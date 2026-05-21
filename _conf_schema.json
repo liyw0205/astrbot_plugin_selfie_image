@@ -1,0 +1,31 @@
+{
+  "web": {
+    "description": "关键启动配置",
+    "type": "object",
+    "hint": "这里只保留插件启动 Web 面板所需的关键配置。生图渠道、模型、自拍、权限等完整配置请在 Flask Web 面板里保存，单独存到插件数据目录 aicat_config.json。",
+    "items": {
+      "enable": {
+        "description": "启用 Flask Web",
+        "type": "bool",
+        "default": true
+      },
+      "host": {
+        "description": "监听地址",
+        "type": "string",
+        "default": "127.0.0.1"
+      },
+      "port": {
+        "description": "监听端口",
+        "type": "int",
+        "default": 14514
+      },
+      "token": {
+        "description": "Web Token",
+        "type": "string",
+        "hint": "访问 Web 配置接口、上传自拍参考图、测试生图时需要。留空表示不校验。",
+        "default": "changeme"
+      }
+    }
+  }
+}
+

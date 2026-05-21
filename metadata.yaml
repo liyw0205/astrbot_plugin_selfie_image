@@ -1,0 +1,8 @@
+name: astrbot_plugin_aicat
+display_name: AICat 生图自拍
+desc: 从 Napcat AICat 迁移的 AstrBot 生图、图生图、AI 自拍和 Flask Web 管理插件。
+help: 发送 /aicat帮助 查看说明；Web 面板地址见日志或配置 web.port。
+version: 1.0.0
+author: AICat Port
+repo: ""
+

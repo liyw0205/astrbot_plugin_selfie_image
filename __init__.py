@@ -1,0 +1,2 @@
+"""AstrBot AICat image plugin."""
+

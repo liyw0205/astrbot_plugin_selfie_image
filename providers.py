@@ -1,0 +1,509 @@
+"""Image generation provider adapters ported from Napcat AICat."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Sequence, Set
+from urllib.parse import urljoin
+
+import aiohttp
+
+from .models import ImageModelTarget
+from .utils import bytes_to_data_url, decode_html_entities
+
+
+@dataclass
+class ImageReference:
+    data: bytes
+    mime_type: str = "image/png"
+
+
+@dataclass
+class ImageGenerateRequest:
+    prompt: str
+    aspect_ratio: str = "自动"
+    resolution: str = "1K"
+    images: List[ImageReference] = field(default_factory=list)
+
+
+@dataclass
+class ImageGenerateResult:
+    images: List[bytes] = field(default_factory=list)
+    error: str = ""
+    used_model: str = ""
+
+
+class BaseImageAdapter:
+    def __init__(self, target: ImageModelTarget, session: aiohttp.ClientSession):
+        self.target = target
+        self.session = session
+
+    async def post_json(self, url: str, payload: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> aiohttp.ClientResponse:
+        request_headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Connection": "close",
+            "User-Agent": "AI-Cat/1.0",
+        }
+        if self.target.api_key:
+            request_headers["Authorization"] = f"Bearer {self.target.api_key}"
+        if headers:
+            request_headers.update(headers)
+        return await self.session.post(
+            url,
+            json=payload,
+            headers=request_headers,
+            timeout=aiohttp.ClientTimeout(total=self.target.timeout),
+        )
+
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        raise NotImplementedError
+
+
+def normalize_image_base_url(url: str) -> str:
+    value = str(url or "").strip().rstrip("/")
+    value = re.sub(r"/v1(?:/.*)?$", "", value, flags=re.I)
+    value = re.sub(r"/chat/completions$", "", value, flags=re.I)
+    value = re.sub(r"/images/(?:generations|edits)$", "", value, flags=re.I)
+    return value
+
+
+def normalize_gemini_base_url(url: str) -> str:
+    value = str(url or "").strip().rstrip("/")
+    value = re.sub(r"/v1beta(?:/.*)?$", "", value, flags=re.I)
+    value = re.sub(r"/v1(?:/.*)?$", "", value, flags=re.I)
+    return value
+
+
+def map_aspect_ratio_to_openai_size(aspect: str) -> str:
+    if not aspect or aspect in {"自动", "1:1"}:
+        return "1024x1024"
+    if aspect in {"16:9", "3:2", "4:3", "5:4", "21:9"}:
+        return "1792x1024"
+    return "1024x1792"
+
+
+def map_aspect_ratio_to_gpt_image_size(aspect: str) -> str:
+    if not aspect or aspect == "自动":
+        return "auto"
+    if aspect == "1:1":
+        return "1024x1024"
+    if aspect in {"3:2", "16:9", "4:3", "5:4", "21:9"}:
+        return "1536x1024"
+    if aspect in {"2:3", "3:4", "9:16", "4:5"}:
+        return "1024x1536"
+    return "auto"
+
+
+def is_gpt_image_model(model: str) -> bool:
+    return "gpt-image" in str(model or "").lower()
+
+
+def b64_to_bytes(value: str) -> bytes:
+    text = str(value or "")
+    if "," in text:
+        text = text.split(",", 1)[1]
+    return base64.b64decode(text, validate=False)
+
+
+def http_error_preview(text: str, limit: int = 500) -> str:
+    raw = str(text or "").strip()
+    preview = raw
+    try:
+        data = json.loads(raw)
+        error = data.get("error") if isinstance(data, dict) else None
+        if isinstance(error, dict) and error.get("message"):
+            preview = str(error.get("message") or "")
+        elif isinstance(data, dict) and data.get("message"):
+            preview = str(data.get("message") or "")
+    except Exception:
+        pass
+    preview = re.sub(r"\s+", " ", preview).strip()
+    return preview[:limit]
+
+
+def clean_image_url(url: str) -> str:
+    text = decode_html_entities(str(url or "")).strip()
+    match = re.match(r"^(https?://\S+?)(?:\s+[\"'][\s\S]*[\"'])?$", text, flags=re.I)
+    if match:
+        text = match.group(1)
+    text = text.strip("<> \t\r\n").rstrip("，。！？、；：")
+    while text.endswith(")") and "(" not in text:
+        text = text[:-1].strip()
+    return text
+
+
+async def fetch_generated_image_url(session: aiohttp.ClientSession, url: str, timeout: int, referer: str = "https://flow.google/") -> Optional[bytes]:
+    text = clean_image_url(url)
+    if not text:
+        return None
+    if text.startswith("data:image/"):
+        return b64_to_bytes(text)
+    if not text.lower().startswith(("http://", "https://")):
+        return None
+    headers = {
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Connection": "close",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": referer,
+    }
+    try:
+        async with session.get(text, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout), allow_redirects=True) as response:
+            if response.status >= 400:
+                return None
+            data = await response.read()
+            return data if data else None
+    except Exception:
+        return None
+
+
+def add_maybe_image_url(value: str, b64: Set[str], urls: Set[str], others: Set[str]) -> None:
+    url = clean_image_url(value)
+    if not url:
+        return
+    if url.startswith("data:image/"):
+        b64.add(url)
+    elif url.lower().startswith(("http://", "https://")):
+        urls.add(url)
+    else:
+        others.add(url)
+
+
+def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
+    raw = decode_html_entities(str(text or ""))
+    b64: Set[str] = set()
+    urls: Set[str] = set()
+    others: Set[str] = set()
+
+    for match in re.finditer(r"!?\[[^\]]*]\(([\s\S]*?)\)", raw):
+        inside = str(match.group(1) or "").strip()
+        if inside:
+            add_maybe_image_url(inside, b64, urls, others)
+
+    for match in re.finditer(r"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_maybe_image_url(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=_-]+", raw):
+        b64.add(match.group(0))
+
+    for match in re.finditer(r"https?://[^\s\"'<>]+", raw):
+        add_maybe_image_url(match.group(0), b64, urls, others)
+
+    return {"b64": list(b64), "urls": list(urls), "others": list(others)}
+
+
+def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
+    b64: Set[str] = set()
+    urls: Set[str] = set()
+    others: Set[str] = set()
+
+    def walk(item: Any) -> None:
+        if item is None:
+            return
+        if isinstance(item, str):
+            extracted = extract_image_urls_from_text(item)
+            b64.update(extracted["b64"])
+            urls.update(extracted["urls"])
+            others.update(extracted["others"])
+            return
+        if isinstance(item, Sequence) and not isinstance(item, (bytes, bytearray, str)):
+            for child in item:
+                walk(child)
+            return
+        if not isinstance(item, dict):
+            return
+
+        for key in ("b64_json", "base64", "data"):
+            if key in item and isinstance(item[key], str):
+                text = item[key].strip()
+                if text:
+                    if text.startswith("data:image/"):
+                        b64.add(text)
+                    elif len(text) > 100:
+                        b64.add(text)
+
+        for key in ("url", "image", "imageUrl", "image_url", "output", "content", "text"):
+            field_value = item.get(key)
+            if isinstance(field_value, str):
+                walk(field_value)
+            elif isinstance(field_value, dict):
+                nested_url = field_value.get("url")
+                if isinstance(nested_url, str):
+                    add_maybe_image_url(nested_url, b64, urls, others)
+                walk(field_value)
+            else:
+                walk(field_value)
+
+        inline_data = item.get("inline_data") or item.get("inlineData")
+        if isinstance(inline_data, dict) and isinstance(inline_data.get("data"), str):
+            b64.add(inline_data["data"].strip())
+
+        for child in item.values():
+            walk(child)
+
+    walk(value)
+    return {"b64": list(b64), "urls": list(urls), "others": list(others)}
+
+
+async def images_from_response_unknown(session: aiohttp.ClientSession, data: Any, timeout: int) -> List[bytes]:
+    collected = collect_images_from_unknown(data)
+    images: List[bytes] = []
+    seen = set()
+
+    for item in collected["b64"]:
+        try:
+            image = b64_to_bytes(item)
+        except Exception:
+            continue
+        key = (len(image), image[:32])
+        if image and key not in seen:
+            images.append(image)
+            seen.add(key)
+
+    for item in collected["urls"]:
+        image = await fetch_generated_image_url(session, item, timeout)
+        key = (len(image or b""), (image or b"")[:32])
+        if image and key not in seen:
+            images.append(image)
+            seen.add(key)
+
+    return images
+
+
+class OpenAIImageAdapter(BaseImageAdapter):
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        if req.images:
+            if not is_gpt_image_model(self.target.model):
+                return ImageGenerateResult(error="OpenAI 图生图仅支持 gpt-image 系列模型，DALL-E 系列不支持参考图")
+            return await self.generate_edit(req)
+        return await self.generate_image(req)
+
+    async def generate_image(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        gpt_image = is_gpt_image_model(self.target.model)
+        base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
+        url = f"{base}/v1/images/generations"
+        payload: Dict[str, Any] = {
+            "model": self.target.model or ("gpt-image-1" if gpt_image else "dall-e-3"),
+            "prompt": req.prompt,
+            "n": 1,
+        }
+        if not gpt_image:
+            payload["response_format"] = "b64_json"
+        payload["size"] = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio) if gpt_image else map_aspect_ratio_to_openai_size(req.aspect_ratio)
+        async with await self.post_json(url, payload) as response:
+            if response.status >= 400:
+                return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text())}")
+            data = await response.json(content_type=None)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
+
+    def _build_edit_form(self, req: ImageGenerateRequest, image_field_name: str) -> aiohttp.FormData:
+        form = aiohttp.FormData()
+        form.add_field("model", self.target.model or "gpt-image-1")
+        form.add_field("prompt", req.prompt)
+        form.add_field("n", "1")
+        size = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio)
+        if size:
+            form.add_field("size", size)
+        for index, image in enumerate(req.images):
+            ext = "jpg" if "jpeg" in image.mime_type else "webp" if "webp" in image.mime_type else "gif" if "gif" in image.mime_type else "png"
+            form.add_field(
+                image_field_name,
+                image.data,
+                filename=f"image_{index}.{ext}",
+                content_type=image.mime_type or "image/png",
+            )
+        return form
+
+    async def _post_edit_form(self, url: str, req: ImageGenerateRequest, image_field_name: str) -> tuple[Optional[Any], str]:
+        headers = {
+            "Accept": "application/json",
+            "Connection": "close",
+            "User-Agent": "AI-Cat/1.0",
+        }
+        if self.target.api_key:
+            headers["Authorization"] = f"Bearer {self.target.api_key}"
+        async with self.session.post(
+            url,
+            data=self._build_edit_form(req, image_field_name),
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=self.target.timeout),
+        ) as response:
+            text = await response.text()
+            if response.status >= 400:
+                return None, f"HTTP {response.status}: {http_error_preview(text)}"
+            try:
+                return json.loads(text), ""
+            except json.JSONDecodeError:
+                return None, f"接口返回非 JSON 内容: {text[:300]}"
+
+    async def generate_edit(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
+        url = f"{base}/v1/images/edits"
+        try:
+            data, error = await self._post_edit_form(url, req, "image")
+            if error and error.startswith("HTTP 400:"):
+                fallback_data, fallback_error = await self._post_edit_form(url, req, "image[]")
+                if fallback_data is not None:
+                    data, error = fallback_data, ""
+                elif fallback_error:
+                    error = f"{error}；兼容 image[] 重试也失败: {fallback_error}"
+            if error or data is None:
+                return ImageGenerateResult(error=error or "接口未返回有效 JSON")
+        except asyncio.TimeoutError:
+            return ImageGenerateResult(error=f"OpenAI 图生图请求超时（{self.target.timeout}秒）")
+        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
+
+
+class GeminiImageAdapter(BaseImageAdapter):
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_gemini_base_url(self.target.base_url) or "https://generativelanguage.googleapis.com"
+        model_path = self.target.model if self.target.model.startswith("models/") else f"models/{self.target.model}"
+        url = f"{base}/v1beta/{model_path}:generateContent"
+        parts: List[Dict[str, Any]] = [{"text": req.prompt}]
+        for image in req.images:
+            parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": image.mime_type or "image/png",
+                        "data": base64.b64encode(image.data).decode("utf-8"),
+                    }
+                }
+            )
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {"responseModalities": ["IMAGE"]},
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "x-goog-api-key": self.target.api_key,
+        }
+        try:
+            async with self.session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=self.target.timeout)) as response:
+                if response.status >= 400:
+                    return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text())}")
+                data = await response.json(content_type=None)
+        except asyncio.TimeoutError:
+            return ImageGenerateResult(error=f"Gemini 生图请求超时（{self.target.timeout}秒）")
+        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
+
+
+class GeminiOpenAIImageAdapter(BaseImageAdapter):
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_image_base_url(self.target.base_url)
+        url = f"{base}/v1/chat/completions"
+        content: List[Dict[str, Any]] = [{"type": "text", "text": f"Generate an image: {req.prompt}"}]
+        for image in req.images:
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": bytes_to_data_url(image.data, image.mime_type)},
+                }
+            )
+        payload = {
+            "model": self.target.model,
+            "messages": [{"role": "user", "content": content}],
+            "modalities": ["image", "text"],
+            "stream": False,
+        }
+        async with await self.post_json(url, payload) as response:
+            if response.status >= 400:
+                return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text())}")
+            data = await response.json(content_type=None)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        if images:
+            return ImageGenerateResult(images=images)
+        preview = json.dumps(data, ensure_ascii=False)[:1000]
+        collected = collect_images_from_unknown(data)
+        if collected["urls"]:
+            return ImageGenerateResult(error=f"接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}；返回预览: {preview}")
+        if collected["b64"]:
+            return ImageGenerateResult(error=f"接口返回了 base64 图片但解码失败。数量: {len(collected['b64'])}；返回预览: {preview}")
+        return ImageGenerateResult(error=f"未识别到可下载图片字段。返回预览: {preview}")
+
+
+class SimpleOpenAIImageAdapter(BaseImageAdapter):
+    default_base_url = ""
+    default_model = ""
+
+    def build_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
+        return {
+            "model": self.target.model or self.default_model,
+            "prompt": req.prompt,
+            "response_format": "b64_json",
+        }
+
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_image_base_url(self.target.base_url) or self.default_base_url
+        url = f"{base}/v1/images/generations"
+        async with await self.post_json(url, self.build_payload(req)) as response:
+            if response.status >= 400:
+                return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text(), 300)}")
+            data = await response.json(content_type=None)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
+
+
+class ZImageAdapter(SimpleOpenAIImageAdapter):
+    default_base_url = "https://ai.gitee.com"
+    default_model = "z-image-turbo"
+
+    def build_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
+        return {
+            "model": self.target.model or self.default_model,
+            "prompt": req.prompt,
+            "size": "1024x1024",
+            "num_inference_steps": 9,
+        }
+
+
+class JimengImageAdapter(SimpleOpenAIImageAdapter):
+    default_base_url = "http://localhost:5100"
+    default_model = "jimeng-4.5"
+
+
+class GrokImageAdapter(SimpleOpenAIImageAdapter):
+    default_base_url = "https://api.x.ai"
+    default_model = "grok-imagine-image"
+
+    def build_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
+        return {
+            "model": self.target.model or self.default_model,
+            "prompt": req.prompt,
+            "aspect_ratio": "auto" if req.aspect_ratio == "自动" else (req.aspect_ratio or "auto"),
+            "resolution": (req.resolution or "2K").lower(),
+            "response_format": "b64_json",
+        }
+
+
+def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> BaseImageAdapter:
+    if target.provider_type == "openai":
+        return OpenAIImageAdapter(target, session)
+    if target.provider_type == "gemini":
+        return GeminiImageAdapter(target, session)
+    if target.provider_type == "gemini_openai":
+        return GeminiOpenAIImageAdapter(target, session)
+    if target.provider_type == "z_image_gitee":
+        return ZImageAdapter(target, session)
+    if target.provider_type == "jimeng2api":
+        return JimengImageAdapter(target, session)
+    if target.provider_type == "grok":
+        return GrokImageAdapter(target, session)
+    raise ValueError(f"未知生图渠道类型: {target.provider_type}")
+
+
+def resolve_response_url(img_url: str, base_url: str) -> str:
+    if img_url.startswith(("http://", "https://", "data:")):
+        return img_url
+    api_root = normalize_image_base_url(base_url)
+    if api_root.endswith("/v1"):
+        api_root = api_root[:-3]
+    return urljoin(api_root.rstrip("/") + "/", img_url.lstrip("/"))
