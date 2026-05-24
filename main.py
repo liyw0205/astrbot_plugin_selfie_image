@@ -953,6 +953,69 @@ class SelfieImagePlugin(Star):
             value = 1
         return max(1, min(self.config.image_max_batch_count, value))
 
+    def _parse_count_token(self, token: str) -> int:
+        text = str(token or "").strip().translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+        if not text:
+            return 0
+        match = re.fullmatch(r"(\d{1,2})(?:张|次|幅)?", text)
+        if match:
+            value = int(match.group(1))
+            return value if value > 0 else 0
+
+        chinese_digits = {
+            "一": 1,
+            "二": 2,
+            "两": 2,
+            "俩": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+            "十": 10,
+        }
+        chinese = re.fullmatch(r"([一二两俩三四五六七八九十]{1,3})(?:张|次|幅)?", text)
+        if not chinese:
+            return 0
+        value_text = chinese.group(1)
+        if value_text == "十":
+            return 10
+        if "十" in value_text:
+            before, _, after = value_text.partition("十")
+            tens = chinese_digits.get(before, 1) if before else 1
+            ones = chinese_digits.get(after, 0) if after else 0
+            value = tens * 10 + ones
+            return value if value > 0 else 0
+        return chinese_digits.get(value_text, 0)
+
+    def _command_tokens_for_count(self, text: str) -> List[str]:
+        raw_tokens = re.sub(r"\s+", " ", str(text or "").strip()).split()
+        tokens: List[str] = []
+        for index, token in enumerate(raw_tokens):
+            if index < 2:
+                parts = [part.strip() for part in re.split(r"[\/／]+", token) if part.strip()]
+                count_like_parts = sum(1 for part in parts if self._parse_count_token(part))
+                if 1 < len(parts) <= 2 and count_like_parts == 1:
+                    tokens.extend(parts)
+                    continue
+            tokens.append(token)
+        return tokens
+
+    def _extract_command_count(self, text: str) -> Tuple[str, int]:
+        tokens = self._command_tokens_for_count(text)
+        if not tokens:
+            return "", 1
+        for index in (0, 1):
+            if index >= len(tokens):
+                continue
+            count = self._parse_count_token(tokens[index])
+            if count:
+                remaining = [token for pos, token in enumerate(tokens) if pos != index]
+                return " ".join(remaining).strip(), self._normalize_count(count)
+        return " ".join(tokens).strip(), 1
+
     def _parse_prompt_options(self, text: str, aspect_ratio: str = "", resolution: str = "") -> Tuple[str, str, str]:
         prompt = str(text or "").strip()
         aspect = str(aspect_ratio or self.config.image_default_aspect_ratio or "自动").strip() or "自动"
@@ -1337,7 +1400,8 @@ class SelfieImagePlugin(Star):
             files.extend(result.get("files", []))
             used_model = str(result.get("used_model") or used_model)
         sent = await self._send_generated_images(event, files)
-        self._record_generated_images(event, sent)
+        if sent:
+            self._record_generated_images(event, requested_count)
         return None
 
     def _build_success_text(self, elapsed_seconds: float, count: int, used_model: str, event: AstrMessageEvent) -> str:
@@ -1469,17 +1533,14 @@ class SelfieImagePlugin(Star):
         files = [self._cache_absolute_path(path) for path in generated_image_paths]
         output_ok, output_reason = await self._audit_output_images(files, audit_user_id, prompt, event=event)
         if not output_ok:
-            for file_path in files:
-                try:
-                    os.remove(file_path)
-                except OSError:
-                    pass
             response_data = {
                 "success": False,
                 "stage": "output_audit",
                 "error": f"图片内容审核未通过：{output_reason}",
                 "used_model": result.used_model,
                 "elapsed_seconds": round(elapsed, 2),
+                "generated_image_paths": generated_image_paths,
+                "blocked_images_retained": True,
             }
             self._record_task(
                 {
@@ -1498,7 +1559,13 @@ class SelfieImagePlugin(Star):
                     "generated_image_paths": generated_image_paths,
                 }
             )
-            return {"success": False, "error": f"图片内容审核未通过：{output_reason}", "elapsed_seconds": elapsed, "used_model": result.used_model}
+            return {
+                "success": False,
+                "error": f"图片内容审核未通过：{output_reason}",
+                "elapsed_seconds": elapsed,
+                "used_model": result.used_model,
+                "image_paths": generated_image_paths,
+            }
 
         cleanup = self._cleanup_image_cache_if_needed([*request_image_paths, *generated_image_paths])
         response_data = {
@@ -1739,6 +1806,43 @@ class SelfieImagePlugin(Star):
         walk(data)
         return sorted(item for item in result if item)
 
+    async def _run_draw_batch(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+        aspect: str,
+        resolution: str,
+        refs: List[ImageReference],
+        source: str,
+        requested_count: int,
+        passthrough: bool = False,
+    ) -> Dict[str, Any]:
+        files: List[str] = []
+        elapsed_total = 0.0
+        used_model = ""
+        for _ in range(self._normalize_count(requested_count)):
+            if passthrough:
+                result = await self._draw_passthrough_once(event, prompt, aspect, resolution, refs, source)
+            else:
+                result = await self._draw_once(event, prompt, aspect, resolution, refs, source)
+            elapsed_total += float(result.get("elapsed_seconds") or 0)
+            used_model = str(result.get("used_model") or used_model)
+            if not result.get("success"):
+                return {
+                    "success": False,
+                    "error": str(result.get("error") or ""),
+                    "elapsed_seconds": elapsed_total,
+                    "used_model": used_model,
+                    "files": files,
+                }
+            files.extend(result.get("files", []))
+        return {
+            "success": True,
+            "files": files,
+            "elapsed_seconds": elapsed_total,
+            "used_model": used_model,
+        }
+
     async def _draw_once(self, event: AstrMessageEvent, prompt: str, aspect: str, resolution: str, refs: List[ImageReference], source: str) -> Dict[str, Any]:
         final_prompt = build_prompt_with_reference_instruction(prompt, refs)
         return await self._run_image_generation(final_prompt, aspect, resolution, refs, source=source, audit_user_id=event_user_id(event), event=event, original_prompt=prompt)
@@ -1758,13 +1862,19 @@ class SelfieImagePlugin(Star):
         fail_label: str,
         message_override: str = "",
         include_at_avatar: bool = False,
+        requested_count_override: int = 0,
     ) -> AsyncGenerator[Any, None]:
-        error = self._quota_error_message(event, 1) or self._rate_limit_error_message(event)
+        message = message_override.strip() if message_override else extract_command_message(event, command_name, fallback)
+        if requested_count_override > 0:
+            requested_count = self._normalize_count(requested_count_override)
+        else:
+            message, requested_count = self._extract_command_count(message)
+
+        error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             yield event.plain_result(error)
             return
 
-        message = message_override.strip() if message_override else extract_command_message(event, command_name, fallback)
         action, aspect, resolution = self._parse_prompt_options(message)
         extra_refs = await self._event_reference_images(event, include_at_avatar=include_at_avatar)
         if not action:
@@ -1776,20 +1886,28 @@ class SelfieImagePlugin(Star):
             hints.append("当前还没有设置 AI 形象参考图，会按人设与今日设定生成主角。")
         if progress_label == "合影" and not extra_refs:
             hints.append("没有读取到合影对象参考图，会按文字要求生成同框对象。")
-        progress = self._build_progress_text("selfie", action, 1)
+        progress = self._build_progress_text("selfie", action, requested_count)
         if hints:
             progress += "\n" + "\n".join(hints)
         yield event.plain_result(progress)
 
-        result = await self._run_image_generation(prompt, aspect, resolution, refs, source=source, audit_user_id=event_user_id(event), event=event, original_prompt=action)
-        if not result.get("success"):
-            yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), fail_label))
-            return
+        files: List[str] = []
+        elapsed_total = 0.0
+        used_model = ""
+        for index in range(requested_count):
+            if index > 0:
+                prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
+            result = await self._run_image_generation(prompt, aspect, resolution, refs, source=source, audit_user_id=event_user_id(event), event=event, original_prompt=action)
+            elapsed_total += float(result.get("elapsed_seconds") or 0)
+            used_model = str(result.get("used_model") or used_model)
+            if not result.get("success"):
+                yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), fail_label))
+                return
+            files.extend(result.get("files", []))
 
-        files = result.get("files", [])
-        self._record_generated_images(event, len(files))
+        self._record_generated_images(event, requested_count)
         yield event.chain_result([self._create_image_component(path) for path in files])
-        info = self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event)
+        info = self._build_success_text(elapsed_total, len(files), used_model, event)
         if info:
             yield event.plain_result(info)
 
@@ -1799,16 +1917,17 @@ class SelfieImagePlugin(Star):
             "\n".join(
                 [
                     f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}",
-                    "/画 <预设名或提示词> [额外提示词] [--ar 1:1] [--resolution 2K]（别名 /生图）",
-                    "/文生图 <原始提示词> [--ar 1:1] [--resolution 2K]（提示词直通）",
-                    "/图生图 <原始提示词> [--ar 1:1] [--resolution 2K]（附带/引用图片，提示词直通）",
+                    "/画 [数量] <预设名或提示词> [数量] [额外提示词] [--ar 1:1] [--resolution 2K]（别名 /生图）",
+                    "/文生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（提示词直通）",
+                    "/图生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（附带/引用图片，提示词直通）",
                     "/预设",
                     "/预设添加 名称:提示词",
                     "/预设删除 名称",
-                    "/自拍 <动作/场景/换装/合照要求> [--ar 3:4]（别名 /看看）",
-                    "/看看腿 [额外要求] [--ar 3:4]",
-                    "/看看你 [动作/场景] [--ar 3:4]（他拍感，不是手持自拍）",
-                    "/合影 <动作/场景/合照要求> [--ar 1:1]（别名 /合照）",
+                    "/自拍 [数量] <动作/场景/换装/合照要求> [--ar 3:4]（别名 /看看）",
+                    "/看看腿 [数量] [额外要求] [--ar 3:4]",
+                    "/看看你 [数量] [动作/场景] [--ar 3:4]（他拍感，不是手持自拍）",
+                    "/合影 [数量] <动作/场景/合照要求> [--ar 1:1]（别名 /合照）",
+                    "数量表示调用生图次数；模型每次实际返回 1 张或多张都会照常发送。",
                     "/形象查看",
                     "/形象设置 <发送图片、引用图片或图片链接>",
                     "/形象清除",
@@ -1834,13 +1953,14 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        error = self._quota_error_message(event, 1) or self._rate_limit_error_message(event)
+        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        message = extract_command_message(event, ("画", "生图"), fallback)
+        message, requested_count = self._extract_command_count(message)
+        error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             yield event.plain_result(error)
             return
 
-        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        message = extract_command_message(event, ("画", "生图"), fallback)
         prompt, aspect, resolution, _, _ = self._resolve_image_preset(message)
         refs = await self._event_reference_images(event, include_at_avatar=True)
         if not prompt and refs:
@@ -1849,14 +1969,14 @@ class SelfieImagePlugin(Star):
             yield event.plain_result("请输入提示词或附带参考图。")
             return
 
-        yield event.plain_result(self._build_progress_text("image", prompt, 1))
-        result = await self._draw_once(event, prompt, aspect, resolution, refs, "command-draw")
+        yield event.plain_result(self._build_progress_text("image", prompt, requested_count))
+        result = await self._run_draw_batch(event, prompt, aspect, resolution, refs, "command-draw", requested_count)
         if not result.get("success"):
             yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
             return
 
         files = result.get("files", [])
-        self._record_generated_images(event, len(files))
+        self._record_generated_images(event, requested_count)
         yield event.chain_result([self._create_image_component(path) for path in files])
         info = self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event)
         if info:
@@ -1877,26 +1997,27 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        error = self._quota_error_message(event, 1) or self._rate_limit_error_message(event)
+        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        message = extract_command_message(event, "文生图", fallback)
+        message, requested_count = self._extract_command_count(message)
+        error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             yield event.plain_result(error)
             return
 
-        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        message = extract_command_message(event, "文生图", fallback)
         prompt, aspect, resolution = self._parse_prompt_options(message)
         if not prompt:
             yield event.plain_result("请输入文生图提示词。")
             return
 
-        yield event.plain_result(self._build_progress_text("image", prompt, 1))
-        result = await self._draw_passthrough_once(event, prompt, aspect, resolution, [], "command-raw-text-to-image")
+        yield event.plain_result(self._build_progress_text("image", prompt, requested_count))
+        result = await self._run_draw_batch(event, prompt, aspect, resolution, [], "command-raw-text-to-image", requested_count, passthrough=True)
         if not result.get("success"):
             yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
             return
 
         files = result.get("files", [])
-        self._record_generated_images(event, len(files))
+        self._record_generated_images(event, requested_count)
         yield event.chain_result([self._create_image_component(path) for path in files])
         info = self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event)
         if info:
@@ -1917,13 +2038,14 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        error = self._quota_error_message(event, 1) or self._rate_limit_error_message(event)
+        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        message = extract_command_message(event, "图生图", fallback)
+        message, requested_count = self._extract_command_count(message)
+        error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             yield event.plain_result(error)
             return
 
-        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        message = extract_command_message(event, "图生图", fallback)
         prompt, aspect, resolution = self._parse_prompt_options(message)
         refs = await self._event_reference_images(event, include_at_avatar=True)
         if not refs:
@@ -1933,14 +2055,14 @@ class SelfieImagePlugin(Star):
             yield event.plain_result("请输入图生图提示词。")
             return
 
-        yield event.plain_result(self._build_progress_text("image", prompt, 1))
-        result = await self._draw_passthrough_once(event, prompt, aspect, resolution, refs, "command-raw-image-to-image")
+        yield event.plain_result(self._build_progress_text("image", prompt, requested_count))
+        result = await self._run_draw_batch(event, prompt, aspect, resolution, refs, "command-raw-image-to-image", requested_count, passthrough=True)
         if not result.get("success"):
             yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
             return
 
         files = result.get("files", [])
-        self._record_generated_images(event, len(files))
+        self._record_generated_images(event, requested_count)
         yield event.chain_result([self._create_image_component(path) for path in files])
         info = self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event)
         if info:
@@ -1989,7 +2111,9 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        raw_extra = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        raw_message = extract_command_message(event, "看看腿", fallback_args)
+        raw_extra, requested_count = self._extract_command_count(raw_message)
         fallback = self._build_leg_focus_action(raw_extra, bool(extract_image_sources_from_event(event)))
         async for item in self._handle_selfie_command(
             event=event,
@@ -2001,6 +2125,7 @@ class SelfieImagePlugin(Star):
             source="command-look-legs",
             fail_label=self._natural_fail_fallback("legs"),
             message_override=fallback,
+            requested_count_override=requested_count,
         ):
             yield item
 
@@ -2019,7 +2144,9 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        raw_extra = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        raw_message = extract_command_message(event, "看看你", fallback_args)
+        raw_extra, requested_count = self._extract_command_count(raw_message)
         fallback = self._build_third_person_look_action(raw_extra, bool(extract_image_sources_from_event(event)))
         async for item in self._handle_selfie_command(
             event=event,
@@ -2031,6 +2158,7 @@ class SelfieImagePlugin(Star):
             source="command-look-you",
             fail_label=self._natural_fail_fallback("selfie"),
             message_override=fallback,
+            requested_count_override=requested_count,
         ):
             yield item
 
@@ -2051,6 +2179,7 @@ class SelfieImagePlugin(Star):
     ) -> AsyncGenerator[Any, None]:
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, ("合影", "合照"), fallback)
+        raw_message, requested_count = self._extract_command_count(raw_message)
         action = self._build_group_selfie_action(raw_message, bool(extract_image_sources_from_event(event, include_at_avatar=True)))
         async for item in self._handle_selfie_command(
             event=event,
@@ -2063,6 +2192,7 @@ class SelfieImagePlugin(Star):
             fail_label=self._natural_fail_fallback("group"),
             message_override=action,
             include_at_avatar=True,
+            requested_count_override=requested_count,
         ):
             yield item
 
@@ -2242,7 +2372,7 @@ class SelfieImagePlugin(Star):
         避免“沿着/顺着/照着 xxx”“收到”“马上为你生成”等僵硬句式。
         Args:
             prompt(string): LLM 根据当前对话整理后的生图提示词，描述主体、风格、场景、构图、细节、参考图使用方式和肢体完整性约束。
-            count(number): 生成张数，默认 1。
+            count(number): 调用生图次数，默认 1；每次调用可能返回一张或多张图片。
             aspect_ratio(string): 宽高比，例如 1:1、3:4、9:16、16:9；留空使用默认值。
             resolution(string): 分辨率，例如 1K、2K、4K；留空使用默认值。
             size(string): 兼容参数，可传 1024x1024、2048x2048 或 4096x4096。
@@ -2271,7 +2401,8 @@ class SelfieImagePlugin(Star):
             files.extend(result.get("files", []))
             used_model = str(result.get("used_model") or used_model)
         sent = await self._send_generated_images(event, files)
-        self._record_generated_images(event, sent)
+        if sent:
+            self._record_generated_images(event, requested_count)
         return None
 
     @LLM_TOOL(name="generate_selfie")
@@ -2297,7 +2428,7 @@ class SelfieImagePlugin(Star):
         ack_message 不要复读用户原话或整理后的 action，不要使用“沿着/顺着/照着 xxx”“收到”“马上为你生成”等僵硬句式。
         Args:
             action(string): LLM 根据当前对话整理后的自拍动作、表情、服装、姿势、环境、镜头、合照要求和肢体完整性约束。
-            count(number): 生成张数，默认 1。
+            count(number): 调用自拍生图次数，默认 1；每次调用可能返回一张或多张图片。
             aspect_ratio(string): 宽高比，例如 1:1、3:4、9:16、16:9；留空使用默认值。
             resolution(string): 分辨率，例如 1K、2K、4K；留空使用默认值。
             size(string): 兼容参数，可传 1024x1024、2048x2048 或 4096x4096。

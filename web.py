@@ -265,7 +265,7 @@ INDEX_HTML = r"""<!doctype html>
         <div><label>最大并发</label><input id="maxConcurrent" type="number" min="1" max="20"></div>
         <div><label>全局超时（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
         <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
-        <div><label>LLM 单次最多张数</label><input id="maxBatchCount" type="number" min="1" max="8"></div>
+        <div><label>单次最多调用次数</label><input id="maxBatchCount" type="number" min="1" max="8"></div>
         <div><label>用户冷却秒数</label><input id="rateLimitSeconds" type="number" min="0"></div>
         <div><label>每日基础额度</label><input id="dailyLimitCount" type="number" min="1"></div>
       </div>
