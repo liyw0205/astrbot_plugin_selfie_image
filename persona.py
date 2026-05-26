@@ -484,45 +484,33 @@ class PersonaManager:
 
         identity_lines = (
             [
-                "存在固定自拍形象参考图。",
-                "参考图一是唯一主体身份参考图。",
-                "必须保持参考图一中的同一角色身份、脸部特征、发型、发色、气质和整体形象，不要变成另一个人。",
-                "角色名称和人设只用于语气、氛围和角色一致性，不要覆盖参考图一的脸和身份。",
+                "固定形象参考：参考图一是主角身份。",
+                "保持同一角色的脸、五官、发型、发色、气质、体态和整体形象；角色名称和人设只辅助语气与氛围。",
             ]
             if has_reference_image
             else [
-                "当前没有固定自拍形象参考图。",
-                "请严格根据角色名称、人设和今日状态生成同一个稳定角色，不要生成随机路人脸。",
-                "没有形象参考图时，角色名称、人设和今日设定就是主角身份的主要依据。",
+                "形象参考以角色名称、人设和今日状态为准，生成稳定主角身份。",
             ]
         )
 
         reference_lines: list[str] = []
         if extra_reference_count > 0:
-            reference_lines.append(f"当前除{'参考图一' if has_reference_image else '主角设定'}外，还有 {extra_reference_count} 张额外参考图。")
+            reference_lines.append(f"另有 {extra_reference_count} 张额外参考图。")
             if intent.is_group_photo:
                 reference_lines.extend(
                     [
-                        "额外参考图在合照模式下优先作为不同同框对象的身份与外观参考，其次才作为服装、姿势、构图和风格参考。",
-                        "必须先检查每张额外参考图里实际可见的人物 / 角色数量；如果单张额外参考图里有多个人，就把这些人都作为独立同框对象保留。",
-                        "真人参考图里的每一个真人都应按实际可见身份进入合影，分别保留脸部特征、发型、穿搭、体型、姿态和相对站位；除非用户明确指定只要其中一人，否则不要只提取一个人。",
-                        "不要把单张多人参考图里的多个人融合成一个人，也不要复制同一张脸代替不同人物。",
-                        "如果有多张额外参考图，应尽量把每张图理解为一个独立同框对象或独立参考来源。",
-                        "不要只使用其中一张额外参考图，也不要把多张参考图的人脸融合成一个人。",
-                        "如果额外参考图是动漫、游戏、二次元、插画、头像、Q版、表情包、贴纸、动物、物品或卡通角色，默认将其真人化 / 拟人化为真实或半写实的人类同框对象。",
-                        "真人化 / 拟人化时要保留参考图角色的关键识别特征，例如发色、发型、耳朵/角/尾巴等标志性元素、主色调、服装轮廓、表情气质和可识别的小配饰。",
-                        "不要把二维原图、表情包、贴纸、卡通头或原图文字直接贴进画面；不要让同框对象仍然保持扁平卡通、Q版或表情包形态。",
-                        "如果参考图上带有文字、UI、边框、水印或表情包字幕，这些只用于理解角色来源，不要在最终图片里复现。",
+                        "合照时，额外参考图优先作为同框对象；保留每张图中可见的人物/角色数量、脸部特征、发型、穿搭、体型、姿态和相对站位。",
+                        "多张额外参考图可分别作为独立同框对象或独立参考来源。",
+                        "非真人参考默认真人化/拟人化为自然同框的人类角色，保留发色、发型、耳朵/角/尾巴等标志元素、主色调、服装轮廓、表情气质和小配饰。",
                     ]
                 )
             else:
                 reference_lines.extend(
                     [
-                        "额外参考图只能作为服装、姿势、构图、风格、场景、道具参考，不要覆盖主角身份。",
-                        "参考图一始终是 AI 自己的主体身份参考图；不要把额外参考图中的人物身份替换成 AI 自己。",
+                        "额外参考图用于服装、姿势、构图、风格、场景、道具、镜头角度或光线氛围；主角身份仍来自参考图一。",
                     ]
                     if has_reference_image
-                    else ["额外参考图可以辅助构图、衣服、姿势，但主角仍应符合角色名称和人设。"]
+                    else ["额外参考图用于构图、衣服、姿势、场景或光线氛围；主角仍符合角色名称和人设。"]
                 )
 
         mode_lines: list[str] = []
@@ -530,76 +518,72 @@ class PersonaManager:
             mode_lines.extend(
                 [
                     "【合照 / 同框模式】",
-                    "本次要求是合照 / 合影 / 同框，主角仍然是你自己。",
-                    "先确定你自己的形象，再为额外参考图生成独立同框对象；不要把你和参考图对象合成同一个人。",
-                    "当额外参考图不是现实人物照片时，必须做拟人化 / 真人化处理，让它成为能自然站在你身边的人类角色。",
-                    "同框人物应自然站位或坐位，有合理距离、遮挡关系、视线方向和肢体互动。",
-                    "所有人物必须处在同一个场景中，使用统一光线、统一色调、统一画风和统一相机透视。",
-                    "整体效果应像同一时间、同一地点、同一相机拍下的一张照片，而不是多张图拼接。",
+                    "先确定你自己的形象，再为额外参考图生成独立同框对象。",
+                    "非真人参考真人化/拟人化为可自然站在身边的人类角色。",
+                    "同框人物自然站位或坐位，有合理距离、遮挡关系、视线方向和肢体互动。",
+                    "所有人物在同一场景中，光线、色调、画风和相机透视统一。",
+                    "整体像同一时间、同一地点、同一相机拍下的一张自然合照。",
                 ]
             )
             if intent.is_multi_person_group_photo or extra_reference_count >= 2:
-                mode_lines.append("本次允许多人合影；每个人都应有清晰、独立、稳定的身份，不要复制脸，不要融合脸。")
+                mode_lines.append("多人合影时，每个人都有清晰、独立、稳定的身份。")
         elif intent.is_legs_only:
             mode_lines.extend(
                 [
                     "【特写自拍 / 晒腿模式】",
-                    "本次重点是成年角色的自然坐姿自拍，构图重点放在腿部线条和袜装上，画面得体、日常、柔和、非挑逗，不要拍成普通正面自拍。",
-                    "默认袜装是黑色透肤丝袜 / 黑丝；除非用户明确要求白丝、肉丝、光腿、短袜或其他袜装，否则不要用今日穿搭覆盖黑丝默认值。",
-                    "优先使用第一人称俯视视角（POV, first-person view, looking down at own legs），像低头看向自己腿部的随手拍；也可以使用自然低角度坐姿自拍，但除非用户明确指定，否则不要使用完整露脸、对镜或站姿构图。",
-                    "主角可以坐在床沿、沙发、单人椅、窗边椅或地毯边，双腿自然向前、斜侧摆放、轻微交叠或并拢放松；膝盖和脚尖方向协调，脚踝线条清楚，坐姿要顺眼、放松、符合人体结构。",
-                    "画面重点呈现裙摆、膝盖、小腿、脚踝、鞋袜搭配和衣料垂落，让腿部线条、穿搭层次、袜口、鞋面材质、地毯/床单/木地板纹理都自然好看。",
-                    "手部互动要像日常自拍里的小动作：轻轻整理或拉住裙摆/衣角、扶住膝盖、调整坐姿、整理袜口或鞋带；可以轻轻整理黑丝边缘，但动作要含蓄自然，不要固定成拉扯姿势。",
-                    "构图重点必须放在腿部和下半身，脸部只可少量入镜甚至完全不入镜；避免夸张广角、畸形拉伸、腿部变短、关节不自然、膝盖脚踝被乱裁。",
-                    "环境和光线要跟当前时间段、房间状态一起变化：可以是晨光、午后漫反射、傍晚暖灯、夜里床边小灯，也可以是居家地毯、沙发边、窗边、床单、木地板或浅色系房间，不要每次都像同一个模板房间。",
-                    "细节刻画默认突出黑丝、裙摆垂落、鞋面材质、毛毯纹理和柔和室内光影；如果用户明确指定其他袜装或光腿，再按用户要求替换。",
-                    "避免过度暴露、内衣视角、性暗示姿势或夸张肢体特写。画面干净、自然、写实，保持私密但温柔的日常随手拍氛围。",
+                    "成年角色自然坐姿随手拍，构图重点放在腿部线条和袜装上，画面得体、日常、柔和。",
+                    "默认黑色透肤丝袜/黑丝；用户明确指定其他袜装时按用户要求。",
+                    "优先第一人称俯视视角（POV，低头看自己的腿）或自然低角度坐姿自拍。",
+                    "主角可坐在床沿、沙发、单人椅、窗边椅或地毯边，双腿向前、斜侧摆放、轻微交叠或并拢放松；膝盖和脚尖方向协调，脚踝线条清楚。",
+                    "画面重点呈现裙摆/裤脚、膝盖、小腿、脚踝、鞋袜搭配、衣料垂落、袜口、鞋面材质、地毯/床单/木地板纹理。",
+                    "脸部保持在画面外，构图集中在下半身、腿部和周围居家环境。",
+                    "手部可自然整理裙摆、衣角、袜口或鞋带，也可以轻扶膝盖；动作含蓄放松。",
+                    "环境和光线跟当前时间段变化：晨光、午后漫反射、傍晚暖灯、夜里床边小灯、居家地毯、沙发边、窗边、床单、木地板或浅色系房间。",
+                    "画面干净、自然、写实，有私密但温柔的日常随手拍氛围。",
                 ]
             )
             if intent.change_clothes:
-                mode_lines.append("本次同时包含换装要求：优先使用用户指定的服装/穿搭，不要用今日穿搭覆盖它。")
+                mode_lines.append("本次同时包含换装要求：优先使用用户指定的服装/穿搭。")
         elif intent.is_third_person_photo:
             mode_lines.extend(
                 [
                     "【他拍 / 日常照片模式】",
-                    "本次不是自己拿手机自拍，而是像第二个人在旁边用相机或手机自然拍下你。",
-                    "镜头视角来自画面外的拍摄者；你可以看向镜头，也可以自然做自己的事，姿态要像被朋友随手拍到。",
-                    "不要出现主角手持手机、自拍杆、镜子自拍、对镜拍、手机遮脸或伸手自拍的构图。",
-                    "画面可以有轻微抓拍感和生活感，但主体脸部、穿搭和姿态要清晰自然。",
+                    "镜头视角来自画面外的拍摄者，像朋友在旁边用相机或手机自然拍下你。",
+                    "你可以看向镜头、轻松回头、坐着发呆、整理东西或自然做自己的事，姿态像生活里被随手拍到。",
+                    "画面带轻微抓拍感和生活感，同时脸部、穿搭、姿态、背景层次和光线清晰自然。",
                 ]
             )
             if intent.change_clothes:
-                mode_lines.append("本次同时包含换装要求：优先使用用户指定的服装/穿搭，不要用今日穿搭覆盖它。")
+                mode_lines.append("本次同时包含换装要求：优先使用用户指定的服装/穿搭。")
             if intent.change_pose:
                 mode_lines.append("本次同时包含姿势/动作要求：在他拍视角下自然完成用户指定的动作或表情。")
         elif intent.change_clothes and intent.change_pose:
             mode_lines.extend(
                 [
                     "【换衣服 + 改姿势模式】",
-                    "保持你自己的身份、脸部特征、发型气质和核心形象不变。",
-                    "本次优化重点：先锁定身份，再同时迁移服装/配饰与姿势/动作，不改变人物身份。",
+                    "保持身份、脸部特征、发型气质和核心形象稳定。",
+                    "先锁定身份，再同时迁移服装/配饰与姿势/动作。",
                     "额外参考图优先用于服装、配饰、颜色、材质、姿势、动作、镜头角度和构图。",
-                    "不要使用今日穿搭覆盖用户指定或参考图中的衣服。",
                 ]
             )
         elif intent.change_clothes:
             mode_lines.extend(
                 [
                     "【改衣服 / 改穿搭模式】",
-                    "本次重点是换装 / 穿搭 / 服装变化。",
-                    "保持你自己的身份、脸部特征、发型气质和核心形象不变。",
-                    "本次优化重点：只替换衣服、配饰、材质、配色和造型氛围，不迁移参考图人物身份。",
-                    "额外参考图只用于服装、配饰、造型、颜色、材质参考，不要把参考图中的人替换成你。",
+                    "重点是换装、穿搭或服装变化。",
+                    "保持身份、脸部特征、发型气质和核心形象稳定。",
+                    "只替换衣服、配饰、材质、配色和造型氛围。",
+                    "额外参考图用于服装、配饰、造型、颜色、材质和穿搭层次参考。",
                 ]
             )
         elif intent.change_pose:
             mode_lines.extend(
                 [
                     "【改姿势 / 改动作模式】",
-                    "本次重点是姿势 / 动作 / 表情变化。",
-                    "本次优化重点：保持身份和穿搭稳定，只改变姿势、动作、表情、镜头角度和构图。",
-                    "优先保持今天的穿搭不变，只改变姿势、表情、镜头角度或肢体动作。",
-                    "额外参考图只参考其姿势、动作、表情、镜头角度或构图。",
+                    "重点是姿势、动作或表情变化。",
+                    "保持身份和穿搭稳定，调整姿势、动作、表情、镜头角度和构图。",
+                    "姿势要自然放松，身体重心、手脚位置、视线方向和画面留白协调。",
+                    "额外参考图用于姿势、动作、表情、镜头角度或构图参考。",
                 ]
             )
         else:
@@ -622,39 +606,35 @@ class PersonaManager:
 
         action_line = f"用户要求：{act}" if act else "用户要求：看着镜头自然自拍，展示你现在的样子。"
         subject_photo_label = "日常他拍照片" if intent.is_third_person_photo and not intent.is_group_photo else "自拍照片"
-        output_lines = (
-            [
+        if intent.is_group_photo:
+            output_lines = [
                 "【生成要求】",
-                "1. 你必须是画面主角之一，且身份来自参考图一或角色设定。",
-                "2. 额外参考图中实际可见的每一个真人或角色都应作为独立同框对象保留；单张多人参考图不能只取一个人。",
-                "3. 所有人物必须在同一个完整场景中，自然站位或坐位，姿势协调，比例合理，透视一致。",
-                "4. 整张图像应像真实拍下的一张自然合照，不要多视角，不要拼图，不要分镜。",
-                "5. 所有人物人体结构必须完整自然；头、手臂、手、手指、腿和脚数量正确，比例合理。",
-                "6. 不要肢体残缺、不要多肢异肢、不要多手多脚、不要手指缺失或多指、不要手脚融合、不要断腕扭手、不要身体部位漂浮、错位或被画面边缘生硬截断。",
-                "7. 非真人额外参考图必须真人化 / 拟人化成同框人类角色，同时保留其核心识别特征。",
-                "8. 不要文字水印，不要角色设定图，不要多人复制脸。",
-                "single coherent group photo, natural group selfie, include every distinct visible real person or character from the reference images, preserve the actual number of visible people in each multi-person reference image, do not extract only one person from a group reference photo, multiple distinct real human people if references are provided, anatomically complete bodies, correct number of arms hands fingers legs and feet, no missing limbs, no extra limbs, no malformed limbs, no fused limbs, no detached body parts, no awkwardly cropped limbs, no extra fingers, no missing fingers, no broken wrists, anthropomorphize or humanize anime/cartoon/sticker/non-human references into realistic human companions, preserve key recognizable traits, consistent lighting, same camera perspective, no collage, no split screen, no face merging, no duplicated faces, no watermark, no text",
+                "1. 主角是你自己，身份来自参考图一或角色设定。",
+                "2. 额外参考图里的真人/角色按实际数量作为独立同框对象，保留关键外观和相对关系。",
+                "3. 所有人物在同一完整场景中，自然站位或坐位，姿势协调，比例合理，透视一致。",
+                "4. 整张图像像真实拍下的一张自然合照，统一光线、色调、景深和相机视角。",
+                "5. 人体结构自然完整；多人合照身份清晰，脸、发型、服装、体态和身体各自独立。",
+                "6. 非真人额外参考图真人化/拟人化为同框人类角色，保留核心识别特征。",
             ]
-            if intent.is_group_photo
-            else [
+        elif intent.is_legs_only:
+            output_lines = [
                 "【生成要求】",
-                "1. 保持主角就是你自己，不要变成另一个人。",
-                "2. 可以根据本次要求自然变化衣服、姿势、表情、室内氛围和小道具。",
-                "3. 整张图应像今天真实拍下的一张照片，而不是模板图。",
-                "4. 人体结构必须完整自然；头、手臂、手、手指、腿和脚数量正确，比例合理。",
-                "5. 不要肢体残缺、不要多肢异肢、不要多手多脚、不要手指缺失或多指、不要手脚融合、不要断腕扭手、不要身体部位漂浮、错位或被画面边缘生硬截断。",
-                "6. 不要拼图，不要分镜，不要角色展示板，不要多视角，不要文字水印。",
-                (
-                    "single image, natural candid portrait photo, photographed by another person, camera held by someone outside the frame, "
-                    "no handheld phone selfie, no selfie stick, no mirror selfie, no phone covering face, complete and unified scene, "
-                    "anatomically complete body, correct number of arms hands fingers legs and feet, no missing limbs, no extra limbs, "
-                    "no malformed limbs, no fused limbs, no detached body parts, no awkwardly cropped limbs, no extra fingers, no missing fingers, no broken wrists, "
-                    "no collage, no grid, no split screen, no character sheet, no multiple views, no watermark, no text"
-                )
-                if intent.is_third_person_photo
-                else "single image, natural selfie photo, complete and unified scene, anatomically complete body, correct number of arms hands fingers legs and feet, no missing limbs, no extra limbs, no malformed limbs, no fused limbs, no detached body parts, no awkwardly cropped limbs, no extra fingers, no missing fingers, no broken wrists, no collage, no grid, no split screen, no character sheet, no multiple views, no watermark, no text",
+                "1. 主角身份稳定，来自参考图一或角色设定。",
+                "2. 构图集中在下半身、腿部线条、袜装、鞋面、衣料垂落和居家材质，脸部保持在画面外。",
+                "3. 镜头语言：第一人称俯视或自然低角度坐姿自拍，膝盖、小腿、脚踝和鞋袜清晰。",
+                "4. 人体结构自然完整，腿部比例、坐姿重心、手部互动、衣料和光影关系可信。",
+                "5. 保持单张完整照片效果，统一光线、色调、景深和相机透视。",
             ]
-        )
+        else:
+            output_lines = [
+                "【生成要求】",
+                "1. 主角身份稳定，来自参考图一或角色设定。",
+                "2. 根据本次要求自然调整衣服、姿势、表情、环境和小道具。",
+                "3. 画面像今天真实拍下的一张照片，构图完整，主体清晰，背景有生活细节。",
+                "4. 人体结构自然完整，手脚和身体比例协调，姿态、衣料、发丝和光影关系可信。",
+                "5. 镜头语言：" + ("画面外拍摄者的日常他拍，带自然抓拍感。" if intent.is_third_person_photo else "自然自拍，视角、手臂位置、脸部表情和环境关系协调。"),
+                "6. 保持单张完整照片效果，统一光线、色调、景深和相机透视。",
+            ]
 
         return "\n".join(
             line

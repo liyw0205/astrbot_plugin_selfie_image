@@ -93,6 +93,11 @@ INDEX_HTML = r"""<!doctype html>
     .toast { min-width: 220px; max-width: min(360px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 8px; background: rgba(32,36,43,.96); color: #fff; box-shadow: 0 14px 32px rgba(0,0,0,.16); }
     .toast.ok { background: rgba(19,138,67,.96); }
     .toast.bad { background: rgba(200,33,47,.96); }
+    .detail-title { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
+    .detail-title h3 { margin: 0; }
+    .copy-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; padding: 0; background: #fff; border-color: var(--line); color: #344054; }
+    .copy-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-weak); }
+    .copy-btn svg { width: 15px; height: 15px; display: block; }
     .tabs-inline { display: flex; gap: 8px; margin: 10px 0 14px; flex-wrap: wrap; }
     .tabs-inline button { background: #fff; border-color: var(--line); color: var(--text); }
     .tabs-inline button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
@@ -402,6 +407,7 @@ INDEX_HTML = r"""<!doctype html>
     let ACTIVE_CHANNEL_PANE = 'image';
     let EDITING_CHANNEL_INDEX = -1;
     let EDITING_CHANNEL_KIND = 'image';
+    let CURRENT_RECORD = null;
 
     $('loginToken').value = AUTH_TOKEN;
 
@@ -1105,9 +1111,60 @@ INDEX_HTML = r"""<!doctype html>
       if (!items.length) return '<div class="muted">无图片</div>';
       return `<div class="images">${items.map(path => `<div><img src="${cacheImageUrl(path)}" alt="${escapeHtml(path)}" onerror="this.outerHTML='<div class=&quot;status&quot;>图片已清理</div>'"><div class="muted">${escapeHtml(path)}</div></div>`).join('')}</div>`;
     }
+    function copyIconSvg() {
+      return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+    }
+    function promptDetailBlock(title, field, text) {
+      return `
+        <div class="detail-title">
+          <h3>${escapeHtml(title)}</h3>
+          <button class="copy-btn" type="button" title="复制${escapeHtml(title)}" aria-label="复制${escapeHtml(title)}" onclick="copyRecordField('${field}')">${copyIconSvg()}</button>
+        </div>
+        <pre>${escapeHtml(text || '')}</pre>
+      `;
+    }
+    async function copyTextToClipboard(text) {
+      const value = String(text ?? '');
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(value);
+        return;
+      }
+      const area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.left = '-9999px';
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(area);
+      if (!ok) throw new Error('复制失败');
+    }
+    async function copyRecordField(field) {
+      const r = CURRENT_RECORD || {};
+      const text = field === 'request_prompt'
+        ? (r.request_prompt || r.prompt || '')
+        : field === 'request_data'
+          ? JSON.stringify(r.request_data || {}, null, 2)
+          : field === 'response_data'
+            ? JSON.stringify(r.response_data || {}, null, 2)
+            : (r.original_prompt || '');
+      if (!text) {
+        showToast('内容为空', 'bad');
+        return;
+      }
+      try {
+        await copyTextToClipboard(text);
+        showToast('已复制到剪贴板', 'ok');
+      } catch (e) {
+        showToast(e.message || '复制失败', 'bad');
+      }
+    }
     function openRecordDetail(id) {
       const r = RECORDS.find(item => String(item.id || '') === String(id || ''));
       if (!r) return;
+      CURRENT_RECORD = r;
       $('recordDetailBody').innerHTML = `
         <div class="grid">
           <div><label>时间</label><div class="status">${escapeHtml(r.time || '')}</div></div>
@@ -1118,10 +1175,10 @@ INDEX_HTML = r"""<!doctype html>
           <div><label>群号</label><div class="status">${escapeHtml(r.group_id || '')}</div></div>
           <div><label>Q号</label><div class="status">${escapeHtml(r.user_id || '')}</div></div>
         </div>
-        <h3>原始提示词</h3><pre>${escapeHtml(r.original_prompt || '')}</pre>
-        <h3>请求提示词</h3><pre>${escapeHtml(r.request_prompt || r.prompt || '')}</pre>
-        <h3>请求数据</h3><pre>${escapeHtml(JSON.stringify(r.request_data || {}, null, 2))}</pre>
-        <h3>响应数据</h3><pre>${escapeHtml(JSON.stringify(r.response_data || {}, null, 2))}</pre>
+        ${promptDetailBlock('原始提示词', 'original_prompt', r.original_prompt || '')}
+        ${promptDetailBlock('请求提示词', 'request_prompt', r.request_prompt || r.prompt || '')}
+        ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
+        ${promptDetailBlock('响应数据', 'response_data', JSON.stringify(r.response_data || {}, null, 2))}
         <h3>请求图</h3>${imageThumbs(r.request_image_paths || [])}
         <h3>生成图</h3>${imageThumbs(r.generated_image_paths || [])}
       `;
@@ -1129,6 +1186,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     function closeRecordDetail() {
       $('recordModal').classList.remove('show');
+      CURRENT_RECORD = null;
     }
 
     async function readFileDataUrl(file) {
@@ -1159,9 +1217,15 @@ INDEX_HTML = r"""<!doctype html>
         $('testRequestData').textContent = JSON.stringify({...payload, images: `[${images.length} images]`}, null, 2);
         showTestPanel('request');
         const res = await api('/api/test-image-channel', {method:'POST', body: JSON.stringify(payload)});
-        $('testStatus').textContent = `成功：${res.data.used_model || ''}，耗时 ${res.data.elapsed_seconds}s，参考图 ${res.data.reference_images} 张`;
-        $('testResponseData').textContent = JSON.stringify(res.data || {}, null, 2);
-        for (const path of res.data.generated_image_paths || []) {
+        const data = res.data || {};
+        $('testResponseData').textContent = JSON.stringify(data, null, 2);
+        if (data.success === false) {
+          $('testStatus').textContent = `失败：${data.error || '这次没顺好'}`;
+          showTestPanel('response');
+          return;
+        }
+        $('testStatus').textContent = `成功：${data.used_model || ''}，耗时 ${data.elapsed_seconds}s，参考图 ${data.reference_images} 张`;
+        for (const path of data.generated_image_paths || []) {
           const img = document.createElement('img');
           img.src = cacheImageUrl(path);
           img.onerror = () => {
@@ -1173,8 +1237,13 @@ INDEX_HTML = r"""<!doctype html>
           $('testImages').appendChild(img);
         }
         showTestPanel('result');
-        await loadRecords();
-      } catch (e) { $('testStatus').textContent = e.message; }
+      } catch (e) {
+        $('testStatus').textContent = e.message;
+        $('testResponseData').textContent = JSON.stringify({success:false, error:e.message}, null, 2);
+        showTestPanel('response');
+      } finally {
+        try { await loadRecords(); } catch (_) {}
+      }
     }
     function showTestPanel(name) {
       ['request','response','result'].forEach(key => $('test' + key[0].toUpperCase() + key.slice(1) + 'Panel').classList.toggle('active', key === name));

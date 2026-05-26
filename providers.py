@@ -35,6 +35,7 @@ class ImageGenerateResult:
     images: List[bytes] = field(default_factory=list)
     error: str = ""
     used_model: str = ""
+    attempts: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class BaseImageAdapter:

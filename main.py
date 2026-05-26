@@ -85,12 +85,9 @@ def append_anatomy_constraints(prompt: str) -> str:
         [
             raw,
             "",
-            "Quality and anatomy constraints:",
-            "1. Human bodies must be anatomically complete and natural.",
-            "2. Keep the correct number of heads, arms, hands, fingers, legs and feet for each person.",
-            "3. No missing limbs, no extra limbs, no malformed limbs, no fused limbs, no detached body parts.",
-            "4. No extra fingers, no missing fingers, no twisted hands, no broken wrists, no duplicated hands or feet.",
-            "5. Do not crop off limbs awkwardly at the image edge; keep visible bodies coherent and complete.",
+            "Composition and quality:",
+            "Use a coherent single image with natural lighting, stable perspective, clear subject focus, and complete natural anatomy for people or animals.",
+            "Frame visible bodies cleanly and keep hands, feet, posture, clothing, and scene relationships consistent.",
         ]
     )
 
@@ -99,28 +96,17 @@ def build_prompt_with_reference_instruction(prompt: str, images: List[ImageRefer
     raw = str(prompt or "").strip()
     if not images:
         return append_anatomy_constraints(raw)
-    multi_person_rules: List[str] = [
-        "8. Carefully inspect every reference image for all distinct visible people or characters.",
-        "9. If a single reference image contains multiple people, preserve the actual number of visible people from that image unless the user explicitly asks for only one person.",
-        "10. Do not extract only one person from a multi-person reference image; do not merge multiple people into one face or body.",
-        "11. For real-person reference photos, keep each real person as a separate person with their own recognizable identity, face, hairstyle, outfit, body shape, and relative position.",
-    ]
     return "\n".join(
         [
-            "The user has provided reference image(s).",
-            "",
-            "Reference image rules:",
-            "1. Use the provided image(s) as visual references.",
-            "2. If the user asks to change clothes, outfit, pose, action, style, composition, character appearance, scene, or camera angle, follow the reference image(s).",
-            "3. Do not ignore the reference image(s).",
-            "4. If there are multiple reference images, use them according to the user request.",
-            "5. Keep the final image as a single complete coherent image, not a collage, not split screen, not multiple panels.",
-            "6. Do not add text, watermark, UI, borders, or captions.",
-            "7. Keep human anatomy complete and natural: correct arms, hands, fingers, legs and feet; no missing limbs, extra limbs, fused limbs, malformed limbs, detached body parts, extra fingers, broken hands, or awkwardly cropped-off limbs.",
-            *multi_person_rules,
+            "Use the provided reference image(s) as visual references.",
+            "Follow the user's requested changes while preserving relevant identity, face, hairstyle, outfit, body shape, pose, camera angle, scene, style, and composition.",
+            "If a reference contains multiple visible people or characters, keep them as distinct subjects; follow any user-requested subset.",
+            "When multiple references are provided, assign each reference to its requested role: identity, clothing, pose, style, scene, object, or group member.",
+            "Create one coherent image with unified lighting, perspective, color tone, natural complete anatomy, and clear spatial relationships.",
+            "Frame the subjects cleanly with a finished photo-like composition.",
             "",
             "User request:",
-            append_anatomy_constraints(raw),
+            raw,
         ]
     )
 
@@ -1138,8 +1124,9 @@ class SelfieImagePlugin(Star):
             "",
             "使用方式：",
             f"1. {prefix}画 预设名 额外提示词",
-            f"2. {prefix}预设 添加 预设名:提示词",
-            f"3. {prefix}预设 删除 预设名",
+            f"2. {prefix}自拍 预设名 额外提示词",
+            f"3. {prefix}预设 添加 预设名:提示词",
+            f"4. {prefix}预设 删除 预设名",
             "",
         ]
         if total_pages > 1:
@@ -1213,32 +1200,20 @@ class SelfieImagePlugin(Star):
         return f"[TOOL_UNAVAILABLE] {fallback}\n请用简体中文、用你自己的语气自然安抚用户，别提功能、工具或配置。"
 
     def _build_leg_focus_action(self, extra_request: str = "", has_refs: bool = False) -> str:
-        base = (
-            "【特写自拍 / 晒腿模式】成年角色自然坐姿自拍，第一人称俯视视角（POV，低头看自己的腿）。"
-            "像低头看向自己腿部的自然随手拍；也可以使用自然低角度坐姿自拍，但不要拍成正面露脸自拍或对镜站姿时漏脸。"
-            "坐在椅子、床沿、沙发或地毯边，双腿自然向前或斜侧摆放，轻微交叠或并拢放松，膝盖与脚尖方向协调，"
-            "脚踝线条清晰，避免广角畸变。构图重点：裙摆/裤脚、膝盖、小腿、脚踝完整美观。"
-            "默认穿黑色透肤丝袜 / 黑丝，不要让今日穿搭覆盖这个默认袜装；如果额外要求明确指定白丝、肉丝、光腿、短袜或其他袜装，则以额外要求为准。"
-            "黑丝贴合腿部曲线，可以有轻微勒肉或自然贴合痕迹，允许有自然的肌肤起伏或袜口轻微陷入感，不刻意追求完美紧绷。"
-            "脚踝处可有轻微堆积褶皱或自然松弛感，鞋面干净。可有自然手部互动：轻拉袜头、抚平丝袜边缘、整理裙摆或扶膝盖，"
-            "不做固定拉扯姿势。整体放松慵懒居家，结合时段光线（晨光/午后漫反射/傍晚暖灯/床边小灯），"
-            "环境浅色系、毛绒地毯、木地板、柔和低饱和清透色调。不露完整人脸，膝盖、脚踝边缘可不完全卡紧，允许轻微裁切但不要突兀。"
-            " 不要完整露脸，不要把膝盖、脚踝裁得很乱。"
-        )
+        base = "看看腿。"
         if has_refs:
-            base = "参考用户提供的图片氛围和构图，" + base
+            base = "参考用户提供的图片氛围和构图，看看腿。"
         extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
         if extra:
-            base += f" 额外要求：{extra}。"
+            base = base.rstrip("。") + f"，用户补充要求：{extra}。"
         return base
 
     def _build_third_person_look_action(self, extra_request: str = "", has_refs: bool = False) -> str:
         base = (
             "【他拍 / 看看你模式】展示 AI 当前样子的自然日常照片。"
-            "必须像第二个人在画面外用相机或手机帮 AI 拍照，有朋友随手拍、生活抓拍的感觉。"
-            "这不是 AI 自己拿手机自拍：不要手持手机、不要自拍杆、不要镜子自拍、不要对镜拍、不要手机遮脸、不要伸手自拍。"
-            "主角可以自然看向镜头，也可以像被人叫住时轻松回头；构图应像旁边的人真实拍下的一张照片。"
-            "保持 AI 当前形象、今日穿搭和生活状态一致，画面自然清晰。"
+            "像朋友在画面外用相机或手机随手拍下 AI，镜头来自旁边的拍摄者，带一点生活抓拍感。"
+            "主角可看向镜头、轻松回头、坐着发呆、整理东西或自然做自己的事。"
+            "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
         )
         if has_refs:
             base = "参考用户提供的图片氛围、场景或构图，" + base
@@ -1250,12 +1225,13 @@ class SelfieImagePlugin(Star):
     def _build_group_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
         base = (
             "合影 / 合照 / 同框。AI 自己必须作为画面主角之一，与用户指定或提供的对象自然同框合影，保持 AI 当前形象一致。"
-            "这不是普通单人自拍；最终画面必须包含 AI 自己和合影对象。"
             "如果同一张参考图里有多个可见人物 / 角色，按实际可见人数全部保留为独立同框对象。"
-            "如果参考图是动漫、卡通、表情包或非真人对象，默认拟人化 / 真人化成自然同框的人类角色，并保留主要识别特征。"
+            "动漫、卡通、表情包或非真人对象默认拟人化 / 真人化成自然同框的人类角色，并保留主要识别特征。"
+            "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动、光线、色调和相机透视统一。"
+            "整体像同一时间、同一地点真实拍下的一张自然合照。"
         )
         if has_refs:
-            base += " 用户提供或艾特对象的头像/图片是合影对象参考，不要只作为风格或构图参考。"
+            base += " 用户提供或艾特对象的头像/图片是合影对象参考。"
         else:
             base += " 没有合影对象参考图时，按文字要求生成自然同框对象。"
         extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
@@ -1390,18 +1366,14 @@ class SelfieImagePlugin(Star):
         action = str(action or "").strip() or "看着镜头自然自拍"
         await self._send_progress_text(event, self._build_progress_text("selfie", action, requested_count, ack_message))
         extra_refs = await self._event_reference_images(event, include_at_avatar=self._looks_like_group_selfie_intent(action))
-        files: List[str] = []
-        used_model = ""
         for _ in range(requested_count):
             prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
             result = await self._run_image_generation(prompt, aspect, resolution, refs, source="llm-generate-selfie", audit_user_id=event_user_id(event), event=event, original_prompt=action)
             if not result.get("success"):
                 return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("selfie"))
-            files.extend(result.get("files", []))
-            used_model = str(result.get("used_model") or used_model)
-        sent = await self._send_generated_images(event, files)
-        if sent:
-            self._record_generated_images(event, requested_count)
+            sent = await self._send_generated_images(event, result.get("files", []))
+            if sent:
+                self._record_generated_images(event, 1)
         return None
 
     def _build_success_text(self, elapsed_seconds: float, count: int, used_model: str, event: AstrMessageEvent) -> str:
@@ -1419,6 +1391,14 @@ class SelfieImagePlugin(Star):
         if self.config.image_show_model_info and used_model:
             lines.append(f"模型：{used_model}")
         return "\n".join(lines)
+
+    def _batch_success_text(self, info: str, index: int, total: int) -> str:
+        text = str(info or "").strip()
+        if not text:
+            return ""
+        if total > 1:
+            return f"第 {index}/{total} 次请求完成。\n{text}"
+        return text
 
     async def _run_image_generation(
         self,
@@ -1509,6 +1489,7 @@ class SelfieImagePlugin(Star):
                 "error": result.error or "未生成任何图片",
                 "used_model": result.used_model,
                 "elapsed_seconds": round(elapsed, 2),
+                "attempts": result.attempts,
             }
             self._record_task(
                 {
@@ -1527,7 +1508,16 @@ class SelfieImagePlugin(Star):
                     "generated_image_paths": [],
                 }
             )
-            return {"success": False, "error": result.error or "未生成任何图片", "elapsed_seconds": elapsed, "used_model": result.used_model}
+            return {
+                "success": False,
+                "error": result.error or "未生成任何图片",
+                "elapsed_seconds": elapsed,
+                "used_model": result.used_model,
+                "request_data": request_data,
+                "response_data": response_data,
+                "request_image_paths": request_image_paths,
+                "attempts": result.attempts,
+            }
 
         generated_image_paths = [self._save_cache_image(image, "generated", detect_mime_by_bytes(image)) for image in result.images if image]
         files = [self._cache_absolute_path(path) for path in generated_image_paths]
@@ -1541,6 +1531,7 @@ class SelfieImagePlugin(Star):
                 "elapsed_seconds": round(elapsed, 2),
                 "generated_image_paths": generated_image_paths,
                 "blocked_images_retained": True,
+                "attempts": result.attempts,
             }
             self._record_task(
                 {
@@ -1565,6 +1556,7 @@ class SelfieImagePlugin(Star):
                 "elapsed_seconds": elapsed,
                 "used_model": result.used_model,
                 "image_paths": generated_image_paths,
+                "attempts": result.attempts,
             }
 
         cleanup = self._cleanup_image_cache_if_needed([*request_image_paths, *generated_image_paths])
@@ -1575,6 +1567,7 @@ class SelfieImagePlugin(Star):
             "count": len(files),
             "generated_image_paths": generated_image_paths,
             "cache_cleanup": cleanup,
+            "attempts": result.attempts,
         }
         self._record_task(
             {
@@ -1603,6 +1596,7 @@ class SelfieImagePlugin(Star):
             "request_data": request_data,
             "response_data": response_data,
             "request_image_paths": request_image_paths,
+            "attempts": result.attempts,
         }
 
     async def _build_selfie_prompt_and_refs(self, action: str, extra_refs: List[ImageReference]) -> Tuple[str, List[ImageReference]]:
@@ -1680,24 +1674,11 @@ class SelfieImagePlugin(Star):
         return None
 
     async def web_test_image(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        target = self._find_image_target(str(payload.get("channel") or "").strip(), str(payload.get("model") or "").strip())
-        if not target:
-            raise RuntimeError("未找到指定生图模型")
-
-        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
-        refs: List[ImageReference] = []
+        channel_name = str(payload.get("channel") or "").strip()
+        model_name = str(payload.get("model") or "").strip()
         raw_images = list(payload.get("images") or [])
         if payload.get("image"):
             raw_images.append(payload.get("image"))
-
-        extra_refs: List[ImageReference] = []
-        for raw in raw_images:
-            data, mime = data_url_to_bytes(str(raw or ""))
-            if not data:
-                continue
-            if len(data) > max_bytes:
-                raise RuntimeError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
-            extra_refs.append(ImageReference(data=data, mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data))))
 
         original_prompt = str(payload.get("prompt") or "").strip() or "看着镜头自然自拍"
         aspect = str(payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "自动")
@@ -1707,37 +1688,98 @@ class SelfieImagePlugin(Star):
             prompt_enhance_raw is False
             or str(prompt_enhance_raw).strip().lower() in {"false", "0", "no", "off", "关闭", "否"}
         )
+        request_summary = {
+            "original_prompt": original_prompt,
+            "channel": channel_name,
+            "model": model_name,
+            "aspect_ratio": aspect,
+            "resolution": resolution,
+            "prompt_enhance": prompt_enhance,
+            "use_selfie_reference": bool(payload.get("use_selfie_reference")),
+            "raw_reference_image_count": len(raw_images),
+        }
 
-        if not prompt_enhance:
-            refs = list(extra_refs)
-            if payload.get("use_selfie_reference"):
-                persona_ref = self.persona.get_reference_image()
-                if not persona_ref:
+        try:
+            target = self._find_image_target(channel_name, model_name)
+            if not target:
+                raise RuntimeError("未找到指定生图模型")
+
+            max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+            refs: List[ImageReference] = []
+            extra_refs: List[ImageReference] = []
+            for raw in raw_images:
+                data, mime = data_url_to_bytes(str(raw or ""))
+                if not data:
+                    continue
+                if len(data) > max_bytes:
+                    raise RuntimeError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
+                extra_refs.append(ImageReference(data=data, mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data))))
+
+            if not prompt_enhance:
+                refs = list(extra_refs)
+                if payload.get("use_selfie_reference"):
+                    persona_ref = self.persona.get_reference_image()
+                    if not persona_ref:
+                        raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
+                    refs.insert(0, ImageReference(data=persona_ref["data"], mime_type=persona_ref["mime_type"]))
+                prompt = original_prompt
+            elif payload.get("use_selfie_reference"):
+                prompt, refs = await self._build_selfie_prompt_and_refs(original_prompt, extra_refs)
+                if not refs:
                     raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
-                refs.insert(0, ImageReference(data=persona_ref["data"], mime_type=persona_ref["mime_type"]))
-            prompt = original_prompt
-        elif payload.get("use_selfie_reference"):
-            prompt, refs = await self._build_selfie_prompt_and_refs(original_prompt, extra_refs)
-            if not refs:
-                raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
-        else:
-            refs = extra_refs
-            prompt = build_prompt_with_reference_instruction(original_prompt, refs)
+            else:
+                refs = extra_refs
+                prompt = build_prompt_with_reference_instruction(original_prompt, refs)
 
-        result = await self._run_image_generation(
-            prompt=prompt,
-            aspect_ratio=aspect,
-            resolution=resolution,
-            refs=refs,
-            targets=[target],
-            source="web-test",
-            original_prompt=original_prompt,
-            event=None,
-        )
+            result = await self._run_image_generation(
+                prompt=prompt,
+                aspect_ratio=aspect,
+                resolution=resolution,
+                refs=refs,
+                targets=[target],
+                source="web-test",
+                original_prompt=original_prompt,
+                event=None,
+            )
+        except Exception as exc:
+            error = str(exc)
+            response_data = {"success": False, "stage": "web_test_preflight", "error": error}
+            self._record_task(
+                {
+                    **self._source_context(None, "web-test"),
+                    "success": False,
+                    "error": error,
+                    "prompt": original_prompt,
+                    "original_prompt": original_prompt,
+                    "request_prompt": original_prompt,
+                    "used_model": model_name,
+                    "elapsed_seconds": 0,
+                    "reference_images": len(raw_images),
+                    "request_data": request_summary,
+                    "response_data": response_data,
+                    "request_image_paths": [],
+                    "generated_image_paths": [],
+                }
+            )
+            raise
+
         if not result.get("success"):
-            raise RuntimeError(str(result.get("error") or "这次没顺好"))
+            return {
+                "success": False,
+                "error": str(result.get("error") or "这次没顺好"),
+                "used_model": result.get("used_model"),
+                "elapsed_seconds": round(float(result.get("elapsed_seconds") or 0), 2),
+                "reference_images": len(refs),
+                "original_prompt": original_prompt,
+                "final_prompt": prompt,
+                "request_data": result.get("request_data") or request_summary,
+                "response_data": result.get("response_data") or {},
+                "request_image_paths": result.get("request_image_paths") or [],
+                "generated_image_paths": result.get("image_paths") or [],
+            }
 
         return {
+            "success": True,
             "used_model": result.get("used_model"),
             "elapsed_seconds": round(float(result.get("elapsed_seconds") or 0), 2),
             "reference_images": len(refs),
@@ -1806,7 +1848,7 @@ class SelfieImagePlugin(Star):
         walk(data)
         return sorted(item for item in result if item)
 
-    async def _run_draw_batch(
+    async def _iter_draw_batch(
         self,
         event: AstrMessageEvent,
         prompt: str,
@@ -1816,32 +1858,18 @@ class SelfieImagePlugin(Star):
         source: str,
         requested_count: int,
         passthrough: bool = False,
-    ) -> Dict[str, Any]:
-        files: List[str] = []
-        elapsed_total = 0.0
-        used_model = ""
-        for _ in range(self._normalize_count(requested_count)):
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        total = self._normalize_count(requested_count)
+        for index in range(total):
             if passthrough:
                 result = await self._draw_passthrough_once(event, prompt, aspect, resolution, refs, source)
             else:
                 result = await self._draw_once(event, prompt, aspect, resolution, refs, source)
-            elapsed_total += float(result.get("elapsed_seconds") or 0)
-            used_model = str(result.get("used_model") or used_model)
+            result["batch_index"] = index + 1
+            result["batch_total"] = total
+            yield result
             if not result.get("success"):
-                return {
-                    "success": False,
-                    "error": str(result.get("error") or ""),
-                    "elapsed_seconds": elapsed_total,
-                    "used_model": used_model,
-                    "files": files,
-                }
-            files.extend(result.get("files", []))
-        return {
-            "success": True,
-            "files": files,
-            "elapsed_seconds": elapsed_total,
-            "used_model": used_model,
-        }
+                return
 
     async def _draw_once(self, event: AstrMessageEvent, prompt: str, aspect: str, resolution: str, refs: List[ImageReference], source: str) -> Dict[str, Any]:
         final_prompt = build_prompt_with_reference_instruction(prompt, refs)
@@ -1875,12 +1903,10 @@ class SelfieImagePlugin(Star):
             yield event.plain_result(error)
             return
 
-        action, aspect, resolution = self._parse_prompt_options(message)
+        action, aspect, resolution, _, _ = self._resolve_image_preset(message)
         extra_refs = await self._event_reference_images(event, include_at_avatar=include_at_avatar)
         if not action:
             action = default_action_with_refs if extra_refs else default_action
-        prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
-
         hints: List[str] = []
         if not self.persona.has_reference_image():
             hints.append("当前还没有设置 AI 形象参考图，会按人设与今日设定生成主角。")
@@ -1891,25 +1917,23 @@ class SelfieImagePlugin(Star):
             progress += "\n" + "\n".join(hints)
         yield event.plain_result(progress)
 
-        files: List[str] = []
-        elapsed_total = 0.0
-        used_model = ""
         for index in range(requested_count):
-            if index > 0:
-                prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
+            prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
             result = await self._run_image_generation(prompt, aspect, resolution, refs, source=source, audit_user_id=event_user_id(event), event=event, original_prompt=action)
-            elapsed_total += float(result.get("elapsed_seconds") or 0)
-            used_model = str(result.get("used_model") or used_model)
             if not result.get("success"):
                 yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), fail_label))
                 return
-            files.extend(result.get("files", []))
-
-        self._record_generated_images(event, requested_count)
-        yield event.chain_result([self._create_image_component(path) for path in files])
-        info = self._build_success_text(elapsed_total, len(files), used_model, event)
-        if info:
-            yield event.plain_result(info)
+            files = result.get("files", [])
+            if files:
+                self._record_generated_images(event, 1)
+                yield event.chain_result([self._create_image_component(path) for path in files])
+            info = self._batch_success_text(
+                self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
+                index + 1,
+                requested_count,
+            )
+            if info:
+                yield event.plain_result(info)
 
     @filter.command("生图帮助")
     async def cmd_help(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
@@ -1923,7 +1947,7 @@ class SelfieImagePlugin(Star):
                     "/预设",
                     "/预设添加 名称:提示词",
                     "/预设删除 名称",
-                    "/自拍 [数量] <动作/场景/换装/合照要求> [--ar 3:4]（别名 /看看）",
+                    "/自拍 [数量] <预设名或动作/场景/换装/合照要求> [--ar 3:4]（别名 /看看）",
                     "/看看腿 [数量] [额外要求] [--ar 3:4]",
                     "/看看你 [数量] [动作/场景] [--ar 3:4]（他拍感，不是手持自拍）",
                     "/合影 [数量] <动作/场景/合照要求> [--ar 1:1]（别名 /合照）",
@@ -1970,17 +1994,21 @@ class SelfieImagePlugin(Star):
             return
 
         yield event.plain_result(self._build_progress_text("image", prompt, requested_count))
-        result = await self._run_draw_batch(event, prompt, aspect, resolution, refs, "command-draw", requested_count)
-        if not result.get("success"):
-            yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
-            return
-
-        files = result.get("files", [])
-        self._record_generated_images(event, requested_count)
-        yield event.chain_result([self._create_image_component(path) for path in files])
-        info = self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event)
-        if info:
-            yield event.plain_result(info)
+        async for result in self._iter_draw_batch(event, prompt, aspect, resolution, refs, "command-draw", requested_count):
+            if not result.get("success"):
+                yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
+                return
+            files = result.get("files", [])
+            if files:
+                self._record_generated_images(event, 1)
+                yield event.chain_result([self._create_image_component(path) for path in files])
+            info = self._batch_success_text(
+                self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
+                int(result.get("batch_index") or 1),
+                int(result.get("batch_total") or requested_count),
+            )
+            if info:
+                yield event.plain_result(info)
 
     @filter.command("文生图")
     async def cmd_raw_text_to_image(
@@ -2011,17 +2039,21 @@ class SelfieImagePlugin(Star):
             return
 
         yield event.plain_result(self._build_progress_text("image", prompt, requested_count))
-        result = await self._run_draw_batch(event, prompt, aspect, resolution, [], "command-raw-text-to-image", requested_count, passthrough=True)
-        if not result.get("success"):
-            yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
-            return
-
-        files = result.get("files", [])
-        self._record_generated_images(event, requested_count)
-        yield event.chain_result([self._create_image_component(path) for path in files])
-        info = self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event)
-        if info:
-            yield event.plain_result(info)
+        async for result in self._iter_draw_batch(event, prompt, aspect, resolution, [], "command-raw-text-to-image", requested_count, passthrough=True):
+            if not result.get("success"):
+                yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
+                return
+            files = result.get("files", [])
+            if files:
+                self._record_generated_images(event, 1)
+                yield event.chain_result([self._create_image_component(path) for path in files])
+            info = self._batch_success_text(
+                self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
+                int(result.get("batch_index") or 1),
+                int(result.get("batch_total") or requested_count),
+            )
+            if info:
+                yield event.plain_result(info)
 
     @filter.command("图生图")
     async def cmd_raw_image_to_image(
@@ -2056,17 +2088,21 @@ class SelfieImagePlugin(Star):
             return
 
         yield event.plain_result(self._build_progress_text("image", prompt, requested_count))
-        result = await self._run_draw_batch(event, prompt, aspect, resolution, refs, "command-raw-image-to-image", requested_count, passthrough=True)
-        if not result.get("success"):
-            yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
-            return
-
-        files = result.get("files", [])
-        self._record_generated_images(event, requested_count)
-        yield event.chain_result([self._create_image_component(path) for path in files])
-        info = self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event)
-        if info:
-            yield event.plain_result(info)
+        async for result in self._iter_draw_batch(event, prompt, aspect, resolution, refs, "command-raw-image-to-image", requested_count, passthrough=True):
+            if not result.get("success"):
+                yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
+                return
+            files = result.get("files", [])
+            if files:
+                self._record_generated_images(event, 1)
+                yield event.chain_result([self._create_image_component(path) for path in files])
+            info = self._batch_success_text(
+                self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
+                int(result.get("batch_index") or 1),
+                int(result.get("batch_total") or requested_count),
+            )
+            if info:
+                yield event.plain_result(info)
 
     @filter.command("自拍", alias={"看看"})
     async def cmd_selfie(
@@ -2359,24 +2395,17 @@ class SelfieImagePlugin(Star):
         ack_message: str = "",
     ) -> Optional[str]:
         """
-        使用生图模型生成图片。支持文生图和参考图图生图。
-        不要用于生成 AI 自己、自拍、合影、合照、同框、与用户一起拍照；这些请求必须调用 generate_selfie。
-        即使你把用户需求整理成英文，只要包含 group selfie、group photo、with you、with me、standing next to、same frame 等含义，也必须调用 generate_selfie。
-        如果误把合影/同框/自拍请求传到这里，插件会自动转入 generate_selfie 流程以带上 AI 形象参考图。
-        调用前应先根据当前对话、用户语气、上下文和机器人人设，把用户的自然语言需求整理成适合生图的 prompt。
-        不要只把用户原话机械复制进 prompt；要补全主体、场景、动作、氛围、构图、风格、约束和参考图关系。
-        如果画面包含人物、类人角色、动物或多角色互动，prompt 必须加入肢体完整性约束：避免肢体残缺、多肢异肢、手脚融合、断腕扭手、手指缺失或多指、身体部位漂浮或被画面边缘生硬截断。
-        如果用户是在闲聊中顺势要求画图，ack_message 应像当前人格自然接话，而不是“收到/正在生成”这类模板。
-        ack_message 不要复读用户原话或整理后的 prompt，不要把 prompt 包在引号里发给用户。
-        ack_message 必须使用简体中文，即使 prompt 或用户原文是英文，也只写 10-40 个中文字的自然反应。
-        避免“沿着/顺着/照着 xxx”“收到”“马上为你生成”等僵硬句式。
+        使用生图模型生成普通图片，支持文生图和参考图图生图。
+        自拍、AI 自己、合影、合照、同框、与用户一起拍照等请求使用 generate_selfie。
+        prompt 保持简洁，保留主体、场景、动作/风格、构图和参考图关系即可。
+        闲聊中顺势画图时，ack_message 用当前人格自然短句接话，简体中文 10-40 字。
         Args:
-            prompt(string): LLM 根据当前对话整理后的生图提示词，描述主体、风格、场景、构图、细节、参考图使用方式和肢体完整性约束。
+            prompt(string): 简洁生图提示词，描述主体、场景、动作/风格、构图和参考图使用方式。
             count(number): 调用生图次数，默认 1；每次调用可能返回一张或多张图片。
             aspect_ratio(string): 宽高比，例如 1:1、3:4、9:16、16:9；留空使用默认值。
             resolution(string): 分辨率，例如 1K、2K、4K；留空使用默认值。
             size(string): 兼容参数，可传 1024x1024、2048x2048 或 4096x4096。
-            ack_message(string): 可选。根据当前对话和机器人人格生成的简体中文短进度回复，会在开始生图前直接发给用户；应自然、有上下文感，避免模板化和复述用户需求。
+            ack_message(string): 可选。根据当前对话和机器人人格生成的简体中文短进度回复。
         """
         if not self.config.image_enable_llm_tool:
             return self._tool_unavailable("我这会儿还没法把这个画面整理出来。")
@@ -2392,17 +2421,13 @@ class SelfieImagePlugin(Star):
 
         await self._send_progress_text(event, self._build_progress_text("image", prompt, requested_count, ack_message))
         refs = await self._event_reference_images(event, include_at_avatar=True)
-        files: List[str] = []
-        used_model = ""
         for _ in range(requested_count):
             result = await self._draw_once(event, prompt, aspect, resol, refs, "llm-generate-image")
             if not result.get("success"):
                 return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("image"))
-            files.extend(result.get("files", []))
-            used_model = str(result.get("used_model") or used_model)
-        sent = await self._send_generated_images(event, files)
-        if sent:
-            self._record_generated_images(event, requested_count)
+            sent = await self._send_generated_images(event, result.get("files", []))
+            if sent:
+                self._record_generated_images(event, 1)
         return None
 
     @LLM_TOOL(name="generate_selfie")
@@ -2418,24 +2443,20 @@ class SelfieImagePlugin(Star):
     ) -> Optional[str]:
         """
         以当前 AI 助手自己的形象生成自拍、形象照、换装照、姿势照、合影或同框照。
-        用户要求“合影/合照/同框/和我一起拍/和你一起拍/我们拍一张”时必须使用这个工具，不要使用 generate_image。
-        英文整理结果包含 group selfie、group photo、with you、with me、standing next to、same frame 等含义时也属于这个工具。
+        用户要求“合影/合照/同框/和我一起拍/和你一起拍/我们拍一张”时使用这个工具。
         本工具会自动带上 AI 当前形象参考图；如果用户消息里附带图片，也会作为合影对象或参考图一起传入。
-        调用前应根据当前对话和机器人人设，把用户的要求整理成自拍动作/场景/情绪/服装/镜头语言。
-        action 必须保留肢体完整性约束：避免肢体残缺、多肢异肢、手脚融合、断腕扭手、手指缺失或多指、身体部位漂浮；合影/同框时每个人都要有独立完整的头、手臂、手、手指、腿和脚，不能复制脸或融合身体。
-        ack_message 必须使用简体中文，即使 action 或用户原文是英文，也不要用英文回复用户。
-        ack_message 应表现出当前人格的反应，例如害羞、认真、调皮或吐槽，而不是固定进度句。
-        ack_message 不要复读用户原话或整理后的 action，不要使用“沿着/顺着/照着 xxx”“收到”“马上为你生成”等僵硬句式。
+        action 保持简洁，整理出动作/场景/情绪/服装/镜头语言；合影时写清同框关系和参考图对象。
+        ack_message 使用简体中文，以当前人格自然回应，10-40 字。
         Args:
-            action(string): LLM 根据当前对话整理后的自拍动作、表情、服装、姿势、环境、镜头、合照要求和肢体完整性约束。
+            action(string): 简洁自拍/合影要求，包含动作、表情、服装、环境、镜头或同框关系。
             count(number): 调用自拍生图次数，默认 1；每次调用可能返回一张或多张图片。
             aspect_ratio(string): 宽高比，例如 1:1、3:4、9:16、16:9；留空使用默认值。
             resolution(string): 分辨率，例如 1K、2K、4K；留空使用默认值。
             size(string): 兼容参数，可传 1024x1024、2048x2048 或 4096x4096。
-            ack_message(string): 可选。根据当前对话和机器人人格生成的简体中文短进度回复，会在开始自拍前直接发给用户；应自然、有上下文感，避免模板化和复述用户需求。
+            ack_message(string): 可选。根据当前对话和机器人人格生成的简体中文短进度回复。
         """
         if not self.config.image_enable_llm_tool:
             return self._tool_unavailable("我这会儿还没法拍这个给你看。")
         requested_count = self._normalize_count(count)
-        action, aspect, resol = self._parse_prompt_options(action or "看着镜头自然自拍", aspect_ratio, resolution or size)
+        action, aspect, resol, _, _ = self._resolve_image_preset(action or "看着镜头自然自拍", aspect_ratio, resolution or size)
         return await self._run_llm_selfie_flow(event, action, requested_count, aspect, resol, ack_message)
