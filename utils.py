@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import binascii
 import hashlib
 import json
@@ -216,41 +217,48 @@ async def fetch_image_source(
     if not text:
         return None
 
-    if text.startswith(("data:image/", "base64://")):
-        data, mime = data_url_to_bytes(text)
-        if data and len(data) <= max_bytes:
-            return data, mime
-        return None
-
-    if os.path.exists(text) and os.path.isfile(text):
-        if os.path.getsize(text) > max_bytes:
+    try:
+        if text.startswith(("data:image/", "base64://")):
+            data, mime = data_url_to_bytes(text)
+            if data and len(data) <= max_bytes:
+                return data, mime
             return None
-        with open(text, "rb") as file:
-            data = file.read()
-        return data, detect_mime_by_bytes(data)
 
-    if not text.lower().startswith(("http://", "https://")):
-        return None
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Referer": "https://im.qq.com/",
-    }
-    async with session.get(text, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout), allow_redirects=True) as response:
-        if response.status >= 400:
-            return None
-        chunks: List[bytes] = []
-        total = 0
-        async for chunk in response.content.iter_chunked(64 * 1024):
-            total += len(chunk)
-            if total > max_bytes:
+        if os.path.exists(text) and os.path.isfile(text):
+            if os.path.getsize(text) > max_bytes:
                 return None
-            chunks.append(chunk)
-        data = b"".join(chunks)
-        header_mime = normalize_image_mime(response.headers.get("content-type", ""), "")
-        return data, header_mime or detect_mime_by_bytes(data)
+            with open(text, "rb") as file:
+                data = file.read()
+            return data, detect_mime_by_bytes(data)
+
+        if not text.lower().startswith(("http://", "https://")):
+            return None
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Referer": "https://im.qq.com/",
+        }
+        request_timeout = aiohttp.ClientTimeout(total=max(1, int(timeout or 30)))
+        async with session.get(text, headers=headers, timeout=request_timeout, allow_redirects=True) as response:
+            if response.status >= 400:
+                return None
+            content_length = response.headers.get("content-length", "")
+            if content_length and int(content_length) > max_bytes:
+                return None
+            chunks: List[bytes] = []
+            total = 0
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    return None
+                chunks.append(chunk)
+            data = b"".join(chunks)
+            header_mime = normalize_image_mime(response.headers.get("content-type", ""), "")
+            return data, header_mime or detect_mime_by_bytes(data)
+    except (asyncio.TimeoutError, aiohttp.ClientError, OSError, binascii.Error, ValueError):
+        return None
 
 
 def extract_event_text(event: Any) -> str:

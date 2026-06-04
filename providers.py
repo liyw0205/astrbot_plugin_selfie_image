@@ -20,6 +20,7 @@ from .utils import bytes_to_data_url, decode_html_entities
 class ImageReference:
     data: bytes
     mime_type: str = "image/png"
+    source_url: str = ""
 
 
 @dataclass
@@ -28,6 +29,7 @@ class ImageGenerateRequest:
     aspect_ratio: str = "自动"
     resolution: str = "1K"
     images: List[ImageReference] = field(default_factory=list)
+    allow_compat_retry: bool = True
 
 
 @dataclass
@@ -98,6 +100,30 @@ def map_aspect_ratio_to_gpt_image_size(aspect: str) -> str:
     if aspect in {"2:3", "3:4", "9:16", "4:5"}:
         return "1024x1536"
     return "auto"
+
+
+def map_aspect_ratio_to_agnes_size(aspect: str) -> str:
+    if not aspect or aspect in {"自动", "1:1"}:
+        return "1024x1024"
+    if aspect == "16:9":
+        return "1024x576"
+    if aspect == "9:16":
+        return "576x1024"
+    if aspect == "3:2":
+        return "1024x682"
+    if aspect == "2:3":
+        return "682x1024"
+    if aspect == "4:3":
+        return "1024x768"
+    if aspect == "3:4":
+        return "768x1024"
+    if aspect == "4:5":
+        return "819x1024"
+    if aspect == "5:4":
+        return "1024x819"
+    if aspect == "21:9":
+        return "1024x439"
+    return "1024x1024"
 
 
 def is_gpt_image_model(model: str) -> bool:
@@ -348,7 +374,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
         url = f"{base}/v1/images/edits"
         try:
             data, error = await self._post_edit_form(url, req, "image")
-            if error:
+            if error and req.allow_compat_retry:
                 fallback_data, fallback_error = await self._post_edit_form(url, req, "image[]")
                 if fallback_data is not None:
                     data, error = fallback_data, ""
@@ -485,6 +511,48 @@ class GrokImageAdapter(SimpleOpenAIImageAdapter):
         }
 
 
+class AgnesImageAdapter(BaseImageAdapter):
+    default_base_url = "https://apihub.agnes-ai.com"
+    default_model = "agnes-image-2.1-flash"
+
+    def _reference_image_value(self, image: ImageReference) -> str:
+        source_url = str(image.source_url or "").strip()
+        if source_url.lower().startswith(("http://", "https://")):
+            return source_url
+        return bytes_to_data_url(image.data, image.mime_type)
+
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_image_base_url(self.target.base_url) or self.default_base_url
+        url = f"{base}/v1/images/generations"
+        payload: Dict[str, Any] = {
+            "model": self.target.model or self.default_model,
+            "prompt": req.prompt,
+            "size": map_aspect_ratio_to_agnes_size(req.aspect_ratio),
+        }
+        extra_body: Dict[str, Any] = {}
+        if req.images:
+            extra_body["image"] = [self._reference_image_value(image) for image in req.images if image.data]
+            extra_body["response_format"] = "url"
+        if extra_body:
+            payload["extra_body"] = extra_body
+        async with await self.post_json(url, payload) as response:
+            text = await response.text()
+            if response.status >= 400:
+                return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(text, 300)}")
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                return ImageGenerateResult(error=f"接口返回非 JSON 内容: {text[:300]}")
+        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        if images:
+            return ImageGenerateResult(images=images)
+        preview = json.dumps(data, ensure_ascii=False)[:1000]
+        collected = collect_images_from_unknown(data)
+        if collected["urls"]:
+            return ImageGenerateResult(error=f"Agnes 返回了图片链接但下载失败。链接数: {len(collected['urls'])}；返回预览: {preview}")
+        return ImageGenerateResult(error=f"未生成任何图片。返回预览: {preview}")
+
+
 def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> BaseImageAdapter:
     if target.provider_type == "openai":
         return OpenAIImageAdapter(target, session)
@@ -498,6 +566,8 @@ def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> 
         return JimengImageAdapter(target, session)
     if target.provider_type == "grok":
         return GrokImageAdapter(target, session)
+    if target.provider_type == "agnes":
+        return AgnesImageAdapter(target, session)
     raise ValueError(f"未知生图渠道类型: {target.provider_type}")
 
 

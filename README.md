@@ -36,6 +36,21 @@
    }
    ```
 
+   Agnes Image 2.1 Flash 示例：
+
+   ```json
+   {
+     "name": "agnes",
+     "provider_type": "agnes",
+     "base_url": "https://apihub.agnes-ai.com",
+     "api_key": "YOUR_API_KEY",
+     "model": "agnes-image-2.1-flash",
+     "enabled_models": ["agnes-image-2.1-flash"],
+     "timeout": 280,
+     "enabled": true
+   }
+   ```
+
 4. 重载插件后使用命令：
 
    - `/画 一只白猫坐在窗边 --ar 1:1`、`/画 3 一只白猫坐在窗边` 或 `/画 预设名 3 额外提示词`
@@ -78,7 +93,7 @@
 
 ## 已迁移范围
 
-- 生图渠道：`openai`、`gemini`、`gemini_openai`、`z_image_gitee`、`jimeng2api`、`grok`
+- 生图渠道：`openai`、`gemini`、`gemini_openai`、`z_image_gitee`、`jimeng2api`、`grok`、`agnes`
 - 指令：`画`（别名 `生图`）、`文生图`、`图生图`、`自拍`（别名 `看看`）、`看看腿`、`看看你`、`合影`（别名 `合照`）、`形象查看`、`形象设置`、`形象清除`、`形象刷新`
 - LLM 工具：`generate_image`、`generate_selfie`
 - Web：基础设置、渠道管理、渠道监控、渠道测试、生图设置、形象设置、生图审核、JSON 编辑

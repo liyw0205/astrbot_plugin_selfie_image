@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
@@ -30,6 +30,7 @@ async def generate_image_with_fallback(
     targets: List[ImageModelTarget],
     req: ImageGenerateRequest,
     session: aiohttp.ClientSession,
+    max_attempts: Optional[int] = None,
 ) -> ImageGenerateResult:
     if not targets:
         return ImageGenerateResult(error="未配置生图模型")
@@ -37,7 +38,7 @@ async def generate_image_with_fallback(
     global_timeout = max(10, int(targets[0].timeout or 180))
     deadline = time.monotonic() + global_timeout
     last_error = "未配置生图模型"
-    total_attempts = max(IMAGE_RETRY_ATTEMPTS, len(targets))
+    total_attempts = max(1, int(max_attempts)) if max_attempts is not None else max(IMAGE_RETRY_ATTEMPTS, len(targets))
     attempts: List[Dict[str, Any]] = []
 
     for attempt in range(1, total_attempts + 1):

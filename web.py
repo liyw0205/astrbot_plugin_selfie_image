@@ -107,8 +107,10 @@ INDEX_HTML = r"""<!doctype html>
     .model-list { display: grid; gap: 7px; margin-top: 8px; }
     .model-list.collapsed { max-height: 240px; overflow-y: auto; border: 1px dashed var(--line); padding: 4px; border-radius: 6px; }
     .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; background: #f8fafc; }
+    .model-row.with-provider { grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) auto; }
     .model-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .model-row .actions { margin-top: 0; }
+    .model-provider { min-width: 150px; padding: 5px 8px; font-size: 12px; }
     .mini { padding: 5px 8px; font-size: 12px; }
     .table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .table th, .table td { text-align: left; border-bottom: 1px solid var(--line); padding: 8px; vertical-align: top; }
@@ -135,7 +137,7 @@ INDEX_HTML = r"""<!doctype html>
       nav { gap: 6px; }
       nav button { font-size: 13px; padding: 8px 4px; }
       .modal { max-height: 96vh; padding: 12px; }
-      .model-row { grid-template-columns: 1fr; }
+      .model-row, .model-row.with-provider { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -200,7 +202,7 @@ INDEX_HTML = r"""<!doctype html>
           <button class="secondary" onclick="addAuditChannel()">添加审核渠道</button>
         </div>
       </div>
-      <p class="muted">支持生图渠道类型：openai、gemini、gemini_openai、z_image_gitee、jimeng2api、grok。列表只显示概要，点编辑管理接口、缓存模型和启用模型顺序。</p>
+      <p class="muted">支持生图渠道类型：openai、gemini、gemini_openai、z_image_gitee、jimeng2api、grok、agnes。列表只显示概要，点编辑管理接口、缓存模型和启用模型顺序。</p>
       <div class="tabs-inline">
         <button id="channelTabImage" class="active" type="button" onclick="switchChannelPane('image')">生图渠道</button>
         <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">审核渠道</button>
@@ -395,7 +397,7 @@ INDEX_HTML = r"""<!doctype html>
   <script>
     const $ = id => document.getElementById(id);
     const ASPECTS = ['自动','1:1','2:3','3:2','3:4','4:3','4:3','4:5','5:4','9:16','16:9','21:9'].filter((v,i,a)=>a.indexOf(v)===i);
-    const PROVIDERS = ['openai','gemini','gemini_openai','z_image_gitee','jimeng2api','grok'];
+    const PROVIDERS = ['openai','gemini','gemini_openai','z_image_gitee','jimeng2api','grok','agnes'];
     const AUDIT_PROVIDERS = ['openai','gemini','gemini_openai'];
     const MONITOR_PAGE_SIZE = 20;
     let CONFIG = {};
@@ -408,6 +410,8 @@ INDEX_HTML = r"""<!doctype html>
     let EDITING_CHANNEL_INDEX = -1;
     let EDITING_CHANNEL_KIND = 'image';
     let CURRENT_RECORD = null;
+    let TEST_TASK_POLL_TIMER = null;
+    let TEST_TASK_ID = '';
 
     $('loginToken').value = AUTH_TOKEN;
 
@@ -581,23 +585,93 @@ INDEX_HTML = r"""<!doctype html>
       if (item && typeof item === 'object') return String(item.id || item.model || item.name || '').trim();
       return '';
     }
+    function normalizeProviderType(value) {
+      const raw = String(value || '').trim().toLowerCase().replace(/-/g, '_');
+      const aliases = {
+        openai_image: 'openai',
+        openai_images: 'openai',
+        openai_chat: 'gemini_openai',
+        openai_compatible: 'gemini_openai',
+        chat_completions: 'gemini_openai',
+        google: 'gemini',
+        google_gemini: 'gemini',
+        zimage: 'z_image_gitee',
+        z_image: 'z_image_gitee',
+        gitee: 'z_image_gitee',
+        jimeng: 'jimeng2api',
+        jimeng2: 'jimeng2api',
+        xai: 'grok',
+        x_ai: 'grok'
+      };
+      const normalized = aliases[raw] || raw;
+      return PROVIDERS.includes(normalized) ? normalized : '';
+    }
+    function inferProviderTypeFromModel(model) {
+      const compact = String(model || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+      if (!compact) return '';
+      if (compact.includes('agnes')) return 'agnes';
+      if (compact.includes('z-image') || compact.startsWith('zimage')) return 'z_image_gitee';
+      if (compact.includes('jimeng') || compact.includes('seedream') || compact.includes('doubao-seedream')) return 'jimeng2api';
+      if (compact.includes('grok') || compact.includes('xai') || compact.includes('x-ai')) return 'grok';
+      if (compact.includes('gpt-image') || compact.includes('dall-e') || compact.includes('dalle')) return 'openai';
+      if (compact.includes('gemini') || compact.includes('nano-banana')) return 'gemini';
+      return '';
+    }
+    function resolveModelProviderType(model, defaultProviderType, manualProviderType = '') {
+      return normalizeProviderType(manualProviderType)
+        || inferProviderTypeFromModel(model)
+        || normalizeProviderType(defaultProviderType)
+        || 'openai';
+    }
+    function collectModelProviderTypes(ch, enabled) {
+      const enabledSet = new Set(enabled || []);
+      const out = {};
+      const sources = [ch.model_provider_types, ch.modelProviderTypes, ch.provider_types, ch.providerTypes];
+      for (const source of sources) {
+        if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+        for (const [model, provider] of Object.entries(source)) {
+          const name = String(model || '').trim();
+          const resolved = normalizeProviderType(provider);
+          if (name && enabledSet.has(name) && resolved) out[name] = resolved;
+        }
+      }
+      for (const item of ch.enabled_models || ch.enabledModels || []) {
+        if (!item || typeof item !== 'object') continue;
+        const name = modelId(item);
+        const resolved = normalizeProviderType(item.provider_type || item.providerType || item.api_type || item.apiType);
+        if (name && enabledSet.has(name) && resolved) out[name] = resolved;
+      }
+      return out;
+    }
+    function compactModelProviderTypes(ch) {
+      const enabledSet = new Set(ch.enabled_models || []);
+      const out = {};
+      for (const [model, provider] of Object.entries(ch.model_provider_types || {})) {
+        const resolved = normalizeProviderType(provider);
+        if (enabledSet.has(model) && resolved) out[model] = resolved;
+      }
+      ch.model_provider_types = out;
+      return ch;
+    }
     function normalizeChannel(ch) {
       ch = ch && typeof ch === 'object' ? ch : {};
-      const enabled = uniq((ch.enabled_models || (ch.model ? [ch.model] : [])).map(modelId));
-      const cache = uniq((ch.models_cache || ch.available_models || []).map(modelId));
-      return {
+      const enabled = uniq((ch.enabled_models || ch.enabledModels || (ch.model ? [ch.model] : [])).map(modelId));
+      const cache = uniq((ch.models_cache || ch.modelsCache || ch.available_models || ch.availableModels || []).map(modelId));
+      const providerType = normalizeProviderType(ch.provider_type || ch.providerType || ch.api_type || ch.apiType) || 'openai';
+      return compactModelProviderTypes(applyProviderDefaults({
         name: String(ch.name || ch.id || 'new-channel').trim(),
-        provider_type: PROVIDERS.includes(ch.provider_type) ? ch.provider_type : 'openai',
+        provider_type: providerType,
         base_url: String(ch.base_url || ch.baseUrl || '').trim(),
         api_key: String(ch.api_key || ch.apiKey || '').trim(),
         model: String(ch.model || enabled[0] || '').trim(),
         timeout: Number(ch.timeout || 280),
         enabled: ch.enabled !== false,
         enabled_models: enabled,
+        model_provider_types: collectModelProviderTypes(ch, enabled),
         models_cache: cache,
         proxy: String(ch.proxy || '').trim(),
         extra: ch.extra && typeof ch.extra === 'object' ? ch.extra : {}
-      };
+      }));
     }
     function normalizeChannels() {
       CONFIG.image_channels = (CONFIG.image_channels || []).map(normalizeChannel);
@@ -618,13 +692,24 @@ INDEX_HTML = r"""<!doctype html>
     }
     function setChannelEnabledModels(ch, list) {
       ch.enabled_models = uniq(list);
-      ch.model = ch.enabled_models[0] || ch.model || '';
+      ch.model = ch.enabled_models[0] || '';
+      compactModelProviderTypes(ch);
     }
     function newChannel() {
       return normalizeChannel({name:'new-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:true, models_cache:[]});
     }
     function newAuditChannel() {
       return normalizeChannel({name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:true, models_cache:[]});
+    }
+    function applyProviderDefaults(ch, force = false) {
+      ch = ch && typeof ch === 'object' ? ch : {};
+      if (ch.provider_type === 'agnes') {
+        if (force || !ch.base_url) ch.base_url = 'https://apihub.agnes-ai.com';
+        if (force || !ch.model) ch.model = 'agnes-image-2.1-flash';
+        if (!Array.isArray(ch.enabled_models) || !ch.enabled_models.length || force) ch.enabled_models = ['agnes-image-2.1-flash'];
+        if (!Array.isArray(ch.models_cache) || !ch.models_cache.length || force) ch.models_cache = ['agnes-image-2.1-flash'];
+      }
+      return ch;
     }
     function addChannel() {
       ensureConfig();
@@ -762,8 +847,19 @@ INDEX_HTML = r"""<!doctype html>
         timeout: Number($('modalTimeout').value || 280),
         enabled: $('modalEnabled').checked,
         enabled_models: enabled,
+        model_provider_types: collectModalProviderTypes(enabled),
         models_cache: source.models_cache || []
       }));
+    }
+    function collectModalProviderTypes(enabled) {
+      const enabledSet = new Set(enabled || []);
+      const out = {};
+      document.querySelectorAll('#enabledModels .model-row').forEach(row => {
+        const model = String(row.querySelector('.name')?.textContent || '').trim();
+        const provider = normalizeProviderType(row.querySelector('.model-provider')?.value || '');
+        if (model && enabledSet.has(model) && provider) out[model] = provider;
+      });
+      return out;
     }
     function openChannelModal(index, kind = 'image') {
       normalizeChannels();
@@ -772,6 +868,8 @@ INDEX_HTML = r"""<!doctype html>
       EDITING_CHANNEL_KIND = kind === 'audit' ? 'audit' : 'image';
       const list = channelListFor(EDITING_CHANNEL_KIND);
       const ch = normalizeChannel(list[index] || (EDITING_CHANNEL_KIND === 'audit' ? newAuditChannel() : newChannel()));
+      applyProviderDefaults(ch);
+      list[index] = ch;
       $('channelModalTitle').textContent = EDITING_CHANNEL_KIND === 'audit' ? '编辑审核渠道' : '编辑生图渠道';
       setSelectOptions('modalProvider', EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS : PROVIDERS, ch.provider_type || 'openai');
       $('modalChannelName').value = ch.name || '';
@@ -786,6 +884,15 @@ INDEX_HTML = r"""<!doctype html>
       $('modalStatus').textContent = '';
       renderModalModels(ch);
       $('channelModal').classList.add('show');
+    }
+    function modalProviderChanged() {
+      const ch = currentModalChannel();
+      applyProviderDefaults(ch, true);
+      $('modalBaseUrl').value = ch.base_url || '';
+      $('modalModel').value = ch.model || '';
+      renderModalModels(ch);
+      refreshModelSelectors();
+      scheduleAutoSave('渠道类型已自动生效');
     }
     function closeChannelModal() {
       $('channelModal').classList.remove('show');
@@ -813,8 +920,9 @@ INDEX_HTML = r"""<!doctype html>
         return `<div class="model-row" data-model="${escapeHtml(item)}"><div class="name">${escapeHtml(item)}</div><div class="actions"><button class="${active ? 'secondary' : ''} mini" type="button" onclick="${active ? `removeEnabledModel('${escapeJs(item)}')` : `addEnabledModel('${escapeJs(item)}')`}">${active ? '取消' : '启用'}</button></div></div>`;
       }).join('') || '<div class="muted">没有匹配的缓存模型。</div>';
       $('enabledModels').innerHTML = enabled.map((item, i) => `
-        <div class="model-row">
+        <div class="model-row with-provider">
           <div class="name">${escapeHtml(item)}</div>
+          ${modelProviderSelectHtml(ch, item, i)}
           <div class="actions">
             <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, -1)">上移</button>
             <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, 1)">下移</button>
@@ -822,10 +930,33 @@ INDEX_HTML = r"""<!doctype html>
           </div>
         </div>`).join('') || '<div class="muted">还没有启用模型。</div>';
     }
+    function modelProviderSelectHtml(ch, model, index) {
+      const manual = normalizeProviderType((ch.model_provider_types || {})[model] || '');
+      let choices = EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS.slice() : PROVIDERS.slice();
+      if (manual && !choices.includes(manual)) choices.unshift(manual);
+      const auto = resolveModelProviderType(model, ch.provider_type, '');
+      const options = [`<option value="" ${manual ? '' : 'selected'}>自动：${escapeHtml(auto)}</option>`]
+        .concat(choices.map(provider => `<option value="${escapeHtml(provider)}" ${manual === provider ? 'selected' : ''}>${escapeHtml(provider)}</option>`));
+      return `<select class="model-provider" title="模型类型，留在自动会按模型名识别，识别不到再使用渠道默认类型" onchange="setModelProviderType(${index}, this.value)">${options.join('')}</select>`;
+    }
     function currentModalChannel() {
       const ch = collectModalChannel();
       channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] = ch;
       return ch;
+    }
+    function setModelProviderType(index, provider) {
+      const ch = currentModalChannel();
+      const model = (ch.enabled_models || [])[index] || '';
+      if (!model) return;
+      ch.model_provider_types ||= {};
+      const resolved = normalizeProviderType(provider);
+      if (resolved) ch.model_provider_types[model] = resolved;
+      else delete ch.model_provider_types[model];
+      compactModelProviderTypes(ch);
+      channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] = ch;
+      renderModalModels(ch);
+      refreshModelSelectors();
+      scheduleAutoSave('模型类型已自动生效');
     }
     function addEnabledModel(name) {
       const ch = currentModalChannel();
@@ -913,13 +1044,17 @@ INDEX_HTML = r"""<!doctype html>
       setSelectOptions('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       setSelectOptions('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
       setSelectOptions('ocrModel', auditLabels, CONFIG.image?.ocr_model || '');
-      setSelectOptions('testChannel', (CONFIG.image_channels || []).map(c=>c.name), (CONFIG.image_channels || [])[0]?.name || '');
+      const testChannels = (CONFIG.image_channels || []).filter(c => c.enabled !== false && c.name);
+      const currentTestChannel = $('testChannel').value;
+      const selectedTestChannel = testChannels.some(c => c.name === currentTestChannel) ? currentTestChannel : (testChannels[0]?.name || '');
+      setSelectOptions('testChannel', testChannels.map(c => c.name), selectedTestChannel);
       refreshTestModels();
     }
     function refreshTestModels() {
       const name = $('testChannel').value;
-      const ch = (CONFIG.image_channels || []).find(c => c.name === name) || {};
-      setSelectOptions('testModel', (ch.enabled_models?.length ? ch.enabled_models : [ch.model]).filter(Boolean), ch.model || '');
+      const ch = (CONFIG.image_channels || []).find(c => c.enabled !== false && c.name === name) || {};
+      const models = (ch.enabled_models?.length ? ch.enabled_models : [ch.model]).filter(Boolean);
+      setSelectOptions('testModel', models, models.includes(ch.model) ? ch.model : (models[0] || ''));
     }
     function addPriority() {
       const value = $('priorityPicker').value;
@@ -1197,11 +1332,99 @@ INDEX_HTML = r"""<!doctype html>
         reader.readAsDataURL(file);
       });
     }
+    function clearTestTaskPoll() {
+      if (TEST_TASK_POLL_TIMER) {
+        clearTimeout(TEST_TASK_POLL_TIMER);
+        TEST_TASK_POLL_TIMER = null;
+      }
+    }
+    function setTestBusy(busy) {
+      $('testImageBtn').disabled = !!busy;
+      $('testImageBtn').textContent = busy ? '后台生成中' : '开始测试';
+    }
+    function renderImageTestResult(data) {
+      $('testResponseData').textContent = JSON.stringify(data || {}, null, 2);
+      if (!data || data.success === false) {
+        $('testStatus').textContent = `失败：${(data && data.error) || '这次没顺好'}`;
+        showTestPanel('response');
+        return;
+      }
+      $('testStatus').textContent = `成功：${data.used_model || ''}，耗时 ${data.elapsed_seconds}s，参考图 ${data.reference_images} 张`;
+      $('testImages').innerHTML = '';
+      for (const path of data.generated_image_paths || []) {
+        const img = document.createElement('img');
+        img.src = cacheImageUrl(path);
+        img.onerror = () => {
+          const div = document.createElement('div');
+          div.className = 'status';
+          div.textContent = '图片已清理';
+          img.replaceWith(div);
+        };
+        $('testImages').appendChild(img);
+      }
+      showTestPanel('result');
+    }
+    async function pollImageTestTask(taskId) {
+      clearTestTaskPoll();
+      TEST_TASK_ID = taskId || '';
+      if (!TEST_TASK_ID) return;
+      try {
+        const res = await api('/api/test-image-channel/tasks/' + encodeURIComponent(TEST_TASK_ID));
+        if (TEST_TASK_ID !== taskId) return;
+        const task = res.data || {};
+        $('testResponseData').textContent = JSON.stringify(task, null, 2);
+        if (task.request_data && !$('testRequestData').textContent.trim()) {
+          $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
+        }
+        if (task.status === 'queued' || task.status === 'running') {
+          setTestBusy(true);
+          const label = task.status === 'queued' ? '排队中' : '生成中';
+          $('testStatus').textContent = `后台任务 ${task.task_id || TEST_TASK_ID} ${label}，已用 ${task.running_seconds || 0}s。关闭页面不会停止任务。`;
+          TEST_TASK_POLL_TIMER = setTimeout(() => pollImageTestTask(TEST_TASK_ID), 2000);
+          return;
+        }
+        setTestBusy(false);
+        localStorage.removeItem('selfieImageLastTestTaskId');
+        renderImageTestResult(task.result || {success:false, error: task.error || '任务未返回结果'});
+        try { await loadRecords(); } catch (_) {}
+      } catch (e) {
+        if (TEST_TASK_ID !== taskId) return;
+        setTestBusy(false);
+        $('testStatus').textContent = e.message;
+        $('testResponseData').textContent = JSON.stringify({success:false, error:e.message}, null, 2);
+        showTestPanel('response');
+      }
+    }
+    async function resumeImageTestTask() {
+      const taskId = localStorage.getItem('selfieImageLastTestTaskId') || '';
+      if (!taskId) return;
+      try {
+        const res = await api('/api/test-image-channel/tasks/' + encodeURIComponent(taskId));
+        const task = res.data || {};
+        if (task.status === 'queued' || task.status === 'running') {
+          TEST_TASK_ID = taskId;
+          $('testResponseData').textContent = JSON.stringify(task, null, 2);
+          if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
+          pollImageTestTask(taskId);
+        } else {
+          localStorage.removeItem('selfieImageLastTestTaskId');
+          $('testResponseData').textContent = JSON.stringify(task, null, 2);
+          if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
+          renderImageTestResult(task.result || {success:false, error: task.error || '任务未返回结果'});
+          try { await loadRecords(); } catch (_) {}
+        }
+      } catch (_) {
+        localStorage.removeItem('selfieImageLastTestTaskId');
+      }
+    }
     async function runImageTest() {
       collectForms();
       clearTestData(false);
-      $('testStatus').textContent = '生成中...';
+      setTestBusy(true);
+      $('testStatus').textContent = '正在提交后台生图任务...';
       try {
+        if (!$('testChannel').value) throw new Error('没有可用的启用生图渠道，请先启用渠道');
+        if (!$('testModel').value) throw new Error('当前渠道没有可用模型，请先启用模型');
         const images = [];
         for (const file of $('testRefs').files) images.push(await readFileDataUrl(file));
         const payload = {
@@ -1216,39 +1439,29 @@ INDEX_HTML = r"""<!doctype html>
         };
         $('testRequestData').textContent = JSON.stringify({...payload, images: `[${images.length} images]`}, null, 2);
         showTestPanel('request');
-        const res = await api('/api/test-image-channel', {method:'POST', body: JSON.stringify(payload)});
-        const data = res.data || {};
-        $('testResponseData').textContent = JSON.stringify(data, null, 2);
-        if (data.success === false) {
-          $('testStatus').textContent = `失败：${data.error || '这次没顺好'}`;
-          showTestPanel('response');
-          return;
-        }
-        $('testStatus').textContent = `成功：${data.used_model || ''}，耗时 ${data.elapsed_seconds}s，参考图 ${data.reference_images} 张`;
-        for (const path of data.generated_image_paths || []) {
-          const img = document.createElement('img');
-          img.src = cacheImageUrl(path);
-          img.onerror = () => {
-            const div = document.createElement('div');
-            div.className = 'status';
-            div.textContent = '图片已清理';
-            img.replaceWith(div);
-          };
-          $('testImages').appendChild(img);
-        }
-        showTestPanel('result');
+        const res = await api('/api/test-image-channel/tasks', {method:'POST', body: JSON.stringify(payload)});
+        const task = res.data || {};
+        TEST_TASK_ID = task.task_id || '';
+        if (!TEST_TASK_ID) throw new Error('后台任务提交失败：未返回 task_id');
+        localStorage.setItem('selfieImageLastTestTaskId', TEST_TASK_ID);
+        $('testResponseData').textContent = JSON.stringify(task, null, 2);
+        $('testStatus').textContent = `后台任务 ${TEST_TASK_ID} 已提交，关闭页面不会停止任务。`;
+        pollImageTestTask(TEST_TASK_ID);
       } catch (e) {
+        setTestBusy(false);
         $('testStatus').textContent = e.message;
         $('testResponseData').textContent = JSON.stringify({success:false, error:e.message}, null, 2);
         showTestPanel('response');
-      } finally {
-        try { await loadRecords(); } catch (_) {}
       }
     }
     function showTestPanel(name) {
       ['request','response','result'].forEach(key => $('test' + key[0].toUpperCase() + key.slice(1) + 'Panel').classList.toggle('active', key === name));
     }
     function clearTestData(clearStatus = true) {
+      clearTestTaskPoll();
+      TEST_TASK_ID = '';
+      localStorage.removeItem('selfieImageLastTestTaskId');
+      setTestBusy(false);
       $('testImages').innerHTML = '';
       $('testRequestData').textContent = '';
       $('testResponseData').textContent = '';
@@ -1326,6 +1539,7 @@ INDEX_HTML = r"""<!doctype html>
         await checkHealth();
         await refreshSelfie();
         await loadRecords();
+        await resumeImageTestTask();
       } catch (e) {
         document.body.classList.remove('authed');
         $('loginStatus').textContent = e.message || '登录失败';
@@ -1361,6 +1575,7 @@ INDEX_HTML = r"""<!doctype html>
     $('logoutBtn').onclick = logout;
     $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(); };
     $('modalSave').onclick = saveChannelModal;
+    $('modalProvider').onchange = modalProviderChanged;
     $('modalRefreshModels').onclick = () => refreshChannelModels();
     $('modalEnableAll').onclick = () => { removeAllEnabledModels(); scheduleAutoSave('已移除全部启用模型'); showToast('已移除全部启用模型', 'ok'); };
     $('cacheSearch').oninput = () => renderModalModels(currentModalChannel());
@@ -1543,6 +1758,26 @@ class FlaskWebServer:
                 return ok(data)
             except Exception as exc:
                 return fail(str(exc), 500)
+
+        @app.route("/api/test-image-channel/tasks", methods=["POST"])
+        def test_image_channel_task_start() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload = request.get_json(silent=True) or {}
+            try:
+                data = self.plugin.start_web_image_task(payload)
+                return ok(data)
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/test-image-channel/tasks/<task_id>", methods=["GET"])
+        def test_image_channel_task_status(task_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                return ok(self.plugin.get_web_image_task(task_id))
+            except Exception as exc:
+                return fail(str(exc), 404)
 
         @app.route("/api/refresh-image-models", methods=["POST"])
         def refresh_image_models() -> Any:

@@ -11,6 +11,7 @@ import re
 import shutil
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
@@ -77,6 +78,18 @@ from .web import FlaskWebServer
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
 
 
+def optional_event_message_type(priority: int = 100):
+    decorator = getattr(filter, "event_message_type", None)
+    event_type = getattr(getattr(filter, "EventMessageType", None), "ALL", None)
+    if callable(decorator) and event_type is not None:
+        return decorator(event_type, priority=priority)
+
+    def passthrough(func):
+        return func
+
+    return passthrough
+
+
 def append_anatomy_constraints(prompt: str) -> str:
     raw = str(prompt or "").strip()
     if not raw:
@@ -133,8 +146,15 @@ class SelfieImagePlugin(Star):
         self._records_lock = threading.RLock()
         self._progress_lock = threading.RLock()
         self._progress_last_sent: Dict[str, float] = {}
+        self._context_lock = threading.RLock()
+        self._conversation_context: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
+        self._context_max_messages = 40
+        self._context_max_sessions = 100
         self._records: List[Dict[str, Any]] = self._load_records()
         self._record_seq = len(self._records)
+        self._web_task_lock = threading.RLock()
+        self._web_tasks: Dict[str, Dict[str, Any]] = {}
+        self._web_task_seq = 0
         self._last_request_at: Dict[str, float] = {}
         self.loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -327,6 +347,184 @@ class SelfieImagePlugin(Star):
         if origin:
             return f"origin:{origin}"
         return f"event:{id(event)}"
+
+    def _context_session_key(self, event: Optional[AstrMessageEvent] = None) -> str:
+        if event is None:
+            return "web"
+        origin = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        return origin or self._session_key(event)
+
+    def _event_sender_name(self, event: Optional[AstrMessageEvent], is_bot: bool = False) -> str:
+        if is_bot:
+            return self._bot_display_name()
+        if event is None:
+            return "用户"
+        for method_name in ("get_sender_name", "get_sender_nickname", "get_user_name"):
+            method = getattr(event, method_name, None)
+            if callable(method):
+                try:
+                    value = str(method() or "").strip()
+                    if value:
+                        return value
+                except Exception:
+                    continue
+        sender = getattr(event, "sender", None)
+        for key in ("nickname", "name", "card", "display_name"):
+            value = getattr(sender, key, None)
+            if value:
+                return str(value).strip()
+        return event_user_id(event) or "用户"
+
+    def _event_message_id(self, event: Optional[AstrMessageEvent]) -> str:
+        if event is None:
+            return f"web:{time.time_ns()}"
+        message_obj = getattr(event, "message_obj", None)
+        for obj in (message_obj, event):
+            for key in ("message_id", "msg_id", "id"):
+                value = getattr(obj, key, None)
+                if value:
+                    return str(value)
+        return f"event:{id(event)}:{time.time_ns()}"
+
+    def _add_context_message(
+        self,
+        session_key: str,
+        sender_id: str,
+        sender_name: str,
+        content: str,
+        is_bot: bool = False,
+        image_sources: Optional[List[str]] = None,
+        msg_id: str = "",
+    ) -> None:
+        key = str(session_key or "").strip() or "unknown"
+        text = re.sub(r"\s+", " ", str(content or "")).strip()
+        sources = [str(item).strip() for item in (image_sources or []) if str(item).strip()]
+        if not text and sources:
+            text = "[图片]"
+        if not text and not sources:
+            return
+        record = {
+            "msg_id": msg_id or f"{time.time_ns()}",
+            "sender_id": str(sender_id or "").strip(),
+            "sender_name": str(sender_name or "").strip() or ("[Bot]" if is_bot else "用户"),
+            "content": text[:500],
+            "is_bot": bool(is_bot),
+            "has_image": bool(sources),
+            "image_sources": sources[:8],
+            "timestamp": time.time(),
+        }
+        with self._context_lock:
+            messages = self._conversation_context.setdefault(key, [])
+            if any(item.get("msg_id") == record["msg_id"] for item in messages[-5:]):
+                return
+            messages.append(record)
+            if len(messages) > self._context_max_messages:
+                del messages[: len(messages) - self._context_max_messages]
+            self._conversation_context.move_to_end(key)
+            while len(self._conversation_context) > self._context_max_sessions:
+                self._conversation_context.popitem(last=False)
+
+    def _recent_context_records(self, event: Optional[AstrMessageEvent], count: int = 12) -> List[Dict[str, Any]]:
+        key = self._context_session_key(event)
+        with self._context_lock:
+            records = list(self._conversation_context.get(key, []))
+        return records[-max(1, int(count or 1)) :]
+
+    def _format_context_for_llm(self, event: Optional[AstrMessageEvent], count: int = 12, max_chars: int = 1400) -> str:
+        lines: List[str] = []
+        total = 0
+        for record in reversed(self._recent_context_records(event, count)):
+            sender = "[Bot]" if record.get("is_bot") else str(record.get("sender_name") or "用户")
+            content = str(record.get("content") or "").strip()
+            image_tag = " [含图片]" if record.get("has_image") else ""
+            line = f"{sender}: {content}{image_tag}".strip()
+            if not line:
+                continue
+            if total + len(line) > max_chars:
+                break
+            lines.insert(0, line)
+            total += len(line) + 1
+        return "\n".join(lines)
+
+    def _extract_context_message_info(self, event: AstrMessageEvent) -> Dict[str, Any]:
+        content = extract_event_text(event)
+        sources = self._filter_reference_images(event, extract_image_sources_from_event(event, include_at_avatar=False))
+        return {"content": content or ("[图片]" if sources else ""), "image_sources": sources}
+
+    def _looks_like_context_image_reference(self, text: str) -> bool:
+        compact = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(text or "").lower())
+        if not compact:
+            return False
+        keywords = [
+            "上图",
+            "上一张",
+            "上张",
+            "刚才那张",
+            "刚刚那张",
+            "刚发的",
+            "前面那张",
+            "这张",
+            "这图",
+            "这个图",
+            "那张",
+            "那图",
+            "继续改",
+            "接着改",
+            "在这个基础上",
+            "基于这张",
+            "参考这个",
+            "参考刚才",
+            "按刚才",
+            "同款",
+            "换成",
+            "改一下",
+            "修一下",
+        ]
+        english = [
+            "previousimage",
+            "lastimage",
+            "lastphoto",
+            "thisimage",
+            "editthis",
+            "continueediting",
+            "basedonthis",
+            "sameasbefore",
+        ]
+        return any(keyword in compact for keyword in keywords) or any(keyword in compact for keyword in english)
+
+    def _recent_context_image_sources(self, event: Optional[AstrMessageEvent], max_images: int = 4) -> List[str]:
+        sources: List[str] = []
+        seen = set()
+        for record in reversed(self._recent_context_records(event, count=20)):
+            for source in reversed(list(record.get("image_sources") or [])):
+                text = str(source or "").strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                sources.append(text)
+                if len(sources) >= max_images:
+                    return sources
+        return sources
+
+    @optional_event_message_type(priority=100)
+    async def on_message_record(self, event: AstrMessageEvent) -> None:
+        try:
+            msg = self._extract_context_message_info(event)
+            sender_id = event_user_id(event)
+            bot_ids = set(self._bot_account_ids(event))
+            is_bot = bool(sender_id and sender_id in bot_ids)
+            self._add_context_message(
+                session_key=self._context_session_key(event),
+                sender_id=sender_id,
+                sender_name=self._event_sender_name(event, is_bot=is_bot),
+                content=str(msg.get("content") or ""),
+                is_bot=is_bot,
+                image_sources=list(msg.get("image_sources") or []),
+                msg_id=self._event_message_id(event),
+            )
+        except Exception as exc:
+            logger.debug(f"[SelfieImage] 记录上下文失败: {exc}")
+        return None
 
     def _access_status(self, event: AstrMessageEvent) -> Dict[str, Any]:
         user_id = event_user_id(event)
@@ -835,6 +1033,118 @@ class SelfieImagePlugin(Star):
             self._persist_records()
             return count
 
+    def _web_task_timestamp(self) -> str:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+    def _summarize_web_test_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw_images = list(payload.get("images") or [])
+        if payload.get("image"):
+            raw_images.append(payload.get("image"))
+        prompt_enhance_raw = payload.get("prompt_enhance", True)
+        prompt_enhance = not (
+            prompt_enhance_raw is False
+            or str(prompt_enhance_raw).strip().lower() in {"false", "0", "no", "off", "关闭", "否"}
+        )
+        return {
+            "original_prompt": str(payload.get("prompt") or "").strip() or "看着镜头自然自拍",
+            "channel": str(payload.get("channel") or "").strip(),
+            "model": str(payload.get("model") or "").strip(),
+            "aspect_ratio": str(payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "自动"),
+            "resolution": str(payload.get("resolution") or self.config.image_default_resolution or "1K"),
+            "prompt_enhance": prompt_enhance,
+            "use_selfie_reference": bool(payload.get("use_selfie_reference")),
+            "raw_reference_image_count": len(raw_images),
+        }
+
+    def _prune_web_tasks_locked(self) -> None:
+        if len(self._web_tasks) <= 50:
+            return
+        finished = [
+            (float(task.get("updated_ts") or 0), task_id)
+            for task_id, task in self._web_tasks.items()
+            if task.get("status") in {"succeeded", "failed"}
+        ]
+        finished.sort(key=lambda item: item[0])
+        while len(self._web_tasks) > 50 and finished:
+            _, task_id = finished.pop(0)
+            self._web_tasks.pop(task_id, None)
+
+    def _set_web_image_task(self, task_id: str, **fields: Any) -> None:
+        with self._web_task_lock:
+            task = self._web_tasks.get(task_id)
+            if not task:
+                return
+            now = time.time()
+            task.update(fields)
+            task["updated_ts"] = now
+            task["updated_at"] = self._web_task_timestamp()
+            self._prune_web_tasks_locked()
+
+    def get_web_image_task(self, task_id: str) -> Dict[str, Any]:
+        with self._web_task_lock:
+            task = self._web_tasks.get(str(task_id or "").strip())
+            if not task:
+                raise ValueError("任务不存在或已清理")
+            data = copy.deepcopy(task)
+        if data.get("status") in {"queued", "running"}:
+            started = float(data.get("started_ts") or data.get("created_ts") or time.time())
+            data["running_seconds"] = round(max(0.0, time.time() - started), 2)
+        return data
+
+    def start_web_image_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise RuntimeError("请求体必须是 JSON 对象")
+        loop = getattr(self, "loop", None)
+        if loop is None or not loop.is_running():
+            raise RuntimeError("AstrBot 事件循环未就绪，无法启动后台生图任务")
+        payload_copy = copy.deepcopy(payload)
+        self._validate_web_test_selection(payload_copy)
+        with self._web_task_lock:
+            self._web_task_seq += 1
+            task_id = f"web-{int(time.time() * 1000)}-{self._web_task_seq}"
+            now = time.time()
+            self._web_tasks[task_id] = {
+                "task_id": task_id,
+                "status": "queued",
+                "success": None,
+                "error": "",
+                "created_ts": now,
+                "updated_ts": now,
+                "created_at": self._web_task_timestamp(),
+                "updated_at": self._web_task_timestamp(),
+                "request_data": self._summarize_web_test_payload(payload_copy),
+                "result": None,
+            }
+            self._prune_web_tasks_locked()
+        asyncio.run_coroutine_threadsafe(self._run_web_image_task(task_id, payload_copy), loop)
+        return self.get_web_image_task(task_id)
+
+    async def _run_web_image_task(self, task_id: str, payload: Dict[str, Any]) -> None:
+        self._set_web_image_task(task_id, status="running", started_ts=time.time(), started_at=self._web_task_timestamp())
+        try:
+            result = await self.web_test_image(payload)
+            success = bool(result.get("success"))
+            self._set_web_image_task(
+                task_id,
+                status="succeeded" if success else "failed",
+                success=success,
+                error="" if success else str(result.get("error") or "这次没顺好"),
+                result=result,
+                finished_ts=time.time(),
+                finished_at=self._web_task_timestamp(),
+            )
+        except Exception as exc:
+            error = str(exc)
+            self._set_web_image_task(
+                task_id,
+                status="failed",
+                success=False,
+                error=error,
+                result={"success": False, "error": error},
+                finished_ts=time.time(),
+                finished_at=self._web_task_timestamp(),
+            )
+
     def _cache_relative_path(self, path: str) -> str:
         try:
             return os.path.relpath(os.path.abspath(path), os.path.abspath(self.generated_dir))
@@ -1054,24 +1364,55 @@ class SelfieImagePlugin(Star):
             return head.strip(), tail.strip()
         return value, ""
 
-    async def _event_reference_images(self, event: AstrMessageEvent, include_at_avatar: bool = False) -> List[ImageReference]:
+    async def _event_reference_images_with_stats(
+        self,
+        event: AstrMessageEvent,
+        include_at_avatar: bool = False,
+        context_hint: str = "",
+        allow_context_fallback: bool = False,
+    ) -> Tuple[List[ImageReference], int, int]:
         sources = self._filter_reference_images(event, extract_image_sources_from_event(event, include_at_avatar=include_at_avatar))
+        if not sources and allow_context_fallback and self._looks_like_context_image_reference(context_hint or extract_event_text(event)):
+            sources = self._filter_reference_images(event, self._recent_context_image_sources(event))
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
         result: List[ImageReference] = []
+        failed_count = 0
         seen = set()
         if not sources:
-            return result
+            return result, 0, 0
         async with aiohttp.ClientSession() as session:
             for source in sources:
                 fetched = await fetch_image_source(source, session, max_bytes=max_bytes)
                 if not fetched:
+                    failed_count += 1
                     continue
                 data, mime = fetched
+                if not data:
+                    failed_count += 1
+                    continue
                 key = (len(data), data[:64])
                 if data and key not in seen:
-                    result.append(ImageReference(data=data, mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data))))
+                    source_url = str(source or "").strip() if str(source or "").strip().lower().startswith(("http://", "https://")) else ""
+                    result.append(ImageReference(data=data, mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data)), source_url=source_url))
                     seen.add(key)
-        return result
+        if failed_count and not result:
+            logger.warning(f"[SelfieImage] 参考图读取失败或超时: {failed_count}/{len(sources)}")
+        return result, len(sources), failed_count
+
+    async def _event_reference_images(
+        self,
+        event: AstrMessageEvent,
+        include_at_avatar: bool = False,
+        context_hint: str = "",
+        allow_context_fallback: bool = False,
+    ) -> List[ImageReference]:
+        refs, _, _ = await self._event_reference_images_with_stats(
+            event,
+            include_at_avatar=include_at_avatar,
+            context_hint=context_hint,
+            allow_context_fallback=allow_context_fallback,
+        )
+        return refs
 
     def _create_image_component(self, file_path: str) -> Any:
         path = os.path.abspath(file_path)
@@ -1085,6 +1426,7 @@ class SelfieImagePlugin(Star):
         sent = 0
         for file_path in files:
             await event.send(event.chain_result([self._create_image_component(file_path)]))
+            self._record_bot_image_context(event, [file_path])
             sent += 1
             await asyncio.sleep(0.4)
         return sent
@@ -1094,6 +1436,7 @@ class SelfieImagePlugin(Star):
             return
         try:
             await event.send(event.plain_result(text))
+            self._record_bot_text_context(event, text)
         except Exception as exc:
             logger.warning(f"[SelfieImage] 发送进度消息失败: {exc}")
 
@@ -1101,6 +1444,127 @@ class SelfieImagePlugin(Star):
         if kind == "selfie":
             return self._selfie_ack_text(user_request, count, ack_message)
         return self._image_ack_text(user_request, count, ack_message)
+
+    async def _call_text_llm(self, event: Optional[AstrMessageEvent], prompt: str, timeout: int = 8) -> str:
+        if event is None:
+            return ""
+
+        async def request() -> str:
+            origin = getattr(event, "unified_msg_origin", None)
+            provider_id = None
+            try:
+                getter = getattr(self.context, "get_using_provider", None)
+                if callable(getter):
+                    provider = getter()
+                    requester = getattr(provider, "text_chat", None) or getattr(provider, "request", None)
+                    if callable(requester):
+                        response = requester(prompt=prompt)
+                        if asyncio.iscoroutine(response):
+                            response = await response
+                        return str(getattr(response, "completion_text", response) or "").strip()
+            except Exception:
+                pass
+            try:
+                getter = getattr(self.context, "get_current_chat_provider_id", None)
+                if callable(getter):
+                    provider_id = await getter(umo=origin) if origin else await getter()
+            except Exception:
+                provider_id = None
+            try:
+                generator = getattr(self.context, "llm_generate", None)
+                if callable(generator):
+                    kwargs = {"prompt": prompt}
+                    if provider_id:
+                        kwargs["chat_provider_id"] = provider_id
+                    response = await generator(**kwargs)
+                    return str(getattr(response, "completion_text", response) or "").strip()
+            except Exception:
+                return ""
+            return ""
+
+        try:
+            return await asyncio.wait_for(request(), timeout=max(2, int(timeout or 8)))
+        except Exception:
+            return ""
+
+    def _strip_llm_short_reply(self, text: str) -> str:
+        value = str(text or "").strip()
+        if not value:
+            return ""
+        fenced = re.match(r"^```(?:\w+)?\s*([\s\S]*?)\s*```$", value)
+        if fenced:
+            value = fenced.group(1).strip()
+        value = re.sub(r"<\s*(?:think|analysis)\b[^>]*>.*?<\s*/\s*(?:think|analysis)\s*>", "", value, flags=re.I | re.S)
+        value = value.replace("\r", " ").replace("\n", " ")
+        value = re.sub(r"^\s*(?:回复|答复|assistant|bot)\s*[：:]\s*", "", value, flags=re.I)
+        value = value.strip(" 「」『』“”\"'`")
+        return re.sub(r"\s+", " ", value).strip()
+
+    def _build_ack_prompt_for_llm(self, event: AstrMessageEvent, kind: str, user_request: str, count: int) -> str:
+        name = self._bot_display_name()
+        context_text = self._format_context_for_llm(event, count=12, max_chars=1400)
+        request = str(user_request or "").strip()
+        kind_text = "自拍/拍照" if kind == "selfie" else "图片请求"
+        count_text = "多张" if count > 1 else "一张"
+        personality = str(self.config.personality or "").strip()
+        return "\n".join(
+            [
+                f"你是{name}，正在和用户自然聊天。",
+                f"用户刚通过指令发起了{kind_text}，数量：{count_text}。",
+                "请只输出一句简体中文短回复，像正在聊天时随口接一句。",
+                "要求：10-32 个汉字；结合最近上下文和人设；不要复述用户提示词；不要解释；不要列点。",
+                "禁止出现：生成、绘制、渲染、工具、提示词、配置、审核、任务、处理中、已收到、开始、为你。",
+                "如果是自拍/拍照，可以表现为找角度、看光线、调整镜头；如果是普通图片，可以表现为整理画面或构图。",
+                f"人设补充：{personality[:300]}" if personality else "",
+                f"最近对话：\n{context_text}" if context_text else "最近对话：无",
+                f"当前请求：{request[:300]}",
+                "只输出这一句回复：",
+            ]
+        )
+
+    async def _build_contextual_progress_text(
+        self,
+        event: AstrMessageEvent,
+        kind: str,
+        user_request: str,
+        count: int,
+        ack_message: str = "",
+    ) -> str:
+        fallback = self._build_progress_text(kind, user_request, count, ack_message)
+        if ack_message:
+            return fallback
+        prompt = self._build_ack_prompt_for_llm(event, kind, user_request, count)
+        text = self._strip_llm_short_reply(await self._call_text_llm(event, prompt, timeout=7))
+        custom = self._clean_ack_message(text, user_request)
+        return custom or fallback
+
+    def _record_bot_text_context(self, event: Optional[AstrMessageEvent], text: str) -> None:
+        if not event or not str(text or "").strip():
+            return
+        self._add_context_message(
+            session_key=self._context_session_key(event),
+            sender_id="bot",
+            sender_name=self._bot_display_name(),
+            content=text,
+            is_bot=True,
+            msg_id=f"bot:{time.time_ns()}",
+        )
+
+    def _record_bot_image_context(self, event: Optional[AstrMessageEvent], files: Iterable[str]) -> None:
+        if not event:
+            return
+        for file_path in files:
+            if not str(file_path or "").strip():
+                continue
+            self._add_context_message(
+                session_key=self._context_session_key(event),
+                sender_id="bot",
+                sender_name=self._bot_display_name(),
+                content="[图片]",
+                is_bot=True,
+                image_sources=[os.path.abspath(str(file_path))],
+                msg_id=f"bot-image:{time.time_ns()}",
+            )
 
     def _is_admin_event(self, event: AstrMessageEvent) -> bool:
         role = str(getattr(event, "role", "") or "").lower().strip()
@@ -1199,13 +1663,49 @@ class SelfieImagePlugin(Star):
     def _tool_unavailable(self, fallback: str) -> str:
         return f"[TOOL_UNAVAILABLE] {fallback}\n请用简体中文、用你自己的语气自然安抚用户，别提功能、工具或配置。"
 
+    def _tool_success(self, kind: str = "image", count: int = 1) -> str:
+        label = "照片" if kind == "selfie" else "图片"
+        count_text = f"，共 {count} 张" if count > 1 else ""
+        return (
+            f"[TOOL_SUCCESS] {label}已经发给用户{count_text}。\n"
+            "请用简体中文、按当前人格自然收尾一句，也可以很短。"
+            "不要复述请求，不要说生成、绘制、工具、调用、任务、已完成、已发送、配置、模型、提示词或审核。"
+        )
+
     def _build_leg_focus_action(self, extra_request: str = "", has_refs: bool = False) -> str:
-        base = "看看腿。"
+        variants = [
+            (
+                "第一人称自拍视角，俯拍半身下半身特写，发色和发型严格沿用 AI 形象参考图，只露出部分发丝（若参考图是淡紫色长卷发则保持淡紫色长卷发），宽松白色翻领衬衫，"
+                "黑色短百褶裙，珠光白过膝长筒丝袜，脚踝堆堆白棉袜，黑色厚底乐福小皮鞋，坐在米白色毛绒地毯上，"
+                "窗边百叶窗洒落条状柔和阳光，暖调自然光，日系居家氛围感，胶片质感，细腻皮肤纹理，高清写实，8K，"
+                "浅景深，低饱和奶油色调，生活化私房穿搭，手部轻扯裙边细节。"
+            ),
+            (
+                "第一人称低头随手拍，坐在床沿，双腿向前自然伸展后轻微斜放，一只手整理袜口，"
+                "柔软针织上衣和短裙边缘进入画面，过膝袜贴合腿部但不过度紧绷，脚踝线条干净，室内暖光和浅色床单背景。"
+            ),
+            (
+                "窗边单人椅坐姿自拍，双腿并拢后向一侧自然倾斜，膝盖和脚尖方向协调，"
+                "裙摆自然垂落，长筒袜和小皮鞋材质清楚，地板有柔和反光，画面像日常穿搭记录。"
+            ),
+            (
+                "米白色地毯上的居家坐姿，下半身近景，双腿轻微交叠但不扭曲，手指轻扶膝盖或裙边，"
+                "袜口、鞋面、衣料褶皱和地毯绒毛清晰，暖调自然光，日系生活感，干净柔和。"
+            ),
+        ]
+        base = (
+            "看看腿。"
+            "主角身份必须来自 AI 自拍形象参考图：即使脸部不入镜，露出的发丝、发色、体态、肤色、手部和整体气质也要像同一个角色。"
+            "不要换成陌生人物，不要改变主角发色和体态。"
+            f"本次腿部特写构图：{random.choice(variants)}"
+            "脚背、脚踝和腿部皮肤保持干净自然；不要明显青筋、血管、突兀肌腱、脏污脚面、皱皮或夸张骨节。"
+            "腿部比例自然，膝盖、小腿、脚踝、鞋袜和手部互动都要协调，姿势不要僵硬或重复。"
+        )
         if has_refs:
-            base = "参考用户提供的图片氛围和构图，看看腿。"
+            base += " 用户提供的图片只参考氛围、构图、服装或姿势；主角身份仍以 AI 自拍形象参考图为准。"
         extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
         if extra:
-            base = base.rstrip("。") + f"，用户补充要求：{extra}。"
+            base = base.rstrip("。") + f"。用户补充要求优先：{extra}。"
         return base
 
     def _build_third_person_look_action(self, extra_request: str = "", has_refs: bool = False) -> str:
@@ -1364,17 +1864,27 @@ class SelfieImagePlugin(Star):
             return self._tool_soft_fail(error)
 
         action = str(action or "").strip() or "看着镜头自然自拍"
-        await self._send_progress_text(event, self._build_progress_text("selfie", action, requested_count, ack_message))
-        extra_refs = await self._event_reference_images(event, include_at_avatar=self._looks_like_group_selfie_intent(action))
+        await self._send_progress_text(
+            event,
+            await self._build_contextual_progress_text(event, "selfie", action, requested_count, ack_message),
+        )
+        extra_refs = await self._event_reference_images(
+            event,
+            include_at_avatar=self._looks_like_group_selfie_intent(action),
+            context_hint=action,
+            allow_context_fallback=True,
+        )
+        total_sent = 0
         for _ in range(requested_count):
             prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
             result = await self._run_image_generation(prompt, aspect, resolution, refs, source="llm-generate-selfie", audit_user_id=event_user_id(event), event=event, original_prompt=action)
             if not result.get("success"):
                 return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("selfie"))
             sent = await self._send_generated_images(event, result.get("files", []))
+            total_sent += sent
             if sent:
                 self._record_generated_images(event, 1)
-        return None
+        return self._tool_success("selfie", total_sent or requested_count)
 
     def _build_success_text(self, elapsed_seconds: float, count: int, used_model: str, event: AstrMessageEvent) -> str:
         lines: List[str] = []
@@ -1411,6 +1921,8 @@ class SelfieImagePlugin(Star):
         audit_user_id: str = "",
         event: Optional[AstrMessageEvent] = None,
         original_prompt: str = "",
+        max_attempts: Optional[int] = None,
+        allow_compat_retry: bool = True,
     ) -> Dict[str, Any]:
         selected_targets = targets or self.config.get_prioritized_targets()
         request_prompt = str(prompt or "")
@@ -1475,11 +1987,17 @@ class SelfieImagePlugin(Star):
             )
             return {"success": False, "error": "当前没有可用的生图模型，请先配置 image_channels。"}
 
-        request = ImageGenerateRequest(prompt=request_prompt, aspect_ratio=aspect_ratio, resolution=resolution, images=refs)
+        request = ImageGenerateRequest(
+            prompt=request_prompt,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            images=refs,
+            allow_compat_retry=allow_compat_retry,
+        )
         started = time.monotonic()
         async with self._semaphore:
             async with aiohttp.ClientSession() as session:
-                result = await generate_image_with_fallback(selected_targets, request, session)
+                result = await generate_image_with_fallback(selected_targets, request, session, max_attempts=max_attempts)
         elapsed = time.monotonic() - started
 
         if result.error or not result.images:
@@ -1673,6 +2191,16 @@ class SelfieImagePlugin(Star):
                 return target
         return None
 
+    def _validate_web_test_selection(self, payload: Dict[str, Any]) -> None:
+        channel_name = str(payload.get("channel") or "").strip()
+        if not channel_name:
+            return
+        matching_channels = [channel for channel in self.config.image_channels if channel.name == channel_name]
+        if not matching_channels:
+            raise RuntimeError(f"生图渠道 {channel_name} 不存在")
+        if not any(channel.enabled for channel in matching_channels):
+            raise RuntimeError(f"生图渠道 {channel_name} 已禁用，渠道测试不会调用禁用渠道")
+
     async def web_test_image(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         channel_name = str(payload.get("channel") or "").strip()
         model_name = str(payload.get("model") or "").strip()
@@ -1700,6 +2228,7 @@ class SelfieImagePlugin(Star):
         }
 
         try:
+            self._validate_web_test_selection(payload)
             target = self._find_image_target(channel_name, model_name)
             if not target:
                 raise RuntimeError("未找到指定生图模型")
@@ -1740,6 +2269,8 @@ class SelfieImagePlugin(Star):
                 source="web-test",
                 original_prompt=original_prompt,
                 event=None,
+                max_attempts=1,
+                allow_compat_retry=False,
             )
         except Exception as exc:
             error = str(exc)
@@ -1796,6 +2327,8 @@ class SelfieImagePlugin(Star):
         base = normalize_image_base_url(str(channel_payload.get("base_url") or channel_payload.get("baseUrl") or "").strip())
         api_key = str(channel_payload.get("api_key") or channel_payload.get("apiKey") or "").strip()
         provider_type = str(channel_payload.get("provider_type") or "openai")
+        if provider_type == "agnes":
+            return ["agnes-image-2.1-flash"]
         if not base:
             raise RuntimeError("base_url 为空")
         headers = {"Accept": "application/json"}
@@ -1904,7 +2437,12 @@ class SelfieImagePlugin(Star):
             return
 
         action, aspect, resolution, _, _ = self._resolve_image_preset(message)
-        extra_refs = await self._event_reference_images(event, include_at_avatar=include_at_avatar)
+        extra_refs = await self._event_reference_images(
+            event,
+            include_at_avatar=include_at_avatar,
+            context_hint=action,
+            allow_context_fallback=True,
+        )
         if not action:
             action = default_action_with_refs if extra_refs else default_action
         hints: List[str] = []
@@ -1912,9 +2450,10 @@ class SelfieImagePlugin(Star):
             hints.append("当前还没有设置 AI 形象参考图，会按人设与今日设定生成主角。")
         if progress_label == "合影" and not extra_refs:
             hints.append("没有读取到合影对象参考图，会按文字要求生成同框对象。")
-        progress = self._build_progress_text("selfie", action, requested_count)
+        progress = await self._build_contextual_progress_text(event, "selfie", action, requested_count)
         if hints:
             progress += "\n" + "\n".join(hints)
+        self._record_bot_text_context(event, progress)
         yield event.plain_result(progress)
 
         for index in range(requested_count):
@@ -1926,6 +2465,7 @@ class SelfieImagePlugin(Star):
             files = result.get("files", [])
             if files:
                 self._record_generated_images(event, 1)
+                self._record_bot_image_context(event, files)
                 yield event.chain_result([self._create_image_component(path) for path in files])
             info = self._batch_success_text(
                 self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
@@ -1986,14 +2526,21 @@ class SelfieImagePlugin(Star):
             return
 
         prompt, aspect, resolution, _, _ = self._resolve_image_preset(message)
-        refs = await self._event_reference_images(event, include_at_avatar=True)
+        refs = await self._event_reference_images(
+            event,
+            include_at_avatar=True,
+            context_hint=prompt,
+            allow_context_fallback=True,
+        )
         if not prompt and refs:
             prompt = "根据参考图生成一张自然、清晰、符合原图语义的图片。"
         if not prompt:
             yield event.plain_result("请输入提示词或附带参考图。")
             return
 
-        yield event.plain_result(self._build_progress_text("image", prompt, requested_count))
+        progress = await self._build_contextual_progress_text(event, "image", prompt, requested_count)
+        self._record_bot_text_context(event, progress)
+        yield event.plain_result(progress)
         async for result in self._iter_draw_batch(event, prompt, aspect, resolution, refs, "command-draw", requested_count):
             if not result.get("success"):
                 yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
@@ -2001,6 +2548,7 @@ class SelfieImagePlugin(Star):
             files = result.get("files", [])
             if files:
                 self._record_generated_images(event, 1)
+                self._record_bot_image_context(event, files)
                 yield event.chain_result([self._create_image_component(path) for path in files])
             info = self._batch_success_text(
                 self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
@@ -2038,7 +2586,9 @@ class SelfieImagePlugin(Star):
             yield event.plain_result("请输入文生图提示词。")
             return
 
-        yield event.plain_result(self._build_progress_text("image", prompt, requested_count))
+        progress = await self._build_contextual_progress_text(event, "image", prompt, requested_count)
+        self._record_bot_text_context(event, progress)
+        yield event.plain_result(progress)
         async for result in self._iter_draw_batch(event, prompt, aspect, resolution, [], "command-raw-text-to-image", requested_count, passthrough=True):
             if not result.get("success"):
                 yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
@@ -2046,6 +2596,7 @@ class SelfieImagePlugin(Star):
             files = result.get("files", [])
             if files:
                 self._record_generated_images(event, 1)
+                self._record_bot_image_context(event, files)
                 yield event.chain_result([self._create_image_component(path) for path in files])
             info = self._batch_success_text(
                 self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
@@ -2079,15 +2630,25 @@ class SelfieImagePlugin(Star):
             return
 
         prompt, aspect, resolution = self._parse_prompt_options(message)
-        refs = await self._event_reference_images(event, include_at_avatar=True)
+        refs, source_count, failed_count = await self._event_reference_images_with_stats(
+            event,
+            include_at_avatar=True,
+            context_hint=prompt,
+            allow_context_fallback=True,
+        )
         if not refs:
+            if source_count and failed_count:
+                yield event.plain_result("参考图读取失败或超时，请重新发送原图后再试。")
+                return
             yield event.plain_result("请附带、引用图片，或艾特要作为参考的对象。")
             return
         if not prompt:
             yield event.plain_result("请输入图生图提示词。")
             return
 
-        yield event.plain_result(self._build_progress_text("image", prompt, requested_count))
+        progress = await self._build_contextual_progress_text(event, "image", prompt, requested_count)
+        self._record_bot_text_context(event, progress)
+        yield event.plain_result(progress)
         async for result in self._iter_draw_batch(event, prompt, aspect, resolution, refs, "command-raw-image-to-image", requested_count, passthrough=True):
             if not result.get("success"):
                 yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
@@ -2095,6 +2656,7 @@ class SelfieImagePlugin(Star):
             files = result.get("files", [])
             if files:
                 self._record_generated_images(event, 1)
+                self._record_bot_image_context(event, files)
                 yield event.chain_result([self._create_image_component(path) for path in files])
             info = self._batch_success_text(
                 self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
@@ -2419,16 +2981,26 @@ class SelfieImagePlugin(Star):
         if self._looks_like_selfie_intent(prompt):
             return await self._run_llm_selfie_flow(event, prompt, requested_count, aspect, resol, ack_message)
 
-        await self._send_progress_text(event, self._build_progress_text("image", prompt, requested_count, ack_message))
-        refs = await self._event_reference_images(event, include_at_avatar=True)
+        await self._send_progress_text(
+            event,
+            await self._build_contextual_progress_text(event, "image", prompt, requested_count, ack_message),
+        )
+        refs = await self._event_reference_images(
+            event,
+            include_at_avatar=True,
+            context_hint=prompt,
+            allow_context_fallback=True,
+        )
+        total_sent = 0
         for _ in range(requested_count):
             result = await self._draw_once(event, prompt, aspect, resol, refs, "llm-generate-image")
             if not result.get("success"):
                 return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("image"))
             sent = await self._send_generated_images(event, result.get("files", []))
+            total_sent += sent
             if sent:
                 self._record_generated_images(event, 1)
-        return None
+        return self._tool_success("image", total_sent or requested_count)
 
     @LLM_TOOL(name="generate_selfie")
     async def tool_generate_selfie(
@@ -2444,7 +3016,10 @@ class SelfieImagePlugin(Star):
         """
         以当前 AI 助手自己的形象生成自拍、形象照、换装照、姿势照、合影或同框照。
         用户要求“合影/合照/同框/和我一起拍/和你一起拍/我们拍一张”时使用这个工具。
+        用户要求 AI 自己“穿这个/穿这套/换这身/换衣服/用这个姿势/摆这个姿势/照这个姿势”并附带参考图时，也使用这个工具。
         本工具会自动带上 AI 当前形象参考图；如果用户消息里附带图片，也会作为合影对象或参考图一起传入。
+        非合影换装或换姿势时，附带图片默认只作为服装、姿势、构图或风格参考，AI 的脸和身份仍来自当前形象参考图。
+        如果附带图片里的人用手机、手、道具、口罩、面具或其他东西挡脸，默认不要把挡脸物迁移到 AI 身上，除非用户明确要求遮脸。
         action 保持简洁，整理出动作/场景/情绪/服装/镜头语言；合影时写清同框关系和参考图对象。
         ack_message 使用简体中文，以当前人格自然回应，10-40 字。
         Args:

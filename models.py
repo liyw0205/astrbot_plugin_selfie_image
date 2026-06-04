@@ -80,6 +80,7 @@ class ImageChannelConfig:
     timeout: int = 180
     enabled: bool = True
     enabled_models: List[str] = field(default_factory=list)
+    model_provider_types: Dict[str, str] = field(default_factory=dict)
     models_cache: List[str] = field(default_factory=list)
     proxy: str = ""
     extra: Dict[str, Any] = field(default_factory=dict)
@@ -95,7 +96,7 @@ class ImageChannelConfig:
             result.append(
                 ImageModelTarget(
                     channel_name=self.name,
-                    provider_type=self.provider_type,
+                    provider_type=resolve_model_provider_type(model, self.provider_type, self.model_provider_types.get(model, "")),
                     base_url=self.base_url,
                     api_key=self.api_key,
                     model=model,
@@ -310,19 +311,27 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
     if not isinstance(raw, dict):
         raw = {}
 
-    provider_type = str(raw.get("provider_type") or raw.get("providerType") or raw.get("api_type") or "openai").strip()
-    if provider_type == "openai_image":
-        provider_type = "openai"
-    if provider_type == "openai_chat":
-        provider_type = "gemini_openai"
+    provider_type = normalize_provider_type(raw.get("provider_type") or raw.get("providerType") or raw.get("api_type") or "openai") or "openai"
 
     enabled_models: List[str] = []
+    model_provider_types: Dict[str, str] = {}
+    raw_model_provider_types = raw.get("model_provider_types") or raw.get("modelProviderTypes") or raw.get("provider_types") or raw.get("providerTypes")
+    if isinstance(raw_model_provider_types, dict):
+        for key, value in raw_model_provider_types.items():
+            model_key = str(key or "").strip()
+            resolved_type = normalize_provider_type(value)
+            if model_key and resolved_type:
+                model_provider_types[model_key] = resolved_type
+
     for item in as_list(raw.get("enabled_models") or raw.get("enabledModels")):
         if isinstance(item, dict):
             if to_bool(item.get("enabled"), True):
                 value = str(item.get("id") or item.get("model") or item.get("name") or "").strip()
                 if value:
                     enabled_models.append(value)
+                    item_provider_type = normalize_provider_type(item.get("provider_type") or item.get("providerType") or item.get("api_type") or item.get("apiType"))
+                    if item_provider_type:
+                        model_provider_types[value] = item_provider_type
         else:
             value = str(item or "").strip()
             if value:
@@ -333,6 +342,8 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
         api_key_value = "\n".join(str(item) for item in api_key_value if str(item).strip())
 
     model = str(raw.get("model") or "").strip()
+    if provider_type == "agnes" and not model:
+        model = "agnes-image-2.1-flash"
     if model and not enabled_models:
         enabled_models = [model]
 
@@ -345,10 +356,63 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
         timeout=to_int(raw.get("timeout"), 180, minimum=10, maximum=900),
         enabled=to_bool(raw.get("enabled"), True),
         enabled_models=unique_values(enabled_models),
+        model_provider_types={model: provider for model, provider in model_provider_types.items() if model in set(enabled_models)},
         models_cache=split_values(raw.get("models_cache") or raw.get("modelsCache") or raw.get("available_models")),
         proxy=str(raw.get("proxy") or "").strip(),
         extra=copy.deepcopy(raw.get("extra") if isinstance(raw.get("extra"), dict) else {}),
     )
+
+
+def normalize_provider_type(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    aliases = {
+        "openai_image": "openai",
+        "openai_images": "openai",
+        "openai_chat": "gemini_openai",
+        "openai_compatible": "gemini_openai",
+        "chat_completions": "gemini_openai",
+        "google": "gemini",
+        "google_gemini": "gemini",
+        "zimage": "z_image_gitee",
+        "z_image": "z_image_gitee",
+        "gitee": "z_image_gitee",
+        "jimeng": "jimeng2api",
+        "jimeng2": "jimeng2api",
+        "xai": "grok",
+        "x_ai": "grok",
+    }
+    text = aliases.get(text, text)
+    return text if text in PROVIDER_TYPES else ""
+
+
+def infer_provider_type_from_model(model: str) -> str:
+    text = str(model or "").strip().lower()
+    compact = re.sub(r"[\s_]+", "-", text)
+    if not compact:
+        return ""
+    if "agnes" in compact:
+        return "agnes"
+    if "z-image" in compact or compact.startswith("zimage"):
+        return "z_image_gitee"
+    if "jimeng" in compact or "seedream" in compact or "doubao-seedream" in compact:
+        return "jimeng2api"
+    if "grok" in compact or "xai" in compact or "x-ai" in compact:
+        return "grok"
+    if "gpt-image" in compact or "dall-e" in compact or "dalle" in compact:
+        return "openai"
+    if "gemini" in compact or "nano-banana" in compact:
+        return "gemini"
+    return ""
+
+
+def resolve_model_provider_type(model: str, default_provider_type: str, manual_provider_type: str = "") -> str:
+    manual = normalize_provider_type(manual_provider_type)
+    if manual:
+        return manual
+    inferred = infer_provider_type_from_model(model)
+    if inferred:
+        return inferred
+    return normalize_provider_type(default_provider_type) or "openai"
 
 
 def deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
