@@ -15,7 +15,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "personality": "可爱猫娘助手，说话带“喵”等语气词，活泼俏皮会撒娇",
     "web": {
         "enable": True,
-        "host": "0.0.0.0",
+        "host": "127.0.0.1",
         "port": 14514,
         "token": "changeme",
     },

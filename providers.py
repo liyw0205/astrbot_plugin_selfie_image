@@ -30,6 +30,7 @@ class ImageGenerateRequest:
     resolution: str = "1K"
     images: List[ImageReference] = field(default_factory=list)
     allow_compat_retry: bool = True
+    max_image_bytes: int = 25 * 1024 * 1024
 
 
 @dataclass
@@ -61,6 +62,7 @@ class BaseImageAdapter:
             json=payload,
             headers=request_headers,
             timeout=aiohttp.ClientTimeout(total=self.target.timeout),
+            proxy=str(self.target.proxy or "").strip() or None,
         )
 
     async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
@@ -164,12 +166,33 @@ def clean_image_url(url: str) -> str:
     return text
 
 
-async def fetch_generated_image_url(session: aiohttp.ClientSession, url: str, timeout: int, referer: str = "https://flow.google/") -> Optional[bytes]:
+def looks_like_binary_image(data: bytes) -> bool:
+    b = data or b""
+    return (
+        len(b) >= 2 and b[:2] == b"\xff\xd8"
+        or len(b) >= 4 and b[:4] == b"\x89PNG"
+        or len(b) >= 3 and b[:3] == b"GIF"
+        or len(b) >= 4 and b[:4] == b"RIFF"
+        or len(b) >= 2 and b[:2] == b"BM"
+        or len(b) >= 12 and b[4:8] == b"ftyp" and b[8:12] in {b"avif", b"heic", b"heix", b"mif1"}
+        or b.lstrip()[:5].lower() == b"<svg "
+    )
+
+
+async def fetch_generated_image_url(
+    session: aiohttp.ClientSession,
+    url: str,
+    timeout: int,
+    referer: str = "https://flow.google/",
+    max_bytes: int = 25 * 1024 * 1024,
+    proxy: str = "",
+) -> Optional[bytes]:
     text = clean_image_url(url)
     if not text:
         return None
     if text.startswith("data:image/"):
-        return b64_to_bytes(text)
+        data = b64_to_bytes(text)
+        return data if data and len(data) <= max_bytes else None
     if not text.lower().startswith(("http://", "https://")):
         return None
     headers = {
@@ -180,11 +203,34 @@ async def fetch_generated_image_url(session: aiohttp.ClientSession, url: str, ti
         "Referer": referer,
     }
     try:
-        async with session.get(text, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout), allow_redirects=True) as response:
+        async with session.get(
+            text,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+            allow_redirects=True,
+            proxy=str(proxy or "").strip() or None,
+        ) as response:
             if response.status >= 400:
                 return None
-            data = await response.read()
-            return data if data else None
+            content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+            if content_type and not content_type.startswith("image/") and content_type != "application/octet-stream":
+                return None
+            content_length = response.headers.get("content-length", "")
+            if content_length and int(content_length) > max_bytes:
+                return None
+            chunks: List[bytes] = []
+            total = 0
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    return None
+                chunks.append(chunk)
+            data = b"".join(chunks)
+            if not data:
+                return None
+            if not content_type.startswith("image/") and not looks_like_binary_image(data):
+                return None
+            return data
     except Exception:
         return None
 
@@ -277,7 +323,13 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
     return {"b64": list(b64), "urls": list(urls), "others": list(others)}
 
 
-async def images_from_response_unknown(session: aiohttp.ClientSession, data: Any, timeout: int) -> List[bytes]:
+async def images_from_response_unknown(
+    session: aiohttp.ClientSession,
+    data: Any,
+    timeout: int,
+    max_bytes: int = 25 * 1024 * 1024,
+    proxy: str = "",
+) -> List[bytes]:
     collected = collect_images_from_unknown(data)
     images: List[bytes] = []
     seen = set()
@@ -287,13 +339,15 @@ async def images_from_response_unknown(session: aiohttp.ClientSession, data: Any
             image = b64_to_bytes(item)
         except Exception:
             continue
+        if len(image) > max_bytes or not looks_like_binary_image(image):
+            continue
         key = (len(image), image[:32])
         if image and key not in seen:
             images.append(image)
             seen.add(key)
 
     for item in collected["urls"]:
-        image = await fetch_generated_image_url(session, item, timeout)
+        image = await fetch_generated_image_url(session, item, timeout, max_bytes=max_bytes, proxy=proxy)
         key = (len(image or b""), (image or b"")[:32])
         if image and key not in seen:
             images.append(image)
@@ -326,7 +380,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
             if response.status >= 400:
                 return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text())}")
             data = await response.json(content_type=None)
-        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
         return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
 
     def _build_edit_form(self, req: ImageGenerateRequest, image_field_name: str) -> aiohttp.FormData:
@@ -360,6 +414,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
             data=self._build_edit_form(req, image_field_name),
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=self.target.timeout),
+            proxy=str(self.target.proxy or "").strip() or None,
         ) as response:
             text = await response.text()
             if response.status >= 400:
@@ -384,7 +439,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
             return ImageGenerateResult(error=f"OpenAI 图生图请求超时（{self.target.timeout}秒）")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
         return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
 
 
@@ -413,13 +468,19 @@ class GeminiImageAdapter(BaseImageAdapter):
             "x-goog-api-key": self.target.api_key,
         }
         try:
-            async with self.session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=self.target.timeout)) as response:
+            async with self.session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=self.target.timeout),
+                proxy=str(self.target.proxy or "").strip() or None,
+            ) as response:
                 if response.status >= 400:
                     return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text())}")
                 data = await response.json(content_type=None)
         except asyncio.TimeoutError:
             return ImageGenerateResult(error=f"Gemini 生图请求超时（{self.target.timeout}秒）")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
         return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
 
 
@@ -445,7 +506,7 @@ class GeminiOpenAIImageAdapter(BaseImageAdapter):
             if response.status >= 400:
                 return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text())}")
             data = await response.json(content_type=None)
-        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
         if images:
             return ImageGenerateResult(images=images)
         preview = json.dumps(data, ensure_ascii=False)[:1000]
@@ -475,7 +536,7 @@ class SimpleOpenAIImageAdapter(BaseImageAdapter):
             if response.status >= 400:
                 return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text(), 300)}")
             data = await response.json(content_type=None)
-        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
         return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
 
 
@@ -543,7 +604,7 @@ class AgnesImageAdapter(BaseImageAdapter):
                 data = json.loads(text)
             except json.JSONDecodeError:
                 return ImageGenerateResult(error=f"接口返回非 JSON 内容: {text[:300]}")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
         if images:
             return ImageGenerateResult(images=images)
         preview = json.dumps(data, ensure_ascii=False)[:1000]

@@ -588,8 +588,11 @@ class SelfieImagePlugin(Star):
         status = self._access_status(event)
         return bool(status.get("whitelist") or (user_id and user_id in self.config.whitelist_users))
 
+    def _is_audit_exempt(self, event: Optional[AstrMessageEvent] = None, user_id: str = "") -> bool:
+        return bool(event is not None and self._is_whitelisted(event, user_id))
+
     def _validate_prompt(self, prompt: str, user_id: str = "", event: Optional[AstrMessageEvent] = None) -> str:
-        if self._is_whitelisted(event, user_id):
+        if self._is_audit_exempt(event, user_id):
             return ""
         text = str(prompt or "")
         low_text = text.lower()
@@ -872,6 +875,7 @@ class SelfieImagePlugin(Star):
         images = images or []
         provider_type = str(target.provider_type or "").lower()
         timeout = aiohttp.ClientTimeout(total=max(10, int(target.timeout or self.config.image_global_timeout or 180)))
+        proxy = str(target.proxy or "").strip() or None
 
         async with aiohttp.ClientSession() as session:
             if provider_type == "gemini":
@@ -892,7 +896,7 @@ class SelfieImagePlugin(Star):
                 headers = {"Content-Type": "application/json", "Accept": "application/json"}
                 if target.api_key:
                     headers["x-goog-api-key"] = target.api_key
-                async with session.post(url, json={"contents": [{"parts": parts}]}, headers=headers, timeout=timeout) as response:
+                async with session.post(url, json={"contents": [{"parts": parts}]}, headers=headers, timeout=timeout, proxy=proxy) as response:
                     if response.status >= 400:
                         raise RuntimeError(f"审核接口失败: HTTP {response.status} {(await response.text())[:200]}")
                     data = await response.json(content_type=None)
@@ -917,7 +921,7 @@ class SelfieImagePlugin(Star):
             else:
                 content = text
             payload = {"model": target.model, "messages": [{"role": "user", "content": content}], "stream": False}
-            async with session.post(url, json=payload, headers=headers, timeout=timeout) as response:
+            async with session.post(url, json=payload, headers=headers, timeout=timeout, proxy=proxy) as response:
                 if response.status >= 400:
                     raise RuntimeError(f"审核接口失败: HTTP {response.status} {(await response.text())[:200]}")
                 data = await response.json(content_type=None)
@@ -970,12 +974,10 @@ class SelfieImagePlugin(Star):
         return ""
 
     async def _audit_prompt(self, prompt: str, user_id: str = "", event: Optional[AstrMessageEvent] = None) -> Tuple[bool, str]:
-        if event is None:
-            return True, ""
         error = self._validate_prompt(prompt, user_id, event)
         if error:
             return False, error
-        if self._is_whitelisted(event, user_id):
+        if self._is_audit_exempt(event, user_id):
             return True, ""
         if not self.config.image_enable_prompt_audit:
             return True, ""
@@ -983,15 +985,18 @@ class SelfieImagePlugin(Star):
         audit_prompt = self.config.image_prompt_audit_template.replace("{prompt}", str(prompt or ""))
         try:
             target = self._find_audit_target(self.config.image_prompt_audit_model)
-            text = await self._audit_chat_via_target(target, audit_prompt) if target else await self._audit_prompt_via_astrbot(event, audit_prompt)
+            if target:
+                text = await self._audit_chat_via_target(target, audit_prompt)
+            elif event is not None:
+                text = await self._audit_prompt_via_astrbot(event, audit_prompt)
+            else:
+                return False, "未配置可用提示词审核模型"
         except Exception as exc:
             return False, str(exc)
         return self._parse_audit_response(text)
 
     async def _audit_output_images(self, files: List[str], user_id: str = "", prompt: str = "", event: Optional[AstrMessageEvent] = None) -> Tuple[bool, str]:
-        if event is None:
-            return True, ""
-        if self._is_whitelisted(event, user_id):
+        if self._is_audit_exempt(event, user_id):
             return True, ""
         if not self.config.image_enable_output_audit:
             return True, ""
@@ -1217,12 +1222,16 @@ class SelfieImagePlugin(Star):
                 except OSError:
                     pass
         candidates.sort(key=lambda item: item[0])
-        for _, path in candidates[:10]:
+        for _, path in candidates:
             try:
+                size = os.path.getsize(path)
                 os.remove(path)
                 deleted.append(self._cache_relative_path(path))
+                total = max(0, total - size)
             except OSError:
                 pass
+            if total <= limit:
+                break
         return {"limit_bytes": limit, "total_bytes": total, "deleted": deleted}
 
     def _source_context(self, event: Optional[AstrMessageEvent], source: str, user_id: str = "") -> Dict[str, Any]:
@@ -1589,8 +1598,9 @@ class SelfieImagePlugin(Star):
             "使用方式：",
             f"1. {prefix}画 预设名 额外提示词",
             f"2. {prefix}自拍 预设名 额外提示词",
-            f"3. {prefix}预设 添加 预设名:提示词",
-            f"4. {prefix}预设 删除 预设名",
+            f"3. {prefix}预设 添加 预设名:提示词（管理员）",
+            f"4. {prefix}预设 删除 预设名（管理员）",
+            f"5. {prefix}预设 查看 [页码/预设名]（管理员）",
             "",
         ]
         if total_pages > 1:
@@ -1600,26 +1610,77 @@ class SelfieImagePlugin(Star):
                 lines.append(f"上一页：{prefix}预设 {current_page - 1}")
             lines.append("")
 
-        for idx, (name, preset) in enumerate(items, start=start + 1):
-            desc = preset.description or preset.prompt
-            extra = preset.extra_prompt
-            params = []
-            if preset.aspect_ratio:
-                params.append(f"比例: {preset.aspect_ratio}")
-            if preset.resolution:
-                params.append(f"分辨率: {preset.resolution}")
-            lines.extend(
-                [
-                    f"{idx}. {name}",
-                    f"提示词: {preset.prompt}",
-                    *( [f"额外提示词: {extra}"] if extra else [] ),
-                    *( [f"说明: {desc}"] if desc and desc != preset.prompt else [] ),
-                    *( [f"参数: {' | '.join(params)}"] if params else [] ),
-                    "",
-                ]
-            )
+        if not items:
+            lines.append("暂无预设。")
+        else:
+            lines.append("预设名：")
+            for idx, (name, _) in enumerate(items, start=start + 1):
+                lines.append(f"{idx}. {name}")
 
         return "\n".join(line for line in lines if line is not None), current_page, total_pages
+
+    def _preset_detail_lines(self, idx: Optional[int], name: str, preset: Any) -> List[str]:
+        desc = preset.description or preset.prompt
+        extra = preset.extra_prompt
+        params = []
+        if preset.aspect_ratio:
+            params.append(f"比例: {preset.aspect_ratio}")
+        if preset.resolution:
+            params.append(f"分辨率: {preset.resolution}")
+        title = f"{idx}. {name}" if idx is not None else str(name)
+        return [
+            title,
+            f"提示词: {preset.prompt}",
+            *( [f"额外提示词: {extra}"] if extra else [] ),
+            *( [f"说明: {desc}"] if desc and desc != preset.prompt else [] ),
+            *( [f"参数: {' | '.join(params)}"] if params else [] ),
+            "",
+        ]
+
+    def _preset_detail_text(self, page: int = 1, page_size: int = 20) -> Tuple[str, int, int]:
+        presets = self.presets.list()
+        total = len(presets)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        current_page = min(total_pages, max(1, page))
+        start = (current_page - 1) * page_size
+        items = presets[start:start + page_size]
+        prefix = "/"
+        lines = [
+            f"📋 生图预设详情 第 {current_page}/{total_pages} 页",
+            f"当前共有 {total} 个预设。",
+            "仅管理员可见。",
+            "",
+        ]
+        if total_pages > 1:
+            if current_page < total_pages:
+                lines.append(f"下一页：{prefix}预设 查看 {current_page + 1}")
+            if current_page > 1:
+                lines.append(f"上一页：{prefix}预设 查看 {current_page - 1}")
+            lines.append("")
+
+        if not items:
+            lines.append("暂无预设。")
+        else:
+            for idx, (name, preset) in enumerate(items, start=start + 1):
+                lines.extend(self._preset_detail_lines(idx, name, preset))
+
+        return "\n".join(line for line in lines if line is not None), current_page, total_pages
+
+    def _preset_single_detail_text(self, name: str) -> Tuple[bool, str]:
+        target = str(name or "").strip()
+        if not target:
+            return False, "格式：/预设 查看 预设名"
+        for preset_name, preset in self.presets.list():
+            if preset_name == target:
+                return True, "\n".join(
+                    [
+                        "📋 生图预设详情",
+                        "仅管理员可见。",
+                        "",
+                        *self._preset_detail_lines(None, preset_name, preset),
+                    ]
+                ).strip()
+        return False, f"预设不存在: {target}"
 
     def _handle_preset_mutation(self, event: AstrMessageEvent, action: str, payload: str) -> Tuple[bool, str]:
         if not self._is_admin_event(event):
@@ -1993,6 +2054,7 @@ class SelfieImagePlugin(Star):
             resolution=resolution,
             images=refs,
             allow_compat_retry=allow_compat_retry,
+            max_image_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
         )
         started = time.monotonic()
         async with self._semaphore:
@@ -2327,6 +2389,7 @@ class SelfieImagePlugin(Star):
         base = normalize_image_base_url(str(channel_payload.get("base_url") or channel_payload.get("baseUrl") or "").strip())
         api_key = str(channel_payload.get("api_key") or channel_payload.get("apiKey") or "").strip()
         provider_type = str(channel_payload.get("provider_type") or "openai")
+        proxy = str(channel_payload.get("proxy") or "").strip() or None
         if provider_type == "agnes":
             return ["agnes-image-2.1-flash"]
         if not base:
@@ -2341,7 +2404,7 @@ class SelfieImagePlugin(Star):
         async with aiohttp.ClientSession() as session:
             for url in candidates:
                 try:
-                    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as response:
+                    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12), proxy=proxy) as response:
                         if response.status >= 400:
                             errors.append(f"{url}: HTTP {response.status} {(await response.text())[:200]}")
                             continue
@@ -2485,6 +2548,7 @@ class SelfieImagePlugin(Star):
                     "/文生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（提示词直通）",
                     "/图生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（附带/引用图片，提示词直通）",
                     "/预设",
+                    "/预设 查看 [页码/预设名]（管理员查看内容）",
                     "/预设添加 名称:提示词",
                     "/预设删除 名称",
                     "/自拍 [数量] <预设名或动作/场景/换装/合照要求> [--ar 3:4]（别名 /看看）",
@@ -2864,10 +2928,22 @@ class SelfieImagePlugin(Star):
             yield event.plain_result(body)
             return
 
-        if head in {"列表", "list", "查看"}:
+        if head in {"列表", "list"}:
             page = int(tail) if tail.isdigit() else 1
             body, _, _ = self._preset_list_text(page)
             yield event.plain_result(body)
+            return
+
+        if head in {"查看", "详情", "view", "detail"}:
+            if not self._is_admin_event(event):
+                yield event.plain_result("仅管理员可以查看预设内容。")
+                return
+            if not tail or tail.isdigit():
+                body, _, _ = self._preset_detail_text(int(tail) if tail.isdigit() else 1)
+                yield event.plain_result(body)
+                return
+            success, body = self._preset_single_detail_text(tail)
+            yield event.plain_result(body if success else f"❌ {body}")
             return
 
         if head in {"添加", "add", "新增"}:
@@ -2892,7 +2968,7 @@ class SelfieImagePlugin(Star):
                 [
                     body,
                     "",
-                    "用法：/预设 2、/预设 添加 名称:提示词、/预设 删除 名称",
+                    "用法：/预设 2、/预设 添加 名称:提示词、/预设 删除 名称、/预设 查看 [页码/预设名]（管理员）",
                 ]
             )
         )

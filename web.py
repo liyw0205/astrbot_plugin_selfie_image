@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import threading
 from typing import Any, Optional
 
@@ -182,7 +183,7 @@ INDEX_HTML = r"""<!doctype html>
       <label>Web 状态</label><div id="health" class="status">未连接</div>
       <div class="grid">
         <div><label>生图缓存上限（MB）</label><input id="cacheLimitMB" type="number" min="10" max="102400"></div>
-        <div><label>缓存说明</label><div class="status">请求图 and 生成图会保存在同一个缓存目录；超过上限后自动清理最旧的 10 张缓存图片。</div></div>
+        <div><label>缓存说明</label><div class="status">请求图 and 生成图会保存在同一个缓存目录；超过上限后自动清理最旧缓存图片直到低于上限。</div></div>
       </div>
       <h3>权限</h3>
       <div class="grid">
@@ -343,6 +344,7 @@ INDEX_HTML = r"""<!doctype html>
         <div><label>类型</label><select id="modalProvider"></select></div>
         <div><label>Base URL</label><input id="modalBaseUrl"></div>
         <div><label>API Key</label><input id="modalApiKey" type="password"></div>
+        <div><label>代理 URL</label><input id="modalProxy" placeholder="http://127.0.0.1:7890"></div>
         <div><label>默认模型</label><input id="modalModel"></div>
         <div><label>超时（秒）</label><input id="modalTimeout" type="number" min="10" max="900"></div>
       </div>
@@ -468,7 +470,7 @@ INDEX_HTML = r"""<!doctype html>
       img.global_timeout ??= 280;
       img.max_image_size_mb ??= 10;
       img.cache_limit_mb ??= 100;
-      img.max_batch_count ??= 5;
+      img.max_batch_count ??= 2;
       img.rate_limit_seconds ??= 0;
       img.enable_daily_limit ??= false;
       img.daily_limit_count ??= 10;
@@ -548,7 +550,7 @@ INDEX_HTML = r"""<!doctype html>
       CONFIG.image.global_timeout = Number($('globalTimeout').value || 280);
       CONFIG.image.max_image_size_mb = Number($('maxImageSize').value || 10);
       CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 100);
-      CONFIG.image.max_batch_count = Number($('maxBatchCount').value || 5);
+      CONFIG.image.max_batch_count = Number($('maxBatchCount').value || 2);
       CONFIG.image.rate_limit_seconds = Number($('rateLimitSeconds').value || 0);
       CONFIG.image.daily_limit_count = Number($('dailyLimitCount').value || 10);
       CONFIG.image.enable_llm_tool = $('enableLLMTool').checked;
@@ -843,6 +845,7 @@ INDEX_HTML = r"""<!doctype html>
         provider_type: $('modalProvider').value,
         base_url: $('modalBaseUrl').value.trim(),
         api_key: $('modalApiKey').value.trim(),
+        proxy: $('modalProxy').value.trim(),
         model: $('modalModel').value.trim(),
         timeout: Number($('modalTimeout').value || 280),
         enabled: $('modalEnabled').checked,
@@ -876,6 +879,7 @@ INDEX_HTML = r"""<!doctype html>
       $('modalProvider').value = ch.provider_type || 'openai';
       $('modalBaseUrl').value = ch.base_url || '';
       $('modalApiKey').value = ch.api_key || '';
+      $('modalProxy').value = ch.proxy || '';
       $('modalModel').value = ch.model || '';
       $('modalTimeout').value = ch.timeout || 280;
       $('modalEnabled').checked = ch.enabled !== false;
@@ -1239,12 +1243,34 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function cacheImageUrl(path) {
-      return `/api/cache-image?path=${encodeURIComponent(path)}&token=${encodeURIComponent(AUTH_TOKEN)}`;
+      return `/api/cache-image?path=${encodeURIComponent(path)}`;
+    }
+    async function loadProtectedImage(img, path) {
+      try {
+        const res = await fetch(cacheImageUrl(path), {headers: headers()});
+        if (!res.ok) throw new Error('图片已清理');
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        img.onload = () => URL.revokeObjectURL(objectUrl);
+        img.src = objectUrl;
+      } catch (e) {
+        const div = document.createElement('div');
+        div.className = 'status';
+        div.textContent = e.message || '图片已清理';
+        img.replaceWith(div);
+      }
+    }
+    function loadProtectedImages(root = document) {
+      root.querySelectorAll('img[data-cache-path]').forEach(img => {
+        const path = img.getAttribute('data-cache-path') || '';
+        img.removeAttribute('data-cache-path');
+        if (path) loadProtectedImage(img, path);
+      });
     }
     function imageThumbs(paths) {
       const items = (paths || []).filter(Boolean);
       if (!items.length) return '<div class="muted">无图片</div>';
-      return `<div class="images">${items.map(path => `<div><img src="${cacheImageUrl(path)}" alt="${escapeHtml(path)}" onerror="this.outerHTML='<div class=&quot;status&quot;>图片已清理</div>'"><div class="muted">${escapeHtml(path)}</div></div>`).join('')}</div>`;
+      return `<div class="images">${items.map(path => `<div><img data-cache-path="${escapeHtml(path)}" alt="${escapeHtml(path)}"><div class="muted">${escapeHtml(path)}</div></div>`).join('')}</div>`;
     }
     function copyIconSvg() {
       return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
@@ -1318,6 +1344,7 @@ INDEX_HTML = r"""<!doctype html>
         <h3>生成图</h3>${imageThumbs(r.generated_image_paths || [])}
       `;
       $('recordModal').classList.add('show');
+      loadProtectedImages($('recordDetailBody'));
     }
     function closeRecordDetail() {
       $('recordModal').classList.remove('show');
@@ -1353,14 +1380,8 @@ INDEX_HTML = r"""<!doctype html>
       $('testImages').innerHTML = '';
       for (const path of data.generated_image_paths || []) {
         const img = document.createElement('img');
-        img.src = cacheImageUrl(path);
-        img.onerror = () => {
-          const div = document.createElement('div');
-          div.className = 'status';
-          div.textContent = '图片已清理';
-          img.replaceWith(div);
-        };
         $('testImages').appendChild(img);
+        loadProtectedImage(img, path);
       }
       showTestPanel('result');
     }
@@ -1678,12 +1699,14 @@ class FlaskWebServer:
                 str(request.headers.get("X-Selfie-Image-Token") or "")
                 or str(request.headers.get("X-AICat-Token") or "")
                 or str(request.headers.get("X-Token") or "")
-                or str(request.args.get("token") or "")
             ).strip()
 
         def check_auth() -> bool:
             configured = str(getattr(self.plugin.config, "web_token", "") or "").strip()
-            return not configured or token_from_request() == configured
+            if not configured:
+                host = str(self.host or "").strip().lower()
+                return host in {"localhost", "::1"} or host.startswith("127.")
+            return hmac.compare_digest(token_from_request(), configured)
 
         @app.route("/", methods=["GET"])
         @app.route("/index.html", methods=["GET"])
@@ -1692,6 +1715,8 @@ class FlaskWebServer:
 
         @app.route("/api/health", methods=["GET"])
         def health() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
             return ok(
                 {
                     "status": "ok",
