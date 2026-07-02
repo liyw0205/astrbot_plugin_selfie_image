@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+
+# Runtime data and local operator configuration.
+selfie_image_config.json
+usage_stats.json
+generation_records.json
+image_persona.json
+image_presets.json
+image_cache/
+image-persona/
