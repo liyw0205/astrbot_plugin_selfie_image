@@ -61,6 +61,7 @@ from .providers import (
     ImageGenerateRequest,
     ImageReference,
     build_model_list_urls,
+    extract_model_ids_from_response,
     normalize_image_base_url,
 )
 from .utils import (
@@ -2424,31 +2425,7 @@ class SelfieImagePlugin(Star):
         raise RuntimeError("\n".join(errors))
 
     def _extract_model_ids(self, data: Any) -> List[str]:
-        result = set()
-
-        def walk(value: Any) -> None:
-            if value is None:
-                return
-            if isinstance(value, str):
-                text = value.strip()
-                if text:
-                    result.add(text)
-                return
-            if isinstance(value, list):
-                for item in value:
-                    walk(item)
-                return
-            if not isinstance(value, dict):
-                return
-            if isinstance(value.get("id"), str):
-                result.add(value["id"].strip())
-            elif isinstance(value.get("name"), str):
-                result.add(value["name"].strip())
-            for key in ("data", "models", "items", "results", "list"):
-                walk(value.get(key))
-
-        walk(data)
-        return sorted(item for item in result if item)
+        return extract_model_ids_from_response(data)
 
     async def _iter_draw_batch(
         self,

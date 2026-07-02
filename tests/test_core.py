@@ -39,6 +39,7 @@ from astrbot_plugin_selfie_image.providers import (
     ImageReference,
     build_model_list_urls,
     clean_image_url,
+    extract_model_ids_from_response,
     extract_image_urls_from_text,
     images_from_response_unknown,
     looks_like_binary_image,
@@ -249,6 +250,30 @@ class ImageUtilityTests(unittest.TestCase):
                 "https://generativelanguage.googleapis.com/v1beta/models",
                 "https://generativelanguage.googleapis.com/v1/models",
                 "https://generativelanguage.googleapis.com/models",
+            ],
+        )
+
+    def test_model_id_extraction_accepts_provider_field_variants(self) -> None:
+        payload = {
+            "object": "list",
+            "data": [
+                {"id": "gpt-image-1", "owned_by": "system"},
+                {"model": "seedream-4.0"},
+                {"model_id": "grok-imagine-image"},
+                {"modelName": "agnes-image-2.1-flash"},
+            ],
+            "models": [{"name": "models/gemini-2.5-flash-image"}],
+            "metadata": {"owner": "not-a-model-id"},
+        }
+
+        self.assertEqual(
+            extract_model_ids_from_response(payload),
+            [
+                "agnes-image-2.1-flash",
+                "gpt-image-1",
+                "grok-imagine-image",
+                "models/gemini-2.5-flash-image",
+                "seedream-4.0",
             ],
         )
 

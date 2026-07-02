@@ -97,6 +97,47 @@ def build_model_list_urls(base_url: str, provider_type: str = "") -> List[str]:
     return [f"{base}{suffix}" for suffix in suffixes]
 
 
+def extract_model_ids_from_response(data: Any) -> List[str]:
+    result: Set[str] = set()
+    primary_keys = ("id", "name", "model", "model_id", "modelId", "model_name", "modelName")
+    fallback_keys = ("display_name", "displayName")
+    container_keys = ("data", "models", "items", "results", "list", "model_list", "modelList")
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip()
+        if text:
+            result.add(text)
+
+    def walk(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, str):
+            add(value)
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+            for item in value:
+                walk(item)
+            return
+        if not isinstance(value, dict):
+            return
+
+        found_primary = False
+        for key in primary_keys:
+            if isinstance(value.get(key), str):
+                add(value.get(key))
+                found_primary = True
+        if not found_primary:
+            for key in fallback_keys:
+                if isinstance(value.get(key), str):
+                    add(value.get(key))
+
+        for key in container_keys:
+            walk(value.get(key))
+
+    walk(data)
+    return sorted(result)
+
+
 def map_aspect_ratio_to_openai_size(aspect: str) -> str:
     if not aspect or aspect in {"自动", "1:1"}:
         return "1024x1024"
