@@ -335,3 +335,5 @@ python -m unittest tests/test_core.py
 2026-07-03：继续补自动化回归覆盖：多模型 fallback 尝试记录、无模型错误、provider URL 提取/清理、Gemini base URL 归一化、Web records API 鉴权、cache-image 正常读取和路径穿越拒绝。验证命令：`python -Wd -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-03：补充配置模型优先级回归，验证手动模型 provider 类型、优先级顺序和禁用渠道不会进入生成目标；新增 `.gitignore`，避免提交 `__pycache__`、运行配置、使用统计、生成记录、图片缓存和自拍形象文件。验证命令：`python -Wd -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-03：修复 Web 刷新模型列表时 Gemini base URL 归一化错误，Gemini 渠道会从 `.../v1beta/...` 生图端点还原到 API 根并优先请求 `/v1beta/models`，同时复用 provider 别名归一化；OpenAI 兼容渠道保持原候选顺序。补充 `build_model_list_urls()` 单测。验证命令：`python -Wd -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。

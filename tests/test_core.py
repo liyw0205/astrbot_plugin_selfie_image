@@ -37,6 +37,7 @@ from astrbot_plugin_selfie_image.providers import (
     ImageGenerateResult,
     ImageGenerateRequest,
     ImageReference,
+    build_model_list_urls,
     clean_image_url,
     extract_image_urls_from_text,
     images_from_response_unknown,
@@ -232,6 +233,24 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(normalize_image_base_url("https://example.com/v1/images/generations"), "https://example.com")
         self.assertEqual(normalize_image_base_url("https://example.com/v1/chat/completions"), "https://example.com")
         self.assertEqual(normalize_gemini_base_url("https://example.com/v1beta/models/gemini:generateContent"), "https://example.com")
+
+    def test_model_list_urls_are_provider_specific(self) -> None:
+        self.assertEqual(
+            build_model_list_urls("https://api.openai.com/v1/images/generations", "openai"),
+            [
+                "https://api.openai.com/v1/models",
+                "https://api.openai.com/models",
+                "https://api.openai.com/v1beta/models",
+            ],
+        )
+        self.assertEqual(
+            build_model_list_urls("https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent", "google"),
+            [
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                "https://generativelanguage.googleapis.com/v1/models",
+                "https://generativelanguage.googleapis.com/models",
+            ],
+        )
 
     def test_group_id_extraction(self) -> None:
         self.assertEqual(extract_group_id_from_text("aiocqhttp:group:123456"), "123456")

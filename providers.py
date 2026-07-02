@@ -12,7 +12,7 @@ from urllib.parse import urljoin
 
 import aiohttp
 
-from .models import ImageModelTarget
+from .models import ImageModelTarget, normalize_provider_type
 from .utils import bytes_to_data_url, decode_html_entities
 
 
@@ -82,6 +82,19 @@ def normalize_gemini_base_url(url: str) -> str:
     value = re.sub(r"/v1beta(?:/.*)?$", "", value, flags=re.I)
     value = re.sub(r"/v1(?:/.*)?$", "", value, flags=re.I)
     return value
+
+
+def build_model_list_urls(base_url: str, provider_type: str = "") -> List[str]:
+    provider = normalize_provider_type(provider_type) or str(provider_type or "").strip().lower().replace("-", "_")
+    if provider == "gemini":
+        base = normalize_gemini_base_url(base_url)
+        suffixes = ("/v1beta/models", "/v1/models", "/models")
+    else:
+        base = normalize_image_base_url(base_url)
+        suffixes = ("/v1/models", "/models", "/v1beta/models")
+    if not base:
+        return []
+    return [f"{base}{suffix}" for suffix in suffixes]
 
 
 def map_aspect_ratio_to_openai_size(aspect: str) -> str:

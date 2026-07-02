@@ -54,9 +54,15 @@ from .models import (
     deep_merge,
     normalize_config_tree,
     normalize_legacy_keys,
+    normalize_provider_type,
 )
 from .persona import PersonaManager
-from .providers import ImageGenerateRequest, ImageReference, normalize_image_base_url
+from .providers import (
+    ImageGenerateRequest,
+    ImageReference,
+    build_model_list_urls,
+    normalize_image_base_url,
+)
 from .utils import (
     bytes_to_data_url,
     data_url_to_bytes,
@@ -2386,20 +2392,20 @@ class SelfieImagePlugin(Star):
 
     async def web_refresh_image_models(self, payload: Dict[str, Any]) -> List[str]:
         channel_payload = payload.get("channel") if isinstance(payload.get("channel"), dict) else payload
-        base = normalize_image_base_url(str(channel_payload.get("base_url") or channel_payload.get("baseUrl") or "").strip())
+        base_url = str(channel_payload.get("base_url") or channel_payload.get("baseUrl") or "").strip()
         api_key = str(channel_payload.get("api_key") or channel_payload.get("apiKey") or "").strip()
-        provider_type = str(channel_payload.get("provider_type") or "openai")
+        provider_type = normalize_provider_type(channel_payload.get("provider_type") or "openai") or "openai"
         proxy = str(channel_payload.get("proxy") or "").strip() or None
         if provider_type == "agnes":
             return ["agnes-image-2.1-flash"]
-        if not base:
+        candidates = build_model_list_urls(base_url, provider_type)
+        if not candidates:
             raise RuntimeError("base_url 为空")
         headers = {"Accept": "application/json"}
         if provider_type == "gemini" and api_key:
             headers["x-goog-api-key"] = api_key
         elif api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        candidates = [f"{base}/v1/models", f"{base}/models", f"{base}/v1beta/models"]
         errors: List[str] = []
         async with aiohttp.ClientSession() as session:
             for url in candidates:
