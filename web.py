@@ -1846,6 +1846,9 @@ class FlaskWebServer:
         def records_clear() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
             return ok({"deleted": self.plugin.clear_recent_records()})
 
         @app.route("/api/cache-image", methods=["GET"])

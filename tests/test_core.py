@@ -732,6 +732,7 @@ class WebApiTests(unittest.TestCase):
             "/api/test-image-channel",
             "/api/test-image-channel/tasks",
             "/api/refresh-image-models",
+            "/api/records/clear",
         ]
 
         for route in routes:
@@ -749,6 +750,11 @@ class WebApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"], [{"id": 1, "success": True}])
+
+        self.assertEqual(client.post("/api/records/clear", json={}).status_code, 401)
+        response = client.post("/api/records/clear", json={}, headers={"X-Selfie-Image-Token": "secret"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"], {"deleted": 1})
 
     def test_cache_image_route_serves_files_and_rejects_traversal(self) -> None:
         plugin = FakeWebPlugin("secret")
