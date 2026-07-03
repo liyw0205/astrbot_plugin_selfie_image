@@ -386,8 +386,10 @@ class ImageUtilityTests(unittest.TestCase):
                 {"model": "seedream-4.0"},
                 {"model_id": "grok-imagine-image"},
                 {"modelName": "agnes-image-2.1-flash"},
+                {"slug": "slug-image-model"},
             ],
             "models": [{"name": "models/gemini-2.5-flash-image"}],
+            "modelIds": ["modelids-image-model"],
             "metadata": {"owner": "not-a-model-id"},
         }
 
@@ -397,8 +399,10 @@ class ImageUtilityTests(unittest.TestCase):
                 "agnes-image-2.1-flash",
                 "gpt-image-1",
                 "grok-imagine-image",
+                "modelids-image-model",
                 "models/gemini-2.5-flash-image",
                 "seedream-4.0",
+                "slug-image-model",
             ],
         )
 

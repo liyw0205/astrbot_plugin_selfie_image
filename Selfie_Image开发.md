@@ -385,3 +385,5 @@ python -m unittest tests/test_core.py
 2026-07-04：收紧 Web JSON 解析边界，统一请求体读取在遇到非空但无法解析为 JSON 对象的 body 时返回 400，避免畸形 JSON 被 `silent=True` 当成空对象继续执行；空 body 仍按 `{}` 处理，保持清除/刷新类接口兼容。补充畸形 JSON 拒绝和空 body 成功单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-04：增强 provider HTTP 错误预览提取，`http_error_preview()` 支持递归识别 `error_description`、`msg`、嵌套 `detail.message`、`errors[].message` 等常见代理错误结构，避免渠道测试或生成失败时只显示整段 JSON。补充多种错误结构单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-04：增强 Web 刷新模型缓存的响应解析，`extract_model_ids_from_response()` 支持 `slug` 模型字段以及 `modelIds`、`model_ids`、`available_models`、`availableModels` 等容器字段，适配更多 OpenAI 兼容代理和模型聚合服务的列表格式。扩展模型 ID 提取单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。

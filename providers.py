@@ -113,9 +113,9 @@ def provider_type_from_channel_payload(payload: Any, default: str = "openai") ->
 
 def extract_model_ids_from_response(data: Any) -> List[str]:
     result: Set[str] = set()
-    primary_keys = ("id", "name", "model", "model_id", "modelId", "model_name", "modelName")
+    primary_keys = ("id", "name", "model", "model_id", "modelId", "model_name", "modelName", "slug")
     fallback_keys = ("display_name", "displayName")
-    container_keys = ("data", "models", "items", "results", "list", "model_list", "modelList")
+    container_keys = ("data", "models", "items", "results", "list", "model_list", "modelList", "available_models", "availableModels", "model_ids", "modelIds")
 
     def add(value: Any) -> None:
         text = str(value or "").strip()
