@@ -97,6 +97,20 @@ def build_model_list_urls(base_url: str, provider_type: str = "") -> List[str]:
     return [f"{base}{suffix}" for suffix in suffixes]
 
 
+def provider_type_from_channel_payload(payload: Any, default: str = "openai") -> str:
+    if isinstance(payload, dict):
+        value = (
+            payload.get("provider_type")
+            or payload.get("providerType")
+            or payload.get("api_type")
+            or payload.get("apiType")
+            or default
+        )
+    else:
+        value = default
+    return normalize_provider_type(value) or normalize_provider_type(default) or "openai"
+
+
 def extract_model_ids_from_response(data: Any) -> List[str]:
     result: Set[str] = set()
     primary_keys = ("id", "name", "model", "model_id", "modelId", "model_name", "modelName")

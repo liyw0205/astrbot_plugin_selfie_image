@@ -45,6 +45,7 @@ from astrbot_plugin_selfie_image.providers import (
     looks_like_binary_image,
     normalize_gemini_base_url,
     normalize_image_base_url,
+    provider_type_from_channel_payload,
 )
 from astrbot_plugin_selfie_image.utils import data_url_to_bytes, extract_group_id_from_text, parse_audit_response_text
 from astrbot_plugin_selfie_image.web import Flask, FlaskWebServer
@@ -252,6 +253,12 @@ class ImageUtilityTests(unittest.TestCase):
                 "https://generativelanguage.googleapis.com/models",
             ],
         )
+
+    def test_channel_payload_provider_type_accepts_legacy_keys_and_aliases(self) -> None:
+        self.assertEqual(provider_type_from_channel_payload({"providerType": "google"}), "gemini")
+        self.assertEqual(provider_type_from_channel_payload({"api_type": "xai"}), "grok")
+        self.assertEqual(provider_type_from_channel_payload({"apiType": "openai_compatible"}), "gemini_openai")
+        self.assertEqual(provider_type_from_channel_payload({}), "openai")
 
     def test_model_id_extraction_accepts_provider_field_variants(self) -> None:
         payload = {

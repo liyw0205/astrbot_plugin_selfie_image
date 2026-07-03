@@ -54,7 +54,6 @@ from .models import (
     deep_merge,
     normalize_config_tree,
     normalize_legacy_keys,
-    normalize_provider_type,
 )
 from .persona import PersonaManager
 from .providers import (
@@ -63,6 +62,7 @@ from .providers import (
     build_model_list_urls,
     extract_model_ids_from_response,
     normalize_image_base_url,
+    provider_type_from_channel_payload,
 )
 from .utils import (
     bytes_to_data_url,
@@ -2364,7 +2364,7 @@ class SelfieImagePlugin(Star):
         channel_payload = payload.get("channel") if isinstance(payload.get("channel"), dict) else payload
         base_url = str(channel_payload.get("base_url") or channel_payload.get("baseUrl") or "").strip()
         api_key = str(channel_payload.get("api_key") or channel_payload.get("apiKey") or "").strip()
-        provider_type = normalize_provider_type(channel_payload.get("provider_type") or "openai") or "openai"
+        provider_type = provider_type_from_channel_payload(channel_payload)
         proxy = str(channel_payload.get("proxy") or "").strip() or None
         if provider_type == "agnes":
             return ["agnes-image-2.1-flash"]
