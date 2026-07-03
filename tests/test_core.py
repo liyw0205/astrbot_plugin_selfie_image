@@ -440,6 +440,14 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(images, [PNG_BYTES])
 
+    async def test_unknown_response_parser_accepts_binary_content_type_aliases(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES, get_headers={"content-type": "application/x-binary"})
+        payload = {"data": [{"url": "https://example.test/generated.bin"}]}
+
+        images = await images_from_response_unknown(session, payload, timeout=5)
+
+        self.assertEqual(images, [PNG_BYTES])
+
     def test_text_url_extraction_cleans_markdown_html_and_trailing_punctuation(self) -> None:
         extracted = extract_image_urls_from_text(
             '<img src="https://example.test/a.png?x=1&amp;y=2"> '

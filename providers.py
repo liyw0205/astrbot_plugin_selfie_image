@@ -285,7 +285,8 @@ async def fetch_generated_image_url(
             if response.status >= 400:
                 return None
             content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-            if content_type and not content_type.startswith("image/") and content_type != "application/octet-stream":
+            binary_content_types = {"application/octet-stream", "binary/octet-stream", "application/binary", "application/x-binary"}
+            if content_type and not content_type.startswith("image/") and content_type not in binary_content_types:
                 return None
             content_length = response.headers.get("content-length", "")
             try:
