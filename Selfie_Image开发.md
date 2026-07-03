@@ -353,3 +353,5 @@ python -m unittest tests/test_core.py
 2026-07-04：增强 provider 通用响应解析，支持从 `url/image/image_url/output` 等字段识别相对图片路径，并按实际请求 base URL 解析下载，覆盖 OpenAI 兼容和 Agnes 等返回 `/outputs/xxx.png` 的代理服务。补充通用解析器和 Agnes adapter 相对 URL 下载单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-04：增强图片 URL 下载容错，`Content-Length` 非标准或不可解析时不再直接丢弃响应，而是继续按流式下载字节数和图片签名校验；合法且超限的长度头仍会提前拒绝。补充非法 `Content-Length` 回归测试。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-04：收紧监控记录缓存清理工具的安全边界，`safe_delete_relative_files()` 在 base 目录为空时直接跳过，并拒绝删除绝对路径输入，只处理明确位于缓存目录内的相对路径。扩展缓存清理单测覆盖绝对路径和空 base 场景。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。

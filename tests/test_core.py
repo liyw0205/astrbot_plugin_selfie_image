@@ -357,22 +357,28 @@ class ImageUtilityTests(unittest.TestCase):
             base.mkdir()
             (base / "nested").mkdir()
             outside = Path(temp_dir) / "outside.png"
+            absolute_inside = base / "absolute_inside.png"
             files = [
                 base / "request_a.png",
                 base / "nested" / "generated_b.png",
                 base / "legacy_c.png",
+                absolute_inside,
                 outside,
             ]
             for path in files:
                 path.write_bytes(PNG_BYTES)
 
-            deleted = safe_delete_relative_files(str(base), paths)
+            deleted = safe_delete_relative_files(str(base), [*paths, str(absolute_inside)])
 
             self.assertEqual(deleted, ["request_a.png", "legacy_c.png", "nested/generated_b.png"])
             self.assertFalse((base / "request_a.png").exists())
             self.assertFalse((base / "nested" / "generated_b.png").exists())
             self.assertFalse((base / "legacy_c.png").exists())
+            self.assertTrue(absolute_inside.exists())
             self.assertTrue(outside.exists())
+
+            self.assertEqual(safe_delete_relative_files("", ["absolute_inside.png"]), [])
+            self.assertTrue(absolute_inside.exists())
 
     def test_audit_response_parser_handles_json_and_text_variants(self) -> None:
         self.assertEqual(parse_audit_response_text('```json\n{"allow": "yes", "reason": "ok"}\n```'), (True, "ok"))

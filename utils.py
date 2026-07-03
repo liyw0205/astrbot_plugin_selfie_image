@@ -190,13 +190,14 @@ def collect_record_cache_paths(records: Any) -> List[str]:
 
 
 def safe_delete_relative_files(base_dir: str, rel_paths: Iterable[Any]) -> List[str]:
-    base = os.path.abspath(str(base_dir or ""))
     deleted: List[str] = []
-    if not base:
+    raw_base = str(base_dir or "").strip()
+    if not raw_base:
         return deleted
+    base = os.path.abspath(raw_base)
     for item in rel_paths:
         rel_path = str(item or "").strip()
-        if not rel_path:
+        if not rel_path or os.path.isabs(rel_path):
             continue
         path = os.path.abspath(os.path.join(base, rel_path))
         if path == base or not path.startswith(base + os.sep):
