@@ -201,7 +201,7 @@ def data_url_to_bytes(input_text: str) -> Tuple[bytes, str]:
             return b"", normalize_image_mime(mime or "image/png")
         return data, detect_mime_by_bytes(data)
 
-    match = re.match(r"^data:([^;,]+);base64,([\s\S]+)$", text, flags=re.I)
+    match = re.match(r"^data:([^;,]+)(?:;[^,;]*)*;base64,([\s\S]+)$", text, flags=re.I)
     if match:
         mime = normalize_image_mime(match.group(1))
         return valid_image_or_empty(decode_base64_payload(match.group(2)), mime)
@@ -433,7 +433,7 @@ def extract_image_urls(text: str) -> List[str]:
         if looks_like_image_url(url):
             result.append(url)
 
-    for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=_-]+", raw):
+    for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+(?:;[^,\s\"'<>;]*)*;base64,[A-Za-z0-9+/=_-]+", raw):
         result.append(match.group(0))
 
     for match in re.finditer(r"base64://[A-Za-z0-9+/=_-]+", raw):

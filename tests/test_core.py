@@ -306,6 +306,15 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(data, PNG_BYTES)
         self.assertEqual(mime, "image/png")
 
+    def test_data_url_to_bytes_accepts_extra_data_url_parameters(self) -> None:
+        payload = base64.b64encode(PNG_BYTES).decode("ascii")
+        data_url = f"data:image/png;name=ref.png;charset=utf-8;base64,{payload}"
+
+        data, mime = data_url_to_bytes(data_url)
+
+        self.assertEqual((data, mime), (PNG_BYTES, "image/png"))
+        self.assertEqual(extract_image_urls(f"ref {data_url}"), [data_url])
+
     def test_data_url_to_bytes_accepts_urlsafe_base64_without_padding(self) -> None:
         image = PNG_BYTES + b"\xfb\xff\xff"
         payload = base64.urlsafe_b64encode(image).decode("ascii").rstrip("=")
@@ -570,6 +579,15 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         images = await images_from_response_unknown(FakeSession(), payload, timeout=5)
 
         self.assertEqual(images, [image])
+
+    async def test_unknown_response_parser_accepts_parameterized_data_urls(self) -> None:
+        encoded = base64.b64encode(PNG_BYTES).decode("ascii")
+        data_url = f"data:image/png;name=result.png;charset=utf-8;base64,{encoded}"
+        payload = {"choices": [{"message": {"content": f"generated: {data_url}"}}]}
+
+        images = await images_from_response_unknown(FakeSession(), payload, timeout=5)
+
+        self.assertEqual(images, [PNG_BYTES])
 
     async def test_unknown_response_parser_reads_base64_field_aliases(self) -> None:
         encoded = base64.b64encode(PNG_BYTES).decode("ascii")
