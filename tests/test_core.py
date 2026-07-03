@@ -207,8 +207,11 @@ class FakeWebPlugin:
 
     def get_cached_image_info(self, rel_path: str):
         base = os.path.abspath(self.generated_dir)
-        path = os.path.abspath(os.path.join(base, str(rel_path or "")))
-        if path != base and not path.startswith(base + os.sep):
+        raw_path = str(rel_path or "").strip()
+        if not raw_path:
+            raise ValueError("图片路径不能为空")
+        path = os.path.abspath(os.path.join(base, raw_path))
+        if path == base or not path.startswith(base + os.sep):
             raise ValueError("非法图片路径")
         return {
             "path": rel_path,
@@ -847,6 +850,18 @@ class WebApiTests(unittest.TestCase):
         response.close()
 
         response = client.get("/api/cache-image?path=../secret.png", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("非法图片路径", response.get_json()["error"])
+
+        response = client.get("/api/cache-image", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("图片路径不能为空", response.get_json()["error"])
+
+        response = client.get("/api/cache-image?path=", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("图片路径不能为空", response.get_json()["error"])
+
+        response = client.get("/api/cache-image?path=.", headers=headers)
         self.assertEqual(response.status_code, 400)
         self.assertIn("非法图片路径", response.get_json()["error"])
 
