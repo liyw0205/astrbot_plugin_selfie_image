@@ -42,6 +42,7 @@ from astrbot_plugin_selfie_image.providers import (
     clean_image_url,
     extract_model_ids_from_response,
     extract_image_urls_from_text,
+    fetch_generated_image_url,
     http_error_preview,
     images_from_response_unknown,
     looks_like_binary_image,
@@ -552,6 +553,23 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         }
         images = await images_from_response_unknown(FakeSession(), payload, timeout=5)
         self.assertEqual(images, [PNG_BYTES])
+
+    async def test_unknown_response_parser_accepts_urlsafe_base64_without_padding(self) -> None:
+        image = PNG_BYTES + b"\xfb\xff\xff"
+        encoded = base64.urlsafe_b64encode(image).decode("ascii").rstrip("=")
+        payload = {"data": [{"b64_json": encoded}]}
+
+        images = await images_from_response_unknown(FakeSession(), payload, timeout=5)
+
+        self.assertEqual(images, [image])
+
+    async def test_generated_data_url_download_rejects_fake_image_content(self) -> None:
+        payload = base64.b64encode(b'{"error":"not image"}').decode("ascii")
+        data_url = "data:image/png;base64," + payload
+
+        image = await fetch_generated_image_url(FakeSession(), data_url, timeout=5)
+
+        self.assertIsNone(image)
 
     async def test_unknown_response_parser_resolves_relative_image_urls(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import json
 import re
 from dataclasses import dataclass, field
@@ -201,10 +202,21 @@ def is_gpt_image_model(model: str) -> bool:
 
 
 def b64_to_bytes(value: str) -> bytes:
-    text = str(value or "")
+    text = str(value or "").strip()
     if "," in text:
         text = text.split(",", 1)[1]
-    return base64.b64decode(text, validate=False)
+    if text.lower().startswith("base64://"):
+        text = text[len("base64://") :]
+    text = re.sub(r"\s+", "", text)
+    if not text:
+        return b""
+    padded = text + ("=" * (-len(text) % 4))
+    try:
+        if "-" in padded or "_" in padded:
+            return base64.urlsafe_b64decode(padded)
+        return base64.b64decode(padded, validate=False)
+    except (binascii.Error, ValueError):
+        return base64.urlsafe_b64decode(padded)
 
 
 def http_error_preview(text: str, limit: int = 500) -> str:
@@ -269,7 +281,7 @@ async def fetch_generated_image_url(
         return None
     if text.startswith("data:image/"):
         data = b64_to_bytes(text)
-        return data if data and len(data) <= max_bytes else None
+        return data if data and len(data) <= max_bytes and looks_like_binary_image(data) else None
     if not text.lower().startswith(("http://", "https://")):
         return None
     headers = {
