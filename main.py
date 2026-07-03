@@ -67,6 +67,7 @@ from .providers import (
 from .utils import (
     bytes_to_data_url,
     collect_record_cache_paths,
+    collect_unreferenced_record_cache_paths,
     data_url_to_bytes,
     detect_mime_by_bytes,
     event_group_id,
@@ -995,14 +996,20 @@ class SelfieImagePlugin(Star):
         return self._parse_audit_response(text)
 
     def _record_task(self, record: Dict[str, Any]) -> None:
+        stale_cache_paths: List[str] = []
         with self._records_lock:
             record = dict(record)
             self._record_seq += 1
             record.setdefault("id", f"{int(time.time() * 1000)}-{self._record_seq}")
             record["time"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             self._records.insert(0, record)
-            del self._records[100:]
+            evicted_records = self._records[100:]
+            if evicted_records:
+                del self._records[100:]
+                stale_cache_paths = collect_unreferenced_record_cache_paths(evicted_records, self._records)
             self._persist_records()
+        if stale_cache_paths:
+            safe_delete_relative_files(self.generated_dir, stale_cache_paths)
 
     def get_recent_records(self) -> List[Dict[str, Any]]:
         with self._records_lock:

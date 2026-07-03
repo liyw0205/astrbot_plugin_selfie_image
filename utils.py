@@ -252,6 +252,18 @@ def collect_record_cache_paths(records: Any) -> List[str]:
     return result
 
 
+def collect_unreferenced_record_cache_paths(removed_records: Any, retained_records: Any) -> List[str]:
+    retained = set(collect_record_cache_paths(retained_records))
+    result: List[str] = []
+    seen = set()
+    for path in collect_record_cache_paths(removed_records):
+        if path in retained or path in seen:
+            continue
+        seen.add(path)
+        result.append(path)
+    return result
+
+
 def safe_delete_relative_files(base_dir: str, rel_paths: Iterable[Any]) -> List[str]:
     deleted: List[str] = []
     raw_base = str(base_dir or "").strip()

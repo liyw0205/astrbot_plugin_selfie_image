@@ -51,6 +51,7 @@ from astrbot_plugin_selfie_image.providers import (
 )
 from astrbot_plugin_selfie_image.utils import (
     collect_record_cache_paths,
+    collect_unreferenced_record_cache_paths,
     data_url_to_bytes,
     detect_mime_by_bytes,
     ext_from_mime,
@@ -444,6 +445,21 @@ class ImageUtilityTests(unittest.TestCase):
 
             self.assertEqual(safe_delete_relative_files("", ["absolute_inside.png"]), [])
             self.assertTrue(absolute_inside.exists())
+
+    def test_unreferenced_record_cache_paths_keep_shared_files(self) -> None:
+        removed = [
+            {"request_image_paths": ["old_request.png", "shared.png"]},
+            {"response_data": {"generated_image_paths": ["old_generated.png"]}},
+        ]
+        retained = [
+            {"generated_image_paths": ["shared.png"]},
+            {"image_paths": ["still_visible.png"]},
+        ]
+
+        self.assertEqual(
+            collect_unreferenced_record_cache_paths(removed, retained),
+            ["old_request.png", "old_generated.png"],
+        )
 
     def test_audit_response_parser_handles_json_and_text_variants(self) -> None:
         self.assertEqual(parse_audit_response_text('```json\n{"allow": "yes", "reason": "ok"}\n```'), (True, "ok"))
