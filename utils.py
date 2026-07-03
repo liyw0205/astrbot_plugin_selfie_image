@@ -172,11 +172,16 @@ def data_url_to_bytes(input_text: str) -> Tuple[bytes, str]:
     if not text:
         return b"", "image/png"
 
+    def valid_image_or_empty(data: bytes, mime: str = "") -> Tuple[bytes, str]:
+        if not data or not looks_like_image_bytes(data):
+            return b"", normalize_image_mime(mime or "image/png")
+        return data, normalize_image_mime(mime or detect_mime_by_bytes(data))
+
     match = re.match(r"^data:([^;,]+);base64,([\s\S]+)$", text, flags=re.I)
     if match:
         mime = normalize_image_mime(match.group(1))
         try:
-            return base64.b64decode(match.group(2), validate=False), mime
+            return valid_image_or_empty(base64.b64decode(match.group(2), validate=False), mime)
         except (binascii.Error, ValueError):
             return b"", mime
 
@@ -184,13 +189,13 @@ def data_url_to_bytes(input_text: str) -> Tuple[bytes, str]:
     if text.startswith(prefix):
         try:
             data = base64.b64decode(text[len(prefix) :], validate=False)
-            return data, detect_mime_by_bytes(data)
+            return valid_image_or_empty(data)
         except (binascii.Error, ValueError):
             return b"", "image/png"
 
     try:
         data = base64.b64decode(text, validate=False)
-        return data, detect_mime_by_bytes(data)
+        return valid_image_or_empty(data)
     except (binascii.Error, ValueError):
         return b"", "image/png"
 
