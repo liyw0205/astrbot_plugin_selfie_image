@@ -67,10 +67,21 @@ def detect_mime_by_bytes(data: bytes) -> str:
         return "image/png"
     if len(b) >= 3 and b[:3] == b"GIF":
         return "image/gif"
-    if len(b) >= 4 and b[:4] == b"RIFF":
+    if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WEBP":
         return "image/webp"
     if len(b) >= 2 and b[:2] == b"BM":
         return "image/bmp"
+    if len(b) >= 12 and b[4:8] == b"ftyp":
+        brand = b[8:12]
+        if brand == b"avif":
+            return "image/avif"
+        if brand in {b"heic", b"heix"}:
+            return "image/heic"
+        if brand in {b"heif", b"mif1"}:
+            return "image/heif"
+    stripped = b.lstrip().lower()
+    if stripped.startswith(b"<svg") or (stripped.startswith(b"<?xml") and b"<svg" in stripped[:512]):
+        return "image/svg+xml"
     return "image/png"
 
 
@@ -93,6 +104,14 @@ def ext_from_mime(mime: str) -> str:
         return "gif"
     if "bmp" in mime:
         return "bmp"
+    if "avif" in mime:
+        return "avif"
+    if "heic" in mime:
+        return "heic"
+    if "heif" in mime:
+        return "heif"
+    if "svg" in mime:
+        return "svg"
     return "png"
 
 
@@ -115,6 +134,14 @@ def guess_image_content_type(source: str, fallback: str = "image/png") -> str:
         return "image/gif"
     if lowered.endswith(".bmp"):
         return "image/bmp"
+    if lowered.endswith(".avif"):
+        return "image/avif"
+    if lowered.endswith(".heic"):
+        return "image/heic"
+    if lowered.endswith(".heif"):
+        return "image/heif"
+    if lowered.endswith(".svg"):
+        return "image/svg+xml"
     return fallback
 
 

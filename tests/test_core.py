@@ -52,7 +52,10 @@ from astrbot_plugin_selfie_image.providers import (
 from astrbot_plugin_selfie_image.utils import (
     collect_record_cache_paths,
     data_url_to_bytes,
+    detect_mime_by_bytes,
+    ext_from_mime,
     extract_group_id_from_text,
+    guess_image_content_type,
     parse_audit_response_text,
     resolve_awaitable,
     safe_delete_relative_files,
@@ -281,6 +284,16 @@ class ImageUtilityTests(unittest.TestCase):
     def test_image_signature_accepts_avif_container(self) -> None:
         self.assertTrue(looks_like_binary_image(b"\x00\x00\x00 ftypavif\x00\x00\x00\x00"))
         self.assertFalse(looks_like_binary_image(b'{"error":"not an image"}'))
+
+    def test_mime_detection_preserves_modern_image_formats(self) -> None:
+        self.assertEqual(detect_mime_by_bytes(b"\x00\x00\x00 ftypavif\x00\x00\x00\x00"), "image/avif")
+        self.assertEqual(detect_mime_by_bytes(b"\x00\x00\x00 ftypheic\x00\x00\x00\x00"), "image/heic")
+        self.assertEqual(detect_mime_by_bytes(b"<?xml version='1.0'?><svg></svg>"), "image/svg+xml")
+        self.assertEqual(detect_mime_by_bytes(b"RIFF1234WAVEfmt "), "image/png")
+        self.assertEqual(ext_from_mime("image/svg+xml"), "svg")
+        self.assertEqual(ext_from_mime("image/avif"), "avif")
+        self.assertEqual(guess_image_content_type("https://example.test/a.heif"), "image/heif")
+        self.assertEqual(guess_image_content_type("https://example.test/a.svg"), "image/svg+xml")
 
     def test_base_url_normalization(self) -> None:
         self.assertEqual(normalize_image_base_url("https://example.com/v1/images/generations"), "https://example.com")
