@@ -1776,12 +1776,18 @@ class FlaskWebServer:
         def selfie_reference_clear() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
             return ok(self.plugin.clear_selfie_reference_from_web(), message="自拍参考图已清除")
 
         @app.route("/api/selfie-profile/refresh", methods=["POST"])
         def selfie_profile_refresh() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
             try:
                 data = self._run_async(self.plugin.refresh_selfie_profile_from_web(), timeout=20)
                 return ok(data, message="今日自拍设定已刷新")

@@ -379,3 +379,5 @@ python -m unittest tests/test_core.py
 2026-07-04：补齐生成记录滚动淘汰时的缓存清理，`_record_task()` 在记录超过 100 条并裁剪旧记录时，会删除仅被淘汰记录引用的请求图/生成图缓存；新增 `collect_unreferenced_record_cache_paths()`，确保仍被保留监控记录引用的共享缓存文件不会被误删。补充共享路径保护单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-04：补齐 Web 记录清空接口的请求体校验，`POST /api/records/clear` 复用统一 JSON 对象检查，拒绝数组等非对象请求体，同时保持空对象 `{}` 清空记录的前端调用兼容。扩展 Web API 轻量单测覆盖鉴权、成功返回和非对象拒绝。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-04：继续补齐 Web 写接口请求体一致性，`POST /api/selfie-reference/clear` 和 `POST /api/selfie-profile/refresh` 也复用统一 JSON 对象检查，拒绝数组等非对象请求体；保持 Web 前端发送 `{}` 的清除参考图和刷新今日自拍设定调用兼容。扩展 Web API 轻量单测覆盖非对象拒绝和空对象成功路径。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。

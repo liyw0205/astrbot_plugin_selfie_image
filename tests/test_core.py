@@ -192,6 +192,12 @@ class FakeWebPlugin:
     def clear_recent_records(self):
         return 1
 
+    def clear_selfie_reference_from_web(self):
+        return {"has_image": False, "status": "cleared"}
+
+    async def refresh_selfie_profile_from_web(self):
+        return {"status": "refreshed", "updated_at": "2026-07-04 00:00:00"}
+
     def get_cached_image_info(self, rel_path: str):
         base = os.path.abspath(self.generated_dir)
         path = os.path.abspath(os.path.join(base, str(rel_path or "")))
@@ -729,6 +735,8 @@ class WebApiTests(unittest.TestCase):
         headers = {"X-Selfie-Image-Token": "secret"}
         routes = [
             "/api/selfie-reference",
+            "/api/selfie-reference/clear",
+            "/api/selfie-profile/refresh",
             "/api/test-image-channel",
             "/api/test-image-channel/tasks",
             "/api/refresh-image-models",
@@ -755,6 +763,18 @@ class WebApiTests(unittest.TestCase):
         response = client.post("/api/records/clear", json={}, headers={"X-Selfie-Image-Token": "secret"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"], {"deleted": 1})
+
+    def test_selfie_write_apis_accept_empty_object_payloads(self) -> None:
+        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        response = client.post("/api/selfie-reference/clear", json={}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["status"], "cleared")
+
+        response = client.post("/api/selfie-profile/refresh", json={}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["status"], "refreshed")
 
     def test_cache_image_route_serves_files_and_rejects_traversal(self) -> None:
         plugin = FakeWebPlugin("secret")
