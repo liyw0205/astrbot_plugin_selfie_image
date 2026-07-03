@@ -379,11 +379,24 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
         if not isinstance(item, dict):
             return
 
-        for key in ("b64_json", "base64", "data"):
+        b64_keys = (
+            "b64_json",
+            "base64",
+            "data",
+            "image_base64",
+            "imageBase64",
+            "base64_image",
+            "base64Image",
+            "image_data",
+            "imageData",
+            "encoded_image",
+            "encodedImage",
+        )
+        for key in b64_keys:
             if key in item and isinstance(item[key], str):
                 text = item[key].strip()
                 if text:
-                    if text.startswith("data:image/"):
+                    if text.startswith(("data:image/", "base64://")):
                         b64.add(text)
                     elif len(text) > 100:
                         b64.add(text)

@@ -571,6 +571,19 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(images, [image])
 
+    async def test_unknown_response_parser_reads_base64_field_aliases(self) -> None:
+        encoded = base64.b64encode(PNG_BYTES).decode("ascii")
+        payload = {
+            "result": {
+                "imageBase64": encoded,
+                "variants": [{"base64_image": "base64://" + encoded}],
+            }
+        }
+
+        images = await images_from_response_unknown(FakeSession(), payload, timeout=5)
+
+        self.assertEqual(images, [PNG_BYTES])
+
     async def test_generated_data_url_download_rejects_fake_image_content(self) -> None:
         payload = base64.b64encode(b'{"error":"not image"}').decode("ascii")
         data_url = "data:image/png;base64," + payload
