@@ -82,16 +82,53 @@ class FakeResponse:
         return self.data
 
 
+class FakeContent:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+    async def iter_chunked(self, size: int):
+        if self.data:
+            yield self.data
+
+
+class FakeImageResponse:
+    def __init__(self, data: bytes, status: int = 200, headers=None) -> None:
+        self.status = status
+        self.headers = headers or {"content-type": "image/png", "content-length": str(len(data))}
+        self.content = FakeContent(data)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
 class FakeSession:
-    def __init__(self, data=None, status: int = 200, text: str = "") -> None:
+    def __init__(
+        self,
+        data=None,
+        status: int = 200,
+        text: str = "",
+        get_data: bytes = b"",
+        get_status: int = 200,
+        get_headers=None,
+    ) -> None:
         self.data = {} if data is None else data
         self.status = status
         self.text = text
+        self.get_data = get_data
+        self.get_status = get_status
+        self.get_headers = get_headers
         self.requests = []
 
     async def post(self, url: str, **kwargs):
-        self.requests.append({"url": url, **kwargs})
+        self.requests.append({"method": "POST", "url": url, **kwargs})
         return FakeResponse(self.data, self.status, self.text)
+
+    def get(self, url: str, **kwargs):
+        self.requests.append({"method": "GET", "url": url, **kwargs})
+        return FakeImageResponse(self.get_data, self.get_status, self.get_headers)
 
 
 class FakeGenerateAdapter:
@@ -374,6 +411,21 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         images = await images_from_response_unknown(FakeSession(), payload, timeout=5)
         self.assertEqual(images, [PNG_BYTES])
 
+    async def test_unknown_response_parser_resolves_relative_image_urls(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {"data": [{"url": "/outputs/generated.png"}]}
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["method"], "GET")
+        self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/generated.png")
+
     def test_text_url_extraction_cleans_markdown_html_and_trailing_punctuation(self) -> None:
         extracted = extract_image_urls_from_text(
             '<img src="https://example.test/a.png?x=1&amp;y=2"> '
@@ -417,6 +469,18 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
         self.assertIn("HTTP 400", result.error)
         self.assertIn("model unavailable", result.error)
+
+    async def test_agnes_adapter_downloads_relative_response_url(self) -> None:
+        response = {"data": [{"url": "/outputs/agnes.png"}]}
+        session = FakeSession(response, text=json.dumps(response), get_data=PNG_BYTES)
+        adapter = AgnesImageAdapter(make_target(), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="portrait"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["url"], "https://example.test/v1/images/generations")
+        self.assertEqual(session.requests[1]["method"], "GET")
+        self.assertEqual(session.requests[1]["url"], "https://example.test/outputs/agnes.png")
 
 
 class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):

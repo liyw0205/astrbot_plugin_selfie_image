@@ -319,6 +319,18 @@ def add_maybe_image_url(value: str, b64: Set[str], urls: Set[str], others: Set[s
         others.add(url)
 
 
+def looks_like_relative_image_url(value: str) -> bool:
+    text = clean_image_url(value)
+    if not text or re.search(r"\s", text):
+        return False
+    if text.lower().startswith(("http://", "https://", "data:image/")):
+        return False
+    path = text.split("?", 1)[0].split("#", 1)[0].lower()
+    return text.startswith(("/", "./", "../")) or path.endswith(
+        (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif", ".heic", ".heif")
+    )
+
+
 def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
     raw = decode_html_entities(str(text or ""))
     b64: Set[str] = set()
@@ -372,10 +384,18 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
                     elif len(text) > 100:
                         b64.add(text)
 
-        for key in ("url", "image", "imageUrl", "image_url", "output", "content", "text"):
+        urlish_keys = ("url", "image", "imageUrl", "image_url", "output")
+        text_keys = ("content", "text")
+        for key in (*urlish_keys, *text_keys):
             field_value = item.get(key)
             if isinstance(field_value, str):
-                walk(field_value)
+                if key in urlish_keys and (
+                    field_value.lower().startswith(("http://", "https://", "data:image/"))
+                    or looks_like_relative_image_url(field_value)
+                ):
+                    add_maybe_image_url(field_value, b64, urls, others)
+                else:
+                    walk(field_value)
             elif isinstance(field_value, dict):
                 nested_url = field_value.get("url")
                 if isinstance(nested_url, str):
@@ -401,6 +421,7 @@ async def images_from_response_unknown(
     timeout: int,
     max_bytes: int = 25 * 1024 * 1024,
     proxy: str = "",
+    base_url: str = "",
 ) -> List[bytes]:
     collected = collect_images_from_unknown(data)
     images: List[bytes] = []
@@ -418,7 +439,21 @@ async def images_from_response_unknown(
             images.append(image)
             seen.add(key)
 
+    download_urls: List[str] = []
+    seen_urls = set()
     for item in collected["urls"]:
+        url = str(item or "").strip()
+        if url and url not in seen_urls:
+            download_urls.append(url)
+            seen_urls.add(url)
+    if base_url:
+        for item in collected["others"]:
+            url = resolve_response_url(str(item or ""), base_url)
+            if url.lower().startswith(("http://", "https://")) and url not in seen_urls:
+                download_urls.append(url)
+                seen_urls.add(url)
+
+    for item in download_urls:
         image = await fetch_generated_image_url(session, item, timeout, max_bytes=max_bytes, proxy=proxy)
         key = (len(image or b""), (image or b"")[:32])
         if image and key not in seen:
@@ -452,7 +487,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
             if response.status >= 400:
                 return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text())}")
             data = await response.json(content_type=None)
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
 
     def _build_edit_form(self, req: ImageGenerateRequest, image_field_name: str) -> aiohttp.FormData:
@@ -511,7 +546,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
             return ImageGenerateResult(error=f"OpenAI 图生图请求超时（{self.target.timeout}秒）")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
 
 
@@ -552,7 +587,7 @@ class GeminiImageAdapter(BaseImageAdapter):
                 data = await response.json(content_type=None)
         except asyncio.TimeoutError:
             return ImageGenerateResult(error=f"Gemini 生图请求超时（{self.target.timeout}秒）")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
 
 
@@ -578,7 +613,7 @@ class GeminiOpenAIImageAdapter(BaseImageAdapter):
             if response.status >= 400:
                 return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text())}")
             data = await response.json(content_type=None)
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         if images:
             return ImageGenerateResult(images=images)
         preview = json.dumps(data, ensure_ascii=False)[:1000]
@@ -608,7 +643,7 @@ class SimpleOpenAIImageAdapter(BaseImageAdapter):
             if response.status >= 400:
                 return ImageGenerateResult(error=f"HTTP {response.status}: {http_error_preview(await response.text(), 300)}")
             data = await response.json(content_type=None)
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
 
 
@@ -676,7 +711,7 @@ class AgnesImageAdapter(BaseImageAdapter):
                 data = json.loads(text)
             except json.JSONDecodeError:
                 return ImageGenerateResult(error=f"接口返回非 JSON 内容: {text[:300]}")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy)
+        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         if images:
             return ImageGenerateResult(images=images)
         preview = json.dumps(data, ensure_ascii=False)[:1000]
