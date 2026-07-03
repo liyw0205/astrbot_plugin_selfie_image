@@ -250,7 +250,7 @@ INDEX_HTML = r"""<!doctype html>
       <div class="grid">
         <label class="checkline"><input id="promptEnhance" type="checkbox" checked> 提示词增强</label>
         <label class="checkline"><input id="useSelfie" type="checkbox"> 使用 AI 自拍形象参考图</label>
-        <div><label>额外参考图</label><input id="testRefs" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple></div>
+        <div><label>额外参考图</label><input id="testRefs" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml" multiple></div>
       </div>
       <div class="actions">
         <button class="ok" id="testImageBtn">开始测试</button>
@@ -294,7 +294,7 @@ INDEX_HTML = r"""<!doctype html>
       </div>
       <label>自拍人设</label><textarea id="selfiePersonality"></textarea>
       <h3>自拍形象参考图</h3>
-      <input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+      <input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml">
       <img id="selfiePreview" class="preview" alt="selfie reference">
       <div class="actions">
         <button id="uploadSelfie">上传并保存</button>

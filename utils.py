@@ -13,6 +13,7 @@ import os
 import re
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 import aiohttp
 
@@ -280,8 +281,14 @@ def looks_like_image_url(text: str) -> bool:
     if value.startswith(("data:image/", "base64://")):
         return True
     lowered = value.lower()
-    return lowered.startswith(("http://", "https://")) and (
-        any(ext in lowered.split("?", 1)[0] for ext in IMAGE_EXTENSIONS)
+    if not lowered.startswith(("http://", "https://")):
+        return False
+    try:
+        path = urlsplit(value).path.lower()
+    except ValueError:
+        path = lowered.split("#", 1)[0].split("?", 1)[0]
+    return (
+        path.endswith(tuple(IMAGE_EXTENSIONS))
         or "qpic.cn" in lowered
         or "qlogo.cn" in lowered
         or "multimedia.nt.qq.com.cn" in lowered

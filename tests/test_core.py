@@ -54,15 +54,17 @@ from astrbot_plugin_selfie_image.utils import (
     data_url_to_bytes,
     detect_mime_by_bytes,
     ext_from_mime,
+    extract_image_urls,
     extract_group_id_from_text,
     fetch_image_source,
     guess_image_content_type,
     looks_like_image_bytes,
+    looks_like_image_url,
     parse_audit_response_text,
     resolve_awaitable,
     safe_delete_relative_files,
 )
-from astrbot_plugin_selfie_image.web import Flask, FlaskWebServer
+from astrbot_plugin_selfie_image.web import Flask, FlaskWebServer, INDEX_HTML
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 128
@@ -313,6 +315,24 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(guess_image_content_type("https://example.test/a.jfif?download=1"), "image/jpeg")
         self.assertEqual(guess_image_content_type("https://example.test/a.heif"), "image/heif")
         self.assertEqual(guess_image_content_type("https://example.test/a.svg#icon"), "image/svg+xml")
+
+    def test_image_url_detection_uses_actual_path_suffix(self) -> None:
+        self.assertTrue(looks_like_image_url("https://example.test/ref.avif?token=1#preview"))
+        self.assertTrue(looks_like_image_url("https://example.test/icons/ref.svg#icon"))
+        self.assertTrue(looks_like_image_url("https://example.test/download?file=ref"))
+        self.assertFalse(looks_like_image_url("https://example.test/view?file=ref.png"))
+        self.assertFalse(looks_like_image_url("https://example.test/archive.png/metadata"))
+
+        urls = extract_image_urls(
+            "ok https://example.test/a.heic?x=1 "
+            "bad https://example.test/view?file=b.png "
+            "also-bad https://example.test/archive.png/metadata"
+        )
+        self.assertEqual(urls, ["https://example.test/a.heic?x=1"])
+
+    def test_web_upload_accept_list_matches_supported_image_formats(self) -> None:
+        for mime in ("image/avif", "image/heic", "image/heif", "image/tiff", "image/svg+xml"):
+            self.assertIn(mime, INDEX_HTML)
 
     def test_base_url_normalization(self) -> None:
         self.assertEqual(normalize_image_base_url("https://example.com/v1/images/generations"), "https://example.com")

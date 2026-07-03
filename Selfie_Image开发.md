@@ -371,3 +371,5 @@ python -m unittest tests/test_core.py
 2026-07-04：收紧参考图 base64 内容校验，`data_url_to_bytes()` 在解码成功后也必须确认字节像图片，避免合法 base64 的 JSON/文本被 Web 形象上传或渠道测试误当 PNG 参考图。补充合法 base64 非图片 payload 拒绝单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-04：增强参考图 URL MIME 推断，`guess_image_content_type()` 会忽略 query/fragment 后再按扩展名判断，避免 `a.png?token=...`、`a.svg#icon` 等 URL 退回默认类型；同步将 `.svg` 纳入图片 URL 扩展名集合，并补充 `.jfif` 显式 JPEG 判断。补充带 query/fragment 的 MIME 推断单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-04：收紧文本参考图 URL 识别，`looks_like_image_url()` 改为按 URL path 的真实图片后缀判断，避免 query 参数里的 `.png` 等扩展名导致非图片页面被误收，同时保留 QQ 图片域名和 `/download?` 入口兼容；Web 渠道测试和自拍形象上传的文件选择器同步放开 BMP、AVIF、HEIC、HEIF、TIFF、SVG。补充 URL 识别和 Web accept 列表单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
