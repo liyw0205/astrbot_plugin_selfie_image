@@ -240,9 +240,15 @@ def http_error_preview(text: str, limit: int = 500) -> str:
 
 def clean_image_url(url: str) -> str:
     text = decode_html_entities(str(url or "")).strip()
-    match = re.match(r"^(https?://\S+?)(?:\s+[\"'][\s\S]*[\"'])?$", text, flags=re.I)
-    if match:
-        text = match.group(1)
+    if text.startswith("<") and ">" in text:
+        candidate, rest = text[1:].split(">", 1)
+        rest = rest.strip()
+        if not rest or re.fullmatch(r"(?:\"[^\"]*\"|'[^']*'|\([^)]*\))", rest):
+            text = candidate.strip()
+    else:
+        match = re.match(r"^(\S+?)(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))$", text, flags=re.I)
+        if match:
+            text = match.group(1)
     text = text.strip("<> \t\r\n").rstrip("，。！？、；：")
     while text.endswith(")") and "(" not in text:
         text = text[:-1].strip()

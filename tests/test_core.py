@@ -655,6 +655,21 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.requests[0]["method"], "GET")
         self.assertEqual(session.requests[0]["url"], "https://example.test/media/generated.webp")
 
+    async def test_unknown_response_parser_resolves_markdown_relative_url_with_title(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {"choices": [{"message": {"content": '![result](outputs/generated.png "preview")'}}]}
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["method"], "GET")
+        self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/generated.png")
+
     async def test_unknown_response_parser_ignores_invalid_content_length_header(self) -> None:
         session = FakeSession(get_data=PNG_BYTES, get_headers={"content-type": "image/png", "content-length": "unknown"})
         payload = {"data": [{"url": "https://example.test/generated.png"}]}
@@ -683,12 +698,18 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         extracted = extract_image_urls_from_text(
             '<img src="https://example.test/a.png?x=1&amp;y=2"> '
             "![ref](https://example.test/b.webp). "
+            "![rel](relative/generated.png \"preview\") "
+            "![angle](<relative/angle.webp> 'preview') "
             "raw https://example.test/c.jpg)。"
         )
         self.assertIn("https://example.test/a.png?x=1&y=2", extracted["urls"])
         self.assertIn("https://example.test/b.webp", extracted["urls"])
         self.assertIn("https://example.test/c.jpg", extracted["urls"])
+        self.assertIn("relative/generated.png", extracted["others"])
+        self.assertIn("relative/angle.webp", extracted["others"])
         self.assertEqual(clean_image_url("https://example.test/d.png)。"), "https://example.test/d.png")
+        self.assertEqual(clean_image_url('relative/generated.png "preview"'), "relative/generated.png")
+        self.assertEqual(clean_image_url("<relative/angle.webp> 'preview'"), "relative/angle.webp")
 
     def test_grok_payload_maps_auto_aspect_and_resolution(self) -> None:
         adapter = GrokImageAdapter(make_target("grok", "grok-imagine-image"), FakeSession())
