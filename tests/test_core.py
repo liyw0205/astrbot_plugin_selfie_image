@@ -285,6 +285,9 @@ class ImageUtilityTests(unittest.TestCase):
 
     def test_image_signature_accepts_avif_container(self) -> None:
         self.assertTrue(looks_like_binary_image(b"\x00\x00\x00 ftypavif\x00\x00\x00\x00"))
+        self.assertTrue(looks_like_binary_image(b"\x00\x00\x00 ftypheif\x00\x00\x00\x00"))
+        self.assertTrue(looks_like_binary_image(b"<?xml version='1.0'?><svg></svg>"))
+        self.assertFalse(looks_like_binary_image(b"RIFF1234WAVEfmt "))
         self.assertFalse(looks_like_binary_image(b'{"error":"not an image"}'))
 
     def test_mime_detection_preserves_modern_image_formats(self) -> None:

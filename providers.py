@@ -13,7 +13,7 @@ from urllib.parse import urljoin
 import aiohttp
 
 from .models import ImageModelTarget, normalize_provider_type
-from .utils import bytes_to_data_url, decode_html_entities
+from .utils import bytes_to_data_url, decode_html_entities, looks_like_image_bytes
 
 
 @dataclass
@@ -239,16 +239,7 @@ def clean_image_url(url: str) -> str:
 
 
 def looks_like_binary_image(data: bytes) -> bool:
-    b = data or b""
-    return (
-        len(b) >= 2 and b[:2] == b"\xff\xd8"
-        or len(b) >= 4 and b[:4] == b"\x89PNG"
-        or len(b) >= 3 and b[:3] == b"GIF"
-        or len(b) >= 4 and b[:4] == b"RIFF"
-        or len(b) >= 2 and b[:2] == b"BM"
-        or len(b) >= 12 and b[4:8] == b"ftyp" and b[8:12] in {b"avif", b"heic", b"heix", b"mif1"}
-        or b.lstrip()[:5].lower() == b"<svg "
-    )
+    return looks_like_image_bytes(data)
 
 
 async def fetch_generated_image_url(
