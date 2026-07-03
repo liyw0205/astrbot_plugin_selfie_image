@@ -273,6 +273,11 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(mime, "image/png")
         self.assertTrue(looks_like_binary_image(data))
 
+    def test_data_url_to_bytes_rejects_malformed_base64_without_raising(self) -> None:
+        self.assertEqual(data_url_to_bytes("data:image/png;base64,abc"), (b"", "image/png"))
+        self.assertEqual(data_url_to_bytes("base64://abc"), (b"", "image/png"))
+        self.assertEqual(data_url_to_bytes("abc"), (b"", "image/png"))
+
     def test_image_signature_accepts_avif_container(self) -> None:
         self.assertTrue(looks_like_binary_image(b"\x00\x00\x00 ftypavif\x00\x00\x00\x00"))
         self.assertFalse(looks_like_binary_image(b'{"error":"not an image"}'))
