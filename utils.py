@@ -178,7 +178,7 @@ def data_url_to_bytes(input_text: str) -> Tuple[bytes, str]:
     def valid_image_or_empty(data: bytes, mime: str = "") -> Tuple[bytes, str]:
         if not data or not looks_like_image_bytes(data):
             return b"", normalize_image_mime(mime or "image/png")
-        return data, normalize_image_mime(mime or detect_mime_by_bytes(data))
+        return data, detect_mime_by_bytes(data)
 
     match = re.match(r"^data:([^;,]+);base64,([\s\S]+)$", text, flags=re.I)
     if match:
@@ -490,8 +490,7 @@ async def fetch_image_source(
                 return None
             if not looks_like_image_bytes(data):
                 return None
-            header_mime = normalize_image_mime(content_type, "")
-            return data, header_mime or detect_mime_by_bytes(data)
+            return data, detect_mime_by_bytes(data)
     except (asyncio.TimeoutError, aiohttp.ClientError, OSError, binascii.Error, ValueError):
         return None
 

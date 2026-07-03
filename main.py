@@ -2202,7 +2202,7 @@ class SelfieImagePlugin(Star):
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
         if len(data) > max_bytes:
             raise ValueError(f"图片过大，最大允许 {self.config.image_max_image_size_mb}MB")
-        self.persona.save_reference_image(data, normalize_image_mime(str(payload.get("mime_type") or mime or detect_mime_by_bytes(data))))
+        self.persona.save_reference_image(data, normalize_image_mime(mime or str(payload.get("mime_type") or "") or detect_mime_by_bytes(data)))
         return self.get_selfie_reference_payload()
 
     def clear_selfie_reference_from_web(self) -> Dict[str, Any]:

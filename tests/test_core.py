@@ -280,6 +280,14 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(mime, "image/png")
         self.assertTrue(looks_like_binary_image(data))
 
+    def test_data_url_to_bytes_prefers_detected_mime_over_declared_mime(self) -> None:
+        data_url = "data:image/jpeg;base64," + base64.b64encode(PNG_BYTES).decode("ascii")
+
+        data, mime = data_url_to_bytes(data_url)
+
+        self.assertEqual(data, PNG_BYTES)
+        self.assertEqual(mime, "image/png")
+
     def test_data_url_to_bytes_rejects_malformed_base64_without_raising(self) -> None:
         self.assertEqual(data_url_to_bytes("data:image/png;base64,abc"), (b"", "image/png"))
         self.assertEqual(data_url_to_bytes("base64://abc"), (b"", "image/png"))
@@ -487,6 +495,13 @@ class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, (PNG_BYTES, "image/png"))
 
+    async def test_fetch_image_source_prefers_detected_mime_over_header_mime(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES, get_headers={"content-type": "image/jpeg"})
+
+        result = await fetch_image_source("https://example.test/ref.jpg", session, max_bytes=1024 * 1024)
+
+        self.assertEqual(result, (PNG_BYTES, "image/png"))
+
 
 class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_response_parser_deduplicates_nested_base64_images(self) -> None:
@@ -512,6 +527,21 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(images, [PNG_BYTES])
         self.assertEqual(session.requests[0]["method"], "GET")
         self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/generated.png")
+
+    async def test_unknown_response_parser_resolves_modern_relative_filenames(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {"data": [{"output": "generated.tiff"}]}
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["method"], "GET")
+        self.assertEqual(session.requests[0]["url"], "https://example.test/generated.tiff")
 
     async def test_unknown_response_parser_ignores_invalid_content_length_header(self) -> None:
         session = FakeSession(get_data=PNG_BYTES, get_headers={"content-type": "image/png", "content-length": "unknown"})

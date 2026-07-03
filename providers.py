@@ -13,7 +13,7 @@ from urllib.parse import urljoin
 import aiohttp
 
 from .models import ImageModelTarget, normalize_provider_type
-from .utils import bytes_to_data_url, decode_html_entities, looks_like_image_bytes
+from .utils import IMAGE_EXTENSIONS, bytes_to_data_url, decode_html_entities, looks_like_image_bytes
 
 
 @dataclass
@@ -321,9 +321,7 @@ def looks_like_relative_image_url(value: str) -> bool:
     if text.lower().startswith(("http://", "https://", "data:image/")):
         return False
     path = text.split("?", 1)[0].split("#", 1)[0].lower()
-    return text.startswith(("/", "./", "../")) or path.endswith(
-        (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif", ".heic", ".heif")
-    )
+    return text.startswith(("/", "./", "../")) or path.endswith(tuple(IMAGE_EXTENSIONS))
 
 
 def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
