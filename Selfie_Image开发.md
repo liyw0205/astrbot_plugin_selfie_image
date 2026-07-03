@@ -365,3 +365,5 @@ python -m unittest tests/test_core.py
 2026-07-04：收紧用户参考图 HTTP 下载校验，`fetch_image_source()` 会拒绝非图片 Content-Type，二进制类型或缺失类型时使用图片签名确认，并和 provider 下载逻辑一样容忍非法 `Content-Length`。避免错误 JSON/文本响应被当作 PNG 参考图写入后续生成链路。补充 HTTP 参考图下载单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-04：统一 provider 响应图片签名判断，`providers.looks_like_binary_image()` 复用 `utils.looks_like_image_bytes()`，避免任意 RIFF 内容被误判为图片，同时支持 HEIF 和 XML 声明形式的 SVG。补充 provider 签名判断单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-04：收紧所有 HTTP 图片下载后的内容校验，provider 结果图和用户参考图即使服务端声明 `image/*`，也必须通过图片签名检查，避免 JSON/文本错误响应被当作图片进入缓存或生成链路；同时补充 TIFF MIME/扩展名和签名识别。补充伪造 `image/png` 响应拒绝和 TIFF 单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。

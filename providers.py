@@ -295,7 +295,7 @@ async def fetch_generated_image_url(
             data = b"".join(chunks)
             if not data:
                 return None
-            if not content_type.startswith("image/") and not looks_like_binary_image(data):
+            if not looks_like_binary_image(data):
                 return None
             return data
     except Exception:

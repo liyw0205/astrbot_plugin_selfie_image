@@ -286,6 +286,7 @@ class ImageUtilityTests(unittest.TestCase):
     def test_image_signature_accepts_avif_container(self) -> None:
         self.assertTrue(looks_like_binary_image(b"\x00\x00\x00 ftypavif\x00\x00\x00\x00"))
         self.assertTrue(looks_like_binary_image(b"\x00\x00\x00 ftypheif\x00\x00\x00\x00"))
+        self.assertTrue(looks_like_binary_image(b"II*\x00\x08\x00\x00\x00"))
         self.assertTrue(looks_like_binary_image(b"<?xml version='1.0'?><svg></svg>"))
         self.assertFalse(looks_like_binary_image(b"RIFF1234WAVEfmt "))
         self.assertFalse(looks_like_binary_image(b'{"error":"not an image"}'))
@@ -293,11 +294,14 @@ class ImageUtilityTests(unittest.TestCase):
     def test_mime_detection_preserves_modern_image_formats(self) -> None:
         self.assertEqual(detect_mime_by_bytes(b"\x00\x00\x00 ftypavif\x00\x00\x00\x00"), "image/avif")
         self.assertEqual(detect_mime_by_bytes(b"\x00\x00\x00 ftypheic\x00\x00\x00\x00"), "image/heic")
+        self.assertEqual(detect_mime_by_bytes(b"MM\x00*\x00\x00\x00\x08"), "image/tiff")
         self.assertEqual(detect_mime_by_bytes(b"<?xml version='1.0'?><svg></svg>"), "image/svg+xml")
         self.assertEqual(detect_mime_by_bytes(b"RIFF1234WAVEfmt "), "image/png")
         self.assertFalse(looks_like_image_bytes(b"RIFF1234WAVEfmt "))
         self.assertEqual(ext_from_mime("image/svg+xml"), "svg")
+        self.assertEqual(ext_from_mime("image/tiff"), "tiff")
         self.assertEqual(ext_from_mime("image/avif"), "avif")
+        self.assertEqual(guess_image_content_type("https://example.test/a.tiff"), "image/tiff")
         self.assertEqual(guess_image_content_type("https://example.test/a.heif"), "image/heif")
         self.assertEqual(guess_image_content_type("https://example.test/a.svg"), "image/svg+xml")
 
@@ -437,6 +441,13 @@ class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
 
+    async def test_fetch_image_source_rejects_fake_image_http_response(self) -> None:
+        session = FakeSession(get_data=b'{"error":"not image"}', get_headers={"content-type": "image/png"})
+
+        result = await fetch_image_source("https://example.test/ref.png", session, max_bytes=1024 * 1024)
+
+        self.assertIsNone(result)
+
     async def test_fetch_image_source_accepts_binary_image_with_invalid_length(self) -> None:
         session = FakeSession(
             get_data=PNG_BYTES,
@@ -488,6 +499,14 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         images = await images_from_response_unknown(session, payload, timeout=5)
 
         self.assertEqual(images, [PNG_BYTES])
+
+    async def test_unknown_response_parser_rejects_fake_image_content(self) -> None:
+        session = FakeSession(get_data=b'{"error":"not image"}', get_headers={"content-type": "image/png"})
+        payload = {"data": [{"url": "https://example.test/generated.png"}]}
+
+        images = await images_from_response_unknown(session, payload, timeout=5)
+
+        self.assertEqual(images, [])
 
     def test_text_url_extraction_cleans_markdown_html_and_trailing_punctuation(self) -> None:
         extracted = extract_image_urls_from_text(

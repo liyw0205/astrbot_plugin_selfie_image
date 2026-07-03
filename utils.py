@@ -71,6 +71,8 @@ def detect_mime_by_bytes(data: bytes) -> str:
         return "image/webp"
     if len(b) >= 2 and b[:2] == b"BM":
         return "image/bmp"
+    if len(b) >= 4 and b[:4] in {b"II*\x00", b"MM\x00*"}:
+        return "image/tiff"
     if len(b) >= 12 and b[4:8] == b"ftyp":
         brand = b[8:12]
         if brand == b"avif":
@@ -94,6 +96,7 @@ def looks_like_image_bytes(data: bytes) -> bool:
         or len(b) >= 3 and b[:3] == b"GIF"
         or len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WEBP"
         or len(b) >= 2 and b[:2] == b"BM"
+        or len(b) >= 4 and b[:4] in {b"II*\x00", b"MM\x00*"}
         or len(b) >= 12 and b[4:8] == b"ftyp" and b[8:12] in {b"avif", b"heic", b"heix", b"heif", b"mif1"}
         or stripped.startswith(b"<svg")
         or stripped.startswith(b"<?xml") and b"<svg" in stripped[:512]
@@ -119,6 +122,8 @@ def ext_from_mime(mime: str) -> str:
         return "gif"
     if "bmp" in mime:
         return "bmp"
+    if "tiff" in mime or "tif" in mime:
+        return "tiff"
     if "avif" in mime:
         return "avif"
     if "heic" in mime:
@@ -149,6 +154,8 @@ def guess_image_content_type(source: str, fallback: str = "image/png") -> str:
         return "image/gif"
     if lowered.endswith(".bmp"):
         return "image/bmp"
+    if lowered.endswith((".tif", ".tiff")):
+        return "image/tiff"
     if lowered.endswith(".avif"):
         return "image/avif"
     if lowered.endswith(".heic"):
@@ -467,7 +474,7 @@ async def fetch_image_source(
             data = b"".join(chunks)
             if not data:
                 return None
-            if (not content_type or content_type in binary_content_types) and not looks_like_image_bytes(data):
+            if not looks_like_image_bytes(data):
                 return None
             header_mime = normalize_image_mime(content_type, "")
             return data, header_mime or detect_mime_by_bytes(data)
