@@ -383,3 +383,5 @@ python -m unittest tests/test_core.py
 2026-07-04：继续补齐 Web 写接口请求体一致性，`POST /api/selfie-reference/clear` 和 `POST /api/selfie-profile/refresh` 也复用统一 JSON 对象检查，拒绝数组等非对象请求体；保持 Web 前端发送 `{}` 的清除参考图和刷新今日自拍设定调用兼容。扩展 Web API 轻量单测覆盖非对象拒绝和空对象成功路径。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-04：收紧 Web JSON 解析边界，统一请求体读取在遇到非空但无法解析为 JSON 对象的 body 时返回 400，避免畸形 JSON 被 `silent=True` 当成空对象继续执行；空 body 仍按 `{}` 处理，保持清除/刷新类接口兼容。补充畸形 JSON 拒绝和空 body 成功单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-04：增强 provider HTTP 错误预览提取，`http_error_preview()` 支持递归识别 `error_description`、`msg`、嵌套 `detail.message`、`errors[].message` 等常见代理错误结构，避免渠道测试或生成失败时只显示整段 JSON。补充多种错误结构单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。

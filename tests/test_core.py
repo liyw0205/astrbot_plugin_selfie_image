@@ -405,6 +405,10 @@ class ImageUtilityTests(unittest.TestCase):
     def test_http_error_preview_extracts_common_error_shapes(self) -> None:
         self.assertEqual(http_error_preview('{"error":"invalid api key"}'), "invalid api key")
         self.assertEqual(http_error_preview('{"detail":"quota exceeded"}'), "quota exceeded")
+        self.assertEqual(http_error_preview('{"error_description":"bad bearer token"}'), "bad bearer token")
+        self.assertEqual(http_error_preview('{"msg":"rate limited"}'), "rate limited")
+        self.assertEqual(http_error_preview('{"detail":{"message":"nested quota exceeded"}}'), "nested quota exceeded")
+        self.assertEqual(http_error_preview('{"errors":[{"message":"first error"},{"message":"second error"}]}'), "first error")
 
     def test_group_id_extraction(self) -> None:
         self.assertEqual(extract_group_id_from_text("aiocqhttp:group:123456"), "123456")

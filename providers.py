@@ -210,17 +210,31 @@ def b64_to_bytes(value: str) -> bytes:
 def http_error_preview(text: str, limit: int = 500) -> str:
     raw = str(text or "").strip()
     preview = raw
+
+    def first_error_text(value: Any) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            for key in ("message", "detail", "error_description", "description", "msg", "reason", "error"):
+                if key in value:
+                    found = first_error_text(value.get(key))
+                    if found:
+                        return found
+            for key in ("errors", "error_messages"):
+                if key in value:
+                    found = first_error_text(value.get(key))
+                    if found:
+                        return found
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+            for item in value:
+                found = first_error_text(item)
+                if found:
+                    return found
+        return ""
+
     try:
         data = json.loads(raw)
-        error = data.get("error") if isinstance(data, dict) else None
-        if isinstance(error, dict) and error.get("message"):
-            preview = str(error.get("message") or "")
-        elif isinstance(error, str) and error.strip():
-            preview = error
-        elif isinstance(data, dict) and data.get("message"):
-            preview = str(data.get("message") or "")
-        elif isinstance(data, dict) and data.get("detail"):
-            preview = str(data.get("detail") or "")
+        preview = first_error_text(data) or raw
     except Exception:
         pass
     preview = re.sub(r"\s+", " ", preview).strip()
