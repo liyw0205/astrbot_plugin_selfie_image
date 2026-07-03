@@ -170,6 +170,27 @@ def guess_image_content_type(source: str, fallback: str = "image/png") -> str:
     return fallback
 
 
+def decode_base64_payload(value: str) -> bytes:
+    text = str(value or "").strip()
+    if "," in text:
+        text = text.split(",", 1)[1]
+    if text.lower().startswith("base64://"):
+        text = text[len("base64://") :]
+    text = re.sub(r"\s+", "", text)
+    if not text:
+        return b""
+    padded = text + ("=" * (-len(text) % 4))
+    try:
+        if "-" in padded or "_" in padded:
+            return base64.urlsafe_b64decode(padded)
+        return base64.b64decode(padded, validate=False)
+    except (binascii.Error, ValueError):
+        try:
+            return base64.urlsafe_b64decode(padded)
+        except (binascii.Error, ValueError):
+            return b""
+
+
 def data_url_to_bytes(input_text: str) -> Tuple[bytes, str]:
     text = str(input_text or "").strip()
     if not text:
@@ -183,24 +204,13 @@ def data_url_to_bytes(input_text: str) -> Tuple[bytes, str]:
     match = re.match(r"^data:([^;,]+);base64,([\s\S]+)$", text, flags=re.I)
     if match:
         mime = normalize_image_mime(match.group(1))
-        try:
-            return valid_image_or_empty(base64.b64decode(match.group(2), validate=False), mime)
-        except (binascii.Error, ValueError):
-            return b"", mime
+        return valid_image_or_empty(decode_base64_payload(match.group(2)), mime)
 
     prefix = "base64://"
     if text.startswith(prefix):
-        try:
-            data = base64.b64decode(text[len(prefix) :], validate=False)
-            return valid_image_or_empty(data)
-        except (binascii.Error, ValueError):
-            return b"", "image/png"
+        return valid_image_or_empty(decode_base64_payload(text))
 
-    try:
-        data = base64.b64decode(text, validate=False)
-        return valid_image_or_empty(data)
-    except (binascii.Error, ValueError):
-        return b"", "image/png"
+    return valid_image_or_empty(decode_base64_payload(text))
 
 
 def bytes_to_data_url(data: bytes, mime: str = "") -> str:

@@ -306,6 +306,14 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(data, PNG_BYTES)
         self.assertEqual(mime, "image/png")
 
+    def test_data_url_to_bytes_accepts_urlsafe_base64_without_padding(self) -> None:
+        image = PNG_BYTES + b"\xfb\xff\xff"
+        payload = base64.urlsafe_b64encode(image).decode("ascii").rstrip("=")
+
+        self.assertEqual(data_url_to_bytes("data:image/png;base64," + payload), (image, "image/png"))
+        self.assertEqual(data_url_to_bytes("base64://" + payload), (image, "image/png"))
+        self.assertEqual(data_url_to_bytes(payload), (image, "image/png"))
+
     def test_data_url_to_bytes_rejects_malformed_base64_without_raising(self) -> None:
         self.assertEqual(data_url_to_bytes("data:image/png;base64,abc"), (b"", "image/png"))
         self.assertEqual(data_url_to_bytes("base64://abc"), (b"", "image/png"))
