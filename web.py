@@ -1694,6 +1694,9 @@ class FlaskWebServer:
         def json_object_payload() -> Any:
             payload = request.get_json(silent=True)
             if payload is None:
+                raw_body = request.get_data(cache=True) or b""
+                if raw_body.strip():
+                    return None, fail("请求体必须是 JSON 对象")
                 return {}, None
             if not isinstance(payload, dict):
                 return None, fail("请求体必须是 JSON 对象")

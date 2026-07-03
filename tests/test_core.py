@@ -722,6 +722,10 @@ class WebApiTests(unittest.TestCase):
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
         headers = {"X-Selfie-Image-Token": "secret"}
 
+        response = client.post("/api/config", data="{bad", content_type="application/json", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("请求体必须是 JSON 对象", response.get_json()["error"])
+
         response = client.post("/api/config", json=["bad"], headers=headers)
         self.assertEqual(response.status_code, 400)
         self.assertIn("请求体必须是 JSON 对象", response.get_json()["error"])
@@ -773,6 +777,10 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.get_json()["data"]["status"], "cleared")
 
         response = client.post("/api/selfie-profile/refresh", json={}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["status"], "refreshed")
+
+        response = client.post("/api/selfie-profile/refresh", data="", headers=headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"]["status"], "refreshed")
 
