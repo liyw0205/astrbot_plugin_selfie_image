@@ -77,6 +77,7 @@ from .utils import (
     fetch_image_source,
     load_json_file,
     normalize_image_mime,
+    parse_audit_response_text,
     save_image_bytes,
     save_json_file,
 )
@@ -826,39 +827,7 @@ class SelfieImagePlugin(Star):
         return filtered
 
     def _parse_audit_response(self, text: str) -> Tuple[bool, str]:
-        raw = str(text or "").strip()
-        if not raw:
-            return False, "审核模型返回为空"
-        fenced = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", raw, flags=re.I)
-        json_text = fenced.group(1).strip() if fenced else raw
-        obj: Any = None
-        try:
-            obj = json.loads(json_text)
-        except Exception:
-            match = re.search(r"\{[\s\S]*\}", json_text)
-            if match:
-                try:
-                    obj = json.loads(match.group(0))
-                except Exception:
-                    obj = None
-        if isinstance(obj, dict):
-            allow = obj.get("allow")
-            reason = str(obj.get("reason") or "").strip()
-            if isinstance(allow, bool):
-                return allow, reason
-            if isinstance(allow, str):
-                low_allow = allow.strip().lower()
-                if low_allow in ("true", "yes", "allow", "allowed", "通过", "允许", "安全"):
-                    return True, reason
-                if low_allow in ("false", "no", "deny", "denied", "拒绝", "不通过", "违规", "不安全"):
-                    return False, reason
-
-        low = json_text.lower()
-        if "false" in low or "unsafe" in low or "拒绝" in json_text or "不通过" in json_text or "违规" in json_text or "不安全" in json_text:
-            return False, json_text[:120]
-        if "true" in low or "通过" in json_text or "允许" in json_text or "安全" in json_text:
-            return True, json_text[:120]
-        return False, f"无法判定审核结果: {json_text[:120]}"
+        return parse_audit_response_text(text)
 
     def _find_audit_target(self, label: str) -> Optional[ImageModelTarget]:
         value = str(label or "").strip()

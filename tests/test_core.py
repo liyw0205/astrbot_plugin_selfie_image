@@ -46,7 +46,7 @@ from astrbot_plugin_selfie_image.providers import (
     normalize_gemini_base_url,
     normalize_image_base_url,
 )
-from astrbot_plugin_selfie_image.utils import data_url_to_bytes, extract_group_id_from_text
+from astrbot_plugin_selfie_image.utils import data_url_to_bytes, extract_group_id_from_text, parse_audit_response_text
 from astrbot_plugin_selfie_image.web import Flask, FlaskWebServer
 
 
@@ -281,6 +281,16 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(extract_group_id_from_text("aiocqhttp:group:123456"), "123456")
         self.assertEqual(extract_group_id_from_text("group_id=98765"), "98765")
         self.assertEqual(extract_group_id_from_text("private:123"), "")
+
+    def test_audit_response_parser_handles_json_and_text_variants(self) -> None:
+        self.assertEqual(parse_audit_response_text('```json\n{"allow": "yes", "reason": "ok"}\n```'), (True, "ok"))
+        self.assertEqual(parse_audit_response_text('{"safe": true, "risk": false, "reason": "clean"}'), (True, "clean"))
+        self.assertEqual(parse_audit_response_text('{"unsafe": true, "reason": "blocked"}'), (False, "blocked"))
+        self.assertEqual(parse_audit_response_text('{"safe": true, "unsafe": true, "reason": "conflict"}'), (False, "conflict"))
+        self.assertEqual(parse_audit_response_text('{"allow": false, "risk": false, "reason": "deny wins"}'), (False, "deny wins"))
+        self.assertEqual(parse_audit_response_text("safe: true"), (True, "safe: true"))
+        self.assertEqual(parse_audit_response_text("risk: false"), (True, "risk: false"))
+        self.assertFalse(parse_audit_response_text("不安全，拒绝")[0])
 
 
 class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):

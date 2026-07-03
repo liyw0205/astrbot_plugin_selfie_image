@@ -178,6 +178,97 @@ def decode_html_entities(text: str) -> str:
     )
 
 
+def _audit_bool_value(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+    text = str(value or "").strip().lower()
+    if text in {"true", "yes", "y", "1", "allow", "allowed", "pass", "passed", "safe", "ok", "通过", "允许", "安全"}:
+        return True
+    if text in {"false", "no", "n", "0", "deny", "denied", "block", "blocked", "unsafe", "violation", "risk", "拒绝", "不通过", "违规", "不安全"}:
+        return False
+    return None
+
+
+def parse_audit_response_text(text: str) -> Tuple[bool, str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return False, "审核模型返回为空"
+
+    fenced = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", raw, flags=re.I)
+    json_text = fenced.group(1).strip() if fenced else raw
+    obj: Any = None
+    try:
+        obj = json.loads(json_text)
+    except Exception:
+        match = re.search(r"\{[\s\S]*\}", json_text)
+        if match:
+            try:
+                obj = json.loads(match.group(0))
+            except Exception:
+                obj = None
+
+    if isinstance(obj, dict):
+        reason = str(obj.get("reason") or obj.get("message") or obj.get("detail") or "").strip()
+        positive_keys = ("allow", "allowed", "pass", "passed", "safe", "is_safe", "approved")
+        negative_keys = ("deny", "denied", "block", "blocked", "unsafe", "is_unsafe", "violation", "violated", "risk", "has_risk", "flagged")
+        verdict_keys = ("result", "status", "decision", "verdict", "label")
+        for key in negative_keys:
+            if key in obj:
+                value = _audit_bool_value(obj.get(key))
+                if value is True:
+                    return False, reason
+        for key in positive_keys:
+            if key in obj:
+                value = _audit_bool_value(obj.get(key))
+                if value is False:
+                    return False, reason
+        for key in positive_keys:
+            if key in obj:
+                value = _audit_bool_value(obj.get(key))
+                if value is True:
+                    return True, reason
+        for key in negative_keys:
+            if key in obj:
+                value = _audit_bool_value(obj.get(key))
+                if value is False:
+                    return True, reason
+        for key in verdict_keys:
+            if key in obj:
+                value = _audit_bool_value(obj.get(key))
+                if value is not None:
+                    return value, reason
+        return False, f"无法判定审核结果: {json_text[:120]}"
+
+    low = json_text.lower().strip()
+    if re.fullmatch(r"(false|no|deny|denied|unsafe|violation|risk)", low):
+        return False, json_text[:120]
+    if re.fullmatch(r"(true|yes|allow|allowed|pass|passed|safe|ok)", low):
+        return True, json_text[:120]
+    if (
+        re.search(r"\b(?:allow|allowed|pass|passed|safe|approved)\s*[:=]\s*(?:false|no|0)\b", low)
+        or re.search(r"\b(?:deny|denied|block|blocked|unsafe|violation|risk|flagged)\s*[:=]\s*(?:true|yes|1)\b", low)
+        or "拒绝" in json_text
+        or "不通过" in json_text
+        or "违规" in json_text
+        or "不安全" in json_text
+    ):
+        return False, json_text[:120]
+    if (
+        re.search(r"\b(?:allow|allowed|pass|passed|safe|approved)\s*[:=]\s*(?:true|yes|1)\b", low)
+        or re.search(r"\b(?:deny|denied|block|blocked|unsafe|violation|risk|flagged)\s*[:=]\s*(?:false|no|0)\b", low)
+        or "通过" in json_text
+        or "允许" in json_text
+        or "安全" in json_text
+    ):
+        return True, json_text[:120]
+    return False, f"无法判定审核结果: {json_text[:120]}"
+
+
 def extract_image_urls(text: str) -> List[str]:
     raw = decode_html_entities(text)
     result: List[str] = []

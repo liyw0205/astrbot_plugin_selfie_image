@@ -339,3 +339,5 @@ python -m unittest tests/test_core.py
 2026-07-03：修复 Web 刷新模型列表时 Gemini base URL 归一化错误，Gemini 渠道会从 `.../v1beta/...` 生图端点还原到 API 根并优先请求 `/v1beta/models`，同时复用 provider 别名归一化；OpenAI 兼容渠道保持原候选顺序。补充 `build_model_list_urls()` 单测。验证命令：`python -Wd -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-03：增强 Web 刷新模型列表的响应解析，除 `id/name` 外支持 `model`、`model_id`、`modelName`、`model_name` 等常见字段，并避免把 `owner/object/metadata` 等无关字符串扫入模型缓存。补充 `extract_model_ids_from_response()` 单测。验证命令：`python -Wd -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-03：增强审核模型响应解析，抽出 `parse_audit_response_text()` 纯函数，支持 fenced JSON、`safe/is_safe`、`unsafe/risk/flagged`、`result/status/verdict` 等常见字段，避免 `{"safe": true, "risk": false}` 被文本 fallback 里的 `false` 误判为拒绝。补充 JSON 和纯文本审核解析单测。验证命令：`python -Wd -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
