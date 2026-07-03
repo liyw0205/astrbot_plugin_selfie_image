@@ -361,3 +361,5 @@ python -m unittest tests/test_core.py
 2026-07-04：增强参考图 base64 解析容错，`data_url_to_bytes()` 对 malformed `data:image/...;base64,...`、`base64://...` 和纯 base64 输入不再抛解码异常，而是返回空数据让上层走现有无效图片错误路径。补充非法 base64 单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-04：补齐缓存图片 MIME/扩展名识别，`detect_mime_by_bytes()` 支持 AVIF、HEIC、HEIF、SVG，并将 WebP 的 RIFF 判断收紧到 `WEBP` 标记；`ext_from_mime()` 和 `guess_image_content_type()` 同步支持现代图片格式，避免缓存文件和 Web 预览误标成 PNG。补充 MIME 检测单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-04：收紧用户参考图 HTTP 下载校验，`fetch_image_source()` 会拒绝非图片 Content-Type，二进制类型或缺失类型时使用图片签名确认，并和 provider 下载逻辑一样容忍非法 `Content-Length`。避免错误 JSON/文本响应被当作 PNG 参考图写入后续生成链路。补充 HTTP 参考图下载单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。

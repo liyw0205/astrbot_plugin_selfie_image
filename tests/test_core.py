@@ -55,7 +55,9 @@ from astrbot_plugin_selfie_image.utils import (
     detect_mime_by_bytes,
     ext_from_mime,
     extract_group_id_from_text,
+    fetch_image_source,
     guess_image_content_type,
+    looks_like_image_bytes,
     parse_audit_response_text,
     resolve_awaitable,
     safe_delete_relative_files,
@@ -290,6 +292,7 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(detect_mime_by_bytes(b"\x00\x00\x00 ftypheic\x00\x00\x00\x00"), "image/heic")
         self.assertEqual(detect_mime_by_bytes(b"<?xml version='1.0'?><svg></svg>"), "image/svg+xml")
         self.assertEqual(detect_mime_by_bytes(b"RIFF1234WAVEfmt "), "image/png")
+        self.assertFalse(looks_like_image_bytes(b"RIFF1234WAVEfmt "))
         self.assertEqual(ext_from_mime("image/svg+xml"), "svg")
         self.assertEqual(ext_from_mime("image/avif"), "avif")
         self.assertEqual(guess_image_content_type("https://example.test/a.heif"), "image/heif")
@@ -423,6 +426,23 @@ class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await resolve_awaitable("plain"), "plain")
         self.assertEqual(await resolve_awaitable(outer()), "nested")
         self.assertEqual(await resolve_awaitable(future), "future")
+
+    async def test_fetch_image_source_rejects_non_image_http_response(self) -> None:
+        session = FakeSession(get_data=b'{"error":"not image"}', get_headers={"content-type": "application/json"})
+
+        result = await fetch_image_source("https://example.test/ref.png", session, max_bytes=1024 * 1024)
+
+        self.assertIsNone(result)
+
+    async def test_fetch_image_source_accepts_binary_image_with_invalid_length(self) -> None:
+        session = FakeSession(
+            get_data=PNG_BYTES,
+            get_headers={"content-type": "application/x-binary", "content-length": "unknown"},
+        )
+
+        result = await fetch_image_source("https://example.test/ref.bin", session, max_bytes=1024 * 1024)
+
+        self.assertEqual(result, (PNG_BYTES, "image/png"))
 
 
 class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):

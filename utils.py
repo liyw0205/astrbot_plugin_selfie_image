@@ -85,6 +85,21 @@ def detect_mime_by_bytes(data: bytes) -> str:
     return "image/png"
 
 
+def looks_like_image_bytes(data: bytes) -> bool:
+    b = data or b""
+    stripped = b.lstrip().lower()
+    return (
+        len(b) >= 2 and b[:2] == b"\xff\xd8"
+        or len(b) >= 4 and b[:4] == b"\x89PNG"
+        or len(b) >= 3 and b[:3] == b"GIF"
+        or len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WEBP"
+        or len(b) >= 2 and b[:2] == b"BM"
+        or len(b) >= 12 and b[4:8] == b"ftyp" and b[8:12] in {b"avif", b"heic", b"heix", b"heif", b"mif1"}
+        or stripped.startswith(b"<svg")
+        or stripped.startswith(b"<?xml") and b"<svg" in stripped[:512]
+    )
+
+
 def normalize_image_mime(mime: str, fallback: str = "image/png") -> str:
     text = str(mime or "").split(";", 1)[0].strip().lower()
     if text in {"image/jpg", "image/pjpeg"}:
@@ -432,9 +447,16 @@ async def fetch_image_source(
         async with session.get(text, headers=headers, timeout=request_timeout, allow_redirects=True) as response:
             if response.status >= 400:
                 return None
-            content_length = response.headers.get("content-length", "")
-            if content_length and int(content_length) > max_bytes:
+            content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+            binary_content_types = {"application/octet-stream", "binary/octet-stream", "application/binary", "application/x-binary"}
+            if content_type and not content_type.startswith("image/") and content_type not in binary_content_types:
                 return None
+            content_length = response.headers.get("content-length", "")
+            try:
+                if content_length and int(content_length) > max_bytes:
+                    return None
+            except (TypeError, ValueError):
+                pass
             chunks: List[bytes] = []
             total = 0
             async for chunk in response.content.iter_chunked(64 * 1024):
@@ -443,7 +465,11 @@ async def fetch_image_source(
                     return None
                 chunks.append(chunk)
             data = b"".join(chunks)
-            header_mime = normalize_image_mime(response.headers.get("content-type", ""), "")
+            if not data:
+                return None
+            if (not content_type or content_type in binary_content_types) and not looks_like_image_bytes(data):
+                return None
+            header_mime = normalize_image_mime(content_type, "")
             return data, header_mime or detect_mime_by_bytes(data)
     except (asyncio.TimeoutError, aiohttp.ClientError, OSError, binascii.Error, ValueError):
         return None
