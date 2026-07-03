@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import re
 import threading
 from typing import Any, Optional
 
@@ -17,6 +18,9 @@ except Exception:  # pragma: no cover - handled at runtime in AstrBot env
     request = None  # type: ignore
     send_file = None  # type: ignore
     make_server = None  # type: ignore
+
+
+WEB_TASK_ID_RE = re.compile(r"^web-\d{8,}-\d+$")
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -1827,6 +1831,8 @@ class FlaskWebServer:
         def test_image_channel_task_status(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
+            if not WEB_TASK_ID_RE.fullmatch(str(task_id or "").strip()):
+                return fail("非法任务 ID", 400)
             try:
                 return ok(self.plugin.get_web_image_task(task_id))
             except Exception as exc:

@@ -168,6 +168,7 @@ class FakeWebPlugin:
         self.config_path = os.path.join(self.temp_dir.name, "selfie_image_config.json")
         self.records_path = os.path.join(self.temp_dir.name, "selfie_image_records.json")
         self.generated_dir = os.path.join(self.temp_dir.name, "image_cache")
+        self.task_status_calls = []
         os.makedirs(self.generated_dir, exist_ok=True)
 
     def _cache_size_bytes(self) -> int:
@@ -197,6 +198,12 @@ class FakeWebPlugin:
 
     async def refresh_selfie_profile_from_web(self):
         return {"status": "refreshed", "updated_at": "2026-07-04 00:00:00"}
+
+    def get_web_image_task(self, task_id: str):
+        self.task_status_calls.append(task_id)
+        if task_id == "web-12345678-1":
+            return {"task_id": task_id, "status": "succeeded", "success": True}
+        raise ValueError("任务不存在或已清理")
 
     def get_cached_image_info(self, rel_path: str):
         base = os.path.abspath(self.generated_dir)
@@ -806,6 +813,26 @@ class WebApiTests(unittest.TestCase):
         response = client.post("/api/selfie-profile/refresh", data="", headers=headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"]["status"], "refreshed")
+
+    def test_web_task_status_validates_task_id(self) -> None:
+        plugin = FakeWebPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        self.assertEqual(client.get("/api/test-image-channel/tasks/web-12345678-1").status_code, 401)
+
+        response = client.get("/api/test-image-channel/tasks/not-a-task", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("非法任务 ID", response.get_json()["error"])
+        self.assertEqual(plugin.task_status_calls, [])
+
+        response = client.get("/api/test-image-channel/tasks/web-12345678-1", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["status"], "succeeded")
+
+        response = client.get("/api/test-image-channel/tasks/web-12345678-2", headers=headers)
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("任务不存在", response.get_json()["error"])
 
     def test_cache_image_route_serves_files_and_rejects_traversal(self) -> None:
         plugin = FakeWebPlugin("secret")
