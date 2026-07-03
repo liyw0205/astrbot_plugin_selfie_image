@@ -391,7 +391,25 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
                     elif len(text) > 100:
                         b64.add(text)
 
-        urlish_keys = ("url", "image", "imageUrl", "image_url", "output")
+        urlish_keys = (
+            "url",
+            "href",
+            "src",
+            "image",
+            "imageUrl",
+            "image_url",
+            "output",
+            "artifact",
+            "artifacts",
+            "asset",
+            "assets",
+            "file",
+            "files",
+            "download_url",
+            "downloadUrl",
+            "media_url",
+            "mediaUrl",
+        )
         text_keys = ("content", "text")
         for key in (*urlish_keys, *text_keys):
             field_value = item.get(key)
