@@ -30,6 +30,7 @@ IMAGE_EXTENSIONS = {
     ".tif",
     ".tiff",
     ".jfif",
+    ".svg",
 }
 
 
@@ -143,26 +144,27 @@ def guess_image_content_type(source: str, fallback: str = "image/png") -> str:
         media_type = header[5:].split(";", 1)[0].strip()
         if media_type.startswith("image/"):
             return normalize_image_mime(media_type)
-    guessed = mimetypes.guess_type(text)[0] or ""
+    path_text = lowered.split("#", 1)[0].split("?", 1)[0]
+    guessed = mimetypes.guess_type(path_text)[0] or ""
     if guessed.startswith("image/"):
         return normalize_image_mime(guessed)
-    if lowered.endswith((".jpg", ".jpeg")):
+    if path_text.endswith((".jpg", ".jpeg", ".jfif")):
         return "image/jpeg"
-    if lowered.endswith(".webp"):
+    if path_text.endswith(".webp"):
         return "image/webp"
-    if lowered.endswith(".gif"):
+    if path_text.endswith(".gif"):
         return "image/gif"
-    if lowered.endswith(".bmp"):
+    if path_text.endswith(".bmp"):
         return "image/bmp"
-    if lowered.endswith((".tif", ".tiff")):
+    if path_text.endswith((".tif", ".tiff")):
         return "image/tiff"
-    if lowered.endswith(".avif"):
+    if path_text.endswith(".avif"):
         return "image/avif"
-    if lowered.endswith(".heic"):
+    if path_text.endswith(".heic"):
         return "image/heic"
-    if lowered.endswith(".heif"):
+    if path_text.endswith(".heif"):
         return "image/heif"
-    if lowered.endswith(".svg"):
+    if path_text.endswith(".svg"):
         return "image/svg+xml"
     return fallback
 

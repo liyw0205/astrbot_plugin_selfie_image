@@ -309,8 +309,10 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(ext_from_mime("image/tiff"), "tiff")
         self.assertEqual(ext_from_mime("image/avif"), "avif")
         self.assertEqual(guess_image_content_type("https://example.test/a.tiff"), "image/tiff")
+        self.assertEqual(guess_image_content_type("https://example.test/a.png?token=1#view"), "image/png")
+        self.assertEqual(guess_image_content_type("https://example.test/a.jfif?download=1"), "image/jpeg")
         self.assertEqual(guess_image_content_type("https://example.test/a.heif"), "image/heif")
-        self.assertEqual(guess_image_content_type("https://example.test/a.svg"), "image/svg+xml")
+        self.assertEqual(guess_image_content_type("https://example.test/a.svg#icon"), "image/svg+xml")
 
     def test_base_url_normalization(self) -> None:
         self.assertEqual(normalize_image_base_url("https://example.com/v1/images/generations"), "https://example.com")

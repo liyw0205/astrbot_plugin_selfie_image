@@ -369,3 +369,5 @@ python -m unittest tests/test_core.py
 2026-07-04：收紧所有 HTTP 图片下载后的内容校验，provider 结果图和用户参考图即使服务端声明 `image/*`，也必须通过图片签名检查，避免 JSON/文本错误响应被当作图片进入缓存或生成链路；同时补充 TIFF MIME/扩展名和签名识别。补充伪造 `image/png` 响应拒绝和 TIFF 单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-04：收紧参考图 base64 内容校验，`data_url_to_bytes()` 在解码成功后也必须确认字节像图片，避免合法 base64 的 JSON/文本被 Web 形象上传或渠道测试误当 PNG 参考图。补充合法 base64 非图片 payload 拒绝单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-04：增强参考图 URL MIME 推断，`guess_image_content_type()` 会忽略 query/fragment 后再按扩展名判断，避免 `a.png?token=...`、`a.svg#icon` 等 URL 退回默认类型；同步将 `.svg` 纳入图片 URL 扩展名集合，并补充 `.jfif` 显式 JPEG 判断。补充带 query/fragment 的 MIME 推断单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
