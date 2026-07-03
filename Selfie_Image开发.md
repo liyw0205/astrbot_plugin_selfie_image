@@ -343,3 +343,9 @@ python -m unittest tests/test_core.py
 2026-07-03：增强审核模型响应解析，抽出 `parse_audit_response_text()` 纯函数，支持 fenced JSON、`safe/is_safe`、`unsafe/risk/flagged`、`result/status/verdict` 等常见字段，避免 `{"safe": true, "risk": false}` 被文本 fallback 里的 `false` 误判为拒绝。补充 JSON 和纯文本审核解析单测。验证命令：`python -Wd -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
 
 2026-07-03：补齐 Web 刷新模型列表的渠道类型兼容读取，`providerType`、`api_type`、`apiType` 和 `google/xai/openai_compatible` 等别名会按现有 provider 归一化处理，避免 JSON 兜底编辑或旧字段传入时误按 OpenAI 刷新。补充 `provider_type_from_channel_payload()` 单测。验证命令：`python -Wd -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-03：增强 AstrBot provider 审核 fallback 的返回值处理，新增 `resolve_awaitable()`，可解析普通值、Future、单层/嵌套 awaitable，避免不同 AstrBot provider SDK 返回形态导致审核 fallback 丢结果。补充异步工具单测。验证命令：`python -Wd -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-03：补充 Web API 轻量回归和 provider 错误预览兼容。Web JSON POST 接口会在收到数组等非对象请求体时返回 400，`/api/config` 的 `config` 包装字段也必须是对象，避免无效请求体进入插件逻辑后变成 500；provider HTTP 错误预览新增 `{"error":"..."}` 和 `{"detail":"..."}` 提取。补充相关单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。
+
+2026-07-04：增强渠道监控记录清理，`clear_recent_records()` 清空记录时会同步删除记录引用的请求图、生成图和旧版 `image_paths` 缓存文件；删除逻辑只允许移除 `image_cache` 内相对路径，路径穿越会被跳过。新增 `collect_record_cache_paths()` 和 `safe_delete_relative_files()` 工具函数及单测。验证命令：`python -m unittest tests/test_core.py`、`python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py`。

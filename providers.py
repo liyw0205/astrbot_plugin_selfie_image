@@ -215,8 +215,12 @@ def http_error_preview(text: str, limit: int = 500) -> str:
         error = data.get("error") if isinstance(data, dict) else None
         if isinstance(error, dict) and error.get("message"):
             preview = str(error.get("message") or "")
+        elif isinstance(error, str) and error.strip():
+            preview = error
         elif isinstance(data, dict) and data.get("message"):
             preview = str(data.get("message") or "")
+        elif isinstance(data, dict) and data.get("detail"):
+            preview = str(data.get("detail") or "")
     except Exception:
         pass
     preview = re.sub(r"\s+", " ", preview).strip()

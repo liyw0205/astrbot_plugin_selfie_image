@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import asyncio
 import json
 import os
 import sys
@@ -41,13 +42,21 @@ from astrbot_plugin_selfie_image.providers import (
     clean_image_url,
     extract_model_ids_from_response,
     extract_image_urls_from_text,
+    http_error_preview,
     images_from_response_unknown,
     looks_like_binary_image,
     normalize_gemini_base_url,
     normalize_image_base_url,
     provider_type_from_channel_payload,
 )
-from astrbot_plugin_selfie_image.utils import data_url_to_bytes, extract_group_id_from_text, parse_audit_response_text
+from astrbot_plugin_selfie_image.utils import (
+    collect_record_cache_paths,
+    data_url_to_bytes,
+    extract_group_id_from_text,
+    parse_audit_response_text,
+    resolve_awaitable,
+    safe_delete_relative_files,
+)
 from astrbot_plugin_selfie_image.web import Flask, FlaskWebServer
 
 
@@ -284,10 +293,49 @@ class ImageUtilityTests(unittest.TestCase):
             ],
         )
 
+    def test_http_error_preview_extracts_common_error_shapes(self) -> None:
+        self.assertEqual(http_error_preview('{"error":"invalid api key"}'), "invalid api key")
+        self.assertEqual(http_error_preview('{"detail":"quota exceeded"}'), "quota exceeded")
+
     def test_group_id_extraction(self) -> None:
         self.assertEqual(extract_group_id_from_text("aiocqhttp:group:123456"), "123456")
         self.assertEqual(extract_group_id_from_text("group_id=98765"), "98765")
         self.assertEqual(extract_group_id_from_text("private:123"), "")
+
+    def test_record_cache_path_collection_and_safe_delete(self) -> None:
+        records = [
+            {
+                "request_image_paths": ["request_a.png", "request_a.png"],
+                "response_data": {"generated_image_paths": ["nested/generated_b.png"]},
+                "image_paths": "legacy_c.png",
+            },
+            {"generated_image_paths": ["../outside.png", ""]},
+        ]
+
+        paths = collect_record_cache_paths(records)
+        self.assertEqual(paths, ["request_a.png", "legacy_c.png", "nested/generated_b.png", "../outside.png"])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir) / "image_cache"
+            base.mkdir()
+            (base / "nested").mkdir()
+            outside = Path(temp_dir) / "outside.png"
+            files = [
+                base / "request_a.png",
+                base / "nested" / "generated_b.png",
+                base / "legacy_c.png",
+                outside,
+            ]
+            for path in files:
+                path.write_bytes(PNG_BYTES)
+
+            deleted = safe_delete_relative_files(str(base), paths)
+
+            self.assertEqual(deleted, ["request_a.png", "legacy_c.png", "nested/generated_b.png"])
+            self.assertFalse((base / "request_a.png").exists())
+            self.assertFalse((base / "nested" / "generated_b.png").exists())
+            self.assertFalse((base / "legacy_c.png").exists())
+            self.assertTrue(outside.exists())
 
     def test_audit_response_parser_handles_json_and_text_variants(self) -> None:
         self.assertEqual(parse_audit_response_text('```json\n{"allow": "yes", "reason": "ok"}\n```'), (True, "ok"))
@@ -298,6 +346,22 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(parse_audit_response_text("safe: true"), (True, "safe: true"))
         self.assertEqual(parse_audit_response_text("risk: false"), (True, "risk: false"))
         self.assertFalse(parse_audit_response_text("不安全，拒绝")[0])
+
+
+class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_resolve_awaitable_handles_plain_nested_and_future_values(self) -> None:
+        async def inner():
+            return "nested"
+
+        async def outer():
+            return inner()
+
+        future = asyncio.get_running_loop().create_future()
+        future.set_result("future")
+
+        self.assertEqual(await resolve_awaitable("plain"), "plain")
+        self.assertEqual(await resolve_awaitable(outer()), "nested")
+        self.assertEqual(await resolve_awaitable(future), "future")
 
 
 class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
@@ -426,6 +490,34 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(plugin.config.web_token, "secret")
         self.assertEqual(plugin.config.web_host, "127.0.0.1")
         self.assertEqual(plugin.config.image_max_batch_count, 8)
+
+    def test_config_api_rejects_invalid_json_shapes(self) -> None:
+        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        response = client.post("/api/config", json=["bad"], headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("请求体必须是 JSON 对象", response.get_json()["error"])
+
+        response = client.post("/api/config", json={"config": ["bad"]}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("config 必须是 JSON 对象", response.get_json()["error"])
+
+    def test_json_post_apis_reject_non_object_payloads_before_plugin_call(self) -> None:
+        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+        routes = [
+            "/api/selfie-reference",
+            "/api/test-image-channel",
+            "/api/test-image-channel/tasks",
+            "/api/refresh-image-models",
+        ]
+
+        for route in routes:
+            with self.subTest(route=route):
+                response = client.post(route, json=["bad"], headers=headers)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("请求体必须是 JSON 对象", response.get_json()["error"])
 
     def test_records_api_requires_auth_and_returns_records(self) -> None:
         plugin = FakeWebPlugin("secret")

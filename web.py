@@ -1691,6 +1691,14 @@ class FlaskWebServer:
         def fail(message: str, status: int = 400) -> Any:
             return jsonify({"success": False, "error": message}), status
 
+        def json_object_payload() -> Any:
+            payload = request.get_json(silent=True)
+            if payload is None:
+                return {}, None
+            if not isinstance(payload, dict):
+                return None, fail("请求体必须是 JSON 对象")
+            return payload, None
+
         def token_from_request() -> str:
             auth = str(request.headers.get("Authorization") or "")
             if auth.lower().startswith("bearer "):
@@ -1737,10 +1745,15 @@ class FlaskWebServer:
                 return fail("Unauthorized: Token 不正确", 401)
             if request.method == "GET":
                 return ok(self.plugin.get_config_for_web())
-            payload = request.get_json(silent=True) or {}
-            patch = payload.get("config") if isinstance(payload.get("config"), dict) else payload
-            if not isinstance(patch, dict):
-                return fail("请求体必须是 JSON 对象")
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            if "config" in payload:
+                if not isinstance(payload.get("config"), dict):
+                    return fail("config 必须是 JSON 对象")
+                patch = payload["config"]
+            else:
+                patch = payload
             data = self.plugin.update_config_from_web(patch)
             return ok(data)
 
@@ -1750,7 +1763,9 @@ class FlaskWebServer:
                 return fail("Unauthorized: Token 不正确", 401)
             if request.method == "GET":
                 return ok(self.plugin.get_selfie_reference_payload())
-            payload = request.get_json(silent=True) or {}
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
             try:
                 data = self.plugin.save_selfie_reference_from_web(payload)
                 return ok(data, message="自拍参考图已保存")
@@ -1777,7 +1792,9 @@ class FlaskWebServer:
         def test_image_channel() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            payload = request.get_json(silent=True) or {}
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
             try:
                 data = self._run_async(self.plugin.web_test_image(payload), timeout=max(30, self.plugin.config.image_global_timeout + 30))
                 return ok(data)
@@ -1788,7 +1805,9 @@ class FlaskWebServer:
         def test_image_channel_task_start() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            payload = request.get_json(silent=True) or {}
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
             try:
                 data = self.plugin.start_web_image_task(payload)
                 return ok(data)
@@ -1808,7 +1827,9 @@ class FlaskWebServer:
         def refresh_image_models() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            payload = request.get_json(silent=True) or {}
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
             try:
                 data = self._run_async(self.plugin.web_refresh_image_models(payload), timeout=30)
                 return ok(data, count=len(data))

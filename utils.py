@@ -6,6 +6,7 @@ import base64
 import asyncio
 import binascii
 import hashlib
+import inspect
 import json
 import mimetypes
 import os
@@ -30,6 +31,13 @@ IMAGE_EXTENSIONS = {
     ".tiff",
     ".jfif",
 }
+
+
+async def resolve_awaitable(value: Any) -> Any:
+    result = value
+    while inspect.isawaitable(result):
+        result = await result
+    return result
 
 
 def load_json_file(path: str) -> Dict[str, Any]:
@@ -145,6 +153,61 @@ def save_image_bytes(data: bytes, save_dir: str, prefix: str = "img", mime: str 
     with open(path, "wb") as file:
         file.write(data)
     return path
+
+
+def collect_record_cache_paths(records: Any) -> List[str]:
+    result: List[str] = []
+    seen = set()
+    path_keys = ("request_image_paths", "generated_image_paths", "image_paths")
+
+    def add(value: Any) -> None:
+        if isinstance(value, str):
+            values = [value]
+        elif isinstance(value, (list, tuple, set)):
+            values = list(value)
+        else:
+            return
+        for item in values:
+            text = str(item or "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                result.append(text)
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for key in path_keys:
+                add(value.get(key))
+            for child in value.values():
+                if isinstance(child, (dict, list, tuple)):
+                    walk(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                if isinstance(child, (dict, list, tuple)):
+                    walk(child)
+
+    walk(records)
+    return result
+
+
+def safe_delete_relative_files(base_dir: str, rel_paths: Iterable[Any]) -> List[str]:
+    base = os.path.abspath(str(base_dir or ""))
+    deleted: List[str] = []
+    if not base:
+        return deleted
+    for item in rel_paths:
+        rel_path = str(item or "").strip()
+        if not rel_path:
+            continue
+        path = os.path.abspath(os.path.join(base, rel_path))
+        if path == base or not path.startswith(base + os.sep):
+            continue
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+                deleted.append(rel_path)
+        except OSError:
+            continue
+    return deleted
 
 
 def looks_like_image_url(text: str) -> bool:

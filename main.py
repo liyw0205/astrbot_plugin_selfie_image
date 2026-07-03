@@ -66,6 +66,7 @@ from .providers import (
 )
 from .utils import (
     bytes_to_data_url,
+    collect_record_cache_paths,
     data_url_to_bytes,
     detect_mime_by_bytes,
     event_group_id,
@@ -78,6 +79,8 @@ from .utils import (
     load_json_file,
     normalize_image_mime,
     parse_audit_response_text,
+    resolve_awaitable,
+    safe_delete_relative_files,
     save_image_bytes,
     save_json_file,
 )
@@ -925,9 +928,7 @@ class SelfieImagePlugin(Star):
                 provider = getter()
                 requester = getattr(provider, "text_chat", None) or getattr(provider, "request", None)
                 if callable(requester):
-                    response = requester(prompt=text)
-                    if asyncio.iscoroutine(response):
-                        response = await response
+                    response = await resolve_awaitable(requester(prompt=text))
                     return str(getattr(response, "completion_text", response) or "").strip()
         except Exception:
             pass
@@ -1010,9 +1011,11 @@ class SelfieImagePlugin(Star):
     def clear_recent_records(self) -> int:
         with self._records_lock:
             count = len(self._records)
+            records = copy.deepcopy(self._records)
             self._records.clear()
             self._persist_records()
-            return count
+        safe_delete_relative_files(self.generated_dir, collect_record_cache_paths(records))
+        return count
 
     def _web_task_timestamp(self) -> str:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
