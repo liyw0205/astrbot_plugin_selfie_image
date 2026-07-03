@@ -426,6 +426,14 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.requests[0]["method"], "GET")
         self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/generated.png")
 
+    async def test_unknown_response_parser_ignores_invalid_content_length_header(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES, get_headers={"content-type": "image/png", "content-length": "unknown"})
+        payload = {"data": [{"url": "https://example.test/generated.png"}]}
+
+        images = await images_from_response_unknown(session, payload, timeout=5)
+
+        self.assertEqual(images, [PNG_BYTES])
+
     def test_text_url_extraction_cleans_markdown_html_and_trailing_punctuation(self) -> None:
         extracted = extract_image_urls_from_text(
             '<img src="https://example.test/a.png?x=1&amp;y=2"> '

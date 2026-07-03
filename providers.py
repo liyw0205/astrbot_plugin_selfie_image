@@ -288,8 +288,11 @@ async def fetch_generated_image_url(
             if content_type and not content_type.startswith("image/") and content_type != "application/octet-stream":
                 return None
             content_length = response.headers.get("content-length", "")
-            if content_length and int(content_length) > max_bytes:
-                return None
+            try:
+                if content_length and int(content_length) > max_bytes:
+                    return None
+            except (TypeError, ValueError):
+                pass
             chunks: List[bytes] = []
             total = 0
             async for chunk in response.content.iter_chunked(64 * 1024):
