@@ -1165,6 +1165,36 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_unknown_response_parser_reads_html_poster_background_attrs(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '<video poster="outputs/from-poster.png"></video><table background=/outputs/from-background.webp></table>'
+                    }
+                }
+            ]
+        }
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        extracted = extract_image_urls_from_text('<video poster="#ignored"></video><body background="outputs/body-bg.webp">')
+        self.assertEqual(extracted["others"], ["outputs/body-bg.webp"])
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(
+            {request["url"] for request in session.requests},
+            {
+                "https://example.test/outputs/from-poster.png",
+                "https://example.test/outputs/from-background.webp",
+            },
+        )
+
     async def test_unknown_response_parser_reads_json_script_image_content(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {
