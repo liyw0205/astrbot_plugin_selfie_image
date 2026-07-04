@@ -45,10 +45,13 @@ async def generate_image_with_fallback(
     for attempt in range(1, total_attempts + 1):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return ImageGenerateResult(error=f"生图全局超时（{global_timeout}秒），最后错误: {last_error}", attempts=attempts)
+            return ImageGenerateResult(
+                error=redact_sensitive_text(f"生图全局超时（{global_timeout}秒），最后错误: {last_error}"),
+                attempts=redact_sensitive_data(attempts),
+            )
 
         target = targets[(attempt - 1) % len(targets)]
-        label = target.label
+        label = redact_sensitive_text(target.label)
         adapter = create_adapter(target, session)
         attempt_info = _target_attempt_base(target, attempt)
         started = time.monotonic()
@@ -86,7 +89,10 @@ async def generate_image_with_fallback(
         if attempt < total_attempts:
             wait_seconds = attempt
             if deadline - time.monotonic() <= wait_seconds:
-                return ImageGenerateResult(error=f"生图全局超时（{global_timeout}秒），最后错误: {last_error}", attempts=attempts)
+                return ImageGenerateResult(
+                    error=redact_sensitive_text(f"生图全局超时（{global_timeout}秒），最后错误: {last_error}"),
+                    attempts=redact_sensitive_data(attempts),
+                )
             await asyncio.sleep(wait_seconds)
 
-    return ImageGenerateResult(error=last_error, attempts=attempts)
+    return ImageGenerateResult(error=redact_sensitive_text(last_error), attempts=redact_sensitive_data(attempts))

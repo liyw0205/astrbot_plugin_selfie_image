@@ -1151,6 +1151,36 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("api_key=[REDACTED]", result.error)
         self.assertNotIn("AIzaSySecretTokenValue", json.dumps(result.attempts, ensure_ascii=False))
 
+    async def test_fallback_redacts_sensitive_target_fields_on_final_failure(self) -> None:
+        target = ImageModelTarget(
+            channel_name="api_key=abcdefghijklmnop",
+            provider_type="grok",
+            base_url="https://example.test",
+            api_key="test-key",
+            model="token=secretmodelvalue12345",
+            timeout=30,
+        )
+
+        def create_fake_adapter(target, session):
+            return FakeGenerateAdapter(ImageGenerateResult(error="temporary failure"))
+
+        with patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter):
+            result = await generate_image_with_fallback(
+                [target],
+                ImageGenerateRequest(prompt="cat"),
+                FakeSession(),
+                max_attempts=1,
+            )
+
+        attempt_text = json.dumps(result.attempts, ensure_ascii=False)
+        self.assertIn("api_key=[REDACTED]", result.error)
+        self.assertIn("token=[REDACTED]", attempt_text)
+        self.assertIn("[REDACTED]", attempt_text)
+        self.assertNotIn("abcdefghijklmnop", result.error)
+        self.assertNotIn("secretmodelvalue12345", result.error)
+        self.assertNotIn("abcdefghijklmnop", attempt_text)
+        self.assertNotIn("secretmodelvalue12345", attempt_text)
+
 
 @unittest.skipIf(Flask is None, "Flask is not installed")
 class WebApiTests(unittest.TestCase):
