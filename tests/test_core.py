@@ -1135,6 +1135,36 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_unknown_response_parser_reads_html_meta_image_content(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '<meta property="og:image" content="outputs/from-og.png"><meta name=twitter:image content=/outputs/from-twitter.webp>'
+                    }
+                }
+            ]
+        }
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        extracted = extract_image_urls_from_text('<meta name="description" content="not an image"><meta property="og:image" content="outputs/meta.webp">')
+        self.assertEqual(extracted["others"], ["outputs/meta.webp"])
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(
+            {request["url"] for request in session.requests},
+            {
+                "https://example.test/outputs/from-og.png",
+                "https://example.test/outputs/from-twitter.webp",
+            },
+        )
+
     async def test_unknown_response_parser_reads_css_url_image_links(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {
