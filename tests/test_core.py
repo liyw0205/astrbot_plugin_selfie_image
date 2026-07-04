@@ -468,6 +468,8 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(redact_sensitive_text('"token":"abcdefghijklmnop"'), '"token":"[REDACTED]"')
         self.assertEqual(redact_sensitive_text('"accessToken":"abcdefghijklmnop"'), '"accessToken":"[REDACTED]"')
         self.assertEqual(redact_sensitive_text('"clientSecret":"secret-value-12345"'), '"clientSecret":"[REDACTED]"')
+        self.assertEqual(redact_sensitive_text("access_token=abcdefghijklmnop"), "access_token=[REDACTED]")
+        self.assertEqual(redact_sensitive_text("x-api-key: provider-secret-value"), "x-api-key: [REDACTED]")
 
     def test_sensitive_text_redacts_proxy_and_url_credentials(self) -> None:
         text = (

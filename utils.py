@@ -378,8 +378,7 @@ def redact_sensitive_text(text: str) -> str:
     patterns = [
         (r"(?i)([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^@\s/]+@", r"\1[REDACTED]@"),
         (r"(?i)(authorization\s*[:=]\s*bearer\s+)[A-Za-z0-9._\-+/=]{8,}", r"\1[REDACTED]"),
-        (r"(?i)(x-goog-api-key\s*[:=]\s*)[A-Za-z0-9._\-+/=]{8,}", r"\1[REDACTED]"),
-        (r"(?i)((?:api[_-]?key|apikey|token|secret)\s*[=:]\s*)[A-Za-z0-9._\-+/=]{8,}", r"\1[REDACTED]"),
+        (r"(?i)((?:x-api-key|x-goog-api-key|[A-Za-z0-9_-]*(?:api[_-]?key|apikey|token|secret))\s*[:=]\s*)[A-Za-z0-9._\-+/=]{8,}", r"\1[REDACTED]"),
         (r"(?i)((?:proxy|password)\s*[=:]\s*)[^\s,;]{8,}", r"\1[REDACTED]"),
         (r"(?i)([\"'](?:api[_-]?key|apikey|token|secret|authorization|password|proxy|cookie|set-cookie|x-api-key|x-goog-api-key|[A-Za-z0-9_-]*(?:token|secret|api[_-]?key))[\"']\s*:\s*[\"'])[^\"']{8,}([\"'])", r"\1[REDACTED]\2"),
         (r"sk-[A-Za-z0-9._\-]{8,}", "sk-[REDACTED]"),
