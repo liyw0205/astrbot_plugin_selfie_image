@@ -394,6 +394,8 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
             others.update(extracted["others"])
             if text.lower().startswith(("data:image/", "base64://")):
                 b64.add(text)
+            elif looks_like_relative_image_url(text):
+                others.add(text)
             elif len(text) > 100 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", text):
                 b64.add(text)
             json_candidates: List[str] = []
