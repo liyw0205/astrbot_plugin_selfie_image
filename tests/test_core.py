@@ -1062,6 +1062,16 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(self.make_client(FakeWebPlugin(""), host="127.0.0.1").get("/api/health").status_code, 200)
         self.assertEqual(self.make_client(FakeWebPlugin(""), host="0.0.0.0").get("/api/health").status_code, 401)
 
+    def test_default_weak_token_is_rejected_on_public_bind_host(self) -> None:
+        public_client = self.make_client(FakeWebPlugin("changeme"), host="0.0.0.0")
+        local_client = self.make_client(FakeWebPlugin("changeme"), host="127.0.0.1")
+
+        public_response = public_client.get("/api/health", headers={"X-Selfie-Image-Token": "changeme"})
+        local_response = local_client.get("/api/health", headers={"X-Selfie-Image-Token": "changeme"})
+
+        self.assertEqual(public_response.status_code, 401)
+        self.assertEqual(local_response.status_code, 200)
+
     def test_config_api_does_not_expose_or_override_web_settings(self) -> None:
         plugin = FakeWebPlugin("secret")
         client = self.make_client(plugin, host="0.0.0.0")

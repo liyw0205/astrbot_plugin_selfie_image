@@ -26,6 +26,7 @@ WEB_TASK_ID_RE = re.compile(r"^web-\d{8,}-\d+$")
 MAX_WEB_TOKEN_LENGTH = 4096
 MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
+WEAK_WEB_TOKENS = {"changeme", "change-me", "change_me", "password", "admin", "123456", "test"}
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -1733,11 +1734,16 @@ class FlaskWebServer:
             )
             return [token for token in tokens if token]
 
+        def is_local_bind_host() -> bool:
+            host = str(self.host or "").strip().lower()
+            return host in {"localhost", "::1", "[::1]"} or host.startswith("127.")
+
         def check_auth() -> bool:
             configured = str(getattr(self.plugin.config, "web_token", "") or "").strip()
             if not configured:
-                host = str(self.host or "").strip().lower()
-                return host in {"localhost", "::1"} or host.startswith("127.")
+                return is_local_bind_host()
+            if not is_local_bind_host() and configured.lower() in WEAK_WEB_TOKENS:
+                return False
             for token in token_candidates_from_request():
                 if len(token) > MAX_WEB_TOKEN_LENGTH:
                     continue
