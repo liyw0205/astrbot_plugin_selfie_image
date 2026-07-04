@@ -398,6 +398,13 @@ def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
     for match in re.finditer(r"<(?:a|link)[^>]+href=([^\s\"'>]+)[^>]*>", raw, flags=re.I):
         add_html_image_candidate(match.group(1), b64, urls, others)
 
+    lazy_image_attrs = r"(?:data-src|data-original|data-lazy-src|data-url)"
+    for match in re.finditer(rf"<[^>]+\s{lazy_image_attrs}\s*=\s*[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    for match in re.finditer(rf"<[^>]+\s{lazy_image_attrs}\s*=\s*([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
     for match in re.finditer(r"url\(\s*([\"']?)(.*?)\1\s*\)", raw, flags=re.I):
         add_html_image_candidate(match.group(2), b64, urls, others)
 

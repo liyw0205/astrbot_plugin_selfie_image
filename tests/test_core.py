@@ -1120,6 +1120,36 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(images, [PNG_BYTES])
         self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/from-css.png")
 
+    async def test_unknown_response_parser_reads_lazy_html_image_attrs(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '<img data-src="outputs/from-data-src.png"><img data-original=/outputs/from-original.webp>'
+                    }
+                }
+            ]
+        }
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        extracted = extract_image_urls_from_text('<img data-lazy-src="outputs/from-lazy.webp"><div data-url="#ignored"></div>')
+        self.assertEqual(extracted["others"], ["outputs/from-lazy.webp"])
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(
+            {request["url"] for request in session.requests},
+            {
+                "https://example.test/outputs/from-data-src.png",
+                "https://example.test/outputs/from-original.webp",
+            },
+        )
+
     async def test_unknown_response_parser_ignores_invalid_content_length_header(self) -> None:
         session = FakeSession(get_data=PNG_BYTES, get_headers={"content-type": "image/png", "content-length": "unknown"})
         payload = {"data": [{"url": "https://example.test/generated.png"}]}
