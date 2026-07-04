@@ -842,6 +842,18 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.requests[0]["method"], "GET")
         self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/generated.png")
 
+    async def test_unknown_response_parser_strips_trailing_url_brackets(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {"choices": [{"message": {"content": "result [https://example.test/outputs/bracketed.png]"}}]}
+
+        images = await images_from_response_unknown(session, payload, timeout=5)
+
+        extracted = extract_image_urls_from_text("one [https://example.test/a.webp] two {https://example.test/b.jpg}")
+        self.assertEqual(set(extracted["urls"]), {"https://example.test/a.webp", "https://example.test/b.jpg"})
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["method"], "GET")
+        self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/bracketed.png")
+
     async def test_unknown_response_parser_unescapes_json_slash_urls_in_text(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {"choices": [{"message": {"content": "result https:\\/\\/example.test\\/outputs\\/escaped.png."}}]}
