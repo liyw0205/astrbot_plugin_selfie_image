@@ -370,7 +370,9 @@ def looks_like_relative_image_url(value: str) -> bool:
 
 
 def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
-    raw = re.sub(r"\\u002f", "/", decode_html_entities(str(text or "")).replace("\\/", "/"), flags=re.I)
+    raw = decode_html_entities(str(text or "")).replace("\\/", "/")
+    raw = re.sub(r"\\u002f", "/", raw, flags=re.I)
+    raw = re.sub(r"\\u003a", ":", raw, flags=re.I)
     b64: Set[str] = set()
     urls: Set[str] = set()
     others: Set[str] = set()

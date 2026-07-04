@@ -866,6 +866,18 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.requests[0]["method"], "GET")
         self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/unicode.png")
 
+    async def test_unknown_response_parser_unescapes_unicode_colon_urls_in_text(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {"choices": [{"message": {"content": "result https\\u003A\\u002F\\u002Fexample.test\\u002Foutputs\\u002Funicode-colon.png."}}]}
+
+        images = await images_from_response_unknown(session, payload, timeout=5)
+
+        extracted = extract_image_urls_from_text("result https\\u003a\\u002f\\u002fexample.test\\u002foutputs\\u002funicode-colon.webp.")
+        self.assertEqual(extracted["urls"], ["https://example.test/outputs/unicode-colon.webp"])
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["method"], "GET")
+        self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/unicode-colon.png")
+
     async def test_unknown_response_parser_resolves_modern_relative_filenames(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {"data": [{"output": "generated.tiff"}]}
