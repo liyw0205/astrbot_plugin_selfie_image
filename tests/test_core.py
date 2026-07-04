@@ -896,6 +896,35 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_unknown_response_parser_reads_link_signed_cdn_aliases(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "files": [
+                {"link": "outputs/from-link.png"},
+                {"location": "/outputs/from-location.webp"},
+                {"signedUrl": "/outputs/from-signed-url.jpg"},
+                {"cdn_url": "/outputs/from-cdn-url.png"},
+            ]
+        }
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(
+            {request["url"] for request in session.requests},
+            {
+                "https://example.test/outputs/from-link.png",
+                "https://example.test/outputs/from-location.webp",
+                "https://example.test/outputs/from-signed-url.jpg",
+                "https://example.test/outputs/from-cdn-url.png",
+            },
+        )
+
     async def test_unknown_response_parser_reads_json_text_content(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {

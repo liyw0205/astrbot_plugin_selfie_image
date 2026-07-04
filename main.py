@@ -1980,7 +1980,7 @@ class SelfieImagePlugin(Star):
             "resolution": resolution,
             "reference_image_count": len(refs),
             "request_image_paths": request_image_paths,
-            "targets": [target.label for target in selected_targets],
+            "targets": [redact_sensitive_text(target.label) for target in selected_targets],
         }
         request_cleanup = self._cleanup_image_cache_if_needed(request_image_paths)
         if request_cleanup.get("deleted"):

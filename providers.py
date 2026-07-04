@@ -454,6 +454,8 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
             "uri",
             "href",
             "src",
+            "link",
+            "location",
             "image",
             "imageUri",
             "image_uri",
@@ -485,6 +487,10 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
             "publicUrl",
             "result_url",
             "resultUrl",
+            "signed_url",
+            "signedUrl",
+            "cdn_url",
+            "cdnUrl",
         )
         text_keys = ("content", "text")
         for key in (*urlish_keys, *text_keys):
