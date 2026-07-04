@@ -1165,6 +1165,28 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_unknown_response_parser_reads_json_script_image_content(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '<script type="application/ld+json">{"image":{"url":"/outputs/from-script.png"}}</script>'
+                    }
+                }
+            ]
+        }
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/from-script.png")
+
     async def test_unknown_response_parser_reads_css_url_image_links(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {
