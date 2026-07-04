@@ -452,6 +452,13 @@ def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
     for match in re.finditer(r"https?://[^\s\"'<>]+", raw):
         add_maybe_image_url(match.group(0), b64, urls, others)
 
+    ext_pattern = "|".join(re.escape(ext.lstrip(".")) for ext in sorted(IMAGE_EXTENSIONS, key=len, reverse=True))
+    relative_image_pattern = (
+        rf"(?<![\w:/.-])(?:\.{{0,2}}/)?[A-Za-z0-9_./~%+-]+\.({ext_pattern})(?:[?#][^\s\"'<>]*)?"
+    )
+    for match in re.finditer(relative_image_pattern, raw, flags=re.I):
+        add_html_image_candidate(match.group(0), b64, urls, others)
+
     return {"b64": list(b64), "urls": list(urls), "others": list(others)}
 
 
