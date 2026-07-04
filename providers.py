@@ -405,6 +405,13 @@ def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
     for match in re.finditer(rf"<[^>]+\s{lazy_image_attrs}\s*=\s*([^\s\"'>]+)[^>]*>", raw, flags=re.I):
         add_html_image_candidate(match.group(1), b64, urls, others)
 
+    lazy_srcset_attrs = r"(?:data-srcset|data-lazy-srcset|data-original-srcset)"
+    for match in re.finditer(rf"<[^>]+\s{lazy_srcset_attrs}\s*=\s*[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_srcset_image_urls(match.group(1), b64, urls, others)
+
+    for match in re.finditer(rf"<[^>]+\s{lazy_srcset_attrs}\s*=\s*([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_srcset_image_urls(match.group(1), b64, urls, others)
+
     for match in re.finditer(r"url\(\s*([\"']?)(.*?)\1\s*\)", raw, flags=re.I):
         add_html_image_candidate(match.group(2), b64, urls, others)
 
