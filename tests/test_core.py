@@ -1011,6 +1011,53 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["data"]["auth"])
 
+    def test_auth_rejects_non_ascii_and_oversized_tokens(self) -> None:
+        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
+
+        non_ascii = client.get("/api/health", headers={"Authorization": "Bearer 密码"})
+        oversized = client.get("/api/health", headers={"X-Selfie-Image-Token": "x" * 5000})
+
+        self.assertEqual(non_ascii.status_code, 401)
+        self.assertEqual(oversized.status_code, 401)
+        self.assertIn("no-store", non_ascii.headers.get("Cache-Control", ""))
+        self.assertIn("no-store", oversized.headers.get("Cache-Control", ""))
+
+    def test_auth_accepts_any_valid_token_header(self) -> None:
+        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
+
+        response = client.get(
+            "/api/health",
+            headers={
+                "Authorization": "Bearer wrong-token",
+                "X-Selfie-Image-Token": "secret",
+            },
+        )
+        response_with_non_ascii_auth = client.get(
+            "/api/health",
+            headers={
+                "Authorization": "Bearer 密码",
+                "X-Token": "secret",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response_with_non_ascii_auth.status_code, 200)
+
+    def test_api_responses_are_not_cached(self) -> None:
+        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
+
+        api_response = client.get("/api/health", headers={"Authorization": "Bearer secret"})
+        page_response = client.get("/index.html")
+
+        self.assertIn("no-store", api_response.headers.get("Cache-Control", ""))
+        self.assertEqual(api_response.headers.get("Pragma"), "no-cache")
+        self.assertEqual(api_response.headers.get("Expires"), "0")
+        self.assertNotIn("no-store", page_response.headers.get("Cache-Control", ""))
+        for response in (api_response, page_response):
+            self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
+            self.assertEqual(response.headers.get("Referrer-Policy"), "no-referrer")
+            self.assertEqual(response.headers.get("X-Frame-Options"), "DENY")
+
     def test_empty_token_only_allows_local_bind_host(self) -> None:
         self.assertEqual(self.make_client(FakeWebPlugin(""), host="127.0.0.1").get("/api/health").status_code, 200)
         self.assertEqual(self.make_client(FakeWebPlugin(""), host="0.0.0.0").get("/api/health").status_code, 401)

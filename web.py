@@ -23,6 +23,7 @@ except Exception:  # pragma: no cover - handled at runtime in AstrBot env
 
 
 WEB_TASK_ID_RE = re.compile(r"^web-\d{8,}-\d+$")
+MAX_WEB_TOKEN_LENGTH = 4096
 MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
 
@@ -1699,6 +1700,17 @@ class FlaskWebServer:
         def fail(message: str, status: int = 400) -> Any:
             return jsonify({"success": False, "error": redact_sensitive_text(message)}), status
 
+        @app.after_request
+        def add_response_safety_headers(response: Any) -> Any:
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+            response.headers.setdefault("Referrer-Policy", "no-referrer")
+            response.headers.setdefault("X-Frame-Options", "DENY")
+            if str(request.path or "").startswith("/api/"):
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+            return response
+
         def json_object_payload() -> Any:
             payload = request.get_json(silent=True)
             if payload is None:
@@ -1710,22 +1722,31 @@ class FlaskWebServer:
                 return None, fail("请求体必须是 JSON 对象")
             return payload, None
 
-        def token_from_request() -> str:
+        def token_candidates_from_request() -> list[str]:
+            tokens: list[str] = []
             auth = str(request.headers.get("Authorization") or "")
             if auth.lower().startswith("bearer "):
-                return auth[7:].strip()
-            return (
-                str(request.headers.get("X-Selfie-Image-Token") or "")
-                or str(request.headers.get("X-AICat-Token") or "")
-                or str(request.headers.get("X-Token") or "")
-            ).strip()
+                tokens.append(auth[7:].strip())
+            tokens.extend(
+                str(request.headers.get(name) or "").strip()
+                for name in ("X-Selfie-Image-Token", "X-AICat-Token", "X-Token")
+            )
+            return [token for token in tokens if token]
 
         def check_auth() -> bool:
             configured = str(getattr(self.plugin.config, "web_token", "") or "").strip()
             if not configured:
                 host = str(self.host or "").strip().lower()
                 return host in {"localhost", "::1"} or host.startswith("127.")
-            return hmac.compare_digest(token_from_request(), configured)
+            for token in token_candidates_from_request():
+                if len(token) > MAX_WEB_TOKEN_LENGTH:
+                    continue
+                try:
+                    if hmac.compare_digest(token, configured):
+                        return True
+                except TypeError:
+                    continue
+            return False
 
         @app.route("/", methods=["GET"])
         @app.route("/index.html", methods=["GET"])
