@@ -342,6 +342,16 @@ def add_maybe_image_url(value: str, b64: Set[str], urls: Set[str], others: Set[s
         others.add(url)
 
 
+def add_srcset_image_urls(value: str, b64: Set[str], urls: Set[str], others: Set[str]) -> None:
+    for item in str(value or "").split(","):
+        candidate = item.strip().split(None, 1)[0] if item.strip() else ""
+        lowered = candidate.lower()
+        if lowered.startswith("data:image/") and "," not in candidate:
+            continue
+        if lowered.startswith(("http://", "https://", "data:image/", "base64://")) or looks_like_relative_image_url(candidate):
+            add_maybe_image_url(candidate, b64, urls, others)
+
+
 def looks_like_relative_image_url(value: str) -> bool:
     text = clean_image_url(value)
     if not text or re.search(r"\s", text):
@@ -368,6 +378,12 @@ def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
 
     for match in re.finditer(r"<img[^>]+src=([^\s\"'>]+)[^>]*>", raw, flags=re.I):
         add_maybe_image_url(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"<(?:img|source)[^>]+srcset=[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_srcset_image_urls(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"<(?:img|source)[^>]+srcset=([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_srcset_image_urls(match.group(1), b64, urls, others)
 
     for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+(?:;[^,\s\"'<>;]*)*;base64,[A-Za-z0-9+/=_-]+", raw, flags=re.I):
         b64.add(match.group(0))

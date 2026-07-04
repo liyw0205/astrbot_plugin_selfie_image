@@ -1038,6 +1038,34 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/unquoted.png")
 
+    async def test_unknown_response_parser_reads_html_srcset(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {"choices": [{"message": {"content": '<source srcset="/outputs/small.webp 1x, /outputs/large.webp 2x">'}}]}
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(
+            set(extract_image_urls_from_text('<img srcset="outputs/a.webp 1x, https://cdn.example.test/b.png 2x">')["others"]),
+            {"outputs/a.webp"},
+        )
+        self.assertIn(
+            "https://cdn.example.test/b.png",
+            extract_image_urls_from_text('<img srcset="outputs/a.webp 1x, https://cdn.example.test/b.png 2x">')["urls"],
+        )
+        self.assertEqual(
+            {request["url"] for request in session.requests},
+            {
+                "https://example.test/outputs/small.webp",
+                "https://example.test/outputs/large.webp",
+            },
+        )
+
     async def test_unknown_response_parser_ignores_invalid_content_length_header(self) -> None:
         session = FakeSession(get_data=PNG_BYTES, get_headers={"content-type": "image/png", "content-length": "unknown"})
         payload = {"data": [{"url": "https://example.test/generated.png"}]}
