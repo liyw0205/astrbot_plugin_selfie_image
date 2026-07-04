@@ -475,6 +475,8 @@ async def fetch_image_source(
                 return None
             with open(text, "rb") as file:
                 data = file.read()
+            if not data or not looks_like_image_bytes(data):
+                return None
             return data, detect_mime_by_bytes(data)
 
         if not text.lower().startswith(("http://", "https://")):

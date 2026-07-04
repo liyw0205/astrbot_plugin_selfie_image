@@ -560,6 +560,19 @@ class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, (PNG_BYTES, "image/png"))
 
+    async def test_fetch_image_source_validates_local_file_signature(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            text_path = Path(temp_dir) / "not_image.png"
+            image_path = Path(temp_dir) / "ref.png"
+            text_path.write_text('{"error":"not image"}', encoding="utf-8")
+            image_path.write_bytes(PNG_BYTES)
+
+            self.assertIsNone(await fetch_image_source(str(text_path), FakeSession(), max_bytes=1024 * 1024))
+            self.assertEqual(
+                await fetch_image_source(str(image_path), FakeSession(), max_bytes=1024 * 1024),
+                (PNG_BYTES, "image/png"),
+            )
+
 
 class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_response_parser_deduplicates_nested_base64_images(self) -> None:
