@@ -398,6 +398,9 @@ def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
     for match in re.finditer(r"<(?:a|link)[^>]+href=([^\s\"'>]+)[^>]*>", raw, flags=re.I):
         add_html_image_candidate(match.group(1), b64, urls, others)
 
+    for match in re.finditer(r"url\(\s*([\"']?)(.*?)\1\s*\)", raw, flags=re.I):
+        add_html_image_candidate(match.group(2), b64, urls, others)
+
     for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+(?:;[^,\s\"'<>;]*)*;base64,[A-Za-z0-9+/=_-]+", raw, flags=re.I):
         b64.add(match.group(0))
 

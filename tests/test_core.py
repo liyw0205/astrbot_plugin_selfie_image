@@ -1096,6 +1096,30 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_unknown_response_parser_reads_css_url_image_links(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "<div style=\"background-image:url('/outputs/from-css.png')\"></div>"
+                    }
+                }
+            ]
+        }
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        extracted = extract_image_urls_from_text("background:url(outputs/from-css.webp), url(#icon)")
+        self.assertEqual(extracted["others"], ["outputs/from-css.webp"])
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/from-css.png")
+
     async def test_unknown_response_parser_ignores_invalid_content_length_header(self) -> None:
         session = FakeSession(get_data=PNG_BYTES, get_headers={"content-type": "image/png", "content-length": "unknown"})
         payload = {"data": [{"url": "https://example.test/generated.png"}]}
