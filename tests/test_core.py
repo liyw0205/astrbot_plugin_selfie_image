@@ -749,7 +749,12 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         payload = {
             "result": {
                 "imageBase64": encoded,
-                "variants": [{"base64_image": "base64://" + encoded}],
+                "variants": [
+                    {"base64_image": "base64://" + encoded},
+                    {"base64Data": encoded},
+                    {"imageB64": encoded},
+                    {"b64": encoded},
+                ],
             }
         }
 

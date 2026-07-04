@@ -527,10 +527,15 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
 
         b64_keys = (
             "b64_json",
+            "b64",
             "base64",
+            "base64_data",
+            "base64Data",
             "data",
             "image_base64",
             "imageBase64",
+            "image_b64",
+            "imageB64",
             "base64_image",
             "base64Image",
             "image_data",
