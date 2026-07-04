@@ -912,6 +912,28 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.requests[0]["method"], "GET")
         self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/query.png?token=abc&size=1")
 
+    async def test_unknown_response_parser_unescapes_unicode_plus_fragment_urls_in_text(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "result https\\u003A\\u002F\\u002Fexample.test\\u002Foutputs\\u002Fsig.png\\u003Fsig\\u003Da\\u002Bb\\u0023preview"
+                    }
+                }
+            ]
+        }
+
+        images = await images_from_response_unknown(session, payload, timeout=5)
+
+        extracted = extract_image_urls_from_text(
+            "result https\\u003a\\u002f\\u002fexample.test\\u002foutputs\\u002fsig.webp\\u003fsig\\u003da\\u002bb\\u0023preview"
+        )
+        self.assertEqual(extracted["urls"], ["https://example.test/outputs/sig.webp?sig=a+b#preview"])
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["method"], "GET")
+        self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/sig.png?sig=a+b#preview")
+
     async def test_unknown_response_parser_resolves_modern_relative_filenames(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {"data": [{"output": "generated.tiff"}]}
