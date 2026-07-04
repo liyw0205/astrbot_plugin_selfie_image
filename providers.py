@@ -260,7 +260,7 @@ def clean_image_url(url: str) -> str:
         match = re.match(r"^(\S+?)(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))$", text, flags=re.I)
         if match:
             text = match.group(1)
-    text = text.strip("<> \t\r\n").rstrip("，。！？、；：")
+    text = text.strip("<> \t\r\n").rstrip(".,;，。！？、；：")
     while text.endswith(")") and "(" not in text:
         text = text[:-1].strip()
     return text
