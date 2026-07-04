@@ -1080,6 +1080,30 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"], {"deleted": 1})
 
+    def test_records_and_task_status_routes_redact_sensitive_data(self) -> None:
+        class SensitivePlugin(FakeWebPlugin):
+            def get_recent_records(self):
+                return [{"error": "api_key=plain-provider-secret", "headers": {"Cookie": "session=abcdef1234567890"}}]
+
+            def get_web_image_task(self, task_id: str):
+                self.task_status_calls.append(task_id)
+                return {"task_id": task_id, "result": {"error": "Authorization: Bearer sk-live-secret-token"}}
+
+        plugin = SensitivePlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        records_response = client.get("/api/records", headers=headers)
+        task_response = client.get("/api/test-image-channel/tasks/web-12345678-1", headers=headers)
+
+        records_text = json.dumps(records_response.get_json()["data"], ensure_ascii=False)
+        task_text = json.dumps(task_response.get_json()["data"], ensure_ascii=False)
+        self.assertIn("api_key=[REDACTED]", records_text)
+        self.assertIn('"Cookie": "[REDACTED]"', records_text)
+        self.assertIn("Bearer [REDACTED]", task_text)
+        self.assertNotIn("plain-provider-secret", records_text)
+        self.assertNotIn("sk-live-secret-token", task_text)
+
     def test_selfie_write_apis_accept_empty_object_payloads(self) -> None:
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
         headers = {"X-Selfie-Image-Token": "secret"}

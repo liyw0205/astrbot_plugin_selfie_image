@@ -331,11 +331,12 @@ class SelfieImagePlugin(Star):
         data = load_json_file(self.records_path)
         items = data.get("records") if isinstance(data.get("records"), list) else []
         records = [item for item in items if isinstance(item, dict)]
-        return copy.deepcopy(records[:100])
+        return redact_sensitive_data(copy.deepcopy(records[:100]))
 
     def _persist_records(self) -> None:
         with self._records_lock:
-            save_json_file(self.records_path, {"records": self._records[:100]})
+            self._records = redact_sensitive_data(self._records[:100])
+            save_json_file(self.records_path, {"records": self._records})
 
     def _record_generated_images(self, event: AstrMessageEvent, count: int) -> None:
         user_id = event_user_id(event)
@@ -1016,7 +1017,7 @@ class SelfieImagePlugin(Star):
 
     def get_recent_records(self) -> List[Dict[str, Any]]:
         with self._records_lock:
-            return copy.deepcopy(self._records[:100])
+            return redact_sensitive_data(copy.deepcopy(self._records[:100]))
 
     def clear_recent_records(self) -> int:
         with self._records_lock:
@@ -1083,7 +1084,7 @@ class SelfieImagePlugin(Star):
         if data.get("status") in {"queued", "running"}:
             started = float(data.get("started_ts") or data.get("created_ts") or time.time())
             data["running_seconds"] = round(max(0.0, time.time() - started), 2)
-        return data
+        return redact_sensitive_data(data)
 
     def start_web_image_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):

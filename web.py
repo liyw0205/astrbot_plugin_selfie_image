@@ -8,7 +8,7 @@ import re
 import threading
 from typing import Any, Optional
 
-from .utils import redact_sensitive_text
+from .utils import redact_sensitive_data, redact_sensitive_text
 
 
 try:
@@ -1839,7 +1839,7 @@ class FlaskWebServer:
             if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
                 return fail("非法任务 ID", 400)
             try:
-                return ok(self.plugin.get_web_image_task(task_id_text))
+                return ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
             except Exception as exc:
                 return fail(str(exc), 404)
 
@@ -1860,7 +1860,7 @@ class FlaskWebServer:
         def records() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            return ok(self.plugin.get_recent_records())
+            return ok(redact_sensitive_data(self.plugin.get_recent_records()))
 
         @app.route("/api/records/clear", methods=["POST"])
         def records_clear() -> Any:
