@@ -396,6 +396,15 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
                 b64.add(text)
             elif len(text) > 100 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", text):
                 b64.add(text)
+            json_text = text
+            fenced = re.fullmatch(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I)
+            if fenced:
+                json_text = fenced.group(1).strip()
+            if json_text.startswith(("{", "[")):
+                try:
+                    walk(json.loads(json_text))
+                except Exception:
+                    pass
             return
         if isinstance(item, Sequence) and not isinstance(item, (bytes, bytearray, str)):
             for child in item:
