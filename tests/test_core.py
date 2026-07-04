@@ -864,6 +864,64 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(images, [PNG_BYTES])
         self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/from-json-text.png")
 
+    async def test_unknown_response_parser_reads_embedded_json_text_content(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": 'result follows:\n```json\n{"publicUrl": "/outputs/embedded-json.png"}\n```'
+                    }
+                }
+            ]
+        }
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/embedded-json.png")
+
+    async def test_unknown_response_parser_reads_sse_data_json_text_content(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": 'event: result\ndata: {"resourceUrl": "/outputs/from-sse.png"}\ndata: [DONE]'
+                    }
+                }
+            ]
+        }
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/from-sse.png")
+
+    async def test_unknown_response_parser_reads_compact_sse_data_json_text_content(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {"text": 'data:{"url":"/outputs/compact-sse.png"}\ndata:{"url":"/outputs/compact-sse.png"}'}
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual([request["url"] for request in session.requests], ["https://example.test/outputs/compact-sse.png"])
+
     async def test_unknown_response_parser_resolves_markdown_relative_url_with_title(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {"choices": [{"message": {"content": '![result](outputs/generated.png "preview")'}}]}

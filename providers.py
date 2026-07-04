@@ -396,11 +396,23 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
                 b64.add(text)
             elif len(text) > 100 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", text):
                 b64.add(text)
-            json_text = text
+            json_candidates: List[str] = []
             fenced = re.fullmatch(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I)
-            if fenced:
-                json_text = fenced.group(1).strip()
-            if json_text.startswith(("{", "[")):
+            json_candidates.append(fenced.group(1).strip() if fenced else text)
+            json_candidates.extend(match.group(1).strip() for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I))
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.lower().startswith("data:"):
+                    payload = stripped.split(":", 1)[1].strip()
+                    if payload and payload != "[DONE]":
+                        json_candidates.append(payload)
+            seen_json: Set[str] = set()
+            for json_text in json_candidates:
+                if not json_text.startswith(("{", "[")):
+                    continue
+                if json_text in seen_json:
+                    continue
+                seen_json.add(json_text)
                 try:
                     walk(json.loads(json_text))
                 except Exception:
