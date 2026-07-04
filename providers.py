@@ -457,7 +457,12 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
             fenced = re.fullmatch(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I)
             json_candidates.append(fenced.group(1).strip() if fenced else text)
             json_candidates.extend(match.group(1).strip() for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I))
-            json_candidates.extend(match.group(1).strip() for match in re.finditer(r"<script[^>]*>([\s\S]*?)</script>", text, flags=re.I))
+            for match in re.finditer(r"<script[^>]*>([\s\S]*?)</script>", text, flags=re.I):
+                script_text = match.group(1).strip()
+                json_candidates.append(script_text)
+                assigned_json = re.search(r"=\s*({[\s\S]*}|\[[\s\S]*])\s*;?\s*$", script_text)
+                if assigned_json:
+                    json_candidates.append(assigned_json.group(1).strip())
             for line in text.splitlines():
                 stripped = line.strip()
                 if stripped.lower().startswith("data:"):
