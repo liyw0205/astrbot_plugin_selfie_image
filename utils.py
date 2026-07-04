@@ -381,7 +381,7 @@ def redact_sensitive_text(text: str) -> str:
         (r"(?i)(x-goog-api-key\s*[:=]\s*)[A-Za-z0-9._\-+/=]{8,}", r"\1[REDACTED]"),
         (r"(?i)((?:api[_-]?key|apikey|token|secret)\s*[=:]\s*)[A-Za-z0-9._\-+/=]{8,}", r"\1[REDACTED]"),
         (r"(?i)((?:proxy|password)\s*[=:]\s*)[^\s,;]{8,}", r"\1[REDACTED]"),
-        (r"(?i)([\"'](?:api[_-]?key|apikey|token|secret|authorization|password|proxy|cookie|set-cookie|x-api-key|x-goog-api-key)[\"']\s*:\s*[\"'])[^\"']{8,}([\"'])", r"\1[REDACTED]\2"),
+        (r"(?i)([\"'](?:api[_-]?key|apikey|token|secret|authorization|password|proxy|cookie|set-cookie|x-api-key|x-goog-api-key|[A-Za-z0-9_-]*(?:token|secret|api[_-]?key))[\"']\s*:\s*[\"'])[^\"']{8,}([\"'])", r"\1[REDACTED]\2"),
         (r"sk-[A-Za-z0-9._\-]{8,}", "sk-[REDACTED]"),
         (r"AIza[0-9A-Za-z_\-]{12,}", "AIza[REDACTED]"),
         (r"Bearer\s+[A-Za-z0-9._\-+/=]{8,}", "Bearer [REDACTED]"),
@@ -402,6 +402,9 @@ def redact_sensitive_data(value: Any) -> Any:
             or key_text.endswith("-token")
             or key_text.endswith("_secret")
             or key_text.endswith("-secret")
+            or key_text.endswith("secret")
+            or key_text.endswith("token")
+            or key_text.endswith("apikey")
             or key_text.endswith("_api_key")
             or key_text.endswith("-api-key")
             or "api_key" in key_text

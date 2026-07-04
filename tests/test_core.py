@@ -466,6 +466,8 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertNotIn("sk-live-secret-token", preview)
         self.assertNotIn("AIzaSySecretTokenValue", preview)
         self.assertEqual(redact_sensitive_text('"token":"abcdefghijklmnop"'), '"token":"[REDACTED]"')
+        self.assertEqual(redact_sensitive_text('"accessToken":"abcdefghijklmnop"'), '"accessToken":"[REDACTED]"')
+        self.assertEqual(redact_sensitive_text('"clientSecret":"secret-value-12345"'), '"clientSecret":"[REDACTED]"')
 
     def test_sensitive_text_redacts_proxy_and_url_credentials(self) -> None:
         text = (
@@ -488,7 +490,9 @@ class ImageUtilityTests(unittest.TestCase):
             {
                 "debug": {
                     "access_token": "abcdefghijklmnop",
+                    "accessToken": "camel-access-token",
                     "client_secret": "secret-value-12345",
+                    "clientSecret": "camel-client-secret",
                     "x-goog-api-key": "plain-provider-secret",
                     "message": "failed",
                 }
@@ -498,9 +502,13 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertIn("api_key=[REDACTED]", raw_preview)
         self.assertNotIn("AIzaSySecretTokenValue", raw_preview)
         self.assertIn('"access_token": "[REDACTED]"', json_preview)
+        self.assertIn('"accessToken": "[REDACTED]"', json_preview)
         self.assertIn('"client_secret": "[REDACTED]"', json_preview)
+        self.assertIn('"clientSecret": "[REDACTED]"', json_preview)
         self.assertIn('"x-goog-api-key": "[REDACTED]"', json_preview)
         self.assertNotIn("abcdefghijklmnop", json_preview)
+        self.assertNotIn("camel-access-token", json_preview)
+        self.assertNotIn("camel-client-secret", json_preview)
         self.assertNotIn("plain-provider-secret", json_preview)
 
     def test_sensitive_data_redaction_handles_nested_monitor_payloads(self) -> None:
