@@ -13,7 +13,7 @@ from urllib.parse import urljoin
 import aiohttp
 
 from .models import ImageModelTarget, normalize_provider_type
-from .utils import IMAGE_EXTENSIONS, bytes_to_data_url, decode_base64_payload, decode_html_entities, looks_like_image_bytes
+from .utils import IMAGE_EXTENSIONS, bytes_to_data_url, decode_base64_payload, decode_html_entities, looks_like_image_bytes, redact_sensitive_data, redact_sensitive_text
 
 
 @dataclass
@@ -235,7 +235,18 @@ def http_error_preview(text: str, limit: int = 500) -> str:
     except Exception:
         pass
     preview = re.sub(r"\s+", " ", preview).strip()
-    return preview[:limit]
+    return redact_sensitive_text(preview)[:limit]
+
+
+def response_preview(value: Any, limit: int = 1000) -> str:
+    if isinstance(value, str):
+        preview = value
+    else:
+        try:
+            preview = json.dumps(redact_sensitive_data(value), ensure_ascii=False)
+        except Exception:
+            preview = str(value)
+    return redact_sensitive_text(preview)[:limit]
 
 
 def clean_image_url(url: str) -> str:
@@ -270,7 +281,7 @@ async def fetch_generated_image_url(
     text = clean_image_url(url)
     if not text:
         return None
-    if text.startswith("data:image/"):
+    if text.lower().startswith(("data:image/", "base64://")):
         data = b64_to_bytes(text)
         return data if data and len(data) <= max_bytes and looks_like_binary_image(data) else None
     if not text.lower().startswith(("http://", "https://")):
@@ -323,7 +334,7 @@ def add_maybe_image_url(value: str, b64: Set[str], urls: Set[str], others: Set[s
     url = clean_image_url(value)
     if not url:
         return
-    if url.startswith("data:image/"):
+    if url.lower().startswith(("data:image/", "base64://")):
         b64.add(url)
     elif url.lower().startswith(("http://", "https://")):
         urls.add(url)
@@ -355,7 +366,10 @@ def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
     for match in re.finditer(r"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
         add_maybe_image_url(match.group(1), b64, urls, others)
 
-    for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+(?:;[^,\s\"'<>;]*)*;base64,[A-Za-z0-9+/=_-]+", raw):
+    for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+(?:;[^,\s\"'<>;]*)*;base64,[A-Za-z0-9+/=_-]+", raw, flags=re.I):
+        b64.add(match.group(0))
+
+    for match in re.finditer(r"base64://[A-Za-z0-9+/=_-]+", raw, flags=re.I):
         b64.add(match.group(0))
 
     for match in re.finditer(r"https?://[^\s\"'<>]+", raw):
@@ -373,10 +387,15 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
         if item is None:
             return
         if isinstance(item, str):
+            text = item.strip()
             extracted = extract_image_urls_from_text(item)
             b64.update(extracted["b64"])
             urls.update(extracted["urls"])
             others.update(extracted["others"])
+            if text.lower().startswith(("data:image/", "base64://")):
+                b64.add(text)
+            elif len(text) > 100 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", text):
+                b64.add(text)
             return
         if isinstance(item, Sequence) and not isinstance(item, (bytes, bytearray, str)):
             for child in item:
@@ -402,7 +421,7 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
             if key in item and isinstance(item[key], str):
                 text = item[key].strip()
                 if text:
-                    if text.startswith(("data:image/", "base64://")):
+                    if text.lower().startswith(("data:image/", "base64://")):
                         b64.add(text)
                     elif len(text) > 100:
                         b64.add(text)
@@ -570,7 +589,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
             try:
                 return json.loads(text), ""
             except json.JSONDecodeError:
-                return None, f"接口返回非 JSON 内容: {text[:300]}"
+                return None, f"接口返回非 JSON 内容: {response_preview(text, 300)}"
 
     async def generate_edit(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
@@ -657,7 +676,7 @@ class GeminiOpenAIImageAdapter(BaseImageAdapter):
         images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         if images:
             return ImageGenerateResult(images=images)
-        preview = json.dumps(data, ensure_ascii=False)[:1000]
+        preview = response_preview(data)
         collected = collect_images_from_unknown(data)
         if collected["urls"]:
             return ImageGenerateResult(error=f"接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}；返回预览: {preview}")
@@ -751,11 +770,11 @@ class AgnesImageAdapter(BaseImageAdapter):
             try:
                 data = json.loads(text)
             except json.JSONDecodeError:
-                return ImageGenerateResult(error=f"接口返回非 JSON 内容: {text[:300]}")
+                return ImageGenerateResult(error=f"接口返回非 JSON 内容: {response_preview(text, 300)}")
         images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         if images:
             return ImageGenerateResult(images=images)
-        preview = json.dumps(data, ensure_ascii=False)[:1000]
+        preview = response_preview(data)
         collected = collect_images_from_unknown(data)
         if collected["urls"]:
             return ImageGenerateResult(error=f"Agnes 返回了图片链接但下载失败。链接数: {len(collected['urls'])}；返回预览: {preview}")
@@ -781,7 +800,7 @@ def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> 
 
 
 def resolve_response_url(img_url: str, base_url: str) -> str:
-    if img_url.startswith(("http://", "https://", "data:")):
+    if img_url.lower().startswith(("http://", "https://", "data:")):
         return img_url
     api_root = normalize_image_base_url(base_url)
     if api_root.endswith("/v1"):

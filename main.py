@@ -67,6 +67,7 @@ from .providers import (
 from .utils import (
     bytes_to_data_url,
     collect_record_cache_paths,
+    collect_cache_cleanup_candidates,
     collect_unreferenced_record_cache_paths,
     data_url_to_bytes,
     detect_mime_by_bytes,
@@ -80,6 +81,8 @@ from .utils import (
     load_json_file,
     normalize_image_mime,
     parse_audit_response_text,
+    redact_sensitive_data,
+    redact_sensitive_text,
     resolve_awaitable,
     safe_delete_relative_files,
     save_image_bytes,
@@ -878,7 +881,7 @@ class SelfieImagePlugin(Star):
                     headers["x-goog-api-key"] = target.api_key
                 async with session.post(url, json={"contents": [{"parts": parts}]}, headers=headers, timeout=timeout, proxy=proxy) as response:
                     if response.status >= 400:
-                        raise RuntimeError(f"审核接口失败: HTTP {response.status} {(await response.text())[:200]}")
+                        raise RuntimeError(f"审核接口失败: HTTP {response.status} {redact_sensitive_text(await response.text())[:200]}")
                     data = await response.json(content_type=None)
                 texts: List[str] = []
                 for candidate in data.get("candidates", []) if isinstance(data, dict) else []:
@@ -903,7 +906,7 @@ class SelfieImagePlugin(Star):
             payload = {"model": target.model, "messages": [{"role": "user", "content": content}], "stream": False}
             async with session.post(url, json=payload, headers=headers, timeout=timeout, proxy=proxy) as response:
                 if response.status >= 400:
-                    raise RuntimeError(f"审核接口失败: HTTP {response.status} {(await response.text())[:200]}")
+                    raise RuntimeError(f"审核接口失败: HTTP {response.status} {redact_sensitive_text(await response.text())[:200]}")
                 data = await response.json(content_type=None)
             if isinstance(data, dict):
                 choices = data.get("choices")
@@ -998,7 +1001,7 @@ class SelfieImagePlugin(Star):
     def _record_task(self, record: Dict[str, Any]) -> None:
         stale_cache_paths: List[str] = []
         with self._records_lock:
-            record = dict(record)
+            record = redact_sensitive_data(dict(record))
             self._record_seq += 1
             record.setdefault("id", f"{int(time.time() * 1000)}-{self._record_seq}")
             record["time"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -1114,18 +1117,20 @@ class SelfieImagePlugin(Star):
         self._set_web_image_task(task_id, status="running", started_ts=time.time(), started_at=self._web_task_timestamp())
         try:
             result = await self.web_test_image(payload)
+            result = redact_sensitive_data(result)
             success = bool(result.get("success"))
+            error = "" if success else redact_sensitive_text(str(result.get("error") or "这次没顺好"))
             self._set_web_image_task(
                 task_id,
                 status="succeeded" if success else "failed",
                 success=success,
-                error="" if success else str(result.get("error") or "这次没顺好"),
+                error=error,
                 result=result,
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
             )
         except Exception as exc:
-            error = str(exc)
+            error = redact_sensitive_text(str(exc))
             self._set_web_image_task(
                 task_id,
                 status="failed",
@@ -1194,24 +1199,10 @@ class SelfieImagePlugin(Star):
         deleted: List[str] = []
         if total <= limit:
             return {"limit_bytes": limit, "total_bytes": total, "deleted": deleted}
-        protected = set()
-        for item in protected_paths or []:
-            try:
-                protected.add(self._cache_absolute_path(str(item)))
-            except Exception:
-                protected.add(os.path.abspath(str(item)))
-        candidates: List[Tuple[float, str]] = []
-        for root, _, files in os.walk(self.generated_dir):
-            for name in files:
-                path = os.path.join(root, name)
-                if os.path.abspath(path) in protected:
-                    continue
-                try:
-                    candidates.append((os.path.getmtime(path), path))
-                except OSError:
-                    pass
-        candidates.sort(key=lambda item: item[0])
-        for _, path in candidates:
+        with self._records_lock:
+            referenced_paths = collect_record_cache_paths(self._records)
+        candidates = collect_cache_cleanup_candidates(self.generated_dir, protected_paths, referenced_paths)
+        for path in candidates:
             try:
                 size = os.path.getsize(path)
                 os.remove(path)
@@ -2392,18 +2383,19 @@ class SelfieImagePlugin(Star):
         errors: List[str] = []
         async with aiohttp.ClientSession() as session:
             for url in candidates:
+                safe_url = redact_sensitive_text(url)
                 try:
                     async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12), proxy=proxy) as response:
                         if response.status >= 400:
-                            errors.append(f"{url}: HTTP {response.status} {(await response.text())[:200]}")
+                            errors.append(f"{safe_url}: HTTP {response.status} {redact_sensitive_text(await response.text())[:200]}")
                             continue
                         data = await response.json(content_type=None)
                     models = self._extract_model_ids(data)
                     if models:
                         return models
-                    errors.append(f"{url}: 返回成功但未识别到模型")
+                    errors.append(f"{safe_url}: 返回成功但未识别到模型")
                 except Exception as exc:
-                    errors.append(f"{url}: {exc}")
+                    errors.append(f"{safe_url}: {redact_sensitive_text(str(exc))}")
         raise RuntimeError("\n".join(errors))
 
     def _extract_model_ids(self, data: Any) -> List[str]:

@@ -10,6 +10,7 @@ import aiohttp
 
 from .models import ImageModelTarget
 from .providers import ImageGenerateRequest, ImageGenerateResult, create_adapter
+from .utils import redact_sensitive_data, redact_sensitive_text
 
 
 IMAGE_RETRY_ATTEMPTS = 3
@@ -60,11 +61,12 @@ async def generate_image_with_fallback(
                 attempt_info["image_count"] = len(result.images)
                 attempts.append(attempt_info)
                 result.used_model = label
-                result.attempts = [*attempts, *result.attempts]
+                result.attempts = redact_sensitive_data([*attempts, *result.attempts])
                 return result
-            last_error = f"{label}: {result.error or '生成失败'}"
+            error_text = redact_sensitive_text(result.error or "生成失败")
+            last_error = f"{label}: {error_text}"
             attempt_info["success"] = False
-            attempt_info["error"] = result.error or "生成失败"
+            attempt_info["error"] = error_text
             attempt_info["image_count"] = len(result.images or [])
             attempts.append(attempt_info)
         except asyncio.TimeoutError:
@@ -74,9 +76,10 @@ async def generate_image_with_fallback(
             attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
             attempts.append(attempt_info)
         except Exception as exc:
-            last_error = f"{label}: {exc}"
+            error_text = redact_sensitive_text(str(exc))
+            last_error = f"{label}: {error_text}"
             attempt_info["success"] = False
-            attempt_info["error"] = str(exc)
+            attempt_info["error"] = error_text
             attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
             attempts.append(attempt_info)
 

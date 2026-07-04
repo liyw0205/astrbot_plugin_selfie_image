@@ -49,8 +49,10 @@ from astrbot_plugin_selfie_image.providers import (
     normalize_gemini_base_url,
     normalize_image_base_url,
     provider_type_from_channel_payload,
+    response_preview,
 )
 from astrbot_plugin_selfie_image.utils import (
+    collect_cache_cleanup_candidates,
     collect_record_cache_paths,
     collect_unreferenced_record_cache_paths,
     data_url_to_bytes,
@@ -63,6 +65,8 @@ from astrbot_plugin_selfie_image.utils import (
     looks_like_image_bytes,
     looks_like_image_url,
     parse_audit_response_text,
+    redact_sensitive_data,
+    redact_sensitive_text,
     resolve_awaitable,
     safe_delete_relative_files,
 )
@@ -298,6 +302,17 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(mime, "image/png")
         self.assertTrue(looks_like_binary_image(data))
 
+    def test_image_base64_inputs_are_case_insensitive(self) -> None:
+        payload = base64.b64encode(PNG_BYTES).decode("ascii")
+        self.assertEqual(data_url_to_bytes("DATA:image/png;BASE64," + payload), (PNG_BYTES, "image/png"))
+        self.assertEqual(data_url_to_bytes("BASE64://" + payload), (PNG_BYTES, "image/png"))
+        self.assertTrue(looks_like_image_url("DATA:image/png;BASE64," + payload))
+        self.assertTrue(looks_like_image_url("BASE64://" + payload))
+        self.assertEqual(
+            extract_image_urls("refs DATA:image/png;BASE64," + payload + " and BASE64://" + payload),
+            ["DATA:image/png;BASE64," + payload, "BASE64://" + payload],
+        )
+
     def test_data_url_to_bytes_prefers_detected_mime_over_declared_mime(self) -> None:
         data_url = "data:image/jpeg;base64," + base64.b64encode(PNG_BYTES).decode("ascii")
 
@@ -442,6 +457,76 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(http_error_preview('{"detail":{"message":"nested quota exceeded"}}'), "nested quota exceeded")
         self.assertEqual(http_error_preview('{"errors":[{"message":"first error"},{"message":"second error"}]}'), "first error")
 
+    def test_error_preview_redacts_common_secret_shapes(self) -> None:
+        raw = '{"error":{"message":"Authorization: Bearer sk-live-secret-token and api_key=AIzaSySecretTokenValue"}}'
+        preview = http_error_preview(raw)
+
+        self.assertIn("Bearer [REDACTED]", preview)
+        self.assertIn("api_key=[REDACTED]", preview)
+        self.assertNotIn("sk-live-secret-token", preview)
+        self.assertNotIn("AIzaSySecretTokenValue", preview)
+        self.assertEqual(redact_sensitive_text('"token":"abcdefghijklmnop"'), '"token":"[REDACTED]"')
+
+    def test_sensitive_text_redacts_proxy_and_url_credentials(self) -> None:
+        text = (
+            "proxy=http://user:password@example.test:7890 failed; "
+            "download https://name:secret-pass@images.example.test/out.png; "
+            '"password":"supersecretvalue"'
+        )
+        redacted = redact_sensitive_text(text)
+
+        self.assertIn("proxy=[REDACTED]", redacted)
+        self.assertIn("https://[REDACTED]@images.example.test/out.png", redacted)
+        self.assertIn('"password":"[REDACTED]"', redacted)
+        self.assertNotIn("user:password", redacted)
+        self.assertNotIn("name:secret-pass", redacted)
+        self.assertNotIn("supersecretvalue", redacted)
+
+    def test_response_preview_redacts_raw_and_json_secret_fields(self) -> None:
+        raw_preview = response_preview("not json api_key=AIzaSySecretTokenValue")
+        json_preview = response_preview(
+            {
+                "debug": {
+                    "access_token": "abcdefghijklmnop",
+                    "client_secret": "secret-value-12345",
+                    "x-goog-api-key": "plain-provider-secret",
+                    "message": "failed",
+                }
+            }
+        )
+
+        self.assertIn("api_key=[REDACTED]", raw_preview)
+        self.assertNotIn("AIzaSySecretTokenValue", raw_preview)
+        self.assertIn('"access_token": "[REDACTED]"', json_preview)
+        self.assertIn('"client_secret": "[REDACTED]"', json_preview)
+        self.assertIn('"x-goog-api-key": "[REDACTED]"', json_preview)
+        self.assertNotIn("abcdefghijklmnop", json_preview)
+        self.assertNotIn("plain-provider-secret", json_preview)
+
+    def test_sensitive_data_redaction_handles_nested_monitor_payloads(self) -> None:
+        payload = {
+            "channel": {"api_key": "sk-live-secret-token", "proxy": "http://user:password@example.test"},
+            "headers": {
+                "Authorization": "Bearer abcdefghijklmnop",
+                "X-Goog-Api-Key": "plain-provider-secret",
+                "x-api-key": "another-provider-secret",
+                "Cookie": "session=abcdef1234567890",
+            },
+            "error": "request failed with token=abcdefghijklmnop",
+            "safe": {"model": "gpt-image-1"},
+        }
+
+        redacted = redact_sensitive_data(payload)
+
+        self.assertEqual(redacted["channel"]["api_key"], "[REDACTED]")
+        self.assertEqual(redacted["channel"]["proxy"], "[REDACTED]")
+        self.assertEqual(redacted["headers"]["Authorization"], "[REDACTED]")
+        self.assertEqual(redacted["headers"]["X-Goog-Api-Key"], "[REDACTED]")
+        self.assertEqual(redacted["headers"]["x-api-key"], "[REDACTED]")
+        self.assertEqual(redacted["headers"]["Cookie"], "[REDACTED]")
+        self.assertEqual(redacted["error"], "request failed with token=[REDACTED]")
+        self.assertEqual(redacted["safe"], {"model": "gpt-image-1"})
+
     def test_group_id_extraction(self) -> None:
         self.assertEqual(extract_group_id_from_text("aiocqhttp:group:123456"), "123456")
         self.assertEqual(extract_group_id_from_text("group_id=98765"), "98765")
@@ -503,6 +588,34 @@ class ImageUtilityTests(unittest.TestCase):
             ["old_request.png", "old_generated.png"],
         )
 
+    def test_cache_cleanup_candidates_prefer_unreferenced_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir) / "image_cache"
+            base.mkdir()
+            paths = {
+                "protected.png": base / "protected.png",
+                "referenced_old.png": base / "referenced_old.png",
+                "unreferenced_new.png": base / "unreferenced_new.png",
+                "unreferenced_old.png": base / "unreferenced_old.png",
+            }
+            for path in paths.values():
+                path.write_bytes(PNG_BYTES)
+            os.utime(paths["referenced_old.png"], (10, 10))
+            os.utime(paths["unreferenced_old.png"], (20, 20))
+            os.utime(paths["unreferenced_new.png"], (30, 30))
+            os.utime(paths["protected.png"], (40, 40))
+
+            candidates = collect_cache_cleanup_candidates(
+                str(base),
+                protected_paths=["protected.png", str(base / "../outside.png")],
+                referenced_paths=["referenced_old.png"],
+            )
+
+            self.assertEqual(
+                [os.path.relpath(path, base) for path in candidates],
+                ["unreferenced_old.png", "unreferenced_new.png", "referenced_old.png"],
+            )
+
     def test_audit_response_parser_handles_json_and_text_variants(self) -> None:
         self.assertEqual(parse_audit_response_text('```json\n{"allow": "yes", "reason": "ok"}\n```'), (True, "ok"))
         self.assertEqual(parse_audit_response_text('{"safe": true, "risk": false, "reason": "clean"}'), (True, "clean"))
@@ -535,6 +648,18 @@ class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
         result = await fetch_image_source("https://example.test/ref.png", session, max_bytes=1024 * 1024)
 
         self.assertIsNone(result)
+
+    async def test_fetch_image_source_accepts_uppercase_inline_image_prefixes(self) -> None:
+        payload = base64.b64encode(PNG_BYTES).decode("ascii")
+
+        self.assertEqual(
+            await fetch_image_source("DATA:image/png;BASE64," + payload, FakeSession(), max_bytes=1024 * 1024),
+            (PNG_BYTES, "image/png"),
+        )
+        self.assertEqual(
+            await fetch_image_source("BASE64://" + payload, FakeSession(), max_bytes=1024 * 1024),
+            (PNG_BYTES, "image/png"),
+        )
 
     async def test_fetch_image_source_rejects_fake_image_http_response(self) -> None:
         session = FakeSession(get_data=b'{"error":"not image"}', get_headers={"content-type": "image/png"})
@@ -593,6 +718,13 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(images, [image])
 
+    async def test_unknown_response_parser_accepts_direct_base64_string_items(self) -> None:
+        encoded = base64.b64encode(PNG_BYTES).decode("ascii")
+
+        images = await images_from_response_unknown(FakeSession(), [encoded, "BASE64://" + encoded], timeout=5)
+
+        self.assertEqual(images, [PNG_BYTES])
+
     async def test_unknown_response_parser_accepts_parameterized_data_urls(self) -> None:
         encoded = base64.b64encode(PNG_BYTES).decode("ascii")
         data_url = f"data:image/png;name=result.png;charset=utf-8;base64,{encoded}"
@@ -622,6 +754,23 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         image = await fetch_generated_image_url(FakeSession(), data_url, timeout=5)
 
         self.assertIsNone(image)
+
+    async def test_unknown_response_parser_accepts_uppercase_inline_image_prefixes(self) -> None:
+        encoded = base64.b64encode(PNG_BYTES).decode("ascii")
+        payload = {
+            "data": [
+                {"url": "DATA:image/png;BASE64," + encoded},
+                {"imageBase64": "BASE64://" + encoded},
+            ]
+        }
+
+        images = await images_from_response_unknown(FakeSession(), payload, timeout=5)
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(
+            extract_image_urls_from_text("generated BASE64://" + encoded)["b64"],
+            ["BASE64://" + encoded],
+        )
 
     async def test_unknown_response_parser_resolves_relative_image_urls(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
@@ -804,6 +953,45 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.images)
         self.assertEqual(result.error, "未配置生图模型")
 
+    async def test_fallback_redacts_sensitive_adapter_errors(self) -> None:
+        target = make_target("grok", "bad-model")
+        secret_error = "Authorization: Bearer sk-live-secret-token and token=abcdefghijklmnop"
+
+        def create_fake_adapter(target, session):
+            return FakeGenerateAdapter(ImageGenerateResult(error=secret_error))
+
+        with patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter):
+            result = await generate_image_with_fallback(
+                [target],
+                ImageGenerateRequest(prompt="cat"),
+                FakeSession(),
+                max_attempts=1,
+            )
+
+        attempt_text = json.dumps(result.attempts, ensure_ascii=False)
+        self.assertIn("Bearer [REDACTED]", result.error)
+        self.assertIn("token=[REDACTED]", result.error)
+        self.assertNotIn("sk-live-secret-token", result.error)
+        self.assertNotIn("abcdefghijklmnop", attempt_text)
+
+    async def test_fallback_redacts_sensitive_exceptions(self) -> None:
+        target = make_target("grok", "bad-model")
+
+        class RaisingAdapter:
+            async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+                raise RuntimeError("api_key=AIzaSySecretTokenValue")
+
+        with patch("astrbot_plugin_selfie_image.generator.create_adapter", return_value=RaisingAdapter()):
+            result = await generate_image_with_fallback(
+                [target],
+                ImageGenerateRequest(prompt="cat"),
+                FakeSession(),
+                max_attempts=1,
+            )
+
+        self.assertIn("api_key=[REDACTED]", result.error)
+        self.assertNotIn("AIzaSySecretTokenValue", json.dumps(result.attempts, ensure_ascii=False))
+
 
 @unittest.skipIf(Flask is None, "Flask is not installed")
 class WebApiTests(unittest.TestCase):
@@ -908,6 +1096,18 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"]["status"], "refreshed")
 
+    def test_web_error_responses_redact_sensitive_text(self) -> None:
+        class FailingPlugin(FakeWebPlugin):
+            async def refresh_selfie_profile_from_web(self):
+                raise RuntimeError("Authorization: Bearer sk-live-secret-token")
+
+        client = self.make_client(FailingPlugin("secret"), host="0.0.0.0")
+        response = client.post("/api/selfie-profile/refresh", json={}, headers={"X-Selfie-Image-Token": "secret"})
+
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("Bearer [REDACTED]", response.get_json()["error"])
+        self.assertNotIn("sk-live-secret-token", response.get_json()["error"])
+
     def test_web_task_status_validates_task_id(self) -> None:
         plugin = FakeWebPlugin("secret")
         client = self.make_client(plugin, host="0.0.0.0")
@@ -916,6 +1116,11 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(client.get("/api/test-image-channel/tasks/web-12345678-1").status_code, 401)
 
         response = client.get("/api/test-image-channel/tasks/not-a-task", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("非法任务 ID", response.get_json()["error"])
+        self.assertEqual(plugin.task_status_calls, [])
+
+        response = client.get("/api/test-image-channel/tasks/web-" + "1" * 200 + "-1", headers=headers)
         self.assertEqual(response.status_code, 400)
         self.assertIn("非法任务 ID", response.get_json()["error"])
         self.assertEqual(plugin.task_status_calls, [])
@@ -955,6 +1160,10 @@ class WebApiTests(unittest.TestCase):
         response = client.get("/api/cache-image?path=.", headers=headers)
         self.assertEqual(response.status_code, 400)
         self.assertIn("非法图片路径", response.get_json()["error"])
+
+        response = client.get("/api/cache-image?path=" + ("a" * 600) + ".png", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("图片路径过长", response.get_json()["error"])
 
 
 class SchemaTests(unittest.TestCase):

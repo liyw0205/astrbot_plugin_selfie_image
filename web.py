@@ -8,6 +8,8 @@ import re
 import threading
 from typing import Any, Optional
 
+from .utils import redact_sensitive_text
+
 
 try:
     from flask import Flask, jsonify, request, send_file
@@ -21,6 +23,8 @@ except Exception:  # pragma: no cover - handled at runtime in AstrBot env
 
 
 WEB_TASK_ID_RE = re.compile(r"^web-\d{8,}-\d+$")
+MAX_WEB_TASK_ID_LENGTH = 64
+MAX_CACHE_IMAGE_PATH_LENGTH = 512
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -1693,7 +1697,7 @@ class FlaskWebServer:
             return jsonify(payload)
 
         def fail(message: str, status: int = 400) -> Any:
-            return jsonify({"success": False, "error": message}), status
+            return jsonify({"success": False, "error": redact_sensitive_text(message)}), status
 
         def json_object_payload() -> Any:
             payload = request.get_json(silent=True)
@@ -1831,10 +1835,11 @@ class FlaskWebServer:
         def test_image_channel_task_status(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            if not WEB_TASK_ID_RE.fullmatch(str(task_id or "").strip()):
+            task_id_text = str(task_id or "").strip()
+            if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
                 return fail("非法任务 ID", 400)
             try:
-                return ok(self.plugin.get_web_image_task(task_id))
+                return ok(self.plugin.get_web_image_task(task_id_text))
             except Exception as exc:
                 return fail(str(exc), 404)
 
@@ -1871,7 +1876,10 @@ class FlaskWebServer:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             try:
-                info = self.plugin.get_cached_image_info(str(request.args.get("path") or ""))
+                rel_path = str(request.args.get("path") or "")
+                if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
+                    return fail("图片路径过长", 400)
+                info = self.plugin.get_cached_image_info(rel_path)
             except Exception as exc:
                 return fail(str(exc), 400)
             if not info.get("exists"):

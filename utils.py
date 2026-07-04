@@ -207,7 +207,7 @@ def data_url_to_bytes(input_text: str) -> Tuple[bytes, str]:
         return valid_image_or_empty(decode_base64_payload(match.group(2)), mime)
 
     prefix = "base64://"
-    if text.startswith(prefix):
+    if text.lower().startswith(prefix):
         return valid_image_or_empty(decode_base64_payload(text))
 
     return valid_image_or_empty(decode_base64_payload(text))
@@ -296,13 +296,51 @@ def safe_delete_relative_files(base_dir: str, rel_paths: Iterable[Any]) -> List[
     return deleted
 
 
+def collect_cache_cleanup_candidates(
+    base_dir: str,
+    protected_paths: Optional[Iterable[Any]] = None,
+    referenced_paths: Optional[Iterable[Any]] = None,
+) -> List[str]:
+    raw_base = str(base_dir or "").strip()
+    if not raw_base:
+        return []
+    base = os.path.abspath(raw_base)
+
+    def inside_cache(path: str) -> bool:
+        return path != base and path.startswith(base + os.sep)
+
+    def normalize_to_abs(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        path = os.path.abspath(text if os.path.isabs(text) else os.path.join(base, text))
+        return path if inside_cache(path) else ""
+
+    protected = {path for path in (normalize_to_abs(item) for item in protected_paths or []) if path}
+    referenced = {path for path in (normalize_to_abs(item) for item in referenced_paths or []) if path}
+    candidates: List[Tuple[int, float, str]] = []
+    for root, _, files in os.walk(base):
+        for name in files:
+            path = os.path.abspath(os.path.join(root, name))
+            if path in protected or not inside_cache(path):
+                continue
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            priority = 1 if path in referenced else 0
+            candidates.append((priority, mtime, path))
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [path for _, _, path in candidates]
+
+
 def looks_like_image_url(text: str) -> bool:
     value = str(text or "").strip()
     if not value:
         return False
-    if value.startswith(("data:image/", "base64://")):
-        return True
     lowered = value.lower()
+    if lowered.startswith(("data:image/", "base64://")):
+        return True
     if not lowered.startswith(("http://", "https://")):
         return False
     try:
@@ -331,6 +369,62 @@ def decode_html_entities(text: str) -> str:
         .replace("&#91;", "[")
         .replace("&#93;", "]")
     )
+
+
+def redact_sensitive_text(text: str) -> str:
+    value = str(text or "")
+    if not value:
+        return ""
+    patterns = [
+        (r"(?i)([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^@\s/]+@", r"\1[REDACTED]@"),
+        (r"(?i)(authorization\s*[:=]\s*bearer\s+)[A-Za-z0-9._\-+/=]{8,}", r"\1[REDACTED]"),
+        (r"(?i)(x-goog-api-key\s*[:=]\s*)[A-Za-z0-9._\-+/=]{8,}", r"\1[REDACTED]"),
+        (r"(?i)((?:api[_-]?key|apikey|token|secret)\s*[=:]\s*)[A-Za-z0-9._\-+/=]{8,}", r"\1[REDACTED]"),
+        (r"(?i)((?:proxy|password)\s*[=:]\s*)[^\s,;]{8,}", r"\1[REDACTED]"),
+        (r"(?i)([\"'](?:api[_-]?key|apikey|token|secret|authorization|password|proxy|cookie|set-cookie|x-api-key|x-goog-api-key)[\"']\s*:\s*[\"'])[^\"']{8,}([\"'])", r"\1[REDACTED]\2"),
+        (r"sk-[A-Za-z0-9._\-]{8,}", "sk-[REDACTED]"),
+        (r"AIza[0-9A-Za-z_\-]{12,}", "AIza[REDACTED]"),
+        (r"Bearer\s+[A-Za-z0-9._\-+/=]{8,}", "Bearer [REDACTED]"),
+    ]
+    for pattern, replacement in patterns:
+        value = re.sub(pattern, replacement, value)
+    return value
+
+
+def redact_sensitive_data(value: Any) -> Any:
+    sensitive_keys = {"api_key", "apikey", "api-key", "token", "secret", "authorization", "password", "proxy", "cookie", "set-cookie"}
+
+    def is_sensitive_key(key: Any) -> bool:
+        key_text = str(key or "").strip().lower()
+        return (
+            key_text in sensitive_keys
+            or key_text.endswith("_token")
+            or key_text.endswith("-token")
+            or key_text.endswith("_secret")
+            or key_text.endswith("-secret")
+            or key_text.endswith("_api_key")
+            or key_text.endswith("-api-key")
+            or "api_key" in key_text
+            or "api-key" in key_text
+        )
+
+    if isinstance(value, str):
+        return redact_sensitive_text(value)
+    if isinstance(value, dict):
+        result: Dict[Any, Any] = {}
+        for key, item in value.items():
+            if is_sensitive_key(key):
+                result[key] = "[REDACTED]" if item else item
+            else:
+                result[key] = redact_sensitive_data(item)
+        return result
+    if isinstance(value, list):
+        return [redact_sensitive_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_data(item) for item in value)
+    if isinstance(value, set):
+        return {redact_sensitive_data(item) for item in value}
+    return value
 
 
 def _audit_bool_value(value: Any) -> Optional[bool]:
@@ -433,10 +527,10 @@ def extract_image_urls(text: str) -> List[str]:
         if looks_like_image_url(url):
             result.append(url)
 
-    for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+(?:;[^,\s\"'<>;]*)*;base64,[A-Za-z0-9+/=_-]+", raw):
+    for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+(?:;[^,\s\"'<>;]*)*;base64,[A-Za-z0-9+/=_-]+", raw, flags=re.I):
         result.append(match.group(0))
 
-    for match in re.finditer(r"base64://[A-Za-z0-9+/=_-]+", raw):
+    for match in re.finditer(r"base64://[A-Za-z0-9+/=_-]+", raw, flags=re.I):
         result.append(match.group(0))
 
     return unique(result)
@@ -464,7 +558,8 @@ async def fetch_image_source(
         return None
 
     try:
-        if text.startswith(("data:image/", "base64://")):
+        lowered = text.lower()
+        if lowered.startswith(("data:image/", "base64://")):
             data, mime = data_url_to_bytes(text)
             if data and len(data) <= max_bytes:
                 return data, mime
@@ -479,7 +574,7 @@ async def fetch_image_source(
                 return None
             return data, detect_mime_by_bytes(data)
 
-        if not text.lower().startswith(("http://", "https://")):
+        if not lowered.startswith(("http://", "https://")):
             return None
 
         headers = {
