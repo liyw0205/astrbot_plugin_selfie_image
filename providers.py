@@ -8,7 +8,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Set
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import aiohttp
 
@@ -896,9 +896,15 @@ def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> 
 
 
 def resolve_response_url(img_url: str, base_url: str) -> str:
-    if img_url.lower().startswith(("http://", "https://", "data:")):
-        return img_url
+    value = clean_image_url(img_url)
+    if value.lower().startswith(("http://", "https://", "data:")):
+        return value
+    if value.startswith("//"):
+        scheme = urlsplit(str(base_url or "")).scheme or "https"
+        if scheme not in {"http", "https"}:
+            scheme = "https"
+        return f"{scheme}:{value}"
     api_root = normalize_image_base_url(base_url)
     if api_root.endswith("/v1"):
         api_root = api_root[:-3]
-    return urljoin(api_root.rstrip("/") + "/", img_url.lstrip("/"))
+    return urljoin(api_root.rstrip("/") + "/", value.lstrip("/"))

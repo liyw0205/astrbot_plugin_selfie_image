@@ -797,6 +797,21 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.requests[0]["method"], "GET")
         self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/generated.png")
 
+    async def test_unknown_response_parser_resolves_protocol_relative_urls(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {"data": [{"url": "//cdn.example.test/outputs/generated.png"}]}
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["method"], "GET")
+        self.assertEqual(session.requests[0]["url"], "https://cdn.example.test/outputs/generated.png")
+
     async def test_unknown_response_parser_resolves_modern_relative_filenames(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {"data": [{"output": "generated.tiff"}]}
