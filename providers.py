@@ -589,6 +589,18 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
             "signedUrl",
             "cdn_url",
             "cdnUrl",
+            "secure_url",
+            "secureUrl",
+            "source_url",
+            "sourceUrl",
+            "original_url",
+            "originalUrl",
+            "preview_url",
+            "previewUrl",
+            "thumbnail_url",
+            "thumbnailUrl",
+            "thumb_url",
+            "thumbUrl",
         )
         text_keys = ("content", "text")
         for key in (*urlish_keys, *text_keys):
