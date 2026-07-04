@@ -428,9 +428,12 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
 
         urlish_keys = (
             "url",
+            "uri",
             "href",
             "src",
             "image",
+            "imageUri",
+            "image_uri",
             "imageUrl",
             "image_url",
             "output",
@@ -438,12 +441,18 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
             "artifacts",
             "asset",
             "assets",
+            "resource",
+            "resources",
+            "resource_url",
+            "resourceUrl",
             "file",
             "files",
             "download_url",
             "downloadUrl",
             "media_url",
             "mediaUrl",
+            "public_url",
+            "publicUrl",
         )
         text_keys = ("content", "text")
         for key in (*urlish_keys, *text_keys):
@@ -457,7 +466,7 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
                 else:
                     walk(field_value)
             elif isinstance(field_value, dict):
-                nested_url = field_value.get("url")
+                nested_url = field_value.get("url") or field_value.get("uri")
                 if isinstance(nested_url, str):
                     add_maybe_image_url(nested_url, b64, urls, others)
                 walk(field_value)

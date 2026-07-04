@@ -817,6 +817,31 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.requests[0]["method"], "GET")
         self.assertEqual(session.requests[0]["url"], "https://example.test/media/generated.webp")
 
+    async def test_unknown_response_parser_reads_uri_resource_url_aliases(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "data": [
+                {"imageUri": "/media/from-uri.png"},
+                {"resource": {"publicUrl": "/media/from-resource.png"}},
+            ]
+        }
+
+        images = await images_from_response_unknown(
+            session,
+            payload,
+            timeout=5,
+            base_url="https://example.test/v1/images/generations",
+        )
+
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(
+            {request["url"] for request in session.requests},
+            {
+                "https://example.test/media/from-uri.png",
+                "https://example.test/media/from-resource.png",
+            },
+        )
+
     async def test_unknown_response_parser_resolves_markdown_relative_url_with_title(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {"choices": [{"message": {"content": '![result](outputs/generated.png "preview")'}}]}
@@ -1042,6 +1067,15 @@ class WebApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response_with_non_ascii_auth.status_code, 200)
+
+    def test_auth_supports_non_ascii_configured_token(self) -> None:
+        client = self.make_client(FakeWebPlugin("密钥"), host="0.0.0.0")
+
+        wrong = client.get("/api/health", headers={"Authorization": "Bearer 密码"})
+        right = client.get("/api/health", headers={"Authorization": "Bearer 密钥"})
+
+        self.assertEqual(wrong.status_code, 401)
+        self.assertEqual(right.status_code, 200)
 
     def test_api_responses_are_not_cached(self) -> None:
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")

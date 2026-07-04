@@ -1744,13 +1744,14 @@ class FlaskWebServer:
                 return is_local_bind_host()
             if not is_local_bind_host() and configured.lower() in WEAK_WEB_TOKENS:
                 return False
+            configured_bytes = configured.encode("utf-8")
             for token in token_candidates_from_request():
                 if len(token) > MAX_WEB_TOKEN_LENGTH:
                     continue
                 try:
-                    if hmac.compare_digest(token, configured):
+                    if hmac.compare_digest(token.encode("utf-8"), configured_bytes):
                         return True
-                except TypeError:
+                except Exception:
                     continue
             return False
 
