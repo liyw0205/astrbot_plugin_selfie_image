@@ -939,6 +939,28 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.requests[0]["method"], "GET")
         self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/sig.png?sig=a+b#preview")
 
+    async def test_unknown_response_parser_unescapes_hex_escaped_urls_in_text(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "result https\\x3A\\x2F\\x2Fexample.test\\x2Foutputs\\x2Fhex.png\\x3Fsig\\x3Da\\x2Bb\\x23preview"
+                    }
+                }
+            ]
+        }
+
+        images = await images_from_response_unknown(session, payload, timeout=5)
+
+        extracted = extract_image_urls_from_text(
+            "result https\\x3a\\x2f\\x2fexample.test\\x2foutputs\\x2fhex.webp\\x3fsig\\x3da\\x2bb\\x23preview"
+        )
+        self.assertEqual(extracted["urls"], ["https://example.test/outputs/hex.webp?sig=a+b#preview"])
+        self.assertEqual(images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["method"], "GET")
+        self.assertEqual(session.requests[0]["url"], "https://example.test/outputs/hex.png?sig=a+b#preview")
+
     async def test_unknown_response_parser_resolves_modern_relative_filenames(self) -> None:
         session = FakeSession(get_data=PNG_BYTES)
         payload = {"data": [{"output": "generated.tiff"}]}

@@ -371,6 +371,13 @@ def looks_like_relative_image_url(value: str) -> bool:
 
 def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
     raw = decode_html_entities(str(text or "")).replace("\\/", "/")
+    raw = re.sub(r"\\x23", "#", raw, flags=re.I)
+    raw = re.sub(r"\\x2b", "+", raw, flags=re.I)
+    raw = re.sub(r"\\x2f", "/", raw, flags=re.I)
+    raw = re.sub(r"\\x26", "&", raw, flags=re.I)
+    raw = re.sub(r"\\x3a", ":", raw, flags=re.I)
+    raw = re.sub(r"\\x3d", "=", raw, flags=re.I)
+    raw = re.sub(r"\\x3f", "?", raw, flags=re.I)
     raw = re.sub(r"\\u0023", "#", raw, flags=re.I)
     raw = re.sub(r"\\u002b", "+", raw, flags=re.I)
     raw = re.sub(r"\\u002f", "/", raw, flags=re.I)
