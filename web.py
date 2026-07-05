@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import re
 import threading
 from typing import Any, Optional
@@ -27,6 +28,7 @@ MAX_WEB_TOKEN_LENGTH = 4096
 MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
 MAX_WEB_RECORD_ID_LENGTH = 128
+MAX_RECORD_PAGE_LIMIT = 100
 WEAK_WEB_TOKENS = {"changeme", "change-me", "change_me", "password", "admin", "123456", "test"}
 
 
@@ -1730,6 +1732,70 @@ class FlaskWebServer:
                 return None, fail("请求体必须是 JSON 对象")
             return payload, None
 
+        def int_query_arg(name: str, default: int, minimum: int, maximum: int) -> tuple[Optional[int], Optional[Any]]:
+            raw_value = str(request.args.get(name, "") or "").strip()
+            if not raw_value:
+                return default, None
+            try:
+                value = int(raw_value)
+            except ValueError:
+                return None, fail(f"{name} 必须是整数", 400)
+            if value < minimum:
+                return None, fail(f"{name} 不能小于 {minimum}", 400)
+            return min(value, maximum), None
+
+        def record_matches_query(record: Any, source: str, model: str, success: str, keyword: str) -> bool:
+            if not isinstance(record, dict):
+                return False
+            if source:
+                source_text = " ".join(
+                    str(record.get(key) or "")
+                    for key in ("source_label", "source", "group_id", "user_id")
+                ).lower()
+                if source not in source_text:
+                    return False
+            if model and model not in str(record.get("used_model") or "").lower():
+                return False
+            if success:
+                expected = success in {"1", "true", "yes", "ok", "success", "succeeded", "成功"}
+                if bool(record.get("success")) is not expected:
+                    return False
+            if keyword:
+                text = json.dumps(record, ensure_ascii=False, default=str).lower()
+                if keyword not in text:
+                    return False
+            return True
+
+        def filtered_record_payload(records: list[Any]) -> Any:
+            source = str(request.args.get("source") or "").strip().lower()
+            model = str(request.args.get("model") or "").strip().lower()
+            success = str(request.args.get("success") or "").strip().lower()
+            keyword = str(request.args.get("q") or request.args.get("keyword") or "").strip().lower()
+            if success and success not in {"1", "0", "true", "false", "yes", "no", "ok", "success", "succeeded", "failed", "失败", "成功"}:
+                return None, None, fail("success 必须是 true 或 false", 400)
+
+            offset, error_response = int_query_arg("offset", 0, 0, 10000)
+            if error_response:
+                return None, None, error_response
+            default_limit = min(MAX_RECORD_PAGE_LIMIT, len(records))
+            limit, error_response = int_query_arg("limit", default_limit, 1, MAX_RECORD_PAGE_LIMIT)
+            if error_response:
+                return None, None, error_response
+
+            filtered = [
+                record
+                for record in records
+                if record_matches_query(record, source, model, success, keyword)
+            ]
+            page = filtered[offset : offset + limit]
+            meta = {
+                "total": len(records),
+                "filtered": len(filtered),
+                "offset": offset,
+                "limit": limit,
+            }
+            return page, meta, None
+
         def token_candidates_from_request() -> list[str]:
             tokens: list[str] = []
             auth = str(request.headers.get("Authorization") or "")
@@ -1898,7 +1964,11 @@ class FlaskWebServer:
         def records() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            return ok(redact_sensitive_data(self.plugin.get_recent_records()))
+            data = redact_sensitive_data(self.plugin.get_recent_records())
+            page, meta, error_response = filtered_record_payload(data)
+            if error_response:
+                return error_response
+            return ok(page, **meta)
 
         @app.route("/api/records/<record_id>", methods=["GET"])
         def record_detail(record_id: str) -> Any:

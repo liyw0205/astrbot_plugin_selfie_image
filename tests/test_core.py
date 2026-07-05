@@ -2034,6 +2034,54 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"], {"deleted": 1})
 
+    def test_records_api_supports_filtering_and_pagination(self) -> None:
+        class RecordPlugin(FakeWebPlugin):
+            def get_recent_records(self):
+                return [
+                    {"id": "1", "source_label": "群A", "group_id": "100", "user_id": "u1", "used_model": "model-a", "success": True},
+                    {"id": "2", "source_label": "群A", "group_id": "100", "user_id": "u2", "used_model": "model-b", "success": False},
+                    {"id": "3", "source_label": "私聊", "group_id": "", "user_id": "u3", "used_model": "model-a", "success": True},
+                    {"id": "4", "source_label": "群B", "group_id": "200", "user_id": "u4", "used_model": "model-a", "success": False},
+                ]
+
+        client = self.make_client(RecordPlugin("secret"), host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        response = client.get(
+            "/api/records",
+            query_string={"source": "群", "model": "model-a", "success": "false", "limit": "1", "offset": "0"},
+            headers=headers,
+        )
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in payload["data"]], ["4"])
+        self.assertEqual(payload["total"], 4)
+        self.assertEqual(payload["filtered"], 1)
+        self.assertEqual(payload["offset"], 0)
+        self.assertEqual(payload["limit"], 1)
+
+        response = client.get("/api/records", query_string={"q": "u", "limit": "2", "offset": "1"}, headers=headers)
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in payload["data"]], ["2", "3"])
+        self.assertEqual(payload["filtered"], 4)
+
+    def test_records_api_rejects_invalid_filter_arguments(self) -> None:
+        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        response = client.get("/api/records", query_string={"limit": "0"}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("limit 不能小于 1", response.get_json()["error"])
+
+        response = client.get("/api/records", query_string={"offset": "bad"}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("offset 必须是整数", response.get_json()["error"])
+
+        response = client.get("/api/records", query_string={"success": "maybe"}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("success 必须是 true 或 false", response.get_json()["error"])
+
     def test_record_detail_api_requires_auth_validates_id_and_returns_record(self) -> None:
         plugin = FakeWebPlugin("secret")
         client = self.make_client(plugin, host="0.0.0.0")
