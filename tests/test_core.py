@@ -52,6 +52,7 @@ from astrbot_plugin_selfie_image.providers import (
     response_preview,
 )
 from astrbot_plugin_selfie_image.utils import (
+    bytes_to_data_url,
     collect_cache_cleanup_candidates,
     collect_record_cache_paths,
     collect_unreferenced_record_cache_paths,
@@ -174,6 +175,7 @@ class FakeWebPlugin:
         self.records_path = os.path.join(self.temp_dir.name, "selfie_image_records.json")
         self.generated_dir = os.path.join(self.temp_dir.name, "image_cache")
         self.task_status_calls = []
+        self.selfie_reference = {"data": b"", "mime_type": "image/png", "updated_at": ""}
         os.makedirs(self.generated_dir, exist_ok=True)
 
     def _cache_size_bytes(self) -> int:
@@ -198,11 +200,48 @@ class FakeWebPlugin:
     def clear_recent_records(self):
         return 1
 
+    def get_selfie_reference_payload(self):
+        data = self.selfie_reference.get("data") or b""
+        if not data:
+            return {
+                "has_image": False,
+                "ref_mime_type": self.selfie_reference.get("mime_type") or "image/png",
+                "updated_at": self.selfie_reference.get("updated_at") or "",
+                "status": "当前还没有设置自拍参考图",
+            }
+        return {
+            "has_image": True,
+            "ref_mime_type": self.selfie_reference.get("mime_type") or detect_mime_by_bytes(data),
+            "updated_at": self.selfie_reference.get("updated_at") or "",
+            "image": bytes_to_data_url(data, self.selfie_reference.get("mime_type") or detect_mime_by_bytes(data)),
+            "status": "当前已设置自拍参考图",
+        }
+
+    def save_selfie_reference_from_web(self, payload):
+        raw_image = str(payload.get("image") or payload.get("data") or "").strip()
+        if not raw_image:
+            raise ValueError("缺少 image 字段，支持 data:image/...;base64,... 或纯 base64")
+        data, mime = data_url_to_bytes(raw_image)
+        if not data:
+            raise ValueError("上传图片为空")
+        self.selfie_reference = {"data": data, "mime_type": mime, "updated_at": "2026-07-06 00:00:00"}
+        return self.get_selfie_reference_payload()
+
     def clear_selfie_reference_from_web(self):
+        self.selfie_reference = {"data": b"", "mime_type": "image/png", "updated_at": "2026-07-06 00:00:00"}
         return {"has_image": False, "status": "cleared"}
 
     async def refresh_selfie_profile_from_web(self):
         return {"status": "refreshed", "updated_at": "2026-07-04 00:00:00"}
+
+    async def web_test_image(self, payload):
+        return {"success": True, "payload": copy.deepcopy(payload)}
+
+    def start_web_image_task(self, payload):
+        return {"task_id": "web-12345678-1", "status": "queued", "request_data": copy.deepcopy(payload)}
+
+    async def web_refresh_image_models(self, payload):
+        return ["model-a", "model-b"]
 
     def get_web_image_task(self, task_id: str):
         self.task_status_calls.append(task_id)
@@ -222,6 +261,7 @@ class FakeWebPlugin:
             "path": rel_path,
             "absolute_path": path,
             "exists": os.path.isfile(path),
+            "is_image": looks_like_image_bytes(Path(path).read_bytes()[:512]) if os.path.isfile(path) else False,
             "mime_type": "image/png",
         }
 
@@ -1861,6 +1901,52 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(plugin.config.web_host, "127.0.0.1")
         self.assertEqual(plugin.config.image_max_batch_count, 8)
 
+    def test_config_api_get_and_save_round_trip_common_settings(self) -> None:
+        plugin = FakeWebPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        response = client.get("/api/config", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("web", response.get_json()["data"])
+
+        response = client.post(
+            "/api/config",
+            json={
+                "config": {
+                    "bot_name": "自拍助手",
+                    "image": {"max_batch_count": 4, "cache_limit_mb": 12},
+                    "permission": {"usable_users": "1001,1002"},
+                    "image_channels": [
+                        {
+                            "name": "main",
+                            "provider_type": "openai",
+                            "base_url": "https://example.test",
+                            "model": "gpt-image-1",
+                            "enabled_models": ["gpt-image-1", "gpt-image-2"],
+                            "enabled": True,
+                        }
+                    ],
+                    "enabled_image_model_priority": ["main/gpt-image-2", "main/gpt-image-1"],
+                    "web": {"token": "bad", "host": "0.0.0.0"},
+                }
+            },
+            headers=headers,
+        )
+
+        data = response.get_json()["data"]
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("web", data)
+        self.assertEqual(data["bot_name"], "自拍助手")
+        self.assertEqual(plugin.config.bot_name, "自拍助手")
+        self.assertEqual(plugin.config.image_max_batch_count, 4)
+        self.assertEqual(plugin.config.image_cache_limit_mb, 12)
+        self.assertEqual(plugin.config.usable_users, ["1001", "1002"])
+        self.assertEqual(plugin.config.enabled_image_model_priority, ["main/gpt-image-2", "main/gpt-image-1"])
+        self.assertEqual([target.label for target in plugin.config.get_prioritized_targets()], ["main/gpt-image-2", "main/gpt-image-1"])
+        self.assertEqual(plugin.config.web_token, "secret")
+        self.assertEqual(plugin.config.web_host, "127.0.0.1")
+
     def test_config_api_rejects_invalid_json_shapes(self) -> None:
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
         headers = {"X-Selfie-Image-Token": "secret"}
@@ -1951,6 +2037,84 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"]["status"], "refreshed")
 
+    def test_selfie_reference_route_saves_and_rejects_invalid_images(self) -> None:
+        plugin = FakeWebPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        response = client.get("/api/selfie-reference", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["data"]["has_image"])
+
+        image = bytes_to_data_url(PNG_BYTES, "image/png")
+        response = client.post("/api/selfie-reference", json={"image": image, "filename": "avatar.png"}, headers=headers)
+        data = response.get_json()["data"]
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(data["has_image"])
+        self.assertEqual(data["ref_mime_type"], "image/png")
+        self.assertTrue(data["image"].startswith("data:image/png;base64,"))
+
+        response = client.post("/api/selfie-reference", json={"image": "bm90IGFuIGltYWdl"}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("上传图片为空", response.get_json()["error"])
+
+    def test_refresh_models_route_returns_count_and_redacts_failures(self) -> None:
+        class FailingPlugin(FakeWebPlugin):
+            async def web_refresh_image_models(self, payload):
+                raise RuntimeError("api_key=plain-provider-secret")
+
+        plugin = FakeWebPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        response = client.post(
+            "/api/refresh-image-models",
+            json={"channel": {"name": "main", "api_key": "sk-live-secret-token"}},
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"], ["model-a", "model-b"])
+        self.assertEqual(response.get_json()["count"], 2)
+
+        client = self.make_client(FailingPlugin("secret"), host="0.0.0.0")
+        response = client.post("/api/refresh-image-models", json={"channel": {"name": "main"}}, headers=headers)
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("api_key=[REDACTED]", response.get_json()["error"])
+        self.assertNotIn("plain-provider-secret", response.get_json()["error"])
+
+    def test_channel_test_routes_redact_sensitive_success_payloads(self) -> None:
+        class SensitivePlugin(FakeWebPlugin):
+            async def web_test_image(self, payload):
+                return {
+                    "success": False,
+                    "error": "Authorization: Bearer sk-live-secret-token",
+                    "request_data": {"channel": {"api_key": "plain-provider-secret"}},
+                }
+
+            def start_web_image_task(self, payload):
+                return {
+                    "task_id": "web-12345678-9",
+                    "status": "failed",
+                    "result": {"error": "token=abcdefghijklmnop"},
+                }
+
+        client = self.make_client(SensitivePlugin("secret"), host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        sync_response = client.post("/api/test-image-channel", json={"prompt": "test"}, headers=headers)
+        task_response = client.post("/api/test-image-channel/tasks", json={"prompt": "test"}, headers=headers)
+
+        sync_text = json.dumps(sync_response.get_json()["data"], ensure_ascii=False)
+        task_text = json.dumps(task_response.get_json()["data"], ensure_ascii=False)
+        self.assertEqual(sync_response.status_code, 200)
+        self.assertEqual(task_response.status_code, 200)
+        self.assertIn("Bearer [REDACTED]", sync_text)
+        self.assertIn('"api_key": "[REDACTED]"', sync_text)
+        self.assertIn("token=[REDACTED]", task_text)
+        self.assertNotIn("sk-live-secret-token", sync_text)
+        self.assertNotIn("plain-provider-secret", sync_text)
+        self.assertNotIn("abcdefghijklmnop", task_text)
+
     def test_web_error_responses_redact_sensitive_text(self) -> None:
         class FailingPlugin(FakeWebPlugin):
             async def refresh_selfie_profile_from_web(self):
@@ -2019,6 +2183,17 @@ class WebApiTests(unittest.TestCase):
         response = client.get("/api/cache-image?path=" + ("a" * 600) + ".png", headers=headers)
         self.assertEqual(response.status_code, 400)
         self.assertIn("图片路径过长", response.get_json()["error"])
+
+    def test_cache_image_route_rejects_non_image_cache_files(self) -> None:
+        plugin = FakeWebPlugin("secret")
+        text_path = os.path.join(plugin.generated_dir, "not-image.txt")
+        Path(text_path).write_text("not an image", encoding="utf-8")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        response = client.get("/api/cache-image?path=not-image.txt", headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("缓存文件不是有效图片", response.get_json()["error"])
 
 
 class SchemaTests(unittest.TestCase):

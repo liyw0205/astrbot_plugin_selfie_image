@@ -1793,8 +1793,11 @@ class FlaskWebServer:
                 patch = payload["config"]
             else:
                 patch = payload
-            data = self.plugin.update_config_from_web(patch)
-            return ok(data)
+            try:
+                data = self.plugin.update_config_from_web(patch)
+                return ok(data)
+            except Exception as exc:
+                return fail(str(exc), 500)
 
         @app.route("/api/selfie-reference", methods=["GET", "POST"])
         def selfie_reference() -> Any:
@@ -1842,7 +1845,7 @@ class FlaskWebServer:
                 return error_response
             try:
                 data = self._run_async(self.plugin.web_test_image(payload), timeout=max(30, self.plugin.config.image_global_timeout + 30))
-                return ok(data)
+                return ok(redact_sensitive_data(data))
             except Exception as exc:
                 return fail(str(exc), 500)
 
@@ -1855,7 +1858,7 @@ class FlaskWebServer:
                 return error_response
             try:
                 data = self.plugin.start_web_image_task(payload)
-                return ok(data)
+                return ok(redact_sensitive_data(data))
             except Exception as exc:
                 return fail(str(exc), 500)
 
@@ -1912,6 +1915,8 @@ class FlaskWebServer:
                 return fail(str(exc), 400)
             if not info.get("exists"):
                 return fail("图片已清理", 404)
+            if info.get("is_image") is False:
+                return fail("缓存文件不是有效图片", 400)
             return send_file(info["absolute_path"], mimetype=info.get("mime_type") or "image/png")
 
         return app

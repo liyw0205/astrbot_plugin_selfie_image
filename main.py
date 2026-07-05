@@ -79,6 +79,7 @@ from .utils import (
     extract_image_urls,
     fetch_image_source,
     load_json_file,
+    looks_like_image_bytes,
     normalize_image_mime,
     parse_audit_response_text,
     redact_sensitive_data,
@@ -1162,13 +1163,18 @@ class SelfieImagePlugin(Star):
         abs_path = self._cache_absolute_path(rel_path)
         exists = os.path.exists(abs_path) and os.path.isfile(abs_path)
         mime = "image/png"
+        is_image = False
         if exists:
             with open(abs_path, "rb") as handle:
-                mime = detect_mime_by_bytes(handle.read(16))
+                head = handle.read(512)
+            is_image = looks_like_image_bytes(head)
+            if is_image:
+                mime = detect_mime_by_bytes(head)
         return {
             "path": rel_path,
             "absolute_path": abs_path,
             "exists": exists,
+            "is_image": is_image,
             "mime_type": mime,
         }
 
