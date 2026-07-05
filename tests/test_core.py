@@ -34,6 +34,7 @@ from astrbot_plugin_selfie_image.models import (
 )
 from astrbot_plugin_selfie_image.providers import (
     AgnesImageAdapter,
+    BaseImageAdapter,
     GrokImageAdapter,
     ImageGenerateResult,
     ImageGenerateRequest,
@@ -798,6 +799,32 @@ class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_adapter_json_response_helper_extracts_http_error_and_redacts(self) -> None:
+        adapter = BaseImageAdapter(make_target(), FakeSession())
+        response = FakeResponse(
+            status=400,
+            text='{"error":{"message":"Authorization: Bearer sk-live-secret-token and token=abcdefghijklmnop"}}',
+        )
+
+        data, error = await adapter.response_json_or_error(response)
+
+        self.assertIsNone(data)
+        self.assertIn("HTTP 400", error)
+        self.assertIn("Bearer [REDACTED]", error)
+        self.assertIn("token=[REDACTED]", error)
+        self.assertNotIn("sk-live-secret-token", error)
+
+    async def test_adapter_json_response_helper_reports_non_json_preview(self) -> None:
+        adapter = BaseImageAdapter(make_target(), FakeSession())
+        response = FakeResponse(status=200, text="<html>token=abcdefghijklmnop</html>")
+
+        data, error = await adapter.response_json_or_error(response)
+
+        self.assertIsNone(data)
+        self.assertIn("接口返回非 JSON 内容", error)
+        self.assertIn("token=[REDACTED]", error)
+        self.assertNotIn("abcdefghijklmnop", error)
+
     async def test_unknown_response_parser_deduplicates_nested_base64_images(self) -> None:
         data_url = "data:image/png;base64," + base64.b64encode(PNG_BYTES).decode("ascii")
         payload = {
