@@ -186,19 +186,22 @@ class OpenAIImageAdapter(BaseImageAdapter):
             return await self.generate_edit(req)
         return await self.generate_image(req)
 
-    async def generate_image(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+    def build_image_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
         gpt_image = is_gpt_image_model(self.target.model)
-        base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
-        url = f"{base}/v1/images/generations"
         payload: Dict[str, Any] = {
             "model": self.target.model or ("gpt-image-1" if gpt_image else "dall-e-3"),
             "prompt": req.prompt,
             "n": 1,
+            "size": map_aspect_ratio_to_gpt_image_size(req.aspect_ratio) if gpt_image else map_aspect_ratio_to_openai_size(req.aspect_ratio),
         }
         if not gpt_image:
             payload["response_format"] = "b64_json"
-        payload["size"] = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio) if gpt_image else map_aspect_ratio_to_openai_size(req.aspect_ratio)
-        data, error = await self.post_json_data_or_error(url, payload)
+        return payload
+
+    async def generate_image(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
+        url = f"{base}/v1/images/generations"
+        data, error = await self.post_json_data_or_error(url, self.build_image_payload(req))
         if error or data is None:
             return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
@@ -259,10 +262,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
 
 
 class GeminiImageAdapter(BaseImageAdapter):
-    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
-        base = normalize_gemini_base_url(self.target.base_url) or "https://generativelanguage.googleapis.com"
-        model_path = self.target.model if self.target.model.startswith("models/") else f"models/{self.target.model}"
-        url = f"{base}/v1beta/{model_path}:generateContent"
+    def build_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
         parts: List[Dict[str, Any]] = [{"text": req.prompt}]
         for image in req.images:
             parts.append(
@@ -273,15 +273,20 @@ class GeminiImageAdapter(BaseImageAdapter):
                     }
                 }
             )
-        payload = {
+        return {
             "contents": [{"parts": parts}],
             "generationConfig": {"responseModalities": ["IMAGE"]},
         }
+
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_gemini_base_url(self.target.base_url) or "https://generativelanguage.googleapis.com"
+        model_path = self.target.model if self.target.model.startswith("models/") else f"models/{self.target.model}"
+        url = f"{base}/v1beta/{model_path}:generateContent"
         headers = {
             "x-goog-api-key": self.target.api_key,
         }
         try:
-            data, error = await self.post_json_data_or_error(url, payload, headers=headers, bearer_auth=False)
+            data, error = await self.post_json_data_or_error(url, self.build_payload(req), headers=headers, bearer_auth=False)
             if error or data is None:
                 return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
@@ -291,9 +296,7 @@ class GeminiImageAdapter(BaseImageAdapter):
 
 
 class GeminiOpenAIImageAdapter(BaseImageAdapter):
-    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
-        base = normalize_image_base_url(self.target.base_url)
-        url = f"{base}/v1/chat/completions"
+    def build_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
         content: List[Dict[str, Any]] = [{"type": "text", "text": f"Generate an image: {req.prompt}"}]
         for image in req.images:
             content.append(
@@ -302,13 +305,17 @@ class GeminiOpenAIImageAdapter(BaseImageAdapter):
                     "image_url": {"url": bytes_to_data_url(image.data, image.mime_type)},
                 }
             )
-        payload = {
+        return {
             "model": self.target.model,
             "messages": [{"role": "user", "content": content}],
             "modalities": ["image", "text"],
             "stream": False,
         }
-        data, error = await self.post_json_data_or_error(url, payload)
+
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_image_base_url(self.target.base_url)
+        url = f"{base}/v1/chat/completions"
+        data, error = await self.post_json_data_or_error(url, self.build_payload(req))
         if error or data is None:
             return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
@@ -386,9 +393,7 @@ class AgnesImageAdapter(BaseImageAdapter):
             return source_url
         return bytes_to_data_url(image.data, image.mime_type)
 
-    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
-        base = normalize_image_base_url(self.target.base_url) or self.default_base_url
-        url = f"{base}/v1/images/generations"
+    def build_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "model": self.target.model or self.default_model,
             "prompt": req.prompt,
@@ -400,6 +405,12 @@ class AgnesImageAdapter(BaseImageAdapter):
             extra_body["response_format"] = "url"
         if extra_body:
             payload["extra_body"] = extra_body
+        return payload
+
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_image_base_url(self.target.base_url) or self.default_base_url
+        url = f"{base}/v1/images/generations"
+        payload = self.build_payload(req)
         data, error = await self.post_json_data_or_error(url, payload, http_preview_limit=300)
         if error or data is None:
             return ImageGenerateResult(error=error or "接口未返回有效 JSON")

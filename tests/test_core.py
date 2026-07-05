@@ -36,10 +36,12 @@ from astrbot_plugin_selfie_image.providers import (
     AgnesImageAdapter,
     BaseImageAdapter,
     GeminiImageAdapter,
+    GeminiOpenAIImageAdapter,
     GrokImageAdapter,
     ImageGenerateResult,
     ImageGenerateRequest,
     ImageReference,
+    OpenAIImageAdapter,
     build_model_list_urls,
     clean_image_url,
     extract_model_ids_from_response,
@@ -800,6 +802,32 @@ class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def test_openai_payload_builder_keeps_gpt_image_response_format_out(self) -> None:
+        adapter = OpenAIImageAdapter(make_target("openai", "gpt-image-1"), FakeSession())
+
+        payload = adapter.build_image_payload(ImageGenerateRequest(prompt="cat", aspect_ratio="16:9"))
+
+        self.assertEqual(payload["model"], "gpt-image-1")
+        self.assertEqual(payload["prompt"], "cat")
+        self.assertEqual(payload["size"], "1536x1024")
+        self.assertNotIn("response_format", payload)
+
+    def test_gemini_openai_payload_builder_embeds_reference_images(self) -> None:
+        adapter = GeminiOpenAIImageAdapter(make_target("gemini_openai", "gemini-2.0-flash"), FakeSession())
+
+        payload = adapter.build_payload(
+            ImageGenerateRequest(
+                prompt="cat",
+                images=[ImageReference(data=PNG_BYTES, mime_type="image/png")],
+            )
+        )
+
+        content = payload["messages"][0]["content"]
+        self.assertEqual(payload["modalities"], ["image", "text"])
+        self.assertEqual(content[0], {"type": "text", "text": "Generate an image: cat"})
+        self.assertEqual(content[1]["type"], "image_url")
+        self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/png;base64,"))
+
     async def test_adapter_json_post_helper_sends_bearer_auth_by_default(self) -> None:
         session = FakeSession({"ok": True})
         adapter = BaseImageAdapter(make_target(), session)
@@ -1756,6 +1784,21 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["aspect_ratio"], "auto")
         self.assertEqual(payload["resolution"], "4k")
         self.assertEqual(payload["response_format"], "b64_json")
+
+    def test_agnes_payload_builder_keeps_remote_reference_url(self) -> None:
+        adapter = AgnesImageAdapter(make_target(), FakeSession())
+
+        payload = adapter.build_payload(
+            ImageGenerateRequest(
+                prompt="portrait",
+                aspect_ratio="3:2",
+                images=[ImageReference(data=PNG_BYTES, source_url="https://example.test/ref.png")],
+            )
+        )
+
+        self.assertEqual(payload["size"], "1024x682")
+        self.assertEqual(payload["extra_body"]["image"], ["https://example.test/ref.png"])
+        self.assertEqual(payload["extra_body"]["response_format"], "url")
 
     async def test_agnes_payload_keeps_reference_image_and_size(self) -> None:
         response = {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
