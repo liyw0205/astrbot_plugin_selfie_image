@@ -417,10 +417,12 @@ INDEX_HTML = r"""<!doctype html>
     const MONITOR_PAGE_SIZE = 20;
     let CONFIG = {};
     let RECORDS = [];
+    let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
     let MONITOR_PAGE = 1;
     let AUTH_TOKEN = localStorage.getItem('selfieImageToken') || localStorage.getItem('aicatToken') || '';
     let IS_FILLING = false;
     let AUTO_SAVE_TIMER = null;
+    let MONITOR_LOAD_TIMER = null;
     let ACTIVE_CHANNEL_PANE = 'image';
     let EDITING_CHANNEL_INDEX = -1;
     let EDITING_CHANNEL_KIND = 'image';
@@ -1184,18 +1186,42 @@ INDEX_HTML = r"""<!doctype html>
         $('healthPill').textContent = '未连接';
       }
     }
-    async function loadRecords() {
+    function monitorQueryPath(page = MONITOR_PAGE) {
+      const params = new URLSearchParams();
+      const source = $('monitorSource').value.trim();
+      const model = $('monitorModel').value.trim();
+      const success = $('monitorSuccess').value;
+      if (source) params.set('source', source);
+      if (model) params.set('model', model);
+      if (success) params.set('success', success);
+      params.set('limit', String(MONITOR_PAGE_SIZE));
+      params.set('offset', String((Math.max(1, page) - 1) * MONITOR_PAGE_SIZE));
+      return '/api/records?' + params.toString();
+    }
+    async function loadRecords(showRefreshToast = true) {
       try {
-        const res = await api('/api/records');
+        const res = await api(monitorQueryPath(MONITOR_PAGE));
         RECORDS = res.data || [];
+        RECORD_META = {
+          total: Number(res.total ?? RECORDS.length),
+          filtered: Number(res.filtered ?? RECORDS.length),
+          offset: Number(res.offset ?? ((MONITOR_PAGE - 1) * MONITOR_PAGE_SIZE)),
+          limit: Number(res.limit ?? MONITOR_PAGE_SIZE)
+        };
+        const totalPages = Math.max(1, Math.ceil((RECORD_META.filtered || 0) / MONITOR_PAGE_SIZE));
+        if (!RECORDS.length && RECORD_META.filtered > 0 && MONITOR_PAGE > totalPages) {
+          MONITOR_PAGE = totalPages;
+          return await loadRecords(showRefreshToast);
+        }
         renderRecords();
-        showToast('记录已刷新', 'ok');
+        if (showRefreshToast) showToast('记录已刷新', 'ok');
       } catch (e) { $('monitorStats').textContent = e.message; }
     }
     async function clearRecords() {
       try {
         await api('/api/records/clear', {method:'POST', body:'{}'});
         RECORDS = [];
+        RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
         renderRecords();
         showToast('记录已清空', 'ok');
       } catch (e) { $('monitorStats').textContent = e.message; }
@@ -1219,30 +1245,30 @@ INDEX_HTML = r"""<!doctype html>
     }
     function setMonitorPage(page) {
       MONITOR_PAGE = page;
-      renderRecords();
+      loadRecords(false);
     }
     function monitorFilterChanged() {
       MONITOR_PAGE = 1;
-      renderRecords();
+      clearTimeout(MONITOR_LOAD_TIMER);
+      MONITOR_LOAD_TIMER = setTimeout(() => loadRecords(false), 260);
     }
     function renderRecords() {
-      const source = $('monitorSource').value.trim().toLowerCase();
       const model = $('monitorModel').value.trim();
-      const success = $('monitorSuccess').value;
       const sourceOptions = uniq(RECORDS.map(r => String(r.source_label || r.source || '').trim()).filter(Boolean));
       const modelOptions = uniq(RECORDS.map(r => String(r.used_model || '').trim()).filter(Boolean));
+      if (model && !modelOptions.includes(model)) modelOptions.unshift(model);
       setMonitorSourceOptions(sourceOptions);
       setSelectOptions('monitorModel', [''].concat(modelOptions), model);
-      const rows = RECORDS.filter(r => (
-        !source || monitorSourceText(r).toLowerCase().includes(source)
-      ) && (!model || String(r.used_model||'').includes(model)) && (!success || String(!!r.success) === success));
+      const rows = RECORDS;
       const ok = rows.filter(r=>r.success).length;
       const avg = rows.length ? rows.reduce((s,r)=>s+Number(r.elapsed_seconds||0),0)/rows.length : 0;
-      const totalPages = Math.max(1, Math.ceil(rows.length / MONITOR_PAGE_SIZE));
+      const filteredCount = Number(RECORD_META.filtered ?? rows.length);
+      const totalCount = Number(RECORD_META.total ?? rows.length);
+      const totalPages = Math.max(1, Math.ceil(filteredCount / MONITOR_PAGE_SIZE));
       MONITOR_PAGE = Math.min(Math.max(1, MONITOR_PAGE), totalPages);
-      const start = (MONITOR_PAGE - 1) * MONITOR_PAGE_SIZE;
-      const pageRows = rows.slice(start, start + MONITOR_PAGE_SIZE);
-      $('monitorStats').textContent = `记录 ${rows.length} / 成功 ${ok} / 失败 ${rows.length-ok} / 平均 ${avg.toFixed(2)}s / 第 ${MONITOR_PAGE}/${totalPages} 页`;
+      const start = Number(RECORD_META.offset ?? ((MONITOR_PAGE - 1) * MONITOR_PAGE_SIZE));
+      const pageRows = rows;
+      $('monitorStats').textContent = `记录 ${filteredCount} / 总计 ${totalCount} / 本页成功 ${ok} / 本页失败 ${rows.length-ok} / 本页平均 ${avg.toFixed(2)}s / 第 ${MONITOR_PAGE}/${totalPages} 页`;
       $('recordTable').innerHTML = '<thead><tr><th>时间</th><th>来源</th><th>状态</th><th>模型</th></tr></thead><tbody>' +
         (pageRows.length ? pageRows.map(r => `<tr style="cursor:pointer" title="点击查看详情" onclick="openRecordDetail('${escapeJs(r.id || '')}')"><td>${escapeHtml(r.time||'')}</td><td>${escapeHtml(r.source_label || r.source || '')}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(r.used_model||'')}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">没有匹配的监控记录</td></tr>') +
         '</tbody>';

@@ -469,6 +469,12 @@ class ImageUtilityTests(unittest.TestCase):
         for mime in ("image/avif", "image/heic", "image/heif", "image/tiff", "image/svg+xml"):
             self.assertIn(mime, INDEX_HTML)
 
+    def test_web_monitor_uses_backend_record_pagination(self) -> None:
+        self.assertIn("function monitorQueryPath", INDEX_HTML)
+        self.assertIn("params.set('limit', String(MONITOR_PAGE_SIZE))", INDEX_HTML)
+        self.assertIn("api(monitorQueryPath(MONITOR_PAGE))", INDEX_HTML)
+        self.assertIn("RECORD_META.filtered", INDEX_HTML)
+
     def test_base_url_normalization(self) -> None:
         self.assertEqual(normalize_image_base_url("https://example.com/v1/images/generations"), "https://example.com")
         self.assertEqual(normalize_image_base_url("https://example.com/v1/chat/completions"), "https://example.com")
