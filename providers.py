@@ -65,21 +65,31 @@ class BaseImageAdapter:
         self.target = target
         self.session = session
 
-    async def post_json(self, url: str, payload: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> aiohttp.ClientResponse:
+    def build_json_headers(self, headers: Optional[Dict[str, str]] = None, *, bearer_auth: bool = True) -> Dict[str, str]:
         request_headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
             "Connection": "close",
             "User-Agent": "AI-Cat/1.0",
         }
-        if self.target.api_key:
+        if bearer_auth and self.target.api_key:
             request_headers["Authorization"] = f"Bearer {self.target.api_key}"
         if headers:
             request_headers.update(headers)
+        return request_headers
+
+    async def post_json(
+        self,
+        url: str,
+        payload: Dict[str, Any],
+        headers: Optional[Dict[str, str]] = None,
+        *,
+        bearer_auth: bool = True,
+    ) -> aiohttp.ClientResponse:
         return await self.session.post(
             url,
             json=payload,
-            headers=request_headers,
+            headers=self.build_json_headers(headers, bearer_auth=bearer_auth),
             timeout=aiohttp.ClientTimeout(total=self.target.timeout),
             proxy=str(self.target.proxy or "").strip() or None,
         )
@@ -98,6 +108,23 @@ class BaseImageAdapter:
             return json.loads(text), ""
         except json.JSONDecodeError:
             return None, f"接口返回非 JSON 内容: {response_preview(text, invalid_json_preview_limit)}"
+
+    async def post_json_data_or_error(
+        self,
+        url: str,
+        payload: Dict[str, Any],
+        headers: Optional[Dict[str, str]] = None,
+        *,
+        bearer_auth: bool = True,
+        http_preview_limit: int = 500,
+        invalid_json_preview_limit: int = 300,
+    ) -> tuple[Optional[Any], str]:
+        async with await self.post_json(url, payload, headers=headers, bearer_auth=bearer_auth) as response:
+            return await self.response_json_or_error(
+                response,
+                http_preview_limit=http_preview_limit,
+                invalid_json_preview_limit=invalid_json_preview_limit,
+            )
 
     async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         raise NotImplementedError
@@ -171,10 +198,9 @@ class OpenAIImageAdapter(BaseImageAdapter):
         if not gpt_image:
             payload["response_format"] = "b64_json"
         payload["size"] = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio) if gpt_image else map_aspect_ratio_to_openai_size(req.aspect_ratio)
-        async with await self.post_json(url, payload) as response:
-            data, error = await self.response_json_or_error(response)
-            if error or data is None:
-                return ImageGenerateResult(error=error or "接口未返回有效 JSON")
+        data, error = await self.post_json_data_or_error(url, payload)
+        if error or data is None:
+            return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
 
@@ -252,21 +278,12 @@ class GeminiImageAdapter(BaseImageAdapter):
             "generationConfig": {"responseModalities": ["IMAGE"]},
         }
         headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
             "x-goog-api-key": self.target.api_key,
         }
         try:
-            async with self.session.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=self.target.timeout),
-                proxy=str(self.target.proxy or "").strip() or None,
-            ) as response:
-                data, error = await self.response_json_or_error(response)
-                if error or data is None:
-                    return ImageGenerateResult(error=error or "接口未返回有效 JSON")
+            data, error = await self.post_json_data_or_error(url, payload, headers=headers, bearer_auth=False)
+            if error or data is None:
+                return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
             return ImageGenerateResult(error=f"Gemini 生图请求超时（{self.target.timeout}秒）")
         images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
@@ -291,10 +308,9 @@ class GeminiOpenAIImageAdapter(BaseImageAdapter):
             "modalities": ["image", "text"],
             "stream": False,
         }
-        async with await self.post_json(url, payload) as response:
-            data, error = await self.response_json_or_error(response)
-            if error or data is None:
-                return ImageGenerateResult(error=error or "接口未返回有效 JSON")
+        data, error = await self.post_json_data_or_error(url, payload)
+        if error or data is None:
+            return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         if images:
             return ImageGenerateResult(images=images)
@@ -321,10 +337,9 @@ class SimpleOpenAIImageAdapter(BaseImageAdapter):
     async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         base = normalize_image_base_url(self.target.base_url) or self.default_base_url
         url = f"{base}/v1/images/generations"
-        async with await self.post_json(url, self.build_payload(req)) as response:
-            data, error = await self.response_json_or_error(response, http_preview_limit=300)
-            if error or data is None:
-                return ImageGenerateResult(error=error or "接口未返回有效 JSON")
+        data, error = await self.post_json_data_or_error(url, self.build_payload(req), http_preview_limit=300)
+        if error or data is None:
+            return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
 
@@ -385,10 +400,9 @@ class AgnesImageAdapter(BaseImageAdapter):
             extra_body["response_format"] = "url"
         if extra_body:
             payload["extra_body"] = extra_body
-        async with await self.post_json(url, payload) as response:
-            data, error = await self.response_json_or_error(response, http_preview_limit=300)
-            if error or data is None:
-                return ImageGenerateResult(error=error or "接口未返回有效 JSON")
+        data, error = await self.post_json_data_or_error(url, payload, http_preview_limit=300)
+        if error or data is None:
+            return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
         if images:
             return ImageGenerateResult(images=images)

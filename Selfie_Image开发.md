@@ -3,7 +3,7 @@
 > 文档重生成日期：2026-07-05
 > 重生成基线：`fb96a7c`，`astrbot_plugin_selfie_image` 1.0.0
 > 运行形态：AstrBot 插件 + 内置 Flask Web 管理页 + 多 Provider 生图适配器
-> 当前回归基线：`tests/test_core.py` 124 个用例；每轮改动后必须重新验证
+> 当前回归基线：`tests/test_core.py` 126 个用例；每轮改动后必须重新验证
 
 ## 目标与边界
 
@@ -289,10 +289,11 @@ sh -n grok_image_edit_batch.sh
 - Web 保存配置前会清理已禁用或已删除模型对应的无效模型优先级，并保留单模型名兼容写法。
 - 拆分 `provider_parser.py`，将 provider 响应解析、模型列表解析、图片链接提取和下载校验从 adapter 文件中分离。
 - 抽取 Provider JSON 响应读取、HTTP 错误预览和非 JSON 错误处理，统一 provider adapter 的错误返回与脱敏路径。
+- 抽取 Provider JSON POST 发送 helper，统一默认请求头、超时、代理和 JSON 错误读取，并保留 Gemini 的 `x-goog-api-key` 非 Bearer 鉴权。
 
 ## 下一步建议
 
-1. 继续收敛 `providers.py` 的 adapter 结构，分离 provider-specific payload 构造和请求发送细节。
+1. 继续收敛 `providers.py` 的 adapter 结构，分离 provider-specific payload 构造和结果解释逻辑。
 2. 继续扩展 Web API 的 Flask test client 用例，覆盖更多 Web 前端异常状态和配置同步细节。
 3. 增加一次真实 AstrBot 环境冒烟检查，确认命令、LLM 工具和 Web 配置热更新在运行时一致。
 4. 整理 `web.py` 内置前端结构，在不引入构建链的前提下分区收敛状态管理和重复渲染逻辑。

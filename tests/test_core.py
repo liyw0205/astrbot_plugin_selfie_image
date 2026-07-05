@@ -35,6 +35,7 @@ from astrbot_plugin_selfie_image.models import (
 from astrbot_plugin_selfie_image.providers import (
     AgnesImageAdapter,
     BaseImageAdapter,
+    GeminiImageAdapter,
     GrokImageAdapter,
     ImageGenerateResult,
     ImageGenerateRequest,
@@ -799,6 +800,19 @@ class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_adapter_json_post_helper_sends_bearer_auth_by_default(self) -> None:
+        session = FakeSession({"ok": True})
+        adapter = BaseImageAdapter(make_target(), session)
+
+        data, error = await adapter.post_json_data_or_error("https://example.test/v1/images/generations", {"prompt": "cat"})
+
+        self.assertEqual(data, {"ok": True})
+        self.assertEqual(error, "")
+        request = session.requests[0]
+        self.assertEqual(request["json"], {"prompt": "cat"})
+        self.assertEqual(request["headers"]["Authorization"], "Bearer test-key")
+        self.assertEqual(request["headers"]["Accept"], "application/json")
+
     async def test_adapter_json_response_helper_extracts_http_error_and_redacts(self) -> None:
         adapter = BaseImageAdapter(make_target(), FakeSession())
         response = FakeResponse(
@@ -824,6 +838,19 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("接口返回非 JSON 内容", error)
         self.assertIn("token=[REDACTED]", error)
         self.assertNotIn("abcdefghijklmnop", error)
+
+    async def test_gemini_json_post_uses_api_key_header_without_bearer_auth(self) -> None:
+        payload = {"candidates": [{"content": {"parts": [{"inlineData": {"data": base64.b64encode(PNG_BYTES).decode("ascii")}}]}}]}
+        session = FakeSession(payload)
+        adapter = GeminiImageAdapter(make_target("gemini", "gemini-2.0-flash"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        headers = session.requests[0]["headers"]
+        self.assertEqual(headers["x-goog-api-key"], "test-key")
+        self.assertNotIn("Authorization", headers)
+        self.assertEqual(headers["Accept"], "application/json")
 
     async def test_unknown_response_parser_deduplicates_nested_base64_images(self) -> None:
         data_url = "data:image/png;base64," + base64.b64encode(PNG_BYTES).decode("ascii")
