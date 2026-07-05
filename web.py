@@ -581,8 +581,9 @@ INDEX_HTML = r"""<!doctype html>
       CONFIG.image.blocked_words = textList('blockedWords');
       CONFIG.image.prompt_audit_template = $('promptAuditTemplate').value;
       CONFIG.image.output_audit_template = $('outputAuditTemplate').value;
-      CONFIG.enabled_image_model_priority = textList('priorityList');
       collectChannels();
+      prunePriorityList();
+      CONFIG.enabled_image_model_priority = textList('priorityList');
       return CONFIG;
     }
 
@@ -1047,6 +1048,17 @@ INDEX_HTML = r"""<!doctype html>
       }
       return labels;
     }
+    function activeImageModelKeys() {
+      collectChannels();
+      const keys = [];
+      for (const ch of CONFIG.image_channels || []) {
+        if (ch.enabled === false || !ch.name) continue;
+        for (const model of (ch.enabled_models?.length ? ch.enabled_models : [ch.model]).filter(Boolean)) {
+          keys.push(`${ch.name}/${model}`, `${ch.name}:${model}`, model);
+        }
+      }
+      return uniq(keys);
+    }
     function auditModelLabels() {
       collectChannels();
       const labels = [];
@@ -1059,6 +1071,7 @@ INDEX_HTML = r"""<!doctype html>
     function refreshModelSelectors() {
       const labels = allModelLabels();
       setSelectOptions('priorityPicker', labels, labels[0] || '');
+      prunePriorityList();
       const auditLabels = [''].concat(auditModelLabels());
       setSelectOptions('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       setSelectOptions('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
@@ -1093,6 +1106,16 @@ INDEX_HTML = r"""<!doctype html>
       $('priorityList').value = uniq(items).join('\n');
       renderPriorityRows();
       scheduleAutoSave('模型优先级已自动生效');
+    }
+    function prunePriorityList() {
+      const allowed = new Set(activeImageModelKeys());
+      const current = textList('priorityList');
+      const next = current.filter(item => allowed.has(item));
+      if (next.length !== current.length || next.some((item, i) => item !== current[i])) {
+        $('priorityList').value = next.join('\n');
+        renderPriorityRows();
+      }
+      return next;
     }
     function movePriority(index, delta) {
       const items = textList('priorityList');

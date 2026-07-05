@@ -475,6 +475,11 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertIn("api(monitorQueryPath(MONITOR_PAGE))", INDEX_HTML)
         self.assertIn("RECORD_META.filtered", INDEX_HTML)
 
+    def test_web_prunes_invalid_model_priority_before_save(self) -> None:
+        self.assertIn("function prunePriorityList", INDEX_HTML)
+        self.assertIn("prunePriorityList();\n      CONFIG.enabled_image_model_priority = textList('priorityList');", INDEX_HTML)
+        self.assertIn("keys.push(`${ch.name}/${model}`, `${ch.name}:${model}`, model);", INDEX_HTML)
+
     def test_base_url_normalization(self) -> None:
         self.assertEqual(normalize_image_base_url("https://example.com/v1/images/generations"), "https://example.com")
         self.assertEqual(normalize_image_base_url("https://example.com/v1/chat/completions"), "https://example.com")
