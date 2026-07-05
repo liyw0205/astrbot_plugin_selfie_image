@@ -161,7 +161,8 @@ Web API 统一要求：
 | `models.py` | 默认配置、配置归一化、数据模型、模型目标解析 |
 | `main.py` | AstrBot 插件主体、命令、LLM 工具、权限、审核、缓存、记录、Web 生命周期 |
 | `web.py` | Flask App、内置 HTML/CSS/JS、鉴权、配置 API、渠道测试 API、记录 API |
-| `providers.py` | Provider adapter、模型列表解析、生图请求、响应图片提取和下载 |
+| `provider_parser.py` | Provider 响应解析、模型列表解析、图片 URL/base64 提取和远程图片下载校验 |
+| `providers.py` | Provider adapter、生图请求、图生图请求和 provider-specific payload |
 | `generator.py` | 多模型 fallback、并发控制、全局超时和失败记录 |
 | `persona.py` | 自拍参考图、每日自拍状态、人设提示词与意图解析 |
 | `preset.py` | 生图预设读写和管理 |
@@ -186,7 +187,8 @@ agnes
 
 - `constants.py` 的 `PROVIDER_TYPES`。
 - `models.py` 的 provider 类型校验、旧字段兼容和模型类型推断。
-- `providers.py` 的 adapter 创建、模型列表 URL、请求载荷和响应解析。
+- `provider_parser.py` 的模型列表 URL、响应解析、图片提取和下载校验。
+- `providers.py` 的 adapter 创建、请求载荷和 provider-specific 错误处理。
 - `web.py` 的渠道管理默认值、模型刷新、模型启用顺序和表单读写。
 - `tests/test_core.py` 的 URL 归一化、模型推断、响应解析和错误脱敏测试。
 
@@ -239,7 +241,7 @@ Web 鉴权规则：
 
 ```sh
 python -m unittest tests/test_core.py
-python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py providers.py utils.py web.py
+python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py provider_parser.py providers.py utils.py web.py
 git diff --check
 ```
 
@@ -285,10 +287,11 @@ sh -n grok_image_edit_batch.sh
 - 增加生成记录列表后端筛选和分页参数，并覆盖默认兼容、分页筛选和非法参数测试。
 - Web 监控页改为使用后端记录筛选分页，避免记录较多时全量加载到浏览器。
 - Web 保存配置前会清理已禁用或已删除模型对应的无效模型优先级，并保留单模型名兼容写法。
+- 拆分 `provider_parser.py`，将 provider 响应解析、模型列表解析、图片链接提取和下载校验从 adapter 文件中分离。
 
 ## 下一步建议
 
-1. 将 `providers.py` 的响应解析拆成独立 parser 模块，降低 adapter 文件体积。
+1. 继续收敛 `providers.py` 的 adapter 结构，分离 provider-specific payload 构造和通用请求错误处理。
 2. 继续扩展 Web API 的 Flask test client 用例，覆盖更多 Web 前端异常状态和配置同步细节。
 3. 增加一次真实 AstrBot 环境冒烟检查，确认命令、LLM 工具和 Web 配置热更新在运行时一致。
 4. 整理 `web.py` 内置前端结构，在不引入构建链的前提下分区收敛状态管理和重复渲染逻辑。

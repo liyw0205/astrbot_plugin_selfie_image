@@ -1,0 +1,618 @@
+"""Provider response parsing and image extraction helpers."""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Sequence
+from typing import Any, Dict, List, Optional, Set
+from urllib.parse import urljoin, urlsplit
+
+import aiohttp
+
+from .models import normalize_provider_type
+from .utils import (
+    IMAGE_EXTENSIONS,
+    decode_base64_payload,
+    decode_html_entities,
+    looks_like_image_bytes,
+    redact_sensitive_data,
+    redact_sensitive_text,
+)
+
+
+def normalize_image_base_url(url: str) -> str:
+    value = str(url or "").strip().rstrip("/")
+    value = re.sub(r"/v1(?:/.*)?$", "", value, flags=re.I)
+    value = re.sub(r"/chat/completions$", "", value, flags=re.I)
+    value = re.sub(r"/images/(?:generations|edits)$", "", value, flags=re.I)
+    return value
+
+
+def normalize_gemini_base_url(url: str) -> str:
+    value = str(url or "").strip().rstrip("/")
+    value = re.sub(r"/v1beta(?:/.*)?$", "", value, flags=re.I)
+    value = re.sub(r"/v1(?:/.*)?$", "", value, flags=re.I)
+    return value
+
+
+def build_model_list_urls(base_url: str, provider_type: str = "") -> List[str]:
+    provider = normalize_provider_type(provider_type) or str(provider_type or "").strip().lower().replace("-", "_")
+    if provider == "gemini":
+        base = normalize_gemini_base_url(base_url)
+        suffixes = ("/v1beta/models", "/v1/models", "/models")
+    else:
+        base = normalize_image_base_url(base_url)
+        suffixes = ("/v1/models", "/models", "/v1beta/models")
+    if not base:
+        return []
+    return [f"{base}{suffix}" for suffix in suffixes]
+
+
+def provider_type_from_channel_payload(payload: Any, default: str = "openai") -> str:
+    if isinstance(payload, dict):
+        value = (
+            payload.get("provider_type")
+            or payload.get("providerType")
+            or payload.get("api_type")
+            or payload.get("apiType")
+            or default
+        )
+    else:
+        value = default
+    return normalize_provider_type(value) or normalize_provider_type(default) or "openai"
+
+
+def extract_model_ids_from_response(data: Any) -> List[str]:
+    result: Set[str] = set()
+    primary_keys = ("id", "name", "model", "model_id", "modelId", "model_name", "modelName", "slug")
+    fallback_keys = ("display_name", "displayName")
+    container_keys = ("data", "models", "items", "results", "list", "model_list", "modelList", "available_models", "availableModels", "model_ids", "modelIds")
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip()
+        if text:
+            result.add(text)
+
+    def walk(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, str):
+            add(value)
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+            for item in value:
+                walk(item)
+            return
+        if not isinstance(value, dict):
+            return
+
+        found_primary = False
+        for key in primary_keys:
+            if isinstance(value.get(key), str):
+                add(value.get(key))
+                found_primary = True
+        if not found_primary:
+            for key in fallback_keys:
+                if isinstance(value.get(key), str):
+                    add(value.get(key))
+
+        for key in container_keys:
+            walk(value.get(key))
+
+    walk(data)
+    return sorted(result)
+
+
+def b64_to_bytes(value: str) -> bytes:
+    return decode_base64_payload(value)
+
+
+def http_error_preview(text: str, limit: int = 500) -> str:
+    raw = str(text or "").strip()
+    preview = raw
+
+    def first_error_text(value: Any) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            for key in ("message", "detail", "error_description", "description", "msg", "reason", "error"):
+                if key in value:
+                    found = first_error_text(value.get(key))
+                    if found:
+                        return found
+            for key in ("errors", "error_messages"):
+                if key in value:
+                    found = first_error_text(value.get(key))
+                    if found:
+                        return found
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+            for item in value:
+                found = first_error_text(item)
+                if found:
+                    return found
+        return ""
+
+    try:
+        data = json.loads(raw)
+        preview = first_error_text(data) or raw
+    except Exception:
+        pass
+    preview = re.sub(r"\s+", " ", preview).strip()
+    return redact_sensitive_text(preview)[:limit]
+
+
+def response_preview(value: Any, limit: int = 1000) -> str:
+    if isinstance(value, str):
+        preview = value
+    else:
+        try:
+            preview = json.dumps(redact_sensitive_data(value), ensure_ascii=False)
+        except Exception:
+            preview = str(value)
+    return redact_sensitive_text(preview)[:limit]
+
+
+def clean_image_url(url: str) -> str:
+    text = decode_html_entities(str(url or "")).strip()
+    if text.startswith("<") and ">" in text:
+        candidate, rest = text[1:].split(">", 1)
+        rest = rest.strip()
+        if not rest or re.fullmatch(r"(?:\"[^\"]*\"|'[^']*'|\([^)]*\))", rest):
+            text = candidate.strip()
+    else:
+        match = re.match(r"^(\S+?)(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))$", text, flags=re.I)
+        if match:
+            text = match.group(1)
+    text = text.strip("<> \t\r\n").rstrip(".,;:]}，。！？、；：")
+    while text.endswith(")") and "(" not in text:
+        text = text[:-1].strip()
+    return text
+
+
+def looks_like_binary_image(data: bytes) -> bool:
+    return looks_like_image_bytes(data)
+
+
+async def fetch_generated_image_url(
+    session: aiohttp.ClientSession,
+    url: str,
+    timeout: int,
+    referer: str = "https://flow.google/",
+    max_bytes: int = 25 * 1024 * 1024,
+    proxy: str = "",
+) -> Optional[bytes]:
+    text = clean_image_url(url)
+    if not text:
+        return None
+    if text.lower().startswith(("data:image/", "base64://")):
+        data = b64_to_bytes(text)
+        return data if data and len(data) <= max_bytes and looks_like_binary_image(data) else None
+    if not text.lower().startswith(("http://", "https://")):
+        return None
+    headers = {
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Connection": "close",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": referer,
+    }
+    try:
+        async with session.get(
+            text,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+            allow_redirects=True,
+            proxy=str(proxy or "").strip() or None,
+        ) as response:
+            if response.status >= 400:
+                return None
+            content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+            binary_content_types = {"application/octet-stream", "binary/octet-stream", "application/binary", "application/x-binary"}
+            if content_type and not content_type.startswith("image/") and content_type not in binary_content_types:
+                return None
+            content_length = response.headers.get("content-length", "")
+            try:
+                if content_length and int(content_length) > max_bytes:
+                    return None
+            except (TypeError, ValueError):
+                pass
+            chunks: List[bytes] = []
+            total = 0
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    return None
+                chunks.append(chunk)
+            data = b"".join(chunks)
+            if not data:
+                return None
+            if not looks_like_binary_image(data):
+                return None
+            return data
+    except Exception:
+        return None
+
+
+def add_maybe_image_url(value: str, b64: Set[str], urls: Set[str], others: Set[str]) -> None:
+    url = clean_image_url(value)
+    if not url:
+        return
+    if url.lower().startswith(("data:image/", "base64://")):
+        b64.add(url)
+    elif url.lower().startswith(("http://", "https://")):
+        urls.add(url)
+    else:
+        others.add(url)
+
+
+def add_srcset_image_urls(value: str, b64: Set[str], urls: Set[str], others: Set[str]) -> None:
+    for item in str(value or "").split(","):
+        candidate = item.strip().split(None, 1)[0] if item.strip() else ""
+        lowered = candidate.lower()
+        if lowered.startswith("data:image/") and "," not in candidate:
+            continue
+        if lowered.startswith(("http://", "https://", "data:image/", "base64://")) or looks_like_relative_image_url(candidate):
+            add_maybe_image_url(candidate, b64, urls, others)
+
+
+def add_html_image_candidate(value: str, b64: Set[str], urls: Set[str], others: Set[str]) -> None:
+    candidate = clean_image_url(value)
+    lowered = candidate.lower()
+    if lowered.startswith(("http://", "https://", "data:image/", "base64://")) or looks_like_relative_image_url(candidate):
+        add_maybe_image_url(candidate, b64, urls, others)
+
+
+def looks_like_relative_image_url(value: str) -> bool:
+    text = clean_image_url(value)
+    if not text or re.search(r"\s", text):
+        return False
+    if text.lower().startswith(("http://", "https://", "data:image/")):
+        return False
+    path = text.split("?", 1)[0].split("#", 1)[0].lower()
+    return text.startswith(("/", "./", "../")) or path.endswith(tuple(IMAGE_EXTENSIONS))
+
+
+def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
+    raw = decode_html_entities(str(text or "")).replace("\\/", "/")
+    raw = re.sub(r"\\x23", "#", raw, flags=re.I)
+    raw = re.sub(r"\\x2b", "+", raw, flags=re.I)
+    raw = re.sub(r"\\x2f", "/", raw, flags=re.I)
+    raw = re.sub(r"\\x26", "&", raw, flags=re.I)
+    raw = re.sub(r"\\x3a", ":", raw, flags=re.I)
+    raw = re.sub(r"\\x3d", "=", raw, flags=re.I)
+    raw = re.sub(r"\\x3f", "?", raw, flags=re.I)
+    raw = re.sub(r"\\u0023", "#", raw, flags=re.I)
+    raw = re.sub(r"\\u002b", "+", raw, flags=re.I)
+    raw = re.sub(r"\\u002f", "/", raw, flags=re.I)
+    raw = re.sub(r"\\u0026", "&", raw, flags=re.I)
+    raw = re.sub(r"\\u003a", ":", raw, flags=re.I)
+    raw = re.sub(r"\\u003d", "=", raw, flags=re.I)
+    raw = re.sub(r"\\u003f", "?", raw, flags=re.I)
+    b64: Set[str] = set()
+    urls: Set[str] = set()
+    others: Set[str] = set()
+
+    for match in re.finditer(r"!?\[[^\]]*]\(([\s\S]*?)\)", raw):
+        inside = str(match.group(1) or "").strip()
+        if inside:
+            add_maybe_image_url(inside, b64, urls, others)
+
+    for match in re.finditer(r"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_maybe_image_url(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"<img[^>]+src=([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_maybe_image_url(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"<(?:img|source)[^>]+srcset=[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_srcset_image_urls(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"<(?:img|source)[^>]+srcset=([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_srcset_image_urls(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"<(?:a|link)[^>]+href=[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"<(?:a|link)[^>]+href=([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"<meta[^>]+content=[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"<meta[^>]+content=([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    image_attr_names = r"(?:poster|background)"
+    for match in re.finditer(rf"<[^>]+\s{image_attr_names}\s*=\s*[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    for match in re.finditer(rf"<[^>]+\s{image_attr_names}\s*=\s*([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    embedded_image_attrs = r"(?:src|data)"
+    for match in re.finditer(rf"<(?:source|object|embed)\b[^>]*\s{embedded_image_attrs}\s*=\s*[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    for match in re.finditer(rf"<(?:source|object|embed)\b[^>]*\s{embedded_image_attrs}\s*=\s*([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    lazy_image_attrs = r"(?:data-src|data-original|data-lazy-src|data-url)"
+    for match in re.finditer(rf"<[^>]+\s{lazy_image_attrs}\s*=\s*[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    for match in re.finditer(rf"<[^>]+\s{lazy_image_attrs}\s*=\s*([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_html_image_candidate(match.group(1), b64, urls, others)
+
+    lazy_srcset_attrs = r"(?:data-srcset|data-lazy-srcset|data-original-srcset)"
+    for match in re.finditer(rf"<[^>]+\s{lazy_srcset_attrs}\s*=\s*[\"']([^\"']+)[\"'][^>]*>", raw, flags=re.I):
+        add_srcset_image_urls(match.group(1), b64, urls, others)
+
+    for match in re.finditer(rf"<[^>]+\s{lazy_srcset_attrs}\s*=\s*([^\s\"'>]+)[^>]*>", raw, flags=re.I):
+        add_srcset_image_urls(match.group(1), b64, urls, others)
+
+    for match in re.finditer(r"url\(\s*([\"']?)(.*?)\1\s*\)", raw, flags=re.I):
+        add_html_image_candidate(match.group(2), b64, urls, others)
+
+    for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+(?:;[^,\s\"'<>;]*)*;base64,[A-Za-z0-9+/=_-]+", raw, flags=re.I):
+        b64.add(match.group(0))
+
+    for match in re.finditer(r"base64://[A-Za-z0-9+/=_-]+", raw, flags=re.I):
+        b64.add(match.group(0))
+
+    for match in re.finditer(r"(?<!:)//[^\s\"'<>]+", raw):
+        add_maybe_image_url(match.group(0), b64, urls, others)
+
+    for match in re.finditer(r"https?://[^\s\"'<>]+", raw):
+        add_maybe_image_url(match.group(0), b64, urls, others)
+
+    ext_pattern = "|".join(re.escape(ext.lstrip(".")) for ext in sorted(IMAGE_EXTENSIONS, key=len, reverse=True))
+    relative_image_pattern = (
+        rf"(?<![\w:/.-])(?:\.{{0,2}}/)?[A-Za-z0-9_./~%+-]+\.({ext_pattern})(?:[?#][^\s\"'<>]*)?"
+    )
+    for match in re.finditer(relative_image_pattern, raw, flags=re.I):
+        add_html_image_candidate(match.group(0), b64, urls, others)
+
+    return {"b64": list(b64), "urls": list(urls), "others": list(others)}
+
+
+def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
+    b64: Set[str] = set()
+    urls: Set[str] = set()
+    others: Set[str] = set()
+
+    def walk(item: Any) -> None:
+        if item is None:
+            return
+        if isinstance(item, str):
+            text = item.strip()
+            extracted = extract_image_urls_from_text(item)
+            b64.update(extracted["b64"])
+            urls.update(extracted["urls"])
+            others.update(extracted["others"])
+            if text.lower().startswith(("data:image/", "base64://")):
+                b64.add(text)
+            elif looks_like_relative_image_url(text):
+                others.add(text)
+            elif len(text) > 100 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", text):
+                b64.add(text)
+            json_candidates: List[str] = []
+            fenced = re.fullmatch(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I)
+            json_candidates.append(fenced.group(1).strip() if fenced else text)
+            json_candidates.extend(match.group(1).strip() for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I))
+            jsonp = re.fullmatch(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(\s*({[\s\S]*}|\[[\s\S]*])\s*\)\s*;?", text)
+            if jsonp:
+                json_candidates.append(jsonp.group(1).strip())
+            for match in re.finditer(r"<script[^>]*>([\s\S]*?)</script>", text, flags=re.I):
+                script_text = match.group(1).strip()
+                json_candidates.append(script_text)
+                assigned_json = re.search(r"=\s*({[\s\S]*}|\[[\s\S]*])\s*;?\s*$", script_text)
+                if assigned_json:
+                    json_candidates.append(assigned_json.group(1).strip())
+                script_jsonp = re.fullmatch(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(\s*({[\s\S]*}|\[[\s\S]*])\s*\)\s*;?", script_text)
+                if script_jsonp:
+                    json_candidates.append(script_jsonp.group(1).strip())
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.lower().startswith("data:"):
+                    payload = stripped.split(":", 1)[1].strip()
+                    if payload and payload != "[DONE]":
+                        json_candidates.append(payload)
+            seen_json: Set[str] = set()
+            for json_text in json_candidates:
+                if not json_text.startswith(("{", "[")):
+                    continue
+                if json_text in seen_json:
+                    continue
+                seen_json.add(json_text)
+                try:
+                    walk(json.loads(json_text))
+                except Exception:
+                    pass
+            return
+        if isinstance(item, Sequence) and not isinstance(item, (bytes, bytearray, str)):
+            for child in item:
+                walk(child)
+            return
+        if not isinstance(item, dict):
+            return
+
+        b64_keys = (
+            "b64_json",
+            "b64",
+            "base64",
+            "base64_data",
+            "base64Data",
+            "data",
+            "image_base64",
+            "imageBase64",
+            "image_b64",
+            "imageB64",
+            "base64_image",
+            "base64Image",
+            "image_data",
+            "imageData",
+            "encoded_image",
+            "encodedImage",
+        )
+        for key in b64_keys:
+            if key in item and isinstance(item[key], str):
+                text = item[key].strip()
+                if text:
+                    if text.lower().startswith(("data:image/", "base64://")):
+                        b64.add(text)
+                    elif len(text) > 100:
+                        b64.add(text)
+
+        urlish_keys = (
+            "url",
+            "uri",
+            "href",
+            "src",
+            "link",
+            "location",
+            "image",
+            "imageUri",
+            "image_uri",
+            "imageUrl",
+            "image_url",
+            "imagePath",
+            "image_path",
+            "output",
+            "outputUrl",
+            "output_url",
+            "artifact",
+            "artifacts",
+            "asset",
+            "assets",
+            "resource",
+            "resources",
+            "resource_url",
+            "resourceUrl",
+            "file",
+            "files",
+            "file_url",
+            "fileUrl",
+            "path",
+            "file_path",
+            "filePath",
+            "asset_url",
+            "assetUrl",
+            "artifact_url",
+            "artifactUrl",
+            "download_url",
+            "downloadUrl",
+            "downloadURL",
+            "media_url",
+            "mediaUrl",
+            "public_url",
+            "publicUrl",
+            "result_url",
+            "resultUrl",
+            "signed_url",
+            "signedUrl",
+            "cdn_url",
+            "cdnUrl",
+            "secure_url",
+            "secureUrl",
+            "source_url",
+            "sourceUrl",
+            "original_url",
+            "originalUrl",
+            "preview_url",
+            "previewUrl",
+            "thumbnail_url",
+            "thumbnailUrl",
+            "thumb_url",
+            "thumbUrl",
+        )
+        text_keys = ("content", "text")
+        for key in (*urlish_keys, *text_keys):
+            field_value = item.get(key)
+            if isinstance(field_value, str):
+                if key in urlish_keys and (
+                    field_value.lower().startswith(("http://", "https://", "data:image/"))
+                    or looks_like_relative_image_url(field_value)
+                ):
+                    add_maybe_image_url(field_value, b64, urls, others)
+                else:
+                    walk(field_value)
+            elif isinstance(field_value, dict):
+                nested_url = field_value.get("url") or field_value.get("uri")
+                if isinstance(nested_url, str):
+                    add_maybe_image_url(nested_url, b64, urls, others)
+                walk(field_value)
+            else:
+                walk(field_value)
+
+        inline_data = item.get("inline_data") or item.get("inlineData")
+        if isinstance(inline_data, dict) and isinstance(inline_data.get("data"), str):
+            b64.add(inline_data["data"].strip())
+
+        for child in item.values():
+            walk(child)
+
+    walk(value)
+    return {"b64": list(b64), "urls": list(urls), "others": list(others)}
+
+
+async def images_from_response_unknown(
+    session: aiohttp.ClientSession,
+    data: Any,
+    timeout: int,
+    max_bytes: int = 25 * 1024 * 1024,
+    proxy: str = "",
+    base_url: str = "",
+) -> List[bytes]:
+    collected = collect_images_from_unknown(data)
+    images: List[bytes] = []
+    seen = set()
+
+    for item in collected["b64"]:
+        try:
+            image = b64_to_bytes(item)
+        except Exception:
+            continue
+        if len(image) > max_bytes or not looks_like_binary_image(image):
+            continue
+        key = (len(image), image[:32])
+        if image and key not in seen:
+            images.append(image)
+            seen.add(key)
+
+    download_urls: List[str] = []
+    seen_urls = set()
+    for item in collected["urls"]:
+        url = str(item or "").strip()
+        if url and url not in seen_urls:
+            download_urls.append(url)
+            seen_urls.add(url)
+    if base_url:
+        for item in collected["others"]:
+            url = resolve_response_url(str(item or ""), base_url)
+            if url.lower().startswith(("http://", "https://")) and url not in seen_urls:
+                download_urls.append(url)
+                seen_urls.add(url)
+
+    for item in download_urls:
+        image = await fetch_generated_image_url(session, item, timeout, max_bytes=max_bytes, proxy=proxy)
+        key = (len(image or b""), (image or b"")[:32])
+        if image and key not in seen:
+            images.append(image)
+            seen.add(key)
+
+    return images
+
+
+def resolve_response_url(img_url: str, base_url: str) -> str:
+    value = clean_image_url(img_url)
+    if value.lower().startswith(("http://", "https://", "data:")):
+        return value
+    if value.startswith("//"):
+        scheme = urlsplit(str(base_url or "")).scheme or "https"
+        if scheme not in {"http", "https"}:
+            scheme = "https"
+        return f"{scheme}:{value}"
+    api_root = normalize_image_base_url(base_url)
+    if api_root.endswith("/v1"):
+        api_root = api_root[:-3]
+    return urljoin(api_root.rstrip("/") + "/", value.lstrip("/"))
