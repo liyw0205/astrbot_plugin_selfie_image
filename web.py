@@ -26,6 +26,7 @@ WEB_TASK_ID_RE = re.compile(r"^web-\d{8,}-\d+$")
 MAX_WEB_TOKEN_LENGTH = 4096
 MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
+MAX_WEB_RECORD_ID_LENGTH = 128
 WEAK_WEB_TOKENS = {"changeme", "change-me", "change_me", "password", "admin", "123456", "test"}
 
 
@@ -1332,8 +1333,14 @@ INDEX_HTML = r"""<!doctype html>
         showToast(e.message || '复制失败', 'bad');
       }
     }
-    function openRecordDetail(id) {
-      const r = RECORDS.find(item => String(item.id || '') === String(id || ''));
+    async function openRecordDetail(id) {
+      let r = RECORDS.find(item => String(item.id || '') === String(id || ''));
+      try {
+        const res = await api('/api/records/' + encodeURIComponent(String(id || '')));
+        r = res.data || r;
+      } catch (e) {
+        showToast(e.message || '记录详情读取失败', 'bad');
+      }
       if (!r) return;
       CURRENT_RECORD = r;
       $('recordDetailBody').innerHTML = `
@@ -1892,6 +1899,18 @@ class FlaskWebServer:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             return ok(redact_sensitive_data(self.plugin.get_recent_records()))
+
+        @app.route("/api/records/<record_id>", methods=["GET"])
+        def record_detail(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            record_id_text = str(record_id or "").strip()
+            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
+                return fail("非法记录 ID", 400)
+            try:
+                return ok(redact_sensitive_data(self.plugin.get_record_for_web(record_id_text)))
+            except Exception as exc:
+                return fail(str(exc), 404)
 
         @app.route("/api/records/clear", methods=["POST"])
         def records_clear() -> Any:

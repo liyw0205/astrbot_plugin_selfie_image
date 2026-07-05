@@ -197,6 +197,16 @@ class FakeWebPlugin:
     def get_recent_records(self):
         return [{"id": 1, "success": True}]
 
+    def get_record_for_web(self, record_id: str):
+        if str(record_id) == "1":
+            return {
+                "id": 1,
+                "success": True,
+                "request_data": {"prompt": "test"},
+                "response_data": {"model": "model-a"},
+            }
+        raise ValueError("记录不存在或已清理")
+
     def clear_recent_records(self):
         return 1
 
@@ -332,6 +342,33 @@ class ConfigModelTests(unittest.TestCase):
         ])
         self.assertEqual(targets[1].provider_type, "grok")
         self.assertNotIn("disabled/dall-e-3", [target.label for target in targets])
+
+    def test_model_priority_skips_disabled_channels_and_disabled_model_items(self) -> None:
+        config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "main",
+                        "provider_type": "openai",
+                        "base_url": "https://example.test",
+                        "model": "fallback-model",
+                        "enabled_models": [
+                            {"model": "enabled-model", "enabled": True},
+                            {"model": "disabled-model", "enabled": False},
+                        ],
+                    },
+                    {
+                        "name": "off",
+                        "provider_type": "openai",
+                        "model": "off-model",
+                        "enabled": False,
+                    },
+                ],
+                "enabled_image_model_priority": ["main/disabled-model", "off/off-model", "main/enabled-model"],
+            }
+        )
+
+        self.assertEqual([target.label for target in config.get_prioritized_targets()], ["main/enabled-model"])
 
 
 class ImageUtilityTests(unittest.TestCase):
@@ -1997,10 +2034,33 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"], {"deleted": 1})
 
+    def test_record_detail_api_requires_auth_validates_id_and_returns_record(self) -> None:
+        plugin = FakeWebPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        self.assertEqual(client.get("/api/records/1").status_code, 401)
+
+        response = client.get("/api/records/1", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["id"], 1)
+        self.assertEqual(response.get_json()["data"]["request_data"], {"prompt": "test"})
+
+        response = client.get("/api/records/" + ("x" * 200), headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("非法记录 ID", response.get_json()["error"])
+
+        response = client.get("/api/records/not-found", headers=headers)
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("记录不存在", response.get_json()["error"])
+
     def test_records_and_task_status_routes_redact_sensitive_data(self) -> None:
         class SensitivePlugin(FakeWebPlugin):
             def get_recent_records(self):
                 return [{"error": "api_key=plain-provider-secret", "headers": {"Cookie": "session=abcdef1234567890"}}]
+
+            def get_record_for_web(self, record_id: str):
+                return {"id": record_id, "error": "token=abcdefghijklmnop", "headers": {"Authorization": "Bearer sk-live-secret-token"}}
 
             def get_web_image_task(self, task_id: str):
                 self.task_status_calls.append(task_id)
@@ -2011,14 +2071,20 @@ class WebApiTests(unittest.TestCase):
         headers = {"X-Selfie-Image-Token": "secret"}
 
         records_response = client.get("/api/records", headers=headers)
+        detail_response = client.get("/api/records/1", headers=headers)
         task_response = client.get("/api/test-image-channel/tasks/web-12345678-1", headers=headers)
 
         records_text = json.dumps(records_response.get_json()["data"], ensure_ascii=False)
+        detail_text = json.dumps(detail_response.get_json()["data"], ensure_ascii=False)
         task_text = json.dumps(task_response.get_json()["data"], ensure_ascii=False)
         self.assertIn("api_key=[REDACTED]", records_text)
         self.assertIn('"Cookie": "[REDACTED]"', records_text)
+        self.assertIn("token=[REDACTED]", detail_text)
+        self.assertIn('"Authorization": "[REDACTED]"', detail_text)
         self.assertIn("Bearer [REDACTED]", task_text)
         self.assertNotIn("plain-provider-secret", records_text)
+        self.assertNotIn("abcdefghijklmnop", detail_text)
+        self.assertNotIn("sk-live-secret-token", detail_text)
         self.assertNotIn("sk-live-secret-token", task_text)
 
     def test_selfie_write_apis_accept_empty_object_payloads(self) -> None:
@@ -2053,6 +2119,13 @@ class WebApiTests(unittest.TestCase):
         self.assertTrue(data["has_image"])
         self.assertEqual(data["ref_mime_type"], "image/png")
         self.assertTrue(data["image"].startswith("data:image/png;base64,"))
+
+        response = client.post("/api/selfie-reference/clear", json={}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        response = client.get("/api/selfie-reference", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["data"]["has_image"])
+        self.assertNotIn("image", response.get_json()["data"])
 
         response = client.post("/api/selfie-reference", json={"image": "bm90IGFuIGltYWdl"}, headers=headers)
         self.assertEqual(response.status_code, 400)

@@ -1020,6 +1020,14 @@ class SelfieImagePlugin(Star):
         with self._records_lock:
             return redact_sensitive_data(copy.deepcopy(self._records[:100]))
 
+    def get_record_for_web(self, record_id: str) -> Dict[str, Any]:
+        target_id = str(record_id or "").strip()
+        with self._records_lock:
+            for record in self._records:
+                if str(record.get("id") or "") == target_id:
+                    return redact_sensitive_data(copy.deepcopy(record))
+        raise ValueError("记录不存在或已清理")
+
     def clear_recent_records(self) -> int:
         with self._records_lock:
             count = len(self._records)

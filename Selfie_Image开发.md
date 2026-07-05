@@ -3,7 +3,7 @@
 > 文档重生成日期：2026-07-05
 > 重生成基线：`fb96a7c`，`astrbot_plugin_selfie_image` 1.0.0
 > 运行形态：AstrBot 插件 + 内置 Flask Web 管理页 + 多 Provider 生图适配器
-> 当前回归基线：`tests/test_core.py` 116 个用例；每轮改动后必须重新验证
+> 当前回归基线：`tests/test_core.py` 118 个用例；每轮改动后必须重新验证
 
 ## 目标与边界
 
@@ -141,6 +141,7 @@ http://127.0.0.1:14514
 | `/api/test-image-channel/tasks/<task_id>` | `GET` | 查询后台测试任务 |
 | `/api/refresh-image-models` | `POST` | 刷新渠道模型列表 |
 | `/api/records` | `GET` | 查看生成记录 |
+| `/api/records/<record_id>` | `GET` | 查看单条生成记录详情 |
 | `/api/records/clear` | `POST` | 清空生成记录 |
 | `/api/cache-image` | `GET` | 读取缓存图片 |
 
@@ -279,10 +280,12 @@ sh -n grok_image_edit_batch.sh
 - 配置保存异常改为统一 JSON 错误响应，并沿用敏感信息脱敏。
 - 继续补充自拍参考图保存、模型启用顺序更新和缓存图片非图片文件拒绝测试。
 - 缓存图片读取会显式校验图片签名，拒绝缓存目录内的非图片文件。
+- 增加生成记录详情 API，Web 详情弹窗按记录 ID 拉取后端脱敏后的完整记录。
+- 补充记录详情鉴权、非法 ID、404、脱敏、自拍参考图清除后状态和模型启用/停用组合测试。
 
 ## 下一步建议
 
 1. 将 `providers.py` 的响应解析拆成独立 parser 模块，降低 adapter 文件体积。
-2. 继续扩展 Web API 的 Flask test client 用例，覆盖自拍参考图清除后状态、记录详情和更多模型启用/停用组合。
+2. 继续扩展 Web API 的 Flask test client 用例，覆盖记录分页/筛选、更多模型启用顺序组合和 Web 前端状态同步。
 3. 增加一次真实 AstrBot 环境冒烟检查，确认命令、LLM 工具和 Web 配置热更新在运行时一致。
 4. 整理 `web.py` 内置前端结构，在不引入构建链的前提下分区收敛状态管理和重复渲染逻辑。
