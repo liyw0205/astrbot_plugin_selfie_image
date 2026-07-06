@@ -1,0 +1,8 @@
+{
+  "pages": {
+    "dashboard": {
+      "title": "Selfie Image Dashboard",
+      "description": "Manage Selfie Image channels, selfie profile, audits, tests, and generation records inside AstrBot WebUI."
+    }
+  }
+}

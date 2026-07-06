@@ -1,0 +1,8 @@
+{
+  "pages": {
+    "dashboard": {
+      "title": "Selfie Image 控制台",
+      "description": "在 AstrBot WebUI 内管理 Selfie Image 生图渠道、自拍形象、审核、测试和监控记录。"
+    }
+  }
+}

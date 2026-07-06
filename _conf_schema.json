@@ -1,29 +1,13 @@
 {
-  "web": {
-    "description": "关键启动配置",
+  "dashboard": {
+    "description": "配置入口",
     "type": "object",
-    "hint": "这里只保留插件启动 Web 面板所需的关键配置。生图渠道、模型、自拍、权限等完整配置请在 Flask Web 面板里保存，单独存到插件数据目录 selfie_image_config.json。",
+    "hint": "完整配置请在 AstrBot WebUI 的插件详情页打开 Dashboard 页面管理。",
     "items": {
-      "enable": {
-        "description": "启用 Flask Web",
-        "type": "bool",
-        "default": true
-      },
-      "host": {
-        "description": "监听地址",
+      "notice": {
+        "description": "说明",
         "type": "string",
-        "default": "127.0.0.1"
-      },
-      "port": {
-        "description": "监听端口",
-        "type": "int",
-        "default": 14514
-      },
-      "token": {
-        "description": "Web Token",
-        "type": "string",
-        "hint": "访问 Web 配置接口、上传自拍参考图、测试生图时需要。留空仅允许本机监听地址免校验。",
-        "default": "changeme"
+        "default": "请到 AstrBot WebUI -> 插件管理 -> Selfie Image -> Dashboard 页面配置生图渠道、自拍形象、审核、权限和 JSON。"
       }
     }
   }

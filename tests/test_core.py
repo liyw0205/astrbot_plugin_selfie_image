@@ -75,7 +75,12 @@ from astrbot_plugin_selfie_image.utils import (
     resolve_awaitable,
     safe_delete_relative_files,
 )
-from astrbot_plugin_selfie_image.web import Flask, FlaskWebServer, INDEX_HTML
+from astrbot_plugin_selfie_image.dashboard_api import DashboardApiError, SelfieImageDashboardApi
+
+
+DASHBOARD_HTML = (
+    Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
+).read_text(encoding="utf-8")
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 128
@@ -471,18 +476,32 @@ class ImageUtilityTests(unittest.TestCase):
 
     def test_web_upload_accept_list_matches_supported_image_formats(self) -> None:
         for mime in ("image/avif", "image/heic", "image/heif", "image/tiff", "image/svg+xml"):
-            self.assertIn(mime, INDEX_HTML)
+            self.assertIn(mime, DASHBOARD_HTML)
 
     def test_web_monitor_uses_backend_record_pagination(self) -> None:
-        self.assertIn("function monitorQueryPath", INDEX_HTML)
-        self.assertIn("params.set('limit', String(MONITOR_PAGE_SIZE))", INDEX_HTML)
-        self.assertIn("api(monitorQueryPath(MONITOR_PAGE))", INDEX_HTML)
-        self.assertIn("RECORD_META.filtered", INDEX_HTML)
+        self.assertIn("function monitorQueryPath", DASHBOARD_HTML)
+        self.assertIn("params.set('limit', String(MONITOR_PAGE_SIZE))", DASHBOARD_HTML)
+        self.assertIn("api(monitorQueryPath(MONITOR_PAGE))", DASHBOARD_HTML)
+        self.assertIn("RECORD_META.filtered", DASHBOARD_HTML)
+
+    def test_dashboard_page_uses_astrbot_bridge_without_token_login(self) -> None:
+        self.assertIn("/api/plugin/page/bridge-sdk.js", DASHBOARD_HTML)
+        self.assertIn("window.AstrBotPluginPage", DASHBOARD_HTML)
+        self.assertIn("bridge.apiPost(mapped.endpoint, mapped.payload)", DASHBOARD_HTML)
+        self.assertIn("function safeStorageGet", DASHBOARD_HTML)
+        self.assertIn("function safeStorageSet", DASHBOARD_HTML)
+        self.assertIn("function safeStorageRemove", DASHBOARD_HTML)
+        self.assertNotIn("/api/auth/check", DASHBOARD_HTML)
+        self.assertNotIn("AUTH_TOKEN", DASHBOARD_HTML)
+        self.assertNotIn("selfieImageToken", DASHBOARD_HTML)
+        self.assertNotIn("localStorage.getItem('selfieImageLastTestTaskId')", DASHBOARD_HTML)
+        self.assertNotIn("localStorage.setItem('selfieImageLastTestTaskId'", DASHBOARD_HTML)
+        self.assertNotIn("localStorage.removeItem('selfieImageLastTestTaskId')", DASHBOARD_HTML)
 
     def test_web_prunes_invalid_model_priority_before_save(self) -> None:
-        self.assertIn("function prunePriorityList", INDEX_HTML)
-        self.assertIn("prunePriorityList();\n      CONFIG.enabled_image_model_priority = textList('priorityList');", INDEX_HTML)
-        self.assertIn("keys.push(`${ch.name}/${model}`, `${ch.name}:${model}`, model);", INDEX_HTML)
+        self.assertIn("function prunePriorityList", DASHBOARD_HTML)
+        self.assertIn("prunePriorityList();\n      CONFIG.enabled_image_model_priority = textList('priorityList');", DASHBOARD_HTML)
+        self.assertIn("keys.push(`${ch.name}/${model}`, `${ch.name}:${model}`, model);", DASHBOARD_HTML)
 
     def test_base_url_normalization(self) -> None:
         self.assertEqual(normalize_image_base_url("https://example.com/v1/images/generations"), "https://example.com")
@@ -1943,121 +1962,40 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("secretmodelvalue12345", attempt_text)
 
 
-@unittest.skipIf(Flask is None, "Flask is not installed")
-class WebApiTests(unittest.TestCase):
-    def make_client(self, plugin: FakeWebPlugin, host: str = "127.0.0.1"):
+class DashboardApiTests(unittest.TestCase):
+    def make_api(self, plugin: FakeWebPlugin):
         if hasattr(plugin, "close"):
             self.addCleanup(plugin.close)
-        server = FlaskWebServer(plugin)
-        server.host = host
-        server.port = 14514
-        return server._create_app().test_client()
+        return SelfieImageDashboardApi(plugin)
 
-    def test_api_requires_token_when_configured(self) -> None:
-        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
-        self.assertEqual(client.get("/api/health").status_code, 401)
-
-        response = client.get("/api/health", headers={"Authorization": "Bearer secret"})
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.get_json()["data"]["auth"])
-
-    def test_auth_rejects_non_ascii_and_oversized_tokens(self) -> None:
-        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
-
-        non_ascii = client.get("/api/health", headers={"Authorization": "Bearer 密码"})
-        oversized = client.get("/api/health", headers={"X-Selfie-Image-Token": "x" * 5000})
-
-        self.assertEqual(non_ascii.status_code, 401)
-        self.assertEqual(oversized.status_code, 401)
-        self.assertIn("no-store", non_ascii.headers.get("Cache-Control", ""))
-        self.assertIn("no-store", oversized.headers.get("Cache-Control", ""))
-
-    def test_auth_accepts_any_valid_token_header(self) -> None:
-        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
-
-        response = client.get(
-            "/api/health",
-            headers={
-                "Authorization": "Bearer wrong-token",
-                "X-Selfie-Image-Token": "secret",
-            },
-        )
-        response_with_non_ascii_auth = client.get(
-            "/api/health",
-            headers={
-                "Authorization": "Bearer 密码",
-                "X-Token": "secret",
-            },
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response_with_non_ascii_auth.status_code, 200)
-
-    def test_auth_supports_non_ascii_configured_token(self) -> None:
-        client = self.make_client(FakeWebPlugin("密钥"), host="0.0.0.0")
-
-        wrong = client.get("/api/health", headers={"Authorization": "Bearer 密码"})
-        right = client.get("/api/health", headers={"Authorization": "Bearer 密钥"})
-
-        self.assertEqual(wrong.status_code, 401)
-        self.assertEqual(right.status_code, 200)
-
-    def test_api_responses_are_not_cached(self) -> None:
-        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
-
-        api_response = client.get("/api/health", headers={"Authorization": "Bearer secret"})
-        page_response = client.get("/index.html")
-
-        self.assertIn("no-store", api_response.headers.get("Cache-Control", ""))
-        self.assertEqual(api_response.headers.get("Pragma"), "no-cache")
-        self.assertEqual(api_response.headers.get("Expires"), "0")
-        self.assertNotIn("no-store", page_response.headers.get("Cache-Control", ""))
-        for response in (api_response, page_response):
-            self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
-            self.assertEqual(response.headers.get("Referrer-Policy"), "no-referrer")
-            self.assertEqual(response.headers.get("X-Frame-Options"), "DENY")
-
-    def test_empty_token_only_allows_local_bind_host(self) -> None:
-        self.assertEqual(self.make_client(FakeWebPlugin(""), host="127.0.0.1").get("/api/health").status_code, 200)
-        self.assertEqual(self.make_client(FakeWebPlugin(""), host="0.0.0.0").get("/api/health").status_code, 401)
-
-    def test_default_weak_token_is_rejected_on_public_bind_host(self) -> None:
-        public_client = self.make_client(FakeWebPlugin("changeme"), host="0.0.0.0")
-        local_client = self.make_client(FakeWebPlugin("changeme"), host="127.0.0.1")
-
-        public_response = public_client.get("/api/health", headers={"X-Selfie-Image-Token": "changeme"})
-        local_response = local_client.get("/api/health", headers={"X-Selfie-Image-Token": "changeme"})
-
-        self.assertEqual(public_response.status_code, 401)
-        self.assertEqual(local_response.status_code, 200)
+    def assert_dashboard_error(self, func, message: str = "", status_code: int | None = None) -> DashboardApiError:
+        with self.assertRaises(DashboardApiError) as caught:
+            func()
+        if message:
+            self.assertIn(message, str(caught.exception))
+        if status_code is not None:
+            self.assertEqual(caught.exception.status_code, status_code)
+        return caught.exception
 
     def test_config_api_does_not_expose_or_override_web_settings(self) -> None:
         plugin = FakeWebPlugin("secret")
-        client = self.make_client(plugin, host="0.0.0.0")
-        response = client.post(
-            "/api/config",
-            json={"config": {"web": {"token": "bad", "host": "0.0.0.0"}, "image": {"max_batch_count": 99}}},
-            headers={"X-Selfie-Image-Token": "secret"},
+        api = self.make_api(plugin)
+        data = api.save_config(
+            {"config": {"web": {"token": "bad", "host": "0.0.0.0"}, "image": {"max_batch_count": 99}}}
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertNotIn("web", response.get_json()["data"])
+        self.assertNotIn("web", data)
         self.assertEqual(plugin.config.web_token, "secret")
         self.assertEqual(plugin.config.web_host, "127.0.0.1")
         self.assertEqual(plugin.config.image_max_batch_count, 8)
 
     def test_config_api_get_and_save_round_trip_common_settings(self) -> None:
         plugin = FakeWebPlugin("secret")
-        client = self.make_client(plugin, host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
+        api = self.make_api(plugin)
 
-        response = client.get("/api/config", headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertNotIn("web", response.get_json()["data"])
-
-        response = client.post(
-            "/api/config",
-            json={
+        self.assertNotIn("web", api.get_config())
+        data = api.save_config(
+            {
                 "config": {
                     "bot_name": "自拍助手",
                     "image": {"max_batch_count": 4, "cache_limit_mb": 12},
@@ -2075,12 +2013,9 @@ class WebApiTests(unittest.TestCase):
                     "enabled_image_model_priority": ["main/gpt-image-2", "main/gpt-image-1"],
                     "web": {"token": "bad", "host": "0.0.0.0"},
                 }
-            },
-            headers=headers,
+            }
         )
 
-        data = response.get_json()["data"]
-        self.assertEqual(response.status_code, 200)
         self.assertNotIn("web", data)
         self.assertEqual(data["bot_name"], "自拍助手")
         self.assertEqual(plugin.config.bot_name, "自拍助手")
@@ -2093,54 +2028,10 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(plugin.config.web_host, "127.0.0.1")
 
     def test_config_api_rejects_invalid_json_shapes(self) -> None:
-        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
+        api = self.make_api(FakeWebPlugin("secret"))
 
-        response = client.post("/api/config", data="{bad", content_type="application/json", headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("请求体必须是 JSON 对象", response.get_json()["error"])
-
-        response = client.post("/api/config", json=["bad"], headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("请求体必须是 JSON 对象", response.get_json()["error"])
-
-        response = client.post("/api/config", json={"config": ["bad"]}, headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("config 必须是 JSON 对象", response.get_json()["error"])
-
-    def test_json_post_apis_reject_non_object_payloads_before_plugin_call(self) -> None:
-        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
-        routes = [
-            "/api/selfie-reference",
-            "/api/selfie-reference/clear",
-            "/api/selfie-profile/refresh",
-            "/api/test-image-channel",
-            "/api/test-image-channel/tasks",
-            "/api/refresh-image-models",
-            "/api/records/clear",
-        ]
-
-        for route in routes:
-            with self.subTest(route=route):
-                response = client.post(route, json=["bad"], headers=headers)
-                self.assertEqual(response.status_code, 400)
-                self.assertIn("请求体必须是 JSON 对象", response.get_json()["error"])
-
-    def test_records_api_requires_auth_and_returns_records(self) -> None:
-        plugin = FakeWebPlugin("secret")
-        client = self.make_client(plugin, host="0.0.0.0")
-
-        self.assertEqual(client.get("/api/records").status_code, 401)
-        response = client.get("/api/records", headers={"X-Selfie-Image-Token": "secret"})
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"], [{"id": 1, "success": True}])
-
-        self.assertEqual(client.post("/api/records/clear", json={}).status_code, 401)
-        response = client.post("/api/records/clear", json={}, headers={"X-Selfie-Image-Token": "secret"})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"], {"deleted": 1})
+        self.assert_dashboard_error(lambda: api.save_config(["bad"]), "请求体必须是 JSON 对象", 400)
+        self.assert_dashboard_error(lambda: api.save_config({"config": ["bad"]}), "config 必须是 JSON 对象", 400)
 
     def test_records_api_supports_filtering_and_pagination(self) -> None:
         class RecordPlugin(FakeWebPlugin):
@@ -2152,65 +2043,30 @@ class WebApiTests(unittest.TestCase):
                     {"id": "4", "source_label": "群B", "group_id": "200", "user_id": "u4", "used_model": "model-a", "success": False},
                 ]
 
-        client = self.make_client(RecordPlugin("secret"), host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
+        api = self.make_api(RecordPlugin("secret"))
+        page, meta = api.records({"source": "群", "model": "model-a", "success": "false", "limit": "1", "offset": "0"})
+        self.assertEqual([item["id"] for item in page], ["4"])
+        self.assertEqual(meta, {"total": 4, "filtered": 1, "offset": 0, "limit": 1})
 
-        response = client.get(
-            "/api/records",
-            query_string={"source": "群", "model": "model-a", "success": "false", "limit": "1", "offset": "0"},
-            headers=headers,
-        )
-        payload = response.get_json()
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual([item["id"] for item in payload["data"]], ["4"])
-        self.assertEqual(payload["total"], 4)
-        self.assertEqual(payload["filtered"], 1)
-        self.assertEqual(payload["offset"], 0)
-        self.assertEqual(payload["limit"], 1)
-
-        response = client.get("/api/records", query_string={"q": "u", "limit": "2", "offset": "1"}, headers=headers)
-        payload = response.get_json()
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual([item["id"] for item in payload["data"]], ["2", "3"])
-        self.assertEqual(payload["filtered"], 4)
+        page, meta = api.records({"q": "u", "limit": "2", "offset": "1"})
+        self.assertEqual([item["id"] for item in page], ["2", "3"])
+        self.assertEqual(meta["filtered"], 4)
 
     def test_records_api_rejects_invalid_filter_arguments(self) -> None:
-        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
+        api = self.make_api(FakeWebPlugin("secret"))
 
-        response = client.get("/api/records", query_string={"limit": "0"}, headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("limit 不能小于 1", response.get_json()["error"])
+        self.assert_dashboard_error(lambda: api.records({"limit": "0"}), "limit 不能小于 1", 400)
+        self.assert_dashboard_error(lambda: api.records({"offset": "bad"}), "offset 必须是整数", 400)
+        self.assert_dashboard_error(lambda: api.records({"success": "maybe"}), "success 必须是 true 或 false", 400)
 
-        response = client.get("/api/records", query_string={"offset": "bad"}, headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("offset 必须是整数", response.get_json()["error"])
+    def test_record_detail_api_validates_id_and_returns_record(self) -> None:
+        api = self.make_api(FakeWebPlugin("secret"))
 
-        response = client.get("/api/records", query_string={"success": "maybe"}, headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("success 必须是 true 或 false", response.get_json()["error"])
+        self.assertEqual(api.record({"record_id": "1"})["id"], 1)
+        self.assert_dashboard_error(lambda: api.record({"record_id": "x" * 200}), "非法记录 ID", 400)
+        self.assert_dashboard_error(lambda: api.record({"record_id": "not-found"}), "记录不存在", 404)
 
-    def test_record_detail_api_requires_auth_validates_id_and_returns_record(self) -> None:
-        plugin = FakeWebPlugin("secret")
-        client = self.make_client(plugin, host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
-
-        self.assertEqual(client.get("/api/records/1").status_code, 401)
-
-        response = client.get("/api/records/1", headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"]["id"], 1)
-        self.assertEqual(response.get_json()["data"]["request_data"], {"prompt": "test"})
-
-        response = client.get("/api/records/" + ("x" * 200), headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("非法记录 ID", response.get_json()["error"])
-
-        response = client.get("/api/records/not-found", headers=headers)
-        self.assertEqual(response.status_code, 404)
-        self.assertIn("记录不存在", response.get_json()["error"])
-
-    def test_records_and_task_status_routes_redact_sensitive_data(self) -> None:
+    def test_records_and_task_status_redact_sensitive_data(self) -> None:
         class SensitivePlugin(FakeWebPlugin):
             def get_recent_records(self):
                 return [{"error": "api_key=plain-provider-secret", "headers": {"Cookie": "session=abcdef1234567890"}}]
@@ -2222,17 +2078,11 @@ class WebApiTests(unittest.TestCase):
                 self.task_status_calls.append(task_id)
                 return {"task_id": task_id, "result": {"error": "Authorization: Bearer sk-live-secret-token"}}
 
-        plugin = SensitivePlugin("secret")
-        client = self.make_client(plugin, host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
+        api = self.make_api(SensitivePlugin("secret"))
+        records_text = json.dumps(api.records({})[0], ensure_ascii=False)
+        detail_text = json.dumps(api.record({"record_id": "1"}), ensure_ascii=False)
+        task_text = json.dumps(api.get_image_channel_task({"task_id": "web-12345678-1"}), ensure_ascii=False)
 
-        records_response = client.get("/api/records", headers=headers)
-        detail_response = client.get("/api/records/1", headers=headers)
-        task_response = client.get("/api/test-image-channel/tasks/web-12345678-1", headers=headers)
-
-        records_text = json.dumps(records_response.get_json()["data"], ensure_ascii=False)
-        detail_text = json.dumps(detail_response.get_json()["data"], ensure_ascii=False)
-        task_text = json.dumps(task_response.get_json()["data"], ensure_ascii=False)
         self.assertIn("api_key=[REDACTED]", records_text)
         self.assertIn('"Cookie": "[REDACTED]"', records_text)
         self.assertIn("token=[REDACTED]", detail_text)
@@ -2243,73 +2093,37 @@ class WebApiTests(unittest.TestCase):
         self.assertNotIn("sk-live-secret-token", detail_text)
         self.assertNotIn("sk-live-secret-token", task_text)
 
-    def test_selfie_write_apis_accept_empty_object_payloads(self) -> None:
-        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
+    def test_selfie_reference_api_saves_and_rejects_invalid_images(self) -> None:
+        api = self.make_api(FakeWebPlugin("secret"))
 
-        response = client.post("/api/selfie-reference/clear", json={}, headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"]["status"], "cleared")
-
-        response = client.post("/api/selfie-profile/refresh", json={}, headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"]["status"], "refreshed")
-
-        response = client.post("/api/selfie-profile/refresh", data="", headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"]["status"], "refreshed")
-
-    def test_selfie_reference_route_saves_and_rejects_invalid_images(self) -> None:
-        plugin = FakeWebPlugin("secret")
-        client = self.make_client(plugin, host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
-
-        response = client.get("/api/selfie-reference", headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.get_json()["data"]["has_image"])
-
+        self.assertFalse(api.get_selfie_reference()["has_image"])
         image = bytes_to_data_url(PNG_BYTES, "image/png")
-        response = client.post("/api/selfie-reference", json={"image": image, "filename": "avatar.png"}, headers=headers)
-        data = response.get_json()["data"]
-        self.assertEqual(response.status_code, 200)
+        data = api.save_selfie_reference({"image": image, "filename": "avatar.png"})
         self.assertTrue(data["has_image"])
         self.assertEqual(data["ref_mime_type"], "image/png")
         self.assertTrue(data["image"].startswith("data:image/png;base64,"))
 
-        response = client.post("/api/selfie-reference/clear", json={}, headers=headers)
-        self.assertEqual(response.status_code, 200)
-        response = client.get("/api/selfie-reference", headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.get_json()["data"]["has_image"])
-        self.assertNotIn("image", response.get_json()["data"])
+        api.clear_selfie_reference({})
+        self.assertFalse(api.get_selfie_reference()["has_image"])
+        with self.assertRaises(ValueError) as caught:
+            api.save_selfie_reference({"image": "bm90IGFuIGltYWdl"})
+        self.assertIn("上传图片为空", str(caught.exception))
 
-        response = client.post("/api/selfie-reference", json={"image": "bm90IGFuIGltYWdl"}, headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("上传图片为空", response.get_json()["error"])
-
-    def test_refresh_models_route_returns_count_and_redacts_failures(self) -> None:
+    def test_refresh_models_returns_count_and_redacts_failures(self) -> None:
         class FailingPlugin(FakeWebPlugin):
             async def web_refresh_image_models(self, payload):
                 raise RuntimeError("api_key=plain-provider-secret")
 
-        plugin = FakeWebPlugin("secret")
-        client = self.make_client(plugin, host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
+        api = self.make_api(FakeWebPlugin("secret"))
+        data, extra = asyncio.run(api.refresh_image_models({"channel": {"name": "main", "api_key": "sk-live-secret-token"}}))
+        self.assertEqual(data, ["model-a", "model-b"])
+        self.assertEqual(extra["count"], 2)
 
-        response = client.post(
-            "/api/refresh-image-models",
-            json={"channel": {"name": "main", "api_key": "sk-live-secret-token"}},
-            headers=headers,
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"], ["model-a", "model-b"])
-        self.assertEqual(response.get_json()["count"], 2)
-
-        client = self.make_client(FailingPlugin("secret"), host="0.0.0.0")
-        response = client.post("/api/refresh-image-models", json={"channel": {"name": "main"}}, headers=headers)
-        self.assertEqual(response.status_code, 500)
-        self.assertIn("api_key=[REDACTED]", response.get_json()["error"])
-        self.assertNotIn("plain-provider-secret", response.get_json()["error"])
+        failing = self.make_api(FailingPlugin("secret"))
+        with self.assertRaises(RuntimeError) as caught:
+            asyncio.run(failing.refresh_image_models({"channel": {"name": "main"}}))
+        self.assertIn("api_key=[REDACTED]", failing.error_text(caught.exception))
+        self.assertNotIn("plain-provider-secret", failing.error_text(caught.exception))
 
     def test_channel_test_routes_redact_sensitive_success_payloads(self) -> None:
         class SensitivePlugin(FakeWebPlugin):
@@ -2327,16 +2141,9 @@ class WebApiTests(unittest.TestCase):
                     "result": {"error": "token=abcdefghijklmnop"},
                 }
 
-        client = self.make_client(SensitivePlugin("secret"), host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
-
-        sync_response = client.post("/api/test-image-channel", json={"prompt": "test"}, headers=headers)
-        task_response = client.post("/api/test-image-channel/tasks", json={"prompt": "test"}, headers=headers)
-
-        sync_text = json.dumps(sync_response.get_json()["data"], ensure_ascii=False)
-        task_text = json.dumps(task_response.get_json()["data"], ensure_ascii=False)
-        self.assertEqual(sync_response.status_code, 200)
-        self.assertEqual(task_response.status_code, 200)
+        api = self.make_api(SensitivePlugin("secret"))
+        sync_text = json.dumps(asyncio.run(api.test_image_channel({"prompt": "test"})), ensure_ascii=False)
+        task_text = json.dumps(api.start_image_channel_task({"prompt": "test"}), ensure_ascii=False)
         self.assertIn("Bearer [REDACTED]", sync_text)
         self.assertIn('"api_key": "[REDACTED]"', sync_text)
         self.assertIn("token=[REDACTED]", task_text)
@@ -2344,93 +2151,59 @@ class WebApiTests(unittest.TestCase):
         self.assertNotIn("plain-provider-secret", sync_text)
         self.assertNotIn("abcdefghijklmnop", task_text)
 
-    def test_web_error_responses_redact_sensitive_text(self) -> None:
-        class FailingPlugin(FakeWebPlugin):
-            async def refresh_selfie_profile_from_web(self):
-                raise RuntimeError("Authorization: Bearer sk-live-secret-token")
-
-        client = self.make_client(FailingPlugin("secret"), host="0.0.0.0")
-        response = client.post("/api/selfie-profile/refresh", json={}, headers={"X-Selfie-Image-Token": "secret"})
-
-        self.assertEqual(response.status_code, 500)
-        self.assertIn("Bearer [REDACTED]", response.get_json()["error"])
-        self.assertNotIn("sk-live-secret-token", response.get_json()["error"])
-
-    def test_web_task_status_validates_task_id(self) -> None:
+    def test_task_status_validates_task_id(self) -> None:
         plugin = FakeWebPlugin("secret")
-        client = self.make_client(plugin, host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
+        api = self.make_api(plugin)
 
-        self.assertEqual(client.get("/api/test-image-channel/tasks/web-12345678-1").status_code, 401)
-
-        response = client.get("/api/test-image-channel/tasks/not-a-task", headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("非法任务 ID", response.get_json()["error"])
+        self.assert_dashboard_error(lambda: api.get_image_channel_task({"task_id": "not-a-task"}), "非法任务 ID", 400)
         self.assertEqual(plugin.task_status_calls, [])
-
-        response = client.get("/api/test-image-channel/tasks/web-" + "1" * 200 + "-1", headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("非法任务 ID", response.get_json()["error"])
+        self.assert_dashboard_error(lambda: api.get_image_channel_task({"task_id": "web-" + "1" * 200 + "-1"}), "非法任务 ID", 400)
         self.assertEqual(plugin.task_status_calls, [])
+        self.assertEqual(api.get_image_channel_task({"task_id": "web-12345678-1"})["status"], "succeeded")
+        self.assert_dashboard_error(lambda: api.get_image_channel_task({"task_id": "web-12345678-2"}), "任务不存在", 404)
 
-        response = client.get("/api/test-image-channel/tasks/web-12345678-1", headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"]["status"], "succeeded")
-
-        response = client.get("/api/test-image-channel/tasks/web-12345678-2", headers=headers)
-        self.assertEqual(response.status_code, 404)
-        self.assertIn("任务不存在", response.get_json()["error"])
-
-    def test_cache_image_route_serves_files_and_rejects_traversal(self) -> None:
+    def test_cache_image_api_returns_data_url_and_rejects_traversal(self) -> None:
         plugin = FakeWebPlugin("secret")
-        image_path = os.path.join(plugin.generated_dir, "ok.png")
-        Path(image_path).write_bytes(PNG_BYTES)
-        client = self.make_client(plugin, host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
+        Path(os.path.join(plugin.generated_dir, "ok.png")).write_bytes(PNG_BYTES)
+        api = self.make_api(plugin)
 
-        response = client.get("/api/cache-image?path=ok.png", headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, PNG_BYTES)
-        response.close()
+        data = api.cache_image({"path": "ok.png"})
+        self.assertEqual(data["mime_type"], "image/png")
+        self.assertEqual(data_url_to_bytes(data["image"])[0], PNG_BYTES)
+        self.assert_dashboard_error(lambda: api.cache_image({"path": "../secret.png"}), "非法图片路径", 400)
+        self.assert_dashboard_error(lambda: api.cache_image({"path": ""}), "图片路径不能为空", 400)
+        self.assert_dashboard_error(lambda: api.cache_image({"path": "."}), "非法图片路径", 400)
+        self.assert_dashboard_error(lambda: api.cache_image({"path": "a" * 600 + ".png"}), "图片路径过长", 400)
 
-        response = client.get("/api/cache-image?path=../secret.png", headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("非法图片路径", response.get_json()["error"])
-
-        response = client.get("/api/cache-image", headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("图片路径不能为空", response.get_json()["error"])
-
-        response = client.get("/api/cache-image?path=", headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("图片路径不能为空", response.get_json()["error"])
-
-        response = client.get("/api/cache-image?path=.", headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("非法图片路径", response.get_json()["error"])
-
-        response = client.get("/api/cache-image?path=" + ("a" * 600) + ".png", headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("图片路径过长", response.get_json()["error"])
-
-    def test_cache_image_route_rejects_non_image_cache_files(self) -> None:
+    def test_cache_image_api_rejects_non_image_cache_files(self) -> None:
         plugin = FakeWebPlugin("secret")
-        text_path = os.path.join(plugin.generated_dir, "not-image.txt")
-        Path(text_path).write_text("not an image", encoding="utf-8")
-        client = self.make_client(plugin, host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
+        Path(os.path.join(plugin.generated_dir, "not-image.txt")).write_text("not an image", encoding="utf-8")
+        api = self.make_api(plugin)
 
-        response = client.get("/api/cache-image?path=not-image.txt", headers=headers)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("缓存文件不是有效图片", response.get_json()["error"])
+        self.assert_dashboard_error(lambda: api.cache_image({"path": "not-image.txt"}), "缓存文件不是有效图片", 400)
 
 
 class SchemaTests(unittest.TestCase):
-    def test_native_conf_schema_only_contains_web_startup_settings(self) -> None:
+    def test_native_conf_schema_only_contains_dashboard_placeholder(self) -> None:
         schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        self.assertEqual(set(schema), {"web"})
-        self.assertEqual(set(schema["web"]["items"]), {"enable", "host", "port", "token"})
+        self.assertEqual(set(schema), {"dashboard"})
+        self.assertEqual(set(schema["dashboard"]["items"]), {"notice"})
+        self.assertIn("AstrBot WebUI", schema["dashboard"]["items"]["notice"]["default"])
+
+    def test_dashboard_plugin_page_assets_are_present(self) -> None:
+        page_root = Path(__file__).resolve().parents[1] / "pages" / "dashboard"
+        manifest = json.loads((page_root / "_page.json").read_text(encoding="utf-8"))
+        html = (page_root / "index.html").read_text(encoding="utf-8")
+
+        self.assertEqual(manifest["title"]["i18n_key"], "pages.dashboard.title")
+        self.assertEqual(manifest["description"]["i18n_key"], "pages.dashboard.description")
+        self.assertIn("/api/plugin/page/bridge-sdk.js", html)
+        self.assertIn("AstrBotPluginPage", html)
+        self.assertIn("渠道管理", html)
+        self.assertIn("渠道测试", html)
+        self.assertIn("生图审核", html)
+        self.assertNotIn("loginToken", html)
 
 
 if __name__ == "__main__":

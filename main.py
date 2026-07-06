@@ -31,6 +31,13 @@ except ImportError:  # Compatibility with older AstrBot layouts
     from astrbot.api.utils import logger
 
 try:
+    from astrbot.api.web import error_response, json_response, request
+except Exception:  # Compatibility with AstrBot versions without plugin pages
+    error_response = None  # type: ignore
+    json_response = None  # type: ignore
+    request = None  # type: ignore
+
+try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 except Exception:
     def get_astrbot_data_path() -> str:
@@ -45,6 +52,7 @@ from .constants import (
     PLUGIN_NAME,
     PLUGIN_VERSION,
 )
+from .dashboard_api import DashboardApiError, SelfieImageDashboardApi
 from .generator import generate_image_with_fallback
 from .preset import ImagePresetManager
 from .models import (
@@ -89,7 +97,6 @@ from .utils import (
     save_image_bytes,
     save_json_file,
 )
-from .web import FlaskWebServer
 
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
 
@@ -184,7 +191,8 @@ class SelfieImagePlugin(Star):
         self.presets = ImagePresetManager(self.data_dir)
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
-        self.web_server = FlaskWebServer(self)
+        self.dashboard_api = SelfieImageDashboardApi(self)
+        self._register_dashboard_page_apis()
 
         # Do not write config files during startup. If AstrBot passes an empty
         # or not-yet-populated config object, writing here would overwrite the
@@ -192,10 +200,232 @@ class SelfieImagePlugin(Star):
 
     async def initialize(self) -> None:
         self.loop = asyncio.get_running_loop()
-        self._start_web_server()
 
     async def terminate(self) -> None:
-        self.web_server.stop()
+        return None
+
+    def _register_dashboard_page_apis(self) -> None:
+        register_api = getattr(self.context, "register_web_api", None)
+        if not callable(register_api):
+            logger.debug("[SelfieImage] 当前 AstrBot 版本不支持官方插件页 API，跳过注册。")
+            return
+        routes = [
+            (
+                "dashboard",
+                self.dashboard_page_dashboard,
+                ["GET"],
+                "读取 Selfie Image 插件页聚合数据",
+            ),
+            ("health", self.dashboard_health, ["GET"], "读取 Selfie Image 运行状态"),
+            ("config", self.dashboard_get_config, ["GET"], "读取 Selfie Image 配置"),
+            ("config", self.dashboard_save_config, ["POST"], "保存 Selfie Image 配置"),
+            (
+                "selfie-reference",
+                self.dashboard_get_selfie_reference,
+                ["GET"],
+                "读取自拍形象参考图",
+            ),
+            (
+                "selfie-reference",
+                self.dashboard_save_selfie_reference,
+                ["POST"],
+                "保存自拍形象参考图",
+            ),
+            (
+                "selfie-reference/clear",
+                self.dashboard_clear_selfie_reference,
+                ["POST"],
+                "清除自拍形象参考图",
+            ),
+            (
+                "selfie-profile/refresh",
+                self.dashboard_refresh_selfie_profile,
+                ["POST"],
+                "刷新今日自拍设定",
+            ),
+            (
+                "test-image-channel",
+                self.dashboard_test_image_channel,
+                ["POST"],
+                "同步测试生图渠道",
+            ),
+            (
+                "test-image-channel/tasks",
+                self.dashboard_start_image_channel_task,
+                ["POST"],
+                "启动后台生图测试任务",
+            ),
+            (
+                "test-image-channel/task",
+                self.dashboard_get_image_channel_task,
+                ["POST"],
+                "读取后台生图测试任务",
+            ),
+            (
+                "refresh-image-models",
+                self.dashboard_refresh_image_models,
+                ["POST"],
+                "刷新生图渠道模型缓存",
+            ),
+            (
+                "records",
+                self.dashboard_records,
+                ["GET", "POST"],
+                "读取生图监控记录",
+            ),
+            ("record", self.dashboard_record, ["POST"], "读取生图监控记录详情"),
+            ("records/clear", self.dashboard_clear_records, ["POST"], "清空生图监控记录"),
+            ("cache-image", self.dashboard_cache_image, ["POST"], "读取缓存图片"),
+        ]
+        for route, handler, methods, desc in routes:
+            register_api(f"/{PLUGIN_NAME}/page/{route}", handler, methods, desc)
+
+    @staticmethod
+    def _dashboard_ok(data: Any = None, message: str = "", **extra: Any) -> Any:
+        payload = {"ok": True, "message": message, "data": data if data is not None else {}}
+        payload.update(extra)
+        if callable(json_response):
+            return json_response(payload)
+        return payload
+
+    @staticmethod
+    def _dashboard_fail(message: str, status_code: int = 400) -> Any:
+        text = redact_sensitive_text(message)
+        if callable(error_response):
+            return error_response(text, status_code=status_code)
+        return {"ok": False, "message": text, "data": {}}
+
+    async def _dashboard_payload(self) -> Dict[str, Any]:
+        if request is None:
+            return {}
+        payload = await request.json(default={})
+        if payload is None:
+            return {}
+        if not isinstance(payload, dict):
+            raise DashboardApiError("请求体必须是 JSON 对象", 400)
+        return payload
+
+    async def _dashboard_call(self, operation: Any, default_status: int = 500) -> Any:
+        try:
+            data = await resolve_awaitable(operation())
+            return self._dashboard_ok(data)
+        except DashboardApiError as exc:
+            return self._dashboard_fail(self.dashboard_api.error_text(exc), exc.status_code)
+        except Exception as exc:
+            logger.error(f"[SelfieImage] Dashboard Page API 调用失败: {exc}", exc_info=True)
+            return self._dashboard_fail(self.dashboard_api.error_text(exc), default_status)
+
+    async def _dashboard_call_with_extra(self, operation: Any, default_status: int = 500) -> Any:
+        try:
+            data, extra = await resolve_awaitable(operation())
+            return self._dashboard_ok(data, **(extra if isinstance(extra, dict) else {}))
+        except DashboardApiError as exc:
+            return self._dashboard_fail(self.dashboard_api.error_text(exc), exc.status_code)
+        except Exception as exc:
+            logger.error(f"[SelfieImage] Dashboard Page API 调用失败: {exc}", exc_info=True)
+            return self._dashboard_fail(self.dashboard_api.error_text(exc), default_status)
+
+    async def _dashboard_call_with_payload(self, operation: Any, default_status: int = 500) -> Any:
+        async def run() -> Any:
+            payload = await self._dashboard_payload()
+            return operation(payload)
+
+        return await self._dashboard_call(run, default_status=default_status)
+
+    async def _dashboard_call_with_payload_extra(self, operation: Any, default_status: int = 500) -> Any:
+        async def run() -> Any:
+            payload = await self._dashboard_payload()
+            return operation(payload)
+
+        return await self._dashboard_call_with_extra(run, default_status=default_status)
+
+    async def _dashboard_section(
+        self,
+        name: str,
+        operation: Any,
+        default: Any,
+        errors: Dict[str, str],
+    ) -> Any:
+        try:
+            data = await resolve_awaitable(operation())
+            return default if data is None else data
+        except Exception as exc:
+            logger.warning(
+                f"[SelfieImage] Dashboard {name} 数据加载失败: {exc}",
+                exc_info=True,
+            )
+            errors[name] = redact_sensitive_text(str(exc))
+            return default
+
+    async def dashboard_page_dashboard(self) -> Any:
+        errors: Dict[str, str] = {}
+        health, config, selfie, records_result = await asyncio.gather(
+            self._dashboard_section("health", self.dashboard_api.health, {}, errors),
+            self._dashboard_section("config", self.dashboard_api.get_config, {}, errors),
+            self._dashboard_section("selfie", self.dashboard_api.get_selfie_reference, {}, errors),
+            self._dashboard_section(
+                "records",
+                lambda: self.dashboard_api.records({"limit": 20, "offset": 0}),
+                ([], {"total": 0, "filtered": 0, "offset": 0, "limit": 20}),
+                errors,
+            ),
+        )
+        records, meta = records_result if isinstance(records_result, tuple) else ([], {})
+        return self._dashboard_ok(
+            {
+                "health": health if isinstance(health, dict) else {},
+                "config": config if isinstance(config, dict) else {},
+                "selfie": selfie if isinstance(selfie, dict) else {},
+                "records": records if isinstance(records, list) else [],
+                "record_meta": meta if isinstance(meta, dict) else {},
+                "errors": errors,
+            }
+        )
+
+    async def dashboard_health(self) -> Any:
+        return await self._dashboard_call(self.dashboard_api.health)
+
+    async def dashboard_get_config(self) -> Any:
+        return await self._dashboard_call(self.dashboard_api.get_config)
+
+    async def dashboard_save_config(self) -> Any:
+        return await self._dashboard_call_with_payload(self.dashboard_api.save_config)
+
+    async def dashboard_get_selfie_reference(self) -> Any:
+        return await self._dashboard_call(self.dashboard_api.get_selfie_reference)
+
+    async def dashboard_save_selfie_reference(self) -> Any:
+        return await self._dashboard_call_with_payload(self.dashboard_api.save_selfie_reference, default_status=400)
+
+    async def dashboard_clear_selfie_reference(self) -> Any:
+        return await self._dashboard_call_with_payload(self.dashboard_api.clear_selfie_reference)
+
+    async def dashboard_refresh_selfie_profile(self) -> Any:
+        return await self._dashboard_call_with_payload(self.dashboard_api.refresh_selfie_profile)
+
+    async def dashboard_test_image_channel(self) -> Any:
+        return await self._dashboard_call_with_payload(self.dashboard_api.test_image_channel)
+
+    async def dashboard_start_image_channel_task(self) -> Any:
+        return await self._dashboard_call_with_payload(self.dashboard_api.start_image_channel_task)
+
+    async def dashboard_get_image_channel_task(self) -> Any:
+        return await self._dashboard_call_with_payload(self.dashboard_api.get_image_channel_task)
+
+    async def dashboard_refresh_image_models(self) -> Any:
+        return await self._dashboard_call_with_payload_extra(self.dashboard_api.refresh_image_models)
+
+    async def dashboard_records(self) -> Any:
+        return await self._dashboard_call_with_payload_extra(self.dashboard_api.records)
+
+    async def dashboard_record(self) -> Any:
+        return await self._dashboard_call_with_payload(self.dashboard_api.record)
+
+    async def dashboard_clear_records(self) -> Any:
+        return await self._dashboard_call_with_payload(self.dashboard_api.clear_records)
+
+    async def dashboard_cache_image(self) -> Any:
+        return await self._dashboard_call_with_payload(self.dashboard_api.cache_image, default_status=400)
 
     def _migrate_legacy_data_dir(self, plugin_data_dir: str) -> None:
         if os.path.exists(self.data_dir):
@@ -285,15 +515,6 @@ class SelfieImagePlugin(Star):
         self.config = AICatConfig.from_dict(self.raw_config)
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self._persist_config()
-
-    def _start_web_server(self) -> None:
-        if not self.config.web_enable:
-            return
-        try:
-            self.web_server.start(self.config.web_host, self.config.web_port)
-            logger.info(f"[SelfieImage] Flask Web 已启动: http://{self.config.web_host}:{self.config.web_port}")
-        except Exception as exc:
-            logger.error(f"[SelfieImage] Flask Web 启动失败: {exc}", exc_info=True)
 
     def get_config_for_web(self) -> Dict[str, Any]:
         web_config = copy.deepcopy(self.raw_config)
@@ -2533,7 +2754,7 @@ class SelfieImagePlugin(Star):
                     "/形象清除",
                     "/形象刷新",
                     "LLM 工具：generate_image、generate_selfie",
-                    f"Flask Web：{'已启用' if self.config.web_enable else '未启用'} http://{self.config.web_host}:{self.config.web_port}",
+                    "配置入口：AstrBot WebUI -> 插件管理 -> Selfie Image -> Dashboard 页面",
                 ]
             )
         )

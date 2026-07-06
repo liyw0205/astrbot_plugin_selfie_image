@@ -17,7 +17,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "enable": True,
         "host": "127.0.0.1",
         "port": 14514,
-        "token": "changeme",
+        "token": "",
     },
     "image": {
         "enable_llm_tool": True,
