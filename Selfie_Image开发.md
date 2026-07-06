@@ -20,7 +20,7 @@ Selfie Image 是 AstrBot 的生图、图生图、AI 自拍、LLM 工具调用和
 - 不把真实 `api_key`、Web Token、代理、Cookie、临时签名 URL 写进仓库。
 - 不扩大 `_conf_schema.json` 的职责；AstrBot 原生配置只保留 `web.enable`、`web.host`、`web.port`、`web.token`。
 - 不在插件启动时覆盖用户完整配置；完整配置只从插件数据目录读取和保存。
-- 不绕过 Web Token 鉴权；对外监听时必须拒绝空 Token 和默认弱 Token。
+- Web Token 仅由 AstrBot 原生配置控制；空 Token 表示免校验，默认 `changeme` 启动时自动随机化。
 - 不把 Web 面板拆成 npm/Vite/React 等外部构建链，除非单独立项。
 - 不提交运行态文件、缓存图片、生成记录、用户配置和真实密钥。
 - 保留旧插件名 `astrbot_plugin_aicat` 与旧配置 `aicat_config.json` 的兼容迁移。
@@ -212,9 +212,8 @@ Web 鉴权规则：
 
 - 配置了 Token 时，API 必须通过 `Authorization: Bearer ...`、`X-Selfie-Image-Token` 或兼容参数提交 Token。
 - Token 比较使用常量时间比较。
-- 非 ASCII 或超长 Token 请求必须拒绝。
-- 空 Token 只允许本机监听地址。
-- 默认弱 Token `changeme` 不允许在 `0.0.0.0`、`::` 等对外监听地址上使用。
+- 空 Token 表示 Web API 不做 Token 校验，前端会自动尝试免 Token 进入。
+- 默认占位 Token `changeme` 在启动时必须自动替换为随机 Token，并输出到日志；鉴权不区分 `127.0.0.1`、`0.0.0.0` 或其他监听地址。
 
 敏感信息处理：
 
@@ -271,7 +270,7 @@ sh -n grok_image_edit_batch.sh
 
 - 持续增强 provider 响应解析：相对 URL、HTML、Markdown、SSE、JSONP、script JSON、CSS URL、lazy image、资源字段别名和多种转义 URL。
 - 强化下载图片校验：大小、Content-Type、图片签名和非图片拒绝。
-- 强化 Web 鉴权：弱 Token、空 Token、本机监听、非 ASCII Token、超长 Token、API no-store 和 nosniff。
+- 强化 Web 鉴权、API no-store 和 nosniff；当前策略为空 Token 免校验、默认 `changeme` 启动随机化。
 - 强化错误和记录脱敏，避免 provider 错误、任务状态和 Web 响应泄露密钥。
 - 重新生成本文档，删除长流水式更新记录，改为当前架构、边界、验收和近期主题摘要。
 

@@ -72,10 +72,10 @@
 6. Flask Web 默认地址：
 
    - `http://127.0.0.1:14514`
-   - 默认 Token：`changeme`
-   - 出于安全考虑，`web.token` 留空时只允许本机监听地址免校验；对外监听请设置强 Token。
+   - `web.token` 默认占位值 `changeme` 会在插件启动时自动替换为随机 Token，并在日志中输出。
+   - `web.token` 留空时 Web API 不做 Token 校验，前端会自动尝试免 Token 进入。
    - 修改 `web.port`、`web.host` 后需要重载插件让监听端口生效。
-   - 打开后先进入登录页，输入 `web.token` 登录。
+   - 配置了 `web.token` 时，打开后在登录页输入该 Token；留空时会自动进入。
 
 ## Web 管理页
 

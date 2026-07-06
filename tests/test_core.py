@@ -168,6 +168,16 @@ def make_target(provider_type: str = "agnes", model: str = "agnes-image-2.1-flas
     )
 
 
+WEB_STARTUP_CONFIG_KEYS = ("web", "webEnable", "webHost", "webPort", "webToken")
+
+
+def strip_web_startup_config(data):
+    cleaned = copy.deepcopy(data if isinstance(data, dict) else {})
+    for key in WEB_STARTUP_CONFIG_KEYS:
+        cleaned.pop(key, None)
+    return cleaned
+
+
 class FakeWebPlugin:
     def __init__(self, token: str = "secret") -> None:
         self.key_web = copy.deepcopy(DEFAULT_CONFIG["web"])
@@ -186,13 +196,10 @@ class FakeWebPlugin:
         return 0
 
     def get_config_for_web(self):
-        data = copy.deepcopy(self.raw_config)
-        data.pop("web", None)
-        return data
+        return strip_web_startup_config(self.raw_config)
 
     def update_config_from_web(self, patch):
-        patch = copy.deepcopy(patch)
-        patch.pop("web", None)
+        patch = strip_web_startup_config(patch)
         self.raw_config = deep_merge(self.raw_config, patch)
         self.raw_config["web"] = copy.deepcopy(self.key_web)
         self.config = AICatConfig.from_dict(self.raw_config)
@@ -1959,9 +1966,12 @@ class WebApiTests(unittest.TestCase):
 
         response = client.get("/api/health", headers={"Authorization": "Bearer secret"})
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.get_json()["data"]["auth"])
+        data = response.get_json()["data"]
+        self.assertEqual(data["status"], "ok")
+        for key in ("auth", "host", "port", "token"):
+            self.assertNotIn(key, data)
 
-    def test_auth_rejects_non_ascii_and_oversized_tokens(self) -> None:
+    def test_auth_rejects_mismatched_tokens(self) -> None:
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
 
         non_ascii = client.get("/api/health", headers={"Authorization": "Bearer 密码"})
@@ -2017,18 +2027,18 @@ class WebApiTests(unittest.TestCase):
             self.assertEqual(response.headers.get("Referrer-Policy"), "no-referrer")
             self.assertEqual(response.headers.get("X-Frame-Options"), "DENY")
 
-    def test_empty_token_only_allows_local_bind_host(self) -> None:
+    def test_empty_token_skips_auth_for_any_bind_host(self) -> None:
         self.assertEqual(self.make_client(FakeWebPlugin(""), host="127.0.0.1").get("/api/health").status_code, 200)
-        self.assertEqual(self.make_client(FakeWebPlugin(""), host="0.0.0.0").get("/api/health").status_code, 401)
+        self.assertEqual(self.make_client(FakeWebPlugin(""), host="0.0.0.0").get("/api/health").status_code, 200)
 
-    def test_default_weak_token_is_rejected_on_public_bind_host(self) -> None:
+    def test_default_token_is_not_special_cased_by_web_auth(self) -> None:
         public_client = self.make_client(FakeWebPlugin("changeme"), host="0.0.0.0")
         local_client = self.make_client(FakeWebPlugin("changeme"), host="127.0.0.1")
 
         public_response = public_client.get("/api/health", headers={"X-Selfie-Image-Token": "changeme"})
         local_response = local_client.get("/api/health", headers={"X-Selfie-Image-Token": "changeme"})
 
-        self.assertEqual(public_response.status_code, 401)
+        self.assertEqual(public_response.status_code, 200)
         self.assertEqual(local_response.status_code, 200)
 
     def test_config_api_does_not_expose_or_override_web_settings(self) -> None:
@@ -2036,15 +2046,30 @@ class WebApiTests(unittest.TestCase):
         client = self.make_client(plugin, host="0.0.0.0")
         response = client.post(
             "/api/config",
-            json={"config": {"web": {"token": "bad", "host": "0.0.0.0"}, "image": {"max_batch_count": 99}}},
+            json={
+                "config": {
+                    "web": {"token": "bad", "host": "0.0.0.0"},
+                    "webHost": "0.0.0.0",
+                    "webPort": 9999,
+                    "webToken": "bad",
+                    "image": {"max_batch_count": 99},
+                }
+            },
             headers={"X-Selfie-Image-Token": "secret"},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn("web", response.get_json()["data"])
+        data = response.get_json()["data"]
+        for key in ("web", "webHost", "webPort", "webToken"):
+            self.assertNotIn(key, data)
         self.assertEqual(plugin.config.web_token, "secret")
         self.assertEqual(plugin.config.web_host, "127.0.0.1")
         self.assertEqual(plugin.config.image_max_batch_count, 8)
+
+    def test_frontend_does_not_display_startup_web_settings(self) -> None:
+        self.assertNotIn("<b>监听", INDEX_HTML)
+        self.assertNotIn("<b>Token", INDEX_HTML)
+        self.assertIn("await enterApp(!AUTH_TOKEN)", INDEX_HTML)
 
     def test_config_api_get_and_save_round_trip_common_settings(self) -> None:
         plugin = FakeWebPlugin("secret")

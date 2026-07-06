@@ -8,11 +8,12 @@ import json
 import os
 import random
 import re
+import secrets
 import shutil
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
@@ -92,6 +93,8 @@ from .utils import (
 from .web import FlaskWebServer
 
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
+WEB_STARTUP_CONFIG_KEYS = ("web", "webEnable", "webHost", "webPort", "webToken")
+DEFAULT_WEB_TOKEN = str(DEFAULT_CONFIG["web"].get("token") or "changeme").strip().lower()
 
 
 def optional_event_message_type(priority: int = 100):
@@ -257,6 +260,66 @@ class SelfieImagePlugin(Star):
             return [self._plain_config_value(item) for item in value]
         return copy.deepcopy(value)
 
+    def _generate_web_token(self) -> str:
+        return secrets.token_urlsafe(24)
+
+    def _set_mapping_web_token(self, data: MutableMapping[str, Any], token: str) -> None:
+        web = data.get("web")
+        if isinstance(web, MutableMapping):
+            web_value = web.get("value")
+            if isinstance(web_value, MutableMapping):
+                token_value = web_value.get("token")
+                if isinstance(token_value, MutableMapping) and "value" in token_value:
+                    token_value["value"] = token
+                else:
+                    web_value["token"] = token
+            else:
+                token_value = web.get("token")
+                if isinstance(token_value, MutableMapping) and "value" in token_value:
+                    token_value["value"] = token
+                else:
+                    web["token"] = token
+        else:
+            data["web"] = {"token": token}
+        if "webToken" in data:
+            legacy_token = data.get("webToken")
+            if isinstance(legacy_token, MutableMapping) and "value" in legacy_token:
+                legacy_token["value"] = token
+            else:
+                data["webToken"] = token
+
+    def _try_persist_native_web_token(self, token: str) -> bool:
+        persisted = False
+        if self._native_config is not None:
+            try:
+                if isinstance(self._native_config, MutableMapping):
+                    self._set_mapping_web_token(self._native_config, token)
+                else:
+                    native_config = self._config_object_to_dict(self._native_config)
+                    self._set_mapping_web_token(native_config, token)
+                    update = getattr(self._native_config, "update", None)
+                    if callable(update):
+                        update(native_config)
+                    else:
+                        for key, value in native_config.items():
+                            self._native_config[key] = value
+                save_config = getattr(self._native_config, "save_config", None)
+                if callable(save_config):
+                    save_config()
+                persisted = True
+            except Exception as exc:
+                logger.warning(f"[SelfieImage] 随机 Web Token 写回 AstrBot 配置对象失败: {exc}", exc_info=True)
+
+        if self._native_config_path:
+            try:
+                native_file_config = load_json_file(self._native_config_path)
+                self._set_mapping_web_token(native_file_config, token)
+                save_json_file(self._native_config_path, native_file_config)
+                persisted = True
+            except Exception as exc:
+                logger.warning(f"[SelfieImage] 随机 Web Token 写回 AstrBot 配置文件失败: {exc}", exc_info=True)
+        return persisted
+
     def _extract_native_key_config(self, native_config: Dict[str, Any]) -> Dict[str, Any]:
         normalized = normalize_legacy_keys(normalize_config_tree(copy.deepcopy(native_config or {})))
         web = normalized.get("web") if isinstance(normalized.get("web"), dict) else {}
@@ -264,21 +327,33 @@ class SelfieImagePlugin(Star):
         for key in ("enable", "host", "port", "token"):
             if key in web:
                 key_config["web"][key] = web[key]
+        if str(key_config["web"].get("token") or "").strip().lower() == DEFAULT_WEB_TOKEN:
+            token = self._generate_web_token()
+            key_config["web"]["token"] = token
+            persisted = self._try_persist_native_web_token(token)
+            suffix = "已写回 AstrBot 原生配置" if persisted else "未能自动写回配置，请手动保存"
+            logger.warning(f"[SelfieImage] web.token 为默认 changeme，已自动生成随机 Web Token: {token}（{suffix}）")
         return key_config
 
+    def _strip_web_startup_config(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        cleaned = copy.deepcopy(data if isinstance(data, dict) else {})
+        for key in WEB_STARTUP_CONFIG_KEYS:
+            cleaned.pop(key, None)
+        return cleaned
+
     def _load_initial_config(self) -> Dict[str, Any]:
-        persisted = load_json_file(self.config_path)
+        persisted = self._strip_web_startup_config(load_json_file(self.config_path))
         source = normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, persisted)))
         source["web"] = copy.deepcopy(self.key_config["web"])
         return source
 
     def _persist_config(self) -> None:
         with self._config_lock:
-            web_config = copy.deepcopy(self.raw_config)
-            web_config.pop("web", None)
+            web_config = self._strip_web_startup_config(self.raw_config)
             save_json_file(self.config_path, web_config)
 
     def _apply_raw_config(self, raw: Dict[str, Any]) -> None:
+        raw = self._strip_web_startup_config(raw)
         next_config = normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, raw)))
         next_config["web"] = copy.deepcopy(self.key_config["web"])
         self.raw_config = next_config
@@ -296,14 +371,11 @@ class SelfieImagePlugin(Star):
             logger.error(f"[SelfieImage] Flask Web 启动失败: {exc}", exc_info=True)
 
     def get_config_for_web(self) -> Dict[str, Any]:
-        web_config = copy.deepcopy(self.raw_config)
-        web_config.pop("web", None)
-        return web_config
+        return self._strip_web_startup_config(self.raw_config)
 
     def update_config_from_web(self, patch: Dict[str, Any]) -> Dict[str, Any]:
         with self._config_lock:
-            patch = copy.deepcopy(patch)
-            patch.pop("web", None)
+            patch = self._strip_web_startup_config(patch)
             self._apply_raw_config(deep_merge(self.raw_config, patch))
             return self.get_config_for_web()
 

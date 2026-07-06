@@ -24,12 +24,10 @@ except Exception:  # pragma: no cover - handled at runtime in AstrBot env
 
 
 WEB_TASK_ID_RE = re.compile(r"^web-\d{8,}-\d+$")
-MAX_WEB_TOKEN_LENGTH = 4096
 MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
 MAX_WEB_RECORD_ID_LENGTH = 128
 MAX_RECORD_PAGE_LIMIT = 100
-WEAK_WEB_TOKENS = {"changeme", "change-me", "change_me", "password", "admin", "123456", "test"}
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -432,7 +430,11 @@ INDEX_HTML = r"""<!doctype html>
 
     $('loginToken').value = AUTH_TOKEN;
 
-    function headers() { return {'Content-Type':'application/json','X-Selfie-Image-Token':AUTH_TOKEN}; }
+    function headers() {
+      const result = {'Content-Type':'application/json'};
+      if (AUTH_TOKEN) result['X-Selfie-Image-Token'] = AUTH_TOKEN;
+      return result;
+    }
     async function api(path, options = {}) {
       const opts = Object.assign({headers: headers()}, options);
       const res = await fetch(path, opts);
@@ -470,6 +472,11 @@ INDEX_HTML = r"""<!doctype html>
       $('channelPaneAudit').classList.toggle('active', ACTIVE_CHANNEL_PANE === 'audit');
     }
     function ensureConfig() {
+      delete CONFIG.web;
+      delete CONFIG.webHost;
+      delete CONFIG.webPort;
+      delete CONFIG.webToken;
+      delete CONFIG.webEnable;
       CONFIG.bot_name ??= '啊呜';
       CONFIG.personality ??= '可爱猫娘助手，说话带“喵”等语气词，活泼俏皮会撒娇';
       CONFIG.permission ??= {};
@@ -1183,6 +1190,7 @@ INDEX_HTML = r"""<!doctype html>
     async function saveJsonConfig() {
       try {
         CONFIG = JSON.parse($('configText').value || '{}');
+        ensureConfig();
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: CONFIG})});
         CONFIG = res.data || CONFIG;
         fillForms();
@@ -1196,8 +1204,6 @@ INDEX_HTML = r"""<!doctype html>
         const d = res.data || {};
         $('health').innerHTML = `
           <div><b>状态：</b>${escapeHtml(d.status || 'ok')}</div>
-          <div><b>监听：</b>${escapeHtml(String(d.host || ''))}:${escapeHtml(String(d.port || ''))}</div>
-          <div><b>Token：</b>${d.auth ? '已启用' : '未启用'}</div>
           <div><b>图片缓存：</b>${escapeHtml(String(d.cache_size_mb ?? 0))} / ${escapeHtml(String(d.cache_limit_mb ?? 100))} MB</div>
           <div><b>缓存目录：</b>${escapeHtml(d.cache_dir || '')}</div>
           <div><b>监控记录：</b>${escapeHtml(d.records_path || '')}</div>
@@ -1614,13 +1620,14 @@ INDEX_HTML = r"""<!doctype html>
     function setMultiStatus(text) {
       for (const id of ['baseStatus','channelStatus','imageStatus','auditStatus','configStatus']) if ($(id)) $(id).textContent = text;
     }
-    async function enterApp() {
-      $('loginStatus').textContent = '登录中...';
+    async function enterApp(silent = false) {
+      if (!silent) $('loginStatus').textContent = '登录中...';
       AUTH_TOKEN = $('loginToken').value.trim();
       try {
         const res = await api('/api/config');
         CONFIG = res.data || {};
-        localStorage.setItem('selfieImageToken', AUTH_TOKEN);
+        if (AUTH_TOKEN) localStorage.setItem('selfieImageToken', AUTH_TOKEN);
+        else localStorage.removeItem('selfieImageToken');
         localStorage.removeItem('aicatToken');
         fillForms();
         document.body.classList.add('authed');
@@ -1631,7 +1638,7 @@ INDEX_HTML = r"""<!doctype html>
         await resumeImageTestTask();
       } catch (e) {
         document.body.classList.remove('authed');
-        $('loginStatus').textContent = e.message || '登录失败';
+        if (!silent || AUTH_TOKEN) $('loginStatus').textContent = e.message || '登录失败';
       }
     }
     function logout() {
@@ -1694,7 +1701,7 @@ INDEX_HTML = r"""<!doctype html>
     (async function init() {
       for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, '自动');
       setupAutoSave();
-      if (AUTH_TOKEN) await enterApp();
+      await enterApp(!AUTH_TOKEN);
     })();
   </script>
 </body>
@@ -1856,20 +1863,12 @@ class FlaskWebServer:
             )
             return [token for token in tokens if token]
 
-        def is_local_bind_host() -> bool:
-            host = str(self.host or "").strip().lower()
-            return host in {"localhost", "::1", "[::1]"} or host.startswith("127.")
-
         def check_auth() -> bool:
             configured = str(getattr(self.plugin.config, "web_token", "") or "").strip()
             if not configured:
-                return is_local_bind_host()
-            if not is_local_bind_host() and configured.lower() in WEAK_WEB_TOKENS:
-                return False
+                return True
             configured_bytes = configured.encode("utf-8")
             for token in token_candidates_from_request():
-                if len(token) > MAX_WEB_TOKEN_LENGTH:
-                    continue
                 try:
                     if hmac.compare_digest(token.encode("utf-8"), configured_bytes):
                         return True
@@ -1889,9 +1888,6 @@ class FlaskWebServer:
             return ok(
                 {
                     "status": "ok",
-                    "auth": bool(getattr(self.plugin.config, "web_token", "")),
-                    "host": self.host,
-                    "port": self.port,
                     "config_path": getattr(self.plugin, "config_path", ""),
                     "records_path": getattr(self.plugin, "records_path", ""),
                     "cache_dir": getattr(self.plugin, "generated_dir", ""),

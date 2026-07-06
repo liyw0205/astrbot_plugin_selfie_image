@@ -22,7 +22,7 @@
       "token": {
         "description": "Web Token",
         "type": "string",
-        "hint": "访问 Web 配置接口、上传自拍参考图、测试生图时需要。留空仅允许本机监听地址免校验。",
+        "hint": "访问 Web 配置接口、上传自拍参考图、测试生图时需要。留空表示不校验 Token；默认 changeme 会在启动时自动替换为随机 Token。",
         "default": "changeme"
       }
     }
