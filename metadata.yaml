@@ -1,7 +1,7 @@
 name: astrbot_plugin_selfie_image
 display_name: Selfie Image 生图自拍
-desc: AstrBot 生图、图生图、AI 自拍和 WebUI 插件页管理插件。
-help: 发送 /生图帮助 查看说明；完整配置请到 AstrBot WebUI 插件详情页的 Dashboard 页面管理。
+desc: AstrBot 生图、图生图、AI 自拍和 Flask Web 管理插件。
+help: 发送 /生图帮助 查看说明；Web 面板地址见日志或配置 web.port。
 version: 1.0.0
 author: liyw0205
 repo: https://github.com/liyw0205/astrbot_plugin_selfie_image

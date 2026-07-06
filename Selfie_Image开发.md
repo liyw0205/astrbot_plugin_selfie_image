@@ -2,26 +2,26 @@
 
 > 文档重生成日期：2026-07-05
 > 重生成基线：`fb96a7c`，`astrbot_plugin_selfie_image` 1.0.0
-> 运行形态：AstrBot 插件 + 官方 WebUI 插件页 Dashboard + 多 Provider 生图适配器
-> 当前回归基线：`tests/test_core.py` 120 个用例；每轮改动后必须重新验证
+> 运行形态：AstrBot 插件 + 内置 Flask Web 管理页 + 多 Provider 生图适配器
+> 当前回归基线：`tests/test_core.py` 129 个用例；每轮改动后必须重新验证
 
 ## 目标与边界
 
-Selfie Image 是 AstrBot 的生图、图生图、AI 自拍、LLM 工具调用和 WebUI 管理插件。它不是独立 Bot，也不是外部前端项目。所有功能应围绕三条入口保持一致：
+Selfie Image 是 AstrBot 的生图、图生图、AI 自拍、LLM 工具调用和 Web 管理插件。它不是独立 Bot，也不是前端单页项目。所有功能应围绕三条入口保持一致：
 
 | 入口 | 目标 |
 |------|------|
 | AstrBot 命令 | 面向群聊/私聊用户，提供生图、图生图、自拍、人设和预设命令 |
 | LLM 工具 | 允许大模型在会话中按权限、额度和审核规则调用生图能力 |
-| WebUI 插件页 Dashboard | 面向管理员，配置渠道、测试模型、管理自拍形象、查看生成记录 |
+| Flask Web | 面向管理员，配置渠道、测试模型、管理自拍形象、查看生成记录 |
 
 固定边界：
 
-- 不把真实 `api_key`、代理、Cookie、临时签名 URL 写进仓库。
-- 不扩大 `_conf_schema.json` 的职责；AstrBot 原生配置只保留 Dashboard 入口说明占位。
+- 不把真实 `api_key`、Web Token、代理、Cookie、临时签名 URL 写进仓库。
+- 不扩大 `_conf_schema.json` 的职责；AstrBot 原生配置只保留 `web.enable`、`web.host`、`web.port`、`web.token`。
 - 不在插件启动时覆盖用户完整配置；完整配置只从插件数据目录读取和保存。
-- 不重新引入独立 Flask 管理面板或自定义 Token 登录；管理能力走 AstrBot 官方插件页 API。
-- 不把 Dashboard 页面拆成 npm/Vite/React 等外部构建链，除非单独立项。
+- 不绕过 Web Token 鉴权；对外监听时必须拒绝空 Token 和默认弱 Token。
+- 不把 Web 面板拆成 npm/Vite/React 等外部构建链，除非单独立项。
 - 不提交运行态文件、缓存图片、生成记录、用户配置和真实密钥。
 - 保留旧插件名 `astrbot_plugin_aicat` 与旧配置 `aicat_config.json` 的兼容迁移。
 
@@ -29,13 +29,16 @@ Selfie Image 是 AstrBot 的生图、图生图、AI 自拍、LLM 工具调用和
 
 ### AstrBot 原生配置
 
-`_conf_schema.json` 只负责在 AstrBot 插件配置页展示 Dashboard 入口说明：
+`_conf_schema.json` 只负责插件能否启动 Flask Web 服务：
 
 | 字段 | 说明 |
 |------|------|
-| `dashboard.notice` | 提示用户到 AstrBot WebUI 插件详情页的 Dashboard 页面管理完整配置 |
+| `web.enable` | 是否启动内置 Web 服务 |
+| `web.host` | Web 监听地址 |
+| `web.port` | Web 监听端口 |
+| `web.token` | Web 管理 Token |
 
-Dashboard 页面保存配置时必须剔除 `web` 节点，避免旧配置字段重新进入插件运行配置。
+这些字段由 AstrBot 读取，优先级高于独立配置文件。Web 面板保存配置时必须剔除 `web` 节点，避免运行时配置覆盖启动监听参数。
 
 ### 插件独立配置
 
@@ -50,7 +53,8 @@ plugin_data/astrbot_plugin_selfie_image/selfie_image_config.json
 1. 读取 `DEFAULT_CONFIG` 作为基础默认值。
 2. 读取 `selfie_image_config.json` 并合并。
 3. 兼容旧字段名和旧数据结构。
-4. 构造 `AICatConfig`，供命令、LLM 工具、Dashboard 测试和 provider 调用共用。
+4. 读取 AstrBot 原生 `web.*` 并覆盖运行态 Web 配置。
+5. 构造 `AICatConfig`，供命令、LLM 工具、Web 测试和 provider 调用共用。
 
 核心配置域：
 
@@ -114,32 +118,40 @@ plugin_data/astrbot_plugin_selfie_image/
 
 LLM 工具必须继续遵守 `image.enable_llm_tool`、用户权限、黑白名单、频控、每日额度、提示词审核、出图审核、缓存和记录逻辑。
 
-### AstrBot 插件页 Dashboard
+### Flask Web
 
-已知插件页 API 路由（注册前缀为 `/{PLUGIN_NAME}/page/`）：
+默认地址：
+
+```text
+http://127.0.0.1:14514
+```
+
+已知路由：
 
 | 路由 | 方法 | 说明 |
 |------|------|------|
-| `dashboard` | `GET` | 聚合读取 Dashboard 初始数据 |
-| `health` | `GET` | 插件页接口状态、路径、缓存大小 |
-| `config` | `GET`/`POST` | 读取/保存运行配置，不含 `web.*` |
-| `selfie-reference` | `GET`/`POST` | 读取/保存自拍参考图 |
-| `selfie-reference/clear` | `POST` | 清除自拍参考图 |
-| `selfie-profile/refresh` | `POST` | 刷新今日自拍状态 |
-| `test-image-channel` | `POST` | 同步渠道测试 |
-| `test-image-channel/tasks` | `POST` | 提交后台渠道测试任务 |
-| `test-image-channel/task` | `POST` | 查询后台测试任务 |
-| `refresh-image-models` | `POST` | 刷新渠道模型列表 |
-| `records` | `GET`/`POST` | 查看生成记录，支持 `source`、`model`、`success`、`q`、`offset`、`limit` 筛选分页 |
-| `record` | `POST` | 查看单条生成记录详情 |
-| `records/clear` | `POST` | 清空生成记录 |
-| `cache-image` | `POST` | 读取缓存图片 data URL |
+| `/`、`/index.html` | `GET` | 内置 Web 管理页 |
+| `/api/health` | `GET` | Web 状态、路径、缓存大小 |
+| `/api/config` | `GET`/`POST` | 读取/保存独立配置，不含 `web.*` |
+| `/api/selfie-reference` | `GET`/`POST` | 读取/保存自拍参考图 |
+| `/api/selfie-reference/clear` | `POST` | 清除自拍参考图 |
+| `/api/selfie-profile/refresh` | `POST` | 刷新今日自拍状态 |
+| `/api/test-image-channel` | `POST` | 同步渠道测试 |
+| `/api/test-image-channel/tasks` | `POST` | 提交后台渠道测试任务 |
+| `/api/test-image-channel/tasks/<task_id>` | `GET` | 查询后台测试任务 |
+| `/api/refresh-image-models` | `POST` | 刷新渠道模型列表 |
+| `/api/records` | `GET` | 查看生成记录，支持 `source`、`model`、`success`、`q`、`offset`、`limit` 筛选分页 |
+| `/api/records/<record_id>` | `GET` | 查看单条生成记录详情 |
+| `/api/records/clear` | `POST` | 清空生成记录 |
+| `/api/cache-image` | `GET` | 读取缓存图片 |
 
 Web API 统一要求：
 
 - JSON POST 请求体必须是 JSON 对象。
+- API 响应带 `X-Content-Type-Options: nosniff`。
+- API 响应使用 `no-store` 缓存控制。
 - 错误文本、任务状态、生成记录必须脱敏。
-- 任务 ID、缓存路径、记录 ID 必须校验。
+- 任务 ID、缓存路径、Token 长度和 Token 编码必须校验。
 
 ## 核心模块职责
 
@@ -147,16 +159,15 @@ Web API 统一要求：
 |------|------|
 | `constants.py` | 插件名、版本、配置文件名、比例、分辨率、Provider 类型 |
 | `models.py` | 默认配置、配置归一化、数据模型、模型目标解析 |
-| `main.py` | AstrBot 插件主体、命令、LLM 工具、权限、审核、缓存、记录、插件页 API 注册 |
-| `dashboard_api.py` | Dashboard API 业务逻辑、配置 API、渠道测试 API、记录 API、缓存图片 data URL |
-| `pages/dashboard/index.html` | 官方插件页单文件 HTML/CSS/JS 控制台 |
+| `main.py` | AstrBot 插件主体、命令、LLM 工具、权限、审核、缓存、记录、Web 生命周期 |
+| `web.py` | Flask App、内置 HTML/CSS/JS、鉴权、配置 API、渠道测试 API、记录 API |
 | `provider_parser.py` | Provider 响应解析、模型列表解析、图片 URL/base64 提取和远程图片下载校验 |
 | `providers.py` | Provider adapter、生图请求、图生图请求和 provider-specific payload |
 | `generator.py` | 多模型 fallback、并发控制、全局超时和失败记录 |
 | `persona.py` | 自拍参考图、每日自拍状态、人设提示词与意图解析 |
 | `preset.py` | 生图预设读写和管理 |
 | `utils.py` | 图片源读取、base64/data URL、图片签名、原子 JSON 保存、脱敏 |
-| `tests/test_core.py` | 核心配置、provider、Dashboard API、安全边界和回归测试 |
+| `tests/test_core.py` | 核心配置、provider、Web API、安全边界和回归测试 |
 
 ## Provider 现状
 
@@ -178,7 +189,7 @@ agnes
 - `models.py` 的 provider 类型校验、旧字段兼容和模型类型推断。
 - `provider_parser.py` 的模型列表 URL、响应解析、图片提取和下载校验。
 - `providers.py` 的 adapter 创建、请求载荷和 provider-specific 错误处理。
-- `dashboard_api.py` 和 `pages/dashboard/index.html` 的渠道管理默认值、模型刷新、模型启用顺序和表单读写。
+- `web.py` 的渠道管理默认值、模型刷新、模型启用顺序和表单读写。
 - `tests/test_core.py` 的 URL 归一化、模型推断、响应解析和错误脱敏测试。
 
 响应解析能力应覆盖：
@@ -195,15 +206,15 @@ agnes
 
 下载远程图片时必须同时校验响应大小、Content-Type 和文件签名。Content-Type 不可信时以图片签名为最终依据；非图片内容不能写入缓存。
 
-## 安全与接口边界
+## 安全与鉴权
 
-Dashboard API 规则：
+Web 鉴权规则：
 
-- 不维护插件私有 Token 登录，访问控制交给 AstrBot 官方 WebUI 与插件页框架。
-- 所有写接口必须校验 JSON body 是对象。
-- 缓存图片通过插件页 API 返回 data URL，不暴露任意文件路径读取。
-- 配置保存必须剔除旧 `web` 节点。
-- 任务 ID、记录 ID、缓存相对路径必须做格式和长度校验。
+- 配置了 Token 时，API 必须通过 `Authorization: Bearer ...`、`X-Selfie-Image-Token` 或兼容参数提交 Token。
+- Token 比较使用常量时间比较。
+- 非 ASCII 或超长 Token 请求必须拒绝。
+- 空 Token 只允许本机监听地址。
+- 默认弱 Token `changeme` 不允许在 `0.0.0.0`、`::` 等对外监听地址上使用。
 
 敏感信息处理：
 
@@ -220,8 +231,8 @@ Dashboard API 规则：
 - 不 amend 既有提交，除非用户明确要求。
 - 修改配置项时，先更新 `DEFAULT_CONFIG` 和归一化，再更新 Web 读写，最后补测试。
 - 修改 provider 时，优先补响应解析测试，再实现 adapter 或解析逻辑。
-- 修改 Dashboard API 时，必须覆盖非法 JSON、错误脱敏和路径校验。
-- 修改 Dashboard UI 时保持插件页单文件可运行，避免引入新构建链。
+- 修改 Web API 时，必须覆盖鉴权、非法 JSON、错误脱敏和路径校验。
+- 修改 Web UI 时保持内置单文件可运行，避免引入新构建链。
 - 修改图片读写时必须验证大小上限、图片签名、缓存清理和路径穿越防护。
 
 ## 每轮验收
@@ -230,7 +241,7 @@ Dashboard API 规则：
 
 ```sh
 python -m unittest tests/test_core.py
-python -m py_compile __init__.py constants.py dashboard_api.py generator.py main.py models.py persona.py preset.py provider_parser.py providers.py utils.py
+python -m py_compile __init__.py constants.py generator.py main.py models.py persona.py preset.py provider_parser.py providers.py utils.py web.py
 git diff --check
 ```
 
@@ -240,7 +251,7 @@ git diff --check
 sh -n grok_image_edit_batch.sh
 ```
 
-涉及 Dashboard 行为时，至少验证 `SelfieImageDashboardApi` 或官方插件页 bridge 对应路径。涉及 provider 解析时，至少补一条单元测试覆盖真实失败形态。
+涉及 Web 行为时，至少验证对应 Flask test client 或本地 Token API。涉及 provider 解析时，至少补一条单元测试覆盖真实失败形态。
 
 ## 近期变更摘要
 
@@ -253,8 +264,8 @@ sh -n grok_image_edit_batch.sh
 ### 2026-07-04
 
 - 强化图片缓存、生成记录、请求图/生成图保存、缓存上限清理。
-- 扩展 Dashboard API：配置保存、渠道测试、后台任务、记录查看、缓存图片读取。
-- 增加 Dashboard API 的非法 JSON、任务 ID、缓存路径和记录清理边界测试。
+- 扩展 Web API：配置保存、渠道测试、后台任务、记录查看、缓存图片读取。
+- 增加 Web API 的非法 JSON、任务 ID、缓存路径和记录清理边界测试。
 
 ### 2026-07-05
 
@@ -266,8 +277,8 @@ sh -n grok_image_edit_batch.sh
 
 ### 2026-07-06
 
-- 补充 Dashboard API 细粒度回归测试，覆盖配置读取/保存、模型刷新成功/失败和渠道测试后台任务响应。
-- 收紧同步渠道测试和后台任务创建响应脱敏，避免成功响应体泄露 provider 密钥或认证头。
+- 补充 Web API 细粒度回归测试，覆盖配置读取/保存、模型刷新成功/失败和渠道测试后台任务响应。
+- 收紧同步渠道测试和后台任务创建响应脱敏，避免成功响应体泄露 provider 密钥、Token 或认证头。
 - 配置保存异常改为统一 JSON 错误响应，并沿用敏感信息脱敏。
 - 继续补充自拍参考图保存、模型启用顺序更新和缓存图片非图片文件拒绝测试。
 - 缓存图片读取会显式校验图片签名，拒绝缓存目录内的非图片文件。
@@ -284,6 +295,6 @@ sh -n grok_image_edit_batch.sh
 ## 下一步建议
 
 1. 继续收敛 `providers.py` 的 adapter 结构，分离 provider-specific 结果解释逻辑。
-2. 继续扩展 Dashboard API 用例，覆盖更多前端异常状态和配置同步细节。
-3. 增加一次真实 AstrBot 环境冒烟检查，确认命令、LLM 工具和 Dashboard 配置热更新在运行时一致。
-4. 整理 `pages/dashboard/index.html` 前端结构，在不引入构建链的前提下分区收敛状态管理和重复渲染逻辑。
+2. 继续扩展 Web API 的 Flask test client 用例，覆盖更多 Web 前端异常状态和配置同步细节。
+3. 增加一次真实 AstrBot 环境冒烟检查，确认命令、LLM 工具和 Web 配置热更新在运行时一致。
+4. 整理 `web.py` 内置前端结构，在不引入构建链的前提下分区收敛状态管理和重复渲染逻辑。

@@ -1,13 +1,47 @@
-<!doctype html>
+"""Embedded Flask Web UI for Selfie Image."""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+import json
+import re
+import threading
+from typing import Any, Optional
+
+from .utils import redact_sensitive_data, redact_sensitive_text
+
+
+try:
+    from flask import Flask, jsonify, request, send_file
+    from werkzeug.serving import make_server
+except Exception:  # pragma: no cover - handled at runtime in AstrBot env
+    Flask = None  # type: ignore
+    jsonify = None  # type: ignore
+    request = None  # type: ignore
+    send_file = None  # type: ignore
+    make_server = None  # type: ignore
+
+
+WEB_TASK_ID_RE = re.compile(r"^web-\d{8,}-\d+$")
+MAX_WEB_TOKEN_LENGTH = 4096
+MAX_WEB_TASK_ID_LENGTH = 64
+MAX_CACHE_IMAGE_PATH_LENGTH = 512
+MAX_WEB_RECORD_ID_LENGTH = 128
+MAX_RECORD_PAGE_LIMIT = 100
+WEAK_WEB_TOKENS = {"changeme", "change-me", "change_me", "password", "admin", "123456", "test"}
+
+
+INDEX_HTML = r"""<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Selfie Image 控制台</title>
+  <title>Selfie Image 管理面板</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f7f9;
+      --bg: #f4f6f8;
       --panel: #ffffff;
       --line: #d8dee4;
       --muted: #667085;
@@ -20,13 +54,18 @@
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--text); }
-    header { background: #fff; color: var(--text); padding: 16px 22px; justify-content: space-between; gap: 16px; align-items: center; border-bottom: 1px solid var(--line); }
+    header { background: #20242b; color: #fff; padding: 16px 22px; justify-content: space-between; gap: 16px; align-items: center; }
     h1 { font-size: 19px; margin: 0; font-weight: 650; }
     h2 { font-size: 17px; margin: 0 0 12px; }
     h3 { font-size: 14px; margin: 16px 0 8px; }
     main { max-width: 1280px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
-    header.app-shell { display: flex; }
-    main.app-shell { display: grid; }
+    .app-shell { display: none; }
+    body.authed header.app-shell { display: flex; }
+    body.authed main.app-shell { display: grid; }
+    .login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 18px; }
+    body.authed .login-page { display: none; }
+    .login-box { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; }
+    .login-box h1 { color: var(--text); margin-bottom: 8px; }
     nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding-bottom: 2px; }
     nav button { border: 1px solid var(--line); background: #fff; color: var(--text); border-radius: 6px; padding: 9px 8px; white-space: nowrap; min-width: 0; width: 100%; }
     nav button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
@@ -105,7 +144,7 @@
       .channel-row .actions { grid-column: 1 / -1; }
     }
     @media (max-width: 760px) {
-      header.app-shell { display: block; }
+      body.authed header.app-shell { display: block; }
       .grid, .grid3, .grid4, .channel-row { grid-template-columns: 1fr; }
       main { padding: 10px; }
       header .topline { margin-top: 10px; justify-content: flex-start; }
@@ -117,11 +156,24 @@
   </style>
 </head>
 <body>
+  <div id="loginPage" class="login-page">
+    <div class="login-box">
+      <h1>Selfie Image 管理登录</h1>
+      <p class="muted">输入 AstrBot 插件配置里的 Web Token。</p>
+      <label>Web Token</label>
+      <input id="loginToken" type="password" placeholder="Web Token" autocomplete="current-password">
+      <div class="actions">
+        <button id="loginBtn" class="ok">登录</button>
+      </div>
+      <div id="loginStatus" class="status"></div>
+    </div>
+  </div>
+
   <header class="app-shell">
     <h1>Selfie Image 生图自拍管理</h1>
     <div class="topline">
       <button id="reloadAll">刷新</button>
-      <button id="saveAllBtn" class="ok">保存配置</button>
+      <button id="logoutBtn" class="secondary">退出登录</button>
     </div>
   </header>
   <main class="app-shell">
@@ -141,7 +193,7 @@
         <h2>基础设置</h2>
         <span id="healthPill" class="pill">未连接</span>
       </div>
-      <label>插件页接口</label><div id="health" class="status">未连接</div>
+      <label>Web 状态</label><div id="health" class="status">未连接</div>
       <div class="grid">
         <div><label>生图缓存上限（MB）</label><input id="cacheLimitMB" type="number" min="10" max="102400"></div>
         <div><label>缓存说明</label><div class="status">请求图 and 生成图会保存在同一个缓存目录；超过上限后自动清理最旧缓存图片直到低于上限。</div></div>
@@ -282,8 +334,8 @@
     </section>
 
     <section id="raw">
-      <h2>配置 JSON</h2>
-      <p class="muted">这里编辑的是插件运行配置，保存到插件数据目录；入口配置请在 AstrBot 插件配置里查看说明。</p>
+      <h2>独立配置 JSON</h2>
+      <p class="muted">这里编辑的是插件独立配置，不包含 AstrBot 启动用的 Web host/port/token。</p>
       <textarea id="configText" style="min-height:360px"></textarea>
       <div class="actions">
         <button onclick="loadConfig()">读取 JSON</button>
@@ -357,7 +409,6 @@
 
   <div id="toastWrap" class="toast-wrap"></div>
 
-  <script src="/api/plugin/page/bridge-sdk.js"></script>
   <script>
     const $ = id => document.getElementById(id);
     const ASPECTS = ['自动','1:1','2:3','3:2','3:4','4:3','4:3','4:5','5:4','9:16','16:9','21:9'].filter((v,i,a)=>a.indexOf(v)===i);
@@ -368,6 +419,7 @@
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
     let MONITOR_PAGE = 1;
+    let AUTH_TOKEN = localStorage.getItem('selfieImageToken') || localStorage.getItem('aicatToken') || '';
     let IS_FILLING = false;
     let AUTO_SAVE_TIMER = null;
     let MONITOR_LOAD_TIMER = null;
@@ -377,80 +429,16 @@
     let CURRENT_RECORD = null;
     let TEST_TASK_POLL_TIMER = null;
     let TEST_TASK_ID = '';
-    const MEMORY_STORAGE = {};
 
-    async function dashboardBridge() {
-      const bridge = window.AstrBotPluginPage;
-      if (!bridge) throw new Error('AstrBot 插件页 bridge 不可用，请在 AstrBot WebUI 的插件详情页打开。');
-      await bridge.ready();
-      return bridge;
-    }
-    function safeStorageGet(key) {
-      try {
-        return window.localStorage.getItem(key) || '';
-      } catch (_) {
-        return MEMORY_STORAGE[key] || '';
-      }
-    }
-    function safeStorageSet(key, value) {
-      MEMORY_STORAGE[key] = String(value || '');
-      try {
-        window.localStorage.setItem(key, String(value || ''));
-      } catch (_) {}
-    }
-    function safeStorageRemove(key) {
-      delete MEMORY_STORAGE[key];
-      try {
-        window.localStorage.removeItem(key);
-      } catch (_) {}
-    }
-    function parseRequestBody(options = {}) {
-      const body = options.body;
-      if (body === undefined || body === null || body === '') return {};
-      if (typeof body === 'string') return JSON.parse(body || '{}');
-      return body && typeof body === 'object' ? body : {};
-    }
-    function pageEndpoint(path, body = {}) {
-      let value = String(path || '').trim();
-      let query = '';
-      const qIndex = value.indexOf('?');
-      if (qIndex >= 0) {
-        query = value.slice(qIndex + 1);
-        value = value.slice(0, qIndex);
-      }
-      value = value.replace(/^\/+/, '');
-      if (value.startsWith('api/')) value = value.slice(4);
-      if (value.startsWith('page/')) value = value.slice(5);
-      const payload = Object.assign({}, body || {});
-      if (query) new URLSearchParams(query).forEach((v, k) => { payload[k] = v; });
-      if (value.startsWith('records/') && value !== 'records/clear') {
-        payload.record_id = decodeURIComponent(value.slice('records/'.length));
-        return {endpoint: 'page/record', payload, forcePost: true};
-      }
-      if (value.startsWith('test-image-channel/tasks/')) {
-        payload.task_id = decodeURIComponent(value.slice('test-image-channel/tasks/'.length));
-        return {endpoint: 'page/test-image-channel/task', payload, forcePost: true};
-      }
-      return {endpoint: 'page/' + value, payload, forcePost: false};
-    }
-    function normalizeApiResponse(payload) {
-      if (payload && typeof payload === 'object') {
-        if (payload.ok === false || payload.success === false || payload.status === 'error') {
-          throw new Error(payload.message || payload.error || '请求失败');
-        }
-        if (payload.ok === true) return Object.assign({success: true, data: {}}, payload);
-      }
-      return payload || {success: true, data: {}};
-    }
+    $('loginToken').value = AUTH_TOKEN;
+
+    function headers() { return {'Content-Type':'application/json','X-Selfie-Image-Token':AUTH_TOKEN}; }
     async function api(path, options = {}) {
-      const method = String(options.method || 'GET').toUpperCase();
-      const body = parseRequestBody(options);
-      const mapped = pageEndpoint(path, body);
-      const bridge = await dashboardBridge();
-      const payload = (method === 'GET' && !mapped.forcePost)
-        ? await bridge.apiGet(mapped.endpoint, mapped.payload)
-        : await bridge.apiPost(mapped.endpoint, mapped.payload);
-      return normalizeApiResponse(payload);
+      const opts = Object.assign({headers: headers()}, options);
+      const res = await fetch(path, opts);
+      const data = await res.json();
+      if (!res.ok || data.success === false) throw new Error(data.error || ('HTTP ' + res.status));
+      return data;
     }
     function textList(id) { return ($(id).value || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean); }
     function setTextList(id, value) { $(id).value = Array.isArray(value) ? value.join('\n') : String(value || ''); }
@@ -1023,7 +1011,6 @@
       try {
         const res = await api('/api/refresh-image-models', {method:'POST', body: JSON.stringify({channel: ch})});
         ch.models_cache = res.data || [];
-        if (!ch.models_cache.length) throw new Error('接口返回成功，但没有识别到模型。请检查渠道类型、Base URL、API Key 和代理。');
         list[index] = ch;
         renderModalModels(ch);
         renderChannels();
@@ -1032,12 +1019,7 @@
         scheduleAutoSave('模型缓存已刷新并自动保存');
         $('modalStatus').textContent = `刷新成功：${ch.models_cache.length} 个模型`;
         showToast(`模型缓存已刷新：${ch.models_cache.length} 个`, 'ok');
-      } catch (e) {
-        const message = e.message || String(e);
-        $('modalStatus').textContent = `刷新失败：${message}`;
-        showToast(`模型刷新失败：${message}`, 'bad');
-        console.error('[SelfieImage] refresh models failed', e);
-      }
+      } catch (e) { $('modalStatus').textContent = e.message; }
     }
     async function saveChannelModal() {
       const ch = currentModalChannel();
@@ -1193,7 +1175,7 @@
       await persistConfig(true, '配置已保存到插件独立配置文件并生效');
     }
     function scheduleAutoSave(okText = '配置已自动保存并生效') {
-      if (IS_FILLING) return;
+      if (IS_FILLING || !document.body.classList.contains('authed')) return;
       clearTimeout(AUTO_SAVE_TIMER);
       setMultiStatus('正在自动保存...');
       AUTO_SAVE_TIMER = setTimeout(() => persistConfig(false, okText), 650);
@@ -1214,7 +1196,8 @@
         const d = res.data || {};
         $('health').innerHTML = `
           <div><b>状态：</b>${escapeHtml(d.status || 'ok')}</div>
-          <div><b>接口：</b>AstrBot 官方插件页 API</div>
+          <div><b>监听：</b>${escapeHtml(String(d.host || ''))}:${escapeHtml(String(d.port || ''))}</div>
+          <div><b>Token：</b>${d.auth ? '已启用' : '未启用'}</div>
           <div><b>图片缓存：</b>${escapeHtml(String(d.cache_size_mb ?? 0))} / ${escapeHtml(String(d.cache_limit_mb ?? 100))} MB</div>
           <div><b>缓存目录：</b>${escapeHtml(d.cache_dir || '')}</div>
           <div><b>监控记录：</b>${escapeHtml(d.records_path || '')}</div>
@@ -1321,12 +1304,17 @@
       `;
     }
 
+    function cacheImageUrl(path) {
+      return `/api/cache-image?path=${encodeURIComponent(path)}`;
+    }
     async function loadProtectedImage(img, path) {
       try {
-        const res = await api('/api/cache-image', {method:'POST', body: JSON.stringify({path})});
-        const data = res.data || {};
-        if (!data.image) throw new Error('图片已清理');
-        img.src = data.image;
+        const res = await fetch(cacheImageUrl(path), {headers: headers()});
+        if (!res.ok) throw new Error('图片已清理');
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        img.onload = () => URL.revokeObjectURL(objectUrl);
+        img.src = objectUrl;
       } catch (e) {
         const div = document.createElement('div');
         div.className = 'status';
@@ -1485,7 +1473,7 @@
           return;
         }
         setTestBusy(false);
-        safeStorageRemove('selfieImageLastTestTaskId');
+        localStorage.removeItem('selfieImageLastTestTaskId');
         renderImageTestResult(task.result || {success:false, error: task.error || '任务未返回结果'});
         try { await loadRecords(); } catch (_) {}
       } catch (e) {
@@ -1497,7 +1485,7 @@
       }
     }
     async function resumeImageTestTask() {
-      const taskId = safeStorageGet('selfieImageLastTestTaskId') || '';
+      const taskId = localStorage.getItem('selfieImageLastTestTaskId') || '';
       if (!taskId) return;
       try {
         const res = await api('/api/test-image-channel/tasks/' + encodeURIComponent(taskId));
@@ -1508,14 +1496,14 @@
           if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
           pollImageTestTask(taskId);
         } else {
-          safeStorageRemove('selfieImageLastTestTaskId');
+          localStorage.removeItem('selfieImageLastTestTaskId');
           $('testResponseData').textContent = JSON.stringify(task, null, 2);
           if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
           renderImageTestResult(task.result || {success:false, error: task.error || '任务未返回结果'});
           try { await loadRecords(); } catch (_) {}
         }
       } catch (_) {
-        safeStorageRemove('selfieImageLastTestTaskId');
+        localStorage.removeItem('selfieImageLastTestTaskId');
       }
     }
     async function runImageTest() {
@@ -1544,7 +1532,7 @@
         const task = res.data || {};
         TEST_TASK_ID = task.task_id || '';
         if (!TEST_TASK_ID) throw new Error('后台任务提交失败：未返回 task_id');
-        safeStorageSet('selfieImageLastTestTaskId', TEST_TASK_ID);
+        localStorage.setItem('selfieImageLastTestTaskId', TEST_TASK_ID);
         $('testResponseData').textContent = JSON.stringify(task, null, 2);
         $('testStatus').textContent = `后台任务 ${TEST_TASK_ID} 已提交，关闭页面不会停止任务。`;
         pollImageTestTask(TEST_TASK_ID);
@@ -1561,7 +1549,7 @@
     function clearTestData(clearStatus = true) {
       clearTestTaskPoll();
       TEST_TASK_ID = '';
-      safeStorageRemove('selfieImageLastTestTaskId');
+      localStorage.removeItem('selfieImageLastTestTaskId');
       setTestBusy(false);
       $('testImages').innerHTML = '';
       $('testRequestData').textContent = '';
@@ -1626,20 +1614,33 @@
     function setMultiStatus(text) {
       for (const id of ['baseStatus','channelStatus','imageStatus','auditStatus','configStatus']) if ($(id)) $(id).textContent = text;
     }
-    async function loadApp() {
+    async function enterApp() {
+      $('loginStatus').textContent = '登录中...';
+      AUTH_TOKEN = $('loginToken').value.trim();
       try {
         const res = await api('/api/config');
         CONFIG = res.data || {};
+        localStorage.setItem('selfieImageToken', AUTH_TOKEN);
+        localStorage.removeItem('aicatToken');
         fillForms();
         document.body.classList.add('authed');
+        $('loginStatus').textContent = '';
         await checkHealth();
         await refreshSelfie();
-        await loadRecords(false);
+        await loadRecords();
         await resumeImageTestTask();
       } catch (e) {
-        setMultiStatus(e.message || '插件页加载失败');
-        showToast(e.message || '插件页加载失败', 'bad');
+        document.body.classList.remove('authed');
+        $('loginStatus').textContent = e.message || '登录失败';
       }
+    }
+    function logout() {
+      AUTH_TOKEN = '';
+      localStorage.removeItem('selfieImageToken');
+      localStorage.removeItem('aicatToken');
+      $('loginToken').value = '';
+      document.body.classList.remove('authed');
+      $('loginStatus').textContent = '已退出登录';
     }
     function setupAutoSave() {
       document.querySelectorAll('main.app-shell input, main.app-shell select, main.app-shell textarea').forEach(el => {
@@ -1658,8 +1659,10 @@
         if (btn.dataset.tab === 'monitor') loadRecords();
       };
     });
+    $('loginBtn').onclick = enterApp;
+    $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };
+    $('logoutBtn').onclick = logout;
     $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(); };
-    $('saveAllBtn').onclick = saveAll;
     $('modalSave').onclick = saveChannelModal;
     $('modalProvider').onchange = modalProviderChanged;
     $('modalRefreshModels').onclick = () => refreshChannelModels();
@@ -1691,8 +1694,367 @@
     (async function init() {
       for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, '自动');
       setupAutoSave();
-      await loadApp();
+      if (AUTH_TOKEN) await enterApp();
     })();
   </script>
 </body>
-</html>
+</html>"""
+
+
+class _ServerThread(threading.Thread):
+    def __init__(self, app: Any, host: str, port: int):
+        super().__init__(daemon=True)
+        self.server = make_server(host, port, app, threaded=True)
+        self.context = app.app_context()
+        self.context.push()
+
+    def run(self) -> None:
+        self.server.serve_forever()
+
+    def shutdown(self) -> None:
+        self.server.shutdown()
+
+
+class FlaskWebServer:
+    def __init__(self, plugin: Any):
+        self.plugin = plugin
+        self.thread: Optional[_ServerThread] = None
+        self.host = ""
+        self.port = 0
+
+    def start(self, host: str, port: int) -> None:
+        if Flask is None or make_server is None:
+            raise RuntimeError("Flask 未安装，请先安装 requirements.txt 中的 Flask/Werkzeug")
+        if self.thread and self.host == host and self.port == port:
+            return
+        self.stop()
+        app = self._create_app()
+        self.thread = _ServerThread(app, host, port)
+        self.host = host
+        self.port = port
+        self.thread.start()
+
+    def stop(self) -> None:
+        if not self.thread:
+            return
+        self.thread.shutdown()
+        self.thread = None
+
+    def _run_async(self, coro: Any, timeout: Optional[float] = None) -> Any:
+        loop = getattr(self.plugin, "loop", None)
+        if loop and loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            return future.result(timeout)
+        return asyncio.run(coro)
+
+    def _create_app(self) -> Any:
+        app = Flask("astrbot_plugin_selfie_image")
+        app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
+
+        def ok(data: Any = None, **extra: Any) -> Any:
+            payload = {"success": True, "data": data}
+            payload.update(extra)
+            return jsonify(payload)
+
+        def fail(message: str, status: int = 400) -> Any:
+            return jsonify({"success": False, "error": redact_sensitive_text(message)}), status
+
+        @app.after_request
+        def add_response_safety_headers(response: Any) -> Any:
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+            response.headers.setdefault("Referrer-Policy", "no-referrer")
+            response.headers.setdefault("X-Frame-Options", "DENY")
+            if str(request.path or "").startswith("/api/"):
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+            return response
+
+        def json_object_payload() -> Any:
+            payload = request.get_json(silent=True)
+            if payload is None:
+                raw_body = request.get_data(cache=True) or b""
+                if raw_body.strip():
+                    return None, fail("请求体必须是 JSON 对象")
+                return {}, None
+            if not isinstance(payload, dict):
+                return None, fail("请求体必须是 JSON 对象")
+            return payload, None
+
+        def int_query_arg(name: str, default: int, minimum: int, maximum: int) -> tuple[Optional[int], Optional[Any]]:
+            raw_value = str(request.args.get(name, "") or "").strip()
+            if not raw_value:
+                return default, None
+            try:
+                value = int(raw_value)
+            except ValueError:
+                return None, fail(f"{name} 必须是整数", 400)
+            if value < minimum:
+                return None, fail(f"{name} 不能小于 {minimum}", 400)
+            return min(value, maximum), None
+
+        def record_matches_query(record: Any, source: str, model: str, success: str, keyword: str) -> bool:
+            if not isinstance(record, dict):
+                return False
+            if source:
+                source_text = " ".join(
+                    str(record.get(key) or "")
+                    for key in ("source_label", "source", "group_id", "user_id")
+                ).lower()
+                if source not in source_text:
+                    return False
+            if model and model not in str(record.get("used_model") or "").lower():
+                return False
+            if success:
+                expected = success in {"1", "true", "yes", "ok", "success", "succeeded", "成功"}
+                if bool(record.get("success")) is not expected:
+                    return False
+            if keyword:
+                text = json.dumps(record, ensure_ascii=False, default=str).lower()
+                if keyword not in text:
+                    return False
+            return True
+
+        def filtered_record_payload(records: list[Any]) -> Any:
+            source = str(request.args.get("source") or "").strip().lower()
+            model = str(request.args.get("model") or "").strip().lower()
+            success = str(request.args.get("success") or "").strip().lower()
+            keyword = str(request.args.get("q") or request.args.get("keyword") or "").strip().lower()
+            if success and success not in {"1", "0", "true", "false", "yes", "no", "ok", "success", "succeeded", "failed", "失败", "成功"}:
+                return None, None, fail("success 必须是 true 或 false", 400)
+
+            offset, error_response = int_query_arg("offset", 0, 0, 10000)
+            if error_response:
+                return None, None, error_response
+            default_limit = min(MAX_RECORD_PAGE_LIMIT, len(records))
+            limit, error_response = int_query_arg("limit", default_limit, 1, MAX_RECORD_PAGE_LIMIT)
+            if error_response:
+                return None, None, error_response
+
+            filtered = [
+                record
+                for record in records
+                if record_matches_query(record, source, model, success, keyword)
+            ]
+            page = filtered[offset : offset + limit]
+            meta = {
+                "total": len(records),
+                "filtered": len(filtered),
+                "offset": offset,
+                "limit": limit,
+            }
+            return page, meta, None
+
+        def token_candidates_from_request() -> list[str]:
+            tokens: list[str] = []
+            auth = str(request.headers.get("Authorization") or "")
+            if auth.lower().startswith("bearer "):
+                tokens.append(auth[7:].strip())
+            tokens.extend(
+                str(request.headers.get(name) or "").strip()
+                for name in ("X-Selfie-Image-Token", "X-AICat-Token", "X-Token")
+            )
+            return [token for token in tokens if token]
+
+        def is_local_bind_host() -> bool:
+            host = str(self.host or "").strip().lower()
+            return host in {"localhost", "::1", "[::1]"} or host.startswith("127.")
+
+        def check_auth() -> bool:
+            configured = str(getattr(self.plugin.config, "web_token", "") or "").strip()
+            if not configured:
+                return is_local_bind_host()
+            if not is_local_bind_host() and configured.lower() in WEAK_WEB_TOKENS:
+                return False
+            configured_bytes = configured.encode("utf-8")
+            for token in token_candidates_from_request():
+                if len(token) > MAX_WEB_TOKEN_LENGTH:
+                    continue
+                try:
+                    if hmac.compare_digest(token.encode("utf-8"), configured_bytes):
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        @app.route("/", methods=["GET"])
+        @app.route("/index.html", methods=["GET"])
+        def index() -> Any:
+            return INDEX_HTML
+
+        @app.route("/api/health", methods=["GET"])
+        def health() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return ok(
+                {
+                    "status": "ok",
+                    "auth": bool(getattr(self.plugin.config, "web_token", "")),
+                    "host": self.host,
+                    "port": self.port,
+                    "config_path": getattr(self.plugin, "config_path", ""),
+                    "records_path": getattr(self.plugin, "records_path", ""),
+                    "cache_dir": getattr(self.plugin, "generated_dir", ""),
+                    "cache_size_mb": round(float(self.plugin._cache_size_bytes()) / 1024 / 1024, 2),
+                    "cache_limit_mb": getattr(self.plugin.config, "image_cache_limit_mb", 100),
+                }
+            )
+
+        @app.route("/api/config", methods=["GET", "POST"])
+        def config_route() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            if request.method == "GET":
+                return ok(self.plugin.get_config_for_web())
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            if "config" in payload:
+                if not isinstance(payload.get("config"), dict):
+                    return fail("config 必须是 JSON 对象")
+                patch = payload["config"]
+            else:
+                patch = payload
+            try:
+                data = self.plugin.update_config_from_web(patch)
+                return ok(data)
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/selfie-reference", methods=["GET", "POST"])
+        def selfie_reference() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            if request.method == "GET":
+                return ok(self.plugin.get_selfie_reference_payload())
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                data = self.plugin.save_selfie_reference_from_web(payload)
+                return ok(data, message="自拍参考图已保存")
+            except Exception as exc:
+                return fail(str(exc))
+
+        @app.route("/api/selfie-reference/clear", methods=["POST"])
+        def selfie_reference_clear() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return ok(self.plugin.clear_selfie_reference_from_web(), message="自拍参考图已清除")
+
+        @app.route("/api/selfie-profile/refresh", methods=["POST"])
+        def selfie_profile_refresh() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                data = self._run_async(self.plugin.refresh_selfie_profile_from_web(), timeout=20)
+                return ok(data, message="今日自拍设定已刷新")
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/test-image-channel", methods=["POST"])
+        def test_image_channel() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                data = self._run_async(self.plugin.web_test_image(payload), timeout=max(30, self.plugin.config.image_global_timeout + 30))
+                return ok(redact_sensitive_data(data))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/test-image-channel/tasks", methods=["POST"])
+        def test_image_channel_task_start() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                data = self.plugin.start_web_image_task(payload)
+                return ok(redact_sensitive_data(data))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/test-image-channel/tasks/<task_id>", methods=["GET"])
+        def test_image_channel_task_status(task_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            task_id_text = str(task_id or "").strip()
+            if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
+                return fail("非法任务 ID", 400)
+            try:
+                return ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        @app.route("/api/refresh-image-models", methods=["POST"])
+        def refresh_image_models() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                data = self._run_async(self.plugin.web_refresh_image_models(payload), timeout=30)
+                return ok(data, count=len(data))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/records", methods=["GET"])
+        def records() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            data = redact_sensitive_data(self.plugin.get_recent_records())
+            page, meta, error_response = filtered_record_payload(data)
+            if error_response:
+                return error_response
+            return ok(page, **meta)
+
+        @app.route("/api/records/<record_id>", methods=["GET"])
+        def record_detail(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            record_id_text = str(record_id or "").strip()
+            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
+                return fail("非法记录 ID", 400)
+            try:
+                return ok(redact_sensitive_data(self.plugin.get_record_for_web(record_id_text)))
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        @app.route("/api/records/clear", methods=["POST"])
+        def records_clear() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return ok({"deleted": self.plugin.clear_recent_records()})
+
+        @app.route("/api/cache-image", methods=["GET"])
+        def cache_image() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                rel_path = str(request.args.get("path") or "")
+                if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
+                    return fail("图片路径过长", 400)
+                info = self.plugin.get_cached_image_info(rel_path)
+            except Exception as exc:
+                return fail(str(exc), 400)
+            if not info.get("exists"):
+                return fail("图片已清理", 404)
+            if info.get("is_image") is False:
+                return fail("缓存文件不是有效图片", 400)
+            return send_file(info["absolute_path"], mimetype=info.get("mime_type") or "image/png")
+
+        return app
