@@ -2125,6 +2125,24 @@ class DashboardApiTests(unittest.TestCase):
         self.assertIn("api_key=[REDACTED]", failing.error_text(caught.exception))
         self.assertNotIn("plain-provider-secret", failing.error_text(caught.exception))
 
+    def test_refresh_models_accepts_wrapped_bridge_payload(self) -> None:
+        class CapturingPlugin(FakeWebPlugin):
+            async def web_refresh_image_models(self, payload):
+                self.refresh_payload = copy.deepcopy(payload)
+                return ["model-a"]
+
+        plugin = CapturingPlugin("secret")
+        api = self.make_api(plugin)
+        data, extra = asyncio.run(
+            api.refresh_image_models(
+                {"data": {"channel": {"name": "main", "base_url": "https://example.test", "api_key": "secret"}}}
+            )
+        )
+
+        self.assertEqual(data, ["model-a"])
+        self.assertEqual(extra["count"], 1)
+        self.assertEqual(plugin.refresh_payload["channel"]["name"], "main")
+
     def test_channel_test_routes_redact_sensitive_success_payloads(self) -> None:
         class SensitivePlugin(FakeWebPlugin):
             async def web_test_image(self, payload):

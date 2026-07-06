@@ -1023,6 +1023,7 @@
       try {
         const res = await api('/api/refresh-image-models', {method:'POST', body: JSON.stringify({channel: ch})});
         ch.models_cache = res.data || [];
+        if (!ch.models_cache.length) throw new Error('接口返回成功，但没有识别到模型。请检查渠道类型、Base URL、API Key 和代理。');
         list[index] = ch;
         renderModalModels(ch);
         renderChannels();
@@ -1031,7 +1032,12 @@
         scheduleAutoSave('模型缓存已刷新并自动保存');
         $('modalStatus').textContent = `刷新成功：${ch.models_cache.length} 个模型`;
         showToast(`模型缓存已刷新：${ch.models_cache.length} 个`, 'ok');
-      } catch (e) { $('modalStatus').textContent = e.message; }
+      } catch (e) {
+        const message = e.message || String(e);
+        $('modalStatus').textContent = `刷新失败：${message}`;
+        showToast(`模型刷新失败：${message}`, 'bad');
+        console.error('[SelfieImage] refresh models failed', e);
+      }
     }
     async function saveChannelModal() {
       const ch = currentModalChannel();

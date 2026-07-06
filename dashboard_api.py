@@ -16,6 +16,21 @@ MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
 MAX_WEB_RECORD_ID_LENGTH = 128
 MAX_RECORD_PAGE_LIMIT = 100
+BRIDGE_PAYLOAD_WRAPPER_KEYS = ("payload", "body", "data", "params", "query")
+DIRECT_PAYLOAD_KEYS = {
+    "channel",
+    "config",
+    "image",
+    "path",
+    "record_id",
+    "task_id",
+    "base_url",
+    "baseUrl",
+    "api_key",
+    "apiKey",
+    "provider_type",
+    "providerType",
+}
 
 
 class DashboardApiError(Exception):
@@ -31,6 +46,12 @@ def _ensure_payload(payload: Any) -> Dict[str, Any]:
         return {}
     if not isinstance(payload, dict):
         raise DashboardApiError("请求体必须是 JSON 对象", 400)
+    if any(key in payload for key in DIRECT_PAYLOAD_KEYS):
+        return payload
+    for key in BRIDGE_PAYLOAD_WRAPPER_KEYS:
+        wrapped = payload.get(key)
+        if isinstance(wrapped, dict):
+            return wrapped
     return payload
 
 
