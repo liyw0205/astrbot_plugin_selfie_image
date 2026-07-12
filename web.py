@@ -435,11 +435,27 @@ INDEX_HTML = r"""<!doctype html>
       if (AUTH_TOKEN) result['X-Selfie-Image-Token'] = AUTH_TOKEN;
       return result;
     }
+    function apiErrorMessage(status, data) {
+      return String(data?.error || ("HTTP " + status));
+    }
     async function api(path, options = {}) {
-      const opts = Object.assign({headers: headers()}, options);
-      const res = await fetch(path, opts);
-      const data = await res.json();
-      if (!res.ok || data.success === false) throw new Error(data.error || ('HTTP ' + res.status));
+      const opts = Object.assign({}, options, {headers: Object.assign({}, headers(), options.headers || {})});
+      let res;
+      try {
+        res = await fetch(path, opts);
+      } catch (_) {
+        throw new Error("网络请求失败，请检查 Web 服务连接");
+      }
+      let data;
+      try {
+        data = await res.json();
+      } catch (_) {
+        throw new Error("接口返回了无效响应（HTTP " + res.status + "）");
+      }
+      if (!res.ok || data.success === false) {
+        if (res.status === 401) document.body.classList.remove("authed");
+        throw new Error(apiErrorMessage(res.status, data));
+      }
       return data;
     }
     function textList(id) { return ($(id).value || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean); }

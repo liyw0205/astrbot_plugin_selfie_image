@@ -12,8 +12,8 @@
 | 顺序 | 目标 | 文档 | 状态 |
 |------|------|------|------|
 | 1 | 统一 Provider 成功/失败结果解释 | `docs/targets/01-provider-result-handling.md` | 已完成 |
-| 2 | 收敛 Web 前端请求与错误状态 | `docs/targets/02-web-request-state.md` | 进行中 |
-| 3 | 增加配置预检与渠道诊断 | `docs/targets/03-config-preflight.md` | 待开始 |
+| 2 | 收敛 Web 前端请求与错误状态 | `docs/targets/02-web-request-state.md` | 已完成 |
+| 3 | 增加配置预检与渠道诊断 | `docs/targets/03-config-preflight.md` | 进行中 |
 | 4 | 完善缓存回收的记录一致性 | `docs/targets/04-cache-retention-consistency.md` | 待开始 |
 | 5 | 建立 AstrBot 运行时冒烟契约 | `docs/targets/05-astrbot-smoke-contract.md` | 待开始 |
 

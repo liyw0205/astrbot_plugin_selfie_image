@@ -2071,6 +2071,12 @@ class WebApiTests(unittest.TestCase):
         self.assertNotIn("<b>Token", INDEX_HTML)
         self.assertIn("await enterApp(!AUTH_TOKEN)", INDEX_HTML)
 
+    def test_frontend_api_helper_handles_network_invalid_json_and_auth_errors(self) -> None:
+        self.assertIn("网络请求失败，请检查 Web 服务连接", INDEX_HTML)
+        self.assertIn("接口返回了无效响应", INDEX_HTML)
+        self.assertIn("document.body.classList.remove(\"authed\")", INDEX_HTML)
+        self.assertIn("Object.assign({}, headers(), options.headers || {})", INDEX_HTML)
+
     def test_config_api_get_and_save_round_trip_common_settings(self) -> None:
         plugin = FakeWebPlugin("secret")
         client = self.make_client(plugin, host="0.0.0.0")
