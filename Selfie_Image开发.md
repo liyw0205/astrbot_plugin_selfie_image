@@ -1,9 +1,21 @@
 # Selfie Image 开发文档
 
-> 文档重生成日期：2026-07-05
-> 重生成基线：`fb96a7c`，`astrbot_plugin_selfie_image` 1.0.0
+> 文档整理日期：2026-07-13
+> 文档基线：`8c4afb4`，`astrbot_plugin_selfie_image` 1.0.0
 > 运行形态：AstrBot 插件 + 内置 Flask Web 管理页 + 多 Provider 生图适配器
-> 当前回归基线：`tests/test_core.py` 129 个用例；每轮改动后必须重新验证
+> 当前回归基线：`tests/test_core.py` 130 个用例；每轮改动后必须重新验证
+
+## 目标队列
+
+开发不再以单一长文档追加流水记录。当前待办以独立目标文档管理：每个目标必须完成实现、测试、提交与推送后，才自动进入下一项。目标文档保存在 `docs/targets/`，其中包含范围、非目标、验收条件和验证命令。
+
+| 顺序 | 目标 | 文档 | 状态 |
+|------|------|------|------|
+| 1 | 统一 Provider 成功/失败结果解释 | `docs/targets/01-provider-result-handling.md` | 已完成 |
+| 2 | 收敛 Web 前端请求与错误状态 | `docs/targets/02-web-request-state.md` | 进行中 |
+| 3 | 增加配置预检与渠道诊断 | `docs/targets/03-config-preflight.md` | 待开始 |
+| 4 | 完善缓存回收的记录一致性 | `docs/targets/04-cache-retention-consistency.md` | 待开始 |
+| 5 | 建立 AstrBot 运行时冒烟契约 | `docs/targets/05-astrbot-smoke-contract.md` | 待开始 |
 
 ## 目标与边界
 

@@ -126,6 +126,36 @@ class BaseImageAdapter:
                 invalid_json_preview_limit=invalid_json_preview_limit,
             )
 
+    async def result_from_response(
+        self,
+        data: Any,
+        req: ImageGenerateRequest,
+        base_url: str,
+        *,
+        provider_name: str = "",
+        detailed_error: bool = False,
+    ) -> ImageGenerateResult:
+        images = await images_from_response_unknown(
+            self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base_url
+        )
+        if images:
+            return ImageGenerateResult(images=images)
+        if not detailed_error:
+            return ImageGenerateResult(error="未生成任何图片")
+
+        preview = response_preview(data)
+        collected = collect_images_from_unknown(data)
+        prefix = f"{provider_name} " if provider_name else ""
+        if collected["urls"]:
+            return ImageGenerateResult(
+                error=f"{prefix}接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}；返回预览: {preview}"
+            )
+        if collected["b64"]:
+            return ImageGenerateResult(
+                error=f"{prefix}接口返回了 base64 图片但解码失败。数量: {len(collected['b64'])}；返回预览: {preview}"
+            )
+        return ImageGenerateResult(error=f"{prefix}未识别到可下载图片字段。返回预览: {preview}")
+
     async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         raise NotImplementedError
 
@@ -204,8 +234,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
         data, error = await self.post_json_data_or_error(url, self.build_image_payload(req))
         if error or data is None:
             return ImageGenerateResult(error=error or "接口未返回有效 JSON")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
-        return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
+        return await self.result_from_response(data, req, base)
 
     def _build_edit_form(self, req: ImageGenerateRequest, image_field_name: str) -> aiohttp.FormData:
         form = aiohttp.FormData()
@@ -257,8 +286,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
             return ImageGenerateResult(error=f"OpenAI 图生图请求超时（{self.target.timeout}秒）")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
-        return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
+        return await self.result_from_response(data, req, base)
 
 
 class GeminiImageAdapter(BaseImageAdapter):
@@ -291,8 +319,7 @@ class GeminiImageAdapter(BaseImageAdapter):
                 return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
             return ImageGenerateResult(error=f"Gemini 生图请求超时（{self.target.timeout}秒）")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
-        return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
+        return await self.result_from_response(data, req, base)
 
 
 class GeminiOpenAIImageAdapter(BaseImageAdapter):
@@ -318,16 +345,7 @@ class GeminiOpenAIImageAdapter(BaseImageAdapter):
         data, error = await self.post_json_data_or_error(url, self.build_payload(req))
         if error or data is None:
             return ImageGenerateResult(error=error or "接口未返回有效 JSON")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
-        if images:
-            return ImageGenerateResult(images=images)
-        preview = response_preview(data)
-        collected = collect_images_from_unknown(data)
-        if collected["urls"]:
-            return ImageGenerateResult(error=f"接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}；返回预览: {preview}")
-        if collected["b64"]:
-            return ImageGenerateResult(error=f"接口返回了 base64 图片但解码失败。数量: {len(collected['b64'])}；返回预览: {preview}")
-        return ImageGenerateResult(error=f"未识别到可下载图片字段。返回预览: {preview}")
+        return await self.result_from_response(data, req, base, detailed_error=True)
 
 
 class SimpleOpenAIImageAdapter(BaseImageAdapter):
@@ -347,8 +365,7 @@ class SimpleOpenAIImageAdapter(BaseImageAdapter):
         data, error = await self.post_json_data_or_error(url, self.build_payload(req), http_preview_limit=300)
         if error or data is None:
             return ImageGenerateResult(error=error or "接口未返回有效 JSON")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
-        return ImageGenerateResult(images=images) if images else ImageGenerateResult(error="未生成任何图片")
+        return await self.result_from_response(data, req, base)
 
 
 class ZImageAdapter(SimpleOpenAIImageAdapter):
@@ -414,14 +431,7 @@ class AgnesImageAdapter(BaseImageAdapter):
         data, error = await self.post_json_data_or_error(url, payload, http_preview_limit=300)
         if error or data is None:
             return ImageGenerateResult(error=error or "接口未返回有效 JSON")
-        images = await images_from_response_unknown(self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base)
-        if images:
-            return ImageGenerateResult(images=images)
-        preview = response_preview(data)
-        collected = collect_images_from_unknown(data)
-        if collected["urls"]:
-            return ImageGenerateResult(error=f"Agnes 返回了图片链接但下载失败。链接数: {len(collected['urls'])}；返回预览: {preview}")
-        return ImageGenerateResult(error=f"未生成任何图片。返回预览: {preview}")
+        return await self.result_from_response(data, req, base, provider_name="Agnes", detailed_error=True)
 
 
 def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> BaseImageAdapter:
