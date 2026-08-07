@@ -222,7 +222,7 @@ async def generate_video_openai_compatible(
     *,
     save_dir: str,
 ) -> VideoGenerateResult:
-    """Dispatch by video protocol: video_async / video_sync / video_chat (OmniDraw-style)."""
+    """Dispatch by video family protocol (sora/veo/seedance/agnes/…) + transport modes."""
     from .models import normalize_video_provider_type, resolve_video_model_provider_type
 
     started = time.monotonic()
@@ -230,7 +230,7 @@ async def generate_video_openai_compatible(
         target.model,
         target.provider_type,
         "",
-    ) or normalize_video_provider_type(target.provider_type) or "video_async"
+    ) or normalize_video_provider_type(target.provider_type) or "openai_video"
     attempt_info: Dict[str, Any] = {
         "channel": target.channel_name,
         "model": target.model,
@@ -275,8 +275,11 @@ async def generate_video_openai_compatible(
                     headers=headers,
                     timeout=timeout,
                     b64_images=b64_images,
+                    family=protocol,
                 )
             else:
+                # Family protocols (sora/veo/seedance/agnes/kling/cogvideo/openai_video)
+                # share OpenAI-compatible /videos/generations on most midgates; payload tuned per family.
                 video_url = await _generate_via_async(
                     session,
                     target=target,
@@ -284,6 +287,7 @@ async def generate_video_openai_compatible(
                     headers=headers,
                     timeout=timeout,
                     b64_images=b64_images,
+                    family=protocol,
                 )
 
             raw = await _download_video_bytes(session, video_url, timeout=timeout)
@@ -320,7 +324,15 @@ async def generate_video_openai_compatible(
     return VideoGenerateResult(error=last_error or "视频生成失败", used_model=target.label)
 
 
-def _video_payload(target: ImageModelTarget, request: VideoGenerateRequest, b64_images: List[str]) -> Dict[str, Any]:
+def _video_payload(
+    target: ImageModelTarget,
+    request: VideoGenerateRequest,
+    b64_images: List[str],
+    *,
+    family: str = "openai_video",
+) -> Dict[str, Any]:
+    """Build request body; family tweaks field names for common midgates."""
+    family = str(family or "openai_video").strip().lower() or "openai_video"
     payload: Dict[str, Any] = {
         "model": target.model,
         "prompt": str(request.prompt or "").strip(),
@@ -329,13 +341,40 @@ def _video_payload(target: ImageModelTarget, request: VideoGenerateRequest, b64_
     if duration > 0:
         payload["duration"] = duration
         payload["seconds"] = duration
+        # some gateways
+        payload["n_seconds"] = duration
     if request.size:
         payload["size"] = str(request.size).strip()
+        payload["aspect_ratio"] = str(request.size).strip()
+
     if b64_images:
-        payload["images"] = b64_images
-        payload["image"] = b64_images[0]
-        payload["image_url"] = b64_images[0]
-        payload["input_reference"] = b64_images[0]
+        first = b64_images[0]
+        # Generic + OmniDraw/big_banana common keys
+        payload["images"] = b64_images[:1] if family in {"sora", "kling", "seedance"} else b64_images[:3]
+        payload["image"] = first
+        payload["image_url"] = first
+        payload["input_reference"] = first
+        if family == "sora":
+            payload["input_reference"] = first
+        elif family == "veo":
+            payload["image"] = {"bytesBase64Encoded": first.split(",", 1)[-1]} if first.startswith("data:") else {"uri": first}
+        elif family == "seedance":
+            payload["first_frame_image"] = first
+            payload["image_url"] = first
+        elif family == "agnes":
+            payload["image_urls"] = [first]
+            payload["image"] = first
+        elif family == "kling":
+            payload["image_url"] = first
+            payload["image"] = first
+        elif family == "cogvideo":
+            payload["image_url"] = first
+
+    # Family hints some midgates read
+    if family and family not in {"openai_video", "video_async"}:
+        payload.setdefault("provider", family)
+        payload.setdefault("video_provider", family)
+
     if isinstance(request.extra, dict) and request.extra:
         payload.update(request.extra)
     return payload
@@ -349,10 +388,11 @@ async def _generate_via_async(
     headers: Dict[str, str],
     timeout: int,
     b64_images: List[str],
+    family: str = "openai_video",
 ) -> str:
     """POST /videos/generations → task_id poll or immediate URL."""
     endpoint = build_video_generations_endpoint(target.base_url)
-    payload = _video_payload(target, request, b64_images)
+    payload = _video_payload(target, request, b64_images, family=family)
     create_timeout = min(45, timeout)
     async with session.post(
         endpoint,
@@ -388,10 +428,11 @@ async def _generate_via_sync(
     headers: Dict[str, str],
     timeout: int,
     b64_images: List[str],
+    family: str = "openai_video",
 ) -> str:
     """Long POST /videos/generations waiting for final URL (no re-POST on timeout)."""
     endpoint = build_video_generations_endpoint(target.base_url)
-    payload = _video_payload(target, request, b64_images)
+    payload = _video_payload(target, request, b64_images, family=family)
     async with session.post(
         endpoint,
         headers=headers,
@@ -411,7 +452,6 @@ async def _generate_via_sync(
     video_url = _extract_video_url(data)
     if video_url:
         return video_url
-    # Some "sync" gateways still return task id — poll once path.
     task_id = _extract_task_id(data)
     if task_id:
         poll_url = _task_poll_url(endpoint, task_id, data)

@@ -148,7 +148,7 @@ class ImageChannelConfig:
             if is_video_proto or model_video_override:
                 ptype = resolve_video_model_provider_type(
                     model,
-                    self.provider_type if is_video_proto else "video_async",
+                    self.provider_type if is_video_proto else "openai_video",
                     self.model_provider_types.get(model, ""),
                 )
             else:
@@ -489,12 +489,12 @@ def _build_video_channel(raw: Any) -> ImageChannelConfig:
     # Temporarily allow video provider types through image builder by mapping first.
     patched = dict(data)
     raw_type = patched.get("provider_type", patched.get("providerType", patched.get("api_type", "")))
-    # bare openai / empty on video channel → default async poll protocol
+    # bare openai / empty / legacy async on video channel → generic openai_video
     raw_lower = str(raw_type or "").strip().lower().replace("-", "_")
-    if raw_lower in {"", "openai", "openai_compatible", "openai_image"}:
-        vtype = "video_async"
+    if raw_lower in {"", "openai", "openai_compatible", "openai_image", "video_async", "async", "async_task"}:
+        vtype = "openai_video"
     else:
-        vtype = normalize_video_provider_type(raw_type) or "video_async"
+        vtype = normalize_video_provider_type(raw_type) or "openai_video"
     # Feed image builder a benign type so it does not blank provider_type.
     patched["provider_type"] = "openai"
     channel = _build_image_channel(patched)
@@ -520,18 +520,57 @@ def _build_video_channel(raw: Any) -> ImageChannelConfig:
 
 
 def normalize_video_provider_type(value: Any) -> str:
-    """Map free-form labels to video_async / video_sync / video_chat."""
+    """Map free-form labels to video model-family protocols.
+
+    Families (primary): openai_video / sora / veo / seedance / agnes / kling / cogvideo
+    Transport (advanced): video_chat / video_sync
+    Legacy video_async → openai_video
+    """
     text = str(value or "").strip().lower().replace("-", "_")
     if not text:
         return ""
+    raw = str(value or "")
+    if "对话" in raw:
+        return "video_chat"
+    if "同步" in raw and "异步" not in raw:
+        return "video_sync"
     aliases = {
-        "openai_compatible": "video_async",
-        "async": "video_async",
-        "async_task": "video_async",
-        "video": "video_async",
-        "videos": "video_async",
-        "poll": "video_async",
-        "video_async": "video_async",
+        # generic OpenAI-compatible video gateway
+        "openai_video": "openai_video",
+        "openai_compatible": "openai_video",
+        "openai_videos": "openai_video",
+        "async": "openai_video",
+        "async_task": "openai_video",
+        "video_async": "openai_video",
+        "video": "openai_video",
+        "videos": "openai_video",
+        "poll": "openai_video",
+        "通用": "openai_video",
+        # families
+        "sora": "sora",
+        "sora2": "sora",
+        "openai_sora": "sora",
+        "veo": "veo",
+        "veo2": "veo",
+        "veo3": "veo",
+        "google_veo": "veo",
+        "gemini_veo": "veo",
+        "seedance": "seedance",
+        "doubao_seedance": "seedance",
+        "seedance_1": "seedance",
+        "jimeng_video": "seedance",
+        "即梦视频": "seedance",
+        "agnes": "agnes",
+        "agnes_video": "agnes",
+        "agnes_ai": "agnes",
+        "kling": "kling",
+        "可灵": "kling",
+        "kuaishou_kling": "kling",
+        "cogvideo": "cogvideo",
+        "cogvideox": "cogvideo",
+        "zhipu_video": "cogvideo",
+        "智谱视频": "cogvideo",
+        # transport
         "sync": "video_sync",
         "openai_sync": "video_sync",
         "video_sync": "video_sync",
@@ -539,32 +578,54 @@ def normalize_video_provider_type(value: Any) -> str:
         "openai_chat": "video_chat",
         "chat_completions": "video_chat",
         "video_chat": "video_chat",
-        # note: bare "openai" is an image protocol — only map when building video channel
     }
-    # Chinese UI leftovers
-    if "异步" in str(value or "") or "轮询" in str(value or ""):
-        return "video_async"
-    if "同步" in str(value or ""):
-        return "video_sync"
-    if "对话" in str(value or "") or "chat" in text:
-        if text in {"video_chat", "openai_chat", "chat", "chat_completions"} or "对话" in str(value or ""):
-            return "video_chat"
+    # bare openai is image protocol — only video channel builder maps it
     text = aliases.get(text, text)
-    return text if text in VIDEO_PROVIDER_TYPES else ""
+    if text in VIDEO_PROVIDER_TYPES:
+        return text
+    # fuzzy contains
+    if "sora" in text:
+        return "sora"
+    if "veo" in text:
+        return "veo"
+    if "seedance" in text or "seedance" in raw.lower():
+        return "seedance"
+    if "agnes" in text:
+        return "agnes"
+    if "kling" in text or "可灵" in raw:
+        return "kling"
+    if "cogvideo" in text or "zhipu" in text:
+        return "cogvideo"
+    return ""
 
 
 def infer_video_provider_type_from_model(model: str) -> str:
-    """Heuristic auto protocol from model name (best-effort)."""
+    """Heuristic auto family from model name (like image provider infer)."""
     text = str(model or "").strip().lower()
     compact = re.sub(r"[\s_]+", "-", text)
     if not compact:
         return ""
-    if any(k in compact for k in ("chat", "gpt-4o", "gpt4o", "claude", "deepseek")):
+    if "sora" in compact:
+        return "sora"
+    if "veo" in compact:
+        return "veo"
+    if "seedance" in compact or "doubao-seedance" in compact:
+        return "seedance"
+    if "agnes" in compact:
+        return "agnes"
+    if "kling" in compact or "可灵" in text:
+        return "kling"
+    if "cogvideo" in compact or "cog-videox" in compact or "viduq" in compact:
+        return "cogvideo"
+    # chat-style models that return video links
+    if any(k in compact for k in ("gpt-4o", "gpt4o", "claude", "deepseek-chat")) and "video" in compact:
         return "video_chat"
-    if any(k in compact for k in ("luma", "runway", "kling", "可灵", "minimax", "hailuo", "vidu", "sora", "cogvideo", "wanx", "wan2")):
-        # Most modern video gateways are async task style.
-        return "video_async"
-    if "sync" in compact:
+    if compact.endswith("-chat") or compact.startswith("chat-"):
+        return "video_chat"
+    # generic async video gateways still common
+    if any(k in compact for k in ("luma", "runway", "minimax", "hailuo", "vidu", "wanx", "wan2", "gen-3", "gen3")):
+        return "openai_video"
+    if "sync" in compact and "video" in compact:
         return "video_sync"
     return ""
 
@@ -580,7 +641,7 @@ def resolve_video_model_provider_type(
     inferred = infer_video_provider_type_from_model(model)
     if inferred:
         return inferred
-    channel = normalize_video_provider_type(channel_provider_type) or "video_async"
+    channel = normalize_video_provider_type(channel_provider_type) or "openai_video"
     return channel
 
 

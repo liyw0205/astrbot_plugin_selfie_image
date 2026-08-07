@@ -530,12 +530,18 @@
     const ASPECTS = ['自动','1:1','2:3','3:2','3:4','4:3','4:3','4:5','5:4','9:16','16:9','21:9'].filter((v,i,a)=>a.indexOf(v)===i);
     const PROVIDERS = ['openai','gemini','gemini_openai','z_image_gitee','jimeng2api','grok','agnes'];
     const AUDIT_PROVIDERS = ['openai','gemini','gemini_openai'];
-    // OmniDraw-style video protocols: async poll / long sync / chat returns URL
-    const VIDEO_PROVIDERS = ['video_async','video_sync','video_chat'];
+    // Video model-family protocols (like image provider types). Auto by model name; manual override.
+    const VIDEO_PROVIDERS = ['openai_video','sora','veo','seedance','agnes','kling','cogvideo','video_chat','video_sync'];
     const VIDEO_PROVIDER_LABELS = {
-      video_async: '异步任务（/videos/generations + 轮询）',
-      video_sync: '同步等待（长连接出片）',
-      video_chat: '对话接口（chat/completions 回链）'
+      openai_video: '通用 OpenAI 视频（/videos/generations）',
+      sora: 'Sora',
+      veo: 'Veo（Google）',
+      seedance: 'Seedance / 即梦视频',
+      agnes: 'Agnes 视频',
+      kling: '可灵 Kling',
+      cogvideo: 'CogVideo / 智谱',
+      video_chat: '对话回链（chat/completions）',
+      video_sync: '同步长等（高级）'
     };
     const MONITOR_PAGE_SIZE = 20;
     // AstrBot plugin iframe is sandboxed without allow-same-origin.
@@ -883,28 +889,36 @@
       const rawText = String(value || '').trim();
       const raw = rawText.toLowerCase().replace(/-/g, '_');
       if (!raw) return '';
-      if (rawText.includes('异步') || rawText.includes('轮询')) return 'video_async';
-      if (rawText.includes('同步')) return 'video_sync';
       if (rawText.includes('对话')) return 'video_chat';
+      if (rawText.includes('同步') && !rawText.includes('异步')) return 'video_sync';
       const aliases = {
-        openai_compatible: 'video_async',
-        async: 'video_async',
-        async_task: 'video_async',
-        video: 'video_async',
-        videos: 'video_async',
-        poll: 'video_async',
-        video_async: 'video_async',
-        sync: 'video_sync',
-        openai_sync: 'video_sync',
-        video_sync: 'video_sync',
-        chat: 'video_chat',
-        openai_chat: 'video_chat',
-        chat_completions: 'video_chat',
-        video_chat: 'video_chat'
-        // bare openai stays image protocol; video channel builder maps it to video_async
+        openai_video: 'openai_video',
+        openai_compatible: 'openai_video',
+        openai_videos: 'openai_video',
+        async: 'openai_video',
+        async_task: 'openai_video',
+        openai_video: 'openai_video',
+        video: 'openai_video',
+        videos: 'openai_video',
+        poll: 'openai_video',
+        sora: 'sora', sora2: 'sora', openai_sora: 'sora',
+        veo: 'veo', veo2: 'veo', veo3: 'veo', google_veo: 'veo', gemini_veo: 'veo',
+        seedance: 'seedance', doubao_seedance: 'seedance', jimeng_video: 'seedance',
+        agnes: 'agnes', agnes_video: 'agnes', agnes_ai: 'agnes',
+        kling: 'kling', kuaishou_kling: 'kling',
+        cogvideo: 'cogvideo', cogvideox: 'cogvideo', zhipu_video: 'cogvideo',
+        sync: 'video_sync', openai_sync: 'video_sync', video_sync: 'video_sync',
+        chat: 'video_chat', openai_chat: 'video_chat', chat_completions: 'video_chat', video_chat: 'video_chat'
       };
-      const normalized = aliases[raw] || raw;
-      return VIDEO_PROVIDERS.includes(normalized) ? normalized : '';
+      let normalized = aliases[raw] || raw;
+      if (VIDEO_PROVIDERS.includes(normalized)) return normalized;
+      if (raw.includes('sora')) return 'sora';
+      if (raw.includes('veo')) return 'veo';
+      if (raw.includes('seedance')) return 'seedance';
+      if (raw.includes('agnes')) return 'agnes';
+      if (raw.includes('kling') || rawText.includes('可灵')) return 'kling';
+      if (raw.includes('cogvideo') || raw.includes('zhipu')) return 'cogvideo';
+      return '';
     }
     function inferProviderTypeFromModel(model) {
       const compact = String(model || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
@@ -920,9 +934,16 @@
     function inferVideoProviderTypeFromModel(model) {
       const compact = String(model || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
       if (!compact) return '';
-      if (['chat','gpt-4o','gpt4o','claude','deepseek'].some(k => compact.includes(k))) return 'video_chat';
-      if (['luma','runway','kling','可灵','minimax','hailuo','vidu','sora','cogvideo','wanx','wan2'].some(k => compact.includes(k))) return 'video_async';
-      if (compact.includes('sync')) return 'video_sync';
+      if (compact.includes('sora')) return 'sora';
+      if (compact.includes('veo')) return 'veo';
+      if (compact.includes('seedance') || compact.includes('doubao-seedance')) return 'seedance';
+      if (compact.includes('agnes')) return 'agnes';
+      if (compact.includes('kling') || compact.includes('可灵')) return 'kling';
+      if (compact.includes('cogvideo') || compact.includes('cog-videox')) return 'cogvideo';
+      if ((['gpt-4o','gpt4o','claude','deepseek-chat'].some(k => compact.includes(k))) && compact.includes('video')) return 'video_chat';
+      if (compact.endsWith('-chat') || compact.startsWith('chat-')) return 'video_chat';
+      if (['luma','runway','minimax','hailuo','vidu','wanx','wan2','gen-3','gen3'].some(k => compact.includes(k))) return 'openai_video';
+      if (compact.includes('sync') && compact.includes('video')) return 'video_sync';
       return '';
     }
     function resolveModelProviderType(model, defaultProviderType, manualProviderType = '') {
@@ -935,7 +956,7 @@
       return normalizeVideoProviderType(manualProviderType)
         || inferVideoProviderTypeFromModel(model)
         || normalizeVideoProviderType(defaultProviderType)
-        || 'video_async';
+        || 'openai_video';
     }
     function collectModelProviderTypes(ch, enabled) {
       const enabledSet = new Set(enabled || []);
@@ -1009,7 +1030,7 @@
     function normalizeVideoChannels() {
       CONFIG.video_channels = (CONFIG.video_channels || []).map(ch => {
         ch = normalizeChannel(ch);
-        ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'video_async';
+        ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'openai_video';
         if (Number(ch.timeout || 0) < 60) ch.timeout = 300;
         const enabledSet = new Set(ch.enabled_models || []);
         const out = {};
@@ -1064,7 +1085,7 @@
       return normalizeChannel({name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:false, models_cache:[]});
     }
     function newVideoChannel() {
-      return normalizeChannel({name:'video-channel', provider_type:'video_async', base_url:'https://api.openai.com/v1', api_key:'', model:'', enabled_models:[], timeout:300, enabled:false, models_cache:[]});
+      return normalizeChannel({name:'video-channel', provider_type:'openai_video', base_url:'https://api.openai.com/v1', api_key:'', model:'', enabled_models:[], timeout:300, enabled:false, models_cache:[]});
     }
     function applyProviderDefaults(ch, force = false) {
       ch = ch && typeof ch === 'object' ? ch : {};
@@ -1208,7 +1229,7 @@
       const ch = normalizeChannel(Object.assign({}, source, {
         name: $('modalChannelName').value.trim(),
         provider_type: EDITING_CHANNEL_KIND === 'video'
-          ? (normalizeVideoProviderType($('modalProvider').value || source.provider_type) || 'video_async')
+          ? (normalizeVideoProviderType($('modalProvider').value || source.provider_type) || 'openai_video')
           : ($('modalProvider').value || source.provider_type || 'openai'),
         base_url: $('modalBaseUrl').value.trim(),
         api_key: $('modalApiKey').value.trim(),
@@ -1259,13 +1280,13 @@
       let ch;
       if (isNew) {
         ch = normalizeChannel(factory());
-        if (EDITING_CHANNEL_KIND === 'video') ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'video_async';
+        if (EDITING_CHANNEL_KIND === 'video') ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'openai_video';
         else applyProviderDefaults(ch);
         CHANNEL_DRAFT = ch;
       } else {
         const list = channelListFor(EDITING_CHANNEL_KIND);
         ch = normalizeChannel(list[index] || factory());
-        if (EDITING_CHANNEL_KIND === 'video') ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'video_async';
+        if (EDITING_CHANNEL_KIND === 'video') ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'openai_video';
         else applyProviderDefaults(ch);
         list[index] = ch;
         CHANNEL_DRAFT = null;
@@ -1280,7 +1301,7 @@
         ? VIDEO_PROVIDERS
         : (EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS : PROVIDERS);
       const defaultProvider = EDITING_CHANNEL_KIND === 'video'
-        ? (normalizeVideoProviderType(ch.provider_type) || 'video_async')
+        ? (normalizeVideoProviderType(ch.provider_type) || 'openai_video')
         : (ch.provider_type || 'openai');
       setSelectOptions('modalProvider', providerChoices, defaultProvider);
       // label video options more readable
@@ -1316,7 +1337,7 @@
     function modalProviderChanged() {
       const ch = currentModalChannel();
       if (EDITING_CHANNEL_KIND === 'video') {
-        ch.provider_type = normalizeVideoProviderType($('modalProvider').value) || 'video_async';
+        ch.provider_type = normalizeVideoProviderType($('modalProvider').value) || 'openai_video';
       } else {
         ch.provider_type = $('modalProvider').value || 'openai';
         applyProviderDefaults(ch);

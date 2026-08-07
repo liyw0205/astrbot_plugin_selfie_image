@@ -2969,7 +2969,11 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("scheduleChannelListAutoSave", self.html)
         self.assertIn("modalProvider", self.html)
         self.assertIn("VIDEO_PROVIDERS", self.html)
-        self.assertIn("video_async", self.html)
+        self.assertIn("openai_video", self.html)
+        self.assertIn("sora", self.html)
+        self.assertIn("veo", self.html)
+        self.assertIn("seedance", self.html)
+        self.assertIn("agnes", self.html)
         self.assertIn("video_sync", self.html)
         self.assertIn("video_chat", self.html)
         self.assertIn("resolveVideoModelProviderType", self.html)
@@ -3223,7 +3227,7 @@ class VideoV1Tests(unittest.TestCase):
                         "model": "sora-like",
                         "enabled_models": ["sora-like", "gpt-4o-video-chat"],
                         "enabled": True,
-                        "provider_type": "video_async",
+                        "provider_type": "openai_video",
                         "model_provider_types": {"gpt-4o-video-chat": "video_chat"},
                     }
                 ],
@@ -3235,12 +3239,13 @@ class VideoV1Tests(unittest.TestCase):
         targets = cfg.get_prioritized_video_targets()
         self.assertEqual(len(targets), 2)
         self.assertEqual(targets[0].label, "vid/sora-like")
-        self.assertEqual(targets[0].provider_type, "video_async")
+        # model name sora-like auto-infers family sora (not channel default)
+        self.assertEqual(targets[0].provider_type, "sora")
         self.assertEqual(targets[1].provider_type, "video_chat")
         self.assertEqual(targets[0].resolved_api_keys(), ["sk-a", "sk-b"])
         self.assertGreaterEqual(targets[0].timeout, 60)
 
-        # legacy openai label on video channel maps to video_async
+        # legacy openai label on video channel maps to openai_video
         legacy = AICatConfig.from_dict(
             {
                 "video": {"enable": True},
@@ -3249,16 +3254,16 @@ class VideoV1Tests(unittest.TestCase):
                         "name": "old",
                         "base_url": "https://x/v1",
                         "api_key": "k",
-                        "model": "kling",
-                        "enabled_models": ["kling"],
+                        "model": "midgate-video-1",
+                        "enabled_models": ["midgate-video-1"],
                         "enabled": True,
                         "provider_type": "openai",
                     }
                 ],
             }
         )
-        self.assertEqual(legacy.video_channels[0].provider_type, "video_async")
-        self.assertEqual(legacy.get_prioritized_video_targets()[0].provider_type, "video_async")
+        self.assertEqual(legacy.video_channels[0].provider_type, "openai_video")
+        self.assertEqual(legacy.get_prioritized_video_targets()[0].provider_type, "openai_video")
 
         disabled = AICatConfig.from_dict({"video": {"enable": False}, "video_channels": [{"name": "vid", "base_url": "https://x", "api_key": "k", "model": "m"}]})
         self.assertEqual(disabled.get_prioritized_video_targets(), [])
@@ -3270,20 +3275,28 @@ class VideoV1Tests(unittest.TestCase):
             resolve_video_model_provider_type,
         )
 
-        self.assertEqual(normalize_video_provider_type("async_task"), "video_async")
+        self.assertEqual(normalize_video_provider_type("async_task"), "openai_video")
+        self.assertEqual(normalize_video_provider_type("sora"), "sora")
+        self.assertEqual(normalize_video_provider_type("veo-3"), "veo")
+        self.assertEqual(normalize_video_provider_type("seedance"), "seedance")
+        self.assertEqual(normalize_video_provider_type("agnes"), "agnes")
         self.assertEqual(normalize_video_provider_type("openai_sync"), "video_sync")
         self.assertEqual(normalize_video_provider_type("openai_chat"), "video_chat")
-        self.assertEqual(normalize_video_provider_type("openai"), "")  # image protocol; video channel maps separately
-        self.assertEqual(infer_video_provider_type_from_model("sora-2"), "video_async")
-        self.assertEqual(infer_video_provider_type_from_model("gpt-4o-mini"), "video_chat")
+        self.assertEqual(normalize_video_provider_type("openai"), "")  # image protocol
+        self.assertEqual(infer_video_provider_type_from_model("sora-2"), "sora")
+        self.assertEqual(infer_video_provider_type_from_model("veo-3.1"), "veo")
+        self.assertEqual(infer_video_provider_type_from_model("doubao-seedance-1.0"), "seedance")
+        self.assertEqual(infer_video_provider_type_from_model("agnes-video-pro"), "agnes")
+        self.assertEqual(infer_video_provider_type_from_model("kling-v2"), "kling")
         self.assertEqual(
             resolve_video_model_provider_type("unknown", "video_sync", ""),
             "video_sync",
         )
         self.assertEqual(
-            resolve_video_model_provider_type("x", "video_async", "video_chat"),
-            "video_chat",
+            resolve_video_model_provider_type("x", "openai_video", "sora"),
+            "sora",
         )
+
 
     def test_video_endpoint_and_extractors(self) -> None:
         from astrbot_plugin_selfie_image.video import (
