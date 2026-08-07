@@ -3108,6 +3108,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 extra_reference_count=1,
             )
             self.assertIn("看向镜头", group)
+            self.assertIn("二次元", group)
+            self.assertIn("写实", group)
+            self.assertTrue(("禁止继续二次元" in group) or ("禁止把对方继续画成二次元" in group) or ("禁止画面里再出现二次元" in group))
 
 
 if __name__ == "__main__":
