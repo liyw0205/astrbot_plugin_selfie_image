@@ -108,6 +108,43 @@ def b64_to_bytes(value: str) -> bytes:
     return decode_base64_payload(value)
 
 
+def extract_openai_images_data(data: Any, max_bytes: int = 25 * 1024 * 1024) -> List[bytes]:
+    """Extract image bytes from a standard OpenAI Images API response.
+
+    NewAPI / OpenAI-compatible relays typically return:
+    ``{"data":[{"b64_json":"..."}]`` or ``{"data":[{"url":"..."}]}``.
+
+    This fast path avoids running HTML/markdown URL extractors over multi-megabyte
+    base64 strings, which can stall the AstrBot event loop and leave web tests
+    stuck in ``running`` even after the upstream already succeeded.
+    """
+    if not isinstance(data, dict):
+        return []
+    items = data.get("data")
+    if not isinstance(items, list) or not items:
+        return []
+
+    images: List[bytes] = []
+    seen: Set[tuple] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        raw_b64 = item.get("b64_json") or item.get("b64") or item.get("base64")
+        if isinstance(raw_b64, str) and raw_b64.strip():
+            try:
+                image = b64_to_bytes(raw_b64)
+            except Exception:
+                image = b""
+            if image and len(image) <= max_bytes and looks_like_binary_image(image):
+                key = (len(image), image[:32])
+                if key not in seen:
+                    images.append(image)
+                    seen.add(key)
+                continue
+        # URL-only items are handled by the generic path (needs async download).
+    return images
+
+
 def http_error_preview(text: str, limit: int = 500) -> str:
     raw = str(text or "").strip()
     preview = raw
@@ -385,16 +422,25 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
             return
         if isinstance(item, str):
             text = item.strip()
+            if not text:
+                return
+            # Large base64 blobs are image payloads, not HTML/markdown to scrape.
+            # Running extract_image_urls_from_text() over multi-MB strings is very expensive.
+            if text.lower().startswith(("data:image/", "base64://")):
+                b64.add(text)
+                return
+            if len(text) > 1000 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", text):
+                b64.add(text)
+                return
+            if len(text) > 100 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", text):
+                b64.add(text)
+                return
             extracted = extract_image_urls_from_text(item)
             b64.update(extracted["b64"])
             urls.update(extracted["urls"])
             others.update(extracted["others"])
-            if text.lower().startswith(("data:image/", "base64://")):
-                b64.add(text)
-            elif looks_like_relative_image_url(text):
+            if looks_like_relative_image_url(text):
                 others.add(text)
-            elif len(text) > 100 and re.fullmatch(r"[A-Za-z0-9+/=_-]+", text):
-                b64.add(text)
             json_candidates: List[str] = []
             fenced = re.fullmatch(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I)
             json_candidates.append(fenced.group(1).strip() if fenced else text)

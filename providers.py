@@ -21,6 +21,7 @@ from .provider_parser import (
     collect_images_from_unknown,
     extract_image_urls_from_text,
     extract_model_ids_from_response,
+    extract_openai_images_data,
     fetch_generated_image_url,
     http_error_preview,
     images_from_response_unknown,
@@ -101,7 +102,12 @@ class BaseImageAdapter:
         http_preview_limit: int = 500,
         invalid_json_preview_limit: int = 300,
     ) -> tuple[Optional[Any], str]:
-        text = await response.text()
+        # Prefer raw bytes then utf-8 decode: large b64_json bodies are common for image APIs.
+        raw = await response.read()
+        try:
+            text = raw.decode(response.charset or "utf-8", errors="replace")
+        except Exception:
+            text = raw.decode("utf-8", errors="replace")
         if response.status >= 400:
             return None, f"HTTP {response.status}: {http_error_preview(text, http_preview_limit)}"
         try:
@@ -169,15 +175,14 @@ def map_aspect_ratio_to_openai_size(aspect: str) -> str:
 
 
 def map_aspect_ratio_to_gpt_image_size(aspect: str) -> str:
-    if not aspect or aspect == "自动":
-        return "auto"
-    if aspect == "1:1":
+    # NewAPI / many OpenAI-compatible relays accept explicit sizes more reliably than "auto".
+    if not aspect or aspect in {"自动", "1:1"}:
         return "1024x1024"
     if aspect in {"3:2", "16:9", "4:3", "5:4", "21:9"}:
         return "1536x1024"
     if aspect in {"2:3", "3:4", "9:16", "4:5"}:
         return "1024x1536"
-    return "auto"
+    return "1024x1024"
 
 
 def map_aspect_ratio_to_agnes_size(aspect: str) -> str:
@@ -234,7 +239,12 @@ class OpenAIImageAdapter(BaseImageAdapter):
         data, error = await self.post_json_data_or_error(url, self.build_image_payload(req))
         if error or data is None:
             return ImageGenerateResult(error=error or "接口未返回有效 JSON")
-        return await self.result_from_response(data, req, base)
+        # Fast path for standard OpenAI Images responses: avoid expensive generic text/html walkers
+        # on multi-megabyte b64_json payloads that NewAPI-style relays commonly return.
+        images = extract_openai_images_data(data, req.max_image_bytes)
+        if images:
+            return ImageGenerateResult(images=images)
+        return await self.result_from_response(data, req, base, detailed_error=True)
 
     def _build_edit_form(self, req: ImageGenerateRequest, image_field_name: str) -> aiohttp.FormData:
         form = aiohttp.FormData()

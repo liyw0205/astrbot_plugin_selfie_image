@@ -90,6 +90,7 @@ from .utils import (
     save_image_bytes,
     save_json_file,
 )
+from .dashboard_api import SelfieImageDashboardAPI
 from .web import FlaskWebServer
 
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
@@ -188,6 +189,11 @@ class SelfieImagePlugin(Star):
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self.web_server = FlaskWebServer(self)
+        self.dashboard_api = SelfieImageDashboardAPI(self)
+        try:
+            self.dashboard_api.register()
+        except Exception as exc:
+            logger.warning(f"[SelfieImage] 注册 AstrBot 内嵌管理页 API 失败: {exc}", exc_info=True)
 
         # Do not write config files during startup. If AstrBot passes an empty
         # or not-yet-populated config object, writing here would overwrite the
@@ -933,8 +939,7 @@ class SelfieImagePlugin(Star):
         provider_type = str(target.provider_type or "").lower()
         timeout = aiohttp.ClientTimeout(total=max(10, int(target.timeout or self.config.image_global_timeout or 180)))
         proxy = str(target.proxy or "").strip() or None
-
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             if provider_type == "gemini":
                 base = normalize_image_base_url(target.base_url) or "https://generativelanguage.googleapis.com"
                 base = re.sub(r"/v1beta(?:/.*)?$", "", base.rstrip("/"), flags=re.I)
@@ -1253,6 +1258,7 @@ class SelfieImagePlugin(Star):
         return {
             "path": rel_path,
             "absolute_path": abs_path,
+            "name": os.path.basename(abs_path),
             "exists": exists,
             "is_image": is_image,
             "mime_type": mime,
@@ -1456,7 +1462,7 @@ class SelfieImagePlugin(Star):
         seen = set()
         if not sources:
             return result, 0, 0
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             for source in sources:
                 fetched = await fetch_image_source(source, session, max_bytes=max_bytes)
                 if not fetched:
@@ -2124,8 +2130,10 @@ class SelfieImagePlugin(Star):
             max_image_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
         )
         started = time.monotonic()
+        # trust_env=False: channel.proxy is explicit; do not inherit process HTTP(S)_PROXY
+        # (common on ops hosts) and silently stall NewAPI image downloads/posts.
         async with self._semaphore:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=False) as session:
                 result = await generate_image_with_fallback(selected_targets, request, session, max_attempts=max_attempts)
         elapsed = time.monotonic() - started
 
@@ -2468,7 +2476,7 @@ class SelfieImagePlugin(Star):
         elif api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         errors: List[str] = []
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             for url in candidates:
                 safe_url = redact_sensitive_text(url)
                 try:
@@ -2606,6 +2614,7 @@ class SelfieImagePlugin(Star):
                     "/形象刷新",
                     "LLM 工具：generate_image、generate_selfie",
                     f"Flask Web：{'已启用' if self.config.web_enable else '未启用'} http://{self.config.web_host}:{self.config.web_port}",
+                    "AstrBot 内嵌管理页：插件详情页 dashboard（复用 Dashboard 登录，无需 Web Token）",
                 ]
             )
         )
@@ -2920,7 +2929,7 @@ class SelfieImagePlugin(Star):
             yield event.plain_result("请发送图片、引用图片，或在指令后附带图片链接。")
             return
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             for source in sources:
                 fetched = await fetch_image_source(source, session, max_bytes=max_bytes)
                 if not fetched:

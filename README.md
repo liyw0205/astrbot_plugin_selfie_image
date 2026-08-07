@@ -1,5 +1,7 @@
 # AstrBot Selfie Image 生图自拍
 
+当前版本 `1.1.0`，要求 AstrBot `>=4.13.0,<5`。
+
 这是 AstrBot 生图自拍插件，包含生图、参考图图生图、AI 自拍、LLM 工具调用和 Flask Web 管理页。
 
 ## 使用步骤
@@ -76,6 +78,12 @@
    - `web.token` 留空时 Web API 不做 Token 校验，前端会自动尝试免 Token 进入。
    - 修改 `web.port`、`web.host` 后需要重载插件让监听端口生效。
    - 配置了 `web.token` 时，打开后在登录页输入该 Token；留空时会自动进入。
+
+7. AstrBot Dashboard 内嵌管理页：
+
+   - 入口：AstrBot WebUI → 插件详情 → 插件行为里的 `dashboard` 页面。
+   - 复用 AstrBot Dashboard 登录态，**不需要单独输入 Web Token**，也不依赖独立 Flask 端口。
+   - 独立 Flask 仍可继续使用；内嵌页与独立页共享同一份 `selfie_image_config.json` 运行配置。
 
 ## Web 管理页
 
