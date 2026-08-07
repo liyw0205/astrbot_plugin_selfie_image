@@ -2940,10 +2940,14 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("header-brand", self.html)
         self.assertIn("header-logo", self.html)
         self.assertIn("--radius-lg", self.html)
+        self.assertIn("nav.page-nav", self.html)
+        self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr))", self.html)
+        self.assertIn("nav.page-nav button.active", self.html)
         page = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
         page_html = page.read_text(encoding="utf-8")
         self.assertIn("#3c96ca", page_html)
         self.assertIn("header-brand", page_html)
+        self.assertIn("page-nav", page_html)
         self.assertIn("开始试画", page_html)
         logo = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "logo.png"
         self.assertTrue(logo.is_file())
