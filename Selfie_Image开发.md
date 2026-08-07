@@ -1,27 +1,31 @@
 # Selfie Image 开发文档
 
 > 文档整理日期：2026-08-07
-> 文档基线：三向优化方案 `docs/OPTIMIZATION_ROADMAP.md`；插件版本见 `metadata.yaml`
+> 文档基线：市场调研 `docs/PLUGIN_MARKET_SURVEY.md` + 三向方案 `docs/OPTIMIZATION_ROADMAP.md`
 > 运行形态：AstrBot 插件 + 内置 Flask Web + 内嵌 Dashboard + 多 Provider 生图适配器
 > 当前回归基线：`tests/test_core.py`；每轮改动后必须重新验证
 
 ## 目标队列
 
-开发以独立目标文档管理：每个目标必须完成实现、测试、提交与推送后，才自动进入下一项。目标文档保存在 `docs/targets/`。总纲与三向（前端/后端/指令）路线见 `docs/OPTIMIZATION_ROADMAP.md`。
+每个目标须实现、测试、提交与推送后才进入下一项。  
+**能力来源以官方插件市场调研为准**，见 `docs/PLUGIN_MARKET_SURVEY.md`（源：`api.soulter.top/astrbot/plugins` → cloud market JSON）。
 
-| 顺序 | 目标 | 文档 | 状态 |
-|------|------|------|------|
-| 1 | 统一 Provider 成功/失败结果解释 | `docs/targets/01-provider-result-handling.md` | 已完成 |
-| 2 | 收敛 Web 前端请求与错误状态 | `docs/targets/02-web-request-state.md` | 已完成 |
-| 3 | 增加配置预检与渠道诊断 | `docs/targets/03-config-preflight.md` | 进行中 |
-| 4 | 完善缓存回收的记录一致性 | `docs/targets/04-cache-retention-consistency.md` | 待开始 |
-| 5 | 建立 AstrBot 运行时冒烟契约 | `docs/targets/05-astrbot-smoke-contract.md` | 待开始 |
-| 6 | 内嵌 Dashboard 与渠道测试闭环 hardening | `docs/targets/06-dashboard-test-loop-hardening.md` | 进行中 |
-| 7 | 协议锁定与 openai/openai_chat 分流 | `docs/targets/07-protocol-lock-openai-chat.md` | 待开始 |
-| 8 | 指令侧模型切换与任务查询/取消 | `docs/targets/08-command-model-and-tasks.md` | 待开始 |
-| 9 | 不可重试错误词典与失败分类 | `docs/targets/09-nonretryable-error-taxonomy.md` | 待开始 |
+| 顺序 | 目标 | 文档 | 状态 | 主要来源插件 |
+|------|------|------|------|--------------|
+| 1 | 统一 Provider 结果解释 | `docs/targets/01-…` | 已完成 | — |
+| 2 | 收敛 Web 请求状态 | `docs/targets/02-…` | 已完成 | — |
+| 3 | 配置预检与渠道诊断 | `docs/targets/03-…` | 进行中 | 通用生图 |
+| 4 | 缓存回收一致性 | `docs/targets/04-…` | 待开始 | — |
+| 5 | AstrBot 冒烟契约 | `docs/targets/05-…` | 待开始 | — |
+| 6 | 内嵌 Dashboard 与测试闭环 | `docs/targets/06-…` | 进行中 | 通用生图 / 电报 |
+| 7 | 协议锁定 openai/openai_chat | `docs/targets/07-…` | 待开始 | 通用生图 / 图像网关 |
+| 8 | 指令模型切换与任务查询取消 | `docs/targets/08-…` | 待开始 | 通用生图 / OmniDraw |
+| 9 | 不可重试错误分类 | `docs/targets/09-…` | 待开始 | 通用生图 / 网关 |
+| 10 | GPT Image 双档案与防双扣费 | `docs/targets/10-…` | 待开始 | starmiao GPT Image |
+| 11 | 统一参考图收集器 | `docs/targets/11-…` | 待开始 | piexian / 通用生图 / OmniDraw |
+| 12 | 多 API Key 轮询 | `docs/targets/12-…` | 待开始 | 多头部生图插件 |
 
-自动后续优化步骤、自我审查清单（bug/漏洞/误理解）见路线图 §3–§4。
+自动步骤与审查清单见 `OPTIMIZATION_ROADMAP.md`。
 
 ## 目标与边界
 
