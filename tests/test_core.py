@@ -3155,7 +3155,12 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             )
             self.assertIn("光腿神器", text)
             self.assertIn("跪坐", text)
-            self.assertIn("坐姿", text)
+            self.assertIn("侧躺", text)
+            self.assertIn("抱膝", text)
+            self.assertIn("二郎腿", text)
+            self.assertIn("站立俯视", text)
+            self.assertIn("窗台", text)
+            self.assertIn("单膝", text)
 
 
 class VideoV1Tests(unittest.TestCase):
@@ -3255,6 +3260,16 @@ class LegFocusTests(unittest.TestCase):
                         return fn
                     return deco
 
+                class PermissionType:
+                    ADMIN = "admin"
+                    MEMBER = "member"
+
+                @staticmethod
+                def permission_type(*a, **k):
+                    def deco(fn):
+                        return fn
+                    return deco
+
             star.Context = object
             star.Star = Star
             star.register = register
@@ -3283,27 +3298,46 @@ class LegFocusTests(unittest.TestCase):
             pathmod.get_astrbot_data_path = lambda: tempfile.gettempdir()
             sys.modules["astrbot.core.utils.astrbot_path"] = pathmod
 
-        from astrbot_plugin_selfie_image import main as plugin_main
+        # Ensure permission_type exists even if astrbot was stubbed earlier without it
+        filt = sys.modules.get("astrbot.api.event")
+        if filt is not None and hasattr(filt, "filter"):
+            fobj = filt.filter
+            if not hasattr(fobj, "PermissionType"):
+                class PermissionType:
+                    ADMIN = "admin"
+                    MEMBER = "member"
+                fobj.PermissionType = PermissionType
+            if not hasattr(fobj, "permission_type"):
+                fobj.permission_type = staticmethod(lambda *a, **k: (lambda fn: fn))
+
+        from importlib import reload
+        import astrbot_plugin_selfie_image.main as plugin_main
+        # if previous import failed, modules may be partial; force reimport path
+        if not hasattr(plugin_main, "SelfieImagePlugin"):
+            plugin_main = reload(plugin_main)
 
         class _P:
             pass
 
-        kneel, sit = [], []
-        for _ in range(50):
+        found = set()
+        for _ in range(120):
             t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
             self.assertIn("光腿神器", t)
             self.assertIn("脸部", t)
-            if "跪坐" in t:
-                kneel.append(t)
-            if "坐姿拍腿" in t or "床沿" in t or "单人椅" in t:
-                sit.append(t)
-        self.assertTrue(kneel, "expected kneel pose")
-        self.assertTrue(sit, "expected sit pose")
+            m = re.search(r"【pose:([a-z_]+)】", t)
+            if m:
+                found.add(m.group(1))
+        for key in ("sit", "kneel", "side_lie", "hug_knee", "cross_leg"):
+            self.assertIn(key, found, f"missing pose {key} in samples {found}")
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        for key in ("stand_topdown", "windowsill", "kneel_up", "one_knee_fix", "side_lie", "hug_knee", "cross_leg"):
+            self.assertIn(f'"{key}"', main_src)
 
     def test_send_one_by_one_comment_present(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
         self.assertIn("生成一张发一张", main_src)
         self.assertIn("rebuild_each", main_src)
+        self.assertIn("avoid_pose", main_src)
 
 
 if __name__ == "__main__":

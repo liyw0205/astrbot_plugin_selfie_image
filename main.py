@@ -1954,46 +1954,155 @@ class SelfieImagePlugin(Star):
             "不要复述请求，不要说生成、绘制、工具、调用、任务、已完成、已发送、配置、模型、提示词或审核。"
         )
 
-    def _build_leg_focus_action(self, extra_request: str = "", has_refs: bool = False) -> str:
-        # 两种主姿势随机：坐姿拍腿 / 跪坐拍腿；均不露脸。
-        pose_bucket = random.choice(["sit", "kneel"])
-        sit_variants = [
-            (
-                "第一人称自拍视角，俯拍下半身特写，发色和发型严格沿用 AI 形象参考图，只露出部分发丝，"
-                "宽松上衣与短裙下摆入镜，腿部光洁细腻像用了光腿神器：自然通透、匀净柔光、无毛糙无瑕疵，"
-                "可光腿或极薄肉色丝袜，也可过膝袜/长筒袜，坐在米白色毛绒地毯上，"
-                "窗边柔和阳光，暖调自然光，日系居家氛围，胶片质感，浅景深，手部轻扯裙边。"
-            ),
-            (
-                "第一人称低头随手拍，坐在床沿，双腿向前自然伸展后轻微斜放，一只手轻抚小腿或整理袜口，"
-                "腿部皮肤干净细腻、光泽自然舒适（光腿神器质感：通透匀净、不假白不油腻），"
-                "柔软针织上衣和短裙边缘进入画面，室内暖光和浅色床单背景。"
-            ),
-            (
-                "窗边单人椅坐姿自拍，双腿并拢后向一侧自然倾斜，膝盖和脚尖方向协调，"
-                "裙摆自然垂落，腿部线条流畅、肤质细腻柔光，小皮鞋或居家拖鞋材质清楚，"
-                "地板有柔和反光，像日常穿搭记录。"
-            ),
-            (
-                "米白色地毯上的居家坐姿，下半身近景，双腿轻微交叠但不扭曲，手指轻扶膝盖或裙边，"
-                "腿部皮肤细腻通透、看起来舒服干净，衣料褶皱和地毯绒毛清晰，暖调自然光，日系生活感。"
-            ),
+    def _build_leg_focus_action(
+        self,
+        extra_request: str = "",
+        has_refs: bool = False,
+        *,
+        avoid_pose: str = "",
+    ) -> str:
+        """晒腿 action：多姿势随机，不露脸；光腿神器肤质。"""
+        # 权重：坐/跪/侧躺/抱膝/二郎腿为主；站立俯视、窗台、跪立、单膝整理略少。
+        pose_pool = [
+            ("sit", 3),
+            ("kneel", 3),
+            ("side_lie", 2),
+            ("hug_knee", 2),
+            ("cross_leg", 2),
+            ("stand_topdown", 1),
+            ("windowsill", 1),
+            ("kneel_up", 1),
+            ("one_knee_fix", 1),
         ]
-        kneel_variants = [
-            (
-                "跪坐拍腿：第一人称俯视 POV，双膝跪在地毯或床单上，臀部坐在小腿或脚跟上，"
-                "镜头从胸口以下往下看自己的腿与脚背，脸部完全在画面外，只露发丝与手部，"
-                "腿部光洁细腻像光腿神器效果——自然通透、匀净柔光、线条舒服，"
-                "可光腿或极薄肉色丝袜，裙摆/裤脚自然垂落，一只手轻扶膝盖或整理衣角，居家暖光。"
-            ),
-            (
-                "跪坐侧斜拍腿：双膝跪地、身体略侧向，仍保持跪坐重心，镜头低头拍下半身，"
-                "不露脸，强调小腿与脚踝曲线、干净脚背和细腻肤质（光腿神器：通透匀净、不脏不糙），"
-                "背景是居家地毯/床单/木地板，柔和自然光，日常随手拍感。"
-            ),
-        ]
-        variants = kneel_variants if pose_bucket == "kneel" else sit_variants
-        pose_label = "跪坐拍腿" if pose_bucket == "kneel" else "坐姿拍腿"
+        if avoid_pose:
+            filtered = [(name, w) for name, w in pose_pool if name != avoid_pose]
+            if filtered:
+                pose_pool = filtered
+        names = [n for n, _ in pose_pool]
+        weights = [w for _, w in pose_pool]
+        pose_bucket = random.choices(names, weights=weights, k=1)[0]
+
+        pose_variants = {
+            "sit": [
+                (
+                    "第一人称自拍视角，俯拍下半身特写，只露出部分发丝，"
+                    "宽松上衣与短裙下摆入镜，腿部光洁细腻像光腿神器：自然通透、匀净柔光，"
+                    "可光腿或极薄肉色丝袜/过膝袜，坐在米白色毛绒地毯上，窗边柔和阳光，手部轻扯裙边。"
+                ),
+                (
+                    "第一人称低头随手拍，坐在床沿，双腿向前自然伸展后轻微斜放，一只手轻抚小腿或整理袜口，"
+                    "腿部皮肤干净细腻（光腿神器质感：通透匀净、不假白不油腻），室内暖光和浅色床单。"
+                ),
+                (
+                    "窗边单人椅坐姿，双腿并拢后向一侧自然倾斜，裙摆垂落，腿部线条流畅、肤质细腻柔光，"
+                    "小皮鞋或居家拖鞋材质清楚，地板柔和反光，日常穿搭记录感。"
+                ),
+            ],
+            "kneel": [
+                (
+                    "跪坐拍腿：第一人称俯视 POV，双膝跪在地毯或床单上，臀部坐在小腿或脚跟上，"
+                    "镜头从胸口以下往下看自己的腿与脚背，脸部完全在画面外，只露发丝与手部，"
+                    "腿部光洁细腻像光腿神器——自然通透、匀净柔光，可光腿或极薄肉色丝袜，手轻扶膝盖，居家暖光。"
+                ),
+                (
+                    "跪坐侧斜拍腿：双膝跪地、身体略侧向，仍保持跪坐重心，镜头低头拍下半身，不露脸，"
+                    "强调小腿与脚踝曲线、干净脚背和细腻肤质（光腿神器：通透匀净），地毯/床单背景。"
+                ),
+            ],
+            "side_lie": [
+                (
+                    "侧躺曲腿：侧身躺在床或地毯上，上面那条腿微微弯曲，下面腿略伸，"
+                    "镜头从腰部以下沿腿的方向近景拍摄，完全不露脸，只见发丝与手部，"
+                    "腿部肤质细腻通透如光腿神器，裙摆/裤脚自然堆叠，床单褶皱清晰，柔和侧光，舒服日常。"
+                ),
+                (
+                    "侧卧抱枕旁拍腿：身体侧躺，一腿屈起贴近，一腿放松前伸，第一人称略俯视下半身，"
+                    "不露脸，小腿脚踝线条舒服，光腿或薄丝，居家暖调，浅景深。"
+                ),
+            ],
+            "hug_knee": [
+                (
+                    "抱膝坐：坐在床或地毯上，双膝（或单膝）收近身前，双手环抱膝盖或轻扶小腿，"
+                    "第一人称俯视只拍下半身与脚背，脸部在画面外，腿部光洁细腻（光腿神器观感），"
+                    "裙摆堆在腿根附近，居家日常、干净柔和。"
+                ),
+                (
+                    "单膝抱膝坐姿：一腿屈起抱住，另一腿自然侧放，镜头低头拍腿与脚，不露脸，"
+                    "肤质通透匀净，手部与膝盖互动自然，窗边或床边暖光。"
+                ),
+            ],
+            "cross_leg": [
+                (
+                    "翘二郎腿坐：坐在椅边或床沿，一条腿架在另一条腿上，强调小腿外侧与脚踝，"
+                    "第一人称略俯视下半身，不露脸，腿部细腻柔光如光腿神器，可光腿或薄肉色丝袜，"
+                    "鞋面或拖鞋细节清楚，穿搭记录感。"
+                ),
+                (
+                    "沙发上跷腿坐：一腿搭在另一腿膝上，裙摆/裤脚自然，镜头拍膝下到脚，完全不露脸，"
+                    "腿线干净舒服，室内漫射光，日系居家。"
+                ),
+            ],
+            "stand_topdown": [
+                (
+                    "站立俯视拍腿：站在居家地面或地毯上，镜头严格压在腰下到膝下，只拍大腿下半、小腿与鞋，"
+                    "绝不露脸、不要全身立绘、不要正脸入镜；可一只脚轻微点地，"
+                    "腿部肤质细腻通透（光腿神器），光腿或薄丝，日常随手俯拍。"
+                ),
+                (
+                    "站立近景膝下：第一人称低头只看见自己的小腿与脚面，裁切在腰线以下，脸部完全出画，"
+                    "肤质匀净柔光，鞋袜或光脚都干净，木地板/地毯纹理清楚。"
+                ),
+            ],
+            "windowsill": [
+                (
+                    "窗台蹬坐：坐在窗台或矮柜边，双脚或一只脚踩在边缘，小腿自然垂下或轻点，"
+                    "镜头从略高处拍下半身与腿，不露脸，窗外柔光，腿部光洁细腻如光腿神器，"
+                    "得体日常，注意安全稳坐感，不要危险姿势。"
+                ),
+                (
+                    "窗边矮台坐拍腿：臀坐台沿，一脚踩台、一脚垂下，第一人称俯视腿脚，脸部出画，"
+                    "薄丝或光腿，肤质通透舒服，居家窗光。"
+                ),
+            ],
+            "kneel_up": [
+                (
+                    "跪立拍腿：双膝跪地但上身略直（比跪坐更高一点），镜头仍贴腿面俯视，"
+                    "只拍下半身与膝脚，完全不露脸，腿部线条与光腿神器肤质清楚，"
+                    "裙摆/裤脚垂落，地毯背景，与贴地跪坐区分开。"
+                ),
+                (
+                    "高跪姿侧斜：跪姿重心略抬，身体微侧，低头拍小腿脚踝，不露脸，"
+                    "肤质细腻匀净，居家暖光，日常随手拍。"
+                ),
+            ],
+            "one_knee_fix": [
+                (
+                    "单腿跪地整理：一只膝跪地、另一只脚踩地，手在袜口或鞋边轻轻整理，"
+                    "第一人称俯视下半身动作戏，不露脸，腿部光洁细腻（光腿神器），"
+                    "动态生活感，避免纯静态摆拍。"
+                ),
+                (
+                    "单膝触地系鞋带/理袜：一膝落地一脚承重，手指在脚踝附近，镜头拍腿脚局部，"
+                    "脸部出画，肤质通透干净，居家地面，自然不僵。"
+                ),
+            ],
+        }
+        pose_labels = {
+            "sit": "坐姿拍腿",
+            "kneel": "跪坐拍腿",
+            "side_lie": "侧躺曲腿",
+            "hug_knee": "抱膝坐",
+            "cross_leg": "翘二郎腿坐",
+            "stand_topdown": "站立俯视膝下",
+            "windowsill": "窗台蹬坐",
+            "kneel_up": "跪立拍腿",
+            "one_knee_fix": "单膝跪地整理",
+        }
+        variants = pose_variants.get(pose_bucket) or pose_variants["sit"]
+        pose_label = pose_labels.get(pose_bucket, "坐姿拍腿")
+        hard_crop = ""
+        if pose_bucket == "stand_topdown":
+            hard_crop = "站立俯视必须严格下半身裁切：无正脸、无全身立绘、构图止于腰下至脚。"
         base = (
             "看看腿。"
             "主角身份必须来自 AI 自拍形象参考图：即使脸部不入镜，露出的发丝、发色、体态、肤色、手部和整体气质也要像同一个角色。"
@@ -2003,12 +2112,15 @@ class SelfieImagePlugin(Star):
             "腿部肤质要求：干净、细腻、自然通透，像「光腿神器」后的舒服观感——匀净柔光、无毛糙、无瑕疵斑点、不假白不油腻；结构完整，不要脏污脚面或畸形骨节。"
             "腿部比例自然，膝盖、小腿、脚踝、鞋袜和手部互动都要协调，姿势不要僵硬。"
             "脸部始终在画面外。"
+            f"{hard_crop}"
         )
         if has_refs:
             base += " 用户提供的图片只参考氛围、构图、服装或姿势；主角身份仍以 AI 自拍形象参考图为准。"
         extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
         if extra:
             base = base.rstrip("。") + f"。用户补充要求优先：{extra}。"
+        # 供多张重采样时避开连抽同一姿势（解析用，模型可忽略）
+        base += f" 【pose:{pose_bucket}】"
         return base
 
     def _build_third_person_look_action(self, extra_request: str = "", has_refs: bool = False) -> str:
@@ -3072,13 +3184,28 @@ class SelfieImagePlugin(Star):
         last_elapsed = 0.0
         # 晒腿等多张：每轮重新采样姿势变体，避免 10 张同构图。
         rebuild_each = source in {"command-look-legs"} or ("看看腿" in str(action or ""))
+        last_pose = ""
+        extra_keep = ""
+        if rebuild_each:
+            m_extra = re.search(r"用户补充要求优先：(.+?)。", str(action or ""))
+            if m_extra:
+                extra_keep = str(m_extra.group(1) or "").strip()
+            m_pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
+            if m_pose:
+                last_pose = str(m_pose.group(1) or "")
         for index in range(total):
             if self._task_cancel_requested(task_id):
                 return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
             round_action = action
             if rebuild_each and total > 1:
-                # 保留用户补充：从原始 action 中无法稳妥拆分时，用空 extra 重采样姿势即可。
-                round_action = self._build_leg_focus_action("", bool(extra_refs))
+                round_action = self._build_leg_focus_action(
+                    extra_keep,
+                    bool(extra_refs),
+                    avoid_pose=last_pose,
+                )
+                m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
+                if m_pose:
+                    last_pose = str(m_pose.group(1) or last_pose)
             prompt, refs = await self._build_selfie_prompt_and_refs(round_action, extra_refs)
             result = await self._run_image_generation(
                 prompt,
