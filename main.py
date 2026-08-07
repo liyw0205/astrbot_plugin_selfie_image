@@ -1955,33 +1955,54 @@ class SelfieImagePlugin(Star):
         )
 
     def _build_leg_focus_action(self, extra_request: str = "", has_refs: bool = False) -> str:
-        variants = [
+        # 两种主姿势随机：坐姿拍腿 / 跪坐拍腿；均不露脸。
+        pose_bucket = random.choice(["sit", "kneel"])
+        sit_variants = [
             (
-                "第一人称自拍视角，俯拍半身下半身特写，发色和发型严格沿用 AI 形象参考图，只露出部分发丝（若参考图是淡紫色长卷发则保持淡紫色长卷发），宽松白色翻领衬衫，"
-                "黑色短百褶裙，珠光白过膝长筒丝袜，脚踝堆堆白棉袜，黑色厚底乐福小皮鞋，坐在米白色毛绒地毯上，"
-                "窗边百叶窗洒落条状柔和阳光，暖调自然光，日系居家氛围感，胶片质感，细腻皮肤纹理，高清写实，"
-                "浅景深，低饱和奶油色调，生活化居家穿搭，手部轻扯裙边细节。"
+                "第一人称自拍视角，俯拍下半身特写，发色和发型严格沿用 AI 形象参考图，只露出部分发丝，"
+                "宽松上衣与短裙下摆入镜，腿部光洁细腻像用了光腿神器：自然通透、匀净柔光、无毛糙无瑕疵，"
+                "可光腿或极薄肉色丝袜，也可过膝袜/长筒袜，坐在米白色毛绒地毯上，"
+                "窗边柔和阳光，暖调自然光，日系居家氛围，胶片质感，浅景深，手部轻扯裙边。"
             ),
             (
-                "第一人称低头随手拍，坐在床沿，双腿向前自然伸展后轻微斜放，一只手整理袜口，"
-                "柔软针织上衣和短裙边缘进入画面，过膝袜贴合腿部但不过度紧绷，脚踝线条干净，室内暖光和浅色床单背景。"
+                "第一人称低头随手拍，坐在床沿，双腿向前自然伸展后轻微斜放，一只手轻抚小腿或整理袜口，"
+                "腿部皮肤干净细腻、光泽自然舒适（光腿神器质感：通透匀净、不假白不油腻），"
+                "柔软针织上衣和短裙边缘进入画面，室内暖光和浅色床单背景。"
             ),
             (
                 "窗边单人椅坐姿自拍，双腿并拢后向一侧自然倾斜，膝盖和脚尖方向协调，"
-                "裙摆自然垂落，长筒袜和小皮鞋材质清楚，地板有柔和反光，画面像日常穿搭记录。"
+                "裙摆自然垂落，腿部线条流畅、肤质细腻柔光，小皮鞋或居家拖鞋材质清楚，"
+                "地板有柔和反光，像日常穿搭记录。"
             ),
             (
                 "米白色地毯上的居家坐姿，下半身近景，双腿轻微交叠但不扭曲，手指轻扶膝盖或裙边，"
-                "袜口、鞋面、衣料褶皱和地毯绒毛清晰，暖调自然光，日系生活感，干净柔和。"
+                "腿部皮肤细腻通透、看起来舒服干净，衣料褶皱和地毯绒毛清晰，暖调自然光，日系生活感。"
             ),
         ]
+        kneel_variants = [
+            (
+                "跪坐拍腿：第一人称俯视 POV，双膝跪在地毯或床单上，臀部坐在小腿或脚跟上，"
+                "镜头从胸口以下往下看自己的腿与脚背，脸部完全在画面外，只露发丝与手部，"
+                "腿部光洁细腻像光腿神器效果——自然通透、匀净柔光、线条舒服，"
+                "可光腿或极薄肉色丝袜，裙摆/裤脚自然垂落，一只手轻扶膝盖或整理衣角，居家暖光。"
+            ),
+            (
+                "跪坐侧斜拍腿：双膝跪地、身体略侧向，仍保持跪坐重心，镜头低头拍下半身，"
+                "不露脸，强调小腿与脚踝曲线、干净脚背和细腻肤质（光腿神器：通透匀净、不脏不糙），"
+                "背景是居家地毯/床单/木地板，柔和自然光，日常随手拍感。"
+            ),
+        ]
+        variants = kneel_variants if pose_bucket == "kneel" else sit_variants
+        pose_label = "跪坐拍腿" if pose_bucket == "kneel" else "坐姿拍腿"
         base = (
             "看看腿。"
             "主角身份必须来自 AI 自拍形象参考图：即使脸部不入镜，露出的发丝、发色、体态、肤色、手部和整体气质也要像同一个角色。"
             "不要换成陌生人物，不要改变主角发色和体态。"
+            f"本次主姿势：{pose_label}。"
             f"本次腿部特写构图：{random.choice(variants)}"
-            "脚背、脚踝和腿部皮肤保持干净自然细腻；结构完整，不要脏污脚面或畸形骨节。"
-            "腿部比例自然，膝盖、小腿、脚踝、鞋袜和手部互动都要协调，姿势不要僵硬或重复。"
+            "腿部肤质要求：干净、细腻、自然通透，像「光腿神器」后的舒服观感——匀净柔光、无毛糙、无瑕疵斑点、不假白不油腻；结构完整，不要脏污脚面或畸形骨节。"
+            "腿部比例自然，膝盖、小腿、脚踝、鞋袜和手部互动都要协调，姿势不要僵硬。"
+            "脸部始终在画面外。"
         )
         if has_refs:
             base += " 用户提供的图片只参考氛围、构图、服装或姿势；主角身份仍以 AI 自拍形象参考图为准。"
@@ -3049,10 +3070,16 @@ class SelfieImagePlugin(Star):
         all_files: List[str] = []
         used_model = ""
         last_elapsed = 0.0
+        # 晒腿等多张：每轮重新采样姿势变体，避免 10 张同构图。
+        rebuild_each = source in {"command-look-legs"} or ("看看腿" in str(action or ""))
         for index in range(total):
             if self._task_cancel_requested(task_id):
                 return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
-            prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
+            round_action = action
+            if rebuild_each and total > 1:
+                # 保留用户补充：从原始 action 中无法稳妥拆分时，用空 extra 重采样姿势即可。
+                round_action = self._build_leg_focus_action("", bool(extra_refs))
+            prompt, refs = await self._build_selfie_prompt_and_refs(round_action, extra_refs)
             result = await self._run_image_generation(
                 prompt,
                 aspect,
@@ -3061,7 +3088,7 @@ class SelfieImagePlugin(Star):
                 source=source,
                 audit_user_id=event_user_id(event),
                 event=event,
-                original_prompt=action,
+                original_prompt=round_action,
             )
             if not result.get("success"):
                 error = self._friendly_user_error_message(str(result.get("error") or ""), fail_label)
@@ -3075,6 +3102,7 @@ class SelfieImagePlugin(Star):
             last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
             if files:
                 self._record_generated_images(event, 1)
+                # 生成一张发一张（不攒齐再发）
                 await self._send_generated_images(event, files)
                 all_files.extend(files)
             info = self._batch_success_text(
@@ -3414,7 +3442,7 @@ class SelfieImagePlugin(Star):
                 "· /文生图　按你写的原文出图（不走自拍人设包装）",
                 "· /图生图　带图或引用图，按原文改图",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
-                "· /看看腿　下半身近景（可选补充）",
+                "· /看看腿　下半身近景；可写数量如 /看看腿 3（生成一张发一张）",
                 "· /看看你　像别人随手拍你（他拍感）",
                 "· /合影 或 /合照　和对象同框；可附图或@对方",
                 "",

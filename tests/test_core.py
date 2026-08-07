@@ -3141,6 +3141,23 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertTrue(("禁止继续二次元" in group) or ("禁止把对方继续画成二次元" in group) or ("禁止画面里再出现二次元" in group))
 
 
+    def test_legs_persona_mentions_kneel_and_light_leg(self) -> None:
+        from astrbot_plugin_selfie_image.persona import PersonaManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            text = manager.build_selfie_prompt(
+                action="看看腿",
+                bot_name="小助",
+                personality="温柔",
+                has_reference_image=True,
+                extra_reference_count=0,
+            )
+            self.assertIn("光腿神器", text)
+            self.assertIn("跪坐", text)
+            self.assertIn("坐姿", text)
+
+
 class VideoV1Tests(unittest.TestCase):
     def test_video_channel_config_and_preflight(self) -> None:
         from astrbot_plugin_selfie_image.models import AICatConfig, preflight_video_channel
@@ -3207,6 +3224,86 @@ class VideoV1Tests(unittest.TestCase):
         self.assertIn('@filter.command("文生视频")', main_src)
         self.assertIn('@filter.command("图生视频")', main_src)
         self.assertIn("视频：", main_src)
+
+
+class LegFocusTests(unittest.TestCase):
+    def test_leg_focus_action_random_poses(self) -> None:
+        # Import main with minimal astrbot stubs (same pattern as smoke tests).
+        import sys
+        import types
+        import tempfile
+
+        if "astrbot" not in sys.modules:
+            astrbot = types.ModuleType("astrbot")
+            api = types.ModuleType("astrbot.api")
+            star = types.ModuleType("astrbot.api.star")
+            event = types.ModuleType("astrbot.api.event")
+            comps = types.ModuleType("astrbot.api.message_components")
+
+            class Star:
+                pass
+
+            def register(*a, **k):
+                def deco(cls):
+                    return cls
+                return deco
+
+            class filter:
+                @staticmethod
+                def command(*a, **k):
+                    def deco(fn):
+                        return fn
+                    return deco
+
+            star.Context = object
+            star.Star = Star
+            star.register = register
+            event.AstrMessageEvent = object
+            event.filter = filter
+            comps.Image = type("Image", (), {})
+            api.star = star
+            api.event = event
+            api.message_components = comps
+            api.llm_tool = lambda *a, **k: (lambda f: f)
+            api.logger = types.SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+                debug=lambda *a, **k: None,
+            )
+            astrbot.api = api
+            sys.modules["astrbot"] = astrbot
+            sys.modules["astrbot.api"] = api
+            sys.modules["astrbot.api.star"] = star
+            sys.modules["astrbot.api.event"] = event
+            sys.modules["astrbot.api.message_components"] = comps
+            sys.modules["astrbot.core"] = types.ModuleType("astrbot.core")
+            sys.modules["astrbot.core.utils"] = types.ModuleType("astrbot.core.utils")
+            pathmod = types.ModuleType("astrbot.core.utils.astrbot_path")
+            pathmod.get_astrbot_data_path = lambda: tempfile.gettempdir()
+            sys.modules["astrbot.core.utils.astrbot_path"] = pathmod
+
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        class _P:
+            pass
+
+        kneel, sit = [], []
+        for _ in range(50):
+            t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
+            self.assertIn("光腿神器", t)
+            self.assertIn("脸部", t)
+            if "跪坐" in t:
+                kneel.append(t)
+            if "坐姿拍腿" in t or "床沿" in t or "单人椅" in t:
+                sit.append(t)
+        self.assertTrue(kneel, "expected kneel pose")
+        self.assertTrue(sit, "expected sit pose")
+
+    def test_send_one_by_one_comment_present(self) -> None:
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        self.assertIn("生成一张发一张", main_src)
+        self.assertIn("rebuild_each", main_src)
 
 
 if __name__ == "__main__":
