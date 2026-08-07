@@ -3095,14 +3095,18 @@ class SelfieImagePlugin(Star):
 
     @filter.command("生图帮助")
     async def cmd_help(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        text = self._help_text_body()
+        """仅发帮助图；详细文字见 /生图help。"""
         help_path = self._resolve_help_image_path()
         if help_path:
             yield event.chain_result([self._create_image_component(help_path)])
-            # Keep a short caption under the poster; full command list still available as text.
-            yield event.plain_result(text)
             return
-        yield event.plain_result(text)
+        # 无图时退回简短提示，避免空白
+        yield event.plain_result("帮助图暂不可用。发 /生图help 看文字说明。")
+
+    @filter.command("生图help")
+    async def cmd_help_text(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """详细文字指令说明。"""
+        yield event.plain_result(self._help_text_body())
 
     def _help_text_body(self) -> str:
         return "\n".join(
@@ -3132,6 +3136,8 @@ class SelfieImagePlugin(Star):
                 "预设：/预设　列表；管理员可 /预设添加 名称:内容、/预设删除 名称",
                 "",
                 "说明：一次可写数量表示连出几轮；图好了会直接发过来，也可用 /生图任务 查进度。",
+                "· /生图帮助　只看图卡",
+                "· /生图help　看本页完整说明",
                 f"管理页：{'已开' if self.config.web_enable else '未开'}　http://{self.config.web_host}:{self.config.web_port}",
                 "也可在 AstrBot 插件页打开内嵌管理（用后台登录即可，不必再输 Web 口令）。",
             ]

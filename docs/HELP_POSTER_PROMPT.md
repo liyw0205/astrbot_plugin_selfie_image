@@ -1,38 +1,42 @@
 # Help poster generation notes (dev-time only; asset is shipped)
 
 ## Runtime
-`/生图帮助` only reads `assets/help_poster.png` (or `.jpg`). **No live generation.**
+- `/生图帮助` → **image only** (`assets/help_poster.png` / `.jpg`)
+- `/生图help` → **detailed text**
+- **No live generation** of the poster
 
 ## Regenerate (developer machine)
 Channel: prioritized test model (e.g. 糖心/gpt-image-2)  
-Reference: current persona image (prefer raw persona webp over cropped logo)  
+Reference: current persona image (prefer raw persona webp)  
 Aspect: vertical `2:3`
 
 ### Prompt principles
-- **Identity lock**: same face/hair/skin as reference; no anime/chibi/2D restyle
-- **Look**: soft realistic illustration / polished photo-poster, natural light
-- **Eye contact**: if facing camera, must look into the lens; fix distracted/off-camera gaze without changing identity
-- **Layout**: character guide + Chinese command cards (`/画 /自拍 /合影 /生图模型 /生图任务 /形象设置`)
-- Clean whitespace, no watermarks/brands
+- Identity lock + eye contact into lens; no anime restyle
+- Keep current card layout for commands
+- **Do not** put English words like `QQ-bot` / `QQ bot` / brand names on the poster
+- Footer line (Chinese only): `发 /生图help 查看指令详情`
 
 ### Prompt (English, used for gpt-image)
 ```
-Create one clean vertical QQ-bot help poster.
+Create one clean vertical help poster for a Chinese chat bot image plugin.
+Keep the same overall layout as a polished photo-poster (character + command cards).
 
 IDENTITY (strict):
-- Same person as the reference photo: face shape, eyes, nose, lips, skin, hair color/length/curl, overall likeness.
-- Do NOT anime / chibi / 2D cartoon restyle. Soft realistic photo-poster look, natural light.
-- EYE CONTACT: she is facing the camera and MUST look directly into the lens with a clear, friendly focus.
-  If the reference looks distracted or off-camera, correct only the gaze so she engages the viewer; keep identity unchanged.
-  Natural soft smile, present and attentive — not vacant, not looking away.
+- Same person as the reference photo: face, hair, skin, likeness.
+- Soft realistic photo-poster look, natural light. No anime / chibi / 2D cartoon.
+- EYE CONTACT: look directly into the camera lens, friendly and focused.
+  If the reference gaze is distracted, fix only the eyes to engage the viewer.
 
-LAYOUT:
-- Upper/mid: half-body or 3/4 of the character as a friendly guide, eye contact with camera.
-- Lower/side: neat Chinese command cards, high readability on mobile:
+LAYOUT (keep structure, clean Chinese text only):
+- Upper/mid: half-body or 3/4 guide character looking at camera.
+- Mid/lower: neat Chinese command cards (high mobile readability):
   /画   /自拍   /合影
   /生图模型   /生图任务   /形象设置
-- Optional small subtitle: 生图帮助
-- Whitespace, minimal decor, no watermarks, no real brand logos.
+- Bottom footer, single clear line in Chinese (must appear, legible):
+  发 /生图help 查看指令详情
+- Optional small title only in Chinese if needed: 生图帮助
+- NO English labels. Especially do NOT write: QQ-bot, QQ bot, bot, Selfie Image, English slogans.
+- No watermarks, no real brand logos, minimal decor, whitespace.
 
-Use the reference only for identity and appearance fidelity.
+Use the reference only for identity fidelity.
 ```

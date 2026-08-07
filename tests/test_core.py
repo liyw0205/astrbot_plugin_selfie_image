@@ -3038,7 +3038,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
         self.assertTrue(hasattr(plugin_main, "SelfieImagePlugin"))
         # command handlers exist
-        for name in ("cmd_help", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel"):
+        for name in ("cmd_help", "cmd_help_text", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel"):
             self.assertTrue(hasattr(plugin_main.SelfieImagePlugin, name), name)
 
     def test_help_uses_shipped_static_poster_only(self) -> None:
@@ -3055,7 +3055,13 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("assets", main_src)
         self.assertIn("help_poster.png", main_src)
         self.assertIn("_bundled_help_poster_path", main_src)
-        self.assertIn('async def cmd_help', main_src)
+        self.assertIn("async def cmd_help", main_src)
+        self.assertIn('@filter.command("生图help")', main_src)
+        self.assertIn("async def cmd_help_text", main_src)
+        # image-only path must not auto-append full help text in cmd_help body
+        help_fn = main_src.split("async def cmd_help", 1)[1].split("async def cmd_help_text", 1)[0]
+        self.assertNotIn("_help_text_body()", help_fn)
+        self.assertIn("chain_result", help_fn)
 
     def test_selfie_prompt_requires_eye_contact_when_facing_camera(self) -> None:
         from astrbot_plugin_selfie_image.persona import PersonaManager
