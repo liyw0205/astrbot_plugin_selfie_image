@@ -19,12 +19,12 @@
 | 5 | AstrBot 冒烟契约 | `docs/targets/05-…` | 待开始 | — |
 | 6 | 内嵌 Dashboard 与测试闭环 | `docs/targets/06-…` | 进行中 | 通用生图 / 电报 |
 | 7 | 协议锁定 openai/openai_chat | `docs/targets/07-…` | 已完成（部分） | 通用生图 / 图像网关 / 手办化 |
-| 8 | 指令模型切换与任务查询取消 | `docs/targets/08-…` | 待开始 | 通用生图 / OmniDraw |
+| 8 | 指令模型切换与任务查询取消 | `docs/targets/08-…` | 已完成 | 通用生图 / OmniDraw |
 | 9 | 不可重试错误分类 | `docs/targets/09-…` | 已完成 | 通用生图 / 网关 |
 | 10 | GPT Image 双档案与防双扣费 | `docs/targets/10-…` | 已完成 | starmiao GPT Image |
 | 11 | 统一参考图收集器 | `docs/targets/11-…` | 待开始 | piexian / 通用生图 / OmniDraw |
 | 12 | 多 API Key 轮询 | `docs/targets/12-…` | 待开始 | 多头部生图插件 |
-| 13 | 生图后台化不阻塞对话 | `docs/targets/13-…` | 待开始 | Gitee aiimg / 通用生图 |
+| 13 | 生图后台化不阻塞对话 | `docs/targets/13-…` | 已完成 | Gitee aiimg / 通用生图 |
 
 扫描市场时 **以 description/tags 为主**（见调研 §1.1 NAME-MISS），避免漏掉手办化/lmarena/doubao 等。  
 自动步骤与审查清单见 `OPTIMIZATION_ROADMAP.md`。

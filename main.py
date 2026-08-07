@@ -175,6 +175,9 @@ class SelfieImagePlugin(Star):
         self._web_task_lock = threading.RLock()
         self._web_tasks: Dict[str, Dict[str, Any]] = {}
         self._web_task_seq = 0
+        # Session-scoped model override: session_key -> "channel/model" (target 08; not global).
+        self._session_model_lock = threading.RLock()
+        self._session_model_overrides: Dict[str, str] = {}
         self._last_request_at: Dict[str, float] = {}
         self.loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -1205,6 +1208,9 @@ class SelfieImagePlugin(Star):
                 "updated_at": self._web_task_timestamp(),
                 "request_data": self._summarize_web_test_payload(payload_copy),
                 "result": None,
+                "source": "web-test",
+                "owner_session": "web",
+                "cancel_requested": False,
             }
             self._prune_web_tasks_locked()
         asyncio.run_coroutine_threadsafe(self._run_web_image_task(task_id, payload_copy), loop)
@@ -1213,8 +1219,21 @@ class SelfieImagePlugin(Star):
     async def _run_web_image_task(self, task_id: str, payload: Dict[str, Any]) -> None:
         self._set_web_image_task(task_id, status="running", started_ts=time.time(), started_at=self._web_task_timestamp())
         try:
+            if self._task_cancel_requested(task_id):
+                raise RuntimeError("任务已取消")
             result = await self.web_test_image(payload)
             result = redact_sensitive_data(result)
+            if self._task_cancel_requested(task_id):
+                self._set_web_image_task(
+                    task_id,
+                    status="cancelled",
+                    success=False,
+                    error="任务已取消",
+                    result={"success": False, "error": "任务已取消"},
+                    finished_ts=time.time(),
+                    finished_at=self._web_task_timestamp(),
+                )
+                return
             success = bool(result.get("success"))
             error = "" if success else redact_sensitive_text(str(result.get("error") or "这次没顺好"))
             self._set_web_image_task(
@@ -1228,9 +1247,10 @@ class SelfieImagePlugin(Star):
             )
         except Exception as exc:
             error = redact_sensitive_text(str(exc))
+            cancelled = "取消" in error
             self._set_web_image_task(
                 task_id,
-                status="failed",
+                status="cancelled" if cancelled else "failed",
                 success=False,
                 error=error,
                 result={"success": False, "error": error},
@@ -2068,7 +2088,7 @@ class SelfieImagePlugin(Star):
         max_attempts: Optional[int] = None,
         allow_compat_retry: bool = True,
     ) -> Dict[str, Any]:
-        selected_targets = targets or self.config.get_prioritized_targets()
+        selected_targets = targets or self._resolve_generation_targets(event)
         request_prompt = str(prompt or "")
         original_prompt = str(original_prompt or request_prompt)
         audit_prompt_text = original_prompt or request_prompt
@@ -2338,6 +2358,388 @@ class SelfieImagePlugin(Star):
                 return target
         return None
 
+    def _available_model_labels(self) -> List[str]:
+        labels: List[str] = []
+        seen = set()
+        for target in self.config.get_prioritized_targets():
+            if target.label in seen:
+                continue
+            seen.add(target.label)
+            labels.append(target.label)
+        return labels
+
+    def _get_session_model_override(self, event: Optional[AstrMessageEvent] = None) -> str:
+        if event is None:
+            return ""
+        key = self._session_key(event)
+        with self._session_model_lock:
+            return str(self._session_model_overrides.get(key) or "").strip()
+
+    def _set_session_model_override(self, event: AstrMessageEvent, label: str) -> str:
+        key = self._session_key(event)
+        value = str(label or "").strip()
+        with self._session_model_lock:
+            if not value:
+                self._session_model_overrides.pop(key, None)
+                return ""
+            self._session_model_overrides[key] = value
+            # Bound memory for long-running bots.
+            while len(self._session_model_overrides) > 200:
+                self._session_model_overrides.pop(next(iter(self._session_model_overrides)))
+        return value
+
+    def _match_model_label(self, raw: str) -> Optional[str]:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        labels = self._available_model_labels()
+        if not labels:
+            return None
+        if text.isdigit():
+            index = int(text) - 1
+            if 0 <= index < len(labels):
+                return labels[index]
+            return None
+        # Exact label / channel:model / bare model
+        for label in labels:
+            if text == label or text == label.replace("/", ":"):
+                return label
+        for label in labels:
+            channel, _, model = label.partition("/")
+            if text == model or text == f"{channel}:{model}":
+                return label
+        # Prefix / contains (single hit only)
+        hits = [label for label in labels if text in label or label.endswith(f"/{text}")]
+        if len(hits) == 1:
+            return hits[0]
+        return None
+
+    def _resolve_generation_targets(
+        self,
+        event: Optional[AstrMessageEvent] = None,
+        targets: Optional[List[ImageModelTarget]] = None,
+    ) -> List[ImageModelTarget]:
+        if targets is not None:
+            return list(targets)
+        all_targets = self.config.get_prioritized_targets()
+        override = self._get_session_model_override(event)
+        if not override or not all_targets:
+            return all_targets
+        preferred: List[ImageModelTarget] = []
+        for target in all_targets:
+            if target.label == override:
+                preferred.append(target)
+                break
+        if not preferred and "/" in override:
+            channel, _, model = override.partition("/")
+            for target in all_targets:
+                if target.channel_name == channel and target.model == model:
+                    preferred.append(target)
+                    break
+        if not preferred:
+            return all_targets
+        rest = [target for target in all_targets if target.label != preferred[0].label]
+        return preferred + rest
+
+    def _list_image_tasks_for_session(
+        self,
+        session_key: str = "",
+        *,
+        include_finished: bool = False,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        with self._web_task_lock:
+            items = list(self._web_tasks.values())
+        active_status = {"queued", "running"}
+        rows: List[Dict[str, Any]] = []
+        for task in sorted(items, key=lambda item: float(item.get("created_ts") or 0), reverse=True):
+            owner = str(task.get("owner_session") or "")
+            if session_key and owner and owner != session_key:
+                continue
+            if not include_finished and task.get("status") not in active_status:
+                continue
+            # Hide pure web-test tasks from chat unless same session web owner is empty and source command
+            source = str(task.get("source") or "")
+            if session_key and source.startswith("web") and owner != session_key:
+                continue
+            rows.append(copy.deepcopy(task))
+            if len(rows) >= max(1, limit):
+                break
+        return [redact_sensitive_data(row) for row in rows]
+
+    def _format_task_list_text(self, tasks: List[Dict[str, Any]]) -> str:
+        if not tasks:
+            return "当前没有进行中的生图任务。"
+        lines = ["进行中的生图任务："]
+        for index, task in enumerate(tasks, 1):
+            task_id = str(task.get("task_id") or "")
+            status = str(task.get("status") or "")
+            req = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
+            prompt = str(req.get("original_prompt") or req.get("prompt") or "")[:40]
+            lines.append(f"{index}. {task_id} [{status}] {prompt}")
+        lines.append("查看：/生图任务 <任务ID>；取消：/生图取消 <任务ID>")
+        return "\n".join(lines)
+
+    def _format_task_detail_text(self, task: Dict[str, Any]) -> str:
+        req = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
+        result = task.get("result") if isinstance(task.get("result"), dict) else {}
+        lines = [
+            f"任务 {task.get('task_id')}",
+            f"状态：{task.get('status')}",
+            f"来源：{task.get('source') or 'unknown'}",
+            f"提示词：{str(req.get('original_prompt') or req.get('prompt') or '')[:120]}",
+        ]
+        if task.get("error"):
+            lines.append(f"错误：{task.get('error')}")
+        if result.get("used_model"):
+            lines.append(f"模型：{result.get('used_model')}")
+        if result.get("files"):
+            lines.append(f"图片数：{len(result.get('files') or [])}")
+        if task.get("status") in {"queued", "running"}:
+            lines.append(f"已运行：{task.get('running_seconds', 0)} 秒")
+        return "\n".join(lines)
+
+    def cancel_image_task(
+        self,
+        task_id: str,
+        *,
+        session_key: str = "",
+        is_admin: bool = False,
+    ) -> str:
+        tid = str(task_id or "").strip()
+        if not tid:
+            raise ValueError("请提供任务ID")
+        with self._web_task_lock:
+            task = self._web_tasks.get(tid)
+            if not task:
+                # allow short numeric index against recent active? handled by caller
+                raise ValueError("任务不存在或已清理")
+            owner = str(task.get("owner_session") or "")
+            if owner and session_key and owner != session_key and not is_admin:
+                raise PermissionError("不能取消其他会话的生图任务")
+            status = str(task.get("status") or "")
+            if status in {"succeeded", "failed", "cancelled"}:
+                return f"任务已结束（{status}），无需取消"
+            task["cancel_requested"] = True
+            now = time.time()
+            if status == "queued":
+                task["status"] = "cancelled"
+                task["success"] = False
+                task["error"] = "任务已取消"
+                task["updated_ts"] = now
+                task["updated_at"] = self._web_task_timestamp()
+                task["finished_ts"] = now
+                task["finished_at"] = self._web_task_timestamp()
+                return f"已取消任务 {tid}"
+            task["updated_ts"] = now
+            task["updated_at"] = self._web_task_timestamp()
+            return f"已请求取消任务 {tid}（生成中将在当前步骤结束后停止）"
+
+    def _task_cancel_requested(self, task_id: str) -> bool:
+        with self._web_task_lock:
+            task = self._web_tasks.get(task_id)
+            return bool(task and task.get("cancel_requested"))
+
+    def start_command_image_task(
+        self,
+        event: AstrMessageEvent,
+        *,
+        source: str,
+        summary: Dict[str, Any],
+        runner,
+    ) -> Dict[str, Any]:
+        """Queue a chat-side generation job and return immediately (targets 08/13)."""
+        loop = getattr(self, "loop", None) or asyncio.get_running_loop()
+        session_key = self._session_key(event)
+        with self._web_task_lock:
+            self._web_task_seq += 1
+            task_id = f"cmd-{int(time.time() * 1000)}-{self._web_task_seq}"
+            now = time.time()
+            self._web_tasks[task_id] = {
+                "task_id": task_id,
+                "status": "queued",
+                "success": None,
+                "error": "",
+                "created_ts": now,
+                "updated_ts": now,
+                "created_at": self._web_task_timestamp(),
+                "updated_at": self._web_task_timestamp(),
+                "request_data": redact_sensitive_data(dict(summary or {})),
+                "result": None,
+                "source": source,
+                "owner_session": session_key,
+                "owner_user_id": event_user_id(event),
+                "cancel_requested": False,
+            }
+            self._prune_web_tasks_locked()
+        asyncio.create_task(self._run_command_image_task(task_id, event, runner))
+        return self.get_web_image_task(task_id)
+
+    async def _run_command_image_task(self, task_id: str, event: AstrMessageEvent, runner) -> None:
+        self._set_web_image_task(
+            task_id,
+            status="running",
+            started_ts=time.time(),
+            started_at=self._web_task_timestamp(),
+        )
+        try:
+            if self._task_cancel_requested(task_id):
+                raise RuntimeError("任务已取消")
+            result = await runner(task_id)
+            result = redact_sensitive_data(result if isinstance(result, dict) else {"success": False, "error": "无效结果"})
+            if self._task_cancel_requested(task_id) and not result.get("success"):
+                result = {"success": False, "error": "任务已取消", "cancelled": True}
+            success = bool(result.get("success"))
+            cancelled = bool(result.get("cancelled")) or str(result.get("error") or "").find("取消") >= 0
+            error = "" if success else redact_sensitive_text(str(result.get("error") or ("任务已取消" if cancelled else "这次没顺好")))
+            self._set_web_image_task(
+                task_id,
+                status="cancelled" if cancelled and not success else ("succeeded" if success else "failed"),
+                success=success,
+                error=error,
+                result=result,
+                finished_ts=time.time(),
+                finished_at=self._web_task_timestamp(),
+            )
+        except Exception as exc:
+            error = redact_sensitive_text(str(exc))
+            cancelled = "取消" in error
+            self._set_web_image_task(
+                task_id,
+                status="cancelled" if cancelled else "failed",
+                success=False,
+                error=error,
+                result={"success": False, "error": error},
+                finished_ts=time.time(),
+                finished_at=self._web_task_timestamp(),
+            )
+            try:
+                await event.send(event.plain_result(self._friendly_user_error_message(error, "生图没有完成")))
+            except Exception as send_exc:
+                logger.warning(f"[SelfieImage] 后台任务失败通知发送失败: {send_exc}")
+
+    async def _background_draw_batches(
+        self,
+        task_id: str,
+        event: AstrMessageEvent,
+        prompt: str,
+        aspect: str,
+        resolution: str,
+        refs: List[ImageReference],
+        source: str,
+        requested_count: int,
+        *,
+        passthrough: bool = False,
+        fail_label: str = "",
+    ) -> Dict[str, Any]:
+        total = self._normalize_count(requested_count)
+        all_files: List[str] = []
+        used_model = ""
+        last_elapsed = 0.0
+        for index in range(total):
+            if self._task_cancel_requested(task_id):
+                return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
+            if passthrough:
+                result = await self._draw_passthrough_once(event, prompt, aspect, resolution, refs, source)
+            else:
+                result = await self._draw_once(event, prompt, aspect, resolution, refs, source)
+            if not result.get("success"):
+                error = self._friendly_user_error_message(
+                    str(result.get("error") or ""),
+                    fail_label or self._natural_fail_fallback("image"),
+                )
+                try:
+                    await event.send(event.plain_result(error))
+                except Exception:
+                    pass
+                return {"success": False, "error": str(result.get("error") or error), "files": all_files}
+            files = list(result.get("files") or [])
+            used_model = str(result.get("used_model") or used_model)
+            last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
+            if files:
+                self._record_generated_images(event, 1)
+                await self._send_generated_images(event, files)
+                all_files.extend(files)
+            info = self._batch_success_text(
+                self._build_success_text(last_elapsed, len(files), used_model, event),
+                index + 1,
+                total,
+            )
+            if info:
+                try:
+                    await event.send(event.plain_result(info))
+                except Exception:
+                    pass
+        return {
+            "success": True,
+            "files": all_files,
+            "used_model": used_model,
+            "elapsed_seconds": last_elapsed,
+            "batch_total": total,
+        }
+
+    async def _background_selfie_batches(
+        self,
+        task_id: str,
+        event: AstrMessageEvent,
+        action: str,
+        extra_refs: List[ImageReference],
+        source: str,
+        requested_count: int,
+        aspect: str,
+        resolution: str,
+        fail_label: str,
+    ) -> Dict[str, Any]:
+        total = self._normalize_count(requested_count)
+        all_files: List[str] = []
+        used_model = ""
+        last_elapsed = 0.0
+        for index in range(total):
+            if self._task_cancel_requested(task_id):
+                return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
+            prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
+            result = await self._run_image_generation(
+                prompt,
+                aspect,
+                resolution,
+                refs,
+                source=source,
+                audit_user_id=event_user_id(event),
+                event=event,
+                original_prompt=action,
+            )
+            if not result.get("success"):
+                error = self._friendly_user_error_message(str(result.get("error") or ""), fail_label)
+                try:
+                    await event.send(event.plain_result(error))
+                except Exception:
+                    pass
+                return {"success": False, "error": str(result.get("error") or error), "files": all_files}
+            files = list(result.get("files") or [])
+            used_model = str(result.get("used_model") or used_model)
+            last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
+            if files:
+                self._record_generated_images(event, 1)
+                await self._send_generated_images(event, files)
+                all_files.extend(files)
+            info = self._batch_success_text(
+                self._build_success_text(last_elapsed, len(files), used_model, event),
+                index + 1,
+                total,
+            )
+            if info:
+                try:
+                    await event.send(event.plain_result(info))
+                except Exception:
+                    pass
+        return {
+            "success": True,
+            "files": all_files,
+            "used_model": used_model,
+            "elapsed_seconds": last_elapsed,
+            "batch_total": total,
+        }
+
     def _validate_web_test_selection(self, payload: Dict[str, Any]) -> None:
         channel_name = str(payload.get("channel") or "").strip()
         model_name = str(payload.get("model") or "").strip()
@@ -2602,26 +3004,35 @@ class SelfieImagePlugin(Star):
         if hints:
             progress += "\n" + "\n".join(hints)
         self._record_bot_text_context(event, progress)
-        yield event.plain_result(progress)
 
-        for index in range(requested_count):
-            prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
-            result = await self._run_image_generation(prompt, aspect, resolution, refs, source=source, audit_user_id=event_user_id(event), event=event, original_prompt=action)
-            if not result.get("success"):
-                yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), fail_label))
-                return
-            files = result.get("files", [])
-            if files:
-                self._record_generated_images(event, 1)
-                self._record_bot_image_context(event, files)
-                yield event.chain_result([self._create_image_component(path) for path in files])
-            info = self._batch_success_text(
-                self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
-                index + 1,
+        async def runner(task_id: str) -> Dict[str, Any]:
+            return await self._background_selfie_batches(
+                task_id,
+                event,
+                action,
+                extra_refs,
+                source,
                 requested_count,
+                aspect,
+                resolution,
+                fail_label,
             )
-            if info:
-                yield event.plain_result(info)
+
+        task = self.start_command_image_task(
+            event,
+            source=source,
+            summary={
+                "original_prompt": action,
+                "aspect_ratio": aspect,
+                "resolution": resolution,
+                "requested_count": requested_count,
+                "kind": progress_label,
+            },
+            runner=runner,
+        )
+        yield event.plain_result(
+            f"{progress}\n已受理任务 {task.get('task_id')}，生成完成后会直接推送；可用 /生图任务 查看。"
+        )
 
     @filter.command("生图帮助")
     async def cmd_help(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
@@ -2632,6 +3043,9 @@ class SelfieImagePlugin(Star):
                     "/画 [数量] <预设名或提示词> [数量] [额外提示词] [--ar 1:1] [--resolution 2K]（别名 /生图）",
                     "/文生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（提示词直通）",
                     "/图生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（附带/引用图片，提示词直通）",
+                    "/生图模型 [序号/渠道/模型名]（会话内切换；留空查看；清除 取消覆盖）",
+                    "/生图任务 [任务ID]（查看本会话任务）",
+                    "/生图取消 <任务ID>（取消本会话任务）",
                     "/预设",
                     "/预设 查看 [页码/预设名]（管理员查看内容）",
                     "/预设添加 名称:提示词",
@@ -2641,6 +3055,7 @@ class SelfieImagePlugin(Star):
                     "/看看你 [数量] [动作/场景] [--ar 3:4]（他拍感，不是手持自拍）",
                     "/合影 [数量] <动作/场景/合照要求> [--ar 1:1]（别名 /合照）",
                     "数量表示调用生图次数；模型每次实际返回 1 张或多张都会照常发送。",
+                    "生图为后台任务：先回执任务号，完成后再推送图片（可用 /生图任务 查询）。",
                     "/形象查看",
                     "/形象设置 <发送图片、引用图片或图片链接>",
                     "/形象清除",
@@ -2651,6 +3066,124 @@ class SelfieImagePlugin(Star):
                 ]
             )
         )
+
+    @filter.command("生图模型")
+    async def cmd_image_model(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
+        message = extract_command_message(event, "生图模型", fallback).strip()
+        labels = self._available_model_labels()
+        current = self._get_session_model_override(event)
+        default_label = labels[0] if labels else ""
+        effective = current or default_label
+
+        if not message:
+            if not labels:
+                yield event.plain_result("当前没有可用生图模型，请先在 Web 配置并启用渠道模型。")
+                return
+            lines = ["可用生图模型（会话覆盖，不影响其他群）："]
+            for index, label in enumerate(labels, 1):
+                mark = " ✓" if label == effective else ""
+                lines.append(f"{index}. {label}{mark}")
+            lines.append(f"当前使用：{effective or '（未配置）'}")
+            if current:
+                lines.append(f"会话覆盖：{current}（发送 /生图模型 清除 可恢复默认优先级）")
+            else:
+                lines.append("切换：/生图模型 序号  或  /生图模型 渠道/模型")
+            yield event.plain_result("\n".join(lines))
+            return
+
+        if message in {"清除", "取消", "默认", "reset", "clear"}:
+            self._set_session_model_override(event, "")
+            yield event.plain_result(f"已清除会话模型覆盖，恢复默认优先级：{default_label or '（无模型）'}")
+            return
+
+        matched = self._match_model_label(message)
+        if not matched:
+            yield event.plain_result("未匹配到模型。请先 /生图模型 查看列表，再输入序号或 渠道/模型。")
+            return
+        self._set_session_model_override(event, matched)
+        yield event.plain_result(f"本会话生图模型已切换为：{matched}\n仅影响当前群/私聊，下次 /画 /自拍 等优先使用该模型。")
+
+    @filter.command("生图任务")
+    async def cmd_image_tasks(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        fallback = " ".join(item for item in [p1, p2] if item).strip()
+        message = extract_command_message(event, "生图任务", fallback).strip()
+        session_key = self._session_key(event)
+        is_admin = self._is_admin_event(event)
+
+        if message:
+            try:
+                task = self.get_web_image_task(message)
+            except Exception:
+                # numeric index into active list
+                active = self._list_image_tasks_for_session(session_key, include_finished=False, limit=20)
+                if message.isdigit():
+                    index = int(message) - 1
+                    if 0 <= index < len(active):
+                        task = active[index]
+                    else:
+                        yield event.plain_result("未找到该编号对应的进行中任务；已结束任务请使用完整任务ID。")
+                        return
+                else:
+                    yield event.plain_result("任务不存在或已清理。")
+                    return
+            owner = str(task.get("owner_session") or "")
+            if owner and owner != session_key and not is_admin:
+                yield event.plain_result("不能查看其他会话的生图任务。")
+                return
+            # refresh running_seconds
+            if task.get("status") in {"queued", "running"}:
+                try:
+                    task = self.get_web_image_task(str(task.get("task_id") or message))
+                except Exception:
+                    pass
+            yield event.plain_result(self._format_task_detail_text(task))
+            return
+
+        tasks = self._list_image_tasks_for_session(session_key, include_finished=False, limit=10)
+        yield event.plain_result(self._format_task_list_text(tasks))
+
+    @filter.command("生图取消")
+    async def cmd_image_task_cancel(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        fallback = " ".join(item for item in [p1, p2] if item).strip()
+        message = extract_command_message(event, "生图取消", fallback).strip()
+        session_key = self._session_key(event)
+        is_admin = self._is_admin_event(event)
+        if not message:
+            active = self._list_image_tasks_for_session(session_key, include_finished=False, limit=5)
+            if active:
+                yield event.plain_result("请提供要取消的任务ID或编号。\n" + self._format_task_list_text(active))
+            else:
+                yield event.plain_result("当前没有可取消的生图任务。")
+            return
+        task_id = message
+        if message.isdigit():
+            active = self._list_image_tasks_for_session(session_key, include_finished=False, limit=20)
+            index = int(message) - 1
+            if 0 <= index < len(active):
+                task_id = str(active[index].get("task_id") or "")
+            else:
+                yield event.plain_result("未找到对应的进行中任务，请检查编号或任务ID。")
+                return
+        try:
+            text = self.cancel_image_task(task_id, session_key=session_key, is_admin=is_admin)
+            yield event.plain_result(text)
+        except PermissionError as exc:
+            yield event.plain_result(str(exc))
+        except Exception as exc:
+            yield event.plain_result(redact_sensitive_text(str(exc)))
 
     @filter.command("画", alias={"生图"})
     async def cmd_draw(
@@ -2690,23 +3223,35 @@ class SelfieImagePlugin(Star):
 
         progress = await self._build_contextual_progress_text(event, "image", prompt, requested_count)
         self._record_bot_text_context(event, progress)
-        yield event.plain_result(progress)
-        async for result in self._iter_draw_batch(event, prompt, aspect, resolution, refs, "command-draw", requested_count):
-            if not result.get("success"):
-                yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
-                return
-            files = result.get("files", [])
-            if files:
-                self._record_generated_images(event, 1)
-                self._record_bot_image_context(event, files)
-                yield event.chain_result([self._create_image_component(path) for path in files])
-            info = self._batch_success_text(
-                self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
-                int(result.get("batch_index") or 1),
-                int(result.get("batch_total") or requested_count),
+
+        async def runner(task_id: str) -> Dict[str, Any]:
+            return await self._background_draw_batches(
+                task_id,
+                event,
+                prompt,
+                aspect,
+                resolution,
+                refs,
+                "command-draw",
+                requested_count,
+                passthrough=False,
             )
-            if info:
-                yield event.plain_result(info)
+
+        task = self.start_command_image_task(
+            event,
+            source="command-draw",
+            summary={
+                "original_prompt": prompt,
+                "aspect_ratio": aspect,
+                "resolution": resolution,
+                "requested_count": requested_count,
+                "reference_image_count": len(refs),
+            },
+            runner=runner,
+        )
+        yield event.plain_result(
+            f"{progress}\n已受理任务 {task.get('task_id')}，生成完成后会直接推送；可用 /生图任务 查看。"
+        )
 
     @filter.command("文生图")
     async def cmd_raw_text_to_image(
@@ -2738,23 +3283,34 @@ class SelfieImagePlugin(Star):
 
         progress = await self._build_contextual_progress_text(event, "image", prompt, requested_count)
         self._record_bot_text_context(event, progress)
-        yield event.plain_result(progress)
-        async for result in self._iter_draw_batch(event, prompt, aspect, resolution, [], "command-raw-text-to-image", requested_count, passthrough=True):
-            if not result.get("success"):
-                yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
-                return
-            files = result.get("files", [])
-            if files:
-                self._record_generated_images(event, 1)
-                self._record_bot_image_context(event, files)
-                yield event.chain_result([self._create_image_component(path) for path in files])
-            info = self._batch_success_text(
-                self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
-                int(result.get("batch_index") or 1),
-                int(result.get("batch_total") or requested_count),
+
+        async def runner(task_id: str) -> Dict[str, Any]:
+            return await self._background_draw_batches(
+                task_id,
+                event,
+                prompt,
+                aspect,
+                resolution,
+                [],
+                "command-raw-text-to-image",
+                requested_count,
+                passthrough=True,
             )
-            if info:
-                yield event.plain_result(info)
+
+        task = self.start_command_image_task(
+            event,
+            source="command-raw-text-to-image",
+            summary={
+                "original_prompt": prompt,
+                "aspect_ratio": aspect,
+                "resolution": resolution,
+                "requested_count": requested_count,
+            },
+            runner=runner,
+        )
+        yield event.plain_result(
+            f"{progress}\n已受理任务 {task.get('task_id')}，生成完成后会直接推送；可用 /生图任务 查看。"
+        )
 
     @filter.command("图生图")
     async def cmd_raw_image_to_image(
@@ -2798,23 +3354,35 @@ class SelfieImagePlugin(Star):
 
         progress = await self._build_contextual_progress_text(event, "image", prompt, requested_count)
         self._record_bot_text_context(event, progress)
-        yield event.plain_result(progress)
-        async for result in self._iter_draw_batch(event, prompt, aspect, resolution, refs, "command-raw-image-to-image", requested_count, passthrough=True):
-            if not result.get("success"):
-                yield event.plain_result(self._friendly_user_error_message(str(result.get("error") or ""), self._natural_fail_fallback("image")))
-                return
-            files = result.get("files", [])
-            if files:
-                self._record_generated_images(event, 1)
-                self._record_bot_image_context(event, files)
-                yield event.chain_result([self._create_image_component(path) for path in files])
-            info = self._batch_success_text(
-                self._build_success_text(float(result.get("elapsed_seconds") or 0), len(files), str(result.get("used_model") or ""), event),
-                int(result.get("batch_index") or 1),
-                int(result.get("batch_total") or requested_count),
+
+        async def runner(task_id: str) -> Dict[str, Any]:
+            return await self._background_draw_batches(
+                task_id,
+                event,
+                prompt,
+                aspect,
+                resolution,
+                refs,
+                "command-raw-image-to-image",
+                requested_count,
+                passthrough=True,
             )
-            if info:
-                yield event.plain_result(info)
+
+        task = self.start_command_image_task(
+            event,
+            source="command-raw-image-to-image",
+            summary={
+                "original_prompt": prompt,
+                "aspect_ratio": aspect,
+                "resolution": resolution,
+                "requested_count": requested_count,
+                "reference_image_count": len(refs),
+            },
+            runner=runner,
+        )
+        yield event.plain_result(
+            f"{progress}\n已受理任务 {task.get('task_id')}，生成完成后会直接推送；可用 /生图任务 查看。"
+        )
 
     @filter.command("自拍", alias={"看看"})
     async def cmd_selfie(

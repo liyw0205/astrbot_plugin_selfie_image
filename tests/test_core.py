@@ -2559,5 +2559,149 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(set(schema["web"]["items"]), {"enable", "host", "port", "token"})
 
 
+class SessionModelAndTaskTests(unittest.TestCase):
+    def _plugin_stub(self):
+        # main.py imports astrbot; stub minimal modules for unit tests outside runtime.
+        if "astrbot" not in sys.modules:
+            astrbot = types.ModuleType("astrbot")
+            api = types.ModuleType("astrbot.api")
+            star = types.ModuleType("astrbot.api.star")
+            event = types.ModuleType("astrbot.api.event")
+            comps = types.ModuleType("astrbot.api.message_components")
+
+            class Star:
+                def __init__(self, *a, **k):
+                    pass
+
+            def register(*a, **k):
+                def deco(cls):
+                    return cls
+
+                return deco
+
+            class filter:
+                class PermissionType:
+                    ADMIN = "admin"
+
+                @staticmethod
+                def command(*a, **k):
+                    def deco(fn):
+                        return fn
+
+                    return deco
+
+                @staticmethod
+                def permission_type(*a, **k):
+                    def deco(fn):
+                        return fn
+
+                    return deco
+
+            star.Context = object
+            star.Star = Star
+            star.register = register
+            event.AstrMessageEvent = object
+            event.filter = filter
+            comps.Image = type("Image", (), {})
+            api.star = star
+            api.event = event
+            api.message_components = comps
+            api.llm_tool = lambda *a, **k: (lambda f: f)
+            api.logger = types.SimpleNamespace(info=lambda *a, **k: None, warning=lambda *a, **k: None, error=lambda *a, **k: None, debug=lambda *a, **k: None)
+            astrbot.api = api
+            sys.modules["astrbot"] = astrbot
+            sys.modules["astrbot.api"] = api
+            sys.modules["astrbot.api.star"] = star
+            sys.modules["astrbot.api.event"] = event
+            sys.modules["astrbot.api.message_components"] = comps
+            sys.modules["astrbot.core"] = types.ModuleType("astrbot.core")
+            sys.modules["astrbot.core.utils"] = types.ModuleType("astrbot.core.utils")
+            pathmod = types.ModuleType("astrbot.core.utils.astrbot_path")
+            pathmod.get_astrbot_data_path = lambda: tempfile.gettempdir()
+            sys.modules["astrbot.core.utils.astrbot_path"] = pathmod
+
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        plugin = object.__new__(plugin_main.SelfieImagePlugin)
+        plugin._session_model_lock = __import__("threading").RLock()
+        plugin._session_model_overrides = {}
+        plugin._web_task_lock = __import__("threading").RLock()
+        plugin._web_tasks = {}
+        plugin._web_task_seq = 0
+        plugin.config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "primary",
+                        "provider_type": "openai",
+                        "base_url": "https://example.test",
+                        "api_key": "sk-test",
+                        "enabled_models": ["gpt-image-2", "gpt-image-1"],
+                    },
+                    {
+                        "name": "secondary",
+                        "provider_type": "openai",
+                        "base_url": "https://example.test",
+                        "api_key": "sk-test",
+                        "enabled_models": ["alt-model"],
+                    },
+                ],
+                "enabled_image_model_priority": ["secondary/alt-model", "primary/gpt-image-2"],
+            }
+        )
+        return plugin
+
+    def test_session_model_override_reorders_targets(self) -> None:
+        plugin = self._plugin_stub()
+
+        class Ev:
+            pass
+
+        plugin._session_key = lambda event=None: "group:g1"
+        labels = plugin._available_model_labels()
+        self.assertEqual(labels[0], "secondary/alt-model")
+        matched = plugin._match_model_label("2")
+        self.assertEqual(matched, "primary/gpt-image-2")
+        plugin._set_session_model_override(Ev(), matched)
+        ordered = plugin._resolve_generation_targets(Ev())
+        self.assertEqual(ordered[0].label, "primary/gpt-image-2")
+        plugin._set_session_model_override(Ev(), "")
+        ordered2 = plugin._resolve_generation_targets(Ev())
+        self.assertEqual(ordered2[0].label, "secondary/alt-model")
+
+    def test_cancel_image_task_session_isolation(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_task_timestamp = lambda: "t"
+        now = 1.0
+        plugin._web_tasks["cmd-1"] = {
+            "task_id": "cmd-1",
+            "status": "queued",
+            "owner_session": "group:a",
+            "source": "command-draw",
+            "created_ts": now,
+            "updated_ts": now,
+        }
+        plugin._web_tasks["cmd-2"] = {
+            "task_id": "cmd-2",
+            "status": "running",
+            "owner_session": "group:b",
+            "source": "command-draw",
+            "created_ts": now,
+            "updated_ts": now,
+            "cancel_requested": False,
+        }
+        msg = plugin.cancel_image_task("cmd-1", session_key="group:a")
+        self.assertIn("已取消", msg)
+        self.assertEqual(plugin._web_tasks["cmd-1"]["status"], "cancelled")
+        with self.assertRaises(PermissionError):
+            plugin.cancel_image_task("cmd-2", session_key="group:a")
+        msg2 = plugin.cancel_image_task("cmd-2", session_key="group:b")
+        self.assertIn("已请求取消", msg2)
+        self.assertTrue(plugin._web_tasks["cmd-2"]["cancel_requested"])
+        listed = plugin._list_image_tasks_for_session("group:b", include_finished=False)
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["task_id"], "cmd-2")
+
+
 if __name__ == "__main__":
     unittest.main()
