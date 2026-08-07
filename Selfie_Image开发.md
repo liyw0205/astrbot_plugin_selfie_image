@@ -15,9 +15,9 @@
 | 1 | 统一 Provider 结果解释 | `docs/targets/01-…` | 已完成 | — |
 | 2 | 收敛 Web 请求状态 | `docs/targets/02-…` | 已完成 | — |
 | 3 | 配置预检与渠道诊断 | `docs/targets/03-…` | 已完成 | 通用生图 |
-| 4 | 缓存回收一致性 | `docs/targets/04-…` | 待开始 | — |
-| 5 | AstrBot 冒烟契约 | `docs/targets/05-…` | 待开始 | — |
-| 6 | 内嵌 Dashboard 与测试闭环 | `docs/targets/06-…` | 进行中 | 通用生图 / 电报 |
+| 4 | 缓存回收一致性 | `docs/targets/04-…` | 已完成 | — |
+| 5 | AstrBot 冒烟契约 | `docs/targets/05-…` | 已完成 | — |
+| 6 | 内嵌 Dashboard 与测试闭环 | `docs/targets/06-…` | 已完成 | 通用生图 / 电报 |
 | 7 | 协议锁定 openai/openai_chat | `docs/targets/07-…` | 已完成（部分） | 通用生图 / 图像网关 / 手办化 |
 | 8 | 指令模型切换与任务查询取消 | `docs/targets/08-…` | 已完成 | 通用生图 / OmniDraw |
 | 9 | 不可重试错误分类 | `docs/targets/09-…` | 已完成 | 通用生图 / 网关 |

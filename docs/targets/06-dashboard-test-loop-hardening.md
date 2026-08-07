@@ -31,4 +31,4 @@ python -m unittest tests/test_core.py
 - 回滚：恢复 endpoint 剥 `/api/` 约定与 bridge 预加载顺序。
 
 ## 状态
-进行中（代码已部分落地，本目标负责收口验收与防回潮）
+已完成（2026-08-07）：前端/内嵌契约单测锁定 bridge 路径、safeStorage、轮询 failStreak、增强默认关、Dashboard 双路由注册、trust_env/OpenAI 快路径。

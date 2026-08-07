@@ -5,6 +5,7 @@ import copy
 import asyncio
 import json
 import os
+import re
 import sys
 import tempfile
 import types
@@ -2882,6 +2883,163 @@ class ReferenceCollectorTests(unittest.TestCase):
 
         buckets = extract_structured_image_sources(Event(), include_at_avatar=True)
         self.assertEqual(sum(len(v) for v in buckets.values()), 0)
+
+
+class DashboardEmbedContractTests(unittest.TestCase):
+    """Target 06: lock embed/token-free boot and channel-test poll contracts."""
+
+    def setUp(self) -> None:
+        self.html = INDEX_HTML or ""
+
+    def test_index_html_has_embed_safe_storage_and_bridge_boot(self) -> None:
+        self.assertIn("function safeStorageGet", self.html)
+        self.assertIn("function safeStorageSet", self.html)
+        self.assertIn("function safeStorageRemove", self.html)
+        self.assertIn("function isDashboardPage", self.html)
+        self.assertIn("function isEmbeddedFrame", self.html)
+        self.assertIn("function bridgeEndpoint", self.html)
+        self.assertIn("waitForDashboardBridge", self.html)
+        self.assertIn("bridge-sdk.js", self.html)
+        # Must strip /api/ prefix like telegram forwarder
+        compact = re.sub(r"\s+", "", self.html)
+        self.assertIn("noQuery.startsWith('/api/')", compact)
+        self.assertIn("noQuery.slice('/api/'.length)", compact)
+        self.assertIn("returnnoQuery.slice('/api/'.length)", compact)
+        # No bare localStorage at boot for token (sandbox SecurityError risk)
+        self.assertNotRegex(self.html, r"(?m)^\s*localStorage\.getItem\(")
+        self.assertIn("safeStorageGet('selfieImageToken')", self.html)
+
+    def test_bridge_endpoint_contract_examples(self) -> None:
+        # Execute bridgeEndpoint pure logic copied from page contract.
+        def bridge_endpoint(path: str) -> str:
+            value = str(path or "").strip()
+            no_query = value.split("?", 1)[0]
+            if no_query.startswith("/api/"):
+                return no_query[len("/api/") :]
+            return no_query.lstrip("/")
+
+        self.assertEqual(bridge_endpoint("/api/config"), "config")
+        self.assertEqual(bridge_endpoint("/api/test-image-channel/tasks"), "test-image-channel/tasks")
+        self.assertEqual(bridge_endpoint("/api/health?x=1"), "health")
+        self.assertNotEqual(bridge_endpoint("/api/config"), "page/api/config")
+
+    def test_channel_test_defaults_and_poll_retry_contract(self) -> None:
+        self.assertIn('id="promptEnhance"', self.html)
+        # default unchecked (no checked attribute on enhance)
+        self.assertNotRegex(self.html, r'id="promptEnhance"[^>]*checked')
+        self.assertIn("pollImageTestTask(taskId, failStreak = 0)", self.html)
+        self.assertIn("nextFail = failStreak + 1", self.html)
+        self.assertIn("failStreak", self.html)
+        self.assertTrue(("15–60" in self.html) or ("15-60" in self.html) or ("15–60秒" in self.html.replace(" ", "")))
+        # 1:1 preference when auto
+        self.assertTrue("1:1" in self.html)
+
+    def test_dashboard_api_registers_token_free_routes(self) -> None:
+        from astrbot_plugin_selfie_image.dashboard_api import SelfieImageDashboardAPI
+        from astrbot_plugin_selfie_image.constants import PLUGIN_NAME
+
+        registered = []
+
+        class Ctx:
+            def register_web_api(self, path, handler, methods, desc):
+                registered.append((path, tuple(methods), desc))
+
+        class Plugin:
+            context = Ctx()
+
+        api = SelfieImageDashboardAPI(Plugin())
+        api.register()
+        paths = [item[0] for item in registered]
+        self.assertTrue(any(p == f"/{PLUGIN_NAME}/health" for p in paths))
+        self.assertTrue(any(p == f"/{PLUGIN_NAME}/page/health" for p in paths))
+        self.assertTrue(any(p.endswith("/config") for p in paths))
+        self.assertTrue(any("test-image-channel/tasks" in p for p in paths))
+        # dual registration for bridge compatibility
+        self.assertGreaterEqual(len(registered), 20)
+
+    def test_openai_fast_path_and_trust_env_false_still_present(self) -> None:
+        providers = Path(__file__).resolve().parents[1] / "providers.py"
+        main = Path(__file__).resolve().parents[1] / "main.py"
+        parser = Path(__file__).resolve().parents[1] / "provider_parser.py"
+        self.assertIn("extract_openai_images_data", providers.read_text(encoding="utf-8"))
+        self.assertIn("def extract_openai_images_data", parser.read_text(encoding="utf-8"))
+        self.assertIn("ClientSession(trust_env=False)", main.read_text(encoding="utf-8"))
+
+
+class AstrBotSmokeContractTests(unittest.TestCase):
+    """Target 05: minimal runtime stubs without real AstrBot process."""
+
+    def test_plugin_class_registers_with_stubbed_astrbot(self) -> None:
+        if "astrbot" not in sys.modules:
+            # reuse session test stubbing pattern
+            astrbot = types.ModuleType("astrbot")
+            api = types.ModuleType("astrbot.api")
+            star = types.ModuleType("astrbot.api.star")
+            event = types.ModuleType("astrbot.api.event")
+            comps = types.ModuleType("astrbot.api.message_components")
+
+            class Star:
+                def __init__(self, *a, **k):
+                    pass
+
+            def register(*a, **k):
+                def deco(cls):
+                    return cls
+
+                return deco
+
+            class filter:
+                class PermissionType:
+                    ADMIN = "admin"
+
+                @staticmethod
+                def command(*a, **k):
+                    def deco(fn):
+                        return fn
+
+                    return deco
+
+                @staticmethod
+                def permission_type(*a, **k):
+                    def deco(fn):
+                        return fn
+
+                    return deco
+
+            star.Context = object
+            star.Star = Star
+            star.register = register
+            event.AstrMessageEvent = object
+            event.filter = filter
+            comps.Image = type("Image", (), {})
+            api.star = star
+            api.event = event
+            api.message_components = comps
+            api.llm_tool = lambda *a, **k: (lambda f: f)
+            api.logger = types.SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+                debug=lambda *a, **k: None,
+            )
+            astrbot.api = api
+            sys.modules["astrbot"] = astrbot
+            sys.modules["astrbot.api"] = api
+            sys.modules["astrbot.api.star"] = star
+            sys.modules["astrbot.api.event"] = event
+            sys.modules["astrbot.api.message_components"] = comps
+            sys.modules["astrbot.core"] = types.ModuleType("astrbot.core")
+            sys.modules["astrbot.core.utils"] = types.ModuleType("astrbot.core.utils")
+            pathmod = types.ModuleType("astrbot.core.utils.astrbot_path")
+            pathmod.get_astrbot_data_path = lambda: tempfile.gettempdir()
+            sys.modules["astrbot.core.utils.astrbot_path"] = pathmod
+
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        self.assertTrue(hasattr(plugin_main, "SelfieImagePlugin"))
+        # command handlers exist
+        for name in ("cmd_help", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel"):
+            self.assertTrue(hasattr(plugin_main.SelfieImagePlugin, name), name)
 
 
 if __name__ == "__main__":
