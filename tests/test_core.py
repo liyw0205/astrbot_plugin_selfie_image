@@ -2965,6 +2965,8 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("EDITING_CHANNEL_IS_NEW", self.html)
         self.assertIn("CHANNEL_DRAFT", self.html)
         self.assertIn("openChannelModal(-1, 'image', { isNew: true })", self.html)
+        self.assertIn("scheduleFormAutoSave", self.html)
+        self.assertIn("scheduleChannelListAutoSave", self.html)
         self.assertIn("modalProvider", self.html)
         self.assertIn("toastOnOk", self.html)
         self.assertIn("allowWhileModal", self.html)

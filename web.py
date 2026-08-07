@@ -384,7 +384,7 @@ INDEX_HTML = r"""<!doctype html>
           <button class="secondary" type="button" onclick="addVideoChannel()">加视频渠道</button>
         </div>
       </div>
-      <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。渠道启用但还没选模型时，保存会自动关掉该渠道，不会整页报错。</p>
+      <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。新建/编辑渠道点「保存渠道」才写入；列表里启停、删除、复制和优先级会自动保存。启用但没选模型时会自动关掉该渠道。</p>
       <div class="tabs-inline" role="tablist" aria-label="渠道分类">
         <button id="channelTabImage" class="active" type="button" onclick="switchChannelPane('image')">生图渠道</button>
         <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">审核渠道</button>
@@ -1092,7 +1092,7 @@ INDEX_HTML = r"""<!doctype html>
       channelListFor(kind).splice(index, 1);
       renderAllChannelLists();
       refreshModelSelectors();
-      scheduleAutoSave('', { toast: false });
+      scheduleChannelListAutoSave();
     }
     function duplicateChannel(index, kind = 'image') {
       const list = channelListFor(kind);
@@ -1102,7 +1102,7 @@ INDEX_HTML = r"""<!doctype html>
       list.splice(index + 1, 0, normalizeChannel(copy));
       renderAllChannelLists();
       refreshModelSelectors();
-      scheduleAutoSave('', { toast: false });
+      scheduleChannelListAutoSave();
     }
     function renderAllChannelLists() {
       renderChannels();
@@ -1150,7 +1150,7 @@ INDEX_HTML = r"""<!doctype html>
           }
           refreshModelSelectors();
           renderAllChannelLists();
-          scheduleAutoSave('', { toast: false });
+          scheduleChannelListAutoSave();
         };
         card.querySelector('[data-act="edit"]').onclick = () => openChannelModal(i, kind);
         card.querySelector('[data-act="dup"]').onclick = () => duplicateChannel(i, kind);
@@ -1530,17 +1530,17 @@ INDEX_HTML = r"""<!doctype html>
       if (!current.includes(value)) current.push(value);
       $('priorityList').value = current.join('\n');
       renderPriorityRows();
-      scheduleAutoSave('', { toast: false });
+      scheduleChannelListAutoSave();
     }
     function clearPriority() {
       $('priorityList').value = '';
       renderPriorityRows();
-      scheduleAutoSave('', { toast: false });
+      scheduleChannelListAutoSave();
     }
     function setPriorityItems(items) {
       $('priorityList').value = uniq(items).join('\n');
       renderPriorityRows();
-      scheduleAutoSave('', { toast: false });
+      scheduleChannelListAutoSave();
     }
     function prunePriorityList() {
       const allowed = new Set(activeImageModelKeys());
@@ -1592,6 +1592,7 @@ INDEX_HTML = r"""<!doctype html>
     async function persistConfig(renderAfterSave = false, okText = '配置已保存', options = {}) {
       const toastOnOk = options.toast === true;
       const toastOnError = options.toastError !== false;
+      const quiet = options.quiet === true;
       try {
         collectForms();
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: CONFIG})});
@@ -1599,7 +1600,7 @@ INDEX_HTML = r"""<!doctype html>
         ensureConfig();
         $('configText').value = JSON.stringify(CONFIG, null, 2);
         if (renderAfterSave) fillForms();
-        else {
+        else if (!quiet) {
           // keep lists in sync with server soft-disable without full form thrash
           renderAllChannelLists();
           refreshModelSelectors();
@@ -1618,11 +1619,28 @@ INDEX_HTML = r"""<!doctype html>
     }
     function scheduleAutoSave(okText = '', options = {}) {
       if (IS_FILLING || SUPPRESS_AUTOSAVE || !document.body.classList.contains('authed')) return;
-      // 编辑渠道弹窗打开时，不自动落盘（避免刷新缓存/未启用模型时误禁用）
+      // 渠道弹窗：只本地草稿，必须点「保存渠道」
       if (isChannelModalOpen() && options.allowWhileModal !== true) return;
       clearTimeout(AUTO_SAVE_TIMER);
-      setMultiStatus('正在保存…');
-      AUTO_SAVE_TIMER = setTimeout(() => persistConfig(false, okText || '', { toast: false, toastError: true }), 650);
+      const reason = options.reason || 'form';
+      // 输入框自动保存不刷「正在保存…」，避免每敲一字全页状态抖动
+      if (!options.silentStatus) setMultiStatus('正在保存…');
+      AUTO_SAVE_TIMER = setTimeout(() => {
+        persistConfig(false, okText || '', {
+          toast: false,
+          toastError: true,
+          quiet: reason === 'form',
+        });
+      }, options.delay != null ? options.delay : (reason === 'form' ? 900 : 650));
+    }
+    /** 主表单字段变更：仅配置页，不负责渠道弹窗/试画/记录。 */
+    function scheduleFormAutoSave() {
+      scheduleAutoSave('', { reason: 'form', silentStatus: true, toast: false });
+    }
+    /** 渠道列表结构化变更（删/复制/启停、优先级）：静默落盘。 */
+    function scheduleChannelListAutoSave() {
+      if (isChannelModalOpen()) return;
+      scheduleAutoSave('', { reason: 'channel-list', silentStatus: true, toast: false, delay: 500 });
     }
     async function saveJsonConfig() {
       try {
@@ -2141,10 +2159,19 @@ INDEX_HTML = r"""<!doctype html>
       if ($('loginStatus')) $('loginStatus').textContent = '已退出登录';
     }
     function setupAutoSave() {
+      // 仅配置型页面字段自动保存；渠道弹窗/试画/记录/高级 JSON 排除。
+      // 渠道新增/编辑：点「保存渠道」；列表启停/删/复制/优先级：scheduleChannelListAutoSave。
+      const allowSections = new Set(['base', 'image', 'selfie', 'audit']);
       document.querySelectorAll('main.app-shell input, main.app-shell select, main.app-shell textarea').forEach(el => {
-        if (el.type === 'file' || el.id === 'configText' || el.closest('#test') || el.closest('#monitor') || el.closest('#raw')) return;
+        if (el.type === 'file' || el.id === 'configText') return;
+        if (el.closest('#channelModal') || el.closest('#recordModal')) return;
+        if (el.closest('#test') || el.closest('#monitor') || el.closest('#raw')) return;
+        // 渠道页里除 priority 隐藏域外，列表操作走专用 schedule，不绑通用 input 自动保存
+        if (el.closest('#channels') && el.id !== 'priorityList') return;
+        const section = el.closest('section');
+        if (section && section.id && !allowSections.has(section.id) && section.id !== 'channels') return;
         const eventName = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'number' ? 'change' : 'input';
-        el.addEventListener(eventName, () => scheduleAutoSave());
+        el.addEventListener(eventName, () => scheduleFormAutoSave());
       });
     }
 
