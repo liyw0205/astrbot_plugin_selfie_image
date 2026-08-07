@@ -11,27 +11,28 @@ Aspect: vertical `2:3`
 ### Prompt principles
 - **Identity lock**: same face/hair/skin as reference; no anime/chibi/2D restyle
 - **Look**: soft realistic illustration / polished photo-poster, natural light
+- **Eye contact**: if facing camera, must look into the lens; fix distracted/off-camera gaze without changing identity
 - **Layout**: character guide + Chinese command cards (`/画 /自拍 /合影 /生图模型 /生图任务 /形象设置`)
 - Clean whitespace, no watermarks/brands
 
 ### Prompt (English, used for gpt-image)
 ```
-Create a clean vertical QQ bot help poster (single image).
+Create one clean vertical QQ-bot help poster.
 
 IDENTITY (strict):
-- The mascot MUST be the exact same real person/character as the reference photo.
-- Keep the same face shape, eyes, nose, lips, skin tone, hair color, hair length/curl pattern, and overall likeness.
-- Do NOT turn her into anime, chibi, 2D cartoon, or cel-shaded art.
-- Style: soft realistic illustration / polished photo-poster look, natural lighting, subtle depth of field. Tasteful, not plastic.
+- Same person as the reference photo: face shape, eyes, nose, lips, skin, hair color/length/curl, overall likeness.
+- Do NOT anime / chibi / 2D cartoon restyle. Soft realistic photo-poster look, natural light.
+- EYE CONTACT: she is facing the camera and MUST look directly into the lens with a clear, friendly focus.
+  If the reference looks distracted or off-camera, correct only the gaze so she engages the viewer; keep identity unchanged.
+  Natural soft smile, present and attentive — not vacant, not looking away.
 
 LAYOUT:
-- Top or left: the character as a friendly guide, half-body or 3/4, calm smile, simple modern outfit consistent with reference vibe.
-- Bottom or right: a neat instruction panel with clear Chinese labels on cards or a soft rounded board:
+- Upper/mid: half-body or 3/4 of the character as a friendly guide, eye contact with camera.
+- Lower/side: neat Chinese command cards, high readability on mobile:
   /画   /自拍   /合影
   /生图模型   /生图任务   /形象设置
-- Optional tiny subtitle: Selfie Image 生图帮助
-- Plenty of whitespace, minimal decorations, no watermarks, no real brand logos, no cluttered UI chrome.
-- High readability for mobile chat; balanced composition; finished poster quality.
+- Optional small subtitle: 生图帮助
+- Whitespace, minimal decor, no watermarks, no real brand logos.
 
-Use the reference image only for character identity and appearance fidelity.
+Use the reference only for identity and appearance fidelity.
 ```

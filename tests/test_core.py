@@ -2775,7 +2775,7 @@ class SessionModelAndTaskTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             plugin.cancel_image_task("cmd-2", session_key="group:a")
         msg2 = plugin.cancel_image_task("cmd-2", session_key="group:b")
-        self.assertIn("已请求取消", msg2)
+        self.assertIn("已记下取消", msg2)
         self.assertTrue(plugin._web_tasks["cmd-2"]["cancel_requested"])
         listed = plugin._list_image_tasks_for_session("group:b", include_finished=False)
         self.assertEqual(len(listed), 1)
@@ -3056,6 +3056,29 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("help_poster.png", main_src)
         self.assertIn("_bundled_help_poster_path", main_src)
         self.assertIn('async def cmd_help', main_src)
+
+    def test_selfie_prompt_requires_eye_contact_when_facing_camera(self) -> None:
+        from astrbot_plugin_selfie_image.persona import PersonaManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            text = manager.build_selfie_prompt(
+                action="",
+                bot_name="小助",
+                personality="温柔",
+                has_reference_image=True,
+                extra_reference_count=0,
+            )
+            self.assertIn("看向镜头", text)
+            self.assertIn("心不在焉", text)
+            group = manager.build_selfie_prompt(
+                action="合影",
+                bot_name="小助",
+                personality="温柔",
+                has_reference_image=True,
+                extra_reference_count=1,
+            )
+            self.assertIn("看向镜头", group)
 
 
 if __name__ == "__main__":

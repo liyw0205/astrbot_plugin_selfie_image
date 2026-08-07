@@ -1927,7 +1927,8 @@ class SelfieImagePlugin(Star):
         base = (
             "【他拍 / 看看你模式】展示 AI 当前样子的自然日常照片。"
             "像朋友在画面外用相机或手机随手拍下 AI，镜头来自旁边的拍摄者，带一点生活抓拍感。"
-            "主角可看向镜头、轻松回头、坐着发呆、整理东西或自然做自己的事。"
+            "正面半身或近景时优先看向镜头，眼神自然有焦点；也可以轻松回头。"
+            "不要整段心不在焉、眼神飘向别处（除非用户明确要求）。"
             "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
         )
         if has_refs:
@@ -1943,6 +1944,7 @@ class SelfieImagePlugin(Star):
             "如果同一张参考图里有多个可见人物 / 角色，按实际可见人数全部保留为独立同框对象。"
             "风景、建筑、房间、道具、表情包、卡通、吉祥物等非人物参考：按该图主色、线条、材质与气质拟人成可并肩站立的完整人物角色（成年、得体、日常），再与 AI 同框；不要把原图原样铺成背景或墙纸。"
             "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动、光线、色调和相机透视统一。"
+            "合影默认多数人看向镜头，像认真合影；AI 若面向镜头，优先与镜头有眼神交流，不要心不在焉。"
             "整体像同一时间、同一地点真实拍下的一张日常合影。"
         )
         if has_refs:
@@ -2182,7 +2184,11 @@ class SelfieImagePlugin(Star):
             return {"success": False, "error": f"提示词审核未通过：{audit_reason}"}
 
         if not selected_targets:
-            response_data = {"success": False, "stage": "select_model", "error": "当前没有可用的生图模型，请先配置 image_channels。"}
+            response_data = {
+                "success": False,
+                "stage": "select_model",
+                "error": "当前没有可用的出图模型，请先在管理页启用渠道和模型。",
+            }
             self._record_task(
                 {
                     **source_meta,
@@ -2200,7 +2206,7 @@ class SelfieImagePlugin(Star):
                     "generated_image_paths": [],
                 }
             )
-            return {"success": False, "error": "当前没有可用的生图模型，请先配置 image_channels。"}
+            return {"success": False, "error": response_data["error"]}
 
         request = ImageGenerateRequest(
             prompt=request_prompt,
@@ -2520,34 +2526,36 @@ class SelfieImagePlugin(Star):
 
     def _format_task_list_text(self, tasks: List[Dict[str, Any]]) -> str:
         if not tasks:
-            return "当前没有进行中的生图任务。"
-        lines = ["进行中的生图任务："]
+            return "现在没有进行中的出图。"
+        lines = ["进行中的出图："]
         for index, task in enumerate(tasks, 1):
             task_id = str(task.get("task_id") or "")
             status = str(task.get("status") or "")
+            status_cn = {"queued": "排队", "running": "绘制中", "succeeded": "完成", "failed": "失败", "cancelled": "已取消"}.get(status, status)
             req = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
             prompt = str(req.get("original_prompt") or req.get("prompt") or "")[:40]
-            lines.append(f"{index}. {task_id} [{status}] {prompt}")
-        lines.append("查看：/生图任务 <任务ID>；取消：/生图取消 <任务ID>")
+            lines.append(f"{index}. {task_id} [{status_cn}] {prompt}")
+        lines.append("查看：/生图任务 编号或任务号；取消：/生图取消 …")
         return "\n".join(lines)
 
     def _format_task_detail_text(self, task: Dict[str, Any]) -> str:
         req = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
         result = task.get("result") if isinstance(task.get("result"), dict) else {}
+        status = str(task.get("status") or "")
+        status_cn = {"queued": "排队", "running": "绘制中", "succeeded": "完成", "failed": "失败", "cancelled": "已取消"}.get(status, status)
         lines = [
             f"任务 {task.get('task_id')}",
-            f"状态：{task.get('status')}",
-            f"来源：{task.get('source') or 'unknown'}",
-            f"提示词：{str(req.get('original_prompt') or req.get('prompt') or '')[:120]}",
+            f"状态：{status_cn}",
+            f"说明：{str(req.get('original_prompt') or req.get('prompt') or '')[:120]}",
         ]
         if task.get("error"):
-            lines.append(f"错误：{task.get('error')}")
+            lines.append(f"原因：{task.get('error')}")
         if result.get("used_model"):
             lines.append(f"模型：{result.get('used_model')}")
         if result.get("files"):
-            lines.append(f"图片数：{len(result.get('files') or [])}")
+            lines.append(f"图片：{len(result.get('files') or [])} 张")
         if task.get("status") in {"queued", "running"}:
-            lines.append(f"已运行：{task.get('running_seconds', 0)} 秒")
+            lines.append(f"已用时：{task.get('running_seconds', 0)} 秒")
         return "\n".join(lines)
 
     def cancel_image_task(
@@ -2570,7 +2578,7 @@ class SelfieImagePlugin(Star):
                 raise PermissionError("不能取消其他会话的生图任务")
             status = str(task.get("status") or "")
             if status in {"succeeded", "failed", "cancelled"}:
-                return f"任务已结束（{status}），无需取消"
+                return f"这单已经结束了（{status}），不用再取消"
             task["cancel_requested"] = True
             now = time.time()
             if status == "queued":
@@ -2581,10 +2589,10 @@ class SelfieImagePlugin(Star):
                 task["updated_at"] = self._web_task_timestamp()
                 task["finished_ts"] = now
                 task["finished_at"] = self._web_task_timestamp()
-                return f"已取消任务 {tid}"
+                return f"已取消 {tid}"
             task["updated_ts"] = now
             task["updated_at"] = self._web_task_timestamp()
-            return f"已请求取消任务 {tid}（生成中将在当前步骤结束后停止）"
+            return f"已记下取消 {tid}（当前这步结束后会停）"
 
     def _task_cancel_requested(self, task_id: str) -> bool:
         with self._web_task_lock:
@@ -3082,7 +3090,7 @@ class SelfieImagePlugin(Star):
             runner=runner,
         )
         yield event.plain_result(
-            f"{progress}\n已受理任务 {task.get('task_id')}，生成完成后会直接推送；可用 /生图任务 查看。"
+            f"{progress}\n已接单 {task.get('task_id')}，画好了会直接发过来。进度可用 /生图任务 看。"
         )
 
     @filter.command("生图帮助")
@@ -3100,29 +3108,32 @@ class SelfieImagePlugin(Star):
         return "\n".join(
             [
                 f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}",
-                "/画 [数量] <预设名或提示词> [数量] [额外提示词] [--ar 1:1] [--resolution 2K]（别名 /生图）",
-                "/文生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（提示词直通）",
-                "/图生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（附带/引用图片，提示词直通）",
-                "/生图模型 [序号/渠道/模型名]（会话内切换；留空查看；清除 取消覆盖）",
-                "/生图任务 [任务ID]（查看本会话任务）",
-                "/生图取消 <任务ID>（取消本会话任务）",
-                "/预设",
-                "/预设 查看 [页码/预设名]（管理员查看内容）",
-                "/预设添加 名称:提示词",
-                "/预设删除 名称",
-                "/自拍 [数量] <预设名或动作/场景/换装/合照要求> [--ar 3:4]（别名 /看看）",
-                "/看看腿 [数量] [额外要求] [--ar 3:4]",
-                "/看看你 [数量] [动作/场景] [--ar 3:4]（他拍感，不是手持自拍）",
-                "/合影 [数量] <动作/场景/合照要求> [--ar 1:1]（别名 /合照）",
-                "数量表示调用生图次数；模型每次实际返回 1 张或多张都会照常发送。",
-                "生图为后台任务：先回执任务号，完成后再推送图片（可用 /生图任务 查询）。",
-                "/形象查看",
-                "/形象设置 <发送图片、引用图片或图片链接>",
-                "/形象清除",
-                "/形象刷新",
-                "LLM 工具：generate_image、generate_selfie",
-                f"Flask Web：{'已启用' if self.config.web_enable else '未启用'} http://{self.config.web_host}:{self.config.web_port}",
-                "AstrBot 内嵌管理页：插件详情页 dashboard（复用 Dashboard 登录，无需 Web Token）",
+                "",
+                "常用：",
+                "· /画 或 /生图　写想要的画面；可加数量、预设名，也可用 --ar 1:1、--resolution 2K",
+                "· /文生图　按你写的原文出图（不走自拍人设包装）",
+                "· /图生图　带图或引用图，按原文改图",
+                "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
+                "· /看看腿　下半身近景（可选补充）",
+                "· /看看你　像别人随手拍你（他拍感）",
+                "· /合影 或 /合照　和对象同框；可附图或@对方",
+                "",
+                "模型与进度：",
+                "· /生图模型　看列表；跟序号或 渠道/模型 切换（只影响当前群/私聊）；发「清除」恢复默认",
+                "· /生图任务　看进行中的图；可跟任务号",
+                "· /生图取消　取消还在排的/进行中的图",
+                "",
+                "形象：",
+                "· /形象查看　看当前参考图与今日状态",
+                "· /形象设置　发图、引用图或链接设成形象",
+                "· /形象清除　去掉参考图",
+                "· /形象刷新　刷新今日穿搭状态",
+                "",
+                "预设：/预设　列表；管理员可 /预设添加 名称:内容、/预设删除 名称",
+                "",
+                "说明：一次可写数量表示连出几轮；图好了会直接发过来，也可用 /生图任务 查进度。",
+                f"管理页：{'已开' if self.config.web_enable else '未开'}　http://{self.config.web_host}:{self.config.web_port}",
+                "也可在 AstrBot 插件页打开内嵌管理（用后台登录即可，不必再输 Web 口令）。",
             ]
         )
 
@@ -3154,31 +3165,31 @@ class SelfieImagePlugin(Star):
 
         if not message:
             if not labels:
-                yield event.plain_result("当前没有可用生图模型，请先在 Web 配置并启用渠道模型。")
+                yield event.plain_result("现在还没有可用模型，请先在管理页启用渠道和模型。")
                 return
-            lines = ["可用生图模型（会话覆盖，不影响其他群）："]
+            lines = ["可用模型（只改当前聊天，不影响其他群）："]
             for index, label in enumerate(labels, 1):
                 mark = " ✓" if label == effective else ""
                 lines.append(f"{index}. {label}{mark}")
-            lines.append(f"当前使用：{effective or '（未配置）'}")
+            lines.append(f"当前：{effective or '（未配置）'}")
             if current:
-                lines.append(f"会话覆盖：{current}（发送 /生图模型 清除 可恢复默认优先级）")
+                lines.append(f"本会话指定：{current}（发 /生图模型 清除 可恢复默认）")
             else:
-                lines.append("切换：/生图模型 序号  或  /生图模型 渠道/模型")
+                lines.append("切换：/生图模型 序号　或　/生图模型 渠道/模型")
             yield event.plain_result("\n".join(lines))
             return
 
         if message in {"清除", "取消", "默认", "reset", "clear"}:
             self._set_session_model_override(event, "")
-            yield event.plain_result(f"已清除会话模型覆盖，恢复默认优先级：{default_label or '（无模型）'}")
+            yield event.plain_result(f"已恢复默认顺序：{default_label or '（无模型）'}")
             return
 
         matched = self._match_model_label(message)
         if not matched:
-            yield event.plain_result("未匹配到模型。请先 /生图模型 查看列表，再输入序号或 渠道/模型。")
+            yield event.plain_result("没对上模型。先 /生图模型 看列表，再发序号或 渠道/模型。")
             return
         self._set_session_model_override(event, matched)
-        yield event.plain_result(f"本会话生图模型已切换为：{matched}\n仅影响当前群/私聊，下次 /画 /自拍 等优先使用该模型。")
+        yield event.plain_result(f"本会话已换成：{matched}\n之后这里的 /画、/自拍 等会优先用它。")
 
     @filter.command("生图任务")
     async def cmd_image_tasks(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
@@ -3202,14 +3213,14 @@ class SelfieImagePlugin(Star):
                     if 0 <= index < len(active):
                         task = active[index]
                     else:
-                        yield event.plain_result("未找到该编号对应的进行中任务；已结束任务请使用完整任务ID。")
+                        yield event.plain_result("没找到这个进行中的编号，或任务号不对。")
                         return
                 else:
-                    yield event.plain_result("任务不存在或已清理。")
+                    yield event.plain_result("没有这单，或已经清理了。")
                     return
             owner = str(task.get("owner_session") or "")
             if owner and owner != session_key and not is_admin:
-                yield event.plain_result("不能查看其他会话的生图任务。")
+                yield event.plain_result("不能看别人会话里的出图。")
                 return
             # refresh running_seconds
             if task.get("status") in {"queued", "running"}:
@@ -3236,9 +3247,9 @@ class SelfieImagePlugin(Star):
         if not message:
             active = self._list_image_tasks_for_session(session_key, include_finished=False, limit=5)
             if active:
-                yield event.plain_result("请提供要取消的任务ID或编号。\n" + self._format_task_list_text(active))
+                yield event.plain_result("请跟任务号或列表里的编号。\n" + self._format_task_list_text(active))
             else:
-                yield event.plain_result("当前没有可取消的生图任务。")
+                yield event.plain_result("现在没有可取消的出图。")
             return
         task_id = message
         if message.isdigit():
@@ -3322,7 +3333,7 @@ class SelfieImagePlugin(Star):
             runner=runner,
         )
         yield event.plain_result(
-            f"{progress}\n已受理任务 {task.get('task_id')}，生成完成后会直接推送；可用 /生图任务 查看。"
+            f"{progress}\n已接单 {task.get('task_id')}，画好了会直接发过来。进度可用 /生图任务 看。"
         )
 
     @filter.command("文生图")
@@ -3381,7 +3392,7 @@ class SelfieImagePlugin(Star):
             runner=runner,
         )
         yield event.plain_result(
-            f"{progress}\n已受理任务 {task.get('task_id')}，生成完成后会直接推送；可用 /生图任务 查看。"
+            f"{progress}\n已接单 {task.get('task_id')}，画好了会直接发过来。进度可用 /生图任务 看。"
         )
 
     @filter.command("图生图")
@@ -3453,7 +3464,7 @@ class SelfieImagePlugin(Star):
             runner=runner,
         )
         yield event.plain_result(
-            f"{progress}\n已受理任务 {task.get('task_id')}，生成完成后会直接推送；可用 /生图任务 查看。"
+            f"{progress}\n已接单 {task.get('task_id')}，画好了会直接发过来。进度可用 /生图任务 看。"
         )
 
     @filter.command("自拍", alias={"看看"})

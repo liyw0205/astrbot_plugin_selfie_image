@@ -125,64 +125,64 @@
   <div id="loginPage" class="login-page">
     <div class="login-box">
       <h1>Selfie Image 管理登录</h1>
-      <p class="muted" id="loginHint">独立 Flask 入口需要 Web Token。AstrBot 内嵌页会自动进入，无需输入 Token。</p>
-      <label>Web Token</label>
-      <input id="loginToken" type="password" placeholder="Web Token" autocomplete="current-password">
+      <p class="muted" id="loginHint">独立打开时需要管理口令。在 AstrBot 插件页里打开会自动登录，不用再输。</p>
+      <label>管理口令</label>
+      <input id="loginToken" type="password" placeholder="管理口令" autocomplete="current-password">
       <div class="actions">
-        <button id="loginBtn" class="ok">登录</button>
+        <button id="loginBtn" class="ok">进入</button>
       </div>
       <div id="loginStatus" class="status"></div>
     </div>
   </div>
 
   <header class="app-shell">
-    <h1>Selfie Image 生图自拍管理</h1>
+    <h1>生图 · 自拍 管理</h1>
     <div class="topline">
       <button id="reloadAll">刷新</button>
-      <button id="logoutBtn" class="secondary">退出登录</button>
+      <button id="logoutBtn" class="secondary">退出</button>
     </div>
   </header>
   <main class="app-shell">
     <nav>
-      <button data-tab="base" class="active">基础设置</button>
-      <button data-tab="channels">渠道管理</button>
-      <button data-tab="monitor">渠道监控</button>
-      <button data-tab="test">渠道测试</button>
-      <button data-tab="image">生图设置</button>
-      <button data-tab="selfie">形象设置</button>
-      <button data-tab="audit">生图审核</button>
-      <button data-tab="raw">JSON</button>
+      <button data-tab="base" class="active">基础</button>
+      <button data-tab="channels">渠道</button>
+      <button data-tab="monitor">记录</button>
+      <button data-tab="test">试画</button>
+      <button data-tab="image">出图</button>
+      <button data-tab="selfie">形象</button>
+      <button data-tab="audit">审核</button>
+      <button data-tab="raw">高级</button>
     </nav>
 
     <section id="base" class="active">
       <div class="between">
-        <h2>基础设置</h2>
+        <h2>基础</h2>
         <span id="healthPill" class="pill">未连接</span>
       </div>
-      <label>Web 状态</label><div id="health" class="status">未连接</div>
+      <label>连接状态</label><div id="health" class="status">还没连上</div>
       <div class="grid">
-        <div><label>生图缓存上限（MB）</label><input id="cacheLimitMB" type="number" min="10" max="102400"></div>
-        <div><label>缓存说明</label><div class="status">请求图 and 生成图会保存在同一个缓存目录；超过上限后自动清理最旧缓存图片直到低于上限。</div></div>
+        <div><label>图片缓存上限（MB）</label><input id="cacheLimitMB" type="number" min="10" max="102400"></div>
+        <div><label>说明</label><div class="status">请求图和生成图存在同一缓存目录；超过上限会自动删最旧的，直到回到上限以下。</div></div>
       </div>
-      <h3>权限</h3>
+      <h3>谁能用</h3>
       <div class="grid">
-        <div><label>可使用人员白名单</label><textarea id="usableUsers" placeholder="留空表示所有人可用"></textarea></div>
-        <div><label>用户黑名单</label><textarea id="blockedUsers"></textarea></div>
+        <div><label>可用名单</label><textarea id="usableUsers" placeholder="空着=所有人都能用"></textarea></div>
+        <div><label>黑名单</label><textarea id="blockedUsers"></textarea></div>
         <div><label>白名单用户</label><textarea id="whitelistUsers"></textarea></div>
-        <div><label>白名单群组</label><textarea id="whitelistGroups"></textarea></div>
+        <div><label>白名单群</label><textarea id="whitelistGroups"></textarea></div>
       </div>
       <div id="baseStatus" class="status" style="margin-top:12px"></div>
     </section>
 
     <section id="channels">
       <div class="between">
-        <h2>渠道管理</h2>
+        <h2>渠道</h2>
         <div class="actions" style="margin-top:0">
-          <button onclick="addChannel()">添加生图渠道</button>
-          <button class="secondary" onclick="addAuditChannel()">添加审核渠道</button>
+          <button onclick="addChannel()">加生图渠道</button>
+          <button class="secondary" onclick="addAuditChannel()">加审核渠道</button>
         </div>
       </div>
-      <p class="muted">支持生图渠道类型：openai、gemini、gemini_openai、z_image_gitee、jimeng2api、grok、agnes。列表只显示概要，点编辑管理接口、缓存模型和启用模型顺序。</p>
+      <p class="muted">类型支持 openai、gemini、gemini_openai、z_image_gitee、jimeng2api、grok、agnes。列表只显示概要，点「编辑」改接口、模型缓存和启用顺序。</p>
       <div class="tabs-inline">
         <button id="channelTabImage" class="active" type="button" onclick="switchChannelPane('image')">生图渠道</button>
         <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">审核渠道</button>
@@ -201,10 +201,10 @@
 
     <section id="monitor">
       <div class="between">
-        <h2>渠道监控</h2>
+        <h2>出图记录</h2>
         <div class="actions" style="margin-top:0">
-          <button class="secondary" onclick="loadRecords()">刷新记录</button>
-          <button class="danger" onclick="clearRecords()">清空记录</button>
+          <button class="secondary" onclick="loadRecords()">刷新</button>
+          <button class="danger" onclick="clearRecords()">清空</button>
         </div>
       </div>
       <div class="grid4">
@@ -218,25 +218,25 @@
     </section>
 
     <section id="test">
-      <h2>渠道测试</h2>
+      <h2>试画</h2>
       <div class="grid">
-        <div><label>生图渠道</label><select id="testChannel"></select></div>
+        <div><label>用哪个渠道</label><select id="testChannel"></select></div>
         <div><label>模型</label><select id="testModel"></select></div>
-        <div><label>宽高比</label><select id="testAspect"></select></div>
-        <div><label>分辨率</label><select id="testResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+        <div><label>画面比例</label><select id="testAspect"></select></div>
+        <div><label>清晰度</label><select id="testResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
       </div>
-      <label>测试提示词</label><textarea id="testPrompt">一只可爱的白色猫咪，坐在樱花树下，柔和光线，精致插画风格</textarea>
+      <label>想画什么</label><textarea id="testPrompt">一只可爱的白色猫咪，坐在樱花树下，柔和光线，精致插画风格</textarea>
       <div class="grid">
-        <label class="checkline"><input id="promptEnhance" type="checkbox"> 提示词增强</label>
-        <label class="checkline"><input id="useSelfie" type="checkbox"> 使用 AI 自拍形象参考图</label>
+        <label class="checkline"><input id="promptEnhance" type="checkbox"> 润色提示词</label>
+        <label class="checkline"><input id="useSelfie" type="checkbox"> 带上当前形象参考</label>
         <div><label>额外参考图</label><input id="testRefs" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml" multiple></div>
       </div>
       <div class="actions">
-        <button class="ok" id="testImageBtn">开始测试</button>
-        <button class="secondary" onclick="showTestPanel('request')">请求数据</button>
-        <button class="secondary" onclick="showTestPanel('response')">响应数据</button>
-        <button class="secondary" onclick="showTestPanel('result')">查看结果</button>
-        <button class="danger" onclick="clearTestData()">清空数据</button>
+        <button class="ok" id="testImageBtn">开始试画</button>
+        <button class="secondary" onclick="showTestPanel('request')">看请求</button>
+        <button class="secondary" onclick="showTestPanel('response')">看响应</button>
+        <button class="secondary" onclick="showTestPanel('result')">看结果</button>
+        <button class="danger" onclick="clearTestData()">清空</button>
       </div>
       <div id="testStatus" class="status"></div>
       <div id="testRequestPanel" class="test-panel"><h3>请求数据</h3><pre id="testRequestData"></pre></div>
@@ -245,63 +245,63 @@
     </section>
 
     <section id="image">
-      <h2>生图设置</h2>
+      <h2>出图习惯</h2>
       <div class="grid4">
-        <div><label>默认宽高比</label><select id="defaultAspect"></select></div>
-        <div><label>默认分辨率</label><select id="defaultResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
-        <div><label>最大并发</label><input id="maxConcurrent" type="number" min="1" max="20"></div>
-        <div><label>全局超时（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
+        <div><label>默认比例</label><select id="defaultAspect"></select></div>
+        <div><label>默认清晰度</label><select id="defaultResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+        <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="20"></div>
+        <div><label>整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
         <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
-        <div><label>单次最多调用次数</label><input id="maxBatchCount" type="number" min="1" max="8"></div>
-        <div><label>用户冷却秒数</label><input id="rateLimitSeconds" type="number" min="0"></div>
-        <div><label>每日基础额度</label><input id="dailyLimitCount" type="number" min="1"></div>
+        <div><label>一次最多连画几轮</label><input id="maxBatchCount" type="number" min="1" max="8"></div>
+        <div><label>每人冷却（秒）</label><input id="rateLimitSeconds" type="number" min="0"></div>
+        <div><label>每日基础次数</label><input id="dailyLimitCount" type="number" min="1"></div>
       </div>
       <div class="grid">
-        <label class="checkline"><input id="enableLLMTool" type="checkbox"> 启用 LLM 生图/自拍工具</label>
-        <label class="checkline"><input id="showGenerationInfo" type="checkbox"> 命令回复生成耗时/数量</label>
-        <label class="checkline"><input id="showModelInfo" type="checkbox"> 命令回复使用模型</label>
-        <label class="checkline"><input id="enableDailyLimit" type="checkbox"> 启用每日用户额度</label>
+        <label class="checkline"><input id="enableLLMTool" type="checkbox"> 对话里也能叫我出图/自拍</label>
+        <label class="checkline"><input id="showGenerationInfo" type="checkbox"> 回复里带上耗时和张数</label>
+        <label class="checkline"><input id="showModelInfo" type="checkbox"> 回复里带上用了哪个模型</label>
+        <label class="checkline"><input id="enableDailyLimit" type="checkbox"> 开启每日次数上限</label>
       </div>
       <div id="imageStatus" class="status"></div>
     </section>
 
     <section id="selfie">
-      <h2>形象设置</h2>
+      <h2>形象</h2>
       <div class="grid">
-        <div><label>机器人名称</label><input id="selfieBotName"></div>
+        <div><label>显示名</label><input id="selfieBotName"></div>
         <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
       </div>
-      <label>自拍人设</label><textarea id="selfiePersonality"></textarea>
-      <h3>自拍形象参考图</h3>
+      <label>人设（语气与氛围）</label><textarea id="selfiePersonality"></textarea>
+      <h3>形象参考图</h3>
       <input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml">
       <img id="selfiePreview" class="preview" alt="selfie reference">
       <div class="actions">
         <button id="uploadSelfie">上传并保存</button>
         <button class="secondary" onclick="refreshSelfie()">刷新预览</button>
-        <button class="ok" onclick="refreshDailySelfie()">刷新今日穿搭</button>
+        <button class="ok" onclick="refreshDailySelfie()">换今日穿搭</button>
         <button class="danger" onclick="clearSelfie()">清除参考图</button>
       </div>
       <div id="selfieStatus" class="status"></div>
     </section>
 
     <section id="audit">
-      <h2>生图审核</h2>
+      <h2>审核</h2>
       <div class="grid">
-        <label class="checkline"><input id="enablePromptAudit" type="checkbox"> 启用提示词审核</label>
-        <label class="checkline"><input id="enableOutputAudit" type="checkbox"> 启用出图审核</label>
-        <div><label>提示词审核模型</label><select id="promptAuditModel"></select></div>
-        <div><label>出图审核模型</label><select id="outputAuditModel"></select></div>
-        <div><label>OCR / 识图模型</label><select id="ocrModel"></select></div>
+        <label class="checkline"><input id="enablePromptAudit" type="checkbox"> 出图前审文字</label>
+        <label class="checkline"><input id="enableOutputAudit" type="checkbox"> 出图后审成品</label>
+        <div><label>文字审核模型</label><select id="promptAuditModel"></select></div>
+        <div><label>成品审核模型</label><select id="outputAuditModel"></select></div>
+        <div><label>识图模型</label><select id="ocrModel"></select></div>
       </div>
-      <label>提示词屏蔽词</label><textarea id="blockedWords"></textarea>
-      <label>提示词审核模板</label><textarea id="promptAuditTemplate"></textarea>
-      <label>出图审核模板</label><textarea id="outputAuditTemplate"></textarea>
-      <div id="auditStatus" class="status">提示词屏蔽词、提示词审核、出图审核会在命令、LLM 工具和 Web 渠道测试中生效。出图审核需要选择支持视觉的 OpenAI/Gemini 兼容模型。</div>
+      <label>文字屏蔽词</label><textarea id="blockedWords"></textarea>
+      <label>文字审核说明</label><textarea id="promptAuditTemplate"></textarea>
+      <label>成品审核说明</label><textarea id="outputAuditTemplate"></textarea>
+      <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核请选能看图的模型。</div>
     </section>
 
     <section id="raw">
-      <h2>独立配置 JSON</h2>
-      <p class="muted">这里编辑的是插件独立配置，不包含 AstrBot 启动用的 Web host/port/token。</p>
+      <h2>高级 · 配置原文</h2>
+      <p class="muted">这里改的是插件自己的配置，不包含 AstrBot 启动用的网页地址和口令。</p>
       <textarea id="configText" style="min-height:360px"></textarea>
       <div class="actions">
         <button onclick="loadConfig()">读取 JSON</button>
@@ -322,7 +322,7 @@
         <div><label>渠道名</label><input id="modalChannelName"></div>
         <div><label>类型</label><select id="modalProvider"></select></div>
         <div><label>Base URL</label><input id="modalBaseUrl"></div>
-        <div><label>API Key（可多行，每行一个；401/429 自动轮询下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
+        <div><label>API Key（可多行，每行一把；鉴权失败或限流会自动换下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
         <div><label>代理 URL</label><input id="modalProxy" placeholder="http://127.0.0.1:7890"></div>
         <div><label>默认模型</label><input id="modalModel"></div>
         <div><label>超时（秒）</label><input id="modalTimeout" type="number" min="10" max="900"></div>
@@ -1531,7 +1531,7 @@
     }
     function setTestBusy(busy) {
       $('testImageBtn').disabled = !!busy;
-      $('testImageBtn').textContent = busy ? '后台生成中' : '开始测试';
+      $('testImageBtn').textContent = busy ? '正在画…' : '开始试画';
     }
     function renderImageTestResult(data) {
       $('testResponseData').textContent = JSON.stringify(data || {}, null, 2);
@@ -1566,9 +1566,9 @@
           const label = task.status === 'queued' ? '排队中' : '生成中';
           const seconds = Number(task.running_seconds || 0);
           const hint = seconds >= 20
-            ? ' gpt-image 中转常需 15–60 秒，请继续等待；超过全局超时才会失败。'
+            ? ' 有的中转要 15–60 秒，先等等；超过设定超时才会判失败。'
             : '';
-          $('testStatus').textContent = `后台任务 ${task.task_id || TEST_TASK_ID} ${label}，已用 ${seconds}s。${hint}关闭页面不会停止任务。`;
+          $('testStatus').textContent = `任务 ${task.task_id || TEST_TASK_ID} ${label}，已用 ${seconds}s。${hint}关掉页面也不会停。`;
           TEST_TASK_POLL_TIMER = setTimeout(() => pollImageTestTask(TEST_TASK_ID, 0), 2000);
           return;
         }
@@ -1618,10 +1618,10 @@
       collectForms();
       clearTestData(false);
       setTestBusy(true);
-      $('testStatus').textContent = '正在提交后台生图任务...';
+      $('testStatus').textContent = '正在提交试画…';
       try {
-        if (!$('testChannel').value) throw new Error('没有可用的启用生图渠道，请先启用渠道');
-        if (!$('testModel').value) throw new Error('当前渠道没有可用模型，请先启用模型');
+        if (!$('testChannel').value) throw new Error('还没有可用渠道，先去「渠道」里启用');
+        if (!$('testModel').value) throw new Error('这个渠道还没有可用模型，先启用模型');
         const images = [];
         for (const file of $('testRefs').files) images.push(await readFileDataUrl(file));
         const payload = {
@@ -1676,7 +1676,7 @@
         } else {
           $('selfiePreview').style.display = 'none';
         }
-        $('selfieStatus').textContent = data.status || (data.has_image ? '当前已设置自拍参考图' : '当前还没有设置自拍参考图');
+        $('selfieStatus').textContent = data.status || (data.has_image ? '已设置形象参考图' : '还没有形象参考图');
       } catch (e) { $('selfieStatus').textContent = e.message; }
     }
     async function refreshDailySelfie() {
@@ -1843,8 +1843,8 @@
         || Boolean(window.AstrBotPluginPage);
       if (embedded) {
         if ($('loginPage')) $('loginPage').style.display = 'none';
-        if ($('loginStatus')) $('loginStatus').textContent = '正在连接 AstrBot 内嵌管理通道...';
-        if ($('loginHint')) $('loginHint').textContent = 'AstrBot 内嵌页复用 Dashboard 登录态，无需 Web Token。';
+        if ($('loginStatus')) $('loginStatus').textContent = '正在连上 AstrBot 管理通道…';
+        if ($('loginHint')) $('loginHint').textContent = '插件页会沿用后台登录，不必再输管理口令。';
         try {
           DASHBOARD_BRIDGE = await waitForDashboardBridge(12000);
           if (typeof DASHBOARD_BRIDGE.ready === 'function') await DASHBOARD_BRIDGE.ready();
