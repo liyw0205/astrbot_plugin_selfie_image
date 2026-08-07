@@ -28,4 +28,4 @@ python -m py_compile models.py providers.py main.py
 - 回滚：默认 lock=false 或迁移时写回显式 model_provider_types。
 
 ## 状态
-待开始
+已完成（2026-08-07 部分）：openai 渠道默认 protocol_lock（模型名不再跳协议）；显式 `model_provider_types` / `protocol_lock` 仍可覆盖。openai_chat 别名既有。

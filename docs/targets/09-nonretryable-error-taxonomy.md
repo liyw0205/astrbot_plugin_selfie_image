@@ -27,4 +27,4 @@ python -m py_compile generator.py providers.py utils.py
 - 回滚：429/5xx 保持可重试。
 
 ## 状态
-待开始
+已完成（2026-08-07）：`error_classify` + generator 不可重试即停；401/model_not_found/unsafe/timeout 不空转。

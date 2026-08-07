@@ -12,6 +12,5 @@
 - 不向远端 Provider 发送预检请求。
 - 不持久化密钥、Token 或请求样本。
 
-## 验收
-- 无效渠道在调用网络前被拒绝。
-- 错误信息可定位字段且不包含敏感值。
+## 状态
+已完成（2026-08-07）：`preflight_image_channel` / `preflight_config_channels`；Web 保存渠道列表与渠道测试共用；单测覆盖。

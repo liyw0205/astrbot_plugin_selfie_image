@@ -24,12 +24,19 @@ if "aiohttp" not in sys.modules:
     )
 
 from astrbot_plugin_selfie_image.generator import generate_image_with_fallback
+from astrbot_plugin_selfie_image.error_classify import (
+    classify_generation_error,
+    is_non_retryable_generation_error,
+    is_param_profile_switch_error,
+)
 from astrbot_plugin_selfie_image.models import (
     AICatConfig,
     DEFAULT_CONFIG,
     ImageModelTarget,
     deep_merge,
     normalize_config_tree,
+    preflight_image_channel,
+    preflight_config_channels,
     resolve_model_provider_type,
 )
 from astrbot_plugin_selfie_image.providers import (
@@ -86,6 +93,8 @@ class FakeResponse:
         self.data = {} if data is None else data
         self.status = status
         self._text = text if text else json.dumps(self.data)
+        self.charset = "utf-8"
+        self.headers = {}
 
     async def __aenter__(self):
         return self
@@ -95,6 +104,9 @@ class FakeResponse:
 
     async def text(self) -> str:
         return self._text
+
+    async def read(self) -> bytes:
+        return self._text.encode("utf-8")
 
     async def json(self, content_type=None):
         return self.data
@@ -309,6 +321,65 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(resolve_model_provider_type("agnes-image-2.1-flash", "openai"), "agnes")
         self.assertEqual(resolve_model_provider_type("grok-imagine-image", "openai"), "grok")
         self.assertEqual(resolve_model_provider_type("unknown-model", "gemini_openai"), "gemini_openai")
+        # protocol_lock keeps channel protocol even when model name looks like gemini
+        self.assertEqual(
+            resolve_model_provider_type("gemini-2.5-flash-image", "openai", protocol_lock=True),
+            "openai",
+        )
+        self.assertEqual(
+            resolve_model_provider_type("gemini-2.5-flash-image", "openai", "gemini", protocol_lock=True),
+            "gemini",
+        )
+
+    def test_openai_channel_protocol_lock_defaults(self) -> None:
+        config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "relay",
+                        "provider_type": "openai",
+                        "base_url": "https://example.test",
+                        "api_key": "sk-test",
+                        "enabled_models": ["gemini-2.5-flash-image", "gpt-image-2"],
+                    }
+                ]
+            }
+        )
+        targets = {t.model: t.provider_type for t in config.get_prioritized_targets()}
+        self.assertEqual(targets["gemini-2.5-flash-image"], "openai")
+        self.assertEqual(targets["gpt-image-2"], "openai")
+
+    def test_channel_preflight_requires_key_url_and_model(self) -> None:
+        bad = preflight_image_channel({"name": "x", "provider_type": "openai"}, kind="image")
+        self.assertFalse(bad["ok"])
+        fields = {item["field"] for item in bad["errors"]}
+        self.assertIn("base_url", fields)
+        self.assertIn("api_key", fields)
+        self.assertIn("enabled_models", fields)
+        good = preflight_image_channel(
+            {
+                "name": "ok",
+                "provider_type": "openai",
+                "base_url": "https://example.test",
+                "api_key": "sk-test",
+                "model": "gpt-image-2",
+            }
+        )
+        self.assertTrue(good["ok"])
+        report = preflight_config_channels({"image_channels": []})
+        self.assertFalse(report["ok"])
+        self.assertIn("image_channels", {e["field"] for e in report["errors"]})
+
+    def test_error_classify_non_retryable(self) -> None:
+        self.assertFalse(classify_generation_error("HTTP 401: invalid token")["retryable"])
+        self.assertEqual(classify_generation_error("HTTP 401: invalid token")["category"], "auth")
+        self.assertFalse(classify_generation_error("No available channel for model gpt-image-1")["retryable"])
+        self.assertFalse(classify_generation_error("The generated images appear to be unsafe")["retryable"])
+        self.assertTrue(classify_generation_error("HTTP 503 upstream")["retryable"])
+        self.assertTrue(classify_generation_error("HTTP 429 rate limit")["retryable"])
+        self.assertFalse(classify_generation_error("请求超时")["retryable"])
+        self.assertTrue(is_non_retryable_generation_error("HTTP 404 model_not_found"))
+        self.assertTrue(is_param_profile_switch_error("HTTP 400: unsupported size"))
 
     def test_enabled_model_priority_and_manual_provider_types_are_preserved(self) -> None:
         config = AICatConfig.from_dict(
@@ -1874,6 +1945,30 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.used_model, second.label)
         self.assertEqual([attempt["success"] for attempt in result.attempts], [False, True])
         self.assertEqual(result.attempts[0]["error"], "temporary failure")
+
+    async def test_fallback_stops_on_non_retryable_auth_error(self) -> None:
+        first = make_target("openai", "bad-model")
+        second = make_target("openai", "good-model")
+        calls = {"n": 0}
+
+        def create_fake_adapter(target, session):
+            calls["n"] += 1
+            if target.model == "bad-model":
+                return FakeGenerateAdapter(ImageGenerateResult(error="HTTP 401: Invalid token"))
+            return FakeGenerateAdapter(ImageGenerateResult(images=[PNG_BYTES]))
+
+        with patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter):
+            result = await generate_image_with_fallback(
+                [first, second],
+                ImageGenerateRequest(prompt="cat"),
+                FakeSession(),
+                max_attempts=3,
+            )
+
+        self.assertFalse(result.images)
+        self.assertEqual(calls["n"], 1)
+        self.assertIn("鉴权", result.error)
+        self.assertEqual(result.attempts[0].get("error_category"), "auth")
 
     async def test_fallback_returns_clear_error_without_targets(self) -> None:
         result = await generate_image_with_fallback([], ImageGenerateRequest(prompt="cat"), FakeSession())

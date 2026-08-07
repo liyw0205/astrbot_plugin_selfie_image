@@ -382,7 +382,17 @@ class SelfieImagePlugin(Star):
     def update_config_from_web(self, patch: Dict[str, Any]) -> Dict[str, Any]:
         with self._config_lock:
             patch = self._strip_web_startup_config(patch)
-            self._apply_raw_config(deep_merge(self.raw_config, patch))
+            merged = deep_merge(self.raw_config, patch)
+            from .models import preflight_config_channels
+
+            # Preflight only channels present in the patch/merged tree; do not block
+            # partial UI saves that only tweak non-channel fields when channels already valid.
+            report = preflight_config_channels(merged)
+            # If user is saving channel lists, enforce preflight.
+            if isinstance(patch, dict) and ("image_channels" in patch or "audit_channels" in patch or "imageChannels" in patch):
+                if not report.get("ok"):
+                    raise RuntimeError(report.get("message") or "渠道配置预检未通过")
+            self._apply_raw_config(merged)
             return self.get_config_for_web()
 
     def _today_key(self) -> str:
@@ -2330,6 +2340,7 @@ class SelfieImagePlugin(Star):
 
     def _validate_web_test_selection(self, payload: Dict[str, Any]) -> None:
         channel_name = str(payload.get("channel") or "").strip()
+        model_name = str(payload.get("model") or "").strip()
         if not channel_name:
             return
         matching_channels = [channel for channel in self.config.image_channels if channel.name == channel_name]
@@ -2337,6 +2348,28 @@ class SelfieImagePlugin(Star):
             raise RuntimeError(f"生图渠道 {channel_name} 不存在")
         if not any(channel.enabled for channel in matching_channels):
             raise RuntimeError(f"生图渠道 {channel_name} 已禁用，渠道测试不会调用禁用渠道")
+        channel = next((item for item in matching_channels if item.enabled), matching_channels[0])
+        from .models import preflight_image_channel
+
+        report = preflight_image_channel(
+            {
+                "name": channel.name,
+                "provider_type": channel.provider_type,
+                "base_url": channel.base_url,
+                "api_key": channel.api_key,
+                "model": channel.model,
+                "enabled_models": channel.enabled_models,
+                "timeout": channel.timeout,
+                "enabled": channel.enabled,
+                "proxy": channel.proxy,
+            },
+            kind="image",
+        )
+        if not report.get("ok"):
+            raise RuntimeError(report.get("message") or "渠道配置预检未通过")
+        enabled = channel.enabled_models or ([channel.model] if channel.model else [])
+        if model_name and model_name not in enabled:
+            raise RuntimeError(f"渠道 {channel_name} 未启用模型 {model_name}，请先在渠道管理中启用并保存")
 
     async def web_test_image(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         channel_name = str(payload.get("channel") or "").strip()

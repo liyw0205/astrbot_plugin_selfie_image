@@ -213,6 +213,44 @@ def is_gpt_image_model(model: str) -> bool:
     return "gpt-image" in str(model or "").lower()
 
 
+def _gpt_image_payload_profiles(req: ImageGenerateRequest, model: str) -> List[Dict[str, Any]]:
+    """Build one or two OpenAI Images payloads (standard then flexible).
+
+    Source: starmiaoa/astrbot-plugin-gpt-image dual-profile idea (target 10).
+    - standard: explicit pixel size (official / many NewAPI relays)
+    - flexible: omit rigid size when aspect is 自动, or add quality-friendly fields for picky relays
+    """
+    base_model = model or "gpt-image-1"
+    size = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio)
+    standard: Dict[str, Any] = {
+        "model": base_model,
+        "prompt": req.prompt,
+        "n": 1,
+        "size": size,
+    }
+    profiles = [standard]
+    # Second profile: some relays dislike size / prefer response_format or auto-ish body.
+    flexible: Dict[str, Any] = {
+        "model": base_model,
+        "prompt": req.prompt,
+        "n": 1,
+    }
+    if req.aspect_ratio and req.aspect_ratio not in {"自动", "1:1", ""}:
+        flexible["size"] = size
+    else:
+        # Keep an explicit square for 自动 to avoid upstream auto stalls, but drop extra fields.
+        flexible["size"] = "1024x1024"
+    # Only add a distinct second attempt when it differs or when compat retry is allowed.
+    if flexible != standard:
+        profiles.append(flexible)
+    elif req.allow_compat_retry:
+        alt = dict(standard)
+        alt["response_format"] = "b64_json"
+        if alt != standard:
+            profiles.append(alt)
+    return profiles
+
+
 class OpenAIImageAdapter(BaseImageAdapter):
     async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         if req.images:
@@ -221,30 +259,57 @@ class OpenAIImageAdapter(BaseImageAdapter):
             return await self.generate_edit(req)
         return await self.generate_image(req)
 
-    def build_image_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
+    def build_image_payload(self, req: ImageGenerateRequest, *, profile: str = "standard") -> Dict[str, Any]:
         gpt_image = is_gpt_image_model(self.target.model)
-        payload: Dict[str, Any] = {
-            "model": self.target.model or ("gpt-image-1" if gpt_image else "dall-e-3"),
-            "prompt": req.prompt,
-            "n": 1,
-            "size": map_aspect_ratio_to_gpt_image_size(req.aspect_ratio) if gpt_image else map_aspect_ratio_to_openai_size(req.aspect_ratio),
-        }
         if not gpt_image:
-            payload["response_format"] = "b64_json"
-        return payload
+            payload: Dict[str, Any] = {
+                "model": self.target.model or "dall-e-3",
+                "prompt": req.prompt,
+                "n": 1,
+                "size": map_aspect_ratio_to_openai_size(req.aspect_ratio),
+                "response_format": "b64_json",
+            }
+            return payload
+        profiles = _gpt_image_payload_profiles(req, self.target.model or "gpt-image-1")
+        if profile == "flexible" and len(profiles) > 1:
+            return profiles[1]
+        return profiles[0]
 
     async def generate_image(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
         url = f"{base}/v1/images/generations"
-        data, error = await self.post_json_data_or_error(url, self.build_image_payload(req))
-        if error or data is None:
-            return ImageGenerateResult(error=error or "接口未返回有效 JSON")
-        # Fast path for standard OpenAI Images responses: avoid expensive generic text/html walkers
-        # on multi-megabyte b64_json payloads that NewAPI-style relays commonly return.
-        images = extract_openai_images_data(data, req.max_image_bytes)
-        if images:
-            return ImageGenerateResult(images=images)
-        return await self.result_from_response(data, req, base, detailed_error=True)
+        from .error_classify import is_param_profile_switch_error
+
+        if is_gpt_image_model(self.target.model):
+            profiles = _gpt_image_payload_profiles(req, self.target.model or "gpt-image-1")
+        else:
+            profiles = [self.build_image_payload(req)]
+
+        last_error = ""
+        # At most one create POST per profile; never loop the same billable body on timeout.
+        for index, payload in enumerate(profiles):
+            try:
+                data, error = await self.post_json_data_or_error(url, payload)
+            except asyncio.TimeoutError:
+                return ImageGenerateResult(
+                    error=f"OpenAI 生图请求超时（{self.target.timeout}秒；为避免重复扣费，不会自动重提）"
+                )
+            if error or data is None:
+                last_error = error or "接口未返回有效 JSON"
+                # Switch profile only on parameter-class failures, and only once.
+                if (
+                    index == 0
+                    and len(profiles) > 1
+                    and req.allow_compat_retry
+                    and is_param_profile_switch_error(last_error)
+                ):
+                    continue
+                return ImageGenerateResult(error=last_error)
+            images = extract_openai_images_data(data, req.max_image_bytes)
+            if images:
+                return ImageGenerateResult(images=images)
+            return await self.result_from_response(data, req, base, detailed_error=True)
+        return ImageGenerateResult(error=last_error or "接口未返回有效 JSON")
 
     def _build_edit_form(self, req: ImageGenerateRequest, image_field_name: str) -> aiohttp.FormData:
         form = aiohttp.FormData()
@@ -287,16 +352,23 @@ class OpenAIImageAdapter(BaseImageAdapter):
         try:
             data, error = await self._post_edit_form(url, req, "image")
             if error and req.allow_compat_retry:
-                fallback_data, fallback_error = await self._post_edit_form(url, req, "image[]")
-                if fallback_data is not None:
-                    data, error = fallback_data, ""
-                elif fallback_error:
-                    error = f"{error}；兼容 image[] 重试也失败: {fallback_error}"
+                # Field-name compat only (image vs image[]) — not a full resubmit of a timed-out job.
+                from .error_classify import is_param_profile_switch_error
+
+                if is_param_profile_switch_error(error) or "image" in str(error).lower():
+                    fallback_data, fallback_error = await self._post_edit_form(url, req, "image[]")
+                    if fallback_data is not None:
+                        data, error = fallback_data, ""
+                    elif fallback_error:
+                        error = f"{error}；兼容 image[] 重试也失败: {fallback_error}"
             if error or data is None:
                 return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
-            return ImageGenerateResult(error=f"OpenAI 图生图请求超时（{self.target.timeout}秒）")
-        return await self.result_from_response(data, req, base)
+            return ImageGenerateResult(error=f"OpenAI 图生图请求超时（{self.target.timeout}秒；为避免重复扣费，不会自动重提）")
+        images = extract_openai_images_data(data, req.max_image_bytes)
+        if images:
+            return ImageGenerateResult(images=images)
+        return await self.result_from_response(data, req, base, detailed_error=True)
 
 
 class GeminiImageAdapter(BaseImageAdapter):

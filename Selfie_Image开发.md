@@ -14,14 +14,14 @@
 |------|------|------|------|--------------|
 | 1 | 统一 Provider 结果解释 | `docs/targets/01-…` | 已完成 | — |
 | 2 | 收敛 Web 请求状态 | `docs/targets/02-…` | 已完成 | — |
-| 3 | 配置预检与渠道诊断 | `docs/targets/03-…` | 进行中 | 通用生图 |
+| 3 | 配置预检与渠道诊断 | `docs/targets/03-…` | 已完成 | 通用生图 |
 | 4 | 缓存回收一致性 | `docs/targets/04-…` | 待开始 | — |
 | 5 | AstrBot 冒烟契约 | `docs/targets/05-…` | 待开始 | — |
 | 6 | 内嵌 Dashboard 与测试闭环 | `docs/targets/06-…` | 进行中 | 通用生图 / 电报 |
-| 7 | 协议锁定 openai/openai_chat | `docs/targets/07-…` | 待开始 | 通用生图 / 图像网关 |
+| 7 | 协议锁定 openai/openai_chat | `docs/targets/07-…` | 已完成（部分） | 通用生图 / 图像网关 / 手办化 |
 | 8 | 指令模型切换与任务查询取消 | `docs/targets/08-…` | 待开始 | 通用生图 / OmniDraw |
-| 9 | 不可重试错误分类 | `docs/targets/09-…` | 待开始 | 通用生图 / 网关 |
-| 10 | GPT Image 双档案与防双扣费 | `docs/targets/10-…` | 待开始 | starmiao GPT Image |
+| 9 | 不可重试错误分类 | `docs/targets/09-…` | 已完成 | 通用生图 / 网关 |
+| 10 | GPT Image 双档案与防双扣费 | `docs/targets/10-…` | 已完成 | starmiao GPT Image |
 | 11 | 统一参考图收集器 | `docs/targets/11-…` | 待开始 | piexian / 通用生图 / OmniDraw |
 | 12 | 多 API Key 轮询 | `docs/targets/12-…` | 待开始 | 多头部生图插件 |
 | 13 | 生图后台化不阻塞对话 | `docs/targets/13-…` | 待开始 | Gitee aiimg / 通用生图 |

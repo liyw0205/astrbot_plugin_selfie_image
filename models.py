@@ -83,12 +83,15 @@ class ImageChannelConfig:
     model_provider_types: Dict[str, str] = field(default_factory=dict)
     models_cache: List[str] = field(default_factory=list)
     proxy: str = ""
+    protocol_lock: bool = False
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def targets(self, global_timeout: int) -> List[ImageModelTarget]:
         if not self.enabled:
             return []
         models = self.enabled_models or ([self.model] if self.model else [])
+        # Default-lock OpenAI-compatible channel types so model names cannot jump protocols.
+        lock = bool(self.protocol_lock) or self.provider_type in {"openai", "gemini_openai"}
         result: List[ImageModelTarget] = []
         for model in models:
             if not model:
@@ -96,7 +99,12 @@ class ImageChannelConfig:
             result.append(
                 ImageModelTarget(
                     channel_name=self.name,
-                    provider_type=resolve_model_provider_type(model, self.provider_type, self.model_provider_types.get(model, "")),
+                    provider_type=resolve_model_provider_type(
+                        model,
+                        self.provider_type,
+                        self.model_provider_types.get(model, ""),
+                        protocol_lock=lock,
+                    ),
                     base_url=self.base_url,
                     api_key=self.api_key,
                     model=model,
@@ -359,6 +367,7 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
         model_provider_types={model: provider for model, provider in model_provider_types.items() if model in set(enabled_models)},
         models_cache=split_values(raw.get("models_cache") or raw.get("modelsCache") or raw.get("available_models")),
         proxy=str(raw.get("proxy") or "").strip(),
+        protocol_lock=to_bool(raw.get("protocol_lock") or raw.get("protocolLock") or raw.get("disable_model_infer"), False),
         extra=copy.deepcopy(raw.get("extra") if isinstance(raw.get("extra"), dict) else {}),
     )
 
@@ -405,14 +414,92 @@ def infer_provider_type_from_model(model: str) -> str:
     return ""
 
 
-def resolve_model_provider_type(model: str, default_provider_type: str, manual_provider_type: str = "") -> str:
+def resolve_model_provider_type(
+    model: str,
+    default_provider_type: str,
+    manual_provider_type: str = "",
+    *,
+    protocol_lock: bool = False,
+) -> str:
+    """Resolve per-model provider protocol.
+
+    When protocol_lock is True (OpenAI-compatible relays / NewAPI), do not infer
+    gemini/z_image/etc. from the model *name* — use channel provider_type unless
+    the operator set an explicit model_provider_types override.
+    Source: target 07 + shoubanhua dual-protocol caution.
+    """
     manual = normalize_provider_type(manual_provider_type)
     if manual:
         return manual
+    default = normalize_provider_type(default_provider_type) or "openai"
+    if protocol_lock:
+        return default
     inferred = infer_provider_type_from_model(model)
     if inferred:
         return inferred
-    return normalize_provider_type(default_provider_type) or "openai"
+    return default
+
+
+def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
+    """Local channel config preflight (target 03). No network.
+
+    Returns {ok, errors:[{field, message}], channel_name}.
+    """
+    errors: List[Dict[str, str]] = []
+    channel = _build_image_channel(raw if isinstance(raw, dict) else {})
+    label = channel.name or "未命名渠道"
+    kind_label = "审核渠道" if kind == "audit" else "生图渠道"
+
+    if not str(channel.name or "").strip():
+        errors.append({"field": "name", "message": f"{kind_label}缺少名称"})
+    if channel.provider_type not in PROVIDER_TYPES:
+        errors.append({"field": "provider_type", "message": f"{kind_label} {label} 的 provider_type 无效"})
+    if not str(channel.base_url or "").strip():
+        errors.append({"field": "base_url", "message": f"{kind_label} {label} 缺少 base_url"})
+    if not str(channel.api_key or "").strip():
+        errors.append({"field": "api_key", "message": f"{kind_label} {label} 缺少 api_key"})
+    models = channel.enabled_models or ([channel.model] if channel.model else [])
+    if not models:
+        errors.append({"field": "enabled_models", "message": f"{kind_label} {label} 未启用任何模型（enabled_models/model 为空）"})
+    if channel.timeout < 10:
+        errors.append({"field": "timeout", "message": f"{kind_label} {label} 超时过短"})
+
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "channel_name": label,
+        "kind": kind,
+        "message": "；".join(item["message"] for item in errors),
+    }
+
+
+def preflight_config_channels(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Preflight all image/audit channels in a config dict."""
+    data = raw if isinstance(raw, dict) else {}
+    image_results = [preflight_image_channel(item, kind="image") for item in template_list_items(data.get("image_channels"))]
+    audit_results = [preflight_image_channel(item, kind="audit") for item in template_list_items(data.get("audit_channels"))]
+    errors: List[Dict[str, str]] = []
+    for result in image_results + audit_results:
+        errors.extend(result.get("errors") or [])
+    enabled_image = [
+        _build_image_channel(item)
+        for item in template_list_items(data.get("image_channels"))
+        if to_bool((item or {}).get("enabled") if isinstance(item, dict) else True, True)
+    ]
+    if not any((ch.enabled_models or ([ch.model] if ch.model else [])) for ch in enabled_image if ch.enabled):
+        # Only warn when there is at least one channel object but none usable, or zero channels.
+        if template_list_items(data.get("image_channels")):
+            if not any(r.get("ok") for r in image_results):
+                pass  # per-channel errors already listed
+        else:
+            errors.append({"field": "image_channels", "message": "未配置任何生图渠道"})
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "image_channels": image_results,
+        "audit_channels": audit_results,
+        "message": "；".join(item["message"] for item in errors),
+    }
 
 
 def deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
