@@ -322,7 +322,7 @@
         <div><label>渠道名</label><input id="modalChannelName"></div>
         <div><label>类型</label><select id="modalProvider"></select></div>
         <div><label>Base URL</label><input id="modalBaseUrl"></div>
-        <div><label>API Key</label><input id="modalApiKey" type="password"></div>
+        <div><label>API Key（可多行，每行一个；401/429 自动轮询下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
         <div><label>代理 URL</label><input id="modalProxy" placeholder="http://127.0.0.1:7890"></div>
         <div><label>默认模型</label><input id="modalModel"></div>
         <div><label>超时（秒）</label><input id="modalTimeout" type="number" min="10" max="900"></div>

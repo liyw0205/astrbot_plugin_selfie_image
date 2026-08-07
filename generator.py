@@ -1,14 +1,16 @@
 """Generation orchestration with retry and fallback.
 
-Retry policy (targets 09/10, inspired by general image-gen + starmiao GPT Image):
-- Billable create POST timeouts / auth / model-not-found / safety: do not resubmit blindly.
-- Multi-target fallback may still advance to the *next* channel/model on retryable errors only.
-- Non-retryable errors stop the whole attempt loop immediately.
+Retry policy (targets 09/10/12):
+- Billable create POST timeouts / model-not-found / safety: do not resubmit blindly.
+- Multi-target fallback may advance to the next channel/model on retryable errors.
+- Auth/rate-limit can rotate to the next API key on the *same* target before giving up.
+- If all keys for a target fail auth, stop with a single-cause auth error.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
 from typing import Any, Dict, List, Optional
 
@@ -23,8 +25,8 @@ from .utils import redact_sensitive_data, redact_sensitive_text
 IMAGE_RETRY_ATTEMPTS = 3
 
 
-def _target_attempt_base(target: ImageModelTarget, attempt: int) -> Dict[str, Any]:
-    return {
+def _target_attempt_base(target: ImageModelTarget, attempt: int, key_index: int = 0, *, multi_key: bool = False) -> Dict[str, Any]:
+    info = {
         "attempt": attempt,
         "channel": target.channel_name,
         "provider_type": target.provider_type,
@@ -32,6 +34,25 @@ def _target_attempt_base(target: ImageModelTarget, attempt: int) -> Dict[str, An
         "label": target.label,
         "timeout_seconds": target.timeout,
     }
+    if multi_key:
+        info["key_index"] = key_index + 1
+    return info
+
+
+def _target_with_api_key(target: ImageModelTarget, api_key: str) -> ImageModelTarget:
+    cloned = copy.deepcopy(target)
+    cloned.api_key = str(api_key or "").strip()
+    return cloned
+
+
+def _should_rotate_api_key(class_info: Dict[str, Any]) -> bool:
+    category = str(class_info.get("category") or "")
+    status = class_info.get("http_status")
+    if category in {"auth", "rate_limit"}:
+        return True
+    if status in {401, 403, 429}:
+        return True
+    return False
 
 
 async def generate_image_with_fallback(
@@ -59,7 +80,6 @@ async def generate_image_with_fallback(
                 attempts=redact_sensitive_data(attempts),
             )
 
-        # Prefer next unused target when some labels are skipped.
         target = None
         for offset in range(len(targets)):
             candidate = targets[(attempt - 1 + offset) % len(targets)]
@@ -70,65 +90,94 @@ async def generate_image_with_fallback(
             target = targets[(attempt - 1) % len(targets)]
 
         label = redact_sensitive_text(target.label)
-        adapter = create_adapter(target, session)
-        attempt_info = _target_attempt_base(target, attempt)
-        started = time.monotonic()
+        api_keys = target.resolved_api_keys() if hasattr(target, "resolved_api_keys") else ([target.api_key] if target.api_key else [""])
+        if not api_keys:
+            api_keys = [""]
 
-        try:
-            result = await asyncio.wait_for(adapter.generate(req), timeout=max(1, min(target.timeout, int(remaining))))
-            attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
-            if result.images and not result.error:
-                attempt_info["success"] = True
-                attempt_info["image_count"] = len(result.images)
+        key_success = False
+        stop_all = False
+        for key_index, api_key in enumerate(api_keys):
+            active_target = _target_with_api_key(target, api_key) if api_key else target
+            adapter = create_adapter(active_target, session)
+            attempt_info = _target_attempt_base(target, attempt, key_index=key_index, multi_key=len(api_keys) > 1)
+            started = time.monotonic()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return ImageGenerateResult(
+                    error=redact_sensitive_text(f"生图全局超时（{global_timeout}秒），最后错误: {last_error}"),
+                    attempts=redact_sensitive_data(attempts),
+                )
+            try:
+                result = await asyncio.wait_for(
+                    adapter.generate(req),
+                    timeout=max(1, min(target.timeout, int(remaining))),
+                )
+                attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
+                if result.images and not result.error:
+                    attempt_info["success"] = True
+                    attempt_info["image_count"] = len(result.images)
+                    attempts.append(attempt_info)
+                    result.used_model = label
+                    result.attempts = redact_sensitive_data([*attempts, *result.attempts])
+                    return result
+                error_text = redact_sensitive_text(result.error or "生成失败")
+                class_info = classify_generation_error(error_text)
+                last_error = f"{label}: {class_info.get('user_message') or error_text}"
+                attempt_info["success"] = False
+                attempt_info["error"] = error_text
+                attempt_info["error_category"] = class_info.get("category")
+                attempt_info["retryable"] = bool(class_info.get("retryable"))
+                attempt_info["image_count"] = len(result.images or [])
                 attempts.append(attempt_info)
-                result.used_model = label
-                result.attempts = redact_sensitive_data([*attempts, *result.attempts])
-                return result
-            error_text = redact_sensitive_text(result.error or "生成失败")
-            class_info = classify_generation_error(error_text)
-            last_error = f"{label}: {class_info.get('user_message') or error_text}"
-            attempt_info["success"] = False
-            attempt_info["error"] = error_text
-            attempt_info["error_category"] = class_info.get("category")
-            attempt_info["retryable"] = bool(class_info.get("retryable"))
-            attempt_info["image_count"] = len(result.images or [])
-            attempts.append(attempt_info)
-            if not class_info.get("retryable", True):
-                # Do not burn more attempts on auth / not_found / safety / create-timeout class.
-                return ImageGenerateResult(
-                    error=redact_sensitive_text(last_error),
-                    attempts=redact_sensitive_data(attempts),
-                )
-        except asyncio.TimeoutError:
-            # Billable create may already have succeeded upstream; do not auto-resubmit.
-            last_error = f"{label}: 请求超时（为避免重复扣费，不会自动重提同一请求）"
-            attempt_info["success"] = False
-            attempt_info["error"] = "请求超时"
-            attempt_info["error_category"] = "timeout"
-            attempt_info["retryable"] = False
-            attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
-            attempts.append(attempt_info)
-            skip_labels.add(target.label)
-            if len(targets) <= 1 or len(skip_labels) >= len(targets):
-                return ImageGenerateResult(
-                    error=redact_sensitive_text(last_error),
-                    attempts=redact_sensitive_data(attempts),
-                )
-        except Exception as exc:
-            error_text = redact_sensitive_text(str(exc))
-            class_info = classify_generation_error(error_text)
-            last_error = f"{label}: {class_info.get('user_message') or error_text}"
-            attempt_info["success"] = False
-            attempt_info["error"] = error_text
-            attempt_info["error_category"] = class_info.get("category")
-            attempt_info["retryable"] = bool(class_info.get("retryable"))
-            attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
-            attempts.append(attempt_info)
-            if not class_info.get("retryable", True):
-                return ImageGenerateResult(
-                    error=redact_sensitive_text(last_error),
-                    attempts=redact_sensitive_data(attempts),
-                )
+
+                # Rotate to next key on auth/rate-limit when more keys remain.
+                if _should_rotate_api_key(class_info) and key_index + 1 < len(api_keys):
+                    continue
+                if not class_info.get("retryable", True):
+                    # Auth exhausted all keys, or non-retryable non-auth error.
+                    if class_info.get("category") == "auth" and key_index + 1 >= len(api_keys):
+                        last_error = f"{label}: 渠道鉴权失败，请检查 API Key 或权限"
+                    return ImageGenerateResult(
+                        error=redact_sensitive_text(last_error),
+                        attempts=redact_sensitive_data(attempts),
+                    )
+                # Retryable non-key-rotation error: break key loop and let outer attempt continue.
+                break
+            except asyncio.TimeoutError:
+                last_error = f"{label}: 请求超时（为避免重复扣费，不会自动重提同一请求）"
+                attempt_info["success"] = False
+                attempt_info["error"] = "请求超时"
+                attempt_info["error_category"] = "timeout"
+                attempt_info["retryable"] = False
+                attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
+                attempts.append(attempt_info)
+                skip_labels.add(target.label)
+                stop_all = len(targets) <= 1 or len(skip_labels) >= len(targets)
+                break
+            except Exception as exc:
+                error_text = redact_sensitive_text(str(exc))
+                class_info = classify_generation_error(error_text)
+                last_error = f"{label}: {class_info.get('user_message') or error_text}"
+                attempt_info["success"] = False
+                attempt_info["error"] = error_text
+                attempt_info["error_category"] = class_info.get("category")
+                attempt_info["retryable"] = bool(class_info.get("retryable"))
+                attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
+                attempts.append(attempt_info)
+                if _should_rotate_api_key(class_info) and key_index + 1 < len(api_keys):
+                    continue
+                if not class_info.get("retryable", True):
+                    return ImageGenerateResult(
+                        error=redact_sensitive_text(last_error),
+                        attempts=redact_sensitive_data(attempts),
+                    )
+                break
+
+        if stop_all:
+            return ImageGenerateResult(
+                error=redact_sensitive_text(last_error),
+                attempts=redact_sensitive_data(attempts),
+            )
 
         if attempt < total_attempts:
             wait_seconds = min(attempt, 2)

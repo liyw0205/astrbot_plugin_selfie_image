@@ -64,10 +64,38 @@ class ImageModelTarget:
     timeout: int
     proxy: str = ""
     extra: Dict[str, Any] = field(default_factory=dict)
+    api_keys: List[str] = field(default_factory=list)
 
     @property
     def label(self) -> str:
         return f"{self.channel_name}/{self.model}"
+
+    def resolved_api_keys(self) -> List[str]:
+        keys = [str(item).strip() for item in (self.api_keys or []) if str(item).strip()]
+        if keys:
+            return unique_values(keys)
+        primary = str(self.api_key or "").strip()
+        return [primary] if primary else []
+
+
+def split_api_keys(value: Any) -> List[str]:
+    """Accept str / list / multiline api_key(s) into ordered unique keys."""
+    if value is None:
+        return []
+    items: List[str] = []
+    if isinstance(value, list):
+        for item in value:
+            items.extend(split_api_keys(item))
+        return unique_values([str(item).strip() for item in items if str(item).strip()])
+    text = str(value or "").strip()
+    if not text:
+        return []
+    # Support newline / comma / semicolon separated multi-keys in one field.
+    for part in re.split(r"[\n\r,;]+", text):
+        key = str(part or "").strip()
+        if key:
+            items.append(key)
+    return unique_values(items)
 
 
 @dataclass
@@ -85,6 +113,13 @@ class ImageChannelConfig:
     proxy: str = ""
     protocol_lock: bool = False
     extra: Dict[str, Any] = field(default_factory=dict)
+    api_keys: List[str] = field(default_factory=list)
+
+    def resolved_api_keys(self) -> List[str]:
+        keys = split_api_keys(self.api_keys)
+        if keys:
+            return keys
+        return split_api_keys(self.api_key)
 
     def targets(self, global_timeout: int) -> List[ImageModelTarget]:
         if not self.enabled:
@@ -92,6 +127,8 @@ class ImageChannelConfig:
         models = self.enabled_models or ([self.model] if self.model else [])
         # Default-lock OpenAI-compatible channel types so model names cannot jump protocols.
         lock = bool(self.protocol_lock) or self.provider_type in {"openai", "gemini_openai"}
+        keys = self.resolved_api_keys()
+        primary_key = keys[0] if keys else str(self.api_key or "").strip()
         result: List[ImageModelTarget] = []
         for model in models:
             if not model:
@@ -106,11 +143,12 @@ class ImageChannelConfig:
                         protocol_lock=lock,
                     ),
                     base_url=self.base_url,
-                    api_key=self.api_key,
+                    api_key=primary_key,
                     model=model,
                     timeout=max(10, int(global_timeout or self.timeout or 180)),
                     proxy=self.proxy,
                     extra=copy.deepcopy(self.extra),
+                    api_keys=list(keys),
                 )
             )
         return result
@@ -345,9 +383,15 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
             if value:
                 enabled_models.append(value)
 
-    api_key_value = raw.get("api_key") or raw.get("apiKey") or raw.get("api_keys") or raw.get("apiKeys") or ""
-    if isinstance(api_key_value, list):
-        api_key_value = "\n".join(str(item) for item in api_key_value if str(item).strip())
+    api_key_value = raw.get("api_key") or raw.get("apiKey") or ""
+    api_keys_value = raw.get("api_keys") or raw.get("apiKeys") or ""
+    # Prefer explicit api_keys list; fall back to api_key (may be multiline).
+    api_keys = split_api_keys(api_keys_value) or split_api_keys(api_key_value)
+    if not api_keys and api_key_value:
+        api_keys = split_api_keys(api_key_value)
+    api_key_primary = api_keys[0] if api_keys else str(api_key_value or "").strip()
+    # Persist multi-line form in api_key for Web textarea round-trip compatibility.
+    api_key_stored = "\n".join(api_keys) if len(api_keys) > 1 else api_key_primary
 
     model = str(raw.get("model") or "").strip()
     if provider_type == "agnes" and not model:
@@ -359,7 +403,7 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
         name=str(raw.get("name") or raw.get("id") or "default").strip(),
         provider_type=provider_type,
         base_url=str(raw.get("base_url") or raw.get("baseUrl") or "").strip(),
-        api_key=str(api_key_value).strip(),
+        api_key=api_key_stored,
         model=model or (enabled_models[0] if enabled_models else ""),
         timeout=to_int(raw.get("timeout"), 180, minimum=10, maximum=900),
         enabled=to_bool(raw.get("enabled"), True),
@@ -369,6 +413,7 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
         proxy=str(raw.get("proxy") or "").strip(),
         protocol_lock=to_bool(raw.get("protocol_lock") or raw.get("protocolLock") or raw.get("disable_model_infer"), False),
         extra=copy.deepcopy(raw.get("extra") if isinstance(raw.get("extra"), dict) else {}),
+        api_keys=api_keys,
     )
 
 
@@ -456,7 +501,7 @@ def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
         errors.append({"field": "provider_type", "message": f"{kind_label} {label} 的 provider_type 无效"})
     if not str(channel.base_url or "").strip():
         errors.append({"field": "base_url", "message": f"{kind_label} {label} 缺少 base_url"})
-    if not str(channel.api_key or "").strip():
+    if not str(channel.api_key or "").strip() and not (getattr(channel, "api_keys", None) or []):
         errors.append({"field": "api_key", "message": f"{kind_label} {label} 缺少 api_key"})
     models = channel.enabled_models or ([channel.model] if channel.model else [])
     if not models:

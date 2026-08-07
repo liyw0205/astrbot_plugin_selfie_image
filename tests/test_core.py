@@ -370,6 +370,45 @@ class ConfigModelTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("image_channels", {e["field"] for e in report["errors"]})
 
+    def test_split_api_keys_and_target_rotation_list(self) -> None:
+        from astrbot_plugin_selfie_image.models import split_api_keys
+
+        self.assertEqual(split_api_keys("a\nb\nc"), ["a", "b", "c"])
+        self.assertEqual(split_api_keys("a,b;c\na"), ["a", "b", "c"])
+        self.assertEqual(split_api_keys(["k1", "k2", "k1"]), ["k1", "k2"])
+        config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "relay",
+                        "provider_type": "openai",
+                        "base_url": "https://example.test",
+                        "api_keys": ["sk-one", "sk-two"],
+                        "enabled_models": ["gpt-image-2"],
+                    }
+                ]
+            }
+        )
+        target = config.get_prioritized_targets()[0]
+        self.assertEqual(target.api_key, "sk-one")
+        self.assertEqual(target.resolved_api_keys(), ["sk-one", "sk-two"])
+        # multiline api_key field also works
+        config2 = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "relay2",
+                        "provider_type": "openai",
+                        "base_url": "https://example.test",
+                        "api_key": "sk-a\nsk-b",
+                        "model": "gpt-image-2",
+                    }
+                ]
+            }
+        )
+        t2 = config2.get_prioritized_targets()[0]
+        self.assertEqual(t2.resolved_api_keys(), ["sk-a", "sk-b"])
+
     def test_error_classify_non_retryable(self) -> None:
         self.assertFalse(classify_generation_error("HTTP 401: invalid token")["retryable"])
         self.assertEqual(classify_generation_error("HTTP 401: invalid token")["category"], "auth")
@@ -1969,6 +2008,45 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls["n"], 1)
         self.assertIn("鉴权", result.error)
         self.assertEqual(result.attempts[0].get("error_category"), "auth")
+
+    async def test_fallback_rotates_api_key_on_auth_then_succeeds(self) -> None:
+        target = ImageModelTarget(
+            channel_name="relay",
+            provider_type="openai",
+            base_url="https://example.test",
+            api_key="bad-key",
+            model="gpt-image-2",
+            timeout=30,
+            api_keys=["bad-key", "good-key"],
+        )
+        calls = []
+
+        class RotatingAdapter:
+            def __init__(self, active_target, session):
+                self.target = active_target
+
+            async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+                calls.append(self.target.api_key)
+                if self.target.api_key == "bad-key":
+                    return ImageGenerateResult(error="HTTP 401: Invalid token")
+                return ImageGenerateResult(images=[PNG_BYTES])
+
+        def create_fake_adapter(active_target, session):
+            return RotatingAdapter(active_target, session)
+
+        with patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter):
+            result = await generate_image_with_fallback(
+                [target],
+                ImageGenerateRequest(prompt="cat"),
+                FakeSession(),
+                max_attempts=1,
+            )
+
+        self.assertEqual(calls, ["bad-key", "good-key"])
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual([a.get("success") for a in result.attempts], [False, True])
+        self.assertEqual(result.attempts[0].get("key_index"), 1)
+        self.assertEqual(result.attempts[1].get("key_index"), 2)
 
     async def test_fallback_returns_clear_error_without_targets(self) -> None:
         result = await generate_image_with_fallback([], ImageGenerateRequest(prompt="cat"), FakeSession())
