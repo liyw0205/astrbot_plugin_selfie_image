@@ -24,7 +24,9 @@
 | 10 | GPT Image 双档案与防双扣费 | `docs/targets/10-…` | 待开始 | starmiao GPT Image |
 | 11 | 统一参考图收集器 | `docs/targets/11-…` | 待开始 | piexian / 通用生图 / OmniDraw |
 | 12 | 多 API Key 轮询 | `docs/targets/12-…` | 待开始 | 多头部生图插件 |
+| 13 | 生图后台化不阻塞对话 | `docs/targets/13-…` | 待开始 | Gitee aiimg / 通用生图 |
 
+扫描市场时 **以 description/tags 为主**（见调研 §1.1 NAME-MISS），避免漏掉手办化/lmarena/doubao 等。  
 自动步骤与审查清单见 `OPTIMIZATION_ROADMAP.md`。
 
 ## 目标与边界

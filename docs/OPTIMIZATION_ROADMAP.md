@@ -3,8 +3,8 @@
 > 基线：`astrbot_plugin_selfie_image` 1.1.0  
 > **市场调研（必读）**：[PLUGIN_MARKET_SURVEY.md](./PLUGIN_MARKET_SURVEY.md)  
 > 插件源：`api.soulter.top/astrbot/plugins` → `cloud.astrbot.app/api/v1/market/plugins.json`  
-> 主工程参考：通用生图、万象画卷 OmniDraw、piexian Gemini、starmiao GPT Image、图像网关  
-> 原则：**借市场头部工程能力，守 Selfie 自拍差异化**；每条优化须能追溯到具体插件仓库。
+> 主工程参考：通用生图、OmniDraw、piexian、starmiao GPT Image、图像网关；**补漏**：手办化、lmarena、big_banana、doubao、grok_suite、Gitee aiimg（名不一定含「生图」）  
+> 原则：**描述/标签优先扫市场**；借头部工程能力，守自拍差异化；每条优化可追溯仓库。
 
 ---
 
@@ -29,8 +29,9 @@
 | 优先级 | ID | 来源 | 项 |
 |--------|-----|------|-----|
 | P0 | B1/B2 | starmiao GPT Image | 生成 POST 不盲目重试；standard/flexible 双档案 |
-| P0 | B3 | 通用生图 / 网关 | 协议锁定 + openai/openai_chat |
+| P0 | B3 | 通用生图 / 网关 / **shoubanhua** | 协议锁定 + openai/openai_chat（双协议缝合经验） |
 | P0 | B5 | 通用生图 / 网关 | 不可重试错误分类 |
+| P0 | B8 | **Gitee aiimg** / 通用生图 | 生图后台化，不阻塞对话 |
 | P1 | B6 | piexian / 通用生图 / OmniDraw | ReferenceCollector |
 | P1 | B4 | 多头部插件 | 多 api_key 轮询 |
 | P2 | B7 | Agnes | 大图发送策略 |
@@ -65,17 +66,17 @@
 4. 审查：成功闭环、无双 POST、无密钥、合影/晒腿不误伤  
 5. 验证 → push → 目标完成 → 下一项  
 
-映射：06←F1，07←B3，08←C1/C2，09←B5，10←B1/B2，11←B6，12←B4。
+映射：06←F1，07←B3，08←C1/C2，09←B5，10←B1/B2，11←B6，12←B4，13←B8。
 
 ---
 
 ## 3. 近两周
 
 1. 目标 10（GPT Image 防双扣费/双档案）  
-2. 09 + 07（错误分类 + 协议锁定）  
-3. 08（模型/任务指令）  
+2. 09 + 07（错误分类 + 协议锁定；含 shoubanhua 双协议经验）  
+3. 08 + 13（模型/任务指令 + 后台不阻塞）  
 4. 11（参考图收集）  
 5. 03/06（预检与 Dashboard）  
 6. 12（多 key）  
 
-完整仓库表与分型见 `PLUGIN_MARKET_SURVEY.md`。
+完整仓库表、**描述优先补漏表**见 `PLUGIN_MARKET_SURVEY.md`。
