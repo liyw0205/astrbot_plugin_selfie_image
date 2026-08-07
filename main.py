@@ -159,6 +159,13 @@ class SelfieImagePlugin(Star):
         self.records_path = os.path.join(self.data_dir, "generation_records.json")
         self.generated_dir = os.path.join(self.data_dir, "image_cache")
         os.makedirs(self.generated_dir, exist_ok=True)
+        self._plugin_root = os.path.dirname(os.path.abspath(__file__))
+        self._bundled_logo_path = os.path.join(self._plugin_root, "logo.png")
+        # Pre-generated static help poster (shipped in repo; never generated at runtime).
+        self._bundled_help_poster_path = os.path.join(self._plugin_root, "assets", "help_poster.png")
+        if not os.path.isfile(self._bundled_help_poster_path):
+            alt = os.path.join(self._plugin_root, "help_poster.png")
+            self._bundled_help_poster_path = alt if os.path.isfile(alt) else self._bundled_help_poster_path
 
         self._native_config = config if hasattr(config, "save_config") else None
         self._native_config_path = str(getattr(config, "config_path", "") or "")
@@ -3071,36 +3078,57 @@ class SelfieImagePlugin(Star):
 
     @filter.command("生图帮助")
     async def cmd_help(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        yield event.plain_result(
-            "\n".join(
-                [
-                    f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}",
-                    "/画 [数量] <预设名或提示词> [数量] [额外提示词] [--ar 1:1] [--resolution 2K]（别名 /生图）",
-                    "/文生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（提示词直通）",
-                    "/图生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（附带/引用图片，提示词直通）",
-                    "/生图模型 [序号/渠道/模型名]（会话内切换；留空查看；清除 取消覆盖）",
-                    "/生图任务 [任务ID]（查看本会话任务）",
-                    "/生图取消 <任务ID>（取消本会话任务）",
-                    "/预设",
-                    "/预设 查看 [页码/预设名]（管理员查看内容）",
-                    "/预设添加 名称:提示词",
-                    "/预设删除 名称",
-                    "/自拍 [数量] <预设名或动作/场景/换装/合照要求> [--ar 3:4]（别名 /看看）",
-                    "/看看腿 [数量] [额外要求] [--ar 3:4]",
-                    "/看看你 [数量] [动作/场景] [--ar 3:4]（他拍感，不是手持自拍）",
-                    "/合影 [数量] <动作/场景/合照要求> [--ar 1:1]（别名 /合照）",
-                    "数量表示调用生图次数；模型每次实际返回 1 张或多张都会照常发送。",
-                    "生图为后台任务：先回执任务号，完成后再推送图片（可用 /生图任务 查询）。",
-                    "/形象查看",
-                    "/形象设置 <发送图片、引用图片或图片链接>",
-                    "/形象清除",
-                    "/形象刷新",
-                    "LLM 工具：generate_image、generate_selfie",
-                    f"Flask Web：{'已启用' if self.config.web_enable else '未启用'} http://{self.config.web_host}:{self.config.web_port}",
-                    "AstrBot 内嵌管理页：插件详情页 dashboard（复用 Dashboard 登录，无需 Web Token）",
-                ]
-            )
+        text = self._help_text_body()
+        help_path = self._resolve_help_image_path()
+        if help_path:
+            yield event.chain_result([self._create_image_component(help_path)])
+            # Keep a short caption under the poster; full command list still available as text.
+            yield event.plain_result(text)
+            return
+        yield event.plain_result(text)
+
+    def _help_text_body(self) -> str:
+        return "\n".join(
+            [
+                f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}",
+                "/画 [数量] <预设名或提示词> [数量] [额外提示词] [--ar 1:1] [--resolution 2K]（别名 /生图）",
+                "/文生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（提示词直通）",
+                "/图生图 [数量] <原始提示词> [--ar 1:1] [--resolution 2K]（附带/引用图片，提示词直通）",
+                "/生图模型 [序号/渠道/模型名]（会话内切换；留空查看；清除 取消覆盖）",
+                "/生图任务 [任务ID]（查看本会话任务）",
+                "/生图取消 <任务ID>（取消本会话任务）",
+                "/预设",
+                "/预设 查看 [页码/预设名]（管理员查看内容）",
+                "/预设添加 名称:提示词",
+                "/预设删除 名称",
+                "/自拍 [数量] <预设名或动作/场景/换装/合照要求> [--ar 3:4]（别名 /看看）",
+                "/看看腿 [数量] [额外要求] [--ar 3:4]",
+                "/看看你 [数量] [动作/场景] [--ar 3:4]（他拍感，不是手持自拍）",
+                "/合影 [数量] <动作/场景/合照要求> [--ar 1:1]（别名 /合照）",
+                "数量表示调用生图次数；模型每次实际返回 1 张或多张都会照常发送。",
+                "生图为后台任务：先回执任务号，完成后再推送图片（可用 /生图任务 查询）。",
+                "/形象查看",
+                "/形象设置 <发送图片、引用图片或图片链接>",
+                "/形象清除",
+                "/形象刷新",
+                "LLM 工具：generate_image、generate_selfie",
+                f"Flask Web：{'已启用' if self.config.web_enable else '未启用'} http://{self.config.web_host}:{self.config.web_port}",
+                "AstrBot 内嵌管理页：插件详情页 dashboard（复用 Dashboard 登录，无需 Web Token）",
+            ]
         )
+
+    def _resolve_help_image_path(self) -> str:
+        """Return shipped static help poster only (no runtime generation)."""
+        for path in (getattr(self, "_bundled_help_poster_path", ""),):
+            if path and os.path.isfile(path):
+                try:
+                    with open(path, "rb") as handle:
+                        head = handle.read(32)
+                    if looks_like_image_bytes(head):
+                        return path
+                except Exception:
+                    continue
+        return ""
 
     @filter.command("生图模型")
     async def cmd_image_model(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:

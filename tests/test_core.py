@@ -3041,6 +3041,24 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         for name in ("cmd_help", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel"):
             self.assertTrue(hasattr(plugin_main.SelfieImagePlugin, name), name)
 
+    def test_help_uses_shipped_static_poster_only(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        self.assertFalse(hasattr(plugin_main.SelfieImagePlugin, "_generate_help_poster"))
+        root = Path(__file__).resolve().parents[1]
+        poster = root / "assets" / "help_poster.png"
+        logo = root / "logo.png"
+        self.assertTrue(logo.is_file(), "logo.png must ship in repo")
+        self.assertTrue(poster.is_file(), "assets/help_poster.png must ship in repo")
+        self.assertGreater(poster.stat().st_size, 1000)
+        self.assertTrue(looks_like_image_bytes(poster.read_bytes()[:32]))
+        # source must not advertise runtime refresh
+        main_src = (root / "main.py").read_text(encoding="utf-8")
+        self.assertNotIn("刷新图", main_src)
+        self.assertNotIn("_generate_help_poster", main_src)
+        self.assertIn("assets", main_src)
+        self.assertIn("help_poster.png", main_src)
+
 
 if __name__ == "__main__":
     unittest.main()

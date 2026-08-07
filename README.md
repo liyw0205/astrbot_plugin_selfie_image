@@ -1,8 +1,12 @@
 # AstrBot Selfie Image 生图自拍
 
-当前版本 `1.1.5`，要求 AstrBot `>=4.13.0,<5`。
+当前版本 `1.1.6`，要求 AstrBot `>=4.13.0,<5`。
 
 这是 AstrBot 生图自拍插件，包含生图、参考图图生图、AI 自拍、LLM 工具调用和 Flask Web / 内嵌 Dashboard 管理页。
+
+`/生图帮助` 会发送仓库内预生成的帮助图（`assets/help_poster.png`）与指令文本；**不会**在运行时再调渠道画帮助图。
+
+前端与帮助图方案见 [`docs/UI_AND_HELP_IMAGE_PLAN.md`](docs/UI_AND_HELP_IMAGE_PLAN.md)。
 
 后续优化按三向推进（前端 / 后端 / 指令）。  
 - 市场调研（插件源与特色）：[`docs/PLUGIN_MARKET_SURVEY.md`](docs/PLUGIN_MARKET_SURVEY.md)  
