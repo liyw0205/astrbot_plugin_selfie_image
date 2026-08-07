@@ -162,10 +162,19 @@ class SelfieImagePlugin(Star):
         self._plugin_root = os.path.dirname(os.path.abspath(__file__))
         self._bundled_logo_path = os.path.join(self._plugin_root, "logo.png")
         # Pre-generated static help poster (shipped in repo; never generated at runtime).
-        self._bundled_help_poster_path = os.path.join(self._plugin_root, "assets", "help_poster.png")
-        if not os.path.isfile(self._bundled_help_poster_path):
-            alt = os.path.join(self._plugin_root, "help_poster.png")
-            self._bundled_help_poster_path = alt if os.path.isfile(alt) else self._bundled_help_poster_path
+        assets_dir = os.path.join(self._plugin_root, "assets")
+        self._bundled_help_poster_path = ""
+        for name in ("help_poster.png", "help_poster.jpg", "help_poster.webp"):
+            candidate = os.path.join(assets_dir, name)
+            if os.path.isfile(candidate):
+                self._bundled_help_poster_path = candidate
+                break
+        if not self._bundled_help_poster_path:
+            for name in ("help_poster.png", "help_poster.jpg"):
+                candidate = os.path.join(self._plugin_root, name)
+                if os.path.isfile(candidate):
+                    self._bundled_help_poster_path = candidate
+                    break
 
         self._native_config = config if hasattr(config, "save_config") else None
         self._native_config_path = str(getattr(config, "config_path", "") or "")

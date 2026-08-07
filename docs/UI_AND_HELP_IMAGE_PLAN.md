@@ -11,7 +11,7 @@
 | 项 | 说明 |
 |----|------|
 | `logo.png` | 由当前形象参考图中心偏上裁 512×512 |
-| `assets/help_poster.png` | 用测试渠道 `糖心/gpt-image-2` + logo 参考 **预生成** 入仓 |
+| `assets/help_poster.png` | 开发时用测试渠道+**原形象图**预生成；提示词强调 **禁止二次元化**、锁脸锁发型（见 `HELP_POSTER_PROMPT.md`） |
 | `/生图帮助` | 优先发送仓库静态帮助图 + 文本指令列表；**无**「刷新图/运行时生成」 |
 
 路径优先级：`assets/help_poster.png`（主）→ 根目录 `help_poster.png`（兼容）。
