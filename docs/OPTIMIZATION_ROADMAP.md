@@ -18,7 +18,8 @@
 
 **不变量**：`web.*` 与 plugin_data 分层；内嵌免 Token；`trust_env=False`+显式 proxy；晒腿等玩法默认保留。
 
-**可借 / 不借**：见调研文档。可借任务指令、协议锁定、GPT Image 防双扣费、参考图收集、多 key、错误分类。不借 Comfy/视频主线、逆向 cookie 默认方案。
+**可借 / 不借**：见调研文档。可借任务指令、协议锁定、GPT Image 防双扣费、参考图收集、多 key、错误分类。  
+视频：**可借** OmniDraw/big_banana 的「生图插件内嵌视频 + `/videos/generations` + 后台轮询」；**不借** Comfy 视频主线、解析类视频、逆向 cookie 默认方案。详见 [VIDEO_GENERATION_PLAN.md](./VIDEO_GENERATION_PLAN.md)。
 
 ---
 
@@ -35,6 +36,7 @@
 | P1 | B6 | piexian / 通用生图 / OmniDraw | ReferenceCollector |
 | P1 | B4 | 多头部插件 | 多 api_key 轮询 |
 | P2 | B7 | Agnes | 大图发送策略 |
+| P1 | B9 | OmniDraw / big_banana / sora | **可选视频**：独立 video 渠道 + 文生/图生视频 + 后台任务（[VIDEO_GENERATION_PLAN.md](./VIDEO_GENERATION_PLAN.md)） |
 
 ### 指令 C
 
@@ -78,5 +80,6 @@
 4. 11（参考图收集）  
 5. 03/06（预检与 Dashboard）  
 6. 12（多 key）  
+7. **视频 V1**（B9：OpenAI 兼容 `/videos/generations` + `/视频`）
 
 完整仓库表、**描述优先补漏表**见 `PLUGIN_MARKET_SURVEY.md`。

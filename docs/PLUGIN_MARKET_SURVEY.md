@@ -128,7 +128,7 @@ Markdown/回复转图片、图床、图片外显、斗图 hub、图片审核/gua
 | 多 key 轮询 | openrouter、piexian、通用生图 | 单 key/渠道 | **高** |
 | CLI 参数 `--ratio` 等 | starmiao、NAI、ppnai | 有部分 | 中 |
 | 工作流 Comfy/A1111 | 网关、Comfy、anima、liblib | 无 | 低 |
-| 视频 | OmniDraw、Agnes、grok_suite、sora | 无 | 低 |
+| 视频 | OmniDraw、big_banana、Agnes、grok_suite、sora、即梦、comfyui_video 等 | 无 | **方案见 [VIDEO_GENERATION_PLAN.md](./VIDEO_GENERATION_PLAN.md)**：可选独立 video 渠道，不借 Comfy 主线 |
 | 连通性/配额 | NAI、ppnai | Web 测试为主 | 中 |
 | 手办化彩蛋 | lmarena/shoubanhua/figurine/多插件 | 可用预设 | 低–中：预设即可 |
 
@@ -148,13 +148,14 @@ Markdown/回复转图片、图床、图片外显、斗图 hub、图片审核/gua
 2. **参考图收集**的完备性（转发、头像、多图角色）  
 3. **GPT Image / 中转**兼容（双参数档案、生成请求不盲目重试）  
 4. **多 key**、失败分类（不可重试词典）  
-5. 与 OmniDraw 比：多人设切换、视频、副脑提示词（后两项非必须）
+5. 与 OmniDraw 比：多人设切换、**视频（市场已常内嵌于生图插件）**、副脑提示词 —— 视频见 [VIDEO_GENERATION_PLAN.md](./VIDEO_GENERATION_PLAN.md)
 
 **不应做的**
 
 - 做成第二个「通用生图」而丢掉自拍主线  
-- 为追 stars 去接 Comfy/视频/手办整站  
-- 把市场里逆向 cookie 方案当默认依赖
+- 为追 stars 去接 **Comfy 视频整站** / 手办整站  
+- 把市场里逆向 cookie 方案当默认依赖  
+- （修正）**完全忽视视频**：头部角色化生图插件多已内嵌文生/图生视频；Selfie 应用**可选 video 渠道**跟进，见视频方案文档
 
 ---
 

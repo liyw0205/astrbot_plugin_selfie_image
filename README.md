@@ -12,8 +12,9 @@
 
 后续优化按三向推进（前端 / 后端 / 指令）。  
 - 市场调研（插件源与特色）：[`docs/PLUGIN_MARKET_SURVEY.md`](docs/PLUGIN_MARKET_SURVEY.md)  
-- 集成方案与自动迭代：[`docs/OPTIMIZATION_ROADMAP.md`](docs/OPTIMIZATION_ROADMAP.md)  
-- 原子目标：`docs/targets/`
+- 优化路线图：[`docs/OPTIMIZATION_ROADMAP.md`](docs/OPTIMIZATION_ROADMAP.md)  
+- **视频（文生/图生）方案**：[`docs/VIDEO_GENERATION_PLAN.md`](docs/VIDEO_GENERATION_PLAN.md)  
+- 前端与帮助图：[`docs/UI_AND_HELP_IMAGE_PLAN.md`](docs/UI_AND_HELP_IMAGE_PLAN.md)
 
 ## 使用步骤
 
