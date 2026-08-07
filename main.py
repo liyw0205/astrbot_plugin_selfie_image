@@ -65,6 +65,7 @@ from .providers import (
     normalize_image_base_url,
     provider_type_from_channel_payload,
 )
+from .reference_collector import ReferenceCollector
 from .utils import (
     bytes_to_data_url,
     collect_record_cache_paths,
@@ -1482,34 +1483,64 @@ class SelfieImagePlugin(Star):
         include_at_avatar: bool = False,
         context_hint: str = "",
         allow_context_fallback: bool = False,
+        include_persona: bool = False,
+        extra_sources: Optional[List[str]] = None,
     ) -> Tuple[List[ImageReference], int, int]:
-        sources = self._filter_reference_images(event, extract_image_sources_from_event(event, include_at_avatar=include_at_avatar))
-        if not sources and allow_context_fallback and self._looks_like_context_image_reference(context_hint or extract_event_text(event)):
-            sources = self._filter_reference_images(event, self._recent_context_image_sources(event))
+        """Collect event references via unified ReferenceCollector (target 11)."""
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
-        result: List[ImageReference] = []
-        failed_count = 0
-        seen = set()
-        if not sources:
-            return result, 0, 0
+        persona_path = ""
+        if include_persona and self.persona.has_reference_image():
+            persona_path = str(self.persona.get_reference_path() or "")
+        collector = ReferenceCollector(
+            max_bytes=max_bytes,
+            bot_ids=self._bot_account_ids(event),
+            persona_path=persona_path,
+            context_sources=self._recent_context_image_sources(event),
+            extra_sources=extra_sources or [],
+            include_at_avatar=include_at_avatar,
+            include_persona=include_persona,
+            allow_context_fallback=allow_context_fallback,
+            context_hint=context_hint or extract_event_text(event),
+            looks_like_context_ref=self._looks_like_context_image_reference,
+        )
         async with aiohttp.ClientSession(trust_env=False) as session:
-            for source in sources:
-                fetched = await fetch_image_source(source, session, max_bytes=max_bytes)
-                if not fetched:
-                    failed_count += 1
-                    continue
-                data, mime = fetched
-                if not data:
-                    failed_count += 1
-                    continue
-                key = (len(data), data[:64])
-                if data and key not in seen:
-                    source_url = str(source or "").strip() if str(source or "").strip().lower().startswith(("http://", "https://")) else ""
-                    result.append(ImageReference(data=data, mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data)), source_url=source_url))
-                    seen.add(key)
-        if failed_count and not result:
-            logger.warning(f"[SelfieImage] 参考图读取失败或超时: {failed_count}/{len(sources)}")
-        return result, len(sources), failed_count
+            collected = await collector.collect(event, session)
+        # Default return keeps historical semantics: object refs only (persona separate).
+        refs = collected.for_draw(include_persona=include_persona)
+        if collected.failed_count and not refs:
+            logger.warning(
+                f"[SelfieImage] 参考图读取失败或超时: {collected.failed_count}/{collected.source_count}"
+            )
+        return refs, collected.source_count, collected.failed_count
+
+    async def _collect_event_references(
+        self,
+        event: AstrMessageEvent,
+        *,
+        include_at_avatar: bool = False,
+        context_hint: str = "",
+        allow_context_fallback: bool = False,
+        include_persona: bool = False,
+        extra_sources: Optional[List[str]] = None,
+    ):
+        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+        persona_path = ""
+        if include_persona and self.persona.has_reference_image():
+            persona_path = str(self.persona.get_reference_path() or "")
+        collector = ReferenceCollector(
+            max_bytes=max_bytes,
+            bot_ids=self._bot_account_ids(event),
+            persona_path=persona_path,
+            context_sources=self._recent_context_image_sources(event),
+            extra_sources=extra_sources or [],
+            include_at_avatar=include_at_avatar,
+            include_persona=include_persona,
+            allow_context_fallback=allow_context_fallback,
+            context_hint=context_hint or extract_event_text(event),
+            looks_like_context_ref=self._looks_like_context_image_reference,
+        )
+        async with aiohttp.ClientSession(trust_env=False) as session:
+            return await collector.collect(event, session)
 
     async def _event_reference_images(
         self,
@@ -1517,12 +1548,16 @@ class SelfieImagePlugin(Star):
         include_at_avatar: bool = False,
         context_hint: str = "",
         allow_context_fallback: bool = False,
+        include_persona: bool = False,
+        extra_sources: Optional[List[str]] = None,
     ) -> List[ImageReference]:
         refs, _, _ = await self._event_reference_images_with_stats(
             event,
             include_at_avatar=include_at_avatar,
             context_hint=context_hint,
             allow_context_fallback=allow_context_fallback,
+            include_persona=include_persona,
+            extra_sources=extra_sources,
         )
         return refs
 

@@ -2703,5 +2703,108 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual(listed[0]["task_id"], "cmd-2")
 
 
+class ReferenceCollectorTests(unittest.TestCase):
+    def test_extract_buckets_message_quote_at_and_forward(self) -> None:
+        from astrbot_plugin_selfie_image.reference_collector import (
+            CollectedReferences,
+            dedupe_image_references,
+            extract_structured_image_sources,
+            filter_bot_avatar_sources,
+        )
+        from astrbot_plugin_selfie_image.providers import ImageReference
+
+        class Image:
+            def __init__(self, url="", path=""):
+                self.url = url
+                self.path = path
+
+        class Plain:
+            def __init__(self, text=""):
+                self.text = text
+
+        class At:
+            def __init__(self, qq):
+                self.qq = qq
+
+        class Quote:
+            def __init__(self, message):
+                self.message = message
+
+        class Node:
+            def __init__(self, message):
+                self.message = message
+
+        class Forward:
+            def __init__(self, nodes):
+                self.nodes = nodes
+
+        class MessageObj:
+            def __init__(self):
+                self.message = [
+                    Plain("see https://cdn.example/a.png"),
+                    Image(url="https://cdn.example/msg.jpg"),
+                    At("10001"),
+                    Forward([Node([Image(path="/tmp/forward.webp")])]),
+                ]
+                self.quote = Quote([Image(url="https://cdn.example/quote.png")])
+
+        class Event:
+            def __init__(self):
+                self.message_obj = MessageObj()
+                self.message = None
+                self.raw_message = None
+
+        buckets = extract_structured_image_sources(Event(), include_at_avatar=True)
+        self.assertTrue(any("a.png" in s or "msg.jpg" in s for s in buckets["message"]))
+        self.assertTrue(any("quote.png" in s for s in buckets["quote"]))
+        self.assertTrue(any("forward.webp" in s for s in buckets["forward"]))
+        self.assertTrue(any("10001" in s for s in buckets["at_avatar"]))
+
+        filtered = filter_bot_avatar_sources(
+            [
+                "https://q4.qlogo.cn/headimg_dl?dst_uin=999&spec=640",
+                "https://cdn.example/keep.png",
+            ],
+            ["999"],
+        )
+        self.assertEqual(filtered, ["https://cdn.example/keep.png"])
+
+        refs = [
+            ImageReference(data=b"\x89PNG" + b"1" * 20, mime_type="image/png"),
+            ImageReference(data=b"\x89PNG" + b"1" * 20, mime_type="image/png"),
+            ImageReference(data=b"\x89PNG" + b"2" * 20, mime_type="image/png"),
+        ]
+        self.assertEqual(len(dedupe_image_references(refs)), 2)
+
+        collected = CollectedReferences(
+            message=[ImageReference(data=b"m" * 32, mime_type="image/png")],
+            persona=[ImageReference(data=b"p" * 32, mime_type="image/png")],
+        )
+        self.assertEqual(len(collected.for_group_selfie()), 1)
+        self.assertEqual(len(collected.for_draw(include_persona=True)), 2)
+        self.assertEqual(len(collected.for_draw(include_persona=False)), 1)
+
+    def test_plain_text_event_has_no_images(self) -> None:
+        from astrbot_plugin_selfie_image.reference_collector import extract_structured_image_sources
+
+        class Plain:
+            def __init__(self, text=""):
+                self.text = text
+
+        class MessageObj:
+            def __init__(self):
+                self.message = [Plain("hello only text")]
+                self.quote = None
+
+        class Event:
+            def __init__(self):
+                self.message_obj = MessageObj()
+                self.message = None
+                self.raw_message = None
+
+        buckets = extract_structured_image_sources(Event(), include_at_avatar=True)
+        self.assertEqual(sum(len(v) for v in buckets.values()), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

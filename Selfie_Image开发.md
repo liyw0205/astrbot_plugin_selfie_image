@@ -22,7 +22,7 @@
 | 8 | 指令模型切换与任务查询取消 | `docs/targets/08-…` | 已完成 | 通用生图 / OmniDraw |
 | 9 | 不可重试错误分类 | `docs/targets/09-…` | 已完成 | 通用生图 / 网关 |
 | 10 | GPT Image 双档案与防双扣费 | `docs/targets/10-…` | 已完成 | starmiao GPT Image |
-| 11 | 统一参考图收集器 | `docs/targets/11-…` | 待开始 | piexian / 通用生图 / OmniDraw |
+| 11 | 统一参考图收集器 | `docs/targets/11-…` | 已完成 | piexian / 通用生图 / OmniDraw |
 | 12 | 多 API Key 轮询 | `docs/targets/12-…` | 待开始 | 多头部生图插件 |
 | 13 | 生图后台化不阻塞对话 | `docs/targets/13-…` | 已完成 | Gitee aiimg / 通用生图 |
 
