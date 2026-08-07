@@ -1,13 +1,13 @@
 # Selfie Image 开发文档
 
-> 文档整理日期：2026-07-13
-> 文档基线：`8c4afb4`，`astrbot_plugin_selfie_image` 1.0.0
-> 运行形态：AstrBot 插件 + 内置 Flask Web 管理页 + 多 Provider 生图适配器
-> 当前回归基线：`tests/test_core.py` 130 个用例；每轮改动后必须重新验证
+> 文档整理日期：2026-08-07
+> 文档基线：三向优化方案 `docs/OPTIMIZATION_ROADMAP.md`；插件版本见 `metadata.yaml`
+> 运行形态：AstrBot 插件 + 内置 Flask Web + 内嵌 Dashboard + 多 Provider 生图适配器
+> 当前回归基线：`tests/test_core.py`；每轮改动后必须重新验证
 
 ## 目标队列
 
-开发不再以单一长文档追加流水记录。当前待办以独立目标文档管理：每个目标必须完成实现、测试、提交与推送后，才自动进入下一项。目标文档保存在 `docs/targets/`，其中包含范围、非目标、验收条件和验证命令。
+开发以独立目标文档管理：每个目标必须完成实现、测试、提交与推送后，才自动进入下一项。目标文档保存在 `docs/targets/`。总纲与三向（前端/后端/指令）路线见 `docs/OPTIMIZATION_ROADMAP.md`。
 
 | 顺序 | 目标 | 文档 | 状态 |
 |------|------|------|------|
@@ -16,6 +16,12 @@
 | 3 | 增加配置预检与渠道诊断 | `docs/targets/03-config-preflight.md` | 进行中 |
 | 4 | 完善缓存回收的记录一致性 | `docs/targets/04-cache-retention-consistency.md` | 待开始 |
 | 5 | 建立 AstrBot 运行时冒烟契约 | `docs/targets/05-astrbot-smoke-contract.md` | 待开始 |
+| 6 | 内嵌 Dashboard 与渠道测试闭环 hardening | `docs/targets/06-dashboard-test-loop-hardening.md` | 进行中 |
+| 7 | 协议锁定与 openai/openai_chat 分流 | `docs/targets/07-protocol-lock-openai-chat.md` | 待开始 |
+| 8 | 指令侧模型切换与任务查询/取消 | `docs/targets/08-command-model-and-tasks.md` | 待开始 |
+| 9 | 不可重试错误词典与失败分类 | `docs/targets/09-nonretryable-error-taxonomy.md` | 待开始 |
+
+自动后续优化步骤、自我审查清单（bug/漏洞/误理解）见路线图 §3–§4。
 
 ## 目标与边界
 

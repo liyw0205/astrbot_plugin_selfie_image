@@ -2,7 +2,9 @@
 
 当前版本 `1.1.0`，要求 AstrBot `>=4.13.0,<5`。
 
-这是 AstrBot 生图自拍插件，包含生图、参考图图生图、AI 自拍、LLM 工具调用和 Flask Web 管理页。
+这是 AstrBot 生图自拍插件，包含生图、参考图图生图、AI 自拍、LLM 工具调用和 Flask Web / 内嵌 Dashboard 管理页。
+
+后续优化按三向推进（前端 / 后端 / 指令），总纲见 [`docs/OPTIMIZATION_ROADMAP.md`](docs/OPTIMIZATION_ROADMAP.md)；原子目标在 `docs/targets/`。
 
 ## 使用步骤
 
