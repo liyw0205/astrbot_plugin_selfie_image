@@ -416,15 +416,29 @@ class SelfieImagePlugin(Star):
         with self._config_lock:
             patch = self._strip_web_startup_config(patch)
             merged = deep_merge(self.raw_config, patch)
-            from .models import preflight_config_channels
+            from .models import preflight_config_channels, sanitize_channels_for_save
 
-            # Preflight only channels present in the patch/merged tree; do not block
-            # partial UI saves that only tweak non-channel fields when channels already valid.
+            # Soft-fix empty-model channels before merge persist (auto-disable).
+            sanitize_channels_for_save(merged)
+            if isinstance(patch, dict):
+                sanitize_channels_for_save(patch)
             report = preflight_config_channels(merged)
-            # If user is saving channel lists, enforce preflight.
-            if isinstance(patch, dict) and ("image_channels" in patch or "audit_channels" in patch or "imageChannels" in patch):
+            channel_keys = (
+                "image_channels",
+                "audit_channels",
+                "video_channels",
+                "imageChannels",
+                "auditChannels",
+                "videoChannels",
+            )
+            if isinstance(patch, dict) and any(key in patch for key in channel_keys):
                 if not report.get("ok"):
                     raise RuntimeError(report.get("message") or "渠道配置预检未通过")
+                # Prefer sanitized tree from preflight when present.
+                if isinstance(report.get("config"), dict):
+                    for key in ("image_channels", "audit_channels", "video_channels"):
+                        if key in report["config"]:
+                            merged[key] = report["config"][key]
             self._apply_raw_config(merged)
             return self.get_config_for_web()
 

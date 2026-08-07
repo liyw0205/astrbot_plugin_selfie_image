@@ -356,7 +356,21 @@ class ConfigModelTests(unittest.TestCase):
         fields = {item["field"] for item in bad["errors"]}
         self.assertIn("base_url", fields)
         self.assertIn("api_key", fields)
-        self.assertIn("enabled_models", fields)
+        # empty models no longer hard-fail: enabled channel is auto-disabled
+        self.assertNotIn("enabled_models", fields)
+        self.assertTrue(bad.get("auto_disabled"))
+        empty_models = {
+            "name": "empty",
+            "provider_type": "openai",
+            "base_url": "https://example.test",
+            "api_key": "sk-test",
+            "enabled": True,
+            "enabled_models": [],
+        }
+        soft = preflight_image_channel(empty_models, kind="image")
+        self.assertTrue(soft["ok"])
+        self.assertTrue(soft.get("auto_disabled"))
+        self.assertFalse(empty_models.get("enabled"))
         good = preflight_image_channel(
             {
                 "name": "ok",
@@ -368,8 +382,8 @@ class ConfigModelTests(unittest.TestCase):
         )
         self.assertTrue(good["ok"])
         report = preflight_config_channels({"image_channels": []})
-        self.assertFalse(report["ok"])
-        self.assertIn("image_channels", {e["field"] for e in report["errors"]})
+        # empty list is allowed (Web may save while configuring)
+        self.assertTrue(report["ok"])
 
     def test_split_api_keys_and_target_rotation_list(self) -> None:
         from astrbot_plugin_selfie_image.models import split_api_keys
@@ -2943,11 +2957,20 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("nav.page-nav", self.html)
         self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr))", self.html)
         self.assertIn("nav.page-nav button.active", self.html)
+        self.assertIn("addVideoChannel", self.html)
+        self.assertIn("channelTabVideo", self.html)
+        self.assertIn("videoChannelList", self.html)
+        self.assertIn("softDisableChannelIfNoModels", self.html)
+        self.assertIn("isChannelModalOpen", self.html)
+        self.assertIn("modalProvider", self.html)
+        self.assertIn("toastOnOk", self.html)
+        self.assertIn("allowWhileModal", self.html)
         page = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
         page_html = page.read_text(encoding="utf-8")
         self.assertIn("#3c96ca", page_html)
         self.assertIn("header-brand", page_html)
         self.assertIn("page-nav", page_html)
+        self.assertIn("channelTabVideo", page_html)
         self.assertIn("开始试画", page_html)
         logo = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "logo.png"
         self.assertTrue(logo.is_file())

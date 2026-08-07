@@ -555,12 +555,14 @@ def resolve_model_provider_type(
 def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
     """Local channel config preflight (target 03). No network.
 
-    Returns {ok, errors:[{field, message}], channel_name}.
+    Returns {ok, errors:[{field, message}], channel_name, auto_disabled}.
+    Enabled channel with zero models is auto-disabled instead of hard error.
     """
     errors: List[Dict[str, str]] = []
     channel = _build_image_channel(raw if isinstance(raw, dict) else {})
     label = channel.name or "未命名渠道"
     kind_label = "审核渠道" if kind == "audit" else "生图渠道"
+    auto_disabled = False
 
     if not str(channel.name or "").strip():
         errors.append({"field": "name", "message": f"{kind_label}缺少名称"})
@@ -571,8 +573,12 @@ def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
     if not str(channel.api_key or "").strip() and not (getattr(channel, "api_keys", None) or []):
         errors.append({"field": "api_key", "message": f"{kind_label} {label} 缺少 api_key"})
     models = channel.enabled_models or ([channel.model] if channel.model else [])
-    if not models:
-        errors.append({"field": "enabled_models", "message": f"{kind_label} {label} 未启用任何模型（enabled_models/model 为空）"})
+    if not models and channel.enabled:
+        # Prefer soft-disable over blocking save (Web 编辑中途常暂时无模型).
+        auto_disabled = True
+        channel.enabled = False
+        if isinstance(raw, dict):
+            raw["enabled"] = False
     if channel.timeout < 10:
         errors.append({"field": "timeout", "message": f"{kind_label} {label} 超时过短"})
 
@@ -581,6 +587,7 @@ def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
         "errors": errors,
         "channel_name": label,
         "kind": kind,
+        "auto_disabled": auto_disabled,
         "message": "；".join(item["message"] for item in errors),
     }
 
@@ -590,6 +597,7 @@ def preflight_video_channel(raw: Any) -> Dict[str, Any]:
     errors: List[Dict[str, str]] = []
     channel = _build_video_channel(raw if isinstance(raw, dict) else {})
     label = channel.name or "未命名视频渠道"
+    auto_disabled = False
     if not str(channel.name or "").strip():
         errors.append({"field": "name", "message": "视频渠道缺少名称"})
     if not str(channel.base_url or "").strip():
@@ -597,43 +605,59 @@ def preflight_video_channel(raw: Any) -> Dict[str, Any]:
     if not str(channel.api_key or "").strip() and not (getattr(channel, "api_keys", None) or []):
         errors.append({"field": "api_key", "message": f"视频渠道 {label} 缺少 api_key"})
     models = channel.enabled_models or ([channel.model] if channel.model else [])
-    if not models:
-        errors.append({"field": "enabled_models", "message": f"视频渠道 {label} 未启用任何模型"})
+    if not models and channel.enabled:
+        auto_disabled = True
+        channel.enabled = False
+        if isinstance(raw, dict):
+            raw["enabled"] = False
     return {
         "ok": not errors,
         "errors": errors,
         "channel_name": label,
         "kind": "video",
+        "auto_disabled": auto_disabled,
         "message": "；".join(item["message"] for item in errors),
     }
 
 
-def preflight_config_channels(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Preflight all image/audit channels in a config dict."""
+def sanitize_channels_for_save(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Mutate channel lists in-place: enabled + no models → disable (no hard fail)."""
     data = raw if isinstance(raw, dict) else {}
+    for key, kind in (("image_channels", "image"), ("audit_channels", "audit"), ("video_channels", "video")):
+        items = template_list_items(data.get(key))
+        cleaned: List[Any] = []
+        for item in items:
+            if not isinstance(item, dict):
+                cleaned.append(item)
+                continue
+            row = copy.deepcopy(item)
+            if kind == "video":
+                preflight_video_channel(row)
+            else:
+                preflight_image_channel(row, kind=kind)
+            cleaned.append(row)
+        if key in data or cleaned:
+            data[key] = cleaned
+    return data
+
+
+def preflight_config_channels(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Preflight all image/audit/video channels in a config dict."""
+    data = sanitize_channels_for_save(copy.deepcopy(raw if isinstance(raw, dict) else {}))
     image_results = [preflight_image_channel(item, kind="image") for item in template_list_items(data.get("image_channels"))]
     audit_results = [preflight_image_channel(item, kind="audit") for item in template_list_items(data.get("audit_channels"))]
+    video_results = [preflight_video_channel(item) for item in template_list_items(data.get("video_channels"))]
     errors: List[Dict[str, str]] = []
-    for result in image_results + audit_results:
+    for result in image_results + audit_results + video_results:
         errors.extend(result.get("errors") or [])
-    enabled_image = [
-        _build_image_channel(item)
-        for item in template_list_items(data.get("image_channels"))
-        if to_bool((item or {}).get("enabled") if isinstance(item, dict) else True, True)
-    ]
-    if not any((ch.enabled_models or ([ch.model] if ch.model else [])) for ch in enabled_image if ch.enabled):
-        # Only warn when there is at least one channel object but none usable, or zero channels.
-        if template_list_items(data.get("image_channels")):
-            if not any(r.get("ok") for r in image_results):
-                pass  # per-channel errors already listed
-        else:
-            errors.append({"field": "image_channels", "message": "未配置任何生图渠道"})
     return {
         "ok": not errors,
         "errors": errors,
         "image_channels": image_results,
         "audit_channels": audit_results,
+        "video_channels": video_results,
         "message": "；".join(item["message"] for item in errors),
+        "config": data,
     }
 
 

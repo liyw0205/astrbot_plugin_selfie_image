@@ -250,8 +250,18 @@ INDEX_HTML = r"""<!doctype html>
     .copy-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-weak); }
     .copy-btn svg { width: 15px; height: 15px; display: block; }
     .tabs-inline { display: flex; gap: 8px; margin: 10px 0 14px; flex-wrap: wrap; }
-    .tabs-inline button { background: #fff; border-color: var(--line); color: var(--text); }
-    .tabs-inline button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .tabs-inline button {
+      background: #fff; border-color: var(--line-strong); color: var(--text);
+      box-shadow: none;
+    }
+    .tabs-inline button:hover { background: var(--panel-soft); border-color: var(--line-strong); color: var(--text); }
+    .tabs-inline button.active,
+    .tabs-inline button.active:hover {
+      background: linear-gradient(180deg, #eef7fc, #e3f2fa);
+      border-color: color-mix(in srgb, var(--primary) 35%, var(--line-strong));
+      color: var(--primary-strong);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset;
+    }
     .channel-pane { display: none; }
     .channel-pane.active { display: block; }
     .model-panel { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; background: #fff; min-height: 120px; }
@@ -369,21 +379,24 @@ INDEX_HTML = r"""<!doctype html>
       <div class="between">
         <h2>渠道</h2>
         <div class="actions" style="margin-top:0">
-          <button onclick="addChannel()">加生图渠道</button>
-          <button class="secondary" onclick="addAuditChannel()">加审核渠道</button>
+          <button class="secondary" type="button" onclick="addChannel()">加生图渠道</button>
+          <button class="secondary" type="button" onclick="addAuditChannel()">加审核渠道</button>
+          <button class="secondary" type="button" onclick="addVideoChannel()">加视频渠道</button>
         </div>
       </div>
-      <p class="muted">类型支持 openai、gemini、gemini_openai、z_image_gitee、jimeng2api、grok、agnes。列表只显示概要，点「编辑」改接口、模型缓存和启用顺序。</p>
-      <div class="tabs-inline">
+      <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。渠道启用但还没选模型时，保存会自动关掉该渠道，不会整页报错。</p>
+      <div class="tabs-inline" role="tablist" aria-label="渠道分类">
         <button id="channelTabImage" class="active" type="button" onclick="switchChannelPane('image')">生图渠道</button>
         <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">审核渠道</button>
+        <button id="channelTabVideo" type="button" onclick="switchChannelPane('video')">视频渠道</button>
       </div>
       <div id="channelPaneImage" class="channel-pane active"><div id="channelList"></div></div>
       <div id="channelPaneAudit" class="channel-pane"><div id="auditChannelList"></div></div>
+      <div id="channelPaneVideo" class="channel-pane"><div id="videoChannelList"></div></div>
       <h3>生图模型优先级</h3>
       <div class="grid">
         <div><label>选择已启用模型</label><select id="priorityPicker"></select></div>
-        <div><label>操作</label><div class="actions" style="margin-top:0"><button onclick="addPriority()">加入优先级</button><button class="secondary" onclick="clearPriority()">清空优先级</button></div></div>
+        <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" onclick="addPriority()">加入优先级</button><button class="secondary" type="button" onclick="clearPriority()">清空优先级</button></div></div>
       </div>
       <textarea id="priorityList" style="display:none"></textarea>
       <div id="priorityRows" class="model-list"></div>
@@ -511,13 +524,14 @@ INDEX_HTML = r"""<!doctype html>
       <div class="modal-body">
       <div class="grid">
         <div><label>渠道名</label><input id="modalChannelName"></div>
-        <div><label>类型</label><select id="modalProvider"></select></div>
+        <div style="display:none"><label>类型</label><select id="modalProvider"></select></div>
         <div><label>Base URL</label><input id="modalBaseUrl"></div>
         <div><label>API Key（可多行，每行一把；鉴权失败或限流会自动换下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
         <div><label>代理 URL</label><input id="modalProxy" placeholder="http://127.0.0.1:7890"></div>
         <div><label>默认模型</label><input id="modalModel"></div>
         <div><label>超时（秒）</label><input id="modalTimeout" type="number" min="10" max="900"></div>
       </div>
+      <p class="muted" id="modalProviderHint" style="margin-top:8px">渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。</p>
       <label class="checkline"><input id="modalEnabled" type="checkbox"> 启用渠道</label>
       
       <div class="grid" style="margin-top: 12px;">
@@ -596,6 +610,8 @@ INDEX_HTML = r"""<!doctype html>
     let ACTIVE_CHANNEL_PANE = 'image';
     let EDITING_CHANNEL_INDEX = -1;
     let EDITING_CHANNEL_KIND = 'image';
+    let CHANNEL_MODAL_DIRTY = false;
+    let SUPPRESS_AUTOSAVE = false;
     let CURRENT_RECORD = null;
     let TEST_TASK_POLL_TIMER = null;
     let TEST_TASK_ID = '';
@@ -733,11 +749,15 @@ INDEX_HTML = r"""<!doctype html>
       setTimeout(() => node.remove(), 2600);
     }
     function switchChannelPane(kind = 'image') {
-      ACTIVE_CHANNEL_PANE = kind === 'audit' ? 'audit' : 'image';
-      $('channelTabImage').classList.toggle('active', ACTIVE_CHANNEL_PANE === 'image');
-      $('channelTabAudit').classList.toggle('active', ACTIVE_CHANNEL_PANE === 'audit');
-      $('channelPaneImage').classList.toggle('active', ACTIVE_CHANNEL_PANE === 'image');
-      $('channelPaneAudit').classList.toggle('active', ACTIVE_CHANNEL_PANE === 'audit');
+      ACTIVE_CHANNEL_PANE = (kind === 'audit' || kind === 'video') ? kind : 'image';
+      const map = { image: 'channelTabImage', audit: 'channelTabAudit', video: 'channelTabVideo' };
+      const panes = { image: 'channelPaneImage', audit: 'channelPaneAudit', video: 'channelPaneVideo' };
+      for (const key of Object.keys(map)) {
+        const tab = $(map[key]);
+        const pane = $(panes[key]);
+        if (tab) tab.classList.toggle('active', ACTIVE_CHANNEL_PANE === key);
+        if (pane) pane.classList.toggle('active', ACTIVE_CHANNEL_PANE === key);
+      }
     }
     function ensureConfig() {
       delete CONFIG.web;
@@ -749,9 +769,12 @@ INDEX_HTML = r"""<!doctype html>
       CONFIG.personality ??= '可爱猫娘助手，说话带“喵”等语气词，活泼俏皮会撒娇';
       CONFIG.permission ??= {};
       CONFIG.image ??= {};
+      CONFIG.video ??= {};
       CONFIG.image_channels ??= [];
       CONFIG.audit_channels ??= [];
+      CONFIG.video_channels ??= [];
       CONFIG.enabled_image_model_priority ??= [];
+      CONFIG.enabled_video_model_priority ??= [];
       const img = CONFIG.image;
       img.enable_llm_tool ??= true;
       img.default_aspect_ratio ??= '自动';
@@ -774,6 +797,11 @@ INDEX_HTML = r"""<!doctype html>
       img.ocr_model ??= '';
       img.prompt_audit_template ??= '你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{"allow":true/false,"reason":"原因"}';
       img.output_audit_template ??= '你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{"allow":true/false,"reason":"原因"}';
+      const vid = CONFIG.video;
+      vid.enable ??= true;
+      vid.default_duration ??= 5;
+      vid.max_concurrent_tasks ??= 1;
+      vid.global_timeout ??= 300;
     }
 
     function fillForms() {
@@ -782,6 +810,7 @@ INDEX_HTML = r"""<!doctype html>
         ensureConfig();
         normalizeChannels();
         normalizeAuditChannels();
+        normalizeVideoChannels();
         const p = CONFIG.permission, img = CONFIG.image;
         setTextList('usableUsers', p.usable_users);
         setTextList('blockedUsers', p.blocked_users);
@@ -814,8 +843,7 @@ INDEX_HTML = r"""<!doctype html>
         $('outputAuditTemplate').value = img.output_audit_template || '';
 
         $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
-        renderChannels();
-        renderAuditChannels();
+        renderAllChannelLists();
         refreshModelSelectors();
         renderPriorityRows();
         $('configText').value = JSON.stringify(CONFIG, null, 2);
@@ -976,23 +1004,49 @@ INDEX_HTML = r"""<!doctype html>
         return ch;
       });
     }
+    function normalizeVideoChannels() {
+      CONFIG.video_channels = (CONFIG.video_channels || []).map(ch => {
+        ch = normalizeChannel(ch);
+        ch.provider_type = 'openai';
+        if (Number(ch.timeout || 0) < 60) ch.timeout = 300;
+        return ch;
+      });
+    }
     function channelListFor(kind) {
-      return kind === 'audit' ? CONFIG.audit_channels : CONFIG.image_channels;
+      if (kind === 'audit') return CONFIG.audit_channels;
+      if (kind === 'video') return CONFIG.video_channels;
+      return CONFIG.image_channels;
     }
     function setChannelListFor(kind, list) {
       if (kind === 'audit') CONFIG.audit_channels = list;
+      else if (kind === 'video') CONFIG.video_channels = list;
       else CONFIG.image_channels = list;
     }
     function setChannelEnabledModels(ch, list) {
       ch.enabled_models = uniq(list);
       ch.model = ch.enabled_models[0] || '';
       compactModelProviderTypes(ch);
+      softDisableChannelIfNoModels(ch);
+    }
+    function softDisableChannelIfNoModels(ch) {
+      const models = (ch.enabled_models && ch.enabled_models.length) ? ch.enabled_models : (ch.model ? [ch.model] : []);
+      if ((!models || !models.length) && ch.enabled !== false) {
+        ch.enabled = false;
+        return true;
+      }
+      return false;
+    }
+    function isChannelModalOpen() {
+      return !!($('channelModal') && $('channelModal').classList.contains('show') && EDITING_CHANNEL_INDEX >= 0);
     }
     function newChannel() {
-      return normalizeChannel({name:'new-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:true, models_cache:[]});
+      return normalizeChannel({name:'new-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:false, models_cache:[]});
     }
     function newAuditChannel() {
-      return normalizeChannel({name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:true, models_cache:[]});
+      return normalizeChannel({name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:false, models_cache:[]});
+    }
+    function newVideoChannel() {
+      return normalizeChannel({name:'video-channel', provider_type:'openai', base_url:'https://api.openai.com/v1', api_key:'', model:'', enabled_models:[], timeout:300, enabled:false, models_cache:[]});
     }
     function applyProviderDefaults(ch, force = false) {
       ch = ch && typeof ch === 'object' ? ch : {};
@@ -1010,6 +1064,7 @@ INDEX_HTML = r"""<!doctype html>
       CONFIG.image_channels.push(newChannel());
       renderChannels();
       refreshModelSelectors();
+      switchChannelPane('image');
       openChannelModal(CONFIG.image_channels.length - 1, 'image');
     }
     function addAuditChannel() {
@@ -1018,132 +1073,139 @@ INDEX_HTML = r"""<!doctype html>
       CONFIG.audit_channels.push(newAuditChannel());
       renderAuditChannels();
       refreshModelSelectors();
+      switchChannelPane('audit');
       openChannelModal(CONFIG.audit_channels.length - 1, 'audit');
+    }
+    function addVideoChannel() {
+      ensureConfig();
+      normalizeVideoChannels();
+      CONFIG.video_channels.push(newVideoChannel());
+      renderVideoChannels();
+      switchChannelPane('video');
+      openChannelModal(CONFIG.video_channels.length - 1, 'video');
     }
     function removeChannel(index, kind = 'image') {
       if (!confirm('确认删除这个渠道？')) return;
       channelListFor(kind).splice(index, 1);
-      renderChannels();
-      renderAuditChannels();
+      renderAllChannelLists();
       refreshModelSelectors();
-      scheduleAutoSave('渠道已删除并自动生效');
-      showToast('渠道已删除', 'ok');
+      scheduleAutoSave('', { toast: false });
     }
     function duplicateChannel(index, kind = 'image') {
       const list = channelListFor(kind);
-      const copy = JSON.parse(JSON.stringify(list[index] || (kind === 'audit' ? newAuditChannel() : newChannel())));
+      const factory = kind === 'audit' ? newAuditChannel : (kind === 'video' ? newVideoChannel : newChannel);
+      const copy = JSON.parse(JSON.stringify(list[index] || factory()));
       copy.name = (copy.name || 'channel') + '-copy';
       list.splice(index + 1, 0, normalizeChannel(copy));
+      renderAllChannelLists();
+      refreshModelSelectors();
+      scheduleAutoSave('', { toast: false });
+    }
+    function renderAllChannelLists() {
       renderChannels();
       renderAuditChannels();
-      refreshModelSelectors();
-      scheduleAutoSave('渠道已复制并自动生效');
-      showToast('渠道已复制', 'ok');
+      renderVideoChannels();
+    }
+    function renderChannelCards(boxId, list, kind, emptyText) {
+      const box = $(boxId);
+      if (!box) return;
+      box.innerHTML = '';
+      if (!list.length) {
+        box.innerHTML = `<div class="card soft muted">${emptyText}</div>`;
+        return;
+      }
+      list.forEach((ch, i) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        const enabledCount = Number((ch.enabled_models || []).length);
+        const cacheCount = Number((ch.models_cache || []).length);
+        card.innerHTML = `
+          <div class="channel-row">
+            <div>
+              <b>${escapeHtml(ch.name || '未命名')}</b>
+              <div class="actions" style="margin-top:6px">
+                <span class="pill gray">缓存 ${cacheCount}</span>
+                <span class="pill green">启用模型 ${enabledCount}</span>
+                ${ch.enabled === false ? '<span class="pill gray">已停用</span>' : '<span class="pill">使用中</span>'}
+              </div>
+            </div>
+            <div class="muted" style="font-size:12px">${kind === 'video' ? 'OpenAI 兼容视频' : '协议随模型'}</div>
+            <label class="checkline"><input type="checkbox" ${ch.enabled !== false ? 'checked' : ''}>启用</label>
+            <div class="actions" style="margin-top:0">
+              <button class="secondary" type="button" data-act="edit">编辑</button>
+              <button class="secondary" type="button" data-act="dup">复制</button>
+              <button class="danger" type="button" data-act="del">删除</button>
+            </div>
+          </div>
+        `;
+        card.querySelector('input[type="checkbox"]').onchange = event => {
+          const target = list[i];
+          target.enabled = event.target.checked;
+          if (target.enabled && softDisableChannelIfNoModels(target)) {
+            event.target.checked = false;
+            setStatus('channelStatus', `${target.name || '渠道'} 还没有启用模型，已保持关闭`);
+          }
+          refreshModelSelectors();
+          renderAllChannelLists();
+          scheduleAutoSave('', { toast: false });
+        };
+        card.querySelector('[data-act="edit"]').onclick = () => openChannelModal(i, kind);
+        card.querySelector('[data-act="dup"]').onclick = () => duplicateChannel(i, kind);
+        card.querySelector('[data-act="del"]').onclick = () => removeChannel(i, kind);
+        box.appendChild(card);
+      });
     }
     function renderChannels() {
       normalizeChannels();
-      const box = $('channelList');
-      box.innerHTML = '';
-      if (!CONFIG.image_channels.length) {
-        box.innerHTML = '<div class="card soft muted">还没有生图渠道。</div>';
-        return;
-      }
-      (CONFIG.image_channels || []).forEach((ch, i) => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.innerHTML = `
-          <div class="channel-row">
-            <div>
-              <b>${escapeHtml(ch.name || '未命名')}</b>
-              <div class="actions" style="margin-top:6px">
-                <span class="pill">${escapeHtml(ch.provider_type || 'openai')}</span>
-                <span class="pill gray">缓存 ${Number((ch.models_cache || []).length)}</span>
-                <span class="pill green">启用 ${Number((ch.enabled_models || []).length)}</span>
-              </div>
-            </div>
-            <div><span class="pill">${escapeHtml(ch.provider_type || 'openai')}</span></div>
-            <label class="checkline"><input type="checkbox" ${ch.enabled !== false ? 'checked' : ''}>启用</label>
-            <div class="actions" style="margin-top:0">
-              <button type="button" onclick="openChannelModal(${i}, 'image')">编辑</button>
-              <button class="secondary" type="button" onclick="duplicateChannel(${i}, 'image')">复制</button>
-              <button class="danger" type="button" onclick="removeChannel(${i}, 'image')">删除</button>
-            </div>
-          </div>
-        `;
-        card.querySelector('input[type="checkbox"]').onchange = event => {
-          CONFIG.image_channels[i].enabled = event.target.checked;
-          refreshModelSelectors();
-          scheduleAutoSave('渠道启用状态已自动生效');
-        };
-        box.appendChild(card);
-      });
+      renderChannelCards('channelList', CONFIG.image_channels || [], 'image', '还没有生图渠道。');
     }
     function renderAuditChannels() {
       normalizeAuditChannels();
-      const box = $('auditChannelList');
-      box.innerHTML = '';
-      if (!CONFIG.audit_channels.length) {
-        box.innerHTML = '<div class="card soft muted">还没有审核渠道。</div>';
-        return;
-      }
-      (CONFIG.audit_channels || []).forEach((ch, i) => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.innerHTML = `
-          <div class="channel-row">
-            <div>
-              <b>${escapeHtml(ch.name || '未命名')}</b>
-              <div class="actions" style="margin-top:6px">
-                <span class="pill">${escapeHtml(ch.provider_type || 'openai')}</span>
-                <span class="pill gray">缓存 ${Number((ch.models_cache || []).length)}</span>
-                <span class="pill green">启用 ${Number((ch.enabled_models || []).length)}</span>
-              </div>
-            </div>
-            <div><span class="pill">${escapeHtml(ch.provider_type || 'openai')}</span></div>
-            <label class="checkline"><input type="checkbox" ${ch.enabled !== false ? 'checked' : ''}>启用</label>
-            <div class="actions" style="margin-top:0">
-              <button type="button" onclick="openChannelModal(${i}, 'audit')">编辑</button>
-              <button class="secondary" type="button" onclick="duplicateChannel(${i}, 'audit')">复制</button>
-              <button class="danger" type="button" onclick="removeChannel(${i}, 'audit')">删除</button>
-            </div>
-          </div>
-        `;
-        card.querySelector('input[type="checkbox"]').onchange = event => {
-          CONFIG.audit_channels[i].enabled = event.target.checked;
-          refreshModelSelectors();
-          scheduleAutoSave('审核渠道启用状态已自动生效');
-        };
-        box.appendChild(card);
-      });
+      renderChannelCards('auditChannelList', CONFIG.audit_channels || [], 'audit', '还没有审核渠道。');
+    }
+    function renderVideoChannels() {
+      normalizeVideoChannels();
+      renderChannelCards('videoChannelList', CONFIG.video_channels || [], 'video', '还没有视频渠道。');
     }
     function collectChannels() {
       normalizeChannels();
       normalizeAuditChannels();
+      normalizeVideoChannels();
+      for (const ch of [...(CONFIG.image_channels || []), ...(CONFIG.audit_channels || []), ...(CONFIG.video_channels || [])]) {
+        softDisableChannelIfNoModels(ch);
+      }
     }
     function removeAllEnabledModels() {
       const ch = currentModalChannel();
       setChannelEnabledModels(ch, []);
       $('modalModel').value = '';
+      $('modalEnabled').checked = false;
+      ch.enabled = false;
+      CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
       refreshModelSelectors();
     }
     function collectModalChannel() {
       const list = channelListFor(EDITING_CHANNEL_KIND);
-      const source = normalizeChannel(list[EDITING_CHANNEL_INDEX] || (EDITING_CHANNEL_KIND === 'audit' ? newAuditChannel() : newChannel()));
+      const factory = EDITING_CHANNEL_KIND === 'audit' ? newAuditChannel : (EDITING_CHANNEL_KIND === 'video' ? newVideoChannel : newChannel);
+      const source = normalizeChannel(list[EDITING_CHANNEL_INDEX] || factory());
       const enabled = Array.from(document.querySelectorAll('#enabledModels .model-row .name')).map(el => el.textContent || '');
-      return normalizeChannel(Object.assign({}, source, {
+      const ch = normalizeChannel(Object.assign({}, source, {
         name: $('modalChannelName').value.trim(),
-        provider_type: $('modalProvider').value,
+        provider_type: EDITING_CHANNEL_KIND === 'video' ? 'openai' : ($('modalProvider').value || source.provider_type || 'openai'),
         base_url: $('modalBaseUrl').value.trim(),
         api_key: $('modalApiKey').value.trim(),
         proxy: $('modalProxy').value.trim(),
         model: $('modalModel').value.trim(),
-        timeout: Number($('modalTimeout').value || 280),
+        timeout: Number($('modalTimeout').value || (EDITING_CHANNEL_KIND === 'video' ? 300 : 280)),
         enabled: $('modalEnabled').checked,
         enabled_models: enabled,
-        model_provider_types: collectModalProviderTypes(enabled),
+        model_provider_types: EDITING_CHANNEL_KIND === 'video' ? {} : collectModalProviderTypes(enabled),
         models_cache: source.models_cache || []
       }));
+      softDisableChannelIfNoModels(ch);
+      if ($('modalEnabled')) $('modalEnabled').checked = ch.enabled !== false;
+      return ch;
     }
     function collectModalProviderTypes(enabled) {
       const enabledSet = new Set(enabled || []);
@@ -1158,13 +1220,18 @@ INDEX_HTML = r"""<!doctype html>
     function openChannelModal(index, kind = 'image') {
       normalizeChannels();
       normalizeAuditChannels();
+      normalizeVideoChannels();
       EDITING_CHANNEL_INDEX = index;
-      EDITING_CHANNEL_KIND = kind === 'audit' ? 'audit' : 'image';
+      EDITING_CHANNEL_KIND = (kind === 'audit' || kind === 'video') ? kind : 'image';
+      CHANNEL_MODAL_DIRTY = false;
       const list = channelListFor(EDITING_CHANNEL_KIND);
-      const ch = normalizeChannel(list[index] || (EDITING_CHANNEL_KIND === 'audit' ? newAuditChannel() : newChannel()));
-      applyProviderDefaults(ch);
+      const factory = EDITING_CHANNEL_KIND === 'audit' ? newAuditChannel : (EDITING_CHANNEL_KIND === 'video' ? newVideoChannel : newChannel);
+      const ch = normalizeChannel(list[index] || factory());
+      if (EDITING_CHANNEL_KIND !== 'video') applyProviderDefaults(ch);
+      else ch.provider_type = 'openai';
       list[index] = ch;
-      $('channelModalTitle').textContent = EDITING_CHANNEL_KIND === 'audit' ? '编辑审核渠道' : '编辑生图渠道';
+      const titles = { image: '编辑生图渠道', audit: '编辑审核渠道', video: '编辑视频渠道' };
+      $('channelModalTitle').textContent = titles[EDITING_CHANNEL_KIND] || '编辑渠道';
       setSelectOptions('modalProvider', EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS : PROVIDERS, ch.provider_type || 'openai');
       $('modalChannelName').value = ch.name || '';
       $('modalProvider').value = ch.provider_type || 'openai';
@@ -1172,31 +1239,43 @@ INDEX_HTML = r"""<!doctype html>
       $('modalApiKey').value = ch.api_key || '';
       $('modalProxy').value = ch.proxy || '';
       $('modalModel').value = ch.model || '';
-      $('modalTimeout').value = ch.timeout || 280;
+      $('modalTimeout').value = ch.timeout || (EDITING_CHANNEL_KIND === 'video' ? 300 : 280);
       $('modalEnabled').checked = ch.enabled !== false;
       $('cacheSearch').value = '';
       $('manualModel').value = '';
       $('modalStatus').textContent = '';
+      if ($('modalProviderHint')) {
+        $('modalProviderHint').textContent = EDITING_CHANNEL_KIND === 'video'
+          ? '视频渠道固定走 OpenAI 兼容 /videos/generations；在下方启用模型即可。'
+          : '渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。';
+      }
       renderModalModels(ch);
       $('channelModal').classList.add('show');
     }
     function modalProviderChanged() {
+      // 类型字段已隐藏；保留函数以免旧绑定报错。
       const ch = currentModalChannel();
+      if (EDITING_CHANNEL_KIND === 'video') {
+        ch.provider_type = 'openai';
+        return;
+      }
       applyProviderDefaults(ch, true);
       $('modalBaseUrl').value = ch.base_url || '';
       $('modalModel').value = ch.model || '';
+      CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
       refreshModelSelectors();
-      scheduleAutoSave('渠道类型已自动生效');
     }
     function closeChannelModal() {
       $('channelModal').classList.remove('show');
       EDITING_CHANNEL_INDEX = -1;
       EDITING_CHANNEL_KIND = 'image';
+      CHANNEL_MODAL_DIRTY = false;
     }
     function renderModalModels(ch) {
       const list = channelListFor(EDITING_CHANNEL_KIND);
-      ch = normalizeChannel(ch || list[EDITING_CHANNEL_INDEX] || (EDITING_CHANNEL_KIND === 'audit' ? newAuditChannel() : newChannel()));
+      const factory = EDITING_CHANNEL_KIND === 'audit' ? newAuditChannel : (EDITING_CHANNEL_KIND === 'video' ? newVideoChannel : newChannel);
+      ch = normalizeChannel(ch || list[EDITING_CHANNEL_INDEX] || factory());
       const enabled = ch.enabled_models || [];
       const search = $('cacheSearch').value.trim().toLowerCase();
       const cacheItems = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
@@ -1212,9 +1291,20 @@ INDEX_HTML = r"""<!doctype html>
 
       cacheModelsEl.innerHTML = cacheItems.map(item => {
         const active = enabled.includes(item);
-        return `<div class="model-row" data-model="${escapeHtml(item)}"><div class="name">${escapeHtml(item)}</div><div class="actions"><button class="${active ? 'secondary' : ''} mini" type="button" onclick="${active ? `removeEnabledModel('${escapeJs(item)}')` : `addEnabledModel('${escapeJs(item)}')`}">${active ? '取消' : '启用'}</button></div></div>`;
+        return `<div class="model-row" data-model="${escapeHtml(item)}"><div class="name">${escapeHtml(item)}</div><div class="actions"><button class="secondary mini" type="button" onclick="${active ? `removeEnabledModel('${escapeJs(item)}')` : `addEnabledModel('${escapeJs(item)}')`}">${active ? '取消' : '启用'}</button></div></div>`;
       }).join('') || '<div class="muted">没有匹配的缓存模型。</div>';
-      $('enabledModels').innerHTML = enabled.map((item, i) => `
+      if (EDITING_CHANNEL_KIND === 'video') {
+        $('enabledModels').innerHTML = enabled.map((item, i) => `
+        <div class="model-row">
+          <div class="name">${escapeHtml(item)}</div>
+          <div class="actions">
+            <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, -1)">上移</button>
+            <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, 1)">下移</button>
+            <button class="danger mini" type="button" onclick="removeEnabledModel('${escapeJs(item)}')">移除</button>
+          </div>
+        </div>`).join('') || '<div class="muted">还没有启用模型。</div>';
+      } else {
+        $('enabledModels').innerHTML = enabled.map((item, i) => `
         <div class="model-row with-provider">
           <div class="name">${escapeHtml(item)}</div>
           ${modelProviderSelectHtml(ch, item, i)}
@@ -1224,6 +1314,7 @@ INDEX_HTML = r"""<!doctype html>
             <button class="danger mini" type="button" onclick="removeEnabledModel('${escapeJs(item)}')">移除</button>
           </div>
         </div>`).join('') || '<div class="muted">还没有启用模型。</div>';
+      }
     }
     function modelProviderSelectHtml(ch, model, index) {
       const manual = normalizeProviderType((ch.model_provider_types || {})[model] || '');
@@ -1249,23 +1340,24 @@ INDEX_HTML = r"""<!doctype html>
       else delete ch.model_provider_types[model];
       compactModelProviderTypes(ch);
       channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] = ch;
+      CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
       refreshModelSelectors();
-      scheduleAutoSave('模型类型已自动生效');
     }
     function addEnabledModel(name) {
       const ch = currentModalChannel();
       setChannelEnabledModels(ch, (ch.enabled_models || []).concat([name]));
+      CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
       refreshModelSelectors();
-      scheduleAutoSave('启用模型已自动生效');
     }
     function removeEnabledModel(name) {
       const ch = currentModalChannel();
       setChannelEnabledModels(ch, (ch.enabled_models || []).filter(item => item !== name));
+      if ($('modalEnabled')) $('modalEnabled').checked = ch.enabled !== false;
+      CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
       refreshModelSelectors();
-      scheduleAutoSave('启用模型已自动生效');
     }
     function moveEnabledModel(index, delta) {
       const ch = currentModalChannel();
@@ -1275,9 +1367,9 @@ INDEX_HTML = r"""<!doctype html>
       const item = list.splice(index, 1)[0];
       list.splice(next, 0, item);
       setChannelEnabledModels(ch, list);
+      CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
       refreshModelSelectors();
-      scheduleAutoSave('启用模型顺序已自动生效');
     }
     async function refreshChannelModels(index = EDITING_CHANNEL_INDEX) {
       const list = channelListFor(EDITING_CHANNEL_KIND);
@@ -1287,13 +1379,12 @@ INDEX_HTML = r"""<!doctype html>
         const res = await api('/api/refresh-image-models', {method:'POST', body: JSON.stringify({channel: ch})});
         ch.models_cache = res.data || [];
         list[index] = ch;
+        CHANNEL_MODAL_DIRTY = true;
+        // 只更新缓存，不自动落盘：避免“刚拉缓存、还没启用模型”就触发禁用保存。
         renderModalModels(ch);
-        renderChannels();
-        renderAuditChannels();
+        renderAllChannelLists();
         refreshModelSelectors();
-        scheduleAutoSave('模型缓存已刷新并自动保存');
-        $('modalStatus').textContent = `刷新成功：${ch.models_cache.length} 个模型`;
-        showToast(`模型缓存已刷新：${ch.models_cache.length} 个`, 'ok');
+        $('modalStatus').textContent = `刷新成功：${ch.models_cache.length} 个模型（点「保存渠道」后生效）`;
       } catch (e) { $('modalStatus').textContent = e.message; }
     }
     async function saveChannelModal() {
@@ -1303,15 +1394,19 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       if (!ch.model && ch.enabled_models.length) ch.model = ch.enabled_models[0];
+      softDisableChannelIfNoModels(ch);
       channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] = ch;
-      renderChannels();
-      renderAuditChannels();
+      renderAllChannelLists();
       refreshModelSelectors();
       $('modalStatus').textContent = '保存中...';
-      const ok = await persistConfig(false, '渠道已保存并生效');
-      $('modalStatus').textContent = ok ? '已保存' : '保存失败，请检查上方提示';
-      if (ok) showToast('渠道已保存', 'ok');
-      if (ok) closeChannelModal();
+      const ok = await persistConfig(false, '渠道已保存', { toast: true });
+      $('modalStatus').textContent = ok
+        ? (ch.enabled === false && !(ch.enabled_models || []).length ? '已保存（无启用模型，渠道已自动关闭）' : '已保存')
+        : '保存失败，请检查上方提示';
+      if (ok) {
+        CHANNEL_MODAL_DIRTY = false;
+        closeChannelModal();
+      }
     }
 
     function allModelLabels() {
@@ -1374,17 +1469,17 @@ INDEX_HTML = r"""<!doctype html>
       if (!current.includes(value)) current.push(value);
       $('priorityList').value = current.join('\n');
       renderPriorityRows();
-      scheduleAutoSave('模型优先级已自动生效');
+      scheduleAutoSave('', { toast: false });
     }
     function clearPriority() {
       $('priorityList').value = '';
       renderPriorityRows();
-      scheduleAutoSave('模型优先级已清空并自动生效');
+      scheduleAutoSave('', { toast: false });
     }
     function setPriorityItems(items) {
       $('priorityList').value = uniq(items).join('\n');
       renderPriorityRows();
-      scheduleAutoSave('模型优先级已自动生效');
+      scheduleAutoSave('', { toast: false });
     }
     function prunePriorityList() {
       const allowed = new Set(activeImageModelKeys());
@@ -1433,7 +1528,9 @@ INDEX_HTML = r"""<!doctype html>
         setStatus('configStatus', e.message);
       }
     }
-    async function persistConfig(renderAfterSave = false, okText = '配置已保存到插件独立配置文件并生效') {
+    async function persistConfig(renderAfterSave = false, okText = '配置已保存', options = {}) {
+      const toastOnOk = options.toast === true;
+      const toastOnError = options.toastError !== false;
       try {
         collectForms();
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: CONFIG})});
@@ -1441,23 +1538,30 @@ INDEX_HTML = r"""<!doctype html>
         ensureConfig();
         $('configText').value = JSON.stringify(CONFIG, null, 2);
         if (renderAfterSave) fillForms();
-        setMultiStatus(okText);
-        showToast(okText, 'ok');
+        else {
+          // keep lists in sync with server soft-disable without full form thrash
+          renderAllChannelLists();
+          refreshModelSelectors();
+        }
+        if (okText) setMultiStatus(okText);
+        if (toastOnOk && okText) showToast(okText, 'ok');
         return true;
       } catch (e) {
         setMultiStatus(e.message);
-        showToast(e.message, 'bad');
+        if (toastOnError) showToast(e.message, 'bad');
         return false;
       }
     }
     async function saveAll() {
-      await persistConfig(true, '配置已保存到插件独立配置文件并生效');
+      await persistConfig(true, '配置已保存', { toast: true });
     }
-    function scheduleAutoSave(okText = '配置已自动保存并生效') {
-      if (IS_FILLING || !document.body.classList.contains('authed')) return;
+    function scheduleAutoSave(okText = '', options = {}) {
+      if (IS_FILLING || SUPPRESS_AUTOSAVE || !document.body.classList.contains('authed')) return;
+      // 编辑渠道弹窗打开时，不自动落盘（避免刷新缓存/未启用模型时误禁用）
+      if (isChannelModalOpen() && options.allowWhileModal !== true) return;
       clearTimeout(AUTO_SAVE_TIMER);
-      setMultiStatus('正在自动保存...');
-      AUTO_SAVE_TIMER = setTimeout(() => persistConfig(false, okText), 650);
+      setMultiStatus('正在保存…');
+      AUTO_SAVE_TIMER = setTimeout(() => persistConfig(false, okText || '', { toast: false, toastError: true }), 650);
     }
     async function saveJsonConfig() {
       try {
@@ -1999,16 +2103,22 @@ INDEX_HTML = r"""<!doctype html>
     $('modalSave').onclick = saveChannelModal;
     $('modalProvider').onchange = modalProviderChanged;
     $('modalRefreshModels').onclick = () => refreshChannelModels();
-    $('modalEnableAll').onclick = () => { removeAllEnabledModels(); scheduleAutoSave('已移除全部启用模型'); showToast('已移除全部启用模型', 'ok'); };
+    $('modalEnableAll').onclick = () => { removeAllEnabledModels(); };
     $('cacheSearch').oninput = () => renderModalModels(currentModalChannel());
     $('manualAdd').onclick = () => {
       const value = $('manualModel').value.trim();
       if (!value) return;
       addEnabledModel(value);
       $('manualModel').value = '';
-      scheduleAutoSave('启用模型已自动生效');
     };
     $('manualModel').onkeydown = event => { if (event.key === 'Enter') $('manualAdd').click(); };
+    // Modal field edits stay local until「保存渠道」
+    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxy','modalModel','modalTimeout','modalEnabled'].forEach(id => {
+      const el = $(id);
+      if (!el) return;
+      const eventName = el.type === 'checkbox' || el.type === 'number' ? 'change' : 'input';
+      el.addEventListener(eventName, () => { if (isChannelModalOpen()) CHANNEL_MODAL_DIRTY = true; });
+    });
     $('testImageBtn').onclick = runImageTest;
     $('uploadSelfie').onclick = uploadSelfie;
     $('testChannel').onchange = refreshTestModels;
