@@ -3162,6 +3162,32 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("窗台", text)
             self.assertIn("单膝", text)
 
+    def test_look_you_and_selfie_persona_have_variety_hints(self) -> None:
+        from astrbot_plugin_selfie_image.persona import PersonaManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            selfie = manager.build_selfie_prompt(
+                action="看着镜头自然自拍",
+                bot_name="小助",
+                personality="温柔",
+                has_reference_image=True,
+                extra_reference_count=0,
+            )
+            self.assertIn("自拍", selfie)
+            self.assertIn("看向镜头", selfie)
+            # variety menu
+            self.assertTrue(("自拍臂" in selfie) or ("镜前" in selfie) or ("窗边" in selfie))
+            look = manager.build_selfie_prompt(
+                action="看看你",
+                bot_name="小助",
+                personality="温柔",
+                has_reference_image=True,
+                extra_reference_count=0,
+            )
+            self.assertIn("他拍", look)
+            self.assertTrue(("半身" in look) or ("三分之四" in look) or ("抓拍" in look))
+
 
 class VideoV1Tests(unittest.TestCase):
     def test_video_channel_config_and_preflight(self) -> None:
@@ -3338,6 +3364,10 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("生成一张发一张", main_src)
         self.assertIn("rebuild_each", main_src)
         self.assertIn("avoid_pose", main_src)
+        self.assertIn("_build_selfie_look_action", main_src)
+        self.assertIn("arm_half", main_src)
+        self.assertIn("half_front", main_src)
+        self.assertIn("command-look-you", main_src)
 
 
 if __name__ == "__main__":

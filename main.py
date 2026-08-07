@@ -2123,19 +2123,167 @@ class SelfieImagePlugin(Star):
         base += f" 【pose:{pose_bucket}】"
         return base
 
-    def _build_third_person_look_action(self, extra_request: str = "", has_refs: bool = False) -> str:
+    def _build_selfie_look_action(
+        self,
+        extra_request: str = "",
+        has_refs: bool = False,
+        *,
+        avoid_shot: str = "",
+    ) -> str:
+        """普通自拍 / 看看：机位+场景+小动作随机，默认看镜头。"""
+        shot_pool = [
+            ("arm_half", 3),
+            ("mirror_half", 2),
+            ("window_side", 2),
+            ("desk_sit", 2),
+            ("sofa_casual", 2),
+            ("high_angle", 1),
+            ("close_portrait", 1),
+        ]
+        if avoid_shot:
+            filtered = [(n, w) for n, w in shot_pool if n != avoid_shot]
+            if filtered:
+                shot_pool = filtered
+        names = [n for n, _ in shot_pool]
+        weights = [w for _, w in shot_pool]
+        shot = random.choices(names, weights=weights, k=1)[0]
+
+        shot_lines = {
+            "arm_half": "手机自拍臂半身：手臂微伸举机，胸口以上到头顶入镜，眼神看镜头，表情自然松弛。",
+            "mirror_half": "镜子半身自拍：镜中看镜头（看向手机镜头方向），构图干净，不要拍进乱糟糟背景堆。",
+            "window_side": "窗边侧光半身自拍：身体略侧、脸仍转向镜头，窗光柔和，轮廓清楚。",
+            "desk_sit": "书桌前坐下自拍：略俯视半身，手可托腮或扶桌沿，看镜头，居家学习/摸鱼感。",
+            "sofa_casual": "沙发窝着随手自拍：半身或胸像，靠垫入镜一点，看镜头，轻松日常。",
+            "high_angle": "稍高机位自拍：镜头略高于眼，脸自然抬一点看镜头，显精神，不要过度仰拍变形。",
+            "close_portrait": "近景胸像自拍：脸与肩为主，眼神对焦镜头，五官清晰，浅景深。",
+        }
+        scenes = [
+            "浅色墙与窗边",
+            "暖灯房间一角",
+            "书桌与杯具",
+            "沙发与抱枕",
+            "阳台栏杆旁",
+            "镜前整洁台面",
+            "厨房台边随手",
+            "床边靠坐",
+        ]
+        gestures = [
+            "嘴角轻微笑意",
+            "一只手整理发丝或衣领",
+            "托腮听人说话的轻松感",
+            "比个很小的 OK 或比心（含蓄）",
+            "双手捧杯刚抬眼",
+            "刚坐好整理袖口",
+        ]
+        lights = [
+            "窗光柔和",
+            "阴天漫射",
+            "暖黄台灯",
+            "清晨清透光",
+            "傍晚金色余晖",
+        ]
+        scene = random.choice(scenes)
+        gesture = random.choice(gestures)
+        light = random.choice(lights)
+        base = (
+            "【自拍 / 看看模式】展示 AI 现在的样子。"
+            "第一人称自拍视角（自己举机或镜前自拍），不是别人代拍。"
+            "必须看向镜头：眼睛对焦镜头方向，表情自然有神；不要眼神飘走或心不在焉。"
+            "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰，写实自然。"
+            f"本次机位：{shot_lines.get(shot, shot_lines['arm_half'])}"
+            f"场景倾向：{scene}。小动作：{gesture}。光线：{light}。"
+            "画面干净日常，不要夸张摆拍或过度美颜磨皮。"
+        )
+        if has_refs:
+            base = "参考用户提供的图片氛围、场景或构图，" + base + " 主角身份仍以 AI 形象为准。"
+        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
+        if extra:
+            base += f" 用户补充要求优先：{extra}。"
+        base += f" 【shot:{shot}】"
+        return base
+
+    def _build_third_person_look_action(
+        self,
+        extra_request: str = "",
+        has_refs: bool = False,
+        *,
+        avoid_shot: str = "",
+    ) -> str:
+        """他拍 / 看看你：景别+场景+动作随机；正面近景优先看镜头。"""
+        shot_pool = [
+            ("half_front", 3),
+            ("three_quarter", 3),
+            ("env_mid", 2),
+            ("walk_candid", 1),
+            ("close_smile", 2),
+            ("low_over", 1),
+            ("lean_wall", 2),
+        ]
+        if avoid_shot:
+            filtered = [(n, w) for n, w in shot_pool if n != avoid_shot]
+            if filtered:
+                shot_pool = filtered
+        names = [n for n, _ in shot_pool]
+        weights = [w for _, w in shot_pool]
+        shot = random.choices(names, weights=weights, k=1)[0]
+
+        shot_lines = {
+            "half_front": "半身平视他拍：朋友在对面用手机拍，AI 正面或微侧看镜头，眼神有焦点。",
+            "three_quarter": "三分之四侧身他拍：身体略侧、头转向镜头，像被叫名字时回头。",
+            "env_mid": "中远景环境人像：人物与场景都清楚，AI 仍是主体，自然看向镜头或刚抬头。",
+            "walk_candid": "走路抓拍：侧前方跟随感，步伐自然，可看镜头一瞬，生活感强。",
+            "close_smile": "近景胸像：脸与肩，浅景深，对镜头带一点笑意，五官清晰。",
+            "low_over": "轻微低机位过肩感：从略低处拍半身，仍看镜头，不要过度仰拍变形。",
+            "lean_wall": "靠墙/门框他拍：肩背轻靠，双手自然，看镜头，竖构图友好。",
+        }
+        scenes = [
+            "窗边沙发",
+            "书桌前",
+            "咖啡馆座位",
+            "街边树荫",
+            "阳台栏杆",
+            "夜灯房间",
+            "书店角落",
+            "楼下咖啡外摆",
+            "雨后屋檐",
+            "厨房台边",
+        ]
+        actions = [
+            "端着杯子刚抬眼",
+            "托腮听人说话",
+            "整理袖口或发丝",
+            "翻书停顿抬头",
+            "双手插兜靠站",
+            "拎袋子侧身回看",
+            "刚坐下整理衣角",
+            "对镜头轻轻点头笑",
+        ]
+        lights = [
+            "窗光",
+            "阴天柔光",
+            "金色小时",
+            "暖台灯",
+            "霓虹夜色边缘光",
+            "树荫斑驳",
+        ]
+        scene = random.choice(scenes)
+        action = random.choice(actions)
+        light = random.choice(lights)
         base = (
             "【他拍 / 看看你模式】展示 AI 当前样子的自然日常照片。"
             "像朋友在画面外用相机或手机随手拍下 AI，镜头来自旁边的拍摄者，带一点生活抓拍感。"
-            "正面半身或近景时优先看向镜头，眼神自然有焦点；也可以轻松回头。"
-            "不要整段心不在焉、眼神飘向别处（除非用户明确要求）。"
+            "正面半身或近景时优先看向镜头，眼神自然有焦点；可以轻松回头，但不要整段心不在焉。"
             "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
+            f"本次机位：{shot_lines.get(shot, shot_lines['half_front'])}"
+            f"场景倾向：{scene}。动作瞬间：{action}。光线：{light}。"
+            "写实手机拍照质感，不要影楼硬摆或过度美颜。"
         )
         if has_refs:
             base = "参考用户提供的图片氛围、场景或构图，" + base
         extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
         if extra:
             base += f" 额外要求：{extra}。"
+        base += f" 【shot:{shot}】"
         return base
 
     def _build_group_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
@@ -3182,30 +3330,55 @@ class SelfieImagePlugin(Star):
         all_files: List[str] = []
         used_model = ""
         last_elapsed = 0.0
-        # 晒腿等多张：每轮重新采样姿势变体，避免 10 张同构图。
-        rebuild_each = source in {"command-look-legs"} or ("看看腿" in str(action or ""))
+        # 晒腿/自拍/他拍多张：每轮重采样机位或姿势，避免连张同构图。
+        rebuild_each = source in {"command-look-legs", "command-selfie", "command-look-you"} or (
+            "看看腿" in str(action or "") or "【shot:" in str(action or "") or "【pose:" in str(action or "")
+        )
         last_pose = ""
+        last_shot = ""
         extra_keep = ""
         if rebuild_each:
-            m_extra = re.search(r"用户补充要求优先：(.+?)。", str(action or ""))
+            m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+?)。", str(action or ""))
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
             m_pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
             if m_pose:
                 last_pose = str(m_pose.group(1) or "")
+            m_shot = re.search(r"【shot:([a-z_]+)】", str(action or ""))
+            if m_shot:
+                last_shot = str(m_shot.group(1) or "")
         for index in range(total):
             if self._task_cancel_requested(task_id):
                 return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
             round_action = action
             if rebuild_each and total > 1:
-                round_action = self._build_leg_focus_action(
-                    extra_keep,
-                    bool(extra_refs),
-                    avoid_pose=last_pose,
-                )
-                m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
-                if m_pose:
-                    last_pose = str(m_pose.group(1) or last_pose)
+                if source == "command-look-legs" or "看看腿" in str(action or "") or "【pose:" in str(action or ""):
+                    round_action = self._build_leg_focus_action(
+                        extra_keep,
+                        bool(extra_refs),
+                        avoid_pose=last_pose,
+                    )
+                    m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
+                    if m_pose:
+                        last_pose = str(m_pose.group(1) or last_pose)
+                elif source == "command-look-you" or "看看你模式" in str(action or ""):
+                    round_action = self._build_third_person_look_action(
+                        extra_keep,
+                        bool(extra_refs),
+                        avoid_shot=last_shot,
+                    )
+                    m_shot = re.search(r"【shot:([a-z_]+)】", round_action)
+                    if m_shot:
+                        last_shot = str(m_shot.group(1) or last_shot)
+                else:
+                    round_action = self._build_selfie_look_action(
+                        extra_keep,
+                        bool(extra_refs),
+                        avoid_shot=last_shot,
+                    )
+                    m_shot = re.search(r"【shot:([a-z_]+)】", round_action)
+                    if m_shot:
+                        last_shot = str(m_shot.group(1) or last_shot)
             prompt, refs = await self._build_selfie_prompt_and_refs(round_action, extra_refs)
             result = await self._run_image_generation(
                 prompt,
@@ -3944,16 +4117,26 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        raw_message = extract_command_message(event, ("自拍", "看看"), fallback_args)
+        raw_extra, requested_count = self._extract_command_count(raw_message)
+        has_refs = bool(extract_image_sources_from_event(event))
+        # 有用户正文时以用户要求为主并叠一层随机机位；无正文则纯随机默认自拍
+        if raw_extra.strip():
+            base_action = self._build_selfie_look_action(raw_extra, has_refs)
+        else:
+            base_action = self._build_selfie_look_action("", has_refs)
         async for item in self._handle_selfie_command(
             event=event,
             command_name=("自拍", "看看"),
-            fallback=fallback,
-            default_action="看着镜头自然自拍，展示你现在的样子",
-            default_action_with_refs="参考用户提供的图片氛围和构图，看着镜头自然自拍，保持 AI 当前形象一致。",
+            fallback=base_action,
+            default_action=self._build_selfie_look_action("", False),
+            default_action_with_refs=self._build_selfie_look_action("", True),
             progress_label="自拍",
             source="command-selfie",
             fail_label=self._natural_fail_fallback("selfie"),
+            message_override=base_action,
+            requested_count_override=requested_count,
         ):
             yield item
 
