@@ -3061,7 +3061,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
         self.assertTrue(hasattr(plugin_main, "SelfieImagePlugin"))
         # command handlers exist
-        for name in ("cmd_help", "cmd_help_text", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel"):
+        for name in ("cmd_help", "cmd_help_text", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel", "cmd_video", "cmd_t2v", "cmd_i2v"):
             self.assertTrue(hasattr(plugin_main.SelfieImagePlugin, name), name)
 
     def test_help_uses_shipped_static_poster_only(self) -> None:
@@ -3111,6 +3111,74 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("二次元", group)
             self.assertIn("写实", group)
             self.assertTrue(("禁止继续二次元" in group) or ("禁止把对方继续画成二次元" in group) or ("禁止画面里再出现二次元" in group))
+
+
+class VideoV1Tests(unittest.TestCase):
+    def test_video_channel_config_and_preflight(self) -> None:
+        from astrbot_plugin_selfie_image.models import AICatConfig, preflight_video_channel
+
+        bad = preflight_video_channel({"name": "v1"})
+        self.assertFalse(bad["ok"])
+        good = preflight_video_channel(
+            {
+                "name": "vid",
+                "base_url": "https://example.com/v1",
+                "api_key": "sk-test",
+                "model": "sora-like",
+                "enabled": True,
+            }
+        )
+        self.assertTrue(good["ok"], good.get("message"))
+
+        cfg = AICatConfig.from_dict(
+            {
+                "video": {"enable": True, "default_duration": 6, "global_timeout": 320},
+                "video_channels": [
+                    {
+                        "name": "vid",
+                        "base_url": "https://example.com/v1",
+                        "api_key": "sk-a\nsk-b",
+                        "model": "sora-like",
+                        "enabled_models": ["sora-like"],
+                        "enabled": True,
+                        "provider_type": "gemini",  # forced to openai for video
+                    }
+                ],
+                "enabled_video_model_priority": ["vid/sora-like"],
+            }
+        )
+        self.assertTrue(cfg.video_enable)
+        self.assertEqual(cfg.video_default_duration, 6)
+        targets = cfg.get_prioritized_video_targets()
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].label, "vid/sora-like")
+        self.assertEqual(targets[0].provider_type, "openai")
+        self.assertEqual(targets[0].resolved_api_keys(), ["sk-a", "sk-b"])
+        self.assertGreaterEqual(targets[0].timeout, 60)
+
+        disabled = AICatConfig.from_dict({"video": {"enable": False}, "video_channels": [{"name": "vid", "base_url": "https://x", "api_key": "k", "model": "m"}]})
+        self.assertEqual(disabled.get_prioritized_video_targets(), [])
+
+    def test_video_endpoint_and_extractors(self) -> None:
+        from astrbot_plugin_selfie_image.video import (
+            build_video_generations_endpoint,
+            _extract_task_id,
+            _extract_video_url,
+            _extract_task_status,
+        )
+
+        self.assertTrue(build_video_generations_endpoint("https://api.example.com/v1").endswith("/videos/generations"))
+        self.assertTrue(build_video_generations_endpoint("https://api.example.com/v1/videos/generations").endswith("/videos/generations"))
+        self.assertEqual(_extract_task_id({"task_id": "abc"}), "abc")
+        self.assertEqual(_extract_task_status({"status": "succeeded"}), "SUCCEEDED")
+        self.assertEqual(_extract_video_url({"data": [{"url": "https://cdn.example/a.mp4"}]}), "https://cdn.example/a.mp4")
+
+    def test_main_help_mentions_video_commands(self) -> None:
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        self.assertIn('@filter.command("视频")', main_src)
+        self.assertIn('@filter.command("文生视频")', main_src)
+        self.assertIn('@filter.command("图生视频")', main_src)
+        self.assertIn("视频：", main_src)
 
 
 if __name__ == "__main__":

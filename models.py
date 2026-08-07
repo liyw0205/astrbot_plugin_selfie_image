@@ -50,7 +50,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "image_channels": [],
     "audit_channels": [],
+    "video_channels": [],
     "enabled_image_model_priority": [],
+    "enabled_video_model_priority": [],
+    "video": {
+        "enable": True,
+        "default_duration": 5,
+        "max_concurrent_tasks": 1,
+        "global_timeout": 300,
+    },
 }
 
 
@@ -190,7 +198,13 @@ class AICatConfig:
     whitelist_groups: List[str]
     image_channels: List[ImageChannelConfig]
     audit_channels: List[ImageChannelConfig]
+    video_channels: List[ImageChannelConfig]
     enabled_image_model_priority: List[str]
+    enabled_video_model_priority: List[str]
+    video_enable: bool
+    video_default_duration: int
+    video_max_concurrent_tasks: int
+    video_global_timeout: int
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AICatConfig":
@@ -199,12 +213,15 @@ class AICatConfig:
 
         web = ensure_dict(raw, "web")
         image = ensure_dict(raw, "image")
+        video = ensure_dict(raw, "video")
         permission = ensure_dict(raw, "permission")
 
         channels = [_build_image_channel(item) for item in template_list_items(raw.get("image_channels"))]
         channels = [channel for channel in channels if channel.name and channel.provider_type in PROVIDER_TYPES]
         audit_channels = [_build_image_channel(item) for item in template_list_items(raw.get("audit_channels"))]
         audit_channels = [channel for channel in audit_channels if channel.name and channel.provider_type in PROVIDER_TYPES]
+        video_channels = [_build_video_channel(item) for item in template_list_items(raw.get("video_channels"))]
+        video_channels = [channel for channel in video_channels if channel.name]
 
         return cls(
             raw=raw,
@@ -241,7 +258,13 @@ class AICatConfig:
             whitelist_groups=split_values(permission.get("whitelist_groups")),
             image_channels=channels,
             audit_channels=audit_channels,
+            video_channels=video_channels,
             enabled_image_model_priority=split_values(raw.get("enabled_image_model_priority")),
+            enabled_video_model_priority=split_values(raw.get("enabled_video_model_priority")),
+            video_enable=to_bool(video.get("enable"), True),
+            video_default_duration=to_int(video.get("default_duration"), 5, minimum=1, maximum=60),
+            video_max_concurrent_tasks=to_int(video.get("max_concurrent_tasks"), 1, minimum=1, maximum=5),
+            video_global_timeout=to_int(video.get("global_timeout"), 300, minimum=30, maximum=1800),
         )
 
     def get_prioritized_targets(self) -> List[ImageModelTarget]:
@@ -279,6 +302,33 @@ class AICatConfig:
             targets.extend(channel.targets(self.image_global_timeout))
         return targets
 
+    def get_prioritized_video_targets(self) -> List[ImageModelTarget]:
+        if not self.video_enable:
+            return []
+        all_targets: List[ImageModelTarget] = []
+        for channel in self.video_channels:
+            all_targets.extend(channel.targets(self.video_global_timeout or self.image_global_timeout))
+        if not self.enabled_video_model_priority:
+            return all_targets
+        by_key: Dict[str, ImageModelTarget] = {}
+        for target in all_targets:
+            by_key[target.label] = target
+            by_key[f"{target.channel_name}:{target.model}"] = target
+            by_key[target.model] = target
+        ordered: List[ImageModelTarget] = []
+        seen = set()
+        for raw_key in self.enabled_video_model_priority:
+            key = str(raw_key).strip()
+            target = by_key.get(key)
+            if target and target.label not in seen:
+                ordered.append(target)
+                seen.add(target.label)
+        for target in all_targets:
+            if target.label not in seen:
+                ordered.append(target)
+                seen.add(target.label)
+        return ordered
+
 
 def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
     raw = copy.deepcopy(raw)
@@ -289,6 +339,10 @@ def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
         raw["audit_channels"] = raw["auditChannels"]
     if "enabledImageModelPriority" in raw and "enabled_image_model_priority" not in raw:
         raw["enabled_image_model_priority"] = raw["enabledImageModelPriority"]
+    if "videoChannels" in raw and "video_channels" not in raw:
+        raw["video_channels"] = raw["videoChannels"]
+    if "enabledVideoModelPriority" in raw and "enabled_video_model_priority" not in raw:
+        raw["enabled_video_model_priority"] = raw["enabledVideoModelPriority"]
     if "botName" in raw and "bot_name" not in raw:
         raw["bot_name"] = raw["botName"]
 
@@ -417,6 +471,19 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
     )
 
 
+def _build_video_channel(raw: Any) -> ImageChannelConfig:
+    """Video channels reuse ImageChannelConfig shape; force openai-compatible protocol."""
+    channel = _build_image_channel(raw if isinstance(raw, dict) else {})
+    # Video V1 only speaks OpenAI-compatible /videos/generations.
+    channel.provider_type = "openai"
+    channel.protocol_lock = True
+    # Clear cross-protocol model overrides that would confuse image adapters if mixed.
+    channel.model_provider_types = {}
+    if channel.timeout < 60:
+        channel.timeout = 300
+    return channel
+
+
 def normalize_provider_type(value: Any) -> str:
     text = str(value or "").strip().lower().replace("-", "_")
     aliases = {
@@ -514,6 +581,29 @@ def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
         "errors": errors,
         "channel_name": label,
         "kind": kind,
+        "message": "；".join(item["message"] for item in errors),
+    }
+
+
+def preflight_video_channel(raw: Any) -> Dict[str, Any]:
+    """Local video channel preflight (VIDEO V1). No network."""
+    errors: List[Dict[str, str]] = []
+    channel = _build_video_channel(raw if isinstance(raw, dict) else {})
+    label = channel.name or "未命名视频渠道"
+    if not str(channel.name or "").strip():
+        errors.append({"field": "name", "message": "视频渠道缺少名称"})
+    if not str(channel.base_url or "").strip():
+        errors.append({"field": "base_url", "message": f"视频渠道 {label} 缺少 base_url"})
+    if not str(channel.api_key or "").strip() and not (getattr(channel, "api_keys", None) or []):
+        errors.append({"field": "api_key", "message": f"视频渠道 {label} 缺少 api_key"})
+    models = channel.enabled_models or ([channel.model] if channel.model else [])
+    if not models:
+        errors.append({"field": "enabled_models", "message": f"视频渠道 {label} 未启用任何模型"})
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "channel_name": label,
+        "kind": "video",
         "message": "；".join(item["message"] for item in errors),
     }
 

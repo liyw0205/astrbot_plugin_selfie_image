@@ -32,6 +32,14 @@ except ImportError:  # Compatibility with older AstrBot layouts
     from astrbot.api.utils import logger
 
 try:
+    from astrbot.api.message_components import Video  # type: ignore
+except Exception:
+    try:
+        from astrbot.api.event.components import Video  # type: ignore
+    except Exception:
+        Video = None  # type: ignore
+
+try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 except Exception:
     def get_astrbot_data_path() -> str:
@@ -55,6 +63,7 @@ from .models import (
     deep_merge,
     normalize_config_tree,
     normalize_legacy_keys,
+    preflight_video_channel,
 )
 from .persona import PersonaManager
 from .providers import (
@@ -66,6 +75,7 @@ from .providers import (
     provider_type_from_channel_payload,
 )
 from .reference_collector import ReferenceCollector
+from .video import VideoGenerateRequest, generate_video_with_fallback
 from .utils import (
     bytes_to_data_url,
     collect_record_cache_paths,
@@ -159,6 +169,8 @@ class SelfieImagePlugin(Star):
         self.records_path = os.path.join(self.data_dir, "generation_records.json")
         self.generated_dir = os.path.join(self.data_dir, "image_cache")
         os.makedirs(self.generated_dir, exist_ok=True)
+        self.video_dir = os.path.join(self.generated_dir, "video")
+        os.makedirs(self.video_dir, exist_ok=True)
         self._plugin_root = os.path.dirname(os.path.abspath(__file__))
         self._bundled_logo_path = os.path.join(self._plugin_root, "logo.png")
         # Pre-generated static help poster (shipped in repo; never generated at runtime).
@@ -208,6 +220,7 @@ class SelfieImagePlugin(Star):
         self.presets = ImagePresetManager(self.data_dir)
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
+        self._video_semaphore = asyncio.Semaphore(max(1, int(getattr(self.config, "video_max_concurrent_tasks", 1) or 1)))
         self.web_server = FlaskWebServer(self)
         self.dashboard_api = SelfieImageDashboardAPI(self)
         try:
@@ -1585,6 +1598,46 @@ class SelfieImagePlugin(Star):
             return Image.from_file_system(path)
         return Image(file=path)
 
+    def _create_video_component(self, file_path: str) -> Any:
+        path = os.path.abspath(file_path)
+        if Video is None:
+            # Fallback: some platforms accept file path as plain text; prefer Image-like file field if present.
+            return {"type": "video", "file": path}
+        if hasattr(Video, "fromFileSystem"):
+            return Video.fromFileSystem(path)
+        if hasattr(Video, "from_file_system"):
+            return Video.from_file_system(path)
+        if hasattr(Video, "fromURL") and str(file_path).startswith("http"):
+            return Video.fromURL(file_path)
+        try:
+            return Video(file=path)
+        except Exception:
+            return Video(path) if callable(Video) else {"type": "video", "file": path}
+
+    async def _send_generated_video(self, event: AstrMessageEvent, file_path: str, caption: str = "") -> None:
+        components: List[Any] = []
+        if caption:
+            try:
+                from astrbot.api.message_components import Plain  # type: ignore
+            except Exception:
+                try:
+                    from astrbot.api.event.components import Plain  # type: ignore
+                except Exception:
+                    Plain = None  # type: ignore
+            if Plain is not None:
+                components.append(Plain(caption) if not callable(Plain) or True else Plain(text=caption))
+        components.append(self._create_video_component(file_path))
+        try:
+            await event.send(event.chain_result(components))
+        except Exception:
+            # Some adapters dislike mixed chains; send separately.
+            if caption:
+                try:
+                    await event.send(event.plain_result(caption))
+                except Exception:
+                    pass
+            await event.send(event.chain_result([self._create_video_component(file_path)]))
+
     async def _send_generated_images(self, event: AstrMessageEvent, files: Iterable[str]) -> int:
         sent = 0
         for file_path in files:
@@ -2528,15 +2581,19 @@ class SelfieImagePlugin(Star):
 
     def _format_task_list_text(self, tasks: List[Dict[str, Any]]) -> str:
         if not tasks:
-            return "现在没有进行中的出图。"
-        lines = ["进行中的出图："]
+            return "现在没有进行中的出图/视频任务。"
+        lines = ["进行中的任务："]
         for index, task in enumerate(tasks, 1):
             task_id = str(task.get("task_id") or "")
             status = str(task.get("status") or "")
-            status_cn = {"queued": "排队", "running": "绘制中", "succeeded": "完成", "failed": "失败", "cancelled": "已取消"}.get(status, status)
+            status_cn = {"queued": "排队", "running": "进行中", "succeeded": "完成", "failed": "失败", "cancelled": "已取消"}.get(status, status)
             req = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
-            prompt = str(req.get("original_prompt") or req.get("prompt") or "")[:40]
-            lines.append(f"{index}. {task_id} [{status_cn}] {prompt}")
+            kind = str(req.get("kind") or "")
+            if not kind:
+                source = str(task.get("source") or "")
+                kind = "视频" if "视频" in source or "video" in source.lower() else "出图"
+            prompt = str(req.get("original_prompt") or req.get("prompt") or req.get("mode") or "")[:40]
+            lines.append(f"{index}. {task_id} [{status_cn}/{kind}] {prompt}")
         lines.append("查看：/生图任务 编号或任务号；取消：/生图取消 …")
         return "\n".join(lines)
 
@@ -2635,6 +2692,229 @@ class SelfieImagePlugin(Star):
             self._prune_web_tasks_locked()
         asyncio.create_task(self._run_command_image_task(task_id, event, runner))
         return self.get_web_image_task(task_id)
+
+    async def _run_video_generation(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+        refs: List[ImageReference],
+        *,
+        source: str = "command-video",
+        duration: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        targets = list(self.config.get_prioritized_video_targets())
+        if not getattr(self.config, "video_enable", True):
+            return {"success": False, "error": "视频功能已关闭，请在配置里打开 video.enable"}
+        if not targets:
+            return {"success": False, "error": "还没有可用的视频渠道，请先在配置里添加并启用 video_channels"}
+        # Preflight first target only for clearer errors.
+        first = targets[0]
+        report = preflight_video_channel(
+            {
+                "name": first.channel_name,
+                "base_url": first.base_url,
+                "api_key": first.api_key,
+                "api_keys": first.api_keys,
+                "model": first.model,
+                "enabled_models": [first.model] if first.model else [],
+                "enabled": True,
+            }
+        )
+        if not report.get("ok"):
+            return {"success": False, "error": report.get("message") or "视频渠道配置不完整"}
+
+        req = VideoGenerateRequest(
+            prompt=str(prompt or "").strip(),
+            images=list(refs or [])[:1],  # I2V: first frame only (big_banana style)
+            duration=int(duration if duration is not None else getattr(self.config, "video_default_duration", 5) or 5),
+        )
+        if not req.prompt:
+            return {"success": False, "error": "请写一下想生成的视频内容"}
+
+        async with self._video_semaphore:
+            async with aiohttp.ClientSession(trust_env=False) as session:
+                result = await generate_video_with_fallback(
+                    targets,
+                    req,
+                    session,
+                    save_dir=self.video_dir,
+                )
+        if result.error or not result.video_path:
+            return {
+                "success": False,
+                "error": result.error or "视频没有生成出来",
+                "used_model": result.used_model,
+                "attempts": result.attempts,
+                "elapsed_seconds": result.elapsed_seconds,
+            }
+        return {
+            "success": True,
+            "video_path": result.video_path,
+            "video_url": result.video_url,
+            "used_model": result.used_model,
+            "attempts": result.attempts,
+            "elapsed_seconds": result.elapsed_seconds,
+            "files": [result.video_path],
+        }
+
+    async def _background_video_job(
+        self,
+        task_id: str,
+        event: AstrMessageEvent,
+        prompt: str,
+        refs: List[ImageReference],
+        source: str,
+        mode: str,
+    ) -> Dict[str, Any]:
+        if self._task_cancel_requested(task_id):
+            return {"success": False, "error": "任务已取消", "cancelled": True}
+        result = await self._run_video_generation(event, prompt, refs, source=source)
+        if self._task_cancel_requested(task_id) and not result.get("success"):
+            return {"success": False, "error": "任务已取消", "cancelled": True}
+        if not result.get("success"):
+            error = self._friendly_user_error_message(str(result.get("error") or ""), "视频没有完成")
+            try:
+                await event.send(event.plain_result(error))
+            except Exception:
+                pass
+            return result
+        path = str(result.get("video_path") or "")
+        used = str(result.get("used_model") or "")
+        elapsed = result.get("elapsed_seconds") or 0
+        bits = ["视频好了。"]
+        if self.config.image_show_generation_info and elapsed:
+            bits.append(f"用时 {elapsed}s")
+        if self.config.image_show_model_info and used:
+            bits.append(f"模型 {used}")
+        caption = " ".join(bits)
+        try:
+            await self._send_generated_video(event, path, caption=caption)
+        except Exception as exc:
+            logger.warning(f"[SelfieImage] 发送视频失败，尝试仅回路径: {exc}")
+            try:
+                await event.send(event.plain_result(f"{caption}\n文件：{path}"))
+            except Exception:
+                pass
+            return {"success": False, "error": f"视频已生成但发送失败：{exc}", "video_path": path}
+        return result
+
+    def _parse_video_duration(self, text: str) -> Tuple[str, Optional[int]]:
+        raw = str(text or "")
+        duration = None
+        match = re.search(r"(?:--duration|--dur|-d)\s*(\d{1,2})\b", raw, flags=re.I)
+        if match:
+            duration = max(1, min(60, int(match.group(1))))
+            raw = (raw[: match.start()] + raw[match.end() :]).strip()
+        return raw, duration
+
+    async def _handle_video_command(
+        self,
+        event: AstrMessageEvent,
+        command_name: Any,
+        fallback: str,
+        *,
+        mode: str = "auto",
+    ) -> AsyncGenerator[Any, None]:
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        raw_message = extract_command_message(event, command_name, fallback).strip()
+        prompt, duration = self._parse_video_duration(raw_message)
+        refs = await self._event_reference_images(
+            event,
+            include_at_avatar=False,
+            allow_context_fallback=True,
+            include_persona=False,
+        )
+        if mode == "t2v":
+            refs = []
+        elif mode == "i2v" and not refs:
+            yield event.plain_result("图生视频需要附图或引用一张图当首帧。")
+            return
+        if mode == "auto" and refs:
+            mode_label = "图生视频"
+        elif mode == "i2v":
+            mode_label = "图生视频"
+        else:
+            mode_label = "文生视频"
+            refs = []
+        if not prompt:
+            yield event.plain_result(f"请写上{mode_label}的内容，例如：/{command_name if isinstance(command_name, str) else '视频'} 小猫在草地上跑")
+            return
+
+        progress = f"收到，开始{mode_label}（通常比出图慢，请稍等）。"
+        if duration:
+            progress += f" 时长约 {duration}s。"
+
+        async def runner_with_duration(task_id: str) -> Dict[str, Any]:
+            if self._task_cancel_requested(task_id):
+                return {"success": False, "error": "任务已取消", "cancelled": True}
+            result = await self._run_video_generation(
+                event,
+                prompt,
+                refs,
+                source=f"command-{mode_label}",
+                duration=duration,
+            )
+            if not result.get("success"):
+                error = self._friendly_user_error_message(str(result.get("error") or ""), "视频没有完成")
+                try:
+                    await event.send(event.plain_result(error))
+                except Exception:
+                    pass
+                return result
+            path = str(result.get("video_path") or "")
+            used = str(result.get("used_model") or "")
+            elapsed = result.get("elapsed_seconds") or 0
+            bits = ["视频好了。"]
+            if self.config.image_show_generation_info and elapsed:
+                bits.append(f"用时 {elapsed}s")
+            if self.config.image_show_model_info and used:
+                bits.append(f"模型 {used}")
+            try:
+                await self._send_generated_video(event, path, caption=" ".join(bits))
+            except Exception as exc:
+                try:
+                    await event.send(event.plain_result(f"{' '.join(bits)}\n文件：{path}"))
+                except Exception:
+                    pass
+                return {"success": False, "error": f"视频已生成但发送失败：{exc}", "video_path": path}
+            return result
+
+        task = self.start_command_image_task(
+            event,
+            source=f"command-{mode_label}",
+            summary={
+                "prompt": prompt,
+                "mode": mode_label,
+                "duration": duration or getattr(self.config, "video_default_duration", 5),
+                "has_image": bool(refs),
+                "kind": "video",
+            },
+            runner=runner_with_duration,
+        )
+        yield event.plain_result(
+            f"{progress}\n已接单 {task.get('task_id')}，做好了会直接发过来。进度可用 /生图任务 看。"
+        )
+
+    @filter.command("视频")
+    async def cmd_video(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
+        async for item in self._handle_video_command(event, "视频", fallback, mode="auto"):
+            yield item
+
+    @filter.command("文生视频")
+    async def cmd_t2v(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
+        async for item in self._handle_video_command(event, "文生视频", fallback, mode="t2v"):
+            yield item
+
+    @filter.command("图生视频")
+    async def cmd_i2v(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
+        async for item in self._handle_video_command(event, "图生视频", fallback, mode="i2v"):
+            yield item
 
     async def _run_command_image_task(self, task_id: str, event: AstrMessageEvent, runner) -> None:
         self._set_web_image_task(
@@ -3124,10 +3404,15 @@ class SelfieImagePlugin(Star):
                 "· /看看你　像别人随手拍你（他拍感）",
                 "· /合影 或 /合照　和对象同框；可附图或@对方",
                 "",
+                "视频：",
+                "· /视频　写想要的动态；带图或引用图时当图生视频，否则文生视频（慢，先回任务号）",
+                "· /文生视频　只用文字出视频",
+                "· /图生视频　必须附图/引用图当首帧",
+                "",
                 "模型与进度：",
                 "· /生图模型　看列表；跟序号或 渠道/模型 切换（只影响当前群/私聊）；发「清除」恢复默认",
-                "· /生图任务　看进行中的图；可跟任务号",
-                "· /生图取消　取消还在排的/进行中的图",
+                "· /生图任务　看出图/视频进行中的任务；可跟任务号",
+                "· /生图取消　取消还在排的/进行中的任务",
                 "",
                 "形象：",
                 "· /形象查看　看当前参考图与今日状态",
