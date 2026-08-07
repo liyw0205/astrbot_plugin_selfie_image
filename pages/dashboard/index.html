@@ -553,6 +553,8 @@
     let ACTIVE_CHANNEL_PANE = 'image';
     let EDITING_CHANNEL_INDEX = -1;
     let EDITING_CHANNEL_KIND = 'image';
+    let EDITING_CHANNEL_IS_NEW = false;
+    let CHANNEL_DRAFT = null;
     let CHANNEL_MODAL_DIRTY = false;
     let SUPPRESS_AUTOSAVE = false;
     let CURRENT_RECORD = null;
@@ -980,7 +982,16 @@
       return false;
     }
     function isChannelModalOpen() {
-      return !!($('channelModal') && $('channelModal').classList.contains('show') && EDITING_CHANNEL_INDEX >= 0);
+      return !!(
+        $('channelModal')
+        && $('channelModal').classList.contains('show')
+        && (EDITING_CHANNEL_IS_NEW || EDITING_CHANNEL_INDEX >= 0)
+      );
+    }
+    function channelFactory(kind = 'image') {
+      if (kind === 'audit') return newAuditChannel;
+      if (kind === 'video') return newVideoChannel;
+      return newChannel;
     }
     function newChannel() {
       return normalizeChannel({name:'new-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:false, models_cache:[]});
@@ -1004,28 +1015,20 @@
     function addChannel() {
       ensureConfig();
       normalizeChannels();
-      CONFIG.image_channels.push(newChannel());
-      renderChannels();
-      refreshModelSelectors();
       switchChannelPane('image');
-      openChannelModal(CONFIG.image_channels.length - 1, 'image');
+      openChannelModal(-1, 'image', { isNew: true });
     }
     function addAuditChannel() {
       ensureConfig();
       normalizeAuditChannels();
-      CONFIG.audit_channels.push(newAuditChannel());
-      renderAuditChannels();
-      refreshModelSelectors();
       switchChannelPane('audit');
-      openChannelModal(CONFIG.audit_channels.length - 1, 'audit');
+      openChannelModal(-1, 'audit', { isNew: true });
     }
     function addVideoChannel() {
       ensureConfig();
       normalizeVideoChannels();
-      CONFIG.video_channels.push(newVideoChannel());
-      renderVideoChannels();
       switchChannelPane('video');
-      openChannelModal(CONFIG.video_channels.length - 1, 'video');
+      openChannelModal(-1, 'video', { isNew: true });
     }
     function removeChannel(index, kind = 'image') {
       if (!confirm('确认删除这个渠道？')) return;
@@ -1129,9 +1132,14 @@
       refreshModelSelectors();
     }
     function collectModalChannel() {
-      const list = channelListFor(EDITING_CHANNEL_KIND);
-      const factory = EDITING_CHANNEL_KIND === 'audit' ? newAuditChannel : (EDITING_CHANNEL_KIND === 'video' ? newVideoChannel : newChannel);
-      const source = normalizeChannel(list[EDITING_CHANNEL_INDEX] || factory());
+      const factory = channelFactory(EDITING_CHANNEL_KIND);
+      let source;
+      if (EDITING_CHANNEL_IS_NEW) {
+        source = normalizeChannel(CHANNEL_DRAFT || factory());
+      } else {
+        const list = channelListFor(EDITING_CHANNEL_KIND);
+        source = normalizeChannel(list[EDITING_CHANNEL_INDEX] || factory());
+      }
       const enabled = Array.from(document.querySelectorAll('#enabledModels .model-row .name')).map(el => el.textContent || '');
       const ch = normalizeChannel(Object.assign({}, source, {
         name: $('modalChannelName').value.trim(),
@@ -1160,21 +1168,45 @@
       });
       return out;
     }
-    function openChannelModal(index, kind = 'image') {
+    function storeModalChannel(ch) {
+      if (EDITING_CHANNEL_IS_NEW) {
+        CHANNEL_DRAFT = ch;
+        return;
+      }
+      if (EDITING_CHANNEL_INDEX >= 0) {
+        channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] = ch;
+      }
+    }
+    function openChannelModal(index, kind = 'image', options = {}) {
       normalizeChannels();
       normalizeAuditChannels();
       normalizeVideoChannels();
-      EDITING_CHANNEL_INDEX = index;
+      const isNew = !!options.isNew || index < 0;
+      EDITING_CHANNEL_IS_NEW = isNew;
       EDITING_CHANNEL_KIND = (kind === 'audit' || kind === 'video') ? kind : 'image';
+      EDITING_CHANNEL_INDEX = isNew ? -1 : index;
       CHANNEL_MODAL_DIRTY = false;
-      const list = channelListFor(EDITING_CHANNEL_KIND);
-      const factory = EDITING_CHANNEL_KIND === 'audit' ? newAuditChannel : (EDITING_CHANNEL_KIND === 'video' ? newVideoChannel : newChannel);
-      const ch = normalizeChannel(list[index] || factory());
-      if (EDITING_CHANNEL_KIND !== 'video') applyProviderDefaults(ch);
-      else ch.provider_type = 'openai';
-      list[index] = ch;
-      const titles = { image: '编辑生图渠道', audit: '编辑审核渠道', video: '编辑视频渠道' };
-      $('channelModalTitle').textContent = titles[EDITING_CHANNEL_KIND] || '编辑渠道';
+      const factory = channelFactory(EDITING_CHANNEL_KIND);
+      let ch;
+      if (isNew) {
+        ch = normalizeChannel(factory());
+        if (EDITING_CHANNEL_KIND !== 'video') applyProviderDefaults(ch);
+        else ch.provider_type = 'openai';
+        CHANNEL_DRAFT = ch;
+      } else {
+        const list = channelListFor(EDITING_CHANNEL_KIND);
+        ch = normalizeChannel(list[index] || factory());
+        if (EDITING_CHANNEL_KIND !== 'video') applyProviderDefaults(ch);
+        else ch.provider_type = 'openai';
+        list[index] = ch;
+        CHANNEL_DRAFT = null;
+      }
+      const titles = {
+        image: isNew ? '新建生图渠道' : '编辑生图渠道',
+        audit: isNew ? '新建审核渠道' : '编辑审核渠道',
+        video: isNew ? '新建视频渠道' : '编辑视频渠道',
+      };
+      $('channelModalTitle').textContent = titles[EDITING_CHANNEL_KIND] || (isNew ? '新建渠道' : '编辑渠道');
       setSelectOptions('modalProvider', EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS : PROVIDERS, ch.provider_type || 'openai');
       $('modalChannelName').value = ch.name || '';
       $('modalProvider').value = ch.provider_type || 'openai';
@@ -1186,7 +1218,7 @@
       $('modalEnabled').checked = ch.enabled !== false;
       $('cacheSearch').value = '';
       $('manualModel').value = '';
-      $('modalStatus').textContent = '';
+      $('modalStatus').textContent = isNew ? '填写后点「保存渠道」才会加入列表；关闭则不添加。' : '';
       if ($('modalProviderHint')) {
         $('modalProviderHint').textContent = EDITING_CHANNEL_KIND === 'video'
           ? '视频渠道固定走 OpenAI 兼容 /videos/generations；在下方启用模型即可。'
@@ -1213,12 +1245,17 @@
       $('channelModal').classList.remove('show');
       EDITING_CHANNEL_INDEX = -1;
       EDITING_CHANNEL_KIND = 'image';
+      EDITING_CHANNEL_IS_NEW = false;
+      CHANNEL_DRAFT = null;
       CHANNEL_MODAL_DIRTY = false;
     }
     function renderModalModels(ch) {
-      const list = channelListFor(EDITING_CHANNEL_KIND);
-      const factory = EDITING_CHANNEL_KIND === 'audit' ? newAuditChannel : (EDITING_CHANNEL_KIND === 'video' ? newVideoChannel : newChannel);
-      ch = normalizeChannel(ch || list[EDITING_CHANNEL_INDEX] || factory());
+      const factory = channelFactory(EDITING_CHANNEL_KIND);
+      if (!ch) {
+        if (EDITING_CHANNEL_IS_NEW) ch = CHANNEL_DRAFT || factory();
+        else ch = channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] || factory();
+      }
+      ch = normalizeChannel(ch);
       const enabled = ch.enabled_models || [];
       const search = $('cacheSearch').value.trim().toLowerCase();
       const cacheItems = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
@@ -1270,7 +1307,7 @@
     }
     function currentModalChannel() {
       const ch = collectModalChannel();
-      channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] = ch;
+      storeModalChannel(ch);
       return ch;
     }
     function setModelProviderType(index, provider) {
@@ -1282,7 +1319,7 @@
       if (resolved) ch.model_provider_types[model] = resolved;
       else delete ch.model_provider_types[model];
       compactModelProviderTypes(ch);
-      channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] = ch;
+      storeModalChannel(ch);
       CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
       refreshModelSelectors();
@@ -1290,6 +1327,7 @@
     function addEnabledModel(name) {
       const ch = currentModalChannel();
       setChannelEnabledModels(ch, (ch.enabled_models || []).concat([name]));
+      storeModalChannel(ch);
       CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
       refreshModelSelectors();
@@ -1298,6 +1336,7 @@
       const ch = currentModalChannel();
       setChannelEnabledModels(ch, (ch.enabled_models || []).filter(item => item !== name));
       if ($('modalEnabled')) $('modalEnabled').checked = ch.enabled !== false;
+      storeModalChannel(ch);
       CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
       refreshModelSelectors();
@@ -1310,22 +1349,27 @@
       const item = list.splice(index, 1)[0];
       list.splice(next, 0, item);
       setChannelEnabledModels(ch, list);
+      storeModalChannel(ch);
       CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
       refreshModelSelectors();
     }
     async function refreshChannelModels(index = EDITING_CHANNEL_INDEX) {
-      const list = channelListFor(EDITING_CHANNEL_KIND);
-      const ch = index === EDITING_CHANNEL_INDEX ? currentModalChannel() : normalizeChannel(list[index]);
-      $('modalStatus').textContent = `正在刷新 ${ch.name} 模型...`;
+      const ch = (EDITING_CHANNEL_IS_NEW || index === EDITING_CHANNEL_INDEX)
+        ? currentModalChannel()
+        : normalizeChannel(channelListFor(EDITING_CHANNEL_KIND)[index]);
+      $('modalStatus').textContent = `正在刷新 ${ch.name || '渠道'} 模型...`;
       try {
         const res = await api('/api/refresh-image-models', {method:'POST', body: JSON.stringify({channel: ch})});
         ch.models_cache = res.data || [];
-        list[index] = ch;
-        CHANNEL_MODAL_DIRTY = true;
-        // 只更新缓存，不自动落盘：避免“刚拉缓存、还没启用模型”就触发禁用保存。
-        renderModalModels(ch);
-        renderAllChannelLists();
+        if (EDITING_CHANNEL_IS_NEW || index === EDITING_CHANNEL_INDEX) {
+          storeModalChannel(ch);
+          CHANNEL_MODAL_DIRTY = true;
+          renderModalModels(ch);
+        } else {
+          channelListFor(EDITING_CHANNEL_KIND)[index] = ch;
+          renderAllChannelLists();
+        }
         refreshModelSelectors();
         $('modalStatus').textContent = `刷新成功：${ch.models_cache.length} 个模型（点「保存渠道」后生效）`;
       } catch (e) { $('modalStatus').textContent = e.message; }
@@ -1338,17 +1382,34 @@
       }
       if (!ch.model && ch.enabled_models.length) ch.model = ch.enabled_models[0];
       softDisableChannelIfNoModels(ch);
-      channelListFor(EDITING_CHANNEL_KIND)[EDITING_CHANNEL_INDEX] = ch;
+      const list = channelListFor(EDITING_CHANNEL_KIND);
+      if (EDITING_CHANNEL_IS_NEW) {
+        list.push(ch);
+      } else if (EDITING_CHANNEL_INDEX >= 0) {
+        list[EDITING_CHANNEL_INDEX] = ch;
+      } else {
+        $('modalStatus').textContent = '没有可保存的渠道';
+        return;
+      }
       renderAllChannelLists();
       refreshModelSelectors();
       $('modalStatus').textContent = '保存中...';
-      const ok = await persistConfig(false, '渠道已保存', { toast: true });
+      const ok = await persistConfig(false, EDITING_CHANNEL_IS_NEW ? '渠道已添加' : '渠道已保存', { toast: true });
       $('modalStatus').textContent = ok
-        ? (ch.enabled === false && !(ch.enabled_models || []).length ? '已保存（无启用模型，渠道已自动关闭）' : '已保存')
+        ? (ch.enabled === false && !(ch.enabled_models || []).length
+          ? (EDITING_CHANNEL_IS_NEW ? '已添加（无启用模型，渠道已自动关闭）' : '已保存（无启用模型，渠道已自动关闭）')
+          : (EDITING_CHANNEL_IS_NEW ? '已添加' : '已保存'))
         : '保存失败，请检查上方提示';
       if (ok) {
         CHANNEL_MODAL_DIRTY = false;
         closeChannelModal();
+      } else if (EDITING_CHANNEL_IS_NEW) {
+        // 保存失败时撤回刚 push 的草稿，避免列表脏数据
+        const pos = list.lastIndexOf(ch);
+        if (pos >= 0) list.splice(pos, 1);
+        CHANNEL_DRAFT = ch;
+        renderAllChannelLists();
+        refreshModelSelectors();
       }
     }
 
