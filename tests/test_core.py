@@ -2934,6 +2934,25 @@ class DashboardEmbedContractTests(unittest.TestCase):
         # 1:1 preference when auto
         self.assertTrue("1:1" in self.html)
 
+    def test_p0_visual_tokens_shared_by_index_and_dashboard_page(self) -> None:
+        self.assertIn("#3c96ca", self.html)
+        self.assertIn("#f6f8fb", self.html)
+        self.assertIn("header-brand", self.html)
+        self.assertIn("header-logo", self.html)
+        self.assertIn("--radius-lg", self.html)
+        page = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
+        page_html = page.read_text(encoding="utf-8")
+        self.assertIn("#3c96ca", page_html)
+        self.assertIn("header-brand", page_html)
+        self.assertIn("开始试画", page_html)
+        logo = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "logo.png"
+        self.assertTrue(logo.is_file())
+        from astrbot_plugin_selfie_image.web import render_index_html
+
+        rendered = render_index_html()
+        self.assertIn("data:image/png;base64,", rendered)
+        self.assertNotIn("__SELFIE_LOGO_SRC__", rendered)
+
     def test_dashboard_api_registers_token_free_routes(self) -> None:
         from astrbot_plugin_selfie_image.dashboard_api import SelfieImageDashboardAPI
         from astrbot_plugin_selfie_image.constants import PLUGIN_NAME

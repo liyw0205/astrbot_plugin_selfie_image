@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hmac
 import json
+import os
 import re
 import threading
 from typing import Any, Optional
@@ -28,6 +30,29 @@ MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
 MAX_WEB_RECORD_ID_LENGTH = 128
 MAX_RECORD_PAGE_LIMIT = 100
+_LOGO_SRC_PLACEHOLDER = "__SELFIE_LOGO_SRC__"
+
+
+def _bundled_logo_data_url() -> str:
+    """Inline logo so Flask and AstrBot iframe both show the same brand mark."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read()
+        if not raw:
+            return ""
+        return "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+    except Exception:
+        return ""
+
+
+def render_index_html(html: Optional[str] = None) -> str:
+    text = INDEX_HTML if html is None else str(html)
+    logo = _bundled_logo_data_url()
+    if logo:
+        return text.replace(_LOGO_SRC_PLACEHOLDER, logo)
+    # Hide broken image slot when logo file is missing.
+    return text.replace(f'src="{_LOGO_SRC_PLACEHOLDER}"', 'src="" style="display:none"')
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -39,44 +64,103 @@ INDEX_HTML = r"""<!doctype html>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f4f6f8;
+      --bg: #f6f8fb;
       --panel: #ffffff;
-      --line: #d8dee4;
-      --muted: #667085;
-      --text: #1f2328;
-      --primary: #1769e0;
-      --primary-weak: #e8f1ff;
-      --danger: #c8212f;
-      --ok: #138a43;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --panel-soft: rgba(60, 150, 202, 0.08);
+      --line: rgba(27, 28, 29, 0.1);
+      --line-strong: rgba(27, 28, 29, 0.14);
+      --muted: rgba(27, 28, 29, 0.56);
+      --text: #1b1c1d;
+      --text-secondary: rgba(27, 28, 29, 0.68);
+      --primary: #3c96ca;
+      --primary-strong: #2f86bd;
+      --primary-weak: rgba(60, 150, 202, 0.12);
+      --danger: #f44336;
+      --ok: #00c853;
+      --shadow: 0 10px 30px rgba(27, 28, 29, 0.06);
+      --radius-lg: 16px;
+      --radius-md: 12px;
+      --radius-sm: 10px;
+      font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", sans-serif;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text); }
-    header { background: #20242b; color: #fff; padding: 16px 22px; justify-content: space-between; gap: 16px; align-items: center; }
-    h1 { font-size: 19px; margin: 0; font-weight: 650; }
-    h2 { font-size: 17px; margin: 0 0 12px; }
-    h3 { font-size: 14px; margin: 16px 0 8px; }
-    main { max-width: 1280px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
-    .app-shell { display: none; }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
+    header.app-shell {
+      display: none;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 20px 16px 8px;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      background: transparent;
+      color: var(--text);
+    }
+    .header-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .header-logo {
+      width: 48px; height: 48px; border-radius: 14px; object-fit: cover;
+      border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); flex: 0 0 auto;
+    }
+    .header-eyebrow {
+      margin: 0 0 4px; color: var(--primary); font-size: 12px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    h1 { font-size: 1.45rem; margin: 0; font-weight: 700; line-height: 1.2; color: var(--text); }
+    .header-sub { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.45; }
+    h2 { font-size: 1.05rem; margin: 0 0 12px; font-weight: 700; }
+    h3 { font-size: 14px; margin: 16px 0 8px; font-weight: 650; }
+    main.app-shell {
+      display: none;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 8px 16px 28px;
+      gap: 14px;
+    }
     body.authed header.app-shell { display: flex; }
     body.authed main.app-shell { display: grid; }
     .login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 18px; }
     body.authed .login-page { display: none; }
-    .login-box { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; }
-    .login-box h1 { color: var(--text); margin-bottom: 8px; }
-    nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding-bottom: 2px; }
-    nav button { border: 1px solid var(--line); background: #fff; color: var(--text); border-radius: 6px; padding: 9px 8px; white-space: nowrap; min-width: 0; width: 100%; }
-    nav button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
-    section { display: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+    .login-box {
+      width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line);
+      border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow);
+    }
+    .login-box h1 { color: var(--text); margin-bottom: 8px; font-size: 1.25rem; }
+    nav {
+      display: flex; flex-wrap: wrap; gap: 8px; padding: 6px; margin-bottom: 2px;
+      border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow);
+    }
+    nav button {
+      border: 0; background: transparent; color: var(--text-secondary); border-radius: 10px;
+      padding: 10px 14px; white-space: nowrap; min-width: 0; font-weight: 600; min-height: 40px;
+    }
+    nav button:hover { background: var(--panel-soft); color: var(--text); }
+    nav button.active {
+      background: var(--panel-soft); color: var(--primary);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 22%, transparent);
+    }
+    section {
+      display: none; background: var(--panel); border: 1px solid var(--line);
+      border-radius: var(--radius-lg); padding: 18px; box-shadow: var(--shadow);
+    }
     section.active { display: block; }
-    label { display: block; font-size: 12px; font-weight: 650; color: #344054; margin: 9px 0 5px; }
+    label { display: block; font-size: 12px; font-weight: 650; color: var(--text-secondary); margin: 9px 0 5px; }
     input, select, textarea, button { font: inherit; }
     input, select, textarea {
-      width: 100%; border: 1px solid #c9d1d9; border-radius: 6px; padding: 8px 10px; background: #fff; color: var(--text);
+      width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+      padding: 9px 11px; background: #fff; color: var(--text);
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none; border-color: color-mix(in srgb, var(--primary) 55%, var(--line-strong));
+      box-shadow: 0 0 0 3px var(--primary-weak);
     }
     textarea { min-height: 92px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; resize: vertical; }
-    button { cursor: pointer; border-radius: 6px; border: 1px solid var(--primary); background: var(--primary); color: #fff; padding: 8px 12px; }
-    button.secondary { background: #fff; border-color: var(--line); color: var(--text); }
+    button {
+      cursor: pointer; border-radius: var(--radius-sm); border: 1px solid var(--primary);
+      background: var(--primary); color: #fff; padding: 8px 14px; font-weight: 600;
+    }
+    button:hover { background: var(--primary-strong); border-color: var(--primary-strong); }
+    button.secondary { background: #fff; border-color: var(--line-strong); color: var(--text); }
+    button.secondary:hover { background: var(--panel-soft); border-color: var(--line-strong); }
     button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
     button.ok { background: var(--ok); border-color: var(--ok); color: #fff; }
     button:disabled { opacity: .55; cursor: not-allowed; }
@@ -85,26 +169,33 @@ INDEX_HTML = r"""<!doctype html>
     .grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     .status, pre {
-      white-space: pre-wrap; background: #f6f8fa; border: 1px solid var(--line); border-radius: 6px; padding: 10px; min-height: 24px;
-      max-width: 100%; overflow-wrap: anywhere; word-break: break-word;
+      white-space: pre-wrap; background: #f8fafc; border: 1px solid var(--line); border-radius: var(--radius-sm);
+      padding: 10px; min-height: 24px; max-width: 100%; overflow-wrap: anywhere; word-break: break-word;
     }
     .muted { color: var(--muted); font-size: 13px; line-height: 1.45; }
-    .card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fff; margin-bottom: 12px; }
-    .soft { background: #f8fafc; }
+    .card { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; background: #fff; margin-bottom: 12px; box-shadow: var(--shadow); }
+    .soft { background: var(--panel-soft); }
     .between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .channel-row { display: grid; grid-template-columns: minmax(160px, 1fr) 130px 90px auto; gap: 10px; align-items: center; }
-    .pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 3px 8px; background: var(--primary-weak); color: #164a9f; font-size: 12px; }
-    .pill.green { background: #e7f7ed; color: #116735; }
-    .pill.gray { background: #f1f3f5; color: #57606a; }
-    .modal-mask { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(31,35,40,.45); padding: 14px; z-index: 50; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 4px 10px;
+      background: var(--panel-soft); color: var(--primary-strong); font-size: 12px; font-weight: 600;
+      border: 1px solid color-mix(in srgb, var(--primary) 18%, transparent);
+    }
+    .pill.green { background: #e7f7ed; color: #116735; border-color: transparent; }
+    .pill.gray { background: #f1f3f5; color: #57606a; border-color: transparent; }
+    .modal-mask { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(27,28,29,.42); padding: 14px; z-index: 50; }
     .modal-mask.show { display: flex; }
-    .modal { width: min(900px, 100%); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; background: #fff; border-radius: 8px; border: 1px solid var(--line); padding: 16px; box-shadow: 0 18px 60px rgba(31,35,40,.22); }
+    .modal {
+      width: min(900px, 100%); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden;
+      background: #fff; border-radius: var(--radius-lg); border: 1px solid var(--line); padding: 16px; box-shadow: 0 18px 60px rgba(27,28,29,.16);
+    }
     .modal-body { overflow: auto; padding-right: 4px; }
     .modal-footer { position: sticky; bottom: 0; margin-top: 14px; padding-top: 12px; background: linear-gradient(180deg, rgba(255,255,255,0), #fff 24px); }
     .toast-wrap { position: fixed; right: 16px; top: 16px; z-index: 100; display: grid; gap: 8px; pointer-events: none; }
-    .toast { min-width: 220px; max-width: min(360px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 8px; background: rgba(32,36,43,.96); color: #fff; box-shadow: 0 14px 32px rgba(0,0,0,.16); }
-    .toast.ok { background: rgba(19,138,67,.96); }
-    .toast.bad { background: rgba(200,33,47,.96); }
+    .toast { min-width: 220px; max-width: min(360px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 12px; background: rgba(27,28,29,.94); color: #fff; box-shadow: 0 14px 32px rgba(0,0,0,.16); }
+    .toast.ok { background: rgba(0,200,83,.94); }
+    .toast.bad { background: rgba(244,67,54,.94); }
     .detail-title { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
     .detail-title h3 { margin: 0; }
     .copy-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; padding: 0; background: #fff; border-color: var(--line); color: #344054; }
@@ -115,10 +206,10 @@ INDEX_HTML = r"""<!doctype html>
     .tabs-inline button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
     .channel-pane { display: none; }
     .channel-pane.active { display: block; }
-    .model-panel { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fff; min-height: 120px; }
+    .model-panel { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; background: #fff; min-height: 120px; }
     .model-list { display: grid; gap: 7px; margin-top: 8px; }
     .model-list.collapsed { max-height: 240px; overflow-y: auto; border: 1px dashed var(--line); padding: 4px; border-radius: 6px; }
-    .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; background: #f8fafc; }
+    .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px; background: #f8fafc; }
     .model-row.with-provider { grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) auto; }
     .model-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .model-row .actions { margin-top: 0; }
@@ -126,16 +217,17 @@ INDEX_HTML = r"""<!doctype html>
     .mini { padding: 5px 8px; font-size: 12px; }
     .table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .table th, .table td { text-align: left; border-bottom: 1px solid var(--line); padding: 8px; vertical-align: top; }
-    .table th { background: #f6f8fa; font-weight: 650; }
-    .preview { max-width: 260px; border: 1px solid var(--line); border-radius: 8px; display: none; margin-top: 10px; }
+    .table th { background: #f8fafc; font-weight: 650; }
+    .preview { max-width: 260px; border: 1px solid var(--line); border-radius: var(--radius-md); display: none; margin-top: 10px; box-shadow: var(--shadow); }
     .images { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-top: 12px; }
-    .images img { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .images img { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); }
     .test-panel { display: none; margin-top: 12px; }
     .test-panel.active { display: block; }
     .checkline { display: flex; align-items: center; gap: 8px; min-height: 38px; }
     .checkline input { width: auto; }
-    .topline { display: flex; align-items: center; gap: 8px; }
+    .topline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .topline input { max-width: 280px; }
+    body.dashboard-embedded { background: var(--bg); }
     @media (max-width: 1100px) {
       .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .channel-row { grid-template-columns: minmax(160px, 1fr) 120px 90px; }
@@ -144,10 +236,11 @@ INDEX_HTML = r"""<!doctype html>
     @media (max-width: 760px) {
       body.authed header.app-shell { display: block; }
       .grid, .grid3, .grid4, .channel-row { grid-template-columns: 1fr; }
-      main { padding: 10px; }
+      main.app-shell { padding: 8px 10px 20px; }
+      header.app-shell { padding: 14px 10px 6px; }
       header .topline { margin-top: 10px; justify-content: flex-start; }
-      nav { gap: 6px; }
-      nav button { font-size: 13px; padding: 8px 4px; }
+      nav { gap: 6px; overflow-x: auto; flex-wrap: nowrap; }
+      nav button { font-size: 13px; padding: 8px 12px; }
       .modal { max-height: 96vh; padding: 12px; }
       .model-row, .model-row.with-provider { grid-template-columns: 1fr; }
     }
@@ -156,7 +249,8 @@ INDEX_HTML = r"""<!doctype html>
 <body>
   <div id="loginPage" class="login-page">
     <div class="login-box">
-      <h1>Selfie Image 管理登录</h1>
+      <p class="header-eyebrow">Selfie Image</p>
+      <h1>管理登录</h1>
       <p class="muted" id="loginHint">独立打开时需要管理口令。在 AstrBot 插件页里打开会自动登录，不用再输。</p>
       <label>管理口令</label>
       <input id="loginToken" type="password" placeholder="管理口令" autocomplete="current-password">
@@ -168,9 +262,16 @@ INDEX_HTML = r"""<!doctype html>
   </div>
 
   <header class="app-shell">
-    <h1>生图 · 自拍 管理</h1>
+    <div class="header-brand">
+      <img class="header-logo" src="__SELFIE_LOGO_SRC__" alt="" onerror="this.style.display='none'">
+      <div>
+        <p class="header-eyebrow">Plugin Page</p>
+        <h1>生图 · 自拍 管理</h1>
+        <p class="header-sub">渠道、试画、形象与记录，内嵌页与独立页同一套界面</p>
+      </div>
+    </div>
     <div class="topline">
-      <button id="reloadAll">刷新</button>
+      <button id="reloadAll" class="secondary">刷新</button>
       <button id="logoutBtn" class="secondary">退出</button>
     </div>
   </header>
@@ -2070,7 +2171,7 @@ class FlaskWebServer:
         @app.route("/", methods=["GET"])
         @app.route("/index.html", methods=["GET"])
         def index() -> Any:
-            return INDEX_HTML
+            return render_index_html()
 
         @app.route("/api/health", methods=["GET"])
         def health() -> Any:

@@ -30,8 +30,9 @@
 
 ### 优化分阶段（仍保持单文件 HTML，不引入 npm）
 
-**P0 视觉 token**（建议下一 PR）  
-对齐 img_gen：背景 `#f6f8fb`、圆角 12–16、阴影、header 浅色+logo、nav 胶囊。
+**P0 视觉 token（已完成 1.2.0）**  
+对齐 img_gen：背景 `#f6f8fb`、主色 `#3c96ca`、圆角 12–16、柔和阴影、浅色 header+logo、胶囊 nav。  
+**内嵌 Dashboard 与独立 Flask 共用同一套 `INDEX_HTML` / `pages/dashboard/index.html`**（此前只改文案未改样式，看起来像两套）。
 
 **P1 信息架构**  
 设置 / 渠道 / 测试 / 监控 / 形象 五类归并。
@@ -57,4 +58,4 @@
 - [x] logo 来自当前形象  
 - [x] 帮助图预生成入仓  
 - [x] 命令只读静态图  
-- [ ] 前端 P0 CSS（方案已写，可另开改动）
+- [x] 前端 P0 CSS（内嵌与独立同源）
