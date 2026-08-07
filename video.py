@@ -222,11 +222,19 @@ async def generate_video_openai_compatible(
     *,
     save_dir: str,
 ) -> VideoGenerateResult:
+    """Dispatch by video protocol: video_async / video_sync / video_chat (OmniDraw-style)."""
+    from .models import normalize_video_provider_type, resolve_video_model_provider_type
+
     started = time.monotonic()
+    protocol = resolve_video_model_provider_type(
+        target.model,
+        target.provider_type,
+        "",
+    ) or normalize_video_provider_type(target.provider_type) or "video_async"
     attempt_info: Dict[str, Any] = {
         "channel": target.channel_name,
         "model": target.model,
-        "provider": target.provider_type,
+        "provider": protocol,
     }
     if not target.base_url or not target.model:
         return VideoGenerateResult(error="视频渠道缺少 base_url 或 model", attempts=[attempt_info])
@@ -234,9 +242,9 @@ async def generate_video_openai_compatible(
     if not keys:
         return VideoGenerateResult(error="视频渠道缺少 api_key", attempts=[attempt_info])
 
-    endpoint = build_video_generations_endpoint(target.base_url)
     timeout = max(60, int(target.timeout or 300))
     last_error = ""
+    b64_images = [_ref_to_data_url(ref) for ref in (request.images or [])[:3] if ref and ref.data]
 
     for key_index, api_key in enumerate(keys):
         headers = {
@@ -246,90 +254,37 @@ async def generate_video_openai_compatible(
             "User-Agent": "SelfieImage-Video/1.0",
             "Connection": "close",
         }
-        b64_images = [_ref_to_data_url(ref) for ref in (request.images or [])[:3] if ref and ref.data]
-        payload: Dict[str, Any] = {
-            "model": target.model,
-            "prompt": str(request.prompt or "").strip(),
-        }
-        duration = int(request.duration or 5)
-        if duration > 0:
-            payload["duration"] = duration
-            payload["seconds"] = duration
-        if request.size:
-            payload["size"] = str(request.size).strip()
-        if b64_images:
-            # Common gateway field names for I2V first frame / refs.
-            payload["images"] = b64_images
-            payload["image"] = b64_images[0]
-            payload["image_url"] = b64_images[0]
-            payload["input_reference"] = b64_images[0]
-        if isinstance(request.extra, dict) and request.extra:
-            payload.update(request.extra)
-
         key_attempt = dict(attempt_info)
         if len(keys) > 1:
             key_attempt["key_index"] = key_index + 1
-
         try:
-            # Prefer short create timeout then poll; if gateway is sync, allow full timeout once.
-            create_timeout = min(45, timeout)
-            async with session.post(
-                endpoint,
-                headers=headers,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=create_timeout),
-                proxy=(target.proxy or None),
-            ) as response:
-                body_text = await response.text()
-                if response.status >= 400:
-                    err = redact_sensitive_text(f"HTTP {response.status}: {body_text[:800]}")
-                    class_info = classify_generation_error(err)
-                    key_attempt["error"] = err
-                    key_attempt["error_category"] = class_info.get("category")
-                    last_error = err
-                    if class_info.get("category") in {"auth", "rate_limit"} and key_index + 1 < len(keys):
-                        continue
-                    if not class_info.get("retryable", True):
-                        return VideoGenerateResult(error=err, attempts=[key_attempt], used_model=target.label)
-                    # Fall through: try long sync POST once for this key only if create looked transient.
-                    async with session.post(
-                        endpoint,
-                        headers=headers,
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=timeout),
-                        proxy=(target.proxy or None),
-                    ) as response2:
-                        body_text = await response2.text()
-                        if response2.status >= 400:
-                            err2 = redact_sensitive_text(f"HTTP {response2.status}: {body_text[:800]}")
-                            key_attempt["error"] = err2
-                            return VideoGenerateResult(error=err2, attempts=[key_attempt], used_model=target.label)
-                        try:
-                            data = await response2.json(content_type=None)
-                        except Exception:
-                            data = {"raw": body_text}
-                else:
-                    try:
-                        data = await response.json(content_type=None)
-                    except Exception:
-                        # Maybe plain URL
-                        data = {"url": body_text.strip()} if str(body_text).strip().startswith("http") else {"raw": body_text}
-
-            if not isinstance(data, dict):
-                data = {"data": data}
-
-            video_url = _extract_video_url(data)
-            task_id = ""
-            if not video_url:
-                task_id = _extract_task_id(data)
-                # Some APIs return id even on success without status — only poll if no URL.
-                if task_id:
-                    poll_url = _task_poll_url(endpoint, task_id, data)
-                    video_url = await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout)
-
-            if not video_url:
-                # Final long sync attempt only if neither URL nor task — do not re-POST if task already created.
-                raise RuntimeError(f"未返回视频地址或任务号: {str(data)[:400]}")
+            if protocol == "video_chat":
+                video_url = await _generate_via_chat(
+                    session,
+                    target=target,
+                    request=request,
+                    headers=headers,
+                    timeout=timeout,
+                    b64_images=b64_images,
+                )
+            elif protocol == "video_sync":
+                video_url = await _generate_via_sync(
+                    session,
+                    target=target,
+                    request=request,
+                    headers=headers,
+                    timeout=timeout,
+                    b64_images=b64_images,
+                )
+            else:
+                video_url = await _generate_via_async(
+                    session,
+                    target=target,
+                    request=request,
+                    headers=headers,
+                    timeout=timeout,
+                    b64_images=b64_images,
+                )
 
             raw = await _download_video_bytes(session, video_url, timeout=timeout)
             os.makedirs(save_dir, exist_ok=True)
@@ -339,13 +294,12 @@ async def generate_video_openai_compatible(
             key_attempt["success"] = True
             return VideoGenerateResult(
                 video_path=path,
-                video_url=video_url if video_url.startswith("http") else "",
+                video_url=video_url if str(video_url).startswith("http") else "",
                 used_model=target.label,
                 attempts=[key_attempt],
                 elapsed_seconds=round(time.monotonic() - started, 2),
             )
         except asyncio.TimeoutError:
-            # Do not automatically re-POST create (double bill risk).
             last_error = "视频请求超时（未自动重提，以免重复扣费）"
             key_attempt["error"] = last_error
             key_attempt["error_category"] = "timeout"
@@ -359,12 +313,188 @@ async def generate_video_openai_compatible(
                 continue
             if not class_info.get("retryable", True):
                 return VideoGenerateResult(error=last_error, attempts=[key_attempt], used_model=target.label)
-            # try next key if any
             if key_index + 1 < len(keys):
                 continue
             return VideoGenerateResult(error=last_error, attempts=[key_attempt], used_model=target.label)
 
     return VideoGenerateResult(error=last_error or "视频生成失败", used_model=target.label)
+
+
+def _video_payload(target: ImageModelTarget, request: VideoGenerateRequest, b64_images: List[str]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "model": target.model,
+        "prompt": str(request.prompt or "").strip(),
+    }
+    duration = int(request.duration or 5)
+    if duration > 0:
+        payload["duration"] = duration
+        payload["seconds"] = duration
+    if request.size:
+        payload["size"] = str(request.size).strip()
+    if b64_images:
+        payload["images"] = b64_images
+        payload["image"] = b64_images[0]
+        payload["image_url"] = b64_images[0]
+        payload["input_reference"] = b64_images[0]
+    if isinstance(request.extra, dict) and request.extra:
+        payload.update(request.extra)
+    return payload
+
+
+async def _generate_via_async(
+    session: aiohttp.ClientSession,
+    *,
+    target: ImageModelTarget,
+    request: VideoGenerateRequest,
+    headers: Dict[str, str],
+    timeout: int,
+    b64_images: List[str],
+) -> str:
+    """POST /videos/generations → task_id poll or immediate URL."""
+    endpoint = build_video_generations_endpoint(target.base_url)
+    payload = _video_payload(target, request, b64_images)
+    create_timeout = min(45, timeout)
+    async with session.post(
+        endpoint,
+        headers=headers,
+        json=payload,
+        timeout=aiohttp.ClientTimeout(total=create_timeout),
+        proxy=(target.proxy or None),
+    ) as response:
+        body_text = await response.text()
+        if response.status >= 400:
+            raise RuntimeError(redact_sensitive_text(f"HTTP {response.status}: {body_text[:800]}"))
+        try:
+            data = await response.json(content_type=None)
+        except Exception:
+            data = {"url": body_text.strip()} if str(body_text).strip().startswith("http") else {"raw": body_text}
+    if not isinstance(data, dict):
+        data = {"data": data}
+    video_url = _extract_video_url(data)
+    if video_url:
+        return video_url
+    task_id = _extract_task_id(data)
+    if not task_id:
+        raise RuntimeError(f"未返回视频地址或任务号: {str(data)[:400]}")
+    poll_url = _task_poll_url(endpoint, task_id, data)
+    return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout)
+
+
+async def _generate_via_sync(
+    session: aiohttp.ClientSession,
+    *,
+    target: ImageModelTarget,
+    request: VideoGenerateRequest,
+    headers: Dict[str, str],
+    timeout: int,
+    b64_images: List[str],
+) -> str:
+    """Long POST /videos/generations waiting for final URL (no re-POST on timeout)."""
+    endpoint = build_video_generations_endpoint(target.base_url)
+    payload = _video_payload(target, request, b64_images)
+    async with session.post(
+        endpoint,
+        headers=headers,
+        json=payload,
+        timeout=aiohttp.ClientTimeout(total=timeout),
+        proxy=(target.proxy or None),
+    ) as response:
+        body_text = await response.text()
+        if response.status >= 400:
+            raise RuntimeError(redact_sensitive_text(f"HTTP {response.status}: {body_text[:800]}"))
+        try:
+            data = await response.json(content_type=None)
+        except Exception:
+            data = {"url": body_text.strip()} if str(body_text).strip().startswith("http") else {"raw": body_text}
+    if not isinstance(data, dict):
+        data = {"data": data}
+    video_url = _extract_video_url(data)
+    if video_url:
+        return video_url
+    # Some "sync" gateways still return task id — poll once path.
+    task_id = _extract_task_id(data)
+    if task_id:
+        poll_url = _task_poll_url(endpoint, task_id, data)
+        return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout)
+    raise RuntimeError(f"同步接口未返回视频地址: {str(data)[:400]}")
+
+
+def _chat_completions_endpoint(base_url: str) -> str:
+    base = normalize_image_base_url(base_url) or str(base_url or "").rstrip("/")
+    if not base:
+        return ""
+    lowered = base.lower()
+    if lowered.endswith("/chat/completions"):
+        return base
+    if base.endswith("/v1"):
+        return f"{base}/chat/completions"
+    if "/v1/" in lowered:
+        return f"{base.rstrip('/')}/chat/completions"
+    return f"{base.rstrip('/')}/v1/chat/completions"
+
+
+async def _generate_via_chat(
+    session: aiohttp.ClientSession,
+    *,
+    target: ImageModelTarget,
+    request: VideoGenerateRequest,
+    headers: Dict[str, str],
+    timeout: int,
+    b64_images: List[str],
+) -> str:
+    """Chat Completions style: model returns video URL / markdown link in content (OmniDraw openai_chat)."""
+    endpoint = _chat_completions_endpoint(target.base_url)
+    user_content: List[Dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                f"请根据以下描述生成视频，并在回复中给出可下载的视频直链（http/https 或 data:video）。\n"
+                f"时长约 {int(request.duration or 5)} 秒。\n"
+                f"描述：{str(request.prompt or '').strip()}"
+            ),
+        }
+    ]
+    for img in b64_images[:2]:
+        user_content.append({"type": "image_url", "image_url": {"url": img}})
+    payload = {
+        "model": target.model,
+        "messages": [{"role": "user", "content": user_content if len(user_content) > 1 else user_content[0]["text"]}],
+        "stream": False,
+    }
+    if isinstance(request.extra, dict) and request.extra:
+        # allow temperature etc., but do not override messages/model casually
+        for key, value in request.extra.items():
+            if key not in {"messages", "model", "stream"}:
+                payload[key] = value
+    async with session.post(
+        endpoint,
+        headers=headers,
+        json=payload,
+        timeout=aiohttp.ClientTimeout(total=timeout),
+        proxy=(target.proxy or None),
+    ) as response:
+        body_text = await response.text()
+        if response.status >= 400:
+            raise RuntimeError(redact_sensitive_text(f"HTTP {response.status}: {body_text[:800]}"))
+        try:
+            data = await response.json(content_type=None)
+        except Exception:
+            data = {"raw": body_text}
+    # Standard chat choices
+    content = ""
+    if isinstance(data, dict):
+        choices = data.get("choices")
+        if isinstance(choices, list) and choices:
+            msg = (choices[0] or {}).get("message") or {}
+            content = str(msg.get("content") or "")
+        if not content:
+            content = str(data.get("content") or data.get("output") or data.get("raw") or "")
+    video_url = _extract_video_url(data) if isinstance(data, dict) else ""
+    if not video_url:
+        video_url = _extract_url(content)
+    if not video_url or not (video_url.startswith("http") or video_url.startswith("data:")):
+        raise RuntimeError(f"对话接口未解析到视频链接: {str(content or data)[:400]}")
+    return video_url
 
 
 async def generate_video_with_fallback(

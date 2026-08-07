@@ -166,6 +166,7 @@ Web：渠道管理增加「视频渠道」页签（复用现有编辑模态，ty
 |------|------|------|
 | **V0 调研** | 本文 + 更新 MARKET/ROADMAP | 文档入仓 |
 | **V1 MVP** | OpenAI 兼容 video 渠道 + `/视频` 自动文生/图生 + 后台任务 + 任务查询 | **已完成 1.3.0**：`video_channels`、`video.py`、`/视频` `/文生视频` `/图生视频`，复用 `/生图任务` |
+| **V1.1 协议** | 视频多协议 + Web 自动/手动模型类型（对齐 OmniDraw async/sync/chat） | **已完成 1.3.7**：`video_async` / `video_sync` / `video_chat`；渠道默认协议 + 每模型自动/手动 |
 | **V2** | Web 视频渠道页、试跑、记录 `source=video`；`/文生视频` `/图生视频` 显式命令 | 内嵌/Flask 可配 |
 | **V3** | LLM tool、多厂商 adapter、可选形象首帧、时长/分辨率参数 | 工具可调且不阻塞 |
 | **Out** | Comfy 主线、解析类视频、默认逆向 Cookie | — |

@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
-from .constants import PROVIDER_TYPES
+from .constants import PROVIDER_TYPES, VIDEO_PROVIDER_TYPES
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -133,23 +133,35 @@ class ImageChannelConfig:
         if not self.enabled:
             return []
         models = self.enabled_models or ([self.model] if self.model else [])
-        # Default-lock OpenAI-compatible channel types so model names cannot jump protocols.
-        lock = bool(self.protocol_lock) or self.provider_type in {"openai", "gemini_openai"}
+        is_video_proto = bool(normalize_video_provider_type(self.provider_type)) or str(self.provider_type or "").startswith(
+            "video_"
+        )
+        # Default-lock OpenAI-compatible *image* channel types so model names cannot jump protocols.
+        lock = (not is_video_proto) and (bool(self.protocol_lock) or self.provider_type in {"openai", "gemini_openai"})
         keys = self.resolved_api_keys()
         primary_key = keys[0] if keys else str(self.api_key or "").strip()
         result: List[ImageModelTarget] = []
         for model in models:
             if not model:
                 continue
+            model_video_override = normalize_video_provider_type(self.model_provider_types.get(model, ""))
+            if is_video_proto or model_video_override:
+                ptype = resolve_video_model_provider_type(
+                    model,
+                    self.provider_type if is_video_proto else "video_async",
+                    self.model_provider_types.get(model, ""),
+                )
+            else:
+                ptype = resolve_model_provider_type(
+                    model,
+                    self.provider_type,
+                    self.model_provider_types.get(model, ""),
+                    protocol_lock=lock,
+                )
             result.append(
                 ImageModelTarget(
                     channel_name=self.name,
-                    provider_type=resolve_model_provider_type(
-                        model,
-                        self.provider_type,
-                        self.model_provider_types.get(model, ""),
-                        protocol_lock=lock,
-                    ),
+                    provider_type=ptype,
                     base_url=self.base_url,
                     api_key=primary_key,
                     model=model,
@@ -472,15 +484,103 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
 
 
 def _build_video_channel(raw: Any) -> ImageChannelConfig:
-    """Video channels reuse ImageChannelConfig shape; force openai-compatible protocol."""
-    channel = _build_image_channel(raw if isinstance(raw, dict) else {})
-    # Video V1 only speaks OpenAI-compatible /videos/generations.
-    channel.provider_type = "openai"
-    channel.protocol_lock = True
-    # Clear cross-protocol model overrides that would confuse image adapters if mixed.
-    channel.model_provider_types = {}
+    """Video channels reuse ImageChannelConfig; keep video protocol types (async/sync/chat)."""
+    data = raw if isinstance(raw, dict) else {}
+    # Temporarily allow video provider types through image builder by mapping first.
+    patched = dict(data)
+    raw_type = patched.get("provider_type", patched.get("providerType", patched.get("api_type", "")))
+    # bare openai / empty on video channel → default async poll protocol
+    raw_lower = str(raw_type or "").strip().lower().replace("-", "_")
+    if raw_lower in {"", "openai", "openai_compatible", "openai_image"}:
+        vtype = "video_async"
+    else:
+        vtype = normalize_video_provider_type(raw_type) or "video_async"
+    # Feed image builder a benign type so it does not blank provider_type.
+    patched["provider_type"] = "openai"
+    channel = _build_image_channel(patched)
+    channel.provider_type = vtype
+    channel.protocol_lock = False
+    # Keep per-model video protocol overrides.
+    fixed_map: Dict[str, str] = {}
+    for model, ptype in (channel.model_provider_types or {}).items():
+        vt = normalize_video_provider_type(ptype)
+        if vt:
+            fixed_map[str(model)] = vt
+    # Also accept raw map before image normalize stripped unknown types.
+    raw_map = data.get("model_provider_types") or data.get("modelProviderTypes") or {}
+    if isinstance(raw_map, dict):
+        for model, ptype in raw_map.items():
+            vt = normalize_video_provider_type(ptype)
+            if vt:
+                fixed_map[str(model)] = vt
+    channel.model_provider_types = fixed_map
     if channel.timeout < 60:
         channel.timeout = 300
+    return channel
+
+
+def normalize_video_provider_type(value: Any) -> str:
+    """Map free-form labels to video_async / video_sync / video_chat."""
+    text = str(value or "").strip().lower().replace("-", "_")
+    if not text:
+        return ""
+    aliases = {
+        "openai_compatible": "video_async",
+        "async": "video_async",
+        "async_task": "video_async",
+        "video": "video_async",
+        "videos": "video_async",
+        "poll": "video_async",
+        "video_async": "video_async",
+        "sync": "video_sync",
+        "openai_sync": "video_sync",
+        "video_sync": "video_sync",
+        "chat": "video_chat",
+        "openai_chat": "video_chat",
+        "chat_completions": "video_chat",
+        "video_chat": "video_chat",
+        # note: bare "openai" is an image protocol — only map when building video channel
+    }
+    # Chinese UI leftovers
+    if "异步" in str(value or "") or "轮询" in str(value or ""):
+        return "video_async"
+    if "同步" in str(value or ""):
+        return "video_sync"
+    if "对话" in str(value or "") or "chat" in text:
+        if text in {"video_chat", "openai_chat", "chat", "chat_completions"} or "对话" in str(value or ""):
+            return "video_chat"
+    text = aliases.get(text, text)
+    return text if text in VIDEO_PROVIDER_TYPES else ""
+
+
+def infer_video_provider_type_from_model(model: str) -> str:
+    """Heuristic auto protocol from model name (best-effort)."""
+    text = str(model or "").strip().lower()
+    compact = re.sub(r"[\s_]+", "-", text)
+    if not compact:
+        return ""
+    if any(k in compact for k in ("chat", "gpt-4o", "gpt4o", "claude", "deepseek")):
+        return "video_chat"
+    if any(k in compact for k in ("luma", "runway", "kling", "可灵", "minimax", "hailuo", "vidu", "sora", "cogvideo", "wanx", "wan2")):
+        # Most modern video gateways are async task style.
+        return "video_async"
+    if "sync" in compact:
+        return "video_sync"
+    return ""
+
+
+def resolve_video_model_provider_type(
+    model: str,
+    channel_provider_type: str,
+    model_override: str = "",
+) -> str:
+    manual = normalize_video_provider_type(model_override)
+    if manual:
+        return manual
+    inferred = infer_video_provider_type_from_model(model)
+    if inferred:
+        return inferred
+    channel = normalize_video_provider_type(channel_provider_type) or "video_async"
     return channel
 
 

@@ -274,7 +274,7 @@
 
   <header class="app-shell">
     <div class="header-brand">
-      <img class="header-logo" src="logo.png" alt="" onerror="this.style.display='none'">
+      <img class="header-logo" src="__SELFIE_LOGO_SRC__" alt="" onerror="this.style.display='none'">
       <div>
         <p class="header-eyebrow">Plugin Page</p>
         <h1>生图 · 自拍 管理</h1>
@@ -467,7 +467,7 @@
       <div class="modal-body">
       <div class="grid">
         <div><label>渠道名</label><input id="modalChannelName"></div>
-        <div style="display:none"><label>类型</label><select id="modalProvider"></select></div>
+        <div style="display:none" id="modalProviderWrap"><label>类型</label><select id="modalProvider"></select></div>
         <div><label>Base URL</label><input id="modalBaseUrl"></div>
         <div><label>API Key（可多行，每行一把；鉴权失败或限流会自动换下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
         <div><label>代理 URL</label><input id="modalProxy" placeholder="http://127.0.0.1:7890"></div>
@@ -530,6 +530,13 @@
     const ASPECTS = ['自动','1:1','2:3','3:2','3:4','4:3','4:3','4:5','5:4','9:16','16:9','21:9'].filter((v,i,a)=>a.indexOf(v)===i);
     const PROVIDERS = ['openai','gemini','gemini_openai','z_image_gitee','jimeng2api','grok','agnes'];
     const AUDIT_PROVIDERS = ['openai','gemini','gemini_openai'];
+    // OmniDraw-style video protocols: async poll / long sync / chat returns URL
+    const VIDEO_PROVIDERS = ['video_async','video_sync','video_chat'];
+    const VIDEO_PROVIDER_LABELS = {
+      video_async: '异步任务（/videos/generations + 轮询）',
+      video_sync: '同步等待（长连接出片）',
+      video_chat: '对话接口（chat/completions 回链）'
+    };
     const MONITOR_PAGE_SIZE = 20;
     // AstrBot plugin iframe is sandboxed without allow-same-origin.
     // Bare storage access throws and aborts the whole script before login bindings.
@@ -872,6 +879,33 @@
       const normalized = aliases[raw] || raw;
       return PROVIDERS.includes(normalized) ? normalized : '';
     }
+    function normalizeVideoProviderType(value) {
+      const rawText = String(value || '').trim();
+      const raw = rawText.toLowerCase().replace(/-/g, '_');
+      if (!raw) return '';
+      if (rawText.includes('异步') || rawText.includes('轮询')) return 'video_async';
+      if (rawText.includes('同步')) return 'video_sync';
+      if (rawText.includes('对话')) return 'video_chat';
+      const aliases = {
+        openai_compatible: 'video_async',
+        async: 'video_async',
+        async_task: 'video_async',
+        video: 'video_async',
+        videos: 'video_async',
+        poll: 'video_async',
+        video_async: 'video_async',
+        sync: 'video_sync',
+        openai_sync: 'video_sync',
+        video_sync: 'video_sync',
+        chat: 'video_chat',
+        openai_chat: 'video_chat',
+        chat_completions: 'video_chat',
+        video_chat: 'video_chat'
+        // bare openai stays image protocol; video channel builder maps it to video_async
+      };
+      const normalized = aliases[raw] || raw;
+      return VIDEO_PROVIDERS.includes(normalized) ? normalized : '';
+    }
     function inferProviderTypeFromModel(model) {
       const compact = String(model || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
       if (!compact) return '';
@@ -883,28 +917,44 @@
       if (compact.includes('gemini') || compact.includes('nano-banana')) return 'gemini';
       return '';
     }
+    function inferVideoProviderTypeFromModel(model) {
+      const compact = String(model || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+      if (!compact) return '';
+      if (['chat','gpt-4o','gpt4o','claude','deepseek'].some(k => compact.includes(k))) return 'video_chat';
+      if (['luma','runway','kling','可灵','minimax','hailuo','vidu','sora','cogvideo','wanx','wan2'].some(k => compact.includes(k))) return 'video_async';
+      if (compact.includes('sync')) return 'video_sync';
+      return '';
+    }
     function resolveModelProviderType(model, defaultProviderType, manualProviderType = '') {
       return normalizeProviderType(manualProviderType)
         || inferProviderTypeFromModel(model)
         || normalizeProviderType(defaultProviderType)
         || 'openai';
     }
+    function resolveVideoModelProviderType(model, defaultProviderType, manualProviderType = '') {
+      return normalizeVideoProviderType(manualProviderType)
+        || inferVideoProviderTypeFromModel(model)
+        || normalizeVideoProviderType(defaultProviderType)
+        || 'video_async';
+    }
     function collectModelProviderTypes(ch, enabled) {
       const enabledSet = new Set(enabled || []);
       const out = {};
       const sources = [ch.model_provider_types, ch.modelProviderTypes, ch.provider_types, ch.providerTypes];
+      const isVideo = EDITING_CHANNEL_KIND === 'video' || !!normalizeVideoProviderType(ch.provider_type);
       for (const source of sources) {
         if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
         for (const [model, provider] of Object.entries(source)) {
           const name = String(model || '').trim();
-          const resolved = normalizeProviderType(provider);
+          const resolved = isVideo ? normalizeVideoProviderType(provider) : normalizeProviderType(provider);
           if (name && enabledSet.has(name) && resolved) out[name] = resolved;
         }
       }
       for (const item of ch.enabled_models || ch.enabledModels || []) {
         if (!item || typeof item !== 'object') continue;
         const name = modelId(item);
-        const resolved = normalizeProviderType(item.provider_type || item.providerType || item.api_type || item.apiType);
+        const raw = item.provider_type || item.providerType || item.api_type || item.apiType;
+        const resolved = isVideo ? normalizeVideoProviderType(raw) : normalizeProviderType(raw);
         if (name && enabledSet.has(name) && resolved) out[name] = resolved;
       }
       return out;
@@ -912,8 +962,9 @@
     function compactModelProviderTypes(ch) {
       const enabledSet = new Set(ch.enabled_models || []);
       const out = {};
+      const isVideo = !!normalizeVideoProviderType(ch.provider_type) || EDITING_CHANNEL_KIND === 'video';
       for (const [model, provider] of Object.entries(ch.model_provider_types || {})) {
-        const resolved = normalizeProviderType(provider);
+        const resolved = isVideo ? normalizeVideoProviderType(provider) : normalizeProviderType(provider);
         if (enabledSet.has(model) && resolved) out[model] = resolved;
       }
       ch.model_provider_types = out;
@@ -923,21 +974,27 @@
       ch = ch && typeof ch === 'object' ? ch : {};
       const enabled = uniq((ch.enabled_models || ch.enabledModels || (ch.model ? [ch.model] : [])).map(modelId));
       const cache = uniq((ch.models_cache || ch.modelsCache || ch.available_models || ch.availableModels || []).map(modelId));
-      const providerType = normalizeProviderType(ch.provider_type || ch.providerType || ch.api_type || ch.apiType) || 'openai';
-      return compactModelProviderTypes(applyProviderDefaults({
+      const rawType = ch.provider_type || ch.providerType || ch.api_type || ch.apiType;
+      const videoType = normalizeVideoProviderType(rawType);
+      const providerType = videoType || normalizeProviderType(rawType) || 'openai';
+      const normalized = {
         name: String(ch.name || ch.id || 'new-channel').trim(),
         provider_type: providerType,
         base_url: String(ch.base_url || ch.baseUrl || '').trim(),
         api_key: String(ch.api_key || ch.apiKey || '').trim(),
         model: String(ch.model || enabled[0] || '').trim(),
-        timeout: Number(ch.timeout || 280),
+        timeout: Number(ch.timeout || (videoType ? 300 : 280)),
         enabled: ch.enabled !== false,
         enabled_models: enabled,
-        model_provider_types: collectModelProviderTypes(ch, enabled),
+        model_provider_types: collectModelProviderTypes(Object.assign({}, ch, {provider_type: providerType}), enabled),
         models_cache: cache,
         proxy: String(ch.proxy || '').trim(),
         extra: ch.extra && typeof ch.extra === 'object' ? ch.extra : {}
-      }));
+      };
+      if (videoType || String(providerType).startsWith('video_')) {
+        return compactModelProviderTypes(normalized);
+      }
+      return compactModelProviderTypes(applyProviderDefaults(normalized));
     }
     function normalizeChannels() {
       CONFIG.image_channels = (CONFIG.image_channels || []).map(normalizeChannel);
@@ -952,8 +1009,15 @@
     function normalizeVideoChannels() {
       CONFIG.video_channels = (CONFIG.video_channels || []).map(ch => {
         ch = normalizeChannel(ch);
-        ch.provider_type = 'openai';
+        ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'video_async';
         if (Number(ch.timeout || 0) < 60) ch.timeout = 300;
+        const enabledSet = new Set(ch.enabled_models || []);
+        const out = {};
+        for (const [model, provider] of Object.entries(ch.model_provider_types || {})) {
+          const resolved = normalizeVideoProviderType(provider);
+          if (enabledSet.has(model) && resolved) out[model] = resolved;
+        }
+        ch.model_provider_types = out;
         return ch;
       });
     }
@@ -1000,7 +1064,7 @@
       return normalizeChannel({name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:false, models_cache:[]});
     }
     function newVideoChannel() {
-      return normalizeChannel({name:'video-channel', provider_type:'openai', base_url:'https://api.openai.com/v1', api_key:'', model:'', enabled_models:[], timeout:300, enabled:false, models_cache:[]});
+      return normalizeChannel({name:'video-channel', provider_type:'video_async', base_url:'https://api.openai.com/v1', api_key:'', model:'', enabled_models:[], timeout:300, enabled:false, models_cache:[]});
     }
     function applyProviderDefaults(ch, force = false) {
       ch = ch && typeof ch === 'object' ? ch : {};
@@ -1143,7 +1207,9 @@
       const enabled = Array.from(document.querySelectorAll('#enabledModels .model-row .name')).map(el => el.textContent || '');
       const ch = normalizeChannel(Object.assign({}, source, {
         name: $('modalChannelName').value.trim(),
-        provider_type: EDITING_CHANNEL_KIND === 'video' ? 'openai' : ($('modalProvider').value || source.provider_type || 'openai'),
+        provider_type: EDITING_CHANNEL_KIND === 'video'
+          ? (normalizeVideoProviderType($('modalProvider').value || source.provider_type) || 'video_async')
+          : ($('modalProvider').value || source.provider_type || 'openai'),
         base_url: $('modalBaseUrl').value.trim(),
         api_key: $('modalApiKey').value.trim(),
         proxy: $('modalProxy').value.trim(),
@@ -1151,7 +1217,7 @@
         timeout: Number($('modalTimeout').value || (EDITING_CHANNEL_KIND === 'video' ? 300 : 280)),
         enabled: $('modalEnabled').checked,
         enabled_models: enabled,
-        model_provider_types: EDITING_CHANNEL_KIND === 'video' ? {} : collectModalProviderTypes(enabled),
+        model_provider_types: collectModalProviderTypes(enabled),
         models_cache: source.models_cache || []
       }));
       softDisableChannelIfNoModels(ch);
@@ -1163,7 +1229,10 @@
       const out = {};
       document.querySelectorAll('#enabledModels .model-row').forEach(row => {
         const model = String(row.querySelector('.name')?.textContent || '').trim();
-        const provider = normalizeProviderType(row.querySelector('.model-provider')?.value || '');
+        const raw = row.querySelector('.model-provider')?.value || '';
+        const provider = EDITING_CHANNEL_KIND === 'video'
+          ? normalizeVideoProviderType(raw)
+          : normalizeProviderType(raw);
         if (model && enabledSet.has(model) && provider) out[model] = provider;
       });
       return out;
@@ -1190,14 +1259,14 @@
       let ch;
       if (isNew) {
         ch = normalizeChannel(factory());
-        if (EDITING_CHANNEL_KIND !== 'video') applyProviderDefaults(ch);
-        else ch.provider_type = 'openai';
+        if (EDITING_CHANNEL_KIND === 'video') ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'video_async';
+        else applyProviderDefaults(ch);
         CHANNEL_DRAFT = ch;
       } else {
         const list = channelListFor(EDITING_CHANNEL_KIND);
         ch = normalizeChannel(list[index] || factory());
-        if (EDITING_CHANNEL_KIND !== 'video') applyProviderDefaults(ch);
-        else ch.provider_type = 'openai';
+        if (EDITING_CHANNEL_KIND === 'video') ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'video_async';
+        else applyProviderDefaults(ch);
         list[index] = ch;
         CHANNEL_DRAFT = null;
       }
@@ -1207,9 +1276,26 @@
         video: isNew ? '新建视频渠道' : '编辑视频渠道',
       };
       $('channelModalTitle').textContent = titles[EDITING_CHANNEL_KIND] || (isNew ? '新建渠道' : '编辑渠道');
-      setSelectOptions('modalProvider', EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS : PROVIDERS, ch.provider_type || 'openai');
+      const providerChoices = EDITING_CHANNEL_KIND === 'video'
+        ? VIDEO_PROVIDERS
+        : (EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS : PROVIDERS);
+      const defaultProvider = EDITING_CHANNEL_KIND === 'video'
+        ? (normalizeVideoProviderType(ch.provider_type) || 'video_async')
+        : (ch.provider_type || 'openai');
+      setSelectOptions('modalProvider', providerChoices, defaultProvider);
+      // label video options more readable
+      if (EDITING_CHANNEL_KIND === 'video') {
+        const sel = $('modalProvider');
+        Array.from(sel.options || []).forEach(opt => {
+          opt.textContent = VIDEO_PROVIDER_LABELS[opt.value] || opt.value;
+        });
+      }
+      // 生图/审核：渠道级类型隐藏（模型旁自动/手动）；视频：显示协议下拉
+      if ($('modalProviderWrap')) {
+        $('modalProviderWrap').style.display = EDITING_CHANNEL_KIND === 'video' ? '' : 'none';
+      }
       $('modalChannelName').value = ch.name || '';
-      $('modalProvider').value = ch.provider_type || 'openai';
+      $('modalProvider').value = defaultProvider;
       $('modalBaseUrl').value = ch.base_url || '';
       $('modalApiKey').value = ch.api_key || '';
       $('modalProxy').value = ch.proxy || '';
@@ -1221,23 +1307,24 @@
       $('modalStatus').textContent = isNew ? '填写后点「保存渠道」才会加入列表；关闭则不添加。' : '';
       if ($('modalProviderHint')) {
         $('modalProviderHint').textContent = EDITING_CHANNEL_KIND === 'video'
-          ? '视频渠道固定走 OpenAI 兼容 /videos/generations；在下方启用模型即可。'
+          ? '视频协议可选：异步轮询 / 同步等待 / 对话回链。模型旁可「自动」识别或手动指定；与生图渠道用法一致。'
           : '渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。';
       }
       renderModalModels(ch);
       $('channelModal').classList.add('show');
     }
     function modalProviderChanged() {
-      // 类型字段已隐藏；保留函数以免旧绑定报错。
       const ch = currentModalChannel();
       if (EDITING_CHANNEL_KIND === 'video') {
-        ch.provider_type = 'openai';
-        return;
+        ch.provider_type = normalizeVideoProviderType($('modalProvider').value) || 'video_async';
+      } else {
+        ch.provider_type = $('modalProvider').value || 'openai';
+        applyProviderDefaults(ch);
+        $('modalBaseUrl').value = ch.base_url || '';
+        $('modalModel').value = ch.model || '';
       }
-      applyProviderDefaults(ch, true);
-      $('modalBaseUrl').value = ch.base_url || '';
-      $('modalModel').value = ch.model || '';
       CHANNEL_MODAL_DIRTY = true;
+      storeModalChannel(ch);
       renderModalModels(ch);
       refreshModelSelectors();
     }
@@ -1273,18 +1360,7 @@
         const active = enabled.includes(item);
         return `<div class="model-row" data-model="${escapeHtml(item)}"><div class="name">${escapeHtml(item)}</div><div class="actions"><button class="secondary mini" type="button" onclick="${active ? `removeEnabledModel('${escapeJs(item)}')` : `addEnabledModel('${escapeJs(item)}')`}">${active ? '取消' : '启用'}</button></div></div>`;
       }).join('') || '<div class="muted">没有匹配的缓存模型。</div>';
-      if (EDITING_CHANNEL_KIND === 'video') {
-        $('enabledModels').innerHTML = enabled.map((item, i) => `
-        <div class="model-row">
-          <div class="name">${escapeHtml(item)}</div>
-          <div class="actions">
-            <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, -1)">上移</button>
-            <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, 1)">下移</button>
-            <button class="danger mini" type="button" onclick="removeEnabledModel('${escapeJs(item)}')">移除</button>
-          </div>
-        </div>`).join('') || '<div class="muted">还没有启用模型。</div>';
-      } else {
-        $('enabledModels').innerHTML = enabled.map((item, i) => `
+      $('enabledModels').innerHTML = enabled.map((item, i) => `
         <div class="model-row with-provider">
           <div class="name">${escapeHtml(item)}</div>
           ${modelProviderSelectHtml(ch, item, i)}
@@ -1294,16 +1370,26 @@
             <button class="danger mini" type="button" onclick="removeEnabledModel('${escapeJs(item)}')">移除</button>
           </div>
         </div>`).join('') || '<div class="muted">还没有启用模型。</div>';
-      }
     }
     function modelProviderSelectHtml(ch, model, index) {
-      const manual = normalizeProviderType((ch.model_provider_types || {})[model] || '');
-      let choices = EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS.slice() : PROVIDERS.slice();
+      const isVideo = EDITING_CHANNEL_KIND === 'video';
+      const manual = isVideo
+        ? normalizeVideoProviderType((ch.model_provider_types || {})[model] || '')
+        : normalizeProviderType((ch.model_provider_types || {})[model] || '');
+      let choices = isVideo
+        ? VIDEO_PROVIDERS.slice()
+        : (EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS.slice() : PROVIDERS.slice());
       if (manual && !choices.includes(manual)) choices.unshift(manual);
-      const auto = resolveModelProviderType(model, ch.provider_type, '');
-      const options = [`<option value="" ${manual ? '' : 'selected'}>自动：${escapeHtml(auto)}</option>`]
-        .concat(choices.map(provider => `<option value="${escapeHtml(provider)}" ${manual === provider ? 'selected' : ''}>${escapeHtml(provider)}</option>`));
-      return `<select class="model-provider" title="模型类型，留在自动会按模型名识别，识别不到再使用渠道默认类型" onchange="setModelProviderType(${index}, this.value)">${options.join('')}</select>`;
+      const auto = isVideo
+        ? resolveVideoModelProviderType(model, ch.provider_type, '')
+        : resolveModelProviderType(model, ch.provider_type, '');
+      const autoLabel = isVideo ? (VIDEO_PROVIDER_LABELS[auto] || auto) : auto;
+      const options = [`<option value="" ${manual ? '' : 'selected'}>自动：${escapeHtml(autoLabel)}</option>`]
+        .concat(choices.map(provider => {
+          const label = isVideo ? (VIDEO_PROVIDER_LABELS[provider] || provider) : provider;
+          return `<option value="${escapeHtml(provider)}" ${manual === provider ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+        }));
+      return `<select class="model-provider" title="模型类型：自动按模型名识别，也可手动指定" onchange="setModelProviderType(${index}, this.value)">${options.join('')}</select>`;
     }
     function currentModalChannel() {
       const ch = collectModalChannel();
@@ -1315,7 +1401,9 @@
       const model = (ch.enabled_models || [])[index] || '';
       if (!model) return;
       ch.model_provider_types ||= {};
-      const resolved = normalizeProviderType(provider);
+      const resolved = EDITING_CHANNEL_KIND === 'video'
+        ? normalizeVideoProviderType(provider)
+        : normalizeProviderType(provider);
       if (resolved) ch.model_provider_types[model] = resolved;
       else delete ch.model_provider_types[model];
       compactModelProviderTypes(ch);
