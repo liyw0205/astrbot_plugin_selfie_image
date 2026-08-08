@@ -3325,6 +3325,18 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("二次元", group)
             self.assertIn("写实", group)
             self.assertTrue(("禁止继续二次元" in group) or ("禁止把对方继续画成二次元" in group) or ("禁止画面里再出现二次元" in group))
+            self.assertIn("默认成年女性", group)
+            self.assertTrue(("表情" in group and "重画" in group) or ("表情眼神按本次合影" in group) or ("不要僵住参考图" in group) or ("自然重画" in group))
+            # clothes mode: expression not locked to identity ref
+            clothes = manager.build_selfie_prompt(
+                action="穿上这件衣服自拍",
+                bot_name="小助",
+                personality="温柔",
+                has_reference_image=True,
+                extra_reference_count=1,
+            )
+            self.assertTrue(("表情" in clothes) and (("重画" in clothes) or ("自然" in clothes)))
+            self.assertIn("只锁身份长相", clothes)
 
 
     def test_legs_persona_mentions_kneel_and_light_leg(self) -> None:
