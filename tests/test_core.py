@@ -3171,6 +3171,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("本次主姿势", text)
             self.assertIn("禁止系鞋带", text)
             self.assertIn("两条腿", text)
+            self.assertIn("堆堆袜", text)
+            self.assertIn("过膝袜", text)
+            self.assertIn("避免只盖到脚踝的短袜", text)
 
     def test_look_you_and_selfie_persona_have_variety_hints(self) -> None:
         from astrbot_plugin_selfie_image.persona import PersonaManager
@@ -3424,6 +3427,9 @@ class LegFocusTests(unittest.TestCase):
         self.assertNotIn("one_knee_fix", main_src)
         self.assertIn("禁止系鞋带", main_src)
         self.assertIn("两条腿", main_src)
+        self.assertIn("堆堆袜", main_src)
+        self.assertIn("过膝袜", main_src)
+        self.assertIn("避免只盖到脚踝", main_src)
 
     def test_send_one_by_one_comment_present(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
