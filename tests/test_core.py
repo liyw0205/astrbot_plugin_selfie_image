@@ -49,6 +49,7 @@ from astrbot_plugin_selfie_image.providers import (
     ImageGenerateResult,
     ImageGenerateRequest,
     ImageReference,
+    NovelAIImageAdapter,
     OpenAIImageAdapter,
     build_model_list_urls,
     clean_image_url,
@@ -58,6 +59,8 @@ from astrbot_plugin_selfie_image.providers import (
     http_error_preview,
     images_from_response_unknown,
     looks_like_binary_image,
+    map_aspect_ratio_to_nai_gateway_size,
+    map_aspect_ratio_to_nai_size,
     normalize_gemini_base_url,
     normalize_image_base_url,
     provider_type_from_channel_payload,
@@ -321,6 +324,7 @@ class ConfigModelTests(unittest.TestCase):
     def test_provider_type_can_be_inferred_from_model(self) -> None:
         self.assertEqual(resolve_model_provider_type("agnes-image-2.1-flash", "openai"), "agnes")
         self.assertEqual(resolve_model_provider_type("grok-imagine-image", "openai"), "grok")
+        self.assertEqual(resolve_model_provider_type("nai-diffusion-4-5-full", "openai"), "novelai")
         self.assertEqual(resolve_model_provider_type("unknown-model", "gemini_openai"), "gemini_openai")
         # protocol_lock keeps channel protocol even when model name looks like gemini
         self.assertEqual(
@@ -1931,6 +1935,70 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["size"], "1024x682")
         self.assertEqual(payload["extra_body"]["image"], ["https://example.test/ref.png"])
         self.assertEqual(payload["extra_body"]["response_format"], "url")
+
+    def test_novelai_size_and_official_payload(self) -> None:
+        self.assertEqual(map_aspect_ratio_to_nai_size("9:16"), (832, 1216))
+        self.assertEqual(map_aspect_ratio_to_nai_size("16:9"), (1216, 832))
+        self.assertEqual(map_aspect_ratio_to_nai_gateway_size("9:16"), "竖图")
+        self.assertEqual(map_aspect_ratio_to_nai_gateway_size("1:1", "2K"), "2K方图")
+        target = make_target("novelai", "nai-diffusion-4-5-full")
+        target.base_url = "https://api.novelai.net"
+        target.api_key = "tok"
+        adapter = NovelAIImageAdapter(target, FakeSession())
+        self.assertEqual(adapter._mode(), "official")
+        payload = adapter.build_official_payload(ImageGenerateRequest(prompt="1girl, solo", aspect_ratio="9:16"))
+        self.assertEqual(payload["model"], "nai-diffusion-4-5-full")
+        self.assertEqual(payload["action"], "generate")
+        self.assertEqual(payload["parameters"]["width"], 832)
+        self.assertEqual(payload["parameters"]["height"], 1216)
+        self.assertIn("v4_prompt", payload["parameters"])
+        # gateway mode
+        gw = make_target("novelai", "nai-diffusion-4-5-full")
+        gw.base_url = "https://nai.sta1n.cn"
+        gw.api_key = "tok"
+        gw_adapter = NovelAIImageAdapter(gw, FakeSession())
+        self.assertEqual(gw_adapter._mode(), "gateway")
+        params = gw_adapter.build_gateway_params(ImageGenerateRequest(prompt="cat", aspect_ratio="1:1"))
+        self.assertEqual(params["size"], "方图")
+        self.assertEqual(params["token"], "tok")
+        self.assertEqual(params["tag"], "cat")
+
+    async def test_novelai_official_parses_zip_response(self) -> None:
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("image_0.png", PNG_BYTES)
+        body = buf.getvalue()
+        target = make_target("novelai", "nai-diffusion-4-5-full")
+        target.base_url = "https://api.novelai.net"
+        target.api_key = "tok"
+
+        class RawResp:
+            status = 200
+            headers = {"Content-Type": "application/zip"}
+
+            async def read(self):
+                return body
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+        class RawSession:
+            def post(self, *a, **k):
+                return RawResp()
+
+            def get(self, *a, **k):
+                return RawResp()
+
+        adapter = NovelAIImageAdapter(target, RawSession())  # type: ignore
+        result = await adapter.generate(ImageGenerateRequest(prompt="1girl"))
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertFalse(result.error)
 
     async def test_agnes_payload_keeps_reference_image_and_size(self) -> None:
         response = {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}

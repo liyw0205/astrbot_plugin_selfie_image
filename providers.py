@@ -521,6 +521,249 @@ class AgnesImageAdapter(BaseImageAdapter):
         return await self.result_from_response(data, req, base, provider_name="Agnes", detailed_error=True)
 
 
+# NovelAI default UC — keep short; selfie prompts already carry identity/quality text.
+NAI_DEFAULT_NEGATIVE = (
+    "lowres, worst quality, bad quality, bad anatomy, bad hands, extra digits, "
+    "fewer digits, cropped, jpeg artifacts, blurry, watermark, text, logo"
+)
+
+
+def map_aspect_ratio_to_nai_size(aspect: str, resolution: str = "1K") -> tuple[int, int]:
+    """Map Selfie aspect presets to NovelAI-friendly pixel sizes."""
+    aspect = str(aspect or "自动").strip()
+    res = str(resolution or "1K").strip().upper()
+    # Official common presets; 2K/4K only meaningfully used by gateway size labels.
+    if aspect in {"16:9", "3:2", "4:3", "5:4", "21:9"}:
+        base = (1216, 832)
+    elif aspect in {"9:16", "2:3", "3:4", "4:5"}:
+        base = (832, 1216)
+    else:
+        base = (1024, 1024)
+    if res == "2K":
+        return (min(base[0] * 2, 2048), min(base[1] * 2, 2048))
+    if res == "4K":
+        # Official NAI rarely accepts true 4K; keep modest upscale for gateways.
+        return (min(base[0] * 2, 1536) if base[0] != base[1] else 1536, min(base[1] * 2, 1536) if base[0] != base[1] else 1536)
+    return base
+
+
+def map_aspect_ratio_to_nai_gateway_size(aspect: str, resolution: str = "1K") -> str:
+    """Nai2API / third-party GET gateways use Chinese size labels."""
+    aspect = str(aspect or "自动").strip()
+    res = str(resolution or "1K").strip().upper()
+    if aspect in {"16:9", "3:2", "4:3", "5:4", "21:9"}:
+        orient = "横图"
+    elif aspect in {"9:16", "2:3", "3:4", "4:5"}:
+        orient = "竖图"
+    else:
+        orient = "方图"
+    if res == "4K":
+        return f"4K{orient}"
+    if res == "2K":
+        return f"2K{orient}"
+    return orient
+
+
+def _extract_image_bytes_from_nai_body(body: bytes) -> Optional[bytes]:
+    """Official NAI returns zip; gateways may return raw image bytes."""
+    if not body:
+        return None
+    if looks_like_binary_image(body):
+        return body
+    import io
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(body)) as zf:
+            for name in zf.namelist():
+                lower = name.lower()
+                if lower.endswith((".png", ".jpg", ".jpeg", ".webp")):
+                    data = zf.read(name)
+                    if data:
+                        return data
+            # first file fallback
+            names = zf.namelist()
+            if names:
+                data = zf.read(names[0])
+                if data:
+                    return data
+    except zipfile.BadZipFile:
+        pass
+    return None
+
+
+class NovelAIImageAdapter(BaseImageAdapter):
+    """NovelAI image channel.
+
+    Modes (auto):
+    - official: POST {base}/ai/generate-image  (default base https://api.novelai.net)
+      Bearer token; response zip or raw image.
+    - gateway: GET {base}/generate?...  (Nai2API / nai.sta1n.cn style)
+      token query param; response raw image bytes.
+
+    Source protocols: astrbot_plugin_nai_canvas, AstrBot_Nai2API, ppnai official body.
+    """
+
+    default_base_url = "https://api.novelai.net"
+    default_model = "nai-diffusion-4-5-full"
+
+    def _mode(self) -> str:
+        base = (normalize_image_base_url(self.target.base_url) or self.default_base_url).lower()
+        if "novelai.net" in base or base.rstrip("/").endswith("/ai") or "/ai/generate-image" in base:
+            return "official"
+        # Common gateway hosts / path hints
+        if any(k in base for k in ("sta1n", "nai2api", "loliyc", "/generate")):
+            return "gateway"
+        # If user points base_url at a host without novelai, prefer gateway GET /generate
+        if "novelai" not in base:
+            return "gateway"
+        return "official"
+
+    def _endpoint(self, mode: str) -> str:
+        raw = str(self.target.base_url or "").strip()
+        base = normalize_image_base_url(raw) or self.default_base_url
+        lower = raw.lower()
+        if mode == "official":
+            if lower.endswith("/ai/generate-image") or lower.endswith("generate-image"):
+                return raw.rstrip("/")
+            return f"{base.rstrip('/')}/ai/generate-image"
+        # gateway
+        if lower.rstrip("/").endswith("/generate"):
+            return raw.rstrip("/")
+        return f"{base.rstrip('/')}/generate"
+
+    def build_official_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
+        import random
+
+        width, height = map_aspect_ratio_to_nai_size(req.aspect_ratio, req.resolution)
+        prompt = str(req.prompt or "").strip()
+        negative = NAI_DEFAULT_NEGATIVE
+        seed = random.randint(1, 2**31 - 1)
+        model = self.target.model or self.default_model
+        parameters: Dict[str, Any] = {
+            "params_version": 3,
+            "width": width,
+            "height": height,
+            "scale": 5.0,
+            "sampler": "k_dpmpp_2m",
+            "steps": 28,
+            "seed": seed,
+            "n_samples": 1,
+            "ucPreset": 0,
+            "qualityToggle": False,
+            "sm": False,
+            "sm_dyn": False,
+            "dynamic_thresholding": False,
+            "controlnet_strength": 1,
+            "legacy": False,
+            "add_original_image": True,
+            "cfg_rescale": 0,
+            "noise_schedule": "karras",
+            "legacy_v3_extend": False,
+            "skip_cfg_above_sigma": None,
+            "use_coords": False,
+            "legacy_uc": False,
+            "normalize_strength": 1,
+            "inpaintImg2ImgStrength": 1,
+            "noise": 0,
+            "strength": 0.7,
+            "negative_prompt": negative,
+            "uc": negative,
+            "v4_prompt": {
+                "caption": {"base_caption": prompt, "char_captions": []},
+                "use_coords": False,
+                "use_order": True,
+            },
+            "v4_negative_prompt": {
+                "caption": {"base_caption": negative, "char_captions": []},
+                "legacy_uc": False,
+            },
+        }
+        action = "generate"
+        if req.images:
+            # img2img: first reference as base image (ppnai style bare base64)
+            raw_b64 = base64.b64encode(req.images[0].data).decode("ascii")
+            parameters["image"] = raw_b64
+            parameters["strength"] = 0.55
+            parameters["noise"] = 0
+            action = "img2img"
+        return {
+            "input": prompt,
+            "model": model,
+            "action": action,
+            "parameters": parameters,
+        }
+
+    def build_gateway_params(self, req: ImageGenerateRequest) -> Dict[str, str]:
+        params = {
+            "token": str(self.target.api_key or "").strip(),
+            "tag": str(req.prompt or "").strip(),
+            "model": self.target.model or self.default_model,
+            "size": map_aspect_ratio_to_nai_gateway_size(req.aspect_ratio, req.resolution),
+            "steps": "28",
+            "scale": "6",
+            "cfg": "0",
+            "sampler": "k_dpmpp_2m_sde",
+            "noise_schedule": "karras",
+            "nocache": "1",
+            "negative": NAI_DEFAULT_NEGATIVE,
+        }
+        return {k: v for k, v in params.items() if v is not None and str(v) != ""}
+
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        if not str(self.target.api_key or "").strip():
+            return ImageGenerateResult(error="NovelAI 渠道缺少 API Token")
+        if not str(req.prompt or "").strip():
+            return ImageGenerateResult(error="提示词为空")
+
+        mode = self._mode()
+        url = self._endpoint(mode)
+        proxy = str(self.target.proxy or "").strip() or None
+        timeout = aiohttp.ClientTimeout(total=self.target.timeout)
+        try:
+            if mode == "official":
+                payload = self.build_official_payload(req)
+                headers = self.build_json_headers()
+                async with self.session.post(url, json=payload, headers=headers, timeout=timeout, proxy=proxy) as response:
+                    body = await response.read()
+                    if response.status >= 400:
+                        preview = body[:400].decode("utf-8", errors="replace")
+                        return ImageGenerateResult(error=f"HTTP {response.status}: {preview or 'NovelAI 请求失败'}")
+                    image = _extract_image_bytes_from_nai_body(body)
+                    if image:
+                        return ImageGenerateResult(images=[image])
+                    ctype = response.headers.get("Content-Type", "")
+                    return ImageGenerateResult(error=f"NovelAI 未返回可解析图片（Content-Type={ctype}）")
+            # gateway GET
+            params = self.build_gateway_params(req)
+            # token in query — do not also send Authorization unless host wants both
+            headers = {
+                "Accept": "image/*,application/zip,application/json,*/*",
+                "Connection": "close",
+                "User-Agent": "AI-Cat/1.0",
+            }
+            async with self.session.get(url, params=params, headers=headers, timeout=timeout, proxy=proxy) as response:
+                body = await response.read()
+                if response.status >= 400:
+                    preview = body[:400].decode("utf-8", errors="replace")
+                    return ImageGenerateResult(error=f"HTTP {response.status}: {preview or 'NAI 网关请求失败'}")
+                image = _extract_image_bytes_from_nai_body(body)
+                if image:
+                    return ImageGenerateResult(images=[image])
+                # some gateways wrap JSON
+                try:
+                    data = json.loads(body.decode("utf-8", errors="replace"))
+                except Exception:
+                    data = None
+                if data is not None:
+                    return await self.result_from_response(data, req, normalize_image_base_url(self.target.base_url) or "", provider_name="NovelAI", detailed_error=True)
+                return ImageGenerateResult(error="NAI 网关未返回可解析图片")
+        except asyncio.TimeoutError:
+            return ImageGenerateResult(error=f"NovelAI 请求超时（{self.target.timeout}秒）")
+        except Exception as exc:
+            return ImageGenerateResult(error=str(exc) or "NovelAI 请求失败")
+
+
 def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> BaseImageAdapter:
     if target.provider_type == "openai":
         return OpenAIImageAdapter(target, session)
@@ -536,4 +779,6 @@ def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> 
         return GrokImageAdapter(target, session)
     if target.provider_type == "agnes":
         return AgnesImageAdapter(target, session)
+    if target.provider_type == "novelai":
+        return NovelAIImageAdapter(target, session)
     raise ValueError(f"未知生图渠道类型: {target.provider_type}")

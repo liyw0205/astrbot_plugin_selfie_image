@@ -662,6 +662,13 @@ def normalize_provider_type(value: Any) -> str:
         "jimeng2": "jimeng2api",
         "xai": "grok",
         "x_ai": "grok",
+        "nai": "novelai",
+        "novel_ai": "novelai",
+        "novelai_image": "novelai",
+        "nai2api": "novelai",
+        "nai_image": "novelai",
+        "bestnai": "novelai",
+        "ppnai": "novelai",
     }
     text = aliases.get(text, text)
     return text if text in PROVIDER_TYPES else ""
@@ -684,6 +691,8 @@ def infer_provider_type_from_model(model: str) -> str:
         return "openai"
     if "gemini" in compact or "nano-banana" in compact:
         return "gemini"
+    if "nai-diffusion" in compact or compact.startswith("nai-") or "novelai" in compact:
+        return "novelai"
     return ""
 
 

@@ -585,7 +585,7 @@ INDEX_HTML = r"""<!doctype html>
   <script>
     const $ = id => document.getElementById(id);
     const ASPECTS = ['自动','1:1','2:3','3:2','3:4','4:3','4:3','4:5','5:4','9:16','16:9','21:9'].filter((v,i,a)=>a.indexOf(v)===i);
-    const PROVIDERS = ['openai','gemini','gemini_openai','z_image_gitee','jimeng2api','grok','agnes'];
+    const PROVIDERS = ['openai','gemini','gemini_openai','z_image_gitee','jimeng2api','grok','agnes','novelai'];
     const AUDIT_PROVIDERS = ['openai','gemini','gemini_openai'];
     // Video model-family protocols (like image provider types). Auto by model name; manual override.
     const VIDEO_PROVIDERS = ['openai_video','sora','veo','seedance','agnes','kling','cogvideo','video_chat','video_sync'];
@@ -936,6 +936,12 @@ INDEX_HTML = r"""<!doctype html>
         gitee: 'z_image_gitee',
         jimeng: 'jimeng2api',
         jimeng2: 'jimeng2api',
+        nai: 'novelai',
+        novel_ai: 'novelai',
+        novelai: 'novelai',
+        nai2api: 'novelai',
+        bestnai: 'novelai',
+        ppnai: 'novelai',
         xai: 'grok',
         x_ai: 'grok'
       };
@@ -985,6 +991,7 @@ INDEX_HTML = r"""<!doctype html>
       if (compact.includes('jimeng') || compact.includes('seedream') || compact.includes('doubao-seedream')) return 'jimeng2api';
       if (compact.includes('grok') || compact.includes('xai') || compact.includes('x-ai')) return 'grok';
       if (compact.includes('gpt-image') || compact.includes('dall-e') || compact.includes('dalle')) return 'openai';
+      if (compact.includes('nai-diffusion') || compact.startsWith('nai-') || compact.includes('novelai')) return 'novelai';
       if (compact.includes('gemini') || compact.includes('nano-banana')) return 'gemini';
       return '';
     }
