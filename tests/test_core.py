@@ -3164,13 +3164,11 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 extra_reference_count=0,
             )
             self.assertIn("光腿神器", text)
-            self.assertIn("跪坐", text)
-            self.assertIn("侧躺", text)
-            self.assertIn("抱膝", text)
-            self.assertIn("二郎腿", text)
-            self.assertIn("站立俯视", text)
-            self.assertIn("窗台", text)
-            self.assertNotIn("单膝跪地整理", text)
+            # persona no longer lists multi-pose menu (avoids model mixing poses)
+            self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
+            self.assertNotIn("· 坐姿拍腿", text)
+            self.assertNotIn("· 侧躺曲腿", text)
+            self.assertIn("本次主姿势", text)
             self.assertIn("禁止系鞋带", text)
             self.assertIn("两条腿", text)
 
