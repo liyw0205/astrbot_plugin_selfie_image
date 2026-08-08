@@ -2019,10 +2019,52 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
                 max_attempts=3,
             )
 
-        self.assertFalse(result.images)
-        self.assertEqual(calls["n"], 1)
-        self.assertIn("鉴权", result.error)
+        # Auth on first target is skipped; second target should still run.
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(result.used_model, second.label)
         self.assertEqual(result.attempts[0].get("error_category"), "auth")
+        self.assertTrue(result.attempts[1].get("success"))
+
+    async def test_fallback_advances_on_param_error_to_next_channel(self) -> None:
+        first = make_target("openai", "gpt-image-2")
+        first.channel_name = "小水管"
+        second = make_target("openai", "gpt-image-1")
+        second.channel_name = "备用"
+        calls = []
+
+        def create_fake_adapter(target, session):
+            calls.append(target.label)
+
+            class A:
+                async def generate(self, req):
+                    if "小水管" in target.label:
+                        return ImageGenerateResult(
+                            error="HTTP 400: 请求参数不受当前模型支持 (request id: x)；兼容 image[] 重试也失败: HTTP 400"
+                        )
+                    return ImageGenerateResult(images=[PNG_BYTES])
+
+            return A()
+
+        async def no_sleep(seconds):
+            return None
+
+        with (
+            patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter),
+            patch("astrbot_plugin_selfie_image.generator.asyncio.sleep", side_effect=no_sleep),
+        ):
+            result = await generate_image_with_fallback(
+                [first, second],
+                ImageGenerateRequest(prompt="cat", images=[ImageReference(data=PNG_BYTES, mime_type="image/png")]),
+                FakeSession(),
+                max_attempts=2,
+            )
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(result.used_model, second.label)
+        self.assertEqual(result.attempts[0].get("error_category"), "param")
+        self.assertTrue(result.attempts[1].get("success"))
+        self.assertEqual(len(calls), 2)
 
     async def test_fallback_rotates_api_key_on_auth_then_succeeds(self) -> None:
         target = ImageModelTarget(
@@ -3174,6 +3216,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("堆堆袜", text)
             self.assertIn("过膝袜", text)
             self.assertIn("避免只盖到脚踝的短袜", text)
+            self.assertIn("不要张张都穿袜", text)
+            self.assertTrue(("光腿" in text) or ("优先光腿" in text))
 
     def test_look_you_and_selfie_persona_have_variety_hints(self) -> None:
         from astrbot_plugin_selfie_image.persona import PersonaManager
@@ -3430,6 +3474,8 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("堆堆袜", main_src)
         self.assertIn("过膝袜", main_src)
         self.assertIn("避免只盖到脚踝", main_src)
+        self.assertIn("不要默认每张都穿袜", main_src)
+        self.assertIn("本次优先光腿", main_src)
 
     def test_send_one_by_one_comment_present(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")

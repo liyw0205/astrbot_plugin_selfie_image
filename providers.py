@@ -319,6 +319,8 @@ class OpenAIImageAdapter(BaseImageAdapter):
         size = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio)
         if size:
             form.add_field("size", size)
+        # Official GPT Image / many NewAPI relays expect repeated image[] parts (img_gen).
+        # Some older relays only accept bare "image". Caller tries preferred name first.
         for index, image in enumerate(req.images):
             ext = "jpg" if "jpeg" in image.mime_type else "webp" if "webp" in image.mime_type else "gif" if "gif" in image.mime_type else "png"
             form.add_field(
@@ -349,26 +351,29 @@ class OpenAIImageAdapter(BaseImageAdapter):
     async def generate_edit(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
         url = f"{base}/v1/images/edits"
+        # Prefer image[] first (OpenAI GPT Image / NewAPI common); fall back to image.
+        field_order = ["image[]", "image"] if req.allow_compat_retry else ["image[]"]
+        last_error = ""
         try:
-            data, error = await self._post_edit_form(url, req, "image")
-            if error and req.allow_compat_retry:
-                # Field-name compat only (image vs image[]) — not a full resubmit of a timed-out job.
+            for index, field_name in enumerate(field_order):
+                data, error = await self._post_edit_form(url, req, field_name)
+                if not error and data is not None:
+                    images = extract_openai_images_data(data, req.max_image_bytes)
+                    if images:
+                        return ImageGenerateResult(images=images)
+                    return await self.result_from_response(data, req, base, detailed_error=True)
+                last_error = error or "接口未返回有效 JSON"
                 from .error_classify import is_param_profile_switch_error
 
-                if is_param_profile_switch_error(error) or "image" in str(error).lower():
-                    fallback_data, fallback_error = await self._post_edit_form(url, req, "image[]")
-                    if fallback_data is not None:
-                        data, error = fallback_data, ""
-                    elif fallback_error:
-                        error = f"{error}；兼容 image[] 重试也失败: {fallback_error}"
-            if error or data is None:
-                return ImageGenerateResult(error=error or "接口未返回有效 JSON")
+                # Only switch field name on param/schema-class failures.
+                if index + 1 < len(field_order) and (
+                    is_param_profile_switch_error(last_error) or "image" in str(last_error).lower()
+                ):
+                    continue
+                break
+            return ImageGenerateResult(error=last_error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
             return ImageGenerateResult(error=f"OpenAI 图生图请求超时（{self.target.timeout}秒；为避免重复扣费，不会自动重提）")
-        images = extract_openai_images_data(data, req.max_image_bytes)
-        if images:
-            return ImageGenerateResult(images=images)
-        return await self.result_from_response(data, req, base, detailed_error=True)
 
 
 class GeminiImageAdapter(BaseImageAdapter):

@@ -55,6 +55,22 @@ def _should_rotate_api_key(class_info: Dict[str, Any]) -> bool:
     return False
 
 
+def _should_advance_to_next_target(class_info: Dict[str, Any]) -> bool:
+    """Whether outer fallback may try another channel/model after this error.
+
+    - auth / rate_limit: key rotation first; if keys exhausted, next target OK
+    - param / not_found: this model/channel rejected the request — try next target
+    - safety: do not hop channels (same prompt would likely fail again)
+    - timeout: skip this label for re-POST, but other targets OK
+    """
+    category = str(class_info.get("category") or "")
+    if category in {"safety"}:
+        return False
+    if category in {"param", "not_found", "timeout", "network", "rate_limit", "auth", "unknown", "fatal"}:
+        return True
+    return bool(class_info.get("retryable", True))
+
+
 async def generate_image_with_fallback(
     targets: List[ImageModelTarget],
     req: ImageGenerateRequest,
@@ -69,7 +85,7 @@ async def generate_image_with_fallback(
     last_error = "未配置生图模型"
     total_attempts = max(1, int(max_attempts)) if max_attempts is not None else max(IMAGE_RETRY_ATTEMPTS, len(targets))
     attempts: List[Dict[str, Any]] = []
-    # Avoid immediately re-POSTing the same target after a create timeout / non-retryable miss.
+    # Avoid immediately re-POSTing the same target after create timeout / exhausted param on that label.
     skip_labels: set[str] = set()
 
     for attempt in range(1, total_attempts + 1):
@@ -94,7 +110,6 @@ async def generate_image_with_fallback(
         if not api_keys:
             api_keys = [""]
 
-        key_success = False
         stop_all = False
         for key_index, api_key in enumerate(api_keys):
             active_target = _target_with_api_key(target, api_key) if api_key else target
@@ -133,16 +148,39 @@ async def generate_image_with_fallback(
                 # Rotate to next key on auth/rate-limit when more keys remain.
                 if _should_rotate_api_key(class_info) and key_index + 1 < len(api_keys):
                     continue
-                if not class_info.get("retryable", True):
-                    # Auth exhausted all keys, or non-retryable non-auth error.
-                    if class_info.get("category") == "auth" and key_index + 1 >= len(api_keys):
-                        last_error = f"{label}: 渠道鉴权失败，请检查 API Key 或权限"
+
+                # This target is done for this error class: skip re-POST same label.
+                if class_info.get("category") in {"param", "not_found", "timeout", "auth"} or not class_info.get(
+                    "retryable", True
+                ):
+                    skip_labels.add(target.label)
+
+                # Safety: stop whole job (same prompt would fail elsewhere too).
+                if class_info.get("category") == "safety":
                     return ImageGenerateResult(
                         error=redact_sensitive_text(last_error),
                         attempts=redact_sensitive_data(attempts),
                     )
-                # Retryable non-key-rotation error: break key loop and let outer attempt continue.
-                break
+
+                # Auth exhausted all keys on this target — try next target if any.
+                if class_info.get("category") == "auth" and key_index + 1 >= len(api_keys):
+                    last_error = f"{label}: 渠道鉴权失败，请检查 API Key 或权限"
+                    if len(targets) <= 1 or len(skip_labels) >= len(targets):
+                        return ImageGenerateResult(
+                            error=redact_sensitive_text(last_error),
+                            attempts=redact_sensitive_data(attempts),
+                        )
+                    break
+
+                # Param / not_found on this model: advance to another channel/model instead of ending the job.
+                if _should_advance_to_next_target(class_info):
+                    break
+
+                # Non-retryable and not advanceable
+                return ImageGenerateResult(
+                    error=redact_sensitive_text(last_error),
+                    attempts=redact_sensitive_data(attempts),
+                )
             except asyncio.TimeoutError:
                 last_error = f"{label}: 请求超时（为避免重复扣费，不会自动重提同一请求）"
                 attempt_info["success"] = False
@@ -152,7 +190,8 @@ async def generate_image_with_fallback(
                 attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
                 attempts.append(attempt_info)
                 skip_labels.add(target.label)
-                stop_all = len(targets) <= 1 or len(skip_labels) >= len(targets)
+                if len(targets) <= 1 or len(skip_labels) >= len(targets):
+                    stop_all = True
                 break
             except Exception as exc:
                 error_text = redact_sensitive_text(str(exc))
@@ -166,12 +205,21 @@ async def generate_image_with_fallback(
                 attempts.append(attempt_info)
                 if _should_rotate_api_key(class_info) and key_index + 1 < len(api_keys):
                     continue
-                if not class_info.get("retryable", True):
+                if class_info.get("category") in {"param", "not_found", "timeout", "auth"} or not class_info.get(
+                    "retryable", True
+                ):
+                    skip_labels.add(target.label)
+                if class_info.get("category") == "safety":
                     return ImageGenerateResult(
                         error=redact_sensitive_text(last_error),
                         attempts=redact_sensitive_data(attempts),
                     )
-                break
+                if _should_advance_to_next_target(class_info):
+                    break
+                return ImageGenerateResult(
+                    error=redact_sensitive_text(last_error),
+                    attempts=redact_sensitive_data(attempts),
+                )
 
         if stop_all:
             return ImageGenerateResult(
