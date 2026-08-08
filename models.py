@@ -53,6 +53,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "video_channels": [],
     "enabled_image_model_priority": [],
     "enabled_video_model_priority": [],
+    # When true: ignore priority list and shuffle enabled models each generate.
+    # Priority list is preserved in config for when random is turned off.
+    "random_image_model": False,
     "video": {
         "enable": True,
         "default_duration": 5,
@@ -213,6 +216,7 @@ class AICatConfig:
     video_channels: List[ImageChannelConfig]
     enabled_image_model_priority: List[str]
     enabled_video_model_priority: List[str]
+    random_image_model: bool
     video_enable: bool
     video_default_duration: int
     video_max_concurrent_tasks: int
@@ -273,6 +277,13 @@ class AICatConfig:
             video_channels=video_channels,
             enabled_image_model_priority=split_values(raw.get("enabled_image_model_priority")),
             enabled_video_model_priority=split_values(raw.get("enabled_video_model_priority")),
+            random_image_model=to_bool(
+                raw.get("random_image_model")
+                or raw.get("randomImageModel")
+                or raw.get("image_model_random")
+                or raw.get("imageModelRandom"),
+                False,
+            ),
             video_enable=to_bool(video.get("enable"), True),
             video_default_duration=to_int(video.get("default_duration"), 5, minimum=1, maximum=60),
             video_max_concurrent_tasks=to_int(video.get("max_concurrent_tasks"), 1, minimum=1, maximum=5),
@@ -283,6 +294,15 @@ class AICatConfig:
         all_targets: List[ImageModelTarget] = []
         for channel in self.image_channels:
             all_targets.extend(channel.targets(self.image_global_timeout))
+
+        # Random mode: shuffle each request among all enabled models; priority list is ignored
+        # but kept in config so turning random off restores ordered fallback.
+        if self.random_image_model:
+            import random
+
+            shuffled = list(all_targets)
+            random.shuffle(shuffled)
+            return shuffled
 
         if not self.enabled_image_model_priority:
             return all_targets

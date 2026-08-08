@@ -510,6 +510,72 @@ class ConfigModelTests(unittest.TestCase):
 
         self.assertEqual([target.label for target in config.get_prioritized_targets()], ["main/enabled-model"])
 
+    def test_empty_priority_uses_channel_enable_order(self) -> None:
+        config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "a",
+                        "provider_type": "openai",
+                        "base_url": "https://a.test",
+                        "enabled_models": ["m1", "m2"],
+                        "enabled": True,
+                    },
+                    {
+                        "name": "b",
+                        "provider_type": "openai",
+                        "base_url": "https://b.test",
+                        "enabled_models": ["m3"],
+                        "enabled": True,
+                    },
+                ],
+                "enabled_image_model_priority": [],
+            }
+        )
+        self.assertEqual(
+            [t.label for t in config.get_prioritized_targets()],
+            ["a/m1", "a/m2", "b/m3"],
+        )
+
+    def test_random_image_model_shuffles_and_keeps_priority_list(self) -> None:
+        raw = {
+            "image_channels": [
+                {
+                    "name": "a",
+                    "provider_type": "openai",
+                    "base_url": "https://a.test",
+                    "enabled_models": ["m1", "m2"],
+                    "enabled": True,
+                },
+                {
+                    "name": "b",
+                    "provider_type": "openai",
+                    "base_url": "https://b.test",
+                    "enabled_models": ["m3"],
+                    "enabled": True,
+                },
+            ],
+            "enabled_image_model_priority": ["b/m3", "a/m1"],
+            "random_image_model": True,
+        }
+        config = AICatConfig.from_dict(raw)
+        self.assertTrue(config.random_image_model)
+        self.assertEqual(config.enabled_image_model_priority, ["b/m3", "a/m1"])
+        labels = {t.label for t in config.get_prioritized_targets()}
+        self.assertEqual(labels, {"a/m1", "a/m2", "b/m3"})
+        # priority list still applied when random off
+        raw["random_image_model"] = False
+        ordered = AICatConfig.from_dict(raw).get_prioritized_targets()
+        self.assertEqual([t.label for t in ordered], ["b/m3", "a/m1", "a/m2"])
+
+    def test_web_random_image_model_toggle_preserves_priority(self) -> None:
+        self.assertIn("randomImageModel", INDEX_HTML)
+        self.assertIn("onRandomImageModelChange", INDEX_HTML)
+        self.assertIn("CONFIG.random_image_model", INDEX_HTML)
+        self.assertIn("isRandomImageModel", INDEX_HTML)
+        # must not clear priority list when enabling random
+        self.assertIn("Keep priorityList as-is", INDEX_HTML)
+
 
 class ImageUtilityTests(unittest.TestCase):
     def test_data_url_to_bytes_detects_png(self) -> None:

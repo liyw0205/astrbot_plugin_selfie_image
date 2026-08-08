@@ -394,9 +394,15 @@ INDEX_HTML = r"""<!doctype html>
       <div id="channelPaneAudit" class="channel-pane"><div id="auditChannelList"></div></div>
       <div id="channelPaneVideo" class="channel-pane"><div id="videoChannelList"></div></div>
       <h3>生图模型优先级</h3>
+      <p class="muted">未设置优先级时，按渠道与已启用模型的配置顺序依次尝试。开启「随机」后每次生图从全部已启用模型中随机排序（失败仍会换下一个）；关闭随机后恢复下方优先级列表，列表不会被清空。</p>
       <div class="grid">
+        <div><label>模型选择模式</label>
+          <div class="actions" style="margin-top:8px">
+            <label class="check"><input id="randomImageModel" type="checkbox" onchange="onRandomImageModelChange()"> 随机（启用时忽略优先级）</label>
+          </div>
+        </div>
         <div><label>选择已启用模型</label><select id="priorityPicker"></select></div>
-        <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" onclick="addPriority()">加入优先级</button><button class="secondary" type="button" onclick="clearPriority()">清空优先级</button></div></div>
+        <div><label>操作</label><div class="actions" style="margin-top:0"><button id="addPriorityBtn" class="secondary" type="button" onclick="addPriority()">加入优先级</button><button id="clearPriorityBtn" class="secondary" type="button" onclick="clearPriority()">清空优先级</button></div></div>
       </div>
       <textarea id="priorityList" style="display:none"></textarea>
       <div id="priorityRows" class="model-list"></div>
@@ -790,6 +796,7 @@ INDEX_HTML = r"""<!doctype html>
       CONFIG.video_channels ??= [];
       CONFIG.enabled_image_model_priority ??= [];
       CONFIG.enabled_video_model_priority ??= [];
+      CONFIG.random_image_model ??= false;
       const img = CONFIG.image;
       img.enable_llm_tool ??= true;
       img.default_aspect_ratio ??= '自动';
@@ -858,6 +865,8 @@ INDEX_HTML = r"""<!doctype html>
         $('outputAuditTemplate').value = img.output_audit_template || '';
 
         $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
+        if ($('randomImageModel')) $('randomImageModel').checked = !!CONFIG.random_image_model;
+        updatePriorityControlsState();
         renderAllChannelLists();
         refreshModelSelectors();
         renderPriorityRows();
@@ -902,6 +911,7 @@ INDEX_HTML = r"""<!doctype html>
       collectChannels();
       prunePriorityList();
       CONFIG.enabled_image_model_priority = textList('priorityList');
+      CONFIG.random_image_model = !!( $('randomImageModel') && $('randomImageModel').checked );
       return CONFIG;
     }
 
@@ -1640,6 +1650,7 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
     function addPriority() {
+      if (isRandomImageModel()) return;
       const value = $('priorityPicker').value;
       if (!value) return;
       const current = textList('priorityList');
@@ -1649,6 +1660,7 @@ INDEX_HTML = r"""<!doctype html>
       scheduleChannelListAutoSave();
     }
     function clearPriority() {
+      if (isRandomImageModel()) return;
       $('priorityList').value = '';
       renderPriorityRows();
       scheduleChannelListAutoSave();
@@ -1669,6 +1681,7 @@ INDEX_HTML = r"""<!doctype html>
       return next;
     }
     function movePriority(index, delta) {
+      if (isRandomImageModel()) return;
       const items = textList('priorityList');
       const next = index + delta;
       if (next < 0 || next >= items.length) return;
@@ -1677,13 +1690,45 @@ INDEX_HTML = r"""<!doctype html>
       setPriorityItems(items);
     }
     function removePriority(index) {
+      if (isRandomImageModel()) return;
       const items = textList('priorityList');
       items.splice(index, 1);
       setPriorityItems(items);
     }
+    function isRandomImageModel() {
+      return !!( $('randomImageModel') && $('randomImageModel').checked );
+    }
+    function onRandomImageModelChange() {
+      // Keep priorityList as-is; only toggle runtime selection mode.
+      CONFIG.random_image_model = isRandomImageModel();
+      updatePriorityControlsState();
+      renderPriorityRows();
+      scheduleChannelListAutoSave();
+    }
+    function updatePriorityControlsState() {
+      const random = isRandomImageModel();
+      const picker = $('priorityPicker');
+      const addBtn = $('addPriorityBtn');
+      const clearBtn = $('clearPriorityBtn');
+      if (picker) picker.disabled = random;
+      if (addBtn) addBtn.disabled = random;
+      if (clearBtn) clearBtn.disabled = random;
+      const box = $('priorityRows');
+      if (box) box.style.opacity = random ? '0.55' : '1';
+    }
     function renderPriorityRows() {
       const items = textList('priorityList');
       const box = $('priorityRows');
+      const random = isRandomImageModel();
+      updatePriorityControlsState();
+      if (random) {
+        box.innerHTML = '<div class="muted">已开启随机：每次生图从全部已启用模型中随机排序；下方优先级列表仍保留，关闭随机后立即生效。</div>'
+          + (items.length ? items.map((item, i) => `
+        <div class="model-row">
+          <div class="name">${escapeHtml(item)} <span class="muted">（暂停）</span></div>
+        </div>`).join('') : '');
+        return;
+      }
       box.innerHTML = items.map((item, i) => `
         <div class="model-row">
           <div class="name">${escapeHtml(item)}</div>
@@ -1692,7 +1737,7 @@ INDEX_HTML = r"""<!doctype html>
             <button class="secondary mini" type="button" onclick="movePriority(${i}, 1)">下移</button>
             <button class="danger mini" type="button" onclick="removePriority(${i})">移除</button>
           </div>
-        </div>`).join('') || '<div class="muted">未设置优先级时按渠道顺序尝试。</div>';
+        </div>`).join('') || '<div class="muted">未设置优先级时按渠道与已启用模型顺序尝试。</div>';
     }
 
     async function loadConfig() {
