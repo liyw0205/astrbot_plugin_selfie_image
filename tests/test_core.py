@@ -3170,7 +3170,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("二郎腿", text)
             self.assertIn("站立俯视", text)
             self.assertIn("窗台", text)
-            self.assertIn("单膝", text)
+            self.assertNotIn("单膝跪地整理", text)
+            self.assertIn("禁止系鞋带", text)
+            self.assertIn("两条腿", text)
 
     def test_look_you_and_selfie_persona_have_variety_hints(self) -> None:
         from astrbot_plugin_selfie_image.persona import PersonaManager
@@ -3419,8 +3421,11 @@ class LegFocusTests(unittest.TestCase):
         for key in ("sit", "kneel", "side_lie", "hug_knee", "cross_leg"):
             self.assertIn(key, found, f"missing pose {key} in samples {found}")
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
-        for key in ("stand_topdown", "windowsill", "kneel_up", "one_knee_fix", "side_lie", "hug_knee", "cross_leg"):
+        for key in ("stand_topdown", "windowsill", "kneel_up", "side_lie", "hug_knee", "cross_leg"):
             self.assertIn(f'"{key}"', main_src)
+        self.assertNotIn("one_knee_fix", main_src)
+        self.assertIn("禁止系鞋带", main_src)
+        self.assertIn("两条腿", main_src)
 
     def test_send_one_by_one_comment_present(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
