@@ -174,9 +174,16 @@ def map_aspect_ratio_to_openai_size(aspect: str) -> str:
     return "1024x1792"
 
 
-def map_aspect_ratio_to_gpt_image_size(aspect: str) -> str:
-    # NewAPI / many OpenAI-compatible relays accept explicit sizes more reliably than "auto".
-    if not aspect or aspect in {"自动", "1:1"}:
+def map_aspect_ratio_to_gpt_image_size(aspect: str, *, allow_omit_auto: bool = False) -> str:
+    """Map aspect to GPT Image size tokens.
+
+    Official GPT Image accepts only 1024x1024 / 1536x1024 / 1024x1536.
+    When allow_omit_auto and aspect is 自动/空: return "" so callers can omit size
+    (img_gen leaves unspecified size unset; some relays reject explicit size on edits).
+    """
+    if not aspect or aspect in {"自动", ""}:
+        return "" if allow_omit_auto else "1024x1024"
+    if aspect in {"1:1"}:
         return "1024x1024"
     if aspect in {"3:2", "16:9", "4:3", "5:4", "21:9"}:
         return "1536x1024"
@@ -311,14 +318,23 @@ class OpenAIImageAdapter(BaseImageAdapter):
             return await self.result_from_response(data, req, base, detailed_error=True)
         return ImageGenerateResult(error=last_error or "接口未返回有效 JSON")
 
-    def _build_edit_form(self, req: ImageGenerateRequest, image_field_name: str) -> aiohttp.FormData:
+    def _build_edit_form(
+        self,
+        req: ImageGenerateRequest,
+        image_field_name: str,
+        *,
+        include_size: bool = True,
+    ) -> aiohttp.FormData:
         form = aiohttp.FormData()
         form.add_field("model", self.target.model or "gpt-image-1")
         form.add_field("prompt", req.prompt)
         form.add_field("n", "1")
-        size = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio)
-        if size:
-            form.add_field("size", size)
+        if include_size:
+            # When profile asks for size: always send one of the 3 official tokens.
+            # 自动 / empty → 1024x1024 (do not omit here; omit is a separate profile).
+            size = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio, allow_omit_auto=False)
+            if size:
+                form.add_field("size", size)
         # Official GPT Image / many NewAPI relays expect repeated image[] parts (img_gen).
         # Some older relays only accept bare "image". Caller tries preferred name first.
         for index, image in enumerate(req.images):
@@ -331,7 +347,14 @@ class OpenAIImageAdapter(BaseImageAdapter):
             )
         return form
 
-    async def _post_edit_form(self, url: str, req: ImageGenerateRequest, image_field_name: str) -> tuple[Optional[Any], str]:
+    async def _post_edit_form(
+        self,
+        url: str,
+        req: ImageGenerateRequest,
+        image_field_name: str,
+        *,
+        include_size: bool = True,
+    ) -> tuple[Optional[Any], str]:
         headers = {
             "Accept": "application/json",
             "Connection": "close",
@@ -341,7 +364,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
             headers["Authorization"] = f"Bearer {self.target.api_key}"
         async with self.session.post(
             url,
-            data=self._build_edit_form(req, image_field_name),
+            data=self._build_edit_form(req, image_field_name, include_size=include_size),
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=self.target.timeout),
             proxy=str(self.target.proxy or "").strip() or None,
@@ -351,22 +374,40 @@ class OpenAIImageAdapter(BaseImageAdapter):
     async def generate_edit(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
         url = f"{base}/v1/images/edits"
-        # Prefer image[] first (OpenAI GPT Image / NewAPI common); fall back to image.
-        field_order = ["image[]", "image"] if req.allow_compat_retry else ["image[]"]
+        # Profiles: field name + size omit. Cap attempts to avoid multi-bill spam.
+        # 1) image[] without size (auto-friendly) 2) image[] with size 3) image with size
+        if req.allow_compat_retry:
+            profiles = [
+                ("image[]", False),
+                ("image[]", True),
+                ("image", True),
+            ]
+        else:
+            profiles = [("image[]", False)]
+        # If user fixed a non-auto ratio, lead with sized body.
+        if req.aspect_ratio and req.aspect_ratio not in {"自动", "", "1:1"}:
+            profiles = [
+                ("image[]", True),
+                ("image[]", False),
+                ("image", True),
+            ] if req.allow_compat_retry else [("image[]", True)]
+
         last_error = ""
         try:
-            for index, field_name in enumerate(field_order):
-                data, error = await self._post_edit_form(url, req, field_name)
+            from .error_classify import is_param_profile_switch_error
+
+            for index, (field_name, include_size) in enumerate(profiles):
+                data, error = await self._post_edit_form(
+                    url, req, field_name, include_size=include_size
+                )
                 if not error and data is not None:
                     images = extract_openai_images_data(data, req.max_image_bytes)
                     if images:
                         return ImageGenerateResult(images=images)
                     return await self.result_from_response(data, req, base, detailed_error=True)
                 last_error = error or "接口未返回有效 JSON"
-                from .error_classify import is_param_profile_switch_error
-
-                # Only switch field name on param/schema-class failures.
-                if index + 1 < len(field_order) and (
+                # Only switch profile on param/schema-class failures.
+                if index + 1 < len(profiles) and (
                     is_param_profile_switch_error(last_error) or "image" in str(last_error).lower()
                 ):
                     continue
