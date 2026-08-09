@@ -2,6 +2,8 @@
 
 Source patterns: OmniDraw VideoManager + big_banana I2V first-frame constraint.
 Endpoint: POST {base}/videos/generations — sync URL or async task_id + poll.
+Agnes Video V2.0 uses official POST /v1/videos + GET /agnesapi?video_id= (urllib;
+aiohttp often fails TLS/connect to apihub from some hosts).
 Never blindly re-POST after a billable create timeout (same discipline as GPT Image).
 """
 
@@ -9,9 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import re
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote, urlparse
@@ -59,6 +64,82 @@ def build_video_generations_endpoint(base_url: str) -> str:
     return f"{base.rstrip('/')}/v1/videos/generations"
 
 
+def build_agnes_videos_endpoint(base_url: str) -> str:
+    """Official Agnes Video V2: POST {base}/v1/videos (not /videos/generations)."""
+    base = normalize_image_base_url(base_url) or str(base_url or "").rstrip("/")
+    if not base:
+        return ""
+    lowered = base.lower().rstrip("/")
+    if lowered.endswith("/v1/videos"):
+        return base.rstrip("/")
+    if lowered.endswith("/videos") and "/v1/" in lowered:
+        return base.rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/videos"
+    return f"{base.rstrip('/')}/v1/videos"
+
+
+def build_agnes_result_url(base_url: str, video_id: str, model: str = "") -> str:
+    """Official poll: GET {origin}/agnesapi?video_id=...[&model_name=...]."""
+    raw = str(base_url or "").strip() or "https://apihub.agnes-ai.com"
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    origin = f"{parsed.scheme or 'https'}://{parsed.netloc}" if parsed.netloc else "https://apihub.agnes-ai.com"
+    vid = quote(str(video_id or "").strip(), safe="")
+    url = f"{origin.rstrip('/')}/agnesapi?video_id={vid}"
+    model_name = str(model or "").strip()
+    if model_name:
+        url += f"&model_name={quote(model_name, safe='')}"
+    return url
+
+
+def agnes_num_frames_for_duration(duration_seconds: int, frame_rate: int = 24) -> int:
+    """Map seconds → num_frames with official 8n+1 and ≤441 constraints."""
+    try:
+        seconds = max(1, int(duration_seconds or 5))
+    except Exception:
+        seconds = 5
+    try:
+        fps = max(1, min(60, int(frame_rate or 24)))
+    except Exception:
+        fps = 24
+    # nearest 8n+1 around target duration
+    target = max(1, int(round(seconds * fps)))
+    n = max(0, int(round((target - 1) / 8.0)))
+    frames = 8 * n + 1
+    if frames > 441:
+        frames = 441  # 8*55+1
+    if frames < 9:
+        frames = 9
+    return frames
+
+
+def agnes_size_wh(size: str) -> tuple[int, int]:
+    """Map size/aspect hint to official default-ish width/height."""
+    text = str(size or "").strip().lower().replace("：", ":")
+    presets = {
+        "16:9": (1152, 768),
+        "9:16": (768, 1152),
+        "1:1": (1024, 1024),
+        "4:3": (1152, 864),
+        "3:4": (864, 1152),
+        "1280x720": (1280, 720),
+        "720x1280": (720, 1280),
+        "1024x1024": (1024, 1024),
+        "1152x768": (1152, 768),
+        "768x1152": (768, 1152),
+    }
+    if text in presets:
+        return presets[text]
+    m = re.match(r"^(\d{3,4})\s*[x×]\s*(\d{3,4})$", text)
+    if m:
+        return max(64, int(m.group(1))), max(64, int(m.group(2)))
+    if "9:16" in text or "竖" in text:
+        return 768, 1152
+    if "1:1" in text or "方" in text:
+        return 1024, 1024
+    return 1152, 768
+
+
 def _extract_url(text: str) -> str:
     match = re.search(r"(https?://[^\s\]\)\"']+)", text or "")
     return match.group(1) if match else str(text or "").strip()
@@ -66,18 +147,20 @@ def _extract_url(text: str) -> str:
 
 def _extract_task_id(payload: Any) -> str:
     if isinstance(payload, dict):
-        for key in ("task_id", "id"):
+        # Agnes official create response prefers video_id for result polling.
+        for key in ("video_id", "task_id", "id"):
             value = payload.get(key)
-            if value and key == "task_id":
+            if not value:
+                continue
+            if key in {"video_id", "task_id"}:
                 return str(value)
-            if value and key == "id":
-                status = str(payload.get("status", payload.get("task_status", ""))).lower()
-                # Prefer explicit task_id; accept id only for async-looking payloads.
-                if status in {"submitted", "pending", "queued", "processing", "running", "in_progress"} or payload.get("task_id"):
-                    return str(value)
-                # Some gateways return only {"id": "..."} for video jobs.
-                if "video" in str(payload).lower() or payload.get("object") in {"video", "video.generation"}:
-                    return str(value)
+            status = str(payload.get("status", payload.get("task_status", ""))).lower()
+            # Prefer explicit task_id; accept id only for async-looking payloads.
+            if status in {"submitted", "pending", "queued", "processing", "running", "in_progress"} or payload.get("task_id") or payload.get("video_id"):
+                return str(value)
+            # Some gateways return only {"id": "..."} for video jobs.
+            if "video" in str(payload).lower() or payload.get("object") in {"video", "video.generation"}:
+                return str(value)
         for value in payload.values():
             found = _extract_task_id(value)
             if found:
@@ -85,6 +168,24 @@ def _extract_task_id(payload: Any) -> str:
     elif isinstance(payload, (list, tuple)):
         for item in payload:
             found = _extract_task_id(item)
+            if found:
+                return found
+    return ""
+
+
+def _extract_video_id(payload: Any) -> str:
+    if isinstance(payload, dict):
+        for key in ("video_id", "task_id", "id"):
+            value = payload.get(key)
+            if value:
+                return str(value)
+        for value in payload.values():
+            found = _extract_video_id(value)
+            if found:
+                return found
+    elif isinstance(payload, (list, tuple)):
+        for item in payload:
+            found = _extract_video_id(item)
             if found:
                 return found
     return ""
@@ -112,6 +213,14 @@ def _extract_video_url(data: Any) -> str:
         if isinstance(data, str) and data.startswith("http"):
             return _extract_url(data)
         return ""
+    # Agnes completed payload: metadata.url
+    meta = data.get("metadata")
+    if isinstance(meta, dict):
+        meta_url = meta.get("url") or meta.get("video_url")
+        if isinstance(meta_url, str) and meta_url.strip():
+            url = _extract_url(meta_url)
+            if url.startswith("http") or url.startswith("data:"):
+                return url
     for key in ("video_url", "url", "output", "video"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
@@ -163,14 +272,37 @@ async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeou
             return base64.b64decode(b64)
         except Exception as exc:
             raise RuntimeError(f"无法解码 data URL 视频: {exc}") from exc
-    headers = {"User-Agent": "SelfieImage-Video/1.0"}
-    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=max(30, timeout))) as response:
-        if response.status >= 400:
-            raise RuntimeError(await _read_error(response))
-        data = await response.read()
+
+    async def _via_aiohttp() -> bytes:
+        headers = {"User-Agent": "SelfieImage-Video/1.0"}
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=max(30, timeout))) as response:
+            if response.status >= 400:
+                raise RuntimeError(await _read_error(response))
+            data = await response.read()
+            if not data:
+                raise RuntimeError("视频下载结果为空")
+            return data
+
+    def _via_urllib() -> bytes:
+        req = urllib.request.Request(url, method="GET", headers={"User-Agent": "SelfieImage-Video/1.0"})
+        with urllib.request.urlopen(req, timeout=max(30, int(timeout or 60))) as resp:
+            data = resp.read()
         if not data:
             raise RuntimeError("视频下载结果为空")
         return data
+
+    try:
+        return await _via_aiohttp()
+    except Exception as aio_exc:
+        # Agnes CDN and some hosts reject/hang aiohttp; urllib often works (same as create/poll).
+        try:
+            return await asyncio.to_thread(_via_urllib)
+        except Exception as ur_exc:
+            raise RuntimeError(
+                redact_sensitive_text(
+                    f"视频下载失败: aiohttp={aio_exc}; urllib={ur_exc}"
+                )
+            ) from ur_exc
 
 
 def _task_poll_url(endpoint: str, task_id: str, submission: Dict[str, Any]) -> str:
@@ -198,6 +330,7 @@ async def _poll_task(
                     continue
                 data = await response.json(content_type=None)
             status = _extract_task_status(data)
+            # Agnes uses completed/failed/in_progress/queued/pending (lowercased upstream → upper here)
             if status in {"SUCCESS", "SUCCEEDED", "COMPLETED", "COMPLETE", "DONE"}:
                 url = _extract_video_url(data)
                 if url:
@@ -208,6 +341,10 @@ async def _poll_task(
                 if isinstance(err, dict):
                     err = err.get("message") or str(err)
                 raise RuntimeError(str(err or data.get("message") or "视频任务失败"))
+            # Some gateways put URL early without final status
+            early = _extract_video_url(data)
+            if early and status in {"", "SUCCESS", "SUCCEEDED", "COMPLETED"}:
+                return early
         except RuntimeError:
             raise
         except Exception:
@@ -277,8 +414,18 @@ async def generate_video_openai_compatible(
                     b64_images=b64_images,
                     family=protocol,
                 )
+            elif protocol == "agnes":
+                # Official Agnes Video V2.0: POST /v1/videos + GET /agnesapi?video_id=
+                video_url = await _generate_via_agnes(
+                    session,
+                    target=target,
+                    request=request,
+                    headers=headers,
+                    timeout=timeout,
+                    b64_images=b64_images,
+                )
             else:
-                # Family protocols (sora/veo/seedance/agnes/kling/cogvideo/openai_video)
+                # Family protocols (sora/veo/seedance/kling/cogvideo/openai_video)
                 # share OpenAI-compatible /videos/generations on most midgates; payload tuned per family.
                 video_url = await _generate_via_async(
                     session,
@@ -304,22 +451,39 @@ async def generate_video_openai_compatible(
                 elapsed_seconds=round(time.monotonic() - started, 2),
             )
         except asyncio.TimeoutError:
+            # Only treat as "create billable timeout" for short create calls; long Agnes polls raise RuntimeError.
             last_error = "视频请求超时（未自动重提，以免重复扣费）"
             key_attempt["error"] = last_error
             key_attempt["error_category"] = "timeout"
-            return VideoGenerateResult(error=last_error, attempts=[key_attempt], used_model=target.label)
+            return VideoGenerateResult(
+                error=last_error,
+                attempts=[key_attempt],
+                used_model=target.label,
+                elapsed_seconds=round(time.monotonic() - started, 2),
+            )
         except Exception as exc:
             last_error = redact_sensitive_text(str(exc))
             class_info = classify_generation_error(last_error)
             key_attempt["error"] = last_error
             key_attempt["error_category"] = class_info.get("category")
+            # Poll/create failures already spent wait time — still report elapsed
             if class_info.get("category") in {"auth", "rate_limit"} and key_index + 1 < len(keys):
                 continue
             if not class_info.get("retryable", True):
-                return VideoGenerateResult(error=last_error, attempts=[key_attempt], used_model=target.label)
+                return VideoGenerateResult(
+                    error=last_error,
+                    attempts=[key_attempt],
+                    used_model=target.label,
+                    elapsed_seconds=round(time.monotonic() - started, 2),
+                )
             if key_index + 1 < len(keys):
                 continue
-            return VideoGenerateResult(error=last_error, attempts=[key_attempt], used_model=target.label)
+            return VideoGenerateResult(
+                error=last_error,
+                attempts=[key_attempt],
+                used_model=target.label,
+                elapsed_seconds=round(time.monotonic() - started, 2),
+            )
 
     return VideoGenerateResult(error=last_error or "视频生成失败", used_model=target.label)
 
@@ -362,8 +526,10 @@ def _video_payload(
             payload["first_frame_image"] = first
             payload["image_url"] = first
         elif family == "agnes":
-            payload["image_urls"] = [first]
+            # Official Agnes i2v expects public image URL in `image` when possible.
+            # Data-URL fallback still sent for gateways that accept it.
             payload["image"] = first
+            payload["image_urls"] = [first]
         elif family == "kling":
             payload["image_url"] = first
             payload["image"] = first
@@ -418,6 +584,226 @@ async def _generate_via_async(
         raise RuntimeError(f"未返回视频地址或任务号: {str(data)[:400]}")
     poll_url = _task_poll_url(endpoint, task_id, data)
     return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout)
+
+
+def _agnes_payload(
+    target: ImageModelTarget,
+    request: VideoGenerateRequest,
+    b64_images: List[str],
+) -> Dict[str, Any]:
+    """Build official Agnes Video V2.0 create-task body."""
+    extra = dict(request.extra or {}) if isinstance(request.extra, dict) else {}
+    try:
+        frame_rate = int(extra.get("frame_rate") or extra.get("fps") or 24)
+    except Exception:
+        frame_rate = 24
+    frame_rate = max(1, min(60, frame_rate))
+    if "num_frames" in extra:
+        try:
+            num_frames = int(extra.get("num_frames") or 0)
+        except Exception:
+            num_frames = 0
+    else:
+        num_frames = 0
+    if num_frames <= 0:
+        num_frames = agnes_num_frames_for_duration(int(request.duration or 5), frame_rate)
+    # enforce 8n+1 and cap
+    if (num_frames - 1) % 8 != 0:
+        num_frames = agnes_num_frames_for_duration(max(1, int(round(num_frames / float(frame_rate)))), frame_rate)
+    num_frames = max(9, min(441, num_frames))
+    width, height = agnes_size_wh(str(request.size or extra.get("size") or extra.get("aspect_ratio") or ""))
+    if extra.get("width") and extra.get("height"):
+        try:
+            width, height = int(extra["width"]), int(extra["height"])
+        except Exception:
+            pass
+    payload: Dict[str, Any] = {
+        "model": target.model or "agnes-video-v2.0",
+        "prompt": str(request.prompt or "").strip(),
+        "width": width,
+        "height": height,
+        "num_frames": num_frames,
+        "frame_rate": frame_rate,
+    }
+    if extra.get("seed") is not None:
+        payload["seed"] = extra.get("seed")
+    if extra.get("negative_prompt"):
+        payload["negative_prompt"] = str(extra.get("negative_prompt"))
+    if extra.get("num_inference_steps") is not None:
+        payload["num_inference_steps"] = extra.get("num_inference_steps")
+    if extra.get("mode"):
+        payload["mode"] = str(extra.get("mode"))
+
+    # image / keyframes
+    image_url = str(extra.get("image") or extra.get("image_url") or "").strip()
+    if not image_url and b64_images:
+        # Prefer source_url on refs if caller put http URLs into extra only; data URL as last resort.
+        image_url = b64_images[0]
+    if image_url:
+        payload["image"] = image_url
+    keyframes = extra.get("keyframes") or extra.get("images")
+    if isinstance(keyframes, list) and keyframes:
+        payload["extra_body"] = {"image": [str(x) for x in keyframes if str(x).strip()], "mode": "keyframes"}
+        payload["mode"] = payload.get("mode") or "keyframes"
+    elif isinstance(extra.get("extra_body"), dict):
+        payload["extra_body"] = extra.get("extra_body")
+    return payload
+
+
+async def _generate_via_agnes(
+    session: aiohttp.ClientSession,
+    *,
+    target: ImageModelTarget,
+    request: VideoGenerateRequest,
+    headers: Dict[str, str],
+    timeout: int,
+    b64_images: List[str],
+) -> str:
+    """Official Agnes async video via urllib in a worker thread.
+
+    Note: ``session`` is accepted for API symmetry but unused — aiohttp often
+    hits ConnectionTimeout against apihub.agnes-ai.com while urllib/httpx work.
+    """
+    _ = session  # kept for call-site compatibility
+    endpoint = build_agnes_videos_endpoint(target.base_url)
+    if not endpoint:
+        raise RuntimeError("Agnes 视频渠道 base_url 无效")
+    payload = _agnes_payload(target, request, b64_images)
+    auth = str(headers.get("Authorization") or "").strip()
+    if not auth and target.api_key:
+        auth = f"Bearer {target.api_key}"
+
+    def _create() -> Dict[str, Any]:
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            endpoint,
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": auth,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "SelfieImage-Video/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=min(90, max(30, int(timeout // 3) if timeout else 60))) as resp:
+                raw = resp.read().decode("utf-8", "replace")
+                status = getattr(resp, "status", 200) or 200
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", "replace")
+            status = int(exc.code)
+            raise RuntimeError(redact_sensitive_text(f"HTTP {status}: {raw[:800]}")) from exc
+        except Exception as exc:
+            raise RuntimeError(redact_sensitive_text(f"Agnes 创建任务失败: {exc}")) from exc
+        try:
+            data = json.loads(raw)
+        except Exception:
+            data = {"raw": raw}
+        if not isinstance(data, dict):
+            data = {"data": data}
+        return data
+
+    data = await asyncio.to_thread(_create)
+    video_url = _extract_video_url(data)
+    if video_url:
+        return video_url
+    video_id = _extract_video_id(data) or _extract_task_id(data)
+    if not video_id:
+        raise RuntimeError(f"Agnes 未返回 video_id/task_id: {str(data)[:400]}")
+    poll_url = build_agnes_result_url(target.base_url, video_id, model=str(target.model or "agnes-video-v2.0"))
+    legacy = f"{endpoint.rstrip('/')}/{quote(video_id, safe='')}"
+    return await _poll_agnes_task_urllib(
+        poll_url=poll_url,
+        legacy_poll_url=legacy,
+        authorization=auth,
+        timeout_seconds=timeout,
+    )
+
+
+async def _poll_agnes_task_urllib(
+    *,
+    poll_url: str,
+    legacy_poll_url: str,
+    authorization: str,
+    timeout_seconds: int,
+) -> str:
+    max_retries = max(6, int(timeout_seconds) // 8)
+    urls = [u for u in (poll_url, legacy_poll_url) if u]
+    last_error = ""
+    deadline = time.monotonic() + max(30, int(timeout_seconds or 300))
+
+    def _get(url: str) -> Dict[str, Any]:
+        req = urllib.request.Request(
+            url,
+            method="GET",
+            headers={
+                "Authorization": authorization,
+                "Accept": "application/json",
+                "User-Agent": "SelfieImage-Video/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", "replace")
+            raise RuntimeError(redact_sensitive_text(f"HTTP {exc.code}: {raw[:400]}")) from exc
+        try:
+            data = json.loads(raw)
+        except Exception as exc:
+            raise RuntimeError(f"Agnes 轮询返回非 JSON: {raw[:200]}") from exc
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Agnes 轮询返回异常: {str(data)[:200]}")
+        return data
+
+    for attempt in range(max_retries):
+        if time.monotonic() > deadline:
+            break
+        await asyncio.sleep(8 if attempt else 3)
+        for url in urls:
+            try:
+                data = await asyncio.to_thread(_get, url)
+            except RuntimeError as exc:
+                last_error = str(exc)
+                continue
+            except Exception as exc:
+                last_error = redact_sensitive_text(str(exc))
+                continue
+            status = _extract_task_status(data)
+            if status in {"SUCCESS", "SUCCEEDED", "COMPLETED", "COMPLETE", "DONE"}:
+                got = _extract_video_url(data)
+                if got:
+                    return got
+                raise RuntimeError(f"Agnes 任务完成但无 metadata.url: {str(data)[:300]}")
+            if status in {"FAIL", "FAILED", "FAILURE", "ERROR", "CANCELLED", "CANCELED"}:
+                err = data.get("error")
+                if isinstance(err, dict):
+                    err = err.get("message") or str(err)
+                raise RuntimeError(str(err or data.get("message") or "Agnes 视频任务失败"))
+            # queued / pending / in_progress — continue outer loop
+            break
+    raise RuntimeError(
+        f"Agnes 视频轮询超时（已等约 {timeout_seconds}s）" + (f"：{last_error}" if last_error else "")
+    )
+
+
+async def _poll_agnes_task(
+    session: aiohttp.ClientSession,
+    *,
+    poll_url: str,
+    legacy_poll_url: str,
+    headers: Dict[str, str],
+    timeout_seconds: int,
+) -> str:
+    """Deprecated aiohttp poll kept for compatibility; prefer urllib path."""
+    auth = str(headers.get("Authorization") or "")
+    return await _poll_agnes_task_urllib(
+        poll_url=poll_url,
+        legacy_poll_url=legacy_poll_url,
+        authorization=auth,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 async def _generate_via_sync(

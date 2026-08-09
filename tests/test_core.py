@@ -3491,6 +3491,41 @@ class VideoV1Tests(unittest.TestCase):
         )
 
 
+    def test_agnes_official_endpoints_and_frames(self) -> None:
+        from types import SimpleNamespace
+        from astrbot_plugin_selfie_image.video import (
+            VideoGenerateRequest,
+            _agnes_payload,
+            _extract_video_url,
+            agnes_num_frames_for_duration,
+            agnes_size_wh,
+            build_agnes_result_url,
+            build_agnes_videos_endpoint,
+        )
+
+        self.assertTrue(build_agnes_videos_endpoint("https://apihub.agnes-ai.com").endswith("/v1/videos"))
+        self.assertTrue(build_agnes_videos_endpoint("https://apihub.agnes-ai.com/v1").endswith("/v1/videos"))
+        poll = build_agnes_result_url("https://apihub.agnes-ai.com/v1", "task_abc", model="agnes-video-v2.0")
+        self.assertIn("/agnesapi?video_id=task_abc", poll)
+        self.assertIn("model_name=agnes-video-v2.0", poll)
+        frames = agnes_num_frames_for_duration(5, 24)
+        self.assertEqual(frames, 121)
+        self.assertEqual((frames - 1) % 8, 0)
+        self.assertLessEqual(agnes_num_frames_for_duration(99, 24), 441)
+        self.assertEqual(agnes_size_wh("16:9"), (1152, 768))
+        self.assertEqual(agnes_size_wh("9:16"), (768, 1152))
+        completed = {"status": "completed", "metadata": {"url": "https://cdn.example/a.mp4"}}
+        self.assertEqual(_extract_video_url(completed), "https://cdn.example/a.mp4")
+        target = SimpleNamespace(model="agnes-video-v2.0")
+        payload = _agnes_payload(target, VideoGenerateRequest(prompt="cat on beach", duration=5, size="16:9"), [])
+        self.assertEqual(payload["model"], "agnes-video-v2.0")
+        self.assertEqual(payload["num_frames"], 121)
+        self.assertEqual(payload["frame_rate"], 24)
+        self.assertEqual(payload["width"], 1152)
+        self.assertEqual(payload["height"], 768)
+        self.assertIn("cat on beach", payload["prompt"])
+
+
     def test_video_endpoint_and_extractors(self) -> None:
         from astrbot_plugin_selfie_image.video import (
             build_video_generations_endpoint,
