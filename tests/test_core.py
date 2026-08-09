@@ -3724,6 +3724,32 @@ class StudioStoreTests(unittest.TestCase):
             mgr2 = ImagePresetManager(tmp)
             self.assertEqual(mgr2.presets["捧脸"].prompt, "自定义捧脸提示词")
 
+    def test_selfie_command_expands_preset_before_action_wrap(self) -> None:
+        """/自拍 捧脸 must expand preset on raw user text, not after long action wrap."""
+        import tempfile
+        from astrbot_plugin_selfie_image.preset import ImagePresetManager
+
+        stub = SessionModelAndTaskTests()._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stub.presets = ImagePresetManager(tmp)
+            stub.config.image_default_aspect_ratio = "自动"
+            stub.config.image_default_resolution = "1K"
+            expanded, aspect, resolution, name = plugin_main.SelfieImagePlugin._expand_user_text_with_preset(
+                stub, "捧脸"
+            )
+            self.assertEqual(name, "捧脸")
+            self.assertIn("捧住她的脸颊", expanded)
+            self.assertNotEqual(expanded, "捧脸")
+            # Wrapped action still carries expanded preset as 用户补充要求
+            action = plugin_main.SelfieImagePlugin._build_selfie_look_action(stub, expanded, False)
+            self.assertIn("捧住她的脸颊", action)
+            self.assertIn("用户补充要求优先", action)
+            # Late resolve on wrapped action alone would fail; early expand is required
+            late = stub.presets.resolve(action)
+            self.assertFalse(late.get("preset_name"))
+
     def test_dashboard_has_studio_tab(self) -> None:
         from astrbot_plugin_selfie_image.web import INDEX_HTML, WEB_TASK_ID_RE
 

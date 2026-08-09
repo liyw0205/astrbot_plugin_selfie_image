@@ -1867,6 +1867,23 @@ class SelfieImagePlugin(Star):
 
         return cleaned_prompt, aspect, resol, preset_name, str(resolved.get("description") or "").strip()
 
+    def _expand_user_text_with_preset(self, raw_text: str) -> Tuple[str, str, str, str]:
+        """Resolve presets against raw user words before action wrappers.
+
+        Commands like /自拍 捧脸 previously wrapped text into a long random action,
+        so preset matching (name must be at the start) never fired.
+        """
+        text = str(raw_text or "").strip()
+        if not text:
+            return "", "", "", ""
+        # Ensure seeded defaults are loaded (no-op if already present).
+        try:
+            self.presets.load()
+        except Exception:
+            pass
+        expanded, aspect, resolution, preset_name, _ = self._resolve_image_preset(text)
+        return str(expanded or text).strip(), aspect, resolution, preset_name
+
     def _normalize_preset_input(self, text: str) -> str:
         return str(text or "").strip().replace("\r", " ").replace("\n", " ")
 
@@ -3704,9 +3721,12 @@ class SelfieImagePlugin(Star):
         last_shot = ""
         extra_keep = ""
         if rebuild_each:
-            m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+?)。", str(action or ""))
+            # Extra may contain full preset text with many periods — take rest of line, then strip pose/shot tags.
+            m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
+                extra_keep = re.sub(r"\s*【(?:pose|shot):[a-z_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
             m_pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
             if m_pose:
                 last_pose = str(m_pose.group(1) or "")
@@ -4023,6 +4043,9 @@ class SelfieImagePlugin(Star):
         message_override: str = "",
         include_at_avatar: bool = False,
         requested_count_override: int = 0,
+        preset_aspect: str = "",
+        preset_resolution: str = "",
+        preset_name: str = "",
     ) -> AsyncGenerator[Any, None]:
         message = message_override.strip() if message_override else extract_command_message(event, command_name, fallback)
         if requested_count_override > 0:
@@ -4035,7 +4058,15 @@ class SelfieImagePlugin(Star):
             yield event.plain_result(error)
             return
 
-        action, aspect, resolution, _, _ = self._resolve_image_preset(message)
+        # Prefer aspect/resolution resolved from raw user text (before action wrappers).
+        if str(preset_name or "").strip():
+            action = message
+            default_aspect = str(self.config.image_default_aspect_ratio or "自动").strip() or "自动"
+            default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
+            aspect = str(preset_aspect or "").strip() or default_aspect
+            resolution = str(preset_resolution or "").strip() or default_resolution
+        else:
+            action, aspect, resolution, _, _ = self._resolve_image_preset(message)
         extra_refs = await self._event_reference_images(
             event,
             include_at_avatar=include_at_avatar,
@@ -4076,6 +4107,7 @@ class SelfieImagePlugin(Star):
                 "resolution": resolution,
                 "requested_count": requested_count,
                 "kind": progress_label,
+                "preset_name": str(preset_name or "").strip(),
             },
             runner=runner,
         )
@@ -4478,10 +4510,11 @@ class SelfieImagePlugin(Star):
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, ("自拍", "看看"), fallback_args)
         raw_extra, requested_count = self._extract_command_count(raw_message)
+        # Resolve presets on raw user words first (e.g. /自拍 捧脸), then wrap action.
+        expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         has_refs = bool(extract_image_sources_from_event(event))
-        # 有用户正文时以用户要求为主并叠一层随机机位；无正文则纯随机默认自拍
-        if raw_extra.strip():
-            base_action = self._build_selfie_look_action(raw_extra, has_refs)
+        if expanded_extra.strip():
+            base_action = self._build_selfie_look_action(expanded_extra, has_refs)
         else:
             base_action = self._build_selfie_look_action("", has_refs)
         async for item in self._handle_selfie_command(
@@ -4495,6 +4528,9 @@ class SelfieImagePlugin(Star):
             fail_label=self._natural_fail_fallback("selfie"),
             message_override=base_action,
             requested_count_override=requested_count,
+            preset_aspect=preset_aspect,
+            preset_resolution=preset_resolution,
+            preset_name=preset_name,
         ):
             yield item
 
@@ -4516,7 +4552,8 @@ class SelfieImagePlugin(Star):
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看腿", fallback_args)
         raw_extra, requested_count = self._extract_command_count(raw_message)
-        fallback = self._build_leg_focus_action(raw_extra, bool(extract_image_sources_from_event(event)))
+        expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
+        fallback = self._build_leg_focus_action(expanded_extra, bool(extract_image_sources_from_event(event)))
         async for item in self._handle_selfie_command(
             event=event,
             command_name="看看腿",
@@ -4528,6 +4565,9 @@ class SelfieImagePlugin(Star):
             fail_label=self._natural_fail_fallback("legs"),
             message_override=fallback,
             requested_count_override=requested_count,
+            preset_aspect=preset_aspect,
+            preset_resolution=preset_resolution,
+            preset_name=preset_name,
         ):
             yield item
 
@@ -4549,7 +4589,8 @@ class SelfieImagePlugin(Star):
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看你", fallback_args)
         raw_extra, requested_count = self._extract_command_count(raw_message)
-        fallback = self._build_third_person_look_action(raw_extra, bool(extract_image_sources_from_event(event)))
+        expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
+        fallback = self._build_third_person_look_action(expanded_extra, bool(extract_image_sources_from_event(event)))
         async for item in self._handle_selfie_command(
             event=event,
             command_name="看看你",
@@ -4561,6 +4602,9 @@ class SelfieImagePlugin(Star):
             fail_label=self._natural_fail_fallback("selfie"),
             message_override=fallback,
             requested_count_override=requested_count,
+            preset_aspect=preset_aspect,
+            preset_resolution=preset_resolution,
+            preset_name=preset_name,
         ):
             yield item
 
@@ -4582,7 +4626,11 @@ class SelfieImagePlugin(Star):
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, ("合影", "合照"), fallback)
         raw_message, requested_count = self._extract_command_count(raw_message)
-        action = self._build_group_selfie_action(raw_message, bool(extract_image_sources_from_event(event, include_at_avatar=True)))
+        expanded_message, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_message)
+        action = self._build_group_selfie_action(
+            expanded_message,
+            bool(extract_image_sources_from_event(event, include_at_avatar=True)),
+        )
         async for item in self._handle_selfie_command(
             event=event,
             command_name=("合影", "合照"),
@@ -4595,6 +4643,9 @@ class SelfieImagePlugin(Star):
             message_override=action,
             include_at_avatar=True,
             requested_count_override=requested_count,
+            preset_aspect=preset_aspect,
+            preset_resolution=preset_resolution,
+            preset_name=preset_name,
         ):
             yield item
 
