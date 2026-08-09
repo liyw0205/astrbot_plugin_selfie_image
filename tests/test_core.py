@@ -3661,6 +3661,8 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn('data-tab="studio"', INDEX_HTML)
         self.assertIn("合影画布", INDEX_HTML)
         self.assertIn("/api/studio/sessions", INDEX_HTML)
+        self.assertIn("data-cache-path", INDEX_HTML)
+        self.assertIn("loadProtectedImages(wrap)", INDEX_HTML)
         self.assertTrue(WEB_TASK_ID_RE.fullmatch("web-studio-12345678-1"))
 
 

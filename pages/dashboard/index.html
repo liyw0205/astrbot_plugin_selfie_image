@@ -2409,9 +2409,10 @@
         const card = document.createElement('div');
         const has = !!(slot.image_path);
         card.className = 'studio-slot ' + (has ? 'has-image' : 'empty');
+        // Must use data-cache-path + loadProtectedImage (auth/token); bare /api/cache-image src is broken.
         card.innerHTML = `
-          <div class="slot-label">${slot.label || slot.role || '槽位'} · ${slot.role || ''}</div>
-          <img alt="" ${has ? `src="${studioCacheUrl(slot.image_path)}"` : ''}>
+          <div class="slot-label">${escapeHtml(slot.label || slot.role || '槽位')} · ${escapeHtml(slot.role || '')}</div>
+          ${has ? `<img data-cache-path="${escapeHtml(slot.image_path)}" alt="">` : '<div class="status" style="font-size:12px">空</div>'}
           <div class="slot-actions">
             <button type="button" class="secondary" data-act="upload">上传</button>
             <button type="button" class="secondary" data-act="clear" ${has ? '' : 'disabled'}>清空</button>
@@ -2429,6 +2430,7 @@
         };
         wrap.appendChild(card);
       }
+      loadProtectedImages(wrap);
     }
     function renderStudioResults() {
       const wrap = $('studioResults');
@@ -2441,12 +2443,12 @@
         card.className = 'card';
         const path = item.image_path || '';
         card.innerHTML = `
-          <img src="${studioCacheUrl(path)}" alt="">
+          ${path ? `<img data-cache-path="${escapeHtml(path)}" alt="">` : '<div class="status">无图</div>'}
           <div class="actions" style="margin-top:6px">
             <button type="button" class="secondary mini" data-act="peer">作同框</button>
             <button type="button" class="secondary mini" data-act="id">作形象</button>
           </div>
-          <div class="status" style="font-size:11px">${item.created_at || ''}</div>`;
+          <div class="status" style="font-size:11px">${escapeHtml(item.created_at || '')}</div>`;
         const peer = (session.slots || []).find(s => s.role === 'peer') || (session.slots || [])[1];
         const identity = (session.slots || []).find(s => s.role === 'identity') || (session.slots || [])[0];
         card.querySelector('[data-act="peer"]').onclick = async () => {
@@ -2474,6 +2476,7 @@
         err.textContent = '上次失败：' + last.error;
         wrap.prepend(err);
       }
+      loadProtectedImages(wrap);
     }
     function renderStudio() {
       renderStudioSessionSelect();
