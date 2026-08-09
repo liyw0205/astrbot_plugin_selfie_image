@@ -3198,9 +3198,7 @@ class SelfieImagePlugin(Star):
             },
             runner=runner_with_duration,
         )
-        yield event.plain_result(
-            f"{progress}\n已接单 {task.get('task_id')}，做好了会直接发过来。进度可用 /生图任务 看。"
-        )
+        yield event.plain_result(progress)
 
     @filter.command("视频")
     async def cmd_video(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
@@ -3722,9 +3720,7 @@ class SelfieImagePlugin(Star):
             },
             runner=runner,
         )
-        yield event.plain_result(
-            f"{progress}\n已接单 {task.get('task_id')}，画好了会直接发过来。进度可用 /生图任务 看。"
-        )
+        yield event.plain_result(progress)
 
     @filter.command("生图帮助")
     async def cmd_help(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
@@ -3773,7 +3769,7 @@ class SelfieImagePlugin(Star):
                 "",
                 "预设：/预设　列表；管理员可 /预设添加 名称:内容、/预设删除 名称",
                 "",
-                "说明：一次可写数量表示连出几轮；图好了会直接发过来，也可用 /生图任务 查进度。",
+                "说明：一次可写数量表示连出几轮；图好了会直接发过来。",
                 "· /生图帮助　只看图卡",
                 "· /生图help　看本页完整说明",
                 f"管理页：{'已开' if self.config.web_enable else '未开'}　http://{self.config.web_host}:{self.config.web_port}",
@@ -3976,9 +3972,7 @@ class SelfieImagePlugin(Star):
             },
             runner=runner,
         )
-        yield event.plain_result(
-            f"{progress}\n已接单 {task.get('task_id')}，画好了会直接发过来。进度可用 /生图任务 看。"
-        )
+        yield event.plain_result(progress)
 
     @filter.command("文生图")
     async def cmd_raw_text_to_image(
@@ -4035,9 +4029,7 @@ class SelfieImagePlugin(Star):
             },
             runner=runner,
         )
-        yield event.plain_result(
-            f"{progress}\n已接单 {task.get('task_id')}，画好了会直接发过来。进度可用 /生图任务 看。"
-        )
+        yield event.plain_result(progress)
 
     @filter.command("图生图")
     async def cmd_raw_image_to_image(
@@ -4107,9 +4099,7 @@ class SelfieImagePlugin(Star):
             },
             runner=runner,
         )
-        yield event.plain_result(
-            f"{progress}\n已接单 {task.get('task_id')}，画好了会直接发过来。进度可用 /生图任务 看。"
-        )
+        yield event.plain_result(progress)
 
     @filter.command("自拍", alias={"看看"})
     async def cmd_selfie(
