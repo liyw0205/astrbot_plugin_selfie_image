@@ -3750,6 +3750,43 @@ class StudioStoreTests(unittest.TestCase):
             late = stub.presets.resolve(action)
             self.assertFalse(late.get("preset_name"))
 
+    def test_clothes_followup_prefers_user_context_images(self) -> None:
+        stub = SessionModelAndTaskTests()._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        # Fake context: bot selfie first (newer), then user outfit ref
+        stub._conversation_context = __import__("collections").OrderedDict()
+        key = "group:g1"
+        stub._context_session_key = lambda event=None: key
+        stub._context_lock = __import__("threading").RLock()
+        stub._conversation_context[key] = [
+            {
+                "msg_id": "1",
+                "is_bot": False,
+                "image_sources": ["user_outfit.jpg"],
+                "content": "[图片]",
+            },
+            {
+                "msg_id": "2",
+                "is_bot": True,
+                "image_sources": ["bot_selfie.jpg"],
+                "content": "[图片]",
+            },
+        ]
+        self.assertTrue(plugin_main.SelfieImagePlugin._looks_like_clothes_followup(stub, "但是怎么不是刚刚的衣服"))
+        self.assertTrue(plugin_main.SelfieImagePlugin._looks_like_context_image_reference(stub, "是穿这个"))
+        self.assertTrue(plugin_main.SelfieImagePlugin._looks_like_context_image_reference(stub, "穿这个看看"))
+        # Prefer user only for clothes follow-up
+        srcs = plugin_main.SelfieImagePlugin._recent_context_image_sources(
+            stub, None, max_images=4, prefer_user=True, user_only=True
+        )
+        self.assertEqual(srcs, ["user_outfit.jpg"])
+        # Default prefer_user still puts user first even if bot is newer in list order
+        srcs2 = plugin_main.SelfieImagePlugin._recent_context_image_sources(
+            stub, None, max_images=4, prefer_user=True, user_only=False
+        )
+        self.assertEqual(srcs2[0], "user_outfit.jpg")
+
     def test_dashboard_has_studio_tab(self) -> None:
         from astrbot_plugin_selfie_image.web import INDEX_HTML, WEB_TASK_ID_RE
 

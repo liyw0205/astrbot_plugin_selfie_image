@@ -642,6 +642,27 @@ class SelfieImagePlugin(Star):
             "换成",
             "改一下",
             "修一下",
+            # 穿搭跟进：无图时也要回拉用户刚发的服装参考
+            "穿这个",
+            "穿这",
+            "穿上这个",
+            "穿上这",
+            "是穿这个",
+            "换这个",
+            "换上这个",
+            "换上这",
+            "这套",
+            "这身",
+            "这件",
+            "刚刚的衣服",
+            "刚才的衣服",
+            "不是刚刚的衣服",
+            "不是刚才的衣服",
+            "一模一样的衣服",
+            "复刻",
+            "照着穿",
+            "按这套",
+            "按这身",
         ]
         english = [
             "previousimage",
@@ -652,22 +673,105 @@ class SelfieImagePlugin(Star):
             "continueediting",
             "basedonthis",
             "sameasbefore",
+            "wearthis",
+            "putthison",
+            "sameoutfit",
         ]
         return any(keyword in compact for keyword in keywords) or any(keyword in compact for keyword in english)
 
-    def _recent_context_image_sources(self, event: Optional[AstrMessageEvent], max_images: int = 4) -> List[str]:
-        sources: List[str] = []
-        seen = set()
-        for record in reversed(self._recent_context_records(event, count=20)):
+    def _looks_like_clothes_followup(self, text: str) -> bool:
+        """User wants outfit from a prior reference, not the bot's last selfie."""
+        compact = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(text or "").lower())
+        if not compact:
+            return False
+        keys = [
+            "穿这个",
+            "穿这",
+            "穿上这个",
+            "是穿这个",
+            "换这个",
+            "换上这个",
+            "这套",
+            "这身",
+            "这件",
+            "衣服",
+            "服装",
+            "穿搭",
+            "刚刚的衣服",
+            "刚才的衣服",
+            "不是刚刚的衣服",
+            "不是刚才的衣服",
+            "一模一样的衣服",
+            "复刻",
+            "照着穿",
+            "同款",
+            "outfit",
+            "wearthis",
+            "clothes",
+        ]
+        return any(k in compact for k in keys)
+
+    def _looks_like_edit_bot_result_followup(self, text: str) -> bool:
+        """Only then may context fall back to bot-generated images."""
+        compact = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(text or "").lower())
+        keys = [
+            "刚才那张",
+            "刚刚那张",
+            "上一张",
+            "上张图",
+            "继续改",
+            "接着改",
+            "在这个基础上",
+            "基于这张",
+            "这张再",
+            "把刚才",
+            "刚生成",
+            "刚画的",
+        ]
+        return any(k in compact for k in keys)
+
+    def _recent_context_image_sources(
+        self,
+        event: Optional[AstrMessageEvent],
+        max_images: int = 4,
+        *,
+        prefer_user: bool = True,
+        user_only: bool = False,
+    ) -> List[str]:
+        """Return recent image sources. Prefer non-bot (user) refs for clothes/selfie follow-ups."""
+        user_sources: List[str] = []
+        bot_sources: List[str] = []
+        seen_user: set = set()
+        seen_bot: set = set()
+        for record in reversed(self._recent_context_records(event, count=24)):
+            is_bot = bool(record.get("is_bot"))
             for source in reversed(list(record.get("image_sources") or [])):
                 text = str(source or "").strip()
-                if not text or text in seen:
+                if not text:
                     continue
-                seen.add(text)
-                sources.append(text)
-                if len(sources) >= max_images:
-                    return sources
-        return sources
+                if is_bot:
+                    if text in seen_bot:
+                        continue
+                    seen_bot.add(text)
+                    bot_sources.append(text)
+                else:
+                    if text in seen_user:
+                        continue
+                    seen_user.add(text)
+                    user_sources.append(text)
+        if user_only:
+            return user_sources[: max(1, int(max_images or 1))]
+        if prefer_user and user_sources:
+            # User refs first, then bot only to fill remaining slots if needed
+            out = list(user_sources)
+            for text in bot_sources:
+                if len(out) >= max_images:
+                    break
+                if text not in out:
+                    out.append(text)
+            return out[: max(1, int(max_images or 1))]
+        merged = user_sources + bot_sources
+        return merged[: max(1, int(max_images or 1))]
 
     @optional_event_message_type(priority=100)
     async def on_message_record(self, event: AstrMessageEvent) -> None:
@@ -1910,16 +2014,26 @@ class SelfieImagePlugin(Star):
         persona_path = ""
         if include_persona and self.persona.has_reference_image():
             persona_path = str(self.persona.get_reference_path() or "")
+        hint = str(context_hint or extract_event_text(event) or "")
+        # Clothes / "wear this" follow-ups must prefer the user's prior reference image,
+        # never the bot's last generated selfie (common failure in group chat).
+        user_only = self._looks_like_clothes_followup(hint) and not self._looks_like_edit_bot_result_followup(hint)
+        prefer_user = True
+        context_sources = self._recent_context_image_sources(
+            event,
+            prefer_user=prefer_user,
+            user_only=user_only,
+        )
         collector = ReferenceCollector(
             max_bytes=max_bytes,
             bot_ids=self._bot_account_ids(event),
             persona_path=persona_path,
-            context_sources=self._recent_context_image_sources(event),
+            context_sources=context_sources,
             extra_sources=extra_sources or [],
             include_at_avatar=include_at_avatar,
             include_persona=include_persona,
             allow_context_fallback=allow_context_fallback,
-            context_hint=context_hint or extract_event_text(event),
+            context_hint=hint,
             looks_like_context_ref=self._looks_like_context_image_reference,
         )
         async with aiohttp.ClientSession(trust_env=False) as session:
@@ -1946,16 +2060,22 @@ class SelfieImagePlugin(Star):
         persona_path = ""
         if include_persona and self.persona.has_reference_image():
             persona_path = str(self.persona.get_reference_path() or "")
+        hint = str(context_hint or extract_event_text(event) or "")
+        user_only = self._looks_like_clothes_followup(hint) and not self._looks_like_edit_bot_result_followup(hint)
         collector = ReferenceCollector(
             max_bytes=max_bytes,
             bot_ids=self._bot_account_ids(event),
             persona_path=persona_path,
-            context_sources=self._recent_context_image_sources(event),
+            context_sources=self._recent_context_image_sources(
+                event,
+                prefer_user=True,
+                user_only=user_only,
+            ),
             extra_sources=extra_sources or [],
             include_at_avatar=include_at_avatar,
             include_persona=include_persona,
             allow_context_fallback=allow_context_fallback,
-            context_hint=context_hint or extract_event_text(event),
+            context_hint=hint,
             looks_like_context_ref=self._looks_like_context_image_reference,
         )
         async with aiohttp.ClientSession(trust_env=False) as session:
