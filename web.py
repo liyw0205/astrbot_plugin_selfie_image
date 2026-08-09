@@ -293,6 +293,14 @@ INDEX_HTML = r"""<!doctype html>
     .studio-results .card { border:1px solid var(--line); border-radius:var(--radius-md); padding:8px; background:#fff; }
     .studio-results img { width:100%; border-radius:8px; border:1px solid var(--line); }
     .studio-chiprow { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+    .preset-panel { display:none; margin-top:8px; border:1px solid var(--line); border-radius:var(--radius-md); background:#fff; max-height:260px; overflow:auto; padding:8px; }
+    .preset-panel.open { display:block; }
+    .preset-item { display:flex; gap:8px; align-items:flex-start; justify-content:space-between; border-bottom:1px solid var(--line); padding:8px 4px; }
+    .preset-item:last-child { border-bottom:none; }
+    .preset-item .meta { flex:1; min-width:0; }
+    .preset-item .name { font-weight:650; font-size:13px; }
+    .preset-item .prompt { color:var(--muted); font-size:12px; margin-top:4px; white-space:pre-wrap; word-break:break-word; max-height:3.6em; overflow:hidden; }
+
     .studio-chiprow button { padding:5px 10px; font-size:12px; }
     .checkline { display: flex; align-items: center; gap: 8px; min-height: 38px; }
     .checkline input { width: auto; }
@@ -488,9 +496,14 @@ INDEX_HTML = r"""<!doctype html>
           </select>
         </div>
       </div>
-      <label>提示词</label>
+      <div class="between">
+        <label>提示词</label>
+        <button class="secondary" id="studioPresetBtn" type="button">预设</button>
+      </div>
       <textarea id="studioPrompt" rows="3" placeholder="自然并肩合影…"></textarea>
+      <div class="preset-panel" id="studioPresetPanel"></div>
       <div class="studio-chiprow" id="studioPromptChips"></div>
+      <div class="status" style="font-size:12px;margin-top:4px">上方芯片随模板变化；「预设」为全局风格库（捧脸/变真人等）。</div>
       <div class="between" style="margin-top:8px">
         <h3>参考槽位</h3>
         <button class="secondary" id="studioAddSlotBtn" type="button">加槽位</button>
@@ -514,7 +527,12 @@ INDEX_HTML = r"""<!doctype html>
         <div><label>画面比例</label><select id="testAspect"></select></div>
         <div><label>清晰度</label><select id="testResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
       </div>
-      <label>想画什么</label><textarea id="testPrompt">一只可爱的白色猫咪，坐在樱花树下，柔和光线，精致插画风格</textarea>
+      <div class="between">
+        <label>想画什么</label>
+        <button class="secondary" id="testPresetBtn" type="button">预设</button>
+      </div>
+      <textarea id="testPrompt">一只可爱的白色猫咪，坐在樱花树下，柔和光线，精致插画风格</textarea>
+      <div class="preset-panel" id="testPresetPanel"></div>
       <div class="grid">
         <label class="checkline"><input id="promptEnhance" type="checkbox"> 润色提示词</label>
         <label class="checkline"><input id="useSelfie" type="checkbox"> 带上当前形象参考</label>
@@ -697,7 +715,7 @@ INDEX_HTML = r"""<!doctype html>
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], pollTimer: null, uploadSlotId: '' };
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], pollTimer: null, uploadSlotId: '', presetOpen: false };
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -2452,6 +2470,78 @@ INDEX_HTML = r"""<!doctype html>
       if (STUDIO.current && STUDIO.current.template) return String(STUDIO.current.template);
       return ($('studioTemplateSelect') && $('studioTemplateSelect').value) || 'duo';
     }
+
+    function mergePromptPresets(rows) {
+      const map = new Map();
+      for (const item of rows || []) {
+        const name = String(item.name || item.title || '').trim();
+        const prompt = String(item.prompt || '').trim();
+        if (!name || !prompt) continue;
+        map.set(name, Object.assign({}, item, { name, title: name, prompt }));
+      }
+      return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+    }
+    function renderPresetPanel(panelId, targetInputId, open) {
+      const panel = $(panelId);
+      if (!panel) return;
+      if (!open) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
+      panel.classList.add('open');
+      const rows = STUDIO.promptPresets || [];
+      if (!rows.length) {
+        panel.innerHTML = '<div class="status">暂无预设</div>';
+        return;
+      }
+      panel.innerHTML = rows.map((item, idx) => `
+        <div class="preset-item">
+          <div class="meta">
+            <div class="name">${escapeHtml(item.name || item.title || '')}</div>
+            <div class="prompt">${escapeHtml(item.prompt || '')}</div>
+          </div>
+          <button type="button" class="secondary mini" data-preset-idx="${idx}">使用</button>
+        </div>`).join('');
+      panel.querySelectorAll('[data-preset-idx]').forEach(btn => {
+        btn.onclick = () => {
+          const item = rows[Number(btn.getAttribute('data-preset-idx'))];
+          if (!item) return;
+          const input = $(targetInputId);
+          if (input) input.value = item.prompt || '';
+          panel.classList.remove('open');
+          if (panelId === 'studioPresetPanel') STUDIO.presetOpen = false;
+          if (panelId === 'testPresetPanel') window.__TEST_PRESET_OPEN = false;
+          showToast('已填入预设：' + (item.name || item.title || ''), 'ok');
+        };
+      });
+    }
+    async function ensurePromptPresetsLoaded() {
+      if (STUDIO.promptPresets && STUDIO.promptPresets.length) return STUDIO.promptPresets;
+      try {
+        const res = await api('/api/prompt-presets');
+        if (res.success) {
+          STUDIO.promptPresets = mergePromptPresets(res.data || []);
+          return STUDIO.promptPresets;
+        }
+      } catch (_) {}
+      return STUDIO.promptPresets || [];
+    }
+    async function toggleStudioPresets() {
+      STUDIO.presetOpen = !STUDIO.presetOpen;
+      if (STUDIO.presetOpen) {
+        await ensurePromptPresetsLoaded();
+        window.__TEST_PRESET_OPEN = false;
+        renderPresetPanel('testPresetPanel', 'testPrompt', false);
+      }
+      renderPresetPanel('studioPresetPanel', 'studioPrompt', STUDIO.presetOpen);
+    }
+    async function toggleTestPresets() {
+      window.__TEST_PRESET_OPEN = !window.__TEST_PRESET_OPEN;
+      if (window.__TEST_PRESET_OPEN) {
+        await ensurePromptPresetsLoaded();
+        STUDIO.presetOpen = false;
+        renderPresetPanel('studioPresetPanel', 'studioPrompt', false);
+      }
+      renderPresetPanel('testPresetPanel', 'testPrompt', !!window.__TEST_PRESET_OPEN);
+    }
+
     function renderStudioPromptChips() {
       const wrap = $('studioPromptChips');
       if (!wrap) return;
@@ -2459,8 +2549,8 @@ INDEX_HTML = r"""<!doctype html>
       const tid = studioActiveTemplateId();
       const items = (STUDIO.prompts || []).filter(item => {
         const tags = item.templates;
-        if (!tags || !tags.length) return true;
-        return tags.includes(tid) || tags.includes('blank');
+        if (!tags || !tags.length) return true; // empty tags = all templates
+        return tags.includes(tid);
       });
       for (const item of items) {
         const btn = document.createElement('button');
@@ -2604,6 +2694,7 @@ INDEX_HTML = r"""<!doctype html>
       STUDIO.sessions = (res.data && res.data.sessions) || [];
       STUDIO.prompts = (res.data && res.data.builtin_prompts) || [];
       STUDIO.templates = (res.data && res.data.templates) || STUDIO.templates || [];
+      if (res.data && res.data.prompt_presets) STUDIO.promptPresets = mergePromptPresets(res.data.prompt_presets);
       if (selectId) {
         const detail = await studioApi('/api/studio/sessions/' + encodeURIComponent(selectId));
         if (detail.success) STUDIO.current = detail.data;
@@ -2741,6 +2832,8 @@ INDEX_HTML = r"""<!doctype html>
     });
     $('testImageBtn').onclick = runImageTest;
     if ($('studioCreateBtn')) $('studioCreateBtn').onclick = studioCreate;
+    if ($('studioPresetBtn')) $('studioPresetBtn').onclick = toggleStudioPresets;
+    if ($('testPresetBtn')) $('testPresetBtn').onclick = toggleTestPresets;
     if ($('studioReloadBtn')) $('studioReloadBtn').onclick = () => loadStudioList(STUDIO.current && STUDIO.current.id);
     if ($('studioDeleteBtn')) $('studioDeleteBtn').onclick = studioDelete;
     if ($('studioSaveBtn')) $('studioSaveBtn').onclick = studioSave;

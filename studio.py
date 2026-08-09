@@ -20,7 +20,9 @@ MAX_SESSIONS = 40
 MAX_SLOTS = 12
 MAX_RESULTS_KEEP = 24
 
-# Built-in prompt chips (no external GitHub sync). templates=[] means all templates.
+# Built-in prompt chips / shared presets (no external GitHub sync).
+# templates: only listed templates see the chip; empty = all templates.
+# global=True: also appear in 画布/试画「预设」总列表.
 BUILTIN_PROMPTS: List[Dict[str, Any]] = [
     {
         "id": "duo_warm",
@@ -38,13 +40,13 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
         "id": "group_warm",
         "title": "多人温馨",
         "prompt": "自然并肩合影，轻松微笑，看向镜头，日常暖光",
-        "templates": ["group", "duo"],
+        "templates": ["group"],
     },
     {
         "id": "group_fun",
         "title": "多人活泼",
         "prompt": "轻松搞怪合影，比心或比耶，氛围愉快，看向镜头",
-        "templates": ["group", "duo"],
+        "templates": ["group"],
     },
     {
         "id": "selfie_soft",
@@ -92,19 +94,101 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
         "id": "window",
         "title": "窗边柔光",
         "prompt": "窗边柔和自然光，半身，轻松表情，干净背景",
-        "templates": ["selfie", "clothes", "duo", "group"],
+        "templates": ["selfie", "clothes"],
     },
     {
         "id": "cafe",
         "title": "咖啡店",
         "prompt": "咖啡馆座位，暖色灯光，轻松日常",
-        "templates": ["selfie", "duo", "group", "blank"],
+        "templates": ["selfie", "duo"],
     },
     {
         "id": "look_you",
         "title": "日常他拍",
         "prompt": "朋友随手拍的日常半身照，自然看镜头，生活感",
-        "templates": ["selfie", "blank"],
+        "templates": ["selfie"],
+    },
+    # Shared style presets (画布芯片 + 默认 /预设 名)
+    {
+        "id": "preset_hold_face",
+        "title": "捧脸",
+        "prompt": (
+            "男生第一视角：女友累了，男生用一只手捧住她的脸颊，高颜值真实人类女孩，"
+            "俯拍镜头且只能看到男友的手和手臂，女孩眼神朦胧却饱含爱意，头发凌乱，"
+            "房间光线昏暗，iPhone随手抓拍的生活化原生质感"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_to_real",
+        "title": "变真人",
+        "prompt": (
+            "将参考图中的二次元/插画角色转换为真实人像照片，保留角色的年龄感、表情、发型、"
+            "服装配色、气质和姿势，真实面部结构，自然皮肤纹理，真实摄影光影，电影级写实风格，高质量人像摄影"
+        ),
+        "templates": ["i2i", "clothes", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_jelly",
+        "title": "果冻化",
+        "prompt": "将第1张图片中的人物处理成果冻风效果，整体呈现Q弹果冻质感，色彩饱和度略高，表面有细微光泽感，原比例。",
+        "templates": ["i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_realistic",
+        "title": "真人化",
+        "prompt": (
+            "把参考图中的角色转化为真实人物照片风格，保留原角色的五官特征、发型、服装元素、气质和动作，"
+            "真实皮肤质感，自然光线，电影感摄影，真实镜头景深，高细节，写实风格，避免夸张变形"
+        ),
+        "templates": ["i2i", "clothes", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_cos",
+        "title": "变COS",
+        "prompt": (
+            "把参考图中的人物改造成高质量真人 COSPLAY 摄影风格，保留角色核心特征、发型、服装配色和标志性元素，"
+            "精致妆容，真实布料材质，摄影棚灯光，动漫展写真感，高清细节，专业摄影"
+        ),
+        "templates": ["clothes", "i2i", "selfie", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_manga_cover",
+        "title": "漫画封面",
+        "prompt": (
+            "把画面改造成高质量漫画封面风格，保留主体特征，强烈构图，精致线稿，鲜明色彩，动态光影，"
+            "干净背景，可加入装饰性标题排版但不要乱码文字，高质量插画"
+        ),
+        "templates": ["t2i", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_id_photo",
+        "title": "证件照",
+        "prompt": (
+            "把参考图中的人物改造成真实标准证件照风格，正面视角，干净背景，均匀光线，自然表情，"
+            "真实皮肤质感，清晰五官，正式衣着，高清真实摄影"
+        ),
+        "templates": ["i2i", "selfie", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_bf_view",
+        "title": "男友视角",
+        "prompt": (
+            "Girlfriend is drunk,  a beautiful 真人女孩,  In a room with purple ambient lighting, "
+            "she sits on the bed. her eyes are hazy but full of love, Messy hair, ensure that the hair color "
+            "of the girl in the picture remains unchanged. the room is dimly lit, she looked at the camera. "
+            "amateurish iPhone shot. Depict the shadow effect in the picture correctly, adjust the shading "
+            "of the glasses section to be appropriate"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
     },
 ]
 
@@ -264,20 +348,65 @@ def list_studio_templates() -> List[Dict[str, Any]]:
 
 
 def prompts_for_template(template_id: str) -> List[Dict[str, Any]]:
+    """Chips for one template only — do not leak other templates' prompts."""
     tid = normalize_template_id(template_id)
     out: List[Dict[str, Any]] = []
     for item in BUILTIN_PROMPTS:
-        tags = item.get("templates")
-        if not tags or tid in tags or "blank" in (tags or []):
-            out.append(
-                {
-                    "id": item.get("id"),
-                    "title": item.get("title"),
-                    "prompt": item.get("prompt"),
-                    "templates": list(tags or []),
-                }
-            )
+        tags = [str(x).strip() for x in (item.get("templates") or []) if str(x).strip()]
+        if tags and tid not in tags:
+            continue
+        out.append(
+            {
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "prompt": item.get("prompt"),
+                "templates": tags,
+                "global": bool(item.get("global")),
+            }
+        )
     return out
+
+
+def global_prompt_presets() -> List[Dict[str, Any]]:
+    """Builtin entries shown in the shared 预设 picker (画布/试画)."""
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in BUILTIN_PROMPTS:
+        title = str(item.get("title") or "").strip()
+        prompt = str(item.get("prompt") or "").strip()
+        if not title or not prompt:
+            continue
+        if not item.get("global") and item.get("templates"):
+            # template-only chips stay out of global picker unless marked global
+            continue
+        key = title.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "id": item.get("id") or title,
+                "name": title,
+                "title": title,
+                "prompt": prompt,
+                "source": "builtin",
+                "templates": list(item.get("templates") or []),
+            }
+        )
+    return out
+
+
+def default_image_preset_seed() -> Dict[str, Dict[str, str]]:
+    """Name -> preset dict for ImagePresetManager seed (QQ /预设 + Web)."""
+    seed: Dict[str, Dict[str, str]] = {}
+    for item in BUILTIN_PROMPTS:
+        if not item.get("global"):
+            continue
+        title = str(item.get("title") or "").strip()
+        prompt = str(item.get("prompt") or "").strip()
+        if title and prompt:
+            seed[title] = {"prompt": prompt, "description": title}
+    return seed
 
 
 def slots_for_template(template_id: str) -> List[Dict[str, Any]]:

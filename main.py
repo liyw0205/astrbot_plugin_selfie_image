@@ -70,6 +70,7 @@ from .studio import (
     BUILTIN_PROMPTS,
     StudioStore,
     build_studio_action,
+    global_prompt_presets,
     list_studio_templates,
     normalize_template_id,
     prompts_for_template,
@@ -1371,11 +1372,45 @@ class SelfieImagePlugin(Star):
 
     # --- Studio / 画布 ---
     def studio_list(self) -> Dict[str, Any]:
+        # Ensure default presets are seeded for picker / QQ /预设
+        try:
+            self.presets.load()
+        except Exception:
+            pass
         return {
             "sessions": self.studio.list_sessions(),
             "builtin_prompts": BUILTIN_PROMPTS,
             "templates": list_studio_templates(),
+            "prompt_presets": self.list_prompt_presets_for_web(),
         }
+
+    def list_prompt_presets_for_web(self) -> List[Dict[str, Any]]:
+        """Merged builtin global + user image_presets for 画布/试画 picker."""
+        merged: Dict[str, Dict[str, Any]] = {}
+        for item in global_prompt_presets():
+            name = str(item.get("name") or item.get("title") or "").strip()
+            if not name:
+                continue
+            merged[name] = dict(item)
+            merged[name]["name"] = name
+            merged[name]["title"] = name
+        try:
+            for item in self.presets.list_public():
+                name = str(item.get("name") or "").strip()
+                if not name:
+                    continue
+                # user file wins on same name (may already include seeded builtins)
+                row = dict(item)
+                row["name"] = name
+                row["title"] = name
+                if name in merged and row.get("source") == "user":
+                    row["source"] = "preset"
+                merged[name] = row
+        except Exception:
+            pass
+        rows = list(merged.values())
+        rows.sort(key=lambda r: str(r.get("name") or ""))
+        return rows
 
     def studio_get(self, session_id: str) -> Dict[str, Any]:
         return self.studio.get(session_id)

@@ -18,6 +18,15 @@ class ImagePreset:
     extra_prompt: str = ""
 
 
+def _default_seed() -> Dict[str, Dict[str, str]]:
+    try:
+        from .studio import default_image_preset_seed
+
+        return default_image_preset_seed()
+    except Exception:
+        return {}
+
+
 class ImagePresetManager:
     def __init__(self, data_dir: str):
         self.file_path = os.path.join(data_dir, "image_presets.json")
@@ -27,8 +36,7 @@ class ImagePresetManager:
     def load(self) -> None:
         raw = load_json_file(self.file_path)
         if not isinstance(raw, dict):
-            self.presets = {}
-            return
+            raw = {}
 
         presets: Dict[str, ImagePreset] = {}
         for name, value in raw.items():
@@ -45,7 +53,23 @@ class ImagePresetManager:
                 description=str(value.get("description") or "").strip(),
                 extra_prompt=str(value.get("extra_prompt") or value.get("extraPrompt") or "").strip(),
             )
+
+        # Seed missing built-in defaults without overwriting user edits.
+        dirty = False
+        for name, value in _default_seed().items():
+            key = str(name or "").strip()
+            prompt = str((value or {}).get("prompt") or "").strip()
+            if not key or not prompt or key in presets:
+                continue
+            presets[key] = ImagePreset(
+                prompt=prompt,
+                description=str((value or {}).get("description") or key).strip(),
+            )
+            dirty = True
+
         self.presets = presets
+        if dirty or (not raw and presets):
+            self.save()
 
     def save(self) -> None:
         save_json_file(
@@ -64,6 +88,23 @@ class ImagePresetManager:
 
     def list(self) -> List[Tuple[str, ImagePreset]]:
         return list(self.presets.items())
+
+    def list_public(self) -> List[Dict[str, str]]:
+        rows: List[Dict[str, str]] = []
+        for name, preset in self.list():
+            rows.append(
+                {
+                    "name": name,
+                    "title": name,
+                    "prompt": preset.prompt,
+                    "description": preset.description or "",
+                    "aspect_ratio": preset.aspect_ratio or "",
+                    "resolution": preset.resolution or "",
+                    "source": "user",
+                }
+            )
+        rows.sort(key=lambda item: str(item.get("name") or ""))
+        return rows
 
     def add(self, name: str, raw_value: str) -> Tuple[bool, str]:
         key = str(name or "").strip()
@@ -149,7 +190,7 @@ class ImagePresetManager:
             if lowered == key_lower:
                 return name, preset, ""
             if lowered.startswith(key_lower + " "):
-                return name, preset, text[len(key):].strip()
+                return name, preset, text[len(key) :].strip()
         return "", None, ""
 
     def _join_prompt(self, parts: List[str]) -> str:

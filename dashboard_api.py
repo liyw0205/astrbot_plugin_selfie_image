@@ -79,6 +79,7 @@ class SelfieImageDashboardAPI:
             ("studio/sessions/<session_id>/promote", self.page_studio_promote, ["POST"], "Selfie Image studio promote"),
             ("studio/sessions/<session_id>/run", self.page_studio_run, ["POST"], "Selfie Image studio run"),
             ("studio/tasks/<task_id>", self.page_studio_task, ["GET"], "Selfie Image studio task"),
+            ("prompt-presets", self.page_prompt_presets, ["GET"], "Selfie Image prompt presets"),
         ]
         for route, handler, methods, desc in routes:
             # Match telegram forwarder: bridge strips "/api/" then hits
@@ -466,3 +467,10 @@ class SelfieImageDashboardAPI:
             return self._ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
         except Exception as exc:
             return self._fail(str(exc), 404)
+
+    async def page_prompt_presets(self) -> Any:
+        try:
+            data = self.plugin.list_prompt_presets_for_web()
+            return self._ok(data, count=len(data))
+        except Exception as exc:
+            return self._fail(str(exc), 500)

@@ -3692,12 +3692,48 @@ class StudioStoreTests(unittest.TestCase):
             chips = prompts_for_template("duo")
             self.assertTrue(any("合影" in (c.get("prompt") or "") or "双人" in (c.get("title") or "") for c in chips))
 
+
+    def test_template_chips_do_not_leak(self) -> None:
+        from astrbot_plugin_selfie_image.studio import prompts_for_template, global_prompt_presets, default_image_preset_seed
+
+        duo = prompts_for_template("duo")
+        titles = {str(x.get("title")) for x in duo}
+        self.assertIn("双人温馨", titles)
+        self.assertNotIn("多人温馨", titles)  # group-only
+        self.assertNotIn("精修表情", titles)  # i2i-only
+        self.assertIn("捧脸", titles)
+        globals_ = global_prompt_presets()
+        gnames = {str(x.get("name")) for x in globals_}
+        for need in ("捧脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角"):
+            self.assertIn(need, gnames)
+        seed = default_image_preset_seed()
+        self.assertIn("捧脸", seed)
+        self.assertTrue(seed["捧脸"]["prompt"])
+
+    def test_default_presets_seed(self) -> None:
+        import tempfile
+        from astrbot_plugin_selfie_image.preset import ImagePresetManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = ImagePresetManager(tmp)
+            names = {n for n, _ in mgr.list()}
+            for need in ("捧脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角"):
+                self.assertIn(need, names)
+            # user override not clobbered
+            mgr.add("捧脸", "自定义捧脸提示词")
+            mgr2 = ImagePresetManager(tmp)
+            self.assertEqual(mgr2.presets["捧脸"].prompt, "自定义捧脸提示词")
+
     def test_dashboard_has_studio_tab(self) -> None:
         from astrbot_plugin_selfie_image.web import INDEX_HTML, WEB_TASK_ID_RE
 
         self.assertIn('data-tab="studio"', INDEX_HTML)
         self.assertIn("studioTemplateSelect", INDEX_HTML)
         self.assertIn("按模板新建", INDEX_HTML)
+        self.assertIn("studioPresetBtn", INDEX_HTML)
+        self.assertIn("testPresetBtn", INDEX_HTML)
+        self.assertIn("/api/prompt-presets", INDEX_HTML)
+        self.assertIn("tags.includes(tid)", INDEX_HTML)
         self.assertIn("/api/studio/sessions", INDEX_HTML)
         self.assertIn("data-cache-path", INDEX_HTML)
         self.assertIn("loadProtectedImages(wrap)", INDEX_HTML)
