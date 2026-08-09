@@ -1618,15 +1618,78 @@ class SelfieImagePlugin(Star):
 
     def studio_promote(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         result_id = str(payload.get("result_id") or "").strip()
+        if not result_id:
+            raise ValueError("需要 result_id")
+        role = str(payload.get("role") or "").strip()
         slot_id = str(payload.get("slot_id") or "").strip()
-        if not result_id or not slot_id:
-            raise ValueError("需要 result_id 与 slot_id")
+        if role:
+            return self.studio.promote_result_to_role(
+                session_id,
+                result_id,
+                role,
+                create_if_missing=payload.get("create_if_missing", True) is not False,
+            )
+        if not slot_id:
+            raise ValueError("需要 slot_id 或 role")
         return self.studio.promote_result_to_slot(session_id, result_id, slot_id)
+
+    def studio_gallery_images(self, limit: int = 24) -> Dict[str, Any]:
+        """Recent successful generated images from records for 画布「从记录选图」."""
+        try:
+            limit_n = max(1, min(48, int(limit or 24)))
+        except Exception:
+            limit_n = 24
+        items: List[Dict[str, Any]] = []
+        seen = set()
+        for record in self.get_recent_records():
+            if not record.get("success"):
+                continue
+            resp = record.get("response_data") if isinstance(record.get("response_data"), dict) else {}
+            req = record.get("request_data") if isinstance(record.get("request_data"), dict) else {}
+            paths = list(resp.get("generated_image_paths") or resp.get("image_paths") or [])
+            if not paths:
+                # some older shapes
+                paths = list(record.get("generated_image_paths") or [])
+            for path in paths:
+                text = str(path or "").strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                info = self.get_cached_image_info(text)
+                if not info.get("exists"):
+                    continue
+                items.append(
+                    {
+                        "path": text,
+                        "record_id": record.get("id"),
+                        "created_at": record.get("created_at") or record.get("time") or "",
+                        "model": resp.get("model") or req.get("model") or "",
+                        "prompt": str(req.get("original_prompt") or req.get("prompt") or "")[:80],
+                        "source": record.get("source") or "",
+                    }
+                )
+                if len(items) >= limit_n:
+                    return {"items": items, "count": len(items)}
+        return {"items": items, "count": len(items)}
 
     def start_studio_run(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Queue a studio generation using current session slots + graph."""
         payload = payload if isinstance(payload, dict) else {}
         session = self.studio.get(session_id)
+        # Prevent double-submit while last run still running
+        last = session.get("last_run") if isinstance(session.get("last_run"), dict) else {}
+        if str(last.get("status") or "") == "running":
+            task_id = str(last.get("task_id") or "").strip()
+            if task_id:
+                try:
+                    existing = self.get_web_image_task(task_id)
+                    st = str(existing.get("status") or "")
+                    if st in {"queued", "running"}:
+                        raise RuntimeError("当前画布正在生成，请稍候或等完成后再点")
+                except ValueError:
+                    pass
+                except RuntimeError:
+                    raise
         if isinstance(payload.get("graph"), dict):
             session = self.studio.update_graph(session_id, payload["graph"])
         loop = getattr(self, "loop", None)

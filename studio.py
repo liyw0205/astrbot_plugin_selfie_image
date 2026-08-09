@@ -522,8 +522,18 @@ class StudioStore:
                     "title": s.get("title"),
                     "updated_at": s.get("updated_at"),
                     "template": s.get("template"),
+                    "mode": ((s.get("graph") or {}).get("mode") if isinstance(s.get("graph"), dict) else "") or "",
                     "slot_count": len(s.get("slots") or []),
                     "result_count": len(s.get("results") or []),
+                    "thumb_path": next(
+                        (
+                            str(r.get("image_path") or "")
+                            for r in (s.get("results") or [])
+                            if isinstance(r, dict) and str(r.get("image_path") or "").strip()
+                        ),
+                        "",
+                    ),
+                    "last_status": str((s.get("last_run") or {}).get("status") or ""),
                     "last_run": s.get("last_run"),
                 }
                 for s in ordered
@@ -742,12 +752,98 @@ class StudioStore:
                     break
             if not result:
                 raise ValueError("结果不存在")
+            path = str(result.get("image_path") or "").strip()
+            if not path:
+                raise ValueError("结果没有图片")
             slot = self._find_slot(session, slot_id)
-            slot["image_path"] = str(result.get("image_path") or "")
+            slot["image_path"] = path
             slot["source"] = "generated"
             session["updated_at"] = _now()
             self._persist()
             return public_session(session)
+
+    def promote_result_to_role(
+        self,
+        session_id: str,
+        result_id: str,
+        role: str,
+        *,
+        create_if_missing: bool = True,
+    ) -> Dict[str, Any]:
+        """Put a result into the first slot of role; optionally create that slot."""
+        role_key = str(role or "").strip().lower() or "extra"
+        role_labels = {
+            "identity": "形象",
+            "base": "底图",
+            "outfit": "服装",
+            "peer": "同框",
+            "pose": "姿势",
+            "scene": "场景",
+            "style": "风格",
+            "detail": "细节",
+            "extra": "额外参考",
+        }
+        with self._lock:
+            session = self._require(session_id)
+            result = None
+            for item in session.get("results") or []:
+                if str(item.get("id")) == str(result_id):
+                    result = item
+                    break
+            if not result:
+                raise ValueError("结果不存在")
+            path = str(result.get("image_path") or "").strip()
+            if not path:
+                raise ValueError("结果没有图片")
+            slot = next(
+                (
+                    s
+                    for s in (session.get("slots") or [])
+                    if isinstance(s, dict) and str(s.get("role") or "") == role_key
+                ),
+                None,
+            )
+            if not slot and create_if_missing:
+                slots = list(session.get("slots") or [])
+                if len(slots) >= MAX_SLOTS:
+                    raise ValueError(f"槽位最多 {MAX_SLOTS} 个")
+                slot = {
+                    "id": _new_id("slot"),
+                    "role": role_key,
+                    "label": role_labels.get(role_key, role_key),
+                    "image_path": "",
+                    "source": "",
+                    "mime": "",
+                }
+                slots.append(slot)
+                session["slots"] = slots
+                order = list((session.get("graph") or {}).get("input_order") or [])
+                order.append(slot["id"])
+                session.setdefault("graph", {})["input_order"] = order
+            if not slot:
+                raise ValueError(f"没有「{role_labels.get(role_key, role_key)}」槽位")
+            slot["image_path"] = path
+            slot["source"] = "generated"
+            session["updated_at"] = _now()
+            self._persist()
+            return public_session(session)
+
+    def set_slot_from_cache_path(
+        self,
+        session_id: str,
+        slot_id: str,
+        image_path: str,
+        *,
+        source: str = "record",
+        mime: str = "",
+    ) -> Dict[str, Any]:
+        return self.set_slot_image(
+            session_id,
+            slot_id,
+            image_path=image_path,
+            source=source,
+            mime=mime,
+        )
 
     def _require(self, session_id: str) -> Dict[str, Any]:
         sid = str(session_id or "").strip()

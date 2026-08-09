@@ -79,6 +79,7 @@ class SelfieImageDashboardAPI:
             ("studio/sessions/<session_id>/promote", self.page_studio_promote, ["POST"], "Selfie Image studio promote"),
             ("studio/sessions/<session_id>/run", self.page_studio_run, ["POST"], "Selfie Image studio run"),
             ("studio/tasks/<task_id>", self.page_studio_task, ["GET"], "Selfie Image studio task"),
+            ("studio/gallery", self.page_studio_gallery, ["GET"], "Selfie Image studio gallery from records"),
             ("prompt-presets", self.page_prompt_presets, ["GET"], "Selfie Image prompt presets"),
         ]
         for route, handler, methods, desc in routes:
@@ -467,6 +468,16 @@ class SelfieImageDashboardAPI:
             return self._ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
         except Exception as exc:
             return self._fail(str(exc), 404)
+
+    async def page_studio_gallery(self) -> Any:
+        try:
+            limit = int(request.args.get("limit") or 24)
+        except Exception:
+            limit = 24
+        try:
+            return self._ok(self.plugin.studio_gallery_images(limit=limit))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
 
     async def page_prompt_presets(self) -> Any:
         try:

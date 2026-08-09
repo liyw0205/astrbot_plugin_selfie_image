@@ -3806,9 +3806,36 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("/api/prompt-presets", INDEX_HTML)
         self.assertIn("tags.includes(tid)", INDEX_HTML)
         self.assertIn("/api/studio/sessions", INDEX_HTML)
+        self.assertIn("/api/studio/gallery", INDEX_HTML)
+        self.assertIn("studioPickRecordBtn", INDEX_HTML)
+        self.assertIn("作底图", INDEX_HTML)
+        self.assertIn("作服装", INDEX_HTML)
+        self.assertIn("studioMoveSlot", INDEX_HTML)
+        self.assertIn("setStudioRunningUI", INDEX_HTML)
         self.assertIn("data-cache-path", INDEX_HTML)
         self.assertIn("loadProtectedImages(wrap)", INDEX_HTML)
         self.assertTrue(WEB_TASK_ID_RE.fullmatch("web-studio-12345678-1"))
+
+    def test_studio_promote_role_and_gallery(self) -> None:
+        import tempfile
+        from astrbot_plugin_selfie_image.studio import StudioStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StudioStore(tmp)
+            session = store.create("b1", template="i2i")
+            # fake result
+            with store._lock:
+                s = store._require(session["id"])
+                s["results"] = [{"id": "res1", "image_path": "generated/a.png", "created_at": "t"}]
+                store._persist()
+            out = store.promote_result_to_role(session["id"], "res1", "outfit")
+            roles = [x.get("role") for x in out.get("slots") or []]
+            self.assertIn("outfit", roles)
+            outfit = next(x for x in out["slots"] if x["role"] == "outfit")
+            self.assertEqual(outfit["image_path"], "generated/a.png")
+            listed = store.list_sessions()
+            self.assertTrue(listed)
+            self.assertIn("thumb_path", listed[0])
 
 
 if __name__ == "__main__":

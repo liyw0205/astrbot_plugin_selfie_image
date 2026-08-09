@@ -251,6 +251,15 @@
     }
 
     .studio-chiprow button { padding:5px 10px; font-size:12px; }
+    .studio-gallery { display:none; margin-top:10px; border:1px solid var(--line); border-radius:var(--radius-md); padding:10px; background:var(--panel-soft); }
+    .studio-gallery.open { display:block; }
+    .studio-gallery-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px; max-height:280px; overflow:auto; }
+    .studio-gallery-item { border:1px solid var(--line); border-radius:8px; background:#fff; padding:4px; cursor:pointer; }
+    .studio-gallery-item img { width:100%; height:72px; object-fit:cover; border-radius:6px; display:block; }
+    .studio-gallery-item .cap { font-size:10px; color:var(--muted); margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .studio-slot .slot-actions button.mini { padding:3px 6px; font-size:11px; }
+    .studio-results .actions { flex-wrap:wrap; gap:4px; }
+
     .checkline { display: flex; align-items: center; gap: 8px; min-height: 38px; }
     .checkline input { width: auto; }
     .topline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -454,12 +463,17 @@
       <div class="studio-chiprow" id="studioPromptChips"></div>
       <div class="between" style="margin-top:8px">
         <h3>参考槽位</h3>
-        <button class="secondary" id="studioAddSlotBtn" type="button">加槽位</button>
+        <div class="actions">
+          <button class="secondary" id="studioPickRecordBtn" type="button">从记录选图</button>
+          <button class="secondary" id="studioAddSlotBtn" type="button">加槽位</button>
+        </div>
       </div>
+      <div class="studio-gallery" id="studioGallery"></div>
       <div class="studio-slots" id="studioSlots"></div>
       <div class="actions">
         <button class="ok" id="studioSaveBtn" type="button">保存设置</button>
         <button class="ok" id="studioRunBtn" type="button">开始生成</button>
+        <button class="secondary" id="studioRerunBtn" type="button">再生成</button>
       </div>
       <div id="studioStatus" class="status">选模板后点「按模板新建」，或打开已有会话。</div>
       <h3>结果</h3>
@@ -663,7 +677,7 @@
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], pollTimer: null, uploadSlotId: '', presetOpen: false };
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], pollTimer: null, uploadSlotId: "", presetOpen: false, running: false, galleryTargetSlotId: "" };
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -2520,10 +2534,16 @@
       blank.value = '';
       blank.textContent = '（未选择）';
       el.appendChild(blank);
+      const tplName = (id) => {
+        const t = (STUDIO.templates || []).find(x => x.id === id);
+        return (t && t.title) || id || '';
+      };
       for (const s of STUDIO.sessions || []) {
         const opt = document.createElement('option');
         opt.value = s.id;
-        opt.textContent = `${s.title || s.id} · ${s.updated_at || ''}`;
+        const badge = [s.template ? tplName(s.template) : '', s.result_count ? (s.result_count + '结果') : '', s.last_status || '']
+          .filter(Boolean).join(' · ');
+        opt.textContent = `${s.title || s.id}${badge ? ' · ' + badge : ''}`;
         if (s.id === cur) opt.selected = true;
         el.appendChild(opt);
       }
@@ -2534,22 +2554,29 @@
       wrap.innerHTML = '';
       const session = STUDIO.current;
       if (!session) { wrap.innerHTML = '<div class="status">还没有画布会话</div>'; return; }
-      for (const slot of session.slots || []) {
+      const slots = session.slots || [];
+      slots.forEach((slot, index) => {
         const card = document.createElement('div');
         const has = !!(slot.image_path);
         card.className = 'studio-slot ' + (has ? 'has-image' : 'empty');
+        card.dataset.slotId = slot.id;
         // Must use data-cache-path + loadProtectedImage (auth/token); bare /api/cache-image src is broken.
         card.innerHTML = `
           <div class="slot-label">${escapeHtml(slot.label || slot.role || '槽位')} · ${escapeHtml(slot.role || '')}</div>
           ${has ? `<img data-cache-path="${escapeHtml(slot.image_path)}" alt="">` : '<div class="status" style="font-size:12px">空</div>'}
           <div class="slot-actions">
-            <button type="button" class="secondary" data-act="upload">上传</button>
-            <button type="button" class="secondary" data-act="clear" ${has ? '' : 'disabled'}>清空</button>
+            <button type="button" class="secondary mini" data-act="upload">上传</button>
+            <button type="button" class="secondary mini" data-act="record">记录</button>
+            <button type="button" class="secondary mini" data-act="up" ${index === 0 ? 'disabled' : ''}>上移</button>
+            <button type="button" class="secondary mini" data-act="down" ${index >= slots.length - 1 ? 'disabled' : ''}>下移</button>
+            <button type="button" class="secondary mini" data-act="clear" ${has ? '' : 'disabled'}>清空</button>
           </div>`;
         card.querySelector('[data-act="upload"]').onclick = () => {
           STUDIO.uploadSlotId = slot.id;
+          STUDIO.galleryTargetSlotId = '';
           $('studioFilePick').click();
         };
+        card.querySelector('[data-act="record"]').onclick = () => openStudioGallery(slot.id);
         card.querySelector('[data-act="clear"]').onclick = async () => {
           const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(session.id)}/slots/${encodeURIComponent(slot.id)}`, {
             method: 'POST', body: JSON.stringify({ clear: true })
@@ -2557,9 +2584,38 @@
           if (!res.success) { showToast(res.message || '清空失败', 'bad'); return; }
           STUDIO.current = res.data; renderStudio();
         };
+        card.querySelector('[data-act="up"]').onclick = () => studioMoveSlot(index, -1);
+        card.querySelector('[data-act="down"]').onclick = () => studioMoveSlot(index, 1);
         wrap.appendChild(card);
-      }
+      });
       loadProtectedImages(wrap);
+    }
+    async function studioMoveSlot(index, delta) {
+      if (!STUDIO.current) return;
+      const slots = [...(STUDIO.current.slots || [])];
+      const j = index + delta;
+      if (j < 0 || j >= slots.length) return;
+      const tmp = slots[index];
+      slots[index] = slots[j];
+      slots[j] = tmp;
+      const order = slots.map(s => s.id);
+      const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(STUDIO.current.id)}/reorder`, {
+        method: 'POST', body: JSON.stringify({ order })
+      });
+      if (!res.success) return showToast(res.message || '排序失败', 'bad');
+      STUDIO.current = res.data;
+      renderStudio();
+    }
+    async function studioPromoteRole(resultId, role, okText) {
+      if (!STUDIO.current) return;
+      const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(STUDIO.current.id)}/promote`, {
+        method: 'POST',
+        body: JSON.stringify({ result_id: resultId, role, create_if_missing: true })
+      });
+      if (!res.success) return showToast(res.message || '失败', 'bad');
+      STUDIO.current = res.data;
+      renderStudio();
+      showToast(okText || '已放入槽位', 'ok');
     }
     function renderStudioResults() {
       const wrap = $('studioResults');
@@ -2574,28 +2630,18 @@
         card.innerHTML = `
           ${path ? `<img data-cache-path="${escapeHtml(path)}" alt="">` : '<div class="status">无图</div>'}
           <div class="actions" style="margin-top:6px">
+            <button type="button" class="secondary mini" data-act="base">作底图</button>
+            <button type="button" class="secondary mini" data-act="outfit">作服装</button>
             <button type="button" class="secondary mini" data-act="peer">作同框</button>
             <button type="button" class="secondary mini" data-act="id">作形象</button>
+            <button type="button" class="secondary mini" data-act="again">再生成</button>
           </div>
-          <div class="status" style="font-size:11px">${escapeHtml(item.created_at || '')}</div>`;
-        const peer = (session.slots || []).find(s => s.role === 'peer') || (session.slots || [])[1];
-        const identity = (session.slots || []).find(s => s.role === 'identity') || (session.slots || [])[0];
-        card.querySelector('[data-act="peer"]').onclick = async () => {
-          if (!peer) return showToast('没有同框槽', 'bad');
-          const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(session.id)}/promote`, {
-            method:'POST', body: JSON.stringify({ result_id: item.id, slot_id: peer.id })
-          });
-          if (!res.success) return showToast(res.message || '失败', 'bad');
-          STUDIO.current = res.data; renderStudio(); showToast('已放进同框槽', 'ok');
-        };
-        card.querySelector('[data-act="id"]').onclick = async () => {
-          if (!identity) return showToast('没有形象槽', 'bad');
-          const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(session.id)}/promote`, {
-            method:'POST', body: JSON.stringify({ result_id: item.id, slot_id: identity.id })
-          });
-          if (!res.success) return showToast(res.message || '失败', 'bad');
-          STUDIO.current = res.data; renderStudio(); showToast('已放进形象槽', 'ok');
-        };
+          <div class="status" style="font-size:11px">${escapeHtml(item.created_at || '')}${item.used_model ? ' · ' + escapeHtml(item.used_model) : ''}</div>`;
+        card.querySelector('[data-act="base"]').onclick = () => studioPromoteRole(item.id, 'base', '已作底图');
+        card.querySelector('[data-act="outfit"]').onclick = () => studioPromoteRole(item.id, 'outfit', '已作服装参考');
+        card.querySelector('[data-act="peer"]').onclick = () => studioPromoteRole(item.id, 'peer', '已作同框');
+        card.querySelector('[data-act="id"]').onclick = () => studioPromoteRole(item.id, 'identity', '已作形象');
+        card.querySelector('[data-act="again"]').onclick = () => studioRun();
         wrap.appendChild(card);
       }
       const last = session.last_run;
@@ -2606,6 +2652,71 @@
         wrap.prepend(err);
       }
       loadProtectedImages(wrap);
+    }
+    function setStudioRunningUI(running) {
+      STUDIO.running = !!running;
+      const btn = $('studioRunBtn');
+      const again = $('studioRerunBtn');
+      if (btn) {
+        btn.disabled = !!running;
+        btn.textContent = running ? '生成中…' : '开始生成';
+      }
+      if (again) again.disabled = !!running;
+      if ($('studioPickRecordBtn')) $('studioPickRecordBtn').disabled = !!running;
+    }
+    async function openStudioGallery(slotId) {
+      if (!STUDIO.current) return showToast('请先选择画布', 'bad');
+      STUDIO.galleryTargetSlotId = slotId || '';
+      const panel = $('studioGallery');
+      if (!panel) return;
+      panel.classList.add('open');
+      panel.innerHTML = '<div class="status">加载记录图…</div>';
+      const res = await studioApi('/api/studio/gallery?limit=24');
+      if (!res.success) {
+        panel.innerHTML = `<div class="status">${escapeHtml(res.message || '加载失败')}</div>`;
+        return;
+      }
+      const items = (res.data && res.data.items) || [];
+      if (!items.length) {
+        panel.innerHTML = '<div class="status">暂无成功记录图</div>';
+        return;
+      }
+      const targetHint = STUDIO.galleryTargetSlotId
+        ? '点击图片放入当前槽'
+        : '先点槽位「记录」，或点图后选默认空槽/形象槽';
+      panel.innerHTML = `<div class="between"><div class="status">${targetHint}</div>
+        <button type="button" class="secondary mini" id="studioGalleryClose">收起</button></div>
+        <div class="studio-gallery-grid" id="studioGalleryGrid"></div>`;
+      $('studioGalleryClose').onclick = () => { panel.classList.remove('open'); panel.innerHTML=''; STUDIO.galleryTargetSlotId=''; };
+      const grid = $('studioGalleryGrid');
+      for (const item of items) {
+        const cell = document.createElement('div');
+        cell.className = 'studio-gallery-item';
+        cell.innerHTML = `<img data-cache-path="${escapeHtml(item.path || '')}" alt=""><div class="cap">${escapeHtml(item.prompt || item.model || item.path || '')}</div>`;
+        cell.onclick = () => studioPickGalleryPath(item.path);
+        grid.appendChild(cell);
+      }
+      loadProtectedImages(grid);
+    }
+    async function studioPickGalleryPath(imagePath) {
+      if (!STUDIO.current || !imagePath) return;
+      let slotId = STUDIO.galleryTargetSlotId;
+      if (!slotId) {
+        const empty = (STUDIO.current.slots || []).find(s => !s.image_path);
+        const identity = (STUDIO.current.slots || []).find(s => s.role === 'identity' || s.role === 'base');
+        slotId = (empty && empty.id) || (identity && identity.id) || ((STUDIO.current.slots || [])[0] || {}).id;
+      }
+      if (!slotId) return showToast('没有可用槽位', 'bad');
+      const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(STUDIO.current.id)}/slots/${encodeURIComponent(slotId)}`, {
+        method: 'POST', body: JSON.stringify({ image_path: imagePath, source: 'record' })
+      });
+      if (!res.success) return showToast(res.message || '放入失败', 'bad');
+      STUDIO.current = res.data;
+      STUDIO.galleryTargetSlotId = '';
+      const panel = $('studioGallery');
+      if (panel) { panel.classList.remove('open'); panel.innerHTML = ''; }
+      renderStudio();
+      showToast('已从记录放入槽位', 'ok');
     }
     function renderStudio() {
       renderStudioSessionSelect();
@@ -2631,6 +2742,8 @@
       $('studioPolicy').value = g.channel_policy || 'priority';
       setSelectOptions('studioAspect', ['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'], g.aspect_ratio || '自动');
       const lr = s.last_run;
+      const running = !!(lr && lr.status === 'running') || !!STUDIO.running;
+      setStudioRunningUI(running && lr && lr.status === 'running');
       if (lr && lr.status === 'running') $('studioStatus').textContent = '生成中… ' + (lr.task_id || '');
       else if (lr && lr.status === 'succeeded') $('studioStatus').textContent = '完成 · ' + (lr.used_model || '') + ' · ' + ((lr.result_paths||[]).length) + ' 张';
       else if (lr && lr.status === 'failed') $('studioStatus').textContent = '失败：' + (lr.error || '');
@@ -2700,13 +2813,16 @@
     }
     async function studioRun() {
       if (!STUDIO.current) return showToast('请先新建或选择画布', 'bad');
+      if (STUDIO.running) return showToast('正在生成，请稍候', 'bad');
       await studioSave();
       if (!STUDIO.current) return;
+      setStudioRunningUI(true);
       $('studioStatus').textContent = '已提交生成…';
       const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/run', {
         method:'POST', body: JSON.stringify({})
       });
       if (!res.success) {
+        setStudioRunningUI(false);
         $('studioStatus').textContent = res.message || '启动失败';
         return showToast(res.message || '启动失败', 'bad');
       }
@@ -2720,9 +2836,11 @@
           const task = st.data || {};
           if (task.status === 'queued' || task.status === 'running') {
             $('studioStatus').textContent = '生成中… ' + (task.running_seconds != null ? task.running_seconds + 's' : '');
+            setStudioRunningUI(true);
             return;
           }
           studioStopPoll();
+          setStudioRunningUI(false);
           await loadStudioList(STUDIO.current.id);
           if (task.success) showToast('画布生成完成', 'ok');
           else showToast(task.error || '生成失败', 'bad');
@@ -2788,6 +2906,8 @@
     if ($('studioDeleteBtn')) $('studioDeleteBtn').onclick = studioDelete;
     if ($('studioSaveBtn')) $('studioSaveBtn').onclick = studioSave;
     if ($('studioRunBtn')) $('studioRunBtn').onclick = studioRun;
+    if ($('studioRerunBtn')) $('studioRerunBtn').onclick = studioRun;
+    if ($('studioPickRecordBtn')) $('studioPickRecordBtn').onclick = () => openStudioGallery('');
     if ($('studioAddSlotBtn')) $('studioAddSlotBtn').onclick = async () => {
       if (!STUDIO.current) return showToast('请先新建画布', 'bad');
       const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/slots', {method:'POST', body: JSON.stringify({role:'extra', label:'额外参考'})});
