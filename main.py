@@ -66,6 +66,7 @@ from .models import (
     preflight_video_channel,
 )
 from .persona import PersonaManager
+from .studio import BUILTIN_PROMPTS, StudioStore, build_studio_action, resolve_slot_refs_for_run
 from .providers import (
     ImageGenerateRequest,
     ImageReference,
@@ -218,6 +219,7 @@ class SelfieImagePlugin(Star):
         self.config = AICatConfig.from_dict(self.raw_config)
         self.persona = PersonaManager(self.data_dir)
         self.presets = ImagePresetManager(self.data_dir)
+        self.studio = StudioStore(self.data_dir)
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self._video_semaphore = asyncio.Semaphore(max(1, int(getattr(self.config, "video_max_concurrent_tasks", 1) or 1)))
@@ -1341,6 +1343,306 @@ class SelfieImagePlugin(Star):
     def _save_cache_image(self, data: bytes, prefix: str, mime: str = "") -> str:
         path = save_image_bytes(data, self.generated_dir, prefix=prefix, mime=mime or detect_mime_by_bytes(data))
         return self._cache_relative_path(path)
+
+    def _load_cache_image_bytes(self, rel_path: str) -> Optional[Tuple[bytes, str]]:
+        try:
+            info = self.get_cached_image_info(rel_path)
+        except Exception:
+            return None
+        if not info.get("exists") or info.get("is_image") is False:
+            return None
+        try:
+            with open(info["absolute_path"], "rb") as handle:
+                data = handle.read()
+        except OSError:
+            return None
+        if not data:
+            return None
+        mime = str(info.get("mime_type") or detect_mime_by_bytes(data) or "image/png")
+        return data, mime
+
+    # --- Studio / 画布 ---
+    def studio_list(self) -> Dict[str, Any]:
+        return {"sessions": self.studio.list_sessions(), "builtin_prompts": BUILTIN_PROMPTS}
+
+    def studio_get(self, session_id: str) -> Dict[str, Any]:
+        return self.studio.get(session_id)
+
+    def studio_create(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        payload = payload if isinstance(payload, dict) else {}
+        title = str(payload.get("title") or "").strip()
+        use_group = payload.get("use_group_template", True)
+        if isinstance(use_group, str):
+            use_group = use_group.strip().lower() not in {"0", "false", "no", "off", "否"}
+        session = self.studio.create(title, use_group_template=bool(use_group))
+        # Prefill identity from persona if present
+        if self.persona.has_reference_image():
+            ref = self.persona.get_reference_image()
+            if ref and ref.get("data"):
+                rel = self._save_cache_image(ref["data"], "studio", ref.get("mime_type") or "image/png")
+                identity = next((s for s in session.get("slots") or [] if s.get("role") == "identity"), None)
+                if identity:
+                    session = self.studio.set_slot_image(
+                        session["id"],
+                        identity["id"],
+                        image_path=rel,
+                        source="persona",
+                        mime=str(ref.get("mime_type") or "image/png"),
+                    )
+        return session
+
+    def studio_delete(self, session_id: str) -> Dict[str, Any]:
+        self.studio.delete(session_id)
+        return {"deleted": True, "id": session_id}
+
+    def studio_update(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("请求体必须是 JSON 对象")
+        patch = payload.get("graph") if isinstance(payload.get("graph"), dict) else payload
+        if "title" in payload and "title" not in patch:
+            patch = dict(patch)
+            patch["title"] = payload.get("title")
+        return self.studio.update_graph(session_id, patch)
+
+    def studio_set_slot(self, session_id: str, slot_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("请求体必须是 JSON 对象")
+        if payload.get("clear"):
+            return self.studio.clear_slot(session_id, slot_id)
+        # from existing cache path
+        from_path = str(payload.get("image_path") or payload.get("path") or "").strip()
+        if from_path:
+            info = self.get_cached_image_info(from_path)
+            if not info.get("exists") or info.get("is_image") is False:
+                raise ValueError("图片不存在或不是有效图片")
+            return self.studio.set_slot_image(
+                session_id,
+                slot_id,
+                image_path=from_path,
+                source=str(payload.get("source") or "record"),
+                mime=str(info.get("mime_type") or ""),
+                label=str(payload.get("label") or ""),
+            )
+        raw = payload.get("image") or payload.get("data_url") or ""
+        data, mime = data_url_to_bytes(str(raw or ""))
+        if not data:
+            raise ValueError("请提供图片 data_url 或 image_path")
+        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+        if len(data) > max_bytes:
+            raise ValueError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
+        mime = normalize_image_mime(mime or detect_mime_by_bytes(data))
+        rel = self._save_cache_image(data, "studio", mime)
+        return self.studio.set_slot_image(
+            session_id,
+            slot_id,
+            image_path=rel,
+            source=str(payload.get("source") or "upload"),
+            mime=mime,
+            label=str(payload.get("label") or ""),
+        )
+
+    def studio_add_slot(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        payload = payload if isinstance(payload, dict) else {}
+        return self.studio.add_slot(
+            session_id,
+            role=str(payload.get("role") or "extra"),
+            label=str(payload.get("label") or ""),
+        )
+
+    def studio_reorder(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        order = payload.get("order") or payload.get("input_order") or []
+        if not isinstance(order, list):
+            raise ValueError("order 必须是数组")
+        return self.studio.reorder_slots(session_id, order)
+
+    def studio_promote(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        result_id = str(payload.get("result_id") or "").strip()
+        slot_id = str(payload.get("slot_id") or "").strip()
+        if not result_id or not slot_id:
+            raise ValueError("需要 result_id 与 slot_id")
+        return self.studio.promote_result_to_slot(session_id, result_id, slot_id)
+
+    def start_studio_run(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Queue a studio generation using current session slots + graph."""
+        payload = payload if isinstance(payload, dict) else {}
+        session = self.studio.get(session_id)
+        if isinstance(payload.get("graph"), dict):
+            session = self.studio.update_graph(session_id, payload["graph"])
+        loop = getattr(self, "loop", None)
+        if loop is None or not loop.is_running():
+            raise RuntimeError("AstrBot 事件循环未就绪，无法启动画布生成")
+
+        graph = session.get("graph") or {}
+        action = build_studio_action(session)
+        aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "自动")
+        resolution = str(graph.get("resolution") or self.config.image_default_resolution or "1K")
+        try:
+            count = max(1, min(4, int(graph.get("count") or 1)))
+        except Exception:
+            count = 1
+        mode = str(graph.get("mode") or "group")
+        persona_ref = self.persona.get_reference_image() if graph.get("use_persona_identity", True) else None
+        raw_refs, used_slots = resolve_slot_refs_for_run(
+            session,
+            persona_ref=persona_ref,
+            load_path_bytes=self._load_cache_image_bytes,
+        )
+        if mode in {"group", "selfie", "i2i"} and not raw_refs:
+            raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
+
+        summary = {
+            "session_id": session_id,
+            "mode": mode,
+            "prompt": action,
+            "aspect_ratio": aspect,
+            "resolution": resolution,
+            "count": count,
+            "used_slots": used_slots,
+            "kind": "studio",
+        }
+        with self._web_task_lock:
+            self._web_task_seq += 1
+            task_id = f"web-studio-{int(time.time() * 1000)}-{self._web_task_seq}"
+            now = time.time()
+            self._web_tasks[task_id] = {
+                "task_id": task_id,
+                "status": "queued",
+                "success": None,
+                "error": "",
+                "created_ts": now,
+                "updated_ts": now,
+                "created_at": self._web_task_timestamp(),
+                "updated_at": self._web_task_timestamp(),
+                "request_data": redact_sensitive_data(dict(summary)),
+                "result": None,
+                "source": "studio-run",
+                "owner_session": "web",
+                "cancel_requested": False,
+                "studio_session_id": session_id,
+            }
+            self._prune_web_tasks_locked()
+
+        self.studio.attach_run_start(session_id, task_id, summary)
+        asyncio.run_coroutine_threadsafe(self._run_studio_task(task_id, session_id), loop)
+        return self.get_web_image_task(task_id)
+
+    async def _run_studio_task(self, task_id: str, session_id: str) -> None:
+        self._set_web_image_task(task_id, status="running", started_ts=time.time(), started_at=self._web_task_timestamp())
+        try:
+            if self._task_cancel_requested(task_id):
+                raise RuntimeError("任务已取消")
+            session = self.studio.get(session_id)
+            graph = session.get("graph") or {}
+            action = build_studio_action(session)
+            aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "自动")
+            resolution = str(graph.get("resolution") or self.config.image_default_resolution or "1K")
+            try:
+                count = max(1, min(4, int(graph.get("count") or 1)))
+            except Exception:
+                count = 1
+            mode = str(graph.get("mode") or "group").strip().lower() or "group"
+            persona_ref = self.persona.get_reference_image() if graph.get("use_persona_identity", True) else None
+            raw_refs, _ = resolve_slot_refs_for_run(
+                session,
+                persona_ref=persona_ref,
+                load_path_bytes=self._load_cache_image_bytes,
+            )
+            refs = [ImageReference(data=data, mime_type=mime) for data, mime in raw_refs]
+            if mode in {"group", "selfie", "i2i"} and not refs:
+                raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
+
+            if mode in {"group", "selfie"}:
+                await self.persona.ensure_daily_selfie_profile(action)
+                # refs already include identity first when available; do not re-prepend persona
+                has_identity = bool(refs)
+                extra_count = max(0, len(refs) - 1) if has_identity else len(refs)
+                prompt = self.persona.build_selfie_prompt(
+                    action=action,
+                    bot_name=self.config.bot_name,
+                    personality=self.config.personality,
+                    has_reference_image=has_identity,
+                    extra_reference_count=extra_count,
+                )
+            else:
+                prompt = build_prompt_with_reference_instruction(action, refs)
+
+            all_paths: List[str] = []
+            last_error = ""
+            used_model = ""
+            last_result: Dict[str, Any] = {}
+            policy = str(graph.get("channel_policy") or "priority").strip().lower()
+            old_random = bool(getattr(self.config, "random_image_model", False))
+            if policy == "random" and not old_random:
+                self.config.random_image_model = True
+            try:
+                for _ in range(max(1, count)):
+                    if self._task_cancel_requested(task_id):
+                        raise RuntimeError("任务已取消")
+                    result = await self._run_image_generation(
+                        prompt=prompt,
+                        aspect_ratio=aspect,
+                        resolution=resolution,
+                        refs=refs,
+                        source="studio-run",
+                        original_prompt=action,
+                        event=None,
+                    )
+                    last_result = result if isinstance(result, dict) else {}
+                    if not last_result.get("success"):
+                        last_error = str(last_result.get("error") or "生成失败")
+                        break
+                    used_model = str(last_result.get("used_model") or used_model)
+                    for path in last_result.get("image_paths") or last_result.get("generated_image_paths") or []:
+                        text = str(path or "").strip()
+                        if text:
+                            all_paths.append(text)
+            finally:
+                self.config.random_image_model = old_random
+
+            success = bool(all_paths) and not last_error
+            error = "" if success else (last_error or "生成失败")
+            self.studio.attach_run_finish(
+                session_id,
+                task_id,
+                success=success,
+                error=error,
+                result_paths=all_paths,
+                used_model=used_model,
+            )
+            result_payload = {
+                "success": success,
+                "error": error,
+                "image_paths": all_paths,
+                "generated_image_paths": all_paths,
+                "used_model": used_model,
+                "session_id": session_id,
+                "elapsed_seconds": last_result.get("elapsed_seconds"),
+            }
+            self._set_web_image_task(
+                task_id,
+                status="succeeded" if success else "failed",
+                success=success,
+                error=error,
+                result=redact_sensitive_data(result_payload),
+                finished_ts=time.time(),
+                finished_at=self._web_task_timestamp(),
+            )
+        except Exception as exc:
+            error = redact_sensitive_text(str(exc))
+            try:
+                self.studio.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[])
+            except Exception:
+                pass
+            cancelled = "取消" in error
+            self._set_web_image_task(
+                task_id,
+                status="cancelled" if cancelled else "failed",
+                success=False,
+                error=error,
+                result={"success": False, "error": error, "session_id": session_id},
+                finished_ts=time.time(),
+                finished_at=self._web_task_timestamp(),
+            )
 
     def _save_reference_images_to_cache(self, refs: List[ImageReference]) -> List[str]:
         paths: List[str] = []

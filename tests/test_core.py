@@ -3634,5 +3634,35 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("command-look-you", main_src)
 
 
+class StudioStoreTests(unittest.TestCase):
+    def test_group_template_and_persist(self) -> None:
+        import tempfile
+        from astrbot_plugin_selfie_image.studio import StudioStore, build_studio_action, BUILTIN_PROMPTS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StudioStore(tmp)
+            session = store.create("测试合影", use_group_template=True)
+            self.assertEqual(session.get("template"), "group")
+            roles = [s.get("role") for s in session.get("slots") or []]
+            self.assertIn("identity", roles)
+            self.assertIn("peer", roles)
+            self.assertTrue(any(p.get("prompt") for p in BUILTIN_PROMPTS))
+            action = build_studio_action(session)
+            self.assertIn("合影", action)
+            updated = store.update_graph(session["id"], {"prompt": "窗边合影", "mode": "group", "count": 2})
+            self.assertEqual(updated["graph"]["prompt"], "窗边合影")
+            self.assertEqual(updated["graph"]["count"], 2)
+            again = StudioStore(tmp).get(session["id"])
+            self.assertEqual(again["graph"]["prompt"], "窗边合影")
+
+    def test_dashboard_has_studio_tab(self) -> None:
+        from astrbot_plugin_selfie_image.web import INDEX_HTML, WEB_TASK_ID_RE
+
+        self.assertIn('data-tab="studio"', INDEX_HTML)
+        self.assertIn("合影画布", INDEX_HTML)
+        self.assertIn("/api/studio/sessions", INDEX_HTML)
+        self.assertTrue(WEB_TASK_ID_RE.fullmatch("web-studio-12345678-1"))
+
+
 if __name__ == "__main__":
     unittest.main()

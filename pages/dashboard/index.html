@@ -224,6 +224,19 @@
     .images img { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); }
     .test-panel { display: none; margin-top: 12px; }
     .test-panel.active { display: block; }
+    .studio-slots { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-top:10px; }
+    .studio-slot { border:1px solid var(--line); border-radius:var(--radius-md); background:#fff; padding:10px; min-height:170px; display:flex; flex-direction:column; gap:8px; box-shadow:var(--shadow); }
+    .studio-slot .slot-label { font-size:12px; font-weight:650; color:var(--muted); }
+    .studio-slot img { width:100%; height:110px; object-fit:cover; border-radius:8px; border:1px solid var(--line); background:#f8fafc; display:none; }
+    .studio-slot.empty img { display:none; }
+    .studio-slot.has-image img { display:block; }
+    .studio-slot .slot-actions { display:flex; gap:6px; flex-wrap:wrap; }
+    .studio-slot .slot-actions button { padding:4px 8px; font-size:12px; }
+    .studio-results { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; margin-top:10px; }
+    .studio-results .card { border:1px solid var(--line); border-radius:var(--radius-md); padding:8px; background:#fff; }
+    .studio-results img { width:100%; border-radius:8px; border:1px solid var(--line); }
+    .studio-chiprow { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+    .studio-chiprow button { padding:5px 10px; font-size:12px; }
     .checkline { display: flex; align-items: center; gap: 8px; min-height: 38px; }
     .checkline input { width: auto; }
     .topline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -291,6 +304,7 @@
       <button data-tab="base" class="active" type="button">基础</button>
       <button data-tab="channels" type="button">渠道</button>
       <button data-tab="monitor" type="button">记录</button>
+      <button data-tab="studio" type="button">画布</button>
       <button data-tab="test" type="button">试画</button>
       <button data-tab="image" type="button">出图</button>
       <button data-tab="selfie" type="button">形象</button>
@@ -368,6 +382,67 @@
       </div>
       <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
       <div id="monitorPager" class="actions"></div>
+    </section>
+
+
+    <section id="studio">
+      <div class="between">
+        <h2>画布</h2>
+        <span class="status">多参考编排 · 合影模板 · 仅图片</span>
+      </div>
+      <div class="grid">
+        <div>
+          <label>画布会话</label>
+          <select id="studioSessionSelect"></select>
+        </div>
+        <div>
+          <label>标题</label>
+          <input id="studioTitle" placeholder="合影画布">
+        </div>
+        <div class="actions" style="align-items:end">
+          <button class="ok" id="studioCreateBtn" type="button">新建合影画布</button>
+          <button class="secondary" id="studioReloadBtn" type="button">刷新</button>
+          <button class="danger" id="studioDeleteBtn" type="button">删除</button>
+        </div>
+      </div>
+      <div class="grid">
+        <div><label>模式</label>
+          <select id="studioMode">
+            <option value="group">合影</option>
+            <option value="selfie">自拍</option>
+            <option value="i2i">图生图</option>
+            <option value="t2i">文生图</option>
+          </select>
+        </div>
+        <div><label>画面比例</label><select id="studioAspect"></select></div>
+        <div><label>清晰度</label><select id="studioResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+        <div><label>张数</label><input id="studioCount" type="number" min="1" max="4" value="1"></div>
+      </div>
+      <div class="grid">
+        <label class="checkline"><input id="studioUsePersona" type="checkbox" checked> 缺形象槽时用当前形象</label>
+        <div><label>渠道策略</label>
+          <select id="studioPolicy">
+            <option value="priority">按优先级/启用序</option>
+            <option value="random">随机启用模型</option>
+          </select>
+        </div>
+      </div>
+      <label>提示词</label>
+      <textarea id="studioPrompt" rows="3" placeholder="自然并肩合影…"></textarea>
+      <div class="studio-chiprow" id="studioPromptChips"></div>
+      <div class="between" style="margin-top:8px">
+        <h3>参考槽位</h3>
+        <button class="secondary" id="studioAddSlotBtn" type="button">加槽位</button>
+      </div>
+      <div class="studio-slots" id="studioSlots"></div>
+      <div class="actions">
+        <button class="ok" id="studioSaveBtn" type="button">保存设置</button>
+        <button class="ok" id="studioRunBtn" type="button">开始生成</button>
+      </div>
+      <div id="studioStatus" class="status">打开后点「新建合影画布」，或选已有会话。</div>
+      <h3>结果</h3>
+      <div class="studio-results" id="studioResults"></div>
+      <input id="studioFilePick" type="file" accept="image/*" style="display:none">
     </section>
 
     <section id="test">
@@ -561,7 +636,8 @@
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
-    let CONFIG = {};
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], pollTimer: null, uploadSlotId: '' };
+
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
     let MONITOR_PAGE = 1;
@@ -2279,6 +2355,261 @@
       });
     }
 
+
+    function studioCacheUrl(path) {
+      return cacheImageUrl(path);
+    }
+    async function studioApi(path, opts = {}) {
+      return api(path, opts);
+    }
+    function studioStopPoll() {
+      if (STUDIO.pollTimer) { clearInterval(STUDIO.pollTimer); STUDIO.pollTimer = null; }
+    }
+    function fillStudioAspect() {
+      const aspects = ['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'];
+      setSelectOptions('studioAspect', aspects, (STUDIO.current && STUDIO.current.graph && STUDIO.current.graph.aspect_ratio) || '自动');
+    }
+    function renderStudioPromptChips() {
+      const wrap = $('studioPromptChips');
+      if (!wrap) return;
+      wrap.innerHTML = '';
+      for (const item of (STUDIO.prompts || [])) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'secondary';
+        btn.textContent = item.title || item.id;
+        btn.onclick = () => { $('studioPrompt').value = item.prompt || ''; };
+        wrap.appendChild(btn);
+      }
+    }
+    function renderStudioSessionSelect() {
+      const el = $('studioSessionSelect');
+      if (!el) return;
+      const cur = STUDIO.current && STUDIO.current.id;
+      el.innerHTML = '';
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = '（未选择）';
+      el.appendChild(blank);
+      for (const s of STUDIO.sessions || []) {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = `${s.title || s.id} · ${s.updated_at || ''}`;
+        if (s.id === cur) opt.selected = true;
+        el.appendChild(opt);
+      }
+    }
+    function renderStudioSlots() {
+      const wrap = $('studioSlots');
+      if (!wrap) return;
+      wrap.innerHTML = '';
+      const session = STUDIO.current;
+      if (!session) { wrap.innerHTML = '<div class="status">还没有画布会话</div>'; return; }
+      for (const slot of session.slots || []) {
+        const card = document.createElement('div');
+        const has = !!(slot.image_path);
+        card.className = 'studio-slot ' + (has ? 'has-image' : 'empty');
+        card.innerHTML = `
+          <div class="slot-label">${slot.label || slot.role || '槽位'} · ${slot.role || ''}</div>
+          <img alt="" ${has ? `src="${studioCacheUrl(slot.image_path)}"` : ''}>
+          <div class="slot-actions">
+            <button type="button" class="secondary" data-act="upload">上传</button>
+            <button type="button" class="secondary" data-act="clear" ${has ? '' : 'disabled'}>清空</button>
+          </div>`;
+        card.querySelector('[data-act="upload"]').onclick = () => {
+          STUDIO.uploadSlotId = slot.id;
+          $('studioFilePick').click();
+        };
+        card.querySelector('[data-act="clear"]').onclick = async () => {
+          const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(session.id)}/slots/${encodeURIComponent(slot.id)}`, {
+            method: 'POST', body: JSON.stringify({ clear: true })
+          });
+          if (!res.success) { showToast(res.message || '清空失败', 'bad'); return; }
+          STUDIO.current = res.data; renderStudio();
+        };
+        wrap.appendChild(card);
+      }
+    }
+    function renderStudioResults() {
+      const wrap = $('studioResults');
+      if (!wrap) return;
+      wrap.innerHTML = '';
+      const session = STUDIO.current;
+      if (!session) return;
+      for (const item of session.results || []) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        const path = item.image_path || '';
+        card.innerHTML = `
+          <img src="${studioCacheUrl(path)}" alt="">
+          <div class="actions" style="margin-top:6px">
+            <button type="button" class="secondary mini" data-act="peer">作同框</button>
+            <button type="button" class="secondary mini" data-act="id">作形象</button>
+          </div>
+          <div class="status" style="font-size:11px">${item.created_at || ''}</div>`;
+        const peer = (session.slots || []).find(s => s.role === 'peer') || (session.slots || [])[1];
+        const identity = (session.slots || []).find(s => s.role === 'identity') || (session.slots || [])[0];
+        card.querySelector('[data-act="peer"]').onclick = async () => {
+          if (!peer) return showToast('没有同框槽', 'bad');
+          const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(session.id)}/promote`, {
+            method:'POST', body: JSON.stringify({ result_id: item.id, slot_id: peer.id })
+          });
+          if (!res.success) return showToast(res.message || '失败', 'bad');
+          STUDIO.current = res.data; renderStudio(); showToast('已放进同框槽', 'ok');
+        };
+        card.querySelector('[data-act="id"]').onclick = async () => {
+          if (!identity) return showToast('没有形象槽', 'bad');
+          const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(session.id)}/promote`, {
+            method:'POST', body: JSON.stringify({ result_id: item.id, slot_id: identity.id })
+          });
+          if (!res.success) return showToast(res.message || '失败', 'bad');
+          STUDIO.current = res.data; renderStudio(); showToast('已放进形象槽', 'ok');
+        };
+        wrap.appendChild(card);
+      }
+      const last = session.last_run;
+      if (last && last.status === 'failed' && last.error) {
+        const err = document.createElement('div');
+        err.className = 'status';
+        err.textContent = '上次失败：' + last.error;
+        wrap.prepend(err);
+      }
+    }
+    function renderStudio() {
+      renderStudioSessionSelect();
+      fillStudioAspect();
+      renderStudioPromptChips();
+      const s = STUDIO.current;
+      if (!s) {
+        $('studioTitle').value = '';
+        $('studioPrompt').value = '';
+        $('studioStatus').textContent = '打开后点「新建合影画布」，或选已有会话。';
+        renderStudioSlots();
+        renderStudioResults();
+        return;
+      }
+      const g = s.graph || {};
+      $('studioTitle').value = s.title || '';
+      $('studioPrompt').value = g.prompt || '';
+      $('studioMode').value = g.mode || 'group';
+      $('studioResolution').value = g.resolution || '1K';
+      $('studioCount').value = g.count || 1;
+      $('studioUsePersona').checked = g.use_persona_identity !== false;
+      $('studioPolicy').value = g.channel_policy || 'priority';
+      setSelectOptions('studioAspect', ['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'], g.aspect_ratio || '自动');
+      const lr = s.last_run;
+      if (lr && lr.status === 'running') $('studioStatus').textContent = '生成中… ' + (lr.task_id || '');
+      else if (lr && lr.status === 'succeeded') $('studioStatus').textContent = '完成 · ' + (lr.used_model || '') + ' · ' + ((lr.result_paths||[]).length) + ' 张';
+      else if (lr && lr.status === 'failed') $('studioStatus').textContent = '失败：' + (lr.error || '');
+      else $('studioStatus').textContent = '已加载：' + (s.title || s.id);
+      renderStudioSlots();
+      renderStudioResults();
+    }
+    async function loadStudioList(selectId) {
+      const res = await studioApi('/api/studio/sessions');
+      if (!res.success) { showToast(res.message || '画布列表失败', 'bad'); return; }
+      STUDIO.sessions = (res.data && res.data.sessions) || [];
+      STUDIO.prompts = (res.data && res.data.builtin_prompts) || [];
+      if (selectId) {
+        const detail = await studioApi('/api/studio/sessions/' + encodeURIComponent(selectId));
+        if (detail.success) STUDIO.current = detail.data;
+      } else if (STUDIO.current && STUDIO.current.id) {
+        const detail = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id));
+        if (detail.success) STUDIO.current = detail.data;
+      }
+      renderStudio();
+    }
+    async function studioCreate() {
+      const res = await studioApi('/api/studio/sessions', {
+        method:'POST',
+        body: JSON.stringify({ title: $('studioTitle').value || '合影画布', use_group_template: true })
+      });
+      if (!res.success) return showToast(res.message || '创建失败', 'bad');
+      STUDIO.current = res.data;
+      await loadStudioList(res.data.id);
+      showToast('已新建合影画布', 'ok');
+    }
+    async function studioSave() {
+      if (!STUDIO.current) return showToast('请先新建或选择画布', 'bad');
+      const body = {
+        title: $('studioTitle').value.trim(),
+        graph: {
+          prompt: $('studioPrompt').value,
+          mode: $('studioMode').value,
+          aspect_ratio: $('studioAspect').value,
+          resolution: $('studioResolution').value,
+          count: Number($('studioCount').value || 1),
+          use_persona_identity: $('studioUsePersona').checked,
+          channel_policy: $('studioPolicy').value,
+        }
+      };
+      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id), {
+        method:'POST', body: JSON.stringify(body)
+      });
+      if (!res.success) return showToast(res.message || '保存失败', 'bad');
+      STUDIO.current = res.data;
+      await loadStudioList(STUDIO.current.id);
+      showToast('画布已保存', 'ok');
+    }
+    async function studioDelete() {
+      if (!STUDIO.current) return;
+      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/delete', {
+        method:'POST', body: JSON.stringify({})
+      });
+      if (!res.success) return showToast(res.message || '删除失败', 'bad');
+      STUDIO.current = null;
+      await loadStudioList();
+      showToast('已删除', 'ok');
+    }
+    async function studioRun() {
+      if (!STUDIO.current) return showToast('请先新建或选择画布', 'bad');
+      await studioSave();
+      if (!STUDIO.current) return;
+      $('studioStatus').textContent = '已提交生成…';
+      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/run', {
+        method:'POST', body: JSON.stringify({})
+      });
+      if (!res.success) {
+        $('studioStatus').textContent = res.message || '启动失败';
+        return showToast(res.message || '启动失败', 'bad');
+      }
+      const taskId = res.data && res.data.task_id;
+      showToast('开始生成', 'ok');
+      studioStopPoll();
+      STUDIO.pollTimer = setInterval(async () => {
+        try {
+          const st = await studioApi('/api/studio/tasks/' + encodeURIComponent(taskId));
+          if (!st.success) return;
+          const task = st.data || {};
+          if (task.status === 'queued' || task.status === 'running') {
+            $('studioStatus').textContent = '生成中… ' + (task.running_seconds != null ? task.running_seconds + 's' : '');
+            return;
+          }
+          studioStopPoll();
+          await loadStudioList(STUDIO.current.id);
+          if (task.success) showToast('画布生成完成', 'ok');
+          else showToast(task.error || '生成失败', 'bad');
+        } catch (e) {}
+      }, 1500);
+    }
+    async function studioUploadFile(file) {
+      if (!STUDIO.current || !STUDIO.uploadSlotId || !file) return;
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(STUDIO.current.id)}/slots/${encodeURIComponent(STUDIO.uploadSlotId)}`, {
+        method:'POST', body: JSON.stringify({ image: dataUrl, source: 'upload' })
+      });
+      STUDIO.uploadSlotId = '';
+      if (!res.success) return showToast(res.message || '上传失败', 'bad');
+      STUDIO.current = res.data;
+      renderStudio();
+      showToast('参考图已放入槽位', 'ok');
+    }
+
     document.querySelectorAll('nav.page-nav button').forEach(btn => {
       btn.onclick = () => {
         document.querySelectorAll('nav.page-nav button').forEach(b => b.classList.remove('active'));
@@ -2286,6 +2617,7 @@
         btn.classList.add('active');
         $(btn.dataset.tab).classList.add('active');
         if (btn.dataset.tab === 'monitor') loadRecords();
+        if (btn.dataset.tab === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
       };
     });
     $('loginBtn').onclick = enterApp;
@@ -2312,6 +2644,30 @@
       el.addEventListener(eventName, () => { if (isChannelModalOpen()) CHANNEL_MODAL_DIRTY = true; });
     });
     $('testImageBtn').onclick = runImageTest;
+    if ($('studioCreateBtn')) $('studioCreateBtn').onclick = studioCreate;
+    if ($('studioReloadBtn')) $('studioReloadBtn').onclick = () => loadStudioList(STUDIO.current && STUDIO.current.id);
+    if ($('studioDeleteBtn')) $('studioDeleteBtn').onclick = studioDelete;
+    if ($('studioSaveBtn')) $('studioSaveBtn').onclick = studioSave;
+    if ($('studioRunBtn')) $('studioRunBtn').onclick = studioRun;
+    if ($('studioAddSlotBtn')) $('studioAddSlotBtn').onclick = async () => {
+      if (!STUDIO.current) return showToast('请先新建画布', 'bad');
+      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/slots', {method:'POST', body: JSON.stringify({role:'extra', label:'额外参考'})});
+      if (!res.success) return showToast(res.message || '失败', 'bad');
+      STUDIO.current = res.data; renderStudio();
+    };
+    if ($('studioSessionSelect')) $('studioSessionSelect').onchange = async () => {
+      const id = $('studioSessionSelect').value;
+      if (!id) { STUDIO.current = null; renderStudio(); return; }
+      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(id));
+      if (!res.success) return showToast(res.message || '加载失败', 'bad');
+      STUDIO.current = res.data; renderStudio();
+    };
+    if ($('studioFilePick')) $('studioFilePick').onchange = async (ev) => {
+      const file = ev.target.files && ev.target.files[0];
+      ev.target.value = '';
+      if (file) await studioUploadFile(file);
+    };
+
     $('uploadSelfie').onclick = uploadSelfie;
     $('testChannel').onchange = refreshTestModels;
     function mirrorValue(a, b) {

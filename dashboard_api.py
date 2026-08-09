@@ -68,6 +68,17 @@ class SelfieImageDashboardAPI:
             ("cache-image", self.page_cache_image_file, ["GET"], "Selfie Image cache image download"),
             ("cache-image-preview", self.page_cache_image_preview, ["GET"], "Selfie Image cache image preview"),
             ("auth/check", self.page_auth_check, ["POST", "GET"], "Selfie Image dashboard auth check"),
+            ("studio/sessions", self.page_studio_list, ["GET"], "Selfie Image studio list"),
+            ("studio/sessions", self.page_studio_create, ["POST"], "Selfie Image studio create"),
+            ("studio/sessions/<session_id>", self.page_studio_get, ["GET"], "Selfie Image studio get"),
+            ("studio/sessions/<session_id>", self.page_studio_update, ["POST"], "Selfie Image studio update"),
+            ("studio/sessions/<session_id>/delete", self.page_studio_delete, ["POST"], "Selfie Image studio delete"),
+            ("studio/sessions/<session_id>/slots/<slot_id>", self.page_studio_set_slot, ["POST"], "Selfie Image studio slot"),
+            ("studio/sessions/<session_id>/slots", self.page_studio_add_slot, ["POST"], "Selfie Image studio add slot"),
+            ("studio/sessions/<session_id>/reorder", self.page_studio_reorder, ["POST"], "Selfie Image studio reorder"),
+            ("studio/sessions/<session_id>/promote", self.page_studio_promote, ["POST"], "Selfie Image studio promote"),
+            ("studio/sessions/<session_id>/run", self.page_studio_run, ["POST"], "Selfie Image studio run"),
+            ("studio/tasks/<task_id>", self.page_studio_task, ["GET"], "Selfie Image studio task"),
         ]
         for route, handler, methods, desc in routes:
             # Match telegram forwarder: bridge strips "/api/" then hits
@@ -365,3 +376,93 @@ class SelfieImageDashboardAPI:
                 "data_url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
             }
         )
+
+    async def page_studio_list(self) -> Any:
+        return self._ok(self.plugin.studio_list())
+
+    async def page_studio_create(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.studio_create(payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_studio_get(self, session_id: str) -> Any:
+        try:
+            return self._ok(self.plugin.studio_get(session_id))
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    async def page_studio_update(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.studio_update(session_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_studio_delete(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.studio_delete(session_id))
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    async def page_studio_set_slot(self, session_id: str, slot_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.studio_set_slot(session_id, slot_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_studio_add_slot(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.studio_add_slot(session_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_studio_reorder(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.studio_reorder(session_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_studio_promote(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.studio_promote(session_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_studio_run(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(redact_sensitive_data(self.plugin.start_studio_run(session_id, payload or {})))
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_studio_task(self, task_id: str) -> Any:
+        task_id_text = str(task_id or "").strip()
+        if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
+            return self._fail("非法任务 ID", 400)
+        try:
+            return self._ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
+        except Exception as exc:
+            return self._fail(str(exc), 404)
