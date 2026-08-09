@@ -231,7 +231,7 @@ def save_image_bytes(data: bytes, save_dir: str, prefix: str = "img", mime: str 
 def collect_record_cache_paths(records: Any) -> List[str]:
     result: List[str] = []
     seen = set()
-    path_keys = ("request_image_paths", "generated_image_paths", "image_paths")
+    path_keys = ("request_image_paths", "generated_image_paths", "image_paths", "generated_video_paths", "video_paths")
 
     def add(value: Any) -> None:
         if isinstance(value, str):

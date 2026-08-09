@@ -299,7 +299,11 @@ class FakeWebPlugin:
             "absolute_path": path,
             "exists": os.path.isfile(path),
             "is_image": looks_like_image_bytes(Path(path).read_bytes()[:512]) if os.path.isfile(path) else False,
-            "mime_type": "image/png",
+            "is_video": (
+                os.path.isfile(path)
+                and (Path(path).read_bytes()[:12][4:12].startswith(b"ftyp") or path.lower().endswith((".mp4", ".webm", ".mov")))
+            ),
+            "mime_type": "video/mp4" if path.lower().endswith(".mp4") else "image/png",
         }
 
     def close(self) -> None:
@@ -573,8 +577,9 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("onRandomImageModelChange", INDEX_HTML)
         self.assertIn("CONFIG.random_image_model", INDEX_HTML)
         self.assertIn("isRandomImageModel", INDEX_HTML)
-        # must not clear priority list when enabling random
-        self.assertIn("Keep priorityList as-is", INDEX_HTML)
+        # Random only suspends image priority; it never clears the stored list.
+        self.assertIn("renderPriorityRows('image')", INDEX_HTML)
+        self.assertNotIn("$('priorityList').value = '';\n      CONFIG.random_image_model", INDEX_HTML)
 
 
 class ImageUtilityTests(unittest.TestCase):
@@ -683,8 +688,10 @@ class ImageUtilityTests(unittest.TestCase):
 
     def test_web_prunes_invalid_model_priority_before_save(self) -> None:
         self.assertIn("function prunePriorityList", INDEX_HTML)
-        self.assertIn("prunePriorityList();\n      CONFIG.enabled_image_model_priority = textList('priorityList');", INDEX_HTML)
-        self.assertIn("keys.push(`${ch.name}/${model}`, `${ch.name}:${model}`, model);", INDEX_HTML)
+        self.assertIn("for (const kind of ['image','audit','video']) prunePriorityList(kind);", INDEX_HTML)
+        self.assertIn("CONFIG.enabled_image_model_priority = textList('priorityList');", INDEX_HTML)
+        self.assertIn("CONFIG.enabled_audit_model_priority = textList('auditPriorityList');", INDEX_HTML)
+        self.assertIn("CONFIG.enabled_video_model_priority = textList('videoPriorityList');", INDEX_HTML)
 
     def test_base_url_normalization(self) -> None:
         self.assertEqual(normalize_image_base_url("https://example.com/v1/images/generations"), "https://example.com")
@@ -2817,7 +2824,29 @@ class WebApiTests(unittest.TestCase):
 
         response = client.get("/api/cache-image?path=not-image.txt", headers=headers)
         self.assertEqual(response.status_code, 400)
-        self.assertIn("缓存文件不是有效图片", response.get_json()["error"])
+        self.assertIn("缓存文件不是有效图片或视频", response.get_json()["error"])
+
+    def test_video_task_route_marks_payload_and_serves_video(self) -> None:
+        plugin = FakeWebPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        response = client.post(
+            "/api/test-video-channel/tasks",
+            json={"channel": "video", "model": "v1", "prompt": "waves"},
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        request_data = response.get_json()["data"]["request_data"]
+        self.assertEqual(request_data["media_type"], "video")
+
+        video_path = os.path.join(plugin.generated_dir, "clip.mp4")
+        video_bytes = b"\x00\x00\x00\x20ftypisom" + b"video-data"
+        Path(video_path).write_bytes(video_bytes)
+        response = client.get("/api/cache-image?path=clip.mp4", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, video_bytes)
+        response.close()
 
 
 class SchemaTests(unittest.TestCase):
@@ -3460,6 +3489,46 @@ class VideoV1Tests(unittest.TestCase):
 
         disabled = AICatConfig.from_dict({"video": {"enable": False}, "video_channels": [{"name": "vid", "base_url": "https://x", "api_key": "k", "model": "m"}]})
         self.assertEqual(disabled.get_prioritized_video_targets(), [])
+
+    def test_image_audit_video_priorities_are_independent(self) -> None:
+        from astrbot_plugin_selfie_image.models import AICatConfig
+
+        cfg = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {"name": "img", "base_url": "https://x", "api_key": "i", "enabled_models": ["i1", "i2"]}
+                ],
+                "audit_channels": [
+                    {"name": "audit", "base_url": "https://x", "api_key": "a", "enabled_models": ["a1", "a2"]}
+                ],
+                "video_channels": [
+                    {"name": "video", "base_url": "https://x", "api_key": "v", "enabled_models": ["v1", "v2"]}
+                ],
+                "enabled_image_model_priority": ["img/i2"],
+                "enabled_audit_model_priority": ["audit/a2"],
+                "enabled_video_model_priority": ["video/v2"],
+            }
+        )
+        self.assertEqual(cfg.get_prioritized_targets()[0].label, "img/i2")
+        self.assertEqual(cfg.get_audit_targets()[0].label, "audit/a2")
+        self.assertEqual(cfg.get_prioritized_video_targets()[0].label, "video/v2")
+        self.assertNotEqual(cfg.enabled_image_model_priority, cfg.enabled_audit_model_priority)
+        self.assertNotEqual(cfg.enabled_image_model_priority, cfg.enabled_video_model_priority)
+
+    def test_dashboard_separates_priorities_and_has_video_test(self) -> None:
+        from astrbot_plugin_selfie_image.web import INDEX_HTML
+
+        for token in (
+            "enabled_audit_model_priority",
+            "enabled_video_model_priority",
+            "auditPriorityRows",
+            "videoPriorityRows",
+            "testVideoBtn",
+            "/api/test-video-channel/tasks",
+            "generated_video_paths",
+            "记录类型",
+        ):
+            self.assertIn(token, INDEX_HTML)
 
     def test_video_protocol_normalize_and_infer(self) -> None:
         from astrbot_plugin_selfie_image.models import (

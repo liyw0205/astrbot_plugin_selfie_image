@@ -30,6 +30,7 @@ MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
 MAX_WEB_RECORD_ID_LENGTH = 128
 MAX_RECORD_PAGE_LIMIT = 100
+PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 _LOGO_SRC_PLACEHOLDER = "__SELFIE_LOGO_SRC__"
 
 
@@ -430,36 +431,55 @@ INDEX_HTML = r"""<!doctype html>
       <div id="channelPaneImage" class="channel-pane active"><div id="channelList"></div></div>
       <div id="channelPaneAudit" class="channel-pane"><div id="auditChannelList"></div></div>
       <div id="channelPaneVideo" class="channel-pane"><div id="videoChannelList"></div></div>
-      <h3>生图模型优先级</h3>
-      <p class="muted">未设置优先级时，按渠道与已启用模型的配置顺序依次尝试。开启「随机」后每次生图从全部已启用模型中随机排序（失败仍会换下一个）；关闭随机后恢复下方优先级列表，列表不会被清空。</p>
-      <div class="grid">
-        <div><label>模型选择模式</label>
-          <div class="actions" style="margin-top:8px">
-            <label class="check"><input id="randomImageModel" type="checkbox" onchange="onRandomImageModelChange()"> 随机（启用时忽略优先级）</label>
-          </div>
+      <div class="priority-block" data-priority-kind="image">
+        <h3>生图模型优先级</h3>
+        <p class="muted">只控制生图渠道。未设置时按渠道与模型启用顺序。</p>
+        <div class="grid">
+          <div><label>模型选择模式</label><div class="actions" style="margin-top:8px"><label class="check"><input id="randomImageModel" type="checkbox" onchange="onRandomImageModelChange()"> 随机（启用时忽略生图优先级）</label></div></div>
+          <div><label>选择生图模型</label><select id="priorityPicker"></select></div>
+          <div><label>操作</label><div class="actions" style="margin-top:0"><button id="addPriorityBtn" class="secondary" type="button" onclick="addPriority('image')">加入</button><button id="clearPriorityBtn" class="secondary" type="button" onclick="clearPriority('image')">清空</button></div></div>
         </div>
-        <div><label>选择已启用模型</label><select id="priorityPicker"></select></div>
-        <div><label>操作</label><div class="actions" style="margin-top:0"><button id="addPriorityBtn" class="secondary" type="button" onclick="addPriority()">加入优先级</button><button id="clearPriorityBtn" class="secondary" type="button" onclick="clearPriority()">清空优先级</button></div></div>
+        <textarea id="priorityList" style="display:none"></textarea>
+        <div id="priorityRows" class="model-list"></div>
       </div>
-      <textarea id="priorityList" style="display:none"></textarea>
-      <div id="priorityRows" class="model-list"></div>
+      <div class="priority-block" data-priority-kind="audit">
+        <h3>审核模型优先级</h3>
+        <p class="muted">只控制审核渠道；提示词审核、成品审核按此顺序寻找可用模型。</p>
+        <div class="grid">
+          <div><label>选择审核模型</label><select id="auditPriorityPicker"></select></div>
+          <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" onclick="addPriority('audit')">加入</button><button class="secondary" type="button" onclick="clearPriority('audit')">清空</button></div></div>
+        </div>
+        <textarea id="auditPriorityList" style="display:none"></textarea>
+        <div id="auditPriorityRows" class="model-list"></div>
+      </div>
+      <div class="priority-block" data-priority-kind="video">
+        <h3>视频模型优先级</h3>
+        <p class="muted">只控制视频渠道；视频生成失败时按此顺序切换。</p>
+        <div class="grid">
+          <div><label>选择视频模型</label><select id="videoPriorityPicker"></select></div>
+          <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" onclick="addPriority('video')">加入</button><button class="secondary" type="button" onclick="clearPriority('video')">清空</button></div></div>
+        </div>
+        <textarea id="videoPriorityList" style="display:none"></textarea>
+        <div id="videoPriorityRows" class="model-list"></div>
+      </div>
       <div id="channelStatus" class="status" style="margin-top:12px"></div>
     </section>
 
     <section id="monitor">
       <div class="between">
-        <h2>出图记录</h2>
+        <h2>生成记录</h2>
         <div class="actions" style="margin-top:0">
           <button class="secondary" onclick="loadRecords()">刷新</button>
           <button class="danger" onclick="clearRecords()">清空</button>
         </div>
       </div>
       <div class="grid4">
+        <div><label>记录类型</label><select id="monitorMedia"><option value="">全部</option><option value="image">图片</option><option value="video">视频</option></select></div>
         <div><label>来源筛选</label><input id="monitorSource" list="monitorSourceList" placeholder="输入来源关键词"><datalist id="monitorSourceList"></datalist></div>
         <div><label>模型筛选</label><select id="monitorModel"><option value="">全部</option></select></div>
         <div><label>状态</label><select id="monitorSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
-        <div><label>统计</label><div id="monitorStats" class="status"></div></div>
       </div>
+      <div id="monitorStats" class="status" style="margin-top:12px"></div>
       <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
       <div id="monitorPager" class="actions"></div>
     </section>
@@ -539,26 +559,28 @@ INDEX_HTML = r"""<!doctype html>
     </section>
 
     <section id="test">
-      <h2>试画</h2>
+      <div class="between"><h2>试画 / 试视频</h2><div class="tabs-inline" style="margin:0"><button id="testModeImage" class="active" type="button" onclick="switchTestMode('image')">图片</button><button id="testModeVideo" type="button" onclick="switchTestMode('video')">视频</button></div></div>
       <div class="grid">
         <div><label>用哪个渠道</label><select id="testChannel"></select></div>
         <div><label>模型</label><select id="testModel"></select></div>
         <div><label>画面比例</label><select id="testAspect"></select></div>
-        <div><label>清晰度</label><select id="testResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+        <div id="testResolutionWrap"><label>清晰度</label><select id="testResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+        <div id="testDurationWrap" style="display:none"><label>视频时长（秒）</label><input id="testDuration" type="number" min="1" max="60" value="5"></div>
       </div>
       <div class="between">
-        <label>想画什么</label>
+        <label id="testPromptLabel">想画什么</label>
         <button class="secondary" id="testPresetBtn" type="button">预设</button>
       </div>
       <textarea id="testPrompt">一只可爱的白色猫咪，坐在樱花树下，柔和光线，精致插画风格</textarea>
       <div class="preset-panel" id="testPresetPanel"></div>
       <div class="grid">
-        <label class="checkline"><input id="promptEnhance" type="checkbox"> 润色提示词</label>
-        <label class="checkline"><input id="useSelfie" type="checkbox"> 带上当前形象参考</label>
-        <div><label>额外参考图</label><input id="testRefs" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml" multiple></div>
+        <label class="checkline" id="promptEnhanceWrap"><input id="promptEnhance" type="checkbox"> 润色提示词</label>
+        <label class="checkline" id="useSelfieWrap"><input id="useSelfie" type="checkbox"> 带上当前形象参考</label>
+        <div><label id="testRefsLabel">额外参考图</label><input id="testRefs" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml" multiple></div>
       </div>
       <div class="actions">
         <button class="ok" id="testImageBtn">开始试画</button>
+        <button class="ok" id="testVideoBtn" style="display:none">开始试视频</button>
         <button class="secondary" onclick="showTestPanel('request')">看请求</button>
         <button class="secondary" onclick="showTestPanel('response')">看响应</button>
         <button class="secondary" onclick="showTestPanel('result')">看结果</button>
@@ -753,6 +775,7 @@ INDEX_HTML = r"""<!doctype html>
     let CURRENT_RECORD = null;
     let TEST_TASK_POLL_TIMER = null;
     let TEST_TASK_ID = '';
+    let TEST_MODE = 'image';
     let DASHBOARD_BRIDGE = null;
 
     function isEmbeddedFrame() {
@@ -896,6 +919,9 @@ INDEX_HTML = r"""<!doctype html>
         if (tab) tab.classList.toggle('active', ACTIVE_CHANNEL_PANE === key);
         if (pane) pane.classList.toggle('active', ACTIVE_CHANNEL_PANE === key);
       }
+      document.querySelectorAll('[data-priority-kind]').forEach(block => {
+        block.style.display = block.getAttribute('data-priority-kind') === ACTIVE_CHANNEL_PANE ? '' : 'none';
+      });
     }
     function ensureConfig() {
       delete CONFIG.web;
@@ -912,6 +938,7 @@ INDEX_HTML = r"""<!doctype html>
       CONFIG.audit_channels ??= [];
       CONFIG.video_channels ??= [];
       CONFIG.enabled_image_model_priority ??= [];
+      CONFIG.enabled_audit_model_priority ??= [];
       CONFIG.enabled_video_model_priority ??= [];
       CONFIG.random_image_model ??= false;
       const img = CONFIG.image;
@@ -982,11 +1009,14 @@ INDEX_HTML = r"""<!doctype html>
         $('outputAuditTemplate').value = img.output_audit_template || '';
 
         $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
+        $('auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\n');
+        $('videoPriorityList').value = (CONFIG.enabled_video_model_priority || []).join('\n');
         if ($('randomImageModel')) $('randomImageModel').checked = !!CONFIG.random_image_model;
         updatePriorityControlsState();
         renderAllChannelLists();
         refreshModelSelectors();
-        renderPriorityRows();
+        renderAllPriorityRows();
+        switchChannelPane(ACTIVE_CHANNEL_PANE);
         $('configText').value = JSON.stringify(CONFIG, null, 2);
       } finally {
         IS_FILLING = false;
@@ -1026,8 +1056,10 @@ INDEX_HTML = r"""<!doctype html>
       CONFIG.image.prompt_audit_template = $('promptAuditTemplate').value;
       CONFIG.image.output_audit_template = $('outputAuditTemplate').value;
       collectChannels();
-      prunePriorityList();
+      for (const kind of ['image','audit','video']) prunePriorityList(kind);
       CONFIG.enabled_image_model_priority = textList('priorityList');
+      CONFIG.enabled_audit_model_priority = textList('auditPriorityList');
+      CONFIG.enabled_video_model_priority = textList('videoPriorityList');
       CONFIG.random_image_model = !!( $('randomImageModel') && $('randomImageModel').checked );
       return CONFIG;
     }
@@ -1733,6 +1765,15 @@ INDEX_HTML = r"""<!doctype html>
       }
       return uniq(keys);
     }
+    function videoModelLabels() {
+      collectChannels();
+      const labels = [];
+      for (const ch of CONFIG.video_channels || []) {
+        if (ch.enabled === false) continue;
+        for (const model of (ch.enabled_models?.length ? ch.enabled_models : [ch.model]).filter(Boolean)) labels.push(`${ch.name}/${model}`);
+      }
+      return labels;
+    }
     function auditModelLabels() {
       collectChannels();
       const labels = [];
@@ -1745,12 +1786,16 @@ INDEX_HTML = r"""<!doctype html>
     function refreshModelSelectors() {
       const labels = allModelLabels();
       setSelectOptions('priorityPicker', labels, labels[0] || '');
-      prunePriorityList();
+      const audits = auditModelLabels();
+      const videos = videoModelLabels();
+      setSelectOptions('auditPriorityPicker', audits, audits[0] || '');
+      setSelectOptions('videoPriorityPicker', videos, videos[0] || '');
+      for (const kind of ['image','audit','video']) prunePriorityList(kind);
       const auditLabels = [''].concat(auditModelLabels());
       setSelectOptions('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       setSelectOptions('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
       setSelectOptions('ocrModel', auditLabels, CONFIG.image?.ocr_model || '');
-      const testChannels = (CONFIG.image_channels || []).filter(c => c.enabled !== false && c.name);
+      const testChannels = (TEST_MODE === 'video' ? CONFIG.video_channels : CONFIG.image_channels || []).filter(c => c.enabled !== false && c.name);
       const currentTestChannel = $('testChannel').value;
       const selectedTestChannel = testChannels.some(c => c.name === currentTestChannel) ? currentTestChannel : (testChannels[0]?.name || '');
       setSelectOptions('testChannel', testChannels.map(c => c.name), selectedTestChannel);
@@ -1758,7 +1803,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     function refreshTestModels() {
       const name = $('testChannel').value;
-      const ch = (CONFIG.image_channels || []).find(c => c.enabled !== false && c.name === name) || {};
+      const ch = ((TEST_MODE === 'video' ? CONFIG.video_channels : CONFIG.image_channels) || []).find(c => c.enabled !== false && c.name === name) || {};
       const models = (ch.enabled_models?.length ? ch.enabled_models : [ch.model]).filter(Boolean);
       setSelectOptions('testModel', models, models.includes(ch.model) ? ch.model : (models[0] || ''));
       // Channel connectivity tests are more stable on an explicit square size.
@@ -1766,95 +1811,100 @@ INDEX_HTML = r"""<!doctype html>
         $('testAspect').value = '1:1';
       }
     }
-    function addPriority() {
-      if (isRandomImageModel()) return;
-      const value = $('priorityPicker').value;
+    const PRIORITY_UI = {
+      image: {picker:'priorityPicker', list:'priorityList', rows:'priorityRows'},
+      audit: {picker:'auditPriorityPicker', list:'auditPriorityList', rows:'auditPriorityRows'},
+      video: {picker:'videoPriorityPicker', list:'videoPriorityList', rows:'videoPriorityRows'},
+    };
+    function priorityUi(kind = 'image') { return PRIORITY_UI[kind] || PRIORITY_UI.image; }
+    function priorityLabels(kind) {
+      return kind === 'audit' ? auditModelLabels() : kind === 'video' ? videoModelLabels() : allModelLabels();
+    }
+    function addPriority(kind = 'image') {
+      if (kind === 'image' && isRandomImageModel()) return;
+      const ui = priorityUi(kind), value = $(ui.picker).value;
       if (!value) return;
-      const current = textList('priorityList');
+      const current = textList(ui.list);
       if (!current.includes(value)) current.push(value);
-      $('priorityList').value = current.join('\n');
-      renderPriorityRows();
+      $(ui.list).value = current.join('\n');
+      renderPriorityRows(kind);
       scheduleChannelListAutoSave();
     }
-    function clearPriority() {
-      if (isRandomImageModel()) return;
-      $('priorityList').value = '';
-      renderPriorityRows();
+    function clearPriority(kind = 'image') {
+      if (kind === 'image' && isRandomImageModel()) return;
+      const ui = priorityUi(kind);
+      $(ui.list).value = '';
+      renderPriorityRows(kind);
       scheduleChannelListAutoSave();
     }
-    function setPriorityItems(items) {
-      $('priorityList').value = uniq(items).join('\n');
-      renderPriorityRows();
+    function setPriorityItems(kind, items) {
+      const ui = priorityUi(kind);
+      $(ui.list).value = uniq(items).join('\n');
+      renderPriorityRows(kind);
       scheduleChannelListAutoSave();
     }
-    function prunePriorityList() {
-      const allowed = new Set(activeImageModelKeys());
-      const current = textList('priorityList');
-      const next = current.filter(item => allowed.has(item));
+    function prunePriorityList(kind = 'image') {
+      const ui = priorityUi(kind), allowed = new Set(priorityLabels(kind).flatMap(label => {
+        const [channel, ...rest] = label.split('/'), model = rest.join('/');
+        return [label, `${channel}:${model}`, model];
+      }));
+      const current = textList(ui.list), next = current.filter(item => allowed.has(item));
       if (next.length !== current.length || next.some((item, i) => item !== current[i])) {
-        $('priorityList').value = next.join('\n');
-        renderPriorityRows();
+        $(ui.list).value = next.join('\n');
+        renderPriorityRows(kind);
       }
       return next;
     }
-    function movePriority(index, delta) {
-      if (isRandomImageModel()) return;
-      const items = textList('priorityList');
-      const next = index + delta;
+    function movePriority(kind, index, delta) {
+      if (kind === 'image' && isRandomImageModel()) return;
+      const ui = priorityUi(kind), items = textList(ui.list), next = index + delta;
       if (next < 0 || next >= items.length) return;
       const item = items.splice(index, 1)[0];
       items.splice(next, 0, item);
-      setPriorityItems(items);
+      setPriorityItems(kind, items);
     }
-    function removePriority(index) {
-      if (isRandomImageModel()) return;
-      const items = textList('priorityList');
+    function removePriority(kind, index) {
+      if (kind === 'image' && isRandomImageModel()) return;
+      const ui = priorityUi(kind), items = textList(ui.list);
       items.splice(index, 1);
-      setPriorityItems(items);
+      setPriorityItems(kind, items);
     }
     function isRandomImageModel() {
       return !!( $('randomImageModel') && $('randomImageModel').checked );
     }
     function onRandomImageModelChange() {
-      // Keep priorityList as-is; only toggle runtime selection mode.
       CONFIG.random_image_model = isRandomImageModel();
       updatePriorityControlsState();
-      renderPriorityRows();
+      renderPriorityRows('image');
       scheduleChannelListAutoSave();
     }
     function updatePriorityControlsState() {
       const random = isRandomImageModel();
-      const picker = $('priorityPicker');
-      const addBtn = $('addPriorityBtn');
-      const clearBtn = $('clearPriorityBtn');
-      if (picker) picker.disabled = random;
-      if (addBtn) addBtn.disabled = random;
-      if (clearBtn) clearBtn.disabled = random;
-      const box = $('priorityRows');
-      if (box) box.style.opacity = random ? '0.55' : '1';
+      for (const id of ['priorityPicker','addPriorityBtn','clearPriorityBtn']) if ($(id)) $(id).disabled = random;
+      if ($('priorityRows')) $('priorityRows').style.opacity = random ? '0.55' : '1';
     }
-    function renderPriorityRows() {
-      const items = textList('priorityList');
-      const box = $('priorityRows');
-      const random = isRandomImageModel();
-      updatePriorityControlsState();
+    function renderPriorityRows(kind = 'image') {
+      const ui = priorityUi(kind), items = textList(ui.list), box = $(ui.rows);
+      if (!box) return;
+      const random = kind === 'image' && isRandomImageModel();
+      if (kind === 'image') updatePriorityControlsState();
       if (random) {
-        box.innerHTML = '<div class="muted">已开启随机：每次生图从全部已启用模型中随机排序；下方优先级列表仍保留，关闭随机后立即生效。</div>'
-          + (items.length ? items.map((item, i) => `
-        <div class="model-row">
-          <div class="name">${escapeHtml(item)} <span class="muted">（暂停）</span></div>
-        </div>`).join('') : '');
+        box.innerHTML = '<div class="muted">已开启随机：生图优先级暂不生效，关闭随机后恢复。</div>'
+          + items.map(item => `<div class="model-row"><div class="name">${escapeHtml(item)} <span class="muted">（暂停）</span></div></div>`).join('');
         return;
       }
       box.innerHTML = items.map((item, i) => `
-        <div class="model-row">
-          <div class="name">${escapeHtml(item)}</div>
-          <div class="actions">
-            <button class="secondary mini" type="button" onclick="movePriority(${i}, -1)">上移</button>
-            <button class="secondary mini" type="button" onclick="movePriority(${i}, 1)">下移</button>
-            <button class="danger mini" type="button" onclick="removePriority(${i})">移除</button>
-          </div>
-        </div>`).join('') || '<div class="muted">未设置优先级时按渠道与已启用模型顺序尝试。</div>';
+        <div class="model-row"><div class="name">${escapeHtml(item)}</div><div class="actions">
+          <button class="secondary mini" type="button" onclick="movePriority('${kind}', ${i}, -1)">上移</button>
+          <button class="secondary mini" type="button" onclick="movePriority('${kind}', ${i}, 1)">下移</button>
+          <button class="danger mini" type="button" onclick="removePriority('${kind}', ${i})">移除</button>
+        </div></div>`).join('') || `<div class="muted">未设置${kind === 'image' ? '生图' : kind === 'audit' ? '审核' : '视频'}优先级时按启用顺序尝试。</div>`;
+    }
+    function renderAllPriorityRows() {
+      for (const kind of ['image','audit','video']) {
+        prunePriorityList(kind);
+        renderPriorityRows(kind);
+      }
     }
 
     async function loadConfig() {
@@ -1950,9 +2000,11 @@ INDEX_HTML = r"""<!doctype html>
     }
     function monitorQueryPath(page = MONITOR_PAGE) {
       const params = new URLSearchParams();
+      const media = $('monitorMedia').value.trim();
       const source = $('monitorSource').value.trim();
       const model = $('monitorModel').value.trim();
       const success = $('monitorSuccess').value;
+      if (media) params.set('media_type', media);
       if (source) params.set('source', source);
       if (model) params.set('model', model);
       if (success) params.set('success', success);
@@ -2031,8 +2083,8 @@ INDEX_HTML = r"""<!doctype html>
       const start = Number(RECORD_META.offset ?? ((MONITOR_PAGE - 1) * MONITOR_PAGE_SIZE));
       const pageRows = rows;
       $('monitorStats').textContent = `记录 ${filteredCount} / 总计 ${totalCount} / 本页成功 ${ok} / 本页失败 ${rows.length-ok} / 本页平均 ${avg.toFixed(2)}s / 第 ${MONITOR_PAGE}/${totalPages} 页`;
-      $('recordTable').innerHTML = '<thead><tr><th>时间</th><th>来源</th><th>状态</th><th>模型</th></tr></thead><tbody>' +
-        (pageRows.length ? pageRows.map(r => `<tr style="cursor:pointer" title="点击查看详情" onclick="openRecordDetail('${escapeJs(r.id || '')}')"><td>${escapeHtml(r.time||'')}</td><td>${escapeHtml(r.source_label || r.source || '')}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(r.used_model||'')}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">没有匹配的监控记录</td></tr>') +
+      $('recordTable').innerHTML = '<thead><tr><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>模型</th></tr></thead><tbody>' +
+        (pageRows.length ? pageRows.map(r => `<tr style="cursor:pointer" title="点击查看详情" onclick="openRecordDetail('${escapeJs(r.id || '')}')"><td>${escapeHtml(r.time||'')}</td><td>${r.media_type === 'video' ? '视频' : '图片'}</td><td>${escapeHtml(r.source_label || r.source || '')}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(r.used_model||'')}</td></tr>`).join('') : '<tr><td colspan="5" class="muted">没有匹配的监控记录</td></tr>') +
         '</tbody>';
       $('monitorPager').innerHTML = `
         <button class="secondary mini" type="button" onclick="setMonitorPage(1)" ${MONITOR_PAGE <= 1 ? 'disabled' : ''}>首页</button>
@@ -2075,6 +2127,34 @@ INDEX_HTML = r"""<!doctype html>
         const path = img.getAttribute('data-cache-path') || '';
         img.removeAttribute('data-cache-path');
         if (path) loadProtectedImage(img, path);
+      });
+    }
+    function videoThumbs(paths) {
+      const list = (paths || []).filter(Boolean);
+      if (!list.length) return '<div class="muted">没有生成视频</div>';
+      return '<h3>生成视频</h3>' + list.map(path => `<video controls preload="metadata" style="width:100%;max-height:480px;border-radius:12px" data-cache-video="${escapeHtml(path)}"></video>`).join('');
+    }
+    async function loadProtectedVideo(video, path) {
+      try {
+        if (isDashboardPage()) {
+          const res = await api('/api/cache-image-preview?path=' + encodeURIComponent(path));
+          const data = res.data || {};
+          if (!data.data_url) throw new Error('视频已清理');
+          video.src = data.data_url;
+          return;
+        }
+        const res = await fetch(cacheImageUrl(path), {headers: headers()});
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        video.src = URL.createObjectURL(blob);
+      } catch (e) {
+        video.outerHTML = `<div class="status">视频读取失败：${escapeHtml(e.message || e)}</div>`;
+      }
+    }
+    function loadProtectedVideos(root = document) {
+      root.querySelectorAll('video[data-cache-video]').forEach(video => {
+        const path = video.getAttribute('data-cache-video');
+        if (path) loadProtectedVideo(video, path);
       });
     }
     function imageThumbs(paths) {
@@ -2147,6 +2227,7 @@ INDEX_HTML = r"""<!doctype html>
           <div><label>时间</label><div class="status">${escapeHtml(r.time || '')}</div></div>
           <div><label>来源</label><div class="status">${escapeHtml(r.source_label || '')}</div></div>
           <div><label>状态</label><div class="status">${r.success ? '成功' : '失败'}</div></div>
+          <div><label>类型</label><div class="status">${r.media_type === 'video' ? '视频' : '图片'}</div></div>
           <div><label>模型</label><div class="status">${escapeHtml(r.used_model || '')}</div></div>
           <div><label>调用入口</label><div class="status">${escapeHtml(r.source || '')}</div></div>
           <div><label>群号</label><div class="status">${escapeHtml(r.group_id || '')}</div></div>
@@ -2158,9 +2239,11 @@ INDEX_HTML = r"""<!doctype html>
         ${promptDetailBlock('响应数据', 'response_data', JSON.stringify(r.response_data || {}, null, 2))}
         <h3>请求图</h3>${imageThumbs(r.request_image_paths || [])}
         <h3>生成图</h3>${imageThumbs(r.generated_image_paths || [])}
+        ${videoThumbs(r.generated_video_paths || [])}
       `;
       $('recordModal').classList.add('show');
       loadProtectedImages($('recordDetailBody'));
+      loadProtectedVideos($('recordDetailBody'));
     }
     function closeRecordDetail() {
       $('recordModal').classList.remove('show');
@@ -2181,9 +2264,33 @@ INDEX_HTML = r"""<!doctype html>
         TEST_TASK_POLL_TIMER = null;
       }
     }
+    function switchTestMode(mode) {
+      TEST_MODE = mode === 'video' ? 'video' : 'image';
+      $('testModeImage').classList.toggle('active', TEST_MODE === 'image');
+      $('testModeVideo').classList.toggle('active', TEST_MODE === 'video');
+      $('testImageBtn').style.display = TEST_MODE === 'image' ? '' : 'none';
+      $('testVideoBtn').style.display = TEST_MODE === 'video' ? '' : 'none';
+      $('testResolutionWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
+      $('testDurationWrap').style.display = TEST_MODE === 'video' ? '' : 'none';
+      $('promptEnhanceWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
+      $('useSelfieWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
+      $('testPromptLabel').textContent = TEST_MODE === 'video' ? '想生成什么视频' : '想画什么';
+      $('testRefsLabel').textContent = TEST_MODE === 'video' ? '首帧参考图（可选一张）' : '额外参考图';
+      $('testRefs').multiple = TEST_MODE === 'image';
+      if (TEST_MODE === 'video') {
+        $('testPrompt').value = $('testPrompt').value || '镜头自然推进，人物轻轻转头看向镜头，动作流畅，光线真实';
+        setSelectOptions('testAspect', ['16:9','9:16','1:1'], '16:9');
+      } else {
+        setSelectOptions('testAspect', ASPECTS, CONFIG.image?.default_aspect_ratio || '自动');
+      }
+      refreshModelSelectors();
+      clearTestData(false);
+    }
     function setTestBusy(busy) {
       $('testImageBtn').disabled = !!busy;
-      $('testImageBtn').textContent = busy ? '正在画…' : '开始试画';
+      $('testVideoBtn').disabled = !!busy;
+      $('testImageBtn').textContent = busy && TEST_MODE === 'image' ? '正在画…' : '开始试画';
+      $('testVideoBtn').textContent = busy && TEST_MODE === 'video' ? '正在生成…' : '开始试视频';
     }
     function renderImageTestResult(data) {
       $('testResponseData').textContent = JSON.stringify(data || {}, null, 2);
@@ -2192,21 +2299,30 @@ INDEX_HTML = r"""<!doctype html>
         showTestPanel('response');
         return;
       }
-      $('testStatus').textContent = `成功：${data.used_model || ''}，耗时 ${data.elapsed_seconds}s，参考图 ${data.reference_images} 张`;
+      $('testStatus').textContent = `成功：${data.used_model || ''}，耗时 ${data.elapsed_seconds}s，参考图 ${data.reference_images || 0} 张`;
       $('testImages').innerHTML = '';
-      for (const path of data.generated_image_paths || []) {
-        const img = document.createElement('img');
-        $('testImages').appendChild(img);
-        loadProtectedImage(img, path);
+      if (data.generated_video_paths && data.generated_video_paths.length) {
+        $('testImages').innerHTML = videoThumbs(data.generated_video_paths);
+        loadProtectedVideos($('testImages'));
+      } else {
+        for (const path of data.generated_image_paths || []) {
+          const img = document.createElement('img');
+          $('testImages').appendChild(img);
+          loadProtectedImage(img, path);
+        }
       }
       showTestPanel('result');
+    }
+    function testTaskStatusPath(taskId) {
+      const kind = TEST_MODE === 'video' ? 'video' : 'image';
+      return `/api/test-${kind}-channel/tasks/${encodeURIComponent(taskId)}`;
     }
     async function pollImageTestTask(taskId, failStreak = 0) {
       clearTestTaskPoll();
       TEST_TASK_ID = taskId || '';
       if (!TEST_TASK_ID) return;
       try {
-        const res = await api('/api/test-image-channel/tasks/' + encodeURIComponent(TEST_TASK_ID));
+        const res = await api(testTaskStatusPath(TEST_TASK_ID));
         if (TEST_TASK_ID !== taskId) return;
         const task = res.data || {};
         $('testResponseData').textContent = JSON.stringify(task, null, 2);
@@ -2226,6 +2342,7 @@ INDEX_HTML = r"""<!doctype html>
         }
         setTestBusy(false);
         safeStorageRemove('selfieImageLastTestTaskId');
+      safeStorageRemove('selfieImageLastTestMode');
         renderImageTestResult(task.result || {success:false, error: task.error || '任务未返回结果'});
         try { await loadRecords(); } catch (_) {}
       } catch (e) {
@@ -2247,8 +2364,10 @@ INDEX_HTML = r"""<!doctype html>
     async function resumeImageTestTask() {
       const taskId = safeStorageGet('selfieImageLastTestTaskId') || '';
       if (!taskId) return;
+      const savedMode = safeStorageGet('selfieImageLastTestMode') || 'image';
+      switchTestMode(savedMode);
       try {
-        const res = await api('/api/test-image-channel/tasks/' + encodeURIComponent(taskId));
+        const res = await api(testTaskStatusPath(taskId));
         const task = res.data || {};
         if (task.status === 'queued' || task.status === 'running') {
           TEST_TASK_ID = taskId;
@@ -2257,6 +2376,7 @@ INDEX_HTML = r"""<!doctype html>
           pollImageTestTask(taskId);
         } else {
           safeStorageRemove('selfieImageLastTestTaskId');
+      safeStorageRemove('selfieImageLastTestMode');
           $('testResponseData').textContent = JSON.stringify(task, null, 2);
           if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
           renderImageTestResult(task.result || {success:false, error: task.error || '任务未返回结果'});
@@ -2264,35 +2384,44 @@ INDEX_HTML = r"""<!doctype html>
         }
       } catch (_) {
         safeStorageRemove('selfieImageLastTestTaskId');
+      safeStorageRemove('selfieImageLastTestMode');
       }
     }
-    async function runImageTest() {
+    async function runMediaTest(mode = 'image') {
+      TEST_MODE = mode === 'video' ? 'video' : 'image';
       collectForms();
       clearTestData(false);
       setTestBusy(true);
-      $('testStatus').textContent = '正在提交试画…';
+      $('testStatus').textContent = TEST_MODE === 'video' ? '正在提交试视频…' : '正在提交试画…';
       try {
         if (!$('testChannel').value) throw new Error('还没有可用渠道，先去「渠道」里启用');
         if (!$('testModel').value) throw new Error('这个渠道还没有可用模型，先启用模型');
         const images = [];
-        for (const file of $('testRefs').files) images.push(await readFileDataUrl(file));
+        for (const file of $('testRefs').files) {
+          images.push(await readFileDataUrl(file));
+          if (TEST_MODE === 'video') break;
+        }
         const payload = {
+          media_type: TEST_MODE,
           channel: $('testChannel').value,
           model: $('testModel').value,
           prompt: $('testPrompt').value.trim(),
           aspect_ratio: $('testAspect').value,
           resolution: $('testResolution').value,
-          prompt_enhance: $('promptEnhance').checked,
-          use_selfie_reference: $('useSelfie').checked,
+          duration: Number($('testDuration').value || CONFIG.video?.default_duration || 5),
+          prompt_enhance: TEST_MODE === 'image' && $('promptEnhance').checked,
+          use_selfie_reference: TEST_MODE === 'image' && $('useSelfie').checked,
           images
         };
         $('testRequestData').textContent = JSON.stringify({...payload, images: `[${images.length} images]`}, null, 2);
         showTestPanel('request');
-        const res = await api('/api/test-image-channel/tasks', {method:'POST', body: JSON.stringify(payload)});
+        const endpoint = TEST_MODE === 'video' ? '/api/test-video-channel/tasks' : '/api/test-image-channel/tasks';
+        const res = await api(endpoint, {method:'POST', body: JSON.stringify(payload)});
         const task = res.data || {};
         TEST_TASK_ID = task.task_id || '';
         if (!TEST_TASK_ID) throw new Error('后台任务提交失败：未返回 task_id');
         safeStorageSet('selfieImageLastTestTaskId', TEST_TASK_ID);
+        safeStorageSet('selfieImageLastTestMode', TEST_MODE);
         $('testResponseData').textContent = JSON.stringify(task, null, 2);
         $('testStatus').textContent = `后台任务 ${TEST_TASK_ID} 已提交，关闭页面不会停止任务。`;
         pollImageTestTask(TEST_TASK_ID);
@@ -2303,6 +2432,8 @@ INDEX_HTML = r"""<!doctype html>
         showTestPanel('response');
       }
     }
+    async function runImageTest() { return runMediaTest('image'); }
+    async function runVideoTest() { return runMediaTest('video'); }
     function showTestPanel(name) {
       ['request','response','result'].forEach(key => $('test' + key[0].toUpperCase() + key.slice(1) + 'Panel').classList.toggle('active', key === name));
     }
@@ -2310,6 +2441,7 @@ INDEX_HTML = r"""<!doctype html>
       clearTestTaskPoll();
       TEST_TASK_ID = '';
       safeStorageRemove('selfieImageLastTestTaskId');
+      safeStorageRemove('selfieImageLastTestMode');
       setTestBusy(false);
       $('testImages').innerHTML = '';
       $('testRequestData').textContent = '';
@@ -2956,6 +3088,7 @@ INDEX_HTML = r"""<!doctype html>
       el.addEventListener(eventName, () => { if (isChannelModalOpen()) CHANNEL_MODAL_DIRTY = true; });
     });
     $('testImageBtn').onclick = runImageTest;
+    $('testVideoBtn').onclick = runVideoTest;
     if ($('studioCreateBtn')) $('studioCreateBtn').onclick = studioCreate;
     if ($('studioPresetBtn')) $('studioPresetBtn').onclick = toggleStudioPresets;
     if ($('testPresetBtn')) $('testPresetBtn').onclick = toggleTestPresets;
@@ -2994,7 +3127,7 @@ INDEX_HTML = r"""<!doctype html>
     mirrorValue('defaultAspect', 'selfieAspect');
     mirrorValue('selfieAspect', 'defaultAspect');
     $('monitorSource').oninput = monitorFilterChanged;
-    ['monitorModel','monitorSuccess'].forEach(id => {
+    ['monitorMedia','monitorModel','monitorSuccess'].forEach(id => {
       $(id).onchange = monitorFilterChanged;
     });
 
@@ -3124,8 +3257,10 @@ class FlaskWebServer:
                 return None, fail(f"{name} 不能小于 {minimum}", 400)
             return min(value, maximum), None
 
-        def record_matches_query(record: Any, source: str, model: str, success: str, keyword: str) -> bool:
+        def record_matches_query(record: Any, source: str, model: str, success: str, keyword: str, media_type: str = "") -> bool:
             if not isinstance(record, dict):
+                return False
+            if media_type and str(record.get("media_type") or "image").strip().lower() != media_type:
                 return False
             if source:
                 source_text = " ".join(
@@ -3149,6 +3284,9 @@ class FlaskWebServer:
         def filtered_record_payload(records: list[Any]) -> Any:
             source = str(request.args.get("source") or "").strip().lower()
             model = str(request.args.get("model") or "").strip().lower()
+            media_type = str(request.args.get("media_type") or "").strip().lower()
+            if media_type not in {"", "image", "video"}:
+                return None, None, fail("media_type 必须是 image 或 video", 400)
             success = str(request.args.get("success") or "").strip().lower()
             keyword = str(request.args.get("q") or request.args.get("keyword") or "").strip().lower()
             if success and success not in {"1", "0", "true", "false", "yes", "no", "ok", "success", "succeeded", "failed", "失败", "成功"}:
@@ -3165,7 +3303,7 @@ class FlaskWebServer:
             filtered = [
                 record
                 for record in records
-                if record_matches_query(record, source, model, success, keyword)
+                if record_matches_query(record, source, model, success, keyword, media_type)
             ]
             page = filtered[offset : offset + limit]
             meta = {
@@ -3316,6 +3454,31 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 404)
 
+        @app.route("/api/test-video-channel/tasks", methods=["POST"])
+        def test_video_channel_task_start() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                data = self.plugin.start_web_image_task({**payload, "media_type": "video"})
+                return ok(redact_sensitive_data(data))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/test-video-channel/tasks/<task_id>", methods=["GET"])
+        def test_video_channel_task_status(task_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            task_id_text = str(task_id or "").strip()
+            if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
+                return fail("非法任务 ID", 400)
+            try:
+                return ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
+            except Exception as exc:
+                return fail(str(exc), 404)
+
         @app.route("/api/refresh-image-models", methods=["POST"])
         def refresh_image_models() -> Any:
             if not check_auth():
@@ -3373,10 +3536,41 @@ class FlaskWebServer:
                 return fail(str(exc), 400)
             if not info.get("exists"):
                 return fail("图片已清理", 404)
-            if info.get("is_image") is False:
-                return fail("缓存文件不是有效图片", 400)
-            return send_file(info["absolute_path"], mimetype=info.get("mime_type") or "image/png")
+            if not info.get("is_image") and not info.get("is_video"):
+                return fail("缓存文件不是有效图片或视频", 400)
+            return send_file(info["absolute_path"], mimetype=info.get("mime_type") or "application/octet-stream")
 
+
+        @app.route("/api/cache-image-preview", methods=["GET"])
+        def cache_image_preview() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                rel_path = str(request.args.get("path") or "")
+                if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
+                    return fail("缓存路径过长", 400)
+                info = self.plugin.get_cached_image_info(rel_path)
+            except Exception as exc:
+                return fail(str(exc), 400)
+            if not info.get("exists"):
+                return fail("缓存文件已清理", 404)
+            if not info.get("is_image") and not info.get("is_video"):
+                return fail("缓存文件不是有效图片或视频", 400)
+            path = str(info.get("absolute_path") or "")
+            try:
+                with open(path, "rb") as handle:
+                    raw = handle.read(PAGE_PREVIEW_MAX_BYTES + 1)
+            except Exception as exc:
+                return fail(str(exc), 400)
+            if len(raw) > PAGE_PREVIEW_MAX_BYTES:
+                return fail("媒体文件过大，请改用下载查看", 413)
+            mime = info.get("mime_type") or "application/octet-stream"
+            return ok({
+                "path": rel_path,
+                "mime_type": mime,
+                "size": len(raw),
+                "data_url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
+            })
 
         @app.route("/api/studio/sessions", methods=["GET", "POST"])
         def studio_sessions() -> Any:

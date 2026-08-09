@@ -52,6 +52,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "audit_channels": [],
     "video_channels": [],
     "enabled_image_model_priority": [],
+    "enabled_audit_model_priority": [],
     "enabled_video_model_priority": [],
     # When true: ignore priority list and shuffle enabled models each generate.
     # Priority list is preserved in config for when random is turned off.
@@ -215,6 +216,7 @@ class AICatConfig:
     audit_channels: List[ImageChannelConfig]
     video_channels: List[ImageChannelConfig]
     enabled_image_model_priority: List[str]
+    enabled_audit_model_priority: List[str]
     enabled_video_model_priority: List[str]
     random_image_model: bool
     video_enable: bool
@@ -276,6 +278,7 @@ class AICatConfig:
             audit_channels=audit_channels,
             video_channels=video_channels,
             enabled_image_model_priority=split_values(raw.get("enabled_image_model_priority")),
+            enabled_audit_model_priority=split_values(raw.get("enabled_audit_model_priority")),
             enabled_video_model_priority=split_values(raw.get("enabled_video_model_priority")),
             random_image_model=to_bool(
                 raw.get("random_image_model")
@@ -290,6 +293,31 @@ class AICatConfig:
             video_global_timeout=to_int(video.get("global_timeout"), 300, minimum=30, maximum=1800),
         )
 
+    @staticmethod
+    def _prioritize_targets(
+        all_targets: List[ImageModelTarget],
+        priority: List[str],
+    ) -> List[ImageModelTarget]:
+        if not priority:
+            return all_targets
+        by_key: Dict[str, ImageModelTarget] = {}
+        for target in all_targets:
+            by_key[target.label] = target
+            by_key[f"{target.channel_name}:{target.model}"] = target
+            by_key[target.model] = target
+        ordered: List[ImageModelTarget] = []
+        seen = set()
+        for raw_key in priority:
+            target = by_key.get(str(raw_key).strip())
+            if target and target.label not in seen:
+                ordered.append(target)
+                seen.add(target.label)
+        for target in all_targets:
+            if target.label not in seen:
+                ordered.append(target)
+                seen.add(target.label)
+        return ordered
+
     def get_prioritized_targets(self) -> List[ImageModelTarget]:
         all_targets: List[ImageModelTarget] = []
         for channel in self.image_channels:
@@ -303,63 +331,21 @@ class AICatConfig:
             shuffled = list(all_targets)
             random.shuffle(shuffled)
             return shuffled
-
-        if not self.enabled_image_model_priority:
-            return all_targets
-
-        by_key: Dict[str, ImageModelTarget] = {}
-        for target in all_targets:
-            by_key[target.label] = target
-            by_key[f"{target.channel_name}:{target.model}"] = target
-            by_key[target.model] = target
-
-        ordered: List[ImageModelTarget] = []
-        seen = set()
-        for raw_key in self.enabled_image_model_priority:
-            key = str(raw_key).strip()
-            target = by_key.get(key)
-            if target and target.label not in seen:
-                ordered.append(target)
-                seen.add(target.label)
-
-        for target in all_targets:
-            if target.label not in seen:
-                ordered.append(target)
-                seen.add(target.label)
-        return ordered
+        return self._prioritize_targets(all_targets, self.enabled_image_model_priority)
 
     def get_audit_targets(self) -> List[ImageModelTarget]:
         targets: List[ImageModelTarget] = []
         for channel in self.audit_channels:
             targets.extend(channel.targets(self.image_global_timeout))
-        return targets
+        return self._prioritize_targets(targets, self.enabled_audit_model_priority)
 
     def get_prioritized_video_targets(self) -> List[ImageModelTarget]:
         if not self.video_enable:
             return []
-        all_targets: List[ImageModelTarget] = []
+        targets: List[ImageModelTarget] = []
         for channel in self.video_channels:
-            all_targets.extend(channel.targets(self.video_global_timeout or self.image_global_timeout))
-        if not self.enabled_video_model_priority:
-            return all_targets
-        by_key: Dict[str, ImageModelTarget] = {}
-        for target in all_targets:
-            by_key[target.label] = target
-            by_key[f"{target.channel_name}:{target.model}"] = target
-            by_key[target.model] = target
-        ordered: List[ImageModelTarget] = []
-        seen = set()
-        for raw_key in self.enabled_video_model_priority:
-            key = str(raw_key).strip()
-            target = by_key.get(key)
-            if target and target.label not in seen:
-                ordered.append(target)
-                seen.add(target.label)
-        for target in all_targets:
-            if target.label not in seen:
-                ordered.append(target)
-                seen.add(target.label)
-        return ordered
+            targets.extend(channel.targets(self.video_global_timeout or self.image_global_timeout))
+        return self._prioritize_targets(targets, self.enabled_video_model_priority)
 
 
 def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -371,10 +357,12 @@ def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
         raw["audit_channels"] = raw["auditChannels"]
     if "enabledImageModelPriority" in raw and "enabled_image_model_priority" not in raw:
         raw["enabled_image_model_priority"] = raw["enabledImageModelPriority"]
-    if "videoChannels" in raw and "video_channels" not in raw:
-        raw["video_channels"] = raw["videoChannels"]
+    if "enabledAuditModelPriority" in raw and "enabled_audit_model_priority" not in raw:
+        raw["enabled_audit_model_priority"] = raw["enabledAuditModelPriority"]
     if "enabledVideoModelPriority" in raw and "enabled_video_model_priority" not in raw:
         raw["enabled_video_model_priority"] = raw["enabledVideoModelPriority"]
+    if "videoChannels" in raw and "video_channels" not in raw:
+        raw["video_channels"] = raw["videoChannels"]
     if "botName" in raw and "bot_name" not in raw:
         raw["bot_name"] = raw["botName"]
 

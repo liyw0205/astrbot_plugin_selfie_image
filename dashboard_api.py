@@ -30,7 +30,7 @@ except Exception:  # pragma: no cover - unit tests / offline import
     request = None  # type: ignore
 
 
-PAGE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
+PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 
 
 class SelfieImageDashboardAPI:
@@ -60,6 +60,13 @@ class SelfieImageDashboardAPI:
                 self.page_test_image_task_status,
                 ["GET"],
                 "Selfie Image channel test task status",
+            ),
+            ("test-video-channel/tasks", self.page_test_video_task_start, ["POST"], "Selfie Image start video channel test"),
+            (
+                "test-video-channel/tasks/<task_id>",
+                self.page_test_image_task_status,
+                ["GET"],
+                "Selfie Image video channel test task status",
             ),
             ("refresh-image-models", self.page_refresh_image_models, ["POST"], "Selfie Image refresh models"),
             ("records", self.page_records, ["GET"], "Selfie Image generation records"),
@@ -133,9 +140,13 @@ class SelfieImageDashboardAPI:
             return None, self._fail(f"{name} 不能小于 {minimum}", 400)
         return min(value, maximum), None
 
-    def _record_matches(self, record: Any, source: str, model: str, success: str, keyword: str) -> bool:
+    def _record_matches(self, record: Any, source: str, model: str, success: str, keyword: str, media_type: str = "") -> bool:
         if not isinstance(record, dict):
             return False
+        if media_type:
+            record_type = str(record.get("media_type") or "image").strip().lower()
+            if record_type != media_type:
+                return False
         if source:
             source_text = " ".join(
                 str(record.get(key) or "") for key in ("source_label", "source", "group_id", "user_id")
@@ -157,6 +168,9 @@ class SelfieImageDashboardAPI:
     def _filtered_records(self, records: list[Any]) -> tuple[Optional[list], Optional[dict], Any]:
         source = self._query_value("source").strip().lower()
         model = self._query_value("model").strip().lower()
+        media_type = self._query_value("media_type").strip().lower()
+        if media_type not in {"", "image", "video"}:
+            return None, None, self._fail("media_type 必须是 image 或 video", 400)
         success = self._query_value("success").strip().lower()
         keyword = (self._query_value("q") or self._query_value("keyword")).strip().lower()
         if success and success not in {
@@ -188,7 +202,7 @@ class SelfieImageDashboardAPI:
         filtered = [
             record
             for record in records
-            if self._record_matches(record, source, model, success, keyword)
+            if self._record_matches(record, source, model, success, keyword, media_type)
         ]
         page = filtered[offset : offset + limit]
         meta = {
@@ -288,6 +302,17 @@ class SelfieImageDashboardAPI:
         except Exception as exc:
             return self._fail(str(exc), 500)
 
+    async def page_test_video_task_start(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        assert payload is not None
+        try:
+            data = self.plugin.start_web_image_task({**payload, "media_type": "video"})
+            return self._ok(redact_sensitive_data(data))
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
     async def page_test_image_task_status(self, task_id: str) -> Any:
         task_id_text = str(task_id or "").strip()
         if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
@@ -341,12 +366,12 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 400)
         if not info.get("exists"):
             return self._fail("图片已清理", 404)
-        if info.get("is_image") is False:
-            return self._fail("缓存文件不是有效图片", 400)
+        if not info.get("is_image") and not info.get("is_video"):
+            return self._fail("缓存文件不是有效图片或视频", 400)
         return file_response(
             info["absolute_path"],
-            filename=str(info.get("name") or "image.png"),
-            content_type=info.get("mime_type") or "image/png",
+            filename=str(info.get("name") or "media.bin"),
+            content_type=info.get("mime_type") or "application/octet-stream",
         )
 
     async def page_cache_image_preview(self) -> Any:
@@ -359,8 +384,8 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 400)
         if not info.get("exists"):
             return self._fail("图片已清理", 404)
-        if info.get("is_image") is False:
-            return self._fail("缓存文件不是有效图片", 400)
+        if not info.get("is_image") and not info.get("is_video"):
+            return self._fail("缓存文件不是有效图片或视频", 400)
         path = str(info.get("absolute_path") or "")
         try:
             with open(path, "rb") as handle:

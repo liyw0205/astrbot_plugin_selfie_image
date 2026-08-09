@@ -1293,6 +1293,17 @@ class SelfieImagePlugin(Star):
         raw_images = list(payload.get("images") or [])
         if payload.get("image"):
             raw_images.append(payload.get("image"))
+        media_type = str(payload.get("media_type") or "image").strip().lower()
+        if media_type == "video":
+            return {
+                "media_type": "video",
+                "original_prompt": str(payload.get("prompt") or "").strip() or "一段自然流畅的短视频",
+                "channel": str(payload.get("channel") or "").strip(),
+                "model": str(payload.get("model") or "").strip(),
+                "aspect_ratio": str(payload.get("aspect_ratio") or "16:9"),
+                "duration": int(payload.get("duration") or self.config.video_default_duration or 5),
+                "raw_reference_image_count": len(raw_images),
+            }
         prompt_enhance_raw = payload.get("prompt_enhance", True)
         prompt_enhance = not (
             prompt_enhance_raw is False
@@ -1351,6 +1362,9 @@ class SelfieImagePlugin(Star):
         if loop is None or not loop.is_running():
             raise RuntimeError("AstrBot 事件循环未就绪，无法启动后台生图任务")
         payload_copy = copy.deepcopy(payload)
+        media_type = str(payload_copy.get("media_type") or "image").strip().lower()
+        if media_type not in {"image", "video"}:
+            raise RuntimeError("media_type 必须是 image 或 video")
         self._validate_web_test_selection(payload_copy)
         with self._web_task_lock:
             self._web_task_seq += 1
@@ -1367,7 +1381,7 @@ class SelfieImagePlugin(Star):
                 "updated_at": self._web_task_timestamp(),
                 "request_data": self._summarize_web_test_payload(payload_copy),
                 "result": None,
-                "source": "web-test",
+                "source": "web-video-test" if media_type == "video" else "web-test",
                 "owner_session": "web",
                 "cancel_requested": False,
             }
@@ -1380,7 +1394,8 @@ class SelfieImagePlugin(Star):
         try:
             if self._task_cancel_requested(task_id):
                 raise RuntimeError("任务已取消")
-            result = await self.web_test_image(payload)
+            media_type = str(payload.get("media_type") or "image").strip().lower()
+            result = await (self.web_test_video(payload) if media_type == "video" else self.web_test_image(payload))
             result = redact_sensitive_data(result)
             if self._task_cancel_requested(task_id):
                 self._set_web_image_task(
@@ -1438,18 +1453,23 @@ class SelfieImagePlugin(Star):
         exists = os.path.exists(abs_path) and os.path.isfile(abs_path)
         mime = "image/png"
         is_image = False
+        is_video = False
         if exists:
             with open(abs_path, "rb") as handle:
                 head = handle.read(512)
             is_image = looks_like_image_bytes(head)
+            is_video = head[4:12].startswith(b"ftyp") or abs_path.lower().endswith((".mp4", ".webm", ".mov"))
             if is_image:
                 mime = detect_mime_by_bytes(head)
+            elif is_video:
+                mime = "video/webm" if abs_path.lower().endswith(".webm") else "video/quicktime" if abs_path.lower().endswith(".mov") else "video/mp4"
         return {
             "path": rel_path,
             "absolute_path": abs_path,
             "name": os.path.basename(abs_path),
             "exists": exists,
             "is_image": is_image,
+            "is_video": is_video,
             "mime_type": mime,
         }
 
@@ -3333,6 +3353,21 @@ class SelfieImagePlugin(Star):
                 return target
         return None
 
+    def _find_video_target(self, channel_name: str = "", model: str = "") -> Optional[ImageModelTarget]:
+        targets = self.config.get_prioritized_video_targets()
+        if not channel_name and not model:
+            return targets[0] if targets else None
+        for target in targets:
+            if channel_name and target.channel_name != channel_name:
+                continue
+            if model and target.model != model:
+                continue
+            return target
+        return next(
+            (target for target in targets if channel_name and target.channel_name == channel_name and not model),
+            None,
+        )
+
     def _available_model_labels(self) -> List[str]:
         labels: List[str] = []
         seen = set()
@@ -3603,6 +3638,25 @@ class SelfieImagePlugin(Star):
                     save_dir=self.video_dir,
                 )
         if result.error or not result.video_path:
+            self._record_task(
+                {
+                    **self._source_context(event, source),
+                    "media_type": "video",
+                    "success": False,
+                    "error": result.error or "视频没有生成出来",
+                    "prompt": req.prompt,
+                    "original_prompt": prompt,
+                    "request_prompt": req.prompt,
+                    "used_model": result.used_model,
+                    "elapsed_seconds": result.elapsed_seconds,
+                    "reference_images": len(refs),
+                    "request_data": {"duration": req.duration, "size": req.size, "reference_images": len(refs)},
+                    "response_data": {"attempts": result.attempts},
+                    "request_image_paths": [],
+                    "generated_image_paths": [],
+                    "generated_video_paths": [],
+                }
+            )
             return {
                 "success": False,
                 "error": result.error or "视频没有生成出来",
@@ -3610,6 +3664,26 @@ class SelfieImagePlugin(Star):
                 "attempts": result.attempts,
                 "elapsed_seconds": result.elapsed_seconds,
             }
+        video_rel = self._cache_relative_path(result.video_path)
+        self._record_task(
+            {
+                **self._source_context(event, source),
+                "media_type": "video",
+                "success": True,
+                "error": "",
+                "prompt": req.prompt,
+                "original_prompt": prompt,
+                "request_prompt": req.prompt,
+                "used_model": result.used_model,
+                "elapsed_seconds": result.elapsed_seconds,
+                "reference_images": len(refs),
+                "request_data": {"duration": req.duration, "size": req.size, "reference_images": len(refs)},
+                "response_data": {"attempts": result.attempts, "video_url": result.video_url},
+                "request_image_paths": [],
+                "generated_image_paths": [],
+                "generated_video_paths": [video_rel],
+            }
+        )
         return {
             "success": True,
             "video_path": result.video_path,
@@ -3995,32 +4069,52 @@ class SelfieImagePlugin(Star):
     def _validate_web_test_selection(self, payload: Dict[str, Any]) -> None:
         channel_name = str(payload.get("channel") or "").strip()
         model_name = str(payload.get("model") or "").strip()
+        media_type = str(payload.get("media_type") or "image").strip().lower()
         if not channel_name:
             return
-        matching_channels = [channel for channel in self.config.image_channels if channel.name == channel_name]
+        is_video = media_type == "video"
+        channels = self.config.video_channels if is_video else self.config.image_channels
+        kind_label = "视频" if is_video else "生图"
+        matching_channels = [channel for channel in channels if channel.name == channel_name]
         if not matching_channels:
-            raise RuntimeError(f"生图渠道 {channel_name} 不存在")
+            raise RuntimeError(f"{kind_label}渠道 {channel_name} 不存在")
         if not any(channel.enabled for channel in matching_channels):
-            raise RuntimeError(f"生图渠道 {channel_name} 已禁用，渠道测试不会调用禁用渠道")
+            raise RuntimeError(f"{kind_label}渠道 {channel_name} 已禁用，渠道测试不会调用禁用渠道")
         channel = next((item for item in matching_channels if item.enabled), matching_channels[0])
-        from .models import preflight_image_channel
+        if is_video:
+            report = preflight_video_channel(
+                {
+                    "name": channel.name,
+                    "provider_type": channel.provider_type,
+                    "base_url": channel.base_url,
+                    "api_key": channel.api_key,
+                    "api_keys": channel.api_keys,
+                    "model": channel.model,
+                    "enabled_models": channel.enabled_models,
+                    "timeout": channel.timeout,
+                    "enabled": channel.enabled,
+                    "proxy": channel.proxy,
+                }
+            )
+        else:
+            from .models import preflight_image_channel
 
-        report = preflight_image_channel(
-            {
-                "name": channel.name,
-                "provider_type": channel.provider_type,
-                "base_url": channel.base_url,
-                "api_key": channel.api_key,
-                "model": channel.model,
-                "enabled_models": channel.enabled_models,
-                "timeout": channel.timeout,
-                "enabled": channel.enabled,
-                "proxy": channel.proxy,
-            },
-            kind="image",
-        )
+            report = preflight_image_channel(
+                {
+                    "name": channel.name,
+                    "provider_type": channel.provider_type,
+                    "base_url": channel.base_url,
+                    "api_key": channel.api_key,
+                    "model": channel.model,
+                    "enabled_models": channel.enabled_models,
+                    "timeout": channel.timeout,
+                    "enabled": channel.enabled,
+                    "proxy": channel.proxy,
+                },
+                kind="image",
+            )
         if not report.get("ok"):
-            raise RuntimeError(report.get("message") or "渠道配置预检未通过")
+            raise RuntimeError(report.get("message") or f"{kind_label}渠道配置预检未通过")
         enabled = channel.enabled_models or ([channel.model] if channel.model else [])
         if model_name and model_name not in enabled:
             raise RuntimeError(f"渠道 {channel_name} 未启用模型 {model_name}，请先在渠道管理中启用并保存")
@@ -4144,6 +4238,77 @@ class SelfieImagePlugin(Star):
             "response_data": result.get("response_data") or {},
             "request_image_paths": result.get("request_image_paths") or [],
             "generated_image_paths": result.get("image_paths") or [],
+        }
+
+    async def web_test_video(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        channel_name = str(payload.get("channel") or "").strip()
+        model_name = str(payload.get("model") or "").strip()
+        prompt = str(payload.get("prompt") or "").strip() or "一段自然流畅的短视频"
+        aspect = str(payload.get("aspect_ratio") or "16:9").strip() or "16:9"
+        duration = max(1, min(60, int(payload.get("duration") or self.config.video_default_duration or 5)))
+        target = self._find_video_target(channel_name, model_name)
+        if not target:
+            raise RuntimeError("未找到指定视频模型")
+
+        raw_images = list(payload.get("images") or [])
+        if payload.get("image"):
+            raw_images.append(payload.get("image"))
+        refs: List[ImageReference] = []
+        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+        for raw in raw_images[:1]:
+            data, mime = data_url_to_bytes(str(raw or ""))
+            if not data:
+                continue
+            if len(data) > max_bytes:
+                raise RuntimeError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
+            refs.append(ImageReference(data=data, mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data))))
+
+        started = time.monotonic()
+        req = VideoGenerateRequest(
+            prompt=prompt,
+            images=refs,
+            duration=duration,
+            size=aspect,
+        )
+        async with self._video_semaphore:
+            async with aiohttp.ClientSession(trust_env=False) as session:
+                result = await generate_video_with_fallback([target], req, session, save_dir=self.video_dir)
+        elapsed = round(float(result.elapsed_seconds or (time.monotonic() - started)), 2)
+        record = {
+            **self._source_context(None, "web-video-test"),
+            "media_type": "video",
+            "success": not bool(result.error) and bool(result.video_path),
+            "error": result.error or "",
+            "prompt": prompt,
+            "original_prompt": prompt,
+            "request_prompt": prompt,
+            "used_model": result.used_model or target.label,
+            "elapsed_seconds": elapsed,
+            "reference_images": len(refs),
+            "request_data": self._summarize_web_test_payload(payload),
+            "response_data": {"attempts": result.attempts, "video_url": result.video_url},
+            "request_image_paths": [],
+            "generated_image_paths": [],
+            "generated_video_paths": [self._cache_relative_path(result.video_path)] if result.video_path else [],
+        }
+        self._record_task(record)
+        if result.error or not result.video_path:
+            return {
+                "success": False,
+                "error": result.error or "视频没有生成出来",
+                "used_model": result.used_model or target.label,
+                "elapsed_seconds": elapsed,
+                "attempts": result.attempts,
+                "generated_video_paths": [],
+            }
+        return {
+            "success": True,
+            "used_model": result.used_model or target.label,
+            "elapsed_seconds": elapsed,
+            "reference_images": len(refs),
+            "video_url": result.video_url,
+            "generated_video_paths": [self._cache_relative_path(result.video_path)],
+            "attempts": result.attempts,
         }
 
     async def web_refresh_image_models(self, payload: Dict[str, Any]) -> List[str]:
