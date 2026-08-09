@@ -230,8 +230,8 @@ STUDIO_TEMPLATES: Dict[str, Dict[str, Any]] = {
     },
     "selfie": {
         "id": "selfie",
-        "title": "自拍 / 看看",
-        "description": "形象 + 可选服装/姿势参考",
+        "title": "自拍 / 看看 / 看看腿",
+        "description": "看看腿会按姿势搭配光腿神器、白丝或黑丝",
         "default_title": "自拍画布",
         "mode": "selfie",
         "aspect_ratio": "3:4",

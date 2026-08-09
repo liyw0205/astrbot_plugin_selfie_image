@@ -3368,7 +3368,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("只锁身份长相", clothes)
 
 
-    def test_legs_persona_mentions_kneel_and_light_leg(self) -> None:
+    def test_legs_persona_uses_only_supported_legwear(self) -> None:
         from astrbot_plugin_selfie_image.persona import PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -3381,18 +3381,24 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 extra_reference_count=0,
             )
             self.assertIn("光腿神器", text)
-            # persona no longer lists multi-pose menu (avoids model mixing poses)
+            self.assertIn("白丝", text)
+            self.assertIn("黑丝", text)
+            for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装"):
+                self.assertNotIn(forbidden, text)
             self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
             self.assertNotIn("· 坐姿拍腿", text)
             self.assertNotIn("· 侧躺曲腿", text)
             self.assertIn("本次主姿势", text)
             self.assertIn("禁止系鞋带", text)
             self.assertIn("两条腿", text)
-            self.assertIn("堆堆袜", text)
-            self.assertIn("过膝袜", text)
-            self.assertIn("避免只盖到脚踝的短袜", text)
-            self.assertIn("不要张张都穿袜", text)
-            self.assertTrue(("光腿" in text) or ("优先光腿" in text))
+
+    def test_daily_profile_does_not_add_unselected_legwear(self) -> None:
+        from astrbot_plugin_selfie_image.persona import fallback_daily_profile
+
+        for _ in range(30):
+            outfit = fallback_daily_profile("2026-08-09", "seed").outfit
+            for forbidden in ("短袜", "居家袜", "中筒袜", "堆堆袜", "过膝袜"):
+                self.assertNotIn(forbidden, outfit)
 
     def test_look_you_and_selfie_persona_have_variety_hints(self) -> None:
         from astrbot_plugin_selfie_image.persona import PersonaManager
@@ -3706,30 +3712,54 @@ class LegFocusTests(unittest.TestCase):
             pass
 
         found = set()
-        for _ in range(120):
+        legwear_by_pose = {}
+        for _ in range(180):
             t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
-            self.assertIn("光腿神器", t)
             self.assertIn("脸部", t)
+            for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "极薄肉色", "袜装"):
+                self.assertNotIn(forbidden, t)
+            selected = [name for name in ("光腿神器", "白丝", "黑丝") if f"本次腿部穿搭：{name}" in t]
+            self.assertEqual(len(selected), 1, t)
             m = re.search(r"【pose:([a-z_]+)】", t)
             if m:
-                found.add(m.group(1))
+                pose = m.group(1)
+                found.add(pose)
+                legwear_by_pose.setdefault(pose, set()).update(selected)
         for key in ("sit", "kneel", "side_lie", "hug_knee", "cross_leg"):
             self.assertIn(key, found, f"missing pose {key} in samples {found}")
-        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
-        for key in ("stand_topdown", "windowsill", "kneel_up", "side_lie", "hug_knee", "cross_leg"):
-            self.assertIn(f'"{key}"', main_src)
-        self.assertNotIn("one_knee_fix", main_src)
-        self.assertIn("禁止系鞋带", main_src)
-        self.assertIn("两条腿", main_src)
-        self.assertIn("堆堆袜", main_src)
-        self.assertIn("过膝袜", main_src)
-        self.assertIn("避免只盖到脚踝", main_src)
-        self.assertIn("不要默认每张都穿袜", main_src)
-        self.assertIn("本次优先光腿", main_src)
+        for pose, choices in legwear_by_pose.items():
+            self.assertTrue(choices <= {"光腿神器", "白丝", "黑丝"}, (pose, choices))
+        filtered = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "短袜 过膝袜 肉丝 清晨", False)
+        self.assertIn("清晨", filtered)
+        for forbidden in ("短袜", "过膝袜", "肉丝"):
+            self.assertNotIn(forbidden, filtered)
+        self.assertEqual(set(plugin_main.LEGWEAR_PROMPTS), {"光腿神器", "白丝", "黑丝"})
 
-    def test_send_one_by_one_comment_present(self) -> None:
+        class PersonaStub:
+            class Intent:
+                is_legs_only = True
+
+            def analyze_selfie_intent(self, action: str):
+                return self.Intent()
+
+        plugin = object.__new__(plugin_main.SelfieImagePlugin)
+        plugin.persona = PersonaStub()
+        normalized = plugin._normalize_selfie_action("看看腿 白丝 短袜 清晨", False)
+        self.assertIn("【pose:", normalized)
+        self.assertIn("清晨", normalized)
+        selected = [name for name in ("光腿神器", "白丝", "黑丝") if f"本次腿部穿搭：{name}" in normalized]
+        self.assertEqual(len(selected), 1, normalized)
+        self.assertNotIn("短袜", normalized)
+        self.assertEqual(plugin._normalize_selfie_action(normalized, False), normalized)
+
+    def test_legwear_is_pose_weighted(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
-        self.assertIn("生成一张发一张", main_src)
+        self.assertIn('"side_lie": (("光腿神器", 6), ("白丝", 3), ("黑丝", 1))', main_src)
+        self.assertIn('"cross_leg": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4))', main_src)
+        self.assertIn('"stand_topdown": (("光腿神器", 3), ("白丝", 3), ("黑丝", 4))', main_src)
+
+    def test_multi_image_commands_rebuild_each_shot(self) -> None:
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
         self.assertIn("rebuild_each", main_src)
         self.assertIn("avoid_pose", main_src)
         self.assertIn("_build_selfie_look_action", main_src)
@@ -3739,6 +3769,14 @@ class LegFocusTests(unittest.TestCase):
 
 
 class StudioStoreTests(unittest.TestCase):
+    def test_selfie_template_mentions_look_legs_legwear(self) -> None:
+        from astrbot_plugin_selfie_image.studio import list_studio_templates
+
+        templates = {item["id"]: item for item in list_studio_templates()}
+        description = templates["selfie"]["description"]
+        self.assertIn("看看腿", description)
+        self.assertIn("光腿神器、白丝或黑丝", description)
+
     def test_group_template_and_persist(self) -> None:
         import tempfile
         from astrbot_plugin_selfie_image.studio import (

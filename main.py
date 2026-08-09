@@ -165,6 +165,28 @@ def build_prompt_with_reference_instruction(prompt: str, images: List[ImageRefer
     )
 
 
+LEGWEAR_BY_POSE = {
+    "sit": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
+    "kneel": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
+    "side_lie": (("光腿神器", 6), ("白丝", 3), ("黑丝", 1)),
+    "hug_knee": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
+    "cross_leg": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
+    "stand_topdown": (("光腿神器", 3), ("白丝", 3), ("黑丝", 4)),
+    "windowsill": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
+    "kneel_up": (("光腿神器", 5), ("白丝", 2), ("黑丝", 3)),
+}
+
+LEGWEAR_PROMPTS = {
+    "光腿神器": "本次腿部穿搭：光腿神器。使用自然肤色、轻薄细腻的连裤穿搭，呈现通透匀净的裸腿观感，不假白、不油腻。",
+    "白丝": "本次腿部穿搭：白丝。使用纯白、轻薄、细腻的连裤丝袜，颜色均匀，质感干净。",
+    "黑丝": "本次腿部穿搭：黑丝。使用纯黑、轻薄、细腻的连裤丝袜，颜色均匀，质感干净。",
+}
+
+LEGWEAR_REQUEST_PATTERN = re.compile(
+    r"(?:光腿神器|光腿|白丝|黑丝|丝袜|短袜|堆堆袜|过膝袜|长筒袜|肉色丝袜|肉丝|连裤袜|长袜)"
+)
+
+
 @register(PLUGIN_NAME, PLUGIN_AUTHOR, f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}", PLUGIN_VERSION)
 class SelfieImagePlugin(Star):
     def __init__(self, context: Context, config: Optional[dict] = None):
@@ -214,7 +236,7 @@ class SelfieImagePlugin(Star):
         self._web_task_lock = threading.RLock()
         self._web_tasks: Dict[str, Dict[str, Any]] = {}
         self._web_task_seq = 0
-        # Session-scoped model override: session_key -> "channel/model" (target 08; not global).
+        # 模型选择仅作用于当前会话。
         self._session_model_lock = threading.RLock()
         self._session_model_overrides: Dict[str, str] = {}
         self._last_request_at: Dict[str, float] = {}
@@ -1796,6 +1818,8 @@ class SelfieImagePlugin(Star):
                 raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
 
             if mode in {"group", "selfie"}:
+                if mode == "selfie":
+                    action = self._normalize_selfie_action(action, bool(refs))
                 await self.persona.ensure_daily_selfie_profile(action)
                 # refs already include identity first when available; do not re-prepend persona
                 has_identity = bool(refs)
@@ -2540,8 +2564,7 @@ class SelfieImagePlugin(Star):
         *,
         avoid_pose: str = "",
     ) -> str:
-        """晒腿 action：多姿势随机，不露脸；光腿神器肤质。禁多腿/乱手/摸鞋带。"""
-        # 权重：坐/跪/侧躺/抱膝/二郎腿为主；站立俯视、窗台、跪立略少。已去掉单膝整理/系鞋带。
+        """生成单一腿部姿势，并按姿势选择腿部穿搭。"""
         pose_pool = [
             ("sit", 3),
             ("kneel", 3),
@@ -2564,98 +2587,98 @@ class SelfieImagePlugin(Star):
             "sit": [
                 (
                     "第一人称自拍视角，俯拍下半身特写，只露出部分发丝，"
-                    "宽松上衣与短裙下摆入镜，腿部光洁细腻像光腿神器：自然通透、匀净柔光，"
-                    "本次腿部为光腿（不穿袜子），可穿小皮鞋或居家拖鞋，坐在米白色毛绒地毯上，窗边柔和阳光；"
+                    "宽松上衣与短裙下摆入镜，腿部线条自然细腻，"
+                    "可穿小皮鞋或居家拖鞋，坐在米白色毛绒地毯上，窗边柔和阳光；"
                     "双手自然放在身侧或腿上，不要去摸鞋或脚面。"
                 ),
                 (
                     "第一人称低头随手拍，坐在床沿，双腿向前自然伸展后轻微斜放，"
-                    "腿部皮肤干净细腻（光腿神器质感：通透匀净、不假白不油腻），室内暖光和浅色床单；"
-                    "可穿过膝袜或堆堆袜，也可光腿；手可轻搭膝盖，禁止摸鞋边。"
+                    "腿部线条与质感干净细腻，室内暖光和浅色床单；"
+                    "手可轻搭膝盖，禁止摸鞋边。"
                 ),
                 (
                     "窗边单人椅坐姿，双腿并拢后向一侧自然倾斜，裙摆垂落，腿部线条流畅、肤质细腻柔光，"
-                    "过膝袜或堆堆袜与小皮鞋/居家拖鞋材质清楚，地板柔和反光；手不碰鞋袜。"
+                    "小皮鞋或居家拖鞋材质清楚，地板柔和反光；手不碰鞋。"
                 ),
             ],
             "kneel": [
                 (
                     "跪坐拍腿：第一人称俯视 POV，双膝跪在地毯或床单上，臀部坐在小腿或脚跟上，"
                     "镜头从胸口以下往下看自己的腿与脚背，脸部完全在画面外，可只露发丝，"
-                    "腿部光洁细腻像光腿神器——自然通透、匀净柔光；本次优先光腿，脚背干净，可穿居家拖鞋或赤足；"
+                    "腿部线条自然，脚背干净，可穿居家拖鞋或赤足；"
                     "双手自然放在大腿上，不要扶鞋、摸脚。"
                 ),
                 (
                     "跪坐侧斜拍腿：双膝跪地、身体略侧向，仍保持跪坐重心，镜头低头拍下半身，不露脸，"
-                    "强调小腿与脚踝曲线、干净脚背和细腻肤质（光腿神器：通透匀净），地毯/床单背景；"
-                    "可光腿或过膝袜；手部静止自然，禁止整理鞋袜动作。"
+                    "强调小腿与脚踝曲线、干净脚背和细腻质感，地毯/床单背景；"
+                    "手部静止自然，禁止整理腿部穿搭。"
                 ),
             ],
             "side_lie": [
                 (
                     "侧躺曲腿：侧身躺在床或地毯上，上面那条腿微微弯曲，下面腿略伸，"
                     "镜头从腰部以下沿腿的方向近景拍摄，完全不露脸，"
-                    "腿部肤质细腻通透如光腿神器，裙摆/裤脚自然堆叠，床单褶皱清晰，柔和侧光；"
-                    "本次优先光腿，突出腿线；手可自然放在身侧，不要伸向脚面。"
+                    "腿部线条细腻自然，裙摆/裤脚自然堆叠，床单褶皱清晰，柔和侧光；"
+                    "突出腿线；手可自然放在身侧，不要伸向脚面。"
                 ),
                 (
                     "侧卧抱枕旁拍腿：身体侧躺，一腿屈起贴近，一腿放松前伸，第一人称略俯视下半身，"
-                    "不露脸，小腿脚踝线条舒服，光腿或极薄肉色丝袜，居家暖调，浅景深；手不碰鞋袜。"
+                    "不露脸，小腿脚踝线条舒服，居家暖调，浅景深；手不碰鞋。"
                 ),
             ],
             "hug_knee": [
                 (
                     "抱膝坐：坐在床或地毯上，双膝（或单膝）收近身前，双手环抱膝盖（抱膝即可，不要摸脚踝以下），"
-                    "第一人称俯视只拍下半身与脚背，脸部在画面外，腿部光洁细腻（光腿神器观感），"
-                    "裙摆堆在腿根附近；本次优先光腿或极薄肉色丝袜，居家日常、干净柔和。"
+                    "第一人称俯视只拍下半身与脚背，脸部在画面外，腿部线条自然细腻，"
+                    "裙摆堆在腿根附近，居家日常、干净柔和。"
                 ),
                 (
                     "单膝抱膝坐姿：一腿屈起抱住膝部，另一腿自然侧放，镜头低头拍腿与脚，不露脸，"
-                    "肤质通透匀净，手只在膝盖附近；可光腿或堆堆袜，禁止去脚面理袜，窗边或床边暖光。"
+                    "腿部质感通透匀净，手只在膝盖附近，禁止伸向脚面，窗边或床边暖光。"
                 ),
             ],
             "cross_leg": [
                 (
                     "翘二郎腿坐：坐在椅边或床沿，一条腿架在另一条腿上，强调小腿外侧与脚踝，"
-                    "第一人称略俯视下半身，不露脸，腿部细腻柔光如光腿神器，"
-                    "配过膝袜或堆堆袜更合适（线条更利落），鞋面可入镜但手不要碰鞋；穿搭记录感。"
+                    "第一人称略俯视下半身，不露脸，腿部线条细腻柔和，"
+                    "鞋面可入镜但手不要碰鞋；穿搭记录感。"
                 ),
                 (
                     "沙发上跷腿坐：一腿搭在另一腿膝上，裙摆/裤脚自然，镜头拍膝下到脚，完全不露脸，"
-                    "腿线干净舒服，室内漫射光；可光腿或过膝袜，双手远离鞋袜。"
+                    "腿线干净舒服，室内漫射光，双手远离鞋面。"
                 ),
             ],
             "stand_topdown": [
                 (
                     "站立俯视拍腿：站在居家地面或地毯上，镜头严格压在腰下到膝下，只拍大腿下半、小腿与鞋，"
                     "绝不露脸、不要全身立绘、不要正脸入镜；可一只脚轻微点地，"
-                    "腿部肤质细腻通透（光腿神器）；本次优先光腿或极薄肉色丝袜，画面里尽量不出现手。"
+                    "腿部线条细腻通透，画面里尽量不出现手。"
                 ),
                 (
                     "站立近景膝下：第一人称低头只看见自己的小腿与脚面，裁切在腰线以下，脸部完全出画，"
-                    "肤质匀净柔光，光脚或过膝袜都干净，木地板/地毯纹理清楚；禁止手伸进画面摸鞋。"
+                    "腿脚干净，木地板/地毯纹理清楚；禁止手伸进画面摸鞋。"
                 ),
             ],
             "windowsill": [
                 (
                     "窗台蹬坐：坐在窗台或矮柜边，双脚或一只脚踩在边缘，小腿自然垂下或轻点，"
-                    "镜头从略高处拍下半身与腿，不露脸，窗外柔光，腿部光洁细腻如光腿神器，"
-                    "本次优先光腿，得体日常，稳坐感；手扶台沿即可，不要摸鞋。"
+                    "镜头从略高处拍下半身与腿，不露脸，窗外柔光，腿部线条自然细腻，"
+                    "得体日常，稳坐感；手扶台沿即可，不要摸鞋。"
                 ),
                 (
                     "窗边矮台坐拍腿：臀坐台沿，一脚踩台、一脚垂下，第一人称俯视腿脚，脸部出画，"
-                    "可光腿或过膝袜，肤质通透舒服，居家窗光；双手不碰鞋袜。"
+                    "腿部质感通透舒服，居家窗光；双手不碰鞋。"
                 ),
             ],
             "kneel_up": [
                 (
                     "跪立拍腿：双膝跪地但上身略直（比跪坐更高一点），镜头仍贴腿面俯视，"
-                    "只拍下半身与膝脚，完全不露脸，腿部线条与光腿神器肤质清楚，"
-                    "裙摆/裤脚垂落，地毯背景；本次优先光腿；手自然垂放或轻放大腿，禁止整理鞋袜。"
+                    "只拍下半身与膝脚，完全不露脸，腿部线条清楚，"
+                    "裙摆/裤脚垂落，地毯背景；手自然垂放或轻放大腿，禁止整理腿部穿搭。"
                 ),
                 (
                     "高跪姿侧斜：跪姿重心略抬，身体微侧，低头拍小腿脚踝，不露脸，"
-                    "肤质细腻匀净，居家暖光；可光腿或堆堆袜，无摸鞋动作。"
+                    "腿部质感细腻匀净，居家暖光，无摸鞋动作。"
                 ),
             ],
         }
@@ -2679,14 +2702,16 @@ class SelfieImagePlugin(Star):
             "画面里只能有两条腿、两只脚、最多两只手；禁止三条腿、六只脚、多余肢体或重复脚踝；"
             "每只手五指自然完整，禁止六指、融合手指、畸形手掌；"
             "膝盖、小腿、脚踝结构对称合理，不要错位关节或扭曲脚掌；"
-            "禁止系鞋带、理袜口、摸鞋边、抠鞋面等手部凑近脚面的动作（难看且易畸变）；"
-            "鞋袜可入镜，但手应远离脚面，或干脆不入手。"
+            "禁止系鞋带、整理腿部穿搭、摸鞋边、抠鞋面等手部凑近脚面的动作；"
+            "鞋面可入镜，但手应远离脚面，或干脆不入手。"
         )
-        sock_rules = (
-            "袜装（未指定时）：按「本次腿部特写构图」执行，可光腿、过膝袜、堆堆袜、长筒袜或极薄肉色丝袜；"
-            "不要默认每张都穿袜；侧躺/跪坐/站立俯视/窗台等构图若写了光腿就保持光腿。"
-            "避免只盖到脚踝、又短又紧的短袜；用户明确要求短袜/黑丝/光腿等时以用户为准。"
-        )
+        legwear_options = LEGWEAR_BY_POSE.get(pose_bucket, LEGWEAR_BY_POSE["sit"])
+        legwear = random.choices(
+            [name for name, _ in legwear_options],
+            weights=[weight for _, weight in legwear_options],
+            k=1,
+        )[0]
+        legwear_rule = LEGWEAR_PROMPTS[legwear]
         base = (
             "看看腿。"
             "主角身份必须来自 AI 自拍形象参考图：即使脸部不入镜，露出的发丝、发色、体态、肤色和整体气质也要像同一个角色。"
@@ -2694,20 +2719,28 @@ class SelfieImagePlugin(Star):
             f"【唯一姿势·不可混用】本次主姿势只能是：{pose_label}。"
             f"本次腿部特写构图（只执行这一段，不要叠加其他姿势）：{random.choice(variants)}"
             "不要同时出现坐姿+跪姿+侧躺等多种姿态，不要额外发明第三种腿姿。"
-            "腿部肤质要求：干净、细腻、自然通透，像「光腿神器」后的舒服观感——匀净柔光、无毛糙、无瑕疵斑点、不假白不油腻；结构完整，不要脏污脚面。"
+            "腿部质感要求：干净、细腻、自然，结构完整，不要脏污脚面。"
             "腿部比例自然，姿势放松不要僵硬。"
-            f"{sock_rules}"
+            f"{legwear_rule}"
             f"{anatomy_rules}"
             "脸部始终在画面外。"
             f"{hard_crop}"
         )
         if has_refs:
             base += " 用户提供的图片只参考氛围、构图、服装或姿势；主角身份仍以 AI 自拍形象参考图为准。"
-        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
+        extra = LEGWEAR_REQUEST_PATTERN.sub("", str(extra_request or ""))
+        extra = re.sub(r"\s+", " ", extra).strip(" 。、，")
         if extra:
             base = base.rstrip("。") + f"。用户补充要求优先：{extra}。"
         base += f" 【pose:{pose_bucket}】"
         return base
+
+    def _normalize_selfie_action(self, action: str, has_refs: bool) -> str:
+        """为腿部自拍补全单一姿势与腿部穿搭。"""
+        raw = str(action or "").strip()
+        if "【pose:" in raw or not self.persona.analyze_selfie_intent(raw).is_legs_only:
+            return raw
+        return self._build_leg_focus_action(raw, has_refs)
 
     def _build_selfie_look_action(
         self,
@@ -3029,6 +3062,7 @@ class SelfieImagePlugin(Star):
             context_hint=action,
             allow_context_fallback=True,
         )
+        action = self._normalize_selfie_action(action, bool(extra_refs))
         total_sent = 0
         for _ in range(requested_count):
             prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
@@ -3970,7 +4004,7 @@ class SelfieImagePlugin(Star):
         all_files: List[str] = []
         used_model = ""
         last_elapsed = 0.0
-        # 晒腿/自拍/他拍多张：每轮重采样机位或姿势，避免连张同构图。
+        # 多张拍摄时逐张更换机位或姿势。
         rebuild_each = source in {"command-look-legs", "command-selfie", "command-look-you"} or (
             "看看腿" in str(action or "") or "【shot:" in str(action or "") or "【pose:" in str(action or "")
         )
@@ -4045,7 +4079,7 @@ class SelfieImagePlugin(Star):
             last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
             if files:
                 self._record_generated_images(event, 1)
-                # 生成一张发一张（不攒齐再发）
+                # 每张生成后立即发送。
                 await self._send_generated_images(event, files)
                 all_files.extend(files)
             info = self._batch_success_text(
@@ -4486,7 +4520,7 @@ class SelfieImagePlugin(Star):
                 "· /文生图　按你写的原文出图（不走自拍人设包装）",
                 "· /图生图　带图或引用图，按原文改图",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
-                "· /看看腿　下半身近景；可写数量如 /看看腿 3（生成一张发一张）",
+                "· /看看腿　下半身近景；按姿势搭配光腿神器、白丝或黑丝；可写数量如 /看看腿 3",
                 "· /看看你　像别人随手拍你（他拍感）",
                 "· /合影 或 /合照　和对象同框；可附图或@对方",
                 "",
