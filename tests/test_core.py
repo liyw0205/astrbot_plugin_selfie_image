@@ -3795,6 +3795,14 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("按模板新建", INDEX_HTML)
         self.assertIn("studioPresetBtn", INDEX_HTML)
         self.assertIn("testPresetBtn", INDEX_HTML)
+        self.assertIn("syncPresetToggleButton", INDEX_HTML)
+        self.assertIn("preset-chip", INDEX_HTML)
+        self.assertIn("'收回'", INDEX_HTML)
+        self.assertNotIn("上方芯片随模板变化", INDEX_HTML)
+        # click-to-use should not auto collapse panel
+        panel_fn = INDEX_HTML.split("function renderPresetPanel", 1)[-1].split("async function ensurePromptPresetsLoaded", 1)[0]
+        self.assertNotIn("STUDIO.presetOpen = false", panel_fn)
+        self.assertNotIn("__TEST_PRESET_OPEN = false", panel_fn)
         self.assertIn("/api/prompt-presets", INDEX_HTML)
         self.assertIn("tags.includes(tid)", INDEX_HTML)
         self.assertIn("/api/studio/sessions", INDEX_HTML)

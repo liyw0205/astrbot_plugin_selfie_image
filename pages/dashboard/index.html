@@ -237,12 +237,18 @@
     .studio-results img { width:100%; border-radius:8px; border:1px solid var(--line); }
     .studio-chiprow { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
     .preset-panel { display:none; margin-top:8px; border:1px solid var(--line); border-radius:var(--radius-md); background:#fff; max-height:260px; overflow:auto; padding:8px; }
-    .preset-panel.open { display:block; }
-    .preset-item { display:flex; gap:8px; align-items:flex-start; justify-content:space-between; border-bottom:1px solid var(--line); padding:8px 4px; }
-    .preset-item:last-child { border-bottom:none; }
-    .preset-item .meta { flex:1; min-width:0; }
-    .preset-item .name { font-weight:650; font-size:13px; }
-    .preset-item .prompt { color:var(--muted); font-size:12px; margin-top:4px; white-space:pre-wrap; word-break:break-word; max-height:3.6em; overflow:hidden; }
+    .preset-panel.open { display:flex; flex-wrap:wrap; gap:8px; }
+    .preset-panel.open { display:flex; flex-wrap:wrap; gap:8px; }
+    .preset-chip {
+      background:#fff; border:1px solid var(--line-strong); color:var(--text);
+      box-shadow:none; padding:5px 10px; font-size:12px; border-radius:999px; cursor:pointer;
+    }
+    .preset-chip:hover { background: var(--panel-soft); border-color: var(--line-strong); color: var(--text); }
+    .preset-chip.active {
+      background: linear-gradient(180deg, #eef7fc, #e3f2fa);
+      border-color: color-mix(in srgb, var(--primary) 35%, var(--line-strong));
+      color: var(--primary-strong);
+    }
 
     .studio-chiprow button { padding:5px 10px; font-size:12px; }
     .checkline { display: flex; align-items: center; gap: 8px; min-height: 38px; }
@@ -446,7 +452,6 @@
       <textarea id="studioPrompt" rows="3" placeholder="自然并肩合影…"></textarea>
       <div class="preset-panel" id="studioPresetPanel"></div>
       <div class="studio-chiprow" id="studioPromptChips"></div>
-      <div class="status" style="font-size:12px;margin-top:4px">上方芯片随模板变化；「预设」为全局风格库（捧脸/变真人等）。</div>
       <div class="between" style="margin-top:8px">
         <h3>参考槽位</h3>
         <button class="secondary" id="studioAddSlotBtn" type="button">加槽位</button>
@@ -2424,9 +2429,15 @@
       }
       return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
     }
-    function renderPresetPanel(panelId, targetInputId, open) {
+    function syncPresetToggleButton(btnId, open) {
+      const btn = $(btnId);
+      if (!btn) return;
+      btn.textContent = open ? '收回' : '预设';
+    }
+    function renderPresetPanel(panelId, targetInputId, open, btnId) {
       const panel = $(panelId);
       if (!panel) return;
+      if (btnId) syncPresetToggleButton(btnId, open);
       if (!open) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
       panel.classList.add('open');
       const rows = STUDIO.promptPresets || [];
@@ -2434,24 +2445,20 @@
         panel.innerHTML = '<div class="status">暂无预设</div>';
         return;
       }
-      panel.innerHTML = rows.map((item, idx) => `
-        <div class="preset-item">
-          <div class="meta">
-            <div class="name">${escapeHtml(item.name || item.title || '')}</div>
-            <div class="prompt">${escapeHtml(item.prompt || '')}</div>
-          </div>
-          <button type="button" class="secondary mini" data-preset-idx="${idx}">使用</button>
-        </div>`).join('');
+      // Name-only chips, same interaction as template prompt recommendations: click to use, stay open.
+      panel.innerHTML = rows.map((item, idx) => {
+        const name = escapeHtml(item.name || item.title || '');
+        return `<button type="button" class="preset-chip" data-preset-idx="${idx}" title="${name}">${name}</button>`;
+      }).join('');
       panel.querySelectorAll('[data-preset-idx]').forEach(btn => {
         btn.onclick = () => {
           const item = rows[Number(btn.getAttribute('data-preset-idx'))];
           if (!item) return;
           const input = $(targetInputId);
           if (input) input.value = item.prompt || '';
-          panel.classList.remove('open');
-          if (panelId === 'studioPresetPanel') STUDIO.presetOpen = false;
-          if (panelId === 'testPresetPanel') window.__TEST_PRESET_OPEN = false;
-          showToast('已填入预设：' + (item.name || item.title || ''), 'ok');
+          panel.querySelectorAll('.preset-chip').forEach(el => el.classList.remove('active'));
+          btn.classList.add('active');
+          // Do not auto-collapse; user closes via 收回.
         };
       });
     }
@@ -2471,18 +2478,18 @@
       if (STUDIO.presetOpen) {
         await ensurePromptPresetsLoaded();
         window.__TEST_PRESET_OPEN = false;
-        renderPresetPanel('testPresetPanel', 'testPrompt', false);
+        renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
       }
-      renderPresetPanel('studioPresetPanel', 'studioPrompt', STUDIO.presetOpen);
+      renderPresetPanel('studioPresetPanel', 'studioPrompt', STUDIO.presetOpen, 'studioPresetBtn');
     }
     async function toggleTestPresets() {
       window.__TEST_PRESET_OPEN = !window.__TEST_PRESET_OPEN;
       if (window.__TEST_PRESET_OPEN) {
         await ensurePromptPresetsLoaded();
         STUDIO.presetOpen = false;
-        renderPresetPanel('studioPresetPanel', 'studioPrompt', false);
+        renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
       }
-      renderPresetPanel('testPresetPanel', 'testPrompt', !!window.__TEST_PRESET_OPEN);
+      renderPresetPanel('testPresetPanel', 'testPrompt', !!window.__TEST_PRESET_OPEN, 'testPresetBtn');
     }
 
     function renderStudioPromptChips() {
