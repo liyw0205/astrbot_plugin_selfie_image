@@ -1,4 +1,4 @@
-"""Studio / 画布工作区 — multi-reference image iteration (Phase A).
+"""Studio / 画布工作区 — multi-reference image iteration.
 
 Inspired by infinite-canvas workflows, but stored server-side and generated
 through Selfie's existing channel pipeline (no browser-held API keys).
@@ -13,28 +13,216 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from .utils import (
-    data_url_to_bytes,
-    detect_mime_by_bytes,
-    load_json_file,
-    normalize_image_mime,
-    save_json_file,
-)
+from .utils import load_json_file, save_json_file
 
 STUDIO_FILENAME = "studio_sessions.json"
 MAX_SESSIONS = 40
 MAX_SLOTS = 12
 MAX_RESULTS_KEEP = 24
 
-# Built-in prompt chips (no external GitHub sync).
-BUILTIN_PROMPTS: List[Dict[str, str]] = [
-    {"id": "group_warm", "title": "温馨合影", "prompt": "自然并肩合影，轻松微笑，看向镜头，日常暖光"},
-    {"id": "group_fun", "title": "活泼合影", "prompt": "轻松搞怪合影，比心或比耶，氛围愉快，看向镜头"},
-    {"id": "clothes", "title": "换装自拍", "prompt": "穿着参考图服装自拍，表情自然，看向镜头，身份保持"},
-    {"id": "look_you", "title": "日常他拍", "prompt": "朋友随手拍的日常半身照，自然看镜头，生活感"},
-    {"id": "window", "title": "窗边柔光", "prompt": "窗边柔和自然光，半身，轻松表情，干净背景"},
-    {"id": "cafe", "title": "咖啡店", "prompt": "咖啡馆座位合影或自拍，暖色灯光，轻松日常"},
+# Built-in prompt chips (no external GitHub sync). templates=[] means all templates.
+BUILTIN_PROMPTS: List[Dict[str, Any]] = [
+    {
+        "id": "duo_warm",
+        "title": "双人温馨",
+        "prompt": "两人自然并肩合影，轻松微笑，看向镜头，日常暖光",
+        "templates": ["duo", "group"],
+    },
+    {
+        "id": "duo_fun",
+        "title": "双人活泼",
+        "prompt": "双人轻松搞怪合影，比心或比耶，氛围愉快，看向镜头",
+        "templates": ["duo", "group"],
+    },
+    {
+        "id": "group_warm",
+        "title": "多人温馨",
+        "prompt": "自然并肩合影，轻松微笑，看向镜头，日常暖光",
+        "templates": ["group", "duo"],
+    },
+    {
+        "id": "group_fun",
+        "title": "多人活泼",
+        "prompt": "轻松搞怪合影，比心或比耶，氛围愉快，看向镜头",
+        "templates": ["group", "duo"],
+    },
+    {
+        "id": "selfie_soft",
+        "title": "自拍柔光",
+        "prompt": "看着镜头自然自拍，半身，柔和光线，轻松表情",
+        "templates": ["selfie"],
+    },
+    {
+        "id": "selfie_mirror",
+        "title": "镜前自拍",
+        "prompt": "镜前半身自拍，自然看镜头，日常居家光线",
+        "templates": ["selfie"],
+    },
+    {
+        "id": "clothes_cos",
+        "title": "换装COS",
+        "prompt": "穿着参考图服装自拍，表情自然，看向镜头，身份保持，不锁死原表情",
+        "templates": ["clothes"],
+    },
+    {
+        "id": "clothes_daily",
+        "title": "日常换装",
+        "prompt": "换上参考服装的日常半身自拍，自然微笑，看向镜头",
+        "templates": ["clothes"],
+    },
+    {
+        "id": "i2i_refine",
+        "title": "精修表情",
+        "prompt": "以底图为主稍作精修：自然表情与光线，保持人物身份与构图",
+        "templates": ["i2i"],
+    },
+    {
+        "id": "i2i_light",
+        "title": "改光线",
+        "prompt": "保持主体与构图，优化光线与色调，更干净自然",
+        "templates": ["i2i"],
+    },
+    {
+        "id": "t2i_soft",
+        "title": "柔和插画感",
+        "prompt": "干净构图，柔和光线，主体清晰，细节完整",
+        "templates": ["t2i", "blank"],
+    },
+    {
+        "id": "window",
+        "title": "窗边柔光",
+        "prompt": "窗边柔和自然光，半身，轻松表情，干净背景",
+        "templates": ["selfie", "clothes", "duo", "group"],
+    },
+    {
+        "id": "cafe",
+        "title": "咖啡店",
+        "prompt": "咖啡馆座位，暖色灯光，轻松日常",
+        "templates": ["selfie", "duo", "group", "blank"],
+    },
+    {
+        "id": "look_you",
+        "title": "日常他拍",
+        "prompt": "朋友随手拍的日常半身照，自然看镜头，生活感",
+        "templates": ["selfie", "blank"],
+    },
 ]
+
+# P0 templates: id -> layout defaults
+STUDIO_TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "duo": {
+        "id": "duo",
+        "title": "双人合影",
+        "description": "形象 + 1 同框，最常用",
+        "default_title": "双人合影",
+        "mode": "group",
+        "aspect_ratio": "3:4",
+        "resolution": "1K",
+        "prompt": "两人自然并肩合影，轻松微笑，看向镜头，日常暖光",
+        "use_persona_identity": True,
+        "slots": [
+            {"role": "identity", "label": "形象（自己）"},
+            {"role": "peer", "label": "同框对象"},
+            {"role": "scene", "label": "场景/道具（可选）"},
+        ],
+    },
+    "group": {
+        "id": "group",
+        "title": "多人合影",
+        "description": "形象 + 同框×3 + 场景",
+        "default_title": "多人合影",
+        "mode": "group",
+        "aspect_ratio": "3:4",
+        "resolution": "1K",
+        "prompt": "自然并肩合影，轻松微笑，看向镜头，日常暖光",
+        "use_persona_identity": True,
+        "slots": [
+            {"role": "identity", "label": "形象（自己）"},
+            {"role": "peer", "label": "同框对象 1"},
+            {"role": "peer", "label": "同框对象 2"},
+            {"role": "peer", "label": "同框对象 3"},
+            {"role": "scene", "label": "场景/道具（可选）"},
+        ],
+    },
+    "selfie": {
+        "id": "selfie",
+        "title": "自拍 / 看看",
+        "description": "形象 + 可选服装/姿势参考",
+        "default_title": "自拍画布",
+        "mode": "selfie",
+        "aspect_ratio": "3:4",
+        "resolution": "1K",
+        "prompt": "看着镜头自然自拍，半身，柔和光线，轻松表情",
+        "use_persona_identity": True,
+        "slots": [
+            {"role": "identity", "label": "形象（自己）"},
+            {"role": "outfit", "label": "服装参考（可选）"},
+            {"role": "pose", "label": "姿势/构图（可选）"},
+        ],
+    },
+    "clothes": {
+        "id": "clothes",
+        "title": "换装 / COS",
+        "description": "形象 + 服装主参考 + 配饰/场景",
+        "default_title": "换装画布",
+        "mode": "selfie",
+        "aspect_ratio": "3:4",
+        "resolution": "1K",
+        "prompt": "穿着参考图服装自拍，表情自然，看向镜头，身份保持，不锁死原表情",
+        "use_persona_identity": True,
+        "slots": [
+            {"role": "identity", "label": "形象（自己）"},
+            {"role": "outfit", "label": "服装主参考"},
+            {"role": "extra", "label": "配饰/材质（可选）"},
+            {"role": "scene", "label": "场景（可选）"},
+        ],
+    },
+    "i2i": {
+        "id": "i2i",
+        "title": "图生图精修",
+        "description": "底图为主，可选风格/细节",
+        "default_title": "图生图",
+        "mode": "i2i",
+        "aspect_ratio": "自动",
+        "resolution": "1K",
+        "prompt": "以底图为主稍作精修：自然表情与光线，保持人物身份与构图",
+        "use_persona_identity": False,
+        "slots": [
+            {"role": "base", "label": "底图（主）"},
+            {"role": "style", "label": "风格参考（可选）"},
+            {"role": "detail", "label": "细节参考（可选）"},
+        ],
+    },
+    "t2i": {
+        "id": "t2i",
+        "title": "文生图",
+        "description": "纯文案，可选 1 张风格参考",
+        "default_title": "文生图",
+        "mode": "t2i",
+        "aspect_ratio": "自动",
+        "resolution": "1K",
+        "prompt": "干净构图，柔和光线，主体清晰，细节完整",
+        "use_persona_identity": False,
+        "slots": [
+            {"role": "style", "label": "风格参考（可选）"},
+        ],
+    },
+    "blank": {
+        "id": "blank",
+        "title": "空白",
+        "description": "无预设槽位，自行添加",
+        "default_title": "空白画布",
+        "mode": "t2i",
+        "aspect_ratio": "自动",
+        "resolution": "1K",
+        "prompt": "",
+        "use_persona_identity": False,
+        "slots": [],
+    },
+}
+
+# Stable order for UI select
+STUDIO_TEMPLATE_ORDER = ["duo", "group", "selfie", "clothes", "i2i", "t2i", "blank"]
 
 
 def _now() -> str:
@@ -45,36 +233,107 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
 
+def normalize_template_id(template: str = "", *, use_group_template: Optional[bool] = None) -> str:
+    text = str(template or "").strip().lower()
+    if text in STUDIO_TEMPLATES:
+        return text
+    # legacy flag
+    if use_group_template is False:
+        return "blank"
+    if use_group_template is True or text in {"", "default", "true", "1"}:
+        # Prefer duo as the everyday default going forward
+        return "duo"
+    return "duo"
+
+
+def list_studio_templates() -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for key in STUDIO_TEMPLATE_ORDER:
+        meta = STUDIO_TEMPLATES.get(key) or {}
+        out.append(
+            {
+                "id": meta.get("id") or key,
+                "title": meta.get("title") or key,
+                "description": meta.get("description") or "",
+                "mode": meta.get("mode") or "t2i",
+                "aspect_ratio": meta.get("aspect_ratio") or "自动",
+                "slot_count": len(meta.get("slots") or []),
+            }
+        )
+    return out
+
+
+def prompts_for_template(template_id: str) -> List[Dict[str, Any]]:
+    tid = normalize_template_id(template_id)
+    out: List[Dict[str, Any]] = []
+    for item in BUILTIN_PROMPTS:
+        tags = item.get("templates")
+        if not tags or tid in tags or "blank" in (tags or []):
+            out.append(
+                {
+                    "id": item.get("id"),
+                    "title": item.get("title"),
+                    "prompt": item.get("prompt"),
+                    "templates": list(tags or []),
+                }
+            )
+    return out
+
+
+def slots_for_template(template_id: str) -> List[Dict[str, Any]]:
+    meta = STUDIO_TEMPLATES.get(normalize_template_id(template_id)) or {}
+    slots: List[Dict[str, Any]] = []
+    for spec in meta.get("slots") or []:
+        if not isinstance(spec, dict):
+            continue
+        slots.append(
+            {
+                "id": _new_id("slot"),
+                "role": str(spec.get("role") or "extra"),
+                "label": str(spec.get("label") or "参考"),
+                "image_path": "",
+                "source": "",
+                "mime": "",
+            }
+        )
+    return slots
+
+
 def group_template_slots() -> List[Dict[str, Any]]:
-    """Default 合影模板: identity + up to 3 peers + optional scene."""
-    return [
-        {"id": _new_id("slot"), "role": "identity", "label": "形象（自己）", "image_path": "", "source": "", "mime": ""},
-        {"id": _new_id("slot"), "role": "peer", "label": "同框对象 1", "image_path": "", "source": "", "mime": ""},
-        {"id": _new_id("slot"), "role": "peer", "label": "同框对象 2", "image_path": "", "source": "", "mime": ""},
-        {"id": _new_id("slot"), "role": "peer", "label": "同框对象 3", "image_path": "", "source": "", "mime": ""},
-        {"id": _new_id("slot"), "role": "scene", "label": "场景/道具（可选）", "image_path": "", "source": "", "mime": ""},
-    ]
+    """Backward-compatible alias → multi-person group layout."""
+    return slots_for_template("group")
 
 
-def empty_session(title: str = "", *, use_group_template: bool = True) -> Dict[str, Any]:
-    slots = group_template_slots() if use_group_template else []
-    input_order = [s["id"] for s in slots if s.get("role") != "scene"]
+def empty_session(
+    title: str = "",
+    *,
+    template: str = "duo",
+    use_group_template: Optional[bool] = None,
+) -> Dict[str, Any]:
+    tid = normalize_template_id(template, use_group_template=use_group_template)
+    meta = STUDIO_TEMPLATES.get(tid) or STUDIO_TEMPLATES["duo"]
+    slots = slots_for_template(tid)
+    # input_order: skip pure optional scene at end unless it's the only content
+    input_order = [s["id"] for s in slots if s.get("role") not in {"scene"}]
+    if not input_order:
+        input_order = [s["id"] for s in slots]
+    default_title = str(meta.get("default_title") or meta.get("title") or "画布")
     return {
         "id": _new_id("studio"),
-        "title": str(title or "合影画布").strip() or "合影画布",
+        "title": str(title or default_title).strip() or default_title,
         "created_at": _now(),
         "updated_at": _now(),
-        "template": "group" if use_group_template else "blank",
+        "template": tid,
         "slots": slots,
         "graph": {
-            "prompt": "自然并肩合影，轻松微笑，看向镜头，日常暖光",
-            "mode": "group",  # group | selfie | i2i | t2i
-            "aspect_ratio": "自动",
-            "resolution": "1K",
+            "prompt": str(meta.get("prompt") or ""),
+            "mode": str(meta.get("mode") or "t2i"),
+            "aspect_ratio": str(meta.get("aspect_ratio") or "自动"),
+            "resolution": str(meta.get("resolution") or "1K"),
             "count": 1,
             "input_order": input_order,
-            "use_persona_identity": True,
-            "channel_policy": "priority",  # priority | random
+            "use_persona_identity": bool(meta.get("use_persona_identity", True)),
+            "channel_policy": "priority",
         },
         "results": [],
         "last_run": None,
@@ -110,7 +369,6 @@ class StudioStore:
         self._sessions = out
 
     def _persist(self) -> None:
-        # Keep newest first, cap count
         ordered = sorted(
             self._sessions.values(),
             key=lambda s: str(s.get("updated_at") or s.get("created_at") or ""),
@@ -150,9 +408,15 @@ class StudioStore:
                 raise ValueError("画布会话不存在")
             return public_session(session)
 
-    def create(self, title: str = "", *, use_group_template: bool = True) -> Dict[str, Any]:
+    def create(
+        self,
+        title: str = "",
+        *,
+        template: str = "duo",
+        use_group_template: Optional[bool] = None,
+    ) -> Dict[str, Any]:
         with self._lock:
-            session = empty_session(title, use_group_template=use_group_template)
+            session = empty_session(title, template=template, use_group_template=use_group_template)
             self._sessions[session["id"]] = session
             self._persist()
             return public_session(session)
@@ -183,7 +447,6 @@ class StudioStore:
             ):
                 if key in graph_patch:
                     graph[key] = graph_patch[key]
-            # normalize
             graph["prompt"] = str(graph.get("prompt") or "").strip()
             graph["mode"] = str(graph.get("mode") or "group").strip() or "group"
             graph["aspect_ratio"] = str(graph.get("aspect_ratio") or "自动").strip() or "自动"
@@ -202,6 +465,9 @@ class StudioStore:
             session["graph"] = graph
             if "title" in graph_patch and str(graph_patch.get("title") or "").strip():
                 session["title"] = str(graph_patch.get("title")).strip()[:80]
+            if "template" in graph_patch and str(graph_patch.get("template") or "").strip():
+                # metadata only — do not rebuild slots on graph save
+                session["template"] = normalize_template_id(str(graph_patch.get("template")))
             session["updated_at"] = _now()
             self._persist()
             return public_session(session)
@@ -272,7 +538,6 @@ class StudioStore:
             for sid in ids:
                 if sid not in by_id:
                     raise ValueError(f"未知槽位 {sid}")
-            # Keep any missing slots at end
             rest = [s for sid, s in by_id.items() if sid not in ids]
             session["slots"] = [by_id[sid] for sid in ids] + rest
             session.setdefault("graph", {})["input_order"] = ids
@@ -384,7 +649,11 @@ def resolve_slot_refs_for_run(
     slots = {str(s.get("id")): s for s in (session.get("slots") or []) if isinstance(s, dict)}
     order = [str(x) for x in (graph.get("input_order") or []) if str(x) in slots]
     if not order:
-        order = [str(s.get("id")) for s in (session.get("slots") or []) if s.get("image_path") or s.get("role") == "identity"]
+        order = [
+            str(s.get("id"))
+            for s in (session.get("slots") or [])
+            if s.get("image_path") or s.get("role") in {"identity", "base"}
+        ]
 
     refs: List[Tuple[bytes, str]] = []
     used: List[str] = []
@@ -395,7 +664,7 @@ def resolve_slot_refs_for_run(
         slot = slots.get(sid) or {}
         role = str(slot.get("role") or "")
         path = str(slot.get("image_path") or "").strip()
-        if role == "identity" and not path and use_persona and persona_ref and persona_ref.get("data"):
+        if role in {"identity", "base"} and not path and use_persona and persona_ref and persona_ref.get("data"):
             refs.append((persona_ref["data"], str(persona_ref.get("mime_type") or "image/png")))
             used.append(sid)
             identity_filled = True
@@ -410,10 +679,9 @@ def resolve_slot_refs_for_run(
             continue
         refs.append((data, mime or "image/png"))
         used.append(sid)
-        if role == "identity":
+        if role in {"identity", "base"}:
             identity_filled = True
 
-    # If identity never in order but persona required for group/selfie
     mode = str(graph.get("mode") or "group")
     if mode in {"group", "selfie"} and use_persona and not identity_filled and persona_ref and persona_ref.get("data"):
         refs.insert(0, (persona_ref["data"], str(persona_ref.get("mime_type") or "image/png")))
@@ -426,15 +694,18 @@ def build_studio_action(session: Dict[str, Any]) -> str:
     graph = session.get("graph") or {}
     prompt = str(graph.get("prompt") or "").strip()
     mode = str(graph.get("mode") or "group").strip().lower()
-    if mode == "group":
+    template = str(session.get("template") or "").strip().lower()
+    if mode == "group" or template in {"duo", "group"}:
         base = (
             "合影 / 合照 / 同框。AI 自己必须作为画面主角之一，与参考图对象自然同框。"
             "身份锁脸型五官发型体态；表情按合影氛围自然重画。"
             "非人物参考拟人时无明确性别默认成年女性。"
         )
         return f"{base} 用户补充要求：{prompt}。" if prompt else base
-    if mode == "selfie":
-        base = "看着镜头自然自拍，展示你现在的样子。"
+    if mode == "selfie" or template in {"selfie", "clothes"}:
+        if template == "clothes" or "换装" in prompt or "COS" in prompt.upper() or "cos" in prompt:
+            base = "换装/穿搭自拍：服装来自参考，身份保持，表情眼神按本次场景自然重画，看向镜头。"
+        else:
+            base = "看着镜头自然自拍，展示你现在的样子。"
         return f"{base} {prompt}".strip() if prompt else base
-    # i2i / t2i raw-ish
     return prompt or "看着镜头自然自拍"

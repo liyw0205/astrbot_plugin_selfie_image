@@ -66,7 +66,15 @@ from .models import (
     preflight_video_channel,
 )
 from .persona import PersonaManager
-from .studio import BUILTIN_PROMPTS, StudioStore, build_studio_action, resolve_slot_refs_for_run
+from .studio import (
+    BUILTIN_PROMPTS,
+    StudioStore,
+    build_studio_action,
+    list_studio_templates,
+    normalize_template_id,
+    prompts_for_template,
+    resolve_slot_refs_for_run,
+)
 from .providers import (
     ImageGenerateRequest,
     ImageReference,
@@ -1363,7 +1371,11 @@ class SelfieImagePlugin(Star):
 
     # --- Studio / 画布 ---
     def studio_list(self) -> Dict[str, Any]:
-        return {"sessions": self.studio.list_sessions(), "builtin_prompts": BUILTIN_PROMPTS}
+        return {
+            "sessions": self.studio.list_sessions(),
+            "builtin_prompts": BUILTIN_PROMPTS,
+            "templates": list_studio_templates(),
+        }
 
     def studio_get(self, session_id: str) -> Dict[str, Any]:
         return self.studio.get(session_id)
@@ -1371,16 +1383,26 @@ class SelfieImagePlugin(Star):
     def studio_create(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         payload = payload if isinstance(payload, dict) else {}
         title = str(payload.get("title") or "").strip()
-        use_group = payload.get("use_group_template", True)
+        template = str(payload.get("template") or payload.get("template_id") or "").strip()
+        use_group = payload.get("use_group_template", None)
         if isinstance(use_group, str):
             use_group = use_group.strip().lower() not in {"0", "false", "no", "off", "否"}
-        session = self.studio.create(title, use_group_template=bool(use_group))
-        # Prefill identity from persona if present
-        if self.persona.has_reference_image():
+        tid = normalize_template_id(template, use_group_template=use_group if template == "" else None)
+        session = self.studio.create(title, template=tid, use_group_template=use_group if not template else None)
+        # Prefill identity/base from persona when template wants it
+        graph = session.get("graph") or {}
+        if graph.get("use_persona_identity") and self.persona.has_reference_image():
             ref = self.persona.get_reference_image()
             if ref and ref.get("data"):
                 rel = self._save_cache_image(ref["data"], "studio", ref.get("mime_type") or "image/png")
-                identity = next((s for s in session.get("slots") or [] if s.get("role") == "identity"), None)
+                identity = next(
+                    (
+                        s
+                        for s in session.get("slots") or []
+                        if s.get("role") in {"identity", "base"}
+                    ),
+                    None,
+                )
                 if identity:
                     session = self.studio.set_slot_image(
                         session["id"],

@@ -388,7 +388,7 @@
     <section id="studio">
       <div class="between">
         <h2>画布</h2>
-        <span class="status">多参考编排 · 合影模板 · 仅图片</span>
+        <span class="status">多参考编排 · 多模板 · 仅图片</span>
       </div>
       <div class="grid">
         <div>
@@ -396,11 +396,15 @@
           <select id="studioSessionSelect"></select>
         </div>
         <div>
+          <label>新建模板</label>
+          <select id="studioTemplateSelect"></select>
+        </div>
+        <div>
           <label>标题</label>
-          <input id="studioTitle" placeholder="合影画布">
+          <input id="studioTitle" placeholder="画布标题">
         </div>
         <div class="actions" style="align-items:end">
-          <button class="ok" id="studioCreateBtn" type="button">新建合影画布</button>
+          <button class="ok" id="studioCreateBtn" type="button">按模板新建</button>
           <button class="secondary" id="studioReloadBtn" type="button">刷新</button>
           <button class="danger" id="studioDeleteBtn" type="button">删除</button>
         </div>
@@ -439,7 +443,7 @@
         <button class="ok" id="studioSaveBtn" type="button">保存设置</button>
         <button class="ok" id="studioRunBtn" type="button">开始生成</button>
       </div>
-      <div id="studioStatus" class="status">打开后点「新建合影画布」，或选已有会话。</div>
+      <div id="studioStatus" class="status">选模板后点「按模板新建」，或打开已有会话。</div>
       <h3>结果</h3>
       <div class="studio-results" id="studioResults"></div>
       <input id="studioFilePick" type="file" accept="image/*" style="display:none">
@@ -636,7 +640,7 @@
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], pollTimer: null, uploadSlotId: '' };
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], pollTimer: null, uploadSlotId: '' };
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -2369,11 +2373,39 @@
       const aspects = ['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'];
       setSelectOptions('studioAspect', aspects, (STUDIO.current && STUDIO.current.graph && STUDIO.current.graph.aspect_ratio) || '自动');
     }
+    function renderStudioTemplateSelect() {
+      const el = $('studioTemplateSelect');
+      if (!el) return;
+      const cur = el.value || 'duo';
+      el.innerHTML = '';
+      const list = STUDIO.templates && STUDIO.templates.length ? STUDIO.templates : [
+        {id:'duo', title:'双人合影'}, {id:'group', title:'多人合影'}, {id:'selfie', title:'自拍 / 看看'},
+        {id:'clothes', title:'换装 / COS'}, {id:'i2i', title:'图生图精修'}, {id:'t2i', title:'文生图'}, {id:'blank', title:'空白'}
+      ];
+      for (const t of list) {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = (t.title || t.id) + (t.description ? ' · ' + t.description : '');
+        if (t.id === cur) opt.selected = true;
+        el.appendChild(opt);
+      }
+      if (![...el.options].some(o => o.selected) && el.options.length) el.selectedIndex = 0;
+    }
+    function studioActiveTemplateId() {
+      if (STUDIO.current && STUDIO.current.template) return String(STUDIO.current.template);
+      return ($('studioTemplateSelect') && $('studioTemplateSelect').value) || 'duo';
+    }
     function renderStudioPromptChips() {
       const wrap = $('studioPromptChips');
       if (!wrap) return;
       wrap.innerHTML = '';
-      for (const item of (STUDIO.prompts || [])) {
+      const tid = studioActiveTemplateId();
+      const items = (STUDIO.prompts || []).filter(item => {
+        const tags = item.templates;
+        if (!tags || !tags.length) return true;
+        return tags.includes(tid) || tags.includes('blank');
+      });
+      for (const item of items) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'secondary';
@@ -2480,13 +2512,14 @@
     }
     function renderStudio() {
       renderStudioSessionSelect();
+      renderStudioTemplateSelect();
       fillStudioAspect();
       renderStudioPromptChips();
       const s = STUDIO.current;
       if (!s) {
         $('studioTitle').value = '';
         $('studioPrompt').value = '';
-        $('studioStatus').textContent = '打开后点「新建合影画布」，或选已有会话。';
+        $('studioStatus').textContent = '选模板后点「按模板新建」，或打开已有会话。';
         renderStudioSlots();
         renderStudioResults();
         return;
@@ -2504,7 +2537,7 @@
       if (lr && lr.status === 'running') $('studioStatus').textContent = '生成中… ' + (lr.task_id || '');
       else if (lr && lr.status === 'succeeded') $('studioStatus').textContent = '完成 · ' + (lr.used_model || '') + ' · ' + ((lr.result_paths||[]).length) + ' 张';
       else if (lr && lr.status === 'failed') $('studioStatus').textContent = '失败：' + (lr.error || '');
-      else $('studioStatus').textContent = '已加载：' + (s.title || s.id);
+      else $('studioStatus').textContent = '已加载：' + (s.title || s.id) + (s.template ? ' · 模板 ' + s.template : '');
       renderStudioSlots();
       renderStudioResults();
     }
@@ -2513,6 +2546,7 @@
       if (!res.success) { showToast(res.message || '画布列表失败', 'bad'); return; }
       STUDIO.sessions = (res.data && res.data.sessions) || [];
       STUDIO.prompts = (res.data && res.data.builtin_prompts) || [];
+      STUDIO.templates = (res.data && res.data.templates) || STUDIO.templates || [];
       if (selectId) {
         const detail = await studioApi('/api/studio/sessions/' + encodeURIComponent(selectId));
         if (detail.success) STUDIO.current = detail.data;
@@ -2523,14 +2557,16 @@
       renderStudio();
     }
     async function studioCreate() {
+      const template = ($('studioTemplateSelect') && $('studioTemplateSelect').value) || 'duo';
+      const title = ($('studioTitle').value || '').trim();
       const res = await studioApi('/api/studio/sessions', {
         method:'POST',
-        body: JSON.stringify({ title: $('studioTitle').value || '合影画布', use_group_template: true })
+        body: JSON.stringify({ title, template })
       });
       if (!res.success) return showToast(res.message || '创建失败', 'bad');
       STUDIO.current = res.data;
       await loadStudioList(res.data.id);
-      showToast('已新建合影画布', 'ok');
+      showToast('已新建：' + (res.data.template || template), 'ok');
     }
     async function studioSave() {
       if (!STUDIO.current) return showToast('请先新建或选择画布', 'bad');

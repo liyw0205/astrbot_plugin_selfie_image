@@ -3637,12 +3637,20 @@ class LegFocusTests(unittest.TestCase):
 class StudioStoreTests(unittest.TestCase):
     def test_group_template_and_persist(self) -> None:
         import tempfile
-        from astrbot_plugin_selfie_image.studio import StudioStore, build_studio_action, BUILTIN_PROMPTS
+        from astrbot_plugin_selfie_image.studio import (
+            StudioStore,
+            build_studio_action,
+            BUILTIN_PROMPTS,
+            list_studio_templates,
+            normalize_template_id,
+            prompts_for_template,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             store = StudioStore(tmp)
+            # legacy flag still creates a usable session (defaults to duo)
             session = store.create("测试合影", use_group_template=True)
-            self.assertEqual(session.get("template"), "group")
+            self.assertIn(session.get("template"), {"duo", "group"})
             roles = [s.get("role") for s in session.get("slots") or []]
             self.assertIn("identity", roles)
             self.assertIn("peer", roles)
@@ -3655,11 +3663,41 @@ class StudioStoreTests(unittest.TestCase):
             again = StudioStore(tmp).get(session["id"])
             self.assertEqual(again["graph"]["prompt"], "窗边合影")
 
+    def test_p0_templates_layouts(self) -> None:
+        import tempfile
+        from astrbot_plugin_selfie_image.studio import StudioStore, list_studio_templates, prompts_for_template
+
+        ids = {t["id"] for t in list_studio_templates()}
+        for need in ("duo", "group", "selfie", "clothes", "i2i", "t2i", "blank"):
+            self.assertIn(need, ids)
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StudioStore(tmp)
+            duo = store.create("双人", template="duo")
+            self.assertEqual(duo["template"], "duo")
+            self.assertEqual(duo["graph"]["mode"], "group")
+            self.assertEqual(sum(1 for s in duo["slots"] if s["role"] == "peer"), 1)
+            selfie = store.create("自拍", template="selfie")
+            self.assertEqual(selfie["graph"]["mode"], "selfie")
+            self.assertTrue(any(s["role"] == "outfit" for s in selfie["slots"]))
+            clothes = store.create("换装", template="clothes")
+            self.assertTrue(any(s["role"] == "outfit" for s in clothes["slots"]))
+            i2i = store.create("精修", template="i2i")
+            self.assertEqual(i2i["graph"]["mode"], "i2i")
+            self.assertFalse(i2i["graph"]["use_persona_identity"])
+            self.assertTrue(any(s["role"] == "base" for s in i2i["slots"]))
+            t2i = store.create("文生", template="t2i")
+            self.assertEqual(t2i["graph"]["mode"], "t2i")
+            blank = store.create("空", template="blank")
+            self.assertEqual(blank["slots"], [])
+            chips = prompts_for_template("duo")
+            self.assertTrue(any("合影" in (c.get("prompt") or "") or "双人" in (c.get("title") or "") for c in chips))
+
     def test_dashboard_has_studio_tab(self) -> None:
         from astrbot_plugin_selfie_image.web import INDEX_HTML, WEB_TASK_ID_RE
 
         self.assertIn('data-tab="studio"', INDEX_HTML)
-        self.assertIn("合影画布", INDEX_HTML)
+        self.assertIn("studioTemplateSelect", INDEX_HTML)
+        self.assertIn("按模板新建", INDEX_HTML)
         self.assertIn("/api/studio/sessions", INDEX_HTML)
         self.assertIn("data-cache-path", INDEX_HTML)
         self.assertIn("loadProtectedImages(wrap)", INDEX_HTML)
