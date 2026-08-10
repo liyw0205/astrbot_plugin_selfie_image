@@ -18,6 +18,7 @@ import aiohttp
 
 from .error_classify import classify_generation_error
 from .models import ImageModelTarget
+from .proxy import channel_client_session, target_session_proxy
 from .providers import ImageGenerateRequest, ImageGenerateResult, create_adapter
 from .utils import redact_sensitive_data, redact_sensitive_text
 
@@ -43,6 +44,16 @@ def _target_with_api_key(target: ImageModelTarget, api_key: str) -> ImageModelTa
     cloned = copy.deepcopy(target)
     cloned.api_key = str(api_key or "").strip()
     return cloned
+
+
+async def _generate_with_target_proxy(
+    target: ImageModelTarget,
+    fallback_session: aiohttp.ClientSession,
+    request: ImageGenerateRequest,
+) -> ImageGenerateResult:
+    async with channel_client_session(target.proxy, fallback_session) as target_session:
+        adapter = create_adapter(target_session_proxy(target), target_session)
+        return await adapter.generate(request)
 
 
 def _should_rotate_api_key(class_info: Dict[str, Any]) -> bool:
@@ -113,7 +124,6 @@ async def generate_image_with_fallback(
         stop_all = False
         for key_index, api_key in enumerate(api_keys):
             active_target = _target_with_api_key(target, api_key) if api_key else target
-            adapter = create_adapter(active_target, session)
             attempt_info = _target_attempt_base(target, attempt, key_index=key_index, multi_key=len(api_keys) > 1)
             started = time.monotonic()
             remaining = deadline - time.monotonic()
@@ -131,7 +141,7 @@ async def generate_image_with_fallback(
                 per_try = max(15, int(remaining) - 15)
             try:
                 result = await asyncio.wait_for(
-                    adapter.generate(req),
+                    _generate_with_target_proxy(active_target, session, req),
                     timeout=per_try,
                 )
                 attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)

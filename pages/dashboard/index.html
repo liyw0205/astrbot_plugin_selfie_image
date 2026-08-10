@@ -260,6 +260,13 @@
     .studio-slot .slot-actions button.mini { padding:3px 6px; font-size:11px; }
     .studio-results .actions { flex-wrap:wrap; gap:4px; }
 
+    .model-attempts { display:grid; gap:5px; min-width:180px; }
+    .model-attempt-badge { display:inline-flex; align-items:center; width:max-content; max-width:220px; padding:3px 7px; border-radius:6px; font-size:12px; font-weight:600; overflow-wrap:anywhere; }
+    .model-attempt-ok { background:#e5f2fb; color:#1d70a2; border:1px solid #b9dcef; }
+    .model-attempt-fail { background:#fde9e7; color:#b42318; border:1px solid #f5c5c0; }
+    .model-attempt-empty { color:var(--muted); }
+    .model-retry-chain { display:flex; flex-wrap:wrap; align-items:center; gap:5px; }
+    .model-retry-arrow { color:var(--muted); font-size:14px; line-height:1; }
     .checkline { display: flex; align-items: center; gap: 8px; min-height: 38px; }
     .checkline input { width: auto; }
     .topline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -517,7 +524,7 @@
       <div class="preset-panel" id="testPresetPanel"></div>
       <div class="grid">
         <label class="checkline" id="promptEnhanceWrap"><input id="promptEnhance" type="checkbox"> 润色提示词</label>
-        <label class="checkline" id="useSelfieWrap"><input id="useSelfie" type="checkbox"> 带上当前形象参考</label>
+        <label class="checkline" id="useSelfieWrap"><input id="useSelfie" type="checkbox"> 带上当前形象参考<span id="useSelfieHint"></span></label>
         <div><label id="testRefsLabel">额外参考图</label><input id="testRefs" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml" multiple></div>
       </div>
       <div class="actions">
@@ -562,6 +569,16 @@
         <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
       </div>
       <label>人设（语气与氛围）</label><textarea id="selfiePersonality"></textarea>
+      <div class="grid">
+        <div>
+          <label>形象类型</label>
+          <select id="selfieAppearanceType">
+            <option value="auto">自动（不追加类型说明）</option>
+            <option value="real">真人（补形象是真人）</option>
+            <option value="anime">动漫（补形象是动漫人物）</option>
+          </select>
+        </div>
+      </div>
       <h3>形象参考图</h3>
       <input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml">
       <img id="selfiePreview" class="preview" alt="selfie reference">
@@ -1476,9 +1493,9 @@
           opt.textContent = VIDEO_PROVIDER_LABELS[opt.value] || opt.value;
         });
       }
-      // 生图/审核：渠道级类型隐藏（模型旁自动/手动）；视频：显示协议下拉
+      // 生图和视频均可设置默认类型，模型旁仍可覆盖为自动或手动类型。
       if ($('modalProviderWrap')) {
-        $('modalProviderWrap').style.display = EDITING_CHANNEL_KIND === 'video' ? '' : 'none';
+        $('modalProviderWrap').style.display = EDITING_CHANNEL_KIND === 'image' || EDITING_CHANNEL_KIND === 'video' ? '' : 'none';
       }
       $('modalChannelName').value = ch.name || '';
       $('modalProvider').value = defaultProvider;
@@ -1494,7 +1511,9 @@
       if ($('modalProviderHint')) {
         $('modalProviderHint').textContent = EDITING_CHANNEL_KIND === 'video'
           ? '视频协议可选：异步轮询 / 同步等待 / 对话回链。模型旁可「自动」识别或手动指定；与生图渠道用法一致。'
-          : '渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。';
+          : EDITING_CHANNEL_KIND === 'image'
+            ? '选择渠道默认类型；模型旁仍可自动识别或手动切换类型。'
+            : '渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。';
       }
       renderModalModels(ch);
       $('channelModal').classList.add('show');
@@ -2008,6 +2027,34 @@
       clearTimeout(MONITOR_LOAD_TIMER);
       MONITOR_LOAD_TIMER = setTimeout(() => loadRecords(false), 260);
     }
+    function formatRecordElapsed(record) {
+      const attempts = record.attempts || record.response_data?.attempts || [];
+      if (record.timeout || record.error_category === 'timeout' || attempts.some(attempt => attempt?.timeout || attempt?.error_category === 'timeout')) return '超时';
+      const seconds = Number(record.elapsed_seconds);
+      return Number.isFinite(seconds) && seconds >= 0 ? `${seconds.toFixed(2)}秒` : '空';
+    }
+    function recordModelLabel(record) {
+      return String(record.label || record.model || record.target || record.used_model || '').trim() || '未记录模型';
+    }
+    function recordFinalModelBadge(record) {
+      if (!record.used_model) return '<span class="model-attempt-empty">空</span>';
+      const failed = record.success === false;
+      return `<span class="model-attempt-badge ${failed ? 'model-attempt-fail' : 'model-attempt-ok'}">${escapeHtml(record.used_model)}</span>`;
+    }
+    function recordRetryModelChain(record) {
+      const attempts = record.attempts || record.response_data?.attempts || [];
+      const rows = Array.isArray(attempts) ? attempts : [];
+      if (!rows.length && record.used_model) {
+        rows.push({ model: record.used_model, success: record.success });
+      }
+      if (!rows.length) return '<span class="model-attempt-empty">空</span>';
+      return `<div class="model-retry-chain">${rows.map((attempt, index) => {
+        const label = recordModelLabel(attempt);
+        const failed = attempt.success === false || attempt.timeout || attempt.error_category === 'timeout';
+        const arrow = index ? '<span class="model-retry-arrow">→</span>' : '';
+        return `${arrow}<span class="model-attempt-badge ${failed ? 'model-attempt-fail' : 'model-attempt-ok'}">${escapeHtml(label)}</span>`;
+      }).join('')}</div>`;
+    }
     function renderRecords() {
       const model = $('monitorModel').value.trim();
       const sourceOptions = uniq(RECORDS.map(r => String(r.source_label || r.source || '').trim()).filter(Boolean));
@@ -2025,8 +2072,8 @@
       const start = Number(RECORD_META.offset ?? ((MONITOR_PAGE - 1) * MONITOR_PAGE_SIZE));
       const pageRows = rows;
       $('monitorStats').textContent = `记录 ${filteredCount} / 总计 ${totalCount} / 本页成功 ${ok} / 本页失败 ${rows.length-ok} / 本页平均 ${avg.toFixed(2)}s / 第 ${MONITOR_PAGE}/${totalPages} 页`;
-      $('recordTable').innerHTML = '<thead><tr><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>模型</th></tr></thead><tbody>' +
-        (pageRows.length ? pageRows.map(r => `<tr style="cursor:pointer" title="点击查看详情" onclick="openRecordDetail('${escapeJs(r.id || '')}')"><td>${escapeHtml(r.time||'')}</td><td>${r.media_type === 'video' ? '视频' : '图片'}</td><td>${escapeHtml(r.source_label || r.source || '')}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(r.used_model||'')}</td></tr>`).join('') : '<tr><td colspan="5" class="muted">没有匹配的监控记录</td></tr>') +
+      $('recordTable').innerHTML = '<thead><tr><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型</th></tr></thead><tbody>' +
+        (pageRows.length ? pageRows.map(r => `<tr style="cursor:pointer" title="点击查看详情" onclick="openRecordDetail('${escapeJs(r.id || '')}')"><td>${escapeHtml(r.time||'')}</td><td>${r.media_type === 'video' ? '视频' : '图片'}</td><td>${escapeHtml(r.source_label || r.source || '')}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">没有匹配的监控记录</td></tr>') +
         '</tbody>';
       $('monitorPager').innerHTML = `
         <button class="secondary mini" type="button" onclick="setMonitorPage(1)" ${MONITOR_PAGE <= 1 ? 'disabled' : ''}>首页</button>
@@ -2170,7 +2217,8 @@
           <div><label>来源</label><div class="status">${escapeHtml(r.source_label || '')}</div></div>
           <div><label>状态</label><div class="status">${r.success ? '成功' : '失败'}</div></div>
           <div><label>类型</label><div class="status">${r.media_type === 'video' ? '视频' : '图片'}</div></div>
-          <div><label>模型</label><div class="status">${escapeHtml(r.used_model || '')}</div></div>
+          <div><label>用时</label><div class="status">${escapeHtml(formatRecordElapsed(r))}</div></div>
+          <div><label>模型重试</label><div class="status">${recordRetryModelChain(r)}</div></div>
           <div><label>调用入口</label><div class="status">${escapeHtml(r.source || '')}</div></div>
           <div><label>群号</label><div class="status">${escapeHtml(r.group_id || '')}</div></div>
           <div><label>Q号</label><div class="status">${escapeHtml(r.user_id || '')}</div></div>
@@ -2215,7 +2263,9 @@
       $('testResolutionWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
       $('testDurationWrap').style.display = TEST_MODE === 'video' ? '' : 'none';
       $('promptEnhanceWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
-      $('useSelfieWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
+      $('useSelfieWrap').style.display = '';
+      $('useSelfie').disabled = TEST_MODE === 't2v';
+      $('useSelfieHint').textContent = TEST_MODE === 'video' ? '（无首帧时使用当前形象参考）' : '';
       $('testPromptLabel').textContent = TEST_MODE === 'video' ? '想生成什么视频' : '想画什么';
       $('testRefsLabel').textContent = TEST_MODE === 'video' ? '首帧参考图（可选一张）' : '额外参考图';
       $('testRefs').multiple = TEST_MODE === 'image';
@@ -2352,7 +2402,7 @@
           resolution: $('testResolution').value,
           duration: Number($('testDuration').value || CONFIG.video?.default_duration || 5),
           prompt_enhance: TEST_MODE === 'image' && $('promptEnhance').checked,
-          use_selfie_reference: TEST_MODE === 'image' && $('useSelfie').checked,
+          use_selfie_reference: TEST_MODE !== 't2v' && $('useSelfie').checked,
           images
         };
         $('testRequestData').textContent = JSON.stringify({...payload, images: `[${images.length} images]`}, null, 2);
@@ -2403,6 +2453,9 @@
           $('selfiePreview').style.display = 'none';
         }
         $('selfieStatus').textContent = data.status || (data.has_image ? '已设置形象参考图' : '还没有形象参考图');
+        if ($('selfieAppearanceType')) {
+          $('selfieAppearanceType').value = data.appearance_type || 'auto';
+        }
       } catch (e) { $('selfieStatus').textContent = e.message; }
     }
     async function refreshDailySelfie() {
@@ -2428,6 +2481,19 @@
     async function clearSelfie() {
       try { await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); await refreshSelfie(); showToast('参考图已清除', 'ok'); }
       catch (e) { $('selfieStatus').textContent = e.message; }
+    }
+    async function saveAppearanceType() {
+      try {
+        const appearance_type = ($('selfieAppearanceType') && $('selfieAppearanceType').value) || 'auto';
+        const res = await api('/api/selfie-appearance-type', {method:'POST', body: JSON.stringify({appearance_type})});
+        const data = res.data || {};
+        if ($('selfieAppearanceType')) $('selfieAppearanceType').value = data.appearance_type || appearance_type;
+        $('selfieStatus').textContent = data.status || '形象类型已保存';
+        showToast('形象类型已保存', 'ok');
+      } catch (e) {
+        $('selfieStatus').textContent = e.message;
+        showToast(e.message, 'bad');
+      }
     }
 
     function escapeHtml(text) {
@@ -3060,6 +3126,7 @@
     };
 
     $('uploadSelfie').onclick = uploadSelfie;
+    if ($('selfieAppearanceType')) $('selfieAppearanceType').onchange = saveAppearanceType;
     $('testChannel').onchange = refreshTestModels;
     function mirrorValue(a, b) {
       const sync = () => { if ($(b).value !== $(a).value) $(b).value = $(a).value; };

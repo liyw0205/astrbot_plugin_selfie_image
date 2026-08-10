@@ -85,6 +85,7 @@ from .providers import (
     provider_type_from_channel_payload,
 )
 from .reference_collector import ReferenceCollector
+from .proxy import channel_client_session, http_proxy_url, target_session_proxy
 from .video import VideoGenerateRequest, generate_video_with_fallback
 from .utils import (
     bytes_to_data_url,
@@ -131,6 +132,13 @@ def optional_event_message_type(priority: int = 100):
     return passthrough
 
 
+def anatomy_constraint_lines(*, style: str = "general") -> list[str]:
+    """Shared body-part constraints for selfie/draw prompts. Implemented in persona."""
+    from .persona import anatomy_constraint_lines as _lines
+
+    return _lines(style=style)
+
+
 def append_anatomy_constraints(prompt: str) -> str:
     raw = str(prompt or "").strip()
     if not raw:
@@ -142,6 +150,7 @@ def append_anatomy_constraints(prompt: str) -> str:
             "Composition and quality:",
             "Use a coherent single image with natural lighting, stable perspective, clear subject focus, and complete natural anatomy for people or animals.",
             "Frame visible bodies cleanly and keep hands, feet, posture, clothing, and scene relationships consistent.",
+            *anatomy_constraint_lines(style="en"),
         ]
     )
 
@@ -158,6 +167,7 @@ def build_prompt_with_reference_instruction(prompt: str, images: List[ImageRefer
             "When multiple references are provided, assign each reference to its requested role: identity, clothing, pose, style, scene, object, or group member.",
             "Create one coherent image with unified lighting, perspective, color tone, natural complete anatomy, and clear spatial relationships.",
             "Frame the subjects cleanly with a finished photo-like composition.",
+            *anatomy_constraint_lines(style="en"),
             "",
             "User request:",
             raw,
@@ -177,9 +187,23 @@ LEGWEAR_BY_POSE = {
 }
 
 LEGWEAR_PROMPTS = {
-    "光腿神器": "本次腿部穿搭：光腿神器。使用自然肤色、轻薄细腻的连裤穿搭，呈现通透匀净的裸腿观感，不假白、不油腻。",
-    "白丝": "本次腿部穿搭：白丝。使用纯白、轻薄、细腻的连裤丝袜，颜色均匀，质感干净。",
-    "黑丝": "本次腿部穿搭：黑丝。使用纯黑、轻薄、细腻的连裤丝袜，颜色均匀，质感干净。",
+    "光腿神器": (
+        "本次腿部穿搭：光腿神器。"
+        "使用自然肤色、极轻薄半透明的腿部质感，远看像干净裸腿，近看有一层细腻光泽；"
+        "通透匀净、不假白、不油腻、不要厚实打底裤或全包厚袜感。"
+    ),
+    "白丝": (
+        "本次腿部穿搭：白丝。"
+        "使用纯白、轻薄半透明的中筒丝袜：袜口停在大腿中段，只包住小腿到大腿中部，大腿根以上露肤；"
+        "能隐约透出腿部肤色与膝盖轮廓，袜面细腻柔光；"
+        "禁止连裤丝袜、全包裤袜、打底裤、到腰的丝袜；不要厚实不透的白裤袜。"
+    ),
+    "黑丝": (
+        "本次腿部穿搭：黑丝。"
+        "使用纯黑、轻薄半透明的中筒丝袜：袜口停在大腿中段，只包住小腿到大腿中部，大腿根以上露肤；"
+        "能隐约透出腿部线条与肤色层次，有细腻光泽；"
+        "禁止连裤丝袜、全包裤袜、打底裤、到腰的丝袜；不要厚实不透的黑裤袜。"
+    ),
 }
 
 LEGWEAR_REQUEST_PATTERN = re.compile(
@@ -231,6 +255,8 @@ class SelfieImagePlugin(Star):
         self._conversation_context: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
         self._context_max_messages = 40
         self._context_max_sessions = 100
+        self._llm_generation_lock = threading.RLock()
+        self._last_llm_generations: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
         self._records: List[Dict[str, Any]] = self._load_records()
         self._record_seq = len(self._records)
         self._web_task_lock = threading.RLock()
@@ -614,6 +640,34 @@ class SelfieImagePlugin(Star):
         with self._context_lock:
             records = list(self._conversation_context.get(key, []))
         return records[-max(1, int(count or 1)) :]
+
+    def _remember_llm_generation(self, event: Optional[AstrMessageEvent], kind: str, params: Dict[str, Any]) -> None:
+        """保存本会话最近一次 LLM 生图请求，供重复生成使用。"""
+        key = self._context_session_key(event)
+        record = {
+            "kind": str(kind or ""),
+            "params": copy.deepcopy(params if isinstance(params, dict) else {}),
+            "timestamp": time.time(),
+        }
+        with self._llm_generation_lock:
+            self._last_llm_generations[key] = record
+            self._last_llm_generations.move_to_end(key)
+            while len(self._last_llm_generations) > self._context_max_sessions:
+                self._last_llm_generations.popitem(last=False)
+
+    def _last_llm_generation(self, event: Optional[AstrMessageEvent], feedback: str = "") -> Dict[str, Any]:
+        """获取最近一次 LLM 生图请求，并将用户修正要求附加到内容中。"""
+        key = self._context_session_key(event)
+        with self._llm_generation_lock:
+            record = copy.deepcopy(self._last_llm_generations.get(key) or {})
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        comment = str(feedback or "").strip()
+        if comment:
+            field = "action" if record.get("kind") == "selfie" else "prompt"
+            original = str(params.get(field) or "").strip()
+            params[field] = "\n".join(item for item in (original, f"优先修正用户反馈：{comment}") if item)
+        record["params"] = params
+        return record
 
     def _format_context_for_llm(self, event: Optional[AstrMessageEvent], count: int = 12, max_chars: int = 1400) -> str:
         lines: List[str] = []
@@ -1141,14 +1195,7 @@ class SelfieImagePlugin(Star):
                 url = f"{base}/v1beta/{model_path}:generateContent"
                 parts: List[Dict[str, Any]] = [{"text": text}]
                 for image in images:
-                    parts.append(
-                        {
-                            "inline_data": {
-                                "mime_type": detect_mime_by_bytes(image),
-                                "data": bytes_to_data_url(image, detect_mime_by_bytes(image)).split(",", 1)[-1],
-                            }
-                        }
-                    )
+                    parts.append({"inline_data": {"mime_type": detect_mime_by_bytes(image), "data": bytes_to_data_url(image, detect_mime_by_bytes(image)).split(",", 1)[-1]}})
                 headers = {"Content-Type": "application/json", "Accept": "application/json"}
                 if target.api_key:
                     headers["x-goog-api-key"] = target.api_key
@@ -1169,13 +1216,10 @@ class SelfieImagePlugin(Star):
             headers = {"Content-Type": "application/json", "Accept": "application/json"}
             if target.api_key:
                 headers["Authorization"] = f"Bearer {target.api_key}"
-            content: Any
+            content: Any = [{"type": "text", "text": text}] if images else text
             if images:
-                content = [{"type": "text", "text": text}]
                 for image in images:
                     content.append({"type": "image_url", "image_url": {"url": bytes_to_data_url(image, detect_mime_by_bytes(image))}})
-            else:
-                content = text
             payload = {"model": target.model, "messages": [{"role": "user", "content": content}], "stream": False}
             async with session.post(url, json=payload, headers=headers, timeout=timeout, proxy=proxy) as response:
                 if response.status >= 400:
@@ -1273,6 +1317,9 @@ class SelfieImagePlugin(Star):
 
     def _record_task(self, record: Dict[str, Any]) -> None:
         stale_cache_paths: List[str] = []
+        response_data = record.get("response_data")
+        if "attempts" not in record and isinstance(response_data, Mapping):
+            record["attempts"] = list(response_data.get("attempts") or [])
         with self._records_lock:
             record = redact_sensitive_data(dict(record))
             self._record_seq += 1
@@ -2255,6 +2302,13 @@ class SelfieImagePlugin(Star):
                     pass
             await event.send(event.chain_result([self._create_video_component(file_path)]))
 
+    def _video_persona_reference(self) -> Optional[ImageReference]:
+        """将当前形象图作为视频首帧参考。"""
+        persona_ref = self.persona.get_reference_image()
+        if not persona_ref:
+            return None
+        return ImageReference(data=persona_ref["data"], mime_type=persona_ref["mime_type"])
+
     async def _send_generated_images(self, event: AstrMessageEvent, files: Iterable[str]) -> int:
         sent = 0
         for file_path in files:
@@ -2586,99 +2640,67 @@ class SelfieImagePlugin(Star):
         pose_variants = {
             "sit": [
                 (
-                    "第一人称自拍视角，俯拍下半身特写，只露出部分发丝，"
-                    "宽松上衣与短裙下摆入镜，腿部线条自然细腻，"
-                    "可穿小皮鞋或居家拖鞋，坐在米白色毛绒地毯上，窗边柔和阳光；"
-                    "双手自然放在身侧或腿上，不要去摸鞋或脚面。"
+                    "第一人称低头随手拍下半身：自然坐在床沿或地毯上，双腿向前放松伸展后轻微并拢，"
+                    "膝盖自然、小腿线条舒服，裙摆自然搭在腿根；赤足，脚趾脚背清楚；"
+                    "双手可轻搭大腿外侧，不要碰脚；构图从腰下到脚，以腿部为主，可只露少许发丝。"
                 ),
                 (
-                    "第一人称低头随手拍，坐在床沿，双腿向前自然伸展后轻微斜放，"
-                    "腿部线条与质感干净细腻，室内暖光和浅色床单；"
-                    "手可轻搭膝盖，禁止摸鞋边。"
-                ),
-                (
-                    "窗边单人椅坐姿，双腿并拢后向一侧自然倾斜，裙摆垂落，腿部线条流畅、肤质细腻柔光，"
-                    "小皮鞋或居家拖鞋材质清楚，地板柔和反光；手不碰鞋。"
+                    "坐姿侧斜拍腿：单人坐在沙发或床边，双腿并拢后向同一侧自然倾斜，赤足脚尖轻点地面，"
+                    "腿部线条流畅放松，不要僵硬直挺；手可扶坐垫，不碰脚；"
+                    "镜头略俯拍下半身。"
                 ),
             ],
             "kneel": [
                 (
-                    "跪坐拍腿：第一人称俯视 POV，双膝跪在地毯或床单上，臀部坐在小腿或脚跟上，"
-                    "镜头从胸口以下往下看自己的腿与脚背，脸部完全在画面外，可只露发丝，"
-                    "腿部线条自然，脚背干净，可穿居家拖鞋或赤足；"
-                    "双手自然放在大腿上，不要扶鞋、摸脚。"
+                    "跪坐拍腿：双膝跪在地毯上，臀部自然坐回小腿，"
+                    "第一人称低头看自己的大腿、小腿与赤足脚背；腿部放松，不要硬拗夸张角度；"
+                    "双手可轻放大腿，不要摸脚。"
                 ),
                 (
-                    "跪坐侧斜拍腿：双膝跪地、身体略侧向，仍保持跪坐重心，镜头低头拍下半身，不露脸，"
-                    "强调小腿与脚踝曲线、干净脚背和细腻质感，地毯/床单背景；"
-                    "手部静止自然，禁止整理腿部穿搭。"
+                    "跪坐微侧：保持跪坐重心，身体只轻微侧一点，镜头低头拍膝到赤足，"
+                    "小腿脚踝曲线自然，脚背干净；手静止自然，不整理腿部穿搭。"
                 ),
             ],
             "side_lie": [
                 (
-                    "侧躺曲腿：侧身躺在床或地毯上，上面那条腿微微弯曲，下面腿略伸，"
-                    "镜头从腰部以下沿腿的方向近景拍摄，完全不露脸，"
-                    "腿部线条细腻自然，裙摆/裤脚自然堆叠，床单褶皱清晰，柔和侧光；"
-                    "突出腿线；手可自然放在身侧，不要伸向脚面。"
-                ),
-                (
-                    "侧卧抱枕旁拍腿：身体侧躺，一腿屈起贴近，一腿放松前伸，第一人称略俯视下半身，"
-                    "不露脸，小腿脚踝线条舒服，居家暖调，浅景深；手不碰鞋。"
+                    "侧躺曲腿：侧身躺在床上，上面那条腿自然弯曲，下面腿略伸，髋膝踝连续自然，"
+                    "不要把腿拧成不合理角度；镜头沿腿近景，从腰下到赤足；"
+                    "手可自然放在身侧，不要伸向脚面。"
                 ),
             ],
             "hug_knee": [
                 (
-                    "抱膝坐：坐在床或地毯上，双膝（或单膝）收近身前，双手环抱膝盖（抱膝即可，不要摸脚踝以下），"
-                    "第一人称俯视只拍下半身与脚背，脸部在画面外，腿部线条自然细腻，"
-                    "裙摆堆在腿根附近，居家日常、干净柔和。"
+                    "抱膝坐：坐在床或地毯上，双膝收近身前，双手从肩肘连续伸出环抱膝盖，"
+                    "腕手与胳膊都在画面内且相连；第一人称俯视下半身与赤足脚背；"
+                    "腿部放松，不要硬折关节。"
                 ),
                 (
-                    "单膝抱膝坐姿：一腿屈起抱住膝部，另一腿自然侧放，镜头低头拍腿与脚，不露脸，"
-                    "腿部质感通透匀净，手只在膝盖附近，禁止伸向脚面，窗边或床边暖光。"
+                    "单膝抱膝：一腿屈起由连续手臂抱住膝部，另一腿自然侧放；"
+                    "镜头低头拍腿与赤足；手只在膝盖附近，不碰脚面。"
                 ),
             ],
             "cross_leg": [
                 (
-                    "翘二郎腿坐：坐在椅边或床沿，一条腿架在另一条腿上，强调小腿外侧与脚踝，"
-                    "第一人称略俯视下半身，不露脸，腿部线条细腻柔和，"
-                    "鞋面可入镜但手不要碰鞋；穿搭记录感。"
-                ),
-                (
-                    "沙发上跷腿坐：一腿搭在另一腿膝上，裙摆/裤脚自然，镜头拍膝下到脚，完全不露脸，"
-                    "腿线干净舒服，室内漫射光，双手远离鞋面。"
+                    "翘二郎腿坐：坐在椅边或床沿，一条腿自然架在另一条腿膝上，小腿外侧与赤足脚踝清楚，"
+                    "姿势放松日常，不要僵硬；第一人称略俯视下半身；手远离脚面。"
                 ),
             ],
             "stand_topdown": [
                 (
-                    "站立俯视拍腿：站在居家地面或地毯上，镜头严格压在腰下到膝下，只拍大腿下半、小腿与鞋，"
-                    "绝不露脸、不要全身立绘、不要正脸入镜；可一只脚轻微点地，"
-                    "腿部线条细腻通透，画面里尽量不出现手。"
-                ),
-                (
-                    "站立近景膝下：第一人称低头只看见自己的小腿与脚面，裁切在腰线以下，脸部完全出画，"
-                    "腿脚干净，木地板/地毯纹理清楚；禁止手伸进画面摸鞋。"
+                    "站立俯视拍腿：站在居家地面，镜头压在腰下到膝下，只拍大腿下半、小腿与赤足，"
+                    "不要全身立绘；双脚自然站立，可一只脚轻微点地；尽量不出现手。"
                 ),
             ],
             "windowsill": [
                 (
-                    "窗台蹬坐：坐在窗台或矮柜边，双脚或一只脚踩在边缘，小腿自然垂下或轻点，"
-                    "镜头从略高处拍下半身与腿，不露脸，窗外柔光，腿部线条自然细腻，"
-                    "得体日常，稳坐感；手扶台沿即可，不要摸鞋。"
-                ),
-                (
-                    "窗边矮台坐拍腿：臀坐台沿，一脚踩台、一脚垂下，第一人称俯视腿脚，脸部出画，"
-                    "腿部质感通透舒服，居家窗光；双手不碰鞋。"
+                    "窗台稳坐拍腿：臀稳坐窗台或矮柜，一脚踩台沿、一脚自然垂下，赤足小腿放松，"
+                    "不要悬空拧腿；镜头从略高处拍下半身到脚；手可扶台沿，不碰脚。"
                 ),
             ],
             "kneel_up": [
                 (
-                    "跪立拍腿：双膝跪地但上身略直（比跪坐更高一点），镜头仍贴腿面俯视，"
-                    "只拍下半身与膝脚，完全不露脸，腿部线条清楚，"
-                    "裙摆/裤脚垂落，地毯背景；手自然垂放或轻放大腿，禁止整理腿部穿搭。"
-                ),
-                (
-                    "高跪姿侧斜：跪姿重心略抬，身体微侧，低头拍小腿脚踝，不露脸，"
-                    "腿部质感细腻匀净，居家暖光，无摸鞋动作。"
+                    "跪立拍腿：双膝跪地、上身略直但仍以腿部为主，镜头贴腿面俯视膝到赤足；"
+                    "腿部线条清楚，手可轻放大腿，不整理腿部穿搭。"
                 ),
             ],
         }
@@ -2694,17 +2716,19 @@ class SelfieImagePlugin(Star):
         }
         variants = pose_variants.get(pose_bucket) or pose_variants["sit"]
         pose_label = pose_labels.get(pose_bucket, "坐姿拍腿")
-        hard_crop = ""
-        if pose_bucket == "stand_topdown":
-            hard_crop = "站立俯视必须严格下半身裁切：无正脸、无全身立绘、构图止于腰下至脚。"
-        anatomy_rules = (
-            "解剖硬性要求（必须遵守）："
-            "画面里只能有两条腿、两只脚、最多两只手；禁止三条腿、六只脚、多余肢体或重复脚踝；"
-            "每只手五指自然完整，禁止六指、融合手指、畸形手掌；"
-            "膝盖、小腿、脚踝结构对称合理，不要错位关节或扭曲脚掌；"
-            "禁止系鞋带、整理腿部穿搭、摸鞋边、抠鞋面等手部凑近脚面的动作；"
-            "鞋面可入镜，但手应远离脚面，或干脆不入手。"
+        hard_crop = (
+            "构图以腿部与下半身为主：身体从入镜的腰腹/大腿连续到膝盖、小腿、脚踝、脚。"
+            "若画面边缘出现发丝或肩颈，须与身体自然相连；不要出现与身体分离的悬浮头、错位头。"
         )
+        if pose_bucket == "stand_topdown":
+            hard_crop += "站立俯视优先下半身裁切：构图止于腰下至脚，不要全身立绘。"
+        anatomy_rules = "".join(anatomy_constraint_lines(style="legs"))
+        anatomy_rules += "赤足，不要任何鞋子、拖鞋、皮鞋、靴子；手应远离脚面，或干脆不入手。"
+        if pose_bucket == "hug_knee":
+            anatomy_rules += (
+                "抱膝时双手必须从肩肘连续伸出后抱膝，腕手与胳膊都在画面内且相连；"
+                "不要一侧只露出半截胳膊，又在腿边另起一只手。"
+            )
         legwear_options = LEGWEAR_BY_POSE.get(pose_bucket, LEGWEAR_BY_POSE["sit"])
         legwear = random.choices(
             [name for name, _ in legwear_options],
@@ -2714,16 +2738,18 @@ class SelfieImagePlugin(Star):
         legwear_rule = LEGWEAR_PROMPTS[legwear]
         base = (
             "看看腿。"
+            "单人下半身特写：画面里只有主角一人，不要第二人、背景人物、路人或合影。"
             "主角身份必须来自 AI 自拍形象参考图：即使脸部不入镜，露出的发丝、发色、体态、肤色和整体气质也要像同一个角色。"
             "不要换成陌生人物，不要改变主角发色和体态。"
             f"【唯一姿势·不可混用】本次主姿势只能是：{pose_label}。"
             f"本次腿部特写构图（只执行这一段，不要叠加其他姿势）：{random.choice(variants)}"
+            "姿势要日常合理、重心稳定、关节自然，不要僵硬拧腿或夸张不可能的体位。"
             "不要同时出现坐姿+跪姿+侧躺等多种姿态，不要额外发明第三种腿姿。"
             "腿部质感要求：干净、细腻、自然，结构完整，不要脏污脚面。"
             "腿部比例自然，姿势放松不要僵硬。"
+            "赤足：不要鞋子、拖鞋、皮鞋或任何鞋类，脚背脚趾自然露出。"
             f"{legwear_rule}"
             f"{anatomy_rules}"
-            "脸部始终在画面外。"
             f"{hard_crop}"
         )
         if has_refs:
@@ -2906,22 +2932,32 @@ class SelfieImagePlugin(Star):
         return base
 
     def _build_group_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
+        appearance_type = "auto"
+        try:
+            appearance_type = self.persona.get_appearance_type()
+        except Exception:
+            appearance_type = "auto"
+        from .persona import appearance_type_instruction, group_style_lines
+
+        appearance_line = appearance_type_instruction(appearance_type, has_reference_image=True)
+        style_blob = " ".join(group_style_lines(appearance_type))
         base = (
             "合影 / 合照 / 同框。AI 自己必须作为画面主角之一，与用户指定或提供的对象自然同框合影。"
-            "AI 保持当前写实身份：脸型五官、发型发色、体态一致；表情与眼神按本次合影氛围自然重画，不要原样复制形象参考图的固定表情。"
+            "AI 保持当前身份：性别、脸型五官、发型发色、体态一致；表情与眼神按本次合影氛围自然重画，不要原样复制形象参考图的固定表情。"
+            "形象参考图是女性则 AI 必须是女性，是男性则必须是男性；禁止无故改成异性。"
             "如果同一张参考图里有多个可见人物 / 角色，按实际可见人数全部保留为独立同框对象。"
-            "真人照片对象：保留大致外观与穿搭倾向。"
-            "二次元头像、插画、Q版、表情包、卡通、吉祥物：只提取发色发型、配色、饰品、服装色块等身份线索，必须改画成与 AI 同一套写实真人照片风格的成年人物；禁止继续二次元大眼、平涂或漫画线稿。"
-            "风景、建筑、房间、道具等非人物参考：按主色与气质拟人成可并肩站立的完整写实人物（成年、得体、日常），再与 AI 同框；不要把原图原样铺成背景或墙纸。"
-            "拟人性别：文字或参考图已明确性别则按该性别；无明确性别线索时默认成年女性（柔和好看、得体日常），不要无故默认男性。"
-            "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动统一；整张图统一为真实相机拍下的写实合影，不要一半真人一半二次元。"
+        )
+        if appearance_line:
+            base += appearance_line
+        base += style_blob
+        base += (
+            "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动统一。"
             "合影默认多数人看向镜头，像认真合影；AI 若面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
-            "仅当用户明确要求二次元/动漫合影时，才允许整体二次元画风。"
         )
         if has_refs:
-            base += " 用户提供或艾特对象的图片是合影角色来源（真人保外观倾向；二次元只取线索并转写实；非人物按风格拟人成写实人物，无性别默认女性）。"
+            base += " 用户提供或艾特对象的图片是合影角色来源，按形象类型与主角画风统一处理；非人物按风格拟人，无性别默认女性。"
         else:
-            base += " 没有合影对象参考图时，按文字要求生成自然同框写实对象；未指定性别时默认成年女性。"
+            base += " 没有合影对象参考图时，按文字要求生成自然同框对象；未指定性别时默认成年女性。"
         extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
         if extra:
             base += f" 用户补充要求：{extra}。"
@@ -3332,20 +3368,30 @@ class SelfieImagePlugin(Star):
     def get_selfie_reference_payload(self) -> Dict[str, Any]:
         data = self.persona.get()
         ref = self.persona.get_reference_image()
-        if not ref:
-            return {
-                "has_image": False,
-                "ref_mime_type": data.get("ref_mime_type") or "image/png",
-                "updated_at": data.get("updated_at") or "",
-                "status": self.persona.status_text(),
-            }
-        return {
-            "has_image": True,
-            "ref_mime_type": ref["mime_type"],
+        appearance_type = self.persona.get_appearance_type()
+        base = {
+            "appearance_type": appearance_type,
+            "appearance_type_label": self.persona.appearance_type_label(),
+            "ref_mime_type": data.get("ref_mime_type") or "image/png",
             "updated_at": data.get("updated_at") or "",
-            "image": bytes_to_data_url(ref["data"], ref["mime_type"]),
             "status": self.persona.status_text(),
         }
+        if not ref:
+            return {
+                **base,
+                "has_image": False,
+            }
+        return {
+            **base,
+            "has_image": True,
+            "ref_mime_type": ref["mime_type"],
+            "image": bytes_to_data_url(ref["data"], ref["mime_type"]),
+        }
+
+    def set_selfie_appearance_type_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        value = payload.get("appearance_type", payload.get("type", "auto"))
+        self.persona.set_appearance_type(value)
+        return self.get_selfie_reference_payload()
 
     def save_selfie_reference_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         raw_image = str(payload.get("image") or payload.get("data") or "").strip()
@@ -3358,6 +3404,8 @@ class SelfieImagePlugin(Star):
         if len(data) > max_bytes:
             raise ValueError(f"图片过大，最大允许 {self.config.image_max_image_size_mb}MB")
         self.persona.save_reference_image(data, normalize_image_mime(mime or str(payload.get("mime_type") or "") or detect_mime_by_bytes(data)))
+        if "appearance_type" in payload or "type" in payload:
+            self.persona.set_appearance_type(payload.get("appearance_type", payload.get("type")))
         return self.get_selfie_reference_payload()
 
     def clear_selfie_reference_from_web(self) -> Dict[str, Any]:
@@ -3639,21 +3687,28 @@ class SelfieImagePlugin(Star):
             return {"success": False, "error": "视频功能已关闭，请在配置里打开 video.enable"}
         if not targets:
             return {"success": False, "error": "还没有可用的视频渠道，请先在配置里添加并启用 video_channels"}
-        # Preflight first target only for clearer errors.
-        first = targets[0]
-        report = preflight_video_channel(
-            {
-                "name": first.channel_name,
-                "base_url": first.base_url,
-                "api_key": first.api_key,
-                "api_keys": first.api_keys,
-                "model": first.model,
-                "enabled_models": [first.model] if first.model else [],
-                "enabled": True,
-            }
-        )
-        if not report.get("ok"):
-            return {"success": False, "error": report.get("message") or "视频渠道配置不完整"}
+        # Skip malformed targets without blocking later configured video channels.
+        valid_targets: List[ImageModelTarget] = []
+        invalid_messages: List[str] = []
+        for candidate in targets:
+            report = preflight_video_channel(
+                {
+                    "name": candidate.channel_name,
+                    "base_url": candidate.base_url,
+                    "api_key": candidate.api_key,
+                    "api_keys": candidate.api_keys,
+                    "model": candidate.model,
+                    "enabled_models": [candidate.model] if candidate.model else [],
+                    "enabled": True,
+                }
+            )
+            if report.get("ok"):
+                valid_targets.append(candidate)
+            else:
+                invalid_messages.append(str(report.get("message") or candidate.label))
+        if not valid_targets:
+            return {"success": False, "error": invalid_messages[0] if invalid_messages else "视频渠道配置不完整"}
+        targets = valid_targets
 
         req = VideoGenerateRequest(
             prompt=str(prompt or "").strip(),
@@ -3800,9 +3855,13 @@ class SelfieImagePlugin(Star):
         )
         if mode == "t2v":
             refs = []
-        elif mode == "i2v" and not refs:
-            yield event.plain_result("图生视频需要附图或引用一张图当首帧。")
-            return
+        elif not refs:
+            persona_ref = self._video_persona_reference()
+            if persona_ref:
+                refs = [persona_ref]
+            elif mode == "i2v":
+                yield event.plain_result("图生视频需要附图、引用图片，或先设置当前形象图作为首帧。")
+                return
         if mode == "auto" and refs:
             mode_label = "图生视频"
         elif mode == "i2v":
@@ -3869,18 +3928,21 @@ class SelfieImagePlugin(Star):
 
     @filter.command("视频")
     async def cmd_video(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        """写想要的动态出视频。带图/引用图优先作首帧；没图时用当前形象图作首帧。"""
         fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
         async for item in self._handle_video_command(event, "视频", fallback, mode="auto"):
             yield item
 
     @filter.command("文生视频")
     async def cmd_t2v(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        """只用文字出视频，不带图、也不使用形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
         async for item in self._handle_video_command(event, "文生视频", fallback, mode="t2v"):
             yield item
 
     @filter.command("图生视频")
     async def cmd_i2v(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        """按图出视频。附图/引用图优先作首帧；没图时用当前形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
         async for item in self._handle_video_command(event, "图生视频", fallback, mode="i2v"):
             yield item
@@ -4296,6 +4358,11 @@ class SelfieImagePlugin(Star):
             if len(data) > max_bytes:
                 raise RuntimeError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
             refs.append(ImageReference(data=data, mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data))))
+        if payload.get("use_selfie_reference") and not refs:
+            persona_ref = self._video_persona_reference()
+            if not persona_ref:
+                raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
+            refs = [persona_ref]
 
         started = time.monotonic()
         req = VideoGenerateRequest(
@@ -4350,7 +4417,7 @@ class SelfieImagePlugin(Star):
         base_url = str(channel_payload.get("base_url") or channel_payload.get("baseUrl") or "").strip()
         api_key = str(channel_payload.get("api_key") or channel_payload.get("apiKey") or "").strip()
         provider_type = provider_type_from_channel_payload(channel_payload)
-        proxy = str(channel_payload.get("proxy") or "").strip() or None
+        proxy = str(channel_payload.get("proxy") or "").strip()
         if provider_type == "agnes":
             return ["agnes-image-2.1-flash"]
         candidates = build_model_list_urls(base_url, provider_type)
@@ -4362,21 +4429,23 @@ class SelfieImagePlugin(Star):
         elif api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         errors: List[str] = []
-        async with aiohttp.ClientSession(trust_env=False) as session:
-            for url in candidates:
-                safe_url = redact_sensitive_text(url)
-                try:
-                    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12), proxy=proxy) as response:
-                        if response.status >= 400:
-                            errors.append(f"{safe_url}: HTTP {response.status} {redact_sensitive_text(await response.text())[:200]}")
-                            continue
-                        data = await response.json(content_type=None)
-                    models = self._extract_model_ids(data)
-                    if models:
-                        return models
-                    errors.append(f"{safe_url}: 返回成功但未识别到模型")
-                except Exception as exc:
-                    errors.append(f"{safe_url}: {redact_sensitive_text(str(exc))}")
+        async with aiohttp.ClientSession(trust_env=False) as base_session:
+            async with channel_client_session(proxy, base_session) as session:
+                request_proxy = http_proxy_url(proxy)
+                for url in candidates:
+                    safe_url = redact_sensitive_text(url)
+                    try:
+                        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12), proxy=request_proxy) as response:
+                            if response.status >= 400:
+                                errors.append(f"{safe_url}: HTTP {response.status} {redact_sensitive_text(await response.text())[:200]}")
+                                continue
+                            data = await response.json(content_type=None)
+                        models = self._extract_model_ids(data)
+                        if models:
+                            return models
+                        errors.append(f"{safe_url}: 返回成功但未识别到模型")
+                    except Exception as exc:
+                        errors.append(f"{safe_url}: {redact_sensitive_text(str(exc))}")
         raise RuntimeError("\n".join(errors))
 
     def _extract_model_ids(self, data: Any) -> List[str]:
@@ -4497,7 +4566,7 @@ class SelfieImagePlugin(Star):
 
     @filter.command("生图帮助")
     async def cmd_help(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """仅发帮助图；详细文字见 /生图help。"""
+        """只看图卡帮助。完整文字说明请发 /生图help。"""
         help_path = self._resolve_help_image_path()
         if help_path:
             yield event.chain_result([self._create_image_component(help_path)])
@@ -4507,7 +4576,7 @@ class SelfieImagePlugin(Star):
 
     @filter.command("生图help")
     async def cmd_help_text(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """详细文字指令说明。"""
+        """完整文字指令说明。"""
         yield event.plain_result(self._help_text_body())
 
     def _help_text_body(self) -> str:
@@ -4516,18 +4585,23 @@ class SelfieImagePlugin(Star):
                 f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}",
                 "",
                 "常用：",
-                "· /画 或 /生图　写想要的画面；可加数量、预设名，也可用 --ar 1:1、--resolution 2K",
-                "· /文生图　按你写的原文出图（不走自拍人设包装）",
-                "· /图生图　带图或引用图，按原文改图",
+                "· /画 或 /生图　写想要的画面；有附图/引用图就按图改，没图就按文字出；不自动带入形象图",
+                "· /文生图　只用文字按原文出图，不走自拍人设，也不用形象图",
+                "· /图生图　必须附图或引用图，按原文改图；不自动使用形象图",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
                 "· /看看腿　下半身近景；按姿势搭配光腿神器、白丝或黑丝；可写数量如 /看看腿 3",
-                "· /看看你　像别人随手拍你（他拍感）",
-                "· /合影 或 /合照　和对象同框；可附图或@对方",
+                "· /看看你　像别人随手拍你",
+                "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象",
                 "",
                 "视频：",
-                "· /视频　写想要的动态；带图或引用图时当图生视频，否则文生视频（慢，先回任务号）",
-                "· /文生视频　只用文字出视频",
-                "· /图生视频　必须附图/引用图当首帧",
+                "· /视频　写想要的动态；有图就图生视频，没图就用当前形象图作首帧",
+                "· /文生视频　只用文字出视频，不带图、不用形象图",
+                "· /图生视频　附图/引用图优先作首帧；没图时用当前形象图",
+                "",
+                "自动判断：",
+                "· /画：有图=图生图，没图=文生图；不会自动塞形象图",
+                "· /视频：有图=图生视频，没图=用形象图作首帧",
+                "· 自拍/合影/看看：会用当前形象；形象类型可设自动、真人、动漫",
                 "",
                 "模型与进度：",
                 "· /生图模型　看列表；跟序号或 渠道/模型 切换（只影响当前群/私聊）；发「清除」恢复默认",
@@ -4535,8 +4609,8 @@ class SelfieImagePlugin(Star):
                 "· /生图取消　取消还在排的/进行中的任务",
                 "",
                 "形象：",
-                "· /形象查看　看当前参考图与今日状态",
-                "· /形象设置　发图、引用图或链接设成形象",
+                "· /形象查看　看当前参考图、形象类型与今日状态",
+                "· /形象设置　发图设形象；也可写 自动 / 真人 / 动漫 改形象类型",
                 "· /形象清除　去掉参考图",
                 "· /形象刷新　刷新今日穿搭状态",
                 "",
@@ -4565,6 +4639,7 @@ class SelfieImagePlugin(Star):
 
     @filter.command("生图模型")
     async def cmd_image_model(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        """查看或切换当前聊天使用的模型。可跟序号、渠道/模型，或发「清除」恢复默认。"""
         denied = self._permission_denied_message(event)
         if denied:
             yield event.plain_result(denied)
@@ -4606,6 +4681,7 @@ class SelfieImagePlugin(Star):
 
     @filter.command("生图任务")
     async def cmd_image_tasks(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
+        """查看进行中的出图/视频任务。可跟任务号或列表编号。"""
         denied = self._permission_denied_message(event)
         if denied:
             yield event.plain_result(denied)
@@ -4649,6 +4725,7 @@ class SelfieImagePlugin(Star):
 
     @filter.command("生图取消")
     async def cmd_image_task_cancel(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
+        """取消排队中或进行中的出图/视频任务。可跟任务号或列表编号。"""
         denied = self._permission_denied_message(event)
         if denied:
             yield event.plain_result(denied)
@@ -4696,6 +4773,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
+        """写想要的画面出图。有附图/引用图时按图改；没图时按文字出。不会自动带入形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, ("画", "生图"), fallback)
         message, requested_count = self._extract_command_count(message)
@@ -4762,6 +4840,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
+        """按你写的原文出图，不走自拍人设包装，也不使用形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, "文生图", fallback)
         message, requested_count = self._extract_command_count(message)
@@ -4819,6 +4898,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
+        """带图或引用图，按原文改图。需要附图，不会自动使用形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, "图生图", fallback)
         message, requested_count = self._extract_command_count(message)
@@ -4889,6 +4969,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
+        """用当前形象自拍。可写动作、场景、换装；有附图时作服装/场景参考。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, ("自拍", "看看"), fallback_args)
         raw_extra, requested_count = self._extract_command_count(raw_message)
@@ -4931,6 +5012,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
+        """下半身近景自拍。按姿势搭配光腿神器、白丝或黑丝；可写数量。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看腿", fallback_args)
         raw_extra, requested_count = self._extract_command_count(raw_message)
@@ -4968,6 +5050,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
+        """像别人随手拍你，带一点日常他拍感。使用当前形象。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看你", fallback_args)
         raw_extra, requested_count = self._extract_command_count(raw_message)
@@ -5005,6 +5088,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
+        """和对象同框合影。可附图或@对方；自己使用当前形象。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, ("合影", "合照"), fallback)
         raw_message, requested_count = self._extract_command_count(raw_message)
@@ -5033,6 +5117,7 @@ class SelfieImagePlugin(Star):
 
     @filter.command("形象查看")
     async def cmd_persona_status(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """查看当前形象参考图、形象类型与今日状态。"""
         await self.persona.ensure_daily_selfie_profile("查看今日自拍设定")
         path = self.persona.get_reference_path()
         if path:
@@ -5041,12 +5126,36 @@ class SelfieImagePlugin(Star):
 
     @filter.command("形象设置")
     async def cmd_persona_set(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """设置形象参考图，或改形象类型：自动 / 真人 / 动漫。"""
         sources = extract_image_sources_from_event(event, include_at_avatar=False)
         text = extract_event_text(event)
         sources.extend(extract_image_urls(text))
         sources = list(dict.fromkeys(sources))
+        # 允许「形象设置 动漫/真人/自动」只改类型；也可与附图一起设置
+        type_hint = ""
+        compact = re.sub(r"[\s，。！？、；：,.!?]", "", str(text or ""))
+        for token, value in (
+            ("二次元", "anime"),
+            ("动漫", "anime"),
+            ("动画", "anime"),
+            ("真人", "real"),
+            ("写实", "real"),
+            ("自动", "auto"),
+            ("默认", "auto"),
+        ):
+            if token in compact:
+                type_hint = value
+                break
+        if type_hint:
+            self.persona.set_appearance_type(type_hint)
         if not sources:
-            yield event.plain_result("请发送图片、引用图片，或在指令后附带图片链接。")
+            if type_hint:
+                yield event.plain_result(f"形象类型已设为{self.persona.appearance_type_label()}。\n" + self.persona.status_text())
+                return
+            yield event.plain_result(
+                "请发送图片、引用图片，或在指令后附带图片链接。\n"
+                "也可：形象设置 自动 / 形象设置 真人 / 形象设置 动漫"
+            )
             return
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
         async with aiohttp.ClientSession(trust_env=False) as session:
@@ -5056,17 +5165,22 @@ class SelfieImagePlugin(Star):
                     continue
                 data, mime = fetched
                 self.persona.save_reference_image(data, mime)
-                yield event.plain_result("AI 自拍形象参考图已保存。")
+                msg = "AI 自拍形象参考图已保存。"
+                if type_hint:
+                    msg += f" 形象类型：{self.persona.appearance_type_label()}。"
+                yield event.plain_result(msg)
                 return
         yield event.plain_result("没有读取到可用图片，或图片超过大小限制。")
 
     @filter.command("形象清除")
     async def cmd_persona_clear(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """清除当前形象参考图。"""
         self.persona.clear_reference_image()
         yield event.plain_result("AI 自拍形象参考图已清除。")
 
     @filter.command("形象刷新")
     async def cmd_persona_refresh(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """刷新今日穿搭与状态。"""
         self.persona.refresh_daily_selfie_profile_for_test()
         await self.persona.ensure_daily_selfie_profile("手动刷新今日自拍设定")
         yield event.plain_result("今日自拍设定已刷新。\n" + self.persona.status_text())
@@ -5086,6 +5200,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
+        """查看预设列表，或按预设名生成。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, "预设", fallback)
         text = self._normalize_preset_input(message)
@@ -5162,6 +5277,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
+        """管理员添加预设。格式：名称:内容"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         payload = self._normalize_preset_input(extract_command_message(event, "预设添加", fallback))
         if not payload:
@@ -5186,6 +5302,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
+        """管理员删除指定预设。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         payload = self._normalize_preset_input(extract_command_message(event, "预设删除", fallback))
         if not payload:
@@ -5220,6 +5337,17 @@ class SelfieImagePlugin(Star):
         """
         if not self.config.image_enable_llm_tool:
             return self._tool_unavailable("我这会儿还没法把这个画面整理出来。")
+        self._remember_llm_generation(
+            event,
+            "image",
+            {
+                "prompt": prompt,
+                "count": count,
+                "aspect_ratio": aspect_ratio,
+                "resolution": resolution,
+                "size": size,
+            },
+        )
         requested_count = self._normalize_count(count)
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
@@ -5281,6 +5409,86 @@ class SelfieImagePlugin(Star):
         """
         if not self.config.image_enable_llm_tool:
             return self._tool_unavailable("我这会儿还没法拍这个给你看。")
+        self._remember_llm_generation(
+            event,
+            "selfie",
+            {
+                "action": action,
+                "count": count,
+                "aspect_ratio": aspect_ratio,
+                "resolution": resolution,
+                "size": size,
+            },
+        )
         requested_count = self._normalize_count(count)
         action, aspect, resol, _, _ = self._resolve_image_preset(action or "看着镜头自然自拍", aspect_ratio, resolution or size)
         return await self._run_llm_selfie_flow(event, action, requested_count, aspect, resol, ack_message)
+
+    @LLM_TOOL(name="generate_video")
+    async def tool_generate_video(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+        duration: int = 5,
+        ack_message: str = "",
+    ) -> Optional[str]:
+        """
+        生成短视频。默认把当前 AI 形象图作为首帧；用户附图时优先使用附图作为首帧。
+        用户要求 AI 自己动态、自拍视频、让 AI 出镜动作时使用本工具。
+        Args:
+            prompt(string): 视频内容，描述动作、镜头、场景和光线。
+            duration(number): 视频时长，1-60 秒；留空使用 5 秒。
+            ack_message(string): 可选。根据当前对话和机器人人格生成的简体中文短进度回复。
+        """
+        if not self.config.video_enable:
+            return self._tool_unavailable("我这会儿还没法录这个给你看。")
+        self._remember_llm_generation(event, "video", {"prompt": prompt, "duration": duration})
+        action = str(prompt or "").strip()
+        if not action:
+            return self._tool_soft_fail("缺少视频内容", "你想让我怎么动？")
+        seconds = max(1, min(60, int(duration or self.config.video_default_duration or 5)))
+        refs = await self._event_reference_images(
+            event,
+            include_at_avatar=False,
+            context_hint=action,
+            allow_context_fallback=True,
+        )
+        if not refs:
+            persona_ref = self._video_persona_reference()
+            if persona_ref:
+                refs = [persona_ref]
+        await self._send_progress_text(
+            event,
+            await self._build_contextual_progress_text(event, "video", action, 1, ack_message),
+        )
+        result = await self._run_video_generation(event, action, refs, source="llm-generate-video", duration=seconds)
+        if not result.get("success"):
+            return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("video"))
+        path = str(result.get("video_path") or "")
+        if path:
+            await self._send_generated_video(event, path, caption="视频好了。")
+        return self._tool_success("video", 1)
+
+    @LLM_TOOL(name="retry_last_generation")
+    async def tool_retry_last_generation(
+        self,
+        event: AstrMessageEvent,
+        feedback: str = "",
+    ) -> Optional[str]:
+        """
+        重新生成本会话最近一次图片、自拍或视频。
+        用户说“再来”“重试”“重新生成”“再试一次”等，或明确指出上一张的问题时必须使用本工具，不能只回复文字。
+        feedback 填用户对上一张的明确修改要求，例如“更年轻一点”“不像我”“衣服不对”。
+        Args:
+            feedback(string): 可选。用户对上一轮结果的具体修正要求；留空时按原要求重新生成。
+        """
+        previous = self._last_llm_generation(event, feedback)
+        kind = str(previous.get("kind") or "")
+        params = previous.get("params") if isinstance(previous.get("params"), dict) else {}
+        if kind == "image":
+            return await self.tool_generate_image(event, **params)
+        if kind == "selfie":
+            return await self.tool_generate_selfie(event, **params)
+        if kind == "video":
+            return await self.tool_generate_video(event, **params)
+        return self._tool_soft_fail("没有找到本会话最近一次生成请求", "你想重新来哪一张？")

@@ -103,7 +103,13 @@ class BaseImageAdapter:
         invalid_json_preview_limit: int = 300,
     ) -> tuple[Optional[Any], str]:
         # Prefer raw bytes then utf-8 decode: large b64_json bodies are common for image APIs.
-        raw = await response.read()
+        try:
+            raw = await response.read()
+        except Exception as exc:
+            # Some relays advertise Content-Length / chunked then reset mid-body
+            # (TransferEncodingError / Connection reset). Surface as switchable error.
+            msg = str(exc).strip() or type(exc).__name__
+            return None, f"上游响应未完整接收: {msg}"
         try:
             text = raw.decode(response.charset or "utf-8", errors="replace")
         except Exception:
@@ -375,26 +381,27 @@ class OpenAIImageAdapter(BaseImageAdapter):
         base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
         url = f"{base}/v1/images/edits"
         # Profiles: field name + size omit. Cap attempts to avoid multi-bill spam.
-        # 1) image[] without size (auto-friendly) 2) image[] with size 3) image with size
+        # Prefer sized image[] first: some relays (e.g. WisArt) often reset mid-body
+        # on omit-size edits, while sized body completes more reliably.
         if req.allow_compat_retry:
             profiles = [
-                ("image[]", False),
                 ("image[]", True),
                 ("image", True),
+                ("image[]", False),
             ]
         else:
-            profiles = [("image[]", False)]
-        # If user fixed a non-auto ratio, lead with sized body.
+            profiles = [("image[]", True)]
+        # If user fixed a non-auto ratio, keep sized body first (already default).
         if req.aspect_ratio and req.aspect_ratio not in {"自动", "", "1:1"}:
             profiles = [
                 ("image[]", True),
-                ("image[]", False),
                 ("image", True),
+                ("image[]", False),
             ] if req.allow_compat_retry else [("image[]", True)]
 
         last_error = ""
         try:
-            from .error_classify import is_param_profile_switch_error
+            from .error_classify import is_param_profile_switch_error, is_transport_profile_switch_error
 
             for index, (field_name, include_size) in enumerate(profiles):
                 data, error = await self._post_edit_form(
@@ -406,9 +413,11 @@ class OpenAIImageAdapter(BaseImageAdapter):
                         return ImageGenerateResult(images=images)
                     return await self.result_from_response(data, req, base, detailed_error=True)
                 last_error = error or "接口未返回有效 JSON"
-                # Only switch profile on param/schema-class failures.
+                # Switch profile on param/schema issues or incomplete transfer resets.
                 if index + 1 < len(profiles) and (
-                    is_param_profile_switch_error(last_error) or "image" in str(last_error).lower()
+                    is_param_profile_switch_error(last_error)
+                    or is_transport_profile_switch_error(last_error)
+                    or "image" in str(last_error).lower()
                 ):
                     continue
                 break

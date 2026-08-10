@@ -52,6 +52,7 @@ class SelfieImageDashboardAPI:
             ("selfie-reference", self.page_selfie_reference_get, ["GET"], "Selfie Image get reference"),
             ("selfie-reference", self.page_selfie_reference_post, ["POST"], "Selfie Image save reference"),
             ("selfie-reference/clear", self.page_selfie_reference_clear, ["POST"], "Selfie Image clear reference"),
+            ("selfie-appearance-type", self.page_selfie_appearance_type, ["POST"], "Selfie Image appearance type"),
             ("selfie-profile/refresh", self.page_selfie_profile_refresh, ["POST"], "Selfie Image refresh profile"),
             ("test-image-channel", self.page_test_image_channel, ["POST"], "Selfie Image sync channel test"),
             ("test-image-channel/tasks", self.page_test_image_task_start, ["POST"], "Selfie Image start channel test task"),
@@ -269,6 +270,17 @@ class SelfieImageDashboardAPI:
         if error:
             return error
         return self._ok(self.plugin.clear_selfie_reference_from_web(), message="自拍参考图已清除")
+
+    async def page_selfie_appearance_type(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        assert payload is not None
+        try:
+            data = self.plugin.set_selfie_appearance_type_from_web(payload)
+            return self._ok(data, message="形象类型已保存")
+        except Exception as exc:
+            return self._fail(str(exc))
 
     async def page_selfie_profile_refresh(self) -> Any:
         payload, error = await self._json_object_payload()

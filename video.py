@@ -22,9 +22,11 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote, urlparse
 
 import aiohttp
+import requests
 
 from .error_classify import classify_generation_error
 from .models import ImageModelTarget
+from .proxy import channel_client_session, target_session_proxy
 from .provider_parser import normalize_image_base_url
 from .providers import ImageReference
 from .utils import bytes_to_data_url, redact_sensitive_text
@@ -264,7 +266,7 @@ async def _read_error(response: aiohttp.ClientResponse) -> str:
     return redact_sensitive_text(f"HTTP {response.status}: {(text or '')[:800]}")
 
 
-async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeout: int) -> bytes:
+async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeout: int, proxy: str = "") -> bytes:
     if url.startswith("data:"):
         # data:video/mp4;base64,...
         try:
@@ -275,7 +277,12 @@ async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeou
 
     async def _via_aiohttp() -> bytes:
         headers = {"User-Agent": "SelfieImage-Video/1.0"}
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=max(30, timeout))) as response:
+        async with session.get(
+            url,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=max(30, timeout)),
+            proxy=proxy or None,
+        ) as response:
             if response.status >= 400:
                 raise RuntimeError(await _read_error(response))
             data = await response.read()
@@ -285,7 +292,8 @@ async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeou
 
     def _via_urllib() -> bytes:
         req = urllib.request.Request(url, method="GET", headers={"User-Agent": "SelfieImage-Video/1.0"})
-        with urllib.request.urlopen(req, timeout=max(30, int(timeout or 60))) as resp:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy})) if proxy else urllib.request.build_opener()
+        with opener.open(req, timeout=max(30, int(timeout or 60))) as resp:
             data = resp.read()
         if not data:
             raise RuntimeError("视频下载结果为空")
@@ -320,12 +328,18 @@ async def _poll_task(
     poll_url: str,
     headers: Dict[str, str],
     timeout_seconds: int,
+    proxy: str = "",
 ) -> str:
     max_retries = max(3, int(timeout_seconds) // 10)
     for attempt in range(max_retries):
         await asyncio.sleep(10)
         try:
-            async with session.get(poll_url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as response:
+            async with session.get(
+                poll_url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+                proxy=proxy or None,
+            ) as response:
                 if response.status >= 400:
                     continue
                 data = await response.json(content_type=None)
@@ -437,7 +451,7 @@ async def generate_video_openai_compatible(
                     family=protocol,
                 )
 
-            raw = await _download_video_bytes(session, video_url, timeout=timeout)
+            raw = await _download_video_bytes(session, video_url, timeout=timeout, proxy=target.proxy)
             os.makedirs(save_dir, exist_ok=True)
             path = os.path.join(save_dir, f"video_{int(time.time() * 1000)}.mp4")
             with open(path, "wb") as handle:
@@ -583,7 +597,7 @@ async def _generate_via_async(
     if not task_id:
         raise RuntimeError(f"未返回视频地址或任务号: {str(data)[:400]}")
     poll_url = _task_poll_url(endpoint, task_id, data)
-    return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout)
+    return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout, proxy=target.proxy)
 
 
 def _agnes_payload(
@@ -673,29 +687,43 @@ async def _generate_via_agnes(
     if not auth and target.api_key:
         auth = f"Bearer {target.api_key}"
 
+    socks_proxy = str((target.extra or {}).get("_socks_proxy") or "")
+
     def _create() -> Dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            endpoint,
-            data=body,
-            method="POST",
-            headers={
-                "Authorization": auth,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": "SelfieImage-Video/1.0",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=min(90, max(30, int(timeout // 3) if timeout else 60))) as resp:
-                raw = resp.read().decode("utf-8", "replace")
-                status = getattr(resp, "status", 200) or 200
-        except urllib.error.HTTPError as exc:
-            raw = exc.read().decode("utf-8", "replace")
-            status = int(exc.code)
-            raise RuntimeError(redact_sensitive_text(f"HTTP {status}: {raw[:800]}")) from exc
-        except Exception as exc:
-            raise RuntimeError(redact_sensitive_text(f"Agnes 创建任务失败: {exc}")) from exc
+        request_headers = {
+            "Authorization": auth,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "SelfieImage-Video/1.0",
+        }
+        if socks_proxy:
+            try:
+                response = requests.post(
+                    endpoint,
+                    data=body,
+                    headers=request_headers,
+                    timeout=min(90, max(30, int(timeout // 3) if timeout else 60)),
+                    proxies={"http": socks_proxy, "https": socks_proxy},
+                )
+                raw = response.text
+                if response.status_code >= 400:
+                    raise RuntimeError(redact_sensitive_text(f"HTTP {response.status_code}: {raw[:800]}"))
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                raise RuntimeError(redact_sensitive_text(f"Agnes 创建任务失败: {exc}")) from exc
+        else:
+            req = urllib.request.Request(endpoint, data=body, method="POST", headers=request_headers)
+            try:
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": target.proxy, "https": target.proxy})) if target.proxy else urllib.request.build_opener()
+                with opener.open(req, timeout=min(90, max(30, int(timeout // 3) if timeout else 60))) as response:
+                    raw = response.read().decode("utf-8", "replace")
+            except urllib.error.HTTPError as exc:
+                raw = exc.read().decode("utf-8", "replace")
+                raise RuntimeError(redact_sensitive_text(f"HTTP {exc.code}: {raw[:800]}")) from exc
+            except Exception as exc:
+                raise RuntimeError(redact_sensitive_text(f"Agnes 创建任务失败: {exc}")) from exc
         try:
             data = json.loads(raw)
         except Exception:
@@ -718,6 +746,7 @@ async def _generate_via_agnes(
         legacy_poll_url=legacy,
         authorization=auth,
         timeout_seconds=timeout,
+        proxy=socks_proxy or target.proxy,
     )
 
 
@@ -727,6 +756,7 @@ async def _poll_agnes_task_urllib(
     legacy_poll_url: str,
     authorization: str,
     timeout_seconds: int,
+    proxy: str = "",
 ) -> str:
     max_retries = max(6, int(timeout_seconds) // 8)
     urls = [u for u in (poll_url, legacy_poll_url) if u]
@@ -734,21 +764,38 @@ async def _poll_agnes_task_urllib(
     deadline = time.monotonic() + max(30, int(timeout_seconds or 300))
 
     def _get(url: str) -> Dict[str, Any]:
-        req = urllib.request.Request(
-            url,
-            method="GET",
-            headers={
-                "Authorization": authorization,
-                "Accept": "application/json",
-                "User-Agent": "SelfieImage-Video/1.0",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                raw = resp.read().decode("utf-8", "replace")
-        except urllib.error.HTTPError as exc:
-            raw = exc.read().decode("utf-8", "replace")
-            raise RuntimeError(redact_sensitive_text(f"HTTP {exc.code}: {raw[:400]}")) from exc
+        if str(proxy or "").lower().startswith(("socks5://", "socks5h://")):
+            try:
+                response = requests.get(
+                    url,
+                    headers={"Authorization": authorization, "Accept": "application/json", "User-Agent": "SelfieImage-Video/1.0"},
+                    timeout=30,
+                    proxies={"http": proxy, "https": proxy},
+                )
+                raw = response.text
+                if response.status_code >= 400:
+                    raise RuntimeError(redact_sensitive_text(f"HTTP {response.status_code}: {raw[:400]}"))
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                raise RuntimeError(redact_sensitive_text(f"Agnes 轮询失败: {exc}")) from exc
+        else:
+            req = urllib.request.Request(
+                url,
+                method="GET",
+                headers={
+                    "Authorization": authorization,
+                    "Accept": "application/json",
+                    "User-Agent": "SelfieImage-Video/1.0",
+                },
+            )
+            try:
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy})) if proxy else urllib.request.build_opener()
+                with opener.open(req, timeout=30) as response:
+                    raw = response.read().decode("utf-8", "replace")
+            except urllib.error.HTTPError as exc:
+                raw = exc.read().decode("utf-8", "replace")
+                raise RuntimeError(redact_sensitive_text(f"HTTP {exc.code}: {raw[:400]}")) from exc
         try:
             data = json.loads(raw)
         except Exception as exc:
@@ -841,7 +888,7 @@ async def _generate_via_sync(
     task_id = _extract_task_id(data)
     if task_id:
         poll_url = _task_poll_url(endpoint, task_id, data)
-        return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout)
+        return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout, proxy=target.proxy)
     raise RuntimeError(f"同步接口未返回视频地址: {str(data)[:400]}")
 
 
@@ -935,7 +982,13 @@ async def generate_video_with_fallback(
     attempts: List[Dict[str, Any]] = []
     last_error = ""
     for target in targets:
-        result = await generate_video_openai_compatible(target, request, session, save_dir=save_dir)
+        async with channel_client_session(target.proxy, session) as target_session:
+            result = await generate_video_openai_compatible(
+                target_session_proxy(target),
+                request,
+                target_session,
+                save_dir=save_dir,
+            )
         attempts.extend(result.attempts or [])
         if result.video_path and not result.error:
             result.attempts = attempts

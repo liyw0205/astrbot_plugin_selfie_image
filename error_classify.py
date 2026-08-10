@@ -110,6 +110,19 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
             "raw": text,
         }
 
+    if re.search(
+        r"payload is not completed|transferencodingerror|not enough data to satisfy transfer length|connection reset by peer|上游响应未完整接收|content.?length|incomplete",
+        lowered,
+    ):
+        return {
+            "category": "network",
+            "retryable": True,
+            "http_status": status,
+            "user_message": "上游响应中断，请换渠道或稍后重试",
+            "raw": text,
+            "profile_switch_candidate": True,
+        }
+
     for pattern in NON_RETRYABLE_PATTERNS:
         if re.search(pattern, lowered if pattern.isascii() else text, flags=re.I):
             if re.search(r"unsafe|safety|moderation|审核", lowered) or "审核" in text:
@@ -182,3 +195,17 @@ def is_param_profile_switch_error(error: Any) -> bool:
         return True
     text = str(error or "").lower()
     return bool(re.search(r"size|aspect|response_format|quality|parameter|unsupported|not supported|extra inputs", text))
+
+
+def is_transport_profile_switch_error(error: Any) -> bool:
+    """Incomplete transfer / connection reset: try another payload profile once."""
+    info = classify_generation_error(error)
+    if info.get("profile_switch_candidate") and info.get("category") == "network":
+        return True
+    text = str(error or "").lower()
+    return bool(
+        re.search(
+            r"payload is not completed|transferencodingerror|not enough data to satisfy transfer length|connection reset by peer|上游响应未完整接收",
+            text,
+        )
+    )

@@ -924,7 +924,8 @@ def build_studio_action(session: Dict[str, Any]) -> str:
         base = (
             "合影 / 合照 / 同框。AI 自己必须作为画面主角之一，与参考图对象自然同框。"
             "身份锁脸型五官发型体态；表情按合影氛围自然重画。"
-            "非人物参考拟人时无明确性别默认成年女性。"
+            "同框对象按主角形象类型统一画风（自动/真人/动漫）；非人物参考拟人时无明确性别默认成年女性。"
+            "不要再强制把所有对象改成写实真人。"
         )
         return f"{base} 用户补充要求：{prompt}。" if prompt else base
     if mode == "selfie" or template in {"selfie", "clothes"}:

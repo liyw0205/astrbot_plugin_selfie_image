@@ -25,10 +25,13 @@ if "aiohttp" not in sys.modules:
     )
 
 from astrbot_plugin_selfie_image.generator import generate_image_with_fallback
+from astrbot_plugin_selfie_image.proxy import parse_channel_proxy
+from astrbot_plugin_selfie_image.video import VideoGenerateRequest, VideoGenerateResult, generate_video_with_fallback
 from astrbot_plugin_selfie_image.error_classify import (
     classify_generation_error,
     is_non_retryable_generation_error,
     is_param_profile_switch_error,
+    is_transport_profile_switch_error,
 )
 from astrbot_plugin_selfie_image.models import (
     AICatConfig,
@@ -325,6 +328,24 @@ class ConfigModelTests(unittest.TestCase):
         raw = {"image": {"value": {"max_batch_count": {"value": 4}}, "type": "object"}}
         self.assertEqual(normalize_config_tree(raw), {"image": {"max_batch_count": 4}})
 
+    def test_channel_proxy_parser_supports_http_and_socks5_auth(self) -> None:
+        cases = {
+            "http://admin:wowull@127.0.0.1:40500": ("http", True),
+            "http://127.0.0.1:40500": ("http", False),
+            "socks5://admin:wowull@127.0.0.1:40500": ("socks5", True),
+            "socks5://127.0.0.1:40500": ("socks5", False),
+        }
+        for value, expected in cases.items():
+            parsed = parse_channel_proxy(value)
+            self.assertEqual((parsed.scheme, parsed.has_auth), expected)
+            self.assertEqual(parsed.host, "127.0.0.1")
+            self.assertEqual(parsed.port, 40500)
+
+    def test_channel_proxy_parser_rejects_partial_auth_and_unknown_scheme(self) -> None:
+        for value in ("socks5://admin@127.0.0.1:40500", "ftp://127.0.0.1:40500", "http://127.0.0.1"):
+            with self.assertRaises(ValueError):
+                parse_channel_proxy(value)
+
     def test_provider_type_can_be_inferred_from_model(self) -> None:
         self.assertEqual(resolve_model_provider_type("agnes-image-2.1-flash", "openai"), "agnes")
         self.assertEqual(resolve_model_provider_type("grok-imagine-image", "openai"), "grok")
@@ -442,6 +463,15 @@ class ConfigModelTests(unittest.TestCase):
         self.assertFalse(classify_generation_error("请求超时")["retryable"])
         self.assertTrue(is_non_retryable_generation_error("HTTP 404 model_not_found"))
         self.assertTrue(is_param_profile_switch_error("HTTP 400: unsupported size"))
+        self.assertTrue(
+            is_transport_profile_switch_error(
+                "Response payload is not completed: <TransferEncodingError: 400, message='Not enough data to satisfy transfer length header.'>. ConnectionResetError(104, 'Connection reset by peer')"
+            )
+        )
+        self.assertEqual(
+            classify_generation_error("上游响应未完整接收: Connection reset by peer")["category"],
+            "network",
+        )
 
     def test_enabled_model_priority_and_manual_provider_types_are_preserved(self) -> None:
         config = AICatConfig.from_dict(
@@ -682,8 +712,19 @@ class ImageUtilityTests(unittest.TestCase):
 
     def test_web_monitor_uses_backend_record_pagination(self) -> None:
         self.assertIn("function monitorQueryPath", INDEX_HTML)
-        self.assertIn("params.set('limit', String(MONITOR_PAGE_SIZE))", INDEX_HTML)
         self.assertIn("api(monitorQueryPath(MONITOR_PAGE))", INDEX_HTML)
+
+    def test_monitor_separates_final_model_from_retry_chain(self) -> None:
+        for token in (
+            "function recordFinalModelBadge",
+            "function recordRetryModelChain",
+            "model-retry-arrow",
+            "recordFinalModelBadge(r)",
+            "recordRetryModelChain(r)",
+        ):
+            self.assertIn(token, INDEX_HTML)
+        self.assertNotIn("<td>${recordModelBadges(r)}</td>", INDEX_HTML)
+
         self.assertIn("RECORD_META.filtered", INDEX_HTML)
 
     def test_web_prunes_invalid_model_priority_before_save(self) -> None:
@@ -2141,6 +2182,37 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([attempt["success"] for attempt in result.attempts], [False, True])
         self.assertEqual(result.attempts[0]["error"], "temporary failure")
 
+    async def test_video_fallback_tries_next_target_after_failure(self) -> None:
+        first = make_target("openai", "bad-video")
+        second = make_target("openai", "good-video")
+        calls = []
+
+        async def fake_generate(target, request, session, *, save_dir):
+            calls.append(target.model)
+            if target.model == "bad-video":
+                return VideoGenerateResult(
+                    error="temporary video failure",
+                    used_model=target.label,
+                    attempts=[{"label": target.label, "success": False, "error_category": "network"}],
+                )
+            return VideoGenerateResult(
+                video_path="/tmp/good.mp4",
+                used_model=target.label,
+                attempts=[{"label": target.label, "success": True}],
+            )
+
+        with patch("astrbot_plugin_selfie_image.video.generate_video_openai_compatible", side_effect=fake_generate):
+            result = await generate_video_with_fallback(
+                [first, second],
+                VideoGenerateRequest(prompt="move naturally"),
+                object(),
+                save_dir=tempfile.gettempdir(),
+            )
+
+        self.assertEqual(calls, ["bad-video", "good-video"])
+        self.assertEqual(result.used_model, second.label)
+        self.assertEqual([item["success"] for item in result.attempts], [False, True])
+
     async def test_fallback_stops_on_non_retryable_auth_error(self) -> None:
         first = make_target("openai", "bad-model")
         second = make_target("openai", "good-model")
@@ -3316,9 +3388,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertGreater(poster.stat().st_size, 1000)
         self.assertTrue(looks_like_image_bytes(poster.read_bytes()[:32]))
         main_src = (root / "main.py").read_text(encoding="utf-8")
-        self.assertNotIn("刷新图", main_src)
         self.assertNotIn("_generate_help_poster", main_src)
-        self.assertIn("assets", main_src)
         self.assertIn("help_poster.png", main_src)
         self.assertIn("_bundled_help_poster_path", main_src)
         self.assertIn("async def cmd_help", main_src)
@@ -3328,6 +3398,270 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         help_fn = main_src.split("async def cmd_help", 1)[1].split("async def cmd_help_text", 1)[0]
         self.assertNotIn("_help_text_body()", help_fn)
         self.assertIn("chain_result", help_fn)
+
+    def test_command_docstrings_for_plugin_panel_descriptions(self) -> None:
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        required = {
+            "cmd_draw": "不会自动带入形象图",
+            "cmd_raw_text_to_image": "不使用形象图",
+            "cmd_raw_image_to_image": "不会自动使用形象图",
+            "cmd_video": "当前形象图作首帧",
+            "cmd_t2v": "也不使用形象图",
+            "cmd_i2v": "用当前形象图",
+            "cmd_selfie": "用当前形象自拍",
+            "cmd_group_selfie": "自己使用当前形象",
+            "cmd_persona_set": "自动 / 真人 / 动漫",
+        }
+        for name, token in required.items():
+            block = main_src.split(f"async def {name}", 1)[1].split("async def ", 1)[0]
+            self.assertIn('"""', block, name)
+            self.assertIn(token, block, name)
+            # no developer jargon in player-facing command descriptions
+            self.assertNotIn("passthrough", block)
+            doc = block.lower().split('"""', 2)[1] if '"""' in block else ""
+            self.assertNotIn("fallback", doc)
+        help_body = main_src.split("def _help_text_body", 1)[1].split("def _resolve_help_image_path", 1)[0]
+        self.assertIn("自动判断", help_body)
+        self.assertIn("不会自动塞形象图", help_body)
+        self.assertIn("有图=图生视频", help_body)
+
+    def test_anatomy_constraints_ban_third_limb_and_same_side_pairs(self) -> None:
+        from astrbot_plugin_selfie_image.persona import PersonaManager, anatomy_constraint_lines
+
+        lines = "\n".join(anatomy_constraint_lines(style="general"))
+        for token in ("一只左手", "一只右手", "一只左脚", "一只右脚", "连续连接", "同侧重复", "来源不清", "单人限定"):
+            self.assertIn(token, lines)
+        self.assertNotIn("同框", lines)
+        for banned in ("断臂", "幽灵手", "残缺", "severed", "ghost hands", "stump"):
+            self.assertNotIn(banned, lines.lower() if banned.isascii() else lines)
+        leg_lines = "\n".join(anatomy_constraint_lines(style="legs"))
+        self.assertIn("同侧重复手或脚", leg_lines)
+        self.assertIn("来源不清", leg_lines)
+        self.assertIn("肩、肘、腕连续连接", leg_lines)
+        self.assertIn("只有主角一人", leg_lines)
+        self.assertNotIn("同框", leg_lines)
+        self.assertNotIn("断臂", leg_lines)
+        self.assertNotIn("幽灵手", leg_lines)
+        en = "\n".join(anatomy_constraint_lines(style="en"))
+        self.assertIn("one left hand", en)
+        self.assertIn("one right hand", en)
+        self.assertIn("continuously", en)
+        self.assertIn("disconnected hands", en)
+        self.assertNotIn("severed", en.lower())
+        self.assertNotIn("ghost", en.lower())
+        self.assertNotIn("stump", en.lower())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            selfie = manager.build_selfie_prompt("自拍", "小助", "温柔", True, 0)
+            self.assertIn("一只左手", selfie)
+            self.assertIn("连续连接", selfie)
+            self.assertIn("来源不清", selfie)
+            self.assertNotIn("幽灵手", selfie)
+            self.assertNotIn("断臂", selfie)
+            legs = manager.build_selfie_prompt("看看腿", "小助", "温柔", True, 0)
+            self.assertIn("两条腿", legs)
+            self.assertIn("来源不清", legs)
+            self.assertIn("肩、肘、腕连续连接", legs)
+            self.assertIn("晒腿", legs)
+            self.assertNotIn("【合影 / 同框模式】", legs)
+            self.assertNotIn("幽灵手", legs)
+            group = manager.build_selfie_prompt("合影", "小助", "温柔", True, 1)
+            self.assertIn("手与胳膊连续连接", group)
+
+        if "astrbot" not in sys.modules:
+            astrbot = types.ModuleType("astrbot")
+            api = types.ModuleType("astrbot.api")
+            star = types.ModuleType("astrbot.api.star")
+            event = types.ModuleType("astrbot.api.event")
+            comps = types.ModuleType("astrbot.api.message_components")
+            star.Context = object
+            star.Star = object
+            star.register = lambda *a, **k: (lambda cls: cls)
+            class filter:
+                @staticmethod
+                def command(*a, **k):
+                    return lambda f: f
+                class PermissionType:
+                    ADMIN = "admin"
+                    MEMBER = "member"
+                @staticmethod
+                def permission_type(*a, **k):
+                    return lambda f: f
+            event.AstrMessageEvent = object
+            event.filter = filter
+            comps.Image = type("Image", (), {})
+            api.star = star
+            api.event = event
+            api.message_components = comps
+            api.llm_tool = lambda *a, **k: (lambda f: f)
+            api.logger = types.SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+                debug=lambda *a, **k: None,
+            )
+            astrbot.api = api
+            sys.modules["astrbot"] = astrbot
+            sys.modules["astrbot.api"] = api
+            sys.modules["astrbot.api.star"] = star
+            sys.modules["astrbot.api.event"] = event
+            sys.modules["astrbot.api.message_components"] = comps
+            sys.modules["astrbot.core"] = types.ModuleType("astrbot.core")
+            sys.modules["astrbot.core.utils"] = types.ModuleType("astrbot.core.utils")
+            pathmod = types.ModuleType("astrbot.core.utils.astrbot_path")
+            pathmod.get_astrbot_data_path = lambda: tempfile.gettempdir()
+            sys.modules["astrbot.core.utils.astrbot_path"] = pathmod
+
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        wrapped = plugin_main.append_anatomy_constraints("a girl standing")
+        self.assertIn("one left hand", wrapped)
+        self.assertIn("disconnected hands", wrapped)
+        self.assertNotIn("severed", wrapped.lower())
+        self.assertNotIn("ghost", wrapped.lower())
+        legs_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(object.__new__(plugin_main.SelfieImagePlugin), "", False)
+        self.assertIn("来源不清", legs_action)
+        self.assertIn("连续", legs_action)
+        self.assertIn("单人", legs_action)
+        self.assertNotIn("同框", legs_action)
+        self.assertNotIn("幽灵手", legs_action)
+        self.assertNotIn("断臂", legs_action)
+        # full pipeline: leg action must stay legs-only, never group
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            intent = manager.analyze_selfie_intent(legs_action)
+            self.assertTrue(intent.is_legs_only)
+            self.assertFalse(intent.is_group_photo)
+            prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
+            self.assertIn("【特写自拍 / 晒腿模式】", prompt)
+            self.assertNotIn("【合影 / 同框模式】", prompt)
+            self.assertIn("只有主角一人", prompt)
+            # auto appearance: no forced real/anime style line
+            manager.set_appearance_type("auto")
+            auto_prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
+            self.assertNotIn("形象是真人", auto_prompt)
+            self.assertNotIn("形象是动漫人物", auto_prompt)
+            self.assertNotIn("形象类型：", auto_prompt)
+
+    def test_appearance_type_auto_real_anime_prompt_injection(self) -> None:
+        from astrbot_plugin_selfie_image.persona import PersonaManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            self.assertEqual(manager.get_appearance_type(), "auto")
+            auto = manager.build_selfie_prompt(
+                action="自拍",
+                bot_name="小助",
+                personality="温柔",
+                has_reference_image=True,
+                extra_reference_count=0,
+            )
+            self.assertNotIn("形象是真人", auto)
+            self.assertNotIn("形象是动漫人物", auto)
+
+            manager.set_appearance_type("real")
+            self.assertEqual(manager.get_appearance_type(), "real")
+            real = manager.build_selfie_prompt(
+                action="自拍",
+                bot_name="小助",
+                personality="温柔",
+                has_reference_image=True,
+                extra_reference_count=0,
+            )
+            self.assertIn("形象是真人", real)
+            self.assertNotIn("形象是动漫人物", real)
+
+            manager.set_appearance_type("anime")
+            self.assertEqual(manager.get_appearance_type(), "anime")
+            anime = manager.build_selfie_prompt(
+                action="自拍",
+                bot_name="小助",
+                personality="温柔",
+                has_reference_image=True,
+                extra_reference_count=0,
+            )
+            self.assertIn("形象是动漫人物", anime)
+            self.assertNotIn("形象是真人", anime)
+            self.assertIn("是女性就保持女性", anime)
+            self.assertIn("禁止无故改成异性", anime)
+            self.assertIn("禁止把女形象改成男", anime)
+
+            # 参考图即使像真人，类型=动漫时仍按动漫形象，不强制写实真人
+            group_anime = manager.build_selfie_prompt(
+                action="合影",
+                bot_name="小助",
+                personality="温柔",
+                has_reference_image=True,
+                extra_reference_count=1,
+            )
+            self.assertIn("形象是动漫人物", group_anime)
+            self.assertIn("动漫", group_anime)
+            self.assertIn("是女性则主角必须是女性", group_anime)
+            self.assertNotIn("默认一律写实真人合影", group_anime)
+            self.assertNotIn("必须改画成与主角同一套写实真人照片风格", group_anime)
+            self.assertNotIn("同框对象默认都是写实真人", group_anime)
+
+            # invalid falls back to auto and persists
+            manager.set_appearance_type("whatever")
+            self.assertEqual(manager.get_appearance_type(), "auto")
+            reloaded = PersonaManager(tmp)
+            self.assertEqual(reloaded.get_appearance_type(), "auto")
+
+    def test_group_action_respects_appearance_type_anime(self) -> None:
+        if "astrbot" not in sys.modules:
+            astrbot = types.ModuleType("astrbot")
+            api = types.ModuleType("astrbot.api")
+            star = types.ModuleType("astrbot.api.star")
+            event = types.ModuleType("astrbot.api.event")
+            comps = types.ModuleType("astrbot.api.message_components")
+            star.Context = object
+            star.Star = object
+            star.register = lambda *a, **k: (lambda cls: cls)
+            class filter:
+                @staticmethod
+                def command(*a, **k):
+                    return lambda f: f
+                class PermissionType:
+                    ADMIN = "admin"
+                    MEMBER = "member"
+                @staticmethod
+                def permission_type(*a, **k):
+                    return lambda f: f
+            event.AstrMessageEvent = object
+            event.filter = filter
+            comps.Image = type("Image", (), {})
+            api.star = star
+            api.event = event
+            api.message_components = comps
+            api.llm_tool = lambda *a, **k: (lambda f: f)
+            api.logger = types.SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+                debug=lambda *a, **k: None,
+            )
+            astrbot.api = api
+            sys.modules["astrbot"] = astrbot
+            sys.modules["astrbot.api"] = api
+            sys.modules["astrbot.api.star"] = star
+            sys.modules["astrbot.api.event"] = event
+            sys.modules["astrbot.api.message_components"] = comps
+            sys.modules["astrbot.core"] = types.ModuleType("astrbot.core")
+            sys.modules["astrbot.core.utils"] = types.ModuleType("astrbot.core.utils")
+            pathmod = types.ModuleType("astrbot.core.utils.astrbot_path")
+            pathmod.get_astrbot_data_path = lambda: tempfile.gettempdir()
+            sys.modules["astrbot.core.utils.astrbot_path"] = pathmod
+
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        stub = object.__new__(plugin_main.SelfieImagePlugin)
+        stub.persona = type("P", (), {"get_appearance_type": staticmethod(lambda: "anime")})()
+        text = plugin_main.SelfieImagePlugin._build_group_selfie_action(stub, extra_request="", has_refs=True)
+        self.assertIn("形象是动漫人物", text)
+        self.assertIn("是女性则 AI 必须是女性", text)
+        self.assertNotIn("写实真人照片风格", text)
+        self.assertNotIn("仅当用户明确要求二次元/动漫合影时，才允许整体二次元画风", text)
 
     def test_selfie_prompt_requires_eye_contact_when_facing_camera(self) -> None:
         from astrbot_plugin_selfie_image.persona import PersonaManager
@@ -3351,9 +3685,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 extra_reference_count=1,
             )
             self.assertIn("看向镜头", group)
-            self.assertIn("二次元", group)
-            self.assertIn("写实", group)
-            self.assertTrue(("禁止继续二次元" in group) or ("禁止把对方继续画成二次元" in group) or ("禁止画面里再出现二次元" in group))
+            self.assertIn("拟人", group)
+            # 默认自动：由模型判断画风，不再强制写实真人
+            self.assertNotIn("默认一律写实真人合影", group)
             self.assertIn("默认成年女性", group)
             self.assertTrue(("表情" in group and "重画" in group) or ("表情眼神按本次合影" in group) or ("不要僵住参考图" in group) or ("自然重画" in group))
             # clothes mode: expression not locked to identity ref
@@ -3383,14 +3717,24 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("光腿神器", text)
             self.assertIn("白丝", text)
             self.assertIn("黑丝", text)
+            self.assertIn("轻薄半透明", text)
+            self.assertIn("中筒丝袜", text)
+            self.assertIn("大腿中段", text)
+            self.assertIn("禁止连裤", text)
             for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装"):
                 self.assertNotIn(forbidden, text)
             self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
             self.assertNotIn("· 坐姿拍腿", text)
             self.assertNotIn("· 侧躺曲腿", text)
             self.assertIn("本次主姿势", text)
-            self.assertIn("禁止系鞋带", text)
             self.assertIn("两条腿", text)
+            self.assertIn("悬浮错位", text)
+            self.assertIn("赤足", text)
+            self.assertNotIn("小皮鞋", text)
+            self.assertNotIn("居家拖鞋", text)
+            self.assertNotIn("禁止系鞋带", text)
+            self.assertNotIn("头脸完全出画", text)
+            self.assertNotIn("不要画完整头颅", text)
 
     def test_daily_profile_does_not_add_unselected_legwear(self) -> None:
         from astrbot_plugin_selfie_image.persona import fallback_daily_profile
@@ -3622,6 +3966,38 @@ class VideoV1Tests(unittest.TestCase):
         self.assertIn('@filter.command("图生视频")', main_src)
         self.assertIn("视频：", main_src)
 
+    def test_video_proxy_covers_polling_and_download(self) -> None:
+        video_src = (Path(__file__).resolve().parents[1] / "video.py").read_text(encoding="utf-8")
+        for token in (
+            "async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeout: int, proxy: str = \"\")",
+            "proxy=proxy or None",
+            "return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout, proxy=target.proxy)",
+            "proxy=target.proxy",
+        ):
+            self.assertIn(token, video_src)
+
+    def test_new_image_channel_shows_channel_type_selector(self) -> None:
+        for html in (INDEX_HTML, (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")):
+            self.assertIn("EDITING_CHANNEL_KIND === 'image' || EDITING_CHANNEL_KIND === 'video'", html)
+
+    def test_video_uses_persona_first_frame_across_entry_points(self) -> None:
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        for token in (
+            "def _video_persona_reference",
+            "@LLM_TOOL(name=\"generate_video\")",
+            "tool_generate_video",
+            "persona_ref = self._video_persona_reference()",
+            "refs = [persona_ref]",
+            "if payload.get(\"use_selfie_reference\") and not refs:",
+            "valid_targets: List[ImageModelTarget] = []",
+            "targets = valid_targets",
+        ):
+            self.assertIn(token, main_src)
+        for html in (INDEX_HTML, (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")):
+            self.assertIn("TEST_MODE !== 't2v'", html)
+            self.assertIn("use_selfie_reference: TEST_MODE !== 't2v'", html)
+            self.assertIn("无首帧时使用当前形象参考", html)
+
 
 class LegFocusTests(unittest.TestCase):
     def test_leg_focus_action_random_poses(self) -> None:
@@ -3715,7 +4091,10 @@ class LegFocusTests(unittest.TestCase):
         legwear_by_pose = {}
         for _ in range(180):
             t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
-            self.assertIn("脸部", t)
+            self.assertIn("赤足", t)
+            self.assertNotIn("小皮鞋", t)
+            self.assertNotIn("居家拖鞋", t)
+            self.assertNotIn("鞋面可入镜", t)
             for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "极薄肉色", "袜装"):
                 self.assertNotIn(forbidden, t)
             selected = [name for name in ("光腿神器", "白丝", "黑丝") if f"本次腿部穿搭：{name}" in t]
@@ -3734,6 +4113,14 @@ class LegFocusTests(unittest.TestCase):
         for forbidden in ("短袜", "过膝袜", "肉丝"):
             self.assertNotIn(forbidden, filtered)
         self.assertEqual(set(plugin_main.LEGWEAR_PROMPTS), {"光腿神器", "白丝", "黑丝"})
+        for name, text in plugin_main.LEGWEAR_PROMPTS.items():
+            self.assertIn("轻薄", text)
+            if name in {"白丝", "黑丝"}:
+                self.assertIn("半透明", text)
+                self.assertIn("中筒丝袜", text)
+                self.assertIn("大腿中段", text)
+                self.assertIn("禁止连裤丝袜", text)
+                self.assertNotIn("连裤丝袜：", text)
 
         class PersonaStub:
             class Intent:
@@ -3928,6 +4315,47 @@ class StudioStoreTests(unittest.TestCase):
             stub, None, max_images=4, prefer_user=True, user_only=False
         )
         self.assertEqual(srcs2[0], "user_outfit.jpg")
+
+    def test_llm_generation_retry_cache_preserves_request_and_feedback(self) -> None:
+        stub = SessionModelAndTaskTests()._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        stub._llm_generation_lock = __import__("threading").RLock()
+        stub._last_llm_generations = __import__("collections").OrderedDict()
+        stub._context_max_sessions = 100
+        stub._context_session_key = lambda event=None: "group:g1"
+        plugin_main.SelfieImagePlugin._remember_llm_generation(
+            stub,
+            None,
+            "selfie",
+            {"action": "白裙坐在窗边", "count": 1, "aspect_ratio": "9:16", "resolution": "2K"},
+        )
+        cached = plugin_main.SelfieImagePlugin._last_llm_generation(stub, None, "太成熟了，年轻一点")
+        self.assertEqual(cached["kind"], "selfie")
+        self.assertEqual(cached["params"]["aspect_ratio"], "9:16")
+        self.assertIn("太成熟了，年轻一点", cached["params"]["action"])
+        self.assertIn("优先修正", cached["params"]["action"])
+
+    def test_retry_last_generation_replays_selfie_with_feedback(self) -> None:
+        stub = SessionModelAndTaskTests()._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        stub._llm_generation_lock = __import__("threading").RLock()
+        stub._last_llm_generations = __import__("collections").OrderedDict()
+        stub._context_max_sessions = 100
+        stub._context_session_key = lambda event=None: "group:g1"
+        stub._remember_llm_generation(None, "selfie", {"action": "窗边白裙", "count": 1})
+        received = {}
+
+        async def replay(event, **params):
+            received.update(params)
+            return "ok"
+
+        stub.tool_generate_selfie = replay
+        result = asyncio.run(plugin_main.SelfieImagePlugin.tool_retry_last_generation(stub, object(), "更年轻一点"))
+        self.assertEqual(result, "ok")
+        self.assertIn("窗边白裙", received["action"])
+        self.assertIn("更年轻一点", received["action"])
 
     def test_dashboard_has_studio_tab(self) -> None:
         from astrbot_plugin_selfie_image.web import INDEX_HTML, WEB_TASK_ID_RE

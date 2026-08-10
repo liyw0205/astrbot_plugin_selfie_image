@@ -12,6 +12,122 @@ from typing import Any, Dict, Optional
 from .utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
 
 
+APPEARANCE_TYPES = ("auto", "real", "anime")
+APPEARANCE_TYPE_LABELS = {
+    "auto": "自动",
+    "real": "真人",
+    "anime": "动漫",
+}
+
+
+def normalize_appearance_type(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    aliases = {
+        "": "auto",
+        "auto": "auto",
+        "automatic": "auto",
+        "默认": "auto",
+        "自动": "auto",
+        "real": "real",
+        "realistic": "real",
+        "photo": "real",
+        "真人": "real",
+        "写实": "real",
+        "anime": "anime",
+        "cartoon": "anime",
+        "2d": "anime",
+        "动漫": "anime",
+        "二次元": "anime",
+        "动画": "anime",
+    }
+    if raw in aliases:
+        return aliases[raw]
+    return raw if raw in APPEARANCE_TYPES else "auto"
+
+
+def appearance_type_instruction(appearance_type: str, *, has_reference_image: bool = False) -> str:
+    kind = normalize_appearance_type(appearance_type)
+    gender_lock = (
+        "性别、年龄感与同一人身份必须跟随参考图一：参考图是女性就保持女性，是男性就保持男性；"
+        "禁止无故改成异性、少年男主或路人男。"
+        if has_reference_image
+        else "若角色设定未写明性别，默认成年女性；禁止无故改成男性。"
+    )
+    if kind == "real":
+        return (
+            "形象类型：真人。主角形象是真人，输出保持写实真人照片质感与真人五官体态。"
+            + gender_lock
+        )
+    if kind == "anime":
+        return (
+            "形象类型：动漫。主角形象是动漫人物，输出保持二次元/动漫人物画风与动漫五官体态；"
+            "即使参考图偏写实，也只把同一人改画成动漫版，不要换成另一个角色。"
+            + gender_lock
+        )
+    return gender_lock if has_reference_image else ""
+
+
+def group_style_lines(appearance_type: str) -> list[str]:
+    kind = normalize_appearance_type(appearance_type)
+    if kind == "anime":
+        return [
+            "整张合影统一为同一套动漫/二次元画风：线条、上色、光影与头身比例一致。",
+            "额外参考若是真人照片：只提取身份线索（发色发型、配色、饰品、服装色块、体态倾向），改画成与主角同一套动漫人物风格，不要继续写实摄影质感。",
+            "二次元头像、插画、表情包、卡通、吉祥物：保留身份线索并统一到同一动漫合影风格。",
+            "风景、建筑、房间、道具等非人物参考：按主色与气质拟人成可并肩站立的完整动漫人物（成年、得体、日常），不要只当背景贴图。",
+            "拟人无明确性别时默认成年女性；有明确性别线索则按对应性别。",
+            "同框人物站位自然，互动友好；整张图像同一场景下的一张动漫合影，不要一半真人一半二次元。",
+        ]
+    if kind == "real":
+        return [
+            "整张合影统一为真实相机拍下的写实照片：光线、色调、景深与画风一致。",
+            "真人照片参考：保留可见人数、大致脸型五官倾向、发型发色、穿搭轮廓、体态站位与相对关系。",
+            "二次元 / 动漫头像 / 插画 / Q版 / 表情包 / 卡通 / 吉祥物参考：只提取身份线索（性别气质、发色发型、配色、饰品、服装色块），改画成与主角同一套写实真人照片风格的成年人物，禁止继续二次元大眼、平涂、赛璐璐、漫画线稿或 Q 版头身。",
+            "风景、建筑、房间、道具、纯色块等非人物图：按主色、线条、材质与气质拟人成可并肩站立的完整写实人物（成年、得体、自然），再与主角同框；不要把原图原样铺成背景。",
+            "拟人性别：参考图或文字已明确性别则按该性别；若无明确性别线索，默认拟人为成年女性，气质柔和好看、得体日常，不要默认男性。",
+            "同框对象统一写实；不要一半真人一半二次元。",
+        ]
+    return [
+        "合影画风：不额外指定真人/动漫，由模型根据主角形象与参考图自行判断，整张图保持统一画风。",
+        "额外参考图一律作为同框角色来源，不要只当背景墙纸或贴图。",
+        "人物类参考：保留身份线索（发色发型、配色、饰品、服装色块、体态倾向），并改画成与主角同一套画风的完整人物。",
+        "风景、建筑、房间、道具等非人物参考：按主色与气质拟人成可并肩站立的完整人物（成年、得体、日常），不要只当背景贴图。",
+        "拟人无明确性别时默认成年女性；有明确性别线索则按对应性别。",
+        "同框人物站位自然，互动友好；整张合影画风统一，不要混用互相冲突的画风。",
+    ]
+
+
+def anatomy_constraint_lines(*, style: str = "general") -> list[str]:
+    """Shared body-part constraints for selfie/draw prompts.
+
+    Keep wording positive and mild. Avoid injury terms (断臂/幽灵手) and
+    avoid the bare token「同框」(it falsely triggers group-photo intent).
+    """
+    if style == "en":
+        return [
+            "Keep natural complete anatomy: when hands are visible, show exactly one left hand and one right hand; when feet are visible, show exactly one left foot and one right foot.",
+            "Each visible hand should connect continuously through shoulder, elbow, and wrist in the same image; do not invent extra hands or disconnected hands near the legs.",
+            "Keep left/right orientation correct; avoid duplicated same-side hands or feet, extra digits, fused fingers, or odd joint placement.",
+            "Prefer clean everyday poses with intact limbs and natural proportions.",
+        ]
+    if style == "legs":
+        return [
+            "单人限定：画面里只有主角一人，不要第二人、背景人物、路人或合影。",
+            "肢体完整：最多两条腿、两只脚、最多两只手，左右各一只。",
+            "左右方向正确：左侧只能是左手/左脚，右侧只能是右手/右脚；不要同侧重复手或脚。",
+            "可见的手要与肩、肘、腕连续连接且都在画面内，从自己身体自然伸出；不要出现来源不清、与胳膊不连续的手。",
+            "手部若入镜：最多两只、五指完整，自然放在大腿或膝附近；不要去碰脚面。",
+            "保持日常完整肢体与自然比例，关节位置正常。",
+        ]
+    return [
+        "单人限定：默认只有主角一人出镜，不要额外路人或第二人（用户明确要求合影除外）。",
+        "肢体完整：可见时只有一只左手和一只右手、一只左脚和一只右脚，左右各一。",
+        "可见手要与肩、肘、腕连续连接且都在画面内，从身体自然伸出；不要出现来源不清、与胳膊不连续的手。",
+        "每只手五指完整自然，关节位置正常；不要同侧重复手/脚，也不要额外多出一只手或脚。",
+        "保持日常完整肢体、自然比例与正常遮挡关系。",
+    ]
+
+
 @dataclass
 class DailySelfieProfile:
     date: str
@@ -142,6 +258,7 @@ class PersonaManager:
         self.data: Dict[str, Any] = {
             "ref_image_path": "",
             "ref_mime_type": "image/png",
+            "appearance_type": "auto",
             "updated_at": "",
             "daily_selfie_profile": None,
         }
@@ -155,6 +272,7 @@ class PersonaManager:
             {
                 "ref_image_path": str(raw.get("ref_image_path") or ""),
                 "ref_mime_type": str(raw.get("ref_mime_type") or "image/png"),
+                "appearance_type": normalize_appearance_type(raw.get("appearance_type")),
                 "updated_at": str(raw.get("updated_at") or ""),
                 "daily_selfie_profile": raw.get("daily_selfie_profile"),
             }
@@ -220,6 +338,19 @@ class PersonaManager:
             return {"data": data, "mime_type": str(self.data.get("ref_mime_type") or detect_mime_by_bytes(data))}
         except OSError:
             return None
+
+    def get_appearance_type(self) -> str:
+        return normalize_appearance_type(self.data.get("appearance_type"))
+
+    def set_appearance_type(self, value: Any) -> str:
+        kind = normalize_appearance_type(value)
+        self.data["appearance_type"] = kind
+        self.data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
+        self.save()
+        return kind
+
+    def appearance_type_label(self) -> str:
+        return APPEARANCE_TYPE_LABELS.get(self.get_appearance_type(), "自动")
 
     def analyze_selfie_intent(self, action: str) -> SelfieIntent:
         raw = str(action or "").strip()
@@ -351,6 +482,11 @@ class PersonaManager:
             ],
         )
         is_legs_only = includes_any(compact, ["看看腿", "看腿", "拍腿", "自拍腿", "丝袜", "黑丝", "白丝", "肉丝", "光腿", "美腿", "大腿", "腿"])
+        # bare token「同框」also appears in anatomy copy ("连续同框"); only treat real group phrases.
+        # Legs/晒腿 must never be classified as group photo.
+        if is_legs_only:
+            is_group_photo = False
+            is_multi = False
         is_third_person_photo = includes_any(
             compact,
             [
@@ -479,64 +615,64 @@ class PersonaManager:
         act = str(action or "").strip()
         intent = self.analyze_selfie_intent(act)
         daily = self.get_daily_selfie_profile()
+        appearance_type = self.get_appearance_type()
 
         identity_lines = (
             [
                 "固定形象参考：参考图一是主角身份锚点。",
-                "主角的脸型、五官结构、发型发色、体态与整体长相必须来自参考图一；角色名称和人设只辅助语气与氛围。",
-                "后续额外参考图不得替换主角身份、脸型五官、发型发色、体态或整体长相。",
+                "主角的脸型、五官结构、发型发色、体态、性别与整体长相必须来自参考图一；角色名称和人设只辅助语气与氛围。",
+                "参考图一是女性则主角必须是女性，是男性则必须是男性；禁止把女形象改成男、把男形象改成女。",
+                "后续额外参考图不得替换主角身份、性别、脸型五官、发型发色、体态或整体长相。",
                 # 表情/眼神默认可随场景自然变化，避免合影/换装时整张脸仍是参考图原表情而出戏。
-                "表情、眼神、嘴角与微表情默认按本次场景自然重画，不要原样复制参考图一的固定表情或僵硬眼神；只锁身份长相。",
+                "表情、眼神、嘴角与微表情默认按本次场景自然重画，不要原样复制参考图一的固定表情或僵硬眼神；只锁身份长相与性别。",
                 "自拍/合影面向镜头时，默认自然看向镜头、眼神有焦点；若用户明确要求侧脸、低头、看彼此或看别处，则按用户要求。",
             ]
             if has_reference_image
             else [
                 "形象参考以角色名称、人设和今日状态为准，生成稳定主角身份。",
+                "若设定未写明性别，默认成年女性；禁止无故改成男性。",
                 "正对镜头时默认看向镜头，表情自然有焦点，不要眼神飘忽。",
             ]
         )
+        appearance_line = appearance_type_instruction(appearance_type, has_reference_image=has_reference_image)
+        if appearance_line:
+            identity_lines.insert(1 if has_reference_image else 0, appearance_line)
 
         reference_lines: list[str] = []
         if extra_reference_count > 0:
             reference_lines.append(f"另有 {extra_reference_count} 张额外参考图。")
             if intent.is_group_photo:
-                reference_lines.extend(
-                    [
-                        "合影时，额外参考图一律作为同框角色来源，不要只当背景墙纸或贴图。",
-                        "真人照片参考：保留可见人数、大致脸型五官倾向、发型发色、穿搭轮廓、体态站位与相对关系。",
-                        "二次元 / 动漫头像 / 插画 / Q版 / 表情包 / 卡通 / 吉祥物参考：只提取身份线索（性别气质、发色发型、配色、饰品、服装色块），必须改画成与主角同一套写实真人照片风格的成年人物，禁止继续二次元大眼、平涂、赛璐璐、漫画线稿或 Q 版头身。",
-                        "风景、建筑、房间、道具、纯色块等非人物图：按主色、线条、材质与气质拟人成可并肩站立的完整写实人物（成年、得体、自然），再与主角同框；不要把原图原样铺成背景。",
-                        "拟人性别：参考图或文字已明确性别则按该性别；若无明确性别线索（常见风景/建筑/道具/纯氛围图），默认拟人为成年女性，气质柔和好看、得体日常，不要默认男性。",
-                        "多张额外参考图可各自对应一个独立同框角色；最终整张合影统一为真实相机拍下的写实照片，光线、色调、景深与画风一致，不要一半真人一半二次元。",
-                    ]
-                )
+                reference_lines.extend(group_style_lines(appearance_type))
             else:
                 reference_lines.extend(
                     [
                         "额外参考图只用于服装、姿势、构图、风格、场景、道具、镜头角度或光线氛围；主角身份和脸部仍来自参考图一。",
                         "换装 / COS / 穿参考图衣服时：只迁移服装的款式、颜色、材质、印花文字、配饰与造型氛围；禁止把参考图人物的脸型、五官、发型发色、体态迁移到主角身上。",
-                        "主角必须仍是参考图一的同一个人：脸型五官发型发色体态锁定，表情眼神按本次场景自然重画；默认正面或半侧脸清晰可见、看向镜头。",
+                        "主角必须仍是参考图一的同一个人：性别、脸型五官、发型发色、体态锁定，表情眼神按本次场景自然重画；默认正面或半侧脸清晰可见、看向镜头。",
+                        "禁止把参考图一的女性改成男性，或把男性改成女性。",
                         "若额外参考图有遮挡面部的物件或动作，默认不要照搬；除非用户明确要求遮脸，否则主角面部清晰自然、不要背对镜头或头发遮脸。",
                     ]
                     if has_reference_image
                     else [
                         "额外参考图用于构图、衣服、姿势、场景或光线氛围；主角仍符合角色名称和人设。",
+                        "若设定未写明性别，默认成年女性；禁止无故改成男性。",
                         "若额外参考图有遮挡面部的物件，默认不要照搬；除非用户明确要求遮脸，否则主角面部清晰自然。",
                     ]
                 )
 
         mode_lines: list[str] = []
         if intent.is_group_photo:
+            mode_lines.append("【合影 / 同框模式】")
+            if appearance_type == "anime":
+                mode_lines.append("先确定你自己的动漫形象，再把每张额外参考图落实为独立的同框动漫人物。")
+            elif appearance_type == "real":
+                mode_lines.append("先确定你自己的写实形象，再把每张额外参考图落实为独立的同框写实人物。")
+            else:
+                mode_lines.append("先确定你自己的形象，再把每张额外参考图落实为独立的同框人物；画风由模型判断并整图统一。")
+            mode_lines.extend(group_style_lines(appearance_type))
             mode_lines.extend(
                 [
-                    "【合影 / 同框模式】",
-                    "先确定你自己的形象（写实照片质感），再把每张额外参考图落实为独立的同框人物。",
-                    "同框对象默认都是写实真人：二次元头像、插画、表情包、卡通、吉祥物只当身份线索，输出必须是可并肩站立的真人，禁止把对方继续画成二次元立绘。",
-                    "风景、建筑、房间、道具等非人物参考：按风格拟人成完整写实人物，保留主色与标志特征；禁止仅当背景贴图。",
-                    "拟人无明确性别时默认成年女性（柔和好看、得体日常）；有明确性别线索则按对应性别，不要无故默认男性。",
                     "同框人物自然站位或坐位，距离、遮挡、视线和互动关系合理。",
-                    "所有人物在同一场景，统一成真实相机照片的光线、色调、景深与透视；不要混用二次元与写实两种画风。",
-                    "整体像同一时间、同一地点、同一相机拍下的一张日常真人合影。",
                     "合影默认多数人看向镜头（或看向画面中的相机方向），表情自然、有互动；你自己的表情按合影氛围重画，不要僵住参考图一的原表情。",
                     "除非用户明确要求看向彼此或看向别处，不要全员心不在焉、眼神飘走。",
                     "你自己作为主角之一时，若面向镜头，优先与镜头有眼神交流，像认真合影而不是走神。",
@@ -548,18 +684,19 @@ class PersonaManager:
             mode_lines.extend(
                 [
                     "【特写自拍 / 晒腿模式】",
-                    "成年角色下半身近景随手拍，构图重点在腿部线条、肤质、腿部穿搭、鞋面和居家衣料细节，画面得体、日常、柔和、舒服。",
+                    "单人下半身特写：只有主角一人，不要第二人、背景人物、路人或合影。",
+                    "成年角色下半身近景随手拍，构图重点在腿部线条、肤质、腿部穿搭和居家衣料细节，画面得体、日常、柔和、舒服。",
                     "即使脸部不入镜，也必须保持参考图一的主角身份：发色、发型露出的部分发丝、肤色、体态、穿搭气质和整体氛围都像同一个角色。",
                     "腿部穿搭仅使用三种：光腿神器、白丝、黑丝；严格沿用动作描述中已选中的一种，不再自行添加其他袜类。",
-                    "光腿神器要自然通透、匀净柔光、不假白不油腻；白丝或黑丝要轻薄细腻、颜色均匀、质感干净。鞋子和衣服优先按用户本次要求，鞋可选小皮鞋或居家拖鞋。",
-                    "姿势规则：严格只执行动作描述里的「本次主姿势」与「本次腿部特写构图」；不要改成别的姿势，不要同时出现坐姿+跪姿+侧躺等多种姿态。",
-                    "优先第一人称俯视或下半身近景，构图始终不露脸。",
-                    "画面重点：裙摆/裤脚、膝盖、小腿、脚踝、腿部穿搭、鞋面、衣料垂落、地毯/床单纹理。",
-                    "脸部保持在画面外，构图集中在下半身、腿部和周围居家环境。",
-                    "手部若入镜：最多两只手、五指完整，可轻放大腿或抱膝；禁止系鞋带、整理腿部穿搭、摸鞋边、抠鞋面。",
-                    "解剖硬约束：只能有两条腿、两只脚；禁止多腿、多重脚踝、多余肢体；禁止六指或融合手指。",
+                    "光腿神器要自然通透像干净裸腿；白丝/黑丝必须是轻薄半透明中筒丝袜，袜口到大腿中段，大腿根以上露肤，禁止连裤/全包裤袜。赤足，不要任何鞋子、拖鞋、皮鞋。",
+                    "姿势规则：严格只执行动作描述里的「本次主姿势」与「本次腿部特写构图」；姿势日常合理、重心稳定，不要僵硬拧腿或不可能体位；不要同时出现坐姿+跪姿+侧躺等多种姿态。",
+                    "优先第一人称俯视或下半身近景，构图以腿部为主；若边缘出现发丝/肩颈，须与身体自然相连，不要悬浮错位的头。",
+                    "画面重点：裙摆/裤脚、膝盖、小腿、脚踝、腿部穿搭、脚背脚趾、衣料垂落、地毯/床单纹理。",
+                    "构图集中在下半身、腿部和周围居家环境；身体从入镜部位连续到脚。",
+                    "手部若入镜：最多两只手、五指完整，可轻放大腿或抱膝；不要整理腿部穿搭，不要去碰脚面。",
+                    *anatomy_constraint_lines(style="legs"),
                     "环境和光线随时间变化：晨光、午后漫反射、傍晚暖灯、夜里床边小灯、居家地毯、沙发边、窗边、床单、木地板。",
-                    "脚背、脚踝和腿部皮肤干净细腻；结构自然完整，不要脏污脚面、畸形脚趾或不自然脚踝。",
+                    "赤足：脚背、脚踝和脚趾干净细腻，结构自然完整，不要脏污脚面、畸形脚趾或不自然脚踝。",
                     "画面干净、自然、写实，有温柔的日常随手拍氛围，看起来舒服。",
                 ]
             )
@@ -642,26 +779,50 @@ class PersonaManager:
         action_line = f"用户要求：{act}" if act else "用户要求：看着镜头自然自拍，展示你现在的样子。"
         subject_photo_label = "日常他拍照片" if intent.is_third_person_photo and not intent.is_group_photo else "自拍照片"
         if intent.is_group_photo:
-            output_lines = [
-                "【生成要求】",
-                "1. 主角是你自己：脸型五官、发型发色、体态来自参考图一或角色设定；表情眼神按本次合影氛围自然重画，不要整张脸复制参考图原表情。",
-                "2. 每张额外参考图对应独立同框人物：真人照片保留大致外观；二次元/插画/表情包/卡通只取发色发型配色等线索，改画成写实真人；风景/道具按风格拟人成完整写实人物，不要当背景贴图。",
-                "3. 拟人无明确性别时默认成年女性；有明确性别线索则按对应性别。",
-                "4. 所有人物在同一完整场景中，站位或坐位自然，比例与透视一致。",
-                "5. 整张图像像真实拍下的一张日常合影，统一写实光线、色调、景深和相机视角；禁止画面里再出现二次元立绘、漫画头或 Q 版身体。",
-                "6. 人体结构自然完整；多人时身份清晰，脸、发型、服装、体态各自独立且都是成年写实形象。",
-                "7. 同框角色均为得体、日常的成年形象，互动自然友好。",
-                "8. 合影时默认看向镜头（有眼神交流）；除非用户另有要求。",
-                "9. 仅当用户明确要求二次元/动漫合影时，才允许整体二次元画风；默认一律写实真人合影。",
-            ]
+            if appearance_type == "anime":
+                output_lines = [
+                    "【生成要求】",
+                    "1. 主角是你自己：性别、脸型五官、发型发色、体态来自参考图一或角色设定；参考图是女性则必须是女性，禁止改成男性；表情眼神按本次合影氛围自然重画。",
+                    "2. 每张额外参考图对应独立同框人物，统一为动漫/二次元画风；真人参考只取身份线索再画成动漫人物，不要继续写实摄影质感。",
+                    "3. 拟人无明确性别时默认成年女性；有明确性别线索则按对应性别。主角性别仍跟随参考图一。",
+                    "4. 所有人物在同一完整场景中，站位或坐位自然，比例与透视一致。",
+                    "5. 整张图是一张统一画风的动漫合影，不要一半真人一半二次元。",
+                    "6. 人体结构自然完整；每人左右手/脚各一只，手与胳膊连续连接，不要同侧重复手/脚。",
+                    "7. 同框角色均为得体、日常的成年形象，互动自然友好。",
+                    "8. 合影时默认看向镜头（有眼神交流）；除非用户另有要求。",
+                ]
+            elif appearance_type == "real":
+                output_lines = [
+                    "【生成要求】",
+                    "1. 主角是你自己：性别、脸型五官、发型发色、体态来自参考图一或角色设定；参考图是女性则必须是女性，禁止改成男性；表情眼神按本次合影氛围自然重画，不要整张脸复制参考图原表情。",
+                    "2. 每张额外参考图对应独立同框人物：真人照片保留大致外观；二次元/插画/表情包/卡通只取发色发型配色等线索，改画成写实真人；风景/道具按风格拟人成完整写实人物，不要当背景贴图。",
+                    "3. 拟人无明确性别时默认成年女性；有明确性别线索则按对应性别。主角性别仍跟随参考图一。",
+                    "4. 所有人物在同一完整场景中，站位或坐位自然，比例与透视一致。",
+                    "5. 整张图像像真实拍下的一张日常合影，统一写实光线、色调、景深和相机视角；禁止画面里再出现二次元立绘、漫画头或 Q 版身体。",
+                    "6. 人体结构自然完整；每人左右手/脚各一只，手与胳膊连续连接，不要同侧重复手/脚。",
+                    "7. 同框角色均为得体、日常的成年形象，互动自然友好。",
+                    "8. 合影时默认看向镜头（有眼神交流）；除非用户另有要求。",
+                ]
+            else:
+                output_lines = [
+                    "【生成要求】",
+                    "1. 主角是你自己：性别、脸型五官、发型发色、体态来自参考图一或角色设定；参考图是女性则必须是女性，禁止改成男性；表情眼神按本次合影氛围自然重画。",
+                    "2. 每张额外参考图对应独立同框人物，画风与主角统一；人物参考取身份线索，非人物参考按风格拟人，不要当背景贴图。",
+                    "3. 拟人无明确性别时默认成年女性；有明确性别线索则按对应性别。主角性别仍跟随参考图一。",
+                    "4. 所有人物在同一完整场景中，站位或坐位自然，比例与透视一致。",
+                    "5. 整张合影画风统一；真人/动漫由模型根据形象类型与参考图判断，不要混用互相冲突的画风。",
+                    "6. 人体结构自然完整；每人左右手/脚各一只，手与胳膊连续连接，不要同侧重复手/脚。",
+                    "7. 同框角色均为得体、日常的成年形象，互动自然友好。",
+                    "8. 合影时默认看向镜头（有眼神交流）；除非用户另有要求。",
+                ]
         elif intent.is_legs_only:
             output_lines = [
                 "【生成要求】",
-                "1. 主角身份稳定，来自参考图一或角色设定。",
-                "2. 构图集中在下半身、腿部线条、腿部穿搭、鞋面、衣料垂落和居家材质，脸部保持在画面外，但发丝、手部、肤色、体态和气质仍要来自参考图一。",
-                "3. 镜头与姿势严格跟动作描述里的「本次主姿势」；膝盖、小腿、脚踝和鞋面清晰。",
-                "4. 腿部穿搭严格采用动作描述中选定的光腿神器、白丝或黑丝，不添加其他袜类。",
-                "5. 人体结构自然完整，仅两条腿两只脚；皮肤、腿部穿搭与鞋面干净细腻。",
+                "1. 主角身份稳定，来自参考图一或角色设定；画面只有主角一人，不要第二人。",
+                "2. 构图集中在下半身、腿部线条、腿部穿搭、衣料垂落和居家材质；身体从入镜部位连续到脚。若出现发丝/肩颈，须与身体相连，不要悬浮错位头。",
+                "3. 镜头与姿势严格跟动作描述里的「本次主姿势」；姿势日常合理；膝盖、小腿、脚踝和脚背清晰；赤足无鞋。",
+                "4. 腿部穿搭严格采用动作描述中选定的光腿神器、白丝或黑丝；白丝/黑丝为到大腿的中筒半透丝袜，不要连裤全包；不要任何鞋子。",
+                "5. 人体结构自然完整，仅两条腿两只脚，左右各一只；手若入镜须与胳膊连续连接。",
                 "6. 保持单张完整照片效果，统一光线、色调、景深和相机透视。",
             ]
         else:
@@ -671,7 +832,7 @@ class PersonaManager:
                 "2. 根据本次要求自然调整衣服、姿势、表情、环境和小道具；换装/COS 时表情眼神按新场景重画，不要沿用参考图原表情。",
                 "3. 除非用户明确要求遮脸，否则主角面部无遮挡、清晰可见。",
                 "4. 画面像今天真实拍下的一张照片，构图完整，主体清晰，背景有生活细节。",
-                "5. 人体结构自然完整，手脚和身体比例协调，姿态、衣料、发丝和光影关系可信。",
+                "5. 人体结构自然完整：左右手/脚各一只，手与胳膊连续连接，五指完整，不要同侧重复手/脚。",
                 "6. 镜头语言："
                 + (
                     "画面外拍摄者的日常他拍；正面近景时优先看向镜头，眼神自然。"
@@ -680,6 +841,11 @@ class PersonaManager:
                 ),
                 "7. 身份锁长相，不锁死表情：可按场景微笑、害羞、俏皮等自然变化。",
                 "8. 保持单张完整照片效果，统一光线、色调、景深和相机透视。",
+            ]
+            # inject full general anatomy constraints after line 5
+            output_lines[4:5] = [
+                "5. 人体结构自然完整：左右手/脚各一只，手与胳膊连续连接，五指完整，不要同侧重复手/脚。",
+                *anatomy_constraint_lines(style="general"),
             ]
 
         return "\n".join(
@@ -701,6 +867,7 @@ class PersonaManager:
         daily = self.get_daily_selfie_profile()
         lines = []
         lines.append("当前已设置 AI 自拍参考图。" if self.has_reference_image() else "当前还没有设置 AI 自拍参考图。")
+        lines.append(f"形象类型：{self.appearance_type_label()}（自动=不追加类型说明；真人/动漫会补对应说明）")
         if daily:
             lines.extend(
                 [
