@@ -3726,6 +3726,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("外翻", text)
             self.assertIn("近大远小", text)
             self.assertIn("粗圆柱", text)
+            self.assertIn("勒进大腿肉", text)
+            self.assertIn("压痕", text)
+            self.assertIn("涂色感", text)
             for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装"):
                 self.assertNotIn(forbidden, text)
             self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
@@ -4126,9 +4129,12 @@ class LegFocusTests(unittest.TestCase):
                 self.assertIn("半透明", text)
                 self.assertIn("中筒丝袜", text)
                 self.assertIn("大腿中段", text)
-                self.assertIn("禁止连裤丝袜", text)
+                self.assertIn("禁止连裤/全包", text)
                 self.assertIn("整只脚", text)
                 self.assertIn("脚趾", text)
+                self.assertIn("勒进大腿肉", text)
+                self.assertIn("压痕", text)
+                self.assertIn("涂色感", text)
                 self.assertNotIn("连裤丝袜：", text)
 
         class PersonaStub:
