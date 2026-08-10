@@ -3721,6 +3721,11 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("中筒丝袜", text)
             self.assertIn("大腿中段", text)
             self.assertIn("禁止连裤", text)
+            self.assertIn("包住", text)
+            self.assertIn("脚趾", text)
+            self.assertIn("外翻", text)
+            self.assertIn("近大远小", text)
+            self.assertIn("粗圆柱", text)
             for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装"):
                 self.assertNotIn(forbidden, text)
             self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
@@ -4092,6 +4097,8 @@ class LegFocusTests(unittest.TestCase):
         for _ in range(180):
             t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
             self.assertIn("赤足", t)
+            self.assertIn("外翻", t)
+            self.assertIn("近大远小", t)
             self.assertNotIn("小皮鞋", t)
             self.assertNotIn("居家拖鞋", t)
             self.assertNotIn("鞋面可入镜", t)
@@ -4120,6 +4127,8 @@ class LegFocusTests(unittest.TestCase):
                 self.assertIn("中筒丝袜", text)
                 self.assertIn("大腿中段", text)
                 self.assertIn("禁止连裤丝袜", text)
+                self.assertIn("整只脚", text)
+                self.assertIn("脚趾", text)
                 self.assertNotIn("连裤丝袜：", text)
 
         class PersonaStub:
