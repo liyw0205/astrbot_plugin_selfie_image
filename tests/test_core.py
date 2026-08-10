@@ -453,6 +453,19 @@ class ConfigModelTests(unittest.TestCase):
         t2 = config2.get_prioritized_targets()[0]
         self.assertEqual(t2.resolved_api_keys(), ["sk-a", "sk-b"])
 
+    def test_safety_advances_to_next_target(self) -> None:
+        from astrbot_plugin_selfie_image.generator import _should_advance_to_next_target
+        self.assertTrue(_should_advance_to_next_target({"category": "safety"}))
+        self.assertTrue(_should_advance_to_next_target({"category": "param"}))
+        self.assertTrue(_should_advance_to_next_target({"category": "timeout"}))
+
+    def test_use_logo_when_no_persona_default_true(self) -> None:
+        cfg = AICatConfig.from_dict({})
+        self.assertTrue(cfg.image_use_logo_when_no_persona)
+        cfg2 = AICatConfig.from_dict({"image": {"use_logo_when_no_persona": False}})
+        self.assertFalse(cfg2.image_use_logo_when_no_persona)
+        self.assertTrue(DEFAULT_CONFIG["image"]["use_logo_when_no_persona"])
+
     def test_error_classify_non_retryable(self) -> None:
         self.assertFalse(classify_generation_error("HTTP 401: invalid token")["retryable"])
         self.assertEqual(classify_generation_error("HTTP 401: invalid token")["category"], "auth")
@@ -472,6 +485,34 @@ class ConfigModelTests(unittest.TestCase):
             classify_generation_error("上游响应未完整接收: Connection reset by peer")["category"],
             "network",
         )
+        zh_safety = classify_generation_error(
+            "HTTP 400: 您的请求无法用于生成图像。该请求可能因安全政策被拦截，或不适合进行图像生成。"
+        )
+        self.assertEqual(zh_safety["category"], "safety")
+        self.assertIn("安全", zh_safety["user_message"])
+        from astrbot_plugin_selfie_image.error_classify import summarize_generation_failures
+
+        summary = summarize_generation_failures(
+            [
+                {
+                    "attempt": 1,
+                    "label": "自建聚合/gpt-image-2",
+                    "success": False,
+                    "error": "HTTP 400: 您的请求无法用于生成图像。该请求可能因安全政策被拦截，或不适合进行图像生成。",
+                    "error_category": "safety",
+                },
+                {
+                    "attempt": 2,
+                    "label": "自建聚合/grok-imagine-image-quality",
+                    "success": False,
+                    "error": "HTTP 400: Generated image rejected by content moderation.",
+                    "error_category": "safety",
+                },
+            ]
+        )
+        self.assertEqual(summary["last_failed_model"], "自建聚合/grok-imagine-image-quality")
+        self.assertIn("内容未通过上游安全策略", summary["failure_reason"])
+        self.assertEqual(len(summary["failure_reasons"]), 2)
 
     def test_enabled_model_priority_and_manual_provider_types_are_preserved(self) -> None:
         config = AICatConfig.from_dict(
@@ -3686,6 +3727,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             )
             self.assertIn("看向镜头", group)
             self.assertIn("拟人", group)
+            self.assertIn("玩偶", group)
+            self.assertIn("完整人物", group)
+            self.assertIn("粘连融合", group)
             # 默认自动：由模型判断画风，不再强制写实真人
             self.assertNotIn("默认一律写实真人合影", group)
             self.assertIn("默认成年女性", group)
@@ -4330,6 +4374,79 @@ class StudioStoreTests(unittest.TestCase):
             stub, None, max_images=4, prefer_user=True, user_only=False
         )
         self.assertEqual(srcs2[0], "user_outfit.jpg")
+
+    def test_reuse_previous_outfit_prefers_bot_context_images(self) -> None:
+        """「这一身不好看，用刚刚那一套」应挂 bot 近图，不是用户图。"""
+        stub = SessionModelAndTaskTests()._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        phrase = "这一身不好看，你能用刚刚那一套吗"
+        self.assertTrue(plugin_main.SelfieImagePlugin._looks_like_edit_bot_result_followup(stub, phrase))
+        self.assertTrue(plugin_main.SelfieImagePlugin._looks_like_clothes_followup(stub, phrase))
+        self.assertTrue(plugin_main.SelfieImagePlugin._looks_like_context_image_reference(stub, phrase))
+        for t in ("用刚刚那一套", "上一套", "刚才那套", "换回刚刚那套", "刚刚那一套"):
+            self.assertTrue(
+                plugin_main.SelfieImagePlugin._looks_like_edit_bot_result_followup(stub, t),
+                msg=t,
+            )
+            self.assertTrue(
+                plugin_main.SelfieImagePlugin._looks_like_context_image_reference(stub, t),
+                msg=t,
+            )
+
+        stub._conversation_context = __import__("collections").OrderedDict()
+        key = "group:g2"
+        stub._context_session_key = lambda event=None: key
+        stub._context_lock = __import__("threading").RLock()
+        stub._conversation_context[key] = [
+            {
+                "msg_id": "1",
+                "is_bot": False,
+                "image_sources": ["user_noise.jpg"],
+                "content": "[图片]",
+            },
+            {
+                "msg_id": "2",
+                "is_bot": True,
+                "image_sources": ["bot_outfit_night.jpg"],
+                "content": "[图片]",
+            },
+            {
+                "msg_id": "3",
+                "is_bot": True,
+                "image_sources": ["bot_outfit_day.jpg"],
+                "content": "[图片]",
+            },
+        ]
+        # bot_only / prefer bot first
+        bot_only = plugin_main.SelfieImagePlugin._recent_context_image_sources(
+            stub, None, max_images=4, prefer_user=False, bot_only=True
+        )
+        self.assertEqual(bot_only[0], "bot_outfit_day.jpg")
+        self.assertNotIn("user_noise.jpg", bot_only)
+        prefer_bot = plugin_main.SelfieImagePlugin._recent_context_image_sources(
+            stub, None, max_images=4, prefer_user=False, user_only=False, bot_only=False
+        )
+        self.assertEqual(prefer_bot[0], "bot_outfit_day.jpg")
+
+        # Collector routing mirrors production: edit_bot wins over pure clothes user_only
+        edit_bot = plugin_main.SelfieImagePlugin._looks_like_edit_bot_result_followup(stub, phrase)
+        clothes = plugin_main.SelfieImagePlugin._looks_like_clothes_followup(stub, phrase)
+        user_only = clothes and not edit_bot
+        bot_only_flag = edit_bot and not clothes
+        prefer_user = not edit_bot
+        # dual-match phrase: not user_only, not bot_only exclusive, but prefer_user False → bot first
+        self.assertFalse(user_only)
+        self.assertFalse(prefer_user)
+        routed = plugin_main.SelfieImagePlugin._recent_context_image_sources(
+            stub,
+            None,
+            max_images=4,
+            prefer_user=prefer_user,
+            user_only=user_only,
+            bot_only=bot_only_flag,
+        )
+        self.assertEqual(routed[0], "bot_outfit_day.jpg")
 
     def test_llm_generation_retry_cache_preserves_request_and_feedback(self) -> None:
         stub = SessionModelAndTaskTests()._plugin_stub()

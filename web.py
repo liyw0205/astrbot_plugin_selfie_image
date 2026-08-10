@@ -29,7 +29,7 @@ WEB_TASK_ID_RE = re.compile(r"^(?:web|web-studio)-\d{8,}-\d+$")
 MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
 MAX_WEB_RECORD_ID_LENGTH = 128
-MAX_RECORD_PAGE_LIMIT = 100
+MAX_RECORD_PAGE_LIMIT = 300
 PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 _LOGO_SRC_PLACEHOLDER = "__SELFIE_LOGO_SRC__"
 
@@ -274,13 +274,6 @@ INDEX_HTML = r"""<!doctype html>
     .model-row .actions { margin-top: 0; }
     .model-provider { min-width: 150px; padding: 5px 8px; font-size: 12px; }
     .mini { padding: 5px 8px; font-size: 12px; }
-    .model-attempts { display:grid; gap:5px; min-width:180px; }
-    .model-attempt-badge { display:inline-flex; align-items:center; width:max-content; max-width:220px; padding:3px 7px; border-radius:6px; font-size:12px; font-weight:600; overflow-wrap:anywhere; }
-    .model-attempt-ok { background:#e5f2fb; color:#1d70a2; border:1px solid #b9dcef; }
-    .model-attempt-fail { background:#fde9e7; color:#b42318; border:1px solid #f5c5c0; }
-    .model-attempt-empty { color:var(--muted); }
-    .model-retry-chain { display:flex; flex-wrap:wrap; align-items:center; gap:5px; }
-    .model-retry-arrow { color:var(--muted); font-size:14px; line-height:1; }
     .table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .table th, .table td { text-align: left; border-bottom: 1px solid var(--line); padding: 8px; vertical-align: top; }
     .table th { background: #f8fafc; font-weight: 650; }
@@ -325,6 +318,27 @@ INDEX_HTML = r"""<!doctype html>
     .studio-slot .slot-actions button.mini { padding:3px 6px; font-size:11px; }
     .studio-results .actions { flex-wrap:wrap; gap:4px; }
 
+    .model-attempts { display:grid; gap:5px; min-width:180px; }
+    .model-attempt-badge { display:inline-flex; align-items:center; width:max-content; max-width:220px; padding:3px 7px; border-radius:6px; font-size:12px; font-weight:600; overflow-wrap:anywhere; }
+    .model-attempt-ok { background:#e5f2fb; color:#1d70a2; border:1px solid #b9dcef; }
+    .model-attempt-fail { background:#fde9e7; color:#b42318; border:1px solid #f5c5c0; }
+    .model-attempt-empty { color:var(--muted); }
+    .model-retry-chain { display:flex; flex-wrap:wrap; align-items:center; gap:5px; }
+    .model-retry-arrow { color:var(--muted); font-size:14px; line-height:1; }
+    .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-top:12px; }
+    .stat-card { border:1px solid var(--line); border-radius:var(--radius-md); background:#fff; padding:10px 12px; box-shadow:var(--shadow); }
+    .stat-card .k { font-size:11px; color:var(--muted); font-weight:650; }
+    .stat-card .v { margin-top:4px; font-size:15px; font-weight:700; color:var(--text); }
+    .baseurl-row { display:flex; gap:8px; align-items:end; }
+    .baseurl-row > div:first-child { flex:1; min-width:0; }
+    .baseurl-row .restore-btn { flex:0 0 auto; width:38px; height:38px; padding:0; display:inline-flex; align-items:center; justify-content:center; }
+    .media-head { display:flex; align-items:center; gap:8px; margin:14px 0 8px; }
+    .media-head h3 { margin:0; }
+    .media-head .copy-btn, .media-head .dl-btn { width:30px; height:30px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:8px; }
+    .images .thumb-card { position:relative; }
+    .images .thumb-dl { position:absolute; top:8px; right:8px; width:30px; height:30px; padding:0; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.92); }
+    .video-card { position:relative; margin-top:8px; }
+    .video-card .thumb-dl { position:absolute; top:8px; right:8px; z-index:2; width:30px; height:30px; padding:0; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.92); }
     .checkline { display: flex; align-items: center; gap: 8px; min-height: 38px; }
     .checkline input { width: auto; }
     .topline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -486,7 +500,7 @@ INDEX_HTML = r"""<!doctype html>
         <div><label>模型筛选</label><select id="monitorModel"><option value="">全部</option></select></div>
         <div><label>状态</label><select id="monitorSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
       </div>
-      <div id="monitorStats" class="status" style="margin-top:12px"></div>
+      <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
       <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
       <div id="monitorPager" class="actions"></div>
     </section>
@@ -627,6 +641,7 @@ INDEX_HTML = r"""<!doctype html>
         <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
       </div>
       <label>人设（语气与氛围）</label><textarea id="selfiePersonality"></textarea>
+      <label class="checkline" title="开启：没有上传形象参考图时，用插件 logo 作为形象图；关闭：不注图，只按人设文案生成"><input id="useLogoWhenNoPersona" type="checkbox" checked> 无形象图用 logo（关则走人设）</label>
       <div class="grid">
         <div>
           <label>形象类型</label>
@@ -686,10 +701,12 @@ INDEX_HTML = r"""<!doctype html>
       <div class="grid">
         <div><label>渠道名</label><input id="modalChannelName"></div>
         <div style="display:none" id="modalProviderWrap"><label>类型</label><select id="modalProvider"></select></div>
-        <div><label>Base URL</label><input id="modalBaseUrl"></div>
+        <div class="baseurl-row">
+          <div><label>Base URL</label><input id="modalBaseUrl" placeholder="https://..."></div>
+          <button class="secondary restore-btn" id="modalBaseUrlRestore" type="button" title="恢复为当前类型默认 Base URL" aria-label="恢复默认 Base URL">↺</button>
+        </div>
         <div><label>API Key（可多行，每行一把；鉴权失败或限流会自动换下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
         <div><label>代理 URL</label><input id="modalProxy" placeholder="http://127.0.0.1:7890"></div>
-        <div><label>默认模型</label><input id="modalModel"></div>
         <div><label>超时（秒）</label><input id="modalTimeout" type="number" min="10" max="900"></div>
       </div>
       <p class="muted" id="modalProviderHint" style="margin-top:8px">渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。</p>
@@ -747,6 +764,35 @@ INDEX_HTML = r"""<!doctype html>
     const $ = id => document.getElementById(id);
     const ASPECTS = ['自动','1:1','2:3','3:2','3:4','4:3','4:3','4:5','5:4','9:16','16:9','21:9'].filter((v,i,a)=>a.indexOf(v)===i);
     const PROVIDERS = ['openai','gemini','gemini_openai','z_image_gitee','jimeng2api','grok','agnes','novelai'];
+    const PROVIDER_DEFAULT_BASE_URLS = {
+      openai: 'https://api.openai.com',
+      gemini: 'https://generativelanguage.googleapis.com',
+      gemini_openai: 'https://generativelanguage.googleapis.com',
+      z_image_gitee: 'https://ai.gitee.com',
+      jimeng2api: 'http://localhost:5100',
+      grok: 'https://api.x.ai',
+      agnes: 'https://apihub.agnes-ai.com',
+      novelai: 'https://image.novelai.net'
+    };
+    const VIDEO_PROVIDER_DEFAULT_BASE_URLS = {
+      openai_video: 'https://api.openai.com',
+      sora: 'https://api.openai.com',
+      veo: 'https://generativelanguage.googleapis.com',
+      seedance: 'https://api.openai.com',
+      agnes: 'https://apihub.agnes-ai.com',
+      kling: 'https://api.openai.com',
+      cogvideo: 'https://api.openai.com',
+      video_chat: 'https://api.openai.com',
+      video_sync: 'https://api.openai.com'
+    };
+    function defaultBaseUrlForProvider(provider, kind = 'image') {
+      const p = String(provider || '').trim();
+      if (kind === 'video') return VIDEO_PROVIDER_DEFAULT_BASE_URLS[p] || VIDEO_PROVIDER_DEFAULT_BASE_URLS.openai_video || 'https://api.openai.com';
+      return PROVIDER_DEFAULT_BASE_URLS[p] || PROVIDER_DEFAULT_BASE_URLS.openai || 'https://api.openai.com';
+    }
+    function normalizeBaseUrlCompare(url) {
+      return String(url || '').trim().replace(/\/+$/, '').toLowerCase();
+    }
     const AUDIT_PROVIDERS = ['openai','gemini','gemini_openai'];
     // Video model-family protocols (like image provider types). Auto by model name; manual override.
     const VIDEO_PROVIDERS = ['openai_video','sora','veo','seedance','agnes','kling','cogvideo','video_chat','video_sync'];
@@ -972,6 +1018,7 @@ INDEX_HTML = r"""<!doctype html>
       img.daily_limit_count ??= 10;
       img.show_generation_info ??= false;
       img.show_model_info ??= false;
+      img.use_logo_when_no_persona ??= true;
       img.blocked_words ??= [];
       img.enable_prompt_audit ??= false;
       img.enable_output_audit ??= false;
@@ -1013,6 +1060,7 @@ INDEX_HTML = r"""<!doctype html>
         $('enableLLMTool').checked = !!img.enable_llm_tool;
         $('showGenerationInfo').checked = !!img.show_generation_info;
         $('showModelInfo').checked = !!img.show_model_info;
+        if ($('useLogoWhenNoPersona')) $('useLogoWhenNoPersona').checked = img.use_logo_when_no_persona !== false;
         $('enableDailyLimit').checked = !!img.enable_daily_limit;
 
         $('selfieBotName').value = CONFIG.bot_name || '';
@@ -1062,6 +1110,7 @@ INDEX_HTML = r"""<!doctype html>
       CONFIG.image.enable_llm_tool = $('enableLLMTool').checked;
       CONFIG.image.show_generation_info = $('showGenerationInfo').checked;
       CONFIG.image.show_model_info = $('showModelInfo').checked;
+      if ($('useLogoWhenNoPersona')) CONFIG.image.use_logo_when_no_persona = $('useLogoWhenNoPersona').checked;
       CONFIG.image.enable_daily_limit = $('enableDailyLimit').checked;
       CONFIG.image.enable_prompt_audit = $('enablePromptAudit').checked;
       CONFIG.image.enable_output_audit = $('enableOutputAudit').checked;
@@ -1327,13 +1376,24 @@ INDEX_HTML = r"""<!doctype html>
     function newVideoChannel() {
       return normalizeChannel({name:'video-channel', provider_type:'openai_video', base_url:'https://api.openai.com/v1', api_key:'', model:'', enabled_models:[], timeout:300, enabled:false, models_cache:[]});
     }
-    function applyProviderDefaults(ch, force = false) {
+    function applyProviderDefaults(ch, force = false, kind = 'image') {
       ch = ch && typeof ch === 'object' ? ch : {};
-      if (ch.provider_type === 'agnes') {
-        if (force || !ch.base_url) ch.base_url = 'https://apihub.agnes-ai.com';
-        if (force || !ch.model) ch.model = 'agnes-image-2.1-flash';
+      const provider = kind === 'video'
+        ? (normalizeVideoProviderType(ch.provider_type) || 'openai_video')
+        : (ch.provider_type || 'openai');
+      ch.provider_type = provider;
+      const def = defaultBaseUrlForProvider(provider, kind);
+      const cur = String(ch.base_url || '').trim();
+      // Only fill empty base_url, or force restore; never clobber custom non-default URLs unless force.
+      if (force || !cur) {
+        ch.base_url = def;
+      } else {
+        // keep custom
+      }
+      if (provider === 'agnes' && kind !== 'video') {
         if (!Array.isArray(ch.enabled_models) || !ch.enabled_models.length || force) ch.enabled_models = ['agnes-image-2.1-flash'];
         if (!Array.isArray(ch.models_cache) || !ch.models_cache.length || force) ch.models_cache = ['agnes-image-2.1-flash'];
+        if (!ch.model) ch.model = (ch.enabled_models && ch.enabled_models[0]) || 'agnes-image-2.1-flash';
       }
       return ch;
     }
@@ -1409,15 +1469,30 @@ INDEX_HTML = r"""<!doctype html>
             </div>
           </div>
         `;
-        card.querySelector('input[type="checkbox"]').onchange = event => {
+        const enableInput = card.querySelector('input[type="checkbox"]');
+        enableInput.onchange = event => {
           const target = list[i];
-          target.enabled = event.target.checked;
-          if (target.enabled && softDisableChannelIfNoModels(target)) {
+          const want = !!event.target.checked;
+          target.enabled = want;
+          if (want && softDisableChannelIfNoModels(target)) {
             event.target.checked = false;
+            target.enabled = false;
             setStatus('channelStatus', `${target.name || '渠道'} 还没有启用模型，已保持关闭`);
+            return;
+          }
+          // Local UI only: update pills on this card. Do NOT rebuild whole list
+          // (destroying the checkbox mid-click feels like "no response").
+          const pills = card.querySelector('.actions');
+          if (pills) {
+            const cacheCount = Number((target.models_cache || []).length);
+            const enabledCount = Number((target.enabled_models || []).length);
+            pills.innerHTML = `
+                <span class="pill gray">缓存 ${cacheCount}</span>
+                <span class="pill green">启用模型 ${enabledCount}</span>
+                ${target.enabled === false ? '<span class="pill gray">已停用</span>' : '<span class="pill">使用中</span>'}
+            `;
           }
           refreshModelSelectors();
-          renderAllChannelLists();
           scheduleChannelListAutoSave();
         };
         card.querySelector('[data-act="edit"]').onclick = () => openChannelModal(i, kind);
@@ -1449,7 +1524,6 @@ INDEX_HTML = r"""<!doctype html>
     function removeAllEnabledModels() {
       const ch = currentModalChannel();
       setChannelEnabledModels(ch, []);
-      $('modalModel').value = '';
       $('modalEnabled').checked = false;
       ch.enabled = false;
       CHANNEL_MODAL_DIRTY = true;
@@ -1474,7 +1548,7 @@ INDEX_HTML = r"""<!doctype html>
         base_url: $('modalBaseUrl').value.trim(),
         api_key: $('modalApiKey').value.trim(),
         proxy: $('modalProxy').value.trim(),
-        model: $('modalModel').value.trim(),
+        model: (enabled[0] || source.model || ''),
         timeout: Number($('modalTimeout').value || (EDITING_CHANNEL_KIND === 'video' ? 300 : 280)),
         enabled: $('modalEnabled').checked,
         enabled_models: enabled,
@@ -1521,13 +1595,13 @@ INDEX_HTML = r"""<!doctype html>
       if (isNew) {
         ch = normalizeChannel(factory());
         if (EDITING_CHANNEL_KIND === 'video') ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'openai_video';
-        else applyProviderDefaults(ch);
+        else applyProviderDefaults(ch, false, EDITING_CHANNEL_KIND);
         CHANNEL_DRAFT = ch;
       } else {
         const list = channelListFor(EDITING_CHANNEL_KIND);
         ch = normalizeChannel(list[index] || factory());
         if (EDITING_CHANNEL_KIND === 'video') ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'openai_video';
-        else applyProviderDefaults(ch);
+        else applyProviderDefaults(ch, false, EDITING_CHANNEL_KIND);
         list[index] = ch;
         CHANNEL_DRAFT = null;
       }
@@ -1557,10 +1631,10 @@ INDEX_HTML = r"""<!doctype html>
       }
       $('modalChannelName').value = ch.name || '';
       $('modalProvider').value = defaultProvider;
+      $('modalProvider').dataset.prevProvider = defaultProvider;
       $('modalBaseUrl').value = ch.base_url || '';
       $('modalApiKey').value = ch.api_key || '';
       $('modalProxy').value = ch.proxy || '';
-      $('modalModel').value = ch.model || '';
       $('modalTimeout').value = ch.timeout || (EDITING_CHANNEL_KIND === 'video' ? 300 : 280);
       $('modalEnabled').checked = ch.enabled !== false;
       $('cacheSearch').value = '';
@@ -1578,18 +1652,39 @@ INDEX_HTML = r"""<!doctype html>
     }
     function modalProviderChanged() {
       const ch = currentModalChannel();
-      if (EDITING_CHANNEL_KIND === 'video') {
-        ch.provider_type = normalizeVideoProviderType($('modalProvider').value) || 'openai_video';
+      const prev = String(($('modalProvider').dataset.prevProvider || ch.provider_type || '')).trim();
+      const next = EDITING_CHANNEL_KIND === 'video'
+        ? (normalizeVideoProviderType($('modalProvider').value) || 'openai_video')
+        : ($('modalProvider').value || 'openai');
+      const curBase = String($('modalBaseUrl').value || ch.base_url || '').trim();
+      const prevDefault = defaultBaseUrlForProvider(prev, EDITING_CHANNEL_KIND);
+      const nextDefault = defaultBaseUrlForProvider(next, EDITING_CHANNEL_KIND);
+      ch.provider_type = next;
+      // Only auto-switch base_url when empty or still on previous type default (don't clobber custom).
+      if (!curBase || normalizeBaseUrlCompare(curBase) === normalizeBaseUrlCompare(prevDefault)) {
+        ch.base_url = nextDefault;
+        $('modalBaseUrl').value = nextDefault;
       } else {
-        ch.provider_type = $('modalProvider').value || 'openai';
-        applyProviderDefaults(ch);
-        $('modalBaseUrl').value = ch.base_url || '';
-        $('modalModel').value = ch.model || '';
+        ch.base_url = curBase;
       }
+      if (EDITING_CHANNEL_KIND !== 'video') applyProviderDefaults(ch, false, EDITING_CHANNEL_KIND);
+      $('modalProvider').dataset.prevProvider = next;
       CHANNEL_MODAL_DIRTY = true;
       storeModalChannel(ch);
       renderModalModels(ch);
       refreshModelSelectors();
+    }
+    function restoreModalBaseUrlDefault() {
+      const provider = EDITING_CHANNEL_KIND === 'video'
+        ? (normalizeVideoProviderType($('modalProvider').value) || 'openai_video')
+        : ($('modalProvider').value || 'openai');
+      const def = defaultBaseUrlForProvider(provider, EDITING_CHANNEL_KIND);
+      $('modalBaseUrl').value = def;
+      const ch = currentModalChannel();
+      ch.base_url = def;
+      CHANNEL_MODAL_DIRTY = true;
+      storeModalChannel(ch);
+      if ($('modalStatus')) $('modalStatus').textContent = '已恢复为当前类型默认 Base URL';
     }
     function closeChannelModal() {
       $('channelModal').classList.remove('show');
@@ -1732,6 +1827,12 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       if (!ch.model && ch.enabled_models.length) ch.model = ch.enabled_models[0];
+      // First-time save: if user already enabled models, auto-enable channel
+      // so auto-save soft-disable doesn't leave a brand-new channel off.
+      if (EDITING_CHANNEL_IS_NEW && (ch.enabled_models || []).length && ch.enabled === false) {
+        ch.enabled = true;
+        if ($('modalEnabled')) $('modalEnabled').checked = true;
+      }
       softDisableChannelIfNoModels(ch);
       const list = channelListFor(EDITING_CHANNEL_KIND);
       if (EDITING_CHANNEL_IS_NEW) {
@@ -1948,8 +2049,12 @@ INDEX_HTML = r"""<!doctype html>
         $('configText').value = JSON.stringify(CONFIG, null, 2);
         if (renderAfterSave) fillForms();
         else if (!quiet) {
-          // keep lists in sync with server soft-disable without full form thrash
+          // Non-quiet saves (manual) may refresh lists; quiet autosave must not
+          // rebuild channel cards or the enable toggle feels lagged/unresponsive.
           renderAllChannelLists();
+          refreshModelSelectors();
+        } else {
+          // quiet path: still refresh dependent selectors, keep existing cards
           refreshModelSelectors();
         }
         if (okText) setMultiStatus(okText);
@@ -1976,7 +2081,8 @@ INDEX_HTML = r"""<!doctype html>
         persistConfig(false, okText || '', {
           toast: false,
           toastError: true,
-          quiet: reason === 'form',
+          // form typing + channel-list toggle both need quiet to avoid UI thrash
+          quiet: reason === 'form' || reason === 'channel-list',
         });
       }, options.delay != null ? options.delay : (reason === 'form' ? 900 : 650));
     }
@@ -1987,7 +2093,8 @@ INDEX_HTML = r"""<!doctype html>
     /** 渠道列表结构化变更（删/复制/启停、优先级）：静默落盘。 */
     function scheduleChannelListAutoSave() {
       if (isChannelModalOpen()) return;
-      scheduleAutoSave('', { reason: 'channel-list', silentStatus: true, toast: false, delay: 500 });
+      // Keep quiet so persistConfig won't rebuild cards and steal the toggle.
+      scheduleAutoSave('', { reason: 'channel-list', silentStatus: true, toast: false, delay: 280 });
     }
     async function saveJsonConfig() {
       try {
@@ -2094,14 +2201,43 @@ INDEX_HTML = r"""<!doctype html>
     function recordModelLabel(record) {
       return String(record.label || record.model || record.target || record.used_model || '').trim() || '未记录模型';
     }
+    function recordFailureReason(record) {
+      const direct = String(record.failure_reason || record.error || '').trim();
+      if (direct) return direct;
+      const rows = record.failure_reasons || [];
+      if (Array.isArray(rows) && rows.length) {
+        const last = rows[rows.length - 1] || {};
+        const label = String(last.label || '').trim();
+        const reason = String(last.error_user_message || last.error || '').trim();
+        if (label && reason) return `${label}: ${reason}`;
+        return reason || label;
+      }
+      const attempts = record.attempts || record.response_data?.attempts || [];
+      const failed = (Array.isArray(attempts) ? attempts : []).filter(a => a && a.success === false);
+      if (failed.length) {
+        const last = failed[failed.length - 1];
+        const label = recordModelLabel(last);
+        const reason = String(last.error_user_message || last.error || '').trim();
+        if (label && reason) return `${label}: ${reason}`;
+        return reason || label;
+      }
+      return '';
+    }
     function recordFinalModelBadge(record) {
-      if (!record.used_model) return '<span class="model-attempt-empty">空</span>';
       const failed = record.success === false;
-      return `<span class="model-attempt-badge ${failed ? 'model-attempt-fail' : 'model-attempt-ok'}">${escapeHtml(record.used_model)}</span>`;
+      const model = String(record.used_model || '').trim();
+      if (failed) {
+        const reason = recordFailureReason(record);
+        const text = model || reason || '失败';
+        const title = reason || text;
+        return `<span class="model-attempt-badge model-attempt-fail" title="${escapeHtml(title)}">${escapeHtml(text)}</span>`;
+      }
+      if (!model) return '<span class="model-attempt-empty">空</span>';
+      return `<span class="model-attempt-badge model-attempt-ok">${escapeHtml(model)}</span>`;
     }
     function recordRetryModelChain(record) {
       const attempts = record.attempts || record.response_data?.attempts || [];
-      const rows = Array.isArray(attempts) ? attempts : [];
+      const rows = Array.isArray(attempts) ? attempts.slice() : [];
       if (!rows.length && record.used_model) {
         rows.push({ model: record.used_model, success: record.success });
       }
@@ -2113,6 +2249,45 @@ INDEX_HTML = r"""<!doctype html>
         return `${arrow}<span class="model-attempt-badge ${failed ? 'model-attempt-fail' : 'model-attempt-ok'}">${escapeHtml(label)}</span>`;
       }).join('')}</div>`;
     }
+    function recordFailureReasonsBlock(record) {
+      if (record.success !== false) return '';
+      let rows = Array.isArray(record.failure_reasons) ? record.failure_reasons : [];
+      if (!rows.length) {
+        const attempts = record.attempts || record.response_data?.attempts || [];
+        rows = (Array.isArray(attempts) ? attempts : [])
+          .filter(a => a && a.success === false)
+          .map(a => ({
+            label: recordModelLabel(a),
+            error: a.error || '',
+            error_user_message: a.error_user_message || '',
+            error_category: a.error_category || '',
+            elapsed_seconds: a.elapsed_seconds,
+          }));
+      }
+      if (!rows.length) {
+        const reason = recordFailureReason(record);
+        if (!reason) return '';
+        return `<h3>失败原因</h3><div class="status">${escapeHtml(reason)}</div>`;
+      }
+      const body = rows.map((row, index) => {
+        const label = String(row.label || `尝试${index + 1}`).trim();
+        const reason = String(row.error_user_message || row.error || '生成失败').trim();
+        const raw = String(row.error || '').trim();
+        const cat = String(row.error_category || '').trim();
+        const elapsed = Number(row.elapsed_seconds);
+        const meta = [
+          cat ? `类型:${cat}` : '',
+          Number.isFinite(elapsed) ? `${elapsed.toFixed(2)}s` : '',
+        ].filter(Boolean).join(' · ');
+        const rawLine = raw && raw !== reason ? `<div class="muted" style="margin-top:4px;overflow-wrap:anywhere">${escapeHtml(raw)}</div>` : '';
+        return `<div class="model-row" style="grid-template-columns:1fr">
+          <div><strong>${escapeHtml(label)}</strong>${meta ? ` <span class="muted">· ${escapeHtml(meta)}</span>` : ''}</div>
+          <div style="margin-top:4px">${escapeHtml(reason)}</div>
+          ${rawLine}
+        </div>`;
+      }).join('');
+      return `<h3>各模型失败原因</h3><div class="model-list">${body}</div>`;
+    }
     function renderRecords() {
       const model = $('monitorModel').value.trim();
       const sourceOptions = uniq(RECORDS.map(r => String(r.source_label || r.source || '').trim()).filter(Boolean));
@@ -2121,16 +2296,29 @@ INDEX_HTML = r"""<!doctype html>
       setMonitorSourceOptions(sourceOptions);
       setSelectOptions('monitorModel', [''].concat(modelOptions), model);
       const rows = RECORDS;
-      const ok = rows.filter(r=>r.success).length;
-      const avg = rows.length ? rows.reduce((s,r)=>s+Number(r.elapsed_seconds||0),0)/rows.length : 0;
       const filteredCount = Number(RECORD_META.filtered ?? rows.length);
       const totalCount = Number(RECORD_META.total ?? rows.length);
+      // Prefer server-provided aggregate when available; otherwise use loaded rows as total scope.
+      const scopeRows = rows;
+      const ok = scopeRows.filter(r=>r.success).length;
+      const fail = scopeRows.length - ok;
+      const avg = scopeRows.length ? scopeRows.reduce((s,r)=>s+Number(r.elapsed_seconds||0),0)/scopeRows.length : 0;
       const totalPages = Math.max(1, Math.ceil(filteredCount / MONITOR_PAGE_SIZE));
       MONITOR_PAGE = Math.min(Math.max(1, MONITOR_PAGE), totalPages);
       const start = Number(RECORD_META.offset ?? ((MONITOR_PAGE - 1) * MONITOR_PAGE_SIZE));
       const pageRows = rows;
-      $('monitorStats').textContent = `记录 ${filteredCount} / 总计 ${totalCount} / 本页成功 ${ok} / 本页失败 ${rows.length-ok} / 本页平均 ${avg.toFixed(2)}s / 第 ${MONITOR_PAGE}/${totalPages} 页`;
-      $('recordTable').innerHTML = '<thead><tr><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型</th></tr></thead><tbody>' +
+      const denom = Math.max(1, scopeRows.length);
+      const okPct = scopeRows.length ? Math.round((ok / denom) * 1000) / 10 : 0;
+      const failPct = scopeRows.length ? Math.round((fail / denom) * 1000) / 10 : 0;
+      $('monitorStats').innerHTML = [
+        ['筛选', String(filteredCount)],
+        ['总计', String(totalCount)],
+        ['成功', `${ok}（${okPct}%）`],
+        ['失败', `${fail}（${failPct}%）`],
+        ['平均耗时', `${avg.toFixed(2)}s`],
+        ['页码', `${MONITOR_PAGE}/${totalPages}`],
+      ].map(([k,v]) => `<div class="stat-card"><div class="k">${k}</div><div class="v">${escapeHtml(String(v))}</div></div>`).join('');
+      $('recordTable').innerHTML = '<thead><tr><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型/失败原因</th></tr></thead><tbody>' +
         (pageRows.length ? pageRows.map(r => `<tr style="cursor:pointer" title="点击查看详情" onclick="openRecordDetail('${escapeJs(r.id || '')}')"><td>${escapeHtml(r.time||'')}</td><td>${r.media_type === 'video' ? '视频' : '图片'}</td><td>${escapeHtml(r.source_label || r.source || '')}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">没有匹配的监控记录</td></tr>') +
         '</tbody>';
       $('monitorPager').innerHTML = `
@@ -2178,8 +2366,11 @@ INDEX_HTML = r"""<!doctype html>
     }
     function videoThumbs(paths) {
       const list = (paths || []).filter(Boolean);
-      if (!list.length) return '<div class="muted">没有生成视频</div>';
-      return '<h3>生成视频</h3>' + list.map(path => `<video controls preload="metadata" style="width:100%;max-height:480px;border-radius:12px" data-cache-video="${escapeHtml(path)}"></video>`).join('');
+      if (!list.length) return '<div class="media-head"><h3>生成视频</h3></div><div class="muted">没有生成视频</div>';
+      return '<div class="media-head"><h3>生成视频</h3></div>' + list.map(path => {
+        const name = String(path).split('/').pop() || 'video.mp4';
+        return `<div class="video-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button><video controls preload="metadata" style="width:100%;max-height:480px;border-radius:12px" data-cache-video="${escapeHtml(path)}"></video></div>`;
+      }).join('');
     }
     async function loadProtectedVideo(video, path) {
       try {
@@ -2204,10 +2395,53 @@ INDEX_HTML = r"""<!doctype html>
         if (path) loadProtectedVideo(video, path);
       });
     }
-    function imageThumbs(paths) {
+    function imageThumbs(paths, title = '图片') {
       const items = (paths || []).filter(Boolean);
-      if (!items.length) return '<div class="muted">无图片</div>';
-      return `<div class="images">${items.map(path => `<div><img data-cache-path="${escapeHtml(path)}" alt="${escapeHtml(path)}"><div class="muted">${escapeHtml(path)}</div></div>`).join('')}</div>`;
+      if (!items.length) return `<div class="media-head"><h3>${escapeHtml(title)}</h3></div><div class="muted">无图片</div>`;
+      const grid = `<div class="images">${items.map(path => {
+        const name = String(path).split('/').pop() || 'image';
+        return `<div class="thumb-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button><img data-cache-path="${escapeHtml(path)}" alt="${escapeHtml(path)}"><div class="muted">${escapeHtml(path)}</div></div>`;
+      }).join('')}</div>`;
+      return `<div class="media-head"><h3>${escapeHtml(title)}</h3></div>${grid}`;
+    }
+    function downloadIconSvg() {
+      return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>';
+    }
+    async function downloadCachePath(path, filename) {
+      const name = String(filename || path || 'download').split('/').pop() || 'download';
+      const rel = String(path || '').trim();
+      if (!rel) {
+        showToast('没有可下载文件', 'bad');
+        return;
+      }
+      try {
+        showToast('正在准备下载…', 'ok');
+        if (isDashboardPage()) {
+          // Use official bridge binary download — do NOT pull huge base64 preview blobs.
+          const bridge = await waitForDashboardBridge();
+          if (typeof bridge.ready === 'function') await bridge.ready();
+          if (typeof bridge.download !== 'function') throw new Error('内嵌页不支持文件下载');
+          await bridge.download('cache-image', { path: rel }, name);
+          showToast('已开始下载', 'ok');
+          return;
+        }
+        const res = await fetch(cacheImageUrl(rel), { headers: headers() });
+        if (!res.ok) throw new Error(res.status === 404 ? '文件已清理' : ('下载失败 HTTP ' + res.status));
+        const blob = await res.blob();
+        if (!blob || !blob.size) throw new Error('下载内容为空');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        showToast('已开始下载', 'ok');
+      } catch (e) {
+        showToast(e.message || '下载失败', 'bad');
+      }
     }
     function copyIconSvg() {
       return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
@@ -2280,13 +2514,15 @@ INDEX_HTML = r"""<!doctype html>
           <div><label>调用入口</label><div class="status">${escapeHtml(r.source || '')}</div></div>
           <div><label>群号</label><div class="status">${escapeHtml(r.group_id || '')}</div></div>
           <div><label>Q号</label><div class="status">${escapeHtml(r.user_id || '')}</div></div>
+          ${r.success === false ? `<div><label>最后失败</label><div class="status">${escapeHtml(recordFailureReason(r) || r.error || '')}</div></div>` : ''}
         </div>
+        ${recordFailureReasonsBlock(r)}
         ${promptDetailBlock('原始提示词', 'original_prompt', r.original_prompt || '')}
         ${promptDetailBlock('请求提示词', 'request_prompt', r.request_prompt || r.prompt || '')}
         ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
         ${promptDetailBlock('响应数据', 'response_data', JSON.stringify(r.response_data || {}, null, 2))}
-        <h3>请求图</h3>${imageThumbs(r.request_image_paths || [])}
-        <h3>生成图</h3>${imageThumbs(r.generated_image_paths || [])}
+        ${imageThumbs(r.request_image_paths || [], '请求图')}
+        ${imageThumbs(r.generated_image_paths || [], '生成图')}
         ${videoThumbs(r.generated_video_paths || [])}
       `;
       $('recordModal').classList.add('show');
@@ -3134,6 +3370,7 @@ INDEX_HTML = r"""<!doctype html>
     $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };
     $('logoutBtn').onclick = logout;
     $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(); };
+    $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;
     $('modalProvider').onchange = modalProviderChanged;
     $('modalRefreshModels').onclick = () => refreshChannelModels();
@@ -3147,7 +3384,7 @@ INDEX_HTML = r"""<!doctype html>
     };
     $('manualModel').onkeydown = event => { if (event.key === 'Enter') $('manualAdd').click(); };
     // Modal field edits stay local until「保存渠道」
-    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxy','modalModel','modalTimeout','modalEnabled'].forEach(id => {
+    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxy','modalTimeout','modalEnabled'].forEach(id => {
       const el = $(id);
       if (!el) return;
       const eventName = el.type === 'checkbox' || el.type === 'number' ? 'change' : 'input';

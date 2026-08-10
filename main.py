@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+RECORD_KEEP_LIMIT = 300
+
 import asyncio
 import copy
 import json
@@ -528,11 +530,11 @@ class SelfieImagePlugin(Star):
         data = load_json_file(self.records_path)
         items = data.get("records") if isinstance(data.get("records"), list) else []
         records = [item for item in items if isinstance(item, dict)]
-        return redact_sensitive_data(copy.deepcopy(records[:100]))
+        return redact_sensitive_data(copy.deepcopy(records[:RECORD_KEEP_LIMIT]))
 
     def _persist_records(self) -> None:
         with self._records_lock:
-            self._records = redact_sensitive_data(self._records[:100])
+            self._records = redact_sensitive_data(self._records[:RECORD_KEEP_LIMIT])
             save_json_file(self.records_path, {"records": self._records})
 
     def _record_generated_images(self, event: AstrMessageEvent, count: int) -> None:
@@ -692,23 +694,39 @@ class SelfieImagePlugin(Star):
         sources = self._filter_reference_images(event, extract_image_sources_from_event(event, include_at_avatar=False))
         return {"content": content or ("[图片]" if sources else ""), "image_sources": sources}
 
-    def _looks_like_context_image_reference(self, text: str) -> bool:
+    def _compact_followup_text(self, text: str) -> str:
+        """Normalize spoken follow-up text for keyword matching."""
         compact = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(text or "").lower())
+        if not compact:
+            return ""
+        # 「这一身/这一套/那一套」口语里常夹「一」，压成「这身/这套/那套」便于匹配。
+        compact = re.sub(r"([这那])一([身套件])", r"\1\2", compact)
+        return compact
+
+    def _looks_like_context_image_reference(self, text: str) -> bool:
+        compact = self._compact_followup_text(text)
         if not compact:
             return False
         keywords = [
             "上图",
             "上一张",
             "上张",
+            "上一套",
+            "上套",
             "刚才那张",
             "刚刚那张",
+            "刚才那套",
+            "刚刚那套",
             "刚发的",
             "前面那张",
+            "前面那套",
             "这张",
             "这图",
             "这个图",
             "那张",
             "那图",
+            "那套",
+            "那一套",
             "继续改",
             "接着改",
             "在这个基础上",
@@ -716,6 +734,10 @@ class SelfieImagePlugin(Star):
             "参考这个",
             "参考刚才",
             "按刚才",
+            "用刚刚",
+            "用刚才",
+            "用上一",
+            "换回",
             "同款",
             "换成",
             "改一下",
@@ -754,12 +776,14 @@ class SelfieImagePlugin(Star):
             "wearthis",
             "putthison",
             "sameoutfit",
+            "previousoutfit",
+            "lastoutfit",
         ]
         return any(keyword in compact for keyword in keywords) or any(keyword in compact for keyword in english)
 
     def _looks_like_clothes_followup(self, text: str) -> bool:
         """User wants outfit from a prior reference, not the bot's last selfie."""
-        compact = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(text or "").lower())
+        compact = self._compact_followup_text(text)
         if not compact:
             return False
         keys = [
@@ -772,11 +796,17 @@ class SelfieImagePlugin(Star):
             "这套",
             "这身",
             "这件",
+            "那套",
+            "那一套",
+            "上一套",
+            "上套",
             "衣服",
             "服装",
             "穿搭",
             "刚刚的衣服",
             "刚才的衣服",
+            "刚刚那套",
+            "刚才那套",
             "不是刚刚的衣服",
             "不是刚才的衣服",
             "一模一样的衣服",
@@ -790,13 +820,28 @@ class SelfieImagePlugin(Star):
         return any(k in compact for k in keys)
 
     def _looks_like_edit_bot_result_followup(self, text: str) -> bool:
-        """Only then may context fall back to bot-generated images."""
-        compact = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(text or "").lower())
+        """User wants to reuse/edit the bot's recent generated image/outfit."""
+        compact = self._compact_followup_text(text)
+        if not compact:
+            return False
         keys = [
             "刚才那张",
             "刚刚那张",
+            "刚才那套",
+            "刚刚那套",
+            "那一套",
+            "那套",
             "上一张",
+            "上一套",
+            "上套",
             "上张图",
+            "用刚刚",
+            "用刚才",
+            "用上一",
+            "换回刚刚",
+            "换回刚才",
+            "换回那套",
+            "换回上一",
             "继续改",
             "接着改",
             "在这个基础上",
@@ -805,6 +850,7 @@ class SelfieImagePlugin(Star):
             "把刚才",
             "刚生成",
             "刚画的",
+            "刚发的",
         ]
         return any(k in compact for k in keys)
 
@@ -815,8 +861,13 @@ class SelfieImagePlugin(Star):
         *,
         prefer_user: bool = True,
         user_only: bool = False,
+        bot_only: bool = False,
     ) -> List[str]:
-        """Return recent image sources. Prefer non-bot (user) refs for clothes/selfie follow-ups."""
+        """Return recent image sources.
+
+        - clothes follow-up: prefer/only user refs
+        - edit-bot follow-up (「用刚刚那一套」): prefer/only bot generated refs
+        """
         user_sources: List[str] = []
         bot_sources: List[str] = []
         seen_user: set = set()
@@ -837,19 +888,31 @@ class SelfieImagePlugin(Star):
                         continue
                     seen_user.add(text)
                     user_sources.append(text)
+        limit = max(1, int(max_images or 1))
+        if bot_only:
+            return bot_sources[:limit]
         if user_only:
-            return user_sources[: max(1, int(max_images or 1))]
+            return user_sources[:limit]
         if prefer_user and user_sources:
             # User refs first, then bot only to fill remaining slots if needed
             out = list(user_sources)
             for text in bot_sources:
-                if len(out) >= max_images:
+                if len(out) >= limit:
                     break
                 if text not in out:
                     out.append(text)
-            return out[: max(1, int(max_images or 1))]
-        merged = user_sources + bot_sources
-        return merged[: max(1, int(max_images or 1))]
+            return out[:limit]
+        if (not prefer_user) and bot_sources:
+            # Bot results first (reuse previous outfit / edit last generation)
+            out = list(bot_sources)
+            for text in user_sources:
+                if len(out) >= limit:
+                    break
+                if text not in out:
+                    out.append(text)
+            return out[:limit]
+        merged = (bot_sources + user_sources) if not prefer_user else (user_sources + bot_sources)
+        return merged[:limit]
 
     @optional_event_message_type(priority=100)
     async def on_message_record(self, event: AstrMessageEvent) -> None:
@@ -1322,15 +1385,37 @@ class SelfieImagePlugin(Star):
         response_data = record.get("response_data")
         if "attempts" not in record and isinstance(response_data, Mapping):
             record["attempts"] = list(response_data.get("attempts") or [])
+        # Enrich failure fields for monitor list/detail (also backfills empty used_model).
+        try:
+            from .error_classify import summarize_generation_failures
+
+            attempts = list(record.get("attempts") or [])
+            if not attempts and isinstance(response_data, Mapping):
+                attempts = list(response_data.get("attempts") or [])
+            summary = summarize_generation_failures(
+                attempts,
+                fallback_error=str(record.get("error") or ""),
+            )
+            if record.get("success") is False:
+                if summary.get("failure_reason"):
+                    record["failure_reason"] = summary["failure_reason"]
+                if summary.get("failure_reasons"):
+                    record["failure_reasons"] = summary["failure_reasons"]
+                if not str(record.get("used_model") or "").strip() and summary.get("last_failed_model"):
+                    record["used_model"] = summary["last_failed_model"]
+                if not str(record.get("error") or "").strip() and summary.get("failure_reason"):
+                    record["error"] = summary["failure_reason"]
+        except Exception:
+            pass
         with self._records_lock:
             record = redact_sensitive_data(dict(record))
             self._record_seq += 1
             record.setdefault("id", f"{int(time.time() * 1000)}-{self._record_seq}")
             record["time"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             self._records.insert(0, record)
-            evicted_records = self._records[100:]
+            evicted_records = self._records[RECORD_KEEP_LIMIT:]
             if evicted_records:
-                del self._records[100:]
+                del self._records[RECORD_KEEP_LIMIT:]
                 stale_cache_paths = collect_unreferenced_record_cache_paths(evicted_records, self._records)
             self._persist_records()
         if stale_cache_paths:
@@ -1338,15 +1423,43 @@ class SelfieImagePlugin(Star):
 
     def get_recent_records(self) -> List[Dict[str, Any]]:
         with self._records_lock:
-            return redact_sensitive_data(copy.deepcopy(self._records[:100]))
+            records = copy.deepcopy(self._records[:RECORD_KEEP_LIMIT])
+        return redact_sensitive_data([self._enrich_record_for_web(item) for item in records])
 
     def get_record_for_web(self, record_id: str) -> Dict[str, Any]:
         target_id = str(record_id or "").strip()
         with self._records_lock:
             for record in self._records:
                 if str(record.get("id") or "") == target_id:
-                    return redact_sensitive_data(copy.deepcopy(record))
+                    return redact_sensitive_data(self._enrich_record_for_web(copy.deepcopy(record)))
         raise ValueError("记录不存在或已清理")
+
+    def _enrich_record_for_web(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Backfill failure_reason / used_model for older records without rewriting disk."""
+        if not isinstance(record, dict):
+            return record
+        if record.get("success") is not False:
+            return record
+        try:
+            from .error_classify import summarize_generation_failures
+
+            attempts = list(record.get("attempts") or [])
+            response_data = record.get("response_data")
+            if not attempts and isinstance(response_data, Mapping):
+                attempts = list(response_data.get("attempts") or [])
+            summary = summarize_generation_failures(
+                attempts,
+                fallback_error=str(record.get("error") or record.get("failure_reason") or ""),
+            )
+            if not str(record.get("failure_reason") or "").strip() and summary.get("failure_reason"):
+                record["failure_reason"] = summary["failure_reason"]
+            if not record.get("failure_reasons") and summary.get("failure_reasons"):
+                record["failure_reasons"] = summary["failure_reasons"]
+            if not str(record.get("used_model") or "").strip() and summary.get("last_failed_model"):
+                record["used_model"] = summary["last_failed_model"]
+        except Exception:
+            pass
+        return record
 
     def clear_recent_records(self) -> int:
         with self._records_lock:
@@ -2168,17 +2281,26 @@ class SelfieImagePlugin(Star):
         """Collect event references via unified ReferenceCollector (target 11)."""
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
         persona_path = ""
-        if include_persona and self.persona.has_reference_image():
-            persona_path = str(self.persona.get_reference_path() or "")
+        if include_persona:
+            if self.persona.has_reference_image():
+                persona_path = str(self.persona.get_reference_path() or "")
+            elif bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
+                logo = str(getattr(self, "_bundled_logo_path", "") or "")
+                if logo and os.path.isfile(logo):
+                    persona_path = logo
         hint = str(context_hint or extract_event_text(event) or "")
-        # Clothes / "wear this" follow-ups must prefer the user's prior reference image,
-        # never the bot's last generated selfie (common failure in group chat).
-        user_only = self._looks_like_clothes_followup(hint) and not self._looks_like_edit_bot_result_followup(hint)
-        prefer_user = True
+        # Clothes / "wear this" → user prior outfit ref.
+        # "用刚刚那一套/上一套" → bot's recent generated image first.
+        edit_bot = self._looks_like_edit_bot_result_followup(hint)
+        clothes = self._looks_like_clothes_followup(hint)
+        user_only = clothes and not edit_bot
+        bot_only = edit_bot and not clothes
+        prefer_user = not edit_bot
         context_sources = self._recent_context_image_sources(
             event,
             prefer_user=prefer_user,
             user_only=user_only,
+            bot_only=bot_only,
         )
         collector = ReferenceCollector(
             max_bytes=max_bytes,
@@ -2214,18 +2336,28 @@ class SelfieImagePlugin(Star):
     ):
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
         persona_path = ""
-        if include_persona and self.persona.has_reference_image():
-            persona_path = str(self.persona.get_reference_path() or "")
+        if include_persona:
+            if self.persona.has_reference_image():
+                persona_path = str(self.persona.get_reference_path() or "")
+            elif bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
+                logo = str(getattr(self, "_bundled_logo_path", "") or "")
+                if logo and os.path.isfile(logo):
+                    persona_path = logo
         hint = str(context_hint or extract_event_text(event) or "")
-        user_only = self._looks_like_clothes_followup(hint) and not self._looks_like_edit_bot_result_followup(hint)
+        edit_bot = self._looks_like_edit_bot_result_followup(hint)
+        clothes = self._looks_like_clothes_followup(hint)
+        user_only = clothes and not edit_bot
+        bot_only = edit_bot and not clothes
+        prefer_user = not edit_bot
         collector = ReferenceCollector(
             max_bytes=max_bytes,
             bot_ids=self._bot_account_ids(event),
             persona_path=persona_path,
             context_sources=self._recent_context_image_sources(
                 event,
-                prefer_user=True,
+                prefer_user=prefer_user,
                 user_only=user_only,
+                bot_only=bot_only,
             ),
             extra_sources=extra_sources or [],
             include_at_avatar=include_at_avatar,
@@ -2304,12 +2436,28 @@ class SelfieImagePlugin(Star):
                     pass
             await event.send(event.chain_result([self._create_video_component(file_path)]))
 
+    def _persona_identity_reference(self) -> Optional[ImageReference]:
+        """形象参考：优先用户上传；无图时按开关回退 logo，或返回 None 走人设文案。"""
+        persona_ref = self.persona.get_reference_image()
+        if persona_ref:
+            return ImageReference(data=persona_ref["data"], mime_type=persona_ref["mime_type"])
+        if not bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
+            return None
+        logo = str(getattr(self, "_bundled_logo_path", "") or "")
+        if not logo or not os.path.isfile(logo):
+            return None
+        try:
+            with open(logo, "rb") as handle:
+                data = handle.read()
+            if not data:
+                return None
+            return ImageReference(data=data, mime_type=detect_mime_by_bytes(data) or "image/png")
+        except OSError:
+            return None
+
     def _video_persona_reference(self) -> Optional[ImageReference]:
         """将当前形象图作为视频首帧参考。"""
-        persona_ref = self.persona.get_reference_image()
-        if not persona_ref:
-            return None
-        return ImageReference(data=persona_ref["data"], mime_type=persona_ref["mime_type"])
+        return self._persona_identity_reference()
 
     async def _send_generated_images(self, event: AstrMessageEvent, files: Iterable[str]) -> int:
         sent = 0
@@ -2959,9 +3107,13 @@ class SelfieImagePlugin(Star):
             "合影默认多数人看向镜头，像认真合影；AI 若面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
         )
         if has_refs:
-            base += " 用户提供或艾特对象的图片是合影角色来源，按形象类型与主角画风统一处理；非人物按风格拟人，无性别默认女性。"
+            base += (
+                " 用户提供或艾特对象的图片是合影角色来源，必须拟人/改画成与主角同一画风的独立完整人物；"
+                "玩偶、毛绒玩具、吉祥物、卡通立牌、表情包、道具等只取配色气质线索，禁止原样保留玩具外形、平面简笔画肢体，"
+                "禁止贴在主角衣服上或与身体衣物粘连融合；非人物按风格拟人，无性别默认女性。"
+            )
         else:
-            base += " 没有合影对象参考图时，按文字要求生成自然同框对象；未指定性别时默认成年女性。"
+            base += " 没有合影对象参考图时，按文字要求生成自然同框完整人物；未指定性别时默认成年女性。"
         extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
         if extra:
             base += f" 用户补充要求：{extra}。"
@@ -3355,10 +3507,10 @@ class SelfieImagePlugin(Star):
 
     async def _build_selfie_prompt_and_refs(self, action: str, extra_refs: List[ImageReference]) -> Tuple[str, List[ImageReference]]:
         await self.persona.ensure_daily_selfie_profile(action)
-        persona_ref = self.persona.get_reference_image()
+        persona_ref = self._persona_identity_reference()
         refs: List[ImageReference] = []
         if persona_ref:
-            refs.append(ImageReference(data=persona_ref["data"], mime_type=persona_ref["mime_type"]))
+            refs.append(persona_ref)
         refs.extend(extra_refs)
         prompt = self.persona.build_selfie_prompt(
             action=action or "看着镜头自然自拍，展示你现在的样子",
@@ -4265,10 +4417,10 @@ class SelfieImagePlugin(Star):
             if not prompt_enhance:
                 refs = list(extra_refs)
                 if payload.get("use_selfie_reference"):
-                    persona_ref = self.persona.get_reference_image()
+                    persona_ref = self._persona_identity_reference()
                     if not persona_ref:
-                        raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
-                    refs.insert(0, ImageReference(data=persona_ref["data"], mime_type=persona_ref["mime_type"]))
+                        raise RuntimeError("当前未设置 AI 自拍形象参考图，且未启用 logo 回退；请先上传形象图、开启「无形象图用 logo」，或取消使用自拍形象参考图")
+                    refs.insert(0, persona_ref)
                 prompt = original_prompt
             elif payload.get("use_selfie_reference"):
                 prompt, refs = await self._build_selfie_prompt_and_refs(original_prompt, extra_refs)
@@ -4532,7 +4684,10 @@ class SelfieImagePlugin(Star):
             action = default_action_with_refs if extra_refs else default_action
         hints: List[str] = []
         if not self.persona.has_reference_image():
-            hints.append("当前还没有设置 AI 形象参考图，会按人设与今日设定生成主角。")
+            if bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
+                hints.append("当前还没有设置 AI 形象参考图，将用插件 logo 作为形象回退；关闭「无形象图用 logo」后改为仅按人设生成。")
+            else:
+                hints.append("当前还没有设置 AI 形象参考图，会按人设与今日设定生成主角。")
         if progress_label == "合影" and not extra_refs:
             hints.append("没有读取到合影对象参考图，会按文字要求生成同框对象。")
         progress = await self._build_contextual_progress_text(event, "selfie", action, requested_count)

@@ -41,6 +41,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "ocr_model": "",
         "prompt_audit_template": "你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{\"allow\":true/false,\"reason\":\"原因\"}",
         "output_audit_template": "你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{\"allow\":true/false,\"reason\":\"原因\"}",
+        # 无形象参考图时：true=回退 logo 图；false=仅用人设文案生成（不注图）
+        "use_logo_when_no_persona": True,
     },
     "permission": {
         "usable_users": "",
@@ -208,6 +210,7 @@ class AICatConfig:
     image_ocr_model: str
     image_prompt_audit_template: str
     image_output_audit_template: str
+    image_use_logo_when_no_persona: bool
     usable_users: List[str]
     blocked_users: List[str]
     whitelist_users: List[str]
@@ -270,6 +273,7 @@ class AICatConfig:
             image_ocr_model=str(image.get("ocr_model") or "").strip(),
             image_prompt_audit_template=str(image.get("prompt_audit_template") or DEFAULT_CONFIG["image"]["prompt_audit_template"]),
             image_output_audit_template=str(image.get("output_audit_template") or DEFAULT_CONFIG["image"]["output_audit_template"]),
+            image_use_logo_when_no_persona=to_bool(image.get("use_logo_when_no_persona"), True),
             usable_users=split_values(permission.get("usable_users")),
             blocked_users=split_values(permission.get("blocked_users")),
             whitelist_users=split_values(permission.get("whitelist_users")),

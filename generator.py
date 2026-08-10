@@ -70,14 +70,13 @@ def _should_advance_to_next_target(class_info: Dict[str, Any]) -> bool:
     """Whether outer fallback may try another channel/model after this error.
 
     - auth / rate_limit: key rotation first; if keys exhausted, next target OK
-    - param / not_found: this model/channel rejected the request — try next target
-    - safety: do not hop channels (same prompt would likely fail again)
+    - param / not_found / safety: this model rejected — try next configured model
     - timeout: skip this label for re-POST, but other targets OK
     """
     category = str(class_info.get("category") or "")
-    if category in {"safety"}:
-        return False
-    if category in {"param", "not_found", "timeout", "network", "rate_limit", "auth", "unknown", "fatal"}:
+    # Safety is model/channel-specific in practice (Grok vs GPT filters differ).
+    # Skip this label and continue priority list instead of aborting the whole job.
+    if category in {"param", "not_found", "timeout", "network", "rate_limit", "auth", "unknown", "fatal", "safety"}:
         return True
     return bool(class_info.get("retryable", True))
 
@@ -157,6 +156,7 @@ async def generate_image_with_fallback(
                 last_error = f"{label}: {class_info.get('user_message') or error_text}"
                 attempt_info["success"] = False
                 attempt_info["error"] = error_text
+                attempt_info["error_user_message"] = str(class_info.get("user_message") or error_text)
                 attempt_info["error_category"] = class_info.get("category")
                 attempt_info["retryable"] = bool(class_info.get("retryable"))
                 attempt_info["image_count"] = len(result.images or [])
@@ -172,12 +172,10 @@ async def generate_image_with_fallback(
                 ):
                     skip_labels.add(target.label)
 
-                # Safety: stop whole job (same prompt would fail elsewhere too).
+                # Safety: skip this model and continue priority list.
                 if class_info.get("category") == "safety":
-                    return ImageGenerateResult(
-                        error=redact_sensitive_text(last_error),
-                        attempts=redact_sensitive_data(attempts),
-                    )
+                    skip_labels.add(target.label)
+                    break
 
                 # Auth exhausted all keys on this target — try next target if any.
                 if class_info.get("category") == "auth" and key_index + 1 >= len(api_keys):
@@ -202,6 +200,7 @@ async def generate_image_with_fallback(
                 last_error = f"{label}: 请求超时（为避免重复扣费，不会自动重提同一请求）"
                 attempt_info["success"] = False
                 attempt_info["error"] = "请求超时"
+                attempt_info["error_user_message"] = "生图请求超时（为避免重复扣费，不会自动重提同一请求）"
                 attempt_info["error_category"] = "timeout"
                 attempt_info["retryable"] = False
                 attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
@@ -216,6 +215,7 @@ async def generate_image_with_fallback(
                 last_error = f"{label}: {class_info.get('user_message') or error_text}"
                 attempt_info["success"] = False
                 attempt_info["error"] = error_text
+                attempt_info["error_user_message"] = str(class_info.get("user_message") or error_text)
                 attempt_info["error_category"] = class_info.get("category")
                 attempt_info["retryable"] = bool(class_info.get("retryable"))
                 attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
@@ -227,10 +227,8 @@ async def generate_image_with_fallback(
                 ):
                     skip_labels.add(target.label)
                 if class_info.get("category") == "safety":
-                    return ImageGenerateResult(
-                        error=redact_sensitive_text(last_error),
-                        attempts=redact_sensitive_data(attempts),
-                    )
+                    skip_labels.add(target.label)
+                    break
                 if _should_advance_to_next_target(class_info):
                     break
                 return ImageGenerateResult(

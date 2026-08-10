@@ -86,7 +86,11 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
         elif status == 404 or re.search(r"model[_\s-]?not[_\s-]?found|no available channel", lowered):
             category = "not_found"
             user_message = "模型不存在或当前分组不可用"
-        elif re.search(r"unsafe|safety|moderation|content[_\s-]?policy|审核", lowered):
+        elif re.search(
+            r"unsafe|safety|moderation|content[_\s-]?policy|审核|安全政策|安全策略|"
+            r"不适合进行图像生成|rejected by content|content moderation",
+            lowered,
+        ) or re.search(r"安全政策|安全策略|内容审核|不适合进行图像生成", text):
             category = "safety"
             user_message = "内容未通过上游安全策略"
         else:
@@ -125,7 +129,14 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
 
     for pattern in NON_RETRYABLE_PATTERNS:
         if re.search(pattern, lowered if pattern.isascii() else text, flags=re.I):
-            if re.search(r"unsafe|safety|moderation|审核", lowered) or "审核" in text:
+            if (
+                re.search(
+                    r"unsafe|safety|moderation|审核|安全政策|安全策略|不适合进行图像生成|rejected by content",
+                    lowered,
+                )
+                or "审核" in text
+                or "安全政策" in text
+            ):
                 category = "safety"
                 user_message = "内容未通过安全策略"
             elif re.search(r"auth|token|key|unauthorized|forbidden|鉴权", lowered):
@@ -209,3 +220,63 @@ def is_transport_profile_switch_error(error: Any) -> bool:
             text,
         )
     )
+
+
+def summarize_generation_failures(
+    attempts: Any,
+    *,
+    fallback_error: str = "",
+) -> Dict[str, Any]:
+    """Build list/detail failure summaries from attempt rows.
+
+    - failure_reason: last failed attempt's single-cause text (for table column)
+    - failure_reasons: each failed attempt with model label + parsed reason
+    - last_failed_model: last failed attempt label (fill empty used_model)
+    """
+    rows: list[Dict[str, Any]] = []
+    for item in list(attempts or []):
+        if not isinstance(item, dict):
+            continue
+        if item.get("success") is True:
+            continue
+        label = str(item.get("label") or item.get("model") or item.get("channel") or "").strip()
+        raw = str(item.get("error") or "").strip()
+        info = classify_generation_error(raw or fallback_error or "生成失败")
+        # Prefer reclassified category so old mis-tagged rows (e.g. 中文安全政策→param) correct on read.
+        category = str(info.get("category") or item.get("error_category") or "").strip()
+        user_message = str(
+            item.get("error_user_message") or info.get("user_message") or raw or "生成失败"
+        ).strip()
+        if not raw and not user_message:
+            continue
+        rows.append(
+            {
+                "label": label,
+                "error": raw,
+                "error_user_message": user_message,
+                "error_category": category,
+                "elapsed_seconds": item.get("elapsed_seconds"),
+                "attempt": item.get("attempt"),
+            }
+        )
+
+    last = rows[-1] if rows else None
+    if last:
+        label = str(last.get("label") or "").strip()
+        reason = str(last.get("error_user_message") or last.get("error") or "").strip()
+        failure_reason = f"{label}: {reason}".strip(": ").strip() if label else reason
+        last_failed_model = label
+    else:
+        failure_reason = str(fallback_error or "").strip()
+        last_failed_model = ""
+        # Prefer "channel/model: reason" already present in top-level error.
+        if failure_reason and ":" in failure_reason:
+            head = failure_reason.split(":", 1)[0].strip()
+            if head and "/" in head:
+                last_failed_model = head
+
+    return {
+        "failure_reason": failure_reason,
+        "failure_reasons": rows,
+        "last_failed_model": last_failed_model,
+    }
