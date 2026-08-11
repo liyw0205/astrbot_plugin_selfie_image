@@ -2246,35 +2246,28 @@ class SelfieImagePlugin(Star):
             last_error = ""
             used_model = ""
             last_result: Dict[str, Any] = {}
-            policy = str(graph.get("channel_policy") or "priority").strip().lower()
-            old_random = bool(getattr(self.config, "random_image_model", False))
-            if policy == "random" and not old_random:
-                self.config.random_image_model = True
-            try:
-                for _ in range(max(1, count)):
-                    if self._task_cancel_requested(task_id):
-                        raise RuntimeError("任务已取消")
-                    result = await self._run_image_generation(
-                        prompt=prompt,
-                        aspect_ratio=aspect,
-                        resolution=resolution,
-                        refs=refs,
-                        source="studio-run",
-                        original_prompt=action,
-                        event=None,
-                        prompt_en_meta=prompt_en_meta,
-                    )
-                    last_result = result if isinstance(result, dict) else {}
-                    if not last_result.get("success"):
-                        last_error = str(last_result.get("error") or "生成失败")
-                        break
-                    used_model = str(last_result.get("used_model") or used_model)
-                    for path in last_result.get("image_paths") or last_result.get("generated_image_paths") or []:
-                        text = str(path or "").strip()
-                        if text:
-                            all_paths.append(text)
-            finally:
-                self.config.random_image_model = old_random
+            for _ in range(max(1, count)):
+                if self._task_cancel_requested(task_id):
+                    raise RuntimeError("任务已取消")
+                result = await self._run_image_generation(
+                    prompt=prompt,
+                    aspect_ratio=aspect,
+                    resolution=resolution,
+                    refs=refs,
+                    source="studio-run",
+                    original_prompt=action,
+                    event=None,
+                    prompt_en_meta=prompt_en_meta,
+                )
+                last_result = result if isinstance(result, dict) else {}
+                if not last_result.get("success"):
+                    last_error = str(last_result.get("error") or "生成失败")
+                    break
+                used_model = str(last_result.get("used_model") or used_model)
+                for path in last_result.get("image_paths") or last_result.get("generated_image_paths") or []:
+                    text = str(path or "").strip()
+                    if text:
+                        all_paths.append(text)
 
             success = bool(all_paths) and not last_error
             error = "" if success else (last_error or "生成失败")
@@ -3902,7 +3895,9 @@ class SelfieImagePlugin(Star):
         }
 
     def _find_image_target(self, channel_name: str = "", model: str = "") -> Optional[ImageModelTarget]:
-        targets = self.config.get_prioritized_targets()
+        targets: List[ImageModelTarget] = []
+        for channel in self.config.image_channels:
+            targets.extend(channel.targets(self.config.image_global_timeout))
         if not channel_name and not model:
             return targets[0] if targets else None
         for target in targets:

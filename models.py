@@ -102,9 +102,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "enabled_image_model_priority": [],
     "enabled_audit_model_priority": [],
     "enabled_video_model_priority": [],
-    # When true: ignore priority list and shuffle enabled models each generate.
-    # Priority list is preserved in config for when random is turned off.
-    "random_image_model": False,
+    # sequence: priority list only, or enabled order when empty; random: one from priority; fixed: priority 1 or enabled 1.
+    "image_model_call_mode": "sequence",
     "video": {
         "enable": True,
         "default_duration": 5,
@@ -283,7 +282,7 @@ class AICatConfig:
     enabled_image_model_priority: List[str]
     enabled_audit_model_priority: List[str]
     enabled_video_model_priority: List[str]
-    random_image_model: bool
+    image_model_call_mode: str
     video_enable: bool
     video_default_duration: int
     video_max_concurrent_tasks: int
@@ -362,6 +361,22 @@ class AICatConfig:
             batch_on_failure = "skip"
         if batch_on_failure not in {"stop", "skip", "skip_max"}:
             batch_on_failure = "skip"
+        source_data = data if isinstance(data, dict) else {}
+        image_model_call_mode = str(
+            source_data.get("image_model_call_mode") or source_data.get("imageModelCallMode") or ""
+        ).strip().lower()
+        if not image_model_call_mode:
+            image_model_call_mode = "random" if to_bool(
+                source_data.get("random_image_model")
+                or source_data.get("randomImageModel")
+                or source_data.get("image_model_random")
+                or source_data.get("imageModelRandom"),
+                False,
+            ) else "sequence"
+        if image_model_call_mode not in {"sequence", "random", "fixed"}:
+            image_model_call_mode = "sequence"
+        raw["image_model_call_mode"] = image_model_call_mode
+        raw.pop("random_image_model", None)
         return cls(
             raw=raw,
             bot_name=str(raw.get("bot_name") or raw.get("botName") or DEFAULT_CONFIG["bot_name"]).strip() or "AI",
@@ -411,13 +426,7 @@ class AICatConfig:
             enabled_image_model_priority=split_values(raw.get("enabled_image_model_priority")),
             enabled_audit_model_priority=split_values(raw.get("enabled_audit_model_priority")),
             enabled_video_model_priority=split_values(raw.get("enabled_video_model_priority")),
-            random_image_model=to_bool(
-                raw.get("random_image_model")
-                or raw.get("randomImageModel")
-                or raw.get("image_model_random")
-                or raw.get("imageModelRandom"),
-                False,
-            ),
+            image_model_call_mode=image_model_call_mode,
             video_enable=to_bool(video.get("enable"), True),
             video_default_duration=to_int(video.get("default_duration"), 5, minimum=1, maximum=60),
             video_max_concurrent_tasks=to_int(video.get("max_concurrent_tasks"), 1, minimum=1, maximum=5),
@@ -487,15 +496,24 @@ class AICatConfig:
         for channel in self.image_channels:
             all_targets.extend(channel.targets(self.image_global_timeout))
 
-        # Random mode: shuffle each request among all enabled models; priority list is ignored
-        # but kept in config so turning random off restores ordered fallback.
-        if self.random_image_model:
+        priority = self.enabled_image_model_priority
+        selected = self._prioritize_targets(all_targets, priority)
+        if priority:
+            allowed = set(priority)
+            selected = [
+                target for target in selected
+                if target.label in allowed or f"{target.channel_name}:{target.model}" in allowed or target.model in allowed
+            ]
+        mode = self.image_model_call_mode
+        if mode == "random":
+            if not priority or not selected:
+                return []
             import random
 
-            shuffled = list(all_targets)
-            random.shuffle(shuffled)
-            return self._bind_download_proxies(shuffled)
-        return self._bind_download_proxies(self._prioritize_targets(all_targets, self.enabled_image_model_priority))
+            selected = [random.choice(selected)]
+        elif mode == "fixed":
+            selected = selected[:1]
+        return self._bind_download_proxies(selected)
 
     def get_audit_targets(self) -> List[ImageModelTarget]:
         targets: List[ImageModelTarget] = []

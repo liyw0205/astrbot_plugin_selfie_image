@@ -822,7 +822,6 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual([target.label for target in targets], [
             "secondary/gemini-2.5-flash-image",
             "primary/custom-image-model",
-            "primary/gpt-image-1",
         ])
         self.assertEqual(targets[1].provider_type, "grok")
         self.assertNotIn("disabled/dall-e-3", [target.label for target in targets])
@@ -881,7 +880,7 @@ class ConfigModelTests(unittest.TestCase):
             ["a/m1", "a/m2", "b/m3"],
         )
 
-    def test_random_image_model_shuffles_and_keeps_priority_list(self) -> None:
+    def test_random_image_model_chooses_one_priority_model(self) -> None:
         raw = {
             "image_channels": [
                 {
@@ -900,26 +899,50 @@ class ConfigModelTests(unittest.TestCase):
                 },
             ],
             "enabled_image_model_priority": ["b/m3", "a/m1"],
-            "random_image_model": True,
+            "image_model_call_mode": "random",
         }
         config = AICatConfig.from_dict(raw)
-        self.assertTrue(config.random_image_model)
+        self.assertEqual(config.image_model_call_mode, "random")
         self.assertEqual(config.enabled_image_model_priority, ["b/m3", "a/m1"])
-        labels = {t.label for t in config.get_prioritized_targets()}
-        self.assertEqual(labels, {"a/m1", "a/m2", "b/m3"})
-        # priority list still applied when random off
-        raw["random_image_model"] = False
+        labels = [t.label for t in config.get_prioritized_targets()]
+        self.assertEqual(len(labels), 1)
+        self.assertIn(labels[0], {"a/m1", "b/m3"})
+        raw["image_model_call_mode"] = "sequence"
         ordered = AICatConfig.from_dict(raw).get_prioritized_targets()
-        self.assertEqual([t.label for t in ordered], ["b/m3", "a/m1", "a/m2"])
+        self.assertEqual([t.label for t in ordered], ["b/m3", "a/m1"])
 
-    def test_web_random_image_model_toggle_preserves_priority(self) -> None:
-        self.assertIn("randomImageModel", INDEX_HTML)
-        self.assertIn("onRandomImageModelChange", INDEX_HTML)
-        self.assertIn("CONFIG.random_image_model", INDEX_HTML)
-        self.assertIn("isRandomImageModel", INDEX_HTML)
-        # Random only suspends image priority; it never clears the stored list.
-        self.assertIn("renderPriorityRows('image')", INDEX_HTML)
-        self.assertNotIn("$('priorityList').value = '';\n      CONFIG.random_image_model", INDEX_HTML)
+    def test_random_image_model_requires_priority_pool(self) -> None:
+        config = AICatConfig.from_dict({
+            "image_model_call_mode": "random",
+            "image_channels": [{"name": "a", "provider_type": "openai", "base_url": "https://a.test", "enabled_models": ["m1"]}],
+        })
+        self.assertEqual(config.get_prioritized_targets(), [])
+
+    def test_fixed_image_model_uses_priority_one_or_first_enabled(self) -> None:
+        raw = {
+            "image_model_call_mode": "fixed",
+            "image_channels": [{"name": "a", "provider_type": "openai", "base_url": "https://a.test", "enabled_models": ["m1", "m2"]}],
+            "enabled_image_model_priority": ["a/m2", "a/m1"],
+        }
+        self.assertEqual([t.label for t in AICatConfig.from_dict(raw).get_prioritized_targets()], ["a/m2"])
+        raw["enabled_image_model_priority"] = []
+        self.assertEqual([t.label for t in AICatConfig.from_dict(raw).get_prioritized_targets()], ["a/m1"])
+
+    def test_image_model_call_mode_defaults_and_migrates_legacy_random(self) -> None:
+        self.assertEqual(AICatConfig.from_dict({}).image_model_call_mode, "sequence")
+        migrated = AICatConfig.from_dict({"random_image_model": True})
+        self.assertEqual(migrated.image_model_call_mode, "random")
+        self.assertEqual(migrated.raw.get("image_model_call_mode"), "random")
+        self.assertNotIn("random_image_model", migrated.raw)
+
+    def test_web_image_model_call_mode_is_select(self) -> None:
+        self.assertIn('id="imageModelCallMode"', INDEX_HTML)
+        self.assertIn('<option value="sequence">顺序</option>', INDEX_HTML)
+        self.assertIn('<option value="random">随机</option>', INDEX_HTML)
+        self.assertIn('<option value="fixed">固定</option>', INDEX_HTML)
+        self.assertIn("CONFIG.image_model_call_mode", INDEX_HTML)
+        self.assertNotIn('id="randomImageModel"', INDEX_HTML)
+        self.assertNotIn("isRandomImageModel", INDEX_HTML)
 
 
 class ImageUtilityTests(unittest.TestCase):

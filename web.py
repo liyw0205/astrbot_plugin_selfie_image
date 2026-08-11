@@ -499,9 +499,9 @@ INDEX_HTML = r"""<!doctype html>
       <div id="channelPaneVideo" class="channel-pane"><div id="videoChannelList"></div></div>
       <div class="priority-block" data-priority-kind="image">
         <h3>生图模型优先级</h3>
-        <p class="muted">只控制生图渠道。未设置时按渠道与模型启用顺序。</p>
+        <p class="muted">顺序：有优先级时只按列表重试，未设置时按启用顺序。随机：从优先级中随机选一个。固定：只用优先级 1，未设置时用启用模型 1。</p>
         <div class="grid">
-          <div><label>模型选择模式</label><div class="actions" style="margin-top:8px"><label class="check"><input id="randomImageModel" type="checkbox" onchange="onRandomImageModelChange()"> 随机（启用时忽略生图优先级）</label></div></div>
+          <div><label>模型调用模式</label><select id="imageModelCallMode" onchange="onImageModelCallModeChange()"><option value="sequence">顺序</option><option value="random">随机</option><option value="fixed">固定</option></select></div>
           <div><label>选择生图模型</label><select id="priorityPicker"></select></div>
           <div><label>操作</label><div class="actions" style="margin-top:0"><button id="addPriorityBtn" class="secondary" type="button" onclick="addPriority('image')">加入</button><button id="clearPriorityBtn" class="secondary" type="button" onclick="clearPriority('image')">清空</button></div></div>
         </div>
@@ -602,15 +602,7 @@ INDEX_HTML = r"""<!doctype html>
         <div><label>清晰度</label><select id="studioResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
         <div><label>张数</label><input id="studioCount" type="number" min="1" max="4" value="1"></div>
       </div>
-      <div class="grid">
-        <label class="checkline"><input id="studioUsePersona" type="checkbox" checked> 缺形象槽时用当前形象</label>
-        <div><label>渠道策略</label>
-          <select id="studioPolicy">
-            <option value="priority">按优先级/启用序</option>
-            <option value="random">随机启用模型</option>
-          </select>
-        </div>
-      </div>
+      <label class="checkline"><input id="studioUsePersona" type="checkbox" checked> 缺形象槽时用当前形象</label>
       <div class="between">
         <label>提示词</label>
         <button class="secondary" id="studioPresetBtn" type="button">预设</button>
@@ -1152,7 +1144,8 @@ Source prompt:
       CONFIG.enabled_image_model_priority ??= [];
       CONFIG.enabled_audit_model_priority ??= [];
       CONFIG.enabled_video_model_priority ??= [];
-      CONFIG.random_image_model ??= false;
+      CONFIG.image_model_call_mode ??= CONFIG.random_image_model ? 'random' : 'sequence';
+      delete CONFIG.random_image_model;
       const img = CONFIG.image;
       img.enable_llm_tool ??= true;
       img.default_aspect_ratio ??= '自动';
@@ -1245,8 +1238,7 @@ Source prompt:
         $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
         $('auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\n');
         $('videoPriorityList').value = (CONFIG.enabled_video_model_priority || []).join('\n');
-        if ($('randomImageModel')) $('randomImageModel').checked = !!CONFIG.random_image_model;
-        updatePriorityControlsState();
+        if ($('imageModelCallMode')) $('imageModelCallMode').value = ['sequence','random','fixed'].includes(CONFIG.image_model_call_mode) ? CONFIG.image_model_call_mode : 'sequence';
         renderAllChannelLists();
         refreshModelSelectors();
         renderAllPriorityRows();
@@ -1304,7 +1296,7 @@ Source prompt:
       CONFIG.enabled_image_model_priority = textList('priorityList');
       CONFIG.enabled_audit_model_priority = textList('auditPriorityList');
       CONFIG.enabled_video_model_priority = textList('videoPriorityList');
-      CONFIG.random_image_model = !!( $('randomImageModel') && $('randomImageModel').checked );
+      CONFIG.image_model_call_mode = ($('imageModelCallMode') && $('imageModelCallMode').value) || 'sequence';
       return CONFIG;
     }
 
@@ -2182,7 +2174,6 @@ Source prompt:
       return kind === 'audit' ? auditModelLabels() : kind === 'video' ? videoModelLabels() : allModelLabels();
     }
     function addPriority(kind = 'image') {
-      if (kind === 'image' && isRandomImageModel()) return;
       const ui = priorityUi(kind), value = $(ui.picker).value;
       if (!value) return;
       const current = textList(ui.list);
@@ -2192,7 +2183,6 @@ Source prompt:
       scheduleChannelListAutoSave();
     }
     function clearPriority(kind = 'image') {
-      if (kind === 'image' && isRandomImageModel()) return;
       const ui = priorityUi(kind);
       $(ui.list).value = '';
       renderPriorityRows(kind);
@@ -2217,7 +2207,6 @@ Source prompt:
       return next;
     }
     function movePriority(kind, index, delta) {
-      if (kind === 'image' && isRandomImageModel()) return;
       const ui = priorityUi(kind), items = textList(ui.list), next = index + delta;
       if (next < 0 || next >= items.length) return;
       const item = items.splice(index, 1)[0];
@@ -2225,35 +2214,18 @@ Source prompt:
       setPriorityItems(kind, items);
     }
     function removePriority(kind, index) {
-      if (kind === 'image' && isRandomImageModel()) return;
       const ui = priorityUi(kind), items = textList(ui.list);
       items.splice(index, 1);
       setPriorityItems(kind, items);
     }
-    function isRandomImageModel() {
-      return !!( $('randomImageModel') && $('randomImageModel').checked );
-    }
-    function onRandomImageModelChange() {
-      CONFIG.random_image_model = isRandomImageModel();
-      updatePriorityControlsState();
+    function onImageModelCallModeChange() {
+      CONFIG.image_model_call_mode = ($('imageModelCallMode') && $('imageModelCallMode').value) || 'sequence';
       renderPriorityRows('image');
       scheduleChannelListAutoSave();
-    }
-    function updatePriorityControlsState() {
-      const random = isRandomImageModel();
-      for (const id of ['priorityPicker','addPriorityBtn','clearPriorityBtn']) if ($(id)) $(id).disabled = random;
-      if ($('priorityRows')) $('priorityRows').style.opacity = random ? '0.55' : '1';
     }
     function renderPriorityRows(kind = 'image') {
       const ui = priorityUi(kind), items = textList(ui.list), box = $(ui.rows);
       if (!box) return;
-      const random = kind === 'image' && isRandomImageModel();
-      if (kind === 'image') updatePriorityControlsState();
-      if (random) {
-        box.innerHTML = '<div class="muted">已开启随机：生图优先级暂不生效，关闭随机后恢复。</div>'
-          + items.map(item => `<div class="model-row"><div class="name">${escapeHtml(item)} <span class="muted">（暂停）</span></div></div>`).join('');
-        return;
-      }
       box.innerHTML = items.map((item, i) => `
         <div class="model-row"><div class="name">${escapeHtml(item)}</div><div class="actions">
           <button class="secondary mini" type="button" onclick="movePriority('${kind}', ${i}, -1)">上移</button>
@@ -3787,7 +3759,6 @@ Source prompt:
       $('studioResolution').value = g.resolution || '1K';
       $('studioCount').value = g.count || 1;
       $('studioUsePersona').checked = g.use_persona_identity !== false;
-      $('studioPolicy').value = g.channel_policy || 'priority';
       setSelectOptions('studioAspect', ['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'], g.aspect_ratio || '自动');
       const lr = s.last_run;
       const running = !!(lr && lr.status === 'running') || !!STUDIO.running;
@@ -3838,7 +3809,6 @@ Source prompt:
           resolution: $('studioResolution').value,
           count: Number($('studioCount').value || 1),
           use_persona_identity: $('studioUsePersona').checked,
-          channel_policy: $('studioPolicy').value,
         }
       };
       const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id), {

@@ -462,7 +462,6 @@ def empty_session(
             "count": 1,
             "input_order": input_order,
             "use_persona_identity": bool(meta.get("use_persona_identity", True)),
-            "channel_policy": "priority",
         },
         "results": [],
         "last_run": None,
@@ -582,7 +581,6 @@ class StudioStore:
                 "count",
                 "input_order",
                 "use_persona_identity",
-                "channel_policy",
             ):
                 if key in graph_patch:
                     graph[key] = graph_patch[key]
@@ -599,8 +597,6 @@ class StudioStore:
                 order = []
             graph["input_order"] = [str(x) for x in order if str(x).strip()]
             graph["use_persona_identity"] = bool(graph.get("use_persona_identity", True))
-            policy = str(graph.get("channel_policy") or "priority").strip().lower()
-            graph["channel_policy"] = "random" if policy == "random" else "priority"
             session["graph"] = graph
             if "title" in graph_patch and str(graph_patch.get("title") or "").strip():
                 session["title"] = str(graph_patch.get("title")).strip()[:80]
