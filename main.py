@@ -2208,8 +2208,39 @@ class SelfieImagePlugin(Star):
                     has_reference_image=has_identity,
                     extra_reference_count=extra_count,
                 )
+                prompt_en_meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
+                if self._prompt_en_needed(action, media="image"):
+                    from .prompt_templates import build_selfie_builtin_prompt, extract_user_prompt
+
+                    user_text = extract_user_prompt(action)
+                    translated_user = ""
+                    if user_text:
+                        translated_user, prompt_en_meta = await self._translate_prompt_to_english(
+                            user_text, media="image", event=None
+                        )
+                        if not prompt_en_meta.get("applied"):
+                            translated_user = ""
+                    else:
+                        prompt_en_meta.update({"enabled": True, "applied": True, "scope": "builtin_only"})
+                    if prompt_en_meta.get("applied"):
+                        prompt = build_selfie_builtin_prompt(
+                            action,
+                            language="en",
+                            has_reference_image=has_identity,
+                            extra_reference_count=extra_count,
+                            appearance_type=self.persona.get_appearance_type(),
+                            user_text=translated_user,
+                        )
             else:
-                prompt = build_prompt_with_reference_instruction(action, refs)
+                user_prompt = action
+                prompt_en_meta = {"enabled": False, "applied": False, "scope": "user_text_only"}
+                if self._prompt_en_needed(user_prompt, media="image"):
+                    translated, prompt_en_meta = await self._translate_prompt_to_english(
+                        user_prompt, media="image", event=None
+                    )
+                    if prompt_en_meta.get("applied") and translated:
+                        user_prompt = translated
+                prompt = build_prompt_with_reference_instruction(user_prompt, refs)
 
             all_paths: List[str] = []
             last_error = ""
@@ -2231,6 +2262,7 @@ class SelfieImagePlugin(Star):
                         source="studio-run",
                         original_prompt=action,
                         event=None,
+                        prompt_en_meta=prompt_en_meta,
                     )
                     last_result = result if isinstance(result, dict) else {}
                     if not last_result.get("success"):
@@ -3480,8 +3512,18 @@ class SelfieImagePlugin(Star):
         action = self._normalize_selfie_action(action, bool(extra_refs))
         total_sent = 0
         for _ in range(requested_count):
-            prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
-            result = await self._run_image_generation(prompt, aspect, resolution, refs, source="llm-generate-selfie", audit_user_id=event_user_id(event), event=event, original_prompt=action)
+            prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(event, action, extra_refs)
+            result = await self._run_image_generation(
+                prompt,
+                aspect,
+                resolution,
+                refs,
+                source="llm-generate-selfie",
+                audit_user_id=event_user_id(event),
+                event=event,
+                original_prompt=action,
+                prompt_en_meta=prompt_en_meta,
+            )
             if not result.get("success"):
                 return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("selfie"))
             sent = await self._send_generated_images(event, result.get("files", []))
@@ -3527,6 +3569,7 @@ class SelfieImagePlugin(Star):
         original_prompt: str = "",
         max_attempts: Optional[int] = None,
         allow_compat_retry: bool = True,
+        prompt_en_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         selected_targets = targets or self._resolve_generation_targets(event)
         request_prompt = str(prompt or "")
@@ -3544,6 +3587,10 @@ class SelfieImagePlugin(Star):
             "request_image_paths": request_image_paths,
             "targets": [redact_sensitive_text(target.label) for target in selected_targets],
         }
+        if prompt_en_meta:
+            request_data["prompt_en"] = dict(prompt_en_meta)
+            if prompt_en_meta.get("applied"):
+                request_data["request_prompt_en"] = request_prompt
         request_cleanup = self._cleanup_image_cache_if_needed(request_image_paths)
         if request_cleanup.get("deleted"):
             request_data["cache_cleanup_before_generation"] = request_cleanup
@@ -3571,7 +3618,7 @@ class SelfieImagePlugin(Star):
             return {"success": False, "error": f"提示词审核未通过：{audit_reason}"}
 
         # Optional: translate final image prompt to English for models weak on Chinese.
-        if self._prompt_en_needed(request_prompt, media="image"):
+        if prompt_en_meta is None and self._prompt_en_needed(request_prompt, media="image"):
             translated, en_meta = await self._translate_prompt_to_english(
                 request_prompt, media="image", event=event
             )
@@ -3754,6 +3801,50 @@ class SelfieImagePlugin(Star):
             extra_reference_count=len(extra_refs),
         )
         return prompt, refs
+
+    async def _build_selfie_prompt_and_refs_for_event(
+        self,
+        event: Optional[AstrMessageEvent],
+        action: str,
+        extra_refs: List[ImageReference],
+    ) -> Tuple[str, List[ImageReference], Dict[str, Any]]:
+        """Use the central English built-ins and translate only free-form user text."""
+        prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
+        has_identity_reference = bool(self._persona_identity_reference())
+        meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
+        if not self._prompt_en_needed(action, media="image"):
+            return prompt, refs, meta
+        from .prompt_templates import build_selfie_builtin_prompt, extract_user_prompt
+
+        user_text = extract_user_prompt(action)
+        if not user_text:
+            english = build_selfie_builtin_prompt(
+                action,
+                language="en",
+                has_reference_image=has_identity_reference,
+                extra_reference_count=len(extra_refs),
+                appearance_type=self.persona.get_appearance_type(),
+            )
+            meta.update({"enabled": True, "applied": True, "scope": "builtin_only"})
+            return english, refs, meta
+        translated, translation_meta = await self._translate_prompt_to_english(
+            user_text,
+            media="image",
+            event=event,
+        )
+        meta.update(translation_meta)
+        meta["scope"] = "user_text_only"
+        if not translation_meta.get("applied"):
+            return prompt, refs, meta
+        english = build_selfie_builtin_prompt(
+            action,
+            language="en",
+            has_reference_image=has_identity_reference,
+            extra_reference_count=len(extra_refs),
+            appearance_type=self.persona.get_appearance_type(),
+            user_text=translated,
+        )
+        return english, refs, meta
 
     def get_selfie_reference_payload(self) -> Dict[str, Any]:
         data = self.persona.get()
@@ -4451,6 +4542,42 @@ class SelfieImagePlugin(Star):
                 base = f"{base}"
         return base
 
+    async def _batch_shot_fail_message(
+        self,
+        event: AstrMessageEvent,
+        *,
+        index: int,
+        total: int,
+        done_files: int,
+        error: str,
+        will_continue: bool,
+    ) -> str:
+        """Prefer a soft LLM sentence while keeping a deterministic fallback."""
+        from .prompt_templates import build_batch_failure_llm_prompt
+
+        reason = re.sub(r"\s+", " ", str(error or "").strip())[:160]
+        llm_prompt = build_batch_failure_llm_prompt(
+            bot_name=self._bot_display_name(),
+            reason=reason,
+            index=index,
+            total=total,
+            done_files=done_files,
+            will_continue=will_continue,
+        )
+        reply = self._strip_llm_short_reply(await self._call_text_llm(event, llm_prompt, timeout=6))
+        if reply and len(reply) <= 90 and "可能" not in reply:
+            return reply
+        return self._batch_shot_fail_text(
+            index=index,
+            total=total,
+            done_files=done_files,
+            error=reason,
+            mode="skip" if will_continue else "stop",
+            skipped=0,
+            skip_max=0,
+            will_continue=will_continue,
+        )
+
     async def _background_draw_batches(
         self,
         task_id: str,
@@ -4490,14 +4617,12 @@ class SelfieImagePlugin(Star):
                     will_continue = True
                 elif mode == "skip_max" and skipped_shots <= skip_max:
                     will_continue = True
-                msg = self._batch_shot_fail_text(
+                msg = await self._batch_shot_fail_message(
+                    event,
                     index=index + 1,
                     total=total,
                     done_files=len(all_files),
                     error=error,
-                    mode=mode,
-                    skipped=skipped_shots,
-                    skip_max=skip_max,
                     will_continue=will_continue,
                 )
                 try:
@@ -4613,7 +4738,7 @@ class SelfieImagePlugin(Star):
                     m_shot = re.search(r"【shot:([a-z_]+)】", round_action)
                     if m_shot:
                         last_shot = str(m_shot.group(1) or last_shot)
-            prompt, refs = await self._build_selfie_prompt_and_refs(round_action, extra_refs)
+            prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(event, round_action, extra_refs)
             result = await self._run_image_generation(
                 prompt,
                 aspect,
@@ -4623,6 +4748,7 @@ class SelfieImagePlugin(Star):
                 audit_user_id=event_user_id(event),
                 event=event,
                 original_prompt=round_action,
+                prompt_en_meta=prompt_en_meta,
             )
             if not result.get("success"):
                 raw_err = str(result.get("error") or "")
@@ -4634,14 +4760,12 @@ class SelfieImagePlugin(Star):
                     will_continue = True
                 elif mode == "skip_max" and skipped_shots <= skip_max:
                     will_continue = True
-                msg = self._batch_shot_fail_text(
+                msg = await self._batch_shot_fail_message(
+                    event,
                     index=index + 1,
                     total=total,
                     done_files=len(all_files),
                     error=error,
-                    mode=mode,
-                    skipped=skipped_shots,
-                    skip_max=skip_max,
                     will_continue=will_continue,
                 )
                 try:
@@ -4998,11 +5122,47 @@ class SelfieImagePlugin(Star):
                 return
 
     async def _draw_once(self, event: AstrMessageEvent, prompt: str, aspect: str, resolution: str, refs: List[ImageReference], source: str) -> Dict[str, Any]:
-        final_prompt = build_prompt_with_reference_instruction(prompt, refs)
-        return await self._run_image_generation(final_prompt, aspect, resolution, refs, source=source, audit_user_id=event_user_id(event), event=event, original_prompt=prompt)
+        user_prompt = str(prompt or "").strip()
+        prompt_en_meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
+        if self._prompt_en_needed(user_prompt, media="image"):
+            translated, prompt_en_meta = await self._translate_prompt_to_english(
+                user_prompt, media="image", event=event
+            )
+            if prompt_en_meta.get("applied") and translated:
+                user_prompt = translated
+        final_prompt = build_prompt_with_reference_instruction(user_prompt, refs)
+        return await self._run_image_generation(
+            final_prompt,
+            aspect,
+            resolution,
+            refs,
+            source=source,
+            audit_user_id=event_user_id(event),
+            event=event,
+            original_prompt=prompt,
+            prompt_en_meta=prompt_en_meta,
+        )
 
     async def _draw_passthrough_once(self, event: AstrMessageEvent, prompt: str, aspect: str, resolution: str, refs: List[ImageReference], source: str) -> Dict[str, Any]:
-        return await self._run_image_generation(prompt, aspect, resolution, refs, source=source, audit_user_id=event_user_id(event), event=event, original_prompt=prompt)
+        user_prompt = str(prompt or "").strip()
+        prompt_en_meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
+        if self._prompt_en_needed(user_prompt, media="image"):
+            translated, prompt_en_meta = await self._translate_prompt_to_english(
+                user_prompt, media="image", event=event
+            )
+            if prompt_en_meta.get("applied") and translated:
+                user_prompt = translated
+        return await self._run_image_generation(
+            user_prompt,
+            aspect,
+            resolution,
+            refs,
+            source=source,
+            audit_user_id=event_user_id(event),
+            event=event,
+            original_prompt=prompt,
+            prompt_en_meta=prompt_en_meta,
+        )
 
     async def _handle_selfie_command(
         self,

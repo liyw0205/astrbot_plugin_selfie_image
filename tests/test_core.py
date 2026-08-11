@@ -426,6 +426,70 @@ class ConfigModelTests(unittest.TestCase):
         fenced = "```json\n{\"ok\":true,\"en\":\"cat walk\"}\n```"
         self.assertEqual(parse(fenced), "cat walk")
 
+    def test_bilingual_prompt_only_replaces_user_text(self) -> None:
+        from astrbot_plugin_selfie_image.prompt_templates import BilingualPrompt
+
+        prompt = BilingualPrompt(
+            builtin_zh="内置中文约束",
+            builtin_en="Built-in English constraints.",
+            user_text="海边回头微笑",
+        )
+        self.assertEqual(prompt.render_zh(), "内置中文约束\n用户要求：海边回头微笑")
+        self.assertEqual(
+            prompt.render_en("turn back and smile by the sea"),
+            "Built-in English constraints.\nUser request: turn back and smile by the sea",
+        )
+        self.assertEqual(prompt.render_en(), "Built-in English constraints.")
+        self.assertNotIn("内置中文约束", prompt.render_en("turn back and smile by the sea"))
+
+    def test_selfie_builtin_prompt_has_compact_english_version(self) -> None:
+        from astrbot_plugin_selfie_image.prompt_templates import build_selfie_builtin_prompt
+
+        zh = build_selfie_builtin_prompt(
+            "看看腿。用户补充要求优先：窗边白裙。 【pose:sit】",
+            language="zh",
+            has_reference_image=True,
+            extra_reference_count=0,
+            appearance_type="real",
+        )
+        en = build_selfie_builtin_prompt(
+            "看看腿。用户补充要求优先：窗边白裙。 【pose:sit】",
+            language="en",
+            has_reference_image=True,
+            extra_reference_count=0,
+            appearance_type="real",
+        )
+        self.assertIn("下半身", zh)
+        self.assertIn("lower-body", en)
+        self.assertNotRegex(en, r"[\u3400-\u9fff]")
+        self.assertNotIn("User request:", en)
+        self.assertLess(len(en), 2400)
+
+        translated = build_selfie_builtin_prompt(
+            "看看腿。用户补充要求优先：窗边白裙。 【pose:sit】",
+            language="en",
+            has_reference_image=True,
+            appearance_type="real",
+            user_text="a white dress by the window",
+        )
+        self.assertIn("User request: a white dress by the window", translated)
+
+    def test_batch_failure_llm_prompt_is_soft_and_keeps_single_reason(self) -> None:
+        from astrbot_plugin_selfie_image.prompt_templates import build_batch_failure_llm_prompt
+
+        prompt = build_batch_failure_llm_prompt(
+            bot_name="啊呜",
+            reason="上游暂时繁忙",
+            index=2,
+            total=4,
+            done_files=1,
+            will_continue=True,
+        )
+        self.assertIn("上游暂时繁忙", prompt)
+        self.assertIn("还会继续尝试后面的", prompt)
+        self.assertIn("自然、柔和", prompt)
+        self.assertNotIn("可能", prompt)
+
     
     def test_batch_on_failure_config(self) -> None:
         from astrbot_plugin_selfie_image.models import AICatConfig, DEFAULT_CONFIG
