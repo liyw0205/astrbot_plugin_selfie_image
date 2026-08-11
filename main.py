@@ -475,9 +475,72 @@ class SelfieImagePlugin(Star):
     def get_config_for_web(self) -> Dict[str, Any]:
         return self._strip_web_startup_config(self.raw_config)
 
+    def list_proxies_for_web(self, *, mask_password: bool = True) -> List[Dict[str, Any]]:
+        from .models import normalize_proxies_list, public_proxy_row
+        rows = normalize_proxies_list((self.raw_config or {}).get("proxies") or [])
+        return [public_proxy_row(row, mask_password=mask_password) for row in rows]
+
+    def _find_proxy_row(self, proxy_id: str) -> Dict[str, Any]:
+        from .models import normalize_proxies_list
+        pid = str(proxy_id or "").strip()
+        if not pid:
+            raise ValueError("缺少代理 id")
+        for row in normalize_proxies_list((self.raw_config or {}).get("proxies") or []):
+            if str(row.get("id") or "") == pid:
+                return row
+        raise ValueError("代理不存在")
+
+    async def test_proxy_connectivity(self, proxy_id: str = "", proxy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        from .models import normalize_proxy_entry
+        from .proxy import probe_proxy_connectivity
+        if proxy_id:
+            row = self._find_proxy_row(proxy_id)
+        else:
+            row = normalize_proxy_entry(proxy or {})
+            if not row:
+                raise ValueError("代理参数无效")
+        result = await probe_proxy_connectivity(str(row.get("url") or ""))
+        result["proxy_id"] = str(row.get("id") or proxy_id or "")
+        result["proxy_name"] = str(row.get("name") or "")
+        return result
+
+    async def test_proxy_quality(self, proxy_id: str = "", proxy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        from .models import normalize_proxy_entry
+        from .proxy import probe_proxy_quality
+        if proxy_id:
+            row = self._find_proxy_row(proxy_id)
+        else:
+            row = normalize_proxy_entry(proxy or {})
+            if not row:
+                raise ValueError("代理参数无效")
+        result = await probe_proxy_quality(str(row.get("url") or ""))
+        result["proxy_id"] = str(row.get("id") or proxy_id or "")
+        result["proxy_name"] = str(row.get("name") or "")
+        return result
+
     def update_config_from_web(self, patch: Dict[str, Any]) -> Dict[str, Any]:
         with self._config_lock:
             patch = self._strip_web_startup_config(patch)
+            if isinstance(patch, dict) and isinstance(patch.get("proxies"), list):
+                # Keep existing proxy passwords when UI sends blank / masked values.
+                old_by_id = {
+                    str(item.get("id") or ""): item
+                    for item in (self.raw_config.get("proxies") or [])
+                    if isinstance(item, dict) and item.get("id")
+                }
+                fixed = []
+                for item in patch["proxies"]:
+                    if not isinstance(item, dict):
+                        continue
+                    row = dict(item)
+                    pid = str(row.get("id") or "").strip()
+                    pwd = str(row.get("password") or "")
+                    if pid and old_by_id.get(pid) and pwd in {"", "******", "[REDACTED]", "«redacted»"}:
+                        old_pwd = str(old_by_id[pid].get("password") or "")
+                        if old_pwd and old_pwd not in {"******", "[REDACTED]"}:
+                            row["password"] = old_pwd
+                    fixed.append(row)
+                patch["proxies"] = fixed
             merged = deep_merge(self.raw_config, patch)
             from .models import preflight_config_channels, sanitize_channels_for_save
 
@@ -4779,7 +4842,7 @@ class SelfieImagePlugin(Star):
                 "· /生图帮助　只看图卡",
                 "· /生图help　看本页完整说明",
                 f"管理页：{'已开' if self.config.web_enable else '未开'}　http://{self.config.web_host}:{self.config.web_port}",
-                "也可在 AstrBot 插件页打开内嵌管理（用后台登录即可，不必再输 Web 口令）。",
+                "也可在 AstrBot 插件页打开管理界面。",
             ]
         )
 

@@ -212,6 +212,11 @@
     .model-list.collapsed { max-height: 240px; overflow-y: auto; border: 1px dashed var(--line); padding: 4px; border-radius: 6px; }
     .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px; background: #f8fafc; }
     .model-row.with-provider { grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) auto; }
+    .model-row.with-provider-download { grid-template-columns: minmax(0, 1fr) minmax(120px, 150px) minmax(120px, 160px) auto; }
+    .model-download-proxy { min-width: 120px; padding: 5px 8px; font-size: 12px; }
+    @media (max-width: 900px) {
+      .model-row.with-provider-download { grid-template-columns: 1fr; }
+    }
     .model-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .model-row .actions { margin-top: 0; }
     .model-provider { min-width: 150px; padding: 5px 8px; font-size: 12px; }
@@ -267,6 +272,45 @@
     .model-attempt-empty { color:var(--muted); }
     .model-retry-chain { display:flex; flex-wrap:wrap; align-items:center; gap:5px; }
     .model-retry-arrow { color:var(--muted); font-size:14px; line-height:1; }
+    .proxy-card { border:1px solid var(--line); border-radius:14px; background:linear-gradient(180deg,#fff, #f8fafc); box-shadow:var(--shadow); padding:12px; display:grid; gap:10px; }
+    .proxy-card-head { display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; }
+    .proxy-title { display:flex; flex-direction:column; gap:4px; min-width:0; flex:1; }
+    .proxy-title b { font-size:15px; line-height:1.3; word-break:break-word; }
+    .proxy-chips { display:flex; flex-wrap:wrap; gap:6px; }
+    .proxy-chip { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:650; border:1px solid var(--line); background:#fff; color:var(--muted); }
+    .proxy-chip.proto { background:#eef7fc; color:#1d70a2; border-color:#b9dcef; }
+    .proxy-chip.on { background:#eaf8ef; color:#067647; border-color:#abe2c0; }
+    .proxy-chip.off { background:#f4f4f5; color:#667085; }
+    .proxy-chip.auth { background:#fff7e8; color:#b54708; border-color:#f7d7a8; }
+    .proxy-addr { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; color:var(--text); background:#fff; border:1px dashed var(--line); border-radius:8px; padding:6px 8px; word-break:break-all; }
+    .proxy-actions { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:6px; }
+    .proxy-actions .mini, .proxy-actions label.checkline {
+      width:100%; justify-content:center; margin:0; min-height:34px; padding:6px 4px; font-size:12px;
+    }
+    .proxy-actions label.checkline { border:1px solid var(--line); border-radius:8px; background:#fff; gap:4px; padding:0 6px; }
+    .proxy-result { border-top:1px dashed var(--line); padding-top:10px; display:grid; gap:8px; }
+    .proxy-result.empty { display:none; }
+    .proxy-kpi { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:6px; }
+    .proxy-kpi .cell { background:#fff; border:1px solid var(--line); border-radius:10px; padding:8px; min-width:0; }
+    .proxy-kpi .k { font-size:10px; color:var(--muted); font-weight:650; }
+    .proxy-kpi .v { margin-top:3px; font-size:12px; font-weight:700; color:var(--text); word-break:break-word; line-height:1.35; }
+    .proxy-qgrid { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:6px; }
+    .proxy-qitem { background:#fff; border:1px solid var(--line); border-radius:10px; padding:8px; display:grid; gap:4px; }
+    .proxy-qitem .name { font-size:12px; font-weight:700; }
+    .proxy-qitem .line { font-size:11px; color:var(--muted); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .badge-code { display:inline-flex; align-items:center; padding:1px 6px; border-radius:999px; font-size:11px; font-weight:700; border:1px solid var(--line); }
+    .badge-code.ok { background:#eaf8ef; color:#067647; border-color:#abe2c0; }
+    .badge-code.warn { background:#fff7e8; color:#b54708; border-color:#f7d7a8; }
+    .badge-code.bad { background:#fde9e7; color:#b42318; border-color:#f5c5c0; }
+    .badge-code.mute { background:#f4f4f5; color:#667085; }
+    @media (max-width: 720px) {
+      .proxy-actions { grid-template-columns:repeat(2, minmax(0,1fr)); }
+      .proxy-kpi { grid-template-columns:1fr; }
+      .proxy-qgrid { grid-template-columns:1fr 1fr; }
+    }
+    @media (max-width: 420px) {
+      .proxy-qgrid { grid-template-columns:1fr; }
+    }
     .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-top:12px; }
     .stat-card { border:1px solid var(--line); border-radius:var(--radius-md); background:#fff; padding:10px 12px; box-shadow:var(--shadow); }
     .stat-card .k { font-size:11px; color:var(--muted); font-weight:650; }
@@ -319,7 +363,7 @@
     <div class="login-box">
       <p class="header-eyebrow">Selfie Image</p>
       <h1>管理登录</h1>
-      <p class="muted" id="loginHint">独立打开时需要管理口令。在 AstrBot 插件页里打开会自动登录，不用再输。</p>
+      <p class="muted" id="loginHint">请输入管理口令后进入。</p>
       <label>管理口令</label>
       <input id="loginToken" type="password" placeholder="管理口令" autocomplete="current-password">
       <div class="actions">
@@ -333,9 +377,9 @@
     <div class="header-brand">
       <img class="header-logo" src="__SELFIE_LOGO_SRC__" alt="" onerror="this.style.display='none'">
       <div>
-        <p class="header-eyebrow">Plugin Page</p>
+        <p class="header-eyebrow">Selfie Image</p>
         <h1>生图 · 自拍 管理</h1>
-        <p class="header-sub">渠道、试画、形象与记录，内嵌页与独立页同一套界面</p>
+        <p class="header-sub">渠道、试画、形象与记录</p>
       </div>
     </div>
     <div class="topline">
@@ -347,6 +391,7 @@
     <nav class="page-nav" aria-label="功能分区">
       <button data-tab="base" class="active" type="button">基础</button>
       <button data-tab="channels" type="button">渠道</button>
+      <button data-tab="proxies" type="button">代理</button>
       <button data-tab="monitor" type="button">记录</button>
       <button data-tab="studio" type="button">画布</button>
       <button data-tab="test" type="button">试画</button>
@@ -426,6 +471,20 @@
         <div id="videoPriorityRows" class="model-list"></div>
       </div>
       <div id="channelStatus" class="status" style="margin-top:12px"></div>
+    </section>
+
+
+    <section id="proxies">
+      <div class="between">
+        <h2>代理</h2>
+        <div class="actions" style="margin-top:0">
+          <button class="secondary" type="button" onclick="renderProxyList()">刷新</button>
+          <button class="ok" type="button" onclick="openProxyModal(-1)">添加代理</button>
+        </div>
+      </div>
+      <p class="muted">统一管理 HTTP / SOCKS5 代理。渠道只从已启用列表中选择；连通测试看出口，质量测试探测常用生图站点是否可达。</p>
+      <div id="proxyList" class="model-list" style="margin-top:12px"></div>
+      <div id="proxyStatus" class="status" style="margin-top:12px"></div>
     </section>
 
     <section id="monitor">
@@ -648,7 +707,7 @@
           <button class="secondary restore-btn" id="modalBaseUrlRestore" type="button" title="恢复为当前类型默认 Base URL" aria-label="恢复默认 Base URL">↺</button>
         </div>
         <div><label>API Key（可多行，每行一把；鉴权失败或限流会自动换下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
-        <div><label>代理 URL</label><input id="modalProxy" placeholder="http://127.0.0.1:7890"></div>
+        <div><label>代理</label><select id="modalProxyId"><option value="">直连（不使用代理）</option></select></div>
         <div><label>超时（秒）</label><input id="modalTimeout" type="number" min="10" max="900"></div>
       </div>
       <p class="muted" id="modalProviderHint" style="margin-top:8px">渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。</p>
@@ -688,6 +747,41 @@
     </div>
   </div>
 
+
+  <div id="proxyModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2 id="proxyModalTitle">添加代理</h2>
+        <button class="secondary" type="button" onclick="closeProxyModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid">
+          <div><label>名称</label><input id="proxyName" placeholder="可选，默认用 协议://主机:端口"></div>
+          <div><label>协议</label>
+            <select id="proxyProtocol">
+              <option value="http">HTTP</option>
+              <option value="https">HTTPS</option>
+              <option value="socks5">SOCKS5</option>
+              <option value="socks5h">SOCKS5H</option>
+            </select>
+          </div>
+          <div><label>IP / 主机</label><input id="proxyHost" placeholder="127.0.0.1"></div>
+          <div><label>端口</label><input id="proxyPort" type="number" min="1" max="65535" placeholder="7890"></div>
+          <div><label>账号（可选）</label><input id="proxyUser" placeholder="可空"></div>
+          <div><label>密码（可选）</label><input id="proxyPass" type="password" placeholder="可空；编辑留空表示不改"></div>
+        </div>
+        <label class="checkline" style="margin-top:10px"><input id="proxyEnabled" type="checkbox" checked> 启用</label>
+        <div id="proxyModalStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" type="button" onclick="closeProxyModal()">取消</button>
+          <button class="ok" type="button" onclick="saveProxyModal()">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="recordModal" class="modal-mask">
     <div class="modal">
       <div class="between">
@@ -700,7 +794,7 @@
 
   <div id="toastWrap" class="toast-wrap"></div>
 
-  <!-- Telegram-forwarder style: load bridge BEFORE app script so embed boot sees AstrBotPluginPage. -->
+  <!-- bridge sdk -->
   <script src="/api/plugin/page/bridge-sdk.js"></script>
   <script>
     const $ = id => document.getElementById(id);
@@ -791,8 +885,7 @@
       }
     }
     function isDashboardPage() {
-      // Prefer live bridge; iframe/path are fallbacks because AstrBot may inject
-      // bridge-sdk after inline scripts unless we preload it ourselves.
+      // Prefer live bridge when available.
       return Boolean(window.AstrBotPluginPage || DASHBOARD_BRIDGE)
         || isEmbeddedFrame()
         || String(window.location.pathname || '').startsWith('/api/plugin/page/content/');
@@ -811,7 +904,7 @@
         }
         await new Promise(resolve => setTimeout(resolve, 25));
       }
-      throw new Error('AstrBot 内嵌管理页 bridge 未就绪');
+      throw new Error('管理页连接未就绪');
     }
     function bridgeEndpoint(path) {
       // Match telegram forwarder api.js:
@@ -870,7 +963,7 @@
             : await bridge.apiPost(endpoint, body || {});
           return bridgePayload(raw);
         } catch (err) {
-          throw new Error(err?.message || '内嵌管理页请求失败');
+          throw new Error(err?.message || '管理页请求失败');
         }
       }
       const opts = Object.assign({}, options, {headers: Object.assign({}, headers(), options.headers || {})});
@@ -939,6 +1032,7 @@
       CONFIG.permission ??= {};
       CONFIG.image ??= {};
       CONFIG.video ??= {};
+      CONFIG.proxies ??= [];
       CONFIG.image_channels ??= [];
       CONFIG.audit_channels ??= [];
       CONFIG.video_channels ??= [];
@@ -1189,6 +1283,30 @@
         || normalizeVideoProviderType(defaultProviderType)
         || 'openai_video';
     }
+    function collectModelDownloadProxyIds(ch, enabled) {
+      const enabledSet = new Set(enabled || []);
+      const out = {};
+      const sources = [ch.model_download_proxy_ids, ch.modelDownloadProxyIds, ch.download_proxy_ids, ch.downloadProxyIds];
+      for (const source of sources) {
+        if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+        for (const [model, proxyId] of Object.entries(source)) {
+          const name = String(model || '').trim();
+          const pid = String(proxyId || '').trim();
+          if (name && enabledSet.has(name) && pid) out[name] = pid;
+        }
+      }
+      return out;
+    }
+    function compactModelDownloadProxyIds(ch) {
+      const enabledSet = new Set(ch.enabled_models || []);
+      const out = {};
+      for (const [model, proxyId] of Object.entries(ch.model_download_proxy_ids || {})) {
+        const pid = String(proxyId || '').trim();
+        if (enabledSet.has(model) && pid) out[model] = pid;
+      }
+      ch.model_download_proxy_ids = out;
+      return ch;
+    }
     function collectModelProviderTypes(ch, enabled) {
       const enabledSet = new Set(enabled || []);
       const out = {};
@@ -1238,8 +1356,10 @@
         timeout: Number(ch.timeout || (videoType ? 300 : 280)),
         enabled: ch.enabled !== false,
         enabled_models: enabled,
+        model_download_proxy_ids: collectModelDownloadProxyIds(ch, enabled),
         model_provider_types: collectModelProviderTypes(Object.assign({}, ch, {provider_type: providerType}), enabled),
         models_cache: cache,
+        proxy_id: String(ch.proxy_id || '').trim(),
         proxy: String(ch.proxy || '').trim(),
         extra: ch.extra && typeof ch.extra === 'object' ? ch.extra : {}
       };
@@ -1422,8 +1542,7 @@
             setStatus('channelStatus', `${target.name || '渠道'} 还没有启用模型，已保持关闭`);
             return;
           }
-          // Local UI only: update pills on this card. Do NOT rebuild whole list
-          // (destroying the checkbox mid-click feels like "no response").
+          // Only refresh this card status; avoid full list rebuild.
           const pills = card.querySelector('.actions');
           if (pills) {
             const cacheCount = Number((target.models_cache || []).length);
@@ -1489,17 +1608,29 @@
           : ($('modalProvider').value || source.provider_type || 'openai'),
         base_url: $('modalBaseUrl').value.trim(),
         api_key: $('modalApiKey').value.trim(),
-        proxy: $('modalProxy').value.trim(),
+        proxy_id: ($('modalProxyId') && $('modalProxyId').value) || '',
+        proxy: '',
         model: (enabled[0] || source.model || ''),
         timeout: Number($('modalTimeout').value || (EDITING_CHANNEL_KIND === 'video' ? 300 : 280)),
         enabled: $('modalEnabled').checked,
         enabled_models: enabled,
         model_provider_types: collectModalProviderTypes(enabled),
+        model_download_proxy_ids: collectModalDownloadProxyIds(enabled),
         models_cache: source.models_cache || []
       }));
       softDisableChannelIfNoModels(ch);
       if ($('modalEnabled')) $('modalEnabled').checked = ch.enabled !== false;
       return ch;
+    }
+    function collectModalDownloadProxyIds(enabled) {
+      const enabledSet = new Set(enabled || []);
+      const out = {};
+      document.querySelectorAll('#enabledModels .model-row').forEach(row => {
+        const model = String(row.querySelector('.name')?.textContent || '').trim();
+        const pid = String(row.querySelector('.model-download-proxy')?.value || '').trim();
+        if (model && enabledSet.has(model) && pid) out[model] = pid;
+      });
+      return out;
     }
     function collectModalProviderTypes(enabled) {
       const enabledSet = new Set(enabled || []);
@@ -1576,7 +1707,7 @@
       $('modalProvider').dataset.prevProvider = defaultProvider;
       $('modalBaseUrl').value = ch.base_url || '';
       $('modalApiKey').value = ch.api_key || '';
-      $('modalProxy').value = ch.proxy || '';
+      fillChannelProxyOptions(ch.proxy_id || '');
       $('modalTimeout').value = ch.timeout || (EDITING_CHANNEL_KIND === 'video' ? 300 : 280);
       $('modalEnabled').checked = ch.enabled !== false;
       $('cacheSearch').value = '';
@@ -1586,7 +1717,7 @@
         $('modalProviderHint').textContent = EDITING_CHANNEL_KIND === 'video'
           ? '视频协议可选：异步轮询 / 同步等待 / 对话回链。模型旁可「自动」识别或手动指定；与生图渠道用法一致。'
           : EDITING_CHANNEL_KIND === 'image'
-            ? '选择渠道默认类型；模型旁仍可自动识别或手动切换类型。'
+            ? '选择渠道默认类型；模型旁可改协议，下载代理仅影响结果图/视频拉取。'
             : '渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。';
       }
       renderModalModels(ch);
@@ -1661,15 +1792,41 @@
         return `<div class="model-row" data-model="${escapeHtml(item)}"><div class="name">${escapeHtml(item)}</div><div class="actions"><button class="secondary mini" type="button" onclick="${active ? `removeEnabledModel('${escapeJs(item)}')` : `addEnabledModel('${escapeJs(item)}')`}">${active ? '取消' : '启用'}</button></div></div>`;
       }).join('') || '<div class="muted">没有匹配的缓存模型。</div>';
       $('enabledModels').innerHTML = enabled.map((item, i) => `
-        <div class="model-row with-provider">
+        <div class="model-row with-provider with-provider-download">
           <div class="name">${escapeHtml(item)}</div>
           ${modelProviderSelectHtml(ch, item, i)}
+          ${modelDownloadProxySelectHtml(ch, item, i)}
           <div class="actions">
             <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, -1)">上移</button>
             <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, 1)">下移</button>
             <button class="danger mini" type="button" onclick="removeEnabledModel('${escapeJs(item)}')">移除</button>
           </div>
         </div>`).join('') || '<div class="muted">还没有启用模型。</div>';
+    }
+    function modelDownloadProxySelectHtml(ch, model, index) {
+      const selected = String(((ch.model_download_proxy_ids || {})[model]) || '').trim();
+      const opts = ['<option value="">下载代理：跟随渠道</option>'];
+      for (const p of enabledProxyOptions()) {
+        const label = `${p.name || p.id} · ${(p.protocol || 'http').toUpperCase()}`;
+        opts.push(`<option value="${escapeHtml(p.id)}" ${selected === p.id ? 'selected' : ''}>${escapeHtml(label)}</option>`);
+      }
+      if (selected && !opts.some(x => x.includes(`value="${escapeHtml(selected)}"`))) {
+        opts.push(`<option value="${escapeHtml(selected)}" selected>已选（未启用/已删）</option>`);
+      }
+      return `<select class="model-download-proxy" title="仅用于模型返回结果的下载；请求仍走渠道代理" onchange="setModelDownloadProxy(${index}, this.value)">${opts.join('')}</select>`;
+    }
+    function setModelDownloadProxy(index, proxyId) {
+      const ch = currentModalChannel();
+      const model = (ch.enabled_models || [])[index] || '';
+      if (!model) return;
+      ch.model_download_proxy_ids ||= {};
+      const pid = String(proxyId || '').trim();
+      if (pid) ch.model_download_proxy_ids[model] = pid;
+      else delete ch.model_download_proxy_ids[model];
+      compactModelDownloadProxyIds(ch);
+      storeModalChannel(ch);
+      CHANNEL_MODAL_DIRTY = true;
+      renderModalModels(ch);
     }
     function modelProviderSelectHtml(ch, model, index) {
       const isVideo = EDITING_CHANNEL_KIND === 'video';
@@ -1769,8 +1926,7 @@
         return;
       }
       if (!ch.model && ch.enabled_models.length) ch.model = ch.enabled_models[0];
-      // First-time save: if user already enabled models, auto-enable channel
-      // so auto-save soft-disable doesn't leave a brand-new channel off.
+      // New channel with enabled models: turn channel on.
       if (EDITING_CHANNEL_IS_NEW && (ch.enabled_models || []).length && ch.enabled === false) {
         ch.enabled = true;
         if ($('modalEnabled')) $('modalEnabled').checked = true;
@@ -1798,7 +1954,7 @@
         CHANNEL_MODAL_DIRTY = false;
         closeChannelModal();
       } else if (EDITING_CHANNEL_IS_NEW) {
-        // 保存失败时撤回刚 push 的草稿，避免列表脏数据
+        // 保存失败时撤回本次添加
         const pos = list.lastIndexOf(ch);
         if (pos >= 0) list.splice(pos, 1);
         CHANNEL_DRAFT = ch;
@@ -1974,6 +2130,7 @@
         const res = await api('/api/config');
         CONFIG = res.data || {};
         fillForms();
+        renderProxyList();
         setStatus('configStatus', '配置已读取');
       } catch (e) {
         setStatus('configStatus', e.message);
@@ -1991,12 +2148,11 @@
         $('configText').value = JSON.stringify(CONFIG, null, 2);
         if (renderAfterSave) fillForms();
         else if (!quiet) {
-          // Non-quiet saves (manual) may refresh lists; quiet autosave must not
-          // rebuild channel cards or the enable toggle feels lagged/unresponsive.
+          // Manual save may refresh lists.
           renderAllChannelLists();
           refreshModelSelectors();
         } else {
-          // quiet path: still refresh dependent selectors, keep existing cards
+          // Keep selectors in sync without rebuilding cards.
           refreshModelSelectors();
         }
         if (okText) setMultiStatus(okText);
@@ -2013,7 +2169,7 @@
     }
     function scheduleAutoSave(okText = '', options = {}) {
       if (IS_FILLING || SUPPRESS_AUTOSAVE || !document.body.classList.contains('authed')) return;
-      // 渠道弹窗：只本地草稿，必须点「保存渠道」
+      // 渠道弹窗未保存前不自动写入
       if (isChannelModalOpen() && options.allowWhileModal !== true) return;
       clearTimeout(AUTO_SAVE_TIMER);
       const reason = options.reason || 'form';
@@ -2023,7 +2179,7 @@
         persistConfig(false, okText || '', {
           toast: false,
           toastError: true,
-          // form typing + channel-list toggle both need quiet to avoid UI thrash
+          // Quiet autosave for form and channel-list changes
           quiet: reason === 'form' || reason === 'channel-list',
         });
       }, options.delay != null ? options.delay : (reason === 'form' ? 900 : 650));
@@ -2033,9 +2189,325 @@
       scheduleAutoSave('', { reason: 'form', silentStatus: true, toast: false });
     }
     /** 渠道列表结构化变更（删/复制/启停、优先级）：静默落盘。 */
+
+    function enabledProxyOptions() {
+      ensureConfig();
+      const rows = Array.isArray(CONFIG.proxies) ? CONFIG.proxies : [];
+      return rows.filter(p => p && p.enabled !== false && p.id);
+    }
+    function fillChannelProxyOptions(selectedId = '') {
+      const sel = $('modalProxyId');
+      if (!sel) return;
+      const cur = selectedId || sel.value || '';
+      const opts = ['<option value="">直连（不使用代理）</option>'];
+      for (const p of enabledProxyOptions()) {
+        const label = `${p.name || p.id} · ${(p.protocol || 'http').toUpperCase()} ${p.host}:${p.port}`;
+        opts.push(`<option value="${escapeHtml(p.id)}">${escapeHtml(label)}</option>`);
+      }
+      // If selected is disabled/missing, still show it once
+      if (cur && !opts.some(x => x.includes(`value="${escapeHtml(cur)}"`))) {
+        const all = Array.isArray(CONFIG.proxies) ? CONFIG.proxies : [];
+        const hit = all.find(p => p && p.id === cur);
+        if (hit) {
+          opts.push(`<option value="${escapeHtml(cur)}">${escapeHtml((hit.name || cur) + '（已停用）')}</option>`);
+        }
+      }
+      sel.innerHTML = opts.join('');
+      sel.value = cur;
+    }
+    function newProxyDraft() {
+      return {id:'', name:'', protocol:'http', host:'', port:7890, username:'', password:'', enabled:true};
+    }
+    let EDITING_PROXY_INDEX = -1;
+    let PROXY_DRAFT = null;
+    function openProxyModal(index = -1) {
+      ensureConfig();
+      CONFIG.proxies = Array.isArray(CONFIG.proxies) ? CONFIG.proxies : [];
+      EDITING_PROXY_INDEX = index;
+      const isNew = index < 0;
+      const row = isNew ? newProxyDraft() : Object.assign(newProxyDraft(), CONFIG.proxies[index] || {});
+      PROXY_DRAFT = row;
+      $('proxyModalTitle').textContent = isNew ? '添加代理' : '编辑代理';
+      $('proxyName').value = row.name || '';
+      $('proxyProtocol').value = row.protocol || 'http';
+      $('proxyHost').value = row.host || '';
+      $('proxyPort').value = row.port || 7890;
+      $('proxyUser').value = row.username || '';
+      $('proxyPass').value = '';
+      $('proxyPass').placeholder = isNew ? '可空' : (row.has_auth || row.password ? '留空表示不修改密码' : '可空');
+      $('proxyEnabled').checked = row.enabled !== false;
+      $('proxyModalStatus').textContent = '';
+      $('proxyModal').classList.add('show');
+    }
+    function closeProxyModal() {
+      $('proxyModal').classList.remove('show');
+      EDITING_PROXY_INDEX = -1;
+      PROXY_DRAFT = null;
+    }
+    function collectProxyModal() {
+      const isNew = EDITING_PROXY_INDEX < 0;
+      const prev = (!isNew && CONFIG.proxies[EDITING_PROXY_INDEX]) ? CONFIG.proxies[EDITING_PROXY_INDEX] : newProxyDraft();
+      const protocol = $('proxyProtocol').value || 'http';
+      const host = $('proxyHost').value.trim();
+      const port = Number($('proxyPort').value || 0);
+      const username = $('proxyUser').value.trim();
+      let password = $('proxyPass').value;
+      if (!isNew && !password && (prev.password || prev.has_auth)) {
+        // keep previous password if masked/blank on edit
+        password = prev.password && prev.password !== '******' ? prev.password : (PROXY_DRAFT && PROXY_DRAFT._plain_password) || '';
+        if (!password && prev.has_auth && prev.password === '******') {
+          // need server-side keep: stash flag
+          password = '';
+        }
+      }
+      const name = $('proxyName').value.trim();
+      const enabled = $('proxyEnabled').checked;
+      if (!host) throw new Error('请填写 IP / 主机');
+      if (!port || port < 1 || port > 65535) throw new Error('端口无效');
+      if (Boolean(username) !== Boolean(password) && isNew) throw new Error('账号和密码需同时填写，或都留空');
+      if (Boolean(username) && !password && isNew) throw new Error('填写了账号时需要密码');
+      const id = prev.id || ('px_' + Math.random().toString(16).slice(2, 10));
+      const row = {
+        id,
+        name: name || `${protocol}://${host}:${port}`,
+        protocol,
+        host,
+        port,
+        username,
+        password: password || (prev.password && prev.password !== '******' ? prev.password : ''),
+        enabled,
+        has_auth: Boolean(username),
+      };
+      // On edit with masked password and empty input: keep has_auth and omit password change by reusing sentinel
+      if (!isNew && prev.has_auth && !$('proxyPass').value) {
+        row.password = prev.password || '******';
+        row.has_auth = true;
+        row._keep_password = true;
+      }
+      return row;
+    }
+    async function saveProxyModal() {
+      try {
+        ensureConfig();
+        CONFIG.proxies = Array.isArray(CONFIG.proxies) ? CONFIG.proxies : [];
+        const row = collectProxyModal();
+        // If keep password sentinel, reload plain from current config raw if present
+        if (row._keep_password) {
+          const cur = CONFIG.proxies[EDITING_PROXY_INDEX] || {};
+          if (cur.password && cur.password !== '******') row.password = cur.password;
+          // else leave ****** — backend normalize will fail; better require re-entry
+          if (row.password === '******') {
+            throw new Error('编辑带认证的代理时请重新输入密码（安全起见前端不回显明文）');
+          }
+          delete row._keep_password;
+        }
+        if (EDITING_PROXY_INDEX < 0) CONFIG.proxies.push(row);
+        else CONFIG.proxies[EDITING_PROXY_INDEX] = row;
+        $('proxyModalStatus').textContent = '保存中…';
+        const ok = await persistConfig(false, '代理已保存', { toast: true, quiet: true });
+        if (!ok) {
+          $('proxyModalStatus').textContent = '保存失败';
+          return;
+        }
+        closeProxyModal();
+        renderProxyList();
+        fillChannelProxyOptions($('modalProxyId') && $('modalProxyId').value);
+      } catch (e) {
+        $('proxyModalStatus').textContent = e.message || String(e);
+      }
+    }
+    function proxyStatusCodeClass(code) {
+      const n = Number(code);
+      if (!Number.isFinite(n) || n <= 0) return 'mute';
+      if (n >= 200 && n < 400) return 'ok';
+      if (n === 401 || n === 403 || n === 404 || n === 429) return 'warn';
+      if (n >= 500) return 'bad';
+      return 'mute';
+    }
+    function formatProxyLocation(d) {
+      if (!d || typeof d !== 'object') return '';
+      if (d.location) return String(d.location);
+      const parts = [d.city, d.region, d.country].map(x => String(x || '').trim()).filter(Boolean);
+      let text = parts.join(' · ');
+      const code = String(d.country_code || '').trim().toUpperCase();
+      if (code && !text.includes(code)) text = text ? `${text} (${code})` : code;
+      return text;
+    }
+    function renderProxyConnectSummary(index, d) {
+      const box = $(`proxyResult-${index}`);
+      if (!box) return;
+      const ok = !!d.success;
+      const code = d.http_status != null ? d.http_status : '';
+      const ms = d.latency_ms != null ? `${d.latency_ms} ms` : '—';
+      const ip = d.ip_address || '—';
+      const loc = formatProxyLocation(d) || '—';
+      const org = d.org || '';
+      box.classList.remove('empty');
+      box.innerHTML = `
+        <div class="proxy-kpi">
+          <div class="cell"><div class="k">状态</div><div class="v">${ok ? '连通' : '失败'}${code !== '' ? ` · <span class="badge-code ${proxyStatusCodeClass(code)}">${escapeHtml(String(code))}</span>` : ''}</div></div>
+          <div class="cell"><div class="k">延迟</div><div class="v">${escapeHtml(ms)}</div></div>
+          <div class="cell"><div class="k">出口 IP</div><div class="v">${escapeHtml(String(ip))}</div></div>
+        </div>
+        <div class="proxy-kpi">
+          <div class="cell" style="grid-column:1/-1"><div class="k">地理位置</div><div class="v">${escapeHtml(loc)}${org ? `<div class="meta" style="margin-top:4px;font-weight:500">${escapeHtml(org)}</div>` : ''}</div></div>
+        </div>
+        ${d.message ? `<div class="meta">${escapeHtml(d.message)}</div>` : ''}
+      `;
+    }
+    function renderProxyQualitySummary(index, d) {
+      const box = $(`proxyResult-${index}`);
+      if (!box) return;
+      const rows = Array.isArray(d.results) ? d.results : [];
+      const ip = d.ip_address || '';
+      const loc = formatProxyLocation(d);
+      const items = rows.map(r => {
+        const code = r.http_status != null ? r.http_status : null;
+        const codeHtml = code != null
+          ? `<span class="badge-code ${proxyStatusCodeClass(code)}">${escapeHtml(String(code))}</span>`
+          : `<span class="badge-code mute">无响应</span>`;
+        const ms = r.latency_ms != null ? `${r.latency_ms}ms` : '';
+        const ok = r.reachable || r.success;
+        return `<div class="proxy-qitem">
+          <div class="name">${escapeHtml(r.label || r.id || '')}</div>
+          <div class="line">${codeHtml}<span>${ok ? '可达' : '不可达'}</span>${ms ? `<span>${escapeHtml(ms)}</span>` : ''}</div>
+        </div>`;
+      }).join('');
+      box.classList.remove('empty');
+      box.innerHTML = `
+        <div class="proxy-kpi">
+          <div class="cell"><div class="k">评分</div><div class="v">${escapeHtml(String(d.quality_grade || '-'))} · ${escapeHtml(String(d.quality_score ?? '-'))}</div></div>
+          <div class="cell"><div class="k">可达</div><div class="v">${escapeHtml(String(d.ok_count ?? 0))}/${escapeHtml(String(d.total ?? rows.length))}</div></div>
+          <div class="cell"><div class="k">出口 IP</div><div class="v">${escapeHtml(ip || '—')}</div></div>
+        </div>
+        ${loc ? `<div class="meta">位置 ${escapeHtml(loc)}${d.org ? ' · ' + escapeHtml(d.org) : ''}</div>` : ''}
+        <div class="proxy-qgrid">${items || '<div class="meta">无结果</div>'}</div>
+      `;
+    }
+    function renderProxyList() {
+      ensureConfig();
+      const box = $('proxyList');
+      if (!box) return;
+      const rows = Array.isArray(CONFIG.proxies) ? CONFIG.proxies : [];
+      if (!rows.length) {
+        box.innerHTML = '<div class="card soft muted">还没有代理。点右上角「添加代理」。</div>';
+        return;
+      }
+      // Preserve previous probe results across re-render.
+      const prev = {};
+      box.querySelectorAll('[data-proxy-index]').forEach(card => {
+        const i = card.getAttribute('data-proxy-index');
+        const result = card.querySelector('.proxy-result');
+        if (result && !result.classList.contains('empty')) prev[i] = result.innerHTML;
+      });
+      box.innerHTML = rows.map((p, i) => {
+        const proto = String(p.protocol || 'http').toUpperCase();
+        const auth = p.has_auth || p.username;
+        const en = p.enabled !== false;
+        const addr = `${p.host || ''}:${p.port || ''}`;
+        return `<div class="proxy-card" data-proxy-index="${i}">
+          <div class="proxy-card-head">
+            <div class="proxy-title">
+              <b>${escapeHtml(p.name || p.id || '未命名')}</b>
+              <div class="proxy-chips">
+                <span class="proxy-chip proto">${escapeHtml(proto)}</span>
+                <span class="proxy-chip ${en ? 'on' : 'off'}">${en ? '已启用' : '已停用'}</span>
+                ${auth ? '<span class="proxy-chip auth">认证</span>' : '<span class="proxy-chip">无认证</span>'}
+              </div>
+            </div>
+          </div>
+          <div class="proxy-addr">${escapeHtml(addr)}</div>
+          <div class="proxy-actions">
+            <label class="checkline"><input type="checkbox" data-act="en" ${en ? 'checked' : ''}>启用</label>
+            <button class="secondary mini" type="button" data-act="edit">编辑</button>
+            <button class="secondary mini" type="button" data-act="test">连通</button>
+            <button class="secondary mini" type="button" data-act="quality">质量</button>
+            <button class="danger mini" type="button" data-act="del" style="grid-column:1/-1">删除</button>
+          </div>
+          <div class="proxy-result ${prev[i] ? '' : 'empty'}" id="proxyResult-${i}">${prev[i] || ''}</div>
+        </div>`;
+      }).join('');
+      box.querySelectorAll('.proxy-card').forEach(card => {
+        const idx = Number(card.getAttribute('data-proxy-index'));
+        card.querySelector('[data-act="en"]').onchange = async (ev) => {
+          CONFIG.proxies[idx].enabled = !!ev.target.checked;
+          const chip = card.querySelector('.proxy-chip.on, .proxy-chip.off');
+          if (chip) {
+            chip.className = `proxy-chip ${ev.target.checked ? 'on' : 'off'}`;
+            chip.textContent = ev.target.checked ? '已启用' : '已停用';
+          }
+          fillChannelProxyOptions($('modalProxyId') && $('modalProxyId').value);
+          await persistConfig(false, '', { quiet: true, toast: false, toastError: true });
+        };
+        card.querySelector('[data-act="edit"]').onclick = () => openProxyModal(idx);
+        card.querySelector('[data-act="del"]').onclick = async () => {
+          if (!confirm('确认删除这个代理？引用它的渠道将变为直连。')) return;
+          const removed = CONFIG.proxies.splice(idx, 1)[0];
+          const rid = removed && removed.id;
+          if (rid) {
+            for (const list of [CONFIG.image_channels, CONFIG.audit_channels, CONFIG.video_channels]) {
+              for (const ch of list || []) {
+                if (ch && ch.proxy_id === rid) ch.proxy_id = '';
+              }
+            }
+          }
+          renderProxyList();
+          fillChannelProxyOptions();
+          await persistConfig(false, '代理已删除', { quiet: true, toast: true });
+        };
+        card.querySelector('[data-act="test"]').onclick = () => testProxyRow(idx, 'connect');
+        card.querySelector('[data-act="quality"]').onclick = () => testProxyRow(idx, 'quality');
+      });
+    }
+    async function testProxyRow(index, kind = 'connect') {
+      const row = (CONFIG.proxies || [])[index];
+      if (!row) return;
+      const box = $(`proxyResult-${index}`);
+      const body = row.id ? { id: row.id } : {
+        protocol: row.protocol, host: row.host, port: row.port,
+        username: row.username, password: row.password === '******' ? '' : row.password,
+        name: row.name, enabled: row.enabled !== false,
+      };
+      if (kind === 'connect') {
+        if (box) {
+          box.classList.remove('empty');
+          box.innerHTML = '<div class="meta">正在检测连通与出口信息…</div>';
+        }
+        try {
+          const res = await api('/api/proxies/test', { method: 'POST', body: JSON.stringify(body) });
+          const d = res.data || {};
+          renderProxyConnectSummary(index, d);
+          showToast(d.success ? '连通正常' : (d.message || '连通失败'), d.success ? 'ok' : 'bad');
+        } catch (e) {
+          if (box) {
+            box.classList.remove('empty');
+            box.innerHTML = `<div class="meta">${escapeHtml(e.message || '测试失败')}</div>`;
+          }
+          showToast(e.message || '测试失败', 'bad');
+        }
+        return;
+      }
+      if (box) {
+        box.classList.remove('empty');
+        box.innerHTML = '<div class="meta">正在质量测试（各站点真实状态码）…</div>';
+      }
+      try {
+        const res = await api('/api/proxies/quality-check', { method: 'POST', body: JSON.stringify(body) });
+        const d = res.data || {};
+        renderProxyQualitySummary(index, d);
+        showToast(d.message || '质量测试完成', d.success ? 'ok' : 'bad');
+      } catch (e) {
+        if (box) {
+          box.classList.remove('empty');
+          box.innerHTML = `<div class="meta">${escapeHtml(e.message || '质量测试失败')}</div>`;
+        }
+        showToast(e.message || '质量测试失败', 'bad');
+      }
+    }
+
     function scheduleChannelListAutoSave() {
       if (isChannelModalOpen()) return;
-      // Keep quiet so persistConfig won't rebuild cards and steal the toggle.
+      // Quiet save avoids rebuilding channel cards.
       scheduleAutoSave('', { reason: 'channel-list', silentStatus: true, toast: false, delay: 280 });
     }
     async function saveJsonConfig() {
@@ -2359,10 +2831,10 @@
       try {
         showToast('正在准备下载…', 'ok');
         if (isDashboardPage()) {
-          // Use official bridge binary download — do NOT pull huge base64 preview blobs.
+          // Binary download via bridge.
           const bridge = await waitForDashboardBridge();
           if (typeof bridge.ready === 'function') await bridge.ready();
-          if (typeof bridge.download !== 'function') throw new Error('内嵌页不支持文件下载');
+          if (typeof bridge.download !== 'function') throw new Error('当前页面不支持文件下载');
           await bridge.download('cache-image', { path: rel }, name);
           showToast('已开始下载', 'ok');
           return;
@@ -2575,7 +3047,7 @@
         try { await loadRecords(); } catch (_) {}
       } catch (e) {
         if (TEST_TASK_ID !== taskId) return;
-        // Transient bridge/network errors should not freeze a still-running generation.
+        // Ignore transient poll errors while task is still running.
         const nextFail = failStreak + 1;
         if (nextFail < 8) {
           setTestBusy(true);
@@ -2789,7 +3261,7 @@
             $('loginPage').style.display = '';
             const box = $('loginPage').querySelector('.login-box');
             if (box) {
-              box.innerHTML = `<h1>内嵌管理页加载失败</h1><p class="muted">已走 AstrBot Dashboard 登录态，不需要 Web Token。</p><div class="status">${escapeHtml(message)}</div>`;
+              box.innerHTML = `<h1>管理页加载失败</h1><p class="muted">请刷新后重试。</p><div class="status">${escapeHtml(message)}</div>`;
             }
           }
           if ($('loginStatus')) $('loginStatus').textContent = message;
@@ -2802,7 +3274,7 @@
     }
     function logout() {
       if (isDashboardPage()) {
-        showToast('AstrBot 内嵌管理页无需退出 Web Token', 'ok');
+        showToast('当前已登录，无需退出', 'ok');
         return;
       }
       AUTH_TOKEN = '';
@@ -3306,6 +3778,7 @@
         $(btn.dataset.tab).classList.add('active');
         if (btn.dataset.tab === 'monitor') loadRecords();
         if (btn.dataset.tab === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
+        if (btn.dataset.tab === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
       };
     });
     $('loginBtn').onclick = enterApp;
@@ -3326,7 +3799,7 @@
     };
     $('manualModel').onkeydown = event => { if (event.key === 'Enter') $('manualAdd').click(); };
     // Modal field edits stay local until「保存渠道」
-    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxy','modalTimeout','modalEnabled'].forEach(id => {
+    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxyId','modalTimeout','modalEnabled'].forEach(id => {
       const el = $(id);
       if (!el) return;
       const eventName = el.type === 'checkbox' || el.type === 'number' ? 'change' : 'input';
@@ -3380,7 +3853,7 @@
     (async function init() {
       for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, '自动');
       setupAutoSave();
-      // AstrBot injects bridge-sdk at </body> if missing; we also preload it above.
+      // Ensure bridge is available before boot.
       // Still wait when running inside the plugin iframe so boot never races token login.
       const embedded = isEmbeddedFrame()
         || String(window.location.pathname || '').startsWith('/api/plugin/page/content/')
@@ -3394,10 +3867,10 @@
           if (typeof DASHBOARD_BRIDGE.ready === 'function') await DASHBOARD_BRIDGE.ready();
         } catch (e) {
           if ($('loginPage')) $('loginPage').style.display = '';
-          if ($('loginStatus')) $('loginStatus').textContent = e.message || '内嵌 bridge 未就绪';
+          if ($('loginStatus')) $('loginStatus').textContent = e.message || '管理页连接未就绪';
           const box = $('loginPage') && $('loginPage').querySelector('.login-box');
           if (box) {
-            box.innerHTML = `<h1>内嵌管理页加载失败</h1><p class="muted">已检测为 AstrBot 内嵌入口，不需要 Web Token。请重载插件或刷新 Dashboard。</p><div class="status">${escapeHtml(e.message || 'bridge 未就绪')}</div>`;
+            box.innerHTML = `<h1>管理页加载失败</h1><p class="muted">请刷新页面或稍后重试。</p><div class="status">${escapeHtml(e.message || '连接未就绪')}</div>`;
           }
           return;
         }

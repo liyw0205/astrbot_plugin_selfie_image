@@ -451,7 +451,7 @@ async def generate_video_openai_compatible(
                     family=protocol,
                 )
 
-            raw = await _download_video_bytes(session, video_url, timeout=timeout, proxy=target.proxy)
+            raw = await _download_video_bytes(session, video_url, timeout=timeout, proxy=str((target.extra or {}).get("download_proxy") or target.proxy or ""))
             os.makedirs(save_dir, exist_ok=True)
             path = os.path.join(save_dir, f"video_{int(time.time() * 1000)}.mp4")
             with open(path, "wb") as handle:

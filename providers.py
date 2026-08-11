@@ -147,8 +147,9 @@ class BaseImageAdapter:
         provider_name: str = "",
         detailed_error: bool = False,
     ) -> ImageGenerateResult:
+        download_proxy = str((self.target.extra or {}).get("download_proxy") or "").strip() or str(self.target.proxy or "").strip()
         images = await images_from_response_unknown(
-            self.session, data, self.target.timeout, req.max_image_bytes, self.target.proxy, base_url
+            self.session, data, self.target.timeout, req.max_image_bytes, download_proxy, base_url
         )
         if images:
             return ImageGenerateResult(images=images)

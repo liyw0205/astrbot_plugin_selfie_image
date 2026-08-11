@@ -1,8 +1,6 @@
 """AstrBot Dashboard embedded page APIs for Selfie Image.
 
-These routes are served through AstrBot Dashboard login state via
-``context.register_web_api``. They intentionally do not require the standalone
-Flask Web Token.
+Dashboard plugin-page APIs registered via ``context.register_web_api``.
 """
 
 from __future__ import annotations
@@ -34,7 +32,7 @@ PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 
 
 class SelfieImageDashboardAPI:
-    """Register and handle Dashboard plugin-page APIs without Web Token."""
+    """Register and handle Dashboard plugin-page APIs."""
 
     def __init__(self, plugin: Any) -> None:
         self.plugin = plugin
@@ -89,12 +87,12 @@ class SelfieImageDashboardAPI:
             ("studio/tasks/<task_id>", self.page_studio_task, ["GET"], "Selfie Image studio task"),
             ("studio/gallery", self.page_studio_gallery, ["GET"], "Selfie Image studio gallery from records"),
             ("prompt-presets", self.page_prompt_presets, ["GET"], "Selfie Image prompt presets"),
+            ("proxies", self.page_proxies_list, ["GET"], "Selfie Image proxy list"),
+            ("proxies/test", self.page_proxy_test, ["POST"], "Selfie Image proxy connectivity test"),
+            ("proxies/quality-check", self.page_proxy_quality, ["POST"], "Selfie Image proxy quality test"),
         ]
         for route, handler, methods, desc in routes:
-            # Match telegram forwarder: bridge strips "/api/" then hits
-            # /api/v1/plugins/extensions/<plugin>/<endpoint>
-            # which resolves registered routes "/<plugin>/<endpoint>" and
-            # "/<plugin>/page/<endpoint>".
+            # Register both bare and /page/ endpoints for Dashboard routing.
             register_web_api(f"/{PLUGIN_NAME}/{route}", handler, methods, desc)
             register_web_api(f"/{PLUGIN_NAME}/page/{route}", handler, methods, desc)
 
@@ -230,6 +228,39 @@ class SelfieImageDashboardAPI:
                 "cache_limit_mb": getattr(plugin.config, "image_cache_limit_mb", 100),
             }
         )
+
+
+    async def page_proxies_list(self) -> Any:
+        try:
+            return self._ok(self.plugin.list_proxies_for_web(mask_password=True))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_proxy_test(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            data = await self.plugin.test_proxy_connectivity(
+                proxy_id=str((payload or {}).get("id") or (payload or {}).get("proxy_id") or ""),
+                proxy=(payload or {}).get("proxy") if isinstance((payload or {}).get("proxy"), dict) else payload,
+            )
+            return self._ok(data)
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_proxy_quality(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            data = await self.plugin.test_proxy_quality(
+                proxy_id=str((payload or {}).get("id") or (payload or {}).get("proxy_id") or ""),
+                proxy=(payload or {}).get("proxy") if isinstance((payload or {}).get("proxy"), dict) else payload,
+            )
+            return self._ok(data)
+        except Exception as exc:
+            return self._fail(str(exc))
 
     async def page_config_get(self) -> Any:
         return self._ok(self.plugin.get_config_for_web())

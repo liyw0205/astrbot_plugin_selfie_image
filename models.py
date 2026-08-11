@@ -50,6 +50,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "whitelist_users": "",
         "whitelist_groups": "",
     },
+    "proxies": [],
     "image_channels": [],
     "audit_channels": [],
     "video_channels": [],
@@ -123,8 +124,10 @@ class ImageChannelConfig:
     enabled: bool = True
     enabled_models: List[str] = field(default_factory=list)
     model_provider_types: Dict[str, str] = field(default_factory=dict)
+    model_download_proxy_ids: Dict[str, str] = field(default_factory=dict)
     models_cache: List[str] = field(default_factory=list)
-    proxy: str = ""
+    proxy: str = ""  # runtime resolved URL only; prefer proxy_id
+    proxy_id: str = ""
     protocol_lock: bool = False
     extra: Dict[str, Any] = field(default_factory=dict)
     api_keys: List[str] = field(default_factory=list)
@@ -164,6 +167,11 @@ class ImageChannelConfig:
                     self.model_provider_types.get(model, ""),
                     protocol_lock=lock,
                 )
+            extra = copy.deepcopy(self.extra)
+            # Per-model download-only proxy (result URL fetch). Request still uses channel proxy.
+            dl_id = str((self.model_download_proxy_ids or {}).get(model) or "").strip()
+            if dl_id:
+                extra["download_proxy_id"] = dl_id
             result.append(
                 ImageModelTarget(
                     channel_name=self.name,
@@ -173,7 +181,7 @@ class ImageChannelConfig:
                     model=model,
                     timeout=max(10, int(global_timeout or self.timeout or 180)),
                     proxy=self.proxy,
-                    extra=copy.deepcopy(self.extra),
+                    extra=extra,
                     api_keys=list(keys),
                 )
             )
@@ -215,6 +223,7 @@ class AICatConfig:
     blocked_users: List[str]
     whitelist_users: List[str]
     whitelist_groups: List[str]
+    proxies: List[Dict[str, Any]]
     image_channels: List[ImageChannelConfig]
     audit_channels: List[ImageChannelConfig]
     video_channels: List[ImageChannelConfig]
@@ -237,12 +246,58 @@ class AICatConfig:
         video = ensure_dict(raw, "video")
         permission = ensure_dict(raw, "permission")
 
+        proxies = normalize_proxies_list(raw.get("proxies") or raw.get("proxy_list") or [])
+        # Migrate legacy per-channel proxy URL strings into shared proxies list once.
+        def _migrate_channel_proxy(channel: ImageChannelConfig) -> None:
+            if channel.proxy_id:
+                channel.proxy = resolve_proxy_url_from_config(proxies, channel.proxy_id, "")
+                return
+            legacy = str(channel.proxy or "").strip()
+            if not legacy:
+                channel.proxy = ""
+                return
+            # Reuse existing matching proxy if same URL
+            for row in proxies:
+                if str(row.get("url") or "") == legacy:
+                    channel.proxy_id = str(row.get("id") or "")
+                    channel.proxy = legacy if row.get("enabled") is not False else ""
+                    return
+            row = normalize_proxy_entry({"url": legacy, "name": f"迁移·{channel.name}", "enabled": True})
+            if row:
+                proxies.append(row)
+                channel.proxy_id = row["id"]
+                channel.proxy = row["url"]
+            else:
+                # keep raw legacy if unparsable
+                channel.proxy = legacy
+
         channels = [_build_image_channel(item) for item in template_list_items(raw.get("image_channels"))]
         channels = [channel for channel in channels if channel.name and channel.provider_type in PROVIDER_TYPES]
         audit_channels = [_build_image_channel(item) for item in template_list_items(raw.get("audit_channels"))]
         audit_channels = [channel for channel in audit_channels if channel.name and channel.provider_type in PROVIDER_TYPES]
         video_channels = [_build_video_channel(item) for item in template_list_items(raw.get("video_channels"))]
         video_channels = [channel for channel in video_channels if channel.name]
+        for channel in (*channels, *audit_channels, *video_channels):
+            _migrate_channel_proxy(channel)
+        raw["proxies"] = proxies
+        # Persist proxy_id on raw channel dicts for Web round-trip; drop bare proxy string preference.
+        for key, chs in (("image_channels", channels), ("audit_channels", audit_channels), ("video_channels", video_channels)):
+            raw_list = template_list_items(raw.get(key))
+            by_name = {c.name: c for c in chs}
+            for item in raw_list:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or item.get("id") or "").strip()
+                ch = by_name.get(name)
+                if not ch:
+                    continue
+                if ch.proxy_id:
+                    item["proxy_id"] = ch.proxy_id
+                # Keep resolved URL only for runtime compatibility; UI uses proxy_id.
+                if ch.proxy:
+                    item["proxy"] = ch.proxy
+                elif "proxy" in item and ch.proxy_id:
+                    item.pop("proxy", None)
 
         return cls(
             raw=raw,
@@ -278,6 +333,7 @@ class AICatConfig:
             blocked_users=split_values(permission.get("blocked_users")),
             whitelist_users=split_values(permission.get("whitelist_users")),
             whitelist_groups=split_values(permission.get("whitelist_groups")),
+            proxies=proxies,
             image_channels=channels,
             audit_channels=audit_channels,
             video_channels=video_channels,
@@ -322,6 +378,39 @@ class AICatConfig:
                 seen.add(target.label)
         return ordered
 
+
+    def _bind_download_proxies(self, targets: List[ImageModelTarget]) -> List[ImageModelTarget]:
+        """Attach resolved download-only proxy URL onto target.extra for result fetching."""
+        if not targets:
+            return targets
+        by_id = {str(row.get("id") or ""): row for row in (self.proxies or []) if isinstance(row, dict)}
+        out: List[ImageModelTarget] = []
+        for target in targets:
+            extra = dict(target.extra or {})
+            # Prefer explicit id on extra; also accept per-model map via channel already expanded
+            dl_id = str(extra.get("download_proxy_id") or "").strip()
+            if dl_id:
+                row = by_id.get(dl_id)
+                if row and row.get("enabled") is not False:
+                    extra["download_proxy"] = str(row.get("url") or "").strip()
+                else:
+                    extra.pop("download_proxy", None)
+            # If no per-model override, do not set download_proxy (fall back to request proxy).
+            out.append(
+                ImageModelTarget(
+                    channel_name=target.channel_name,
+                    provider_type=target.provider_type,
+                    base_url=target.base_url,
+                    api_key=target.api_key,
+                    model=target.model,
+                    timeout=target.timeout,
+                    proxy=target.proxy,
+                    extra=extra,
+                    api_keys=list(target.api_keys or []),
+                )
+            )
+        return out
+
     def get_prioritized_targets(self) -> List[ImageModelTarget]:
         all_targets: List[ImageModelTarget] = []
         for channel in self.image_channels:
@@ -334,14 +423,14 @@ class AICatConfig:
 
             shuffled = list(all_targets)
             random.shuffle(shuffled)
-            return shuffled
-        return self._prioritize_targets(all_targets, self.enabled_image_model_priority)
+            return self._bind_download_proxies(shuffled)
+        return self._bind_download_proxies(self._prioritize_targets(all_targets, self.enabled_image_model_priority))
 
     def get_audit_targets(self) -> List[ImageModelTarget]:
         targets: List[ImageModelTarget] = []
         for channel in self.audit_channels:
             targets.extend(channel.targets(self.image_global_timeout))
-        return self._prioritize_targets(targets, self.enabled_audit_model_priority)
+        return self._bind_download_proxies(self._prioritize_targets(targets, self.enabled_audit_model_priority))
 
     def get_prioritized_video_targets(self) -> List[ImageModelTarget]:
         if not self.video_enable:
@@ -349,7 +438,7 @@ class AICatConfig:
         targets: List[ImageModelTarget] = []
         for channel in self.video_channels:
             targets.extend(channel.targets(self.video_global_timeout or self.image_global_timeout))
-        return self._prioritize_targets(targets, self.enabled_video_model_priority)
+        return self._bind_download_proxies(self._prioritize_targets(targets, self.enabled_video_model_priority))
 
 
 def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -422,6 +511,106 @@ def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
     return raw
 
 
+def _new_proxy_id() -> str:
+    import secrets
+    return "px_" + secrets.token_hex(4)
+
+
+def normalize_proxy_entry(raw: Any) -> Optional[Dict[str, Any]]:
+    """Normalize a proxy row into config dict."""
+    from .proxy import build_proxy_url, parse_channel_proxy
+
+    data = raw if isinstance(raw, dict) else {}
+    protocol = str(data.get("protocol") or data.get("scheme") or "http").strip().lower()
+    host = str(data.get("host") or data.get("ip") or "").strip()
+    port = data.get("port")
+    username = str(data.get("username") or data.get("user") or "").strip()
+    password = str(data.get("password") or data.get("pass") or "").strip()
+    name = str(data.get("name") or "").strip()
+    enabled = to_bool(data.get("enabled"), True)
+    # status active/inactive alias
+    status = str(data.get("status") or "").strip().lower()
+    if status == "inactive":
+        enabled = False
+    elif status == "active":
+        enabled = True
+    proxy_id = str(data.get("id") or data.get("proxy_id") or "").strip()
+    # Legacy free-form URL field
+    legacy_url = str(data.get("url") or data.get("proxy") or "").strip()
+    if not host and legacy_url:
+        try:
+            parsed = parse_channel_proxy(legacy_url)
+        except Exception:
+            parsed = None
+        if parsed:
+            protocol = parsed.scheme
+            host = parsed.host
+            port = parsed.port
+            username = parsed.username
+            password = parsed.password
+    if not host:
+        return None
+    try:
+        url = build_proxy_url(protocol, host, int(port or 0), username, password)
+        parsed = parse_channel_proxy(url)
+    except Exception:
+        return None
+    assert parsed is not None
+    if not proxy_id:
+        proxy_id = _new_proxy_id()
+    if not name:
+        name = f"{parsed.scheme}://{parsed.host}:{parsed.port}"
+    return {
+        "id": proxy_id,
+        "name": name,
+        "protocol": parsed.scheme,
+        "host": parsed.host,
+        "port": parsed.port,
+        "username": parsed.username,
+        "password": parsed.password,
+        "enabled": bool(enabled),
+        "url": parsed.url,
+    }
+
+
+def normalize_proxies_list(raw: Any) -> List[Dict[str, Any]]:
+    items = template_list_items(raw) if not isinstance(raw, list) else raw
+    out: List[Dict[str, Any]] = []
+    seen: set = set()
+    for item in items:
+        row = normalize_proxy_entry(item)
+        if not row:
+            continue
+        if row["id"] in seen:
+            row["id"] = _new_proxy_id()
+        seen.add(row["id"])
+        out.append(row)
+    return out
+
+
+def resolve_proxy_url_from_config(proxies: List[Dict[str, Any]], proxy_id: str = "", legacy_proxy: str = "") -> str:
+    """Resolve runtime proxy URL from proxy_id list, with legacy channel.proxy fallback."""
+    pid = str(proxy_id or "").strip()
+    if pid:
+        for row in proxies or []:
+            if str(row.get("id") or "") == pid and row.get("enabled") is not False:
+                return str(row.get("url") or "").strip()
+        # selected but missing/disabled → no proxy
+        return ""
+    # legacy free-form URL on channel
+    return str(legacy_proxy or "").strip()
+
+
+def public_proxy_row(row: Dict[str, Any], *, mask_password: bool = True) -> Dict[str, Any]:
+    data = dict(row or {})
+    if mask_password and data.get("password"):
+        data["password"] = "******"
+        # keep has_auth flag for UI
+    data["has_auth"] = bool(str(row.get("username") or "").strip())
+    return data
+
+
+
 def _build_image_channel(raw: Any) -> ImageChannelConfig:
     raw = normalize_config_tree(raw)
     if isinstance(raw, dict):
@@ -477,6 +666,16 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
     if model and not enabled_models:
         enabled_models = [model]
 
+    download_proxy_ids: Dict[str, str] = {}
+    raw_dl = raw.get("model_download_proxy_ids") or raw.get("modelDownloadProxyIds") or raw.get("download_proxy_ids") or {}
+    if isinstance(raw_dl, dict):
+        enabled_set = set(enabled_models)
+        for model_name, proxy_ref in raw_dl.items():
+            name = str(model_name or "").strip()
+            pid = str(proxy_ref or "").strip()
+            if name and pid and name in enabled_set:
+                download_proxy_ids[name] = pid
+
     return ImageChannelConfig(
         name=str(raw.get("name") or raw.get("id") or "default").strip(),
         provider_type=provider_type,
@@ -487,8 +686,10 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
         enabled=to_bool(raw.get("enabled"), True),
         enabled_models=unique_values(enabled_models),
         model_provider_types={model: provider for model, provider in model_provider_types.items() if model in set(enabled_models)},
+        model_download_proxy_ids=download_proxy_ids,
         models_cache=split_values(raw.get("models_cache") or raw.get("modelsCache") or raw.get("available_models")),
-        proxy=str(raw.get("proxy") or "").strip(),
+        proxy=str(raw.get("proxy") or "").strip(),  # legacy; resolved later via proxy_id
+        proxy_id=str(raw.get("proxy_id") or raw.get("proxyId") or "").strip(),
         protocol_lock=to_bool(raw.get("protocol_lock") or raw.get("protocolLock") or raw.get("disable_model_infer"), False),
         extra=copy.deepcopy(raw.get("extra") if isinstance(raw.get("extra"), dict) else {}),
         api_keys=api_keys,
@@ -756,7 +957,7 @@ def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
         errors.append({"field": "api_key", "message": f"{kind_label} {label} 缺少 api_key"})
     models = channel.enabled_models or ([channel.model] if channel.model else [])
     if not models and channel.enabled:
-        # Prefer soft-disable over blocking save (Web 编辑中途常暂时无模型).
+        # Auto-disable channels with no models instead of blocking save.
         auto_disabled = True
         channel.enabled = False
         if isinstance(raw, dict):

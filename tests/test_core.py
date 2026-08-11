@@ -346,6 +346,95 @@ class ConfigModelTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 parse_channel_proxy(value)
 
+
+
+    def test_model_download_proxy_override(self) -> None:
+        from astrbot_plugin_selfie_image.models import AICatConfig
+        cfg = AICatConfig.from_dict({
+            "proxies": [
+                {"id": "px_req", "protocol": "http", "host": "1.1.1.1", "port": 7890, "name": "req", "enabled": True},
+                {"id": "px_dl", "protocol": "http", "host": "2.2.2.2", "port": 7890, "name": "dl", "enabled": True},
+            ],
+            "image_channels": [{
+                "name": "c1",
+                "provider_type": "openai",
+                "base_url": "https://api.openai.com",
+                "api_key": "k",
+                "model": "m1",
+                "enabled_models": ["m1", "m2"],
+                "proxy_id": "px_req",
+                "model_download_proxy_ids": {"m2": "px_dl"},
+            }],
+        })
+        by = {t.model: t for t in cfg.get_prioritized_targets()}
+        self.assertIn("1.1.1.1", by["m1"].proxy)
+        self.assertFalse((by["m1"].extra or {}).get("download_proxy"))
+        self.assertIn("1.1.1.1", by["m2"].proxy)
+        self.assertEqual((by["m2"].extra or {}).get("download_proxy_id"), "px_dl")
+        self.assertIn("2.2.2.2", (by["m2"].extra or {}).get("download_proxy") or "")
+        from pathlib import Path
+        providers = (Path(__file__).resolve().parents[1] / "providers.py").read_text(encoding="utf-8")
+        self.assertIn("download_proxy", providers)
+        html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
+        self.assertIn("modelDownloadProxySelectHtml", html)
+        self.assertIn("model-download-proxy", html)
+        self.assertIn("btn.dataset.tab === 'proxies'", html)
+
+    def test_proxy_list_migrate_channel_proxy(self) -> None:
+        from astrbot_plugin_selfie_image.models import AICatConfig, normalize_proxy_entry
+        row = normalize_proxy_entry({
+            "protocol": "http", "host": "10.0.0.2", "port": 7890,
+            "username": "u", "password": "p", "name": "home",
+        })
+        self.assertTrue(row and row["id"].startswith("px_"))
+        self.assertIn("10.0.0.2", row["url"])
+        cfg = AICatConfig.from_dict({
+            "proxies": [row],
+            "image_channels": [{
+                "name": "c1",
+                "provider_type": "openai",
+                "base_url": "https://api.openai.com",
+                "api_key": "k",
+                "model": "m",
+                "enabled_models": ["m"],
+                "proxy_id": row["id"],
+            }],
+        })
+        self.assertEqual(cfg.image_channels[0].proxy_id, row["id"])
+        self.assertIn("7890", cfg.image_channels[0].proxy)
+        # legacy free-form migrates into proxies
+        cfg2 = AICatConfig.from_dict({
+            "image_channels": [{
+                "name": "c2",
+                "provider_type": "openai",
+                "base_url": "https://api.openai.com",
+                "api_key": "k",
+                "model": "m",
+                "enabled_models": ["m"],
+                "proxy": "socks5://127.0.0.1:1080",
+            }],
+        })
+        self.assertTrue(cfg2.image_channels[0].proxy_id)
+        self.assertTrue(any(p.get("port") == 1080 for p in cfg2.proxies))
+
+    def test_dashboard_has_proxy_page_and_channel_proxy_select(self) -> None:
+        from pathlib import Path
+        from astrbot_plugin_selfie_image.web import INDEX_HTML
+        html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
+        for doc in (html, INDEX_HTML):
+            self.assertIn('data-tab="proxies"', doc)
+            self.assertIn('id="proxies"', doc)
+            self.assertIn("modalProxyId", doc)
+            self.assertIn("function renderProxyList", doc)
+            self.assertIn("proxy-card", doc)
+            self.assertIn("renderProxyQualitySummary", doc)
+            self.assertIn("badge-code", doc)
+            self.assertIn("/api/proxies/test", doc)
+            self.assertIn("/api/proxies/quality-check", doc)
+            self.assertNotIn('id="modalProxy"', doc)
+            self.assertNotIn("代理 URL", doc)
+
+
     def test_provider_type_can_be_inferred_from_model(self) -> None:
         self.assertEqual(resolve_model_provider_type("agnes-image-2.1-flash", "openai"), "agnes")
         self.assertEqual(resolve_model_provider_type("grok-imagine-image", "openai"), "grok")
