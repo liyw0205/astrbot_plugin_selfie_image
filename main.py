@@ -141,10 +141,21 @@ def anatomy_constraint_lines(*, style: str = "general") -> list[str]:
     return _lines(style=style)
 
 
-def append_anatomy_constraints(prompt: str) -> str:
+def append_anatomy_constraints(prompt: str, *, language: str = "zh") -> str:
     raw = str(prompt or "").strip()
     if not raw:
         return raw
+    if language != "en":
+        return "\n".join(
+            [
+                raw,
+                "",
+                "构图与画面质量：",
+                "生成一张光线自然、透视稳定、主体清晰的完整画面；人物或动物结构自然完整。",
+                "身体入镜边界干净，手脚、姿态、服装与场景关系保持一致。",
+                *anatomy_constraint_lines(style="general"),
+            ]
+        )
     return "\n".join(
         [
             raw,
@@ -157,10 +168,24 @@ def append_anatomy_constraints(prompt: str) -> str:
     )
 
 
-def build_prompt_with_reference_instruction(prompt: str, images: List[ImageReference]) -> str:
+def build_prompt_with_reference_instruction(prompt: str, images: List[ImageReference], *, language: str = "zh") -> str:
     raw = str(prompt or "").strip()
     if not images:
-        return append_anatomy_constraints(raw)
+        return append_anatomy_constraints(raw, language=language)
+    if language != "en":
+        return "\n".join(
+            [
+                "使用提供的参考图作为视觉参考。",
+                "按用户要求修改，同时保持相关人物身份、脸部、发型、服装、体态、姿势、机位、场景、画风与构图的一致性。",
+                "参考图中有多个人物或角色时，保持各自独立，并按用户指定的对象处理。",
+                "有多张参考图时，按用户要求分别用于身份、服装、姿势、画风、场景、物件或合影人物，不要混淆身份。",
+                "画面光线、透视、色调与空间关系统一，人体结构自然完整，构图像一张完成的照片。",
+                *anatomy_constraint_lines(style="general"),
+                "",
+                "用户要求：",
+                raw,
+            ]
+        )
     return "\n".join(
         [
             "Use the provided reference image(s) as visual references.",
@@ -2240,7 +2265,11 @@ class SelfieImagePlugin(Star):
                     )
                     if prompt_en_meta.get("applied") and translated:
                         user_prompt = translated
-                prompt = build_prompt_with_reference_instruction(user_prompt, refs)
+                prompt = build_prompt_with_reference_instruction(
+                    user_prompt,
+                    refs,
+                    language="en" if self.config.image_enable_image_prompt_en else "zh",
+                )
 
             all_paths: List[str] = []
             last_error = ""
@@ -4882,6 +4911,7 @@ class SelfieImagePlugin(Star):
             "use_selfie_reference": bool(payload.get("use_selfie_reference")),
             "raw_reference_image_count": len(raw_images),
         }
+        prompt_en_meta: Optional[Dict[str, Any]] = None
 
         try:
             self._validate_web_test_selection(payload)
@@ -4909,12 +4939,30 @@ class SelfieImagePlugin(Star):
                     refs.insert(0, persona_ref)
                 prompt = original_prompt
             elif payload.get("use_selfie_reference"):
-                prompt, refs = await self._build_selfie_prompt_and_refs(original_prompt, extra_refs)
+                prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(
+                    None,
+                    original_prompt,
+                    extra_refs,
+                )
                 if not refs:
                     raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
             else:
                 refs = extra_refs
-                prompt = build_prompt_with_reference_instruction(original_prompt, refs)
+                user_prompt = original_prompt
+                prompt_en_meta = {"enabled": False, "applied": False, "scope": "user_text_only"}
+                if self._prompt_en_needed(user_prompt, media="image"):
+                    translated, prompt_en_meta = await self._translate_prompt_to_english(
+                        user_prompt,
+                        media="image",
+                        event=None,
+                    )
+                    if prompt_en_meta.get("applied") and translated:
+                        user_prompt = translated
+                prompt = build_prompt_with_reference_instruction(
+                    user_prompt,
+                    refs,
+                    language="en" if self.config.image_enable_image_prompt_en else "zh",
+                )
 
             result = await self._run_image_generation(
                 prompt=prompt,
@@ -4927,6 +4975,7 @@ class SelfieImagePlugin(Star):
                 event=None,
                 max_attempts=1,
                 allow_compat_retry=False,
+                prompt_en_meta=prompt_en_meta,
             )
         except Exception as exc:
             error = str(exc)
@@ -5125,7 +5174,11 @@ class SelfieImagePlugin(Star):
             )
             if prompt_en_meta.get("applied") and translated:
                 user_prompt = translated
-        final_prompt = build_prompt_with_reference_instruction(user_prompt, refs)
+        final_prompt = build_prompt_with_reference_instruction(
+            user_prompt,
+            refs,
+            language="en" if self.config.image_enable_image_prompt_en else "zh",
+        )
         return await self._run_image_generation(
             final_prompt,
             aspect,

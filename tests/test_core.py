@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.28")
+        self.assertEqual(PLUGIN_VERSION, "1.3.29")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3859,11 +3859,22 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
         from astrbot_plugin_selfie_image import main as plugin_main
 
-        wrapped = plugin_main.append_anatomy_constraints("a girl standing")
+        wrapped_zh = plugin_main.append_anatomy_constraints("女孩站立")
+        self.assertIn("构图与画面质量", wrapped_zh)
+        self.assertNotIn("Composition and quality", wrapped_zh)
+        wrapped = plugin_main.append_anatomy_constraints("a girl standing", language="en")
         self.assertIn("one left hand", wrapped)
         self.assertIn("disconnected hands", wrapped)
         self.assertNotIn("severed", wrapped.lower())
         self.assertNotIn("ghost", wrapped.lower())
+        ref = ImageReference(data=PNG_BYTES, mime_type="image/png")
+        ref_zh = plugin_main.build_prompt_with_reference_instruction("把衣服改成蓝色", [ref])
+        self.assertIn("使用提供的参考图", ref_zh)
+        self.assertIn("用户要求：", ref_zh)
+        self.assertNotIn("Use the provided", ref_zh)
+        ref_en = plugin_main.build_prompt_with_reference_instruction("change the outfit to blue", [ref], language="en")
+        self.assertIn("Use the provided", ref_en)
+        self.assertIn("User request:", ref_en)
         legs_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(object.__new__(plugin_main.SelfieImagePlugin), "", False)
         self.assertIn("来源不清", legs_action)
         self.assertIn("连续", legs_action)
