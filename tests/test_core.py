@@ -380,6 +380,80 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("model-download-proxy", html)
         self.assertIn("btn.dataset.tab === 'proxies'", html)
 
+
+    
+
+    def test_parse_prompt_en_response_json(self) -> None:
+        from pathlib import Path
+        import json
+        import re as _re
+        from astrbot_plugin_selfie_image.models import DEFAULT_CONFIG
+
+        img_t = DEFAULT_CONFIG["image"]["image_prompt_en_template"]
+        vid_t = DEFAULT_CONFIG["image"]["video_prompt_en_template"]
+        self.assertIn("faithful language conversion only", img_t)
+        self.assertIn('"ok":true', img_t)
+        self.assertIn("{prompt}", img_t)
+        self.assertNotIn("Task: rewrite the user prompt", img_t)
+        self.assertIn("faithful language conversion only", vid_t)
+        self.assertIn('"ok":true', vid_t)
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        self.assertIn("def parse_prompt_en_response", main_src)
+        self.assertIn("translate_parse_failed", main_src)
+        self.assertIn("fail-open: keep original prompt", main_src)
+
+        def parse(text: str) -> str:
+            cleaned = str(text or "").strip()
+            if not cleaned:
+                return ""
+            if cleaned.startswith("```"):
+                cleaned = _re.sub(r"^```(?:\w+)?\s*", "", cleaned)
+                cleaned = _re.sub(r"\s*```$", "", cleaned).strip()
+            try:
+                payload = json.loads(cleaned)
+            except Exception:
+                m = _re.search(r"\{.*?\}", cleaned, flags=_re.S)
+                payload = json.loads(m.group(0)) if m else None
+            if isinstance(payload, dict):
+                if payload.get("ok") is False:
+                    return ""
+                return str(payload.get("en") or "").strip()
+            return ""
+
+        self.assertEqual(parse('{"ok":true,"en":"white stockings"}'), "white stockings")
+        self.assertEqual(parse('{"ok":false,"en":""}'), "")
+        self.assertEqual(parse('{"ok":true,"en":""}'), "")
+        fenced = "```json\n{\"ok\":true,\"en\":\"cat walk\"}\n```"
+        self.assertEqual(parse(fenced), "cat walk")
+
+    def test_prompt_en_config_and_cjk_gate(self) -> None:
+        from astrbot_plugin_selfie_image.models import AICatConfig, DEFAULT_CONFIG
+        self.assertIn("enable_image_prompt_en", DEFAULT_CONFIG["image"])
+        self.assertIn("enable_video_prompt_en", DEFAULT_CONFIG["image"])
+        cfg = AICatConfig.from_dict({
+            "image": {
+                "enable_image_prompt_en": True,
+                "enable_video_prompt_en": True,
+                "prompt_en_mode": "if_cjk",
+                "prompt_en_model": "audit/gpt",
+            }
+        })
+        self.assertTrue(cfg.image_enable_image_prompt_en)
+        self.assertTrue(cfg.image_enable_video_prompt_en)
+        self.assertEqual(cfg.image_prompt_en_mode, "if_cjk")
+        self.assertEqual(cfg.image_prompt_en_model, "audit/gpt")
+        html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
+        self.assertIn("enableImagePromptEn", html)
+        self.assertIn("enableVideoPromptEn", html)
+        self.assertIn("promptEnMode", html)
+        self.assertIn("生图提示词转英文", html)
+        self.assertIn("视频提示词转英文", html)
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        self.assertIn("_translate_prompt_to_english", main_src)
+        self.assertIn("_prompt_en_needed", main_src)
+        self.assertIn('media="image"', main_src)
+        self.assertIn('media="video"', main_src)
+
     def test_proxy_list_migrate_channel_proxy(self) -> None:
         from astrbot_plugin_selfie_image.models import AICatConfig, normalize_proxy_entry
         row = normalize_proxy_entry({
@@ -4283,9 +4357,77 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("【pose:", normalized)
         self.assertIn("清晨", normalized)
         selected = [name for name in ("光腿神器", "白丝", "黑丝") if f"本次腿部穿搭：{name}" in normalized]
-        self.assertEqual(len(selected), 1, normalized)
+        self.assertEqual(selected, ["白丝"], normalized)
         self.assertNotIn("短袜", normalized)
         self.assertEqual(plugin._normalize_selfie_action(normalized, False), normalized)
+
+    def test_user_requested_legwear_is_honored(self) -> None:
+        import sys
+        import types
+        import tempfile
+        import re
+
+        if "astrbot" not in sys.modules:
+            astrbot = types.ModuleType("astrbot")
+            api = types.ModuleType("astrbot.api")
+            star = types.ModuleType("astrbot.api.star")
+            event = types.ModuleType("astrbot.api.event")
+            comps = types.ModuleType("astrbot.api.message_components")
+            class Star: pass
+            class Context: pass
+            def register(*a, **k):
+                def deco(cls): return cls
+                return deco
+            star.Star = Star
+            star.Context = Context
+            star.register = register
+            class filter:
+                @staticmethod
+                def command(*a, **k):
+                    return lambda fn: fn
+                class PermissionType:
+                    ADMIN = "admin"
+                    MEMBER = "member"
+                @staticmethod
+                def permission_type(*a, **k):
+                    return lambda fn: fn
+            event.filter = filter
+            api.logger = types.SimpleNamespace(info=lambda *a, **k: None, warning=lambda *a, **k: None, error=lambda *a, **k: None, debug=lambda *a, **k: None)
+            sys.modules["astrbot"] = astrbot
+            sys.modules["astrbot.api"] = api
+            sys.modules["astrbot.api.star"] = star
+            sys.modules["astrbot.api.event"] = event
+            sys.modules["astrbot.api.message_components"] = comps
+            sys.modules["astrbot.core"] = types.ModuleType("astrbot.core")
+            sys.modules["astrbot.core.utils"] = types.ModuleType("astrbot.core.utils")
+            pathmod = types.ModuleType("astrbot.core.utils.astrbot_path")
+            pathmod.get_astrbot_data_path = lambda: tempfile.gettempdir()
+            sys.modules["astrbot.core.utils.astrbot_path"] = pathmod
+
+        from importlib import reload
+        import astrbot_plugin_selfie_image.main as plugin_main
+        if not hasattr(plugin_main, "parse_requested_legwear"):
+            plugin_main = reload(plugin_main)
+
+        self.assertEqual(plugin_main.parse_requested_legwear("看看腿 白丝"), "白丝")
+        self.assertEqual(plugin_main.parse_requested_legwear("黑丝 3"), "黑丝")
+        self.assertEqual(plugin_main.parse_requested_legwear("光腿"), "光腿神器")
+        boilerplate = "若本次是白丝/黑丝：丝袜必须包住整只脚到脚趾。本次腿部穿搭：光腿神器。"
+        self.assertEqual(plugin_main.parse_requested_legwear(boilerplate), "光腿神器")
+
+        class _P:
+            pass
+
+        white = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "白丝 清晨", False)
+        self.assertIn("本次腿部穿搭：白丝", white)
+        self.assertNotIn("本次腿部穿搭：光腿神器", white)
+        self.assertNotIn("本次腿部穿搭：黑丝", white)
+        black = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "黑丝", False)
+        self.assertIn("本次腿部穿搭：黑丝", black)
+        bare = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "光腿神器", False)
+        self.assertIn("本次腿部穿搭：光腿神器", bare)
+        forced = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False, force_legwear="白丝")
+        self.assertIn("本次腿部穿搭：白丝", forced)
 
     def test_legwear_is_pose_weighted(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")

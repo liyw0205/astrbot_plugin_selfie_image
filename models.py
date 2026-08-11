@@ -43,6 +43,48 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "output_audit_template": "你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{\"allow\":true/false,\"reason\":\"原因\"}",
         # 无形象参考图时：true=回退 logo 图；false=仅用人设文案生成（不注图）
         "use_logo_when_no_persona": True,
+        # Prompt EN for models weak on Chinese (uses audit-channel chat).
+        "enable_image_prompt_en": False,
+        "enable_video_prompt_en": False,
+        "prompt_en_mode": "if_cjk",  # if_cjk | always
+        "prompt_en_model": "",
+        "image_prompt_en_template": (
+            "Translate the image-generation prompt into natural English.\n"
+            "Goal: faithful language conversion only. Do not rewrite creative intent.\n"
+            "\n"
+            "Rules:\n"
+            "1. Keep the same meaning, detail order, style tags, and constraints.\n"
+            "2. Do not add, remove, or strengthen subjects, clothing, poses, scenes, or bans.\n"
+            "3. Do not summarize, beautify, or restructure into a new prompt.\n"
+            "4. Proper nouns, model tags, and bracket markers may stay as-is when needed.\n"
+            "5. If already English, return it with only minimal grammar fixes.\n"
+            "\n"
+            "Return ONLY one JSON object (no markdown, no extra text):\n"
+            '{"ok":true,"en":"<english prompt>"}\n'
+            'On failure still return JSON: {"ok":false,"en":""}\n'
+            "\n"
+            "Source prompt:\n"
+            "{prompt}"
+        ),
+        "video_prompt_en_template": (
+            "Translate the video-generation prompt into natural English.\n"
+            "Goal: faithful language conversion only. Do not rewrite creative intent.\n"
+            "\n"
+            "Rules:\n"
+            "1. Keep the same meaning, detail order, motion, camera cues, style, and constraints.\n"
+            "2. Do not add, remove, or invent actions, shots, characters, or plot.\n"
+            "3. Do not summarize, beautify, or restructure into a new prompt.\n"
+            "4. Proper nouns and technical tags may stay as-is when needed.\n"
+            "5. If already English, return it with only minimal grammar fixes.\n"
+            "\n"
+            "Return ONLY one JSON object (no markdown, no extra text):\n"
+            '{"ok":true,"en":"<english prompt>"}\n'
+            'On failure still return JSON: {"ok":false,"en":""}\n'
+            "\n"
+            "Source prompt:\n"
+            "{prompt}"
+        ),
+
     },
     "permission": {
         "usable_users": "",
@@ -219,6 +261,12 @@ class AICatConfig:
     image_prompt_audit_template: str
     image_output_audit_template: str
     image_use_logo_when_no_persona: bool
+    image_enable_image_prompt_en: bool
+    image_enable_video_prompt_en: bool
+    image_prompt_en_mode: str
+    image_prompt_en_model: str
+    image_image_prompt_en_template: str
+    image_video_prompt_en_template: str
     usable_users: List[str]
     blocked_users: List[str]
     whitelist_users: List[str]
@@ -299,6 +347,11 @@ class AICatConfig:
                 elif "proxy" in item and ch.proxy_id:
                     item.pop("proxy", None)
 
+        prompt_en_mode = str(image.get("prompt_en_mode") or image.get("promptEnMode") or "if_cjk").strip().lower() or "if_cjk"
+        if prompt_en_mode not in {"if_cjk", "always", "cjk", "chinese", "zh"}:
+            prompt_en_mode = "if_cjk"
+        if prompt_en_mode in {"cjk", "chinese", "zh"}:
+            prompt_en_mode = "if_cjk"
         return cls(
             raw=raw,
             bot_name=str(raw.get("bot_name") or raw.get("botName") or DEFAULT_CONFIG["bot_name"]).strip() or "AI",
@@ -329,6 +382,12 @@ class AICatConfig:
             image_prompt_audit_template=str(image.get("prompt_audit_template") or DEFAULT_CONFIG["image"]["prompt_audit_template"]),
             image_output_audit_template=str(image.get("output_audit_template") or DEFAULT_CONFIG["image"]["output_audit_template"]),
             image_use_logo_when_no_persona=to_bool(image.get("use_logo_when_no_persona"), True),
+            image_enable_image_prompt_en=to_bool(image.get("enable_image_prompt_en") or image.get("enableImagePromptEn"), False),
+            image_enable_video_prompt_en=to_bool(image.get("enable_video_prompt_en") or image.get("enableVideoPromptEn"), False),
+            image_prompt_en_mode=prompt_en_mode,
+            image_prompt_en_model=str(image.get("prompt_en_model") or image.get("promptEnModel") or "").strip(),
+            image_image_prompt_en_template=str(image.get("image_prompt_en_template") or image.get("imagePromptEnTemplate") or "").strip() or DEFAULT_CONFIG["image"]["image_prompt_en_template"],
+            image_video_prompt_en_template=str(image.get("video_prompt_en_template") or image.get("videoPromptEnTemplate") or "").strip() or DEFAULT_CONFIG["image"]["video_prompt_en_template"],
             usable_users=split_values(permission.get("usable_users")),
             blocked_users=split_values(permission.get("blocked_users")),
             whitelist_users=split_values(permission.get("whitelist_users")),

@@ -735,7 +735,22 @@ INDEX_HTML = r"""<!doctype html>
       <label>文字屏蔽词</label><textarea id="blockedWords"></textarea>
       <label>文字审核说明</label><textarea id="promptAuditTemplate"></textarea>
       <label>成品审核说明</label><textarea id="outputAuditTemplate"></textarea>
-      <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核请选能看图的模型。</div>
+      <h3 style="margin-top:18px">提示词转英文</h3>
+      <p class="muted">部分模型对中文不友好。开启后，在真正请求渠道前把提示词译成英文；原文仍记入记录。走审核渠道对话模型，失败则保留原文。</p>
+      <div class="grid">
+        <label class="checkline"><input id="enableImagePromptEn" type="checkbox"> 生图提示词转英文</label>
+        <label class="checkline"><input id="enableVideoPromptEn" type="checkbox"> 视频提示词转英文</label>
+        <div><label>翻译模式</label>
+          <select id="promptEnMode">
+            <option value="if_cjk">含中文时翻译</option>
+            <option value="always">始终翻译</option>
+          </select>
+        </div>
+        <div><label>翻译模型</label><select id="promptEnModel"></select></div>
+      </div>
+      <label>生图翻译说明</label><textarea id="imagePromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
+      <label>视频翻译说明</label><textarea id="videoPromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
+      <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核请选能看图的模型。转英文与审核共用审核渠道模型。</div>
     </section>
 
     <section id="raw">
@@ -1079,6 +1094,38 @@ INDEX_HTML = r"""<!doctype html>
         block.style.display = block.getAttribute('data-priority-kind') === ACTIVE_CHANNEL_PANE ? '' : 'none';
       });
     }
+    const DEFAULT_IMAGE_PROMPT_EN_TEMPLATE = `Translate the image-generation prompt into natural English.
+Goal: faithful language conversion only. Do not rewrite creative intent.
+
+Rules:
+1. Keep the same meaning, detail order, style tags, and constraints.
+2. Do not add, remove, or strengthen subjects, clothing, poses, scenes, or bans.
+3. Do not summarize, beautify, or restructure into a new prompt.
+4. Proper nouns, model tags, and bracket markers may stay as-is when needed.
+5. If already English, return it with only minimal grammar fixes.
+
+Return ONLY one JSON object (no markdown, no extra text):
+{"ok":true,"en":"<english prompt>"}
+On failure still return JSON: {"ok":false,"en":""}
+
+Source prompt:
+{prompt}`;
+    const DEFAULT_VIDEO_PROMPT_EN_TEMPLATE = `Translate the video-generation prompt into natural English.
+Goal: faithful language conversion only. Do not rewrite creative intent.
+
+Rules:
+1. Keep the same meaning, detail order, motion, camera cues, style, and constraints.
+2. Do not add, remove, or invent actions, shots, characters, or plot.
+3. Do not summarize, beautify, or restructure into a new prompt.
+4. Proper nouns and technical tags may stay as-is when needed.
+5. If already English, return it with only minimal grammar fixes.
+
+Return ONLY one JSON object (no markdown, no extra text):
+{"ok":true,"en":"<english prompt>"}
+On failure still return JSON: {"ok":false,"en":""}
+
+Source prompt:
+{prompt}`;
     function ensureConfig() {
       delete CONFIG.web;
       delete CONFIG.webHost;
@@ -1121,6 +1168,14 @@ INDEX_HTML = r"""<!doctype html>
       img.ocr_model ??= '';
       img.prompt_audit_template ??= '你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{"allow":true/false,"reason":"原因"}';
       img.output_audit_template ??= '你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{"allow":true/false,"reason":"原因"}';
+      img.enable_image_prompt_en ??= false;
+      img.enable_video_prompt_en ??= false;
+      img.prompt_en_mode ??= 'if_cjk';
+      img.prompt_en_model ??= '';
+      img.image_prompt_en_template = String(img.image_prompt_en_template || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
+      img.video_prompt_en_template = String(img.video_prompt_en_template || '').trim() || DEFAULT_VIDEO_PROMPT_EN_TEMPLATE;
+      if (String(img.image_prompt_en_template||'').includes('Task: rewrite the user prompt') || !String(img.image_prompt_en_template||'').includes('"ok":true')) img.image_prompt_en_template = DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
+      if (String(img.video_prompt_en_template||'').includes('Task: rewrite the user prompt') || String(img.video_prompt_en_template||'').includes('Prefer concrete motion verbs') || !String(img.video_prompt_en_template||'').includes('"ok":true')) img.video_prompt_en_template = DEFAULT_VIDEO_PROMPT_EN_TEMPLATE;
       const vid = CONFIG.video;
       vid.enable ??= true;
       vid.default_duration ??= 5;
@@ -1166,6 +1221,11 @@ INDEX_HTML = r"""<!doctype html>
         setTextList('blockedWords', img.blocked_words);
         $('promptAuditTemplate').value = img.prompt_audit_template || '';
         $('outputAuditTemplate').value = img.output_audit_template || '';
+        if ($('enableImagePromptEn')) $('enableImagePromptEn').checked = !!img.enable_image_prompt_en;
+        if ($('enableVideoPromptEn')) $('enableVideoPromptEn').checked = !!img.enable_video_prompt_en;
+        if ($('promptEnMode')) $('promptEnMode').value = (img.prompt_en_mode === 'always') ? 'always' : 'if_cjk';
+        if ($('imagePromptEnTemplate')) $('imagePromptEnTemplate').value = String(img.image_prompt_en_template || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
+        if ($('videoPromptEnTemplate')) $('videoPromptEnTemplate').value = String(img.video_prompt_en_template || '').trim() || DEFAULT_VIDEO_PROMPT_EN_TEMPLATE;
 
         $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
         $('auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\n');
@@ -1215,6 +1275,12 @@ INDEX_HTML = r"""<!doctype html>
       CONFIG.image.blocked_words = textList('blockedWords');
       CONFIG.image.prompt_audit_template = $('promptAuditTemplate').value;
       CONFIG.image.output_audit_template = $('outputAuditTemplate').value;
+       CONFIG.image.enable_image_prompt_en = !!( $('enableImagePromptEn') && $('enableImagePromptEn').checked );
+       CONFIG.image.enable_video_prompt_en = !!( $('enableVideoPromptEn') && $('enableVideoPromptEn').checked );
+       CONFIG.image.prompt_en_mode = ($('promptEnMode') && $('promptEnMode').value === 'always') ? 'always' : 'if_cjk';
+       CONFIG.image.prompt_en_model = ($('promptEnModel') && $('promptEnModel').value) || '';
+       CONFIG.image.image_prompt_en_template = String(($('imagePromptEnTemplate') && $('imagePromptEnTemplate').value) || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
+       CONFIG.image.video_prompt_en_template = String(($('videoPromptEnTemplate') && $('videoPromptEnTemplate').value) || '').trim() || DEFAULT_VIDEO_PROMPT_EN_TEMPLATE;
       collectChannels();
       for (const kind of ['image','audit','video']) prunePriorityList(kind);
       CONFIG.enabled_image_model_priority = textList('priorityList');
@@ -2071,6 +2137,7 @@ INDEX_HTML = r"""<!doctype html>
       setSelectOptions('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       setSelectOptions('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
       setSelectOptions('ocrModel', auditLabels, CONFIG.image?.ocr_model || '');
+      setSelectOptions('promptEnModel', auditLabels, CONFIG.image?.prompt_en_model || '');
       const testChannels = (TEST_MODE === 'video' ? CONFIG.video_channels : CONFIG.image_channels || []).filter(c => c.enabled !== false && c.name);
       const currentTestChannel = $('testChannel').value;
       const selectedTestChannel = testChannels.some(c => c.name === currentTestChannel) ? currentTestChannel : (testChannels[0]?.name || '');

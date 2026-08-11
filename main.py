@@ -215,6 +215,77 @@ LEGWEAR_REQUEST_PATTERN = re.compile(
 )
 
 
+def parse_requested_legwear(text: str) -> str:
+    """Honor explicit user legwear: 白丝 / 黑丝 / 光腿神器. Empty = random by pose."""
+    raw = str(text or "")
+    # Prefer explicit "本次腿部穿搭：X" if already built.
+    m = re.search(r"本次腿部穿搭[:：]\s*(光腿神器|白丝|黑丝)", raw)
+    if m:
+        return str(m.group(1) or "").strip()
+    # Drop boilerplate that always lists all three options (must not force 白丝).
+    cleaned = re.sub(r"若本次是白丝/黑丝[^。\n]*。?", " ", raw)
+    cleaned = re.sub(r"光腿神器[、,，/]白丝[、,，/或]黑丝", " ", cleaned)
+    cleaned = re.sub(r"白丝/黑丝", " ", cleaned)
+    # User command extras: first match wins (看看腿 白丝).
+    if re.search(r"白丝", cleaned):
+        return "白丝"
+    if re.search(r"黑丝", cleaned):
+        return "黑丝"
+    if re.search(r"光腿神器|(?<![一-龥])光腿(?![一-龥])", cleaned) or re.search(r"光腿", cleaned):
+        # bare 光腿 / 光腿神器
+        if re.search(r"光腿神器|光腿", cleaned):
+            return "光腿神器"
+    return ""
+
+
+def parse_prompt_en_response(text: str) -> str:
+    """Extract English prompt from translator JSON; empty means failure -> keep original."""
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return ""
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:\w+)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+    try:
+        import json as _json
+
+        payload = None
+        try:
+            payload = _json.loads(cleaned)
+        except Exception:
+            matched = re.search(r"\{(?:[^{}]|\{[^{}]*\})*\}", cleaned, flags=re.S)
+            if matched:
+                payload = _json.loads(matched.group(0))
+        if isinstance(payload, dict):
+            if payload.get("ok") is False:
+                return ""
+            en = payload.get(
+                "en",
+                payload.get("english", payload.get("prompt", payload.get("translation", ""))),
+            )
+            en = str(en or "").strip()
+            if not en:
+                return ""
+            low = en.lower()
+            if low.startswith("{") or "return only one json" in low or "source prompt:" in low:
+                return ""
+            return en
+    except Exception:
+        pass
+    # Legacy plain-text fallback for old templates.
+    plain = re.sub(r"^(?:English\s*prompt|Translation|译文|英文)[:：]\s*", "", cleaned, flags=re.I).strip()
+    if not plain or plain.startswith("{"):
+        return ""
+    low = plain.lower()
+    if ("allow" in low and "reason" in low) or "return only one json" in low or "source prompt:" in low:
+        return ""
+    if "faithful language conversion only" in low or "translate the image-generation prompt" in low:
+        return ""
+    if "translate the video-generation prompt" in low:
+        return ""
+    return plain
+
+
 @register(PLUGIN_NAME, PLUGIN_AUTHOR, f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}", PLUGIN_VERSION)
 class SelfieImagePlugin(Star):
     def __init__(self, context: Context, config: Optional[dict] = None):
@@ -1442,6 +1513,87 @@ class SelfieImagePlugin(Star):
         except Exception as exc:
             return False, str(exc)
         return self._parse_audit_response(text)
+
+
+    def _prompt_en_needed(self, text: str, *, media: str = "image") -> bool:
+        """Whether prompt EN translation is enabled and applicable for this text."""
+        if media == "video":
+            if not bool(getattr(self.config, "image_enable_video_prompt_en", False)):
+                return False
+        else:
+            if not bool(getattr(self.config, "image_enable_image_prompt_en", False)):
+                return False
+        mode = str(getattr(self.config, "image_prompt_en_mode", "if_cjk") or "if_cjk").strip().lower()
+        if mode == "always":
+            return True
+        # if_cjk (default): only when CJK present
+        return bool(re.search(r"[\u3400-\u9fff\uf900-\ufaff]", str(text or "")))
+
+    async def _translate_prompt_to_english(
+        self,
+        prompt: str,
+        *,
+        media: str = "image",
+        event: Optional[AstrMessageEvent] = None,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Translate generation prompt to English via audit-channel chat model.
+
+        Returns (translated_or_original, meta). Fail-open: on error keep original.
+        """
+        raw = str(prompt or "").strip()
+        meta: Dict[str, Any] = {"enabled": True, "applied": False, "media": media}
+        if not raw:
+            return raw, meta
+        if not self._prompt_en_needed(raw, media=media):
+            meta["skipped"] = "not_needed"
+            return raw, meta
+        template = (
+            getattr(self.config, "image_video_prompt_en_template", "")
+            if media == "video"
+            else getattr(self.config, "image_image_prompt_en_template", "")
+        )
+        template = str(template or "").strip()
+        if not template or "{prompt}" not in template:
+            from .models import DEFAULT_CONFIG
+            template = str(
+                DEFAULT_CONFIG["image"]["video_prompt_en_template"]
+                if media == "video"
+                else DEFAULT_CONFIG["image"]["image_prompt_en_template"]
+            )
+        instruct = template.replace("{prompt}", raw)
+        model_label = str(getattr(self.config, "image_prompt_en_model", "") or "").strip()
+        # Prefer dedicated EN model, else prompt-audit model, else first audit target.
+        try:
+            target = self._find_audit_target(model_label) if model_label else None
+            if target is None and self.config.image_prompt_audit_model:
+                target = self._find_audit_target(self.config.image_prompt_audit_model)
+            if target is None:
+                targets = self.config.get_audit_targets()
+                target = targets[0] if targets else None
+            text = ""
+            if target:
+                text = await self._audit_chat_via_target(target, instruct)
+                meta["model"] = target.label
+            elif event is not None:
+                text = await self._audit_prompt_via_astrbot(event, instruct)
+                meta["model"] = "astrbot"
+            else:
+                meta["error"] = "no_translate_model"
+                return raw, meta
+            cleaned = parse_prompt_en_response(text)
+            if not cleaned:
+                meta["error"] = "translate_parse_failed"
+                meta["raw_preview"] = redact_sensitive_text(str(text or ""))[:180]
+                return raw, meta  # fail-open: keep original prompt
+            meta["applied"] = True
+            meta["original_len"] = len(raw)
+            meta["translated_len"] = len(cleaned)
+            meta["format"] = "json"
+            return cleaned, meta
+        except Exception as exc:
+            meta["error"] = redact_sensitive_text(str(exc))[:200]
+            return raw, meta  # fail-open
+
 
     def _record_task(self, record: Dict[str, Any]) -> None:
         stale_cache_paths: List[str] = []
@@ -2830,8 +2982,9 @@ class SelfieImagePlugin(Star):
         has_refs: bool = False,
         *,
         avoid_pose: str = "",
+        force_legwear: str = "",
     ) -> str:
-        """生成单一腿部姿势，并按姿势选择腿部穿搭。"""
+        """生成单一腿部姿势，并按姿势选择腿部穿搭。用户点名白丝/黑丝/光腿时强制采用。"""
         pose_pool = [
             ("sit", 3),
             ("kneel", 3),
@@ -2942,12 +3095,18 @@ class SelfieImagePlugin(Star):
                 "抱膝时双手必须从肩肘连续伸出后抱膝，腕手与胳膊都在画面内且相连；"
                 "不要一侧只露出半截胳膊，又在腿边另起一只手。"
             )
-        legwear_options = LEGWEAR_BY_POSE.get(pose_bucket, LEGWEAR_BY_POSE["sit"])
-        legwear = random.choices(
-            [name for name, _ in legwear_options],
-            weights=[weight for _, weight in legwear_options],
-            k=1,
-        )[0]
+        requested = str(force_legwear or "").strip()
+        if requested not in LEGWEAR_PROMPTS:
+            requested = parse_requested_legwear(extra_request)
+        if requested in LEGWEAR_PROMPTS:
+            legwear = requested
+        else:
+            legwear_options = LEGWEAR_BY_POSE.get(pose_bucket, LEGWEAR_BY_POSE["sit"])
+            legwear = random.choices(
+                [name for name, _ in legwear_options],
+                weights=[weight for _, weight in legwear_options],
+                k=1,
+            )[0]
         legwear_rule = LEGWEAR_PROMPTS[legwear]
         base = (
             "看看腿。"
@@ -2969,6 +3128,7 @@ class SelfieImagePlugin(Star):
         )
         if has_refs:
             base += " 用户提供的图片只参考氛围、构图、服装或姿势；主角身份仍以 AI 自拍形象参考图为准。"
+        # Strip sock/legwear tokens from free-text extra so they don't fight the locked choice.
         extra = LEGWEAR_REQUEST_PATTERN.sub("", str(extra_request or ""))
         extra = re.sub(r"\s+", " ", extra).strip(" 。、，")
         if extra:
@@ -3409,6 +3569,17 @@ class SelfieImagePlugin(Star):
                 }
             )
             return {"success": False, "error": f"提示词审核未通过：{audit_reason}"}
+
+        # Optional: translate final image prompt to English for models weak on Chinese.
+        if self._prompt_en_needed(request_prompt, media="image"):
+            translated, en_meta = await self._translate_prompt_to_english(
+                request_prompt, media="image", event=event
+            )
+            request_data["prompt_en"] = en_meta
+            if en_meta.get("applied") and translated:
+                request_prompt = translated
+                request_data["request_prompt"] = request_prompt
+                request_data["request_prompt_en"] = translated
 
         if not selected_targets:
             response_data = {
@@ -3929,8 +4100,17 @@ class SelfieImagePlugin(Star):
             return {"success": False, "error": invalid_messages[0] if invalid_messages else "视频渠道配置不完整"}
         targets = valid_targets
 
+        video_prompt = str(prompt or "").strip()
+        prompt_en_meta = {}
+        if self._prompt_en_needed(video_prompt, media="video"):
+            translated, prompt_en_meta = await self._translate_prompt_to_english(
+                video_prompt, media="video", event=event
+            )
+            if prompt_en_meta.get("applied") and translated:
+                video_prompt = translated
+
         req = VideoGenerateRequest(
-            prompt=str(prompt or "").strip(),
+            prompt=video_prompt,
             images=list(refs or [])[:1],  # I2V: first frame only (big_banana style)
             duration=int(duration if duration is not None else getattr(self.config, "video_default_duration", 5) or 5),
         )
@@ -3958,7 +4138,13 @@ class SelfieImagePlugin(Star):
                     "used_model": result.used_model,
                     "elapsed_seconds": result.elapsed_seconds,
                     "reference_images": len(refs),
-                    "request_data": {"duration": req.duration, "size": req.size, "reference_images": len(refs)},
+                    "request_data": {
+                        "duration": req.duration,
+                        "size": req.size,
+                        "reference_images": len(refs),
+                        "prompt_en": prompt_en_meta,
+                        "request_prompt_en": req.prompt if prompt_en_meta.get("applied") else "",
+                    },
                     "response_data": {"attempts": result.attempts},
                     "request_image_paths": [],
                     "generated_image_paths": [],
@@ -3985,7 +4171,13 @@ class SelfieImagePlugin(Star):
                 "used_model": result.used_model,
                 "elapsed_seconds": result.elapsed_seconds,
                 "reference_images": len(refs),
-                "request_data": {"duration": req.duration, "size": req.size, "reference_images": len(refs)},
+                "request_data": {
+                    "duration": req.duration,
+                    "size": req.size,
+                    "reference_images": len(refs),
+                    "prompt_en": prompt_en_meta,
+                    "request_prompt_en": req.prompt if prompt_en_meta.get("applied") else "",
+                },
                 "response_data": {"attempts": result.attempts, "video_url": result.video_url},
                 "request_image_paths": [],
                 "generated_image_paths": [],
@@ -4292,6 +4484,7 @@ class SelfieImagePlugin(Star):
         last_pose = ""
         last_shot = ""
         extra_keep = ""
+        force_legwear = ""
         if rebuild_each:
             # Extra may contain full preset text with many periods — take rest of line, then strip pose/shot tags.
             m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
@@ -4299,6 +4492,8 @@ class SelfieImagePlugin(Star):
                 extra_keep = str(m_extra.group(1) or "").strip()
                 extra_keep = re.sub(r"\s*【(?:pose|shot):[a-z_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
+            # Keep user/locked legwear across rebuild rounds (extra text alone may have stripped 白丝).
+            force_legwear = parse_requested_legwear(str(action or "")) or parse_requested_legwear(extra_keep)
             m_pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
             if m_pose:
                 last_pose = str(m_pose.group(1) or "")
@@ -4315,6 +4510,7 @@ class SelfieImagePlugin(Star):
                         extra_keep,
                         bool(extra_refs),
                         avoid_pose=last_pose,
+                        force_legwear=force_legwear,
                     )
                     m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
                     if m_pose:
