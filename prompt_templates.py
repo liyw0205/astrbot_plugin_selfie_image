@@ -50,6 +50,7 @@ def build_selfie_builtin_prompt(
     translated_user = str(user_text or "").strip()
     is_legs = "看看腿" in str(action) or "腿部" in str(action) or "【pose:" in str(action)
     is_group = "合影" in str(action) or "合照" in str(action) or "同框" in str(action)
+    feet_cropped = "【pose:reclined_knees_crop】" in str(action)
     if language == "en":
         style = {"real": "realistic", "anime": "anime-style"}.get(str(appearance_type), "visually consistent")
         lines = [
@@ -63,16 +64,25 @@ def build_selfie_builtin_prompt(
             lines.append("Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.")
         if extra_reference_count:
             lines.append("Use extra references for clothing, pose, composition, lighting, or scene only.")
-        if is_group:
+        # Legs first: action text may contain "不要合影" which must not flip into group mode.
+        if is_legs:
+            if feet_cropped:
+                lines.extend([
+                    "Single subject, close first-person downward shot: show only a little waist or skirt, thighs, and knees; crop both ankles and feet fully outside the frame.",
+                    "Keep exactly two natural thighs and knees connected from the hips, bent in a stable seated pose with clear left-right boundaries.",
+                    "Use only the selected bare-leg effect or separate white/black sheer thigh-high stockings; keep the stocking tops on the upper thighs and never turn them into tights.",
+                    "Do not add toes, soles, shoes, or any foot detail; preserve natural close-range perspective without forced symmetry.",
+                ])
+            else:
+                lines.extend([
+                    "Single subject only: a tasteful lower-body close-up with no second person, background people, or shoes.",
+                    "Use only the selected legwear: natural bare-leg effect, white sheer mid-calf stockings, or black sheer mid-calf stockings; stockings cover the whole foot and do not become tights.",
+                    "Keep two natural legs and feet, correct joints, stable pose, realistic anatomy, and perspective.",
+                ])
+        elif is_group:
             lines.extend([
                 "Turn each referenced person or non-person subject into an independent complete person with clear boundaries; do not leave toys or flat cutouts.",
                 "Keep everyone in one coherent scene with natural positions, scale, perspective, and friendly interaction.",
-            ])
-        elif is_legs:
-            lines.extend([
-                "Single subject only: a tasteful lower-body close-up with no second person, background people, or shoes.",
-                "Use only the selected legwear: natural bare-leg effect, white sheer mid-calf stockings, or black sheer mid-calf stockings; stockings cover the whole foot and do not become tights.",
-                "Keep two natural legs and feet, correct joints, stable pose, realistic anatomy, and perspective.",
             ])
         else:
             lines.extend([
@@ -85,13 +95,19 @@ def build_selfie_builtin_prompt(
         return _join(*lines, f"User request: {translated_user}" if translated_user else "")
 
     user = translated_user or extract_user_prompt(action)
+    if is_legs and feet_cropped:
+        legs_line = "单人近距离俯拍，只露少量腰腹/裙摆、大腿与膝部；双脚完整裁出画外；腿部穿搭只用已选定的光腿神器、白丝或黑丝，左右分离大腿袜，禁止连裤袜。"
+    elif is_legs:
+        legs_line = "单人下半身近景，只保留自然完整的两条腿和双脚；腿部穿搭只用已选定的光腿神器、白丝或黑丝，不要鞋子。"
+    else:
+        legs_line = ""
     return _join(
         "这是自拍/日常照片。",
         "固定主角身份：脸型五官、发型发色、性别、体态与整体长相保持稳定；表情按本次场景自然变化。",
         "正对镜头时自然看向镜头，眼神有焦点。",
         "参考图一只作为主角身份锚点，额外参考图只用于服装、姿势、构图、光线或场景。" if has_reference_image else "按角色设定保持主角身份稳定，未说明性别时默认成年女性。",
-        "合影对象必须落实为独立完整人物，站位自然，边界清晰。" if is_group else "",
-        "单人下半身近景，只保留自然完整的两条腿和双脚；腿部穿搭只用已选定的光腿神器、白丝或黑丝，不要鞋子。" if is_legs else "",
+        "" if is_legs else ("合影对象必须落实为独立完整人物，站位自然，边界清晰。" if is_group else ""),
+        legs_line,
         "画面自然完整，光线、色调、景深和相机透视统一。" if not is_legs else "",
         f"用户要求：{user}" if user else "",
     )

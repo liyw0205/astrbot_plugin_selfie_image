@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.29")
+        self.assertEqual(PLUGIN_VERSION, "1.3.30")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4457,8 +4457,6 @@ class LegFocusTests(unittest.TestCase):
         legwear_by_pose = {}
         for _ in range(180):
             t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
-            self.assertIn("赤足", t)
-            self.assertIn("外翻", t)
             self.assertIn("近大远小", t)
             self.assertNotIn("小皮鞋", t)
             self.assertNotIn("居家拖鞋", t)
@@ -4472,8 +4470,33 @@ class LegFocusTests(unittest.TestCase):
                 pose = m.group(1)
                 found.add(pose)
                 legwear_by_pose.setdefault(pose, set()).update(selected)
-        for key in ("sit", "kneel", "side_lie", "hug_knee", "cross_leg"):
+                if pose == "reclined_knees_crop":
+                    self.assertIn("双脚完整裁出画外", t)
+                    self.assertNotIn("脚趾五个分开", t)
+                    self.assertNotIn("丝袜必须包住整只脚到脚趾", t)
+                else:
+                    self.assertIn("赤足", t)
+                    self.assertIn("外翻", t)
+        for key in ("sit", "kneel", "side_lie", "hug_knee", "cross_leg", "reclined_knees_crop"):
             self.assertIn(key, found, f"missing pose {key} in samples {found}")
+        forced_crop = None
+        with patch("astrbot_plugin_selfie_image.main.random.choices", side_effect=[["reclined_knees_crop"], ["白丝"]]):
+            forced_crop = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
+        self.assertIn("【pose:reclined_knees_crop】", forced_crop)
+        self.assertIn("双脚完整裁出画外", forced_crop)
+        self.assertNotIn("脚趾五个分开", forced_crop)
+        self.assertNotIn("丝袜必须包住整只脚到脚趾", forced_crop)
+        from astrbot_plugin_selfie_image.persona import PersonaManager
+        from astrbot_plugin_selfie_image.prompt_templates import build_selfie_builtin_prompt
+        with tempfile.TemporaryDirectory() as tmp:
+            final_crop = PersonaManager(tmp).build_selfie_prompt(forced_crop, "小助", "温柔", True, 0)
+        self.assertIn("脚部画外", final_crop)
+        self.assertIn("脚踝和双脚完整裁出画外", final_crop)
+        for conflict in ("脚趾五个分开", "身体从入镜部位连续到脚", "包住整脚到脚趾"):
+            self.assertNotIn(conflict, final_crop)
+        final_crop_en = build_selfie_builtin_prompt(forced_crop, language="en", has_reference_image=True)
+        self.assertIn("crop both ankles and feet fully outside the frame", final_crop_en)
+        self.assertNotIn("stockings cover the whole foot", final_crop_en)
         for pose, choices in legwear_by_pose.items():
             self.assertTrue(choices <= {"光腿神器", "白丝", "黑丝"}, (pose, choices))
         filtered = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "短袜 过膝袜 肉丝 清晨", False)
