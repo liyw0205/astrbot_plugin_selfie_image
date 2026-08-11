@@ -441,7 +441,7 @@
       <div id="channelPaneVideo" class="channel-pane"><div id="videoChannelList"></div></div>
       <div class="priority-block" data-priority-kind="image">
         <h3>生图模型优先级</h3>
-        <p class="muted">顺序：有优先级时只按列表重试，未设置时按启用顺序。随机：从优先级中随机选一个。固定：只用优先级 1，未设置时用启用模型 1。</p>
+        <p class="muted">候选范围：有优先级时只用优先级模型，未设置时使用全部启用模型。顺序会依次重试，随机只选一个，固定只用候选模型 1。</p>
         <div class="grid">
           <div><label>模型调用模式</label><select id="imageModelCallMode" onchange="onImageModelCallModeChange()"><option value="sequence">顺序</option><option value="random">随机</option><option value="fixed">固定</option></select></div>
           <div><label>选择生图模型</label><select id="priorityPicker"></select></div>

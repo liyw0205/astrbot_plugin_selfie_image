@@ -506,7 +506,7 @@ class AICatConfig:
             ]
         mode = self.image_model_call_mode
         if mode == "random":
-            if not priority or not selected:
+            if not selected:
                 return []
             import random
 

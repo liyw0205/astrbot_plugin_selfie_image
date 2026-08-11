@@ -911,12 +911,14 @@ class ConfigModelTests(unittest.TestCase):
         ordered = AICatConfig.from_dict(raw).get_prioritized_targets()
         self.assertEqual([t.label for t in ordered], ["b/m3", "a/m1"])
 
-    def test_random_image_model_requires_priority_pool(self) -> None:
+    def test_random_image_model_uses_enabled_models_without_priority(self) -> None:
         config = AICatConfig.from_dict({
             "image_model_call_mode": "random",
-            "image_channels": [{"name": "a", "provider_type": "openai", "base_url": "https://a.test", "enabled_models": ["m1"]}],
+            "image_channels": [{"name": "a", "provider_type": "openai", "base_url": "https://a.test", "enabled_models": ["m1", "m2"]}],
         })
-        self.assertEqual(config.get_prioritized_targets(), [])
+        labels = [target.label for target in config.get_prioritized_targets()]
+        self.assertEqual(len(labels), 1)
+        self.assertIn(labels[0], {"a/m1", "a/m2"})
 
     def test_fixed_image_model_uses_priority_one_or_first_enabled(self) -> None:
         raw = {
