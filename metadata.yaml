@@ -7,3 +7,24 @@ version: 1.3.27
 author: liyw0205
 repo: https://github.com/liyw0205/astrbot_plugin_selfie_image
 astrbot_version: ">=4.13.0,<5"
+tags:
+  - image
+  - selfie
+  - video
+  - web
+  - dashboard
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - qq_official_webhook
+  - telegram
+  - discord
+  - wecom
+  - lark
+  - dingtalk
+  - kook
+  - slack
+  - satori
+  - webchat
+pages:
+  - name: dashboard
