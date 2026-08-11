@@ -441,6 +441,10 @@ async def generate_video_openai_compatible(
             else:
                 # Family protocols (sora/veo/seedance/kling/cogvideo/openai_video)
                 # share OpenAI-compatible /videos/generations on most midgates; payload tuned per family.
+                async_family = protocol
+                model_l = str(target.model or "").lower()
+                if "grok" in model_l and "video" in model_l:
+                    async_family = "grok_midgate"
                 video_url = await _generate_via_async(
                     session,
                     target=target,
@@ -448,7 +452,7 @@ async def generate_video_openai_compatible(
                     headers=headers,
                     timeout=timeout,
                     b64_images=b64_images,
-                    family=protocol,
+                    family=async_family,
                 )
 
             raw = await _download_video_bytes(session, video_url, timeout=timeout, proxy=str((target.extra or {}).get("download_proxy") or target.proxy or ""))
@@ -502,6 +506,38 @@ async def generate_video_openai_compatible(
     return VideoGenerateResult(error=last_error or "视频生成失败", used_model=target.label)
 
 
+def _normalize_aspect_ratio(size: str) -> str:
+    """Map size-like values to aspect_ratio when possible."""
+    raw = str(size or "").strip()
+    if not raw:
+        return ""
+    if ":" in raw and "x" not in raw.lower():
+        return raw
+    lower = raw.lower().replace("×", "x")
+    if "x" in lower:
+        try:
+            w_s, h_s = lower.split("x", 1)
+            w, h = int(float(w_s)), int(float(h_s))
+            if w > 0 and h > 0:
+                # reduce roughly to common ratios
+                ratio = w / h
+                presets = {
+                    (16, 9): 16 / 9,
+                    (9, 16): 9 / 16,
+                    (1, 1): 1.0,
+                    (4, 3): 4 / 3,
+                    (3, 4): 3 / 4,
+                    (3, 2): 1.5,
+                    (2, 3): 2 / 3,
+                }
+                best = min(presets.items(), key=lambda item: abs(item[1] - ratio))
+                if abs(best[1] - ratio) < 0.08:
+                    return f"{best[0][0]}:{best[0][1]}"
+        except Exception:
+            pass
+    return raw
+
+
 def _video_payload(
     target: ImageModelTarget,
     request: VideoGenerateRequest,
@@ -509,54 +545,99 @@ def _video_payload(
     *,
     family: str = "openai_video",
 ) -> Dict[str, Any]:
-    """Build request body; family tweaks field names for common midgates."""
+    """Build request body with per-family field whitelist (avoid unknown-field 400)."""
     family = str(family or "openai_video").strip().lower() or "openai_video"
+    # Aliases for Grok midgates / chat transport already routed elsewhere.
+    if family in {"grok", "grok_video", "xai"}:
+        family = "grok_midgate"
+
+    prompt = str(request.prompt or "").strip()
     payload: Dict[str, Any] = {
         "model": target.model,
-        "prompt": str(request.prompt or "").strip(),
+        "prompt": prompt,
     }
     duration = int(request.duration or 5)
-    if duration > 0:
-        payload["duration"] = duration
-        payload["seconds"] = duration
-        # some gateways
-        payload["n_seconds"] = duration
-    if request.size:
-        payload["size"] = str(request.size).strip()
-        payload["aspect_ratio"] = str(request.size).strip()
+    size_raw = str(request.size or "").strip()
+    aspect = _normalize_aspect_ratio(size_raw)
 
+    # --- duration / size profiles (minimal by default) ---
+    if family in {"grok_midgate"}:
+        # futureppo/NewAPI style: unknown fields (seconds/size/n/...) often 400
+        if aspect:
+            payload["aspect_ratio"] = aspect
+        # no duration fields unless gateway documents them
+    elif family in {"sora", "openai_video", "video_async"}:
+        if duration > 0:
+            payload["duration"] = duration
+            # seconds as string for gateways that reject number-as-string mismatch either way—
+            # prefer int duration only; add seconds only if explicitly needed by extra.
+        if size_raw:
+            payload["size"] = size_raw
+        if aspect and ":" in aspect:
+            payload.setdefault("aspect_ratio", aspect)
+    elif family in {"veo", "seedance", "kling", "cogvideo"}:
+        if duration > 0:
+            payload["duration"] = duration
+        if aspect:
+            payload["aspect_ratio"] = aspect
+        elif size_raw:
+            payload["size"] = size_raw
+    elif family == "agnes":
+        # official path uses dedicated builder; generations midgate fallback:
+        if duration > 0:
+            payload["duration"] = duration
+        if size_raw:
+            payload["size"] = size_raw
+    else:
+        # conservative generic midgate
+        if duration > 0:
+            payload["duration"] = duration
+        if aspect:
+            payload["aspect_ratio"] = aspect
+        elif size_raw:
+            payload["size"] = size_raw
+
+    # --- I2V first frame ---
     if b64_images:
         first = b64_images[0]
-        # Generic + OmniDraw/big_banana common keys
-        payload["images"] = b64_images[:1] if family in {"sora", "kling", "seedance"} else b64_images[:3]
-        payload["image"] = first
-        payload["image_url"] = first
-        payload["input_reference"] = first
         if family == "sora":
             payload["input_reference"] = first
+            payload["images"] = b64_images[:1]
         elif family == "veo":
-            payload["image"] = {"bytesBase64Encoded": first.split(",", 1)[-1]} if first.startswith("data:") else {"uri": first}
+            payload["image"] = (
+                {"bytesBase64Encoded": first.split(",", 1)[-1]}
+                if first.startswith("data:")
+                else {"uri": first}
+            )
         elif family == "seedance":
             payload["first_frame_image"] = first
             payload["image_url"] = first
-        elif family == "agnes":
-            # Official Agnes i2v expects public image URL in `image` when possible.
-            # Data-URL fallback still sent for gateways that accept it.
-            payload["image"] = first
-            payload["image_urls"] = [first]
         elif family == "kling":
             payload["image_url"] = first
             payload["image"] = first
         elif family == "cogvideo":
             payload["image_url"] = first
+        elif family == "agnes":
+            payload["image"] = first
+            payload["image_urls"] = [first]
+        elif family == "grok_midgate":
+            # keep single common key only
+            payload["image"] = first
+        else:
+            payload["image"] = first
+            payload["images"] = b64_images[:1]
 
-    # Family hints some midgates read
-    if family and family not in {"openai_video", "video_async"}:
+    # Optional family hint only for non-strict gateways
+    if family not in {"openai_video", "video_async", "grok_midgate", "agnes"}:
         payload.setdefault("provider", family)
-        payload.setdefault("video_provider", family)
 
+    # request.extra may add documented fields; still drop known-toxic keys for strict families
     if isinstance(request.extra, dict) and request.extra:
-        payload.update(request.extra)
+        extra = dict(request.extra)
+        if family == "grok_midgate":
+            for bad in ("seconds", "n_seconds", "n", "size", "video_config", "video_length", "length"):
+                extra.pop(bad, None)
+        payload.update(extra)
     return payload
 
 

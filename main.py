@@ -4401,6 +4401,56 @@ class SelfieImagePlugin(Star):
             except Exception as send_exc:
                 logger.warning(f"[SelfieImage] 后台任务失败通知发送失败: {send_exc}")
 
+
+    def _batch_failure_policy(self) -> tuple[str, int]:
+        """Return (mode, skip_max). mode: stop | skip | skip_max."""
+        mode = str(getattr(self.config, "image_batch_on_failure", "skip") or "skip").strip().lower()
+        if mode in {"continue", "skip_continue", "skip-continue"}:
+            mode = "skip"
+        if mode not in {"stop", "skip", "skip_max"}:
+            mode = "skip"
+        try:
+            skip_max = int(getattr(self.config, "image_batch_skip_max", 2) or 2)
+        except Exception:
+            skip_max = 2
+        skip_max = max(0, min(8, skip_max))
+        return mode, skip_max
+
+    def _batch_shot_fail_text(
+        self,
+        *,
+        index: int,
+        total: int,
+        done_files: int,
+        error: str,
+        mode: str,
+        skipped: int,
+        skip_max: int,
+        will_continue: bool,
+    ) -> str:
+        """Single-cause progress line when one shot in a batch fails."""
+        base = f"第 {index}/{total} 张没出成"
+        detail = str(error or "").strip()
+        if detail:
+            # keep short
+            detail = re.sub(r"\s+", " ", detail)
+            if len(detail) > 80:
+                detail = detail[:79] + "…"
+            base = f"{base}：{detail}"
+        base = f"{base}。已出 {done_files} 张"
+        if will_continue:
+            if mode == "skip_max":
+                base = f"{base}，已跳过 {skipped}/{skip_max}，继续后面的"
+            else:
+                base = f"{base}，继续后面的"
+        else:
+            left = max(0, total - index)
+            if left:
+                base = f"{base}，后面 {left} 张先不跑了"
+            else:
+                base = f"{base}"
+        return base
+
     async def _background_draw_batches(
         self,
         task_id: str,
@@ -4419,6 +4469,7 @@ class SelfieImagePlugin(Star):
         all_files: List[str] = []
         used_model = ""
         last_elapsed = 0.0
+        skipped_shots = 0
         for index in range(total):
             if self._task_cancel_requested(task_id):
                 return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
@@ -4427,15 +4478,42 @@ class SelfieImagePlugin(Star):
             else:
                 result = await self._draw_once(event, prompt, aspect, resolution, refs, source)
             if not result.get("success"):
+                raw_err = str(result.get("error") or "")
                 error = self._friendly_user_error_message(
-                    str(result.get("error") or ""),
+                    raw_err,
                     fail_label or self._natural_fail_fallback("image"),
                 )
+                mode, skip_max = self._batch_failure_policy()
+                skipped_shots += 1
+                will_continue = False
+                if mode == "skip":
+                    will_continue = True
+                elif mode == "skip_max" and skipped_shots <= skip_max:
+                    will_continue = True
+                msg = self._batch_shot_fail_text(
+                    index=index + 1,
+                    total=total,
+                    done_files=len(all_files),
+                    error=error,
+                    mode=mode,
+                    skipped=skipped_shots,
+                    skip_max=skip_max,
+                    will_continue=will_continue,
+                )
                 try:
-                    await event.send(event.plain_result(error))
+                    await event.send(event.plain_result(msg))
                 except Exception:
                     pass
-                return {"success": False, "error": str(result.get("error") or error), "files": all_files}
+                if will_continue:
+                    continue
+                return {
+                    "success": False,
+                    "error": raw_err or error,
+                    "files": all_files,
+                    "batch_total": total,
+                    "batch_failed_at": index + 1,
+                    "batch_skipped": skipped_shots,
+                }
             files = list(result.get("files") or [])
             used_model = str(result.get("used_model") or used_model)
             last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
@@ -4459,6 +4537,7 @@ class SelfieImagePlugin(Star):
             "used_model": used_model,
             "elapsed_seconds": last_elapsed,
             "batch_total": total,
+            "batch_skipped": skipped_shots,
         }
 
     async def _background_selfie_batches(
@@ -4477,6 +4556,7 @@ class SelfieImagePlugin(Star):
         all_files: List[str] = []
         used_model = ""
         last_elapsed = 0.0
+        skipped_shots = 0
         # 多张拍摄时逐张更换机位或姿势。
         rebuild_each = source in {"command-look-legs", "command-selfie", "command-look-you"} or (
             "看看腿" in str(action or "") or "【shot:" in str(action or "") or "【pose:" in str(action or "")
@@ -4545,12 +4625,39 @@ class SelfieImagePlugin(Star):
                 original_prompt=round_action,
             )
             if not result.get("success"):
-                error = self._friendly_user_error_message(str(result.get("error") or ""), fail_label)
+                raw_err = str(result.get("error") or "")
+                error = self._friendly_user_error_message(raw_err, fail_label)
+                mode, skip_max = self._batch_failure_policy()
+                skipped_shots += 1
+                will_continue = False
+                if mode == "skip":
+                    will_continue = True
+                elif mode == "skip_max" and skipped_shots <= skip_max:
+                    will_continue = True
+                msg = self._batch_shot_fail_text(
+                    index=index + 1,
+                    total=total,
+                    done_files=len(all_files),
+                    error=error,
+                    mode=mode,
+                    skipped=skipped_shots,
+                    skip_max=skip_max,
+                    will_continue=will_continue,
+                )
                 try:
-                    await event.send(event.plain_result(error))
+                    await event.send(event.plain_result(msg))
                 except Exception:
                     pass
-                return {"success": False, "error": str(result.get("error") or error), "files": all_files}
+                if will_continue:
+                    continue
+                return {
+                    "success": False,
+                    "error": raw_err or error,
+                    "files": all_files,
+                    "batch_total": total,
+                    "batch_failed_at": index + 1,
+                    "batch_skipped": skipped_shots,
+                }
             files = list(result.get("files") or [])
             used_model = str(result.get("used_model") or used_model)
             last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
@@ -4575,6 +4682,7 @@ class SelfieImagePlugin(Star):
             "used_model": used_model,
             "elapsed_seconds": last_elapsed,
             "batch_total": total,
+            "batch_skipped": skipped_shots,
         }
 
     def _validate_web_test_selection(self, payload: Dict[str, Any]) -> None:

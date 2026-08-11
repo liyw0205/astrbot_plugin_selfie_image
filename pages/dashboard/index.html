@@ -623,6 +623,14 @@
         <div><label>整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
         <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
         <div><label>一次最多连画几轮</label><input id="maxBatchCount" type="number" min="1" max="8"></div>
+        <div><label>连画失败时</label>
+          <select id="batchOnFailure">
+            <option value="skip">跳过失败张，继续后面</option>
+            <option value="stop">一张失败就整批停</option>
+            <option value="skip_max">最多跳过 N 张后停止</option>
+          </select>
+        </div>
+        <div><label>最多跳过张数</label><input id="batchSkipMax" type="number" min="0" max="8" title="仅「最多跳过 N 张」时生效"></div>
         <div><label>每人冷却（秒）</label><input id="rateLimitSeconds" type="number" min="0"></div>
         <div><label>每日基础次数</label><input id="dailyLimitCount" type="number" min="1"></div>
       </div>
@@ -1096,6 +1104,8 @@ Source prompt:
       img.max_image_size_mb ??= 10;
       img.cache_limit_mb ??= 100;
       img.max_batch_count ??= 2;
+      img.batch_on_failure ??= 'skip';
+      img.batch_skip_max ??= 2;
       img.rate_limit_seconds ??= 0;
       img.enable_daily_limit ??= false;
       img.daily_limit_count ??= 10;
@@ -1146,6 +1156,11 @@ Source prompt:
         $('maxImageSize').value = img.max_image_size_mb;
         $('cacheLimitMB').value = img.cache_limit_mb;
         $('maxBatchCount').value = img.max_batch_count;
+         if ($('batchOnFailure')) {
+           const m = String(img.batch_on_failure || 'skip');
+           $('batchOnFailure').value = ['stop','skip','skip_max'].includes(m) ? m : 'skip';
+         }
+         if ($('batchSkipMax')) $('batchSkipMax').value = img.batch_skip_max ?? 2;
         $('rateLimitSeconds').value = img.rate_limit_seconds;
         $('dailyLimitCount').value = img.daily_limit_count;
         $('enableLLMTool').checked = !!img.enable_llm_tool;
@@ -1201,6 +1216,9 @@ Source prompt:
       CONFIG.image.max_image_size_mb = Number($('maxImageSize').value || 10);
       CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 100);
       CONFIG.image.max_batch_count = Number($('maxBatchCount').value || 2);
+       CONFIG.image.batch_on_failure = ($('batchOnFailure') && $('batchOnFailure').value) || 'skip';
+       if (!['stop','skip','skip_max'].includes(CONFIG.image.batch_on_failure)) CONFIG.image.batch_on_failure = 'skip';
+       CONFIG.image.batch_skip_max = Number(($('batchSkipMax') && $('batchSkipMax').value) || 2);
       CONFIG.image.rate_limit_seconds = Number($('rateLimitSeconds').value || 0);
       CONFIG.image.daily_limit_count = Number($('dailyLimitCount').value || 10);
       CONFIG.image.enable_llm_tool = $('enableLLMTool').checked;

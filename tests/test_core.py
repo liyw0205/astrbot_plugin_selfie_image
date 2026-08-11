@@ -426,6 +426,48 @@ class ConfigModelTests(unittest.TestCase):
         fenced = "```json\n{\"ok\":true,\"en\":\"cat walk\"}\n```"
         self.assertEqual(parse(fenced), "cat walk")
 
+    
+    def test_batch_on_failure_config(self) -> None:
+        from astrbot_plugin_selfie_image.models import AICatConfig, DEFAULT_CONFIG
+        self.assertEqual(DEFAULT_CONFIG["image"].get("batch_on_failure"), "skip")
+        cfg = AICatConfig.from_dict({"image": {"batch_on_failure": "stop", "batch_skip_max": 3}})
+        self.assertEqual(cfg.image_batch_on_failure, "stop")
+        self.assertEqual(cfg.image_batch_skip_max, 3)
+        cfg2 = AICatConfig.from_dict({"image": {"batch_on_failure": "skip_continue"}})
+        self.assertEqual(cfg2.image_batch_on_failure, "skip")
+        html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
+        self.assertIn("batchOnFailure", html)
+        self.assertIn("batchSkipMax", html)
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        self.assertIn("_batch_failure_policy", main_src)
+        self.assertIn("_batch_shot_fail_text", main_src)
+        self.assertIn("will_continue", main_src)
+
+    def test_video_payload_grok_midgate_minimal(self) -> None:
+        from astrbot_plugin_selfie_image.models import ImageModelTarget
+        from astrbot_plugin_selfie_image.video import VideoGenerateRequest, _video_payload
+        target = ImageModelTarget(
+            channel_name="t",
+            provider_type="openai_video",
+            base_url="https://example.com",
+            api_key="k",
+            model="grok-imagine-video",
+            timeout=60,
+        )
+        req = VideoGenerateRequest(prompt="a cat", duration=6, size="1280x720")
+        payload = _video_payload(target, req, [], family="grok_midgate")
+        self.assertEqual(payload.get("model"), "grok-imagine-video")
+        self.assertEqual(payload.get("prompt"), "a cat")
+        self.assertNotIn("seconds", payload)
+        self.assertNotIn("n_seconds", payload)
+        self.assertNotIn("n", payload)
+        self.assertNotIn("size", payload)
+        self.assertIn(payload.get("aspect_ratio"), {"16:9", "1280x720"})
+        # default openai family still has duration
+        payload2 = _video_payload(target, req, [], family="openai_video")
+        self.assertIn("duration", payload2)
+
+
     def test_prompt_en_config_and_cjk_gate(self) -> None:
         from astrbot_plugin_selfie_image.models import AICatConfig, DEFAULT_CONFIG
         self.assertIn("enable_image_prompt_en", DEFAULT_CONFIG["image"])

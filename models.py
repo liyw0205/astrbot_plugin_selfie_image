@@ -33,6 +33,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "enable_daily_limit": False,
         "daily_limit_count": 10,
         "max_batch_count": 2,
+        # stop: 一张全失败整批停（旧行为）；skip: 跳过失败张继续凑满；skip_max: 最多跳过 N 张
+        "batch_on_failure": "skip",
+        "batch_skip_max": 2,
         "blocked_words": [],
         "enable_prompt_audit": False,
         "enable_output_audit": False,
@@ -252,6 +255,8 @@ class AICatConfig:
     image_enable_daily_limit: bool
     image_daily_limit_count: int
     image_max_batch_count: int
+    image_batch_on_failure: str
+    image_batch_skip_max: int
     image_blocked_words: List[str]
     image_enable_prompt_audit: bool
     image_enable_output_audit: bool
@@ -352,6 +357,11 @@ class AICatConfig:
             prompt_en_mode = "if_cjk"
         if prompt_en_mode in {"cjk", "chinese", "zh"}:
             prompt_en_mode = "if_cjk"
+        batch_on_failure = str(image.get("batch_on_failure") or image.get("batchOnFailure") or "skip").strip().lower() or "skip"
+        if batch_on_failure in {"continue", "skip_continue", "skip-continue"}:
+            batch_on_failure = "skip"
+        if batch_on_failure not in {"stop", "skip", "skip_max"}:
+            batch_on_failure = "skip"
         return cls(
             raw=raw,
             bot_name=str(raw.get("bot_name") or raw.get("botName") or DEFAULT_CONFIG["bot_name"]).strip() or "AI",
@@ -373,6 +383,8 @@ class AICatConfig:
             image_enable_daily_limit=to_bool(image.get("enable_daily_limit"), False),
             image_daily_limit_count=to_int(image.get("daily_limit_count"), 10, minimum=1, maximum=1000),
             image_max_batch_count=to_int(image.get("max_batch_count"), 2, minimum=1, maximum=8),
+            image_batch_on_failure=batch_on_failure,
+            image_batch_skip_max=to_int(image.get("batch_skip_max") or image.get("batchSkipMax"), 2, minimum=0, maximum=8),
             image_blocked_words=split_values(image.get("blocked_words")),
             image_enable_prompt_audit=to_bool(image.get("enable_prompt_audit"), False),
             image_enable_output_audit=to_bool(image.get("enable_output_audit"), False),
