@@ -833,6 +833,7 @@
       agnes: 'https://apihub.agnes-ai.com',
       kling: 'https://api.openai.com',
       cogvideo: 'https://api.openai.com',
+      grok: 'https://api.x.ai',
       video_chat: 'https://api.openai.com',
       video_sync: 'https://api.openai.com'
     };
@@ -846,7 +847,7 @@
     }
     const AUDIT_PROVIDERS = ['openai','gemini','gemini_openai'];
     // Video model-family protocols (like image provider types). Auto by model name; manual override.
-    const VIDEO_PROVIDERS = ['openai_video','sora','veo','seedance','agnes','kling','cogvideo','video_chat','video_sync'];
+    const VIDEO_PROVIDERS = ['openai_video','sora','veo','seedance','agnes','kling','cogvideo','grok','video_chat','video_sync'];
     const VIDEO_PROVIDER_LABELS = {
       openai_video: '通用 OpenAI 视频（/videos/generations）',
       sora: 'Sora',
@@ -855,6 +856,7 @@
       agnes: 'Agnes 视频',
       kling: '可灵 Kling',
       cogvideo: 'CogVideo / 智谱',
+      grok: 'Grok 视频（/videos/generations）',
       video_chat: '对话回链（chat/completions）',
       video_sync: '同步长等（高级）'
     };
@@ -1307,6 +1309,7 @@ Source prompt:
         agnes: 'agnes', agnes_video: 'agnes', agnes_ai: 'agnes',
         kling: 'kling', kuaishou_kling: 'kling',
         cogvideo: 'cogvideo', cogvideox: 'cogvideo', zhipu_video: 'cogvideo',
+        grok: 'grok', grok_video: 'grok', grok_imagine: 'grok', grok_midgate: 'grok', xai: 'grok', x_ai: 'grok',
         sync: 'video_sync', openai_sync: 'video_sync', video_sync: 'video_sync',
         chat: 'video_chat', openai_chat: 'video_chat', chat_completions: 'video_chat', video_chat: 'video_chat'
       };
@@ -1318,6 +1321,7 @@ Source prompt:
       if (raw.includes('agnes')) return 'agnes';
       if (raw.includes('kling') || rawText.includes('可灵')) return 'kling';
       if (raw.includes('cogvideo') || raw.includes('zhipu')) return 'cogvideo';
+      if (raw.includes('grok') || raw.includes('xai') || raw.includes('x_ai')) return 'grok';
       return '';
     }
     function inferProviderTypeFromModel(model) {
@@ -1341,6 +1345,7 @@ Source prompt:
       if (compact.includes('agnes')) return 'agnes';
       if (compact.includes('kling') || compact.includes('可灵')) return 'kling';
       if (compact.includes('cogvideo') || compact.includes('cog-videox')) return 'cogvideo';
+      if ((compact.includes('grok') && compact.includes('video')) || compact.startsWith('grok-imagine-video')) return 'grok';
       if ((['gpt-4o','gpt4o','claude','deepseek-chat'].some(k => compact.includes(k))) && compact.includes('video')) return 'video_chat';
       if (compact.endsWith('-chat') || compact.startsWith('chat-')) return 'video_chat';
       if (['luma','runway','minimax','hailuo','vidu','wanx','wan2','gen-3','gen3'].some(k => compact.includes(k))) return 'openai_video';

@@ -150,19 +150,24 @@ def _extract_url(text: str) -> str:
 def _extract_task_id(payload: Any) -> str:
     if isinstance(payload, dict):
         # Agnes official create response prefers video_id for result polling.
-        for key in ("video_id", "task_id", "id"):
+        # futureppo/Grok midgates often return only {"request_id": "task_..."}.
+        for key in ("video_id", "task_id", "request_id", "id"):
             value = payload.get(key)
             if not value:
                 continue
-            if key in {"video_id", "task_id"}:
+            if key in {"video_id", "task_id", "request_id"}:
                 return str(value)
             status = str(payload.get("status", payload.get("task_status", ""))).lower()
             # Prefer explicit task_id; accept id only for async-looking payloads.
-            if status in {"submitted", "pending", "queued", "processing", "running", "in_progress"} or payload.get("task_id") or payload.get("video_id"):
+            if status in {"submitted", "pending", "queued", "processing", "running", "in_progress"} or payload.get("task_id") or payload.get("video_id") or payload.get("request_id"):
                 return str(value)
             # Some gateways return only {"id": "..."} for video jobs.
             if "video" in str(payload).lower() or payload.get("object") in {"video", "video.generation"}:
                 return str(value)
+            # bare request-looking id with task_ prefix
+            text = str(value)
+            if text.startswith("task_") or text.startswith("video_"):
+                return text
         for value in payload.values():
             found = _extract_task_id(value)
             if found:
@@ -439,11 +444,13 @@ async def generate_video_openai_compatible(
                     b64_images=b64_images,
                 )
             else:
-                # Family protocols (sora/veo/seedance/kling/cogvideo/openai_video)
+                # Family protocols (sora/veo/seedance/kling/cogvideo/openai_video/grok)
                 # share OpenAI-compatible /videos/generations on most midgates; payload tuned per family.
                 async_family = protocol
                 model_l = str(target.model or "").lower()
-                if "grok" in model_l and "video" in model_l:
+                if protocol in {"grok", "grok_video", "xai", "grok_midgate"} or (
+                    "grok" in model_l and "video" in model_l
+                ):
                     async_family = "grok_midgate"
                 video_url = await _generate_via_async(
                     session,

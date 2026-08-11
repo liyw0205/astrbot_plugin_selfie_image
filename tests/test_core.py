@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.30")
+        self.assertEqual(PLUGIN_VERSION, "1.3.31")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -518,17 +518,17 @@ class ConfigModelTests(unittest.TestCase):
 
     def test_video_payload_grok_midgate_minimal(self) -> None:
         from astrbot_plugin_selfie_image.models import ImageModelTarget
-        from astrbot_plugin_selfie_image.video import VideoGenerateRequest, _video_payload
+        from astrbot_plugin_selfie_image.video import VideoGenerateRequest, _extract_task_id, _video_payload, build_video_generations_endpoint
         target = ImageModelTarget(
             channel_name="t",
-            provider_type="openai_video",
-            base_url="https://example.com",
+            provider_type="grok",
+            base_url="https://api.futureppo.top",
             api_key="k",
             model="grok-imagine-video",
             timeout=60,
         )
         req = VideoGenerateRequest(prompt="a cat", duration=6, size="1280x720")
-        payload = _video_payload(target, req, [], family="grok_midgate")
+        payload = _video_payload(target, req, [], family="grok")
         self.assertEqual(payload.get("model"), "grok-imagine-video")
         self.assertEqual(payload.get("prompt"), "a cat")
         self.assertNotIn("seconds", payload)
@@ -539,6 +539,12 @@ class ConfigModelTests(unittest.TestCase):
         # default openai family still has duration
         payload2 = _video_payload(target, req, [], family="openai_video")
         self.assertIn("duration", payload2)
+        self.assertEqual(
+            build_video_generations_endpoint("https://api.futureppo.top"),
+            "https://api.futureppo.top/v1/videos/generations",
+        )
+        self.assertEqual(_extract_task_id({"request_id": "task_abc"}), "task_abc")
+        self.assertEqual(_extract_task_id({"data": {"request_id": "task_nested"}}), "task_nested")
 
 
     def test_prompt_en_config_and_cjk_gate(self) -> None:
@@ -4258,6 +4264,9 @@ class VideoV1Tests(unittest.TestCase):
         self.assertEqual(normalize_video_provider_type("veo-3"), "veo")
         self.assertEqual(normalize_video_provider_type("seedance"), "seedance")
         self.assertEqual(normalize_video_provider_type("agnes"), "agnes")
+        self.assertEqual(normalize_video_provider_type("grok"), "grok")
+        self.assertEqual(normalize_video_provider_type("grok_video"), "grok")
+        self.assertEqual(normalize_video_provider_type("xai"), "grok")
         self.assertEqual(normalize_video_provider_type("openai_sync"), "video_sync")
         self.assertEqual(normalize_video_provider_type("openai_chat"), "video_chat")
         self.assertEqual(normalize_video_provider_type("openai"), "")  # image protocol
@@ -4266,6 +4275,8 @@ class VideoV1Tests(unittest.TestCase):
         self.assertEqual(infer_video_provider_type_from_model("doubao-seedance-1.0"), "seedance")
         self.assertEqual(infer_video_provider_type_from_model("agnes-video-pro"), "agnes")
         self.assertEqual(infer_video_provider_type_from_model("kling-v2"), "kling")
+        self.assertEqual(infer_video_provider_type_from_model("grok-imagine-video"), "grok")
+        self.assertEqual(infer_video_provider_type_from_model("grok-imagine-video-1.5"), "grok")
         self.assertEqual(
             resolve_video_model_provider_type("unknown", "video_sync", ""),
             "video_sync",

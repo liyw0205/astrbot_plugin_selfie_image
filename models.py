@@ -872,6 +872,12 @@ def normalize_video_provider_type(value: Any) -> str:
         "cogvideox": "cogvideo",
         "zhipu_video": "cogvideo",
         "智谱视频": "cogvideo",
+        "grok": "grok",
+        "grok_video": "grok",
+        "grok_imagine": "grok",
+        "grok_midgate": "grok",
+        "xai": "grok",
+        "x_ai": "grok",
         # transport
         "sync": "video_sync",
         "openai_sync": "video_sync",
@@ -898,6 +904,8 @@ def normalize_video_provider_type(value: Any) -> str:
         return "kling"
     if "cogvideo" in text or "zhipu" in text:
         return "cogvideo"
+    if "grok" in text or "xai" in text or "x_ai" in text:
+        return "grok"
     return ""
 
 
@@ -919,6 +927,10 @@ def infer_video_provider_type_from_model(model: str) -> str:
         return "kling"
     if "cogvideo" in compact or "cog-videox" in compact or "viduq" in compact:
         return "cogvideo"
+    if "grok" in compact and "video" in compact:
+        return "grok"
+    if compact.startswith("grok-imagine-video") or compact.startswith("grok_imagine_video"):
+        return "grok"
     # chat-style models that return video links
     if any(k in compact for k in ("gpt-4o", "gpt4o", "claude", "deepseek-chat")) and "video" in compact:
         return "video_chat"
