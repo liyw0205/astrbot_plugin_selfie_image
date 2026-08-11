@@ -885,6 +885,7 @@
     let EDITING_CHANNEL_INDEX = -1;
     let EDITING_CHANNEL_KIND = 'image';
     let EDITING_CHANNEL_IS_NEW = false;
+    let PENDING_DELETE = { key: '', timer: null };
     let CHANNEL_DRAFT = null;
     let CHANNEL_MODAL_DIRTY = false;
     let SUPPRESS_AUTOSAVE = false;
@@ -1559,11 +1560,30 @@ Source prompt:
       openChannelModal(-1, 'video', { isNew: true });
     }
     function removeChannel(index, kind = 'image') {
-      if (!confirm('确认删除这个渠道？')) return;
-      channelListFor(kind).splice(index, 1);
+      // AstrBot iframe often blocks window.confirm; use two-click page button instead.
+      const list = channelListFor(kind);
+      if (!list || index < 0 || index >= list.length) return;
+      const key = `${kind}:${index}`;
+      if (PENDING_DELETE.key !== key) {
+        clearTimeout(PENDING_DELETE.timer);
+        PENDING_DELETE = {
+          key,
+          timer: setTimeout(() => {
+            PENDING_DELETE = { key: '', timer: null };
+            renderAllChannelLists();
+          }, 4000),
+        };
+        renderAllChannelLists();
+        showToast('再点一次「确认删除」才会删除渠道', 'info');
+        return;
+      }
+      clearTimeout(PENDING_DELETE.timer);
+      PENDING_DELETE = { key: '', timer: null };
+      list.splice(index, 1);
       renderAllChannelLists();
       refreshModelSelectors();
       scheduleChannelListAutoSave();
+      showToast('渠道已删除', 'ok');
     }
     function duplicateChannel(index, kind = 'image') {
       const list = channelListFor(kind);
@@ -1608,7 +1628,7 @@ Source prompt:
             <div class="actions" style="margin-top:0">
               <button class="secondary" type="button" data-act="edit">编辑</button>
               <button class="secondary" type="button" data-act="dup">复制</button>
-              <button class="danger" type="button" data-act="del">删除</button>
+              <button class="danger" type="button" data-act="del">${PENDING_DELETE.key === `${kind}:${i}` ? '确认删除' : '删除'}</button>
             </div>
           </div>
         `;
@@ -2484,7 +2504,7 @@ Source prompt:
             <button class="secondary mini" type="button" data-act="edit">编辑</button>
             <button class="secondary mini" type="button" data-act="test">连通</button>
             <button class="secondary mini" type="button" data-act="quality">质量</button>
-            <button class="danger mini" type="button" data-act="del" style="grid-column:1/-1">删除</button>
+            <button class="danger mini" type="button" data-act="del" style="grid-column:1/-1">${PENDING_DELETE.key === `proxy:${i}` ? '确认删除' : '删除'}</button>
           </div>
           <div class="proxy-result ${prev[i] ? '' : 'empty'}" id="proxyResult-${i}">${prev[i] || ''}</div>
         </div>`;
@@ -2503,7 +2523,22 @@ Source prompt:
         };
         card.querySelector('[data-act="edit"]').onclick = () => openProxyModal(idx);
         card.querySelector('[data-act="del"]').onclick = async () => {
-          if (!confirm('确认删除这个代理？引用它的渠道将变为直连。')) return;
+          const key = `proxy:${idx}`;
+          if (PENDING_DELETE.key !== key) {
+            clearTimeout(PENDING_DELETE.timer);
+            PENDING_DELETE = {
+              key,
+              timer: setTimeout(() => {
+                PENDING_DELETE = { key: '', timer: null };
+                renderProxyList();
+              }, 4000),
+            };
+            renderProxyList();
+            showToast('再点一次「确认删除」才会删除代理', 'info');
+            return;
+          }
+          clearTimeout(PENDING_DELETE.timer);
+          PENDING_DELETE = { key: '', timer: null };
           const removed = CONFIG.proxies.splice(idx, 1)[0];
           const rid = removed && removed.id;
           if (rid) {

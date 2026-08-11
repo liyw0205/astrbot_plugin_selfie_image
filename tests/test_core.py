@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.31")
+        self.assertEqual(PLUGIN_VERSION, "1.3.32")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3594,6 +3594,10 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("openChannelModal(-1, 'image', { isNew: true })", self.html)
         self.assertIn("scheduleFormAutoSave", self.html)
         self.assertIn("scheduleChannelListAutoSave", self.html)
+        self.assertIn("PENDING_DELETE", self.html)
+        self.assertIn("再点一次「确认删除」才会删除渠道", self.html)
+        self.assertNotIn("confirm('确认删除这个渠道？')", self.html)
+        self.assertNotIn("confirm('确认删除这个代理？", self.html)
         self.assertIn("modalProvider", self.html)
         self.assertIn("VIDEO_PROVIDERS", self.html)
         self.assertIn("openai_video", self.html)
