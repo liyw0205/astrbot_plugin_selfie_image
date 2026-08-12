@@ -5339,6 +5339,64 @@ class SelfieImagePlugin(Star):
                     pass
             return None
 
+        # Non-recursive helper for emitting
+        async def _emit_message(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            nonlocal skipped_shots, used_model, last_elapsed, stop_error
+            index = int(result.get("index") or 0)
+            if result.get("cancelled"):
+                return None
+            if not result.get("success"):
+                raw_err = str(result.get("error") or "")
+                error = self._friendly_user_error_message(raw_err, fail_label or self._natural_fail_fallback("image"))
+                mode, skip_max = self._batch_failure_policy()
+                skipped_shots += 1
+                will_continue = False
+                if mode == "skip":
+                    will_continue = True
+                elif mode == "skip_max" and skipped_shots <= skip_max:
+                    will_continue = True
+                msg = await self._batch_shot_fail_message(
+                    event,
+                    index=index + 1,
+                    total=total,
+                    done_files=len(all_files),
+                    error=error,
+                    will_continue=will_continue,
+                )
+                try:
+                    await event.send(event.plain_result(msg))
+                except Exception:
+                    pass
+                if not will_continue:
+                    stop_error = raw_err or error
+                    return {
+                        "success": False,
+                        "error": stop_error,
+                        "files": all_files,
+                        "batch_total": total,
+                        "batch_failed_at": index + 1,
+                        "batch_skipped": skipped_shots,
+                    }
+                return None
+            files = list(result.get("files") or [])
+            used_model = str(result.get("used_model") or used_model)
+            last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
+            if files:
+                self._record_generated_images(event, 1)
+                await self._send_generated_images(event, files)
+                all_files.extend(files)
+            info = self._batch_success_text(
+                self._build_success_text(last_elapsed, len(files), used_model, event),
+                index + 1,
+                total,
+            )
+            if info:
+                try:
+                    await event.send(event.plain_result(info))
+                except Exception:
+                    pass
+            return None
+
         for index, factory in jobs:
             pending.add(asyncio.create_task(_one(index, factory)))
         early: Optional[Dict[str, Any]] = None
@@ -5352,7 +5410,7 @@ class SelfieImagePlugin(Star):
                 except Exception as exc:
                     result = {"success": False, "error": str(exc), "index": 0}
                 async with send_lock:
-                    early = await _emit(result)
+                    early = await _emit_message(result)
                 if early:
                     for leftover in pending:
                         leftover.cancel()
