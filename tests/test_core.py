@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.42")
+        self.assertEqual(PLUGIN_VERSION, "1.3.43")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4528,7 +4528,7 @@ class LegFocusTests(unittest.TestCase):
                     self.assertTrue(("不穿鞋" in t) or ("脚部自然完整" in t) or ("赤足" in t), t)
                     self.assertIn("近大远小", t)
         # full-foot and calf-crop families should both appear
-        for key in ("sit", "kneel", "side_lie", "hug_knee", "cross_leg", "reclined_knees_crop"):
+        for key in ("sit", "kneel", "side_lie", "hug_knee", "cross_leg", "reclined_knees_crop", "kneel_front", "floor_fold"):
             self.assertTrue(any(p == key or p.startswith(key + "_") for p in found), f"missing pose family {key} in {found}")
         self.assertTrue(any(p.endswith("_crop") for p in found), f"missing crop poses in {found}")
         forced_crop = None

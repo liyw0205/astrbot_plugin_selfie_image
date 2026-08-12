@@ -231,6 +231,8 @@ LEGWEAR_BY_POSE = {
     "windowsill": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
     "windowsill_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
     "kneel_up": (("光腿神器", 5), ("白丝", 2), ("黑丝", 3)),
+    "kneel_front": (("光腿神器", 6), ("白丝", 2), ("黑丝", 2)),
+    "floor_fold": (("光腿神器", 6), ("白丝", 2), ("黑丝", 2)),
     "reclined_knees_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 3)),
 }
 
@@ -3081,8 +3083,10 @@ class SelfieImagePlugin(Star):
         """生成单一腿部姿势，并按姿势选择腿部穿搭。用户点名白丝/黑丝/光腿时强制采用。"""
         pose_pool = [
             # Full-foot poses (majority): keep feet/toes visible when useful.
-            ("sit", 4),
+            ("sit", 3),
             ("kneel", 2),
+            ("kneel_front", 2),
+            ("floor_fold", 2),
             ("side_lie", 1),
             ("hug_knee", 1),
             ("cross_leg", 2),
@@ -3196,6 +3200,22 @@ class SelfieImagePlugin(Star):
                     "双膝间距自然，小腿平行贴地；手可轻放大腿。"
                 ),
             ],
+            "kneel_front": [
+                (
+                    "正面跪坐全腿入镜：双膝跪在地毯上，小腿向后折叠贴地，大腿并拢，"
+                    "臀部自然贴近脚跟，重心稳定；第一人称略俯视，构图从腰腹/裙摆到完整双脚；"
+                    "膝、小腿、脚踝、脚背与脚趾都清晰入镜，脚尖朝后或微侧，不穿鞋；"
+                    "双手可自然放在身前或大腿上，不要遮挡腿形。"
+                ),
+            ],
+            "floor_fold": [
+                (
+                    "高位俯拍屈膝坐地：坐在地毯或木地板上，双腿弯曲折叠于身前，"
+                    "大腿并拢占画面下半，膝盖朝上或略侧，小腿收近身前；"
+                    "手机举高从上往下拍，构图从胸口/腰腹到膝与部分脚掌；"
+                    "一只手可自然轻放大腿外侧，脚部自然完整，脚趾清晰，不穿鞋。"
+                ),
+            ],
             "reclined_knees_crop": [
                 (
                     "后仰屈膝近景：坐在沙发、座椅或床上，身体轻微后仰，双膝自然弯曲抬起并靠拢，"
@@ -3225,6 +3245,8 @@ class SelfieImagePlugin(Star):
             "windowsill": "窗台蹬坐",
             "windowsill_crop": "窗台大腿近景",
             "kneel_up": "跪立拍腿",
+            "kneel_front": "正面跪坐全腿",
+            "floor_fold": "高位俯拍屈膝坐",
             "reclined_knees_crop": "后仰屈膝大腿近景",
         }
         variants = pose_variants.get(pose_bucket) or pose_variants["sit"]
