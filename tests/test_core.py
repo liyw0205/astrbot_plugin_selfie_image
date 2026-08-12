@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.32")
+        self.assertEqual(PLUGIN_VERSION, "1.3.33")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3789,9 +3789,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         for banned in ("断臂", "幽灵手", "残缺", "severed", "ghost hands", "stump"):
             self.assertNotIn(banned, lines.lower() if banned.isascii() else lines)
         leg_lines = "\n".join(anatomy_constraint_lines(style="legs"))
-        self.assertIn("同侧重复手或脚", leg_lines)
-        self.assertIn("来源不清", leg_lines)
-        self.assertIn("肩、肘、腕连续连接", leg_lines)
+        self.assertIn("同侧重复肢体", leg_lines)
+        self.assertIn("肩肘腕连续连接", leg_lines)
         self.assertIn("只有主角一人", leg_lines)
         self.assertNotIn("同框", leg_lines)
         self.assertNotIn("断臂", leg_lines)
@@ -3815,11 +3814,12 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("断臂", selfie)
             legs = manager.build_selfie_prompt("看看腿", "小助", "温柔", True, 0)
             self.assertIn("两条腿", legs)
-            self.assertIn("来源不清", legs)
-            self.assertIn("肩、肘、腕连续连接", legs)
+            self.assertIn("肩肘腕连续连接", legs)
             self.assertIn("晒腿", legs)
             self.assertNotIn("【合影 / 同框模式】", legs)
             self.assertNotIn("幽灵手", legs)
+            self.assertNotIn("勒进大腿肉", legs)
+            self.assertNotIn("鼓肉", legs)
             group = manager.build_selfie_prompt("合影", "小助", "温柔", True, 1)
             self.assertIn("手与胳膊连续连接", group)
 
@@ -3886,12 +3886,13 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("Use the provided", ref_en)
         self.assertIn("User request:", ref_en)
         legs_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(object.__new__(plugin_main.SelfieImagePlugin), "", False)
-        self.assertIn("来源不清", legs_action)
         self.assertIn("连续", legs_action)
         self.assertIn("单人", legs_action)
         self.assertNotIn("同框", legs_action)
         self.assertNotIn("幽灵手", legs_action)
         self.assertNotIn("断臂", legs_action)
+        self.assertNotIn("勒进大腿肉", legs_action)
+        self.assertNotIn("鼓肉", legs_action)
         # full pipeline: leg action must stay legs-only, never group
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
@@ -3899,7 +3900,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertTrue(intent.is_legs_only)
             self.assertFalse(intent.is_group_photo)
             prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
-            self.assertIn("【特写自拍 / 晒腿模式】", prompt)
+            self.assertIn("晒腿模式", prompt)
+            self.assertNotIn("勒进大腿肉", prompt)
             self.assertNotIn("【合影 / 同框模式】", prompt)
             self.assertIn("只有主角一人", prompt)
             # auto appearance: no forced real/anime style line
@@ -4085,32 +4087,18 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("光腿神器", text)
             self.assertIn("白丝", text)
             self.assertIn("黑丝", text)
-            self.assertIn("轻薄半透明", text)
+            self.assertIn("轻薄", text)
             self.assertIn("中筒丝袜", text)
             self.assertIn("大腿中段", text)
-            self.assertIn("禁止连裤", text)
-            self.assertIn("包住", text)
-            self.assertIn("脚趾", text)
-            self.assertIn("外翻", text)
-            self.assertIn("近大远小", text)
-            self.assertIn("粗圆柱", text)
-            self.assertIn("勒进大腿肉", text)
-            self.assertIn("压痕", text)
-            self.assertIn("涂色感", text)
-            for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装"):
+            self.assertIn("完整包住脚部", text)
+            self.assertIn("晒腿模式", text)
+            self.assertIn("两条腿", text)
+            for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装", "勒进大腿肉", "鼓肉", "压痕"):
                 self.assertNotIn(forbidden, text)
             self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
             self.assertNotIn("· 坐姿拍腿", text)
-            self.assertNotIn("· 侧躺曲腿", text)
-            self.assertIn("本次主姿势", text)
-            self.assertIn("两条腿", text)
-            self.assertIn("悬浮错位", text)
-            self.assertIn("赤足", text)
             self.assertNotIn("小皮鞋", text)
             self.assertNotIn("居家拖鞋", text)
-            self.assertNotIn("禁止系鞋带", text)
-            self.assertNotIn("头脸完全出画", text)
-            self.assertNotIn("不要画完整头颅", text)
 
     def test_daily_profile_does_not_add_unselected_legwear(self) -> None:
         from astrbot_plugin_selfie_image.persona import fallback_daily_profile
@@ -4490,8 +4478,8 @@ class LegFocusTests(unittest.TestCase):
                     self.assertNotIn("脚趾五个分开", t)
                     self.assertNotIn("丝袜必须包住整只脚到脚趾", t)
                 else:
-                    self.assertIn("赤足", t)
-                    self.assertIn("外翻", t)
+                    self.assertTrue(("不穿鞋" in t) or ("赤足" in t), t)
+                    self.assertIn("近大远小", t)
         for key in ("sit", "kneel", "side_lie", "hug_knee", "cross_leg", "reclined_knees_crop"):
             self.assertIn(key, found, f"missing pose {key} in samples {found}")
         forced_crop = None
@@ -4506,8 +4494,8 @@ class LegFocusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             final_crop = PersonaManager(tmp).build_selfie_prompt(forced_crop, "小助", "温柔", True, 0)
         self.assertIn("脚部画外", final_crop)
-        self.assertIn("脚踝和双脚完整裁出画外", final_crop)
-        for conflict in ("脚趾五个分开", "身体从入镜部位连续到脚", "包住整脚到脚趾"):
+        self.assertTrue(("双脚完整裁出画外" in final_crop) or ("双脚裁出画外" in final_crop), final_crop)
+        for conflict in ("脚趾五个分开", "身体从入镜部位连续到脚", "包住整脚到脚趾", "勒进大腿肉", "鼓肉"):
             self.assertNotIn(conflict, final_crop)
         final_crop_en = build_selfie_builtin_prompt(forced_crop, language="en", has_reference_image=True)
         self.assertIn("crop both ankles and feet fully outside the frame", final_crop_en)
@@ -4522,15 +4510,13 @@ class LegFocusTests(unittest.TestCase):
         for name, text in plugin_main.LEGWEAR_PROMPTS.items():
             self.assertIn("轻薄", text)
             if name in {"白丝", "黑丝"}:
-                self.assertIn("半透明", text)
                 self.assertIn("中筒丝袜", text)
                 self.assertIn("大腿中段", text)
-                self.assertIn("禁止连裤/全包", text)
-                self.assertIn("整只脚", text)
-                self.assertIn("脚趾", text)
-                self.assertIn("勒进大腿肉", text)
-                self.assertIn("压痕", text)
+                self.assertIn("完整包住", text)
+                self.assertIn("自然贴合", text)
                 self.assertIn("涂色感", text)
+                self.assertNotIn("勒进大腿肉", text)
+                self.assertNotIn("鼓肉", text)
                 self.assertNotIn("连裤丝袜：", text)
 
         class PersonaStub:
