@@ -94,6 +94,7 @@ from .utils import (
     collect_record_cache_paths,
     collect_cache_cleanup_candidates,
     collect_unreferenced_record_cache_paths,
+    compact_generation_record,
     data_url_to_bytes,
     detect_mime_by_bytes,
     event_group_id,
@@ -113,6 +114,7 @@ from .utils import (
     safe_delete_relative_files,
     save_image_bytes,
     save_json_file,
+    summarize_record_for_list,
 )
 from .dashboard_api import SelfieImageDashboardAPI
 from .web import FlaskWebServer
@@ -722,11 +724,16 @@ class SelfieImagePlugin(Star):
         data = load_json_file(self.records_path)
         items = data.get("records") if isinstance(data.get("records"), list) else []
         records = [item for item in items if isinstance(item, dict)]
-        return redact_sensitive_data(copy.deepcopy(records[:RECORD_KEEP_LIMIT]))
+        compacted = [compact_generation_record(redact_sensitive_data(item)) for item in records[:RECORD_KEEP_LIMIT]]
+        return compacted
 
     def _persist_records(self) -> None:
         with self._records_lock:
-            self._records = redact_sensitive_data(self._records[:RECORD_KEEP_LIMIT])
+            self._records = [
+                compact_generation_record(redact_sensitive_data(item))
+                for item in self._records[:RECORD_KEEP_LIMIT]
+                if isinstance(item, dict)
+            ]
             save_json_file(self.records_path, {"records": self._records})
 
     def _record_generated_images(self, event: AstrMessageEvent, count: int) -> None:
@@ -1685,7 +1692,7 @@ class SelfieImagePlugin(Star):
         except Exception:
             pass
         with self._records_lock:
-            record = redact_sensitive_data(dict(record))
+            record = compact_generation_record(redact_sensitive_data(dict(record)))
             self._record_seq += 1
             record.setdefault("id", f"{int(time.time() * 1000)}-{self._record_seq}")
             record["time"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -1698,10 +1705,15 @@ class SelfieImagePlugin(Star):
         if stale_cache_paths:
             safe_delete_relative_files(self.generated_dir, stale_cache_paths)
 
-    def get_recent_records(self) -> List[Dict[str, Any]]:
+    def get_recent_records(self, *, summary: bool = False) -> List[Dict[str, Any]]:
         with self._records_lock:
-            records = copy.deepcopy(self._records[:RECORD_KEEP_LIMIT])
-        return redact_sensitive_data([self._enrich_record_for_web(item) for item in records])
+            # Avoid deepcopy of fat nested blobs on every list poll.
+            records = [dict(item) if isinstance(item, dict) else item for item in self._records[:RECORD_KEEP_LIMIT]]
+        if summary:
+            return redact_sensitive_data(
+                [summarize_record_for_list(self._enrich_record_for_web(item)) for item in records if isinstance(item, dict)]
+            )
+        return redact_sensitive_data([self._enrich_record_for_web(item) for item in records if isinstance(item, dict)])
 
     def get_record_for_web(self, record_id: str) -> Dict[str, Any]:
         target_id = str(record_id or "").strip()
@@ -4691,6 +4703,40 @@ class SelfieImagePlugin(Star):
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
             )
+            # Ensure monitor still gets a row when runner crashes before generate_images records.
+            try:
+                task_meta = {}
+                try:
+                    with self._web_task_lock:
+                        task_meta = dict((self._web_tasks or {}).get(task_id) or {})
+                except Exception:
+                    task_meta = {}
+                source = str(task_meta.get("source") or "command-task")
+                prompt = ""
+                summary = task_meta.get("request_data") or task_meta.get("summary") or {}
+                if isinstance(summary, dict):
+                    prompt = str(summary.get("prompt") or summary.get("action") or "")
+                self._record_task(
+                    {
+                        "source": source,
+                        "source_label": source,
+                        "success": False,
+                        "error": error,
+                        "prompt": prompt,
+                        "original_prompt": prompt,
+                        "request_prompt": prompt,
+                        "used_model": "",
+                        "elapsed_seconds": 0,
+                        "reference_images": 0,
+                        "request_data": {"stage": "task_exception"},
+                        "response_data": {"success": False, "stage": "task_exception", "error": error},
+                        "request_image_paths": [],
+                        "generated_image_paths": [],
+                        "attempts": [],
+                    }
+                )
+            except Exception as rec_exc:
+                logger.warning(f"[SelfieImage] 任务异常落库失败: {rec_exc}")
             try:
                 await event.send(event.plain_result(self._friendly_user_error_message(error, "生图没有完成")))
             except Exception as send_exc:

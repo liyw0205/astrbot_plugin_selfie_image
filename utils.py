@@ -429,6 +429,156 @@ def redact_sensitive_data(value: Any) -> Any:
     return value
 
 
+def _truncate_text(value: Any, limit: int) -> str:
+    text = str(value or "")
+    if limit <= 0 or len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)] + "…"
+
+
+def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Shrink persisted generation records: drop prompt duplicates, cap attempt errors."""
+    if not isinstance(record, dict):
+        return {}
+    out = dict(record)
+    for key in ("prompt", "original_prompt", "request_prompt", "error", "failure_reason"):
+        if key in out:
+            lim = 6000 if key in {"prompt", "original_prompt", "request_prompt"} else 800
+            out[key] = _truncate_text(out.get(key), lim)
+
+    rd = out.get("request_data")
+    if isinstance(rd, dict):
+        slim_rd: Dict[str, Any] = {
+            "aspect_ratio": rd.get("aspect_ratio"),
+            "resolution": rd.get("resolution"),
+            "reference_image_count": rd.get("reference_image_count"),
+            "targets": rd.get("targets") if isinstance(rd.get("targets"), list) else [],
+            "request_image_paths": rd.get("request_image_paths")
+            if isinstance(rd.get("request_image_paths"), list)
+            else [],
+        }
+        pe = rd.get("prompt_en")
+        if isinstance(pe, dict):
+            slim_rd["prompt_en"] = {
+                "applied": pe.get("applied"),
+                "error": _truncate_text(pe.get("error"), 200),
+                "format": pe.get("format"),
+            }
+        out["request_data"] = slim_rd
+
+    resp = out.get("response_data")
+    if isinstance(resp, dict):
+        out["response_data"] = {
+            "success": resp.get("success"),
+            "stage": resp.get("stage"),
+            "error": _truncate_text(resp.get("error"), 500),
+            "used_model": resp.get("used_model"),
+            "elapsed_seconds": resp.get("elapsed_seconds"),
+            "count": resp.get("count"),
+            "generated_image_paths": resp.get("generated_image_paths")
+            if isinstance(resp.get("generated_image_paths"), list)
+            else [],
+            "generated_video_paths": resp.get("generated_video_paths")
+            if isinstance(resp.get("generated_video_paths"), list)
+            else [],
+        }
+
+    attempts_in = out.get("attempts")
+    if not isinstance(attempts_in, list) and isinstance(resp, dict):
+        attempts_in = resp.get("attempts")
+    slim_attempts: List[Dict[str, Any]] = []
+    if isinstance(attempts_in, list):
+        for item in attempts_in:
+            if not isinstance(item, dict):
+                continue
+            slim_attempts.append(
+                {
+                    "attempt": item.get("attempt"),
+                    "label": item.get("label") or item.get("model") or item.get("channel") or "",
+                    "model": item.get("model") or "",
+                    "success": item.get("success"),
+                    "error": _truncate_text(item.get("error"), 800),
+                    "error_user_message": _truncate_text(item.get("error_user_message"), 300),
+                    "error_category": item.get("error_category") or "",
+                    "elapsed_seconds": item.get("elapsed_seconds"),
+                    "timeout": item.get("timeout"),
+                }
+            )
+    if slim_attempts:
+        out["attempts"] = slim_attempts
+
+    fr = out.get("failure_reasons")
+    if isinstance(fr, list):
+        slim_fr: List[Dict[str, Any]] = []
+        for item in fr:
+            if not isinstance(item, dict):
+                continue
+            slim_fr.append(
+                {
+                    "label": item.get("label") or "",
+                    "error": _truncate_text(item.get("error"), 500),
+                    "error_user_message": _truncate_text(item.get("error_user_message"), 300),
+                    "error_category": item.get("error_category") or "",
+                    "elapsed_seconds": item.get("elapsed_seconds"),
+                    "attempt": item.get("attempt"),
+                }
+            )
+        out["failure_reasons"] = slim_fr
+    return out
+
+
+def summarize_record_for_list(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Lightweight monitor-list row; full body stays on detail endpoint."""
+    if not isinstance(record, dict):
+        return {}
+    attempts = record.get("attempts") if isinstance(record.get("attempts"), list) else []
+    failed_attempts = [a for a in attempts if isinstance(a, dict) and a.get("success") is False]
+    fr = record.get("failure_reasons") if isinstance(record.get("failure_reasons"), list) else []
+    if not fr and failed_attempts:
+        fr = [
+            {
+                "label": a.get("label") or a.get("model") or "",
+                "error": a.get("error") or "",
+                "error_user_message": a.get("error_user_message") or "",
+                "error_category": a.get("error_category") or "",
+                "elapsed_seconds": a.get("elapsed_seconds"),
+            }
+            for a in failed_attempts
+        ]
+    return {
+        "id": record.get("id"),
+        "time": record.get("time"),
+        "source": record.get("source"),
+        "source_label": record.get("source_label"),
+        "success": record.get("success"),
+        "media_type": record.get("media_type") or "image",
+        "used_model": record.get("used_model") or "",
+        "elapsed_seconds": record.get("elapsed_seconds"),
+        "group_id": record.get("group_id") or "",
+        "user_id": record.get("user_id") or "",
+        "chat_type": record.get("chat_type") or "",
+        "count": record.get("count"),
+        "reference_images": record.get("reference_images"),
+        "error": _truncate_text(record.get("error") or record.get("failure_reason"), 300),
+        "failure_reason": _truncate_text(record.get("failure_reason") or record.get("error"), 300),
+        "failure_reasons": fr[:12],
+        "attempt_count": len(attempts),
+        "failed_attempt_count": len(failed_attempts),
+        "original_prompt": _truncate_text(record.get("original_prompt"), 240),
+        "request_prompt": _truncate_text(record.get("request_prompt") or record.get("prompt"), 240),
+        "request_image_paths": record.get("request_image_paths")
+        if isinstance(record.get("request_image_paths"), list)
+        else [],
+        "generated_image_paths": record.get("generated_image_paths")
+        if isinstance(record.get("generated_image_paths"), list)
+        else [],
+        "generated_video_paths": record.get("generated_video_paths")
+        if isinstance(record.get("generated_video_paths"), list)
+        else [],
+        "has_detail": True,
+    }
+
+
 def _audit_bool_value(value: Any) -> Optional[bool]:
     if isinstance(value, bool):
         return value

@@ -4153,7 +4153,20 @@ class FlaskWebServer:
                 if bool(record.get("success")) is not expected:
                     return False
             if keyword:
-                text = json.dumps(record, ensure_ascii=False, default=str).lower()
+                text = " ".join(
+                    str(record.get(key) or "")
+                    for key in (
+                        "source",
+                        "source_label",
+                        "used_model",
+                        "error",
+                        "failure_reason",
+                        "original_prompt",
+                        "request_prompt",
+                        "group_id",
+                        "user_id",
+                    )
+                ).lower()
                 if keyword not in text:
                     return False
             return True
@@ -4434,7 +4447,7 @@ class FlaskWebServer:
         def records() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            data = redact_sensitive_data(self.plugin.get_recent_records())
+            data = redact_sensitive_data(self.plugin.get_recent_records(summary=True))
             page, meta, error_response = filtered_record_payload(data)
             if error_response:
                 return error_response

@@ -224,7 +224,7 @@ class FakeWebPlugin:
         self.config = AICatConfig.from_dict(self.raw_config)
         return self.get_config_for_web()
 
-    def get_recent_records(self):
+    def get_recent_records(self, *args, **kwargs):
         return [{"id": 1, "success": True}]
 
     def get_record_for_web(self, record_id: str):
@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.46")
+        self.assertEqual(PLUGIN_VERSION, "1.3.47")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -817,6 +817,43 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(len(success_summary["failure_reasons"]), 1)
         self.assertIn("A/model-a", success_summary["failure_reasons"][0]["label"])
         self.assertIn("内容未通过上游安全策略", success_summary["failure_reasons"][0]["error_user_message"])
+
+
+    def test_compact_and_summarize_generation_records(self) -> None:
+        from astrbot_plugin_selfie_image.utils import compact_generation_record, summarize_record_for_list
+
+        fat = {
+            "success": False,
+            "prompt": "P" * 9000,
+            "original_prompt": "O" * 2000,
+            "request_prompt": "R" * 9000,
+            "error": "boom",
+            "request_data": {
+                "original_prompt": "dup",
+                "request_prompt": "dup2",
+                "aspect_ratio": "1:1",
+                "resolution": "1K",
+                "reference_image_count": 1,
+                "targets": ["m1"],
+                "request_image_paths": ["a.png"],
+            },
+            "response_data": {
+                "success": False,
+                "stage": "generate",
+                "error": "e",
+                "attempts": [{"label": "m1", "success": False, "error": "x" * 2000}],
+            },
+            "attempts": [{"label": "m1", "success": False, "error": "x" * 2000, "error_category": "safety"}],
+        }
+        slim = compact_generation_record(fat)
+        self.assertLessEqual(len(slim["prompt"]), 6001)
+        self.assertNotIn("original_prompt", slim.get("request_data") or {})
+        self.assertLessEqual(len(slim["attempts"][0]["error"]), 801)
+        row = summarize_record_for_list(slim)
+        self.assertTrue(row.get("has_detail"))
+        self.assertEqual(row.get("failed_attempt_count"), 1)
+        self.assertNotIn("request_data", row)
+        self.assertLessEqual(len(row.get("request_prompt") or ""), 241)
 
     def test_enabled_model_priority_and_manual_provider_types_are_preserved(self) -> None:
         config = AICatConfig.from_dict(
@@ -2988,7 +3025,7 @@ class WebApiTests(unittest.TestCase):
 
     def test_records_api_supports_filtering_and_pagination(self) -> None:
         class RecordPlugin(FakeWebPlugin):
-            def get_recent_records(self):
+            def get_recent_records(self, *args, **kwargs):
                 return [
                     {"id": "1", "source_label": "群A", "group_id": "100", "user_id": "u1", "used_model": "model-a", "success": True},
                     {"id": "2", "source_label": "群A", "group_id": "100", "user_id": "u2", "used_model": "model-b", "success": False},
@@ -3056,7 +3093,7 @@ class WebApiTests(unittest.TestCase):
 
     def test_records_and_task_status_routes_redact_sensitive_data(self) -> None:
         class SensitivePlugin(FakeWebPlugin):
-            def get_recent_records(self):
+            def get_recent_records(self, *args, **kwargs):
                 return [{"error": "api_key=plain-provider-secret", "headers": {"Cookie": "session=abcdef1234567890"}}]
 
             def get_record_for_web(self, record_id: str):
