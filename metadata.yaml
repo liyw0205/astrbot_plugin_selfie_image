@@ -3,7 +3,7 @@ display_name: Selfie Image 生图自拍
 desc: AstrBot 生图、图生图、AI 自拍与 Web 管理插件。
 short_desc: 生图、图生图、AI 自拍与 Web 管理。
 help: 发送 /生图帮助 看图卡，/生图help 看文字说明。/画 有图按图改、没图按文字；/视频 有图作首帧、没图用形象图。Web 管理见配置 web.port，也可在 AstrBot 插件详情打开。
-version: 1.3.35
+version: 1.3.36
 author: liyw0205
 repo: https://github.com/liyw0205/astrbot_plugin_selfie_image
 astrbot_version: ">=4.13.0,<5"

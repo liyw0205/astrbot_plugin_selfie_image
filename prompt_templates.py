@@ -70,13 +70,13 @@ def build_selfie_builtin_prompt(
                 lines.extend([
                     "Single subject, close first-person downward shot: show only a little waist or skirt, thighs, and knees; crop both ankles and feet fully outside the frame.",
                     "Keep exactly two softly plump natural thighs and knees connected from the hips; not stick-thin and not oversized elephant legs.",
-                    "Use only the selected bare-leg effect or separate white/black sheer thigh-high stockings; stocking tops may leave a light indent on soft thighs and never become tights.",
+                    "Use only the selected bare-leg effect or separate white/black opaque thigh-high stockings that show leg shape, not skin through; stocking tops may leave a light indent on soft thighs and never become tights.",
                     "Do not add toes, soles, shoes, or any foot detail; preserve natural close-range perspective without forced symmetry.",
                 ])
             else:
                 lines.extend([
                     "Single subject only: a tasteful lower-body close-up with no second person, background people, or shoes.",
-                    "Use softly plump natural thighs, not stick-thin and not oversized; selected legwear is bare-leg effect or white/black sheer mid-calf stockings with a light sock-top indent.",
+                    "Use softly plump natural thighs, not stick-thin and not oversized; selected legwear is bare-leg effect or white/black opaque mid-calf stockings that emphasize leg shape with a light sock-top indent, not sheer skin-see-through.",
                     "Keep two natural legs and feet, correct joints, stable pose, realistic anatomy, and perspective.",
                 ])
         elif is_group:

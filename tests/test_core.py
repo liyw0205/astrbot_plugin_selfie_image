@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.35")
+        self.assertEqual(PLUGIN_VERSION, "1.3.36")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4101,17 +4101,19 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("光腿神器", text)
             self.assertIn("白丝", text)
             self.assertIn("黑丝", text)
-            self.assertIn("轻薄", text)
+            self.assertIn("不透", text)
+            self.assertIn("主要看腿形", text)
             self.assertIn("中筒丝袜", text)
             self.assertIn("大腿中段", text)
             self.assertIn("完整包住脚部", text)
             self.assertIn("晒腿模式", text)
             self.assertIn("两条腿", text)
-            for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装", "勒进大腿肉"):
+            for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装", "勒进大腿肉", "半透明"):
                 self.assertNotIn(forbidden, text)
             self.assertIn("微胖软肉", text)
             self.assertIn("浅压痕", text)
             self.assertIn("不要大象腿猪腿", text)
+            self.assertIn("不要超薄透视", text)
             self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
             self.assertNotIn("· 坐姿拍腿", text)
             self.assertNotIn("小皮鞋", text)
@@ -4526,18 +4528,23 @@ class LegFocusTests(unittest.TestCase):
         for forbidden in ("短袜", "过膝袜", "肉丝"):
             self.assertNotIn(forbidden, filtered)
         self.assertEqual(set(plugin_main.LEGWEAR_PROMPTS), {"光腿神器", "白丝", "黑丝"})
-        for name, text in plugin_main.LEGWEAR_PROMPTS.items():
-            self.assertIn("轻薄", text)
-            if name in {"白丝", "黑丝"}:
-                self.assertIn("中筒丝袜", text)
-                self.assertIn("大腿中段", text)
-                self.assertIn("完整包住", text)
-                self.assertIn("微胖软肉", text)
-                self.assertIn("浅压痕", text)
-                self.assertIn("涂色感", text)
-                self.assertNotIn("勒进大腿肉", text)
-                self.assertIn("不要大象腿猪腿", text)
-                self.assertNotIn("连裤丝袜：", text)
+        bare_leg = plugin_main.LEGWEAR_PROMPTS["光腿神器"]
+        self.assertIn("轻薄", bare_leg)
+        for name in ("白丝", "黑丝"):
+            text = plugin_main.LEGWEAR_PROMPTS[name]
+            self.assertIn("不透", text)
+            self.assertIn("主要看腿形", text)
+            self.assertIn("中筒丝袜", text)
+            self.assertIn("大腿中段", text)
+            self.assertIn("完整包住", text)
+            self.assertIn("微胖软肉", text)
+            self.assertIn("浅压痕", text)
+            self.assertIn("涂色感", text)
+            self.assertIn("不要超薄透视", text)
+            self.assertNotIn("半透明", text)
+            self.assertNotIn("勒进大腿肉", text)
+            self.assertIn("不要大象腿猪腿", text)
+            self.assertNotIn("连裤丝袜：", text)
 
         class PersonaStub:
             class Intent:

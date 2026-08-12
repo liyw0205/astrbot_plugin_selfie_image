@@ -2,7 +2,7 @@
 
 给 AstrBot 用的生图与 AI 自拍插件。支持文生图、图生图、固定形象自拍/合影/换装，以及 Web / 内嵌管理面板。
 
-- 当前版本：`1.3.35`
+- 当前版本：`1.3.36`
 - 需要 AstrBot：`>=4.13.0,<5`
 - 仓库：https://github.com/liyw0205/astrbot_plugin_selfie_image
 
