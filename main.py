@@ -5258,81 +5258,31 @@ class SelfieImagePlugin(Star):
         fail_label: str,
         total: int,
     ) -> Dict[str, Any]:
-        """Run batch slots concurrently; upstream concurrency is the image semaphore."""
+        """Run at most image_max_concurrent_tasks slots at once. Do not stampede LLM/upstream."""
         all_files: List[str] = []
         used_model = ""
         last_elapsed = 0.0
         skipped_shots = 0
         send_lock = asyncio.Lock()
         stop_error = ""
-        pending: set[asyncio.Task] = set()
+        inflight = max(1, int(getattr(self.config, "image_max_concurrent_tasks", 3) or 3))
+        slot_sem = asyncio.Semaphore(inflight)
+        logger.info(f"[SelfieImage] batch start task={task_id} total={total} inflight={inflight}")
 
         async def _one(index: int, factory: Any) -> Dict[str, Any]:
-            if self._task_cancel_requested(task_id) or stop_error:
-                return {"success": False, "cancelled": True, "index": index}
-            result = await factory()
-            result = dict(result or {})
-            result["index"] = index
-            return result
-
-        async def _emit(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-            nonlocal skipped_shots, used_model, last_elapsed, stop_error
-            index = int(result.get("index") or 0)
-            if result.get("cancelled"):
-                return None
-            if not result.get("success"):
-                raw_err = str(result.get("error") or "")
-                error = self._friendly_user_error_message(raw_err, fail_label or self._natural_fail_fallback("image"))
-                mode, skip_max = self._batch_failure_policy()
-                skipped_shots += 1
-                will_continue = False
-                if mode == "skip":
-                    will_continue = True
-                elif mode == "skip_max" and skipped_shots <= skip_max:
-                    will_continue = True
-                msg = await self._batch_shot_fail_message(
-                    event,
-                    index=index + 1,
-                    total=total,
-                    done_files=len(all_files),
-                    error=error,
-                    will_continue=will_continue,
-                )
+            async with slot_sem:
+                if self._task_cancel_requested(task_id) or stop_error:
+                    return {"success": False, "cancelled": True, "index": index}
                 try:
-                    await event.send(event.plain_result(msg))
-                except Exception:
-                    pass
-                if not will_continue:
-                    stop_error = raw_err or error
-                    return {
-                        "success": False,
-                        "error": stop_error,
-                        "files": all_files,
-                        "batch_total": total,
-                        "batch_failed_at": index + 1,
-                        "batch_skipped": skipped_shots,
-                    }
-                return None
-            files = list(result.get("files") or [])
-            used_model = str(result.get("used_model") or used_model)
-            last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
-            if files:
-                self._record_generated_images(event, 1)
-                await self._send_generated_images(event, files)
-                all_files.extend(files)
-            info = self._batch_success_text(
-                self._build_success_text(last_elapsed, len(files), used_model, event),
-                index + 1,
-                total,
-            )
-            if info:
-                try:
-                    await event.send(event.plain_result(info))
-                except Exception:
-                    pass
-            return None
+                    result = await factory()
+                except asyncio.CancelledError:
+                    return {"success": False, "cancelled": True, "index": index}
+                except Exception as exc:
+                    return {"success": False, "error": str(exc), "index": index}
+                result = dict(result or {})
+                result["index"] = index
+                return result
 
-        # Non-recursive helper for emitting
         async def _emit_message(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             nonlocal skipped_shots, used_model, last_elapsed, stop_error
             index = int(result.get("index") or 0)
@@ -5343,17 +5293,16 @@ class SelfieImagePlugin(Star):
                 error = self._friendly_user_error_message(raw_err, fail_label or self._natural_fail_fallback("image"))
                 mode, skip_max = self._batch_failure_policy()
                 skipped_shots += 1
-                will_continue = False
-                if mode == "skip":
-                    will_continue = True
-                elif mode == "skip_max" and skipped_shots <= skip_max:
-                    will_continue = True
-                msg = await self._batch_shot_fail_message(
-                    event,
+                will_continue = mode == "skip" or (mode == "skip_max" and skipped_shots <= skip_max)
+                # Static copy only: extra LLM here used to freeze the event loop mid-batch.
+                msg = self._batch_shot_fail_text(
                     index=index + 1,
                     total=total,
                     done_files=len(all_files),
                     error=error,
+                    mode="skip" if will_continue else "stop",
+                    skipped=skipped_shots,
+                    skip_max=skip_max,
                     will_continue=will_continue,
                 )
                 try:
@@ -5390,9 +5339,7 @@ class SelfieImagePlugin(Star):
                     pass
             return None
 
-        for index, factory in jobs:
-            pending.add(asyncio.create_task(_one(index, factory)))
-        early: Optional[Dict[str, Any]] = None
+        pending: set[asyncio.Task] = {asyncio.create_task(_one(index, factory)) for index, factory in jobs}
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for task in done:

@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.63")
+        self.assertEqual(PLUGIN_VERSION, "1.3.64")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4796,6 +4796,7 @@ class LegFocusTests(unittest.TestCase):
                 return text
 
         plugin = object.__new__(plugin_main.SelfieImagePlugin)
+        plugin.config = types.SimpleNamespace(image_max_concurrent_tasks=3)
         plugin._task_cancel_requested = lambda *_a, **_k: False
         plugin._friendly_user_error_message = lambda err, *_a, **_k: str(err)
         plugin._natural_fail_fallback = lambda *_a, **_k: "fail"
