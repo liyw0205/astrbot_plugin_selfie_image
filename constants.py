@@ -4,7 +4,7 @@ PLUGIN_NAME = "astrbot_plugin_selfie_image"
 LEGACY_PLUGIN_NAME = "astrbot_plugin_aicat"
 PLUGIN_DISPLAY_NAME = "Selfie Image 生图自拍"
 PLUGIN_AUTHOR = "Selfie Image"
-PLUGIN_VERSION = "1.3.53"
+PLUGIN_VERSION = "1.3.54"
 PLUGIN_CONFIG_FILENAME = "selfie_image_config.json"
 LEGACY_CONFIG_FILENAME = "aicat_config.json"
 

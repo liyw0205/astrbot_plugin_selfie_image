@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.53")
+        self.assertEqual(PLUGIN_VERSION, "1.3.54")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4635,10 +4635,16 @@ class LegFocusTests(unittest.TestCase):
             self.assertTrue(m, t)
             ids.add(m.group(1))
         self.assertGreaterEqual(len(ids), 4, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 7)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 14)
         titles = {x["title"] for x in plugin_main.COS_LOOK_SETS}
         self.assertIn("公孙离·青金短裙", titles)
         self.assertIn("爱莉希雅·粉白奇幻", titles)
+        self.assertIn("洛琪希·奶油居家", titles)
+        self.assertIn("和泉纱雾·粉结白T", titles)
+        self.assertIn("菲比·双马尾白裙", titles)
+        roxy = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "roxy_cream")
+        self.assertIn("禁止蓝色旅行法师外套", roxy["prompt"])
+        self.assertIn("双麻花辫", roxy["prompt"])
 
         class PersonaStub:
             class Intent:
