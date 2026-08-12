@@ -5129,111 +5129,14 @@ class SelfieImagePlugin(Star):
             will_continue=will_continue,
         )
 
-    async def _background_draw_batches(
+    def _plan_selfie_round_actions(
         self,
-        task_id: str,
-        event: AstrMessageEvent,
-        prompt: str,
-        aspect: str,
-        resolution: str,
-        refs: List[ImageReference],
-        source: str,
-        requested_count: int,
-        *,
-        passthrough: bool = False,
-        fail_label: str = "",
-    ) -> Dict[str, Any]:
-        total = self._normalize_count(requested_count)
-        all_files: List[str] = []
-        used_model = ""
-        last_elapsed = 0.0
-        skipped_shots = 0
-        for index in range(total):
-            if self._task_cancel_requested(task_id):
-                return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
-            if passthrough:
-                result = await self._draw_passthrough_once(event, prompt, aspect, resolution, refs, source)
-            else:
-                result = await self._draw_once(event, prompt, aspect, resolution, refs, source)
-            if not result.get("success"):
-                raw_err = str(result.get("error") or "")
-                error = self._friendly_user_error_message(
-                    raw_err,
-                    fail_label or self._natural_fail_fallback("image"),
-                )
-                mode, skip_max = self._batch_failure_policy()
-                skipped_shots += 1
-                will_continue = False
-                if mode == "skip":
-                    will_continue = True
-                elif mode == "skip_max" and skipped_shots <= skip_max:
-                    will_continue = True
-                msg = await self._batch_shot_fail_message(
-                    event,
-                    index=index + 1,
-                    total=total,
-                    done_files=len(all_files),
-                    error=error,
-                    will_continue=will_continue,
-                )
-                try:
-                    await event.send(event.plain_result(msg))
-                except Exception:
-                    pass
-                if will_continue:
-                    continue
-                return {
-                    "success": False,
-                    "error": raw_err or error,
-                    "files": all_files,
-                    "batch_total": total,
-                    "batch_failed_at": index + 1,
-                    "batch_skipped": skipped_shots,
-                }
-            files = list(result.get("files") or [])
-            used_model = str(result.get("used_model") or used_model)
-            last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
-            if files:
-                self._record_generated_images(event, 1)
-                await self._send_generated_images(event, files)
-                all_files.extend(files)
-            info = self._batch_success_text(
-                self._build_success_text(last_elapsed, len(files), used_model, event),
-                index + 1,
-                total,
-            )
-            if info:
-                try:
-                    await event.send(event.plain_result(info))
-                except Exception:
-                    pass
-        return {
-            "success": True,
-            "files": all_files,
-            "used_model": used_model,
-            "elapsed_seconds": last_elapsed,
-            "batch_total": total,
-            "batch_skipped": skipped_shots,
-        }
-
-    async def _background_selfie_batches(
-        self,
-        task_id: str,
-        event: AstrMessageEvent,
         action: str,
         extra_refs: List[ImageReference],
         source: str,
-        requested_count: int,
-        aspect: str,
-        resolution: str,
-        fail_label: str,
-    ) -> Dict[str, Any]:
-        total = self._normalize_count(requested_count)
-        all_files: List[str] = []
-        used_model = ""
-        last_elapsed = 0.0
-        skipped_shots = 0
-        # 多张拍摄时逐张更换机位或姿势。
+        total: int,
+    ) -> List[str]:
+        """Pre-assign each batch slot a pose/COS/shot so parallel gens stay distinct."""
         rebuild_each = source in {
             "command-look-legs",
             "command-selfie",
@@ -5252,13 +5155,11 @@ class SelfieImagePlugin(Star):
         extra_keep = ""
         force_legwear = ""
         if rebuild_each:
-            # Extra may contain full preset text with many periods — take rest of line, then strip pose/shot tags.
             m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
                 extra_keep = re.sub(r"\s*【(?:pose|shot|cos):[a-z0-9_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
-            # Keep user/locked legwear across rebuild rounds (extra text alone may have stripped 白丝).
             force_legwear = parse_requested_legwear(str(action or "")) or parse_requested_legwear(extra_keep)
             m_pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
             if m_pose:
@@ -5269,9 +5170,8 @@ class SelfieImagePlugin(Star):
             m_cos = re.search(r"【cos:([a-z0-9_]+)】", str(action or ""))
             if m_cos:
                 last_cos = str(m_cos.group(1) or "")
+        planned: List[str] = []
         for index in range(total):
-            if self._task_cancel_requested(task_id):
-                return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
             round_action = action
             if rebuild_each and total > 1:
                 if source == "command-look-legs" or "看看腿" in str(action or "") or "【pose:" in str(action or ""):
@@ -5311,21 +5211,43 @@ class SelfieImagePlugin(Star):
                     m_shot = re.search(r"【shot:([a-z_]+)】", round_action)
                     if m_shot:
                         last_shot = str(m_shot.group(1) or last_shot)
-            prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(event, round_action, extra_refs)
-            result = await self._run_image_generation(
-                prompt,
-                aspect,
-                resolution,
-                refs,
-                source=source,
-                audit_user_id=event_user_id(event),
-                event=event,
-                original_prompt=round_action,
-                prompt_en_meta=prompt_en_meta,
-            )
+            planned.append(round_action)
+        return planned
+
+    async def _run_generation_jobs_parallel(
+        self,
+        task_id: str,
+        event: AstrMessageEvent,
+        jobs: List[Tuple[int, Any]],
+        *,
+        fail_label: str,
+        total: int,
+    ) -> Dict[str, Any]:
+        """Run batch slots concurrently; upstream concurrency is the image semaphore."""
+        all_files: List[str] = []
+        used_model = ""
+        last_elapsed = 0.0
+        skipped_shots = 0
+        send_lock = asyncio.Lock()
+        stop_error = ""
+        pending: set[asyncio.Task] = set()
+
+        async def _one(index: int, factory: Any) -> Dict[str, Any]:
+            if self._task_cancel_requested(task_id) or stop_error:
+                return {"success": False, "cancelled": True, "index": index}
+            result = await factory()
+            result = dict(result or {})
+            result["index"] = index
+            return result
+
+        async def _emit(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            nonlocal skipped_shots, used_model, last_elapsed, stop_error
+            index = int(result.get("index") or 0)
+            if result.get("cancelled"):
+                return None
             if not result.get("success"):
                 raw_err = str(result.get("error") or "")
-                error = self._friendly_user_error_message(raw_err, fail_label)
+                error = self._friendly_user_error_message(raw_err, fail_label or self._natural_fail_fallback("image"))
                 mode, skip_max = self._batch_failure_policy()
                 skipped_shots += 1
                 will_continue = False
@@ -5345,22 +5267,22 @@ class SelfieImagePlugin(Star):
                     await event.send(event.plain_result(msg))
                 except Exception:
                     pass
-                if will_continue:
-                    continue
-                return {
-                    "success": False,
-                    "error": raw_err or error,
-                    "files": all_files,
-                    "batch_total": total,
-                    "batch_failed_at": index + 1,
-                    "batch_skipped": skipped_shots,
-                }
+                if not will_continue:
+                    stop_error = raw_err or error
+                    return {
+                        "success": False,
+                        "error": stop_error,
+                        "files": all_files,
+                        "batch_total": total,
+                        "batch_failed_at": index + 1,
+                        "batch_skipped": skipped_shots,
+                    }
+                return None
             files = list(result.get("files") or [])
             used_model = str(result.get("used_model") or used_model)
             last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
             if files:
                 self._record_generated_images(event, 1)
-                # 每张生成后立即发送。
                 await self._send_generated_images(event, files)
                 all_files.extend(files)
             info = self._batch_success_text(
@@ -5373,6 +5295,36 @@ class SelfieImagePlugin(Star):
                     await event.send(event.plain_result(info))
                 except Exception:
                     pass
+            return None
+
+        for index, factory in jobs:
+            pending.add(asyncio.create_task(_one(index, factory)))
+        early: Optional[Dict[str, Any]] = None
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                try:
+                    result = task.result()
+                except asyncio.CancelledError:
+                    continue
+                except Exception as exc:
+                    result = {"success": False, "error": str(exc), "index": 0}
+                async with send_lock:
+                    early = await _emit(result)
+                if early:
+                    for leftover in pending:
+                        leftover.cancel()
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
+                    if self._task_cancel_requested(task_id):
+                        return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
+                    return early
+            if self._task_cancel_requested(task_id):
+                for leftover in pending:
+                    leftover.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
         return {
             "success": True,
             "files": all_files,
@@ -5381,6 +5333,78 @@ class SelfieImagePlugin(Star):
             "batch_total": total,
             "batch_skipped": skipped_shots,
         }
+
+    async def _background_draw_batches(
+        self,
+        task_id: str,
+        event: AstrMessageEvent,
+        prompt: str,
+        aspect: str,
+        resolution: str,
+        refs: List[ImageReference],
+        source: str,
+        requested_count: int,
+        *,
+        passthrough: bool = False,
+        fail_label: str = "",
+    ) -> Dict[str, Any]:
+        total = self._normalize_count(requested_count)
+        jobs: List[Tuple[int, Any]] = []
+        for index in range(total):
+            async def _factory(passthrough=passthrough) -> Dict[str, Any]:
+                if passthrough:
+                    return await self._draw_passthrough_once(event, prompt, aspect, resolution, refs, source)
+                return await self._draw_once(event, prompt, aspect, resolution, refs, source)
+
+            jobs.append((index, _factory))
+        return await self._run_generation_jobs_parallel(
+            task_id,
+            event,
+            jobs,
+            fail_label=fail_label,
+            total=total,
+        )
+
+    async def _background_selfie_batches(
+        self,
+        task_id: str,
+        event: AstrMessageEvent,
+        action: str,
+        extra_refs: List[ImageReference],
+        source: str,
+        requested_count: int,
+        aspect: str,
+        resolution: str,
+        fail_label: str,
+    ) -> Dict[str, Any]:
+        total = self._normalize_count(requested_count)
+        planned = self._plan_selfie_round_actions(action, extra_refs, source, total)
+        jobs: List[Tuple[int, Any]] = []
+        for index, round_action in enumerate(planned):
+            async def _factory(round_action=round_action) -> Dict[str, Any]:
+                prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(
+                    event, round_action, extra_refs
+                )
+                return await self._run_image_generation(
+                    prompt,
+                    aspect,
+                    resolution,
+                    refs,
+                    source=source,
+                    audit_user_id=event_user_id(event),
+                    event=event,
+                    original_prompt=round_action,
+                    prompt_en_meta=prompt_en_meta,
+                )
+
+            jobs.append((index, _factory))
+        return await self._run_generation_jobs_parallel(
+            task_id,
+            event,
+            jobs,
+            fail_label=fail_label,
+            total=total,
+        )
 
     def _validate_web_test_selection(self, payload: Dict[str, Any]) -> None:
         channel_name = str(payload.get("channel") or "").strip()

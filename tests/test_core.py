@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.58")
+        self.assertEqual(PLUGIN_VERSION, "1.3.59")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -330,7 +330,7 @@ class ConfigModelTests(unittest.TestCase):
 
     def test_numeric_config_is_clamped(self) -> None:
         config = AICatConfig.from_dict({"image": {"max_batch_count": 99, "max_concurrent_tasks": 0}})
-        self.assertEqual(config.image_max_batch_count, 8)
+        self.assertEqual(config.image_max_batch_count, 20)
         self.assertEqual(config.image_max_concurrent_tasks, 1)
 
     def test_astrbot_wrapped_values_are_unwrapped(self) -> None:
@@ -2960,7 +2960,7 @@ class WebApiTests(unittest.TestCase):
             self.assertNotIn(key, data)
         self.assertEqual(plugin.config.web_token, "secret")
         self.assertEqual(plugin.config.web_host, "127.0.0.1")
-        self.assertEqual(plugin.config.image_max_batch_count, 8)
+        self.assertEqual(plugin.config.image_max_batch_count, 20)
 
     def test_frontend_does_not_display_startup_web_settings(self) -> None:
         self.assertNotIn("<b>监听", INDEX_HTML)
@@ -4727,6 +4727,63 @@ class LegFocusTests(unittest.TestCase):
         roxy = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "roxy_cream")
         self.assertIn("禁止蓝色旅行法师外套", roxy["prompt"])
         self.assertIn("双麻花辫", roxy["prompt"])
+
+        planner = object.__new__(plugin_main.SelfieImagePlugin)
+        planned = planner._plan_selfie_round_actions(
+            plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False),
+            [],
+            "command-look-cos",
+            6,
+        )
+        self.assertEqual(len(planned), 6)
+        cos_ids = [re.search(r"【cos:([a-z0-9_]+)】", t).group(1) for t in planned]
+        self.assertGreaterEqual(len(set(cos_ids)), 4, cos_ids)
+
+        class _Evt:
+            async def send(self, *_a, **_k):
+                return None
+
+            def plain_result(self, text):
+                return text
+
+        plugin = object.__new__(plugin_main.SelfieImagePlugin)
+        plugin._task_cancel_requested = lambda *_a, **_k: False
+        plugin._friendly_user_error_message = lambda err, *_a, **_k: str(err)
+        plugin._natural_fail_fallback = lambda *_a, **_k: "fail"
+        plugin._batch_failure_policy = lambda: ("skip", 2)
+
+        async def _fail_msg(*_a, **_k):
+            return "fail"
+
+        plugin._batch_shot_fail_message = _fail_msg
+        plugin._batch_success_text = lambda info, index, total: ""
+        plugin._build_success_text = lambda *a, **k: ""
+        plugin._record_generated_images = lambda *a, **k: None
+        sent: list = []
+
+        async def _send(_event, files):
+            sent.extend(files)
+            return len(files)
+
+        plugin._send_generated_images = _send
+        inflight = {"n": 0, "peak": 0}
+
+        async def _job(i: int):
+            inflight["n"] += 1
+            inflight["peak"] = max(inflight["peak"], inflight["n"])
+            await asyncio.sleep(0.05)
+            inflight["n"] -= 1
+            return {"success": True, "files": [f"{i}.png"], "used_model": "m", "elapsed_seconds": 0.05}
+
+        jobs = [(i, (lambda i=i: _job(i))) for i in range(6)]
+        out = asyncio.run(
+            plugin_main.SelfieImagePlugin._run_generation_jobs_parallel(
+                plugin, "t", _Evt(), jobs, fail_label="x", total=6
+            )
+        )
+        self.assertTrue(out["success"])
+        self.assertEqual(len(out["files"]), 6)
+        self.assertGreaterEqual(inflight["peak"], 3)
 
         class PersonaStub:
             class Intent:

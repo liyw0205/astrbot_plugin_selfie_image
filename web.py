@@ -669,10 +669,10 @@ INDEX_HTML = r"""<!doctype html>
       <div class="grid4">
         <div><label>默认比例</label><select id="defaultAspect"></select></div>
         <div><label>默认清晰度</label><select id="defaultResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
-        <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="20"></div>
+        <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="20" title="同一时间最多几张图一起请求上游；批量 /看看COS 10 会按这个数并发"></div>
         <div><label>整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
         <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
-        <div><label>一次最多连画几轮</label><input id="maxBatchCount" type="number" min="1" max="8"></div>
+        <div><label>一次最多连画几轮</label><input id="maxBatchCount" type="number" min="1" max="20" title="一条指令最多画几张，例如 /看看腿 10"></div>
         <div><label>连画失败时</label>
           <select id="batchOnFailure">
             <option value="skip">跳过失败张，继续后面</option>

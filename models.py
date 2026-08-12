@@ -397,7 +397,7 @@ class AICatConfig:
             image_rate_limit_seconds=to_int(image.get("rate_limit_seconds"), 0, minimum=0, maximum=3600),
             image_enable_daily_limit=to_bool(image.get("enable_daily_limit"), False),
             image_daily_limit_count=to_int(image.get("daily_limit_count"), 10, minimum=1, maximum=1000),
-            image_max_batch_count=to_int(image.get("max_batch_count"), 2, minimum=1, maximum=8),
+            image_max_batch_count=to_int(image.get("max_batch_count"), 2, minimum=1, maximum=20),
             image_batch_on_failure=batch_on_failure,
             image_batch_skip_max=to_int(image.get("batch_skip_max") or image.get("batchSkipMax"), 2, minimum=0, maximum=8),
             image_blocked_words=split_values(image.get("blocked_words")),
