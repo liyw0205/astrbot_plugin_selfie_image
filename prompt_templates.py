@@ -48,8 +48,11 @@ def build_selfie_builtin_prompt(
 ) -> str:
     """Build a compact central built-in prompt; user text is appended separately."""
     translated_user = str(user_text or "").strip()
-    is_legs = "看看腿" in str(action) or "腿部" in str(action) or "【pose:" in str(action)
-    is_group = "合影" in str(action) or "合照" in str(action) or "同框" in str(action)
+    is_cos = "看看COS" in str(action) or "看看cos" in str(action).lower() or "【cos:" in str(action)
+    is_legs = (not is_cos) and (
+        "看看腿" in str(action) or "腿部" in str(action) or "【pose:" in str(action)
+    )
+    is_group = (not is_cos) and ("合影" in str(action) or "合照" in str(action) or "同框" in str(action))
     # Look-legs always hides feet by default.
     feet_cropped = (
         is_legs

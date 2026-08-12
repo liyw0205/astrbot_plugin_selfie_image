@@ -169,6 +169,7 @@ class SelfieIntent:
     has_reference_style_hint: bool
     is_legs_only: bool = False
     is_third_person_photo: bool = False
+    is_cos_look: bool = False
 
 
 def normalize_intent_text(text: str) -> str:
@@ -498,17 +499,16 @@ class PersonaManager:
                 "leaning",
             ],
         )
-        is_cos_look = includes_any(compact, ["看看cos", "看看cos模式"]) or "【cos:" in raw.lower() or "【cos：" in raw
+        is_cos_look = (
+            includes_any(compact, ["看看cos", "看看cos模式", "cos换装自拍"])
+            or "【cos:" in raw.lower()
+            or "【cos：" in raw
+        )
         is_legs_only = (not is_cos_look) and includes_any(
             compact,
             ["看看腿", "看腿", "拍腿", "自拍腿", "丝袜", "黑丝", "白丝", "肉丝", "光腿", "美腿", "大腿"],
         )
-        # bare token「同框」also appears in anatomy copy ("连续同框"); only treat real group phrases.
-        # Legs/晒腿 must never be classified as group photo.
-        if is_legs_only:
-            is_group_photo = False
-            is_multi = False
-        is_third_person_photo = includes_any(
+        is_third_person_photo = (not is_cos_look) and includes_any(
             compact,
             [
                 "他拍",
@@ -539,7 +539,20 @@ class PersonaManager:
                 "shotbyanotherperson",
             ],
         )
-        use_today = not compact or includes_any(compact, ["看看你", "看下你", "你长什么样", "你的样子", "今日穿搭", "今天穿搭", "今天这身"])
+        # COS is its own mode: never fall into legs / group / third-person / daily-outfit.
+        if is_cos_look:
+            is_legs_only = False
+            is_group_photo = False
+            is_multi = False
+            is_third_person_photo = False
+            change_clothes = True
+            use_today = False
+        elif is_legs_only:
+            is_group_photo = False
+            is_multi = False
+        use_today = False if is_cos_look else (
+            not compact or includes_any(compact, ["看看你", "看下你", "你长什么样", "你的样子", "今日穿搭", "今天穿搭", "今天这身"])
+        )
         has_ref_hint = includes_any(
             compact,
             [
@@ -570,6 +583,7 @@ class PersonaManager:
             has_reference_style_hint=has_ref_hint,
             is_legs_only=is_legs_only,
             is_third_person_photo=is_third_person_photo,
+            is_cos_look=is_cos_look,
         )
 
     async def ensure_daily_selfie_profile(self, action: str = "") -> DailySelfieProfile:
@@ -683,7 +697,17 @@ class PersonaManager:
                 )
 
         mode_lines: list[str] = []
-        if intent.is_group_photo:
+        if intent.is_cos_look:
+            mode_lines.extend(
+                [
+                    "【COS换装自拍模式】",
+                    "这是 COS 换装自拍，不是晒腿、不是合影、不是他拍。",
+                    "保持形象参考的脸型五官与体态；假发颜色、发型、发饰按本套 COS 完整替换。",
+                    "全身或半身完整入镜，重点还原套装层次、颜色、配饰与开叉/薄纱结构；不要裁成只拍腿或只拍脸。",
+                    "构图以展示 COS 服装为主，日常得体；表情按新造型自然重画。",
+                ]
+            )
+        elif intent.is_group_photo:
             mode_lines.append("【合影 / 同框模式】")
             if appearance_type == "anime":
                 mode_lines.append("先确定你自己的柔光京阿尼动漫形象，再把每张额外参考图落实为独立的同框动漫人物。")
@@ -798,7 +822,7 @@ class PersonaManager:
             )
 
         today_lines: list[str] = []
-        if daily and daily.outfit and not intent.change_clothes and not intent.is_legs_only:
+        if daily and daily.outfit and not intent.change_clothes and not intent.is_legs_only and not intent.is_cos_look:
             today_lines.append(f"今日穿搭：{daily.outfit}")
         if daily and daily.status:
             today_lines.append(f"当前时间段：{period_label(current_period())}")
@@ -808,7 +832,16 @@ class PersonaManager:
 
         action_line = f"用户要求：{act}" if act else "用户要求：看着镜头自然自拍，展示你现在的样子。"
         subject_photo_label = "日常他拍照片" if intent.is_third_person_photo and not intent.is_group_photo else "自拍照片"
-        if intent.is_group_photo:
+        if intent.is_cos_look:
+            output_lines = [
+                "【生成要求】",
+                "1. 主角身份稳定：脸型五官、体态来自参考图一；假发/发饰按 COS 套装。",
+                "2. 这是 COS 换装自拍：完整展示指定套装层次，不要改成晒腿近景或合影。",
+                "3. 面部清晰可见、自然看向镜头，除非用户明确要求遮脸。",
+                "4. 画面像日常拍下的一张完整 COS 照片，主体清晰，服装还原优先。",
+                "5. 人体结构自然完整：左右手/脚各一只，手与胳膊连续连接。",
+            ]
+        elif intent.is_group_photo:
             if appearance_type == "anime":
                 output_lines = [
                     "【生成要求】",
