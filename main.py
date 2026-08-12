@@ -5266,22 +5266,23 @@ class SelfieImagePlugin(Star):
         send_lock = asyncio.Lock()
         stop_error = ""
         inflight = max(1, int(getattr(self.config, "image_max_concurrent_tasks", 3) or 3))
-        slot_sem = asyncio.Semaphore(inflight)
+        slot_timeout = 180
         logger.info(f"[SelfieImage] batch start task={task_id} total={total} inflight={inflight}")
 
         async def _one(index: int, factory: Any) -> Dict[str, Any]:
-            async with slot_sem:
-                if self._task_cancel_requested(task_id) or stop_error:
-                    return {"success": False, "cancelled": True, "index": index}
-                try:
-                    result = await factory()
-                except asyncio.CancelledError:
-                    return {"success": False, "cancelled": True, "index": index}
-                except Exception as exc:
-                    return {"success": False, "error": str(exc), "index": index}
-                result = dict(result or {})
-                result["index"] = index
-                return result
+            if self._task_cancel_requested(task_id) or stop_error:
+                return {"success": False, "cancelled": True, "index": index}
+            try:
+                result = await asyncio.wait_for(factory(), timeout=slot_timeout)
+            except asyncio.TimeoutError:
+                return {"success": False, "error": f"这一张超过{slot_timeout}秒未完成", "index": index}
+            except asyncio.CancelledError:
+                return {"success": False, "cancelled": True, "index": index}
+            except Exception as exc:
+                return {"success": False, "error": str(exc), "index": index}
+            result = dict(result or {})
+            result["index"] = index
+            return result
 
         async def _emit_message(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             nonlocal skipped_shots, used_model, last_elapsed, stop_error
@@ -5339,32 +5340,33 @@ class SelfieImagePlugin(Star):
                     pass
             return None
 
-        pending: set[asyncio.Task] = {asyncio.create_task(_one(index, factory)) for index, factory in jobs}
-        while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                try:
-                    result = task.result()
-                except asyncio.CancelledError:
-                    continue
-                except Exception as exc:
-                    result = {"success": False, "error": str(exc), "index": 0}
-                async with send_lock:
-                    early = await _emit_message(result)
-                if early:
-                    for leftover in pending:
-                        leftover.cancel()
-                    if pending:
-                        await asyncio.gather(*pending, return_exceptions=True)
-                    if self._task_cancel_requested(task_id):
-                        return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
-                    return early
+        queue = list(jobs)
+        wave_no = 0
+        while queue:
             if self._task_cancel_requested(task_id):
-                for leftover in pending:
-                    leftover.cancel()
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
                 return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
+            wave = queue[:inflight]
+            del queue[:inflight]
+            wave_no += 1
+            logger.info(
+                f"[SelfieImage] batch wave={wave_no} size={len(wave)} remain={len(queue)} task={task_id}"
+            )
+            pending = {asyncio.create_task(_one(index, factory)) for index, factory in wave}
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    try:
+                        result = task.result()
+                    except BaseException as exc:
+                        result = {"success": False, "error": str(exc), "index": 0}
+                    async with send_lock:
+                        early = await _emit_message(result)
+                    if early:
+                        for leftover in pending:
+                            leftover.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
+                        return early
         return {
             "success": True,
             "files": all_files,
