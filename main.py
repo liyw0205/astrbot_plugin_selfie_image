@@ -1667,15 +1667,19 @@ class SelfieImagePlugin(Star):
                 attempts,
                 fallback_error=str(record.get("error") or ""),
             )
+            # Intermediate failures are useful even when final attempt succeeded.
+            if summary.get("failure_reasons"):
+                record["failure_reasons"] = summary["failure_reasons"]
             if record.get("success") is False:
                 if summary.get("failure_reason"):
                     record["failure_reason"] = summary["failure_reason"]
-                if summary.get("failure_reasons"):
-                    record["failure_reasons"] = summary["failure_reasons"]
                 if not str(record.get("used_model") or "").strip() and summary.get("last_failed_model"):
                     record["used_model"] = summary["last_failed_model"]
                 if not str(record.get("error") or "").strip() and summary.get("failure_reason"):
                     record["error"] = summary["failure_reason"]
+            # success path: never promote intermediate failures into top-level failure_reason/error
+            elif "failure_reason" in record and record.get("success") is True:
+                record.pop("failure_reason", None)
         except Exception:
             pass
         with self._records_lock:
@@ -1706,10 +1710,8 @@ class SelfieImagePlugin(Star):
         raise ValueError("记录不存在或已清理")
 
     def _enrich_record_for_web(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        """Backfill failure_reason / used_model for older records without rewriting disk."""
+        """Backfill failure fields for monitor without rewriting disk."""
         if not isinstance(record, dict):
-            return record
-        if record.get("success") is not False:
             return record
         try:
             from .error_classify import summarize_generation_failures
@@ -1718,16 +1720,23 @@ class SelfieImagePlugin(Star):
             response_data = record.get("response_data")
             if not attempts and isinstance(response_data, Mapping):
                 attempts = list(response_data.get("attempts") or [])
+            if not attempts:
+                return record
             summary = summarize_generation_failures(
                 attempts,
                 fallback_error=str(record.get("error") or record.get("failure_reason") or ""),
             )
-            if not str(record.get("failure_reason") or "").strip() and summary.get("failure_reason"):
-                record["failure_reason"] = summary["failure_reason"]
+            # Always surface intermediate failed attempts (including final-success retries).
             if not record.get("failure_reasons") and summary.get("failure_reasons"):
                 record["failure_reasons"] = summary["failure_reasons"]
-            if not str(record.get("used_model") or "").strip() and summary.get("last_failed_model"):
-                record["used_model"] = summary["last_failed_model"]
+            if record.get("success") is False:
+                if not str(record.get("failure_reason") or "").strip() and summary.get("failure_reason"):
+                    record["failure_reason"] = summary["failure_reason"]
+                if not str(record.get("used_model") or "").strip() and summary.get("last_failed_model"):
+                    record["used_model"] = summary["last_failed_model"]
+            elif record.get("success") is True:
+                # Final success should not look like a terminal failure in the detail header.
+                record.pop("failure_reason", None)
         except Exception:
             pass
         return record
@@ -3071,21 +3080,20 @@ class SelfieImagePlugin(Star):
     ) -> str:
         """生成单一腿部姿势，并按姿势选择腿部穿搭。用户点名白丝/黑丝/光腿时强制采用。"""
         pose_pool = [
-            ("sit", 2),
-            ("sit_crop", 3),
-            ("kneel", 1),
-            ("kneel_crop", 2),
+            # Full-foot poses (majority): keep feet/toes visible when useful.
+            ("sit", 4),
+            ("kneel", 2),
             ("side_lie", 1),
-            ("side_lie_crop", 1),
             ("hug_knee", 1),
-            ("hug_knee_crop", 1),
-            ("cross_leg", 1),
-            ("cross_leg_crop", 1),
+            ("cross_leg", 2),
             ("stand_topdown", 1),
-            ("windowsill", 1),
-            ("windowsill_crop", 2),
+            ("windowsill", 2),
             ("kneel_up", 1),
-            ("reclined_knees_crop", 4),
+            # Calf/foot crop poses (minority): only some shots hide lower legs.
+            ("sit_crop", 2),
+            ("kneel_crop", 1),
+            ("windowsill_crop", 1),
+            ("reclined_knees_crop", 2),
         ]
         if avoid_pose:
             filtered = [(name, w) for name, w in pose_pool if name != avoid_pose]

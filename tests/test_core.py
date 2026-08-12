@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.41")
+        self.assertEqual(PLUGIN_VERSION, "1.3.42")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -797,6 +797,26 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(summary["last_failed_model"], "自建聚合/grok-imagine-image-quality")
         self.assertIn("内容未通过上游安全策略", summary["failure_reason"])
         self.assertEqual(len(summary["failure_reasons"]), 2)
+
+        # Success path should still keep intermediate failure rows for monitor detail.
+        success_summary = summarize_generation_failures(
+            [
+                {
+                    "attempt": 1,
+                    "label": "A/model-a",
+                    "success": False,
+                    "error": "HTTP 400: Generated image rejected by content moderation.",
+                },
+                {
+                    "attempt": 2,
+                    "label": "B/model-b",
+                    "success": True,
+                },
+            ]
+        )
+        self.assertEqual(len(success_summary["failure_reasons"]), 1)
+        self.assertIn("A/model-a", success_summary["failure_reasons"][0]["label"])
+        self.assertIn("内容未通过上游安全策略", success_summary["failure_reasons"][0]["error_user_message"])
 
     def test_enabled_model_priority_and_manual_provider_types_are_preserved(self) -> None:
         config = AICatConfig.from_dict(
@@ -4515,9 +4535,10 @@ class LegFocusTests(unittest.TestCase):
         with patch("astrbot_plugin_selfie_image.main.random.choices", side_effect=[["sit_crop"], ["白丝"]]):
             forced_crop = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
         self.assertIn("【pose:sit_crop】", forced_crop)
-        self.assertIn("双脚完整裁出画外", forced_crop)
         self.assertIn("【crop:calves】", forced_crop)
         self.assertIn("卷边", forced_crop)
+        self.assertIn("小腿", forced_crop)
+        self.assertIn("画外", forced_crop)
         self.assertNotIn("脚趾五个分开", forced_crop)
         self.assertNotIn("丝袜必须包住整只脚到脚趾", forced_crop)
         from astrbot_plugin_selfie_image.persona import PersonaManager

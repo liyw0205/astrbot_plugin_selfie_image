@@ -2761,7 +2761,6 @@ Source prompt:
       }).join('')}</div>`;
     }
     function recordFailureReasonsBlock(record) {
-      if (record.success !== false) return '';
       let rows = Array.isArray(record.failure_reasons) ? record.failure_reasons : [];
       if (!rows.length) {
         const attempts = record.attempts || record.response_data?.attempts || [];
@@ -2776,10 +2775,16 @@ Source prompt:
           }));
       }
       if (!rows.length) {
-        const reason = recordFailureReason(record);
-        if (!reason) return '';
-        return `<h3>失败原因</h3><div class="status">${escapeHtml(reason)}</div>`;
+        // Terminal failure with no attempt rows: single final reason only.
+        if (record.success === false) {
+          const reason = recordFailureReason(record);
+          if (!reason) return '';
+          return `<h3>失败原因</h3><div class="status">${escapeHtml(reason)}</div>`;
+        }
+        return '';
       }
+      const finalFailed = record.success === false;
+      const title = finalFailed ? '各模型失败原因' : '过程中失败（最终成功）';
       const body = rows.map((row, index) => {
         const label = String(row.label || `尝试${index + 1}`).trim();
         const reason = String(row.error_user_message || row.error || '生成失败').trim();
@@ -2797,7 +2802,7 @@ Source prompt:
           ${rawLine}
         </div>`;
       }).join('');
-      return `<h3>各模型失败原因</h3><div class="model-list">${body}</div>`;
+      return `<h3>${title}</h3><div class="model-list">${body}</div>`;
     }
     function renderRecords() {
       const model = $('monitorModel').value.trim();
