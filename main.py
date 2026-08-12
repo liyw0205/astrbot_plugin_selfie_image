@@ -3437,25 +3437,23 @@ class SelfieImagePlugin(Star):
         raw = str(text or "")
         if not raw.strip():
             return False
-        keys = ("漏腰", "露腰", "露脐", "小蛮腰", "露脐短上衣", "短上衣")
-        if any(k in raw for k in ("漏腰", "露腰", "露脐短上衣", "小蛮腰")):
+        if any(k in raw for k in ("漏腰", "露腰", "露脐短上衣", "小蛮腰", "crop_waist", "crop top")):
             return True
         # Expanded preset body usually contains both crop top + outer shirt.
-        return ("露脐" in raw or "短上衣" in raw) and ("外衫" in raw or "开衫" in raw or "半敞" in raw)
+        has_inner = ("露脐" in raw) or ("短上衣" in raw) or ("crop top" in raw.lower())
+        has_outer = ("外衫" in raw) or ("开衫" in raw) or ("半敞" in raw) or ("oversized" in raw.lower())
+        return has_inner and has_outer
 
     def _build_crop_waist_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
         """漏腰/露腰：腰腹构图 + 内外两层穿搭，避免被日常半身自拍机位冲掉。"""
         base = (
             "【自拍 / 漏腰模式】"
-            "第一人称微俯拍，聚焦上半身与腰腹，不是脸部特写，也不是胸口以上半身。"
-            "构图从大腿根到肩部；可半遮脸，但腰腹与短上衣下摆必须清晰。"
-            "【换装优先·覆盖今日穿搭】必须两层衣服："
-            "内层黑色紧身露脐短上衣，只贴合胸部区域，下摆在肋下，露出完整腰线与肚脐；"
-            "外层宽松oversized暗色长袖外衫，明显不贴身、不裹紧，半敞并向上掀起，软质皱褶垂落。"
-            "禁止把外衫也画成紧身贴肉；禁止只剩一件贴身上衣。"
-            "仰卧或半躺暗色床单/沙发，腰腹自然贴合表面轻压出小蛮腰；"
-            "暗调柔光，皮肤与黑衣高对比，暗黑系少御，日常得体。"
-            "保持 AI 身份长相与发色一致。"
+            "参考男友视角那种随手 iPhone 抓拍：暗一点的房间柔光、生活化原生质感，不要棚拍感。"
+            "第一人称略俯拍，构图看上身与腰线，不是纯脸特写，也不是胸口以上半身。"
+            "本次换装优先于今日穿搭：黑色短款上衣 + 宽松深色长袖外衫（外衫明显 oversized、敞开一点并略上提），"
+            "自然露出腰线；外衫保持松垮有皱褶，不要整件贴肉，也不要只剩一件紧身上衣。"
+            "她随意半躺或靠在深色床/沙发上，动作放松日常；长发可略乱，脸可被发丝或角度半遮。"
+            "保持 AI 身份长相与发色一致，画面干净得体。"
         )
         if has_refs:
             base = "参考用户附图的氛围或构图，" + base

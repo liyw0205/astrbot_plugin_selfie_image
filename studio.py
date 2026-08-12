@@ -194,13 +194,12 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
         "id": "preset_crop_waist",
         "title": "漏腰",
         "prompt": (
-            "【换装优先·覆盖今日穿搭】两层穿搭必须同时成立，不可合成一件贴身衣："
-            "内层是黑色紧身露脐短上衣/运动bra式短上衣，只贴合胸部与上胸，下摆在肋下，露出完整腰腹与肚脐；"
-            "外层是宽松oversized暗色长袖外衫或开衫，明显宽大、不贴身、不裹紧，半敞并向上掀到胸口，"
-            "软质皱褶自然垂落，袖子松垮，与内层短上衣形成松紧对比。"
-            "仰卧暗色床单或沙发，微俯拍聚焦腰腹与上身；腰腹自然贴合表面轻压出小蛮腰；"
-            "胸部轮廓在短上衣承托下柔和，不夸张挤压。"
-            "构图从大腿根到肩部，长发散落可半遮脸；暗调柔光，暗黑系少御，日常得体。"
+            "a beautiful 真人女孩, casual home fashion selfie, dim soft room light like boyfriend-view vibe, "
+            "amateurish iPhone snapshot, slightly high angle looking down at her torso. "
+            "She wears a black short crop top under a loose oversized dark long-sleeve shirt left open and lifted a little, "
+            "so the midriff/waistline shows naturally; outer shirt stays baggy with soft folds, not skin-tight. "
+            "She reclines casually on a dark bed or sofa, relaxed everyday pose, hair slightly messy, "
+            "face may be partly obscured by hair or angle, natural skin, clean tasteful photo, no exaggerated body focus."
         ),
         "templates": ["selfie", "t2i", "i2i", "blank"],
         "global": True,
