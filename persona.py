@@ -21,12 +21,18 @@ APPEARANCE_TYPE_LABELS = {
 
 
 def is_leg_calf_crop_action(text: str) -> bool:
-    """Detect look-legs frames that crop calves/feet off-screen."""
+    """Detect look-legs frames that crop calves/feet off-screen.
+
+    Look-legs defaults to no feet (user aesthetic); bare \"看看腿\" also counts.
+    """
     raw = str(text or "")
-    if "【crop:calves】" in raw or "双脚完整裁出画外" in raw:
+    if "【crop:calves】" in raw or "双脚完整裁出画外" in raw or "不展示脚部" in raw:
         return True
     m = re.search(r"【pose:([a-z_]+)】", raw)
-    return bool(m and str(m.group(1)).endswith("_crop"))
+    if m and str(m.group(1)).endswith("_crop"):
+        return True
+    # Default look-legs path always hides feet now.
+    return "看看腿" in raw
 
 
 

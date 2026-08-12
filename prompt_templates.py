@@ -50,8 +50,14 @@ def build_selfie_builtin_prompt(
     translated_user = str(user_text or "").strip()
     is_legs = "看看腿" in str(action) or "腿部" in str(action) or "【pose:" in str(action)
     is_group = "合影" in str(action) or "合照" in str(action) or "同框" in str(action)
-    feet_cropped = "【pose:reclined_knees_crop】" in str(action) or "【crop:calves】" in str(action) or bool(
-        re.search(r"【pose:\w+_crop】", str(action))
+    # Look-legs always hides feet by default.
+    feet_cropped = (
+        is_legs
+        or "【pose:reclined_knees_crop】" in str(action)
+        or "【crop:calves】" in str(action)
+        or bool(re.search(r"【pose:\w+_crop】", str(action)))
+        or "双脚完整裁出画外" in str(action)
+        or "不展示脚部" in str(action)
     )
     if language == "en":
         style = {

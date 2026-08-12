@@ -256,17 +256,17 @@ def is_leg_calf_crop_action(text: str) -> bool:
 LEGWEAR_PROMPTS = {
     "光腿神器": (
         "本次腿部穿搭：光腿神器。"
-        "自然肤色、干净匀净的光腿效果；脚部完整，脚趾自然清晰、互不黏连，脚型正常。"
+        "自然肤色、干净匀净的光腿效果，主要看腿形；不展示脚部与脚趾。"
     ),
     "白丝": (
         "本次腿部穿搭：白丝。"
-        "纯白不透的中筒丝袜，遮住肤色，主要看腿形；袜口在大腿中段并有清晰卷边，"
-        "完整包住小腿与脚部；不要超薄透视，不要连裤全包。"
+        "纯白不透的左右分离大腿袜，遮住肤色，主要看腿形；袜口在大腿中段并有清晰卷边；"
+        "袜身向膝下延伸后出画，不展示脚部；不要超薄透视，不要连裤全包。"
     ),
     "黑丝": (
         "本次腿部穿搭：黑丝。"
-        "纯黑不透的中筒丝袜，遮住肤色，主要看腿形；袜口在大腿中段并有清晰卷边，"
-        "完整包住小腿与脚部；不要超薄透视，不要连裤全包。"
+        "纯黑不透的左右分离大腿袜，遮住肤色，主要看腿形；袜口在大腿中段并有清晰卷边；"
+        "袜身向膝下延伸后出画，不展示脚部；不要超薄透视，不要连裤全包。"
     ),
 }
 
@@ -3094,22 +3094,14 @@ class SelfieImagePlugin(Star):
     ) -> str:
         """生成单一腿部姿势，并按姿势选择腿部穿搭。用户点名白丝/黑丝/光腿时强制采用。"""
         pose_pool = [
-            # Full-foot poses (majority): keep feet/toes visible when useful.
-            ("sit", 3),
-            ("kneel", 2),
-            ("kneel_front", 2),
-            ("floor_fold", 2),
-            ("cross_leg", 3),
-            ("side_lie", 1),
-            ("hug_knee", 1),
-            ("stand_topdown", 1),
-            ("windowsill", 2),
-            ("kneel_up", 1),
-            # Calf/foot crop poses (minority): only some shots hide lower legs.
-            ("sit_crop", 2),
-            ("kneel_crop", 2),
-            ("windowsill_crop", 1),
-            ("reclined_knees_crop", 2),
+            # Default: crop feet/calves off-frame — feet ruin aesthetics ~80% of the time.
+            ("sit_crop", 4),
+            ("kneel_crop", 3),
+            ("cross_leg_crop", 3),
+            ("reclined_knees_crop", 3),
+            ("side_lie_crop", 2),
+            ("hug_knee_crop", 2),
+            ("windowsill_crop", 2),
         ]
         if avoid_pose:
             filtered = [(name, w) for name, w in pose_pool if name != avoid_pose]
@@ -3268,27 +3260,18 @@ class SelfieImagePlugin(Star):
             "floor_fold": "高位俯拍屈膝坐",
             "reclined_knees_crop": "后仰屈膝大腿近景",
         }
-        variants = pose_variants.get(pose_bucket) or pose_variants["sit"]
-        pose_label = pose_labels.get(pose_bucket, "坐姿拍腿")
-        feet_cropped = pose_bucket in CALF_CROP_POSES
-        if feet_cropped:
-            hard_crop = (
-                "构图只露少量腰腹/裙摆、大腿与膝部；两条腿从髋部到膝部连续自然。"
-                "小腿远端自然离开画面，双脚完整裁出画外。"
-            )
-            anatomy_rules = (
-                "单人限定：只有主角一人。两条大腿与两个膝部左右各一，髋膝连续。"
-                "姿势重心稳定、日常可维持，近距离俯视可有近大远小。"
-            )
-        else:
-            hard_crop = (
-                "构图以腿部与下半身为主：身体从入镜的腰腹/大腿连续到膝盖、小腿、脚踝、脚。"
-                "若画面边缘出现发丝或肩颈，须与身体自然相连。"
-            )
-            if pose_bucket == "stand_topdown":
-                hard_crop += "站立俯视优先下半身裁切：构图止于腰下至脚，不要全身立绘。"
-            anatomy_rules = "".join(anatomy_constraint_lines(style="legs"))
-            anatomy_rules += "不穿鞋；脚部朝向自然；若光腿入镜，脚趾自然清晰、不黏连。"
+        variants = pose_variants.get(pose_bucket) or pose_variants["sit_crop"]
+        pose_label = pose_labels.get(pose_bucket, "坐姿大腿近景")
+        # Look-legs default: never show feet (user aesthetic after many bad foot gens).
+        feet_cropped = True
+        hard_crop = (
+            "构图只露少量腰腹/裙摆、大腿与膝部；两条腿从髋部到膝部连续自然。"
+            "小腿远端自然离开画面，双脚完整裁出画外；不展示脚趾、脚掌、鞋或赤足。"
+        )
+        anatomy_rules = (
+            "单人限定：只有主角一人。两条大腿与两个膝部左右各一，髋膝连续。"
+            "姿势重心稳定、日常可维持，近距离俯视可有近大远小。"
+        )
         if pose_bucket in {"hug_knee", "hug_knee_crop"}:
             anatomy_rules += (
                 "抱膝时双手必须从肩肘连续伸出后抱膝，腕手与胳膊都在画面内且相连。"
@@ -3299,22 +3282,21 @@ class SelfieImagePlugin(Star):
         if requested in LEGWEAR_PROMPTS:
             legwear = requested
         else:
-            legwear_options = LEGWEAR_BY_POSE.get(pose_bucket, LEGWEAR_BY_POSE["sit"])
+            legwear_options = LEGWEAR_BY_POSE.get(pose_bucket, LEGWEAR_BY_POSE["sit_crop"])
             legwear = random.choices(
                 [name for name, _ in legwear_options],
                 weights=[weight for _, weight in legwear_options],
                 k=1,
             )[0]
         legwear_rule = LEGWEAR_PROMPTS[legwear]
-        if feet_cropped:
-            if legwear == "光腿神器":
-                legwear_rule = "本次腿部穿搭：光腿神器。大腿干净自然的光腿效果。"
-            else:
-                color = "纯白" if legwear == "白丝" else "纯黑"
-                legwear_rule = (
-                    f"本次腿部穿搭：{legwear}。{color}不透的左右分离大腿袜，主要看腿形；"
-                    "袜口在大腿上段并有清晰卷边；不是连裤袜。袜身向画外延伸，不展示脚部。"
-                )
+        if legwear == "光腿神器":
+            legwear_rule = "本次腿部穿搭：光腿神器。大腿干净自然的光腿效果，主要看腿形；不展示脚部。"
+        else:
+            color = "纯白" if legwear == "白丝" else "纯黑"
+            legwear_rule = (
+                f"本次腿部穿搭：{legwear}。{color}不透的左右分离大腿袜，主要看腿形；"
+                "袜口在大腿上段并有清晰卷边；不是连裤袜。袜身向画外延伸，不展示脚部。"
+            )
         base = (
             "看看腿。"
             "单人下半身特写：只有主角一人，日常随手拍，画面得体自然。"
@@ -3323,14 +3305,10 @@ class SelfieImagePlugin(Star):
             f"本次腿部特写构图（只执行这一段，不要叠加其他姿势）：{random.choice(variants)}"
             "姿势日常可维持、重心稳定；髋-膝连续，关节朝向正常。"
             "腿部比例与腿形自然，第一人称俯视可有近大远小。"
-            + (
-                "双脚完整裁出画外，不显示小腿远端、脚部或鞋子。【crop:calves】"
-                if feet_cropped
-                else "不穿鞋，脚部自然完整；光腿时脚趾自然清晰。"
-            )
-            + f"{legwear_rule}"
-            + f"{anatomy_rules}"
-            + f"{hard_crop}"
+            "双脚完整裁出画外，不显示小腿远端、脚部、脚趾或鞋子。【crop:calves】"
+            f"{legwear_rule}"
+            f"{anatomy_rules}"
+            f"{hard_crop}"
         )
         if has_refs:
             base += " 用户提供的图片只参考氛围、构图、服装或姿势；主角身份仍以 AI 自拍形象参考图为准。"
@@ -3437,23 +3415,27 @@ class SelfieImagePlugin(Star):
         raw = str(text or "")
         if not raw.strip():
             return False
-        if any(k in raw for k in ("漏腰", "露腰", "露脐短上衣", "小蛮腰", "crop_waist", "crop top", "short top")):
+        if any(k in raw for k in ("漏腰", "露腰", "露脐短上衣", "小蛮腰", "crop_waist", "crop top", "short top", "短上衣")):
             return True
-        # Expanded preset body usually contains both short top + outer shirt.
         low = raw.lower()
         has_inner = ("露脐" in raw) or ("短上衣" in raw) or ("crop top" in low) or ("short top" in low)
-        has_outer = ("外衫" in raw) or ("开衫" in raw) or ("半敞" in raw) or ("oversized" in low)
+        has_outer = (
+            ("外衫" in raw)
+            or ("开衫" in raw)
+            or ("半敞" in raw)
+            or ("衬衫" in raw and ("宽松" in raw or "敞开" in raw))
+            or ("oversized" in low)
+        )
         return has_inner and has_outer
 
     def _build_crop_waist_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
         """漏腰/露腰：腰腹构图 + 内外两层穿搭，避免被日常半身自拍机位冲掉。"""
         base = (
             "【自拍 / 漏腰模式】"
-            "随手 iPhone 抓拍，房间偏暗柔光，生活化原生质感，不要棚拍。"
-            "略俯拍，构图看上身与自然露出的一点腰线，不是纯脸特写。"
-            "本次换装优先：黑色短上衣 + 宽松深色长袖外衫（外衫 oversized、敞开），"
-            "外衫松垮有皱褶，不要整件贴肉，也不要只剩一件紧身上衣。"
-            "她随意坐或半靠在深色床/沙发上，动作放松；长发可略乱。"
+            "一张漂亮的真人女孩，居家休闲自拍，室内光线柔和偏暗，角度略高。"
+            "本次换装优先：黑色短上衣，外面套宽松 oversized 深色长袖衬衫并敞开，"
+            "外层宽松带柔软褶皱，微微露出自然腰线；外衫不要整件贴肉。"
+            "放松地坐着或靠在深色沙发/床边，头发略显凌乱，像日常随意拍的照片。"
             "保持 AI 身份长相与发色一致，画面干净得体。"
         )
         if has_refs:
