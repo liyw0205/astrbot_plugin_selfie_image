@@ -142,6 +142,11 @@ def anatomy_constraint_lines(*, style: str = "general") -> list[str]:
 
 
 def append_anatomy_constraints(prompt: str, *, language: str = "zh") -> str:
+    """Optional quality/anatomy pad for strong fixed selfie builtins only.
+
+    Freeform /画 /文生图 /图生图 should not use this — user/preset text already
+    carries intent, and stacking anatomy negatives conflicts or blows length.
+    """
     raw = str(prompt or "").strip()
     if not raw:
         return raw
@@ -152,7 +157,6 @@ def append_anatomy_constraints(prompt: str, *, language: str = "zh") -> str:
                 "",
                 "构图与画面质量：",
                 "生成一张光线自然、透视稳定、主体清晰的完整画面；人物或动物结构自然完整。",
-                "身体入镜边界干净，手脚、姿态、服装与场景关系保持一致。",
                 *anatomy_constraint_lines(style="general"),
             ]
         )
@@ -162,44 +166,54 @@ def append_anatomy_constraints(prompt: str, *, language: str = "zh") -> str:
             "",
             "Composition and quality:",
             "Use a coherent single image with natural lighting, stable perspective, clear subject focus, and complete natural anatomy for people or animals.",
-            "Frame visible bodies cleanly and keep hands, feet, posture, clothing, and scene relationships consistent.",
             *anatomy_constraint_lines(style="en"),
         ]
     )
 
 
-def build_prompt_with_reference_instruction(prompt: str, images: List[ImageReference], *, language: str = "zh") -> str:
+def build_prompt_with_reference_instruction(
+    prompt: str,
+    images: List[ImageReference],
+    *,
+    language: str = "zh",
+    enhance: bool = False,
+) -> str:
+    """Freeform draw/img2img wrapper.
+
+    Default (enhance=False): keep user/preset text intact. With refs, add a short
+    reference instruction only — no anatomy/negative dump.
+    enhance=True is for rare fixed pipelines that still want anatomy padding.
+    """
     raw = str(prompt or "").strip()
     if not images:
-        return append_anatomy_constraints(raw, language=language)
+        return append_anatomy_constraints(raw, language=language) if enhance else raw
     if language != "en":
-        return "\n".join(
+        lines = [
+            "使用提供的参考图作为视觉参考。",
+            "按用户要求修改，并尽量保持相关人物身份、服装、姿势、场景与构图一致。",
+        ]
+        if enhance:
+            lines.extend(
+                [
+                    "画面光线、透视与色调统一，人体结构自然完整。",
+                    *anatomy_constraint_lines(style="general"),
+                ]
+            )
+        lines.extend(["", "用户要求：", raw])
+        return "\n".join(lines)
+    lines = [
+        "Use the provided reference image(s) as visual references.",
+        "Follow the user's requested changes while preserving relevant identity, outfit, pose, scene, and composition.",
+    ]
+    if enhance:
+        lines.extend(
             [
-                "使用提供的参考图作为视觉参考。",
-                "按用户要求修改，同时保持相关人物身份、脸部、发型、服装、体态、姿势、机位、场景、画风与构图的一致性。",
-                "参考图中有多个人物或角色时，保持各自独立，并按用户指定的对象处理。",
-                "有多张参考图时，按用户要求分别用于身份、服装、姿势、画风、场景、物件或合影人物，不要混淆身份。",
-                "画面光线、透视、色调与空间关系统一，人体结构自然完整，构图像一张完成的照片。",
-                *anatomy_constraint_lines(style="general"),
-                "",
-                "用户要求：",
-                raw,
+                "Create one coherent image with unified lighting, perspective, and natural complete anatomy.",
+                *anatomy_constraint_lines(style="en"),
             ]
         )
-    return "\n".join(
-        [
-            "Use the provided reference image(s) as visual references.",
-            "Follow the user's requested changes while preserving relevant identity, face, hairstyle, outfit, body shape, pose, camera angle, scene, style, and composition.",
-            "If a reference contains multiple visible people or characters, keep them as distinct subjects; follow any user-requested subset.",
-            "When multiple references are provided, assign each reference to its requested role: identity, clothing, pose, style, scene, object, or group member.",
-            "Create one coherent image with unified lighting, perspective, color tone, natural complete anatomy, and clear spatial relationships.",
-            "Frame the subjects cleanly with a finished photo-like composition.",
-            *anatomy_constraint_lines(style="en"),
-            "",
-            "User request:",
-            raw,
-        ]
-    )
+    lines.extend(["", "User request:", raw])
+    return "\n".join(lines)
 
 
 LEGWEAR_BY_POSE = {
@@ -5568,7 +5582,7 @@ class SelfieImagePlugin(Star):
                 refs,
                 "command-draw",
                 requested_count,
-                passthrough=False,
+                passthrough=True,
             )
 
         task = self.start_command_image_task(
@@ -6130,7 +6144,7 @@ class SelfieImagePlugin(Star):
         )
         total_sent = 0
         for _ in range(requested_count):
-            result = await self._draw_once(event, prompt, aspect, resol, refs, "llm-generate-image")
+            result = await self._draw_passthrough_once(event, prompt, aspect, resol, refs, "llm-generate-image")
             if not result.get("success"):
                 return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("image"))
             sent = await self._send_generated_images(event, result.get("files", []))

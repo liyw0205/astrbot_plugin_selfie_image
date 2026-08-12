@@ -572,11 +572,8 @@ class AgnesImageAdapter(BaseImageAdapter):
         return await self.result_from_response(data, req, base, provider_name="Agnes", detailed_error=True)
 
 
-# NovelAI default UC — keep short; selfie prompts already carry identity/quality text.
-NAI_DEFAULT_NEGATIVE = (
-    "lowres, worst quality, bad quality, bad anatomy, bad hands, extra digits, "
-    "fewer digits, cropped, jpeg artifacts, blurry, watermark, text, logo"
-)
+# NovelAI default UC — keep very short; freeform user/preset text should not fight a long UC dump.
+NAI_DEFAULT_NEGATIVE = "lowres, worst quality, bad anatomy, bad hands, extra digits, blurry, watermark, text"
 
 
 def map_aspect_ratio_to_nai_size(aspect: str, resolution: str = "1K") -> tuple[int, int]:

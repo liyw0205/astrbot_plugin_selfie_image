@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.34")
+        self.assertEqual(PLUGIN_VERSION, "1.3.35")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3783,7 +3783,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.persona import PersonaManager, anatomy_constraint_lines
 
         lines = "\n".join(anatomy_constraint_lines(style="general"))
-        for token in ("一只左手", "一只右手", "一只左脚", "一只右脚", "连续连接", "同侧重复", "来源不清", "单人限定"):
+        for token in ("左右手/脚各一", "肩肘腕连续连接", "单人限定"):
             self.assertIn(token, lines)
         self.assertNotIn("同框", lines)
         for banned in ("断臂", "幽灵手", "残缺", "severed", "ghost hands", "stump"):
@@ -3808,9 +3808,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
             selfie = manager.build_selfie_prompt("自拍", "小助", "温柔", True, 0)
-            self.assertIn("一只左手", selfie)
-            self.assertIn("连续连接", selfie)
-            self.assertIn("来源不清", selfie)
+            self.assertIn("左右手/脚各一", selfie)
+            self.assertIn("肩肘腕连续连接", selfie)
             self.assertNotIn("幽灵手", selfie)
             self.assertNotIn("断臂", selfie)
             legs = manager.build_selfie_prompt("看看腿", "小助", "温柔", True, 0)
@@ -3880,13 +3879,23 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertNotIn("severed", wrapped.lower())
         self.assertNotIn("ghost", wrapped.lower())
         ref = ImageReference(data=PNG_BYTES, mime_type="image/png")
+        bare = plugin_main.build_prompt_with_reference_instruction("女孩站立", [])
+        self.assertEqual(bare, "女孩站立")
+        self.assertNotIn("构图与画面质量", bare)
+        self.assertNotIn("一只左手", bare)
         ref_zh = plugin_main.build_prompt_with_reference_instruction("把衣服改成蓝色", [ref])
         self.assertIn("使用提供的参考图", ref_zh)
         self.assertIn("用户要求：", ref_zh)
         self.assertNotIn("Use the provided", ref_zh)
+        self.assertNotIn("一只左手", ref_zh)
+        self.assertNotIn("来源不清", ref_zh)
         ref_en = plugin_main.build_prompt_with_reference_instruction("change the outfit to blue", [ref], language="en")
         self.assertIn("Use the provided", ref_en)
         self.assertIn("User request:", ref_en)
+        self.assertNotIn("one left hand", ref_en)
+        enhanced = plugin_main.build_prompt_with_reference_instruction("女孩站立", [], enhance=True)
+        self.assertIn("构图与画面质量", enhanced)
+        self.assertIn("左右手/脚各一", enhanced)
         legs_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(object.__new__(plugin_main.SelfieImagePlugin), "", False)
         self.assertIn("连续", legs_action)
         self.assertIn("单人", legs_action)
