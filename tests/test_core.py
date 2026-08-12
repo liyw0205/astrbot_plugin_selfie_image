@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.59")
+        self.assertEqual(PLUGIN_VERSION, "1.3.60")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4047,6 +4047,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             cos_prompt = manager.build_selfie_prompt(forced, "小助", "温柔", True, 0)
             self.assertNotIn("晒腿模式", cos_prompt)
             self.assertIn("COS换装自拍模式", cos_prompt)
+            self.assertIn("对镜", cos_prompt)
             self.assertIn("看看COS", cos_prompt)
             self.assertIn("换装", cos_prompt)
             # auto appearance: no forced real/anime style line
@@ -4707,7 +4708,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("西施·诗雨江南", titles)
         self.assertIn("薄荷粉纱汉服", titles)
         self.assertIn("爱莉希雅·粉白奇幻", titles)
-        self.assertIn("洛琪希·奶油居家", titles)
+        self.assertIn("洛琪希·奶油睡衣", titles)
         self.assertIn("和泉纱雾·粉结白T", titles)
         self.assertIn("菲比·双马尾白裙", titles)
         self.assertIn("貂蝉·猫影幻舞", titles)
@@ -4724,9 +4725,21 @@ class LegFocusTests(unittest.TestCase):
             blob = item["title"] + item["prompt"]
             self.assertNotIn("抖音", blob)
             self.assertNotIn("擦边", blob)
+            self.assertNotIn("反差", blob)
         roxy = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "roxy_cream")
         self.assertIn("禁止蓝色旅行法师外套", roxy["prompt"])
         self.assertIn("双麻花辫", roxy["prompt"])
+        self.assertIn("睡衣", roxy["prompt"])
+        mansui = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "mansui_xianxia")
+        self.assertIn("跪坐", mansui["prompt"])
+        self.assertIn("高开衩", mansui["prompt"])
+        self.assertNotIn("反差", mansui["prompt"])
+        ink = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "gongsunli_ink")
+        self.assertIn("泼墨", ink["prompt"])
+        self.assertIn("高开叉", ink["prompt"])
+        wrap = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
+        self.assertIn("对镜", wrap)
+        self.assertNotIn("第一人称自拍或居家随手拍", wrap)
 
         planner = object.__new__(plugin_main.SelfieImagePlugin)
         planned = planner._plan_selfie_round_actions(
