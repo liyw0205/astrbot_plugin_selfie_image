@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.51")
+        self.assertEqual(PLUGIN_VERSION, "1.3.52")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -470,7 +470,9 @@ class ConfigModelTests(unittest.TestCase):
         )
         self.assertIn("大腿", zh)
         self.assertIn("双脚裁出画外", zh)
+        self.assertIn("脸部", zh)
         self.assertIn("crop both ankles and feet", en)
+        self.assertIn("Do not show the face", en)
         self.assertNotRegex(en, r"[\u3400-\u9fff]")
         self.assertNotIn("User request:", en)
         self.assertLess(len(en), 2400)
@@ -3873,8 +3875,10 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             legs = manager.build_selfie_prompt("看看腿", "小助", "温柔", True, 0)
             self.assertIn("脚部画外", legs)
             self.assertIn("双脚裁出画外", legs)
+            self.assertIn("不露脸", legs)
             self.assertIn("晒腿", legs)
             self.assertIn("髋到膝", legs)
+            self.assertIn("禁止膝盖顶脸", legs)
             self.assertNotIn("【合影 / 同框模式】", legs)
             self.assertNotIn("幽灵手", legs)
             self.assertNotIn("勒进大腿肉", legs)
@@ -4171,6 +4175,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("晒腿模式", text)
             self.assertIn("脚部画外", text)
             self.assertIn("双脚裁出画外", text)
+            self.assertIn("不露脸", text)
             self.assertIn("卷边", text)
             for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装", "勒进大腿肉", "半透明", "赤足", "碰脚", "脚趾自然清晰", "完整包住脚部", "中筒丝袜"):
                 self.assertNotIn(forbidden, text)
@@ -4558,6 +4563,7 @@ class LegFocusTests(unittest.TestCase):
                 # Look-legs always crops feet now — all samples must hide feet.
                 self.assertIn("双脚完整裁出画外", t)
                 self.assertIn("【crop:calves】", t)
+                self.assertIn("不露脸", t)
                 self.assertNotIn("脚趾五个分开", t)
                 self.assertNotIn("丝袜必须包住整只脚到脚趾", t)
                 self.assertNotIn("脚部自然完整", t)
