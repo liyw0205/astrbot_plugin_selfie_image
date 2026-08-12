@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.38")
+        self.assertEqual(PLUGIN_VERSION, "1.3.39")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3789,10 +3789,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         for banned in ("断臂", "幽灵手", "残缺", "severed", "ghost hands", "stump"):
             self.assertNotIn(banned, lines.lower() if banned.isascii() else lines)
         leg_lines = "\n".join(anatomy_constraint_lines(style="legs"))
-        self.assertIn("腿部结构自然", leg_lines)
-        self.assertNotIn("微胖软肉", leg_lines)
-        self.assertNotIn("大象腿", leg_lines)
-        self.assertIn("肩肘腕连续连接", leg_lines)
+        self.assertIn("髋-膝-踝连续", leg_lines)
+        self.assertIn("重心稳定", leg_lines)
+        self.assertIn("肩肘腕连续", leg_lines)
         self.assertIn("只有主角一人", leg_lines)
         self.assertNotIn("同框", leg_lines)
         self.assertNotIn("断臂", leg_lines)
@@ -3815,13 +3814,15 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("断臂", selfie)
             legs = manager.build_selfie_prompt("看看腿", "小助", "温柔", True, 0)
             self.assertIn("两条腿", legs)
-            self.assertIn("肩肘腕连续连接", legs)
+            self.assertIn("髋-膝-踝连续", legs)
             self.assertIn("晒腿", legs)
             self.assertNotIn("【合影 / 同框模式】", legs)
             self.assertNotIn("幽灵手", legs)
             self.assertNotIn("勒进大腿肉", legs)
             self.assertNotIn("不要大象腿猪腿", legs)
             self.assertNotIn("微胖软肉", legs)
+            self.assertNotIn("赤足", legs)
+            self.assertNotIn("碰脚", legs)
             group = manager.build_selfie_prompt("合影", "小助", "温柔", True, 1)
             self.assertIn("手与胳膊连续连接", group)
 
@@ -4112,11 +4113,12 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("完整包住脚部", text)
             self.assertIn("晒腿模式", text)
             self.assertIn("两条腿", text)
-            for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装", "勒进大腿肉", "半透明"):
+            for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装", "勒进大腿肉", "半透明", "赤足", "碰脚"):
                 self.assertNotIn(forbidden, text)
             self.assertNotIn("微胖软肉", text)
-            self.assertIn("浅压痕", text)
+            self.assertIn("髋-膝-踝连续", text)
             self.assertNotIn("不要大象腿猪腿", text)
+            self.assertIn("重心稳定", text)
             self.assertIn("不要超薄透视", text)
             self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
             self.assertNotIn("· 坐姿拍腿", text)
@@ -4501,7 +4503,7 @@ class LegFocusTests(unittest.TestCase):
                     self.assertNotIn("脚趾五个分开", t)
                     self.assertNotIn("丝袜必须包住整只脚到脚趾", t)
                 else:
-                    self.assertTrue(("不穿鞋" in t) or ("赤足" in t), t)
+                    self.assertTrue(("不穿鞋" in t) or ("脚部自然完整" in t) or ("赤足" in t), t)
                     self.assertIn("近大远小", t)
         for key in ("sit", "kneel", "side_lie", "hug_knee", "cross_leg", "reclined_knees_crop"):
             self.assertIn(key, found, f"missing pose {key} in samples {found}")
@@ -4533,7 +4535,8 @@ class LegFocusTests(unittest.TestCase):
             self.assertNotIn(forbidden, filtered)
         self.assertEqual(set(plugin_main.LEGWEAR_PROMPTS), {"光腿神器", "白丝", "黑丝"})
         bare_leg = plugin_main.LEGWEAR_PROMPTS["光腿神器"]
-        self.assertIn("轻薄", bare_leg)
+        self.assertIn("光腿效果", bare_leg)
+        self.assertIn("干净匀净", bare_leg)
         for name in ("白丝", "黑丝"):
             text = plugin_main.LEGWEAR_PROMPTS[name]
             self.assertIn("不透", text)
@@ -4542,11 +4545,10 @@ class LegFocusTests(unittest.TestCase):
             self.assertIn("大腿中段", text)
             self.assertIn("完整包住", text)
             self.assertNotIn("微胖软肉", text)
-            self.assertIn("浅压痕", text)
-            self.assertIn("涂色感", text)
             self.assertIn("不要超薄透视", text)
             self.assertNotIn("半透明", text)
             self.assertNotIn("勒进大腿肉", text)
+            self.assertNotIn("浅压痕", text)
             self.assertNotIn("大象腿", text)
             self.assertNotIn("细杆腿", text)
             self.assertNotIn("连裤丝袜：", text)
