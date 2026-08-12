@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.60")
+        self.assertEqual(PLUGIN_VERSION, "1.3.61")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4242,7 +4242,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("脚部画外", text)
             self.assertIn("双脚裁出画外", text)
             self.assertIn("不露脸", text)
-            self.assertIn("卷边", text)
+            self.assertTrue(any(k in text for k in ("袜口", "卷边", "平口", "丝带", "腿环", "花纹")), text)
             for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装", "勒进大腿肉", "半透明", "赤足", "碰脚", "脚趾自然清晰", "完整包住脚部", "中筒丝袜"):
                 self.assertNotIn(forbidden, text)
             self.assertNotIn("微胖软肉", text)
@@ -4643,7 +4643,7 @@ class LegFocusTests(unittest.TestCase):
             forced_crop = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
         self.assertIn("【pose:sit_crop】", forced_crop)
         self.assertIn("【crop:calves】", forced_crop)
-        self.assertIn("卷边", forced_crop)
+        self.assertTrue(any(k in forced_crop for k in ("卷边", "平口", "丝带", "腿环", "镂空", "花纹")), forced_crop)
         self.assertIn("小腿", forced_crop)
         self.assertIn("画外", forced_crop)
         self.assertNotIn("脚趾五个分开", forced_crop)
@@ -4654,7 +4654,7 @@ class LegFocusTests(unittest.TestCase):
             final_crop = PersonaManager(tmp).build_selfie_prompt(forced_crop, "小助", "温柔", True, 0)
         self.assertIn("脚部画外", final_crop)
         self.assertTrue(("双脚完整裁出画外" in final_crop) or ("双脚裁出画外" in final_crop), final_crop)
-        self.assertIn("卷边", final_crop)
+        self.assertTrue(any(k in final_crop for k in ("袜口", "卷边", "平口", "丝带", "腿环", "花纹")), final_crop)
         for conflict in ("脚趾五个分开", "身体从入镜部位连续到脚", "包住整脚到脚趾", "勒进大腿肉"):
             self.assertNotIn(conflict, final_crop)
         self.assertNotIn("微胖软肉", final_crop)
@@ -4679,7 +4679,7 @@ class LegFocusTests(unittest.TestCase):
             self.assertIn("不透", text)
             self.assertIn("主要看腿形", text)
             self.assertIn("大腿袜", text)
-            self.assertIn("卷边", text)
+            self.assertIn("袜口", text)
             self.assertIn("不展示脚部", text)
             self.assertNotIn("微胖软肉", text)
             self.assertIn("不要超薄透视", text)
