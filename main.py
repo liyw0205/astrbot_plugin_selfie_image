@@ -218,30 +218,51 @@ def build_prompt_with_reference_instruction(
 
 LEGWEAR_BY_POSE = {
     "sit": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
+    "sit_crop": (("光腿神器", 3), ("白丝", 4), ("黑丝", 3)),
     "kneel": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
+    "kneel_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
     "side_lie": (("光腿神器", 6), ("白丝", 3), ("黑丝", 1)),
+    "side_lie_crop": (("光腿神器", 4), ("白丝", 4), ("黑丝", 2)),
     "hug_knee": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
+    "hug_knee_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
     "cross_leg": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
+    "cross_leg_crop": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
     "stand_topdown": (("光腿神器", 3), ("白丝", 3), ("黑丝", 4)),
     "windowsill": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
+    "windowsill_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
     "kneel_up": (("光腿神器", 5), ("白丝", 2), ("黑丝", 3)),
     "reclined_knees_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 3)),
 }
 
+# Poses that crop calves/feet off-frame to reduce weird lower-leg anatomy.
+CALF_CROP_POSES = frozenset(
+    name for name in LEGWEAR_BY_POSE if name.endswith("_crop")
+)
+
+
+def is_leg_calf_crop_action(text: str) -> bool:
+    raw = str(text or "")
+    m = re.search(r"【pose:([a-z_]+)】", raw)
+    if m and m.group(1) in CALF_CROP_POSES:
+        return True
+    if "【crop:calves】" in raw or "双脚完整裁出画外" in raw:
+        return True
+    return "大腿" in raw and "小腿" in raw and "画外" in raw
+
 LEGWEAR_PROMPTS = {
     "光腿神器": (
         "本次腿部穿搭：光腿神器。"
-        "自然肤色、干净匀净的光腿效果。"
+        "自然肤色、干净匀净的光腿效果；脚部完整，脚趾自然清晰、互不黏连，脚型正常。"
     ),
     "白丝": (
         "本次腿部穿搭：白丝。"
-        "纯白不透的中筒丝袜，遮住肤色，主要看腿形；袜口在大腿中段，完整包住小腿与脚部；"
-        "不要超薄透视，不要连裤全包。"
+        "纯白不透的中筒丝袜，遮住肤色，主要看腿形；袜口在大腿中段并有清晰卷边，"
+        "完整包住小腿与脚部；不要超薄透视，不要连裤全包。"
     ),
     "黑丝": (
         "本次腿部穿搭：黑丝。"
-        "纯黑不透的中筒丝袜，遮住肤色，主要看腿形；袜口在大腿中段，完整包住小腿与脚部；"
-        "不要超薄透视，不要连裤全包。"
+        "纯黑不透的中筒丝袜，遮住肤色，主要看腿形；袜口在大腿中段并有清晰卷边，"
+        "完整包住小腿与脚部；不要超薄透视，不要连裤全包。"
     ),
 }
 
@@ -3050,15 +3071,21 @@ class SelfieImagePlugin(Star):
     ) -> str:
         """生成单一腿部姿势，并按姿势选择腿部穿搭。用户点名白丝/黑丝/光腿时强制采用。"""
         pose_pool = [
-            ("sit", 4),
-            ("kneel", 2),
+            ("sit", 2),
+            ("sit_crop", 3),
+            ("kneel", 1),
+            ("kneel_crop", 2),
             ("side_lie", 1),
+            ("side_lie_crop", 1),
             ("hug_knee", 1),
-            ("cross_leg", 2),
+            ("hug_knee_crop", 1),
+            ("cross_leg", 1),
+            ("cross_leg_crop", 1),
             ("stand_topdown", 1),
-            ("windowsill", 2),
+            ("windowsill", 1),
+            ("windowsill_crop", 2),
             ("kneel_up", 1),
-            ("reclined_knees_crop", 3),
+            ("reclined_knees_crop", 4),
         ]
         if avoid_pose:
             filtered = [(name, w) for name, w in pose_pool if name != avoid_pose]
@@ -3072,23 +3099,27 @@ class SelfieImagePlugin(Star):
             "sit": [
                 (
                     "第一人称低头随手拍下半身：自然坐在床沿或地毯上，双腿向前放松伸展后轻微并拢，"
-                    "膝盖朝前、小腿自然，裙摆自然搭在腿根；脚部自然完整；"
+                    "膝盖朝前、小腿自然，裙摆自然搭在腿根；脚部自然完整，脚趾清晰；"
                     "双手可轻搭大腿外侧；构图从腰下到脚，以腿部为主。"
                 ),
+            ],
+            "sit_crop": [
                 (
-                    "坐姿侧斜拍腿：单人坐在沙发或床边，双腿并拢后向同一侧自然倾斜，"
-                    "腿部放松，髋膝踝连续；手可扶坐垫；镜头略俯拍下半身。"
+                    "坐姿大腿近景：自然坐在床沿或沙发上，双膝朝前并拢或留窄缝；"
+                    "镜头贴近腰腹俯拍，只露裙摆、大腿与膝部，小腿和双脚完整裁出画外；"
+                    "髋膝连续，重心稳定，日常可维持。"
                 ),
             ],
             "kneel": [
                 (
                     "跪坐拍腿：双膝跪在地毯上，臀部自然坐回小腿，重心稳定，"
-                    "第一人称低头看自己的大腿与小腿；髋膝踝连续，不要硬拗夸张角度；"
-                    "双手可轻放大腿。"
+                    "第一人称低头看自己的大腿与小腿；髋膝踝连续；双手可轻放大腿。"
                 ),
+            ],
+            "kneel_crop": [
                 (
-                    "跪坐微侧：保持跪坐重心，身体只轻微侧一点，镜头低头拍膝到小腿，"
-                    "双膝间距自然，小腿平行；手静止自然。"
+                    "跪坐大腿近景：双膝跪坐、重心稳定；镜头贴近大腿俯拍，"
+                    "只露大腿与膝部，小腿远端和双脚裁出画外；髋膝连续，不要硬拗。"
                 ),
             ],
             "side_lie": [
@@ -3098,21 +3129,38 @@ class SelfieImagePlugin(Star):
                     "手可自然放在身侧。"
                 ),
             ],
+            "side_lie_crop": [
+                (
+                    "侧躺大腿近景：侧身躺着，上面腿自然屈膝朝前；"
+                    "镜头贴近大腿，只露腰侧、大腿与膝部，小腿和双脚裁出画外；"
+                    "髋膝连续，姿势日常可维持。"
+                ),
+            ],
             "hug_knee": [
                 (
                     "抱膝坐：坐在床或地毯上，双膝收近身前但保持可呼吸的日常坐姿，"
                     "双手从肩肘连续伸出环抱膝盖，腕手与胳膊都在画面内且相连；"
                     "第一人称俯视下半身；膝盖朝上，关节正常。"
                 ),
+            ],
+            "hug_knee_crop": [
                 (
-                    "单膝抱膝：一腿屈起由连续手臂抱住膝部，另一腿自然侧放脚掌落地；"
-                    "镜头低头拍腿；手只在膝盖附近。"
+                    "抱膝大腿近景：双膝收近身前，双手从肩肘连续抱膝；"
+                    "镜头贴近大腿与膝部，小腿和双脚裁出画外；"
+                    "腕手与胳膊都在画面内且相连，重心稳定。"
                 ),
             ],
             "cross_leg": [
                 (
                     "翘二郎腿坐：坐在椅边或床沿，一条腿自然架在另一条腿膝上，架腿的脚自然下垂，"
                     "姿势放松日常，髋膝踝连续；第一人称略俯视下半身。"
+                ),
+            ],
+            "cross_leg_crop": [
+                (
+                    "翘腿大腿近景：坐着一条腿自然架在另一条腿膝上；"
+                    "镜头贴近大腿与膝部，小腿远端和双脚裁出画外；"
+                    "髋膝连续，姿势放松日常。"
                 ),
             ],
             "stand_topdown": [
@@ -3125,6 +3173,13 @@ class SelfieImagePlugin(Star):
                 (
                     "窗台稳坐拍腿：臀稳坐窗台或矮柜，重心落在坐骨，一脚轻踩台沿、一脚自然垂下，"
                     "垂下的脚脚踝正位；镜头从略高处拍下半身到脚；手可扶台沿。"
+                ),
+            ],
+            "windowsill_crop": [
+                (
+                    "窗台大腿近景：臀稳坐窗台，重心落在坐骨；"
+                    "镜头贴近大腿俯拍，只露裙摆、大腿与膝部，小腿和双脚裁出画外；"
+                    "髋膝连续，手可扶台沿。"
                 ),
             ],
             "kneel_up": [
@@ -3149,18 +3204,24 @@ class SelfieImagePlugin(Star):
         }
         pose_labels = {
             "sit": "坐姿拍腿",
+            "sit_crop": "坐姿大腿近景",
             "kneel": "跪坐拍腿",
+            "kneel_crop": "跪坐大腿近景",
             "side_lie": "侧躺曲腿",
+            "side_lie_crop": "侧躺大腿近景",
             "hug_knee": "抱膝坐",
+            "hug_knee_crop": "抱膝大腿近景",
             "cross_leg": "翘二郎腿坐",
+            "cross_leg_crop": "翘腿大腿近景",
             "stand_topdown": "站立俯视膝下",
             "windowsill": "窗台蹬坐",
+            "windowsill_crop": "窗台大腿近景",
             "kneel_up": "跪立拍腿",
             "reclined_knees_crop": "后仰屈膝大腿近景",
         }
         variants = pose_variants.get(pose_bucket) or pose_variants["sit"]
         pose_label = pose_labels.get(pose_bucket, "坐姿拍腿")
-        feet_cropped = pose_bucket == "reclined_knees_crop"
+        feet_cropped = pose_bucket in CALF_CROP_POSES
         if feet_cropped:
             hard_crop = (
                 "构图只露少量腰腹/裙摆、大腿与膝部；两条腿从髋部到膝部连续自然。"
@@ -3168,7 +3229,7 @@ class SelfieImagePlugin(Star):
             )
             anatomy_rules = (
                 "单人限定：只有主角一人。两条大腿与两个膝部左右各一，髋膝连续。"
-                "屈膝坐姿重心稳定、日常可维持，近距离俯视可有近大远小。"
+                "姿势重心稳定、日常可维持，近距离俯视可有近大远小。"
             )
         else:
             hard_crop = (
@@ -3178,8 +3239,8 @@ class SelfieImagePlugin(Star):
             if pose_bucket == "stand_topdown":
                 hard_crop += "站立俯视优先下半身裁切：构图止于腰下至脚，不要全身立绘。"
             anatomy_rules = "".join(anatomy_constraint_lines(style="legs"))
-            anatomy_rules += "不穿鞋；脚部朝向自然。"
-        if pose_bucket == "hug_knee":
+            anatomy_rules += "不穿鞋；脚部朝向自然；若光腿入镜，脚趾自然清晰、不黏连。"
+        if pose_bucket in {"hug_knee", "hug_knee_crop"}:
             anatomy_rules += (
                 "抱膝时双手必须从肩肘连续伸出后抱膝，腕手与胳膊都在画面内且相连。"
             )
@@ -3202,8 +3263,8 @@ class SelfieImagePlugin(Star):
             else:
                 color = "纯白" if legwear == "白丝" else "纯黑"
                 legwear_rule = (
-                    f"本次腿部穿搭：{legwear}。{color}不透的左右分离大腿袜，主要看腿形，袜口在大腿上段；"
-                    "不是连裤袜。袜身向画外延伸，不展示脚部。"
+                    f"本次腿部穿搭：{legwear}。{color}不透的左右分离大腿袜，主要看腿形；"
+                    "袜口在大腿上段并有清晰卷边；不是连裤袜。袜身向画外延伸，不展示脚部。"
                 )
         base = (
             "看看腿。"
@@ -3211,9 +3272,13 @@ class SelfieImagePlugin(Star):
             "主角身份来自 AI 自拍形象参考图：发色、体态、肤色气质保持一致。"
             f"【唯一姿势·不可混用】本次主姿势只能是：{pose_label}。"
             f"本次腿部特写构图（只执行这一段，不要叠加其他姿势）：{random.choice(variants)}"
-            "姿势日常可维持、重心稳定；髋-膝-踝连续，关节朝向正常。"
+            "姿势日常可维持、重心稳定；髋-膝连续，关节朝向正常。"
             "腿部比例与腿形自然，第一人称俯视可有近大远小。"
-            + ("双脚裁出画外，不显示脚部或鞋子。" if feet_cropped else "不穿鞋，脚部自然完整。")
+            + (
+                "双脚完整裁出画外，不显示小腿远端、脚部或鞋子。【crop:calves】"
+                if feet_cropped
+                else "不穿鞋，脚部自然完整；光腿时脚趾自然清晰。"
+            )
             + f"{legwear_rule}"
             + f"{anatomy_rules}"
             + f"{hard_crop}"

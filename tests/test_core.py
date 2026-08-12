@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.39")
+        self.assertEqual(PLUGIN_VERSION, "1.3.41")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4113,6 +4113,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("完整包住脚部", text)
             self.assertIn("晒腿模式", text)
             self.assertIn("两条腿", text)
+            self.assertIn("卷边", text)
             for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装", "勒进大腿肉", "半透明", "赤足", "碰脚"):
                 self.assertNotIn(forbidden, text)
             self.assertNotIn("微胖软肉", text)
@@ -4120,6 +4121,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("不要大象腿猪腿", text)
             self.assertIn("重心稳定", text)
             self.assertIn("不要超薄透视", text)
+            self.assertIn("脚趾自然清晰", text)
             self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
             self.assertNotIn("· 坐姿拍腿", text)
             self.assertNotIn("小皮鞋", text)
@@ -4498,20 +4500,24 @@ class LegFocusTests(unittest.TestCase):
                 pose = m.group(1)
                 found.add(pose)
                 legwear_by_pose.setdefault(pose, set()).update(selected)
-                if pose == "reclined_knees_crop":
+                if pose == "reclined_knees_crop" or pose.endswith("_crop") or "【crop:calves】" in t:
                     self.assertIn("双脚完整裁出画外", t)
                     self.assertNotIn("脚趾五个分开", t)
                     self.assertNotIn("丝袜必须包住整只脚到脚趾", t)
                 else:
                     self.assertTrue(("不穿鞋" in t) or ("脚部自然完整" in t) or ("赤足" in t), t)
                     self.assertIn("近大远小", t)
+        # full-foot and calf-crop families should both appear
         for key in ("sit", "kneel", "side_lie", "hug_knee", "cross_leg", "reclined_knees_crop"):
-            self.assertIn(key, found, f"missing pose {key} in samples {found}")
+            self.assertTrue(any(p == key or p.startswith(key + "_") for p in found), f"missing pose family {key} in {found}")
+        self.assertTrue(any(p.endswith("_crop") for p in found), f"missing crop poses in {found}")
         forced_crop = None
-        with patch("astrbot_plugin_selfie_image.main.random.choices", side_effect=[["reclined_knees_crop"], ["白丝"]]):
+        with patch("astrbot_plugin_selfie_image.main.random.choices", side_effect=[["sit_crop"], ["白丝"]]):
             forced_crop = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
-        self.assertIn("【pose:reclined_knees_crop】", forced_crop)
+        self.assertIn("【pose:sit_crop】", forced_crop)
         self.assertIn("双脚完整裁出画外", forced_crop)
+        self.assertIn("【crop:calves】", forced_crop)
+        self.assertIn("卷边", forced_crop)
         self.assertNotIn("脚趾五个分开", forced_crop)
         self.assertNotIn("丝袜必须包住整只脚到脚趾", forced_crop)
         from astrbot_plugin_selfie_image.persona import PersonaManager
@@ -4520,6 +4526,7 @@ class LegFocusTests(unittest.TestCase):
             final_crop = PersonaManager(tmp).build_selfie_prompt(forced_crop, "小助", "温柔", True, 0)
         self.assertIn("脚部画外", final_crop)
         self.assertTrue(("双脚完整裁出画外" in final_crop) or ("双脚裁出画外" in final_crop), final_crop)
+        self.assertIn("卷边", final_crop)
         for conflict in ("脚趾五个分开", "身体从入镜部位连续到脚", "包住整脚到脚趾", "勒进大腿肉"):
             self.assertNotIn(conflict, final_crop)
         self.assertNotIn("微胖软肉", final_crop)
@@ -4537,6 +4544,7 @@ class LegFocusTests(unittest.TestCase):
         bare_leg = plugin_main.LEGWEAR_PROMPTS["光腿神器"]
         self.assertIn("光腿效果", bare_leg)
         self.assertIn("干净匀净", bare_leg)
+        self.assertIn("脚趾自然清晰", bare_leg)
         for name in ("白丝", "黑丝"):
             text = plugin_main.LEGWEAR_PROMPTS[name]
             self.assertIn("不透", text)
@@ -4544,6 +4552,7 @@ class LegFocusTests(unittest.TestCase):
             self.assertIn("中筒丝袜", text)
             self.assertIn("大腿中段", text)
             self.assertIn("完整包住", text)
+            self.assertIn("卷边", text)
             self.assertNotIn("微胖软肉", text)
             self.assertIn("不要超薄透视", text)
             self.assertNotIn("半透明", text)

@@ -50,7 +50,9 @@ def build_selfie_builtin_prompt(
     translated_user = str(user_text or "").strip()
     is_legs = "看看腿" in str(action) or "腿部" in str(action) or "【pose:" in str(action)
     is_group = "合影" in str(action) or "合照" in str(action) or "同框" in str(action)
-    feet_cropped = "【pose:reclined_knees_crop】" in str(action)
+    feet_cropped = "【pose:reclined_knees_crop】" in str(action) or "【crop:calves】" in str(action) or bool(
+        re.search(r"【pose:\w+_crop】", str(action))
+    )
     if language == "en":
         style = {
             "real": "realistic",
@@ -73,7 +75,7 @@ def build_selfie_builtin_prompt(
                 lines.extend([
                     "Single subject, close first-person downward shot: show only a little waist or skirt, thighs, and knees; crop both ankles and feet fully outside the frame.",
                     "Keep exactly two natural thighs and knees connected from the hips.",
-                    "Use only the selected bare-leg effect or separate white/black opaque thigh-high stockings that show leg shape, not skin through; stocking tops may leave a light indent and never become tights.",
+                    "Use only the selected bare-leg effect or separate white/black opaque thigh-high stockings with a clear rolled cuff that show leg shape, not skin through; never become tights.",
                     "Do not add toes, soles, shoes, or any foot detail; preserve natural close-range perspective without forced symmetry.",
                 ])
             else:
@@ -99,9 +101,9 @@ def build_selfie_builtin_prompt(
 
     user = translated_user or extract_user_prompt(action)
     if is_legs and feet_cropped:
-        legs_line = "单人近距离俯拍，只露少量腰腹/裙摆、大腿与膝部；双脚完整裁出画外；腿部穿搭只用已选定的光腿神器、白丝或黑丝，左右分离大腿袜，禁止连裤袜。"
+        legs_line = "单人近距离俯拍，只露少量腰腹/裙摆、大腿与膝部；小腿与双脚裁出画外；腿部穿搭只用已选定的光腿神器、白丝或黑丝，白丝/黑丝袜口有卷边，禁止连裤袜。"
     elif is_legs:
-        legs_line = "单人下半身近景，只保留自然完整的两条腿和双脚；腿部穿搭只用已选定的光腿神器、白丝或黑丝，不要鞋子。"
+        legs_line = "单人下半身近景，只保留自然完整的两条腿和双脚；光腿时脚趾自然清晰；腿部穿搭只用已选定的光腿神器、白丝或黑丝，白丝/黑丝袜口有卷边，不要鞋子。"
     else:
         legs_line = ""
     return _join(
