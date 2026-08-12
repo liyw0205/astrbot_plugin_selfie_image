@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.57")
+        self.assertEqual(PLUGIN_VERSION, "1.3.58")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4700,7 +4700,7 @@ class LegFocusTests(unittest.TestCase):
             self.assertTrue(m, t)
             ids.add(m.group(1))
         self.assertGreaterEqual(len(ids), 4, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 16)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 26)
         titles = {x["title"] for x in plugin_main.COS_LOOK_SETS}
         self.assertIn("公孙离·青金短裙", titles)
         self.assertIn("公孙离·墨染江湖", titles)
@@ -4710,6 +4710,20 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("洛琪希·奶油居家", titles)
         self.assertIn("和泉纱雾·粉结白T", titles)
         self.assertIn("菲比·双马尾白裙", titles)
+        self.assertIn("貂蝉·猫影幻舞", titles)
+        self.assertIn("大乔·白鹤梁神女", titles)
+        self.assertIn("海月·潮汐", titles)
+        self.assertIn("戈娅·荒野猎手", titles)
+        self.assertIn("今汐·朔雷之鳞", titles)
+        self.assertIn("长离·焚羽", titles)
+        self.assertIn("坎特蕾拉·紫海", titles)
+        self.assertIn("珂莱塔·冰冕", titles)
+        self.assertIn("约尔·荆棘姬", titles)
+        self.assertIn("艾斯德斯·冰将军", titles)
+        for item in plugin_main.COS_LOOK_SETS:
+            blob = item["title"] + item["prompt"]
+            self.assertNotIn("抖音", blob)
+            self.assertNotIn("擦边", blob)
         roxy = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "roxy_cream")
         self.assertIn("禁止蓝色旅行法师外套", roxy["prompt"])
         self.assertIn("双麻花辫", roxy["prompt"])
