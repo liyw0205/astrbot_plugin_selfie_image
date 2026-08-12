@@ -183,6 +183,18 @@ class ImagePresetManager:
 
     def _match_preset(self, text: str) -> Tuple[str, Optional[ImagePreset], str]:
         lowered = text.lower()
+        # Common aliases for built-in titles (user often types near-homophones).
+        alias_map = {
+            "露腰": "漏腰",
+            "漏腰杀": "漏腰",
+            "小蛮腰": "漏腰",
+        }
+        for alias, target in alias_map.items():
+            alias_l = alias.lower()
+            if lowered == alias_l or lowered.startswith(alias_l + " "):
+                if target in self.presets:
+                    rest = "" if lowered == alias_l else text[len(alias):].strip()
+                    return target, self.presets[target], rest
         items = sorted(self.presets.items(), key=lambda item: len(item[0]), reverse=True)
         for name, preset in items:
             key = self._normalize_text(name)

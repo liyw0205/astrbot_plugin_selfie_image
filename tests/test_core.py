@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.45")
+        self.assertEqual(PLUGIN_VERSION, "1.3.46")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4770,6 +4770,8 @@ class StudioStoreTests(unittest.TestCase):
         self.assertTrue(seed["捧脸"]["prompt"])
         self.assertIn("露脐", seed["漏腰"]["prompt"])
         self.assertIn("小蛮腰", seed["漏腰"]["prompt"])
+        self.assertIn("两层", seed["漏腰"]["prompt"])
+        self.assertIn("不贴身", seed["漏腰"]["prompt"])
 
     def test_default_presets_seed(self) -> None:
         import tempfile
@@ -4784,6 +4786,11 @@ class StudioStoreTests(unittest.TestCase):
             mgr.add("捧脸", "自定义捧脸提示词")
             mgr2 = ImagePresetManager(tmp)
             self.assertEqual(mgr2.presets["捧脸"].prompt, "自定义捧脸提示词")
+            # 露腰 alias resolves to 漏腰 preset body
+            resolved = mgr.resolve("露腰")
+            self.assertEqual(resolved.get("preset_name"), "漏腰")
+            self.assertIn("露脐", resolved.get("prompt") or "")
+            self.assertIn("外层", resolved.get("prompt") or "")
 
     def test_selfie_command_expands_preset_before_action_wrap(self) -> None:
         """/自拍 捧脸 must expand preset on raw user text, not after long action wrap."""
@@ -4810,7 +4817,18 @@ class StudioStoreTests(unittest.TestCase):
             # Late resolve on wrapped action alone would fail; early expand is required
             late = stub.presets.resolve(action)
             self.assertFalse(late.get("preset_name"))
-
+            # 露腰 alias + dedicated crop-waist selfie framing
+            expanded2, _, _, name2 = plugin_main.SelfieImagePlugin._expand_user_text_with_preset(stub, "露腰")
+            self.assertEqual(name2, "漏腰")
+            self.assertIn("露脐", expanded2)
+            waist = plugin_main.SelfieImagePlugin._build_selfie_look_action(stub, expanded2, False)
+            self.assertIn("【shot:crop_waist】", waist)
+            self.assertIn("漏腰模式", waist)
+            self.assertIn("两层", waist)
+            self.assertNotIn("arm_half", waist)
+            self.assertNotIn("今日穿搭与气质一致", waist)
+            short = plugin_main.SelfieImagePlugin._build_selfie_look_action(stub, "露腰", False)
+            self.assertIn("【shot:crop_waist】", short)
     def test_clothes_followup_prefers_user_context_images(self) -> None:
         stub = SessionModelAndTaskTests()._plugin_stub()
         from astrbot_plugin_selfie_image import main as plugin_main

@@ -3345,6 +3345,11 @@ class SelfieImagePlugin(Star):
         avoid_shot: str = "",
     ) -> str:
         """普通自拍 / 看看：机位+场景+小动作随机，默认看镜头。"""
+        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
+        # Clothing style presets (e.g. 漏腰) need torso framing, not arm_half face selfie.
+        if SelfieImagePlugin._looks_like_crop_waist_request(extra):
+            return SelfieImagePlugin._build_crop_waist_selfie_action(self, extra, has_refs)
+
         shot_pool = [
             ("arm_half", 3),
             ("mirror_half", 2),
@@ -3410,10 +3415,45 @@ class SelfieImagePlugin(Star):
         )
         if has_refs:
             base = "参考用户提供的图片氛围、场景或构图，" + base + " 主角身份仍以 AI 形象为准。"
-        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
         if extra:
             base += f" 用户补充要求优先：{extra}。"
         base += f" 【shot:{shot}】"
+        return base
+
+    @staticmethod
+    def _looks_like_crop_waist_request(text: str) -> bool:
+        raw = str(text or "")
+        if not raw.strip():
+            return False
+        keys = ("漏腰", "露腰", "露脐", "小蛮腰", "露脐短上衣", "短上衣")
+        if any(k in raw for k in ("漏腰", "露腰", "露脐短上衣", "小蛮腰")):
+            return True
+        # Expanded preset body usually contains both crop top + outer shirt.
+        return ("露脐" in raw or "短上衣" in raw) and ("外衫" in raw or "开衫" in raw or "半敞" in raw)
+
+    def _build_crop_waist_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
+        """漏腰/露腰：腰腹构图 + 内外两层穿搭，避免被日常半身自拍机位冲掉。"""
+        base = (
+            "【自拍 / 漏腰模式】"
+            "第一人称微俯拍，聚焦上半身与腰腹，不是脸部特写，也不是胸口以上半身。"
+            "构图从大腿根到肩部；可半遮脸，但腰腹与短上衣下摆必须清晰。"
+            "【换装优先·覆盖今日穿搭】必须两层衣服："
+            "内层黑色紧身露脐短上衣，只贴合胸部区域，下摆在肋下，露出完整腰线与肚脐；"
+            "外层宽松oversized暗色长袖外衫，明显不贴身、不裹紧，半敞并向上掀起，软质皱褶垂落。"
+            "禁止把外衫也画成紧身贴肉；禁止只剩一件贴身上衣。"
+            "仰卧或半躺暗色床单/沙发，腰腹自然贴合表面轻压出小蛮腰；"
+            "暗调柔光，皮肤与黑衣高对比，暗黑系少御，日常得体。"
+            "保持 AI 身份长相与发色一致。"
+        )
+        if has_refs:
+            base = "参考用户附图的氛围或构图，" + base
+        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
+        # Avoid duplicating the whole expanded preset twice if already embedded.
+        if extra and extra not in base:
+            # If extra is just the short alias, skip; full preset text can reinforce.
+            if extra not in {"漏腰", "露腰", "漏腰杀", "小蛮腰"}:
+                base += f" 用户补充要求优先：{extra}。"
+        base += " 【shot:crop_waist】"
         return base
 
     def _build_third_person_look_action(
