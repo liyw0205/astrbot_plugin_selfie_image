@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.55")
+        self.assertEqual(PLUGIN_VERSION, "1.3.56")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4027,6 +4027,23 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("不要大象腿猪腿", prompt)
             self.assertNotIn("【合影 / 同框模式】", prompt)
             self.assertIn("只有主角一人", prompt)
+
+        # /看看COS must not be hijacked into 晒腿 by 高叉/与腿 wording
+        class _P:
+            pass
+        cos_action = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            cos_intent = manager.analyze_selfie_intent(cos_action)
+            self.assertFalse(cos_intent.is_legs_only, cos_action)
+            shaosiyuan = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "shaosiyuan_red")
+            forced = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), shaosiyuan["prompt"], False)
+            forced_intent = manager.analyze_selfie_intent(forced)
+            self.assertFalse(forced_intent.is_legs_only, forced)
+            cos_prompt = manager.build_selfie_prompt(forced, "小助", "温柔", True, 0)
+            self.assertNotIn("晒腿模式", cos_prompt)
+            self.assertIn("看看COS", cos_prompt)
+            self.assertIn("换装", cos_prompt)
             # auto appearance: no forced real/anime style line
             manager.set_appearance_type("auto")
             auto_prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)

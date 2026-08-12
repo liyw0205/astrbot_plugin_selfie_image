@@ -498,7 +498,11 @@ class PersonaManager:
                 "leaning",
             ],
         )
-        is_legs_only = includes_any(compact, ["看看腿", "看腿", "拍腿", "自拍腿", "丝袜", "黑丝", "白丝", "肉丝", "光腿", "美腿", "大腿", "腿"])
+        is_cos_look = includes_any(compact, ["看看cos", "看看cos模式"]) or "【cos:" in raw.lower() or "【cos：" in raw
+        is_legs_only = (not is_cos_look) and includes_any(
+            compact,
+            ["看看腿", "看腿", "拍腿", "自拍腿", "丝袜", "黑丝", "白丝", "肉丝", "光腿", "美腿", "大腿"],
+        )
         # bare token「同框」also appears in anatomy copy ("连续同框"); only treat real group phrases.
         # Legs/晒腿 must never be classified as group photo.
         if is_legs_only:
