@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.52")
+        self.assertEqual(PLUGIN_VERSION, "1.3.53")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4623,6 +4623,22 @@ class LegFocusTests(unittest.TestCase):
             self.assertNotIn("大象腿", text)
             self.assertNotIn("细杆腿", text)
             self.assertNotIn("连裤丝袜：", text)
+
+        # /看看COS random outfit pool
+        ids = set()
+        for _ in range(40):
+            t = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
+            self.assertIn("看看COS模式", t)
+            self.assertIn("换装", t)
+            self.assertIn("不要换成别人的脸", t)
+            m = re.search(r"【cos:([a-z0-9_]+)】", t)
+            self.assertTrue(m, t)
+            ids.add(m.group(1))
+        self.assertGreaterEqual(len(ids), 4, ids)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 7)
+        titles = {x["title"] for x in plugin_main.COS_LOOK_SETS}
+        self.assertIn("公孙离·青金短裙", titles)
+        self.assertIn("爱莉希雅·粉白奇幻", titles)
 
         class PersonaStub:
             class Intent:

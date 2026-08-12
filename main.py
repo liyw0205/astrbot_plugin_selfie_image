@@ -275,6 +275,88 @@ LEGWEAR_REQUEST_PATTERN = re.compile(
 )
 
 
+# Built from user COS screenshots under /root/图片 — random pick for /看看COS.
+COS_LOOK_SETS: List[Dict[str, str]] = [
+    {
+        "id": "gongsunli_teal",
+        "title": "公孙离·青金短裙",
+        "prompt": (
+            "换装为王者荣耀公孙离风格舞姬短装："
+            "孔雀青绿抹胸短裙，金色刺绣祥云花纹，裙摆微外扩带侧开，内衬白色荷叶边；"
+            "肩臂披透明冰蓝薄纱，腰间金色细链与红色流苏；"
+            "颈间金饰与红色珠串流苏；华丽中式游戏风，居家随手拍，日常得体。"
+        ),
+    },
+    {
+        "id": "elysia_pink",
+        "title": "爱莉希雅·粉白奇幻",
+        "prompt": (
+            "换装为爱莉希雅风格粉白奇幻套装："
+            "粉色短发波波假发、尖精灵耳与白色发饰；"
+            "白紫金紧身短裙套装，金色浮雕花纹与紫金胸前吊坠，半透明全息侧片与飘带；"
+            "紫色护臂与腿部细节；二次元华丽精灵公主风，室内柔光，日常得体。"
+        ),
+    },
+    {
+        "id": "mansui_xianxia",
+        "title": "满穗·冰蓝仙侠",
+        "prompt": (
+            "换装为冰蓝仙侠汉服风："
+            "外层透明冰蓝广袖薄纱袍，蓝金花鸟刺绣；内层米白长裙与蓝色镶边；"
+            "蓝色丝绦腰带配双金圆饰与长飘带；深色长发半挽，白花小发饰；"
+            "空灵飘逸、居家跪坐或站姿随手拍，日常得体。"
+        ),
+    },
+    {
+        "id": "sora_white",
+        "title": "穹妹·白裙黑结",
+        "prompt": (
+            "换装为春日野穹风格居家白裙："
+            "白色荷叶边短睡裙，胸口黑色丝带蝴蝶结，轻薄雪纺层次；"
+            "长直铂金假发及腰，两侧黑色丝带大结；"
+            "日系软萌居家感，室内木地板柔光，日常得体。"
+        ),
+    },
+    {
+        "id": "roxy_cream",
+        "title": "洛琪希·奶油居家",
+        "prompt": (
+            "换装为洛琪希风格奶油居家两件套："
+            "淡奶油色无袖方领荷叶边上衣，胸前白色缎带长结；"
+            "同色宽松短裤；薰衣草紫蓝粗双麻花辫；"
+            "软萌居家魔法少女感，木地板地毯，日常得体。"
+        ),
+    },
+    {
+        "id": "hanfu_peach",
+        "title": "齐胸汉服·桃粉",
+        "prompt": (
+            "换装为桃粉色齐胸汉服："
+            "无肩带高腰抹胸上衣，桃粉半透长裙多层飘逸，翠绿丝带长飘带；"
+            "黑发高髻配粉色牡丹与金簪；细金项链与长耳环；"
+            "古风夜景或室内柔光，侧身优雅，日常得体。"
+        ),
+    },
+    {
+        "id": "lusha_princess",
+        "title": "露莎公主·白金",
+        "prompt": (
+            "换装为白金二次元公主风："
+            "超长直白发，银色镶紫宝石头冠与黑色猫耳发饰；"
+            "金色项圈、白色交叉绑带与荷叶边抹胸，金色腰封流苏，白色短裙与半透披肩；"
+            "金色宽手镯；华丽 galgame 公主感，室内柔光，日常得体。"
+        ),
+    },
+]
+
+
+def pick_cos_look_set(*, avoid_id: str = "") -> Dict[str, str]:
+    pool = [item for item in COS_LOOK_SETS if str(item.get("id") or "") != str(avoid_id or "")]
+    if not pool:
+        pool = list(COS_LOOK_SETS)
+    return dict(random.choice(pool))
+
+
 def parse_requested_legwear(text: str) -> str:
     """Honor explicit user legwear: 白丝 / 黑丝 / 光腿神器. Empty = random by pose."""
     raw = str(text or "")
@@ -3450,6 +3532,35 @@ class SelfieImagePlugin(Star):
         base += " 【shot:crop_waist】"
         return base
 
+    def _build_cos_look_action(
+        self,
+        extra_request: str = "",
+        has_refs: bool = False,
+        *,
+        avoid_id: str = "",
+    ) -> str:
+        """看看COS：随机一套内置 COS 换装提示词，保持当前形象脸。"""
+        chosen = pick_cos_look_set(avoid_id=avoid_id)
+        title = str(chosen.get("title") or "随机COS")
+        outfit = str(chosen.get("prompt") or "").strip()
+        cos_id = str(chosen.get("id") or "cos")
+        base = (
+            "【自拍 / 看看COS模式】"
+            "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
+            "第一人称自拍或居家随手拍，保持主角脸型五官、发色底色气质来自形象参考；"
+            f"假发/发饰可按本套 COS 调整。本次套装：{title}。"
+            f"{outfit}"
+            "只迁移服装款式颜色材质配饰与造型氛围，不要换成别人的脸。"
+            "画面干净得体，像日常拍的一张 COS 自拍。"
+        )
+        if has_refs:
+            base = "参考用户附图的氛围或构图，" + base
+        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
+        if extra and extra not in base:
+            base += f" 用户补充要求优先：{extra}。"
+        base += f" 【cos:{cos_id}】"
+        return base
+
     def _build_third_person_look_action(
         self,
         extra_request: str = "",
@@ -4915,11 +5026,21 @@ class SelfieImagePlugin(Star):
         last_elapsed = 0.0
         skipped_shots = 0
         # 多张拍摄时逐张更换机位或姿势。
-        rebuild_each = source in {"command-look-legs", "command-selfie", "command-look-you"} or (
-            "看看腿" in str(action or "") or "【shot:" in str(action or "") or "【pose:" in str(action or "")
+        rebuild_each = source in {
+            "command-look-legs",
+            "command-selfie",
+            "command-look-you",
+            "command-look-cos",
+        } or (
+            "看看腿" in str(action or "")
+            or "看看COS" in str(action or "")
+            or "【shot:" in str(action or "")
+            or "【pose:" in str(action or "")
+            or "【cos:" in str(action or "")
         )
         last_pose = ""
         last_shot = ""
+        last_cos = ""
         extra_keep = ""
         force_legwear = ""
         if rebuild_each:
@@ -4927,7 +5048,7 @@ class SelfieImagePlugin(Star):
             m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
-                extra_keep = re.sub(r"\s*【(?:pose|shot):[a-z_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s*【(?:pose|shot|cos):[a-z0-9_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
             # Keep user/locked legwear across rebuild rounds (extra text alone may have stripped 白丝).
             force_legwear = parse_requested_legwear(str(action or "")) or parse_requested_legwear(extra_keep)
@@ -4937,6 +5058,9 @@ class SelfieImagePlugin(Star):
             m_shot = re.search(r"【shot:([a-z_]+)】", str(action or ""))
             if m_shot:
                 last_shot = str(m_shot.group(1) or "")
+            m_cos = re.search(r"【cos:([a-z0-9_]+)】", str(action or ""))
+            if m_cos:
+                last_cos = str(m_cos.group(1) or "")
         for index in range(total):
             if self._task_cancel_requested(task_id):
                 return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
@@ -4952,6 +5076,15 @@ class SelfieImagePlugin(Star):
                     m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
                     if m_pose:
                         last_pose = str(m_pose.group(1) or last_pose)
+                elif source == "command-look-cos" or "看看COS" in str(action or "") or "【cos:" in str(action or ""):
+                    round_action = self._build_cos_look_action(
+                        extra_keep,
+                        bool(extra_refs),
+                        avoid_id=last_cos,
+                    )
+                    m_cos = re.search(r"【cos:([a-z0-9_]+)】", round_action)
+                    if m_cos:
+                        last_cos = str(m_cos.group(1) or last_cos)
                 elif source == "command-look-you" or "看看你模式" in str(action or ""):
                     round_action = self._build_third_person_look_action(
                         extra_keep,
@@ -5532,6 +5665,7 @@ class SelfieImagePlugin(Star):
                 "· /图生图　必须附图或引用图，按原文改图；不自动使用形象图",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
                 "· /看看腿　下半身近景；按姿势搭配光腿神器、白丝或黑丝；可写数量如 /看看腿 3",
+                "· /看看COS　随机一套内置 COS 换装自拍；可写数量如 /看看COS 2",
                 "· /看看你　像别人随手拍你",
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象",
                 "",
@@ -5969,6 +6103,48 @@ class SelfieImagePlugin(Star):
             progress_label="自拍",
             source="command-look-legs",
             fail_label=self._natural_fail_fallback("legs"),
+            message_override=fallback,
+            requested_count_override=requested_count,
+            preset_aspect=preset_aspect,
+            preset_resolution=preset_resolution,
+            preset_name=preset_name,
+        ):
+            yield item
+
+    @filter.command("看看COS", alias={"看看cos", "看看Cos"})
+    async def cmd_look_cos(
+        self,
+        event: AstrMessageEvent,
+        p1: str = "",
+        p2: str = "",
+        p3: str = "",
+        p4: str = "",
+        p5: str = "",
+        p6: str = "",
+        p7: str = "",
+        p8: str = "",
+        p9: str = "",
+        p10: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        """随机一套内置 COS 换装自拍；可写数量如 /看看COS 3。"""
+        fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        raw_message = extract_command_message(event, "看看COS", fallback_args)
+        # Also accept lowercase command text extraction fallbacks.
+        if not raw_message:
+            raw_message = extract_command_message(event, "看看cos", fallback_args)
+        raw_extra, requested_count = self._extract_command_count(raw_message)
+        expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
+        has_refs = bool(extract_image_sources_from_event(event))
+        fallback = self._build_cos_look_action(expanded_extra, has_refs)
+        async for item in self._handle_selfie_command(
+            event=event,
+            command_name="看看COS",
+            fallback=fallback,
+            default_action=self._build_cos_look_action("", False),
+            default_action_with_refs=self._build_cos_look_action("", True),
+            progress_label="自拍",
+            source="command-look-cos",
+            fail_label=self._natural_fail_fallback("selfie"),
             message_override=fallback,
             requested_count_override=requested_count,
             preset_aspect=preset_aspect,
