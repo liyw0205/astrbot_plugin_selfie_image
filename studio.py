@@ -194,12 +194,12 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
         "id": "preset_crop_waist",
         "title": "漏腰",
         "prompt": (
-            "a beautiful 真人女孩, casual home fashion selfie, dim soft room light like boyfriend-view vibe, "
-            "amateurish iPhone snapshot, slightly high angle looking down at her torso. "
-            "She wears a black short crop top under a loose oversized dark long-sleeve shirt left open and lifted a little, "
-            "so the midriff/waistline shows naturally; outer shirt stays baggy with soft folds, not skin-tight. "
-            "She reclines casually on a dark bed or sofa, relaxed everyday pose, hair slightly messy, "
-            "face may be partly obscured by hair or angle, natural skin, clean tasteful photo, no exaggerated body focus."
+            "a beautiful 真人女孩, casual home selfie, dim soft room lighting, "
+            "amateurish iPhone snapshot, slightly high angle. "
+            "black short top under a loose oversized dark long-sleeve shirt worn open, "
+            "baggy outer shirt with soft folds, a little natural waist showing, relaxed everyday look. "
+            "she sits or reclines casually on a dark bed or sofa, messy hair, natural expression, "
+            "clean tasteful photo, realistic skin, no studio lighting."
         ),
         "templates": ["selfie", "t2i", "i2i", "blank"],
         "global": True,

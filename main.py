@@ -3437,30 +3437,29 @@ class SelfieImagePlugin(Star):
         raw = str(text or "")
         if not raw.strip():
             return False
-        if any(k in raw for k in ("漏腰", "露腰", "露脐短上衣", "小蛮腰", "crop_waist", "crop top")):
+        if any(k in raw for k in ("漏腰", "露腰", "露脐短上衣", "小蛮腰", "crop_waist", "crop top", "short top")):
             return True
-        # Expanded preset body usually contains both crop top + outer shirt.
-        has_inner = ("露脐" in raw) or ("短上衣" in raw) or ("crop top" in raw.lower())
-        has_outer = ("外衫" in raw) or ("开衫" in raw) or ("半敞" in raw) or ("oversized" in raw.lower())
+        # Expanded preset body usually contains both short top + outer shirt.
+        low = raw.lower()
+        has_inner = ("露脐" in raw) or ("短上衣" in raw) or ("crop top" in low) or ("short top" in low)
+        has_outer = ("外衫" in raw) or ("开衫" in raw) or ("半敞" in raw) or ("oversized" in low)
         return has_inner and has_outer
 
     def _build_crop_waist_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
         """漏腰/露腰：腰腹构图 + 内外两层穿搭，避免被日常半身自拍机位冲掉。"""
         base = (
             "【自拍 / 漏腰模式】"
-            "参考男友视角那种随手 iPhone 抓拍：暗一点的房间柔光、生活化原生质感，不要棚拍感。"
-            "第一人称略俯拍，构图看上身与腰线，不是纯脸特写，也不是胸口以上半身。"
-            "本次换装优先于今日穿搭：黑色短款上衣 + 宽松深色长袖外衫（外衫明显 oversized、敞开一点并略上提），"
-            "自然露出腰线；外衫保持松垮有皱褶，不要整件贴肉，也不要只剩一件紧身上衣。"
-            "她随意半躺或靠在深色床/沙发上，动作放松日常；长发可略乱，脸可被发丝或角度半遮。"
+            "随手 iPhone 抓拍，房间偏暗柔光，生活化原生质感，不要棚拍。"
+            "略俯拍，构图看上身与自然露出的一点腰线，不是纯脸特写。"
+            "本次换装优先：黑色短上衣 + 宽松深色长袖外衫（外衫 oversized、敞开），"
+            "外衫松垮有皱褶，不要整件贴肉，也不要只剩一件紧身上衣。"
+            "她随意坐或半靠在深色床/沙发上，动作放松；长发可略乱。"
             "保持 AI 身份长相与发色一致，画面干净得体。"
         )
         if has_refs:
             base = "参考用户附图的氛围或构图，" + base
         extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
-        # Avoid duplicating the whole expanded preset twice if already embedded.
         if extra and extra not in base:
-            # If extra is just the short alias, skip; full preset text can reinforce.
             if extra not in {"漏腰", "露腰", "漏腰杀", "小蛮腰"}:
                 base += f" 用户补充要求优先：{extra}。"
         base += " 【shot:crop_waist】"
