@@ -1010,6 +1010,12 @@ def infer_provider_type_from_model(model: str) -> str:
     return ""
 
 
+# Native adapters that cannot ride the OpenAI images/edits codepath.
+STRONG_NATIVE_PROVIDER_TYPES = frozenset(
+    {"grok", "novelai", "agnes", "jimeng2api", "z_image_gitee"}
+)
+
+
 def resolve_model_provider_type(
     model: str,
     default_provider_type: str,
@@ -1020,17 +1026,34 @@ def resolve_model_provider_type(
     """Resolve per-model provider protocol.
 
     When protocol_lock is True (OpenAI-compatible relays / NewAPI), do not infer
-    gemini/z_image/etc. from the model *name* — use channel provider_type unless
-    the operator set an explicit model_provider_types override.
-    Source: target 07 + shoubanhua dual-protocol caution.
+    gemini from the model *name* onto a different chat/native path — keep the
+    channel provider_type. Explicit model_provider_types still wins, except a
+    no-op override that merely repeats the channel default while the model name
+    clearly requires a strong native adapter (grok/novelai/agnes/…).
+
+    Source: target 07 + shoubanhua dual-protocol caution; fixed 2026-08-13 for
+    grok-on-openai-channel selfie refs.
     """
     manual = normalize_provider_type(manual_provider_type)
-    if manual:
-        return manual
     default = normalize_provider_type(default_provider_type) or "openai"
-    if protocol_lock:
-        return default
     inferred = infer_provider_type_from_model(model)
+
+    if manual:
+        # "openai" stored for grok/nai/agnes is usually accidental (channel default
+        # copied into model_provider_types). Prefer the native adapter.
+        if (
+            inferred in STRONG_NATIVE_PROVIDER_TYPES
+            and manual == default
+            and inferred != manual
+        ):
+            return inferred
+        return manual
+
+    if protocol_lock:
+        if inferred in STRONG_NATIVE_PROVIDER_TYPES:
+            return inferred
+        return default
+
     if inferred:
         return inferred
     return default

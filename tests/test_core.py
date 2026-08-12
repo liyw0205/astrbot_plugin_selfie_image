@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.54")
+        self.assertEqual(PLUGIN_VERSION, "1.3.55")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -638,7 +638,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(resolve_model_provider_type("grok-imagine-image", "openai"), "grok")
         self.assertEqual(resolve_model_provider_type("nai-diffusion-4-5-full", "openai"), "novelai")
         self.assertEqual(resolve_model_provider_type("unknown-model", "gemini_openai"), "gemini_openai")
-        # protocol_lock keeps channel protocol even when model name looks like gemini
+        # protocol_lock keeps channel protocol for gemini-like names
         self.assertEqual(
             resolve_model_provider_type("gemini-2.5-flash-image", "openai", protocol_lock=True),
             "openai",
@@ -646,6 +646,24 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(
             resolve_model_provider_type("gemini-2.5-flash-image", "openai", "gemini", protocol_lock=True),
             "gemini",
+        )
+        # strong natives still resolve under openai channel lock
+        self.assertEqual(
+            resolve_model_provider_type("grok-imagine-image", "openai", protocol_lock=True),
+            "grok",
+        )
+        self.assertEqual(
+            resolve_model_provider_type("nai-diffusion-4-5-full", "openai", protocol_lock=True),
+            "novelai",
+        )
+        self.assertEqual(
+            resolve_model_provider_type("agnes-image-2.1-flash", "openai", protocol_lock=True),
+            "agnes",
+        )
+        # accidental mpt=openai (same as channel) must not pin grok to OpenAI adapter
+        self.assertEqual(
+            resolve_model_provider_type("grok-imagine-image", "openai", "openai", protocol_lock=True),
+            "grok",
         )
 
     def test_openai_channel_protocol_lock_defaults(self) -> None:
@@ -657,7 +675,17 @@ class ConfigModelTests(unittest.TestCase):
                         "provider_type": "openai",
                         "base_url": "https://example.test",
                         "api_key": "sk-test",
-                        "enabled_models": ["gemini-2.5-flash-image", "gpt-image-2"],
+                        "enabled_models": [
+                            "gemini-2.5-flash-image",
+                            "gpt-image-2",
+                            "grok-imagine-image",
+                            "nai-diffusion-4-5-full",
+                            "agnes-image-2.1-flash",
+                        ],
+                        "model_provider_types": {
+                            # accidental same-as-channel pin must not stick for strong natives
+                            "grok-imagine-image": "openai",
+                        },
                     }
                 ]
             }
@@ -665,6 +693,21 @@ class ConfigModelTests(unittest.TestCase):
         targets = {t.model: t.provider_type for t in config.get_prioritized_targets()}
         self.assertEqual(targets["gemini-2.5-flash-image"], "openai")
         self.assertEqual(targets["gpt-image-2"], "openai")
+        self.assertEqual(targets["grok-imagine-image"], "grok")
+        self.assertEqual(targets["nai-diffusion-4-5-full"], "novelai")
+        self.assertEqual(targets["agnes-image-2.1-flash"], "agnes")
+
+    def test_grok_edit_payload_uses_data_url_image(self) -> None:
+        adapter = GrokImageAdapter(make_target("grok", "grok-imagine-image"), FakeSession())
+        payload = adapter.build_edit_payload(
+            ImageGenerateRequest(
+                prompt="keep identity",
+                images=[ImageReference(data=PNG_BYTES, mime_type="image/png")],
+            )
+        )
+        self.assertEqual(payload["model"], "grok-imagine-image-edit")
+        self.assertIn("image", payload)
+        self.assertTrue(str(payload["image"]["url"]).startswith("data:image/png;base64,"))
 
     def test_channel_preflight_requires_key_url_and_model(self) -> None:
         bad = preflight_image_channel({"name": "x", "provider_type": "openai"}, kind="image")

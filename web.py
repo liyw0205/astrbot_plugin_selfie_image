@@ -1412,10 +1412,21 @@ Source prompt:
       return '';
     }
     function resolveModelProviderType(model, defaultProviderType, manualProviderType = '') {
-      return normalizeProviderType(manualProviderType)
-        || inferProviderTypeFromModel(model)
-        || normalizeProviderType(defaultProviderType)
-        || 'openai';
+      const manual = normalizeProviderType(manualProviderType);
+      const def = normalizeProviderType(defaultProviderType) || 'openai';
+      const inferred = inferProviderTypeFromModel(model);
+      const strong = new Set(['grok','novelai','agnes','jimeng2api','z_image_gitee']);
+      // Match backend: strong natives win over channel default lock / no-op override.
+      if (manual) {
+        if (strong.has(inferred) && manual === def && inferred !== manual) return inferred;
+        return manual;
+      }
+      if (strong.has(inferred)) return inferred;
+      // openai/gemini_openai channels keep default for gemini-like names (protocol lock).
+      if (def === 'openai' || def === 'gemini_openai') {
+        return def;
+      }
+      return inferred || def || 'openai';
     }
     function resolveVideoModelProviderType(model, defaultProviderType, manualProviderType = '') {
       return normalizeVideoProviderType(manualProviderType)

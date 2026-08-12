@@ -33,7 +33,7 @@ from .provider_parser import (
     response_preview,
     resolve_response_url,
 )
-from .utils import bytes_to_data_url
+from .utils import bytes_to_data_url, normalize_image_mime
 
 
 @dataclass
@@ -529,13 +529,48 @@ class GrokImageAdapter(SimpleOpenAIImageAdapter):
     default_model = "grok-imagine-image"
 
     def build_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
-        return {
+        payload: Dict[str, Any] = {
             "model": self.target.model or self.default_model,
             "prompt": req.prompt,
             "aspect_ratio": "auto" if req.aspect_ratio == "自动" else (req.aspect_ratio or "auto"),
             "resolution": (req.resolution or "2K").lower(),
             "response_format": "b64_json",
         }
+        return payload
+
+    def build_edit_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
+        """xAI image edit: JSON body with data-URL image (see grok_image_edit_batch.sh)."""
+        model = str(self.target.model or self.default_model)
+        # Prefer edit model name when caller still has the generate model id.
+        if "edit" not in model.lower() and model.lower().startswith("grok-imagine-image"):
+            model = "grok-imagine-image-edit"
+        image = req.images[0]
+        mime = normalize_image_mime(getattr(image, "mime_type", "") or "image/png")
+        data_url = bytes_to_data_url(image.data, mime)
+        payload: Dict[str, Any] = {
+            "model": model,
+            "prompt": req.prompt,
+            "image": {"url": data_url, "type": "image_url"},
+            "response_format": "b64_json",
+        }
+        if req.aspect_ratio and req.aspect_ratio not in {"自动", ""}:
+            payload["aspect_ratio"] = req.aspect_ratio
+        if req.resolution:
+            payload["resolution"] = str(req.resolution).lower()
+        return payload
+
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_image_base_url(self.target.base_url) or self.default_base_url
+        if req.images:
+            url = f"{base}/v1/images/edits"
+            payload = self.build_edit_payload(req)
+        else:
+            url = f"{base}/v1/images/generations"
+            payload = self.build_payload(req)
+        data, error = await self.post_json_data_or_error(url, payload, http_preview_limit=300)
+        if error or data is None:
+            return ImageGenerateResult(error=error or "接口未返回有效 JSON")
+        return await self.result_from_response(data, req, base)
 
 
 class AgnesImageAdapter(BaseImageAdapter):
