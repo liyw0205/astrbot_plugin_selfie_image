@@ -190,6 +190,19 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
         "templates": ["selfie", "duo", "i2i", "blank"],
         "global": True,
     },
+    {
+        "id": "preset_crop_waist",
+        "title": "漏腰",
+        "prompt": (
+            "黑色紧身露脐短上衣，细浅色滚边，贴合上身；外面披宽松暗色长袖外衫，半敞向上掀起，软质皱褶。"
+            "仰卧在暗色床单或沙发上，腰腹自然贴合表面并轻压出小蛮腰线条；"
+            "短上衣承托下胸部轮廓柔和起伏，不夸张挤压。"
+            "微俯拍聚焦上半身与腰腹，从大腿根到肩部入画，长发散落，面部可半遮；"
+            "暗调柔光，皮肤与黑衣高对比，暗黑系少御氛围，日常得体。"
+        ),
+        "templates": ["selfie", "t2i", "i2i", "blank"],
+        "global": True,
+    },
 ]
 
 # P0 templates: id -> layout defaults

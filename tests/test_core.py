@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.44")
+        self.assertEqual(PLUGIN_VERSION, "1.3.45")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4762,11 +4762,14 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("捧脸", titles)
         globals_ = global_prompt_presets()
         gnames = {str(x.get("name")) for x in globals_}
-        for need in ("捧脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角"):
+        for need in ("捧脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角", "漏腰"):
             self.assertIn(need, gnames)
         seed = default_image_preset_seed()
         self.assertIn("捧脸", seed)
+        self.assertIn("漏腰", seed)
         self.assertTrue(seed["捧脸"]["prompt"])
+        self.assertIn("露脐", seed["漏腰"]["prompt"])
+        self.assertIn("小蛮腰", seed["漏腰"]["prompt"])
 
     def test_default_presets_seed(self) -> None:
         import tempfile
@@ -4775,7 +4778,7 @@ class StudioStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mgr = ImagePresetManager(tmp)
             names = {n for n, _ in mgr.list()}
-            for need in ("捧脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角"):
+            for need in ("捧脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角", "漏腰"):
                 self.assertIn(need, names)
             # user override not clobbered
             mgr.add("捧脸", "自定义捧脸提示词")
