@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -321,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.61")
+        self.assertEqual(PLUGIN_VERSION, "1.3.62")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -900,6 +901,33 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(row.get("failed_attempt_count"), 1)
         self.assertNotIn("request_data", row)
         self.assertLessEqual(len(row.get("request_prompt") or ""), 241)
+
+    def test_record_task_splits_multi_image_rows(self) -> None:
+        from astrbot_plugin_selfie_image.utils import split_generation_record_images
+
+        pieces = split_generation_record_images(
+            {
+                "success": True,
+                "source": "command-look-cos",
+                "prompt": "cos",
+                "generated_image_paths": ["a.png", "b.png", "c.png"],
+                "response_data": {"success": True, "count": 3, "generated_image_paths": ["a.png", "b.png", "c.png"]},
+                "count": 3,
+                "id": "keep-out",
+            }
+        )
+        self.assertEqual(len(pieces), 3)
+        self.assertEqual(sorted(p["generated_image_paths"][0] for p in pieces), ["a.png", "b.png", "c.png"])
+        for row in pieces:
+            self.assertEqual(row["count"], 1)
+            self.assertEqual(len(row["generated_image_paths"]), 1)
+            self.assertEqual(row["response_data"]["count"], 1)
+            self.assertEqual(len(row["response_data"]["generated_image_paths"]), 1)
+            self.assertNotIn("id", row)
+        single = split_generation_record_images({"success": True, "generated_image_paths": ["only.png"], "count": 9})
+        self.assertEqual(len(single), 1)
+        self.assertEqual(single[0]["count"], 1)
+        self.assertEqual(single[0]["generated_image_paths"], ["only.png"])
 
     def test_enabled_model_priority_and_manual_provider_types_are_preserved(self) -> None:
         config = AICatConfig.from_dict(

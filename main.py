@@ -95,6 +95,7 @@ from .utils import (
     collect_cache_cleanup_candidates,
     collect_unreferenced_record_cache_paths,
     compact_generation_record,
+    split_generation_record_images,
     data_url_to_bytes,
     detect_mime_by_bytes,
     event_group_id,
@@ -1982,6 +1983,11 @@ class SelfieImagePlugin(Star):
 
 
     def _record_task(self, record: Dict[str, Any]) -> None:
+        # One generated image per monitor row. Batch/concurrency must not pile shots together.
+        for piece in split_generation_record_images(record):
+            self._commit_generation_record(piece)
+
+    def _commit_generation_record(self, record: Dict[str, Any]) -> None:
         stale_cache_paths: List[str] = []
         response_data = record.get("response_data")
         if "attempts" not in record and isinstance(response_data, Mapping):

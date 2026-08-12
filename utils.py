@@ -436,6 +436,34 @@ def _truncate_text(value: Any, limit: int) -> str:
     return text[: max(0, limit - 1)] + "…"
 
 
+def split_generation_record_images(record: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """One generated image per monitor row."""
+    if not isinstance(record, dict):
+        return []
+    raw = dict(record)
+    paths = [str(p).strip() for p in (raw.get("generated_image_paths") or []) if str(p or "").strip()]
+    if len(paths) <= 1:
+        if paths:
+            raw["generated_image_paths"] = paths
+            if raw.get("success"):
+                raw["count"] = 1
+        return [raw]
+    resp = raw.get("response_data") if isinstance(raw.get("response_data"), dict) else {}
+    pieces: List[Dict[str, Any]] = []
+    for path in paths:
+        piece = dict(raw)
+        piece["generated_image_paths"] = [path]
+        piece["count"] = 1
+        piece.pop("id", None)
+        if resp:
+            slim_resp = dict(resp)
+            slim_resp["generated_image_paths"] = [path]
+            slim_resp["count"] = 1
+            piece["response_data"] = slim_resp
+        pieces.append(piece)
+    return pieces
+
+
 def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
     """Shrink persisted generation records: drop prompt duplicates, cap attempt errors."""
     if not isinstance(record, dict):
