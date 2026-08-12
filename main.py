@@ -4067,27 +4067,20 @@ class SelfieImagePlugin(Star):
             allow_context_fallback=True,
         )
         action = self._normalize_selfie_action(action, bool(extra_refs))
-        total_sent = 0
-        for _ in range(requested_count):
-            prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(event, action, extra_refs)
-            result = await self._run_image_generation(
-                prompt,
-                aspect,
-                resolution,
-                refs,
-                source="llm-generate-selfie",
-                audit_user_id=event_user_id(event),
-                event=event,
-                original_prompt=action,
-                prompt_en_meta=prompt_en_meta,
-            )
-            if not result.get("success"):
-                return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("selfie"))
-            sent = await self._send_generated_images(event, result.get("files", []))
-            total_sent += sent
-            if sent:
-                self._record_generated_images(event, 1)
-        return self._tool_success("selfie", total_sent or requested_count)
+        result = await self._background_selfie_batches(
+            "llm-generate-selfie",
+            event,
+            action,
+            extra_refs,
+            "llm-generate-selfie",
+            requested_count,
+            aspect,
+            resolution,
+            self._natural_fail_fallback("selfie"),
+        )
+        if not result.get("success") and not result.get("files"):
+            return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("selfie"))
+        return self._tool_success("selfie", len(result.get("files") or []) or requested_count)
 
     def _build_success_text(self, elapsed_seconds: float, count: int, used_model: str, event: AstrMessageEvent) -> str:
         lines: List[str] = []
@@ -5992,14 +5985,14 @@ class SelfieImagePlugin(Star):
                 f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}",
                 "",
                 "常用：",
-                "· /画 或 /生图　写想要的画面；有附图/引用图就按图改，没图就按文字出；不自动带入形象图",
-                "· /文生图　只用文字按原文出图，不走自拍人设，也不用形象图",
-                "· /图生图　必须附图或引用图，按原文改图；不自动使用形象图",
-                "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
+                "· /画 或 /生图　写想要的画面；可写数量如 /画 3；有附图/引用图就按图改，没图就按文字出；不自动带入形象图",
+                "· /文生图　只用文字按原文出图，不走自拍人设，也不用形象图；可写数量",
+                "· /图生图　必须附图或引用图，按原文改图；可写数量；不自动使用形象图",
+                "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装；可写数量如 /自拍 3",
                 "· /看看腿　下半身近景；按姿势搭配光腿神器、白丝或黑丝；可写数量如 /看看腿 3",
                 "· /看看COS　随机一套内置 COS 换装自拍；可写数量如 /看看COS 2",
-                "· /看看你　像别人随手拍你",
-                "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象",
+                "· /看看你　像别人随手拍你；可写数量",
+                "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象；可写数量",
                 "",
                 "视频：",
                 "· /视频　写想要的动态；有图就图生视频，没图就用当前形象图作首帧",
@@ -6024,7 +6017,7 @@ class SelfieImagePlugin(Star):
                 "",
                 "预设：/预设　列表；管理员可 /预设添加 名称:内容、/预设删除 名称",
                 "",
-                "说明：一次可写数量表示连出几轮；图好了会直接发过来。",
+                "说明：一次可写数量表示连出几轮，按「同时画几张」并发请求；图好了会直接发过来。",
                 "· /生图帮助　只看图卡",
                 "· /生图help　看本页完整说明",
                 f"管理页：{'已开' if self.config.web_enable else '未开'}　http://{self.config.web_host}:{self.config.web_port}",
@@ -6818,16 +6811,21 @@ class SelfieImagePlugin(Star):
             context_hint=prompt,
             allow_context_fallback=True,
         )
-        total_sent = 0
-        for _ in range(requested_count):
-            result = await self._draw_passthrough_once(event, prompt, aspect, resol, refs, "llm-generate-image")
-            if not result.get("success"):
-                return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("image"))
-            sent = await self._send_generated_images(event, result.get("files", []))
-            total_sent += sent
-            if sent:
-                self._record_generated_images(event, 1)
-        return self._tool_success("image", total_sent or requested_count)
+        result = await self._background_draw_batches(
+            "llm-generate-image",
+            event,
+            prompt,
+            aspect,
+            resol,
+            refs,
+            "llm-generate-image",
+            requested_count,
+            passthrough=True,
+            fail_label=self._natural_fail_fallback("image"),
+        )
+        if not result.get("success") and not result.get("files"):
+            return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("image"))
+        return self._tool_success("image", len(result.get("files") or []) or requested_count)
 
     @LLM_TOOL(name="generate_selfie")
     async def tool_generate_selfie(

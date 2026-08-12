@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.62")
+        self.assertEqual(PLUGIN_VERSION, "1.3.63")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3909,6 +3909,14 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("自动判断", help_body)
         self.assertIn("不会自动塞形象图", help_body)
         self.assertIn("有图=图生视频", help_body)
+        self.assertIn("/画 3", help_body)
+        self.assertIn("/自拍 3", help_body)
+        self.assertIn("同时画几张", help_body)
+        llm_selfie = main_src.split("async def _run_llm_selfie_flow", 1)[1].split("def _build_success_text", 1)[0]
+        self.assertIn("_background_selfie_batches", llm_selfie)
+        self.assertNotIn("for _ in range(requested_count)", llm_selfie)
+        llm_image = main_src.split("async def tool_generate_image", 1)[1].split("async def tool_generate_selfie", 1)[0]
+        self.assertIn("_background_draw_batches", llm_image)
 
     def test_anatomy_constraints_ban_third_limb_and_same_side_pairs(self) -> None:
         from astrbot_plugin_selfie_image.persona import PersonaManager, anatomy_constraint_lines
