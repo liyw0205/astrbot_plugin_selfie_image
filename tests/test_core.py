@@ -321,7 +321,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.37")
+        self.assertEqual(PLUGIN_VERSION, "1.3.38")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3964,6 +3964,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 extra_reference_count=0,
             )
             self.assertIn("形象是动漫人物", anime)
+            self.assertIn("柔光京阿尼", anime)
+            self.assertIn("脸更细", anime)
+            self.assertIn("仙风", anime)
             self.assertNotIn("形象是真人", anime)
             self.assertIn("是女性就保持女性", anime)
             self.assertIn("禁止无故改成异性", anime)
@@ -3978,7 +3981,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 extra_reference_count=1,
             )
             self.assertIn("形象是动漫人物", group_anime)
-            self.assertIn("动漫", group_anime)
+            self.assertIn("柔光京阿尼", group_anime)
             self.assertIn("是女性则主角必须是女性", group_anime)
             self.assertNotIn("默认一律写实真人合影", group_anime)
             self.assertNotIn("必须改画成与主角同一套写实真人照片风格", group_anime)

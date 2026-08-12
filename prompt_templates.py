@@ -52,7 +52,10 @@ def build_selfie_builtin_prompt(
     is_group = "合影" in str(action) or "合照" in str(action) or "同框" in str(action)
     feet_cropped = "【pose:reclined_knees_crop】" in str(action)
     if language == "en":
-        style = {"real": "realistic", "anime": "anime-style"}.get(str(appearance_type), "visually consistent")
+        style = {
+            "real": "realistic",
+            "anime": "soft Kyoto Animation-like anime with a finer face and ethereal atmosphere",
+        }.get(str(appearance_type), "visually consistent")
         lines = [
             f"Create one natural {style} everyday photo.",
             "Keep the main subject's identity, gender, face, hair, body proportions, and overall appearance stable; change expression naturally with the scene.",
