@@ -729,6 +729,7 @@ class SelfieImagePlugin(Star):
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self._video_semaphore = asyncio.Semaphore(max(1, int(getattr(self.config, "video_max_concurrent_tasks", 1) or 1)))
+        self._selfie_batch_gate = asyncio.Lock()
         self.web_server = FlaskWebServer(self)
         self.dashboard_api = SelfieImageDashboardAPI(self)
         try:
@@ -5260,6 +5261,41 @@ class SelfieImagePlugin(Star):
         }
 
     async def _background_selfie_batches(
+        self,
+        task_id: str,
+        event: AstrMessageEvent,
+        action: str,
+        extra_refs: List[ImageReference],
+        source: str,
+        requested_count: int,
+        aspect: str,
+        resolution: str,
+        fail_label: str,
+    ) -> Dict[str, Any]:
+        gate = getattr(self, "_selfie_batch_gate", None)
+        if gate is None:
+            self._selfie_batch_gate = asyncio.Lock()
+            gate = self._selfie_batch_gate
+        if gate.locked():
+            logger.info(f"[SelfieImage] selfie batch queued task={task_id} source={source}")
+            try:
+                await event.send(event.plain_result("上一轮还在画，这轮先排队，画完接上。"))
+            except Exception:
+                pass
+        async with gate:
+            return await self._run_selfie_batches_unlocked(
+                task_id,
+                event,
+                action,
+                extra_refs,
+                source,
+                requested_count,
+                aspect,
+                resolution,
+                fail_label,
+            )
+
+    async def _run_selfie_batches_unlocked(
         self,
         task_id: str,
         event: AstrMessageEvent,

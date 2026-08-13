@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.77")
+        self.assertEqual(PLUGIN_VERSION, "1.3.78")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3943,6 +3943,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("_background_draw_batches", llm_image)
         selfie_batch = main_src.split("async def _background_selfie_batches", 1)[1].split("def _validate_web_test_selection", 1)[0]
         self.assertIn("for index in range(total)", selfie_batch)
+        self.assertIn("_selfie_batch_gate", selfie_batch)
+        self.assertIn("上一轮还在画，这轮先排队，画完接上。", selfie_batch)
+        self.assertIn("_run_selfie_batches_unlocked", selfie_batch)
         self.assertNotIn("_run_generation_jobs_parallel", main_src)
 
     def test_anatomy_constraints_ban_third_limb_and_same_side_pairs(self) -> None:
