@@ -107,20 +107,24 @@ class BaseImageAdapter:
         try:
             raw = await response.read()
         except Exception as exc:
-            # Some relays advertise Content-Length / chunked then reset mid-body
-            # (TransferEncodingError / Connection reset). Surface as switchable error.
             msg = str(exc).strip() or type(exc).__name__
             return None, f"上游响应未完整接收: {msg}"
-        try:
-            text = raw.decode(response.charset or "utf-8", errors="replace")
-        except Exception:
-            text = raw.decode("utf-8", errors="replace")
-        if response.status >= 400:
-            return None, f"HTTP {response.status}: {http_error_preview(text, http_preview_limit)}"
-        try:
-            return json.loads(text), ""
-        except json.JSONDecodeError:
-            return None, f"接口返回非 JSON 内容: {response_preview(text, invalid_json_preview_limit)}"
+        charset = response.charset or "utf-8"
+        status = response.status
+
+        def _decode_and_parse(blob: bytes) -> tuple[Optional[Any], str]:
+            try:
+                text = blob.decode(charset, errors="replace")
+            except Exception:
+                text = blob.decode("utf-8", errors="replace")
+            if status >= 400:
+                return None, f"HTTP {status}: {http_error_preview(text, http_preview_limit)}"
+            try:
+                return json.loads(text), ""
+            except json.JSONDecodeError:
+                return None, f"接口返回非 JSON 内容: {response_preview(text, invalid_json_preview_limit)}"
+
+        return await asyncio.to_thread(_decode_and_parse, raw)
 
     async def post_json_data_or_error(
         self,
