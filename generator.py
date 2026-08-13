@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-from .error_classify import classify_generation_error
+from .error_classify import classify_generation_error, format_timeout_user_message
 from .models import ImageModelTarget
 from .proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, target_session_proxy
 from .providers import ImageGenerateRequest, ImageGenerateResult, create_adapter
@@ -103,7 +103,7 @@ async def generate_image_with_fallback(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return ImageGenerateResult(
-                error=redact_sensitive_text(f"生图全局超时（{chain_timeout}秒），最后错误: {last_error}"),
+                error=redact_sensitive_text(format_timeout_user_message("global", chain_timeout)),
                 attempts=redact_sensitive_data(attempts),
             )
 
@@ -129,7 +129,7 @@ async def generate_image_with_fallback(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return ImageGenerateResult(
-                    error=redact_sensitive_text(f"生图全局超时（{chain_timeout}秒），最后错误: {last_error}"),
+                    error=redact_sensitive_text(format_timeout_user_message("global", chain_timeout)),
                     attempts=redact_sensitive_data(attempts),
                 )
             # Reserve budget for later channels so one slow timeout cannot burn the whole global window.
@@ -208,10 +208,10 @@ async def generate_image_with_fallback(
                     attempts=redact_sensitive_data(attempts),
                 )
             except asyncio.TimeoutError:
-                last_error = f"{label}: 请求超时，改试下一个模型"
+                last_error = f"{label}: {format_timeout_user_message('local', per_try)}"
                 attempt_info["success"] = False
-                attempt_info["error"] = "请求超时"
-                attempt_info["error_user_message"] = "该模型超时，已改试下一个"
+                attempt_info["error"] = format_timeout_user_message("local", per_try)
+                attempt_info["error_user_message"] = format_timeout_user_message("local", per_try)
                 attempt_info["error_category"] = "timeout"
                 attempt_info["retryable"] = False
                 attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
@@ -257,7 +257,7 @@ async def generate_image_with_fallback(
             wait_seconds = min(attempt, 2)
             if deadline - time.monotonic() <= wait_seconds:
                 return ImageGenerateResult(
-                    error=redact_sensitive_text(f"生图全局超时（{chain_timeout}秒），最后错误: {last_error}"),
+                    error=redact_sensitive_text(format_timeout_user_message("global", chain_timeout)),
                     attempts=redact_sensitive_data(attempts),
                 )
             await asyncio.sleep(wait_seconds)

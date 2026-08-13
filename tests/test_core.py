@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.80")
+        self.assertEqual(PLUGIN_VERSION, "1.3.81")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -805,6 +805,10 @@ class ConfigModelTests(unittest.TestCase):
         self.assertTrue(classify_generation_error("HTTP 503 upstream")["retryable"])
         self.assertTrue(classify_generation_error("HTTP 429 rate limit")["retryable"])
         self.assertFalse(classify_generation_error("请求超时")["retryable"])
+        self.assertEqual(classify_generation_error("请求超时")["user_message"], "模型超时（180s）")
+        self.assertEqual(classify_generation_error("gateway timeout")["user_message"], "上游模型超时")
+        self.assertEqual(classify_generation_error("生图全局超时（280秒），最后错误: x")["user_message"], "生图超时（280s）")
+        self.assertEqual(classify_generation_error("该模型超时，已改试下一个")["user_message"], "模型超时（180s）")
         self.assertTrue(is_non_retryable_generation_error("HTTP 404 model_not_found"))
         self.assertTrue(is_param_profile_switch_error("HTTP 400: unsupported size"))
         self.assertTrue(
@@ -4698,6 +4702,9 @@ class LegFocusTests(unittest.TestCase):
                 self.assertIn("双脚完整裁出画外", t)
                 self.assertIn("【crop:calves】", t)
                 self.assertIn("不露脸", t)
+                self.assertIn("短裙", t)
+                self.assertNotIn("18+", t)
+                self.assertNotIn("十八禁", t)
                 self.assertNotIn("脚趾五个分开", t)
                 self.assertNotIn("丝袜必须包住整只脚到脚趾", t)
                 self.assertNotIn("脚部自然完整", t)

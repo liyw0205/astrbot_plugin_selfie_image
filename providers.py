@@ -293,7 +293,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
     async def generate_image(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
         url = f"{base}/v1/images/generations"
-        from .error_classify import is_param_profile_switch_error
+        from .error_classify import format_timeout_user_message, is_param_profile_switch_error
 
         if is_gpt_image_model(self.target.model):
             profiles = _gpt_image_payload_profiles(req, self.target.model or "gpt-image-1")
@@ -307,7 +307,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 data, error = await self.post_json_data_or_error(url, payload)
             except asyncio.TimeoutError:
                 return ImageGenerateResult(
-                    error=f"OpenAI 生图请求超时（{self.target.timeout}秒）"
+                    error=format_timeout_user_message("local")
                 )
             if error or data is None:
                 last_error = error or "接口未返回有效 JSON"
@@ -425,7 +425,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 break
             return ImageGenerateResult(error=last_error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
-            return ImageGenerateResult(error=f"OpenAI 图生图请求超时（{self.target.timeout}秒）")
+            return ImageGenerateResult(error=format_timeout_user_message("local"))
 
 
 class GeminiImageAdapter(BaseImageAdapter):
@@ -457,7 +457,7 @@ class GeminiImageAdapter(BaseImageAdapter):
             if error or data is None:
                 return ImageGenerateResult(error=error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
-            return ImageGenerateResult(error=f"Gemini 生图请求超时（{self.target.timeout}秒）")
+            return ImageGenerateResult(error=format_timeout_user_message("local"))
         return await self.result_from_response(data, req, base)
 
 
@@ -843,7 +843,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
                     return await self.result_from_response(data, req, normalize_image_base_url(self.target.base_url) or "", provider_name="NovelAI", detailed_error=True)
                 return ImageGenerateResult(error="NAI 网关未返回可解析图片")
         except asyncio.TimeoutError:
-            return ImageGenerateResult(error=f"NovelAI 请求超时（{self.target.timeout}秒）")
+            return ImageGenerateResult(error=format_timeout_user_message("local"))
         except Exception as exc:
             return ImageGenerateResult(error=str(exc) or "NovelAI 请求失败")
 

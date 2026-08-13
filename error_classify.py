@@ -7,7 +7,21 @@ Selfie target 09.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+from .proxy import LOCAL_IMAGE_WAIT_SECONDS
+
+
+def format_timeout_user_message(kind: str, seconds: Optional[int] = None) -> str:
+    """Record-facing timeout copy. Do not mention fallback/next model."""
+    kind = str(kind or "").strip().lower()
+    if kind in {"global", "chain", "job"}:
+        n = max(1, int(seconds or 280))
+        return f"生图超时（{n}s）"
+    if kind in {"local", "wait", "client"}:
+        n = max(1, int(seconds or LOCAL_IMAGE_WAIT_SECONDS))
+        return f"模型超时（{n}s）"
+    return "上游模型超时"
 
 
 # HTTP statuses that must not burn extra attempts (auth / not found / bad request class).
@@ -105,12 +119,24 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
         }
 
     if re.search(r"timeout|超时|timed?\s*out", lowered):
+        g = re.search(r"生图全局超时[（(](\d+)\s*秒[）)]|生图超时[（(](\d+)\s*s[）)]", text)
+        if g:
+            n = int(next(x for x in g.groups() if x))
+            user_message = format_timeout_user_message("global", n)
+        elif re.search(
+            r"改试下一个|已改试下一个|模型超时|生图请求超时|图生图请求超时|NovelAI 请求超时|^请求超时$",
+            text.strip(),
+        ):
+            sec = re.search(r"[（(](\d+)\s*(?:秒|s)[）)]", text)
+            n = int(sec.group(1)) if sec else LOCAL_IMAGE_WAIT_SECONDS
+            user_message = format_timeout_user_message("global" if n >= 200 else "local", n)
+        else:
+            user_message = format_timeout_user_message("upstream")
         return {
             "category": "timeout",
-            # Create-image POST timeout: do not blindly resubmit same billable job.
             "retryable": False,
             "http_status": status,
-            "user_message": "该模型超时，已改试下一个",
+            "user_message": user_message,
             "raw": text,
         }
 
@@ -241,12 +267,9 @@ def summarize_generation_failures(
             continue
         label = str(item.get("label") or item.get("model") or item.get("channel") or "").strip()
         raw = str(item.get("error") or "").strip()
-        info = classify_generation_error(raw or fallback_error or "生成失败")
-        # Prefer reclassified category so old mis-tagged rows (e.g. 中文安全政策→param) correct on read.
+        info = classify_generation_error(" ".join(part for part in (raw, str(item.get("error_user_message") or ""), fallback_error) if part) or "生成失败")
         category = str(info.get("category") or item.get("error_category") or "").strip()
-        user_message = str(
-            item.get("error_user_message") or info.get("user_message") or raw or "生成失败"
-        ).strip()
+        user_message = str(info.get("user_message") or item.get("error_user_message") or raw or "生成失败").strip()
         if not raw and not user_message:
             continue
         rows.append(
