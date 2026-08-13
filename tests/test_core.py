@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.66")
+        self.assertEqual(PLUGIN_VERSION, "1.3.67")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3911,12 +3911,15 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("有图=图生视频", help_body)
         self.assertIn("/画 3", help_body)
         self.assertIn("/自拍 3", help_body)
-        self.assertIn("同时画几张", help_body)
+        self.assertIn("一张一张", help_body)
         llm_selfie = main_src.split("async def _run_llm_selfie_flow", 1)[1].split("def _build_success_text", 1)[0]
         self.assertIn("_background_selfie_batches", llm_selfie)
         self.assertNotIn("for _ in range(requested_count)", llm_selfie)
         llm_image = main_src.split("async def tool_generate_image", 1)[1].split("async def tool_generate_selfie", 1)[0]
         self.assertIn("_background_draw_batches", llm_image)
+        selfie_batch = main_src.split("async def _background_selfie_batches", 1)[1].split("def _validate_web_test_selection", 1)[0]
+        self.assertIn("for index in range(total)", selfie_batch)
+        self.assertNotIn("_run_generation_jobs_parallel", main_src)
 
     def test_anatomy_constraints_ban_third_limb_and_same_side_pairs(self) -> None:
         from astrbot_plugin_selfie_image.persona import PersonaManager, anatomy_constraint_lines
@@ -4776,64 +4779,6 @@ class LegFocusTests(unittest.TestCase):
         wrap = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
         self.assertIn("对镜", wrap)
         self.assertNotIn("第一人称自拍或居家随手拍", wrap)
-
-        planner = object.__new__(plugin_main.SelfieImagePlugin)
-        planned = planner._plan_selfie_round_actions(
-            plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False),
-            [],
-            "command-look-cos",
-            6,
-        )
-        self.assertEqual(len(planned), 6)
-        cos_ids = [re.search(r"【cos:([a-z0-9_]+)】", t).group(1) for t in planned]
-        self.assertGreaterEqual(len(set(cos_ids)), 4, cos_ids)
-
-        class _Evt:
-            async def send(self, *_a, **_k):
-                return None
-
-            def plain_result(self, text):
-                return text
-
-        plugin = object.__new__(plugin_main.SelfieImagePlugin)
-        plugin.config = types.SimpleNamespace(image_max_concurrent_tasks=3)
-        plugin._task_cancel_requested = lambda *_a, **_k: False
-        plugin._friendly_user_error_message = lambda err, *_a, **_k: str(err)
-        plugin._natural_fail_fallback = lambda *_a, **_k: "fail"
-        plugin._batch_failure_policy = lambda: ("skip", 2)
-
-        async def _fail_msg(*_a, **_k):
-            return "fail"
-
-        plugin._batch_shot_fail_message = _fail_msg
-        plugin._batch_success_text = lambda info, index, total: ""
-        plugin._build_success_text = lambda *a, **k: ""
-        plugin._record_generated_images = lambda *a, **k: None
-        sent: list = []
-
-        async def _send(_event, files):
-            sent.extend(files)
-            return len(files)
-
-        plugin._send_generated_images = _send
-        inflight = {"n": 0, "peak": 0}
-
-        async def _job(i: int):
-            inflight["n"] += 1
-            inflight["peak"] = max(inflight["peak"], inflight["n"])
-            await asyncio.sleep(0.05)
-            inflight["n"] -= 1
-            return {"success": True, "files": [f"{i}.png"], "used_model": "m", "elapsed_seconds": 0.05}
-
-        jobs = [(i, (lambda i=i: _job(i))) for i in range(6)]
-        out = asyncio.run(
-            plugin_main.SelfieImagePlugin._run_generation_jobs_parallel(
-                plugin, "t", _Evt(), jobs, fail_label="x", total=6
-            )
-        )
-        self.assertTrue(out["success"])
-        self.assertEqual(len(out["files"]), 6)
-        self.assertGreaterEqual(inflight["peak"], 3)
 
         class PersonaStub:
             class Intent:
