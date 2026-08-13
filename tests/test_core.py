@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.68")
+        self.assertEqual(PLUGIN_VERSION, "1.3.69")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4673,9 +4673,10 @@ class LegFocusTests(unittest.TestCase):
                 self.assertNotIn("丝袜必须包住整只脚到脚趾", t)
                 self.assertNotIn("脚部自然完整", t)
                 self.assertNotIn("脚趾自然清晰", t)
-        # calf-crop families only (no full-foot pool)
-        for key in ("sit_crop", "kneel_crop", "cross_leg_crop", "side_lie_crop", "hug_knee_crop", "windowsill_crop", "reclined_knees_crop"):
+        # calf-crop families only (no full-foot; no cross/hug — high deformity on gpt-image)
+        for key in ("sit_crop", "kneel_crop", "side_lie_crop", "windowsill_crop", "reclined_knees_crop"):
             self.assertTrue(any(p == key for p in found), f"missing pose family {key} in {found}")
+        self.assertFalse(any(p in found for p in ("cross_leg_crop", "hug_knee_crop")), f"retired poses leaked: {found}")
         self.assertTrue(all(p.endswith("_crop") for p in found), f"non-crop poses leaked: {found}")
         forced_crop = None
         with patch("astrbot_plugin_selfie_image.main.random.choices", side_effect=[["sit_crop"], ["白丝"]]):
@@ -4692,6 +4693,7 @@ class LegFocusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             final_crop = PersonaManager(tmp).build_selfie_prompt(forced_crop, "小助", "温柔", True, 0)
         self.assertIn("脚部画外", final_crop)
+        self.assertNotIn("换装要求", final_crop)
         self.assertTrue(("双脚完整裁出画外" in final_crop) or ("双脚裁出画外" in final_crop), final_crop)
         self.assertTrue(any(k in final_crop for k in ("袜口", "卷边", "平口", "丝带", "腿环", "花纹")), final_crop)
         for conflict in ("脚趾五个分开", "身体从入镜部位连续到脚", "包住整脚到脚趾", "勒进大腿肉"):

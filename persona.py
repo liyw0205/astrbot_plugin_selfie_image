@@ -550,9 +550,16 @@ class PersonaManager:
         elif is_legs_only:
             is_group_photo = False
             is_multi = False
-        use_today = False if is_cos_look else (
-            not compact or includes_any(compact, ["看看你", "看下你", "你长什么样", "你的样子", "今日穿搭", "今天穿搭", "今天这身"])
-        )
+            # 光腿/白丝/黑丝 are legwear, not outfit-change; 换装 line confuses gpt-image.
+            change_clothes = False
+            use_today = False
+        else:
+            use_today = (
+                not compact
+                or includes_any(compact, ["看看你", "看下你", "你长什么样", "你的样子", "今日穿搭", "今天穿搭", "今天这身"])
+            )
+        if is_cos_look:
+            use_today = False
         has_ref_hint = includes_any(
             compact,
             [

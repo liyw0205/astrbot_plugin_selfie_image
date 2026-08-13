@@ -3422,12 +3422,12 @@ class SelfieImagePlugin(Star):
         """生成单一腿部姿势，并按姿势选择腿部穿搭。用户点名白丝/黑丝/光腿时强制采用。"""
         pose_pool = [
             # Default: crop feet/calves off-frame — feet ruin aesthetics ~80% of the time.
-            ("sit_crop", 4),
-            ("kneel_crop", 3),
-            ("cross_leg_crop", 3),
+            # cross_leg_crop / hug_knee_crop removed from pool: gpt-image often grows a 3rd leg
+            # or pulls calves+feet into frame despite crop text.
+            ("sit_crop", 5),
+            ("kneel_crop", 4),
             ("reclined_knees_crop", 3),
-            ("side_lie_crop", 2),
-            ("hug_knee_crop", 1),
+            ("side_lie_crop", 3),
             ("windowsill_crop", 2),
         ]
         if avoid_pose:
@@ -3492,9 +3492,10 @@ class SelfieImagePlugin(Star):
             ],
             "hug_knee_crop": [
                 (
-                    "抱膝大腿近景：镜头贴近大腿与膝部，画面不露脸、不露肩颈；"
-                    "双膝收近身前但不要顶到脸部区域，双手从肩肘连续抱膝；"
-                    "小腿和双脚裁出画外；腕手与胳膊都在画面内且相连，重心稳定，突出腿形。"
+                    "抱膝大腿近景：坐稳，双膝并拢朝上收在身前；"
+                    "双手只放在大腿中上段靠近膝盖处轻扶，不要伸到小腿或脚踝；"
+                    "镜头只拍裙摆到膝部，小腿和双脚完整裁出画外；"
+                    "画面只有左右各一条大腿和各一个膝盖，禁止多腿、禁止脚尖入镜。"
                 ),
             ],
             "cross_leg": [
