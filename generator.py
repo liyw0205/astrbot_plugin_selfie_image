@@ -139,10 +139,20 @@ async def generate_image_with_fallback(
                 # Still give a short try, but leave at least ~15s for next model.
                 per_try = max(15, int(remaining) - 15)
             try:
-                result = await asyncio.wait_for(
-                    _generate_with_target_proxy(active_target, session, req),
-                    timeout=per_try,
-                )
+                work = asyncio.create_task(_generate_with_target_proxy(active_target, session, req))
+                done, _ = await asyncio.wait({work}, timeout=per_try)
+                if work not in done:
+                    work.cancel()
+
+                    async def _drain(t: asyncio.Task) -> None:
+                        try:
+                            await t
+                        except Exception:
+                            pass
+
+                    asyncio.create_task(_drain(work))
+                    raise asyncio.TimeoutError
+                result = work.result()
                 attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
                 if result.images and not result.error:
                     attempt_info["success"] = True
