@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.75")
+        self.assertEqual(PLUGIN_VERSION, "1.3.76")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3046,6 +3046,30 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual([target.label for target in plugin.config.get_prioritized_targets()], ["main/gpt-image-2", "main/gpt-image-1"])
         self.assertEqual(plugin.config.web_token, "secret")
         self.assertEqual(plugin.config.web_host, "127.0.0.1")
+
+        response = client.post(
+            "/api/config",
+            json={
+                "config": {
+                    "image_channels": [
+                        {
+                            "name": "main",
+                            "provider_type": "openai",
+                            "base_url": "https://example.test",
+                            "model": "gpt-image-1",
+                            "enabled_models": ["gpt-image-1", "gpt-image-2"],
+                            "enabled": False,
+                        }
+                    ],
+                }
+            },
+            headers=headers,
+        )
+        data = response.get_json()["data"]
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["image_channels"][0]["enabled"], False)
+        self.assertEqual(plugin.config.image_channels[0].enabled, False)
+        self.assertEqual(plugin.config.get_prioritized_targets(), [])
 
     def test_config_api_rejects_invalid_json_shapes(self) -> None:
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")

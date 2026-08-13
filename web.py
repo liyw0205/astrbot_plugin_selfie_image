@@ -488,7 +488,7 @@ INDEX_HTML = r"""<!doctype html>
           <button class="secondary" type="button" onclick="addVideoChannel()">加视频渠道</button>
         </div>
       </div>
-      <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。新建/编辑渠道点「保存渠道」才写入；列表里启停、删除、复制和优先级会自动保存。启用但没选模型时会自动关掉该渠道。</p>
+      <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。新建/编辑渠道点「保存渠道」才写入；列表里启停会马上保存，删除、复制和优先级也会自动保存。启用但没选模型时会自动关掉该渠道。</p>
       <div class="tabs-inline" role="tablist" aria-label="渠道分类">
         <button id="channelTabImage" class="active" type="button" onclick="switchChannelPane('image')">生图渠道</button>
         <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">审核渠道</button>
@@ -1505,7 +1505,7 @@ Source prompt:
         api_key: String(ch.api_key || ch.apiKey || '').trim(),
         model: String(ch.model || enabled[0] || '').trim(),
         timeout: Number(ch.timeout || (videoType ? 300 : 280)),
-        enabled: ch.enabled !== false,
+        enabled: !(ch.enabled === false || ch.enabled === 'false' || ch.enabled === 0),
         enabled_models: enabled,
         model_download_proxy_ids: collectModelDownloadProxyIds(ch, enabled),
         model_provider_types: collectModelProviderTypes(Object.assign({}, ch, {provider_type: providerType}), enabled),
@@ -2287,7 +2287,14 @@ Source prompt:
         setStatus('configStatus', e.message);
       }
     }
+    let PERSIST_TAIL = Promise.resolve(true);
     async function persistConfig(renderAfterSave = false, okText = '配置已保存', options = {}) {
+      const run = () => persistConfigNow(renderAfterSave, okText, options);
+      const next = PERSIST_TAIL.then(run, run);
+      PERSIST_TAIL = next.then(() => true, () => true);
+      return next;
+    }
+    async function persistConfigNow(renderAfterSave = false, okText = '配置已保存', options = {}) {
       const toastOnOk = options.toast === true;
       const toastOnError = options.toastError !== false;
       const quiet = options.quiet === true;
@@ -2673,8 +2680,9 @@ Source prompt:
 
     function scheduleChannelListAutoSave() {
       if (isChannelModalOpen()) return;
-      // Quiet save avoids rebuilding channel cards.
-      scheduleAutoSave('', { reason: 'channel-list', silentStatus: true, toast: false, delay: 280 });
+      // List enable/disable must flush now. Sharing AUTO_SAVE_TIMER with the form
+      // debounce let a later keystroke cancel the persist, so refresh restored enabled.
+      persistConfig(false, '', { toast: false, toastError: true, quiet: true });
     }
     async function saveJsonConfig() {
       try {
