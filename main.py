@@ -87,7 +87,7 @@ from .providers import (
     provider_type_from_channel_payload,
 )
 from .reference_collector import ReferenceCollector
-from .proxy import channel_client_session, http_proxy_url, target_session_proxy
+from .proxy import channel_client_session, http_proxy_url, image_client_timeout, target_session_proxy
 from .video import VideoGenerateRequest, generate_video_with_fallback
 from .utils import (
     bytes_to_data_url,
@@ -1976,6 +1976,15 @@ class SelfieImagePlugin(Star):
 
 
     def _record_task(self, record: Dict[str, Any]) -> None:
+        payload = copy.deepcopy(record)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._commit_generation_records(payload)
+            return
+        loop.create_task(asyncio.to_thread(self._commit_generation_records, payload))
+
+    def _commit_generation_records(self, record: Dict[str, Any]) -> None:
         # One generated image per monitor row. Batch/concurrency must not pile shots together.
         for piece in split_generation_record_images(record):
             self._commit_generation_record(piece)
@@ -4210,7 +4219,7 @@ class SelfieImagePlugin(Star):
         # trust_env=False: channel.proxy is explicit; do not inherit process HTTP(S)_PROXY
         # (common on ops hosts) and silently stall NewAPI image downloads/posts.
         async with self._semaphore:
-            async with aiohttp.ClientSession(trust_env=False) as session:
+            async with aiohttp.ClientSession(trust_env=False, timeout=image_client_timeout()) as session:
                 result = await generate_image_with_fallback(selected_targets, request, session, max_attempts=max_attempts)
         self._remember_unhealthy_channels(getattr(result, "attempts", None))
         elapsed = time.monotonic() - started

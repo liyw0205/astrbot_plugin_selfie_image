@@ -10,6 +10,12 @@ from urllib.parse import quote, unquote, urlparse
 import aiohttp
 
 
+def image_client_timeout(seconds: Optional[int] = None) -> aiohttp.ClientTimeout:
+    """Bound waits so a hung upstream cannot occupy the event loop for minutes."""
+    total = max(20, min(90, int(seconds or 90)))
+    return aiohttp.ClientTimeout(total=total, connect=10, sock_connect=10, sock_read=45)
+
+
 @dataclass(frozen=True)
 class ChannelProxy:
     scheme: str
@@ -86,7 +92,11 @@ async def channel_client_session(proxy_value: str, fallback: aiohttp.ClientSessi
     except ImportError as exc:
         raise RuntimeError("SOCKS5 代理需要安装 aiohttp-socks") from exc
     connector = ProxyConnector.from_url(proxy.url)
-    async with aiohttp.ClientSession(connector=connector, trust_env=False) as session:
+    async with aiohttp.ClientSession(
+        connector=connector,
+        trust_env=False,
+        timeout=image_client_timeout(),
+    ) as session:
         yield session
 
 

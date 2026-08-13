@@ -134,7 +134,7 @@ async def generate_image_with_fallback(
             # Reserve budget for later channels so one slow timeout cannot burn the whole global window.
             remaining_targets = max(0, len([t for t in targets if t.label not in skip_labels]) - 1)
             reserve = min(45, int(remaining // 3)) if remaining_targets > 0 else 0
-            per_try = max(1, min(target.timeout, int(remaining) - reserve))
+            per_try = max(1, min(75, int(target.timeout or 75), int(remaining) - reserve))
             if per_try < 15 and remaining_targets > 0 and remaining > 20:
                 # Still give a short try, but leave at least ~15s for next model.
                 per_try = max(15, int(remaining) - 15)

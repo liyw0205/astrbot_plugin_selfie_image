@@ -34,6 +34,7 @@ from .provider_parser import (
     resolve_response_url,
 )
 from .utils import bytes_to_data_url, normalize_image_mime
+from .proxy import image_client_timeout
 
 
 @dataclass
@@ -91,7 +92,7 @@ class BaseImageAdapter:
             url,
             json=payload,
             headers=self.build_json_headers(headers, bearer_auth=bearer_auth),
-            timeout=aiohttp.ClientTimeout(total=self.target.timeout),
+            timeout=image_client_timeout(self.target.timeout),
             proxy=str(self.target.proxy or "").strip() or None,
         )
 
@@ -373,7 +374,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
             url,
             data=self._build_edit_form(req, image_field_name, include_size=include_size),
             headers=headers,
-            timeout=aiohttp.ClientTimeout(total=self.target.timeout),
+            timeout=image_client_timeout(self.target.timeout),
             proxy=str(self.target.proxy or "").strip() or None,
         ) as response:
             return await self.response_json_or_error(response)
@@ -802,7 +803,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
         mode = self._mode()
         url = self._endpoint(mode)
         proxy = str(self.target.proxy or "").strip() or None
-        timeout = aiohttp.ClientTimeout(total=self.target.timeout)
+        timeout = image_client_timeout(self.target.timeout)
         try:
             if mode == "official":
                 payload = self.build_official_payload(req)
