@@ -729,7 +729,6 @@ class SelfieImagePlugin(Star):
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self._video_semaphore = asyncio.Semaphore(max(1, int(getattr(self.config, "video_max_concurrent_tasks", 1) or 1)))
-        self._channel_skip_until: Dict[str, float] = {}
         self.web_server = FlaskWebServer(self)
         self.dashboard_api = SelfieImageDashboardAPI(self)
         try:
@@ -4221,7 +4220,6 @@ class SelfieImagePlugin(Star):
         async with self._semaphore:
             async with aiohttp.ClientSession(trust_env=False, timeout=image_client_timeout()) as session:
                 result = await generate_image_with_fallback(selected_targets, request, session, max_attempts=max_attempts)
-        self._remember_unhealthy_channels(getattr(result, "attempts", None))
         elapsed = time.monotonic() - started
 
         if result.error or not result.images:
@@ -4550,11 +4548,11 @@ class SelfieImagePlugin(Star):
         targets: Optional[List[ImageModelTarget]] = None,
     ) -> List[ImageModelTarget]:
         if targets is not None:
-            return self._drop_cooled_targets(list(targets))
+            return list(targets)
         all_targets = self.config.get_prioritized_targets()
         override = self._get_session_model_override(event)
         if not override or not all_targets:
-            return self._drop_cooled_targets(all_targets)
+            return all_targets
         preferred: List[ImageModelTarget] = []
         for target in all_targets:
             if target.label == override:
@@ -4567,39 +4565,9 @@ class SelfieImagePlugin(Star):
                     preferred.append(target)
                     break
         if not preferred:
-            return self._drop_cooled_targets(all_targets)
+            return all_targets
         rest = [target for target in all_targets if target.label != preferred[0].label]
-        return self._drop_cooled_targets(preferred + rest)
-
-    def _remember_unhealthy_channels(self, attempts: Optional[List[Any]] = None) -> None:
-        now = time.time()
-        if not hasattr(self, "_channel_skip_until") or self._channel_skip_until is None:
-            self._channel_skip_until = {}
-        for item in attempts or []:
-            if not isinstance(item, dict) or item.get("success"):
-                continue
-            label = str(item.get("label") or "")
-            channel = label.split("/")[0].strip()
-            if not channel:
-                continue
-            category = str(item.get("error_category") or "")
-            error = str(item.get("error") or "")
-            if category in {"rate_limit", "timeout", "auth"} or "积分不足" in error or "No active tokens" in error:
-                self._channel_skip_until[channel] = now + 480
-                logger.info(f"[SelfieImage] cool channel={channel} 8min cat={category or 'quota'}")
-
-    def _drop_cooled_targets(self, targets: List[ImageModelTarget]) -> List[ImageModelTarget]:
-        now = time.time()
-        skip_until = getattr(self, "_channel_skip_until", None) or {}
-        kept = [
-            target
-            for target in targets
-            if float(skip_until.get(target.channel_name, 0) or 0) <= now
-        ]
-        dropped = [target.label for target in targets if target not in kept]
-        if dropped:
-            logger.info(f"[SelfieImage] skip cooled targets: {dropped}")
-        return kept
+        return preferred + rest
 
     def _list_image_tasks_for_session(
         self,
