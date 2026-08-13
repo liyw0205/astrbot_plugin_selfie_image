@@ -237,6 +237,9 @@ LEGWEAR_BY_POSE = {
     "kneel_front": (("光腿神器", 6), ("白丝", 2), ("黑丝", 2)),
     "floor_fold": (("光腿神器", 6), ("白丝", 2), ("黑丝", 2)),
     "reclined_knees_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 3)),
+    "floor_knees_up_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
+    "desk_sit_crop": (("光腿神器", 3), ("白丝", 4), ("黑丝", 3)),
+    "bed_supine_crop": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
 }
 
 # Poses that crop calves/feet off-frame to reduce weird lower-leg anatomy.
@@ -3431,6 +3434,9 @@ class SelfieImagePlugin(Star):
             ("reclined_knees_crop", 3),
             ("side_lie_crop", 3),
             ("windowsill_crop", 2),
+            ("floor_knees_up_crop", 3),
+            ("desk_sit_crop", 3),
+            ("bed_supine_crop", 3),
         ]
         if avoid_pose:
             filtered = [(name, w) for name, w in pose_pool if name != avoid_pose]
@@ -3469,6 +3475,11 @@ class SelfieImagePlugin(Star):
                     "跪坐大腿特写：双膝并拢跪坐，大腿自然并拢；"
                     "镜头贴近衣摆到膝部，小腿和双脚裁出画外；"
                     "髋膝连续，不要硬拗。"
+                ),
+                (
+                    "跪坐掀衣摆近景：双膝并拢跪在地毯上，大腿贴紧；"
+                    "一手轻轻掀开衣摆下沿，只露大腿到膝；"
+                    "小腿和双脚裁出画外，不要露腰腹特写。"
                 ),
             ],
             "side_lie": [
@@ -3571,6 +3582,27 @@ class SelfieImagePlugin(Star):
                     "两侧髋膝连接连续，左右腿边界清楚。"
                 ),
             ],
+            "floor_knees_up_crop": [
+                (
+                    "席地屈膝朝上：坐在室内地面，双膝并拢朝上收在身前；"
+                    "镜头贴近衣摆到膝部，一手可轻放大腿中段外侧；"
+                    "小腿和双脚完整裁出画外，不要露脸。"
+                ),
+            ],
+            "desk_sit_crop": [
+                (
+                    "书桌前坐姿近景：坐在桌前椅子上，双膝朝镜头并拢弯曲；"
+                    "背景可带桌沿，只拍衣摆、大腿与膝部；"
+                    "小腿和双脚裁出画外，髋膝连续。"
+                ),
+            ],
+            "bed_supine_crop": [
+                (
+                    "床上仰躺屈膝：躺在床上，双膝并拢弯向身体一侧；"
+                    "镜头贴近衣摆到膝部，小腿和双脚裁出画外；"
+                    "髋膝连续，居家随手拍，不要露脸。"
+                ),
+            ],
         }
         pose_labels = {
             "sit": "椅上垂腿全镜",
@@ -3590,6 +3622,9 @@ class SelfieImagePlugin(Star):
             "kneel_front": "正面跪坐全腿",
             "floor_fold": "高位俯拍屈膝坐",
             "reclined_knees_crop": "后仰屈膝大腿近景",
+            "floor_knees_up_crop": "席地屈膝朝上",
+            "desk_sit_crop": "书桌前坐姿近景",
+            "bed_supine_crop": "床上仰躺屈膝",
         }
         variants = pose_variants.get(pose_bucket) or pose_variants["sit_crop"]
         pose_label = pose_labels.get(pose_bucket, "坐姿大腿近景")

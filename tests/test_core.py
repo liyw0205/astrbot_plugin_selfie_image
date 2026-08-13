@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.79")
+        self.assertEqual(PLUGIN_VERSION, "1.3.80")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4703,7 +4703,16 @@ class LegFocusTests(unittest.TestCase):
                 self.assertNotIn("脚部自然完整", t)
                 self.assertNotIn("脚趾自然清晰", t)
         # calf-crop families only (no full-foot; no cross/hug — high deformity on gpt-image)
-        for key in ("sit_crop", "kneel_crop", "side_lie_crop", "windowsill_crop", "reclined_knees_crop"):
+        for key in (
+            "sit_crop",
+            "kneel_crop",
+            "side_lie_crop",
+            "windowsill_crop",
+            "reclined_knees_crop",
+            "floor_knees_up_crop",
+            "desk_sit_crop",
+            "bed_supine_crop",
+        ):
             self.assertTrue(any(p == key for p in found), f"missing pose family {key} in {found}")
         self.assertFalse(any(p in found for p in ("cross_leg_crop", "hug_knee_crop")), f"retired poses leaked: {found}")
         self.assertTrue(all(p.endswith("_crop") for p in found), f"non-crop poses leaked: {found}")
