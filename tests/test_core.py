@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.70")
+        self.assertEqual(PLUGIN_VERSION, "1.3.71")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4712,7 +4712,8 @@ class LegFocusTests(unittest.TestCase):
         self.assertEqual(set(plugin_main.LEGWEAR_PROMPTS), {"光腿神器", "白丝", "黑丝"})
         bare_leg = plugin_main.LEGWEAR_PROMPTS["光腿神器"]
         self.assertIn("光腿效果", bare_leg)
-        self.assertIn("干净匀净", bare_leg)
+        self.assertIn("皮肤纹理", bare_leg)
+        self.assertNotIn("干净匀净", bare_leg)
         self.assertIn("不展示脚部", bare_leg)
         self.assertNotIn("脚趾自然清晰", bare_leg)
         for name in ("白丝", "黑丝"):

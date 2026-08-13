@@ -82,11 +82,12 @@ def build_selfie_builtin_prompt(
         if is_legs:
             if feet_cropped:
                 lines.extend([
-                    "Single subject, close first-person downward shot: show only a little waist or skirt, thighs, and knees; crop both ankles and feet fully outside the frame.",
+                    "Amateur phone snapshot of a single subject: only a little waist or skirt, thighs, and knees; crop both ankles and feet fully outside the frame.",
                     "Do not show the face, hair, or head; crop the face fully outside the frame; no knees pressed against the face.",
                     "Keep exactly two natural thighs and knees connected from the hips.",
-                    "Use only the selected bare-leg effect or separate white/black opaque thigh-high stockings; cuff may be plain, rolled, or ribboned, optional lace/pattern or a thigh strap; show leg shape, not skin through; never become tights.",
-                    "Do not add toes, soles, shoes, or any foot detail; preserve natural close-range perspective without forced symmetry.",
+                    "Natural skin texture and pores; no beauty-filter smoothing, no porcelain or plastic sheen, no studio softbox look.",
+                    "Use only the selected bare-leg effect or separate white/black opaque thigh-high stockings with visible fabric texture; cuff may be plain, rolled, or ribboned, optional lace/pattern or a thigh strap; show leg shape, not skin through; never become tights.",
+                    "Do not add toes, soles, shoes, or any foot detail; keep casual indoor light and unforced perspective.",
                 ])
             else:
                 lines.extend([
