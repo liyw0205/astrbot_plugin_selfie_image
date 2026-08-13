@@ -110,7 +110,7 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
             # Create-image POST timeout: do not blindly resubmit same billable job.
             "retryable": False,
             "http_status": status,
-            "user_message": "生图请求超时（为避免重复扣费，不会自动重提同一请求）",
+            "user_message": "该模型超时，已改试下一个",
             "raw": text,
         }
 

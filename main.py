@@ -3194,16 +3194,15 @@ class SelfieImagePlugin(Star):
         request = str(user_request or "").strip()
         kind_text = "自拍/拍照" if kind == "selfie" else "图片请求"
         count_text = "多张" if count > 1 else "一张"
-        personality = str(self.config.personality or "").strip()
         return "\n".join(
             [
                 f"你是{name}，正在和用户自然聊天。",
                 f"用户刚通过指令发起了{kind_text}，数量：{count_text}。",
                 "请只输出一句简体中文短回复，像正在聊天时随口接一句。",
-                "要求：10-32 个汉字；结合最近上下文和人设；不要复述用户提示词；不要解释；不要列点。",
+                "要求：10-32 个汉字；结合最近上下文；不要复述用户提示词；不要解释；不要列点。",
                 "禁止出现：生成、绘制、渲染、工具、提示词、配置、审核、任务、处理中、已收到、开始、为你。",
+                "不要套用人设、语气词或氛围设定；只按当前对话自然接一句。",
                 "如果是自拍/拍照，可以表现为找角度、看光线、调整镜头；如果是普通图片，可以表现为整理画面或构图。",
-                f"人设补充：{personality[:300]}" if personality else "",
                 f"最近对话：\n{context_text}" if context_text else "最近对话：无",
                 f"当前请求：{request[:300]}",
                 "只输出这一句回复：",
@@ -4219,7 +4218,13 @@ class SelfieImagePlugin(Star):
         # (common on ops hosts) and silently stall NewAPI image downloads/posts.
         async with self._semaphore:
             async with aiohttp.ClientSession(trust_env=False, timeout=image_client_timeout()) as session:
-                result = await generate_image_with_fallback(selected_targets, request, session, max_attempts=max_attempts)
+                result = await generate_image_with_fallback(
+                    selected_targets,
+                    request,
+                    session,
+                    max_attempts=max_attempts,
+                    global_timeout=self.config.image_global_timeout,
+                )
         elapsed = time.monotonic() - started
 
         if result.error or not result.images:

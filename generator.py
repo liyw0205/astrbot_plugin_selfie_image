@@ -18,7 +18,7 @@ import aiohttp
 
 from .error_classify import classify_generation_error
 from .models import ImageModelTarget
-from .proxy import channel_client_session, target_session_proxy
+from .proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, target_session_proxy
 from .providers import ImageGenerateRequest, ImageGenerateResult, create_adapter
 from .utils import redact_sensitive_data, redact_sensitive_text
 
@@ -86,12 +86,13 @@ async def generate_image_with_fallback(
     req: ImageGenerateRequest,
     session: aiohttp.ClientSession,
     max_attempts: Optional[int] = None,
+    global_timeout: Optional[int] = None,
 ) -> ImageGenerateResult:
     if not targets:
         return ImageGenerateResult(error="未配置生图模型")
 
-    global_timeout = max(10, int(targets[0].timeout or 180))
-    deadline = time.monotonic() + global_timeout
+    chain_timeout = max(10, int(global_timeout or targets[0].timeout or 180))
+    deadline = time.monotonic() + chain_timeout
     last_error = "未配置生图模型"
     total_attempts = max(1, int(max_attempts)) if max_attempts is not None else max(IMAGE_RETRY_ATTEMPTS, len(targets))
     attempts: List[Dict[str, Any]] = []
@@ -102,7 +103,7 @@ async def generate_image_with_fallback(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return ImageGenerateResult(
-                error=redact_sensitive_text(f"生图全局超时（{global_timeout}秒），最后错误: {last_error}"),
+                error=redact_sensitive_text(f"生图全局超时（{chain_timeout}秒），最后错误: {last_error}"),
                 attempts=redact_sensitive_data(attempts),
             )
 
@@ -128,13 +129,13 @@ async def generate_image_with_fallback(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return ImageGenerateResult(
-                    error=redact_sensitive_text(f"生图全局超时（{global_timeout}秒），最后错误: {last_error}"),
+                    error=redact_sensitive_text(f"生图全局超时（{chain_timeout}秒），最后错误: {last_error}"),
                     attempts=redact_sensitive_data(attempts),
                 )
             # Reserve budget for later channels so one slow timeout cannot burn the whole global window.
             remaining_targets = max(0, len([t for t in targets if t.label not in skip_labels]) - 1)
             reserve = min(45, int(remaining // 3)) if remaining_targets > 0 else 0
-            per_try = max(1, min(75, int(target.timeout or 75), int(remaining) - reserve))
+            per_try = max(1, min(LOCAL_IMAGE_WAIT_SECONDS, int(target.timeout or LOCAL_IMAGE_WAIT_SECONDS), int(remaining) - reserve))
             if per_try < 15 and remaining_targets > 0 and remaining > 20:
                 # Still give a short try, but leave at least ~15s for next model.
                 per_try = max(15, int(remaining) - 15)
@@ -207,10 +208,10 @@ async def generate_image_with_fallback(
                     attempts=redact_sensitive_data(attempts),
                 )
             except asyncio.TimeoutError:
-                last_error = f"{label}: 请求超时（为避免重复扣费，不会自动重提同一请求）"
+                last_error = f"{label}: 请求超时，改试下一个模型"
                 attempt_info["success"] = False
                 attempt_info["error"] = "请求超时"
-                attempt_info["error_user_message"] = "生图请求超时（为避免重复扣费，不会自动重提同一请求）"
+                attempt_info["error_user_message"] = "该模型超时，已改试下一个"
                 attempt_info["error_category"] = "timeout"
                 attempt_info["retryable"] = False
                 attempt_info["elapsed_seconds"] = round(time.monotonic() - started, 2)
@@ -256,7 +257,7 @@ async def generate_image_with_fallback(
             wait_seconds = min(attempt, 2)
             if deadline - time.monotonic() <= wait_seconds:
                 return ImageGenerateResult(
-                    error=redact_sensitive_text(f"生图全局超时（{global_timeout}秒），最后错误: {last_error}"),
+                    error=redact_sensitive_text(f"生图全局超时（{chain_timeout}秒），最后错误: {last_error}"),
                     attempts=redact_sensitive_data(attempts),
                 )
             await asyncio.sleep(wait_seconds)

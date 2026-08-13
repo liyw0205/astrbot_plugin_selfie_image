@@ -10,10 +10,13 @@ from urllib.parse import quote, unquote, urlparse
 import aiohttp
 
 
+LOCAL_IMAGE_WAIT_SECONDS = 180
+
+
 def image_client_timeout(seconds: Optional[int] = None) -> aiohttp.ClientTimeout:
-    """Bound waits so a hung upstream cannot occupy the event loop for minutes."""
-    total = max(20, min(90, int(seconds or 90)))
-    return aiohttp.ClientTimeout(total=total, connect=10, sock_connect=10, sock_read=45)
+    """Local wait when upstream does not return. Cap 180s; do not use 45/75/90 short cuts."""
+    total = max(20, min(LOCAL_IMAGE_WAIT_SECONDS, int(seconds or LOCAL_IMAGE_WAIT_SECONDS)))
+    return aiohttp.ClientTimeout(total=total, connect=10, sock_connect=10, sock_read=total)
 
 
 @dataclass(frozen=True)

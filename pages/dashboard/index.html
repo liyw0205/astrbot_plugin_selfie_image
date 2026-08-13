@@ -612,7 +612,7 @@
         <div><label>默认比例</label><select id="defaultAspect"></select></div>
         <div><label>默认清晰度</label><select id="defaultResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
         <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="20" title="同一时间最多几张图一起请求上游；批量 /看看COS 10 会按这个数并发"></div>
-        <div><label>整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
+        <div><label title="全部模型依次请求到结束的最长等待">整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
         <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
         <div><label>一次最多连画几轮</label><input id="maxBatchCount" type="number" min="1" max="20" title="一条指令最多画几张，例如 /看看腿 10"></div>
         <div><label>连画失败时</label>
@@ -642,7 +642,7 @@
         <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
       </div>
       <label>人设（语气与氛围）</label><textarea id="selfiePersonality"></textarea>
-      <label class="checkline" title="开启：没有上传形象参考图时，用插件 logo 作为形象图；关闭：不注图，只按人设文案生成"><input id="useLogoWhenNoPersona" type="checkbox" checked> 无形象图用 logo（关则走人设）</label>
+      <label class="checkline" title="开启：没有上传形象参考图时，用插件 logo 作为形象图；关闭：不注图，只按人设文案生成。人设只用于这种无图文生图，不会注入对话或进度回复。"><input id="useLogoWhenNoPersona" type="checkbox" checked> 无形象图用 logo（关则走人设）</label>
       <div class="grid">
         <div>
           <label>形象类型</label>

@@ -307,7 +307,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 data, error = await self.post_json_data_or_error(url, payload)
             except asyncio.TimeoutError:
                 return ImageGenerateResult(
-                    error=f"OpenAI 生图请求超时（{self.target.timeout}秒；为避免重复扣费，不会自动重提）"
+                    error=f"OpenAI 生图请求超时（{self.target.timeout}秒）"
                 )
             if error or data is None:
                 last_error = error or "接口未返回有效 JSON"
@@ -425,7 +425,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 break
             return ImageGenerateResult(error=last_error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
-            return ImageGenerateResult(error=f"OpenAI 图生图请求超时（{self.target.timeout}秒；为避免重复扣费，不会自动重提）")
+            return ImageGenerateResult(error=f"OpenAI 图生图请求超时（{self.target.timeout}秒）")
 
 
 class GeminiImageAdapter(BaseImageAdapter):
