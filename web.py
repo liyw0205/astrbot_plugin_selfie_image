@@ -669,7 +669,7 @@ INDEX_HTML = r"""<!doctype html>
       <div class="grid4">
         <div><label>默认比例</label><select id="defaultAspect"></select></div>
         <div><label>默认清晰度</label><select id="defaultResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
-        <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="20" title="同一时间最多几张图一起请求上游；批量 /看看COS 10 会按这个数并发"></div>
+        <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="3" title="同一时间最多几张一起请求上游，硬上限 3；/看看腿 10 会 3→3→3→1"></div>
         <div><label>整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
         <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
         <div><label>一次最多连画几轮</label><input id="maxBatchCount" type="number" min="1" max="20" title="一条指令最多画几张，例如 /看看腿 10"></div>
@@ -1264,7 +1264,7 @@ Source prompt:
       };
       CONFIG.image.default_aspect_ratio = $('defaultAspect').value || $('selfieAspect').value || '自动';
       CONFIG.image.default_resolution = $('defaultResolution').value || '1K';
-      CONFIG.image.max_concurrent_tasks = Number($('maxConcurrent').value || 3);
+      CONFIG.image.max_concurrent_tasks = Math.min(3, Math.max(1, Number($('maxConcurrent').value || 3)));
       CONFIG.image.global_timeout = Number($('globalTimeout').value || 280);
       CONFIG.image.max_image_size_mb = Number($('maxImageSize').value || 10);
       CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 100);

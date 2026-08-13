@@ -388,7 +388,7 @@ class AICatConfig:
             image_enable_llm_tool=to_bool(image.get("enable_llm_tool"), True),
             image_default_aspect_ratio=str(image.get("default_aspect_ratio") or "自动").strip() or "自动",
             image_default_resolution=str(image.get("default_resolution") or "1K").strip() or "1K",
-            image_max_concurrent_tasks=to_int(image.get("max_concurrent_tasks"), 3, minimum=1, maximum=20),
+            image_max_concurrent_tasks=to_int(image.get("max_concurrent_tasks"), 3, minimum=1, maximum=3),
             image_global_timeout=to_int(image.get("global_timeout"), 180, minimum=10, maximum=900),
             image_max_image_size_mb=to_int(image.get("max_image_size_mb"), 10, minimum=1, maximum=100),
             image_cache_limit_mb=to_int(image.get("cache_limit_mb"), 100, minimum=10, maximum=102400),

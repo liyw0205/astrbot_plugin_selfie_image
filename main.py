@@ -5265,24 +5265,37 @@ class SelfieImagePlugin(Star):
         skipped_shots = 0
         send_lock = asyncio.Lock()
         stop_error = ""
-        inflight = max(1, int(getattr(self.config, "image_max_concurrent_tasks", 3) or 3))
-        slot_timeout = 180
+        inflight = max(1, min(3, int(getattr(self.config, "image_max_concurrent_tasks", 3) or 3)))
+        slot_timeout = 120
         logger.info(f"[SelfieImage] batch start task={task_id} total={total} inflight={inflight}")
 
         async def _one(index: int, factory: Any) -> Dict[str, Any]:
             if self._task_cancel_requested(task_id) or stop_error:
                 return {"success": False, "cancelled": True, "index": index}
-            try:
-                result = await asyncio.wait_for(factory(), timeout=slot_timeout)
-            except asyncio.TimeoutError:
-                return {"success": False, "error": f"这一张超过{slot_timeout}秒未完成", "index": index}
-            except asyncio.CancelledError:
-                return {"success": False, "cancelled": True, "index": index}
-            except Exception as exc:
-                return {"success": False, "error": str(exc), "index": index}
-            result = dict(result or {})
-            result["index"] = index
-            return result
+            # Hard timeout: do NOT use wait_for — it waits for cancellation of hung
+            # aiohttp calls and can block the whole wave/semaphore forever.
+            work = asyncio.create_task(factory())
+            done, _ = await asyncio.wait({work}, timeout=slot_timeout)
+            if work in done:
+                try:
+                    result = work.result()
+                except asyncio.CancelledError:
+                    return {"success": False, "cancelled": True, "index": index}
+                except Exception as exc:
+                    return {"success": False, "error": str(exc), "index": index}
+                result = dict(result or {})
+                result["index"] = index
+                return result
+            work.cancel()
+
+            async def _drain(t: asyncio.Task) -> None:
+                try:
+                    await t
+                except Exception:
+                    pass
+
+            asyncio.create_task(_drain(work))
+            return {"success": False, "error": f"这一张超过{slot_timeout}秒未完成", "index": index}
 
         async def _emit_message(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             nonlocal skipped_shots, used_model, last_elapsed, stop_error
@@ -5364,8 +5377,7 @@ class SelfieImagePlugin(Star):
                     if early:
                         for leftover in pending:
                             leftover.cancel()
-                        if pending:
-                            await asyncio.gather(*pending, return_exceptions=True)
+                        # Do not await leftovers — hung upstream cancel can block forever.
                         return early
         return {
             "success": True,
