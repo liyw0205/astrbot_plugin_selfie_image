@@ -679,12 +679,12 @@ class PersonaManager:
         if intent.is_legs_only and feet_cropped:
             identity_lines = (
                 [
-                    "固定形象参考：参考图一只锁体态、肤色与气质，本张不画脸、不画头发。",
-                    "参考图是女性则保持女性；禁止改成男性。",
+                    "参考图一只锁体态与肤色，本张不画脸。",
+                    "参考图是女性则保持女性。",
                 ]
                 if has_reference_image
                 else [
-                    "本张只拍腿，不画脸；体态自然，默认成年女性。",
+                    "本张只拍腿，不画脸。",
                 ]
             )
         appearance_line = appearance_type_instruction(appearance_type, has_reference_image=has_reference_image)
@@ -749,13 +749,8 @@ class PersonaManager:
             if feet_cropped:
                 mode_lines.extend(
                     [
-                        "【特写自拍 / 晒腿模式 / 脚部画外 / 不露脸】",
-                        "像日常随手拍，不要过度修图。",
-                        "单人近景：只拍少量衣摆、大腿与膝部；双脚裁出画外，脸部也裁出画外。",
-                        "保持参考图一的体态与肤色气质（本张不需要脸）。",
-                        "双腿从髋到膝连续自然，左右各一；坐姿重心稳定，日常可维持；禁止膝盖顶脸。",
-                        "腿部穿搭只用动作描述已选的光腿神器、白丝或黑丝；白丝/黑丝为不透长袜，袜口按动作描述，主要看腿形。",
-                        "严格执行动作描述构图；不补画脚部或脸部。",
+                        "【晒腿模式 / 脚部画外】单人日常随手拍；短裙盖髋，下摆到大腿中段；只拍裙摆到膝；双脚裁出画外，不露脸。",
+                        "体态跟参考图一；左右腿各一，髋膝连续；禁止膝盖顶脸。穿搭只用光腿神器、白丝或黑丝，主要看腿形。",
                     ]
                 )
             else:
@@ -839,13 +834,16 @@ class PersonaManager:
                 ]
             )
 
-        today_lines: list[str] = []
+        if intent.is_legs_only:
+            today_lines = []
+        else:
+            today_lines: list[str] = []
         if daily and daily.outfit and not intent.change_clothes and not intent.is_legs_only and not intent.is_cos_look:
             today_lines.append(f"今日穿搭：{daily.outfit}")
-        if daily and daily.status:
+        if daily and daily.status and not intent.is_legs_only:
             today_lines.append(f"当前时间段：{period_label(current_period())}")
             today_lines.append(f"当前状态：{daily.status}")
-        if daily and daily.mood:
+        if daily and daily.mood and not intent.is_legs_only:
             today_lines.append(f"当前心情：{daily.mood}")
 
         action_line = f"用户要求：{act}" if act else "用户要求：看着镜头自然自拍，展示你现在的样子。"
@@ -899,12 +897,7 @@ class PersonaManager:
         elif intent.is_legs_only:
             if feet_cropped:
                 output_lines = [
-                    "【生成要求】",
-                    "1. 主角身份稳定，画面只有主角一人。",
-                    "2. 近景只露裙摆到膝部；日常短裙盖住髋部，下摆大约到大腿中段；双脚裁出画外，脸部也裁出画外。",
-                    "3. 双腿从髋到膝连续，坐姿重心稳定、日常可维持。",
-                    "4. 穿搭按动作描述选用光腿神器、白丝或黑丝；白丝/黑丝为不透长袜，袜口按动作描述，主要看腿形。",
-                    "5. 日常随手拍，焦点在腿形。",
+                    "【生成要求】短裙盖髋；构图裙摆到膝；双脚裁出画外；穿搭按动作描述的光腿神器、白丝或黑丝不透长袜。",
                 ]
             else:
                 output_lines = [

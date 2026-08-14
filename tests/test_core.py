@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.83")
+        self.assertEqual(PLUGIN_VERSION, "1.3.84")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3992,8 +3992,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("双脚裁出画外", legs)
             self.assertIn("不露脸", legs)
             self.assertIn("晒腿", legs)
-            self.assertIn("髋到膝", legs)
+            self.assertIn("髋膝", legs)
             self.assertIn("禁止膝盖顶脸", legs)
+            self.assertIn("短裙", legs)
             self.assertNotIn("【合影 / 同框模式】", legs)
             self.assertNotIn("幽灵手", legs)
             self.assertNotIn("勒进大腿肉", legs)
@@ -4098,7 +4099,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("微胖软肉", prompt)
             self.assertNotIn("不要大象腿猪腿", prompt)
             self.assertNotIn("【合影 / 同框模式】", prompt)
-            self.assertIn("只有主角一人", prompt)
+            self.assertIn("单人", prompt)
 
         # /看看COS must not be hijacked into 晒腿 by 高叉/与腿 wording
         class _P:
@@ -4314,11 +4315,10 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("脚部画外", text)
             self.assertIn("双脚裁出画外", text)
             self.assertIn("不露脸", text)
-            self.assertTrue(any(k in text for k in ("袜口", "卷边", "平口", "蝴蝶结", "竖纹")), text)
+            self.assertTrue(any(k in text for k in ("髋膝", "短裙")), text)
             for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "袜装", "勒进大腿肉", "半透明", "赤足", "碰脚", "脚趾自然清晰", "完整包住脚部", "中筒丝袜"):
                 self.assertNotIn(forbidden, text)
             self.assertNotIn("微胖软肉", text)
-            self.assertIn("重心稳定", text)
             self.assertNotIn("不要大象腿猪腿", text)
             self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
             self.assertNotIn("· 坐姿拍腿", text)

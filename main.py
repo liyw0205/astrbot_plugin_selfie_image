@@ -3631,16 +3631,8 @@ class SelfieImagePlugin(Star):
         pose_label = pose_labels.get(pose_bucket, "坐姿大腿近景")
         # Look-legs default: never show feet (user aesthetic after many bad foot gens).
         feet_cropped = True
-        hard_crop = (
-            "日常短裙盖住髋部，下摆大约到大腿中段，不要只剩上衣下摆。"
-            "构图只露裙摆、大腿与膝部；两条腿从髋部到膝部连续自然。"
-            "小腿远端离开画面，双脚完整裁出画外。"
-        )
-        anatomy_rules = (
-            "单人限定：只有主角一人。两条大腿与两个膝部左右各一，髋膝连续。"
-            "姿势重心稳定、日常可维持，近景可有近大远小。"
-            "画面焦点在腿形，不要上半身大头自拍构图。"
-        )
+        hard_crop = "短裙盖髋，下摆到大腿中段；只露裙摆到膝；双脚完整裁出画外。"
+        anatomy_rules = "单人；髋膝连续；近景可有近大远小；焦点在腿形。"
         if pose_bucket in {"hug_knee", "hug_knee_crop"}:
             anatomy_rules += (
                 "抱膝时双手必须从肩肘连续伸出后抱膝，腕手与胳膊都在画面内且相连。"
@@ -3670,12 +3662,7 @@ class SelfieImagePlugin(Star):
             )
         base = (
             "看看腿。"
-            "单人下半身特写：只有主角一人，日常随手拍，画面得体自然。"
-            "主角身份来自 AI 自拍形象参考图：体态、肤色气质保持一致（本张不露脸）。"
-            f"【唯一姿势·不可混用】本次主姿势只能是：{pose_label}。"
-            f"本次腿部特写构图（只执行这一段，不要叠加其他姿势）：{random.choice(variants)}"
-            "姿势日常可维持、重心稳定；髋-膝连续，关节朝向正常。"
-            "腿部比例与腿形自然。"
+            f"【姿势】{pose_label}：{random.choice(variants)}"
             "不露脸：脸部/头发完整裁出画外。"
             "双脚完整裁出画外。【crop:calves】"
             f"{legwear_rule}"
