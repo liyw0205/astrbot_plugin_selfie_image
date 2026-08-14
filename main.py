@@ -4255,14 +4255,13 @@ class SelfieImagePlugin(Star):
         # trust_env=False: channel.proxy is explicit; do not inherit process HTTP(S)_PROXY
         # (common on ops hosts) and silently stall NewAPI image downloads/posts.
         async with self._semaphore:
-            async with aiohttp.ClientSession(trust_env=False, timeout=image_client_timeout()) as session:
-                result = await generate_image_with_fallback(
-                    selected_targets,
-                    request,
-                    session,
-                    max_attempts=max_attempts,
-                    global_timeout=self.config.image_global_timeout,
-                )
+            result = await generate_image_with_fallback(
+                selected_targets,
+                request,
+                None,
+                max_attempts=max_attempts,
+                global_timeout=self.config.image_global_timeout,
+            )
         elapsed = time.monotonic() - started
 
         if result.error or not result.images:
@@ -5156,91 +5155,78 @@ class SelfieImagePlugin(Star):
         run_one,
         log_prefix: str,
     ) -> Dict[str, Any]:
-        """Run up to image_max_concurrent_tasks shots; send as each finishes."""
+        """Queue-friendly batch: at most inflight shots generating; send as each finishes."""
         total = max(1, int(total))
         inflight = min(self._image_inflight_limit(), total)
+        sem = asyncio.Semaphore(inflight)
         send_lock = asyncio.Lock()
-        take_lock = asyncio.Lock()
         stop = False
         skipped_shots = 0
         all_files: List[str] = []
         used_model = ""
         last_elapsed = 0.0
         failed_at = 0
-        next_index = 0
         cancelled = False
 
-        async def worker() -> None:
-            nonlocal next_index, stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled
-            while True:
+        async def one(index: int) -> None:
+            nonlocal stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled
+            async with sem:
                 if stop or self._task_cancel_requested(task_id):
                     if self._task_cancel_requested(task_id):
                         cancelled = True
                     return
-                async with take_lock:
-                    index = next_index
-                    next_index += 1
-                if index >= total:
-                    return
                 logger.info(f"[SelfieImage] {log_prefix} {index + 1}/{total} inflight={inflight} task={task_id}")
-                await asyncio.sleep(0)
                 result = await run_one(index)
-                async with send_lock:
-                    if stop:
-                        return
-                    if self._task_cancel_requested(task_id):
-                        cancelled = True
-                        stop = True
-                        return
-                    if not result.get("success"):
-                        raw_err = str(result.get("error") or "")
-                        error = self._friendly_user_error_message(raw_err, fail_label)
-                        skipped_shots += 1
-                        mode, skip_max = self._batch_failure_policy()
-                        will_continue = False
-                        if mode == "skip":
-                            will_continue = True
-                        elif mode == "skip_max" and skipped_shots <= skip_max:
-                            will_continue = True
-                        msg = self._batch_shot_fail_text(
-                            index=index + 1,
-                            total=total,
-                            done_files=len(all_files),
-                            error=error,
-                            mode=mode,
-                            skipped=skipped_shots,
-                            skip_max=skip_max,
-                            will_continue=will_continue,
-                        )
-                        try:
-                            await event.send(event.plain_result(msg))
-                        except Exception:
-                            pass
-                        if not will_continue:
-                            stop = True
-                            failed_at = index + 1
-                            return
-                        continue
-                    files = list(result.get("files") or [])
-                    used_model = str(result.get("used_model") or used_model)
-                    last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
-                    if files:
-                        self._record_generated_images(event, 1)
-                        await self._send_generated_images(event, files)
-                        all_files.extend(files)
-                    info = self._batch_success_text(
-                        self._build_success_text(last_elapsed, len(files), used_model, event),
-                        index + 1,
-                        total,
+            async with send_lock:
+                if stop:
+                    return
+                if self._task_cancel_requested(task_id):
+                    cancelled = True
+                    stop = True
+                    return
+                if not result.get("success"):
+                    raw_err = str(result.get("error") or "")
+                    error = self._friendly_user_error_message(raw_err, fail_label)
+                    skipped_shots += 1
+                    mode, skip_max = self._batch_failure_policy()
+                    will_continue = mode == "skip" or (mode == "skip_max" and skipped_shots <= skip_max)
+                    msg = self._batch_shot_fail_text(
+                        index=index + 1,
+                        total=total,
+                        done_files=len(all_files),
+                        error=error,
+                        mode=mode,
+                        skipped=skipped_shots,
+                        skip_max=skip_max,
+                        will_continue=will_continue,
                     )
-                    if info:
-                        try:
-                            await event.send(event.plain_result(info))
-                        except Exception:
-                            pass
+                    try:
+                        await event.send(event.plain_result(msg))
+                    except Exception:
+                        pass
+                    if not will_continue:
+                        stop = True
+                        failed_at = index + 1
+                    return
+                files = list(result.get("files") or [])
+                used_model = str(result.get("used_model") or used_model)
+                last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
+                if files:
+                    self._record_generated_images(event, 1)
+                    await self._send_generated_images(event, files)
+                    all_files.extend(files)
+                info = self._batch_success_text(
+                    self._build_success_text(last_elapsed, len(files), used_model, event),
+                    index + 1,
+                    total,
+                )
+                if info:
+                    try:
+                        await event.send(event.plain_result(info))
+                    except Exception:
+                        pass
 
-        workers = [asyncio.create_task(worker()) for _ in range(inflight)]
-        await asyncio.gather(*workers)
+        await asyncio.gather(*(one(i) for i in range(total)))
         if cancelled:
             return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
         if failed_at:

@@ -1,4 +1,8 @@
-"""One-pass model fallback. No same-label re-POST. No loop-blocking waits."""
+"""Isolated one-pass generation: each model runs in its own thread+loop.
+
+The main event loop never awaits aiohttp. Timeouts fire even if another
+shot is parsing a large body. Same label is never re-POSTed.
+"""
 
 from __future__ import annotations
 
@@ -11,9 +15,13 @@ import aiohttp
 
 from .error_classify import classify_generation_error, format_timeout_user_message
 from .models import ImageModelTarget
-from .proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, target_session_proxy
+from .proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, image_client_timeout, target_session_proxy
 from .providers import ImageGenerateRequest, ImageGenerateResult, create_adapter
 from .utils import redact_sensitive_data, redact_sensitive_text
+
+SUCCESS = "success"
+NEXT_KEY = "next_key"
+NEXT_MODEL = "next_model"
 
 
 def _target_attempt_base(target: ImageModelTarget, attempt: int, key_index: int = 0, *, multi_key: bool = False) -> Dict[str, Any]:
@@ -36,16 +44,6 @@ def _target_with_api_key(target: ImageModelTarget, api_key: str) -> ImageModelTa
     return cloned
 
 
-async def _generate_with_target_proxy(
-    target: ImageModelTarget,
-    fallback_session: aiohttp.ClientSession,
-    request: ImageGenerateRequest,
-) -> ImageGenerateResult:
-    async with channel_client_session(target.proxy, fallback_session) as target_session:
-        adapter = create_adapter(target_session_proxy(target), target_session)
-        return await adapter.generate(request)
-
-
 def _should_rotate_api_key(class_info: Dict[str, Any]) -> bool:
     category = str(class_info.get("category") or "")
     status = class_info.get("http_status")
@@ -63,37 +61,74 @@ def _should_advance_to_next_target(class_info: Dict[str, Any]) -> bool:
     return bool(class_info.get("retryable", True))
 
 
-async def _run_one_target(
-    *,
+def judge_attempt(result: ImageGenerateResult) -> str:
+    """Pure decision: keep going to next key / next model, or accept success."""
+    if result.images and not result.error:
+        return SUCCESS
+    info = classify_generation_error(result.error or "生成失败")
+    if _should_rotate_api_key(info):
+        return NEXT_KEY
+    return NEXT_MODEL
+
+
+def _sync_try_model(target: ImageModelTarget, req: ImageGenerateRequest, budget: int) -> ImageGenerateResult:
+    """Run one model in a private loop so the bot loop cannot be blocked."""
+
+    async def _go() -> ImageGenerateResult:
+        timeout = image_client_timeout(budget)
+        async with aiohttp.ClientSession(trust_env=False, timeout=timeout) as base:
+            async with channel_client_session(getattr(target, "proxy", "") or "", base) as owned:
+                adapter = create_adapter(target_session_proxy(target), owned)
+                return await adapter.generate(req)
+
+    try:
+        return asyncio.run(asyncio.wait_for(_go(), timeout=max(3, int(budget) + 2)))
+    except asyncio.TimeoutError:
+        return ImageGenerateResult(error=format_timeout_user_message("local", budget))
+    except Exception as exc:
+        return ImageGenerateResult(error=redact_sensitive_text(str(exc)))
+
+
+async def _try_model(
     target: ImageModelTarget,
-    session: aiohttp.ClientSession,
     req: ImageGenerateRequest,
     budget: int,
+    session: Optional[aiohttp.ClientSession],
 ) -> ImageGenerateResult:
-    work = asyncio.create_task(_generate_with_target_proxy(target, session, req))
+    if session is None:
+        return await asyncio.to_thread(_sync_try_model, target, req, budget)
+    work = asyncio.create_task(_try_on_session(target, req, session))
     done, _ = await asyncio.wait({work}, timeout=max(1, int(budget)))
     if work not in done:
         work.cancel()
         return ImageGenerateResult(error=format_timeout_user_message("local", budget))
     try:
         return work.result()
-    except asyncio.CancelledError:
-        return ImageGenerateResult(error=format_timeout_user_message("local", budget))
     except Exception as exc:
         return ImageGenerateResult(error=redact_sensitive_text(str(exc)))
+
+
+async def _try_on_session(
+    target: ImageModelTarget,
+    req: ImageGenerateRequest,
+    session: aiohttp.ClientSession,
+) -> ImageGenerateResult:
+    async with channel_client_session(getattr(target, "proxy", "") or "", session) as owned:
+        adapter = create_adapter(target_session_proxy(target), owned)
+        return await adapter.generate(req)
 
 
 async def generate_image_with_fallback(
     targets: List[ImageModelTarget],
     req: ImageGenerateRequest,
-    session: aiohttp.ClientSession,
+    session: Optional[aiohttp.ClientSession] = None,
     max_attempts: Optional[int] = None,
     global_timeout: Optional[int] = None,
 ) -> ImageGenerateResult:
     if not targets:
         return ImageGenerateResult(error="未配置生图模型")
 
-    chain_timeout = max(10, int(global_timeout or targets[0].timeout or 180))
+    chain_timeout = max(10, int(global_timeout or getattr(targets[0], "timeout", None) or 180))
     deadline = time.monotonic() + chain_timeout
     last_error = "未配置生图模型"
     attempts: List[Dict[str, Any]] = []
@@ -125,19 +160,18 @@ async def generate_image_with_fallback(
             attempt_info = _target_attempt_base(target, index, key_index=key_index, multi_key=len(api_keys) > 1)
             started = time.monotonic()
             active = _target_with_api_key(target, api_key) if api_key else target
-            result = await _run_one_target(target=active, session=session, req=req, budget=budget)
+            result = await _try_model(active, req, budget, session)
             wall = time.monotonic() - started
-            if wall > budget + 1:
-                result = ImageGenerateResult(error=format_timeout_user_message("local", budget))
             elapsed = round(min(wall, float(budget)), 2)
             attempt_info["elapsed_seconds"] = elapsed
 
-            if result.images and not result.error:
+            decision = judge_attempt(result)
+            if decision == SUCCESS:
                 attempt_info["success"] = True
                 attempt_info["image_count"] = len(result.images)
                 attempts.append(attempt_info)
                 result.used_model = label
-                result.attempts = redact_sensitive_data([*attempts, *result.attempts])
+                result.attempts = redact_sensitive_data([*attempts, *getattr(result, "attempts", [])])
                 return result
 
             error_text = redact_sensitive_text(result.error or "生成失败")
@@ -151,7 +185,7 @@ async def generate_image_with_fallback(
             attempt_info["image_count"] = len(result.images or [])
             attempts.append(attempt_info)
 
-            if _should_rotate_api_key(class_info) and key_index + 1 < len(api_keys):
+            if decision == NEXT_KEY and key_index + 1 < len(api_keys):
                 continue
             break
 
