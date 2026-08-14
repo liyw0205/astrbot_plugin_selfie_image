@@ -221,25 +221,25 @@ def build_prompt_with_reference_instruction(
 
 LEGWEAR_BY_POSE = {
     "sit": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
-    "sit_crop": (("光腿神器", 3), ("白丝", 4), ("黑丝", 3)),
+    "sit_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
     "kneel": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
-    "kneel_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
+    "kneel_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
     "side_lie": (("光腿神器", 6), ("白丝", 3), ("黑丝", 1)),
-    "side_lie_crop": (("光腿神器", 4), ("白丝", 4), ("黑丝", 2)),
+    "side_lie_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 4)),
     "hug_knee": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
     "hug_knee_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
     "cross_leg": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
     "cross_leg_crop": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
     "stand_topdown": (("光腿神器", 3), ("白丝", 3), ("黑丝", 4)),
     "windowsill": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
-    "windowsill_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
+    "windowsill_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
     "kneel_up": (("光腿神器", 5), ("白丝", 2), ("黑丝", 3)),
     "kneel_front": (("光腿神器", 6), ("白丝", 2), ("黑丝", 2)),
     "floor_fold": (("光腿神器", 6), ("白丝", 2), ("黑丝", 2)),
-    "reclined_knees_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 3)),
-    "floor_knees_up_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
-    "desk_sit_crop": (("光腿神器", 3), ("白丝", 4), ("黑丝", 3)),
-    "bed_supine_crop": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
+    "reclined_knees_crop": (("光腿神器", 1), ("白丝", 6), ("黑丝", 5)),
+    "floor_knees_up_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
+    "desk_sit_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
+    "bed_supine_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 4)),
 }
 
 # Poses that crop calves/feet off-frame to reduce weird lower-leg anatomy.
@@ -274,24 +274,14 @@ LEGWEAR_PROMPTS = {
     ),
 }
 
-# Random stocking finishes. Keep wording mild — 勒/镂空/腿环 trip safety.
+# Stocking finishes. User asked to see 花边/腿环 again; keep 镂空/勒痕 out.
 STOCKING_FINISH_CHOICES: List[Tuple[str, int]] = [
-    (
-        "袜口平整素色。",
-        3,
-    ),
-    (
-        "袜口轻轻卷边，素色袜身。",
-        2,
-    ),
-    (
-        "袜口有小蝴蝶结，素色袜身。",
-        2,
-    ),
-    (
-        "袜身带细竖纹，袜口平整。",
-        2,
-    ),
+    ("袜口宽花边，素色袜身。", 4),
+    ("膝上细腿环，袜口平整。", 4),
+    ("袜口花边加细腿环。", 3),
+    ("袜口小蝴蝶结，素色袜身。", 2),
+    ("袜身带细竖纹，袜口平整。", 2),
+    ("袜口轻轻卷边，素色袜身。", 1),
 ]
 
 
@@ -3631,7 +3621,10 @@ class SelfieImagePlugin(Star):
         pose_label = pose_labels.get(pose_bucket, "坐姿大腿近景")
         # Look-legs default: never show feet (user aesthetic after many bad foot gens).
         feet_cropped = True
-        hard_crop = "短裙盖髋，下摆到大腿中段；只露裙摆到膝；双脚完整裁出画外。"
+        hard_crop = (
+            "下半身特写，不要全身，不要头肩入镜，不要鞋子。"
+            "短裙盖髋，下摆到大腿中段；只露裙摆到膝；双脚完整裁出画外。"
+        )
         anatomy_rules = "单人；髋膝连续；近景可有近大远小；焦点在腿形。"
         if pose_bucket in {"hug_knee", "hug_knee_crop"}:
             anatomy_rules += (
@@ -3661,10 +3654,10 @@ class SelfieImagePlugin(Star):
                 "袜身向画外延伸，不展示脚部。"
             )
         base = (
-            "看看腿。"
+            "看看腿。下半身特写，不要全身照。"
             f"【姿势】{pose_label}：{random.choice(variants)}"
             "不露脸：脸部/头发完整裁出画外。"
-            "双脚完整裁出画外。【crop:calves】"
+            "双脚完整裁出画外，不要鞋子。【crop:calves】"
             f"{legwear_rule}"
             f"{anatomy_rules}"
             f"{hard_crop}"

@@ -111,7 +111,7 @@ def build_selfie_builtin_prompt(
 
     user = translated_user or extract_user_prompt(action)
     if is_legs and feet_cropped:
-        legs_line = "单人近景，短裙盖髋、下摆到大腿中段；只露裙摆到膝；小腿与双脚裁出画外；脸部也裁出画外；穿搭只用已选的光腿神器、白丝或黑丝。"
+        legs_line = "下半身特写，不要全身，不要鞋子；短裙盖髋、下摆到大腿中段；只露裙摆到膝；小腿与双脚裁出画外；脸部也裁出画外；穿搭只用已选的光腿神器、白丝或黑丝。"
     elif is_legs:
         legs_line = "单人下半身近景，只保留自然完整的两条腿和双脚；光腿时脚趾自然清晰；腿部穿搭只用已选定的光腿神器、白丝或黑丝，白丝/黑丝袜口有卷边，不要鞋子。"
     else:

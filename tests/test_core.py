@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.84")
+        self.assertEqual(PLUGIN_VERSION, "1.3.85")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4703,6 +4703,8 @@ class LegFocusTests(unittest.TestCase):
                 self.assertIn("【crop:calves】", t)
                 self.assertIn("不露脸", t)
                 self.assertIn("短裙", t)
+                self.assertIn("不要全身", t)
+                self.assertIn("不要鞋子", t)
                 self.assertNotIn("18+", t)
                 self.assertNotIn("十八禁", t)
                 self.assertNotIn("脚趾五个分开", t)
