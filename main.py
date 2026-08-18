@@ -722,7 +722,8 @@ class SelfieImagePlugin(Star):
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self._video_semaphore = asyncio.Semaphore(max(1, int(getattr(self.config, "video_max_concurrent_tasks", 1) or 1)))
-        self._image_batch_gate = asyncio.Lock()
+        # Reserve image slots per requested shot, not per whole command batch.
+        self._image_batch_gate = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self._selfie_batch_gate = self._image_batch_gate
         self.web_server = FlaskWebServer(self)
         self.dashboard_api = SelfieImageDashboardAPI(self)
@@ -901,6 +902,8 @@ class SelfieImagePlugin(Star):
         self.raw_config = next_config
         self.config = AICatConfig.from_dict(self.raw_config)
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
+        self._image_batch_gate = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
+        self._selfie_batch_gate = self._image_batch_gate
         self._persist_config()
 
     def _start_web_server(self) -> None:
@@ -5106,24 +5109,43 @@ class SelfieImagePlugin(Star):
 
 
     def _image_inflight_limit(self) -> int:
-        return max(1, min(3, int(getattr(self.config, "image_max_concurrent_tasks", 1) or 1)))
+        return max(1, min(10, int(getattr(self.config, "image_max_concurrent_tasks", 1) or 1)))
 
-    def _ensure_image_batch_gate(self) -> asyncio.Lock:
+    def _ensure_image_batch_gate(self) -> asyncio.Semaphore:
         gate = getattr(self, "_image_batch_gate", None)
-        if gate is None:
-            self._image_batch_gate = asyncio.Lock()
+        if gate is None or not isinstance(gate, asyncio.Semaphore):
+            self._image_batch_gate = asyncio.Semaphore(self._image_inflight_limit())
             gate = self._image_batch_gate
         self._selfie_batch_gate = gate
         return gate
 
-    async def _await_image_batch_turn(self, event: AstrMessageEvent, task_id: str, kind: str) -> None:
+    def _image_batch_queue_expected(self, total: int) -> bool:
         gate = self._ensure_image_batch_gate()
-        if gate.locked():
+        return int(getattr(gate, "_value", 0)) < max(1, int(total))
+
+    async def _reserve_image_batch_slots(
+        self,
+        event: AstrMessageEvent,
+        task_id: str,
+        kind: str,
+        total: int,
+        *,
+        already_notified: bool = False,
+    ) -> asyncio.Semaphore:
+        gate = self._ensure_image_batch_gate()
+        if not already_notified and self._image_batch_queue_expected(total):
             logger.info(f"[SelfieImage] {kind} batch queued task={task_id}")
             try:
                 await event.send(event.plain_result("上一轮还在画，这轮先排队，画完接上。"))
             except Exception:
                 pass
+        for _ in range(max(1, int(total))):
+            await gate.acquire()
+        return gate
+
+    def _release_image_batch_slots(self, gate: asyncio.Semaphore, total: int) -> None:
+        for _ in range(max(1, int(total))):
+            gate.release()
 
     async def _run_counted_generation_shots(
         self,
@@ -5326,10 +5348,9 @@ class SelfieImagePlugin(Star):
         passthrough: bool = False,
         fail_label: str = "",
     ) -> Dict[str, Any]:
-        await self._await_image_batch_turn(event, task_id, "draw")
-        async with self._ensure_image_batch_gate():
-            total = self._normalize_count(requested_count)
-
+        total = self._normalize_count(requested_count)
+        gate = await self._reserve_image_batch_slots(event, task_id, "draw", total)
+        try:
             async def run_one(index: int) -> Dict[str, Any]:
                 if passthrough:
                     return await self._draw_passthrough_once(event, prompt, aspect, resolution, refs, source)
@@ -5343,6 +5364,8 @@ class SelfieImagePlugin(Star):
                 run_one=run_one,
                 log_prefix="draw batch",
             )
+        finally:
+            self._release_image_batch_slots(gate, total)
 
     async def _background_selfie_batches(
         self,
@@ -5355,20 +5378,32 @@ class SelfieImagePlugin(Star):
         aspect: str,
         resolution: str,
         fail_label: str,
+        *,
+        queue_notified: bool = False,
     ) -> Dict[str, Any]:
-        await self._await_image_batch_turn(event, task_id, "selfie")
-        async with self._ensure_image_batch_gate():
+        total = self._normalize_count(requested_count)
+        self._ensure_image_batch_gate()
+        gate = await self._reserve_image_batch_slots(
+            event,
+            task_id,
+            "selfie",
+            total,
+            already_notified=queue_notified,
+        )
+        try:
             return await self._run_selfie_batches_unlocked(
                 task_id,
                 event,
                 action,
                 extra_refs,
                 source,
-                requested_count,
+                total,
                 aspect,
                 resolution,
                 fail_label,
             )
+        finally:
+            self._release_image_batch_slots(gate, total)
 
     async def _run_selfie_batches_unlocked(
         self,
@@ -5921,6 +5956,9 @@ class SelfieImagePlugin(Star):
         progress = await self._build_contextual_progress_text(event, "selfie", action, requested_count)
         if hints:
             progress += "\n" + "\n".join(hints)
+        queue_notified = self._image_batch_queue_expected(requested_count)
+        if queue_notified:
+            progress = "上一轮还在画，这轮先排队，画完接上。\n" + progress
         self._record_bot_text_context(event, progress)
 
         async def runner(task_id: str) -> Dict[str, Any]:
@@ -5934,6 +5972,7 @@ class SelfieImagePlugin(Star):
                 aspect,
                 resolution,
                 fail_label,
+                queue_notified=queue_notified,
             )
 
         task = self.start_command_image_task(
@@ -6004,7 +6043,7 @@ class SelfieImagePlugin(Star):
                 "",
                 "预设：/预设　列表；管理员可 /预设添加 名称:内容、/预设删除 名称",
                 "",
-                "说明：一次可写数量表示连出几轮；同时几张由「同时画几张」决定，新任务自动排队。图好了会直接发过来。",
+                "说明：一次可写数量表示本条指令要生成的总张数；同时最多进行几张由「同时画几张上限」决定，不锁在单条指令里，新任务自动排队，超过同时上限才等待。图好了会直接发过来。",
                 "· /生图帮助　只看图卡",
                 "· /生图help　看本页完整说明",
                 f"管理页：{'已开' if self.config.web_enable else '未开'}　http://{self.config.web_host}:{self.config.web_port}",
