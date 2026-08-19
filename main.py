@@ -6,6 +6,7 @@ RECORD_KEEP_LIMIT = 300
 
 import asyncio
 import copy
+import hashlib
 import json
 import os
 import random
@@ -665,6 +666,7 @@ class SelfieImagePlugin(Star):
         self._migrate_legacy_config_file()
         self.usage_path = os.path.join(self.data_dir, "usage_stats.json")
         self.records_path = os.path.join(self.data_dir, "generation_records.json")
+        self.tasks_path = os.path.join(self.data_dir, "generation_tasks.json")
         self.generated_dir = os.path.join(self.data_dir, "image_cache")
         os.makedirs(self.generated_dir, exist_ok=True)
         self.video_dir = os.path.join(self.generated_dir, "video")
@@ -702,12 +704,16 @@ class SelfieImagePlugin(Star):
         self._records: List[Dict[str, Any]] = self._load_records()
         self._record_seq = len(self._records)
         self._web_task_lock = threading.RLock()
-        self._web_tasks: Dict[str, Dict[str, Any]] = {}
+        self._web_tasks: Dict[str, Dict[str, Any]] = self._load_web_tasks()
         self._web_task_seq = 0
         # 模型选择仅作用于当前会话。
         self._session_model_lock = threading.RLock()
         self._session_model_overrides: Dict[str, str] = {}
         self._last_request_at: Dict[str, float] = {}
+        self._channel_health: Dict[str, Dict[str, Any]] = {}
+        self._channel_health_lock = threading.RLock()
+        self._send_failures: Dict[str, List[str]] = {}
+        self._send_failures_lock = threading.RLock()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
 
         native_config = self._config_object_to_dict(config)
@@ -917,6 +923,37 @@ class SelfieImagePlugin(Star):
 
     def get_config_for_web(self) -> Dict[str, Any]:
         return self._strip_web_startup_config(self.raw_config)
+
+    def export_config_for_web(self) -> Dict[str, Any]:
+        exported = redact_sensitive_data(self.get_config_for_web())
+        if isinstance(exported, dict):
+            exported["schema_version"] = int(exported.get("schema_version") or 2)
+            exported["_export_note"] = "API key、Token、代理密码已脱敏；导入前请补回凭据。"
+        return exported
+
+    def preview_config_import(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        candidate = payload.get("config") if isinstance(payload.get("config"), dict) else payload
+        if not isinstance(candidate, dict):
+            raise ValueError("配置必须是 JSON 对象")
+        merged = deep_merge(self.raw_config, candidate)
+        from .models import preflight_config_channels
+        report = preflight_config_channels(merged)
+        return {"ok": bool(report.get("ok")), "schema_version": 2, "errors": report.get("errors", []), "config": redact_sensitive_data(candidate)}
+
+    def import_config_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        candidate = payload.get("config") if isinstance(payload.get("config"), dict) else payload
+        if not isinstance(candidate, dict):
+            raise ValueError("配置必须是 JSON 对象")
+        before = copy.deepcopy(self.raw_config)
+        try:
+            preview = self.preview_config_import(candidate)
+            if not preview["ok"]:
+                raise RuntimeError("配置预检未通过")
+            return self.update_config_from_web(candidate)
+        except Exception:
+            self._apply_raw_config(before)
+            self._persist_config()
+            raise
 
     def list_proxies_for_web(self, *, mask_password: bool = True) -> List[Dict[str, Any]]:
         from .models import normalize_proxies_list, public_proxy_row
@@ -2041,6 +2078,113 @@ class SelfieImagePlugin(Star):
             )
         return redact_sensitive_data([self._enrich_record_for_web(item) for item in records if isinstance(item, dict)])
 
+    def get_generation_metrics(self) -> Dict[str, Any]:
+        """Return redacted aggregate metrics from retained generation records."""
+        with self._records_lock:
+            records = [dict(item) for item in self._records if isinstance(item, dict)]
+        status_counts: Dict[str, int] = {}
+        category_counts: Dict[str, int] = {}
+        model_counts: Dict[str, Dict[str, int]] = {}
+        channel_counts: Dict[str, Dict[str, Any]] = {}
+        elapsed_values: List[float] = []
+        requested = succeeded = failed = 0
+        for record in records:
+            response = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
+            status = str(record.get("status") or response.get("status") or ("succeeded" if record.get("success") else "failed"))
+            status_counts[status] = status_counts.get(status, 0) + 1
+            try:
+                requested += max(1, int(record.get("requested_count") or response.get("requested_count") or record.get("count") or 1))
+                succeeded += max(0, int(record.get("succeeded_count") or response.get("succeeded_count") or (record.get("count") if record.get("success") else 0) or 0))
+                failed += max(0, int(record.get("failed_count") or response.get("failed_count") or (0 if record.get("success") else 1)))
+            except (TypeError, ValueError):
+                pass
+            try:
+                elapsed = float(record.get("elapsed_seconds") or response.get("elapsed_seconds") or 0)
+                if elapsed > 0:
+                    elapsed_values.append(elapsed)
+            except (TypeError, ValueError):
+                pass
+            model = str(record.get("used_model") or response.get("used_model") or "未知").strip() or "未知"
+            bucket = model_counts.setdefault(model, {"records": 0, "success": 0, "failed": 0})
+            bucket["records"] += 1
+            bucket["success"] += int(status == "succeeded")
+            bucket["failed"] += int(status in {"failed", "partial_success"})
+            attempts = list(record.get("attempts") or response.get("attempts") or [])
+            attempt_channels: List[str] = []
+            for attempt in attempts:
+                if not isinstance(attempt, Mapping):
+                    continue
+                channel = str(attempt.get("channel") or attempt.get("provider_type") or "unknown").strip() or "unknown"
+                attempt_channels.append(channel)
+                channel_bucket = channel_counts.setdefault(channel, {
+                    "attempts": 0,
+                    "success": 0,
+                    "failed": 0,
+                    "elapsed_seconds": 0.0,
+                    "error_categories": {},
+                    "fallbacks": 0,
+                })
+                channel_bucket["attempts"] += 1
+                success_attempt = bool(attempt.get("success"))
+                channel_bucket["success"] += int(success_attempt)
+                channel_bucket["failed"] += int(not success_attempt)
+                try:
+                    channel_bucket["elapsed_seconds"] += max(0.0, float(attempt.get("elapsed_seconds") or 0))
+                except (TypeError, ValueError):
+                    pass
+                if not success_attempt:
+                    category = str(attempt.get("error_category") or "unknown")
+                    category_counts[category] = category_counts.get(category, 0) + 1
+                    categories = channel_bucket["error_categories"]
+                    categories[category] = categories.get(category, 0) + 1
+            for previous, current in zip(attempt_channels, attempt_channels[1:]):
+                if previous != current:
+                    channel_counts[current]["fallbacks"] += 1
+        elapsed_values.sort()
+        def percentile(percent: float) -> float:
+            if not elapsed_values:
+                return 0.0
+            index = min(len(elapsed_values) - 1, int(round((len(elapsed_values) - 1) * percent)))
+            return round(elapsed_values[index], 2)
+        return {
+            "retained_records": len(records),
+            "requested_images": requested,
+            "succeeded_images": succeeded,
+            "failed_images": failed,
+            "status_counts": status_counts,
+            "error_categories": category_counts,
+            "models": model_counts,
+            "channels": {
+                channel: {
+                    **values,
+                    "elapsed_seconds": round(float(values["elapsed_seconds"]), 2),
+                    "success_rate": round(values["success"] / values["attempts"], 4) if values["attempts"] else 0.0,
+                }
+                for channel, values in channel_counts.items()
+            },
+            "elapsed_seconds": {"p50": percentile(0.50), "p95": percentile(0.95), "max": round(max(elapsed_values), 2) if elapsed_values else 0.0},
+        }
+
+    def _composition_metadata(self, prompt: str, source: str, aspect_ratio: str, resolution: str, reference_count: int) -> Dict[str, Any]:
+        text = str(prompt or "").strip()
+        lowered = text.lower()
+        if "看看腿" in text or "look_legs" in lowered:
+            strategy = "look_legs"
+        elif "全身" in text or "full body" in lowered:
+            strategy = "full_body"
+        elif "半身" in text or "portrait" in lowered:
+            strategy = "half_body"
+        else:
+            strategy = "selfie_default" if "selfie" in str(source or "").lower() else "custom"
+        prompt_hash = hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()[:16] if text else ""
+        return {
+            "strategy": strategy,
+            "prompt_hash": prompt_hash,
+            "aspect_ratio": str(aspect_ratio or "自动"),
+            "resolution": str(resolution or "1K"),
+            "reference_image_count": max(0, int(reference_count or 0)),
+        }
+
     def get_record_for_web(self, record_id: str) -> Dict[str, Any]:
         target_id = str(record_id or "").strip()
         with self._records_lock:
@@ -2093,6 +2237,71 @@ class SelfieImagePlugin(Star):
     def _web_task_timestamp(self) -> str:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
+    def _load_web_tasks(self) -> Dict[str, Dict[str, Any]]:
+        data = load_json_file(self.tasks_path)
+        if not isinstance(data, dict):
+            return {}
+        raw_tasks = data.get("tasks") if isinstance(data.get("tasks"), dict) else {}
+        tasks: Dict[str, Dict[str, Any]] = {}
+        for task_id, raw in raw_tasks.items():
+            if not isinstance(raw, dict):
+                continue
+            task = copy.deepcopy(raw)
+            task["task_id"] = str(task.get("task_id") or task_id)
+            if task.get("status") in {"queued", "running"}:
+                task["status"] = "expired"
+                task["success"] = False
+                task["error"] = "插件重启后未恢复该任务，请重新提交"
+                task["finished_ts"] = time.time()
+                task["finished_at"] = self._web_task_timestamp()
+            tasks[task["task_id"]] = task
+        return tasks
+
+    def _persist_web_tasks_locked(self) -> None:
+        path = str(getattr(self, "tasks_path", "") or "").strip()
+        if not path:
+            return
+        save_json_file(path, {"tasks": self._web_tasks})
+
+    def _request_fingerprint(self, payload: Mapping[str, Any], owner_session: str = "") -> str:
+        """Build a short-lived dedupe key without persisting request contents."""
+        image_values = list(payload.get("images") or [])
+        if payload.get("image"):
+            image_values.append(payload.get("image"))
+        image_hashes = []
+        for value in image_values:
+            raw = str(value or "").encode("utf-8", "ignore")
+            image_hashes.append(hashlib.sha256(raw).hexdigest()[:24])
+        fields = {
+            "owner_session": str(owner_session or ""),
+            "media_type": str(payload.get("media_type") or "image").strip().lower(),
+            "prompt": str(payload.get("prompt") or payload.get("original_prompt") or "").strip(),
+            "channel": str(payload.get("channel") or "").strip(),
+            "model": str(payload.get("model") or "").strip(),
+            "aspect_ratio": str(payload.get("aspect_ratio") or "").strip(),
+            "resolution": str(payload.get("resolution") or "").strip(),
+            "duration": str(payload.get("duration") or "").strip(),
+            "count": str(payload.get("count") or 1).strip(),
+            "prompt_enhance": str(payload.get("prompt_enhance") or "").strip().lower(),
+            "image_hashes": image_hashes,
+        }
+        encoded = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8", "ignore")).hexdigest()[:24]
+
+    def _find_recent_duplicate_task_locked(self, fingerprint: str, *, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        if not fingerprint:
+            return None
+        current = float(now or time.time())
+        for task in self._web_tasks.values():
+            if not isinstance(task, dict) or task.get("request_fingerprint") != fingerprint:
+                continue
+            if task.get("status") not in {"queued", "running"}:
+                continue
+            if current - float(task.get("created_ts") or 0) > 120:
+                continue
+            return copy.deepcopy(task)
+        return None
+
     def _summarize_web_test_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         raw_images = list(payload.get("images") or [])
         if payload.get("image"):
@@ -2130,7 +2339,7 @@ class SelfieImagePlugin(Star):
         finished = [
             (float(task.get("updated_ts") or 0), task_id)
             for task_id, task in self._web_tasks.items()
-            if task.get("status") in {"succeeded", "failed"}
+            if task.get("status") in {"succeeded", "partial_success", "failed", "cancelled", "expired"}
         ]
         finished.sort(key=lambda item: item[0])
         while len(self._web_tasks) > 50 and finished:
@@ -2147,6 +2356,7 @@ class SelfieImagePlugin(Star):
             task["updated_ts"] = now
             task["updated_at"] = self._web_task_timestamp()
             self._prune_web_tasks_locked()
+            self._persist_web_tasks_locked()
 
     def get_web_image_task(self, task_id: str) -> Dict[str, Any]:
         with self._web_task_lock:
@@ -2170,7 +2380,14 @@ class SelfieImagePlugin(Star):
         if media_type not in {"image", "video"}:
             raise RuntimeError("media_type 必须是 image 或 video")
         self._validate_web_test_selection(payload_copy)
+        force_regenerate = bool(payload_copy.get("force_regenerate") or payload_copy.get("force"))
+        fingerprint = self._request_fingerprint(payload_copy, "web")
         with self._web_task_lock:
+            if not force_regenerate:
+                duplicate = self._find_recent_duplicate_task_locked(fingerprint)
+                if duplicate:
+                    duplicate["deduplicated"] = True
+                    return redact_sensitive_data(duplicate)
             self._web_task_seq += 1
             task_id = f"web-{int(time.time() * 1000)}-{self._web_task_seq}"
             now = time.time()
@@ -2188,8 +2405,11 @@ class SelfieImagePlugin(Star):
                 "source": "web-video-test" if media_type == "video" else "web-test",
                 "owner_session": "web",
                 "cancel_requested": False,
+                "request_fingerprint": fingerprint,
+                "deduplicated": False,
             }
             self._prune_web_tasks_locked()
+            self._persist_web_tasks_locked()
         asyncio.run_coroutine_threadsafe(self._run_web_image_task(task_id, payload_copy), loop)
         return self.get_web_image_task(task_id)
 
@@ -2200,6 +2420,7 @@ class SelfieImagePlugin(Star):
                 raise RuntimeError("任务已取消")
             media_type = str(payload.get("media_type") or "image").strip().lower()
             result = await (self.web_test_video(payload) if media_type == "video" else self.web_test_image(payload))
+            result = self._normalize_generation_result(result, payload.get("count") or 1)
             result = redact_sensitive_data(result)
             if self._task_cancel_requested(task_id):
                 self._set_web_image_task(
@@ -2216,9 +2437,12 @@ class SelfieImagePlugin(Star):
             error = "" if success else redact_sensitive_text(str(result.get("error") or "这次没顺好"))
             self._set_web_image_task(
                 task_id,
-                status="succeeded" if success else "failed",
+                status=str(result.get("status") or ("succeeded" if success else "failed")),
                 success=success,
                 error=error,
+                requested_count=result.get("requested_count", 1),
+                succeeded_count=result.get("succeeded_count", 0),
+                failed_count=result.get("failed_count", 0),
                 result=result,
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
@@ -2569,6 +2793,7 @@ class SelfieImagePlugin(Star):
                 "studio_session_id": session_id,
             }
             self._prune_web_tasks_locked()
+            self._persist_web_tasks_locked()
 
         self.studio.attach_run_start(session_id, task_id, summary)
         asyncio.run_coroutine_threadsafe(self._run_studio_task(task_id, session_id), loop)
@@ -2761,6 +2986,79 @@ class SelfieImagePlugin(Star):
             if total <= limit:
                 break
         return {"limit_bytes": limit, "total_bytes": total, "deleted": deleted}
+
+    def get_cache_cleanup_preview(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+        """Return a dry-run cache cleanup plan without deleting files."""
+        limit = max(10, int(self.config.image_cache_limit_mb or 100)) * 1024 * 1024
+        total = self._cache_size_bytes()
+        with self._records_lock:
+            referenced_paths = collect_record_cache_paths(self._records)
+        candidates = collect_cache_cleanup_candidates(self.generated_dir, protected_paths, referenced_paths)
+        planned: List[Dict[str, Any]] = []
+        remaining = total
+        if total > limit:
+            for path in candidates:
+                try:
+                    size = os.path.getsize(path)
+                except OSError:
+                    continue
+                planned.append({"path": self._cache_relative_path(path), "size_bytes": size})
+                remaining = max(0, remaining - size)
+                if remaining <= limit:
+                    break
+        return {
+            "limit_bytes": limit,
+            "total_bytes": total,
+            "would_delete_bytes": total - remaining,
+            "remaining_bytes": remaining,
+            "would_delete": planned,
+        }
+
+    def clear_channel_health(self, channel: str = "") -> Dict[str, Any]:
+        with self._channel_health_lock:
+            if channel:
+                self._channel_health.pop(str(channel).strip(), None)
+            else:
+                self._channel_health.clear()
+            return self.get_channel_health()
+
+    def get_channel_health(self) -> Dict[str, Any]:
+        now = time.time()
+        with self._channel_health_lock:
+            return {
+                name: {**dict(state), "cooldown_remaining": round(max(0.0, float(state.get("cooldown_until") or 0) - now), 2)}
+                for name, state in self._channel_health.items()
+            }
+
+    def _channel_is_healthy(self, channel: str) -> bool:
+        with self._channel_health_lock:
+            state = self._channel_health.get(str(channel).strip()) or {}
+            return float(state.get("cooldown_until") or 0) <= time.time()
+
+    def _record_channel_health(self, attempts: Iterable[Mapping[str, Any]]) -> None:
+        now = time.time()
+        for attempt in attempts:
+            channel = str(attempt.get("channel") or "").strip()
+            if not channel:
+                continue
+            category = str(attempt.get("error_category") or "").strip()
+            success = bool(attempt.get("success"))
+            if not success and category not in {"network", "server", "timeout_create", "timeout_poll"}:
+                continue
+            with self._channel_health_lock:
+                state = self._channel_health.setdefault(channel, {"consecutive_failures": 0, "last_error_category": ""})
+                if success:
+                    state["consecutive_failures"] = 0
+                    state["cooldown_until"] = 0
+                    state["last_success_ts"] = now
+                    continue
+                if category not in {"network", "server", "timeout_create", "timeout_poll"}:
+                    continue
+                state["consecutive_failures"] = int(state.get("consecutive_failures") or 0) + 1
+                state["last_error_category"] = category
+                state["last_error_ts"] = now
+                if state["consecutive_failures"] >= 3:
+                    state["cooldown_until"] = now + 60
 
     def _source_context(self, event: Optional[AstrMessageEvent], source: str, user_id: str = "") -> Dict[str, Any]:
         uid = event_user_id(event) if event is not None else str(user_id or "")
@@ -3111,11 +3409,42 @@ class SelfieImagePlugin(Star):
     async def _send_generated_images(self, event: AstrMessageEvent, files: Iterable[str]) -> int:
         sent = 0
         for file_path in files:
-            await event.send(event.chain_result([self._create_image_component(file_path)]))
+            try:
+                await event.send(event.chain_result([self._create_image_component(file_path)]))
+            except Exception as exc:
+                logger.warning("[SelfieImage] image send failed: %s", redact_sensitive_text(str(exc)))
+                owner = self._session_key(event)
+                with self._send_failures_lock:
+                    self._send_failures.setdefault(owner, []).append(self._cache_relative_path(file_path))
+                continue
             self._record_bot_image_context(event, [file_path])
             sent += 1
             await asyncio.sleep(0.4)
         return sent
+
+    async def retry_failed_images(self, event: AstrMessageEvent) -> Dict[str, Any]:
+        owner = self._session_key(event)
+        with self._send_failures_lock:
+            paths = list(self._send_failures.get(owner) or [])
+        sent = 0
+        remaining = []
+        for rel_path in paths:
+            try:
+                abs_path = self._cache_absolute_path(rel_path)
+            except Exception:
+                continue
+            if not os.path.isfile(abs_path):
+                continue
+            if await self._send_generated_images(event, [abs_path]):
+                sent += 1
+            else:
+                remaining.append(rel_path)
+        with self._send_failures_lock:
+            if remaining:
+                self._send_failures[owner] = remaining
+            else:
+                self._send_failures.pop(owner, None)
+        return {"success": sent > 0, "sent": sent, "remaining": len(remaining)}
 
     async def _send_progress_text(self, event: AstrMessageEvent, text: str) -> None:
         if not self._progress_text_allowed(event):
@@ -4145,6 +4474,10 @@ class SelfieImagePlugin(Star):
         prompt_en_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         selected_targets = targets or self._resolve_generation_targets(event)
+        healthy_targets = [target for target in selected_targets if self._channel_is_healthy(target.channel_name)]
+        if selected_targets and not healthy_targets:
+            return {"success": False, "error": "所有生图渠道暂时冷却中，请稍后重试或清除渠道健康状态"}
+        selected_targets = healthy_targets or selected_targets
         request_prompt = str(prompt or "")
         original_prompt = str(original_prompt or request_prompt)
         audit_prompt_text = original_prompt or request_prompt
@@ -4164,6 +4497,9 @@ class SelfieImagePlugin(Star):
             request_data["prompt_en"] = dict(prompt_en_meta)
             if prompt_en_meta.get("applied"):
                 request_data["request_prompt_en"] = request_prompt
+        request_data["composition"] = self._composition_metadata(
+            request_prompt, source, aspect_ratio, resolution, len(refs)
+        )
         request_cleanup = self._cleanup_image_cache_if_needed(request_image_paths)
         if request_cleanup.get("deleted"):
             request_data["cache_cleanup_before_generation"] = request_cleanup
@@ -4246,6 +4582,7 @@ class SelfieImagePlugin(Star):
                 global_timeout=self.config.image_global_timeout,
             )
         elapsed = time.monotonic() - started
+        self._record_channel_health(result.attempts)
 
         if result.error or not result.images:
             response_data = {
@@ -4689,9 +5026,11 @@ class SelfieImagePlugin(Star):
                 task["updated_at"] = self._web_task_timestamp()
                 task["finished_ts"] = now
                 task["finished_at"] = self._web_task_timestamp()
+                self._persist_web_tasks_locked()
                 return f"已取消 {tid}"
             task["updated_ts"] = now
             task["updated_at"] = self._web_task_timestamp()
+            self._persist_web_tasks_locked()
             return f"已记下取消 {tid}（当前这步结束后会停）"
 
     def _task_cancel_requested(self, task_id: str) -> bool:
@@ -4710,7 +5049,15 @@ class SelfieImagePlugin(Star):
         """Queue a chat-side generation job and return immediately (targets 08/13)."""
         loop = getattr(self, "loop", None) or asyncio.get_running_loop()
         session_key = self._session_key(event)
+        request_summary = dict(summary or {})
+        force_regenerate = bool(request_summary.get("force_regenerate") or request_summary.get("force"))
+        fingerprint = self._request_fingerprint(request_summary, session_key)
         with self._web_task_lock:
+            if not force_regenerate:
+                duplicate = self._find_recent_duplicate_task_locked(fingerprint)
+                if duplicate and duplicate.get("owner_session") == session_key:
+                    duplicate["deduplicated"] = True
+                    return redact_sensitive_data(duplicate)
             self._web_task_seq += 1
             task_id = f"cmd-{int(time.time() * 1000)}-{self._web_task_seq}"
             now = time.time()
@@ -4723,14 +5070,17 @@ class SelfieImagePlugin(Star):
                 "updated_ts": now,
                 "created_at": self._web_task_timestamp(),
                 "updated_at": self._web_task_timestamp(),
-                "request_data": redact_sensitive_data(dict(summary or {})),
+                "request_data": redact_sensitive_data(request_summary),
                 "result": None,
                 "source": source,
                 "owner_session": session_key,
                 "owner_user_id": event_user_id(event),
                 "cancel_requested": False,
+                "request_fingerprint": fingerprint,
+                "deduplicated": False,
             }
             self._prune_web_tasks_locked()
+            self._persist_web_tasks_locked()
         asyncio.create_task(self._run_command_image_task(task_id, event, runner))
         return self.get_web_image_task(task_id)
 
@@ -5040,7 +5390,8 @@ class SelfieImagePlugin(Star):
             if self._task_cancel_requested(task_id):
                 raise RuntimeError("任务已取消")
             result = await runner(task_id)
-            result = redact_sensitive_data(result if isinstance(result, dict) else {"success": False, "error": "无效结果"})
+            result = self._normalize_generation_result(result)
+            result = redact_sensitive_data(result)
             if self._task_cancel_requested(task_id) and not result.get("success"):
                 result = {"success": False, "error": "任务已取消", "cancelled": True}
             success = bool(result.get("success"))
@@ -5048,9 +5399,12 @@ class SelfieImagePlugin(Star):
             error = "" if success else redact_sensitive_text(str(result.get("error") or ("任务已取消" if cancelled else "这次没顺好")))
             self._set_web_image_task(
                 task_id,
-                status="cancelled" if cancelled and not success else ("succeeded" if success else "failed"),
+                status="cancelled" if cancelled and not success else str(result.get("status") or ("succeeded" if success else "failed")),
                 success=success,
                 error=error,
+                requested_count=result.get("requested_count", 1),
+                succeeded_count=result.get("succeeded_count", 0),
+                failed_count=result.get("failed_count", 0),
                 result=result,
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
@@ -5169,9 +5523,10 @@ class SelfieImagePlugin(Star):
         last_elapsed = 0.0
         failed_at = 0
         cancelled = False
+        succeeded_shots = 0
 
         async def one(index: int) -> None:
-            nonlocal stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled
+            nonlocal stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled, succeeded_shots
             async with sem:
                 if stop or self._task_cancel_requested(task_id):
                     if self._task_cancel_requested(task_id):
@@ -5191,7 +5546,10 @@ class SelfieImagePlugin(Star):
                     error = self._friendly_user_error_message(raw_err, fail_label)
                     skipped_shots += 1
                     mode, skip_max = self._batch_failure_policy()
-                    will_continue = mode == "skip" or (mode == "skip_max" and skipped_shots <= skip_max)
+                    has_remaining = index < total
+                    will_continue = has_remaining and (
+                        mode == "skip" or (mode == "skip_max" and skipped_shots <= skip_max)
+                    )
                     msg = self._batch_shot_fail_text(
                         index=index + 1,
                         total=total,
@@ -5217,6 +5575,7 @@ class SelfieImagePlugin(Star):
                     self._record_generated_images(event, 1)
                     await self._send_generated_images(event, files)
                     all_files.extend(files)
+                    succeeded_shots += 1
                 info = self._batch_success_text(
                     self._build_success_text(last_elapsed, len(files), used_model, event),
                     index + 1,
@@ -5230,24 +5589,39 @@ class SelfieImagePlugin(Star):
 
         await asyncio.gather(*(one(i) for i in range(total)))
         if cancelled:
-            return {"success": False, "error": "任务已取消", "cancelled": True, "files": all_files}
+            return self._normalize_generation_result(
+                {
+                    "success": False,
+                    "error": "任务已取消",
+                    "cancelled": True,
+                    "files": all_files,
+                    "batch_total": total,
+                    "succeeded_count": succeeded_shots,
+                    "failed_count": skipped_shots,
+                },
+                total,
+            )
         if failed_at:
-            return {
+            return self._normalize_generation_result({
                 "success": False,
                 "error": fail_label or "生图没有完成",
                 "files": all_files,
                 "batch_total": total,
                 "batch_failed_at": failed_at,
                 "batch_skipped": skipped_shots,
-            }
-        return {
-            "success": True,
+                "succeeded_count": succeeded_shots,
+                "failed_count": skipped_shots,
+            }, total)
+        return self._normalize_generation_result({
+            "success": skipped_shots == 0,
             "files": all_files,
             "used_model": used_model,
             "elapsed_seconds": last_elapsed,
             "batch_total": total,
             "batch_skipped": skipped_shots,
-        }
+            "succeeded_count": succeeded_shots,
+            "failed_count": skipped_shots,
+        }, total)
 
     def _batch_failure_policy(self) -> tuple[str, int]:
         """Return (mode, skip_max). mode: stop | skip | skip_max."""
@@ -5263,6 +5637,47 @@ class SelfieImagePlugin(Star):
         skip_max = max(0, min(8, skip_max))
         return mode, skip_max
 
+    def _normalize_generation_result(self, result: Any, requested_count: int = 1) -> Dict[str, Any]:
+        """Add stable counts/status while accepting legacy result dictionaries."""
+        data = copy.deepcopy(result) if isinstance(result, dict) else {"success": False, "error": "无效结果"}
+        files = list(data.get("files") or data.get("image_paths") or data.get("generated_image_paths") or [])
+        try:
+            requested = max(1, int(data.get("batch_total") or requested_count or 1))
+        except (TypeError, ValueError):
+            requested = 1
+        try:
+            succeeded = max(0, min(requested, int(data.get("succeeded_count") or len(files))))
+        except (TypeError, ValueError):
+            succeeded = min(requested, len(files))
+        try:
+            failed = max(0, int(data.get("failed_count") or data.get("batch_skipped") or 0))
+        except (TypeError, ValueError):
+            failed = 0
+        if not succeeded and bool(data.get("success")):
+            succeeded = requested
+        if succeeded + failed > requested:
+            failed = max(0, requested - succeeded)
+        cancelled = bool(data.get("cancelled"))
+        if cancelled:
+            status = "cancelled"
+        elif succeeded >= requested and not failed:
+            status = "succeeded"
+        elif succeeded:
+            status = "partial_success"
+        else:
+            status = "failed"
+        data.update(
+            {
+                "files": files,
+                "requested_count": requested,
+                "succeeded_count": succeeded,
+                "failed_count": failed,
+                "status": status,
+                "success": status == "succeeded",
+            }
+        )
+        return data
+
     def _batch_shot_fail_text(
         self,
         *,
@@ -5276,7 +5691,8 @@ class SelfieImagePlugin(Star):
         will_continue: bool,
     ) -> str:
         """Single-cause progress line when one shot in a batch fails."""
-        base = f"第 {index}/{total} 张没出成"
+        single_shot = total <= 1
+        base = "这张没生成成功" if single_shot else f"第 {index}/{total} 张没出成"
         detail = str(error or "").strip()
         if detail:
             # keep short
@@ -5284,6 +5700,8 @@ class SelfieImagePlugin(Star):
             if len(detail) > 80:
                 detail = detail[:79] + "…"
             base = f"{base}：{detail}"
+        if single_shot:
+            return base
         base = f"{base}。已出 {done_files} 张"
         if will_continue:
             if mode == "skip_max":
@@ -6184,6 +6602,19 @@ class SelfieImagePlugin(Star):
             yield event.plain_result(str(exc))
         except Exception as exc:
             yield event.plain_result(redact_sensitive_text(str(exc)))
+
+    @filter.command("生图重发")
+    async def cmd_image_retry_failed(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """重发本会话最近发送失败、仍存在于缓存中的图片。"""
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        result = await self.retry_failed_images(event)
+        if result["sent"]:
+            yield event.plain_result(f"已重发 {result['sent']} 张图片。")
+        else:
+            yield event.plain_result("没有可重发的图片。")
 
     @filter.command("画", alias={"生图"})
     async def cmd_draw(

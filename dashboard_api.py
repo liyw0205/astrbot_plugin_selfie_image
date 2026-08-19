@@ -45,8 +45,12 @@ class SelfieImageDashboardAPI:
 
         routes = [
             ("health", self.page_health, ["GET"], "Selfie Image health"),
+            ("health/channels/clear", self.page_channel_health_clear, ["POST"], "Selfie Image clear channel health"),
             ("config", self.page_config_get, ["GET"], "Selfie Image get config"),
             ("config", self.page_config_post, ["POST"], "Selfie Image save config"),
+            ("config/export", self.page_config_export, ["GET"], "Selfie Image export config"),
+            ("config/import/preview", self.page_config_import_preview, ["POST"], "Selfie Image preview config import"),
+            ("config/import", self.page_config_import, ["POST"], "Selfie Image import config"),
             ("selfie-reference", self.page_selfie_reference_get, ["GET"], "Selfie Image get reference"),
             ("selfie-reference", self.page_selfie_reference_post, ["POST"], "Selfie Image save reference"),
             ("selfie-reference/clear", self.page_selfie_reference_clear, ["POST"], "Selfie Image clear reference"),
@@ -69,6 +73,7 @@ class SelfieImageDashboardAPI:
             ),
             ("refresh-image-models", self.page_refresh_image_models, ["POST"], "Selfie Image refresh models"),
             ("records", self.page_records, ["GET"], "Selfie Image generation records"),
+            ("metrics", self.page_metrics, ["GET"], "Selfie Image generation metrics"),
             ("records/<record_id>", self.page_record_detail, ["GET"], "Selfie Image record detail"),
             ("records/clear", self.page_records_clear, ["POST"], "Selfie Image clear records"),
             ("cache-image", self.page_cache_image_file, ["GET"], "Selfie Image cache image download"),
@@ -239,6 +244,8 @@ class SelfieImageDashboardAPI:
                 "cache_dir": getattr(plugin, "generated_dir", ""),
                 "cache_size_mb": round(float(plugin._cache_size_bytes()) / 1024 / 1024, 2),
                 "cache_limit_mb": getattr(plugin.config, "image_cache_limit_mb", 100),
+                "channel_health": plugin.get_channel_health(),
+                "cache_cleanup_preview": plugin.get_cache_cleanup_preview(),
             }
         )
 
@@ -294,6 +301,27 @@ class SelfieImageDashboardAPI:
             return self._ok(data)
         except Exception as exc:
             return self._fail(str(exc), 500)
+
+    async def page_config_export(self) -> Any:
+        return self._ok(self.plugin.export_config_for_web())
+
+    async def page_config_import_preview(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.preview_config_import(payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_config_import(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.import_config_from_web(payload or {}), message="配置导入成功")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
 
     async def page_selfie_reference_get(self) -> Any:
         return self._ok(self.plugin.get_selfie_reference_payload())
@@ -396,6 +424,20 @@ class SelfieImageDashboardAPI:
             return error
         assert page is not None and meta is not None
         return self._ok(page, **meta)
+
+    async def page_channel_health_clear(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        assert payload is not None
+        channel = str(payload.get("channel") or "").strip()
+        return self._ok(self.plugin.clear_channel_health(channel), message="渠道健康状态已清除")
+
+    async def page_metrics(self) -> Any:
+        try:
+            return self._ok(redact_sensitive_data(self.plugin.get_generation_metrics()))
+        except Exception as exc:
+            return self._fail(str(exc), 500)
 
     async def page_record_detail(self, record_id: str) -> Any:
         record_id_text = str(record_id or "").strip()

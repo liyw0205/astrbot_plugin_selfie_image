@@ -85,7 +85,7 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
     """Classify a provider/generation error for retry policy.
 
     Returns:
-        category: auth | not_found | safety | param | timeout | network | unknown
+        category: auth | not_found | safety | param | timeout | network | server | rate_limit | unknown
         retryable: whether outer fallback should spend another attempt on *this* error class
         user_message: single-cause user-facing text (already expects redaction upstream)
     """
@@ -195,7 +195,7 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
 
     if status is not None and status >= 500:
         return {
-            "category": "network",
+            "category": "server",
             "retryable": True,
             "http_status": status,
             "user_message": f"上游服务异常（HTTP {status}）",

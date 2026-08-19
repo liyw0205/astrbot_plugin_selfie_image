@@ -7,6 +7,7 @@ import base64
 import hmac
 import json
 import os
+from pathlib import Path
 import re
 import threading
 from typing import Any, Optional
@@ -48,7 +49,14 @@ def _bundled_logo_data_url() -> str:
 
 
 def render_index_html(html: Optional[str] = None) -> str:
-    text = INDEX_HTML if html is None else str(html)
+    if html is None:
+        external_page = Path(__file__).resolve().parent / "pages" / "dashboard" / "index.html"
+        try:
+            text = external_page.read_text(encoding="utf-8") if external_page.is_file() else INDEX_HTML
+        except OSError:
+            text = INDEX_HTML
+    else:
+        text = str(html)
     logo = _bundled_logo_data_url()
     if logo:
         return text.replace(_LOGO_SRC_PLACEHOLDER, logo)

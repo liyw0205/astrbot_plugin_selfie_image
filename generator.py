@@ -56,7 +56,7 @@ def _should_rotate_api_key(class_info: Dict[str, Any]) -> bool:
 
 def _should_advance_to_next_target(class_info: Dict[str, Any]) -> bool:
     category = str(class_info.get("category") or "")
-    if category in {"param", "not_found", "timeout", "network", "rate_limit", "auth", "unknown", "fatal", "safety"}:
+    if category in {"param", "not_found", "timeout", "network", "server", "rate_limit", "auth", "unknown", "fatal", "safety"}:
         return True
     return bool(class_info.get("retryable", True))
 

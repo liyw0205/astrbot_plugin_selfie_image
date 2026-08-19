@@ -357,6 +357,118 @@
       .model-row, .model-row.with-provider { grid-template-columns: 1fr; }
     }
   </style>
+  <style id="bento-studio-theme">
+    :root {
+      color-scheme: light;
+      --bg: #f4f5f9;
+      --panel: #ffffff;
+      --panel-soft: #f7f7fc;
+      --line: #e6e7ef;
+      --line-strong: #d9dbe7;
+      --muted: #858897;
+      --text: #1a1b27;
+      --text-secondary: #6f7282;
+      --primary: #5964f2;
+      --primary-strong: #4651db;
+      --primary-weak: #eeeeff;
+      --danger: #dc6a62;
+      --ok: #249b7d;
+      --shadow: 0 12px 35px rgba(42, 43, 66, .055);
+      --shadow-soft: 0 4px 16px rgba(42, 43, 66, .045);
+      --radius-lg: 20px;
+      --radius-md: 15px;
+      --radius-sm: 10px;
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, "Microsoft YaHei", sans-serif; }
+    body.authed { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 100vh; }
+    body.authed header.app-shell {
+      display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 22px;
+      width: 224px; max-width: none; min-height: 100vh; margin: 0; padding: 25px 15px;
+      background: var(--panel); border-right: 1px solid var(--line); color: var(--text); position: fixed; inset: 0 auto 0 0; z-index: 20;
+    }
+    body.authed main.app-shell { display: block; width: 100%; max-width: 1440px; margin: 0 auto; padding: 28px 38px 42px 262px; }
+    .header-brand { align-items: center; gap: 10px; padding: 0 10px 24px; border-bottom: 1px solid var(--line); }
+    .header-logo { width: 34px; height: 34px; border-radius: 12px; box-shadow: none; border: 0; background: var(--text); }
+    .header-eyebrow { color: var(--primary); font-size: 10px; letter-spacing: .14em; margin: 0 0 3px; }
+    h1 { font-size: 15px; letter-spacing: -.02em; }
+    .header-sub { color: var(--muted); font-size: 10px; margin: 3px 0 0; }
+    body.authed header.app-shell .topline { margin-top: auto; display: flex; flex-direction: column; align-items: stretch; gap: 8px; border-top: 1px solid var(--line); padding: 15px 10px 0; }
+    body.authed header.app-shell .topline::before { content: "创作空间"; color: var(--text); font-size: 12px; font-weight: 700; margin-bottom: 2px; }
+    body.authed header.app-shell .topline::after { content: "● 系统运行正常"; color: var(--ok); font-size: 10px; order: 4; }
+    body.authed #reloadAll, body.authed #logoutBtn { width: 100%; text-align: left; padding: 9px 10px; border: 0; background: transparent; color: var(--muted); }
+    body.authed #reloadAll:hover, body.authed #logoutBtn:hover { background: var(--panel-soft); color: var(--primary); }
+    nav.page-nav { display: grid; gap: 5px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+    nav.page-nav::before { content: "WORKSPACE"; color: #a0a2b0; font-size: 10px; letter-spacing: .14em; padding: 0 11px 5px; }
+    nav.page-nav button, nav.page-nav button.secondary, nav.page-nav button.ok, nav.page-nav button.danger {
+      min-height: 40px; justify-content: flex-start; gap: 10px; padding: 9px 12px; border: 0; border-radius: 10px;
+      background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 550; text-align: left; box-shadow: none;
+    }
+    nav.page-nav button::first-letter { color: var(--primary); }
+    nav.page-nav button:hover { background: var(--panel-soft); color: var(--primary); border: 0; }
+    nav.page-nav button.active, nav.page-nav button.active:hover { background: var(--primary-weak); color: var(--primary); border: 0; box-shadow: inset 2px 0 var(--primary); font-weight: 700; }
+    nav.page-nav button[data-tab="base"]::before { content: "⌂"; }
+    nav.page-nav button[data-tab="channels"]::before { content: "◫"; }
+    nav.page-nav button[data-tab="proxies"]::before { content: "◌"; }
+    nav.page-nav button[data-tab="monitor"]::before { content: "☷"; }
+    nav.page-nav button[data-tab="studio"]::before { content: "✦"; }
+    nav.page-nav button[data-tab="test"]::before { content: "◎"; }
+    nav.page-nav button[data-tab="image"]::before { content: "▧"; }
+    nav.page-nav button[data-tab="selfie"]::before { content: "◉"; }
+    nav.page-nav button[data-tab="audit"]::before { content: "✓"; }
+    nav.page-nav button[data-tab="raw"]::before { content: "⚙"; }
+    nav.page-nav button::before { width: 17px; color: currentColor; font-size: 16px; text-align: center; }
+    section { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); padding: 24px; box-shadow: var(--shadow); }
+    section.active::before { width: 0; display: none; }
+    section + section { margin-top: 16px; }
+    section > .between:first-child, section > h2:first-child { padding-left: 0; }
+    h2 { font-size: 19px; letter-spacing: -.04em; margin-bottom: 7px; }
+    h3 { color: var(--text); font-size: 13px; margin-top: 22px; }
+    label { color: var(--text-secondary); font-weight: 650; }
+    input, select, textarea { border-color: var(--line-strong); background: #fff; color: var(--text); border-radius: var(--radius-sm); }
+    input:focus, select:focus, textarea:focus { border-color: #9ba2ff; box-shadow: 0 0 0 3px var(--primary-weak); }
+    button { border-radius: var(--radius-sm); }
+    button:not(.secondary):not(.danger):not(.ok) { background: var(--primary); border-color: var(--primary); }
+    button:not(.secondary):not(.danger):not(.ok):hover { background: var(--primary-strong); border-color: var(--primary-strong); }
+    button.secondary { background: #fff; border-color: var(--line-strong); color: var(--text); }
+    button.secondary:hover { background: var(--panel-soft); border-color: #bdc1d7; color: var(--primary); }
+    button.ok { background: var(--ok); border-color: var(--ok); }
+    .status, pre { background: var(--panel-soft); border-color: var(--line); color: var(--text-secondary); border-radius: var(--radius-sm); }
+    .card, .model-panel, .model-row, .proxy-card, .studio-slot, .studio-results .card, .stat-card { background: var(--panel); border-color: var(--line); box-shadow: var(--shadow-soft); }
+    .pill { background: var(--primary-weak); color: var(--primary); border-color: #d8d9ff; }
+    .pill.green { background: var(--mint, #e6f8f0); color: var(--ok); }
+    .tabs-inline button.active, .tabs-inline button.active:hover { background: var(--primary-weak); border-color: #c9ccff; color: var(--primary); }
+    .table th { background: var(--panel-soft); }
+    .modal { border-color: var(--line); box-shadow: 0 24px 70px rgba(42,43,66,.2); }
+    .bento-welcome { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; margin-bottom: 16px; }
+    .bento-hero { min-height: 190px; padding: 25px; border-radius: var(--radius-lg); color: #fff; background: var(--text); position: relative; overflow: hidden; }
+    .bento-hero::after { content: ""; position: absolute; width: 220px; height: 220px; right: -55px; top: -95px; border-radius: 50%; background: #747cff; opacity: .8; }
+    .bento-hero .eyebrow { color: #b9bdff; position: relative; z-index: 1; }
+    .bento-hero h2 { max-width: 410px; color: #fff; font-size: 27px; margin: 10px 0 8px; position: relative; z-index: 1; }
+    .bento-hero p { max-width: 420px; color: #b9bbca; font-size: 12px; line-height: 1.6; position: relative; z-index: 1; }
+    .bento-hero button { position: relative; z-index: 1; margin-top: 5px; background: #fff !important; border-color: #fff !important; color: var(--text); }
+    .bento-quick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .bento-tile { min-height: 90px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--primary-weak); }
+    .bento-tile:nth-child(2) { background: #e6f8f0; }
+    .bento-tile:nth-child(3) { background: #fff1df; }
+    .bento-tile:nth-child(4) { background: var(--panel); }
+    .bento-tile b { display: block; font-size: 13px; margin: 9px 0 4px; }
+    .bento-tile span { color: var(--text-secondary); font-size: 10px; }
+    .bento-icon { color: var(--primary); font-size: 17px; }
+    .bento-tile:nth-child(2) .bento-icon { color: var(--ok); }
+    .bento-tile:nth-child(3) .bento-icon { color: #c17a2d; }
+    .base-config { margin-top: 0; }
+    @media (max-width: 900px) {
+      body.authed { display: block; }
+      body.authed header.app-shell { width: 224px; transform: translateX(-100%); transition: transform .2s ease; box-shadow: 10px 0 30px rgba(0,0,0,.12); }
+      body.authed header.app-shell.mobile-open { transform: translateX(0); }
+      body.authed main.app-shell { padding: 20px 16px 32px; }
+      body.authed main.app-shell::before { display: none; }
+      .bento-mobile-menu { display: inline-flex !important; }
+      nav.page-nav { margin-top: 0; }
+      .bento-welcome { grid-template-columns: 1fr; }
+    }
+  </style>
 </head>
 <body>
   <div id="loginPage" class="login-page">
@@ -382,26 +494,41 @@
         <p class="header-sub">渠道、试画、形象与记录</p>
       </div>
     </div>
+    <nav class="page-nav" aria-label="功能分区">
+      <button data-tab="base" class="active" type="button">工作台</button>
+      <button data-tab="channels" type="button">模型渠道</button>
+      <button data-tab="proxies" type="button">代理设置</button>
+      <button data-tab="monitor" type="button">生成记录</button>
+      <button data-tab="studio" type="button">创作画布</button>
+      <button data-tab="test" type="button">快速试画</button>
+      <button data-tab="image" type="button">出图设置</button>
+      <button data-tab="selfie" type="button">形象参考</button>
+      <button data-tab="audit" type="button">审核与翻译</button>
+      <button data-tab="raw" type="button">高级配置</button>
+    </nav>
     <div class="topline">
       <button id="reloadAll" class="secondary">刷新</button>
       <button id="logoutBtn" class="secondary">退出</button>
     </div>
   </header>
   <main class="app-shell">
-    <nav class="page-nav" aria-label="功能分区">
-      <button data-tab="base" class="active" type="button">基础</button>
-      <button data-tab="channels" type="button">渠道</button>
-      <button data-tab="proxies" type="button">代理</button>
-      <button data-tab="monitor" type="button">记录</button>
-      <button data-tab="studio" type="button">画布</button>
-      <button data-tab="test" type="button">试画</button>
-      <button data-tab="image" type="button">出图</button>
-      <button data-tab="selfie" type="button">形象</button>
-      <button data-tab="audit" type="button">审核</button>
-      <button data-tab="raw" type="button">高级</button>
-    </nav>
+    <button id="bentoMobileMenu" class="bento-mobile-menu" type="button" style="display:none;margin:0 0 16px;background:var(--panel);border-color:var(--line);color:var(--text);box-shadow:var(--shadow-soft)">☰　Selfie Image</button>
 
     <section id="base" class="active">
+      <div class="bento-welcome">
+        <div class="bento-hero">
+          <div class="eyebrow">CREATIVE WORKSPACE</div>
+          <h2>把灵感变成可以分享的画面。</h2>
+          <p>从一次试画开始，管理你的模型渠道、形象参考与生成记录。</p>
+          <button type="button" onclick="document.querySelector('[data-tab=\"test\"]').click()">开始一次创作　→</button>
+        </div>
+        <div class="bento-quick">
+          <div class="bento-tile"><div class="bento-icon">✦</div><b>快速试画</b><span>从文字开始创作</span></div>
+          <div class="bento-tile"><div class="bento-icon">◉</div><b>形象参考</b><span>管理固定形象</span></div>
+          <div class="bento-tile"><div class="bento-icon">◫</div><b>模型渠道</b><span>检查运行状态</span></div>
+          <div class="bento-tile"><div class="bento-icon">☷</div><b>生成记录</b><span>查看最近任务</span></div>
+        </div>
+      </div>
       <div class="between">
         <h2>基础</h2>
         <span id="healthPill" class="pill">未连接</span>
@@ -502,6 +629,7 @@
         <div><label>状态</label><select id="monitorSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
       </div>
       <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
+      <div id="monitorMetrics" class="status" style="margin-top:12px"></div>
       <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
       <div id="monitorPager" class="actions"></div>
     </section>
@@ -2640,6 +2768,7 @@ Source prompt:
         $('health').innerHTML = `
           <div><b>状态：</b>${escapeHtml(d.status || 'ok')}</div>
           <div><b>图片缓存：</b>${escapeHtml(String(d.cache_size_mb ?? 0))} / ${escapeHtml(String(d.cache_limit_mb ?? 100))} MB</div>
+          <div><b>缓存预览：</b>预计清理 ${escapeHtml(String(Math.round(Number(d.cache_cleanup_preview?.would_delete_bytes || 0) / 1024 / 1024)))} MB</div>
           <div><b>缓存目录：</b>${escapeHtml(d.cache_dir || '')}</div>
           <div><b>监控记录：</b>${escapeHtml(d.records_path || '')}</div>
           <div><b>配置文件：</b>${escapeHtml(d.config_path || '')}</div>
@@ -2664,6 +2793,17 @@ Source prompt:
       params.set('offset', String((Math.max(1, page) - 1) * MONITOR_PAGE_SIZE));
       return '/api/records?' + params.toString();
     }
+    async function loadMetrics() {
+      try {
+        const res = await api('/api/metrics');
+        const d = res.data || {};
+        const statuses = Object.entries(d.status_counts || {}).map(([k, v]) => `${escapeHtml(k)} ${escapeHtml(String(v))}`).join(' · ') || '暂无';
+        const errors = Object.entries(d.error_categories || {}).map(([k, v]) => `${escapeHtml(k)} ${escapeHtml(String(v))}`).join(' · ') || '暂无';
+        const e = d.elapsed_seconds || {};
+        const channels = Object.entries(d.channels || {}).map(([k, v]) => `${escapeHtml(k)} ${escapeHtml(String(v.success ?? 0))}/${escapeHtml(String(v.attempts ?? 0))} 成功 · 回退 ${escapeHtml(String(v.fallbacks ?? 0))}`).join('；') || '暂无';
+        $('monitorMetrics').innerHTML = `<b>保留记录：</b>${escapeHtml(String(d.retained_records ?? 0))} · <b>图片：</b>${escapeHtml(String(d.requested_images ?? 0))} 请求 / ${escapeHtml(String(d.succeeded_images ?? 0))} 成功 / ${escapeHtml(String(d.failed_images ?? 0))} 失败<br><b>状态：</b>${statuses}<br><b>错误类别：</b>${errors}<br><b>渠道：</b>${channels}<br><b>耗时：</b>P50 ${escapeHtml(String(e.p50 ?? 0))}s · P95 ${escapeHtml(String(e.p95 ?? 0))}s · 最大 ${escapeHtml(String(e.max ?? 0))}s`;
+      } catch (e) { $('monitorMetrics').textContent = e.message; }
+    }
     async function loadRecords(showRefreshToast = true) {
       try {
         const res = await api(monitorQueryPath(MONITOR_PAGE));
@@ -2680,6 +2820,7 @@ Source prompt:
           return await loadRecords(showRefreshToast);
         }
         renderRecords();
+        loadMetrics();
         if (showRefreshToast) showToast('记录已刷新', 'ok');
       } catch (e) { $('monitorStats').textContent = e.message; }
     }
@@ -3993,6 +4134,17 @@ Source prompt:
         return;
       }
       await enterApp(!AUTH_TOKEN);
+    })();
+  </script>
+  <script>
+    (function () {
+      const menu = document.getElementById('bentoMobileMenu');
+      const shell = document.querySelector('header.app-shell');
+      if (!menu || !shell) return;
+      menu.addEventListener('click', function () { shell.classList.toggle('mobile-open'); });
+      document.querySelectorAll('.page-nav button').forEach(function (button) {
+        button.addEventListener('click', function () { shell.classList.remove('mobile-open'); });
+      });
     })();
   </script>
 </body>

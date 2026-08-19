@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.86")
+        self.assertEqual(PLUGIN_VERSION, "1.3.88")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -519,6 +519,171 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("_batch_failure_policy", main_src)
         self.assertIn("_batch_shot_fail_text", main_src)
         self.assertIn("will_continue", main_src)
+
+    def test_single_shot_failure_does_not_claim_batch_continuation(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        message = plugin._batch_shot_fail_text(
+            index=1,
+            total=1,
+            done_files=0,
+            error="这版构图有点跑偏",
+            mode="skip",
+            skipped=1,
+            skip_max=2,
+            will_continue=False,
+        )
+        self.assertEqual(message, "这张没生成成功：这版构图有点跑偏")
+        self.assertNotIn("第 1/1", message)
+        self.assertNotIn("继续后面的", message)
+
+    def test_generation_result_normalizes_legacy_and_partial_results(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        success = plugin._normalize_generation_result({"success": True, "files": ["a.png"]}, 1)
+        self.assertEqual(success["status"], "succeeded")
+        self.assertEqual(success["succeeded_count"], 1)
+        partial = plugin._normalize_generation_result(
+            {"success": False, "files": ["a.png"], "batch_total": 3, "batch_skipped": 1},
+            3,
+        )
+        self.assertEqual(partial["status"], "partial_success")
+        self.assertEqual(partial["requested_count"], 3)
+        self.assertEqual(partial["succeeded_count"], 1)
+        self.assertEqual(partial["failed_count"], 1)
+        self.assertFalse(partial["success"])
+
+    def test_generation_metrics_aggregates_without_exposing_prompt(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin._records_lock = threading.RLock()
+        plugin._records = [
+            {"success": True, "status": "succeeded", "count": 2, "used_model": "model-a", "elapsed_seconds": 4.0, "request_data": {"original_prompt": "secret prompt"}, "attempts": [{"channel": "channel-a", "success": False, "elapsed_seconds": 2, "error_category": "server"}, {"channel": "channel-b", "success": True, "elapsed_seconds": 3}]},
+            {"success": False, "status": "failed", "used_model": "model-a", "elapsed_seconds": 8.0, "attempts": [{"success": False, "error_category": "server"}]},
+        ]
+        metrics = plugin.get_generation_metrics()
+        self.assertEqual(metrics["retained_records"], 2)
+        self.assertEqual(metrics["requested_images"], 3)
+        self.assertEqual(metrics["succeeded_images"], 2)
+        self.assertEqual(metrics["failed_images"], 1)
+        self.assertEqual(metrics["error_categories"]["server"], 2)
+        self.assertEqual(metrics["channels"]["channel-a"]["failed"], 1)
+        self.assertEqual(metrics["channels"]["channel-b"]["success"], 1)
+        self.assertEqual(metrics["channels"]["channel-b"]["fallbacks"], 1)
+        self.assertEqual(metrics["channels"]["channel-b"]["success_rate"], 1.0)
+        self.assertNotIn("secret prompt", json.dumps(metrics, ensure_ascii=False))
+
+    def test_composition_metadata_is_hashed_and_classified(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        metadata = plugin._composition_metadata("看看腿，白丝，全身", "command", "9:16", "1K", 2)
+        self.assertEqual(metadata["strategy"], "look_legs")
+        self.assertEqual(len(metadata["prompt_hash"]), 16)
+        self.assertEqual(metadata["reference_image_count"], 2)
+        self.assertNotIn("白丝", json.dumps(metadata, ensure_ascii=False))
+
+    def test_generation_metrics_counts_channel_fallback_only_on_channel_change(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin._records_lock = threading.RLock()
+        plugin._records = [{
+            "success": True,
+            "status": "succeeded",
+            "count": 1,
+            "attempts": [
+                {"channel": "a", "success": False, "elapsed_seconds": 1, "error_category": "auth"},
+                {"channel": "a", "success": False, "elapsed_seconds": 2, "error_category": "rate_limit"},
+                {"channel": "b", "success": True, "elapsed_seconds": 3},
+            ],
+        }]
+        channels = plugin.get_generation_metrics()["channels"]
+        self.assertEqual(channels["a"]["attempts"], 2)
+        self.assertEqual(channels["a"]["fallbacks"], 0)
+        self.assertEqual(channels["b"]["fallbacks"], 1)
+        self.assertEqual(channels["a"]["error_categories"], {"auth": 1, "rate_limit": 1})
+
+    def test_config_schema_migration_preserves_explicit_concurrency(self) -> None:
+        migrated = AICatConfig.from_dict({"image": {"max_concurrent_tasks": 3}})
+        self.assertEqual(migrated.raw["schema_version"], 2)
+        self.assertEqual(migrated.image_max_concurrent_tasks, 3)
+
+    def test_channel_health_cooldown_ignores_non_operational_errors(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin._channel_health = {}
+        plugin._channel_health_lock = threading.RLock()
+        plugin._record_channel_health([
+            {"channel": "x", "success": False, "error_category": "param"},
+            {"channel": "x", "success": False, "error_category": "safety"},
+        ])
+        self.assertEqual(plugin.get_channel_health(), {})
+        plugin._record_channel_health([{"channel": "x", "success": False, "error_category": "server"}] * 3)
+        self.assertGreater(plugin.get_channel_health()["x"]["cooldown_remaining"], 0)
+        plugin.clear_channel_health("x")
+        self.assertNotIn("x", plugin.get_channel_health())
+
+    def test_request_fingerprint_is_stable_and_does_not_include_plain_prompt(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        first = plugin._request_fingerprint({"prompt": "  hello  ", "count": 1, "images": ["reference-data"]}, "web")
+        second = plugin._request_fingerprint({"prompt": "hello", "count": 1, "images": ["reference-data"]}, "web")
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 24)
+        self.assertNotIn("hello", first)
+        self.assertNotIn("reference-data", first)
+
+    def test_duplicate_task_lookup_only_returns_recent_active_task(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin._web_tasks = {
+            "old": {"task_id": "old", "status": "queued", "request_fingerprint": "same", "created_ts": 1},
+            "active": {"task_id": "active", "status": "running", "request_fingerprint": "same", "created_ts": 100},
+        }
+        self.assertEqual(plugin._find_recent_duplicate_task_locked("same", now=130)["task_id"], "active")
+        self.assertIsNone(plugin._find_recent_duplicate_task_locked("same", now=300))
+
+    def test_cache_cleanup_preview_does_not_delete_files(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_dir = Path(directory) / "image_cache"
+            cache_dir.mkdir()
+            cache_file = cache_dir / "old.bin"
+            cache_file.write_bytes(b"x" * 32)
+            plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+            plugin.generated_dir = str(cache_dir)
+            plugin.config = SimpleNamespace(image_cache_limit_mb=10)
+            plugin._records_lock = threading.RLock()
+            plugin._records = []
+            preview = plugin.get_cache_cleanup_preview()
+            self.assertEqual(preview["total_bytes"], 32)
+            self.assertEqual(preview["would_delete"], [])
+            self.assertTrue(cache_file.exists())
+
+    def test_persisted_running_task_is_marked_expired_after_restart(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "generation_tasks.json"
+            path.write_text(
+                json.dumps({"tasks": {"task-1": {"task_id": "task-1", "status": "running"}}}),
+                encoding="utf-8",
+            )
+            plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+            plugin.tasks_path = str(path)
+            tasks = plugin._load_web_tasks()
+            self.assertEqual(tasks["task-1"]["status"], "expired")
+            self.assertFalse(tasks["task-1"]["success"])
+            self.assertIn("重新提交", tasks["task-1"]["error"])
 
     def test_video_payload_grok_midgate_minimal(self) -> None:
         from astrbot_plugin_selfie_image.models import ImageModelTarget
@@ -803,6 +968,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertFalse(classify_generation_error("No available channel for model gpt-image-1")["retryable"])
         self.assertFalse(classify_generation_error("The generated images appear to be unsafe")["retryable"])
         self.assertTrue(classify_generation_error("HTTP 503 upstream")["retryable"])
+        self.assertEqual(classify_generation_error("HTTP 503 upstream")["category"], "server")
         self.assertTrue(classify_generation_error("HTTP 429 rate limit")["retryable"])
         self.assertFalse(classify_generation_error("请求超时")["retryable"])
         self.assertEqual(classify_generation_error("请求超时")["user_message"], "模型超时（180s）")

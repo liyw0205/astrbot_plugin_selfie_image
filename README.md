@@ -2,9 +2,11 @@
 
 给 AstrBot 用的生图与 AI 自拍插件。支持文生图、图生图、固定形象自拍/合影/换装，以及 Web / 内嵌管理面板。
 
-- 当前版本：`1.3.86`
+- 当前版本：`1.3.88`
 - 需要 AstrBot：`>=4.13.0,<5`
 - 仓库：https://github.com/liyw0205/astrbot_plugin_selfie_image
+
+1.3.88 增加后台重复请求去重、渠道失败短暂冷却、配置脱敏导入导出、发送失败图片重发（`/生图重发`）、缓存清理预览，并统一 Flask 与 AstrBot 内置 Web 的 Bento Studio 界面。
 
 ## 能做什么
 

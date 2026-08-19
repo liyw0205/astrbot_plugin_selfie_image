@@ -11,6 +11,7 @@ from .constants import PROVIDER_TYPES, VIDEO_PROVIDER_TYPES
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
+    "schema_version": 2,
     "bot_name": "啊呜",
     "personality": "可爱猫娘助手，说话带“喵”等语气词，活泼俏皮会撒娇",
     "web": {
@@ -111,6 +112,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "global_timeout": 300,
     },
 }
+
+
+CONFIG_SCHEMA_VERSION = 2
+
+
+def migrate_config(data: Any) -> Dict[str, Any]:
+    """Normalize legacy config and record the independent config schema version."""
+    raw = copy.deepcopy(data) if isinstance(data, dict) else {}
+    try:
+        version = int(raw.get("schema_version") or 1)
+    except Exception:
+        version = 1
+    raw["schema_version"] = min(max(version, CONFIG_SCHEMA_VERSION), CONFIG_SCHEMA_VERSION)
+    return raw
 
 
 @dataclass
@@ -290,7 +305,8 @@ class AICatConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AICatConfig":
-        raw = normalize_config_tree(deep_merge(DEFAULT_CONFIG, data if isinstance(data, dict) else {}))
+        migrated = migrate_config(data)
+        raw = normalize_config_tree(deep_merge(DEFAULT_CONFIG, migrated))
         raw = normalize_legacy_keys(raw)
 
         web = ensure_dict(raw, "web")
