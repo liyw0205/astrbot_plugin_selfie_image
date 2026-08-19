@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.88")
+        self.assertEqual(PLUGIN_VERSION, "1.3.89")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -472,8 +472,12 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("大腿", zh)
         self.assertIn("双脚裁出画外", zh)
         self.assertIn("脸部", zh)
+        self.assertIn("真人摄影质感", zh)
+        self.assertIn("普通手机", zh)
         self.assertIn("crop both ankles and feet", en)
         self.assertIn("Do not show the face", en)
+        self.assertIn("smartphone snapshot", en)
+        self.assertIn("plastic skin", en)
         self.assertNotRegex(en, r"[\u3400-\u9fff]")
         self.assertNotIn("User request:", en)
         self.assertLess(len(en), 2400)
@@ -5451,6 +5455,35 @@ class StudioStoreTests(unittest.TestCase):
             listed = store.list_sessions()
             self.assertTrue(listed)
             self.assertIn("thumb_path", listed[0])
+
+
+class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_daily_profile_prefers_valid_llm_json(self) -> None:
+        from astrbot_plugin_selfie_image.persona import PersonaManager
+
+        periods = {key: f"{key} 的自然状态" for key in ("morning", "noon", "afternoon", "evening", "night", "late_night")}
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+
+            async def generate(_: str) -> str:
+                return json.dumps({"outfit": "浅蓝衬衫和白色长裙", "mood": "清爽", "status_by_period": periods}, ensure_ascii=False)
+
+            profile = await manager.ensure_daily_selfie_profile("看看你", llm_generate=generate)
+            self.assertEqual(profile.source, "llm")
+            self.assertEqual(profile.outfit, "浅蓝衬衫和白色长裙")
+
+    async def test_daily_profile_falls_back_when_llm_fails(self) -> None:
+        from astrbot_plugin_selfie_image.persona import PersonaManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+
+            async def generate(_: str) -> str:
+                raise TimeoutError("timeout")
+
+            profile = await manager.ensure_daily_selfie_profile("看看你", llm_generate=generate)
+            self.assertEqual(profile.source, "fallback")
+            self.assertTrue(profile.outfit)
 
 
 if __name__ == "__main__":

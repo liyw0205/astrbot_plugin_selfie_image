@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from .utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
 
@@ -593,7 +594,12 @@ class PersonaManager:
             is_cos_look=is_cos_look,
         )
 
-    async def ensure_daily_selfie_profile(self, action: str = "") -> DailySelfieProfile:
+    async def ensure_daily_selfie_profile(
+        self,
+        action: str = "",
+        *,
+        llm_generate: Optional[Callable[[str], Awaitable[str]]] = None,
+    ) -> DailySelfieProfile:
         today = local_date_key()
         existed = self.data.get("daily_selfie_profile")
         if isinstance(existed, dict) and existed.get("date") == today and existed.get("outfit") and existed.get("status"):
@@ -610,7 +616,51 @@ class PersonaManager:
             )
             return profile
 
-        profile = fallback_daily_profile(today, make_random_seed())
+        profile: Optional[DailySelfieProfile] = None
+        if llm_generate is not None:
+            prompt = (
+                "请为 AI 自拍角色生成今天的日常拍照设定。只返回一个 JSON 对象，不要 Markdown："
+                '{"outfit":"...","mood":"...","status_by_period":{"morning":"...",'
+                '"noon":"...","afternoon":"...","evening":"...","night":"...",'
+                '"late_night":"..."}}。要求：角色是成年人物，穿搭得体日常，内容适合普通自拍；'
+                "不要写敏感、暴露或未成年人内容；每个字段简短自然。"
+            )
+            try:
+                raw = str(await llm_generate(prompt) or "").strip()
+                match = re.search(r"\{[\s\S]*\}", raw)
+                data = json.loads(match.group(0)) if match else {}
+                periods = data.get("status_by_period") if isinstance(data, dict) and isinstance(data.get("status_by_period"), dict) else {}
+                outfit = str(data.get("outfit") or "").strip()
+                mood = str(data.get("mood") or "自然、放松、轻松").strip()
+                clean_periods = {
+                    key: str(periods.get(key) or "").strip()
+                    for key in ("morning", "noon", "afternoon", "evening", "night", "late_night")
+                }
+                forbidden = ("未成年", "裸", "裸体", "色情", "暴露", "内衣", "乳", "私密")
+                all_text = " ".join([outfit, mood, *clean_periods.values()])
+                if (
+                    outfit
+                    and len(outfit) <= 180
+                    and len(mood) <= 80
+                    and all(clean_periods.values())
+                    and all(len(value) <= 160 for value in clean_periods.values())
+                    and not any(word in all_text for word in forbidden)
+                ):
+                    if all(clean_periods.values()):
+                        profile = DailySelfieProfile(
+                            date=today,
+                            outfit=str(data["outfit"]).strip(),
+                            status=clean_periods.get(current_period(), clean_periods["morning"]),
+                            status_by_period=clean_periods,
+                            mood=str(data.get("mood") or "自然、放松、轻松").strip(),
+                            seed=make_random_seed(),
+                            updated_at=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
+                            source="llm",
+                        )
+            except Exception:
+                profile = None
+        if profile is None:
+            profile = fallback_daily_profile(today, make_random_seed())
         self.data["daily_selfie_profile"] = {
             "date": profile.date,
             "outfit": profile.outfit,

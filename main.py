@@ -3720,7 +3720,11 @@ class SelfieImagePlugin(Star):
             return random.choice(["这会儿接口没接上，晚点再试。", "现在暂时出不了图，等配置恢复再来。"])
         if "缺少生图提示词" in text or "请输入提示词" in text:
             return "你想让我往什么感觉走？也可以直接丢张参考图给我。"
-        return fallback or self._natural_fail_fallback("image")
+        detail = redact_sensitive_text(text)
+        detail = re.sub(r"[\r\n\t]+", " ", detail)
+        detail = re.sub(r"Traceback \(most recent call last\):.*", "", detail, flags=re.I)
+        detail = re.sub(r"\s+", " ", detail).strip(" ：:;；")
+        return detail[:180] + ("…" if len(detail) > 180 else "") if detail else (fallback or self._natural_fail_fallback("image"))
 
     def _tool_soft_fail(self, error: str, fallback: str = "") -> str:
         message = self._friendly_user_error_message(error, fallback)
@@ -4701,8 +4705,9 @@ class SelfieImagePlugin(Star):
             "attempts": result.attempts,
         }
 
-    async def _build_selfie_prompt_and_refs(self, action: str, extra_refs: List[ImageReference]) -> Tuple[str, List[ImageReference]]:
-        await self.persona.ensure_daily_selfie_profile(action)
+    async def _build_selfie_prompt_and_refs(self, action: str, extra_refs: List[ImageReference], event: Optional[AstrMessageEvent] = None) -> Tuple[str, List[ImageReference]]:
+        llm_generate = (lambda prompt: self._call_text_llm(event, prompt, timeout=6)) if event is not None else None
+        await self.persona.ensure_daily_selfie_profile(action, llm_generate=llm_generate)
         persona_ref = self._persona_identity_reference()
         refs: List[ImageReference] = []
         if persona_ref:
@@ -4724,7 +4729,7 @@ class SelfieImagePlugin(Star):
         extra_refs: List[ImageReference],
     ) -> Tuple[str, List[ImageReference], Dict[str, Any]]:
         """Use the central English built-ins and translate only free-form user text."""
-        prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs)
+        prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs, event=event)
         has_identity_reference = bool(self._persona_identity_reference())
         meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
         if not self._prompt_en_needed(action, media="image"):
@@ -5522,11 +5527,12 @@ class SelfieImagePlugin(Star):
         used_model = ""
         last_elapsed = 0.0
         failed_at = 0
+        last_failure_error = ""
         cancelled = False
         succeeded_shots = 0
 
         async def one(index: int) -> None:
-            nonlocal stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled, succeeded_shots
+            nonlocal stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled, succeeded_shots, last_failure_error
             async with sem:
                 if stop or self._task_cancel_requested(task_id):
                     if self._task_cancel_requested(task_id):
@@ -5542,7 +5548,13 @@ class SelfieImagePlugin(Star):
                     stop = True
                     return
                 if not result.get("success"):
-                    raw_err = str(result.get("error") or "")
+                    raw_err = str(result.get("failure_reason") or result.get("error") or "")
+                    if not raw_err:
+                        attempts = result.get("attempts") or []
+                        if isinstance(attempts, list) and attempts:
+                            last = attempts[-1] if isinstance(attempts[-1], dict) else {}
+                            raw_err = str(last.get("error_user_message") or last.get("error") or "")
+                    last_failure_error = raw_err
                     error = self._friendly_user_error_message(raw_err, fail_label)
                     skipped_shots += 1
                     mode, skip_max = self._batch_failure_policy()
@@ -5604,7 +5616,7 @@ class SelfieImagePlugin(Star):
         if failed_at:
             return self._normalize_generation_result({
                 "success": False,
-                "error": fail_label or "生图没有完成",
+                "error": last_failure_error or fail_label or "生图没有完成",
                 "files": all_files,
                 "batch_total": total,
                 "batch_failed_at": failed_at,
