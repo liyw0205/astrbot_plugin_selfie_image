@@ -329,6 +329,8 @@
     .checkline input { width: auto; }
     .topline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .topline input { max-width: 280px; }
+    .page-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-soft); }
+    .page-actions .muted { min-width: 0; }
     body.dashboard-embedded { background: var(--bg); }
     @media (max-width: 1100px) {
       .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -458,6 +460,135 @@
     .bento-tile:nth-child(2) .bento-icon { color: var(--ok); }
     .bento-tile:nth-child(3) .bento-icon { color: #c17a2d; }
     .base-config { margin-top: 0; }
+    /* Light active state for the Bento UI: clear contrast without dark blocks. */
+    nav.page-nav button.active,
+    nav.page-nav button.active:hover,
+    .tabs-inline button.active,
+    .tabs-inline button.active:hover {
+      background: #eef0ff !important;
+      border-color: #c7cdfc !important;
+      color: #3730a3 !important;
+      font-weight: 700;
+      text-shadow: none;
+      box-shadow: 0 3px 10px rgba(89, 100, 242, .12) !important;
+    }
+    nav.page-nav button.active::before { color: #5964f2 !important; }
+    nav.page-nav button:not(.active),
+    nav.page-nav button:not(.active):visited,
+    .tabs-inline button:not(.active),
+    .tabs-inline button:not(.active):visited {
+      background: #ffffff !important;
+      border-color: #e1e3ed !important;
+      color: #3f4350 !important;
+      box-shadow: none !important;
+      text-shadow: none;
+    }
+    nav.page-nav button:not(.active):hover,
+    .tabs-inline button:not(.active):hover {
+      color: #4f46e5 !important;
+      background: #f6f7ff !important;
+    }
+    /* Unified light action system: positive actions share one visual language. */
+    body.authed button:not(.secondary):not(.danger),
+    body.authed button.ok,
+    body.authed button.ok:hover {
+      background: #eef0ff !important;
+      border-color: #c7cdfc !important;
+      color: #3730a3 !important;
+      box-shadow: 0 3px 10px rgba(89, 100, 242, .10) !important;
+    }
+    body.authed button:not(.secondary):not(.danger):hover,
+    body.authed button.ok:hover {
+      background: #e3e6ff !important;
+      border-color: #b8c0f8 !important;
+      color: #312e81 !important;
+    }
+    body.authed button.secondary,
+    body.authed button.secondary:hover {
+      background: #ffffff !important;
+      border-color: #e1e3ed !important;
+      color: #3f4350 !important;
+      box-shadow: none !important;
+    }
+    body.authed button.secondary:hover {
+      background: #f6f7ff !important;
+      border-color: #c7cdfc !important;
+      color: #4f46e5 !important;
+    }
+    body.authed button.danger,
+    body.authed button.danger:hover {
+      background: #fff1f0 !important;
+      border-color: #f3c5c1 !important;
+      color: #b42318 !important;
+      box-shadow: none !important;
+    }
+    body.authed button.danger:hover {
+      background: #ffe5e2 !important;
+      border-color: #eaa7a1 !important;
+      color: #912018 !important;
+    }
+    body.authed .bento-hero button,
+    body.authed .bento-hero button:hover {
+      background: #ffffff !important;
+      border-color: #ffffff !important;
+      color: var(--text) !important;
+      box-shadow: none !important;
+    }
+    /* Keep navigation states independent from the general action-button rules. */
+    body.authed nav.page-nav button:not(.active),
+    body.authed nav.page-nav button:not(.active):hover,
+    body.authed .tabs-inline button:not(.active),
+    body.authed .tabs-inline button:not(.active):hover {
+      background: #ffffff !important;
+      border-color: #e1e3ed !important;
+      color: #3f4350 !important;
+      box-shadow: none !important;
+    }
+    body.authed nav.page-nav button:not(.active):hover,
+    body.authed .tabs-inline button:not(.active):hover {
+      background: #f6f7ff !important;
+      border-color: #c7cdfc !important;
+      color: #4f46e5 !important;
+    }
+    body.authed nav.page-nav button.active,
+    body.authed nav.page-nav button.active:hover,
+    body.authed .tabs-inline button.active,
+    body.authed .tabs-inline button.active:hover {
+      background: #eef0ff !important;
+      border-color: #c7cdfc !important;
+      color: #3730a3 !important;
+      box-shadow: 0 3px 10px rgba(89, 100, 242, .12) !important;
+    }
+    html, body { max-width: 100%; overflow-x: hidden; }
+    body.authed main.app-shell, body.authed main.app-shell * { min-width: 0; }
+    body.authed main.app-shell { width: auto; max-width: none; padding-left: 38px; }
+    body.authed.dashboard-embedded main.app-shell { width: auto; max-width: none; }
+    body.authed.dashboard-embedded { display: block; min-height: 0; }
+    body.authed.dashboard-embedded header.app-shell {
+      display: flex; position: static; width: 100%; min-height: 0; height: auto; padding: 16px 28px 0;
+      flex-direction: column; gap: 12px; border-right: 0; border-bottom: 1px solid var(--line);
+    }
+    body.authed.dashboard-embedded .header-brand,
+    body.authed.dashboard-embedded header.app-shell .topline { display: none; }
+    body.authed.dashboard-embedded nav.page-nav { grid-template-columns: repeat(5, minmax(0, 1fr)); width: 100%; }
+    body.authed.dashboard-embedded nav.page-nav::before { display: none; }
+    body.authed.dashboard-embedded nav.page-nav button { justify-content: center; text-align: center; }
+    body.authed.dashboard-embedded main.app-shell { display: block; width: 100%; max-width: 1440px; margin: 0 auto; padding: 24px 28px 36px; }
+    body.authed main.app-shell img, body.authed main.app-shell video, body.authed main.app-shell iframe { max-width: 100%; }
+    body.authed section { overflow: hidden; }
+    body.authed .grid, body.authed .grid3, body.authed .grid4, body.authed .channel-row,
+    body.authed .baseurl-row, body.authed .proxy-card, body.authed .proxy-actions,
+    body.authed .proxy-kpi, body.authed .proxy-qgrid { min-width: 0; }
+    body.authed textarea { max-width: 100%; }
+    @media (max-width: 1180px) and (min-width: 901px) {
+      body.authed { grid-template-columns: 204px minmax(0, 1fr); }
+      body.authed header.app-shell { width: 204px; padding: 22px 12px; }
+      body.authed main.app-shell { padding: 24px 24px 36px; }
+      .bento-welcome { grid-template-columns: 1fr; }
+      .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .channel-row { grid-template-columns: minmax(0, 1fr) 120px 90px; }
+      .channel-row .actions { grid-column: 1 / -1; }
+    }
     @media (max-width: 900px) {
       body.authed { display: block; }
       body.authed header.app-shell { width: 224px; transform: translateX(-100%); transition: transform .2s ease; box-shadow: 10px 0 30px rgba(0,0,0,.12); }
@@ -467,6 +598,29 @@
       .bento-mobile-menu { display: inline-flex !important; }
       nav.page-nav { margin-top: 0; }
       .bento-welcome { grid-template-columns: 1fr; }
+      body.authed.dashboard-embedded header.app-shell { position: static; width: 100%; transform: none !important; padding: 12px 16px 0; }
+      body.authed.dashboard-embedded nav.page-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      body.authed.dashboard-embedded main.app-shell { padding: 16px 16px 28px; }
+    }
+    @media (max-width: 640px) {
+      body.authed main.app-shell { padding: 14px 10px 28px; }
+      body.authed section { padding: 16px; border-radius: 16px; }
+      .bento-hero { min-height: 205px; padding: 20px; }
+      .bento-hero h2 { font-size: 23px; }
+      .bento-quick { gap: 8px; }
+      .bento-tile { min-height: 82px; padding: 13px; }
+      .grid, .grid3, .grid4, .channel-row { grid-template-columns: minmax(0, 1fr) !important; }
+      .actions { align-items: stretch; }
+      .actions button { max-width: 100%; }
+      .between { align-items: flex-start; flex-wrap: wrap; }
+      .topline { width: 100%; }
+      .topline input { max-width: 100%; }
+      .page-actions { align-items: stretch; }
+      .page-actions button { flex: 1 1 140px; }
+      .proxy-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .proxy-kpi, .proxy-qgrid { grid-template-columns: 1fr; }
+      .modal { width: calc(100vw - 20px); padding: 12px; }
+      .table { min-width: 620px; }
     }
   </style>
 </head>
@@ -513,6 +667,11 @@
   </header>
   <main class="app-shell">
     <button id="bentoMobileMenu" class="bento-mobile-menu" type="button" style="display:none;margin:0 0 16px;background:var(--panel);border-color:var(--line);color:var(--text);box-shadow:var(--shadow-soft)">☰　Selfie Image</button>
+    <div class="page-actions" aria-label="页面操作">
+      <button id="pageSaveAll" class="ok" type="button">保存配置</button>
+      <button id="pageRefreshAll" class="secondary" type="button">刷新数据</button>
+      <span id="pageActionStatus" class="muted" role="status"></span>
+    </div>
 
     <section id="base" class="active">
       <div class="bento-welcome">
@@ -1770,7 +1929,7 @@ Source prompt:
           </div>
         `;
         const enableInput = card.querySelector('input[type="checkbox"]');
-        enableInput.onchange = event => {
+        enableInput.onchange = async event => {
           const target = list[i];
           const want = !!event.target.checked;
           target.enabled = want;
@@ -1792,7 +1951,13 @@ Source prompt:
             `;
           }
           refreshModelSelectors();
-          scheduleChannelListAutoSave();
+          const saved = await scheduleChannelListAutoSave();
+          if (!saved) {
+            target.enabled = !want;
+            enableInput.checked = !want;
+            renderAllChannelLists();
+            showToast('渠道开关保存失败，已恢复原状态', 'bad');
+          }
         };
         card.querySelector('[data-act="edit"]').onclick = () => openChannelModal(i, kind);
         card.querySelector('[data-act="dup"]').onclick = () => duplicateChannel(i, kind);
@@ -2746,9 +2911,9 @@ Source prompt:
       }
     }
 
-    function scheduleChannelListAutoSave() {
-      if (isChannelModalOpen()) return;
-      persistConfig(false, '', { toast: false, toastError: true, quiet: true });
+    async function scheduleChannelListAutoSave() {
+      if (isChannelModalOpen()) return false;
+      return await persistConfig(false, '', { toast: false, toastError: true, quiet: true });
     }
     async function saveJsonConfig() {
       try {
@@ -2777,6 +2942,26 @@ Source prompt:
       } catch (e) {
         $('health').textContent = e.message;
         $('healthPill').textContent = '未连接';
+      }
+    }
+    async function refreshDashboardData() {
+      if ($('pageActionStatus')) $('pageActionStatus').textContent = '正在刷新…';
+      try {
+        // Wait for a pending channel/list save before reading the server state back.
+        await PERSIST_TAIL;
+        await Promise.allSettled([
+          checkHealth(),
+          loadConfig(),
+          refreshSelfie(),
+          loadRecords(),
+          loadMetrics(),
+          loadStudioList(STUDIO.current && STUDIO.current.id),
+        ]);
+        if ($('pageActionStatus')) $('pageActionStatus').textContent = '已刷新';
+        showToast('页面数据已刷新', 'ok');
+      } catch (e) {
+        if ($('pageActionStatus')) $('pageActionStatus').textContent = e.message || '刷新失败';
+        showToast(e.message || '刷新失败', 'bad');
       }
     }
     function monitorQueryPath(page = MONITOR_PAGE) {
@@ -3509,6 +3694,8 @@ Source prompt:
         await checkHealth();
         await refreshSelfie();
         await loadRecords(false);
+        await loadMetrics();
+        await loadStudioList(STUDIO.current && STUDIO.current.id);
         await resumeImageTestTask();
       } catch (e) {
         document.body.classList.remove('authed');
@@ -4032,8 +4219,9 @@ Source prompt:
         document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
         btn.classList.add('active');
         $(btn.dataset.tab).classList.add('active');
-        if (btn.dataset.tab === 'monitor') loadRecords();
+        if (btn.dataset.tab === 'monitor') { loadRecords(); loadMetrics(); }
         if (btn.dataset.tab === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
+        if (btn.dataset.tab === 'selfie') refreshSelfie();
         if (btn.dataset.tab === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
       };
     });
@@ -4041,6 +4229,8 @@ Source prompt:
     $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };
     $('logoutBtn').onclick = logout;
     $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(); };
+    $('pageSaveAll').onclick = saveAll;
+    $('pageRefreshAll').onclick = refreshDashboardData;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;
     $('modalProvider').onchange = modalProviderChanged;
