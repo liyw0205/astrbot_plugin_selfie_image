@@ -82,17 +82,19 @@ def build_selfie_builtin_prompt(
         if is_legs:
             if feet_cropped:
                 lines.extend([
-                    "Casual indoor snapshot of a single subject: only a little hem, thighs, and knees; crop both ankles and feet fully outside the frame.",
+                    "Casual indoor smartphone snapshot of a single adult subject: only a little hem, thighs, and knees; crop both ankles and feet fully outside the frame.",
                     "Do not show the face, hair, or head; crop the face fully outside the frame.",
                     "Keep exactly two natural thighs and knees connected from the hips.",
                     "Use only the selected bare-leg look or separate white/black opaque long socks; cuff may be plain, lightly rolled, or a small bow; show leg shape; never become tights.",
-                    "Do not add feet or shoes; keep everyday indoor light.",
+                    "Use ordinary window or room light, natural exposure, realistic fabric thickness and small clothing wrinkles; avoid studio polish, plastic skin, illustration, or 3D-rendered surfaces.",
+                    "Do not add feet or shoes; keep everyday indoor perspective and an unretouched candid-photo feel.",
                 ])
             else:
                 lines.extend([
-                    "Single subject only: a tasteful lower-body close-up with no second person, background people, or shoes.",
+                    "Single adult subject only: a natural lower-body everyday-photo composition with no second person, background people, or shoes.",
                     "Use natural thighs; selected legwear is bare-leg effect or white/black opaque mid-calf stockings that emphasize leg shape with a light sock-top indent, not sheer skin-see-through.",
                     "Keep two natural legs and feet, correct joints, stable pose, realistic anatomy, and perspective.",
+                    "Use ordinary smartphone perspective, ambient window or room light, subtle exposure variation, realistic fabric texture, and lightly textured skin; avoid studio polish, plastic skin, illustration, or 3D-rendered surfaces.",
                 ])
         elif is_group:
             lines.extend([
@@ -111,7 +113,7 @@ def build_selfie_builtin_prompt(
 
     user = translated_user or extract_user_prompt(action)
     if is_legs and feet_cropped:
-        legs_line = "下半身特写，不要全身，不要鞋子；短裙盖髋、下摆到大腿中段；只露裙摆到膝；小腿与双脚裁出画外；脸部也裁出画外；穿搭只用已选的光腿神器、白丝或黑丝。"
+        legs_line = "成年人物的日常手机随拍，下半身近景，不要全身，不要鞋子；短裙盖髋、下摆到大腿中段；只露裙摆到膝；小腿与双脚裁出画外；脸部也裁出画外；穿搭只用已选的光腿神器、白丝或黑丝。"
     elif is_legs:
         legs_line = "单人下半身近景，只保留自然完整的两条腿和双脚；光腿时脚趾自然清晰；腿部穿搭只用已选定的光腿神器、白丝或黑丝，白丝/黑丝袜口有卷边，不要鞋子。"
     else:
@@ -123,6 +125,7 @@ def build_selfie_builtin_prompt(
         "参考图一只作为主角身份锚点，额外参考图只用于服装、姿势、构图、光线或场景。" if has_reference_image else "按角色设定保持主角身份稳定，未说明性别时默认成年女性。",
         "" if is_legs else ("合影对象必须落实为独立完整人物，站位自然，边界清晰。" if is_group else ""),
         legs_line,
+        "真人摄影质感：像普通手机在室内随手拍到的日常照片；使用窗光或房间环境光，保留自然曝光变化、真实布料厚度与细小褶皱、轻微皮肤纹理和接触阴影；避免棚拍精修、塑料皮肤、插画感、3D 渲染感和过度虚化。" if is_legs and str(appearance_type) == "real" else "",
         "画面自然完整，光线、色调、景深和相机透视统一。" if not is_legs else "",
         f"用户要求：{user}" if user else "",
     )
