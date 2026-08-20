@@ -321,8 +321,8 @@ class ConfigModelTests(unittest.TestCase):
         metadata = (Path(__file__).resolve().parents[1] / "metadata.yaml").read_text(encoding="utf-8")
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
-        self.assertIn(f"当前版本：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.89")
+        self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
+        self.assertEqual(PLUGIN_VERSION, "1.3.90")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3854,6 +3854,62 @@ class ReferenceCollectorTests(unittest.TestCase):
         buckets = extract_structured_image_sources(Event(), include_at_avatar=True)
         self.assertEqual(sum(len(v) for v in buckets.values()), 0)
 
+    def test_context_fallback_is_opt_in_for_cos_style_collection(self) -> None:
+        from astrbot_plugin_selfie_image.reference_collector import ReferenceCollector
+
+        class Event:
+            message_obj = None
+            message = None
+            raw_message = None
+
+        collector = ReferenceCollector(
+            max_bytes=1024 * 1024,
+            context_sources=["https://cdn.example/old-1.png", "https://cdn.example/old-2.png"],
+            context_hint="上一张换成 COS",
+            allow_context_fallback=False,
+            looks_like_context_ref=lambda text: "上一张" in text,
+        )
+        buckets = collector.collect_source_buckets(Event())
+        self.assertEqual(buckets["context"], [])
+
+        explicit = ReferenceCollector(
+            max_bytes=1024 * 1024,
+            context_sources=["https://cdn.example/old.png"],
+            context_hint="看看COS",
+            allow_context_fallback=False,
+        )
+        explicit_buckets = explicit.collect_source_buckets(Event())
+        self.assertEqual(explicit_buckets["context"], [])
+
+    def test_explicit_current_message_image_remains_message_reference(self) -> None:
+        from astrbot_plugin_selfie_image.reference_collector import ReferenceCollector
+
+        class Image:
+            def __init__(self):
+                self.url = "https://cdn.example/current.png"
+                self.path = ""
+
+        class MessageObj:
+            def __init__(self):
+                self.message = [Image()]
+                self.quote = None
+
+        class Event:
+            def __init__(self):
+                self.message_obj = MessageObj()
+                self.message = None
+                self.raw_message = None
+
+        collector = ReferenceCollector(
+            max_bytes=1024 * 1024,
+            context_sources=["https://cdn.example/old.png"],
+            context_hint="看看COS",
+            allow_context_fallback=False,
+        )
+        buckets = collector.collect_source_buckets(Event())
+        self.assertEqual(buckets["message"], ["https://cdn.example/current.png"])
+        self.assertEqual(buckets["context"], [])
+
 
 class DashboardEmbedContractTests(unittest.TestCase):
     """Target 06: lock embed/token-free boot and channel-test poll contracts."""
@@ -4282,8 +4338,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertTrue(getattr(cos_intent, "is_cos_look", False), cos_action)
             self.assertFalse(cos_intent.is_group_photo)
             self.assertFalse(cos_intent.is_third_person_photo)
-            shaosiyuan = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "shaosiyuan_red")
-            forced = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), shaosiyuan["prompt"], False)
+            rem = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "rem_blue_lolita")
+            forced = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), rem["prompt"], False)
             forced_intent = manager.analyze_selfie_intent(forced)
             self.assertFalse(forced_intent.is_legs_only, forced)
             self.assertTrue(forced_intent.is_cos_look)
@@ -4960,26 +5016,26 @@ class LegFocusTests(unittest.TestCase):
             self.assertTrue(m, t)
             ids.add(m.group(1))
         self.assertGreaterEqual(len(ids), 4, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 26)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 13)
         titles = {x["title"] for x in plugin_main.COS_LOOK_SETS}
-        self.assertIn("公孙离·青金短裙", titles)
-        self.assertIn("公孙离·墨染江湖", titles)
-        self.assertIn("西施·诗雨江南", titles)
-        self.assertIn("薄荷粉纱汉服", titles)
-        self.assertIn("爱莉希雅·粉白奇幻", titles)
-        self.assertIn("洛琪希·奶油睡衣", titles)
-        self.assertIn("和泉纱雾·粉结白T", titles)
-        self.assertIn("菲比·双马尾白裙", titles)
-        self.assertIn("貂蝉·猫影幻舞", titles)
-        self.assertIn("大乔·白鹤梁神女", titles)
-        self.assertIn("海月·潮汐", titles)
-        self.assertIn("戈娅·荒野猎手", titles)
-        self.assertIn("今汐·朔雷之鳞", titles)
-        self.assertIn("长离·焚羽", titles)
-        self.assertIn("坎特蕾拉·紫海", titles)
-        self.assertIn("珂莱塔·冰冕", titles)
-        self.assertIn("约尔·荆棘姬", titles)
-        self.assertIn("艾斯德斯·冰将军", titles)
+        self.assertEqual(
+            titles,
+            {
+                "洛琪希·奶油睡衣",
+                "齐胸汉服·桃粉",
+                "薄荷粉纱汉服",
+                "蕾姆·蓝白女仆洛丽塔",
+                "露莎公主·白金礼服",
+                "艾莎·冰蓝披风礼服",
+                "初音未来·蓝白公式服",
+                "木之本樱·粉白魔法裙",
+                "蝴蝶忍·蝶纹羽织",
+                "甘露寺蜜璃·恋柱羽织",
+                "赛马娘·特雷森学院制服",
+                "瑶·大耳狗之梦",
+                "芭芭拉·蓝白祈礼服",
+            },
+        )
         for item in plugin_main.COS_LOOK_SETS:
             blob = item["title"] + item["prompt"]
             self.assertNotIn("抖音", blob)
@@ -4989,13 +5045,17 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("禁止蓝色旅行法师外套", roxy["prompt"])
         self.assertIn("双麻花辫", roxy["prompt"])
         self.assertIn("睡衣", roxy["prompt"])
-        mansui = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "mansui_xianxia")
-        self.assertIn("跪坐", mansui["prompt"])
-        self.assertIn("高开衩", mansui["prompt"])
-        self.assertNotIn("反差", mansui["prompt"])
-        ink = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "gongsunli_ink")
-        self.assertIn("泼墨", ink["prompt"])
-        self.assertIn("高开叉", ink["prompt"])
+        rem = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "rem_blue_lolita")
+        self.assertIn("蓝白女仆洛丽塔", rem["title"])
+        self.assertIn("白色蕾丝围裙", rem["prompt"])
+        added_ids = {
+            "shinobu_butterfly",
+            "mitsuri_love",
+            "tracen_academy",
+            "yao_cinnamoroll",
+            "barbara_idol",
+        }
+        self.assertTrue(added_ids.issubset({x["id"] for x in plugin_main.COS_LOOK_SETS}))
         wrap = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
         self.assertIn("对镜", wrap)
         self.assertNotIn("第一人称自拍或居家随手拍", wrap)
