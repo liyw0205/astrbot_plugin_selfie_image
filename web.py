@@ -1165,7 +1165,7 @@ Source prompt:
       img.global_timeout ??= 280;
       img.max_image_size_mb ??= 10;
       img.cache_limit_mb ??= 100;
-      img.max_batch_count ??= 2;
+      img.max_batch_count ??= 10;
       img.batch_on_failure ??= 'skip';
       img.batch_skip_max ??= 2;
       img.rate_limit_seconds ??= 0;
@@ -1276,7 +1276,7 @@ Source prompt:
       CONFIG.image.global_timeout = Number($('globalTimeout').value || 280);
       CONFIG.image.max_image_size_mb = Number($('maxImageSize').value || 10);
       CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 100);
-      CONFIG.image.max_batch_count = Number($('maxBatchCount').value || 2);
+      CONFIG.image.max_batch_count = Number($('maxBatchCount').value || 10);
        CONFIG.image.batch_on_failure = ($('batchOnFailure') && $('batchOnFailure').value) || 'skip';
        if (!['stop','skip','skip_max'].includes(CONFIG.image.batch_on_failure)) CONFIG.image.batch_on_failure = 'skip';
        CONFIG.image.batch_skip_max = Number(($('batchSkipMax') && $('batchSkipMax').value) || 2);

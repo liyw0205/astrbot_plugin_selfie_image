@@ -33,7 +33,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "rate_limit_seconds": 0,
         "enable_daily_limit": False,
         "daily_limit_count": 10,
-        "max_batch_count": 2,
+        # A batch may contain 10 shots; max_concurrent_tasks still limits
+        # how many are sent to the upstream at the same time.
+        "max_batch_count": 10,
         # stop: 一张全失败整批停（旧行为）；skip: 跳过失败张继续凑满；skip_max: 最多跳过 N 张
         "batch_on_failure": "skip",
         "batch_skip_max": 2,
@@ -413,7 +415,7 @@ class AICatConfig:
             image_rate_limit_seconds=to_int(image.get("rate_limit_seconds"), 0, minimum=0, maximum=3600),
             image_enable_daily_limit=to_bool(image.get("enable_daily_limit"), False),
             image_daily_limit_count=to_int(image.get("daily_limit_count"), 10, minimum=1, maximum=1000),
-            image_max_batch_count=to_int(image.get("max_batch_count"), 2, minimum=1, maximum=20),
+            image_max_batch_count=to_int(image.get("max_batch_count"), 10, minimum=1, maximum=20),
             image_batch_on_failure=batch_on_failure,
             image_batch_skip_max=to_int(image.get("batch_skip_max") or image.get("batchSkipMax"), 2, minimum=0, maximum=8),
             image_blocked_words=split_values(image.get("blocked_words")),

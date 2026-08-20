@@ -322,12 +322,12 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.91")
+        self.assertEqual(PLUGIN_VERSION, "1.3.92")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
         self.assertEqual(config.web_host, "127.0.0.1")
-        self.assertEqual(config.image_max_batch_count, 2)
+        self.assertEqual(config.image_max_batch_count, 10)
 
     def test_numeric_config_is_clamped(self) -> None:
         config = AICatConfig.from_dict({"image": {"max_batch_count": 99, "max_concurrent_tasks": 0}})
