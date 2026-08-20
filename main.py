@@ -5249,9 +5249,15 @@ class SelfieImagePlugin(Star):
         self._selfie_batch_gate = gate
         return gate
 
-    def _image_batch_queue_expected(self, total: int) -> bool:
+    def _image_batch_queue_expected(self, total: int = 1) -> bool:
+        """Whether the first shot must wait for a currently occupied slot.
+
+        ``total`` is intentionally not used here.  A batch of ten is valid
+        with concurrency three and must not be labelled queued merely because
+        ten is larger than the configured concurrency.
+        """
         gate = self._ensure_image_batch_gate()
-        return int(getattr(gate, "_value", 0)) < max(1, int(total))
+        return int(getattr(gate, "_value", 0)) <= 0
 
     async def _acquire_image_slot(self, task_id: str) -> Optional[asyncio.Semaphore]:
         """Acquire one slot; a batch may be larger than the global limit."""
@@ -6142,7 +6148,7 @@ class SelfieImagePlugin(Star):
             progress += "\n" + "\n".join(hints)
         queue_notified = self._image_batch_queue_expected(requested_count)
         if queue_notified:
-            progress = "上一轮还在画，这轮先排队，画完接上。\n" + progress
+            progress = "当前生图并发已满，本次先排队，空出槽位后继续。\n" + progress
         self._record_bot_text_context(event, progress)
 
         async def runner(task_id: str) -> Dict[str, Any]:

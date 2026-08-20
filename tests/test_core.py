@@ -5545,6 +5545,18 @@ class StudioStoreTests(unittest.TestCase):
 
 
 class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_large_batch_is_not_called_previous_task_queue_when_idle(self) -> None:
+        from types import SimpleNamespace
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin.config = SimpleNamespace(image_max_concurrent_tasks=3)
+        plugin._image_batch_gate = asyncio.Semaphore(3)
+        self.assertFalse(plugin._image_batch_queue_expected(10))
+        for _ in range(3):
+            await plugin._image_batch_gate.acquire()
+        self.assertTrue(plugin._image_batch_queue_expected(10))
+
     async def test_batch_larger_than_limit_is_drained_without_deadlock(self) -> None:
         from types import SimpleNamespace
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
