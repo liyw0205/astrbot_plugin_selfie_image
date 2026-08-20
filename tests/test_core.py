@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.93")
+        self.assertEqual(PLUGIN_VERSION, "1.3.94")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5015,8 +5015,8 @@ class LegFocusTests(unittest.TestCase):
             m = re.search(r"【cos:([a-z0-9_]+)】", t)
             self.assertTrue(m, t)
             ids.add(m.group(1))
-        self.assertGreaterEqual(len(ids), 4, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 13)
+        self.assertGreaterEqual(len(ids), 3, ids)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 18)
         titles = {x["title"] for x in plugin_main.COS_LOOK_SETS}
         self.assertEqual(
             titles,
@@ -5025,15 +5025,20 @@ class LegFocusTests(unittest.TestCase):
                 "齐胸汉服·桃粉",
                 "薄荷粉纱汉服",
                 "蕾姆·蓝白女仆洛丽塔",
-                "露莎公主·白金礼服",
-                "艾莎·冰蓝披风礼服",
-                "初音未来·蓝白公式服",
-                "木之本樱·粉白魔法裙",
-                "蝴蝶忍·蝶纹羽织",
-                "甘露寺蜜璃·恋柱羽织",
-                "赛马娘·特雷森学院制服",
-                "瑶·大耳狗之梦",
-                "芭芭拉·蓝白祈礼服",
+                "白细肩带迷你裙",
+                "海月·白蓝花瓣水母",
+                "西施·同人短旗袍",
+                "蓝梦·龙之道",
+                "朵莉亚·海洋荷叶裙",
+                "殷紫萍·银白短旗袍",
+                "甘雨·花嫁",
+                "玉玲珑·金狐",
+                "貂蝉·三国杀",
+                "铂金发白蕾丝长裙",
+                "西施·青绿渐变旗袍",
+                "黄结白围裙女仆",
+                "银紫深V广袖",
+                "露背蓝纱古装",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -5056,33 +5061,88 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("白色长袖蓬袖衬衣", rem["prompt"])
         self.assertIn("分叉燕尾式深色后摆", rem["prompt"])
         self.assertIn("不要拉姆粉色女仆服", rem["prompt"])
-        added_ids = {
+        prompts = {x["id"]: x["prompt"] for x in plugin_main.COS_LOOK_SETS}
+        self.assertIn("齐胸抹胸高腰", prompts["hanfu_peach"])
+        self.assertIn("外层宽袖薄纱袍", prompts["mint_sheer_hanfu"])
+        white = prompts["white_slip_mini"]
+        self.assertIn("细肩带", white)
+        self.assertIn("裙摆只到大腿中段", white)
+        self.assertIn("白色厚底运动鞋", white)
+        self.assertNotIn("《", white)
+        self.assertNotIn("抖音", white)
+        self.assertNotIn("天宫", white)
+        haiyue = prompts["haiyue_petal_jelly"]
+        self.assertIn("《王者荣耀》海月", haiyue)
+        self.assertIn("深甜心领", haiyue)
+        self.assertIn("不是原皮宽袖长袍汉服", haiyue)
+        self.assertNotIn("抖音", haiyue)
+        xishi = prompts["xishi_fan_qipao"]
+        self.assertIn("《王者荣耀》西施同人短旗袍", xishi)
+        self.assertIn("薄荷白鹿角", xishi)
+        self.assertIn("不是原皮长裙水莲汉服", xishi)
+        self.assertNotIn("抖音", xishi)
+        lanmeng = prompts["lanmeng_dragon_path"]
+        self.assertIn("《永劫无间》蓝梦龙之道", lanmeng)
+        self.assertIn("浅金海波纹一字肩短上衣", lanmeng)
+        self.assertIn("不是原皮多层长袍", lanmeng)
+        self.assertNotIn("抖音", lanmeng)
+        dolia = prompts["dolia_ocean_ruffle"]
+        self.assertIn("《王者荣耀》朵莉亚", dolia)
+        self.assertIn("白贝壳与红海星", dolia)
+        self.assertIn("不是原皮人鱼长尾", dolia)
+        self.assertNotIn("抖音", dolia)
+        yinzi = prompts["yinzi_white_qipao"]
+        self.assertIn("《永劫无间》殷紫萍", yinzi)
+        self.assertIn("钥匙孔开窗", yinzi)
+        self.assertIn("不是长袍旗袍", yinzi)
+        ganyu = prompts["ganyu_bride"]
+        self.assertIn("《原神》甘雨花嫁", ganyu)
+        self.assertIn("麒麟角", ganyu)
+        self.assertIn("不是原皮深蓝金边旗袍", ganyu)
+        fox = prompts["yulinglong_gold_fox"]
+        self.assertIn("《永劫无间》玉玲珑", fox)
+        self.assertIn("狐耳", fox)
+        self.assertIn("不是原皮覆盖更多的汉服长袍", fox)
+        diaochan = prompts["diaochan_sanguosha"]
+        self.assertIn("《三国杀》貂蝉", diaochan)
+        self.assertIn("螺旋黑发包", diaochan)
+        self.assertIn("薄荷缎裙", diaochan)
+        lace = prompts["platinum_lace_gown"]
+        self.assertIn("铂金长直发白蕾丝长裙", lace)
+        self.assertNotIn("《", lace)
+        self.assertNotIn("星穹", lace)
+        cyan = prompts["xishi_cyan_qipao"]
+        self.assertIn("《王者荣耀》西施这一版青绿渐变旗袍", cyan)
+        self.assertIn("白盘扣", cyan)
+        self.assertIn("不是鹿角同人短旗袍", cyan)
+        maid = prompts["yellow_bow_maid"]
+        self.assertIn("大黄蝴蝶结", maid)
+        self.assertIn("白围裙", maid)
+        self.assertNotIn("永劫", maid)
+        self.assertNotIn("宁红夜", maid)
+        self.assertNotIn("《", maid)
+        deepv = prompts["silver_deepv_hanfu"]
+        self.assertIn("交领极低开到胸口", deepv)
+        self.assertIn("金绣直襟", deepv)
+        self.assertNotIn("《", deepv)
+        backless = prompts["blue_backless_hanfu"]
+        self.assertIn("整片后背从颈到腰全开", backless)
+        self.assertIn("冰蓝渐变到青绿再到宝蓝", backless)
+        self.assertNotIn("《", backless)
+        self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
+        self.assertNotIn("yao_cinnamoroll", {x["id"] for x in plugin_main.COS_LOOK_SETS})
+        for removed in (
+            "lusha_white_gold",
+            "elsa_ice_cape",
+            "miku_formula_blue",
+            "sakura_pink_magic",
             "shinobu_butterfly",
             "mitsuri_love",
             "tracen_academy",
             "yao_cinnamoroll",
             "barbara_idol",
-        }
-        self.assertTrue(added_ids.issubset({x["id"] for x in plugin_main.COS_LOOK_SETS}))
-        prompts = {x["id"]: x["prompt"] for x in plugin_main.COS_LOOK_SETS}
-        self.assertIn("《死馆2》的露莎公主", prompts["lusha_white_gold"])
-        self.assertIn("前中部保留明显纵向开衩", prompts["lusha_white_gold"])
-        self.assertIn("不要《最终幻想VII》LOVELESS露莎", prompts["lusha_white_gold"])
-        self.assertIn("2013年《Let It Go》经典冰雪礼服", prompts["elsa_ice_cape"])
-        self.assertIn("半透明冰蓝色闪粉长披风/拖尾", prompts["elsa_ice_cape"])
-        self.assertIn("原始 KEI/CV01", prompts["miku_formula_blue"])
-        self.assertIn("独立式黑色长臂套", prompts["miku_formula_blue"])
-        self.assertIn("初期经典粉白捕获服", prompts["sakura_pink_magic"])
-        self.assertIn("粉白魔法帽", prompts["sakura_pink_magic"])
-        self.assertIn("下半身明确为紫色制服长裤/窄腿裤", prompts["shinobu_butterfly"])
-        self.assertIn("不要蝴蝶纹羽织", prompts["mitsuri_love"])
-        self.assertIn("黄绿色竖条纹的长袜套", prompts["mitsuri_love"])
-        self.assertIn("特雷森学院夏季制服", prompts["tracen_academy"])
-        self.assertIn("紫色学院制服短袖上衣与紫色百褶短裙明确分体", prompts["tracen_academy"])
-        self.assertIn("水晶气泡鹿角", prompts["yao_cinnamoroll"])
-        self.assertIn("半透明水蓝色云纹罩纱", prompts["yao_cinnamoroll"])
-        self.assertIn("默认服装「纯真期待」", prompts["barbara_idol"])
-        self.assertIn("独立式分离短袖/袖套", prompts["barbara_idol"])
+        ):
+            self.assertNotIn(removed, {x["id"] for x in plugin_main.COS_LOOK_SETS})
         wrap = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
         self.assertIn("对镜", wrap)
         self.assertNotIn("第一人称自拍或居家随手拍", wrap)
