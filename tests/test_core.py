@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.90")
+        self.assertEqual(PLUGIN_VERSION, "1.3.91")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5042,12 +5042,20 @@ class LegFocusTests(unittest.TestCase):
             self.assertNotIn("擦边", blob)
             self.assertNotIn("反差", blob)
         roxy = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "roxy_cream")
+        self.assertIn("《无职转生》洛琪希", roxy["prompt"])
+        self.assertIn("跪坐在地毯上", roxy["prompt"])
+        self.assertIn("双膝并拢", roxy["prompt"])
+        self.assertIn("双腿收拢并拢压在身下", roxy["prompt"])
+        self.assertIn("不要盘腿、分腿或站立", roxy["prompt"])
         self.assertIn("禁止蓝色旅行法师外套", roxy["prompt"])
         self.assertIn("双麻花辫", roxy["prompt"])
         self.assertIn("睡衣", roxy["prompt"])
         rem = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "rem_blue_lolita")
         self.assertIn("蓝白女仆洛丽塔", rem["title"])
-        self.assertIn("白色蕾丝围裙", rem["prompt"])
+        self.assertIn("罗兹瓦尔宅邸经典蓝白女仆服", rem["prompt"])
+        self.assertIn("白色长袖蓬袖衬衣", rem["prompt"])
+        self.assertIn("分叉燕尾式深色后摆", rem["prompt"])
+        self.assertIn("不要拉姆粉色女仆服", rem["prompt"])
         added_ids = {
             "shinobu_butterfly",
             "mitsuri_love",
@@ -5056,6 +5064,25 @@ class LegFocusTests(unittest.TestCase):
             "barbara_idol",
         }
         self.assertTrue(added_ids.issubset({x["id"] for x in plugin_main.COS_LOOK_SETS}))
+        prompts = {x["id"]: x["prompt"] for x in plugin_main.COS_LOOK_SETS}
+        self.assertIn("《死馆2》的露莎公主", prompts["lusha_white_gold"])
+        self.assertIn("前中部保留明显纵向开衩", prompts["lusha_white_gold"])
+        self.assertIn("不要《最终幻想VII》LOVELESS露莎", prompts["lusha_white_gold"])
+        self.assertIn("2013年《Let It Go》经典冰雪礼服", prompts["elsa_ice_cape"])
+        self.assertIn("半透明冰蓝色闪粉长披风/拖尾", prompts["elsa_ice_cape"])
+        self.assertIn("原始 KEI/CV01", prompts["miku_formula_blue"])
+        self.assertIn("独立式黑色长臂套", prompts["miku_formula_blue"])
+        self.assertIn("初期经典粉白捕获服", prompts["sakura_pink_magic"])
+        self.assertIn("粉白魔法帽", prompts["sakura_pink_magic"])
+        self.assertIn("下半身明确为紫色制服长裤/窄腿裤", prompts["shinobu_butterfly"])
+        self.assertIn("不要蝴蝶纹羽织", prompts["mitsuri_love"])
+        self.assertIn("黄绿色竖条纹的长袜套", prompts["mitsuri_love"])
+        self.assertIn("特雷森学院夏季制服", prompts["tracen_academy"])
+        self.assertIn("紫色学院制服短袖上衣与紫色百褶短裙明确分体", prompts["tracen_academy"])
+        self.assertIn("水晶气泡鹿角", prompts["yao_cinnamoroll"])
+        self.assertIn("半透明水蓝色云纹罩纱", prompts["yao_cinnamoroll"])
+        self.assertIn("默认服装「纯真期待」", prompts["barbara_idol"])
+        self.assertIn("独立式分离短袖/袖套", prompts["barbara_idol"])
         wrap = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
         self.assertIn("对镜", wrap)
         self.assertNotIn("第一人称自拍或居家随手拍", wrap)
