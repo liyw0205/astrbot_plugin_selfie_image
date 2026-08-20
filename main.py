@@ -445,6 +445,7 @@ class SelfieImagePlugin(Star):
         self._web_task_lock = threading.RLock()
         self._web_tasks: Dict[str, Dict[str, Any]] = self._load_web_tasks()
         self._web_task_seq = 0
+        self._runtime_generation_tasks: Dict[str, asyncio.Task] = {}
         # 模型选择仅作用于当前会话。
         self._session_model_lock = threading.RLock()
         self._session_model_overrides: Dict[str, str] = {}
@@ -1982,6 +1983,7 @@ class SelfieImagePlugin(Star):
             return {}
         raw_tasks = data.get("tasks") if isinstance(data.get("tasks"), dict) else {}
         tasks: Dict[str, Dict[str, Any]] = {}
+        expired_on_start = False
         for task_id, raw in raw_tasks.items():
             if not isinstance(raw, dict):
                 continue
@@ -1993,7 +1995,10 @@ class SelfieImagePlugin(Star):
                 task["error"] = "插件重启后未恢复该任务，请重新提交"
                 task["finished_ts"] = time.time()
                 task["finished_at"] = self._web_task_timestamp()
+                expired_on_start = True
             tasks[task["task_id"]] = task
+        if expired_on_start:
+            save_json_file(self.tasks_path, {"tasks": tasks})
         return tasks
 
     def _persist_web_tasks_locked(self) -> None:
@@ -4762,20 +4767,18 @@ class SelfieImagePlugin(Star):
                 return f"这单已经结束了（{status}），不用再取消"
             task["cancel_requested"] = True
             now = time.time()
-            if status == "queued":
-                task["status"] = "cancelled"
-                task["success"] = False
-                task["error"] = "任务已取消"
-                task["updated_ts"] = now
-                task["updated_at"] = self._web_task_timestamp()
-                task["finished_ts"] = now
-                task["finished_at"] = self._web_task_timestamp()
-                self._persist_web_tasks_locked()
-                return f"已取消 {tid}"
+            task["status"] = "cancelled"
+            task["success"] = False
+            task["error"] = "任务已取消"
             task["updated_ts"] = now
             task["updated_at"] = self._web_task_timestamp()
+            task["finished_ts"] = now
+            task["finished_at"] = self._web_task_timestamp()
             self._persist_web_tasks_locked()
-            return f"已记下取消 {tid}（当前这步结束后会停）"
+            runtime_task = getattr(self, "_runtime_generation_tasks", {}).get(tid)
+            if runtime_task is not None and not runtime_task.done():
+                runtime_task.cancel()
+            return f"已立即取消 {tid}"
 
     def _task_cancel_requested(self, task_id: str) -> bool:
         with self._web_task_lock:
@@ -4825,7 +4828,15 @@ class SelfieImagePlugin(Star):
             }
             self._prune_web_tasks_locked()
             self._persist_web_tasks_locked()
-        asyncio.create_task(self._run_command_image_task(task_id, event, runner))
+        runtime_task = asyncio.create_task(self._run_command_image_task(task_id, event, runner))
+        runtime_tasks = getattr(self, "_runtime_generation_tasks", None)
+        if runtime_tasks is None:
+            runtime_tasks = {}
+            self._runtime_generation_tasks = runtime_tasks
+        runtime_tasks[task_id] = runtime_task
+        runtime_task.add_done_callback(
+            lambda _task, tid=task_id: getattr(self, "_runtime_generation_tasks", {}).pop(tid, None)
+        )
         return self.get_web_image_task(task_id)
 
     async def _run_video_generation(
@@ -5124,6 +5135,16 @@ class SelfieImagePlugin(Star):
             yield item
 
     async def _run_command_image_task(self, task_id: str, event: AstrMessageEvent, runner) -> None:
+        if self._task_cancel_requested(task_id):
+            self._set_web_image_task(
+                task_id,
+                status="cancelled",
+                success=False,
+                error="任务已取消",
+                finished_ts=time.time(),
+                finished_at=self._web_task_timestamp(),
+            )
+            return
         self._set_web_image_task(
             task_id,
             status="running",
@@ -5153,6 +5174,17 @@ class SelfieImagePlugin(Star):
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
             )
+        except asyncio.CancelledError:
+            self._set_web_image_task(
+                task_id,
+                status="cancelled",
+                success=False,
+                error="任务已取消",
+                result={"success": False, "error": "任务已取消", "cancelled": True},
+                finished_ts=time.time(),
+                finished_at=self._web_task_timestamp(),
+            )
+            return
         except Exception as exc:
             error = redact_sensitive_text(str(exc))
             cancelled = "取消" in error
@@ -5221,29 +5253,17 @@ class SelfieImagePlugin(Star):
         gate = self._ensure_image_batch_gate()
         return int(getattr(gate, "_value", 0)) < max(1, int(total))
 
-    async def _reserve_image_batch_slots(
-        self,
-        event: AstrMessageEvent,
-        task_id: str,
-        kind: str,
-        total: int,
-        *,
-        already_notified: bool = False,
-    ) -> asyncio.Semaphore:
+    async def _acquire_image_slot(self, task_id: str) -> Optional[asyncio.Semaphore]:
+        """Acquire one slot; a batch may be larger than the global limit."""
         gate = self._ensure_image_batch_gate()
-        if not already_notified and self._image_batch_queue_expected(total):
-            logger.info(f"[SelfieImage] {kind} batch queued task={task_id}")
+        while True:
+            if self._task_cancel_requested(task_id):
+                return None
             try:
-                await event.send(event.plain_result("上一轮还在画，这轮先排队，画完接上。"))
-            except Exception:
-                pass
-        for _ in range(max(1, int(total))):
-            await gate.acquire()
-        return gate
-
-    def _release_image_batch_slots(self, gate: asyncio.Semaphore, total: int) -> None:
-        for _ in range(max(1, int(total))):
-            gate.release()
+                await asyncio.wait_for(gate.acquire(), timeout=1.0)
+                return gate
+            except asyncio.TimeoutError:
+                continue
 
     async def _run_counted_generation_shots(
         self,
@@ -5278,7 +5298,14 @@ class SelfieImagePlugin(Star):
                         cancelled = True
                     return
                 logger.info(f"[SelfieImage] {log_prefix} {index + 1}/{total} inflight={inflight} task={task_id}")
-                result = await run_one(index)
+                slot_gate = await self._acquire_image_slot(task_id)
+                if slot_gate is None:
+                    cancelled = True
+                    return
+                try:
+                    result = await run_one(index)
+                finally:
+                    slot_gate.release()
             async with send_lock:
                 if stop:
                     return
@@ -5518,23 +5545,20 @@ class SelfieImagePlugin(Star):
         fail_label: str = "",
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
-        gate = await self._reserve_image_batch_slots(event, task_id, "draw", total)
-        try:
-            async def run_one(index: int) -> Dict[str, Any]:
-                if passthrough:
-                    return await self._draw_passthrough_once(event, prompt, aspect, resolution, refs, source)
-                return await self._draw_once(event, prompt, aspect, resolution, refs, source)
 
-            return await self._run_counted_generation_shots(
-                task_id=task_id,
-                event=event,
-                total=total,
-                fail_label=fail_label or self._natural_fail_fallback("image"),
-                run_one=run_one,
-                log_prefix="draw batch",
-            )
-        finally:
-            self._release_image_batch_slots(gate, total)
+        async def run_one(index: int) -> Dict[str, Any]:
+            if passthrough:
+                return await self._draw_passthrough_once(event, prompt, aspect, resolution, refs, source)
+            return await self._draw_once(event, prompt, aspect, resolution, refs, source)
+
+        return await self._run_counted_generation_shots(
+            task_id=task_id,
+            event=event,
+            total=total,
+            fail_label=fail_label or self._natural_fail_fallback("image"),
+            run_one=run_one,
+            log_prefix="draw batch",
+        )
 
     async def _background_selfie_batches(
         self,
@@ -5552,27 +5576,17 @@ class SelfieImagePlugin(Star):
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         self._ensure_image_batch_gate()
-        gate = await self._reserve_image_batch_slots(
-            event,
+        return await self._run_selfie_batches_unlocked(
             task_id,
-            "selfie",
+            event,
+            action,
+            extra_refs,
+            source,
             total,
-            already_notified=queue_notified,
+            aspect,
+            resolution,
+            fail_label,
         )
-        try:
-            return await self._run_selfie_batches_unlocked(
-                task_id,
-                event,
-                action,
-                extra_refs,
-                source,
-                total,
-                aspect,
-                resolution,
-                fail_label,
-            )
-        finally:
-            self._release_image_batch_slots(gate, total)
 
     async def _run_selfie_batches_unlocked(
         self,

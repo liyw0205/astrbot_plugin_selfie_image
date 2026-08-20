@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.92")
+        self.assertEqual(PLUGIN_VERSION, "1.3.93")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3740,16 +3740,16 @@ class SessionModelAndTaskTests(unittest.TestCase):
             "cancel_requested": False,
         }
         msg = plugin.cancel_image_task("cmd-1", session_key="group:a")
-        self.assertIn("已取消", msg)
+        self.assertIn("已立即取消", msg)
         self.assertEqual(plugin._web_tasks["cmd-1"]["status"], "cancelled")
         with self.assertRaises(PermissionError):
             plugin.cancel_image_task("cmd-2", session_key="group:a")
         msg2 = plugin.cancel_image_task("cmd-2", session_key="group:b")
-        self.assertIn("已记下取消", msg2)
+        self.assertIn("已立即取消", msg2)
         self.assertTrue(plugin._web_tasks["cmd-2"]["cancel_requested"])
+        self.assertEqual(plugin._web_tasks["cmd-2"]["status"], "cancelled")
         listed = plugin._list_image_tasks_for_session("group:b", include_finished=False)
-        self.assertEqual(len(listed), 1)
-        self.assertEqual(listed[0]["task_id"], "cmd-2")
+        self.assertEqual(listed, [])
 
 
 class ReferenceCollectorTests(unittest.TestCase):
@@ -5542,6 +5542,61 @@ class StudioStoreTests(unittest.TestCase):
             listed = store.list_sessions()
             self.assertTrue(listed)
             self.assertIn("thumb_path", listed[0])
+
+
+class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_batch_larger_than_limit_is_drained_without_deadlock(self) -> None:
+        from types import SimpleNamespace
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin.config = SimpleNamespace(
+            image_max_concurrent_tasks=3,
+            image_max_batch_count=10,
+            image_show_generation_info=False,
+            image_enable_daily_limit=False,
+            image_show_model_info=False,
+        )
+        plugin._image_batch_gate = asyncio.Semaphore(3)
+        plugin._selfie_batch_gate = plugin._image_batch_gate
+        plugin._web_task_lock = threading.RLock()
+        plugin._web_tasks = {"task": {"cancel_requested": False}}
+        plugin._record_generated_images = lambda *_args: None
+        plugin._send_generated_images = lambda *_args: asyncio.sleep(0)
+        plugin._friendly_user_error_message = lambda error, fallback: error or fallback
+        active = 0
+        peak = 0
+
+        async def run_one(_index):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.002)
+            active -= 1
+            return {"success": True, "files": ["generated.png"]}
+
+        result = await asyncio.wait_for(
+            plugin._run_counted_generation_shots(
+                task_id="task",
+                event=Event(),
+                total=10,
+                fail_label="failed",
+                run_one=run_one,
+                log_prefix="test batch",
+            ),
+            timeout=2,
+        )
+        self.assertEqual(result["succeeded_count"], 10)
+        self.assertEqual(result["failed_count"], 0)
+        self.assertEqual(peak, 3)
+        self.assertEqual(plugin._image_batch_gate._value, 3)
 
 
 class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
