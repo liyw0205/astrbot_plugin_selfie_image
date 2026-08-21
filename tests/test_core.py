@@ -322,7 +322,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.94")
+        self.assertEqual(PLUGIN_VERSION, "1.3.95")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4361,8 +4361,11 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertTrue(third_intent.is_third_person_photo, third_action)
             third_prompt = manager.build_selfie_prompt(third_action, "小助", "温柔", True, 0)
             self.assertIn("COS换装他拍模式", third_prompt)
-            self.assertIn("不要对镜", third_prompt)
+            self.assertIn("别人视角的单人成品照", third_prompt)
+            self.assertIn("不要第二个人", third_prompt)
+            self.assertIn("不要有人举着手机拍主角", third_prompt)
             self.assertNotIn("站在穿衣镜前", third_prompt)
+            self.assertNotIn("朋友在旁边", third_prompt)
             # auto appearance: no forced real/anime style line
             manager.set_appearance_type("auto")
             auto_prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
@@ -5032,7 +5035,7 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 18)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 27)
         titles = {x["title"] for x in plugin_main.COS_LOOK_SETS}
         self.assertEqual(
             titles,
@@ -5055,6 +5058,15 @@ class LegFocusTests(unittest.TestCase):
                 "黄结白围裙女仆",
                 "银紫深V广袖",
                 "露背蓝纱古装",
+                "姬小满·黑金橙短装",
+                "西施·诗语江南",
+                "公孙离·离恨烟",
+                "西施·露腰短旗袍",
+                "影·黑白红短装",
+                "露莎·白金短装",
+                "秧秧·蓝白碎花泳装",
+                "卡提希娅·黑裙飞鸟",
+                "青绿双辫广袖长裙",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -5148,6 +5160,50 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("不要第三只手", backless)
         self.assertIn("冰蓝渐变到青绿再到宝蓝", backless)
         self.assertNotIn("《", backless)
+        jixiaoman = prompts["jixiaoman_black_gold"]
+        self.assertIn("《王者荣耀》姬小满", jixiaoman)
+        self.assertIn("黑金橙短装", jixiaoman)
+        self.assertIn("短款宽袖外套只到胸下", jixiaoman)
+        self.assertIn("整段腰腹露出", jixiaoman)
+        self.assertIn("宽袖外黑内亮橙金", jixiaoman)
+        self.assertIn("大金六角护甲板", jixiaoman)
+        self.assertIn("黑色短裤", jixiaoman)
+        self.assertIn("浅紫白辫状长尾饰", jixiaoman)
+        self.assertIn("不是黄睡衣家居", jixiaoman)
+        self.assertIn("不是黄短裙", jixiaoman)
+        shiyu = prompts["xishi_shiyu_jiangnan"]
+        self.assertIn("《王者荣耀》西施诗语江南", shiyu)
+        self.assertIn("青绿荷叶大结", shiyu)
+        self.assertIn("不是鹿角同人短旗袍", shiyu)
+        lihen = prompts["gongsunli_lihenyan"]
+        self.assertIn("《王者荣耀》公孙离离恨烟", lihen)
+        self.assertIn("尖角高发包", lihen)
+        self.assertIn("大金螺旋圆徽", lihen)
+        self.assertIn("不是大乔", lihen)
+        self.assertNotIn("大乔离恨烟", lihen)
+        crop = prompts["xishi_crop_qipao"]
+        self.assertIn("《王者荣耀》西施这一版露腰短旗袍两件套", crop)
+        self.assertIn("只到胸下", crop)
+        self.assertIn("不是诗语江南广袖短衣", crop)
+        ying = prompts["ying_black_red"]
+        self.assertIn("《王者荣耀》影", ying)
+        self.assertIn("大红圆宝石", ying)
+        self.assertIn("贴身亮黑短裤", ying)
+        lusha = prompts["lusha_gold_tiara"]
+        self.assertIn("铂金超长直发白金短装", lusha)
+        self.assertIn("金交叉胸带", lusha)
+        self.assertNotIn("《", lusha)
+        yangyang = prompts["yangyang_blue_floral_swim"]
+        self.assertIn("《鸣潮》秧秧", yangyang)
+        self.assertIn("白底蓝花比基尼", yangyang)
+        cart = prompts["cartethyia_black_bird"]
+        self.assertIn("《鸣潮》卡提希娅", cart)
+        self.assertIn("白绣飞鸟", cart)
+        self.assertIn("银枝状脚环", cart)
+        twin = prompts["mint_twin_braid_hanfu"]
+        self.assertIn("深棕双麻花辫青绿广袖长裙", twin)
+        self.assertIn("粉红花囊", twin)
+        self.assertNotIn("《", twin)
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
         self.assertNotIn("yao_cinnamoroll", {x["id"] for x in plugin_main.COS_LOOK_SETS})
         for removed in (
@@ -5176,8 +5232,14 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("【他拍 / 看看COS模式】", forced_third)
         self.assertNotIn("对镜全身或大半身自拍", forced_third)
         adapted = plugin_main.adapt_cos_outfit_for_camera("室内柔光对镜全身。不是婚纱。", "third")
-        self.assertIn("他拍", adapted)
+        self.assertIn("室内柔光全身", adapted)
         self.assertNotIn("对镜", adapted)
+        self.assertIn("不要第二个人", forced_third)
+        self.assertIn("不要有人举着手机拍主角", forced_third)
+        look_you = plugin_main.SelfieImagePlugin._build_third_person_look_action(_P(), "", False)
+        self.assertIn("别人视角的单人成品照", look_you)
+        self.assertNotIn("朋友在对面用手机拍", look_you)
+        self.assertNotIn("朋友在旁边", look_you)
 
         class PersonaStub:
             class Intent:
