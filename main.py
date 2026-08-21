@@ -318,7 +318,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
     {"id": "xishi_cyan_qipao", "title": "西施·青绿渐变旗袍", "prompt": "严格换装为《王者荣耀》西施这一版青绿渐变旗袍：黑长直发披背。上身高立领，白盘扣，领下到腰是青绿转到象牙白，深棕滚边；右胸白花蝶贴饰；七分袖，袖口白蕾丝，袖缝棕滚边。腰下白内裙微微鼓出。外裙下摆蓝花叶纹，一侧高开叉到大腿，内层白蕾丝衬裙。颈上一串白珠。室内素墙对镜全身。不是原皮长裙水莲，也不是鹿角同人短旗袍。"},
     {"id": "yellow_bow_maid", "title": "黄结白围裙女仆", "prompt": "严格换装为深蓝底白围裙女仆装：黑长直发披背。上身深蓝底衣，白色荷叶水手领黑滚边；胸前大黄蝴蝶结，结心绿宝石。肩上白蓬袖，深蓝袖管，袖口白宽边黑条。腰上白围裙束出荷叶，裙摆白荷叶盖在深蓝裙外。白手套。室内柔光对镜全身。不是黑白法式女仆，也不是蕾姆蓝白女仆。"},
     {"id": "silver_deepv_hanfu", "title": "银紫深V广袖", "prompt": "严格换装为银紫长直发深V广袖古装：头发中分垂过腰，右侧白花步摇。上身交领极低开到胸口，领边金云纹滚边；前中一条金绣直襟从领口通到裙摆；外层粉白薄纱，腰上浅粉腰带。广袖，肩头藕粉抽褶，袖身粉白薄纱。下装粉白多层长裙，前中金绣直条。室内柔光对镜全身。不是齐胸抹胸汉服。"},
-    {"id": "blue_backless_hanfu", "title": "露背蓝纱古装", "prompt": "严格换装为露背蓝纱古装：黑发高髻。后颈一条亮蓝丝带打结，两根长带垂背；整片后背从颈到腰全开，无交叉带。右肩搭一层浅蓝暗纹薄纱。袖和裙都是多层蓝纱，从冰蓝渐变到青绿再到宝蓝，广袖鼓起，长裙拖地。室内黑底柔光，背对镜子或侧过身。不是齐胸长裙，也不是白婚纱。"},
+    {"id": "blue_backless_hanfu", "title": "露背蓝纱古装", "prompt": "严格换装为露背蓝纱古装：黑发高髻。构图必须是单人四分之三侧身，身体朝画面一侧转开，镜头同时看到一侧脸颊、一侧锁骨和从颈到腰的整片裸背，不要正面全身，也不要正对镜头的后脑勺。后颈一条亮蓝丝带打结，两根长带沿背沟垂下；后背无交叉带、无第二套肩带。右肩只搭一层浅蓝暗纹薄纱。袖和裙都是多层蓝纱，从冰蓝渐变到青绿再到宝蓝，广袖鼓起但不挡背，长裙拖地。人体只有两条胳膊、两只手，一只手自然垂在身侧，另一只手轻扶裙或纱，不要第三只手、不要重复手臂、不要镜子里再长出一只手。室内黑底柔光，单人侧身对镜。不是齐胸长裙，也不是白婚纱。"},
 ]
 
 def pick_cos_look_set(*, avoid_id: str = "") -> Dict[str, str]:
@@ -326,6 +326,67 @@ def pick_cos_look_set(*, avoid_id: str = "") -> Dict[str, str]:
     if not pool:
         pool = list(COS_LOOK_SETS)
     return dict(random.choice(pool))
+
+
+def parse_requested_cos_camera(text: str) -> str:
+    """Honor extra text: 他拍 / 自拍. Empty = random later."""
+    raw = str(text or "")
+    compact = re.sub(r"\s+", "", raw).lower()
+    blob = compact + raw.lower()
+    third_keys = (
+        "他拍",
+        "别人拍",
+        "别人帮拍",
+        "朋友拍",
+        "有人拍",
+        "被拍",
+        "抓拍",
+        "第三人称",
+        "路人视角",
+        "摄影师拍",
+        "不是自拍",
+        "非自拍",
+        "不要自拍",
+        "不要对镜",
+        "不拿手机",
+        "不要拿手机",
+        "不要手持手机",
+        "candid",
+        "thirdperson",
+        "notselfie",
+    )
+    selfie_keys = ("自拍", "对镜", "镜前", "镜子前", "自己拍", "selfie", "mirror")
+    if any(key in blob for key in third_keys):
+        return "third"
+    if any(key in blob for key in selfie_keys):
+        return "selfie"
+    return ""
+
+
+def pick_cos_camera(*, extra_request: str = "", avoid: str = "", camera: str = "") -> str:
+    forced = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
+    if forced in {"selfie", "third"}:
+        return forced
+    pool = ["selfie", "third"]
+    if avoid in pool:
+        pool = [item for item in pool if item != avoid] or pool
+    return random.choice(pool)
+
+
+def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
+    text = str(outfit or "")
+    if camera != "third":
+        return text
+    replacements = (
+        ("对镜坐在木地板地毯上", "坐在木地板地毯上，由画面外的人拍下"),
+        ("室内柔光对镜全身", "室内柔光全身他拍"),
+        ("室内素墙对镜全身", "室内素墙全身他拍"),
+        ("室内黑底柔光，单人侧身对镜", "室内黑底柔光，单人侧身他拍"),
+        ("对镜全身", "全身他拍"),
+    )
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text.replace("对镜", "他拍")
 
 
 def parse_requested_legwear(text: str) -> str:
@@ -3891,30 +3952,44 @@ class SelfieImagePlugin(Star):
         has_refs: bool = False,
         *,
         avoid_id: str = "",
+        avoid_camera: str = "",
+        camera: str = "",
     ) -> str:
-        """看看COS：所有内置套装都走 COS 换装自拍模式，不进晒腿/合影/他拍。"""
+        """看看COS：随机套装；机位默认自拍/他拍随机，额外提示词可指定。"""
         chosen = pick_cos_look_set(avoid_id=avoid_id)
         title = str(chosen.get("title") or "随机COS")
-        outfit = str(chosen.get("prompt") or "").strip()
+        camera_kind = pick_cos_camera(extra_request=extra_request, avoid=avoid_camera, camera=camera)
+        outfit = adapt_cos_outfit_for_camera(str(chosen.get("prompt") or "").strip(), camera_kind)
         cos_id = str(chosen.get("id") or "cos")
+        if camera_kind == "third":
+            framing = (
+                "【他拍 / 看看COS模式】"
+                "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
+                "画面外拍摄者的全身或大半身他拍：朋友在旁边用手机拍，不要对镜、不要手持手机入镜；"
+                "不要第一人称伸手自拍，不要手臂挡脸挡衣服。"
+            )
+        else:
+            framing = (
+                "【自拍 / 看看COS模式】"
+                "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
+                "对镜全身或大半身自拍：站在穿衣镜前，手机可出现在镜中；"
+                "不要第一人称伸手自拍，不要手臂挡脸挡衣服。"
+            )
         base = (
-            "【自拍 / 看看COS模式】"
-            "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
-            "对镜全身或大半身自拍：站在穿衣镜前，手机可出现在镜中；"
-            "不要第一人称伸手自拍，不要手臂挡脸挡衣服。"
-            "脸型五官必须保持形象参考，不要换成别人的脸；"
-            "假发颜色/发型/发饰可按本套 COS 完整替换。"
-            f"本次套装：{title}。"
-            f"{outfit}"
-            "服装颜色、层数、配饰、开叉、荷叶边、鞋履等结构要尽量齐全高还原；"
-            "构图完整带上腰线与腿部线条；不要简化成普通常服；画面干净得体。"
+            framing
+            + "脸型五官必须保持形象参考，不要换成别人的脸；"
+            + "假发颜色/发型/发饰可按本套 COS 完整替换。"
+            + f"本次套装：{title}。"
+            + f"{outfit}"
+            + "服装颜色、层数、配饰、开叉、荷叶边、鞋履等结构要尽量齐全高还原；"
+            + "构图完整带上腰线与腿部线条；不要简化成普通常服；画面干净得体。"
         )
         if has_refs:
             base = "参考用户附图的氛围或构图，" + base
         extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
         if extra and extra not in base:
             base += f" 用户补充要求优先：{extra}。"
-        base += f" 【cos:{cos_id}】"
+        base += f" 【cos:{cos_id}】 【cam:{camera_kind}】"
         return base
 
     def _build_third_person_look_action(
@@ -5629,6 +5704,7 @@ class SelfieImagePlugin(Star):
         last_pose = ""
         last_shot = ""
         last_cos = ""
+        last_cam = ""
         extra_keep = ""
         force_legwear = ""
         if rebuild_each:
@@ -5636,7 +5712,7 @@ class SelfieImagePlugin(Star):
             m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
-                extra_keep = re.sub(r"\s*【(?:pose|shot|cos):[a-z0-9_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam):[a-z0-9_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
             # Keep user/locked legwear across rebuild rounds (extra text alone may have stripped 白丝).
             force_legwear = parse_requested_legwear(str(action or "")) or parse_requested_legwear(extra_keep)
@@ -5649,6 +5725,9 @@ class SelfieImagePlugin(Star):
             m_cos = re.search(r"【cos:([a-z0-9_]+)】", str(action or ""))
             if m_cos:
                 last_cos = str(m_cos.group(1) or "")
+            m_cam = re.search(r"【cam:(selfie|third)】", str(action or ""))
+            if m_cam:
+                last_cam = str(m_cam.group(1) or "")
         round_actions: List[str] = []
         for index in range(total):
             round_action = action
@@ -5668,10 +5747,14 @@ class SelfieImagePlugin(Star):
                         extra_keep,
                         bool(extra_refs),
                         avoid_id=last_cos,
+                        avoid_camera=last_cam,
                     )
                     m_cos = re.search(r"【cos:([a-z0-9_]+)】", round_action)
                     if m_cos:
                         last_cos = str(m_cos.group(1) or last_cos)
+                    m_cam = re.search(r"【cam:(selfie|third)】", round_action)
+                    if m_cam:
+                        last_cam = str(m_cam.group(1) or last_cam)
                 elif source == "command-look-you" or "看看你模式" in str(action or ""):
                     round_action = self._build_third_person_look_action(
                         extra_keep,
@@ -6212,7 +6295,7 @@ class SelfieImagePlugin(Star):
                 "· /图生图　必须附图或引用图，按原文改图；可写数量；不自动使用形象图",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装；可写数量如 /自拍 3",
                 "· /看看腿　下半身近景；按姿势搭配光腿神器、白丝或黑丝；可写数量如 /看看腿 3",
-                "· /看看COS　随机一套内置 COS 换装自拍；可写数量如 /看看COS 2",
+                "· /看看COS　随机一套内置 COS 换装；默认随机自拍或他拍，也可写「自拍」「他拍」；可写数量如 /看看COS 2",
                 "· /看看你　像别人随手拍你；可写数量",
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象；可写数量",
                 "",
@@ -6686,7 +6769,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        """随机一套内置 COS 换装自拍；可写数量如 /看看COS 3。"""
+        """随机一套内置 COS 换装；默认随机自拍或他拍。可写数量如 /看看COS 3。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看COS", fallback_args)
         # Also accept lowercase command text extraction fallbacks.

@@ -30,9 +30,9 @@ def extract_user_prompt(action: str) -> str:
     match = re.search(r"(?:用户补充要求优先|用户补充要求|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
     if match:
         value = match.group(1)
-        value = re.sub(r"\s*【(?:pose|shot):[a-z_]+】\s*", " ", value)
+        value = re.sub(r"\s*【(?:pose|shot|cos|cam):[a-z0-9_]+】\s*", " ", value)
         return re.sub(r"\s+", " ", value).strip(" 。")
-    if any(marker in text for marker in ("【自拍 / 看看模式】", "【他拍 / 看看你模式】", "【合影 / 合照模式】", "看看腿。", "【唯一姿势·不可混用】")):
+    if any(marker in text for marker in ("【自拍 / 看看模式】", "【他拍 / 看看你模式】", "【自拍 / 看看COS模式】", "【他拍 / 看看COS模式】", "【合影 / 合照模式】", "看看腿。", "【唯一姿势·不可混用】")):
         return ""
     return text
 
