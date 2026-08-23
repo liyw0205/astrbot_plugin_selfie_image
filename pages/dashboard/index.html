@@ -211,15 +211,23 @@
     .model-list { display: grid; gap: 7px; margin-top: 8px; }
     .model-list.collapsed { max-height: 240px; overflow-y: auto; border: 1px dashed var(--line); padding: 4px; border-radius: 6px; }
     .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px; background: #f8fafc; }
-    .model-row.with-provider { grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) auto; }
-    .model-row.with-provider-download { grid-template-columns: minmax(0, 1fr) minmax(120px, 150px) minmax(120px, 160px) auto; }
-    .model-download-proxy { min-width: 120px; padding: 5px 8px; font-size: 12px; }
-    @media (max-width: 900px) {
-      .model-row.with-provider-download { grid-template-columns: 1fr; }
+    .model-row.with-provider { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+    .model-row.with-provider-download { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+    .model-row.with-provider-download .model-controls,
+    .model-row.with-provider .model-controls {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
+      min-width: 0;
     }
-    .model-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .model-download-proxy, .model-provider { min-width: 0; width: 100%; max-width: 100%; padding: 5px 8px; font-size: 12px; }
+    @media (max-width: 900px) {
+      .model-row.with-provider-download { grid-template-columns: minmax(0, 1fr); }
+      .model-row.with-provider-download .model-controls,
+      .model-row.with-provider .model-controls { grid-template-columns: minmax(0, 1fr); }
+    }
+    .model-row .name { min-width: 0; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; white-space: normal; font-weight: 650; }
     .model-row .actions { margin-top: 0; }
-    .model-provider { min-width: 150px; padding: 5px 8px; font-size: 12px; }
     .mini { padding: 5px 8px; font-size: 12px; }
     .table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .table th, .table td { text-align: left; border-bottom: 1px solid var(--line); padding: 8px; vertical-align: top; }
@@ -1101,9 +1109,21 @@
   <script>
     const $ = id => document.getElementById(id);
     const ASPECTS = ['自动','1:1','2:3','3:2','3:4','4:3','4:3','4:5','5:4','9:16','16:9','21:9'].filter((v,i,a)=>a.indexOf(v)===i);
-    const PROVIDERS = ['openai','gemini','gemini_openai','z_image_gitee','jimeng2api','grok','agnes','novelai'];
+    const PROVIDERS = ['openai','openai_chat','gemini','gemini_openai','z_image_gitee','jimeng2api','grok','agnes','novelai'];
+    const IMAGE_PROVIDER_LABELS = {
+      openai: 'openai',
+      openai_chat: 'openai_chat',
+      gemini: 'gemini',
+      gemini_openai: 'gemini_openai',
+      z_image_gitee: 'z_image_gitee',
+      jimeng2api: 'jimeng2api',
+      grok: 'grok',
+      agnes: 'agnes',
+      novelai: 'novelai'
+    };
     const PROVIDER_DEFAULT_BASE_URLS = {
       openai: 'https://api.openai.com',
+      openai_chat: 'https://api.openai.com',
       gemini: 'https://generativelanguage.googleapis.com',
       gemini_openai: 'https://generativelanguage.googleapis.com',
       z_image_gitee: 'https://ai.gitee.com',
@@ -1553,9 +1573,9 @@ Source prompt:
       const aliases = {
         openai_image: 'openai',
         openai_images: 'openai',
-        openai_chat: 'gemini_openai',
+        openai_chat: 'openai_chat',
+        chat_completions: 'openai_chat',
         openai_compatible: 'gemini_openai',
-        chat_completions: 'gemini_openai',
         google: 'gemini',
         google_gemini: 'gemini',
         zimage: 'z_image_gitee',
@@ -1599,7 +1619,7 @@ Source prompt:
         cogvideo: 'cogvideo', cogvideox: 'cogvideo', zhipu_video: 'cogvideo',
         grok: 'grok', grok_video: 'grok', grok_imagine: 'grok', grok_midgate: 'grok', xai: 'grok', x_ai: 'grok',
         sync: 'video_sync', openai_sync: 'video_sync', video_sync: 'video_sync',
-        chat: 'video_chat', openai_chat: 'video_chat', chat_completions: 'video_chat', video_chat: 'video_chat'
+        chat: 'video_chat', video_chat: 'video_chat'
       };
       let normalized = aliases[raw] || raw;
       if (VIDEO_PROVIDERS.includes(normalized)) return normalized;
@@ -1650,7 +1670,7 @@ Source prompt:
         return manual;
       }
       if (strong.has(inferred)) return inferred;
-      if (def === 'openai' || def === 'gemini_openai') {
+      if (def === 'openai' || def === 'openai_chat' || def === 'gemini_openai') {
         return def;
       }
       return inferred || def || 'openai';
@@ -2094,11 +2114,14 @@ Source prompt:
         ? (normalizeVideoProviderType(ch.provider_type) || 'openai_video')
         : (ch.provider_type || 'openai');
       setSelectOptions('modalProvider', providerChoices, defaultProvider);
-      // label video options more readable
+      const sel = $('modalProvider');
       if (EDITING_CHANNEL_KIND === 'video') {
-        const sel = $('modalProvider');
         Array.from(sel.options || []).forEach(opt => {
           opt.textContent = VIDEO_PROVIDER_LABELS[opt.value] || opt.value;
+        });
+      } else if (EDITING_CHANNEL_KIND === 'image') {
+        Array.from(sel.options || []).forEach(opt => {
+          opt.textContent = IMAGE_PROVIDER_LABELS[opt.value] || opt.value;
         });
       }
       // 生图和视频均可设置默认类型，模型旁仍可覆盖为自动或手动类型。
@@ -2196,9 +2219,11 @@ Source prompt:
       }).join('') || '<div class="muted">没有匹配的缓存模型。</div>';
       $('enabledModels').innerHTML = enabled.map((item, i) => `
         <div class="model-row with-provider with-provider-download">
-          <div class="name">${escapeHtml(item)}</div>
-          ${modelProviderSelectHtml(ch, item, i)}
-          ${modelDownloadProxySelectHtml(ch, item, i)}
+          <div class="name" title="${escapeHtml(item)}">${escapeHtml(item)}</div>
+          <div class="model-controls">
+            ${modelProviderSelectHtml(ch, item, i)}
+            ${modelDownloadProxySelectHtml(ch, item, i)}
+          </div>
           <div class="actions">
             <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, -1)">上移</button>
             <button class="secondary mini" type="button" onclick="moveEnabledModel(${i}, 1)">下移</button>
@@ -2243,10 +2268,10 @@ Source prompt:
       const auto = isVideo
         ? resolveVideoModelProviderType(model, ch.provider_type, '')
         : resolveModelProviderType(model, ch.provider_type, '');
-      const autoLabel = isVideo ? (VIDEO_PROVIDER_LABELS[auto] || auto) : auto;
+      const autoLabel = isVideo ? (VIDEO_PROVIDER_LABELS[auto] || auto) : (IMAGE_PROVIDER_LABELS[auto] || auto);
       const options = [`<option value="" ${manual ? '' : 'selected'}>自动：${escapeHtml(autoLabel)}</option>`]
         .concat(choices.map(provider => {
-          const label = isVideo ? (VIDEO_PROVIDER_LABELS[provider] || provider) : provider;
+          const label = isVideo ? (VIDEO_PROVIDER_LABELS[provider] || provider) : (IMAGE_PROVIDER_LABELS[provider] || provider);
           return `<option value="${escapeHtml(provider)}" ${manual === provider ? 'selected' : ''}>${escapeHtml(label)}</option>`;
         }));
       return `<select class="model-provider" title="模型类型：自动按模型名识别，也可手动指定" onchange="setModelProviderType(${index}, this.value)">${options.join('')}</select>`;

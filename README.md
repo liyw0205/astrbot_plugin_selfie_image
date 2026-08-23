@@ -2,7 +2,7 @@
 
 给 AstrBot 用的生图与 AI 自拍插件。支持文生图、图生图、固定形象自拍/合影/换装，以及 Web / 内嵌管理面板。
 
-- 当前稳定版：`1.3.95`
+- 当前稳定版：`1.3.96`
 - 需要 AstrBot：`>=4.13.0,<5`
 - 仓库：https://github.com/liyw0205/astrbot_plugin_selfie_image
 
@@ -100,7 +100,8 @@ pip install -r requirements.txt
 
 管理页「渠道」里添加，常见类型包括：
 
-- `openai` / 各类 OpenAI 兼容中转
+- `openai` / 各类 OpenAI 兼容中转（`/images/generations`）
+- `openai_chat`：手动选择；只提供 `chat/completions` 的 GPT 生图中继。`gpt-image-2` 自动仍是 `openai`。地址有无 `/v1` 均可，会截掉 `/v1` 后面的路径再拼接口。
 - `gemini`、`gemini_openai`
 - `grok`、`agnes`、`novelai`
 - `jimeng2api`、`z_image_gitee` 等

@@ -17,6 +17,7 @@ from .provider_parser import (
     add_srcset_image_urls,
     b64_to_bytes,
     build_model_list_urls,
+    build_openai_chat_completions_endpoint,
     clean_image_url,
     collect_images_from_unknown,
     extract_image_urls_from_text,
@@ -294,10 +295,15 @@ class OpenAIImageAdapter(BaseImageAdapter):
             return profiles[1]
         return profiles[0]
 
-    async def generate_image(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+    def create_image_url(self) -> str:
         base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
-        url = f"{base}/v1/images/generations"
+        return f"{base}/v1/images/generations"
+
+    async def generate_image(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         from .error_classify import format_timeout_user_message, is_param_profile_switch_error
+
+        base = normalize_image_base_url(self.target.base_url) or "https://api.openai.com"
+        url = self.create_image_url()
 
         if is_gpt_image_model(self.target.model):
             profiles = _gpt_image_payload_profiles(req, self.target.model or "gpt-image-1")
@@ -430,6 +436,16 @@ class OpenAIImageAdapter(BaseImageAdapter):
             return ImageGenerateResult(error=last_error or "接口未返回有效 JSON")
         except asyncio.TimeoutError:
             return ImageGenerateResult(error=format_timeout_user_message("local"))
+
+
+class OpenAIChatImageAdapter(OpenAIImageAdapter):
+    """GPT image relays that only expose chat/completions with images-style JSON."""
+
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        return await self.generate_image(req)
+
+    def create_image_url(self) -> str:
+        return build_openai_chat_completions_endpoint(self.target.base_url)
 
 
 class GeminiImageAdapter(BaseImageAdapter):
@@ -855,6 +871,8 @@ class NovelAIImageAdapter(BaseImageAdapter):
 def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> BaseImageAdapter:
     if target.provider_type == "openai":
         return OpenAIImageAdapter(target, session)
+    if target.provider_type == "openai_chat":
+        return OpenAIChatImageAdapter(target, session)
     if target.provider_type == "gemini":
         return GeminiImageAdapter(target, session)
     if target.provider_type == "gemini_openai":

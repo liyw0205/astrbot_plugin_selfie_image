@@ -42,6 +42,7 @@ from astrbot_plugin_selfie_image.models import (
     normalize_config_tree,
     preflight_image_channel,
     preflight_config_channels,
+    normalize_provider_type,
     resolve_model_provider_type,
 )
 from astrbot_plugin_selfie_image.providers import (
@@ -54,9 +55,12 @@ from astrbot_plugin_selfie_image.providers import (
     ImageGenerateRequest,
     ImageReference,
     NovelAIImageAdapter,
+    OpenAIChatImageAdapter,
     OpenAIImageAdapter,
     build_model_list_urls,
+    build_openai_chat_completions_endpoint,
     clean_image_url,
+    create_adapter,
     extract_model_ids_from_response,
     extract_image_urls_from_text,
     fetch_generated_image_url,
@@ -322,7 +326,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.95")
+        self.assertEqual(PLUGIN_VERSION, "1.3.96")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -383,12 +387,21 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual((by["m2"].extra or {}).get("download_proxy_id"), "px_dl")
         self.assertIn("2.2.2.2", (by["m2"].extra or {}).get("download_proxy") or "")
         from pathlib import Path
+        from astrbot_plugin_selfie_image.web import INDEX_HTML
         providers = (Path(__file__).resolve().parents[1] / "providers.py").read_text(encoding="utf-8")
         self.assertIn("download_proxy", providers)
         html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
-        self.assertIn("modelDownloadProxySelectHtml", html)
-        self.assertIn("model-download-proxy", html)
-        self.assertIn("btn.dataset.tab === 'proxies'", html)
+        for doc in (html, INDEX_HTML):
+            self.assertIn("modelDownloadProxySelectHtml", doc)
+            self.assertIn("model-download-proxy", doc)
+            self.assertIn("btn.dataset.tab === 'proxies'", doc)
+            self.assertIn("model-controls", doc)
+            self.assertNotIn("minmax(120px, 150px) minmax(120px, 160px)", doc)
+            self.assertNotIn("minmax(150px, 190px) auto", doc)
+            self.assertIn(".model-row .name { min-width: 0;", doc)
+            self.assertIn("white-space: normal", doc)
+            self.assertNotIn(".model-provider { min-width: 150px;", doc)
+            self.assertNotIn(".model-download-proxy { min-width: 120px;", doc)
 
 
     
@@ -807,6 +820,8 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(resolve_model_provider_type("agnes-image-2.1-flash", "openai"), "agnes")
         self.assertEqual(resolve_model_provider_type("grok-imagine-image", "openai"), "grok")
         self.assertEqual(resolve_model_provider_type("nai-diffusion-4-5-full", "openai"), "novelai")
+        self.assertEqual(resolve_model_provider_type("gpt-image-2", "openai"), "openai")
+        self.assertEqual(resolve_model_provider_type("gpt-image-2", "openai", "openai_chat"), "openai_chat")
         self.assertEqual(resolve_model_provider_type("unknown-model", "gemini_openai"), "gemini_openai")
         # protocol_lock keeps channel protocol for gemini-like names
         self.assertEqual(
@@ -866,6 +881,25 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(targets["grok-imagine-image"], "grok")
         self.assertEqual(targets["nai-diffusion-4-5-full"], "novelai")
         self.assertEqual(targets["agnes-image-2.1-flash"], "agnes")
+
+    def test_openai_chat_channel_stays_on_chat_protocol(self) -> None:
+        config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "chami",
+                        "provider_type": "openai_chat",
+                        "base_url": "http://chami.yyqzx.com/GPTimage/chami/v1/chat/completions",
+                        "api_key": "sk-test",
+                        "enabled_models": ["gpt-image-2", "gemini-2.5-flash-image"],
+                    }
+                ]
+            }
+        )
+        targets = {t.model: t.provider_type for t in config.get_prioritized_targets()}
+        self.assertEqual(targets["gpt-image-2"], "openai_chat")
+        self.assertEqual(targets["gemini-2.5-flash-image"], "openai_chat")
+        self.assertEqual(config.image_channels[0].base_url, "http://chami.yyqzx.com/GPTimage/chami")
 
     def test_grok_edit_payload_uses_data_url_image(self) -> None:
         adapter = GrokImageAdapter(make_target("grok", "grok-imagine-image"), FakeSession())
@@ -1392,7 +1426,35 @@ class ImageUtilityTests(unittest.TestCase):
     def test_base_url_normalization(self) -> None:
         self.assertEqual(normalize_image_base_url("https://example.com/v1/images/generations"), "https://example.com")
         self.assertEqual(normalize_image_base_url("https://example.com/v1/chat/completions"), "https://example.com")
+        self.assertEqual(
+            normalize_image_base_url("http://chami.yyqzx.com/GPTimage/chami/v1/chat/completions"),
+            "http://chami.yyqzx.com/GPTimage/chami",
+        )
         self.assertEqual(normalize_gemini_base_url("https://example.com/v1beta/models/gemini:generateContent"), "https://example.com")
+        self.assertEqual(
+            build_openai_chat_completions_endpoint("https://example.com"),
+            "https://example.com/v1/chat/completions",
+        )
+        self.assertEqual(
+            build_openai_chat_completions_endpoint("https://example.com/v1"),
+            "https://example.com/v1/chat/completions",
+        )
+        self.assertEqual(
+            build_openai_chat_completions_endpoint("http://chami.yyqzx.com/GPTimage/chami"),
+            "http://chami.yyqzx.com/GPTimage/chami/v1/chat/completions",
+        )
+        self.assertEqual(
+            build_openai_chat_completions_endpoint("http://chami.yyqzx.com/GPTimage/chami/v1"),
+            "http://chami.yyqzx.com/GPTimage/chami/v1/chat/completions",
+        )
+        self.assertEqual(
+            build_openai_chat_completions_endpoint("http://chami.yyqzx.com/GPTimage/chami/v1/chat/completions"),
+            "http://chami.yyqzx.com/GPTimage/chami/v1/chat/completions",
+        )
+        self.assertEqual(
+            build_openai_chat_completions_endpoint("http://chami.yyqzx.com/GPTimage/chami/v1/images/generations"),
+            "http://chami.yyqzx.com/GPTimage/chami/v1/chat/completions",
+        )
 
     def test_model_list_urls_are_provider_specific(self) -> None:
         self.assertEqual(
@@ -1416,6 +1478,9 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(provider_type_from_channel_payload({"providerType": "google"}), "gemini")
         self.assertEqual(provider_type_from_channel_payload({"api_type": "xai"}), "grok")
         self.assertEqual(provider_type_from_channel_payload({"apiType": "openai_compatible"}), "gemini_openai")
+        self.assertEqual(provider_type_from_channel_payload({"provider_type": "openai_chat"}), "openai_chat")
+        self.assertEqual(provider_type_from_channel_payload({"apiType": "chat_completions"}), "openai_chat")
+        self.assertEqual(normalize_provider_type("openai_chat"), "openai_chat")
         self.assertEqual(provider_type_from_channel_payload({}), "openai")
 
     def test_model_id_extraction_accepts_provider_field_variants(self) -> None:
@@ -1714,8 +1779,65 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["model"], "gpt-image-1")
         self.assertEqual(payload["prompt"], "cat")
+        self.assertEqual(payload["n"], 1)
         self.assertEqual(payload["size"], "1536x1024")
         self.assertNotIn("response_format", payload)
+        self.assertNotIn("messages", payload)
+
+    async def test_openai_generate_stays_on_images_endpoint(self) -> None:
+        response = {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
+        session = FakeSession(response)
+        adapter = OpenAIImageAdapter(make_target("openai", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat", aspect_ratio="1:1"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(len(session.requests), 1)
+        self.assertEqual(session.requests[0]["url"], "https://example.test/v1/images/generations")
+        self.assertEqual(session.requests[0]["json"]["prompt"], "cat")
+
+    async def test_openai_chat_generate_posts_prompt_body(self) -> None:
+        response = {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
+        session = FakeSession(response)
+        target = make_target("openai_chat", "gpt-image-2")
+        target.base_url = "http://chami.yyqzx.com/GPTimage/chami"
+        adapter = OpenAIChatImageAdapter(target, session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="一只橘猫", aspect_ratio="1:1"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(len(session.requests), 1)
+        request = session.requests[0]
+        self.assertEqual(request["url"], "http://chami.yyqzx.com/GPTimage/chami/v1/chat/completions")
+        self.assertEqual(request["json"]["model"], "gpt-image-2")
+        self.assertEqual(request["json"]["prompt"], "一只橘猫")
+        self.assertEqual(request["json"]["n"], 1)
+        self.assertEqual(request["json"]["size"], "1024x1024")
+        self.assertNotIn("messages", request["json"])
+
+    async def test_openai_chat_generate_does_not_call_images_endpoint(self) -> None:
+        session = FakeSession({"error": {"message": "invalid api key"}}, status=401)
+        adapter = OpenAIChatImageAdapter(make_target("openai_chat", "gpt-image-2"), session)
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertIn("HTTP 401", result.error)
+        self.assertEqual(len(session.requests), 1)
+        self.assertTrue(session.requests[0]["url"].endswith("/v1/chat/completions"))
+
+    async def test_openai_chat_generate_parses_chat_choices_image(self) -> None:
+        data_url = "data:image/png;base64," + base64.b64encode(PNG_BYTES).decode("ascii")
+        session = FakeSession({"choices": [{"message": {"content": f"done {data_url}"}}]})
+        adapter = OpenAIChatImageAdapter(make_target("openai_chat", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(session.requests[0]["url"], "https://example.test/v1/chat/completions")
+
+    def test_create_adapter_uses_openai_chat_type(self) -> None:
+        adapter = create_adapter(make_target("openai_chat", "gpt-image-2"), FakeSession())
+        self.assertIsInstance(adapter, OpenAIChatImageAdapter)
+        self.assertNotIsInstance(create_adapter(make_target("openai", "gpt-image-2"), FakeSession()), OpenAIChatImageAdapter)
 
     def test_gemini_openai_payload_builder_embeds_reference_images(self) -> None:
         adapter = GeminiOpenAIImageAdapter(make_target("gemini_openai", "gemini-2.0-flash"), FakeSession())
@@ -3984,6 +4106,8 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertNotIn("confirm('确认删除这个渠道？')", self.html)
         self.assertNotIn("confirm('确认删除这个代理？", self.html)
         self.assertIn("modalProvider", self.html)
+        self.assertIn("openai_chat", self.html)
+        self.assertIn("IMAGE_PROVIDER_LABELS", self.html)
         self.assertIn("VIDEO_PROVIDERS", self.html)
         self.assertIn("openai_video", self.html)
         self.assertIn("sora", self.html)
@@ -4728,7 +4852,8 @@ class VideoV1Tests(unittest.TestCase):
         self.assertEqual(normalize_video_provider_type("grok_video"), "grok")
         self.assertEqual(normalize_video_provider_type("xai"), "grok")
         self.assertEqual(normalize_video_provider_type("openai_sync"), "video_sync")
-        self.assertEqual(normalize_video_provider_type("openai_chat"), "video_chat")
+        self.assertEqual(normalize_video_provider_type("video_chat"), "video_chat")
+        self.assertEqual(normalize_video_provider_type("openai_chat"), "")  # image protocol
         self.assertEqual(normalize_video_provider_type("openai"), "")  # image protocol
         self.assertEqual(infer_video_provider_type_from_model("sora-2"), "sora")
         self.assertEqual(infer_video_provider_type_from_model("veo-3.1"), "veo")

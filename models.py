@@ -207,7 +207,7 @@ class ImageChannelConfig:
             "video_"
         )
         # Default-lock OpenAI-compatible *image* channel types so model names cannot jump protocols.
-        lock = (not is_video_proto) and (bool(self.protocol_lock) or self.provider_type in {"openai", "gemini_openai"})
+        lock = (not is_video_proto) and (bool(self.protocol_lock) or self.provider_type in {"openai", "openai_chat", "gemini_openai"})
         keys = self.resolved_api_keys()
         primary_key = keys[0] if keys else str(self.api_key or "").strip()
         result: List[ImageModelTarget] = []
@@ -783,10 +783,12 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
             if name and pid and name in enabled_set:
                 download_proxy_ids[name] = pid
 
+    from .provider_parser import normalize_image_base_url
+
     return ImageChannelConfig(
         name=str(raw.get("name") or raw.get("id") or "default").strip(),
         provider_type=provider_type,
-        base_url=str(raw.get("base_url") or raw.get("baseUrl") or "").strip(),
+        base_url=normalize_image_base_url(str(raw.get("base_url") or raw.get("baseUrl") or "").strip()),
         api_key=api_key_stored,
         model=model or (enabled_models[0] if enabled_models else ""),
         timeout=to_int(raw.get("timeout"), 180, minimum=10, maximum=900),
@@ -901,8 +903,6 @@ def normalize_video_provider_type(value: Any) -> str:
         "openai_sync": "video_sync",
         "video_sync": "video_sync",
         "chat": "video_chat",
-        "openai_chat": "video_chat",
-        "chat_completions": "video_chat",
         "video_chat": "video_chat",
     }
     # bare openai is image protocol — only video channel builder maps it
@@ -982,9 +982,9 @@ def normalize_provider_type(value: Any) -> str:
     aliases = {
         "openai_image": "openai",
         "openai_images": "openai",
-        "openai_chat": "gemini_openai",
+        "openai_chat": "openai_chat",
+        "chat_completions": "openai_chat",
         "openai_compatible": "gemini_openai",
-        "chat_completions": "gemini_openai",
         "google": "gemini",
         "google_gemini": "gemini",
         "zimage": "z_image_gitee",

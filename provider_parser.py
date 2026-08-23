@@ -29,6 +29,12 @@ def normalize_image_base_url(url: str) -> str:
     return value
 
 
+def build_openai_chat_completions_endpoint(base_url: str) -> str:
+    """Always rebuild /v1/chat/completions from the truncated API root."""
+    root = normalize_image_base_url(base_url) or "https://api.openai.com"
+    return f"{root}/v1/chat/completions"
+
+
 def normalize_gemini_base_url(url: str) -> str:
     value = str(url or "").strip().rstrip("/")
     value = re.sub(r"/v1beta(?:/.*)?$", "", value, flags=re.I)
