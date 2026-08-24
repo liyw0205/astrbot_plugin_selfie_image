@@ -266,16 +266,44 @@ def parse_image_response_body(blob: bytes, charset: str = "utf-8") -> tuple[Opti
         return None, "non-json"
 
 
+_MIXED_DATA_IMAGE_RE = re.compile(
+    r"data:image/[a-zA-Z0-9.+-]+(?:;[^,\s\"'<>;]*)*;base64,[A-Za-z0-9+/=_-]+",
+    flags=re.I,
+)
+_MIXED_RAW_B64_RE = re.compile(r"(?:iVBOR|UklGR|/9j/|R0lGOD|AAAAFGZ0eXBhdmlm)[A-Za-z0-9+/_=-]{80,}")
+_MIXED_HTTP_URL_RE = re.compile(r"https?://[^\s\"'<>]+", flags=re.I)
+
+
 def extract_mixed_image_payload(text: str) -> Optional[Dict[str, Any]]:
-    """Pull image data URLs / raw base64 / image links out of mixed keepalive text."""
-    extracted = extract_image_urls_from_text(text)
-    b64_items = list(extracted.get("b64") or [])
-    url_items = list(extracted.get("urls") or [])
+    """Pull image data URLs / raw base64 / image links out of mixed keepalive text.
+
+    Do not reuse extract_image_urls_from_text() here. That HTML/markdown scraper
+    includes a relative-path regex that backtracks on multi-megabyte base64 and
+    stalls the AstrBot process (CPython holds the GIL while matching).
+    """
+    b64_items: List[str] = []
+    seen: Set[str] = set()
+    for match in _MIXED_DATA_IMAGE_RE.finditer(text):
+        item = match.group(0)
+        if item not in seen:
+            seen.add(item)
+            b64_items.append(item)
     if not b64_items:
-        for match in re.finditer(r"(?:iVBOR|UklGR|/9j/|R0lGOD|AAAAFGZ0eXBhdmlm)[A-Za-z0-9+/_=-]{80,}", text):
+        for match in _MIXED_RAW_B64_RE.finditer(text):
             candidate = match.group(0)
+            if candidate in seen:
+                continue
             if looks_like_raw_base64_image(candidate):
+                seen.add(candidate)
                 b64_items.append(candidate)
+
+    urls: Set[str] = set()
+    unused_b64: Set[str] = set()
+    unused_others: Set[str] = set()
+    for match in _MIXED_HTTP_URL_RE.finditer(text):
+        add_maybe_image_url(match.group(0), unused_b64, urls, unused_others)
+    url_items = list(urls)
+
     if not b64_items and not url_items:
         return None
     data: List[Dict[str, str]] = []

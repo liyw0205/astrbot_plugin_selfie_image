@@ -9,6 +9,7 @@ import re
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -331,7 +332,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.0")
+        self.assertEqual(PLUGIN_VERSION, "1.4.1")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -1914,6 +1915,27 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.images, [PNG_BYTES])
         self.assertFalse(result.error)
+
+    async def test_openai_chat_generate_parses_large_mixed_keepalive_quickly(self) -> None:
+        image = PNG_BYTES + bytes((index * 17) % 256 for index in range(200_000))
+        b64 = base64.b64encode(image).decode("ascii")
+        sse = (
+            ": initial_keepalive_heartbeat_to_prevent_504\n\n"
+            ": keepalive_heartbeat\n\n"
+            "event: balance_update\n"
+            'data: {"GPTimage_balance": 32}\n\n'
+            'data: {"choices": [{"delta": {"content": "data:image/png;base64,' + b64 + '"}}]}\n\n'
+        )
+        session = FakeSession(text=sse)
+        adapter = OpenAIChatImageAdapter(make_target("openai_chat", "gpt-image-2"), session)
+
+        started = time.perf_counter()
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+        elapsed = time.perf_counter() - started
+
+        self.assertEqual(result.images, [image])
+        self.assertFalse(result.error)
+        self.assertLess(elapsed, 1.0, f"mixed keepalive parse stalled for {elapsed:.2f}s")
 
     def test_create_adapter_uses_openai_chat_type(self) -> None:
         adapter = create_adapter(make_target("openai_chat", "gpt-image-2"), FakeSession())
