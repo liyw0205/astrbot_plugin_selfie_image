@@ -101,10 +101,11 @@ PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 128
 
 
 class FakeResponse:
-    def __init__(self, data=None, status: int = 200, text: str = "") -> None:
+    def __init__(self, data=None, status: int = 200, text: str = "", raw: bytes | None = None) -> None:
         self.data = {} if data is None else data
         self.status = status
         self._text = text if text else json.dumps(self.data)
+        self._raw = raw
         self.charset = "utf-8"
         self.headers = {}
 
@@ -118,6 +119,8 @@ class FakeResponse:
         return self._text
 
     async def read(self) -> bytes:
+        if self._raw is not None:
+            return self._raw
         return self._text.encode("utf-8")
 
     async def json(self, content_type=None):
@@ -155,10 +158,12 @@ class FakeSession:
         get_data: bytes = b"",
         get_status: int = 200,
         get_headers=None,
+        raw: bytes | None = None,
     ) -> None:
         self.data = {} if data is None else data
         self.status = status
         self.text = text
+        self.raw = raw
         self.get_data = get_data
         self.get_status = get_status
         self.get_headers = get_headers
@@ -166,7 +171,7 @@ class FakeSession:
 
     async def post(self, url: str, **kwargs):
         self.requests.append({"method": "POST", "url": url, **kwargs})
-        return FakeResponse(self.data, self.status, self.text)
+        return FakeResponse(self.data, self.status, self.text, raw=self.raw)
 
     def get(self, url: str, **kwargs):
         self.requests.append({"method": "GET", "url": url, **kwargs})
@@ -326,7 +331,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.96")
+        self.assertEqual(PLUGIN_VERSION, "1.3.97")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -1833,6 +1838,33 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.images, [PNG_BYTES])
         self.assertEqual(session.requests[0]["url"], "https://example.test/v1/chat/completions")
+
+    async def test_openai_chat_generate_parses_raw_png_body(self) -> None:
+        session = FakeSession(raw=PNG_BYTES)
+        adapter = OpenAIChatImageAdapter(make_target("openai_chat", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertFalse(result.error)
+
+    async def test_openai_chat_generate_parses_raw_base64_body(self) -> None:
+        session = FakeSession(text=base64.b64encode(PNG_BYTES).decode("ascii"))
+        adapter = OpenAIChatImageAdapter(make_target("openai_chat", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertFalse(result.error)
+
+    async def test_openai_chat_generate_parses_quoted_base64_body(self) -> None:
+        session = FakeSession(text=json.dumps(base64.b64encode(PNG_BYTES).decode("ascii")))
+        adapter = OpenAIChatImageAdapter(make_target("openai_chat", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertFalse(result.error)
 
     def test_create_adapter_uses_openai_chat_type(self) -> None:
         adapter = create_adapter(make_target("openai_chat", "gpt-image-2"), FakeSession())

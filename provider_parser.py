@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import base64
 from collections.abc import Sequence
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urljoin, urlsplit
@@ -124,6 +125,17 @@ def extract_openai_images_data(data: Any, max_bytes: int = 25 * 1024 * 1024) -> 
     base64 strings, which can stall the AstrBot event loop and leave web tests
     stuck in ``running`` even after the upstream already succeeded.
     """
+    if isinstance(data, (bytes, bytearray)) and looks_like_binary_image(bytes(data)):
+        image = bytes(data)
+        return [image] if len(image) <= max_bytes else []
+    if isinstance(data, str) and looks_like_raw_base64_image(data):
+        try:
+            image = b64_to_bytes(data)
+        except Exception:
+            image = b""
+        if image and len(image) <= max_bytes and looks_like_binary_image(image):
+            return [image]
+        return []
     if not isinstance(data, dict):
         return []
     items = data.get("data")
@@ -215,6 +227,40 @@ def clean_image_url(url: str) -> str:
 
 def looks_like_binary_image(data: bytes) -> bool:
     return looks_like_image_bytes(data)
+
+
+def looks_like_raw_base64_image(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if raw.lower().startswith(("data:image/", "base64://")):
+        return True
+    compact = re.sub(r"\s+", "", raw)
+    if len(compact) < 32:
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9+/_=-]+", compact):
+        return False
+    image = decode_base64_payload(compact)
+    return bool(image) and looks_like_binary_image(image)
+
+
+def parse_image_response_body(blob: bytes, charset: str = "utf-8") -> tuple[Optional[Any], str]:
+    """Parse JSON, a quoted/plain base64 image, or raw image bytes."""
+    if looks_like_binary_image(blob):
+        return blob, ""
+    try:
+        text = blob.decode(charset, errors="replace")
+    except Exception:
+        text = blob.decode("utf-8", errors="replace")
+    stripped = text.strip()
+    if not stripped:
+        return None, "empty"
+    try:
+        return json.loads(stripped), ""
+    except json.JSONDecodeError:
+        if looks_like_raw_base64_image(stripped):
+            return stripped, ""
+        return None, "non-json"
 
 
 async def fetch_generated_image_url(
@@ -425,6 +471,10 @@ def collect_images_from_unknown(value: Any) -> Dict[str, List[str]]:
 
     def walk(item: Any) -> None:
         if item is None:
+            return
+        if isinstance(item, (bytes, bytearray)):
+            if looks_like_binary_image(bytes(item)):
+                b64.add("data:image/png;base64," + base64.b64encode(bytes(item)).decode("ascii"))
             return
         if isinstance(item, str):
             text = item.strip()

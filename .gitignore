@@ -9,3 +9,8 @@ image_persona.json
 image_presets.json
 image_cache/
 image-persona/
+
+# Local COS reverse-engineering leftovers (do not commit).
+.tmp_douyin_*/
+scripts/douyin_frames.py
+scripts/__pycache__/

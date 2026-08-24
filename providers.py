@@ -28,6 +28,7 @@ from .provider_parser import (
     images_from_response_unknown,
     looks_like_binary_image,
     looks_like_relative_image_url,
+    parse_image_response_body,
     normalize_gemini_base_url,
     normalize_image_base_url,
     provider_type_from_channel_payload,
@@ -114,16 +115,22 @@ class BaseImageAdapter:
         status = response.status
 
         def _decode_and_parse(blob: bytes) -> tuple[Optional[Any], str]:
-            try:
-                text = blob.decode(charset, errors="replace")
-            except Exception:
-                text = blob.decode("utf-8", errors="replace")
+            parsed, kind = parse_image_response_body(blob, charset)
             if status >= 400:
-                return None, f"HTTP {status}: {http_error_preview(text, http_preview_limit)}"
-            try:
-                return json.loads(text), ""
-            except json.JSONDecodeError:
+                if isinstance(parsed, (bytes, bytearray)):
+                    preview_text = response_preview(bytes(parsed), http_preview_limit)
+                else:
+                    preview_text = parsed if isinstance(parsed, str) else blob.decode(charset, errors="replace")
+                return None, f"HTTP {status}: {http_error_preview(str(preview_text), http_preview_limit)}"
+            if kind == "empty":
+                return None, f"接口返回非 JSON 内容: {response_preview('', invalid_json_preview_limit)}"
+            if kind == "non-json":
+                try:
+                    text = blob.decode(charset, errors="replace")
+                except Exception:
+                    text = blob.decode("utf-8", errors="replace")
                 return None, f"接口返回非 JSON 内容: {response_preview(text, invalid_json_preview_limit)}"
+            return parsed, ""
 
         return await asyncio.to_thread(_decode_and_parse, raw)
 

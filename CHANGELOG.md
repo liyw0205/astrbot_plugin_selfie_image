@@ -1,5 +1,9 @@
 # 更新日志
 
+## 1.3.97
+
+- Web 试画、指令和 LLM 工具兼容中继直接返回裸 PNG 或裸 base64，不再只认 JSON。
+
 ## 1.3.96
 
 - 新增生图渠道类型 `openai_chat`：给只提供 `chat/completions` 的 GPT 生图中继手动选择，请求体仍是 `{model, prompt, n, size}`。`gpt-image-2` 自动仍是 `openai`。渠道地址会截掉 `/v1` 后面的路径后再拼接口。
