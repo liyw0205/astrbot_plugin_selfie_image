@@ -331,7 +331,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.3.97")
+        self.assertEqual(PLUGIN_VERSION, "1.4.0")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -1859,6 +1859,55 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_openai_chat_generate_parses_quoted_base64_body(self) -> None:
         session = FakeSession(text=json.dumps(base64.b64encode(PNG_BYTES).decode("ascii")))
+        adapter = OpenAIChatImageAdapter(make_target("openai_chat", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertFalse(result.error)
+
+    async def test_openai_chat_generate_parses_sse_keepalive_then_image(self) -> None:
+        b64 = base64.b64encode(PNG_BYTES).decode("ascii")
+        sse = (
+            ": initial_keepalive_heartbeat_to_prevent_504\n\n"
+            ": keepalive_heartbeat\n\n"
+            ": keepalive_heartbeat\n\n"
+            "event: balance_update\n"
+            'data: {"GPTimage_balance": 32}\n\n'
+            'data: {"choices": [{"delta": {"content": "data:image/png;base64,' + b64 + '"}}]}\n\n'
+        )
+        session = FakeSession(text=sse)
+        adapter = OpenAIChatImageAdapter(make_target("openai_chat", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertFalse(result.error)
+
+    async def test_openai_chat_generate_parses_sse_split_delta_content(self) -> None:
+        b64 = base64.b64encode(PNG_BYTES).decode("ascii")
+        sse = (
+            ": keepalive_heartbeat\n\n"
+            'data: {"choices": [{"delta": {"content": "data:image/png;base64,"}}]}\n\n'
+            'data: {"choices": [{"delta": {"content": "' + b64 + '"}}]}\n\n'
+            "data: [DONE]\n"
+        )
+        session = FakeSession(text=sse)
+        adapter = OpenAIChatImageAdapter(make_target("openai_chat", "gpt-image-2"), session)
+
+        result = await adapter.generate(ImageGenerateRequest(prompt="cat"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertFalse(result.error)
+
+    async def test_openai_chat_generate_parses_mixed_keepalive_and_image_url(self) -> None:
+        sse = (
+            ": keepalive_heartbeat\n\n"
+            "event: balance_update\n"
+            'data: {"GPTimage_balance": 32}\n\n'
+            "data: https://cdn.example.test/cat.png\n"
+        )
+        session = FakeSession(text=sse, get_data=PNG_BYTES)
         adapter = OpenAIChatImageAdapter(make_target("openai_chat", "gpt-image-2"), session)
 
         result = await adapter.generate(ImageGenerateRequest(prompt="cat"))

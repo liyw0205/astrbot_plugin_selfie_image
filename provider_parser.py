@@ -245,7 +245,7 @@ def looks_like_raw_base64_image(text: str) -> bool:
 
 
 def parse_image_response_body(blob: bytes, charset: str = "utf-8") -> tuple[Optional[Any], str]:
-    """Parse JSON, a quoted/plain base64 image, or raw image bytes."""
+    """Parse JSON, mixed keepalive/SSE text, a quoted/plain base64 image, or raw image bytes."""
     if looks_like_binary_image(blob):
         return blob, ""
     try:
@@ -258,9 +258,32 @@ def parse_image_response_body(blob: bytes, charset: str = "utf-8") -> tuple[Opti
     try:
         return json.loads(stripped), ""
     except json.JSONDecodeError:
+        mixed = extract_mixed_image_payload(stripped)
+        if mixed is not None:
+            return mixed, ""
         if looks_like_raw_base64_image(stripped):
             return stripped, ""
         return None, "non-json"
+
+
+def extract_mixed_image_payload(text: str) -> Optional[Dict[str, Any]]:
+    """Pull image data URLs / raw base64 / image links out of mixed keepalive text."""
+    extracted = extract_image_urls_from_text(text)
+    b64_items = list(extracted.get("b64") or [])
+    url_items = list(extracted.get("urls") or [])
+    if not b64_items:
+        for match in re.finditer(r"(?:iVBOR|UklGR|/9j/|R0lGOD|AAAAFGZ0eXBhdmlm)[A-Za-z0-9+/_=-]{80,}", text):
+            candidate = match.group(0)
+            if looks_like_raw_base64_image(candidate):
+                b64_items.append(candidate)
+    if not b64_items and not url_items:
+        return None
+    data: List[Dict[str, str]] = []
+    for item in b64_items:
+        data.append({"b64_json": item})
+    for item in url_items:
+        data.append({"url": item})
+    return {"data": data}
 
 
 async def fetch_generated_image_url(
