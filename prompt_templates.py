@@ -68,7 +68,7 @@ def build_selfie_builtin_prompt(
             "anime": "soft Kyoto Animation-like anime with a finer face and ethereal atmosphere",
         }.get(str(appearance_type), "visually consistent")
         lines = [
-            f"Create one natural {style} everyday photo.",
+            f"Create one natural {style} vertical smartphone cover photo.",
             "Keep the main subject's identity, gender, face, hair, body proportions, and overall appearance stable; change expression naturally with the scene.",
             "When facing the camera, keep natural focused eye contact unless the request says otherwise.",
         ]
@@ -82,7 +82,7 @@ def build_selfie_builtin_prompt(
         if is_legs:
             if feet_cropped:
                 lines.extend([
-                    "Casual indoor smartphone snapshot of a single adult subject: only a little hem, thighs, and knees; crop both ankles and feet fully outside the frame.",
+                    "Casual indoor vertical smartphone snapshot of a single adult subject: only a little hem, thighs, and knees; crop both ankles and feet fully outside the frame.",
                     "Do not show the face, hair, or head; crop the face fully outside the frame.",
                     "Keep exactly two natural thighs and knees connected from the hips.",
                     "Use only the selected bare-leg look or separate white/black opaque long socks; cuff may be plain, lightly rolled, or a small bow; show leg shape; never become tights.",
@@ -99,11 +99,11 @@ def build_selfie_builtin_prompt(
         elif is_group:
             lines.extend([
                 "Turn each referenced person or non-person subject into an independent complete person with clear boundaries; do not leave toys or flat cutouts.",
-                "Keep everyone in one coherent scene with natural positions, scale, perspective, and friendly interaction.",
+                "Keep everyone in one coherent vertical half-body scene with natural positions, scale, perspective, and friendly interaction.",
             ])
         else:
             lines.extend([
-                "Keep the photo complete and everyday, with coherent light, color, depth, camera perspective, clothing, and scene relationships.",
+                "Keep a vertical close half-body everyday photo, with coherent light, color, depth, camera perspective, clothing, and scene relationships.",
                 "Keep visible anatomy complete and natural: one left and one right hand or foot, connected limbs, and complete fingers or toes.",
             ])
         pose = re.search(r"【(?:pose|shot):([a-z_]+)】", str(action))
@@ -113,7 +113,7 @@ def build_selfie_builtin_prompt(
 
     user = translated_user or extract_user_prompt(action)
     if is_legs and feet_cropped:
-        legs_line = "成年人物的日常手机随拍，下半身近景，不要全身，不要鞋子；短裙盖髋、下摆到大腿中段；只露裙摆到膝；小腿与双脚裁出画外；脸部也裁出画外；穿搭只用已选的光腿神器、白丝或黑丝。"
+        legs_line = "成年人物的日常竖屏手机随拍，下半身近景，不要全身，不要鞋子；短裙盖髋、下摆到大腿中段；只露裙摆到膝；小腿与双脚裁出画外；脸部也裁出画外；穿搭只用已选的光腿神器、白丝或黑丝。"
     elif is_legs:
         legs_line = "单人下半身近景，只保留自然完整的两条腿和双脚；光腿时脚趾自然清晰；腿部穿搭只用已选定的光腿神器、白丝或黑丝，白丝/黑丝袜口有卷边，不要鞋子。"
     else:
@@ -125,8 +125,8 @@ def build_selfie_builtin_prompt(
         "参考图一只作为主角身份锚点，额外参考图只用于服装、姿势、构图、光线或场景。" if has_reference_image else "按角色设定保持主角身份稳定，未说明性别时默认成年女性。",
         "" if is_legs else ("合影对象必须落实为独立完整人物，站位自然，边界清晰。" if is_group else ""),
         legs_line,
-        "真人摄影质感：像普通手机在室内随手拍到的日常照片；使用窗光或房间环境光，保留自然曝光变化、真实布料厚度与细小褶皱、轻微皮肤纹理和接触阴影；避免棚拍精修、塑料皮肤、插画感、3D 渲染感和过度虚化。" if is_legs and str(appearance_type) == "real" else "",
-        "画面自然完整，光线、色调、景深和相机透视统一。" if not is_legs else "",
+        "真人摄影质感：像普通手机竖屏近景随手拍到的日常照片；使用窗光或房间环境光，保留自然曝光变化、真实布料厚度与细小褶皱、轻微皮肤纹理和接触阴影；避免棚拍精修、塑料皮肤、插画感、3D 渲染感和过度虚化。" if str(appearance_type) == "real" or is_legs else "",
+        "竖屏近景半身，光线、色调、景深和相机透视统一。" if not is_legs else "",
         f"用户要求：{user}" if user else "",
     )
 

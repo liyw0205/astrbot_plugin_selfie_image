@@ -1179,7 +1179,7 @@ Source prompt:
       delete CONFIG.random_image_model;
       const img = CONFIG.image;
       img.enable_llm_tool ??= true;
-      img.default_aspect_ratio ??= '自动';
+      img.default_aspect_ratio ??= '9:16';
       img.default_resolution ??= '1K';
       img.max_concurrent_tasks ??= 3;
       img.global_timeout ??= 280;
@@ -1230,7 +1230,7 @@ Source prompt:
         setTextList('whitelistUsers', p.whitelist_users);
         setTextList('whitelistGroups', p.whitelist_groups);
 
-        for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, img.default_aspect_ratio || '自动');
+        for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, img.default_aspect_ratio || '9:16');
         $('defaultResolution').value = img.default_resolution || '1K';
         $('testResolution').value = img.default_resolution || '1K';
         $('maxConcurrent').value = img.max_concurrent_tasks;
@@ -1253,7 +1253,7 @@ Source prompt:
 
         $('selfieBotName').value = CONFIG.bot_name || '';
         $('selfiePersonality').value = CONFIG.personality || '';
-        $('selfieAspect').value = img.default_aspect_ratio || '自动';
+        $('selfieAspect').value = img.default_aspect_ratio || '9:16';
 
         $('enablePromptAudit').checked = !!img.enable_prompt_audit;
         $('enableOutputAudit').checked = !!img.enable_output_audit;
@@ -1290,7 +1290,7 @@ Source prompt:
         whitelist_users: textList('whitelistUsers'),
         whitelist_groups: textList('whitelistGroups')
       };
-      CONFIG.image.default_aspect_ratio = $('defaultAspect').value || $('selfieAspect').value || '自动';
+      CONFIG.image.default_aspect_ratio = $('defaultAspect').value || $('selfieAspect').value || '9:16';
       CONFIG.image.default_resolution = $('defaultResolution').value || '1K';
       CONFIG.image.max_concurrent_tasks = Math.min(3, Math.max(1, Number($('maxConcurrent').value || 3)));
       CONFIG.image.global_timeout = Number($('globalTimeout').value || 280);
@@ -3193,7 +3193,7 @@ Source prompt:
         $('testPrompt').value = $('testPrompt').value || '镜头自然推进，人物轻轻转头看向镜头，动作流畅，光线真实';
         setSelectOptions('testAspect', ['16:9','9:16','1:1'], '16:9');
       } else {
-        setSelectOptions('testAspect', ASPECTS, CONFIG.image?.default_aspect_ratio || '自动');
+        setSelectOptions('testAspect', ASPECTS, CONFIG.image?.default_aspect_ratio || '9:16');
       }
       refreshModelSelectors();
       clearTestData(false);

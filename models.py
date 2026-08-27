@@ -22,7 +22,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "image": {
         "enable_llm_tool": True,
-        "default_aspect_ratio": "自动",
+        "default_aspect_ratio": "9:16",
         "default_resolution": "1K",
         "max_concurrent_tasks": 10,
         "global_timeout": 280,
@@ -404,7 +404,7 @@ class AICatConfig:
             web_port=to_int(web.get("port"), 14514, minimum=1, maximum=65535),
             web_token=str(web.get("token") or "").strip(),
             image_enable_llm_tool=to_bool(image.get("enable_llm_tool"), True),
-            image_default_aspect_ratio=str(image.get("default_aspect_ratio") or "自动").strip() or "自动",
+            image_default_aspect_ratio=str(image.get("default_aspect_ratio") or "9:16").strip() or "9:16",
             image_default_resolution=str(image.get("default_resolution") or "1K").strip() or "1K",
             image_max_concurrent_tasks=to_int(image.get("max_concurrent_tasks"), 10, minimum=1, maximum=10),
             image_global_timeout=to_int(image.get("global_timeout"), 180, minimum=10, maximum=900),

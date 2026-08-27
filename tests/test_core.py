@@ -332,12 +332,14 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.1")
+        self.assertEqual(PLUGIN_VERSION, "1.4.2")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
         self.assertEqual(config.web_host, "127.0.0.1")
         self.assertEqual(config.image_max_batch_count, 10)
+        self.assertEqual(config.image_default_aspect_ratio, "9:16")
+        self.assertEqual(DEFAULT_CONFIG["image"]["default_aspect_ratio"], "9:16")
 
     def test_numeric_config_is_clamped(self) -> None:
         config = AICatConfig.from_dict({"image": {"max_batch_count": 99, "max_concurrent_tasks": 0}})
@@ -493,10 +495,21 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("脸部", zh)
         self.assertIn("真人摄影质感", zh)
         self.assertIn("普通手机", zh)
+        self.assertIn("竖屏", zh)
+        selfie_zh = build_selfie_builtin_prompt(
+            "【自拍 / 看看模式】展示现在的样子。",
+            language="zh",
+            has_reference_image=True,
+            appearance_type="real",
+        )
+        self.assertIn("竖屏", selfie_zh)
+        self.assertIn("真人摄影质感", selfie_zh)
+        self.assertIn("普通手机", selfie_zh)
         self.assertIn("crop both ankles and feet", en)
         self.assertIn("Do not show the face", en)
         self.assertIn("smartphone snapshot", en)
         self.assertIn("plastic skin", en)
+        self.assertIn("vertical", en.lower())
         self.assertNotRegex(en, r"[\u3400-\u9fff]")
         self.assertNotIn("User request:", en)
         self.assertLess(len(en), 2400)
@@ -5460,7 +5473,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("【他拍 / 看看COS模式】", forced_third)
         self.assertNotIn("对镜全身或大半身自拍", forced_third)
         adapted = plugin_main.adapt_cos_outfit_for_camera("室内柔光对镜全身。不是婚纱。", "third")
-        self.assertIn("室内柔光全身", adapted)
+        self.assertIn("室内柔光半身", adapted)
         self.assertNotIn("对镜", adapted)
         self.assertIn("不要第二个人", forced_third)
         self.assertIn("不要有人举着手机拍主角", forced_third)
@@ -5468,6 +5481,119 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("别人视角的单人成品照", look_you)
         self.assertNotIn("朋友在对面用手机拍", look_you)
         self.assertNotIn("朋友在旁边", look_you)
+        self.assertIn("竖屏", look_you)
+        self.assertIn("半身", look_you)
+        self.assertIn("窗光", look_you)
+        self.assertIn("真实皮肤", look_you)
+        self.assertIn("不要美颜滤镜", look_you)
+        selfie_cover = plugin_main.SelfieImagePlugin._build_selfie_look_action(_P(), "", False)
+        self.assertIn("竖屏", selfie_cover)
+        self.assertIn("半身", selfie_cover)
+        self.assertIn("窗光", selfie_cover)
+        self.assertIn("真实皮肤", selfie_cover)
+        self.assertIn("不要美颜滤镜", selfie_cover)
+        self.assertNotIn("过度美颜磨皮", selfie_cover)
+        group_cover = plugin_main.SelfieImagePlugin._build_group_selfie_action(_P(), "", False)
+        self.assertIn("竖屏", group_cover)
+        self.assertIn("半身", group_cover)
+        self.assertIn("窗光", group_cover)
+        self.assertIn("不要美颜滤镜", group_cover)
+        self.assertIn("竖屏", forced_selfie)
+        self.assertIn("半身", forced_selfie)
+        self.assertNotIn("对镜全身或大半身自拍", forced_selfie)
+        self.assertIn("竖屏", forced_third)
+        self.assertIn("半身", forced_third)
+        self.assertNotIn("全身或大半身", forced_third)
+        self.assertIn("室内柔光半身", adapted)
+        self.assertNotIn("室内柔光全身", adapted)
+        rem_prompt = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "rem_blue_lolita")["prompt"]
+        self.assertIn("室内柔光对镜全身", rem_prompt)
+        self.assertIn("白色长袖蓬袖衬衣", rem_prompt)
+
+
+        from astrbot_plugin_selfie_image.persona import PersonaManager, current_period, period_label
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            manager.data["daily_selfie_profile"] = {
+                "date": "2099-01-01",
+                "outfit": "浅蓝衬衫和白色长裙",
+                "status": "stale-status",
+                "status_by_period": {
+                    "morning": "晨光清爽",
+                    "noon": "午间明亮",
+                    "afternoon": "午后偏软",
+                    "evening": "傍晚暖灯",
+                    "night": "夜里小灯",
+                    "late_night": "深夜私密",
+                },
+                "mood": "放松、安静、柔和",
+                "seed": "test",
+                "updated_at": "",
+                "source": "fallback",
+            }
+            period = current_period()
+            label = period_label(period)
+            expected_status = manager.data["daily_selfie_profile"]["status_by_period"][period]
+
+            look_you = plugin_main.SelfieImagePlugin._build_third_person_look_action(_P(), "", False)
+            selfie = plugin_main.SelfieImagePlugin._build_selfie_look_action(_P(), "", False)
+            night_lights = ("霓虹夜色", "金色小时", "清晨清透光", "傍晚金色余晖")
+            if period in {"morning", "noon", "afternoon"}:
+                for token in ("霓虹夜色", "暖黄台灯"):
+                    self.assertNotIn(token, look_you)
+                    self.assertNotIn(token, selfie)
+            if period in {"evening", "night", "late_night"}:
+                for token in ("清晨清透光", "金色小时", "树荫斑驳"):
+                    self.assertNotIn(token, look_you)
+                    self.assertNotIn(token, selfie)
+            self.assertIn("用户补充要求优先", plugin_main.SelfieImagePlugin._build_third_person_look_action(_P(), "晚上霓虹", False))
+
+            look_prompt = manager.build_selfie_prompt(
+                plugin_main.SelfieImagePlugin._build_third_person_look_action(_P(), "", False),
+                "小助",
+                "温柔",
+                True,
+                0,
+            )
+            self.assertIn("今日穿搭：浅蓝衬衫和白色长裙", look_prompt)
+            self.assertIn(f"当前时间段：{label}", look_prompt)
+            self.assertIn(f"当前状态：{expected_status}", look_prompt)
+            self.assertNotIn("stale-status", look_prompt)
+
+            override = manager.build_selfie_prompt(
+                plugin_main.SelfieImagePlugin._build_third_person_look_action(_P(), "晚上霓虹街上穿黑裙", False),
+                "小助",
+                "温柔",
+                True,
+                0,
+            )
+            self.assertIn("用户补充要求优先：晚上霓虹街上穿黑裙", override)
+            self.assertNotIn("今日穿搭：", override)
+            self.assertNotIn("当前时间段：", override)
+            self.assertNotIn("当前状态：", override)
+
+            clothes_only = manager.build_selfie_prompt(
+                plugin_main.SelfieImagePlugin._build_third_person_look_action(_P(), "穿白裙", False),
+                "小助",
+                "温柔",
+                True,
+                0,
+            )
+            self.assertNotIn("今日穿搭：", clothes_only)
+            self.assertIn(f"当前时间段：{label}", clothes_only)
+
+            cos = manager.build_selfie_prompt(
+                plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False, camera="selfie"),
+                "小助",
+                "温柔",
+                True,
+                0,
+            )
+            self.assertNotIn("今日穿搭：", cos)
+            self.assertNotIn("当前时间段：", cos)
+            legs = manager.build_selfie_prompt("看看腿", "小助", "温柔", True, 0)
+            self.assertNotIn("今日穿搭：", legs)
+            self.assertNotIn("当前时间段：", legs)
 
         class PersonaStub:
             class Intent:
@@ -6020,7 +6146,41 @@ class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
             profile = await manager.ensure_daily_selfie_profile("看看你", llm_generate=generate)
             self.assertEqual(profile.source, "fallback")
             self.assertTrue(profile.outfit)
+            for token in ("清晨穿着", "午后是", "傍晚换成", "夜里是", "深夜会偏居家"):
+                self.assertNotIn(token, profile.outfit)
 
+    def test_auxiliary_identity_references_are_limited_and_keep_primary(self) -> None:
+        from astrbot_plugin_selfie_image.persona import PersonaManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            manager.save_reference_image(PNG_BYTES, "image/png")
+            primary = manager.get_reference_image()
+            self.assertIsNotNone(primary)
+            for _ in range(3):
+                manager.add_auxiliary_reference_image(PNG_BYTES, "image/png")
+            auxiliary = manager.get_auxiliary_reference_images()
+            self.assertEqual(len(auxiliary), 3)
+            self.assertTrue(all(item["data"] == PNG_BYTES for item in auxiliary))
+            with self.assertRaisesRegex(ValueError, "最多 3 张"):
+                manager.add_auxiliary_reference_image(PNG_BYTES, "image/png")
+            removed_id = str(auxiliary[1]["id"])
+            manager.remove_auxiliary_reference_image(removed_id)
+            self.assertEqual(len(manager.get_auxiliary_reference_images()), 2)
+            self.assertEqual(manager.get_reference_image()["data"], primary["data"])
+            manager.clear_reference_image()
+            self.assertFalse(manager.has_reference_image())
+            self.assertEqual(len(manager.get_auxiliary_reference_images()), 2)
+            manager.clear_auxiliary_reference_images()
+            self.assertEqual(len(manager.get_auxiliary_reference_images()), 0)
+
+    def test_auxiliary_persona_commands_are_documented_and_registered(self) -> None:
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        readme_src = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+        for token in ('@filter.command("辅助形象设置")', '@filter.command("辅助形象清除")', "合影时只使用主形象图"):
+            self.assertIn(token, main_src)
+        self.assertIn("/辅助形象设置", readme_src)
+        self.assertIn("/辅助形象清除", readme_src)
 
 if __name__ == "__main__":
     unittest.main()

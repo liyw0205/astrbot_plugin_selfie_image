@@ -388,10 +388,10 @@ def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
         return text
     replacements = (
         ("对镜坐在木地板地毯上", "坐在木地板地毯上"),
-        ("室内柔光对镜全身", "室内柔光全身"),
-        ("室内素墙对镜全身", "室内素墙全身"),
-        ("室内黑底柔光，单人侧身对镜", "室内黑底柔光，单人侧身"),
-        ("对镜全身", "全身"),
+        ("室内柔光对镜全身", "室内柔光半身"),
+        ("室内素墙对镜全身", "室内素墙半身"),
+        ("室内黑底柔光，单人侧身对镜", "室内黑底柔光，单人侧身半身"),
+        ("对镜全身", "对镜半身"),
     )
     for old, new in replacements:
         text = text.replace(old, new)
@@ -2146,7 +2146,7 @@ class SelfieImagePlugin(Star):
             "original_prompt": str(payload.get("prompt") or "").strip() or "看着镜头自然自拍",
             "channel": str(payload.get("channel") or "").strip(),
             "model": str(payload.get("model") or "").strip(),
-            "aspect_ratio": str(payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "自动"),
+            "aspect_ratio": str(payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16"),
             "resolution": str(payload.get("resolution") or self.config.image_default_resolution or "1K"),
             "prompt_enhance": prompt_enhance,
             "use_selfie_reference": bool(payload.get("use_selfie_reference")),
@@ -2566,7 +2566,7 @@ class SelfieImagePlugin(Star):
 
         graph = session.get("graph") or {}
         action = build_studio_action(session)
-        aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "自动")
+        aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
         resolution = str(graph.get("resolution") or self.config.image_default_resolution or "1K")
         try:
             count = max(1, min(4, int(graph.get("count") or 1)))
@@ -2627,7 +2627,7 @@ class SelfieImagePlugin(Star):
             session = self.studio.get(session_id)
             graph = session.get("graph") or {}
             action = build_studio_action(session)
-            aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "自动")
+            aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
             resolution = str(graph.get("resolution") or self.config.image_default_resolution or "1K")
             try:
                 count = max(1, min(4, int(graph.get("count") or 1)))
@@ -2969,7 +2969,7 @@ class SelfieImagePlugin(Star):
 
     def _parse_prompt_options(self, text: str, aspect_ratio: str = "", resolution: str = "") -> Tuple[str, str, str]:
         prompt = str(text or "").strip()
-        aspect = str(aspect_ratio or self.config.image_default_aspect_ratio or "自动").strip() or "自动"
+        aspect = str(aspect_ratio or self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
         resol = str(resolution or self.config.image_default_resolution or "1K").strip() or "1K"
         matches = list(re.finditer(r"--([a-zA-Z0-9_\-]+)(?:[=\s]+([^\s]+))?", prompt))
         for match in reversed(matches):
@@ -2996,7 +2996,7 @@ class SelfieImagePlugin(Star):
 
         if preset_name:
             cleaned_prompt = str(resolved.get("prompt") or cleaned_prompt).strip()
-            default_aspect = str(self.config.image_default_aspect_ratio or "自动").strip() or "自动"
+            default_aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
             default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
             preset_aspect = str(resolved.get("aspect_ratio") or "").strip()
             preset_resolution = str(resolved.get("resolution") or "").strip()
@@ -3221,6 +3221,17 @@ class SelfieImagePlugin(Star):
             return ImageReference(data=data, mime_type=detect_mime_by_bytes(data) or "image/png")
         except OSError:
             return None
+
+    def _persona_auxiliary_references(self, action: str = "") -> List[ImageReference]:
+        """Load auxiliary identity images; group photos intentionally use primary only."""
+        intent = self.persona.analyze_selfie_intent(action)
+        if intent.is_group_photo:
+            return []
+        return [
+            ImageReference(data=item["data"], mime_type=item["mime_type"])
+            for item in self.persona.get_auxiliary_reference_images()
+            if item.get("data")
+        ]
 
     def _video_persona_reference(self) -> Optional[ImageReference]:
         """将当前形象图作为视频首帧参考。"""
@@ -3810,7 +3821,7 @@ class SelfieImagePlugin(Star):
                 "袜身向画外延伸，不展示脚部。"
             )
         base = (
-            "看看腿。下半身特写，不要全身照。"
+            "看看腿。下半身特写，不要全身照。竖屏手机近景。"
             f"【姿势】{pose_label}：{random.choice(variants)}"
             "不露脸：脸部/头发完整裁出画外。"
             "双脚完整裁出画外，不要鞋子。【crop:calves】"
@@ -3834,6 +3845,37 @@ class SelfieImagePlugin(Star):
         if "【pose:" in raw or not self.persona.analyze_selfie_intent(raw).is_legs_only:
             return raw
         return self._build_leg_focus_action(raw, has_refs)
+
+
+    @staticmethod
+    def _period_scene_light_pools(kind: str = "selfie") -> tuple[list[str], list[str]]:
+        from .persona import current_period
+
+        period = current_period()
+        if kind == "look_you":
+            day_scenes = ["窗边沙发", "书桌前", "阳台栏杆", "厨房台边"]
+            night_scenes = ["窗边沙发", "书桌前", "夜灯房间", "厨房台边"]
+            cafe_day = ["咖啡馆座位", "楼下咖啡外摆", "街边树荫", "书店角落"]
+            if period in {"morning", "noon"}:
+                scenes = day_scenes + cafe_day
+                lights = ["窗光", "阴天柔光"]
+            elif period == "afternoon":
+                scenes = day_scenes + cafe_day
+                lights = ["窗光", "阴天柔光"]
+            elif period == "evening":
+                scenes = night_scenes + ["阳台栏杆", "雨后屋檐"]
+                lights = ["暖台灯", "窗光"]
+            else:
+                scenes = night_scenes
+                lights = ["暖台灯", "夜灯房间柔光"]
+            return scenes, lights
+        if period in {"morning", "noon"}:
+            return ["浅色墙与窗边", "书桌与杯具", "阳台栏杆旁", "镜前整洁台面"], ["窗光柔和", "清晨清透光", "阴天漫射"]
+        if period == "afternoon":
+            return ["浅色墙与窗边", "书桌与杯具", "沙发与抱枕", "阳台栏杆旁"], ["窗光柔和", "阴天漫射"]
+        if period == "evening":
+            return ["暖灯房间一角", "沙发与抱枕", "书桌与杯具", "床边靠坐"], ["暖黄台灯", "窗光柔和"]
+        return ["暖灯房间一角", "沙发与抱枕", "床边靠坐", "镜前整洁台面"], ["暖黄台灯"]
 
     def _build_selfie_look_action(
         self,
@@ -3874,16 +3916,6 @@ class SelfieImagePlugin(Star):
             "high_angle": "稍高机位自拍：镜头略高于眼，脸自然抬一点看镜头，显精神，不要过度仰拍变形。",
             "close_portrait": "近景胸像自拍：脸与肩为主，眼神对焦镜头，五官清晰，浅景深。",
         }
-        scenes = [
-            "浅色墙与窗边",
-            "暖灯房间一角",
-            "书桌与杯具",
-            "沙发与抱枕",
-            "阳台栏杆旁",
-            "镜前整洁台面",
-            "厨房台边随手",
-            "床边靠坐",
-        ]
         gestures = [
             "嘴角轻微笑意",
             "一只手整理发丝或衣领",
@@ -3892,13 +3924,7 @@ class SelfieImagePlugin(Star):
             "双手捧杯刚抬眼",
             "刚坐好整理袖口",
         ]
-        lights = [
-            "窗光柔和",
-            "阴天漫射",
-            "暖黄台灯",
-            "清晨清透光",
-            "傍晚金色余晖",
-        ]
+        scenes, lights = SelfieImagePlugin._period_scene_light_pools("selfie")
         scene = random.choice(scenes)
         gesture = random.choice(gestures)
         light = random.choice(lights)
@@ -3906,10 +3932,11 @@ class SelfieImagePlugin(Star):
             "【自拍 / 看看模式】展示 AI 现在的样子。"
             "第一人称自拍视角（自己举机或镜前自拍），不是别人代拍。"
             "必须看向镜头：眼睛对焦镜头方向，表情自然有神；不要眼神飘走或心不在焉。"
-            "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰，写实自然。"
+            "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
+            "竖屏手机近景半身：像短视频封面那样拍得近，但质感仍是真实皮肤、真实布料和接触阴影；窗光或暖灯，不要棚拍、不要美颜滤镜、不要塑料皮肤。"
             f"本次机位：{shot_lines.get(shot, shot_lines['arm_half'])}"
             f"场景倾向：{scene}。小动作：{gesture}。光线：{light}。"
-            "画面干净日常，不要夸张摆拍或过度美颜磨皮。"
+            "画面干净日常，不要夸张摆拍。"
         )
         if has_refs:
             base = "参考用户提供的图片氛围、场景或构图，" + base + " 主角身份仍以 AI 形象为准。"
@@ -3974,7 +4001,7 @@ class SelfieImagePlugin(Star):
             framing = (
                 "【他拍 / 看看COS模式】"
                 "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
-                "别人视角的单人成品照：镜头已经对准主角拍下全身或大半身，画面里只有主角一个人；"
+                "别人视角的单人成品照：竖屏手机近景半身或环境人像，像随手拍的 COS 封面；画面里只有主角一个人；"
                 "拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角，不要拍到拍照过程；"
                 "不要对镜、不要镜子、不要手持手机入镜，不要第一人称伸手自拍，不要手臂挡脸挡衣服。"
             )
@@ -3982,7 +4009,7 @@ class SelfieImagePlugin(Star):
             framing = (
                 "【自拍 / 看看COS模式】"
                 "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
-                "对镜全身或大半身自拍：站在穿衣镜前，手机可出现在镜中；"
+                "竖屏手机近景半身自拍：可对镜，但拍胸像到腰线，不要展会式全身棚拍；手机可出现在镜中；"
                 "不要第一人称伸手自拍，不要手臂挡脸挡衣服。"
             )
         base = (
@@ -3992,7 +4019,7 @@ class SelfieImagePlugin(Star):
             + f"本次套装：{title}。"
             + f"{outfit}"
             + "服装颜色、层数、配饰、开叉、荷叶边、鞋履等结构要尽量齐全高还原；"
-            + "构图完整带上腰线与腿部线条；不要简化成普通常服；画面干净得体。"
+            + "构图完整带上腰线；竖屏近景半身即可，不要简化成普通常服；画面干净得体。"
         )
         if has_refs:
             base = "参考用户附图的氛围或构图，" + base
@@ -4036,18 +4063,6 @@ class SelfieImagePlugin(Star):
             "low_over": "轻微低机位过肩感：从略低处拍半身，仍看镜头，不要过度仰拍变形。",
             "lean_wall": "靠墙/门框他拍：肩背轻靠，双手自然，看镜头，竖构图友好。",
         }
-        scenes = [
-            "窗边沙发",
-            "书桌前",
-            "咖啡馆座位",
-            "街边树荫",
-            "阳台栏杆",
-            "夜灯房间",
-            "书店角落",
-            "楼下咖啡外摆",
-            "雨后屋檐",
-            "厨房台边",
-        ]
         actions = [
             "端着杯子刚抬眼",
             "托腮听人说话",
@@ -4058,14 +4073,7 @@ class SelfieImagePlugin(Star):
             "刚坐下整理衣角",
             "对镜头轻轻点头笑",
         ]
-        lights = [
-            "窗光",
-            "阴天柔光",
-            "金色小时",
-            "暖台灯",
-            "霓虹夜色边缘光",
-            "树荫斑驳",
-        ]
+        scenes, lights = SelfieImagePlugin._period_scene_light_pools("look_you")
         scene = random.choice(scenes)
         action = random.choice(actions)
         light = random.choice(lights)
@@ -4074,15 +4082,16 @@ class SelfieImagePlugin(Star):
             "别人视角的单人成品照：镜头已经对准主角拍下，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角。"
             "正面半身或近景时优先看向镜头，眼神自然有焦点；可以轻松回头，但不要整段心不在焉。"
             "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
+            "竖屏手机近景半身：窗光或暖灯，真实皮肤和真实布料，不要美颜滤镜、不要棚拍精修。"
             f"本次机位：{shot_lines.get(shot, shot_lines['half_front'])}"
             f"场景倾向：{scene}。动作瞬间：{action}。光线：{light}。"
-            "写实手机拍照质感，不要影楼硬摆或过度美颜。"
+            "写实手机拍照质感，不要影楼硬摆。"
         )
         if has_refs:
             base = "参考用户提供的图片氛围、场景或构图，" + base
         extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
         if extra:
-            base += f" 额外要求：{extra}。"
+            base += f" 用户补充要求优先：{extra}。"
         base += f" 【shot:{shot}】"
         return base
 
@@ -4107,7 +4116,8 @@ class SelfieImagePlugin(Star):
         base += style_blob
         base += (
             "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动统一。"
-            "合影默认多数人看向镜头，像认真合影；AI 若面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
+            "合影默认多数人看向镜头；竖屏手机近景半身，窗光或暖灯，真实皮肤，不要美颜滤镜、不要证件照站排。"
+            "AI 若面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
         )
         if has_refs:
             base += (
@@ -4547,6 +4557,7 @@ class SelfieImagePlugin(Star):
         refs: List[ImageReference] = []
         if persona_ref:
             refs.append(persona_ref)
+        refs.extend(self._persona_auxiliary_references(action))
         refs.extend(extra_refs)
         prompt = self.persona.build_selfie_prompt(
             action=action or "看着镜头自然自拍，展示你现在的样子",
@@ -5870,7 +5881,7 @@ class SelfieImagePlugin(Star):
             raw_images.append(payload.get("image"))
 
         original_prompt = str(payload.get("prompt") or "").strip() or "看着镜头自然自拍"
-        aspect = str(payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "自动")
+        aspect = str(payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
         resolution = str(payload.get("resolution") or self.config.image_default_resolution or "1K")
         prompt_enhance_raw = payload.get("prompt_enhance", True)
         prompt_enhance = not (
@@ -6220,7 +6231,7 @@ class SelfieImagePlugin(Star):
         # Prefer aspect/resolution resolved from raw user text (before action wrappers).
         if str(preset_name or "").strip():
             action = message
-            default_aspect = str(self.config.image_default_aspect_ratio or "自动").strip() or "自动"
+            default_aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
             default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
             aspect = str(preset_aspect or "").strip() or default_aspect
             resolution = str(preset_resolution or "").strip() or default_resolution
@@ -6327,6 +6338,8 @@ class SelfieImagePlugin(Star):
                 "形象：",
                 "· /形象查看　看当前参考图、形象类型与今日状态",
                 "· /形象设置　发图设形象；也可写 自动 / 真人 / 动漫 改形象类型",
+                "· /辅助形象设置　附带图片增加辅助形象；最多 3 张，普通自拍/换装会使用，合影时只使用主形象图",
+                "· /辅助形象清除　清空辅助形象图，不影响主形象",
                 "· /形象清除　去掉参考图",
                 "· /形象刷新　刷新今日穿搭状态",
                 "",
@@ -6943,6 +6956,87 @@ class SelfieImagePlugin(Star):
                 yield event.plain_result(msg)
                 return
         yield event.plain_result("没有读取到可用图片，或图片超过大小限制。")
+
+    @filter.command("辅助形象设置")
+    async def cmd_persona_auxiliary_set(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """增加辅助形象参考图；辅助图最多保存 3 张。"""
+        event_text = extract_event_text(event)
+        text = extract_command_message(event, "辅助形象设置", event_text)
+        compact = re.sub(r"[\s，。！？、；：,.!?]", "", str(text or "")).lower()
+        clear_requested = compact in {"清除", "删除", "重置", "clear", "reset", "全部清除"} or any(
+            compact.startswith(prefix) for prefix in ("清除辅助形象", "删除辅助形象", "重置辅助形象")
+        )
+        if clear_requested:
+            self.persona.clear_auxiliary_reference_images()
+            yield event.plain_result("辅助形象参考图已全部清除，主形象不受影响。")
+            return
+
+        sources = extract_image_sources_from_event(event, include_at_avatar=False)
+        sources.extend(extract_image_urls(text))
+        sources = list(dict.fromkeys(sources))
+        current_count = len(self.persona.get_auxiliary_reference_entries())
+        if not sources:
+            if current_count:
+                yield event.plain_result(
+                    f"当前已有 {current_count} 张辅助形象参考图（最多 3 张）。"
+                    "请附带图片上传，合影时不会使用辅助图。"
+                )
+            else:
+                yield event.plain_result(
+                    "请发送图片、引用图片，或在指令后附带图片链接，作为辅助形象参考图。"
+                    "最多可设置 3 张。"
+                )
+            return
+        if current_count >= 3:
+            yield event.plain_result("辅助形象参考图已达到上限 3 张，请先使用 /辅助形象清除。")
+            return
+
+        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+        saved = 0
+        failed = 0
+        async with aiohttp.ClientSession(trust_env=False) as session:
+            for source in sources:
+                if current_count + saved >= 3:
+                    break
+                try:
+                    fetched = await fetch_image_source(source, session, max_bytes=max_bytes)
+                except Exception:
+                    fetched = None
+                if not fetched:
+                    failed += 1
+                    continue
+                data, mime = fetched
+                try:
+                    self.persona.add_auxiliary_reference_image(data, mime)
+                except (OSError, ValueError):
+                    failed += 1
+                    continue
+                saved += 1
+
+        total = len(self.persona.get_auxiliary_reference_entries())
+        if saved:
+            message = f"已保存 {saved} 张辅助形象参考图，当前共 {total} 张。合影时只使用主形象图。"
+            if failed:
+                message += f"另有 {failed} 张图片读取失败。"
+            if total >= 3 and len(sources) > saved:
+                message += "辅助形象图已达到上限 3 张。"
+            yield event.plain_result(message)
+            return
+        if failed:
+            yield event.plain_result("没有读取到可用图片，或图片超过大小限制。")
+        else:
+            yield event.plain_result("没有新增辅助形象参考图。")
+
+    @filter.command("辅助形象清除")
+    async def cmd_persona_auxiliary_clear(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """清除全部辅助形象参考图，不影响主形象。"""
+        count = len(self.persona.get_auxiliary_reference_entries())
+        self.persona.clear_auxiliary_reference_images()
+        yield event.plain_result(
+            "辅助形象参考图已清除，不影响主形象。"
+            if count
+            else "当前没有辅助形象参考图。主形象不受影响。"
+        )
 
     @filter.command("形象清除")
     async def cmd_persona_clear(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:

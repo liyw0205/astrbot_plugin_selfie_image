@@ -188,6 +188,82 @@ def includes_any(text: str, items: list[str]) -> bool:
     return any(item and item in text for item in items)
 
 
+def extract_user_extra_text(action: str) -> str:
+    text = str(action or "")
+    match = re.search(r"(?:用户补充要求优先|用户补充要求|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
+    if not match:
+        return ""
+    value = match.group(1)
+    value = re.sub(r"\s*【(?:pose|shot|cos|cam):[a-z0-9_]+】\s*", " ", value)
+    return re.sub(r"\s+", " ", value).strip(" 。")
+
+
+def extra_overrides_outfit(extra: str) -> bool:
+    compact = normalize_intent_text(extra)
+    return includes_any(
+        compact,
+        [
+            "穿这",
+            "穿那",
+            "穿上",
+            "穿着",
+            "换装",
+            "换这身",
+            "换这套",
+            "换衣服",
+            "白裙",
+            "黑裙",
+            "短裙",
+            "长裙",
+            "旗袍",
+            "制服",
+            "outfit",
+            "dress",
+            "wearing",
+            "wearthis",
+        ],
+    )
+
+
+def extra_overrides_period(extra: str) -> bool:
+    compact = normalize_intent_text(extra)
+    return includes_any(
+        compact,
+        [
+            "早上",
+            "早晨",
+            "清晨",
+            "上午",
+            "中午",
+            "午后",
+            "下午",
+            "傍晚",
+            "黄昏",
+            "晚上",
+            "夜里",
+            "夜晚",
+            "深夜",
+            "凌晨",
+            "霓虹",
+            "夜色",
+            "夜灯",
+            "月光",
+            "晨光",
+            "金色小时",
+            "夕阳",
+            "日出",
+            "日落",
+            "咖啡馆",
+            "街上",
+            "街边",
+            "室外",
+            "户外",
+        ],
+    )
+
+
+
+
 def local_date_key() -> str:
     return time.strftime("%Y-%m-%d", time.localtime())
 
@@ -240,12 +316,12 @@ def make_random_seed() -> str:
 
 def fallback_daily_profile(date: str, seed: str) -> DailySelfieProfile:
     outfits = [
-        "清晨穿着奶油白细针织上衣和浅杏短开衫，下身是轻薄格纹短裙，腿部穿搭简洁，像刚收拾好准备出门前的样子。",
-        "午后是浅粉宽松卫衣配奶白色短裙，发间夹一枚小珍珠发夹，像在家里随手窝着休息。",
-        "傍晚换成雾紫色针织连衣裙，外披奶白毛绒小披肩，布料柔软，适合暖灯下安静坐着。",
-        "白天偏清爽的浅蓝灰宽松衬衫配白色高腰半身裙，袖口松松卷起，像随手拍到的日常穿搭。",
-        "夜里是月白宽松毛衣配浅灰百褶裙，整体温暖、松弛，像准备窝回房间休息。",
-        "深夜会偏居家一点，宽松薄针织或短款家居上衣配轻软短裙，鞋子不固定，重点是舒服自然。",
+        "奶油白细针织上衣和浅杏短开衫，下身轻薄格纹短裙，腿部穿搭简洁。",
+        "浅粉宽松卫衣配奶白色短裙，发间夹一枚小珍珠发夹。",
+        "雾紫色针织连衣裙，外披奶白毛绒小披肩，布料柔软。",
+        "浅蓝灰宽松衬衫配白色高腰半身裙，袖口松松卷起。",
+        "月白宽松毛衣配浅灰百褶裙，整体温暖、松弛。",
+        "宽松薄针织或短款家居上衣配轻软短裙，重点是舒服自然。",
     ]
     status_by_period = {
         "morning": "刚整理好头发和衣服，窗边是偏白一点的晨光，整个人清爽、安静，还带点没完全醒透的松弛感。",
@@ -277,6 +353,7 @@ class PersonaManager:
         self.data: Dict[str, Any] = {
             "ref_image_path": "",
             "ref_mime_type": "image/png",
+            "auxiliary_identity_refs": [],
             "appearance_type": "auto",
             "updated_at": "",
             "daily_selfie_profile": None,
@@ -291,6 +368,16 @@ class PersonaManager:
             {
                 "ref_image_path": str(raw.get("ref_image_path") or ""),
                 "ref_mime_type": str(raw.get("ref_mime_type") or "image/png"),
+                "auxiliary_identity_refs": [
+                    {
+                        "id": str(item.get("id") or "").strip(),
+                        "path": str(item.get("path") or "").strip(),
+                        "mime_type": str(item.get("mime_type") or "image/png").strip() or "image/png",
+                        "created_at": str(item.get("created_at") or "").strip(),
+                    }
+                    for item in (raw.get("auxiliary_identity_refs") or [])
+                    if isinstance(item, dict) and str(item.get("id") or "").strip() and str(item.get("path") or "").strip()
+                ][:3],
                 "appearance_type": normalize_appearance_type(raw.get("appearance_type")),
                 "updated_at": str(raw.get("updated_at") or ""),
                 "daily_selfie_profile": raw.get("daily_selfie_profile"),
@@ -309,6 +396,106 @@ class PersonaManager:
 
     def has_reference_image(self) -> bool:
         return bool(self.get_reference_path())
+
+    def get_auxiliary_reference_entries(self) -> list[Dict[str, Any]]:
+        entries: list[Dict[str, Any]] = []
+        for item in self.data.get("auxiliary_identity_refs") or []:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            ref_id = str(item.get("id") or "").strip()
+            if not ref_id or not path or not os.path.isfile(path):
+                continue
+            entries.append(
+                {
+                    "id": ref_id,
+                    "path": path,
+                    "mime_type": str(item.get("mime_type") or "image/png"),
+                    "created_at": str(item.get("created_at") or ""),
+                }
+            )
+        return entries[:3]
+
+    def get_auxiliary_reference_images(self) -> list[Dict[str, Any]]:
+        images: list[Dict[str, Any]] = []
+        for entry in self.get_auxiliary_reference_entries():
+            try:
+                with open(entry["path"], "rb") as file:
+                    data = file.read()
+            except OSError:
+                continue
+            if data:
+                images.append({"id": entry["id"], "data": data, "mime_type": entry["mime_type"], "created_at": entry["created_at"]})
+        return images
+
+    def add_auxiliary_reference_image(self, data: bytes, mime_type: str = "") -> Dict[str, Any]:
+        if not data:
+            raise ValueError("辅助形象图为空")
+        entries = self.get_auxiliary_reference_entries()
+        if len(entries) >= 3:
+            raise ValueError("辅助形象图最多 3 张，请先删除一张")
+        mime = mime_type or detect_mime_by_bytes(data)
+        ext = ext_from_mime(mime)
+        ref_id = f"aux_{time.time_ns()}"
+        path = os.path.join(self.image_dir, f"persona_aux_{time.time_ns()}.{ext}")
+        with open(path, "wb") as file:
+            file.write(data)
+        entries.append(
+            {
+                "id": ref_id,
+                "path": path,
+                "mime_type": mime,
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
+            }
+        )
+        self.data["auxiliary_identity_refs"] = entries
+        self.data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
+        self.save()
+        return self.get()
+
+    def remove_auxiliary_reference_image(self, ref_id: str) -> Dict[str, Any]:
+        target_id = str(ref_id or "").strip()
+        if not target_id:
+            raise ValueError("缺少辅助形象图 id")
+        entries = list(self.data.get("auxiliary_identity_refs") or [])
+        kept: list[Dict[str, Any]] = []
+        removed = None
+        for item in entries:
+            if isinstance(item, dict) and str(item.get("id") or "") == target_id:
+                removed = item
+            elif isinstance(item, dict):
+                kept.append(item)
+        if removed is None:
+            raise ValueError("辅助形象图不存在")
+        path = str(removed.get("path") or "")
+        if path:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
+        self.data["auxiliary_identity_refs"] = kept
+        self.data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
+        self.save()
+        return self.get()
+
+    def clear_auxiliary_reference_images(self) -> Dict[str, Any]:
+        """Remove all auxiliary identity images while keeping the primary image."""
+        for item in self.data.get("auxiliary_identity_refs") or []:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            if not path:
+                continue
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
+        self.data["auxiliary_identity_refs"] = []
+        self.data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
+        self.save()
+        return self.get()
 
     def save_reference_image(self, data: bytes, mime_type: str = "") -> Dict[str, Any]:
         if not data:
@@ -373,7 +560,9 @@ class PersonaManager:
 
     def analyze_selfie_intent(self, action: str) -> SelfieIntent:
         raw = str(action or "").strip()
+        extra = extract_user_extra_text(raw)
         compact = normalize_intent_text(raw)
+        extra_compact = normalize_intent_text(extra)
         is_group_photo = includes_any(
             compact,
             [
@@ -413,7 +602,7 @@ class PersonaManager:
             re.search(r"[3-9三四五六七八九十]人", compact)
         )
         change_clothes = includes_any(
-            compact,
+            extra_compact,
             [
                 "穿这个",
                 "穿这身",
@@ -460,7 +649,7 @@ class PersonaManager:
             ],
         )
         change_pose = includes_any(
-            compact,
+            extra_compact,
             [
                 "姿势",
                 "动作",
@@ -627,7 +816,7 @@ class PersonaManager:
                 '{"outfit":"...","mood":"...","status_by_period":{"morning":"...",'
                 '"noon":"...","afternoon":"...","evening":"...","night":"...",'
                 '"late_night":"..."}}。要求：角色是成年人物，穿搭得体日常，内容适合普通自拍；'
-                "不要写敏感、暴露或未成年人内容；每个字段简短自然。"
+                "不要写敏感、暴露或未成年人内容；outfit 只写衣服本身，不要写清晨、午后、夜里等时间词；时间氛围只放进 status_by_period；每个字段简短自然。"
             )
             try:
                 raw = str(await llm_generate(prompt) or "").strip()
@@ -642,6 +831,7 @@ class PersonaManager:
                 }
                 forbidden = ("未成年", "裸", "裸体", "色情", "暴露", "内衣", "乳", "私密")
                 all_text = " ".join([outfit, mood, *clean_periods.values()])
+                time_locked = ("清晨", "早晨", "午后", "傍晚", "夜里", "夜晚", "深夜", "凌晨")
                 if (
                     outfit
                     and len(outfit) <= 180
@@ -649,6 +839,7 @@ class PersonaManager:
                     and all(clean_periods.values())
                     and all(len(value) <= 160 for value in clean_periods.values())
                     and not any(word in all_text for word in forbidden)
+                    and not any(word in outfit for word in time_locked)
                 ):
                     if all(clean_periods.values()):
                         profile = DailySelfieProfile(
@@ -777,12 +968,12 @@ class PersonaManager:
                     + ("他拍" if camera_is_third else "自拍")
                     + "，不是晒腿、不是合影。",
                     (
-                        "别人视角的单人成品照：镜头已经对准主角拍下全身或大半身，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角，不要对镜、不要手持手机入镜；禁止第一人称伸手挡脸挡身。"
+                        "别人视角的单人成品照：竖屏手机近景半身，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角，不要对镜、不要手持手机入镜；禁止第一人称伸手挡脸挡身。"
                         if camera_is_third
-                        else "对镜全身或大半身：站在穿衣镜前拍摄，手机可入镜；禁止第一人称伸手挡脸挡身。"
+                        else "竖屏手机近景半身：可对镜拍胸像到腰线，不要展会式全身棚拍；手机可入镜；禁止第一人称伸手挡脸挡身。"
                     ),
                     "保持形象参考的脸型五官与体态；假发颜色、发型、发饰按本套 COS 完整替换。",
-                    "完整展示套装层次、腰线与腿部线条；不要裁成只拍腿或只拍脸。",
+                    "完整展示套装层次和腰线；竖屏近景半身即可，不要裁成只拍腿或只拍脸。",
                     "构图以展示 COS 服装为主；表情按新造型自然重画。",
                 ]
             )
@@ -890,22 +1081,29 @@ class PersonaManager:
                     "优先使用你今天的穿搭、状态和心情来生成一张自然照片。",
                     "自拍默认看向镜头：眼睛对焦镜头方向，表情自然、有神；不要眼神飘向画面外或心不在焉。",
                     "除非用户明确要求侧脸、低头、闭眼、看别处，否则保持与镜头的眼神交流。",
-                    "机位可自然变化：自拍臂半身、镜前半身、窗边侧光、书桌坐拍、沙发随手、稍高机位、近景胸像等，不要次次同一构图。",
+                    "竖屏手机近景半身：自拍臂、镜前、窗边侧光、书桌坐拍、沙发随手、近景胸像，拍得近一些，不要次次同一构图。",
                     "场景与小动作保持日常：窗边、暖灯房间、书桌杯具、沙发抱枕、阳台、镜前台面等；可轻微笑、整理发丝/衣领、托腮、捧杯抬眼。",
                 ]
             )
 
-        if intent.is_legs_only:
-            today_lines = []
-        else:
-            today_lines: list[str] = []
-        if daily and daily.outfit and not intent.change_clothes and not intent.is_legs_only and not intent.is_cos_look:
+        extra = extract_user_extra_text(act)
+        skip_outfit = extra_overrides_outfit(extra) or intent.change_clothes
+        skip_period = extra_overrides_period(extra)
+        use_daily_now = (not intent.is_legs_only) and (not intent.is_cos_look)
+        today_lines: list[str] = []
+        if use_daily_now and daily and daily.outfit and not skip_outfit:
             today_lines.append(f"今日穿搭：{daily.outfit}")
-        if daily and daily.status and not intent.is_legs_only:
-            today_lines.append(f"当前时间段：{period_label(current_period())}")
-            today_lines.append(f"当前状态：{daily.status}")
-        if daily and daily.mood and not intent.is_legs_only:
-            today_lines.append(f"当前心情：{daily.mood}")
+        if use_daily_now and daily and not skip_period:
+            period = current_period()
+            status = ""
+            if daily.status_by_period:
+                status = str(daily.status_by_period.get(period) or "")
+            status = status or str(daily.status or "")
+            if status:
+                today_lines.append(f"当前时间段：{period_label(period)}")
+                today_lines.append(f"当前状态：{status}")
+            if daily.mood:
+                today_lines.append(f"当前心情：{daily.mood}")
 
         action_line = f"用户要求：{act}" if act else "用户要求：看着镜头自然自拍，展示你现在的样子。"
         subject_photo_label = "日常他拍照片" if intent.is_third_person_photo and not intent.is_group_photo else "自拍照片"
@@ -916,9 +1114,9 @@ class PersonaManager:
                 "1. 主角身份稳定：脸型五官、体态来自参考图一；假发/发饰按 COS 套装。",
                 "2. 这是 COS 换装"
                 + ("他拍" if camera_is_third else "自拍")
-                + "：完整展示指定套装层次，不要改成晒腿近景或合影。",
+                + "：完整展示指定套装层次，竖屏近景半身，不要改成晒腿近景或合影。",
                 "3. 面部清晰可见、自然看向镜头，除非用户明确要求遮脸。",
-                "4. 画面像日常拍下的一张完整 COS 照片，主体清晰，服装还原优先。",
+                "4. 画面像随手拍的竖屏 COS 封面，主体清晰，服装还原优先，不要棚拍全身。",
                 "5. 人体结构自然完整：左右手/脚各一只，手与胳膊连续连接。",
             ]
         elif intent.is_group_photo:
