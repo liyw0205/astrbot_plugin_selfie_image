@@ -332,7 +332,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.4")
+        self.assertEqual(PLUGIN_VERSION, "1.4.5")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4237,6 +4237,79 @@ class ReferenceCollectorTests(unittest.TestCase):
                 "https://cdn.example/transcoded.png",
             ],
         )
+
+    def test_raw_onebot_image_segment_is_extracted(self) -> None:
+        from astrbot_plugin_selfie_image.reference_collector import extract_structured_image_sources
+
+        class Event:
+            message_obj = None
+            message = None
+            raw_message = {
+                "post_type": "message",
+                "message": [
+                    {
+                        "type": "image",
+                        "data": {
+                            "file": "qq-file-id",
+                            "url": "https://cdn.example/original.png",
+                        },
+                    }
+                ],
+            }
+
+        buckets = extract_structured_image_sources(Event(), include_image_alternates=True)
+        self.assertEqual(
+            buckets["message"],
+            ["qq-file-id", "https://cdn.example/original.png"],
+        )
+
+    async def _collect_with_onebot_image_resolution(self, local_path: str):
+        from astrbot_plugin_selfie_image.reference_collector import ReferenceCollector
+
+        class Image:
+            file = "qq-file-id"
+            url = "https://cdn.example/transcoded.png"
+            path = ""
+
+        class MessageObj:
+            def __init__(self):
+                self.message = [Image()]
+                self.quote = None
+
+        class Api:
+            def __init__(self):
+                self.calls = []
+
+            async def call_action(self, action, **params):
+                self.calls.append((action, params))
+                if action == "get_image" and params == {"file": "qq-file-id"}:
+                    return {"file": local_path}
+                raise RuntimeError("unsupported action")
+
+        class Event:
+            def __init__(self):
+                self.message_obj = MessageObj()
+                self.message = None
+                self.raw_message = None
+                self.bot = type("Bot", (), {"api": Api()})()
+
+        collector = ReferenceCollector(
+            max_bytes=1024 * 1024,
+            include_image_alternates=True,
+        )
+        event = Event()
+        return await collector.collect(event, FakeSession(get_data=PNG_BYTES)), event.bot.api.calls
+
+    def test_onebot_get_image_resolution_prefers_returned_local_bytes(self) -> None:
+        async def run():
+            with tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / "original.png"
+                path.write_bytes(PNG_BYTES)
+                collected, calls = await self._collect_with_onebot_image_resolution(str(path))
+                self.assertEqual(collected.message[0].data, PNG_BYTES)
+                self.assertEqual(calls[0], ("get_image", {"file": "qq-file-id"}))
+
+        asyncio.run(run())
 
 
 class DashboardEmbedContractTests(unittest.TestCase):

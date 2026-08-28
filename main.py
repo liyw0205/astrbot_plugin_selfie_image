@@ -1005,6 +1005,88 @@ class SelfieImagePlugin(Star):
                     return str(value)
         return f"event:{id(event)}:{time.time_ns()}"
 
+    def _event_quotes_bot_image(self, event: Optional[AstrMessageEvent]) -> bool:
+        """Whether the current event quotes a bot-authored image message.
+
+        aiocqhttp converts a QQ reply into AstrBot ``Reply`` with ``sender_id``
+        and ``chain`` populated from ``get_msg``.  That metadata lets prompt
+        lookup safely use the plugin's own cached bytes instead of guessing
+        from an unrelated recent image.
+        """
+        if event is None:
+            return False
+        bot_ids = {str(value).strip() for value in self._bot_account_ids(event) if str(value).strip()}
+        if not bot_ids:
+            return False
+        visited: set[int] = set()
+
+        def has_image(obj: Any, depth: int = 0) -> bool:
+            if obj is None or depth > 10 or id(obj) in visited:
+                return False
+            visited.add(id(obj))
+            obj_type = type(obj).__name__
+            if obj_type == "Image":
+                return True
+            if isinstance(obj, dict):
+                if str(obj.get("type") or "").lower() == "image":
+                    return True
+                return any(has_image(value, depth + 1) for value in obj.values())
+            if isinstance(obj, (list, tuple, set)):
+                return any(has_image(item, depth + 1) for item in obj)
+            attrs = []
+            if hasattr(obj, "__dict__"):
+                attrs.extend(vars(obj).keys())
+            if hasattr(obj, "__slots__"):
+                attrs.extend(getattr(obj, "__slots__", []) or [])
+            for key in set(attrs):
+                try:
+                    if has_image(getattr(obj, key), depth + 1):
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        def search(obj: Any, depth: int = 0) -> bool:
+            if obj is None or depth > 10 or id(obj) in visited:
+                return False
+            visited.add(id(obj))
+            if type(obj).__name__ == "Reply":
+                sender_value = getattr(obj, "sender_id", None)
+                if not sender_value:
+                    sender_value = getattr(obj, "qq", "")
+                sender_id = str(sender_value or "").strip()
+                if sender_id in bot_ids and has_image(
+                    getattr(obj, "chain", None)
+                    or getattr(obj, "message", None)
+                    or getattr(obj, "content", None)
+                ):
+                    return True
+            if isinstance(obj, dict):
+                return any(search(value, depth + 1) for value in obj.values())
+            if isinstance(obj, (list, tuple, set)):
+                return any(search(item, depth + 1) for item in obj)
+            attrs = []
+            if hasattr(obj, "__dict__"):
+                attrs.extend(vars(obj).keys())
+            if hasattr(obj, "__slots__"):
+                attrs.extend(getattr(obj, "__slots__", []) or [])
+            for key in set(attrs):
+                try:
+                    if search(getattr(obj, key), depth + 1):
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        for root in (
+            getattr(event, "message_obj", None),
+            getattr(event, "message", None),
+            getattr(event, "raw_message", None),
+        ):
+            if search(root):
+                return True
+        return False
+
     def _add_context_message(
         self,
         session_key: str,
@@ -6384,6 +6466,19 @@ class SelfieImagePlugin(Star):
         if denied:
             yield event.plain_result(denied)
             return
+        # AstrBot's aiocqhttp adapter records bot replies in ``Reply.chain``.
+        # The plugin already retains the exact generated cache path for each
+        # sent image, so include those bytes when the quoted sender is the bot.
+        bot_cache_sources = (
+            self._recent_context_image_sources(
+                event,
+                max_images=8,
+                prefer_user=False,
+                bot_only=True,
+            )
+            if self._event_quotes_bot_image(event)
+            else []
+        )
         refs = await self._event_reference_images(
             event,
             include_at_avatar=False,
@@ -6393,6 +6488,7 @@ class SelfieImagePlugin(Star):
             # QQ/AstrBot may expose both a transcoded local path and the
             # original URL.  Prompt lookup must try both to match the cache.
             include_image_alternates=True,
+            extra_sources=bot_cache_sources,
         )
         if not refs:
             yield event.plain_result("请引用一张图片后再使用 /查看提示词。")
@@ -6409,6 +6505,10 @@ class SelfieImagePlugin(Star):
                 md5 = candidate_md5
                 record = candidate_record
                 break
+        logger.debug(
+            "[SelfieImage] 查看提示词图片候选 MD5: %s",
+            ", ".join(hashlib.md5(candidate.data).hexdigest() for candidate in refs),
+        )
         if record is not None:
             prompt = str(
                 record.get("request_prompt")

@@ -10,7 +10,9 @@ persona selfie image, and group-photo object images without mixing roles.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import parse_qs, urlparse
@@ -160,6 +162,28 @@ def extract_structured_image_sources(
         visited.add(id(obj))
         obj_type = _component_type_name(obj)
 
+        # ``raw_message`` is the OneBot event dict.  AstrBot normally turns
+        # it into components, but older/failing reply conversions can leave
+        # only these protocol dictionaries available.
+        if isinstance(obj, Mapping):
+            if str(obj.get("type") or "").lower() == "image":
+                data = obj.get("data") if isinstance(obj.get("data"), Mapping) else obj
+                raw_candidates = [data.get(key) for key in ("path", "file", "file_path", "url")]
+                candidates = []
+                for value in raw_candidates:
+                    text = str(value or "").strip()
+                    if text and text not in candidates:
+                        candidates.append(text)
+                local = [value for value in candidates if not value.lower().startswith(("http://", "https://"))]
+                remote = [value for value in candidates if value.lower().startswith(("http://", "https://"))]
+                for value in ([*local, *remote] if include_image_alternates else [*local, *remote][:1]):
+                    add(role, value)
+                return
+            for key, value in obj.items():
+                child_role = "quote" if str(key).lower() in {"quote", "reply"} else role
+                search(value, child_role, depth + 1)
+            return
+
         if obj_type == "Image":
             # AstrBot's Image model declares ``path`` with an empty default,
             # while QQ adapters often put the usable local file in ``file``.
@@ -292,6 +316,55 @@ def filter_bot_avatar_sources(sources: Sequence[str], bot_ids: Sequence[str]) ->
     return filtered
 
 
+async def resolve_onebot_image_source(event: Any, source: str) -> List[str]:
+    """Resolve a OneBot image identifier through AstrBot's bound bot API.
+
+    AstrBot's aiocqhttp adapter keeps ``Image.file`` as the protocol file id
+    and exposes the downloadable URL separately.  ``get_image`` is the only
+    adapter-level way to recover a local/original file when that id is not a
+    filesystem path.  This is deliberately best-effort and returns all useful
+    fields so callers can try local bytes before a remote URL.
+    """
+    value = str(source or "").strip()
+    lower = value.lower()
+    if (
+        not value
+        or lower.startswith(("http://", "https://", "file://", "data:", "base64://"))
+        or os.path.exists(value)
+    ):
+        return []
+
+    bot = getattr(event, "bot", None)
+    api = getattr(bot, "api", None)
+    call_action = getattr(api, "call_action", None)
+    if not callable(call_action):
+        call_action = getattr(bot, "call_action", None)
+    if not callable(call_action):
+        return []
+
+    resolved: List[str] = []
+    for params in (
+        {"file": value},
+        {"file_id": value},
+        {"id": value},
+        {"image": value},
+    ):
+        try:
+            result = await call_action("get_image", **params)
+        except Exception:
+            continue
+        payload = result.get("data") if isinstance(result, dict) and isinstance(result.get("data"), dict) else result
+        if not isinstance(payload, dict):
+            continue
+        for key in ("file", "path", "file_path", "url"):
+            candidate = payload.get(key)
+            if isinstance(candidate, str) and candidate.strip() and candidate.strip() not in resolved:
+                resolved.append(candidate.strip())
+        if resolved:
+            break
+    return resolved
+
+
 async def download_sources_as_references(
     sources: Sequence[str],
     session: Any,
@@ -387,7 +460,13 @@ class ReferenceCollector:
         collected = CollectedReferences()
         role_order = ("message", "quote", "forward", "at_avatar", "context", "extra", "persona")
         for role in role_order:
-            sources = buckets.get(role) or []
+            sources = list(buckets.get(role) or [])
+            if self.include_image_alternates:
+                expanded: List[str] = []
+                for source in sources:
+                    expanded.append(source)
+                    expanded.extend(await resolve_onebot_image_source(event, source))
+                sources = unique(expanded)
             collected.source_count += len(sources)
             refs, failed = await download_sources_as_references(sources, session, max_bytes=self.max_bytes)
             collected.failed_count += failed
