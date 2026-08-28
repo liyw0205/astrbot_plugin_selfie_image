@@ -442,18 +442,29 @@ def split_generation_record_images(record: Dict[str, Any]) -> List[Dict[str, Any
         return []
     raw = dict(record)
     paths = [str(p).strip() for p in (raw.get("generated_image_paths") or []) if str(p or "").strip()]
+    raw_md5s = raw.get("md5s")
+    if not isinstance(raw_md5s, list):
+        raw_md5s = raw.get("generated_image_md5s")
+    md5s = [str(value or "").strip().lower() for value in (raw_md5s or [])]
+    if not md5s and raw.get("md5"):
+        md5s = [str(raw.get("md5") or "").strip().lower()]
+    # ``md5s`` is only an input for splitting a batch; persisted rows use ``md5``.
+    raw.pop("md5s", None)
+    raw.pop("generated_image_md5s", None)
     if len(paths) <= 1:
         if paths:
             raw["generated_image_paths"] = paths
             if raw.get("success"):
                 raw["count"] = 1
+            raw["md5"] = md5s[0] if md5s else str(raw.get("md5") or "").strip().lower()
         return [raw]
     resp = raw.get("response_data") if isinstance(raw.get("response_data"), dict) else {}
     pieces: List[Dict[str, Any]] = []
-    for path in paths:
+    for index, path in enumerate(paths):
         piece = dict(raw)
         piece["generated_image_paths"] = [path]
         piece["count"] = 1
+        piece["md5"] = md5s[index] if index < len(md5s) else ""
         piece.pop("id", None)
         if resp:
             slim_resp = dict(resp)
@@ -469,6 +480,9 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(record, dict):
         return {}
     out = dict(record)
+    value = str(out.get("md5") or "").strip().lower()
+    # Keep the key present so older records render an explicit empty value.
+    out["md5"] = value if re.fullmatch(r"[0-9a-f]{32}", value) else ""
     for key in ("prompt", "original_prompt", "request_prompt", "error", "failure_reason"):
         if key in out:
             lim = 6000 if key in {"prompt", "original_prompt", "request_prompt"} else 800
@@ -586,6 +600,7 @@ def summarize_record_for_list(record: Dict[str, Any]) -> Dict[str, Any]:
         "user_id": record.get("user_id") or "",
         "chat_type": record.get("chat_type") or "",
         "count": record.get("count"),
+        "md5": str(record.get("md5") or "").strip().lower(),
         "reference_images": record.get("reference_images"),
         "error": _truncate_text(record.get("error") or record.get("failure_reason"), 300),
         "failure_reason": _truncate_text(record.get("failure_reason") or record.get("error"), 300),

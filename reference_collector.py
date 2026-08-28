@@ -132,8 +132,14 @@ def extract_structured_image_sources(
     event: Any,
     *,
     include_at_avatar: bool = False,
+    include_image_alternates: bool = False,
 ) -> Dict[str, List[str]]:
-    """Walk event tree and bucket image sources by role."""
+    """Walk event tree and bucket image sources by role.
+
+    Most callers only need one source per image.  Prompt lookup can opt into
+    both ``path`` and ``url`` because adapters sometimes expose a transcoded
+    local copy alongside the original remote image.
+    """
 
     buckets: Dict[str, List[str]] = {
         "message": [],
@@ -157,8 +163,14 @@ def extract_structured_image_sources(
         if obj_type == "Image":
             path = getattr(obj, "path", getattr(obj, "file", getattr(obj, "file_path", None)))
             url = getattr(obj, "url", None)
-            value = path if path and not str(path).startswith(("http://", "https://")) else url or path
-            if value:
+            candidates: List[Any] = []
+            if path and not str(path).startswith(("http://", "https://")):
+                candidates.append(path)
+            if url:
+                candidates.append(url)
+            if not candidates and path:
+                candidates.append(path)
+            for value in (candidates if include_image_alternates else candidates[:1]):
                 add(role, value)
             return
 
@@ -310,6 +322,7 @@ class ReferenceCollector:
         allow_context_fallback: bool = False,
         context_hint: str = "",
         looks_like_context_ref=None,
+        include_image_alternates: bool = False,
     ) -> None:
         self.max_bytes = max(1024, int(max_bytes or 10 * 1024 * 1024))
         self.bot_ids = list(bot_ids or [])
@@ -321,9 +334,14 @@ class ReferenceCollector:
         self.allow_context_fallback = bool(allow_context_fallback)
         self.context_hint = str(context_hint or "")
         self.looks_like_context_ref = looks_like_context_ref
+        self.include_image_alternates = bool(include_image_alternates)
 
     def collect_source_buckets(self, event: Any) -> Dict[str, List[str]]:
-        buckets = extract_structured_image_sources(event, include_at_avatar=self.include_at_avatar)
+        buckets = extract_structured_image_sources(
+            event,
+            include_at_avatar=self.include_at_avatar,
+            include_image_alternates=self.include_image_alternates,
+        )
         for key, values in list(buckets.items()):
             buckets[key] = filter_bot_avatar_sources(values, self.bot_ids)
 

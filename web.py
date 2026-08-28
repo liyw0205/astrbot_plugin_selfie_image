@@ -3135,6 +3135,7 @@ Source prompt:
           <div><label>来源</label><div class="status">${escapeHtml(r.source_label || '')}</div></div>
           <div><label>状态</label><div class="status">${r.success ? '成功' : '失败'}</div></div>
           <div><label>类型</label><div class="status">${r.media_type === 'video' ? '视频' : '图片'}</div></div>
+          <div><label>MD5</label><div class="status" style="overflow-wrap:anywhere">${escapeHtml(String(r.md5 || '空'))}</div></div>
           <div><label>用时</label><div class="status">${escapeHtml(formatRecordElapsed(r))}</div></div>
           <div><label>模型重试</label><div class="status">${recordRetryModelChain(r)}</div></div>
           <div><label>调用入口</label><div class="status">${escapeHtml(r.source || '')}</div></div>

@@ -231,12 +231,12 @@ LEGWEAR_BY_POSE = {
     "hug_knee_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
     "cross_leg": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
     "cross_leg_crop": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
-    "stand_topdown": (("光腿神器", 3), ("白丝", 3), ("黑丝", 4)),
     "windowsill": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
     "windowsill_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
     "kneel_up": (("光腿神器", 5), ("白丝", 2), ("黑丝", 3)),
     "kneel_front": (("光腿神器", 6), ("白丝", 2), ("黑丝", 2)),
     "floor_fold": (("光腿神器", 6), ("白丝", 2), ("黑丝", 2)),
+    "one_knee_fix": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
     "reclined_knees_crop": (("光腿神器", 1), ("白丝", 6), ("黑丝", 5)),
     "floor_knees_up_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
     "desk_sit_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
@@ -248,11 +248,38 @@ CALF_CROP_POSES = frozenset(
     name for name in LEGWEAR_BY_POSE if name.endswith("_crop")
 )
 
+# Camera choices are pose-aware so a phone selfie does not fight the physical
+# setup.  The weights still leave room for the alternate viewpoint.
+LEGFOCUS_CAMERA_WEIGHTS = {
+    "sit": (("selfie", 3), ("third", 2)),
+    "sit_crop": (("selfie", 4), ("third", 1)),
+    "kneel": (("selfie", 4), ("third", 1)),
+    "kneel_crop": (("selfie", 4), ("third", 1)),
+    "side_lie": (("selfie", 3), ("third", 2)),
+    "side_lie_crop": (("selfie", 4), ("third", 1)),
+    "hug_knee": (("selfie", 4), ("third", 1)),
+    "hug_knee_crop": (("selfie", 4), ("third", 1)),
+    "cross_leg": (("selfie", 2), ("third", 4)),
+    "cross_leg_crop": (("selfie", 3), ("third", 3)),
+    "windowsill": (("selfie", 1), ("third", 4)),
+    "windowsill_crop": (("selfie", 2), ("third", 4)),
+    "kneel_up": (("selfie", 1), ("third", 4)),
+    "kneel_front": (("selfie", 2), ("third", 4)),
+    "floor_fold": (("selfie", 4), ("third", 1)),
+    "one_knee_fix": (("selfie", 4), ("third", 2)),
+    "reclined_knees_crop": (("selfie", 5), ("third", 1)),
+    "floor_knees_up_crop": (("selfie", 5), ("third", 1)),
+    "desk_sit_crop": (("selfie", 3), ("third", 2)),
+    "bed_supine_crop": (("selfie", 6), ("third", 1)),
+}
+
 
 def is_leg_calf_crop_action(text: str) -> bool:
     raw = str(text or "")
     m = re.search(r"【pose:([a-z_]+)】", raw)
     if m and m.group(1) in CALF_CROP_POSES:
+        return True
+    if "【legs:outfit】" in raw or "下半身穿搭" in raw or "穿搭展示" in raw:
         return True
     if "【crop:calves】" in raw or "双脚完整裁出画外" in raw:
         return True
@@ -260,18 +287,13 @@ def is_leg_calf_crop_action(text: str) -> bool:
 
 LEGWEAR_PROMPTS = {
     "光腿神器": (
-        "本次腿部穿搭：光腿神器。"
-        "自然肤色的光腿效果，主要看腿形；不展示脚部与脚趾。"
+        "本次服装搭配：自然肤色日常搭配，材质自然，作为得体穿搭的一部分。"
     ),
     "白丝": (
-        "本次腿部穿搭：白丝。"
-        "不透的左右分离白色长袜，主要看腿形；袜口在膝上；"
-        "袜身向膝下延伸后出画，不展示脚部；不要超薄透视，不要连裤全包。"
+        "本次服装搭配：白色不透长袜，袜口和材质自然，作为得体日常穿搭的一部分。"
     ),
     "黑丝": (
-        "本次腿部穿搭：黑丝。"
-        "不透的左右分离黑色长袜，主要看腿形；袜口在膝上；"
-        "袜身向膝下延伸后出画，不展示脚部；不要超薄透视，不要连裤全包。"
+        "本次服装搭配：黑色不透长袜，袜口和材质自然，作为得体日常穿搭的一部分。"
     ),
 }
 
@@ -295,6 +317,21 @@ def pick_stocking_finish() -> str:
 LEGWEAR_REQUEST_PATTERN = re.compile(
     r"(?:光腿神器|光腿|白丝|黑丝|丝袜|短袜|堆堆袜|过膝袜|长筒袜|肉色丝袜|肉丝|连裤袜|长袜)"
 )
+
+LEGFOCUS_RISKY_EXTRA_REPLACEMENTS = (
+    ("掀衣摆", "整理衣摆"),
+    ("晒腿", "记录穿搭"),
+    ("主要看腿形", "重点看服装版型"),
+    ("看腿形", "看服装版型"),
+    ("不露脸", "服装局部取景"),
+    ("短裙", "日常裙装"),
+)
+
+SAFE_LEGWEAR_LABELS = {
+    "光腿神器": "自然肤色日常搭配",
+    "白丝": "白色不透长袜",
+    "黑丝": "黑色不透长袜",
+}
 
 
 # COS pool: garment silhouettes first. Work/source lock is optional —
@@ -401,6 +438,9 @@ def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
 def parse_requested_legwear(text: str) -> str:
     """Honor explicit user legwear: 白丝 / 黑丝 / 光腿神器. Empty = random by pose."""
     raw = str(text or "")
+    safe_tag = re.search(r"【wear:(white|black|bare)】", raw)
+    if safe_tag:
+        return {"white": "白丝", "black": "黑丝", "bare": "光腿神器"}[safe_tag.group(1)]
     # Prefer explicit "本次腿部穿搭：X" if already built.
     m = re.search(r"本次腿部穿搭[:：]\s*(光腿神器|白丝|黑丝)", raw)
     if m:
@@ -1610,6 +1650,67 @@ class SelfieImagePlugin(Star):
             if target.model == value:
                 return target
         return None
+
+    def _record_image_md5(self, record: Mapping[str, Any]) -> str:
+        """Return the MD5 of cached image bytes, with legacy metadata fallback."""
+        value = str(record.get("md5") or "").strip().lower()
+        paths = record.get("generated_image_paths")
+        if isinstance(paths, list):
+            for path in paths:
+                try:
+                    loaded = self._load_cache_image_bytes(str(path or ""))
+                    if loaded:
+                        # The file bytes are authoritative; stale metadata cannot create a match.
+                        return hashlib.md5(loaded[0]).hexdigest()
+                except Exception:
+                    continue
+        return value if re.fullmatch(r"[0-9a-f]{32}", value) else ""
+
+    def _find_generation_record_by_md5(self, md5: str) -> Optional[Dict[str, Any]]:
+        wanted = str(md5 or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{32}", wanted):
+            return None
+        with self._records_lock:
+            records = [dict(item) for item in self._records if isinstance(item, dict)]
+        for record in records:
+            if not record.get("generated_image_paths"):
+                continue
+            if str(record.get("media_type") or "image").lower() == "video":
+                continue
+            if self._record_image_md5(record) == wanted:
+                record["md5"] = wanted
+                return record
+            # Legacy batch rows may contain several cached paths but no per-image MD5.
+            for path in record.get("generated_image_paths") or []:
+                try:
+                    loaded = self._load_cache_image_bytes(str(path or ""))
+                    if loaded and hashlib.md5(loaded[0]).hexdigest() == wanted:
+                        record["md5"] = wanted
+                        return record
+                except Exception:
+                    continue
+        return None
+
+    async def _reverse_image_prompt_with_llm(
+        self,
+        event: Optional[AstrMessageEvent],
+        image: bytes,
+    ) -> str:
+        """Use the current AstrBot chat LLM to reconstruct a prompt from an image."""
+        if event is None:
+            raise RuntimeError("当前会话不可用，无法调用 LLM 反推提示词。")
+        instruct = (
+            "请根据这张图片反推出一个适合图像生成模型使用的中文提示词。"
+            "只输出提示词正文，不要解释、不要 Markdown、不要猜测图片来源。"
+            "尽量描述主体、构图、视角、姿势、服装、场景、光线、风格和画面比例；"
+            "看不清或无法确定的内容不要编造。"
+        )
+        result = await self._call_text_llm(event, instruct, timeout=30, images=[image])
+        cleaned = str(result or "").strip()
+        fenced = re.match(r"^```(?:\w+)?\s*([\s\S]*?)\s*```$", cleaned)
+        if fenced:
+            cleaned = fenced.group(1).strip()
+        return cleaned[:6000]
 
     async def _audit_chat_via_target(self, target: ImageModelTarget, text: str, images: Optional[List[bytes]] = None) -> str:
         images = images or []
@@ -3044,6 +3145,7 @@ class SelfieImagePlugin(Star):
         allow_context_fallback: bool = False,
         include_persona: bool = False,
         extra_sources: Optional[List[str]] = None,
+        include_image_alternates: bool = False,
     ) -> Tuple[List[ImageReference], int, int]:
         """Collect event references via unified ReferenceCollector (target 11)."""
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
@@ -3080,6 +3182,7 @@ class SelfieImagePlugin(Star):
             allow_context_fallback=allow_context_fallback,
             context_hint=hint,
             looks_like_context_ref=self._looks_like_context_image_reference,
+            include_image_alternates=include_image_alternates,
         )
         async with aiohttp.ClientSession(trust_env=False) as session:
             collected = await collector.collect(event, session)
@@ -3100,6 +3203,7 @@ class SelfieImagePlugin(Star):
         allow_context_fallback: bool = False,
         include_persona: bool = False,
         extra_sources: Optional[List[str]] = None,
+        include_image_alternates: bool = False,
     ):
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
         persona_path = ""
@@ -3132,6 +3236,7 @@ class SelfieImagePlugin(Star):
             allow_context_fallback=allow_context_fallback,
             context_hint=hint,
             looks_like_context_ref=self._looks_like_context_image_reference,
+            include_image_alternates=include_image_alternates,
         )
         async with aiohttp.ClientSession(trust_env=False) as session:
             return await collector.collect(event, session)
@@ -3144,6 +3249,7 @@ class SelfieImagePlugin(Star):
         allow_context_fallback: bool = False,
         include_persona: bool = False,
         extra_sources: Optional[List[str]] = None,
+        include_image_alternates: bool = False,
     ) -> List[ImageReference]:
         refs, _, _ = await self._event_reference_images_with_stats(
             event,
@@ -3152,6 +3258,7 @@ class SelfieImagePlugin(Star):
             allow_context_fallback=allow_context_fallback,
             include_persona=include_persona,
             extra_sources=extra_sources,
+            include_image_alternates=include_image_alternates,
         )
         return refs
 
@@ -3291,9 +3398,20 @@ class SelfieImagePlugin(Star):
             return self._selfie_ack_text(user_request, count, ack_message)
         return self._image_ack_text(user_request, count, ack_message)
 
-    async def _call_text_llm(self, event: Optional[AstrMessageEvent], prompt: str, timeout: int = 8) -> str:
+    async def _call_text_llm(
+        self,
+        event: Optional[AstrMessageEvent],
+        prompt: str,
+        timeout: int = 8,
+        images: Optional[List[bytes]] = None,
+    ) -> str:
         if event is None:
             return ""
+        image_urls = [
+            bytes_to_data_url(image, detect_mime_by_bytes(image))
+            for image in (images or [])
+            if image
+        ]
 
         async def request() -> str:
             origin = getattr(event, "unified_msg_origin", None)
@@ -3304,7 +3422,10 @@ class SelfieImagePlugin(Star):
                     provider = getter()
                     requester = getattr(provider, "text_chat", None) or getattr(provider, "request", None)
                     if callable(requester):
-                        response = requester(prompt=prompt)
+                        kwargs: Dict[str, Any] = {"prompt": prompt}
+                        if image_urls:
+                            kwargs["image_urls"] = image_urls
+                        response = requester(**kwargs)
                         if asyncio.iscoroutine(response):
                             response = await response
                         return str(getattr(response, "completion_text", response) or "").strip()
@@ -3322,6 +3443,8 @@ class SelfieImagePlugin(Star):
                     kwargs = {"prompt": prompt}
                     if provider_id:
                         kwargs["chat_provider_id"] = provider_id
+                    if image_urls:
+                        kwargs["image_urls"] = image_urls
                     response = await generator(**kwargs)
                     return str(getattr(response, "completion_text", response) or "").strip()
             except Exception:
@@ -3581,16 +3704,27 @@ class SelfieImagePlugin(Star):
         avoid_pose: str = "",
         force_legwear: str = "",
     ) -> str:
-        """生成单一腿部姿势，并按姿势选择腿部穿搭。用户点名白丝/黑丝/光腿时强制采用。"""
+        """生成中性的日常下装构图，并按姿势选择兼容的自拍或第三人称摄影视角。"""
         pose_pool = [
-            # Default: crop feet/calves off-frame — feet ruin aesthetics ~80% of the time.
-            # cross_leg_crop / hug_knee_crop removed from pool: gpt-image often grows a 3rd leg
-            # or pulls calves+feet into frame despite crop text.
-            ("sit_crop", 5),
-            ("kneel_crop", 4),
-            ("reclined_knees_crop", 3),
+            # Keep the established non-standing pose families.  Only the standing
+            # top-down variant was removed; the crop variants remain available.
+            ("sit", 2),
+            ("sit_crop", 3),
+            ("kneel", 2),
+            ("kneel_crop", 3),
+            ("side_lie", 2),
             ("side_lie_crop", 3),
-            ("windowsill_crop", 2),
+            ("hug_knee", 2),
+            ("hug_knee_crop", 3),
+            ("cross_leg", 2),
+            ("cross_leg_crop", 3),
+            ("windowsill", 2),
+            ("windowsill_crop", 3),
+            ("kneel_up", 2),
+            ("kneel_front", 2),
+            ("floor_fold", 2),
+            ("one_knee_fix", 2),
+            ("reclined_knees_crop", 3),
             ("floor_knees_up_crop", 3),
             ("desk_sit_crop", 3),
             ("bed_supine_crop", 3),
@@ -3604,199 +3738,62 @@ class SelfieImagePlugin(Star):
         pose_bucket = random.choices(names, weights=weights, k=1)[0]
 
         pose_variants = {
-            "sit": [
-                (
-                    "高位俯拍坐椅看腿：自然坐在办公椅、沙发或床沿，身体微后靠，"
-                    "双腿从膝下自然下垂，大腿并拢或留很窄缝，小腿垂向地面，"
-                    "赤足脚掌平踩或脚尖轻点地毯，脚趾清晰；构图从腰腹/裙摆一直到完整双脚，"
-                    "突出大腿到脚背的连续长线条；双手可轻扶坐垫或放在身侧，不要遮腿。"
-                ),
-            ],
-            "sit_crop": [
-                (
-                    "坐姿大腿近景：坐在椅上或沙发上，双膝朝前并拢；"
-                    "日常短裙盖住髋部，下摆大约到大腿中段；"
-                    "镜头贴近裙摆，只露裙摆、大腿与膝部，小腿和双脚完整裁出画外；"
-                    "髋膝连续，重心稳定，日常可维持。"
-                ),
-            ],
-            "kneel": [
-                (
-                    "跪坐并拢看腿：双膝并拢跪在地毯上，小腿向后折叠，臀部自然坐回脚跟，"
-                    "大腿内侧贴近、膝部朝前，上身略前倾；第一人称略俯视，"
-                    "构图以腰到膝的大腿线条为主，小腿可部分入镜；髋膝连续，重心稳定；"
-                    "双手可轻放身侧或大腿上沿，不要挡腿。"
-                ),
-            ],
-            "kneel_crop": [
-                (
-                    "跪坐大腿特写：双膝并拢跪坐，大腿自然并拢；"
-                    "镜头贴近衣摆到膝部，小腿和双脚裁出画外；"
-                    "髋膝连续，不要硬拗。"
-                ),
-                (
-                    "跪坐掀衣摆近景：双膝并拢跪在地毯上，大腿贴紧；"
-                    "一手轻轻掀开衣摆下沿，只露大腿到膝；"
-                    "小腿和双脚裁出画外，不要露腰腹特写。"
-                ),
-            ],
-            "side_lie": [
-                (
-                    "侧躺曲腿：侧身躺在床上，上面那条腿自然弯曲，下面腿略伸，"
-                    "髋膝踝连续，上面腿的膝盖朝前；镜头沿腿近景，从腰下到脚；"
-                    "手可自然放在身侧。"
-                ),
-            ],
-            "side_lie_crop": [
-                (
-                    "侧躺大腿近景：侧身躺着，上面腿自然屈膝朝前；"
-                    "镜头贴近衣摆到膝部，小腿和双脚裁出画外；"
-                    "髋膝连续，姿势日常可维持。"
-                ),
-            ],
-            "hug_knee": [
-                (
-                    "抱膝坐：坐在床或地毯上，双膝收近身前但保持可呼吸的日常坐姿，"
-                    "双手从肩肘连续伸出环抱膝盖，腕手与胳膊都在画面内且相连；"
-                    "第一人称俯视下半身；膝盖朝上，关节正常。"
-                ),
-            ],
-            "hug_knee_crop": [
-                (
-                    "抱膝大腿近景：坐稳，双膝并拢朝上收在身前；"
-                    "双手只放在大腿中上段靠近膝盖处轻扶，不要伸到小腿或脚踝；"
-                    "镜头只拍裙摆到膝部，小腿和双脚完整裁出画外；"
-                    "画面只有左右各一条大腿和各一个膝盖，禁止多腿、禁止脚尖入镜。"
-                ),
-            ],
-            "cross_leg": [
-                (
-                    "椅上交叉抬腿：坐在宽椅或沙发上，身体微后靠；"
-                    "一条腿屈膝抬高贴近身前，另一条腿从下方交叉斜伸，"
-                    "两腿交叠成自然 X/V 形，大腿内侧贴近，膝盖朝外或朝上，"
-                    "突出交叉美腿曲线；脚部自然完整、脚趾清晰，不穿鞋；"
-                    "第一人称略俯视，构图从腰腹到完整双脚；一手可轻放腿侧。"
-                ),
-            ],
-            "cross_leg_crop": [
-                (
-                    "交叉大腿近景：坐在椅上或沙发上，双臀坐稳；"
-                    "两条大腿都在坐垫上，一腿在上轻搭另一腿大腿中段（只大腿交叠，不要再画第三条小腿）；"
-                    "镜头贴近腰腹到膝部，画面里只出现左右各一条大腿和各一个膝盖；"
-                    "两条小腿都向下离开画面，双脚完整裁出画外；"
-                    "髋-膝连续，左右腿边界清楚，禁止多腿、分叉腿或椅下再冒出一截腿。"
-                ),
-            ],
-            "stand_topdown": [
-                (
-                    "站立俯视拍腿：站在居家地面，镜头压在腰下到膝下，只拍大腿下半与小腿，"
-                    "不要全身立绘；双脚自然平行站立或一只脚轻微点地，脚尖朝前。"
-                ),
-            ],
-            "windowsill": [
-                (
-                    "窗台稳坐拍腿：臀稳坐窗台或矮柜，重心落在坐骨，一脚轻踩台沿、一脚自然垂下，"
-                    "垂下的脚脚踝正位；镜头从略高处拍下半身到脚；手可扶台沿。"
-                ),
-            ],
-            "windowsill_crop": [
-                (
-                    "窗台大腿近景：稳坐窗台；"
-                    "镜头贴近衣摆、大腿与膝部，小腿和双脚裁出画外；"
-                    "髋膝连续，手可扶台沿。"
-                ),
-            ],
-            "kneel_up": [
-                (
-                    "跪立拍腿：双膝跪地、上身略前倾但仍以腿部为主，镜头贴腿面俯视膝到小腿；"
-                    "双膝间距自然，小腿平行贴地；手可轻放大腿。"
-                ),
-            ],
-            "kneel_front": [
-                (
-                    "正面跪坐全腿入镜：双膝跪在地毯上，小腿向后折叠贴地，大腿并拢，"
-                    "臀部自然贴近脚跟，重心稳定；第一人称略俯视，构图从腰腹/裙摆到完整双脚；"
-                    "膝、小腿、脚踝、脚背与脚趾都清晰入镜，脚尖朝后或微侧，不穿鞋；"
-                    "双手可自然放在身前或大腿上，不要遮挡腿形。"
-                ),
-            ],
-            "floor_fold": [
-                (
-                    "高位俯拍屈膝坐地：坐在地毯或木地板上，双腿弯曲折叠于身前，"
-                    "大腿并拢占画面下半，膝盖朝上或略侧，小腿收近身前；"
-                    "手机举高从上往下拍，构图从胸口/腰腹到膝与部分脚掌；"
-                    "一只手可自然轻放大腿外侧，脚部自然完整，脚趾清晰，不穿鞋。"
-                ),
-            ],
-            "reclined_knees_crop": [
-                (
-                    "后仰屈膝近景：坐在沙发或座椅上，身体轻微后仰，双膝自然弯曲靠拢，"
-                    "近景只露衣摆、大腿与膝部，小腿向远端出画，双脚完整裁出画外；"
-                    "髋膝连接连续，屈膝角度日常可维持。"
-                ),
-                (
-                    "座椅后仰拍大腿：稳定坐好，背部轻靠椅背，双腿屈膝并拢；"
-                    "构图集中在衣摆、大腿和膝盖，双脚完整裁出画外，"
-                    "两侧髋膝连接连续，左右腿边界清楚。"
-                ),
-            ],
-            "floor_knees_up_crop": [
-                (
-                    "席地屈膝朝上：坐在室内地面，双膝并拢朝上收在身前；"
-                    "镜头贴近衣摆到膝部，一手可轻放大腿中段外侧；"
-                    "小腿和双脚完整裁出画外，不要露脸。"
-                ),
-            ],
-            "desk_sit_crop": [
-                (
-                    "书桌前坐姿近景：坐在桌前椅子上，双膝朝镜头并拢弯曲；"
-                    "背景可带桌沿，只拍衣摆、大腿与膝部；"
-                    "小腿和双脚裁出画外，髋膝连续。"
-                ),
-            ],
-            "bed_supine_crop": [
-                (
-                    "床上仰躺屈膝：躺在床上，双膝并拢弯向身体一侧；"
-                    "镜头贴近衣摆到膝部，小腿和双脚裁出画外；"
-                    "髋膝连续，居家随手拍，不要露脸。"
-                ),
-            ],
+            "sit": ["椅上或沙发自然坐好，衣摆顺着坐姿落下，室内光线柔和。"],
+            "sit_crop": ["椅上或沙发自然坐好，衣摆顺着坐姿落下，近距离记录腰线到膝部附近的服装。"],
+            "kneel": ["在地毯或软垫上自然跪坐，双膝并拢、重心稳定，上身略前倾，衣摆平整落下。"],
+            "kneel_crop": ["在地毯或软垫上自然跪坐，双膝并拢、重心稳定，近距离记录衣摆到膝部附近的搭配。"],
+            "side_lie": ["在床边或沙发上侧躺曲腿，一侧自然弯曲、另一侧放松伸展，衣料和靠垫形成生活化背景。"],
+            "side_lie_crop": ["在床边或沙发上侧躺曲腿，姿势放松可维持，近距离记录衣摆到膝部附近的服装层次。"],
+            "hug_knee": ["坐在床边或地毯上自然抱膝，双手轻扶膝部或衣摆，姿势舒适可维持。"],
+            "hug_knee_crop": ["坐在床边或地毯上自然抱膝，衣摆随着收膝姿势落下，画面聚焦衣摆到膝部附近。"],
+            "cross_leg": ["坐在椅上或沙发上自然翘二郎腿，衣摆和服装搭配协调，重心稳定，像普通生活随拍。"],
+            "cross_leg_crop": ["坐在椅上或沙发上自然交叠双侧下装，近距离记录腰线到膝部附近的搭配，边界清楚。"],
+            "windowsill": ["稳坐窗台或矮柜边，一侧轻踩台沿、另一侧自然垂下，衣摆自然落下，窗光柔和。"],
+            "windowsill_crop": ["稳坐窗台或矮柜边，保持窗边坐姿与稳定重心，近距离记录衣料、颜色和褶皱。"],
+            "kneel_up": ["在软垫上采用较高的跪姿，上身略直、重心稳定，衣物自然垂落。"],
+            "kneel_front": ["面向镜头跪坐在地毯上，双膝并拢、衣摆整洁，保持日常记录感。"],
+            "floor_fold": ["坐在地毯或木地板上自然屈膝，双侧衣摆向身前折叠，衣物层次清楚。"],
+            "one_knee_fix": ["一侧单膝触地、另一侧自然支撑，手轻整理衣摆或袜口，动作生活化且重心稳定。"],
+            "reclined_knees_crop": ["在沙发或座椅上轻松靠坐，膝部自然向前弯曲，近距离记录服装版型。"],
+            "floor_knees_up_crop": ["在地毯或木地板上轻松席地坐，膝部自然收近，近距离记录衣摆和材质。"],
+            "desk_sit_crop": ["坐在桌前椅上，桌沿可入镜，近距离记录衣摆、颜色和材质。"],
+            "bed_supine_crop": ["在床上由靠垫支撑轻松靠坐，衣摆和床品自然铺开，保持居家随拍感。"],
         }
         pose_labels = {
-            "sit": "椅上垂腿全镜",
-            "sit_crop": "坐姿大腿近景",
-            "kneel": "跪坐并拢看腿",
-            "kneel_crop": "跪坐大腿特写",
-            "side_lie": "侧躺曲腿",
-            "side_lie_crop": "侧躺大腿近景",
-            "hug_knee": "抱膝坐",
-            "hug_knee_crop": "抱膝大腿近景",
-            "cross_leg": "椅上交叉抬腿",
-            "cross_leg_crop": "交叉大腿近景",
-            "stand_topdown": "站立俯视膝下",
-            "windowsill": "窗台蹬坐",
-            "windowsill_crop": "窗台大腿近景",
-            "kneel_up": "跪立拍腿",
-            "kneel_front": "正面跪坐全腿",
-            "floor_fold": "高位俯拍屈膝坐",
-            "reclined_knees_crop": "后仰屈膝大腿近景",
-            "floor_knees_up_crop": "席地屈膝朝上",
-            "desk_sit_crop": "书桌前坐姿近景",
-            "bed_supine_crop": "床上仰躺屈膝",
+            "sit": "坐姿穿搭记录", "sit_crop": "坐姿近景记录",
+            "kneel": "跪坐记录", "kneel_crop": "跪坐近景",
+            "side_lie": "侧躺曲腿记录", "side_lie_crop": "侧躺曲腿近景",
+            "hug_knee": "收膝坐姿记录", "hug_knee_crop": "收膝坐姿近景",
+            "cross_leg": "交叠坐姿记录", "cross_leg_crop": "交叠坐姿近景",
+            "windowsill": "窗边坐姿记录", "windowsill_crop": "窗边坐姿近景",
+            "kneel_up": "高位跪姿", "kneel_front": "正面跪坐",
+            "floor_fold": "席地屈膝坐姿",
+            "one_knee_fix": "单膝整理衣摆",
+            "reclined_knees_crop": "沙发靠坐近景", "floor_knees_up_crop": "席地坐近景",
+            "desk_sit_crop": "桌前坐姿近景", "bed_supine_crop": "床上靠坐近景",
         }
         variants = pose_variants.get(pose_bucket) or pose_variants["sit_crop"]
-        pose_label = pose_labels.get(pose_bucket, "坐姿大腿近景")
-        # Look-legs default: never show feet (user aesthetic after many bad foot gens).
-        feet_cropped = True
-        hard_crop = (
-            "下半身特写，不要全身，不要头肩入镜，不要鞋子。"
-            "短裙盖髋，下摆到大腿中段；只露裙摆到膝；双脚完整裁出画外。"
-        )
-        anatomy_rules = "单人；髋膝连续；近景可有近大远小；焦点在腿形。"
-        if pose_bucket in {"hug_knee", "hug_knee_crop"}:
-            anatomy_rules += (
-                "抱膝时双手必须从肩肘连续伸出后抱膝，腕手与胳膊都在画面内且相连。"
+        pose_label = pose_labels.get(pose_bucket, "坐姿下装展示")
+        camera_bag = [
+            kind
+            for kind, weight in LEGFOCUS_CAMERA_WEIGHTS.get(
+                pose_bucket,
+                (("selfie", 1), ("third", 1)),
             )
+            for _ in range(weight)
+        ]
+        camera_kind = random.choice(camera_bag)
+        camera_line = (
+            "第一人称手机自拍：人物自己举手机向下记录日常服装局部，镜头从腰线附近取到膝部附近。"
+            if camera_kind == "selfie"
+            else "第三人称摄影照片：由画面外的朋友用手机拍摄日常服装局部，镜头从腰线附近取到膝部附近。"
+        )
+        # Keep the frame on the clothing area instead of using body-focused wording.
+        hard_crop = (
+            "日常服装局部记录，取景范围从腰线附近到膝部附近；服装得体、不透明，"
+            "画面用于记录颜色、材质和层次，不强调身体细节。"
+        )
+        anatomy_rules = "单人、成年人；姿态放松自然，服装穿着完整；画面重点是日常服装搭配。"
         requested = str(force_legwear or "").strip()
         if requested not in LEGWEAR_PROMPTS:
             requested = parse_requested_legwear(extra_request)
@@ -3809,22 +3806,13 @@ class SelfieImagePlugin(Star):
                 weights=[weight for _, weight in legwear_options],
                 k=1,
             )[0]
-        legwear_rule = LEGWEAR_PROMPTS[legwear]
-        if legwear == "光腿神器":
-            legwear_rule = "本次腿部穿搭：光腿神器。自然肤色，主要看腿形；不展示脚部。"
-        else:
-            color = "白色" if legwear == "白丝" else "黑色"
-            finish = pick_stocking_finish()
-            legwear_rule = (
-                f"本次腿部穿搭：{legwear}。{color}不透长袜，左右分开，主要看腿形；"
-                f"{finish}"
-                "袜身向画外延伸，不展示脚部。"
-            )
+        legwear_label = SAFE_LEGWEAR_LABELS.get(legwear, "日常不透明长袜")
+        legwear_rule = f"本次服装搭配：{legwear_label}，材质自然，作为得体日常穿搭的一部分。"
         base = (
-            "看看腿。下半身特写，不要全身照。竖屏手机近景。"
+            "成年人物日常穿搭记录。竖屏手机记录照。"
+            f"{camera_line}"
+            "【legs:outfit】"
             f"【姿势】{pose_label}：{random.choice(variants)}"
-            "不露脸：脸部/头发完整裁出画外。"
-            "双脚完整裁出画外，不要鞋子。【crop:calves】"
             f"{legwear_rule}"
             f"{anatomy_rules}"
             f"{hard_crop}"
@@ -3833,16 +3821,23 @@ class SelfieImagePlugin(Star):
             base += " 用户提供的图片只参考氛围、构图、服装或姿势；主角身份仍以 AI 自拍形象参考图为准。"
         # Strip sock/legwear tokens from free-text extra so they don't fight the locked choice.
         extra = LEGWEAR_REQUEST_PATTERN.sub("", str(extra_request or ""))
+        for risky_text, neutral_text in LEGFOCUS_RISKY_EXTRA_REPLACEMENTS:
+            extra = extra.replace(risky_text, neutral_text)
         extra = re.sub(r"\s+", " ", extra).strip(" 。、，")
         if extra:
             base = base.rstrip("。") + f"。用户补充要求优先：{extra}。"
-        base += f" 【pose:{pose_bucket}】"
+        wear_tag = {"白丝": "white", "黑丝": "black", "光腿神器": "bare"}.get(legwear, "daily")
+        base += f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_bucket}】"
         return base
 
     def _normalize_selfie_action(self, action: str, has_refs: bool) -> str:
         """为腿部自拍补全单一姿势与腿部穿搭。"""
         raw = str(action or "").strip()
-        if "【pose:" in raw or not self.persona.analyze_selfie_intent(raw).is_legs_only:
+        pose_match = re.search(r"【pose:([a-z_]+)】", raw)
+        removed_pose = "stand_" + "topdown"
+        if pose_match and pose_match.group(1) == removed_pose:
+            return self._build_leg_focus_action(raw, has_refs, avoid_pose=removed_pose)
+        if pose_match or not self.persona.analyze_selfie_intent(raw).is_legs_only:
             return raw
         return self._build_leg_focus_action(raw, has_refs)
 
@@ -4329,7 +4324,14 @@ class SelfieImagePlugin(Star):
         selected_targets = healthy_targets or selected_targets
         request_prompt = str(prompt or "")
         original_prompt = str(original_prompt or request_prompt)
-        audit_prompt_text = original_prompt or request_prompt
+        # Leg-focus actions are normalized into a neutral outfit prompt before generation.
+        # Audit that effective prompt so command labels do not create false positives.
+        is_leg_focus_request = (
+            source == "command-look-legs"
+            or "【legs:outfit】" in original_prompt
+            or "下半身穿搭" in original_prompt
+        )
+        audit_prompt_text = request_prompt if is_leg_focus_request else (original_prompt or request_prompt)
         source_meta = self._source_context(event, source, audit_user_id)
         request_image_paths = self._save_reference_images_to_cache(refs)
         request_data = {
@@ -4470,7 +4472,12 @@ class SelfieImagePlugin(Star):
                 "attempts": result.attempts,
             }
 
-        generated_image_paths = [self._save_cache_image(image, "generated", detect_mime_by_bytes(image)) for image in result.images if image]
+        generated_images = [image for image in result.images if image]
+        generated_image_paths = [
+            self._save_cache_image(image, "generated", detect_mime_by_bytes(image))
+            for image in generated_images
+        ]
+        generated_image_md5s = [hashlib.md5(image).hexdigest() for image in generated_images]
         files = [self._cache_absolute_path(path) for path in generated_image_paths]
         output_ok, output_reason = await self._audit_output_images(files, audit_user_id, prompt, event=event)
         if not output_ok:
@@ -4499,6 +4506,7 @@ class SelfieImagePlugin(Star):
                     "response_data": response_data,
                     "request_image_paths": request_image_paths,
                     "generated_image_paths": generated_image_paths,
+                    "md5s": generated_image_md5s,
                 }
             )
             return {
@@ -4535,6 +4543,7 @@ class SelfieImagePlugin(Star):
                 "response_data": response_data,
                 "request_image_paths": request_image_paths,
                 "generated_image_paths": generated_image_paths,
+                "md5s": generated_image_md5s,
             }
         )
         return {
@@ -5717,6 +5726,7 @@ class SelfieImagePlugin(Star):
             "command-look-cos",
         } or (
             "看看腿" in str(action or "")
+            or "【legs:outfit】" in str(action or "")
             or "看看COS" in str(action or "")
             or "【shot:" in str(action or "")
             or "【pose:" in str(action or "")
@@ -5733,7 +5743,7 @@ class SelfieImagePlugin(Star):
             m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
-                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam):[a-z0-9_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear):[a-z0-9_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
             # Keep user/locked legwear across rebuild rounds (extra text alone may have stripped 白丝).
             force_legwear = parse_requested_legwear(str(action or "")) or parse_requested_legwear(extra_keep)
@@ -5753,7 +5763,7 @@ class SelfieImagePlugin(Star):
         for index in range(total):
             round_action = action
             if rebuild_each and total > 1:
-                if source == "command-look-legs" or "看看腿" in str(action or "") or "【pose:" in str(action or ""):
+                if source == "command-look-legs" or "看看腿" in str(action or "") or "【legs:outfit】" in str(action or "") or "【pose:" in str(action or ""):
                     round_action = self._build_leg_focus_action(
                         extra_keep,
                         bool(extra_refs),
@@ -6315,7 +6325,8 @@ class SelfieImagePlugin(Star):
                 "· /文生图　只用文字按原文出图，不走自拍人设，也不用形象图；可写数量",
                 "· /图生图　必须附图或引用图，按原文改图；可写数量；不自动使用形象图",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装；可写数量如 /自拍 3",
-                "· /看看腿　下半身近景；按姿势搭配光腿神器、白丝或黑丝；可写数量如 /看看腿 3",
+                "· /看看腿　日常下装穿搭记录；随机手机记录或朋友协助拍摄视角；可写数量如 /看看腿 3",
+                "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
                 "· /看看COS　随机一套内置 COS 换装；默认随机自拍或他拍，也可写「自拍」「他拍」；可写数量如 /看看COS 2",
                 "· /看看你　像别人随手拍你；可写数量",
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象；可写数量",
@@ -6365,6 +6376,63 @@ class SelfieImagePlugin(Star):
                 except Exception:
                     continue
         return ""
+
+    @filter.command("查看提示词")
+    async def cmd_view_prompt(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """引用一张图片查看原生图提示词；没有记录时由当前聊天 LLM 反推。"""
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        refs = await self._event_reference_images(
+            event,
+            include_at_avatar=False,
+            context_hint="查看提示词",
+            allow_context_fallback=False,
+            include_persona=False,
+            # QQ/AstrBot may expose both a transcoded local path and the
+            # original URL.  Prompt lookup must try both to match the cache.
+            include_image_alternates=True,
+        )
+        if not refs:
+            yield event.plain_result("请引用一张图片后再使用 /查看提示词。")
+            return
+
+        ref = refs[0]
+        md5 = hashlib.md5(ref.data).hexdigest()
+        record = None
+        for candidate in refs:
+            candidate_md5 = hashlib.md5(candidate.data).hexdigest()
+            candidate_record = self._find_generation_record_by_md5(candidate_md5)
+            if candidate_record is not None:
+                ref = candidate
+                md5 = candidate_md5
+                record = candidate_record
+                break
+        if record is not None:
+            prompt = str(
+                record.get("request_prompt")
+                or record.get("prompt")
+                or record.get("original_prompt")
+                or ""
+            ).strip()
+            if prompt:
+                yield event.plain_result(f"图片 MD5：{md5}\n生图提示词：\n{prompt}")
+            else:
+                yield event.plain_result(f"图片 MD5：{md5}\n这是本插件生成的图片，但历史记录中没有保存提示词。")
+            return
+
+        yield event.plain_result(f"图片 MD5：{md5}\n未找到本插件的生图记录，正在让当前 LLM 反推提示词……")
+        try:
+            prompt = await self._reverse_image_prompt_with_llm(event, ref.data)
+        except Exception as exc:
+            logger.warning("[SelfieImage] 反推图片提示词失败: %s", redact_sensitive_text(str(exc)))
+            yield event.plain_result(f"图片 MD5：{md5}\n暂时无法反推提示词：{redact_sensitive_text(str(exc))[:200]}")
+            return
+        if not prompt:
+            yield event.plain_result(f"图片 MD5：{md5}\n当前 LLM 没有返回有效提示词。")
+            return
+        yield event.plain_result(f"图片 MD5：{md5}\nLLM 反推提示词：\n{prompt}")
 
     @filter.command("生图模型")
     async def cmd_image_model(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
@@ -6754,7 +6822,7 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        """下半身近景自拍。按姿势搭配光腿神器、白丝或黑丝；可写数量。"""
+        """日常下装穿搭记录；随机手机记录或朋友协助拍摄视角；可写数量。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看腿", fallback_args)
         raw_extra, requested_count = self._extract_command_count(raw_message)

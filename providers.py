@@ -567,7 +567,7 @@ class GrokImageAdapter(SimpleOpenAIImageAdapter):
         return payload
 
     def build_edit_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
-        """xAI image edit: JSON body with data-URL image (see grok_image_edit_batch.sh)."""
+        """Build the xAI image-edit JSON body with a data-URL reference image."""
         model = str(self.target.model or self.default_model)
         # Prefer edit model name when caller still has the generate model id.
         if "edit" not in model.lower() and model.lower().startswith("grok-imagine-image"):
