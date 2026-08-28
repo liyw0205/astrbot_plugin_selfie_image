@@ -332,7 +332,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.3")
+        self.assertEqual(PLUGIN_VERSION, "1.4.4")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -1830,6 +1830,16 @@ class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await fetch_image_source(str(text_path), FakeSession(), max_bytes=1024 * 1024))
             self.assertEqual(
                 await fetch_image_source(str(image_path), FakeSession(), max_bytes=1024 * 1024),
+                (PNG_BYTES, "image/png"),
+            )
+
+    async def test_fetch_image_source_accepts_file_uri(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "image with spaces.png"
+            image_path.write_bytes(PNG_BYTES)
+            source = image_path.as_uri()
+            self.assertEqual(
+                await fetch_image_source(source, FakeSession(), max_bytes=1024 * 1024),
                 (PNG_BYTES, "image/png"),
             )
 
@@ -4191,6 +4201,42 @@ class ReferenceCollectorTests(unittest.TestCase):
         buckets = collector.collect_source_buckets(Event())
         self.assertEqual(buckets["message"], ["https://cdn.example/current.png"])
         self.assertEqual(buckets["context"], [])
+
+    def test_image_file_is_used_when_path_has_empty_default(self) -> None:
+        from astrbot_plugin_selfie_image.reference_collector import extract_structured_image_sources
+
+        class Image:
+            def __init__(self):
+                self.file = "file:///storage/emulated/0/Pictures/QQ/original.png"
+                self.path = ""
+                self.url = "https://cdn.example/transcoded.png"
+
+        class MessageObj:
+            def __init__(self):
+                self.message = [Image()]
+                self.quote = None
+
+        class Event:
+            def __init__(self):
+                self.message_obj = MessageObj()
+                self.message = None
+                self.raw_message = None
+
+        buckets = extract_structured_image_sources(Event())
+        self.assertEqual(
+            buckets["message"],
+            [
+                "file:///storage/emulated/0/Pictures/QQ/original.png",
+            ],
+        )
+        alternates = extract_structured_image_sources(Event(), include_image_alternates=True)
+        self.assertEqual(
+            alternates["message"],
+            [
+                "file:///storage/emulated/0/Pictures/QQ/original.png",
+                "https://cdn.example/transcoded.png",
+            ],
+        )
 
 
 class DashboardEmbedContractTests(unittest.TestCase):

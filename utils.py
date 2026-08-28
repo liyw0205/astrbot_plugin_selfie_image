@@ -13,7 +13,7 @@ import os
 import re
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import aiohttp
 
@@ -753,6 +753,16 @@ async def fetch_image_source(
         return None
 
     try:
+        # AstrBot Image.file may be a file URI while Image.path is empty.
+        # Resolve it before checking local storage so QQ's original bytes are
+        # used instead of downloading a potentially transcoded remote URL.
+        if text.lower().startswith("file://"):
+            parsed = urlsplit(text)
+            if parsed.netloc and parsed.netloc.lower() not in {"", "localhost"}:
+                return None
+            text = unquote(parsed.path)
+            if not text:
+                return None
         lowered = text.lower()
         if lowered.startswith(("data:image/", "base64://")):
             data, mime = data_url_to_bytes(text)
@@ -847,11 +857,26 @@ def extract_image_sources_from_event(event: Any, include_at_avatar: bool = False
         obj_type = type(obj).__name__
 
         if obj_type == "Image":
-            path = getattr(obj, "path", getattr(obj, "file", getattr(obj, "file_path", None)))
-            url = getattr(obj, "url", None)
-            value = path if path and not str(path).startswith(("http://", "https://")) else url or path
-            if value:
-                images.append(str(value))
+            # ``path`` is an empty declared field on AstrBot Image objects;
+            # prefer a usable file/file URI before falling back to ``url``.
+            candidates: List[str] = []
+            for attr in ("path", "file", "file_path", "url"):
+                try:
+                    value = getattr(obj, attr, None)
+                except Exception:
+                    value = None
+                text = str(value or "").strip()
+                if text and text not in candidates:
+                    candidates.append(text)
+            local = [
+                value
+                for value in candidates
+                if not value.lower().startswith(("http://", "https://"))
+            ]
+            if local:
+                images.append(local[0])
+            elif candidates:
+                images.append(candidates[0])
             return
 
         if obj_type == "Plain":

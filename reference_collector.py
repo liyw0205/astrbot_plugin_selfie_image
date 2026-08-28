@@ -161,15 +161,34 @@ def extract_structured_image_sources(
         obj_type = _component_type_name(obj)
 
         if obj_type == "Image":
-            path = getattr(obj, "path", getattr(obj, "file", getattr(obj, "file_path", None)))
-            url = getattr(obj, "url", None)
+            # AstrBot's Image model declares ``path`` with an empty default,
+            # while QQ adapters often put the usable local file in ``file``.
+            # Gather every representation and prefer local/inline data over a
+            # remote URL, otherwise prompt lookup can hash a transcoded URL.
+            raw_candidates: List[Any] = []
+            for attr in ("path", "file", "file_path", "url"):
+                try:
+                    value = getattr(obj, attr, None)
+                except Exception:
+                    value = None
+                if value:
+                    raw_candidates.append(value)
             candidates: List[Any] = []
-            if path and not str(path).startswith(("http://", "https://")):
-                candidates.append(path)
-            if url:
-                candidates.append(url)
-            if not candidates and path:
-                candidates.append(path)
+            for value in raw_candidates:
+                text = str(value).strip()
+                if text and text not in candidates:
+                    candidates.append(text)
+            local = [
+                value
+                for value in candidates
+                if not value.lower().startswith(("http://", "https://"))
+            ]
+            remote = [
+                value
+                for value in candidates
+                if value.lower().startswith(("http://", "https://"))
+            ]
+            candidates = [*local, *remote]
             for value in (candidates if include_image_alternates else candidates[:1]):
                 add(role, value)
             return
