@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import base64
+import asyncio
 from collections.abc import Sequence
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urljoin, urlsplit
@@ -12,6 +13,7 @@ from urllib.parse import urljoin, urlsplit
 import aiohttp
 
 from .models import normalize_provider_type
+from .proxy import IMAGE_DOWNLOAD_WAIT_SECONDS, image_download_timeout
 from .utils import (
     IMAGE_EXTENSIONS,
     decode_base64_payload,
@@ -321,6 +323,7 @@ async def fetch_generated_image_url(
     referer: str = "https://flow.google/",
     max_bytes: int = 25 * 1024 * 1024,
     proxy: str = "",
+    diagnostics: Optional[List[str]] = None,
 ) -> Optional[bytes]:
     text = clean_image_url(url)
     if not text:
@@ -337,23 +340,35 @@ async def fetch_generated_image_url(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": referer,
     }
+    # Keep diagnostics useful without recording signed URLs or API tokens.
+    try:
+        parsed_url = urlsplit(text)
+        url_label = f"{parsed_url.hostname or 'unknown'}{parsed_url.path or '/'}"
+    except ValueError:
+        url_label = "invalid-url"
     try:
         async with session.get(
             text,
             headers=headers,
-            timeout=aiohttp.ClientTimeout(total=timeout),
+            timeout=image_download_timeout(timeout),
             allow_redirects=True,
             proxy=str(proxy or "").strip() or None,
         ) as response:
             if response.status >= 400:
+                if diagnostics is not None:
+                    diagnostics.append(f"{url_label}: HTTP {response.status}")
                 return None
             content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
             binary_content_types = {"application/octet-stream", "binary/octet-stream", "application/binary", "application/x-binary"}
             if content_type and not content_type.startswith("image/") and content_type not in binary_content_types:
+                if diagnostics is not None:
+                    diagnostics.append(f"{url_label}: 内容类型 {content_type or '未知'}")
                 return None
             content_length = response.headers.get("content-length", "")
             try:
                 if content_length and int(content_length) > max_bytes:
+                    if diagnostics is not None:
+                        diagnostics.append(f"{url_label}: 响应超过 {max_bytes} bytes")
                     return None
             except (TypeError, ValueError):
                 pass
@@ -362,15 +377,28 @@ async def fetch_generated_image_url(
             async for chunk in response.content.iter_chunked(64 * 1024):
                 total += len(chunk)
                 if total > max_bytes:
+                    if diagnostics is not None:
+                        diagnostics.append(f"{url_label}: 响应超过 {max_bytes} bytes")
                     return None
                 chunks.append(chunk)
             data = b"".join(chunks)
             if not data:
+                if diagnostics is not None:
+                    diagnostics.append(f"{url_label}: 空响应")
                 return None
             if not looks_like_binary_image(data):
+                if diagnostics is not None:
+                    diagnostics.append(f"{url_label}: 响应不是图片")
                 return None
             return data
-    except Exception:
+    except asyncio.TimeoutError:
+        if diagnostics is not None:
+            diagnostics.append(f"{url_label}: 下载超时（{IMAGE_DOWNLOAD_WAIT_SECONDS}s）")
+        return None
+    except Exception as exc:
+        if diagnostics is not None:
+            reason = str(exc).strip() or type(exc).__name__
+            diagnostics.append(f"{url_label}: {reason[:160]}")
         return None
 
 
@@ -715,6 +743,7 @@ async def images_from_response_unknown(
     max_bytes: int = 25 * 1024 * 1024,
     proxy: str = "",
     base_url: str = "",
+    download_diagnostics: Optional[List[str]] = None,
 ) -> List[bytes]:
     collected = collect_images_from_unknown(data)
     images: List[bytes] = []
@@ -747,7 +776,14 @@ async def images_from_response_unknown(
                 seen_urls.add(url)
 
     for item in download_urls:
-        image = await fetch_generated_image_url(session, item, timeout, max_bytes=max_bytes, proxy=proxy)
+        image = await fetch_generated_image_url(
+            session,
+            item,
+            timeout,
+            max_bytes=max_bytes,
+            proxy=proxy,
+            diagnostics=download_diagnostics,
+        )
         key = (len(image or b""), (image or b"")[:32])
         if image and key not in seen:
             images.append(image)

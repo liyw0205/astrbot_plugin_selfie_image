@@ -11,12 +11,22 @@ import aiohttp
 
 
 LOCAL_IMAGE_WAIT_SECONDS = 180
+# A successful image-generation response may point at a separate CDN.  Do not
+# spend the whole generation budget waiting for that second request.
+IMAGE_DOWNLOAD_WAIT_SECONDS = 30
 
 
 def image_client_timeout(seconds: Optional[int] = None) -> aiohttp.ClientTimeout:
     """Local wait when upstream does not return. Cap 180s; do not use 45/75/90 short cuts."""
     total = max(20, min(LOCAL_IMAGE_WAIT_SECONDS, int(seconds or LOCAL_IMAGE_WAIT_SECONDS)))
     return aiohttp.ClientTimeout(total=total, connect=10, sock_connect=10, sock_read=total)
+
+
+def image_download_timeout(seconds: Optional[int] = None) -> aiohttp.ClientTimeout:
+    """Bound result-URL downloads independently from model generation."""
+    requested = int(seconds or IMAGE_DOWNLOAD_WAIT_SECONDS)
+    total = max(5, min(IMAGE_DOWNLOAD_WAIT_SECONDS, requested))
+    return aiohttp.ClientTimeout(total=total, connect=min(10, total), sock_connect=min(10, total), sock_read=total)
 
 
 @dataclass(frozen=True)

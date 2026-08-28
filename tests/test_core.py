@@ -27,7 +27,7 @@ if "aiohttp" not in sys.modules:
     )
 
 from astrbot_plugin_selfie_image.generator import generate_image_with_fallback
-from astrbot_plugin_selfie_image.proxy import parse_channel_proxy
+from astrbot_plugin_selfie_image.proxy import IMAGE_DOWNLOAD_WAIT_SECONDS, image_download_timeout, parse_channel_proxy
 from astrbot_plugin_selfie_image.video import VideoGenerateRequest, VideoGenerateResult, generate_video_with_fallback
 from astrbot_plugin_selfie_image.error_classify import (
     classify_generation_error,
@@ -332,7 +332,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.5")
+        self.assertEqual(PLUGIN_VERSION, "1.4.6")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -2064,6 +2064,25 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("token=[REDACTED]", error)
         self.assertNotIn("abcdefghijklmnop", error)
 
+    async def test_result_from_response_explains_generated_url_download_failure(self) -> None:
+        session = FakeSession(
+            data={"data": [{"url": "https://cdn.example.test/result.png?token=secret-token-value"}]},
+            get_data=b"not-an-image",
+        )
+        adapter = BaseImageAdapter(make_target(), session)
+
+        result = await adapter.result_from_response(
+            session.data,
+            ImageGenerateRequest(prompt="cat"),
+            "https://example.test",
+            detailed_error=True,
+        )
+
+        self.assertFalse(result.images)
+        self.assertIn("图片链接但下载失败", result.error)
+        self.assertIn("cdn.example.test/result.png", result.error)
+        self.assertNotIn("secret-token-value", result.error)
+
     async def test_gemini_json_post_uses_api_key_header_without_bearer_auth(self) -> None:
         payload = {"candidates": [{"content": {"parts": [{"inlineData": {"data": base64.b64encode(PNG_BYTES).decode("ascii")}}]}}]}
         session = FakeSession(payload)
@@ -2136,6 +2155,40 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         image = await fetch_generated_image_url(FakeSession(), data_url, timeout=5)
 
         self.assertIsNone(image)
+
+    async def test_generated_url_download_has_independent_timeout_budget(self) -> None:
+        session = FakeSession(get_data=PNG_BYTES)
+        diagnostics = []
+
+        timeout_factory = lambda **kwargs: types.SimpleNamespace(**kwargs)
+        with patch("astrbot_plugin_selfie_image.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
+            image = await fetch_generated_image_url(
+                session,
+                "https://cdn.example.test/generated.png?signature=secret",
+                timeout=180,
+                diagnostics=diagnostics,
+            )
+
+        self.assertEqual(image, PNG_BYTES)
+        self.assertEqual(session.requests[0]["timeout"].total, IMAGE_DOWNLOAD_WAIT_SECONDS)
+        with patch("astrbot_plugin_selfie_image.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
+            self.assertEqual(image_download_timeout(180).total, IMAGE_DOWNLOAD_WAIT_SECONDS)
+
+    async def test_generated_url_download_diagnostics_do_not_include_query(self) -> None:
+        session = FakeSession(get_data=b"not-an-image")
+        diagnostics = []
+
+        image = await fetch_generated_image_url(
+            session,
+            "https://cdn.example.test/generated.png?token=secret-token",
+            timeout=180,
+            diagnostics=diagnostics,
+        )
+
+        self.assertIsNone(image)
+        self.assertTrue(diagnostics)
+        self.assertIn("cdn.example.test/generated.png", diagnostics[0])
+        self.assertNotIn("secret-token", diagnostics[0])
 
     async def test_unknown_response_parser_accepts_uppercase_inline_image_prefixes(self) -> None:
         encoded = base64.b64encode(PNG_BYTES).decode("ascii")

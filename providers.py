@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -37,6 +38,9 @@ from .provider_parser import (
 )
 from .utils import bytes_to_data_url, normalize_image_mime
 from .proxy import image_client_timeout
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -161,21 +165,36 @@ class BaseImageAdapter:
         detailed_error: bool = False,
     ) -> ImageGenerateResult:
         download_proxy = str((self.target.extra or {}).get("download_proxy") or "").strip() or str(self.target.proxy or "").strip()
+        download_diagnostics: List[str] = []
         images = await images_from_response_unknown(
-            self.session, data, self.target.timeout, req.max_image_bytes, download_proxy, base_url
+            self.session,
+            data,
+            self.target.timeout,
+            req.max_image_bytes,
+            download_proxy,
+            base_url,
+            download_diagnostics,
         )
         if images:
             return ImageGenerateResult(images=images)
-        if not detailed_error:
-            return ImageGenerateResult(error="未生成任何图片")
-
         preview = response_preview(data)
         collected = collect_images_from_unknown(data)
         prefix = f"{provider_name} " if provider_name else ""
         if collected["urls"]:
-            return ImageGenerateResult(
-                error=f"{prefix}接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}；返回预览: {preview}"
+            detail = "；原因: " + "；".join(download_diagnostics[:3]) if download_diagnostics else ""
+            logger.warning(
+                "[SelfieImage] generated image URL download failed: %s",
+                "; ".join(download_diagnostics[:3]) or f"{len(collected['urls'])} URL(s)",
             )
+            if not detailed_error:
+                return ImageGenerateResult(
+                    error=f"{prefix}接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}{detail}"
+                )
+            return ImageGenerateResult(
+                error=f"{prefix}接口返回了图片链接但下载失败。链接数: {len(collected['urls'])}{detail}；返回预览: {preview}"
+            )
+        if not detailed_error:
+            return ImageGenerateResult(error="未生成任何图片")
         if collected["b64"]:
             return ImageGenerateResult(
                 error=f"{prefix}接口返回了 base64 图片但解码失败。数量: {len(collected['b64'])}；返回预览: {preview}"
