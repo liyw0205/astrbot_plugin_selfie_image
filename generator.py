@@ -76,9 +76,11 @@ def _sync_try_model(target: ImageModelTarget, req: ImageGenerateRequest, budget:
 
     async def _go() -> ImageGenerateResult:
         timeout = image_client_timeout(budget)
+        request_target = copy.deepcopy(target)
+        request_target.timeout = int(budget)
         async with aiohttp.ClientSession(trust_env=False, timeout=timeout) as base:
-            async with channel_client_session(getattr(target, "proxy", "") or "", base) as owned:
-                adapter = create_adapter(target_session_proxy(target), owned)
+            async with channel_client_session(getattr(request_target, "proxy", "") or "", base, budget) as owned:
+                adapter = create_adapter(target_session_proxy(request_target), owned)
                 return await adapter.generate(req)
 
     try:
@@ -97,7 +99,7 @@ async def _try_model(
 ) -> ImageGenerateResult:
     if session is None:
         return await asyncio.to_thread(_sync_try_model, target, req, budget)
-    work = asyncio.create_task(_try_on_session(target, req, session))
+    work = asyncio.create_task(_try_on_session(target, req, session, budget))
     done, _ = await asyncio.wait({work}, timeout=max(1, int(budget)))
     if work not in done:
         work.cancel()
@@ -112,9 +114,12 @@ async def _try_on_session(
     target: ImageModelTarget,
     req: ImageGenerateRequest,
     session: aiohttp.ClientSession,
+    budget: int,
 ) -> ImageGenerateResult:
-    async with channel_client_session(getattr(target, "proxy", "") or "", session) as owned:
-        adapter = create_adapter(target_session_proxy(target), owned)
+    request_target = copy.deepcopy(target)
+    request_target.timeout = int(budget)
+    async with channel_client_session(getattr(request_target, "proxy", "") or "", session, budget) as owned:
+        adapter = create_adapter(target_session_proxy(request_target), owned)
         return await adapter.generate(req)
 
 
@@ -156,7 +161,10 @@ async def generate_image_with_fallback(
                     error=redact_sensitive_text(format_timeout_user_message("global", chain_timeout)),
                     attempts=redact_sensitive_data(attempts),
                 )
-            budget = max(1, min(LOCAL_IMAGE_WAIT_SECONDS, int(remain)))
+            # The global deadline limits the whole fallback chain; each model
+            # keeps its configured timeout instead of inheriting a 180s cap.
+            target_timeout = max(1, int(getattr(target, "timeout", 0) or LOCAL_IMAGE_WAIT_SECONDS))
+            budget = max(1, min(target_timeout, int(remain)))
             attempt_info = _target_attempt_base(target, index, key_index=key_index, multi_key=len(api_keys) > 1)
             started = time.monotonic()
             active = _target_with_api_key(target, api_key) if api_key else target

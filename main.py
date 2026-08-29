@@ -7,6 +7,7 @@ RECORD_KEEP_LIMIT = 300
 import asyncio
 import copy
 import hashlib
+from io import BytesIO
 import json
 import os
 import random
@@ -17,6 +18,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Mapping, MutableMapping
+from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
@@ -87,7 +89,7 @@ from .providers import (
     normalize_image_base_url,
     provider_type_from_channel_payload,
 )
-from .reference_collector import ReferenceCollector
+from .reference_collector import ReferenceCollector, extract_structured_image_sources
 from .proxy import channel_client_session, http_proxy_url, image_client_timeout, target_session_proxy
 from .video import VideoGenerateRequest, generate_video_with_fallback
 from .utils import (
@@ -1005,88 +1007,6 @@ class SelfieImagePlugin(Star):
                     return str(value)
         return f"event:{id(event)}:{time.time_ns()}"
 
-    def _event_quotes_bot_image(self, event: Optional[AstrMessageEvent]) -> bool:
-        """Whether the current event quotes a bot-authored image message.
-
-        aiocqhttp converts a QQ reply into AstrBot ``Reply`` with ``sender_id``
-        and ``chain`` populated from ``get_msg``.  That metadata lets prompt
-        lookup safely use the plugin's own cached bytes instead of guessing
-        from an unrelated recent image.
-        """
-        if event is None:
-            return False
-        bot_ids = {str(value).strip() for value in self._bot_account_ids(event) if str(value).strip()}
-        if not bot_ids:
-            return False
-        visited: set[int] = set()
-
-        def has_image(obj: Any, depth: int = 0) -> bool:
-            if obj is None or depth > 10 or id(obj) in visited:
-                return False
-            visited.add(id(obj))
-            obj_type = type(obj).__name__
-            if obj_type == "Image":
-                return True
-            if isinstance(obj, dict):
-                if str(obj.get("type") or "").lower() == "image":
-                    return True
-                return any(has_image(value, depth + 1) for value in obj.values())
-            if isinstance(obj, (list, tuple, set)):
-                return any(has_image(item, depth + 1) for item in obj)
-            attrs = []
-            if hasattr(obj, "__dict__"):
-                attrs.extend(vars(obj).keys())
-            if hasattr(obj, "__slots__"):
-                attrs.extend(getattr(obj, "__slots__", []) or [])
-            for key in set(attrs):
-                try:
-                    if has_image(getattr(obj, key), depth + 1):
-                        return True
-                except Exception:
-                    continue
-            return False
-
-        def search(obj: Any, depth: int = 0) -> bool:
-            if obj is None or depth > 10 or id(obj) in visited:
-                return False
-            visited.add(id(obj))
-            if type(obj).__name__ == "Reply":
-                sender_value = getattr(obj, "sender_id", None)
-                if not sender_value:
-                    sender_value = getattr(obj, "qq", "")
-                sender_id = str(sender_value or "").strip()
-                if sender_id in bot_ids and has_image(
-                    getattr(obj, "chain", None)
-                    or getattr(obj, "message", None)
-                    or getattr(obj, "content", None)
-                ):
-                    return True
-            if isinstance(obj, dict):
-                return any(search(value, depth + 1) for value in obj.values())
-            if isinstance(obj, (list, tuple, set)):
-                return any(search(item, depth + 1) for item in obj)
-            attrs = []
-            if hasattr(obj, "__dict__"):
-                attrs.extend(vars(obj).keys())
-            if hasattr(obj, "__slots__"):
-                attrs.extend(getattr(obj, "__slots__", []) or [])
-            for key in set(attrs):
-                try:
-                    if search(getattr(obj, key), depth + 1):
-                        return True
-                except Exception:
-                    continue
-            return False
-
-        for root in (
-            getattr(event, "message_obj", None),
-            getattr(event, "message", None),
-            getattr(event, "raw_message", None),
-        ):
-            if search(root):
-                return True
-        return False
-
     def _add_context_message(
         self,
         session_key: str,
@@ -1750,6 +1670,47 @@ class SelfieImagePlugin(Star):
                     continue
         return value if re.fullmatch(r"[0-9a-f]{32}", value) else ""
 
+    def _image_md5_variants(self, data: bytes) -> List[str]:
+        """Return direct and AstrBot JPEG-normalized MD5s for image bytes.
+
+        AstrBot converts quoted non-JPEG images to RGB JPEG (quality 95,
+        subsampling 0) before plugin handlers run.  Keep the original cache
+        digest authoritative, but also recognize that deterministic transport
+        representation when QQ does not expose the original image source.
+        """
+        if not data:
+            return []
+        direct = hashlib.md5(data).hexdigest()
+        variants = [direct]
+        try:
+            from PIL import Image as PILImage
+
+            with PILImage.open(BytesIO(data)) as opened:
+                image_format = str(opened.format or "").upper()
+                image_has_alpha = opened.mode in {"RGBA", "LA"} or (
+                    opened.mode == "P" and "transparency" in opened.info
+                )
+                image_is_animated = bool(
+                    getattr(opened, "is_animated", False)
+                    or getattr(opened, "n_frames", 1) > 1
+                )
+                if image_format == "JPEG" or image_has_alpha or image_is_animated:
+                    return variants
+                converted = opened.convert("RGB")
+                try:
+                    output = BytesIO()
+                    converted.save(output, "JPEG", quality=95, subsampling=0)
+                    normalized = hashlib.md5(output.getvalue()).hexdigest()
+                finally:
+                    converted.close()
+            if normalized not in variants:
+                variants.append(normalized)
+        except Exception:
+            # Pillow is supplied by AstrBot, but direct MD5 lookup remains
+            # available in minimal/older installations without it.
+            pass
+        return variants
+
     def _find_generation_record_by_md5(self, md5: str) -> Optional[Dict[str, Any]]:
         wanted = str(md5 or "").strip().lower()
         if not re.fullmatch(r"[0-9a-f]{32}", wanted):
@@ -1768,7 +1729,7 @@ class SelfieImagePlugin(Star):
             for path in record.get("generated_image_paths") or []:
                 try:
                     loaded = self._load_cache_image_bytes(str(path or ""))
-                    if loaded and hashlib.md5(loaded[0]).hexdigest() == wanted:
+                    if loaded and wanted in self._image_md5_variants(loaded[0]):
                         record["md5"] = wanted
                         return record
                 except Exception:
@@ -3893,7 +3854,8 @@ class SelfieImagePlugin(Star):
         legwear_label = SAFE_LEGWEAR_LABELS.get(legwear, "光腿神器、白丝或黑丝三选一")
         legwear_rule = (
             f"本次服装搭配已锁定为：{legwear_label}；"
-            "腿部穿搭只允许光腿神器、白丝、黑丝三选一，禁止中筒袜、短袜、运动袜、船袜、堆堆袜、普通棉袜或袜子停在小腿中段。"
+            "腿部穿搭只允许光腿神器、白丝、黑丝三选一；参考图中的袜子、腿部服装和鞋袜搭配全部忽略，不得复制；"
+            "禁止中筒袜、短袜、运动袜、船袜、堆堆袜、普通棉袜或袜子停在小腿中段。"
         )
         base = (
             "成年人物日常穿搭记录。竖屏手机记录照。"
@@ -3905,7 +3867,7 @@ class SelfieImagePlugin(Star):
             f"{hard_crop}"
         )
         if has_refs:
-            base += " 用户提供的图片只参考氛围、构图、服装或姿势；主角身份仍以 AI 自拍形象参考图为准。"
+            base += " 用户提供的图片只参考氛围、构图、姿势和室内环境；不参考或复制其中任何袜子、腿部穿搭或鞋袜搭配，主角身份仍以 AI 自拍形象参考图为准。"
         # Strip sock/legwear tokens from free-text extra so they don't fight the locked choice.
         extra = LEGWEAR_REQUEST_PATTERN.sub("", str(extra_request or ""))
         for risky_text, neutral_text in LEGFOCUS_RISKY_EXTRA_REPLACEMENTS:
@@ -6464,6 +6426,114 @@ class SelfieImagePlugin(Star):
                     continue
         return ""
 
+    def _quoted_reply_ids(self, event: Optional[AstrMessageEvent]) -> List[str]:
+        """Return message IDs from Reply components in the current event."""
+        if event is None:
+            return []
+        found: List[str] = []
+        seen_ids: set[str] = set()
+        visited: set[int] = set()
+
+        def add(value: Any) -> None:
+            text = str(value or "").strip()
+            if text and text not in seen_ids:
+                seen_ids.add(text)
+                found.append(text)
+
+        def walk(obj: Any, depth: int = 0) -> None:
+            if obj is None or depth > 12 or id(obj) in visited:
+                return
+            visited.add(id(obj))
+            obj_type = type(obj).__name__
+            if obj_type in {"Reply", "Quote"} or "reply" in obj_type.lower() or "quote" in obj_type.lower():
+                for key in ("id", "message_id", "msg_id"):
+                    add(getattr(obj, key, None))
+                # A Reply's chain contains the converted image, but nested
+                # replies may still carry useful original message IDs.
+                walk(getattr(obj, "chain", None), depth + 1)
+                return
+            if isinstance(obj, Mapping):
+                if str(obj.get("type") or "").lower() == "reply":
+                    data = obj.get("data") if isinstance(obj.get("data"), Mapping) else obj
+                    add(data.get("id"))
+                for value in obj.values():
+                    walk(value, depth + 1)
+                return
+            if isinstance(obj, (list, tuple, set)):
+                for value in obj:
+                    walk(value, depth + 1)
+                return
+            attrs: List[str] = []
+            if hasattr(obj, "__dict__"):
+                attrs.extend(vars(obj).keys())
+            if hasattr(obj, "__slots__"):
+                attrs.extend(list(getattr(obj, "__slots__", []) or []))
+            blocked = {"bot", "context", "star", "provider", "session", "config", "plugin_config", "logger"}
+            for key in set(attrs) - blocked:
+                try:
+                    walk(getattr(obj, key), depth + 1)
+                except Exception:
+                    continue
+
+        message_obj = getattr(event, "message_obj", None)
+        walk(getattr(message_obj, "message", None))
+        walk(getattr(message_obj, "quote", None))
+        walk(getattr(event, "message", None))
+        walk(getattr(event, "raw_message", None))
+        return found
+
+    async def _quoted_original_image_sources(self, event: Optional[AstrMessageEvent]) -> List[str]:
+        """Fetch original sources for current replies before AstrBot JPEG conversion."""
+        if event is None:
+            return []
+        bot = getattr(event, "bot", None)
+        call_action = getattr(bot, "call_action", None)
+        if not callable(call_action):
+            call_action = getattr(getattr(bot, "api", None), "call_action", None)
+        if not callable(call_action):
+            return []
+        reply_ids = self._quoted_reply_ids(event)
+        if not reply_ids:
+            return []
+
+        routing: Dict[str, Any] = {}
+        message_obj = getattr(event, "message_obj", None)
+        raw_message = getattr(message_obj, "raw_message", None)
+        for source in (raw_message, getattr(event, "raw_message", None), message_obj, event):
+            if isinstance(source, Mapping) and source.get("self_id"):
+                routing["self_id"] = source.get("self_id")
+                break
+            value = getattr(source, "self_id", None)
+            if value:
+                routing["self_id"] = value
+                break
+
+        sources: List[str] = []
+        for reply_id in reply_ids:
+            try:
+                numeric_id = int(reply_id)
+            except (TypeError, ValueError):
+                continue
+            try:
+                payload = await asyncio.wait_for(
+                    call_action("get_msg", message_id=numeric_id, **routing),
+                    timeout=5,
+                )
+            except Exception as exc:
+                logger.debug("[SelfieImage] 回查引用原图失败 id=%s: %s", reply_id, exc)
+                continue
+            if not isinstance(payload, Mapping):
+                continue
+            if not payload.get("message") and isinstance(payload.get("data"), Mapping):
+                payload = payload["data"]
+            raw_event = SimpleNamespace(message_obj=None, message=None, raw_message=payload)
+            buckets = extract_structured_image_sources(raw_event, include_image_alternates=True)
+            for role in ("message", "quote", "forward"):
+                for source in buckets.get(role, []):
+                    if source not in sources:
+                        sources.append(source)
+        return sources
+
     @filter.command("查看提示词")
     async def cmd_view_prompt(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
         """引用一张图片查看原生图提示词；没有记录时由当前聊天 LLM 反推。"""
@@ -6471,29 +6541,22 @@ class SelfieImagePlugin(Star):
         if denied:
             yield event.plain_result(denied)
             return
-        # AstrBot's aiocqhttp adapter records bot replies in ``Reply.chain``.
-        # The plugin already retains the exact generated cache path for each
-        # sent image, so include those bytes when the quoted sender is the bot.
-        bot_cache_sources = (
-            self._recent_context_image_sources(
-                event,
-                max_images=8,
-                prefer_user=False,
-                bot_only=True,
-            )
-            if self._event_quotes_bot_image(event)
-            else []
-        )
+        quoted_sources = await self._quoted_original_image_sources(event)
+        collect_kwargs: Dict[str, Any] = {
+            "include_at_avatar": False,
+            "context_hint": "查看提示词",
+            "allow_context_fallback": False,
+            "include_persona": False,
+            # QQ/AstrBot may expose both a transcoded local path and the
+            # original URL. Prompt lookup must try only representations of
+            # the quoted image; unrelated recent bot images must never match.
+            "include_image_alternates": True,
+        }
+        if quoted_sources:
+            collect_kwargs["extra_sources"] = quoted_sources
         refs = await self._event_reference_images(
             event,
-            include_at_avatar=False,
-            context_hint="查看提示词",
-            allow_context_fallback=False,
-            include_persona=False,
-            # QQ/AstrBot may expose both a transcoded local path and the
-            # original URL.  Prompt lookup must try both to match the cache.
-            include_image_alternates=True,
-            extra_sources=bot_cache_sources,
+            **collect_kwargs,
         )
         if not refs:
             yield event.plain_result("请引用一张图片后再使用 /查看提示词。")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -27,7 +28,12 @@ if "aiohttp" not in sys.modules:
     )
 
 from astrbot_plugin_selfie_image.generator import generate_image_with_fallback
-from astrbot_plugin_selfie_image.proxy import IMAGE_DOWNLOAD_WAIT_SECONDS, image_download_timeout, parse_channel_proxy
+from astrbot_plugin_selfie_image.proxy import (
+    IMAGE_DOWNLOAD_WAIT_SECONDS,
+    image_client_timeout,
+    image_download_timeout,
+    parse_channel_proxy,
+)
 from astrbot_plugin_selfie_image.video import VideoGenerateRequest, VideoGenerateResult, generate_video_with_fallback
 from astrbot_plugin_selfie_image.error_classify import (
     classify_generation_error,
@@ -332,7 +338,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.8")
+        self.assertEqual(PLUGIN_VERSION, "1.4.9")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -1871,6 +1877,20 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.requests[0]["url"], "https://example.test/v1/images/generations")
         self.assertEqual(session.requests[0]["json"]["prompt"], "cat")
 
+    async def test_openai_edit_timeout_returns_model_timeout(self) -> None:
+        target = make_target("openai", "gpt-image-2")
+        target.timeout = 280
+        adapter = OpenAIImageAdapter(target, FakeSession())
+        request = ImageGenerateRequest(
+            prompt="cat",
+            images=[ImageReference(data=PNG_BYTES, mime_type="image/png")],
+        )
+
+        with patch.object(adapter, "_post_edit_form", side_effect=asyncio.TimeoutError):
+            result = await adapter.generate(request)
+
+        self.assertEqual(result.error, "模型超时（280s）")
+
     async def test_openai_chat_generate_posts_prompt_body(self) -> None:
         response = {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
         session = FakeSession(response)
@@ -3156,6 +3176,33 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fallback_uses_target_timeout_without_180_second_cap(self) -> None:
+        target = make_target("openai", "gpt-image-2")
+        target.timeout = 280
+        budgets = []
+
+        async def fake_try_model(active, req, budget, session):
+            budgets.append(budget)
+            return ImageGenerateResult(images=[PNG_BYTES])
+
+        with patch("astrbot_plugin_selfie_image.generator._try_model", side_effect=fake_try_model):
+            result = await generate_image_with_fallback(
+                [target],
+                ImageGenerateRequest(prompt="cat"),
+                FakeSession(),
+                global_timeout=400,
+            )
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(budgets, [280])
+
+    def test_image_client_timeout_preserves_requested_model_budget(self) -> None:
+        timeout_factory = lambda **kwargs: types.SimpleNamespace(**kwargs)
+        with patch("astrbot_plugin_selfie_image.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
+            timeout = image_client_timeout(280)
+        self.assertEqual(timeout.total, 280)
+        self.assertEqual(timeout.sock_read, 280)
+
     async def test_fallback_records_failed_attempt_then_success(self) -> None:
         first = make_target("grok", "bad-model")
         second = make_target("grok", "good-model")
@@ -6233,35 +6280,125 @@ class StudioStoreTests(unittest.TestCase):
         )
         self.assertEqual(routed[0], "bot_outfit_day.jpg")
 
-    def test_reply_sender_user_is_not_treated_as_bot(self) -> None:
-        """A context/user id must not make a user's quoted image use bot cache."""
-        stub = SessionModelAndTaskTests()._plugin_stub()
-
-        class Image:
-            pass
-
-        class Reply:
-            def __init__(self, sender_id):
-                self.sender_id = sender_id
-                self.chain = [Image()]
-
-        class MessageObj:
-            def __init__(self, quote):
-                self.quote = quote
+    def test_view_prompt_does_not_mix_recent_bot_images_into_quote_lookup(self) -> None:
+        """Each quoted image must be matched only against its own bytes."""
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        quoted_a = ImageReference(data=b"quoted-image-a", mime_type="image/png")
+        quoted_b = ImageReference(data=b"quoted-image-b", mime_type="image/png")
+        prompts = {
+            hashlib.md5(quoted_a.data).hexdigest(): "prompt for quoted A",
+            hashlib.md5(quoted_b.data).hexdigest(): "prompt for quoted B",
+        }
+        collected_kwargs = []
 
         class Event:
-            def __init__(self, quote):
-                self.self_id = "bot-1"
-                self.message_obj = MessageObj(quote)
-                self.message = None
-                self.raw_message = None
+            def __init__(self, image):
+                self.image = image
 
-        # Some adapters expose the current user on the plugin context.  It
-        # must not be added to the bot identity set.
-        stub.context = types.SimpleNamespace(user_id="user-1")
-        self.assertEqual(stub._bot_account_ids(Event(Reply("user-1"))), ["bot-1"])
-        self.assertFalse(stub._event_quotes_bot_image(Event(Reply("user-1"))))
-        self.assertTrue(stub._event_quotes_bot_image(Event(Reply("bot-1"))))
+            def plain_result(self, text):
+                return text
+
+        async def collect_refs(event, **kwargs):
+            collected_kwargs.append(kwargs)
+            return [event.image]
+
+        def find_record(md5):
+            prompt = prompts.get(md5)
+            return {"request_prompt": prompt} if prompt else None
+
+        plugin._permission_denied_message = lambda _event: ""
+        plugin._event_reference_images = collect_refs
+        plugin._find_generation_record_by_md5 = find_record
+        # A prior implementation searched this global session cache when a
+        # bot image was quoted, which made every lookup resolve to the latest
+        # generated image. Prompt lookup must never touch it.
+        plugin._recent_context_image_sources = lambda *_args, **_kwargs: self.fail("unexpected recent-image lookup")
+        plugin._event_quotes_bot_image = lambda _event: True
+
+        async def run(event):
+            return [item async for item in plugin.cmd_view_prompt(event)]
+
+        first = asyncio.run(run(Event(quoted_a)))
+        second = asyncio.run(run(Event(quoted_b)))
+        self.assertEqual(first, [f"图片 MD5：{hashlib.md5(quoted_a.data).hexdigest()}\n生图提示词：\nprompt for quoted A"])
+        self.assertEqual(second, [f"图片 MD5：{hashlib.md5(quoted_b.data).hexdigest()}\n生图提示词：\nprompt for quoted B"])
+        self.assertEqual(len(collected_kwargs), 2)
+        for kwargs in collected_kwargs:
+            self.assertTrue(kwargs["include_image_alternates"])
+            self.assertNotIn("extra_sources", kwargs)
+
+    def test_quoted_original_sources_are_fetched_by_reply_id(self) -> None:
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+
+        class Reply:
+            def __init__(self, message_id):
+                self.id = message_id
+                self.chain = []
+
+        class MessageObj:
+            message = [Reply(2132965351)]
+            quote = None
+            raw_message = {"self_id": "3834455831"}
+
+        class Bot:
+            def __init__(self):
+                self.calls = []
+
+            async def call_action(self, action, **params):
+                self.calls.append((action, params))
+                return {
+                    "message": [
+                        {
+                            "type": "image",
+                            "data": {
+                                "file": "qq-original-file",
+                                "url": "https://cdn.example/original.png",
+                            },
+                        }
+                    ]
+                }
+
+        event = types.SimpleNamespace(message_obj=MessageObj(), message=None, raw_message=None, bot=Bot())
+        sources = asyncio.run(plugin._quoted_original_image_sources(event))
+        self.assertEqual(sources, ["qq-original-file", "https://cdn.example/original.png"])
+        self.assertEqual(event.bot.calls, [("get_msg", {"message_id": 2132965351, "self_id": "3834455831"})])
+
+    def test_find_generation_record_by_md5_accepts_astrbot_jpeg_variant(self) -> None:
+        """A quoted PNG may arrive after AstrBot's deterministic JPEG conversion."""
+        from io import BytesIO
+        try:
+            from PIL import Image as PILImage
+        except ImportError:
+            self.skipTest("Pillow is required to reproduce AstrBot JPEG conversion")
+
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        with tempfile.TemporaryDirectory() as directory:
+            source = BytesIO()
+            PILImage.new("RGB", (3, 2), (42, 128, 231)).save(source, "PNG")
+            png_data = source.getvalue()
+            normalized = BytesIO()
+            with PILImage.open(BytesIO(png_data)) as image:
+                image.convert("RGB").save(normalized, "JPEG", quality=95, subsampling=0)
+            normalized_md5 = hashlib.md5(normalized.getvalue()).hexdigest()
+            self.assertNotEqual(hashlib.md5(png_data).hexdigest(), normalized_md5)
+
+            cache_file = Path(directory) / "generated_3a23dd4a59f0cb.png"
+            cache_file.write_bytes(png_data)
+            plugin.generated_dir = directory
+            plugin._records_lock = threading.RLock()
+            plugin._records = [
+                {
+                    "success": True,
+                    "generated_image_paths": [cache_file.name],
+                    "md5": hashlib.md5(png_data).hexdigest(),
+                    "request_prompt": "recorded prompt",
+                }
+            ]
+
+            found = plugin._find_generation_record_by_md5(normalized_md5)
+            self.assertIsNotNone(found)
+            self.assertEqual(found["request_prompt"], "recorded prompt")
+            self.assertEqual(found["md5"], normalized_md5)
 
     def test_llm_generation_retry_cache_preserves_request_and_feedback(self) -> None:
         stub = SessionModelAndTaskTests()._plugin_stub()

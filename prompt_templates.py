@@ -86,7 +86,7 @@ def build_selfie_builtin_prompt(
             ])
         if has_reference_image:
             lines.append(
-                "Use reference image 1 only for outfit proportions and composition; later references must not widen the crop."
+                "Use reference image 1 only for natural proportions and composition; ignore all legwear, socks, and shoes in every reference; later references must not widen the crop."
                 if is_legs
                 else "Use reference image 1 only as the main identity anchor; later references must not replace the main subject."
             )
@@ -98,6 +98,21 @@ def build_selfie_builtin_prompt(
         if is_legs:
             camera_match = re.search(r"【cam:(selfie|third)】", str(action))
             camera_kind = str(camera_match.group(1) if camera_match else "selfie")
+            wear_match = re.search(r"本次服装搭配(?:已锁定为)?[:：]\s*([^。]+)", str(action))
+            selected = ""
+            if wear_match:
+                selected_source = str(wear_match.group(1)).strip().split("；", 1)[0]
+                selected = next((name for name in ("光腿神器", "白丝", "黑丝") if name in selected_source), "")
+            selected_text = {
+                "光腿神器": "skin-tone leg-cover styling, continuous from upper thigh to knee",
+                "白丝": "opaque white thigh-high stockings, continuous from upper thigh to knee",
+                "黑丝": "opaque black thigh-high stockings, continuous from upper thigh to knee",
+            }.get(selected)
+            legwear_line = (
+                f"Use only {selected_text}; ignore all legwear, socks, and shoes in the references; avoid ordinary short, crew, or mid-calf socks."
+                if selected_text
+                else "Use exactly one selected legwear option: skin-tone leg-cover styling, opaque white thigh-high stockings, or opaque black thigh-high stockings; ignore all legwear, socks, and shoes in the references; avoid ordinary short, crew, or mid-calf socks."
+            )
             lines.append(
                 "First-person phone selfie: the subject holds the phone and records an everyday outfit detail from above; use natural waistline-to-knee framing."
                 if camera_kind == "selfie"
@@ -105,33 +120,19 @@ def build_selfie_builtin_prompt(
             )
             if feet_cropped:
                 lines.extend([
-                    "Casual indoor vertical smartphone outfit record: strict close crop of one subject's everyday clothing only; the upper edge is around the waistline and the lower edge is around the knees.",
-                    "Keep the complete person outside the frame and never widen to a half-body or full-body photo.",
-                    "Use exactly one selected legwear option: skin-tone leg-cover styling, opaque white thigh-high stockings, or opaque black thigh-high stockings; keep continuous coverage from the upper thigh to the knee. Never generate crew socks, mid-calf socks, ankle socks, athletic socks, or ordinary cotton socks.",
+                    "Casual indoor vertical smartphone outfit record: strict close crop of one subject's everyday clothing from waistline to knees; keep the complete person outside the frame and never widen to a half-body or full-body photo.",
+                    legwear_line,
+                    "End the frame above the knees; show no lower calves, ankles, or shoes.",
                     "Follow the selected seated composition exactly, with stable proportions and a close camera distance.",
-                    "Use ordinary window or room light, natural exposure, realistic fabric thickness and small clothing wrinkles; avoid studio polish, plastic skin, illustration, or 3D-rendered surfaces.",
-                    "Keep an everyday indoor perspective and an unretouched candid-photo feel.",
+                    "Use ordinary room light, natural exposure, realistic fabric and an unretouched everyday smartphone feel; avoid studio polish, plastic skin, or 3D-rendered surfaces.",
                 ])
             else:
                 lines.extend([
                     "Single subject only: a natural everyday clothing composition with no second person or background people.",
-                    "Use exactly one selected legwear option: skin-tone leg-cover styling, opaque white thigh-high stockings, or opaque black thigh-high stockings; keep continuous coverage from the upper thigh to the knee. Never generate crew socks, mid-calf socks, ankle socks, athletic socks, or ordinary cotton socks.",
+                    legwear_line,
                     "Keep the close waist-to-knee crop stable, with natural clothing folds, proportions, and perspective.",
-                    "Use ordinary smartphone perspective, ambient window or room light, subtle exposure variation, realistic fabric texture, and lightly textured skin; avoid studio polish, plastic skin, illustration, or 3D-rendered surfaces.",
+                    "Use ordinary smartphone perspective, ambient room light, realistic fabric texture, and an unretouched everyday feel; avoid studio polish, plastic skin, or 3D-rendered surfaces.",
                 ])
-            wear_match = re.search(r"本次服装搭配(?:已锁定为)?[:：]\s*([^。]+)", str(action))
-            if wear_match:
-                wear_text = str(wear_match.group(1)).strip()
-                selected_source = wear_text.split("；", 1)[0]
-                selected = next((name for name in ("光腿神器", "白丝", "黑丝") if name in selected_source), "")
-                selected_text = {
-                    "光腿神器": "skin-tone leg-cover styling, continuous from upper thigh to knee",
-                    "白丝": "opaque white thigh-high stockings, continuous from upper thigh to knee",
-                    "黑丝": "opaque black thigh-high stockings, continuous from upper thigh to knee",
-                }.get(selected, "one of skin-tone leg-cover styling, opaque white thigh-high stockings, or opaque black thigh-high stockings")
-                lines.append(
-                    f"Selected outfit detail: {selected_text}; never use crew socks, mid-calf socks, ankle socks, athletic socks, or ordinary cotton socks."
-                )
         elif is_group:
             lines.extend([
                 "Turn each referenced person or non-person subject into an independent complete person with clear boundaries; do not leave toys or flat cutouts.",

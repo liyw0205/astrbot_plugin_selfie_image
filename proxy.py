@@ -17,8 +17,9 @@ IMAGE_DOWNLOAD_WAIT_SECONDS = 30
 
 
 def image_client_timeout(seconds: Optional[int] = None) -> aiohttp.ClientTimeout:
-    """Local wait when upstream does not return. Cap 180s; do not use 45/75/90 short cuts."""
-    total = max(20, min(LOCAL_IMAGE_WAIT_SECONDS, int(seconds or LOCAL_IMAGE_WAIT_SECONDS)))
+    """Bound one upstream image request without truncating the channel timeout."""
+    requested = LOCAL_IMAGE_WAIT_SECONDS if seconds is None else int(seconds)
+    total = max(20, requested)
     return aiohttp.ClientTimeout(total=total, connect=10, sock_connect=10, sock_read=total)
 
 
@@ -94,7 +95,11 @@ def target_session_proxy(target):
 
 
 @asynccontextmanager
-async def channel_client_session(proxy_value: str, fallback: aiohttp.ClientSession) -> AsyncIterator[aiohttp.ClientSession]:
+async def channel_client_session(
+    proxy_value: str,
+    fallback: aiohttp.ClientSession,
+    timeout_seconds: Optional[int] = None,
+) -> AsyncIterator[aiohttp.ClientSession]:
     """Use a dedicated SOCKS connector only when the channel requires one."""
     proxy = parse_channel_proxy(proxy_value)
     if not proxy or not proxy.is_socks:
@@ -108,7 +113,7 @@ async def channel_client_session(proxy_value: str, fallback: aiohttp.ClientSessi
     async with aiohttp.ClientSession(
         connector=connector,
         trust_env=False,
-        timeout=image_client_timeout(),
+        timeout=image_client_timeout(timeout_seconds),
     ) as session:
         yield session
 
