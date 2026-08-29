@@ -332,7 +332,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.6")
+        self.assertEqual(PLUGIN_VERSION, "1.4.8")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -509,6 +509,8 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("everyday clothing", en)
         self.assertIn("smartphone outfit record", en)
         self.assertIn("plastic skin", en)
+        self.assertIn("mid-calf socks", en)
+        self.assertIn("skin-tone leg-cover styling", en)
         self.assertIn("vertical", en.lower())
         self.assertNotRegex(en, r"[\u3400-\u9fff]")
         self.assertNotIn("User request:", en)
@@ -5018,8 +5020,10 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("脚部画外", text)
             self.assertNotIn("双脚裁出画外", text)
             self.assertNotIn("不露脸", text)
-            for forbidden in ("短袜", "堆堆袜", "过膝袜", "长筒袜", "肉色丝袜", "丝袜", "勒进大腿肉", "半透明", "赤足", "碰脚", "脚趾自然清晰", "完整包住脚部"):
+            for forbidden in ("过膝袜", "长筒袜", "肉色丝袜", "丝袜", "勒进大腿肉", "半透明", "赤足", "碰脚", "脚趾自然清晰", "完整包住脚部"):
                 self.assertNotIn(forbidden, text)
+            self.assertIn("腿部穿搭只允许光腿神器、白丝或黑丝三选一", text)
+            self.assertIn("禁止中筒袜、短袜", text)
             self.assertNotIn("微胖软肉", text)
             self.assertNotIn("不要大象腿猪腿", text)
             self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
@@ -5414,7 +5418,8 @@ class LegFocusTests(unittest.TestCase):
             forced_crop = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
         self.assertIn("【pose:sit_crop】", forced_crop)
         self.assertIn("【legs:outfit】", forced_crop)
-        self.assertIn("白色不透长袜", forced_crop)
+        self.assertIn("白色不透白丝", forced_crop)
+        self.assertIn("从大腿连续覆盖到膝部", forced_crop)
         self.assertIn("腰线附近到膝部附近", forced_crop)
         self.assertNotIn("脚部画外", forced_crop)
         from astrbot_plugin_selfie_image.persona import PersonaManager
@@ -5424,6 +5429,8 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("服装局部展示", final_crop)
         self.assertNotIn("换装要求", final_crop)
         self.assertIn("腰线附近到膝部附近", final_crop)
+        self.assertIn("白色不透白丝（从大腿连续覆盖到膝部", final_crop)
+        self.assertIn("禁止中筒袜、短袜", final_crop)
         for conflict in ("脚趾五个分开", "身体从入镜部位连续到脚", "包住整脚到脚趾", "勒进大腿肉", "晒腿", "主要看腿形"):
             self.assertNotIn(conflict, final_crop)
         self.assertNotIn("微胖软肉", final_crop)
@@ -5431,6 +5438,8 @@ class LegFocusTests(unittest.TestCase):
         final_crop_en = build_selfie_builtin_prompt(forced_crop, language="en", has_reference_image=True)
         self.assertIn("waistline-to-knee framing", final_crop_en)
         self.assertIn("everyday clothing", final_crop_en)
+        self.assertIn("opaque white thigh-high stockings, continuous from upper thigh to knee", final_crop_en)
+        self.assertIn("mid-calf socks", final_crop_en)
         with patch(
             "astrbot_plugin_selfie_image.main.random.choice",
             side_effect=lambda values: values[0],
@@ -5469,8 +5478,9 @@ class LegFocusTests(unittest.TestCase):
             self.assertNotIn(other_en_phrase, camera_prompt_en)
         filtered = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "短袜 过膝袜 肉丝 清晨", False)
         self.assertIn("清晨", filtered)
+        filtered_extra = re.split(r"用户补充要求优先[:：]", filtered, maxsplit=1)[-1]
         for forbidden in ("短袜", "过膝袜", "肉丝"):
-            self.assertNotIn(forbidden, filtered)
+            self.assertNotIn(forbidden, filtered_extra)
         neutralized = plugin_main.SelfieImagePlugin._build_leg_focus_action(
             _P(), "侧躺 跪坐 掀衣摆 不露脸 主要看腿形 短裙", False
         )
@@ -5484,13 +5494,14 @@ class LegFocusTests(unittest.TestCase):
 
         self.assertEqual(set(plugin_main.LEGWEAR_PROMPTS), {"光腿神器", "白丝", "黑丝"})
         bare_leg = plugin_main.LEGWEAR_PROMPTS["光腿神器"]
-        self.assertIn("自然肤色日常搭配", bare_leg)
+        self.assertIn("自然肤色光腿神器", bare_leg)
         self.assertNotIn("主要看腿形", bare_leg)
         self.assertNotIn("脚趾", bare_leg)
         for name in ("白丝", "黑丝"):
             text = plugin_main.LEGWEAR_PROMPTS[name]
             self.assertIn("不透", text)
-            self.assertIn("长袜", text)
+            self.assertIn(name, text)
+            self.assertIn("从大腿连续覆盖到膝部", text)
             self.assertIn("袜口", text)
             self.assertNotIn("主要看腿形", text)
             self.assertNotIn("脚部", text)
@@ -5846,9 +5857,10 @@ class LegFocusTests(unittest.TestCase):
         normalized = plugin._normalize_selfie_action("看看腿 白丝 短袜 清晨", False)
         self.assertIn("【pose:", normalized)
         self.assertIn("清晨", normalized)
-        self.assertIn("本次服装搭配：白色不透长袜", normalized)
+        self.assertIn("本次服装搭配已锁定为：白色不透白丝", normalized)
         self.assertNotIn("本次腿部穿搭：", normalized)
-        self.assertNotIn("短袜", normalized)
+        normalized_extra = re.split(r"用户补充要求优先[:：]", normalized, maxsplit=1)[-1]
+        self.assertNotIn("短袜", normalized_extra)
         self.assertEqual(plugin._normalize_selfie_action(normalized, False), normalized)
 
     def test_user_requested_legwear_is_honored(self) -> None:
@@ -5909,14 +5921,27 @@ class LegFocusTests(unittest.TestCase):
             pass
 
         white = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "白丝 清晨", False)
-        self.assertIn("本次服装搭配：白色不透长袜", white)
+        self.assertIn("本次服装搭配已锁定为：白色不透白丝", white)
         self.assertNotIn("本次腿部穿搭：", white)
         black = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "黑丝", False)
-        self.assertIn("本次服装搭配：黑色不透长袜", black)
+        self.assertIn("本次服装搭配已锁定为：黑色不透黑丝", black)
         bare = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "光腿神器", False)
-        self.assertIn("本次服装搭配：自然肤色日常搭配", bare)
+        self.assertIn("本次服装搭配已锁定为：自然肤色光腿神器", bare)
         forced = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False, force_legwear="白丝")
-        self.assertIn("本次服装搭配：白色不透长袜", forced)
+        self.assertIn("本次服装搭配已锁定为：白色不透白丝", forced)
+        from astrbot_plugin_selfie_image.persona import PersonaManager
+
+        for legwear, expected in (
+            ("光腿神器", "自然肤色光腿神器（从大腿连续覆盖到膝部）"),
+            ("白丝", "白色不透白丝（从大腿连续覆盖到膝部，袜口在大腿上部）"),
+            ("黑丝", "黑色不透黑丝（从大腿连续覆盖到膝部，袜口在大腿上部）"),
+        ):
+            action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
+                _P(), "", False, force_legwear=legwear
+            )
+            with tempfile.TemporaryDirectory() as tmp:
+                final = PersonaManager(tmp).build_selfie_prompt(action, "小助", "温柔", True, 0)
+            self.assertIn(expected, final)
 
     def test_legwear_is_pose_weighted(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
@@ -6207,6 +6232,36 @@ class StudioStoreTests(unittest.TestCase):
             bot_only=bot_only_flag,
         )
         self.assertEqual(routed[0], "bot_outfit_day.jpg")
+
+    def test_reply_sender_user_is_not_treated_as_bot(self) -> None:
+        """A context/user id must not make a user's quoted image use bot cache."""
+        stub = SessionModelAndTaskTests()._plugin_stub()
+
+        class Image:
+            pass
+
+        class Reply:
+            def __init__(self, sender_id):
+                self.sender_id = sender_id
+                self.chain = [Image()]
+
+        class MessageObj:
+            def __init__(self, quote):
+                self.quote = quote
+
+        class Event:
+            def __init__(self, quote):
+                self.self_id = "bot-1"
+                self.message_obj = MessageObj(quote)
+                self.message = None
+                self.raw_message = None
+
+        # Some adapters expose the current user on the plugin context.  It
+        # must not be added to the bot identity set.
+        stub.context = types.SimpleNamespace(user_id="user-1")
+        self.assertEqual(stub._bot_account_ids(Event(Reply("user-1"))), ["bot-1"])
+        self.assertFalse(stub._event_quotes_bot_image(Event(Reply("user-1"))))
+        self.assertTrue(stub._event_quotes_bot_image(Event(Reply("bot-1"))))
 
     def test_llm_generation_retry_cache_preserves_request_and_feedback(self) -> None:
         stub = SessionModelAndTaskTests()._plugin_stub()

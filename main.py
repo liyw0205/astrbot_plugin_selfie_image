@@ -287,13 +287,13 @@ def is_leg_calf_crop_action(text: str) -> bool:
 
 LEGWEAR_PROMPTS = {
     "光腿神器": (
-        "本次服装搭配：自然肤色日常搭配，材质自然，作为得体穿搭的一部分。"
+        "本次服装搭配：自然肤色光腿神器，从大腿连续覆盖到膝部，材质自然，作为得体穿搭的一部分。"
     ),
     "白丝": (
-        "本次服装搭配：白色不透长袜，袜口和材质自然，作为得体日常穿搭的一部分。"
+        "本次服装搭配：白色不透白丝，从大腿连续覆盖到膝部，袜口位于大腿上部，作为得体日常穿搭的一部分。"
     ),
     "黑丝": (
-        "本次服装搭配：黑色不透长袜，袜口和材质自然，作为得体日常穿搭的一部分。"
+        "本次服装搭配：黑色不透黑丝，从大腿连续覆盖到膝部，袜口位于大腿上部，作为得体日常穿搭的一部分。"
     ),
 }
 
@@ -328,9 +328,9 @@ LEGFOCUS_RISKY_EXTRA_REPLACEMENTS = (
 )
 
 SAFE_LEGWEAR_LABELS = {
-    "光腿神器": "自然肤色日常搭配",
-    "白丝": "白色不透长袜",
-    "黑丝": "黑色不透长袜",
+    "光腿神器": "自然肤色光腿神器，从大腿连续覆盖到膝部",
+    "白丝": "白色不透白丝，从大腿连续覆盖到膝部，袜口位于大腿上部",
+    "黑丝": "黑色不透黑丝，从大腿连续覆盖到膝部，袜口位于大腿上部",
 }
 
 
@@ -1646,7 +1646,9 @@ class SelfieImagePlugin(Star):
 
     def _bot_account_ids(self, event: Optional[AstrMessageEvent] = None) -> List[str]:
         ids = set()
-        context_keys = ("bot_id", "self_id", "account_id", "qq", "uin", "user_id")
+        # Context is global to the plugin and may expose the current user's
+        # ``user_id`` on some runtimes; that is never a bot identity.
+        context_keys = ("bot_id", "self_id", "account_id", "qq", "uin")
         event_keys = ("bot_id", "self_id", "account_id", "qq", "uin")
         robot_keys = ("bot_id", "self_id", "account_id", "qq", "uin", "user_id", "id")
 
@@ -3888,8 +3890,11 @@ class SelfieImagePlugin(Star):
                 weights=[weight for _, weight in legwear_options],
                 k=1,
             )[0]
-        legwear_label = SAFE_LEGWEAR_LABELS.get(legwear, "日常不透明长袜")
-        legwear_rule = f"本次服装搭配：{legwear_label}，材质自然，作为得体日常穿搭的一部分。"
+        legwear_label = SAFE_LEGWEAR_LABELS.get(legwear, "光腿神器、白丝或黑丝三选一")
+        legwear_rule = (
+            f"本次服装搭配已锁定为：{legwear_label}；"
+            "腿部穿搭只允许光腿神器、白丝、黑丝三选一，禁止中筒袜、短袜、运动袜、船袜、堆堆袜、普通棉袜或袜子停在小腿中段。"
+        )
         base = (
             "成年人物日常穿搭记录。竖屏手机记录照。"
             f"{camera_line}"
@@ -6407,7 +6412,7 @@ class SelfieImagePlugin(Star):
                 "· /文生图　只用文字按原文出图，不走自拍人设，也不用形象图；可写数量",
                 "· /图生图　必须附图或引用图，按原文改图；可写数量；不自动使用形象图",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装；可写数量如 /自拍 3",
-                "· /看看腿　日常下装穿搭记录；随机手机记录或朋友协助拍摄视角；可写数量如 /看看腿 3",
+                "· /看看腿　日常下装穿搭记录；腿部穿搭仅随机光腿神器、白丝或黑丝，可直接指定；随机手机记录或朋友协助拍摄视角；可写数量如 /看看腿 3",
                 "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
                 "· /看看COS　随机一套内置 COS 换装；默认随机自拍或他拍，也可写「自拍」「他拍」；可写数量如 /看看COS 2",
                 "· /看看你　像别人随手拍你；可写数量",

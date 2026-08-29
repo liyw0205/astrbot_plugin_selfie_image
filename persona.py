@@ -1039,20 +1039,24 @@ class PersonaManager:
                     "严格近距离取景：画面只保留腰线附近到膝部附近的服装区域；不扩展为半身或全身构图。",
                     "完整人物保持在画外，镜头不要拉远。",
                     "画面主体为成年人物的得体日常服装展示，重点展示服装的颜色、材质、层次和自然版型，不刻意强调身体细节。",
-                    "画面只有主角一人，服装材质不透明，裙装或长裤与日常长袜搭配自然；保持室内生活场景和柔和光线。",
+                    "画面只有主角一人；腿部穿搭只允许光腿神器、白丝或黑丝三选一，禁止中筒袜、短袜、运动袜、船袜、堆堆袜、普通棉袜或袜子停在小腿中段；保持室内生活场景和柔和光线。",
                     "按动作描述保持自然坐姿、跪坐、侧躺、抱膝、交叠坐姿、窗边坐或席地屈膝，画面重心稳定，服装纹理清楚。",
                     "整体比例自然，衣物穿着完整，不出现多余人物或杂乱肢体。",
                 ]
             )
-            wear_match = re.search(r"本次服装搭配[:：]\s*([^。]+)", act)
+            wear_match = re.search(r"本次服装搭配(?:已锁定为)?[:：]\s*([^。]+)", act)
             if wear_match:
                 wear_text = str(wear_match.group(1)).strip()
-                wear_text = (
-                    wear_text.replace("白丝", "白色不透长袜")
-                    .replace("黑丝", "黑色不透长袜")
-                    .replace("光腿神器", "自然肤色日常搭配")
+                selected_source = wear_text.split("；", 1)[0]
+                selected = next((name for name in ("光腿神器", "白丝", "黑丝") if name in selected_source), "")
+                selected_text = {
+                    "光腿神器": "自然肤色光腿神器（从大腿连续覆盖到膝部）",
+                    "白丝": "白色不透白丝（从大腿连续覆盖到膝部，袜口在大腿上部）",
+                    "黑丝": "黑色不透黑丝（从大腿连续覆盖到膝部，袜口在大腿上部）",
+                }.get(selected, "光腿神器、白丝或黑丝三选一")
+                mode_lines.append(
+                    f"本次服装搭配已锁定为：{selected_text}；禁止中筒袜、短袜、运动袜、船袜、堆堆袜、普通棉袜或袜子停在小腿中段。"
                 )
-                mode_lines.append(f"本次服装搭配：{wear_text}。")
             pose_match = re.search(r"【pose:([a-z_]+)】", act)
             if pose_match:
                 pose_descriptions = {
