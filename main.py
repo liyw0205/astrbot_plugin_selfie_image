@@ -69,6 +69,7 @@ from .models import (
     normalize_config_tree,
     normalize_legacy_keys,
     preflight_video_channel,
+    strip_channel_timeouts,
 )
 from .persona import PersonaManager
 from .studio import (
@@ -339,6 +340,8 @@ SAFE_LEGWEAR_LABELS = {
 # COS pool: garment silhouettes first. Work/source lock is optional —
 # character outfits may name a series; category outfits (hanfu, white dress)
 # only describe visible structure, never Douyin/author/title provenance.
+# Titles use `·` for the main split; matching accepts the full title or a
+# complete title segment, never an arbitrary substring.
 COS_LOOK_SETS: List[Dict[str, str]] = [
     {"id": "roxy_cream", "title": "洛琪希·奶油睡衣", "prompt": "严格换装为《无职转生》洛琪希的奶油色居家睡衣两件套：米白奶油色无袖睡衣上衣，柔软微皱棉质，领口与肩线细荷叶边抽褶；胸前白色缎带大蝴蝶结与长飘带；同色宽松睡衣短裤；浅薰衣草紫超长发双麻花辫垂在胸前；姿势严格为跪坐在地毯上，双膝并拢，双腿收拢并拢压在身下，臀部坐在脚跟上，脚部不要向两侧张开，不要盘腿、分腿或站立；对镜坐在木地板地毯上；禁止蓝色旅行法师外套、宽檐帽、法杖。"},
     {"id": "hanfu_peach", "title": "齐胸汉服·桃粉", "prompt": "严格换装为桃粉齐胸汉服：齐胸抹胸高腰，桃粉多层长裙，轻薄裙摆与细微花卉刺绣；高腰翠绿宽丝带和长飘带；黑发高髻配粉色牡丹与金簪；细金项链和长吊坠耳环；古风优雅，日常得体，不要现代礼服。"},
@@ -356,7 +359,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
     {"id": "platinum_lace_gown", "title": "铂金发白蕾丝长裙", "prompt": "严格换装为铂金长直发白蕾丝长裙：头发中分，两缕垂到大腿。上身高领白蕾丝抽褶衣，短蓬袖蕾丝边，腰上同色宽带和扣。下装多层奶白长裙，薄纱外层，一侧用手掀起露出大腿。裸腿。室内素墙对镜全身。不是婚纱，也不是齐胸汉服。"},
     {"id": "xishi_cyan_qipao", "title": "西施·青绿渐变旗袍", "prompt": "严格换装为《王者荣耀》西施这一版青绿渐变旗袍：黑长直发披背。上身高立领，白盘扣，领下到腰是青绿转到象牙白，深棕滚边；右胸白花蝶贴饰；七分袖，袖口白蕾丝，袖缝棕滚边。腰下白内裙微微鼓出。外裙下摆蓝花叶纹，一侧高开叉到大腿，内层白蕾丝衬裙。颈上一串白珠。室内素墙对镜全身。不是原皮长裙水莲，也不是鹿角同人短旗袍。"},
     {"id": "yellow_bow_maid", "title": "黄结白围裙女仆", "prompt": "严格换装为深蓝底白围裙女仆装：黑长直发披背。上身深蓝底衣，白色荷叶水手领黑滚边；胸前大黄蝴蝶结，结心绿宝石。肩上白蓬袖，深蓝袖管，袖口白宽边黑条。腰上白围裙束出荷叶，裙摆白荷叶盖在深蓝裙外。白手套。室内柔光对镜全身。不是黑白法式女仆，也不是蕾姆蓝白女仆。"},
-    {"id": "silver_deepv_hanfu", "title": "银紫深V广袖", "prompt": "严格换装为银紫长直发深V广袖古装：头发中分垂过腰，右侧白花步摇。上身交领极低开到胸口，领边金云纹滚边；前中一条金绣直襟从领口通到裙摆；外层粉白薄纱，腰上浅粉腰带。广袖，肩头藕粉抽褶，袖身粉白薄纱。下装粉白多层长裙，前中金绣直条。室内柔光对镜全身。不是齐胸抹胸汉服。"},
+    {"id": "silver_deepv_hanfu", "title": "汉服·银紫深V广袖", "prompt": "严格换装为银紫长直发深V广袖古装：头发中分垂过腰，右侧白花步摇。上身交领极低开到胸口，领边金云纹滚边；前中一条金绣直襟从领口通到裙摆；外层粉白薄纱，腰上浅粉腰带。广袖，肩头藕粉抽褶，袖身粉白薄纱。下装粉白多层长裙，前中金绣直条。室内柔光对镜全身。不是齐胸抹胸汉服。"},
     {"id": "blue_backless_hanfu", "title": "露背蓝纱古装", "prompt": "严格换装为露背蓝纱古装：黑发高髻。构图必须是单人四分之三侧身，身体朝画面一侧转开，镜头同时看到一侧脸颊、一侧锁骨和从颈到腰的整片裸背，不要正面全身，也不要正对镜头的后脑勺。后颈一条亮蓝丝带打结，两根长带沿背沟垂下；后背无交叉带、无第二套肩带。右肩只搭一层浅蓝暗纹薄纱。袖和裙都是多层蓝纱，从冰蓝渐变到青绿再到宝蓝，广袖鼓起但不挡背，长裙拖地。人体只有两条胳膊、两只手，一只手自然垂在身侧，另一只手轻扶裙或纱，不要第三只手、不要重复手臂、不要镜子里再长出一只手。室内黑底柔光，单人侧身对镜。不是齐胸长裙，也不是白婚纱。"},
     {"id": "jixiaoman_black_gold", "title": "姬小满·黑金橙短装", "prompt": "严格换装为《王者荣耀》姬小满这一版黑金橙短装：浅橙粉到珊瑚橙长发披肩。内层白领立领。外层黑色短款宽袖外套只到胸下，金滚边，胸前金纹与金链吊坠，整段腰腹露出。宽袖外黑内亮橙金，袖口金边。腰上金腰带。髋前一块大金六角护甲板，板上有圆环纹。下装黑色短裤，裤口白边，大腿裸出。髋侧一条浅紫白辫状长尾饰。室内柔光对镜全身。不是黄睡衣家居，不是黄短裙，也不是齐胸长裙汉服。"},
     {"id": "xishi_shiyu_jiangnan", "title": "西施·诗语江南", "prompt": "严格换装为《王者荣耀》西施诗语江南这一版青绿短款：黑长发披肩，一侧编小辫，金花叶发饰。上身贴身青绿短衣，白花绣，金滚边；高立领金边；左肩一团青绿荷叶大结；内衬白底白花金边，前襟掀起露出腰腹。广袖，外层青绿金袖口，内层白袖金边。腰侧粉红流苏小囊。下装浅青绿白多层迷你蓬裙，裙摆只到大腿。白色不透明过膝袜，袜口宽米色边。室内素墙对镜全身。不是原皮长裙水莲，不是鹿角同人短旗袍，也不是青绿长旗袍。"},
@@ -367,13 +370,98 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
     {"id": "yangyang_blue_floral_swim", "title": "秧秧·蓝白碎花泳装", "prompt": "严格换装为《鸣潮》秧秧这一版蓝白碎花泳装：黑长直发，发尾染蓝，左侧银发卡。上身细吊带白底蓝花比基尼，蓝荷叶滚边，胸前蓝结。无袖，整段腰腹露出。下装同料白底蓝花薄纱裹裙，左髋打结，一侧高开。室内柔光对镜全身。不是原皮长外套白裙，也不是普通白婚纱。"},
     {"id": "cartethyia_black_bird", "title": "卡提希娅·黑裙飞鸟", "prompt": "严格换装为《鸣潮》卡提希娅这一版：浅冰蓝长发。颈上黑立领，正中金翼剑徽。上身白胸衣，蓝藤花绣，外罩黑色金环胸带。肩上白到浅蓝短披，肩头圆环纹。左上臂藕粉袖箍金环。下装黑色迷你裙，裙上白绣飞鸟，一侧蓝带和金链。赤足，银枝状脚环。室内柔光对镜全身。不是白婚纱，也不是齐胸汉服。"},
     {"id": "mint_twin_braid_hanfu", "title": "青绿双辫广袖长裙", "prompt": "严格换装为深棕双麻花辫青绿广袖长裙：两股粗辫垂在胸前。上身淡青绿立领短衣，领前白花绣，内层白襟。广袖淡青绿，褐花藤绣，袖里白。腰侧粉红花囊。下装白到淡青绿多层蓬长裙。室内素墙对镜全身。不是齐胸抹胸汉服，也不是迷你短裙。"},
+    {"id": "mansui_gray_wafu", "title": "满穗·灰白和风", "prompt": "严格换装为满穗风格的灰白色和风 COS 造型：黑色长发齐刘海，双侧丸子头，白色大蝴蝶结发饰和白色飘带。上身宽松灰白色长袖上衣，柔软布料与自然褶皱，领口和胸前有深色细滚边；下装深灰色高腰长裙，多层自然垂落的褶皱裙摆，裙摆略带轻薄质感；自然裸腿，搭配简洁黑色平底鞋。单人竖屏手机高机位俯拍，人物跪坐或半跪在室外地面，抬头看向镜头，一只手在脸旁比 V，另一只手轻轻整理裙摆。背景是旧墙、灰色地面和少量散落树叶，阴天自然光，真实手机摄影质感，画面干净得体。不要中筒袜、短袜或厚重打底袜，不要字幕、贴纸、水印或额外人物。"},
+    {"id": "xiao_qiao_white_bear", "title": "小乔·白熊围巾", "prompt": "严格换装为薄荷绿白熊主题的完整 COS 造型：薄荷绿色长发或中长卷发，头顶白色圆形熊耳发饰，发间有少量彩色小装饰。上身白色宽松蓬袖上衣，袖口和肩部带薄荷绿色装饰；颈部围着粗针织黄色长围巾，围巾两端自然垂下；腰间有粉色蝴蝶结。下装亮蓝色和青绿色百褶短裙，裙面有白色和金黄色几何线条，裙前悬挂小人偶、星星和流苏装饰。腿部穿白色不透明过膝袜或连贯白色腿部服装，从大腿上方连续到脚踝，不要中筒袜、短袜或袜口截断；脚穿白色与米黄色动物毛绒拖鞋，带蓝色和粉色绑带装饰。单人竖屏手机正面全身摄影，室内客厅电视柜前，双手自然抬起整理黄色围巾，明亮普通房间光线，真实真人 COS 摄影质感。不要视频字幕、文字、水印、贴纸或第二个人。"},
+    {"id": "furina_cream_blue_ruffle", "title": "芙宁娜·奶油浅蓝荷叶裙", "prompt": "严格换装为芙宁娜风格的奶油浅蓝荷叶裙 COS 造型：白金色短卷发或齐肩波浪发，发丝中混合浅蓝色挑染，前额柔软碎发和两缕侧边卷发，头顶佩戴浅色猫耳发饰。上身奶油米白色荷叶边上衣，肩部和胸前有多层柔软荷叶边，长袖略宽松，面料带浅粉色和浅蓝色小花图案，胸前佩戴细链项链。腰部系灰蓝色大蝴蝶结。下装浅蓝灰色多层蓬松半身裙，由多层蓝灰色布料和奶油白荷叶边组成，每层边缘带细白色蕾丝，裙面有少量细小花朵装饰。单人竖屏手机正面近景或三分之二身构图，人物正对镜头，表情温柔自然，双手自然放在身体两侧或轻轻展开裙摆，画面从头顶拍到膝盖附近。室内温暖客厅背景，木色柜体和柔和环境光，真实真人 COS 摄影质感。不要字幕、猫咪贴纸、文字、水印、塑料皮肤、过度磨皮或额外人物。"},
 ]
 
-def pick_cos_look_set(*, avoid_id: str = "") -> Dict[str, str]:
-    pool = [item for item in COS_LOOK_SETS if str(item.get("id") or "") != str(avoid_id or "")]
+COS_LOOK_CATEGORY_TERMS = (
+    "旗袍", "汉服", "女仆", "睡衣", "长裙", "短裙", "短装", "泳装", "古装",
+    "洛丽塔", "花嫁", "围裙", "白熊", "和风", "荷叶裙",
+)
+
+
+def _cos_item_terms(item: Mapping[str, Any]) -> List[str]:
+    """Return complete searchable segments from a pool item's title."""
+    title = str(item.get("title") or "")
+    compact_title = re.sub(r"\s+", "", title).lower()
+    terms: List[str] = [compact_title]
+    for part in re.split(r"[·/\s、，,：:（）()]+", title):
+        part = part.strip().lower()
+        if len(part) >= 2:
+            terms.append(part)
+    for term in COS_LOOK_CATEGORY_TERMS:
+        if term in title:
+            terms.append(term.lower())
+    return list(dict.fromkeys(term for term in terms if len(term) >= 2))
+
+
+def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
+    """Match a COS pool subset by full title, character, or outfit category."""
+    query = re.sub(r"\s+", "", str(text or "")).strip().lower()
+    if not query:
+        return []
+    all_items = [dict(item) for item in COS_LOOK_SETS]
+    exact: List[Dict[str, str]] = []
+    category_terms = [term.lower() for term in COS_LOOK_CATEGORY_TERMS if term.lower() in query]
+    category_term_set = {term.lower() for term in COS_LOOK_CATEGORY_TERMS}
+    name_terms: List[str] = []
+    for item in all_items:
+        title = str(item.get("title") or "")
+        head = title.split("·", 1)[0].strip().lower()
+        if len(head) >= 2 and head in query:
+            name_terms.append(head)
+        for part in re.split(r"[·/\s、，,：:（）()]+", title):
+            part = part.strip().lower()
+            if (
+                len(part) >= 2
+                and part not in category_term_set
+                and part in query
+            ):
+                name_terms.append(part)
+    name_terms = list(dict.fromkeys(name_terms))
+    for item in COS_LOOK_SETS:
+        full_title = re.sub(r"\s+", "", str(item.get("title") or "")).lower()
+        if full_title and full_title in query:
+            exact.append(dict(item))
+    if exact:
+        return exact
+
+    # Character/alias and category filters can be combined, so `西施旗袍`
+    # narrows to Xishi's qipao entries while plain `旗袍` keeps all qipaos.
+    pool = all_items
+    if name_terms:
+        pool = [
+            item for item in pool
+            if any(term in name_terms for term in _cos_item_terms(item))
+        ]
+    if category_terms:
+        pool = [
+            item for item in pool
+            if all(category in _cos_item_terms(item) for category in category_terms)
+        ]
+    if name_terms or category_terms:
+        return pool
+
+    # No title segment matched: preserve the caller's text as an ordinary
+    # extra prompt instead of guessing a nearby title.
+    return []
+
+
+def pick_cos_look_set(*, avoid_id: str = "", query: str = "") -> Dict[str, str]:
+    matched = match_cos_look_sets(query)
+    pool = matched or list(COS_LOOK_SETS)
+    pool = [item for item in pool if str(item.get("id") or "") != str(avoid_id or "")]
     if not pool:
-        pool = list(COS_LOOK_SETS)
+        pool = matched or list(COS_LOOK_SETS)
     return dict(random.choice(pool))
+
+
+def format_cos_look_list() -> str:
+    """Format the ordered COS pool for the non-generating list command."""
+    lines = [f"看看COS 随机池（{len(COS_LOOK_SETS)}套）："]
+    lines.extend(f"{index}. {item.get('title') or '未命名套装'}" for index, item in enumerate(COS_LOOK_SETS, 1))
+    return "\n".join(lines)
 
 
 def parse_requested_cos_camera(text: str) -> str:
@@ -750,7 +838,9 @@ class SelfieImagePlugin(Star):
 
     def _load_initial_config(self) -> Dict[str, Any]:
         persisted = self._strip_web_startup_config(load_json_file(self.config_path))
-        source = normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, persisted)))
+        source = strip_channel_timeouts(
+            normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, persisted)))
+        )
         source["web"] = copy.deepcopy(self.key_config["web"])
         return source
 
@@ -761,7 +851,9 @@ class SelfieImagePlugin(Star):
 
     def _apply_raw_config(self, raw: Dict[str, Any]) -> None:
         raw = self._strip_web_startup_config(raw)
-        next_config = normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, raw)))
+        next_config = strip_channel_timeouts(
+            normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, raw)))
+        )
         next_config["web"] = copy.deepcopy(self.key_config["web"])
         self.raw_config = next_config
         self.config = AICatConfig.from_dict(self.raw_config)
@@ -3087,6 +3179,28 @@ class SelfieImagePlugin(Star):
             return value if value > 0 else 0
         return chinese_digits.get(value_text, 0)
 
+    def _split_attached_count_token(self, token: str) -> Tuple[str, int]:
+        """Split COS shorthand such as `3旗袍`, `3张西施`, or `西施3`."""
+        text = str(token or "").strip().translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+        if not text:
+            return "", 0
+        count = self._parse_count_token(text)
+        if count:
+            return "", count
+        count_pattern = r"(?:\d{1,2}|[一二两俩三四五六七八九十]{1,3})"
+        suffix_pattern = r"(?:张|次|幅)?"
+        match = re.fullmatch(rf"({count_pattern}){suffix_pattern}(.+)", text)
+        if match:
+            count = self._parse_count_token(match.group(1))
+            if count:
+                return match.group(2).strip(), count
+        match = re.fullmatch(rf"(.+?)({count_pattern}){suffix_pattern}", text)
+        if match:
+            count = self._parse_count_token(match.group(2))
+            if count:
+                return match.group(1).strip(), count
+        return text, 0
+
     def _command_tokens_for_count(self, text: str) -> List[str]:
         raw_tokens = re.sub(r"\s+", " ", str(text or "").strip()).split()
         tokens: List[str] = []
@@ -3100,7 +3214,7 @@ class SelfieImagePlugin(Star):
             tokens.append(token)
         return tokens
 
-    def _extract_command_count(self, text: str) -> Tuple[str, int]:
+    def _extract_command_count(self, text: str, *, allow_attached: bool = False) -> Tuple[str, int]:
         tokens = self._command_tokens_for_count(text)
         if not tokens:
             return "", 1
@@ -3111,6 +3225,13 @@ class SelfieImagePlugin(Star):
             if count:
                 remaining = [token for pos, token in enumerate(tokens) if pos != index]
                 return " ".join(remaining).strip(), self._normalize_count(count)
+            if allow_attached:
+                remainder, count = self._split_attached_count_token(tokens[index])
+                if count:
+                    remaining = [token for pos, token in enumerate(tokens) if pos != index]
+                    if remainder:
+                        remaining.insert(index, remainder)
+                    return " ".join(remaining).strip(), self._normalize_count(count)
         return " ".join(tokens).strip(), 1
 
     def _parse_prompt_options(self, text: str, aspect_ratio: str = "", resolution: str = "") -> Tuple[str, str, str]:
@@ -4036,7 +4157,7 @@ class SelfieImagePlugin(Star):
         camera: str = "",
     ) -> str:
         """看看COS：随机套装；机位默认自拍/他拍随机，额外提示词可指定。"""
-        chosen = pick_cos_look_set(avoid_id=avoid_id)
+        chosen = pick_cos_look_set(avoid_id=avoid_id, query=extra_request)
         title = str(chosen.get("title") or "随机COS")
         camera_kind = pick_cos_camera(extra_request=extra_request, avoid=avoid_camera, camera=camera)
         outfit = adapt_cos_outfit_for_camera(str(chosen.get("prompt") or "").strip(), camera_kind)
@@ -5904,7 +6025,6 @@ class SelfieImagePlugin(Star):
                     "api_keys": channel.api_keys,
                     "model": channel.model,
                     "enabled_models": channel.enabled_models,
-                    "timeout": channel.timeout,
                     "enabled": channel.enabled,
                     "proxy": channel.proxy,
                 }
@@ -5920,7 +6040,6 @@ class SelfieImagePlugin(Star):
                     "api_key": channel.api_key,
                     "model": channel.model,
                     "enabled_models": channel.enabled_models,
-                    "timeout": channel.timeout,
                     "enabled": channel.enabled,
                     "proxy": channel.proxy,
                 },
@@ -6376,7 +6495,7 @@ class SelfieImagePlugin(Star):
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装；可写数量如 /自拍 3",
                 "· /看看腿　日常下装穿搭记录；腿部穿搭仅随机光腿神器、白丝或黑丝，可直接指定；随机手机记录或朋友协助拍摄视角；可写数量如 /看看腿 3",
                 "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
-                "· /看看COS　随机一套内置 COS 换装；默认随机自拍或他拍，也可写「自拍」「他拍」；可写数量如 /看看COS 2",
+                "· /看看COS　随机一套内置 COS 换装；可发「看看COS 列表/全部/查看」浏览标题，也可按标题中的角色名或服装类别指定，如「看看COS 西施」「看看COS 旗袍」「看看COS 3旗袍」；默认随机自拍或他拍，也可写「自拍」「他拍」",
                 "· /看看你　像别人随手拍你；可写数量",
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象；可写数量",
                 "",
@@ -7028,13 +7147,17 @@ class SelfieImagePlugin(Star):
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        """随机一套内置 COS 换装；默认随机自拍或他拍。可写数量如 /看看COS 3。"""
+        """随机一套内置 COS 换装；可用列表/全部/查看浏览标题，或按标题分段指定套装并附加数量。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看COS", fallback_args)
         # Also accept lowercase command text extraction fallbacks.
         if not raw_message:
             raw_message = extract_command_message(event, "看看cos", fallback_args)
-        raw_extra, requested_count = self._extract_command_count(raw_message)
+        list_request = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(raw_message or "")).lower()
+        if list_request in {"列表", "全部", "查看", "list", "all", "view"}:
+            yield event.plain_result(format_cos_look_list())
+            return
+        raw_extra, requested_count = self._extract_command_count(raw_message, allow_attached=True)
         expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         has_refs = bool(extract_image_sources_from_event(event))
         fallback = self._build_cos_look_action(expanded_extra, has_refs)

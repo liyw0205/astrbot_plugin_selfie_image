@@ -797,7 +797,6 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <div><label>API Key（可多行，每行一把；鉴权失败或限流会自动换下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
         <div><label>代理</label><select id="modalProxyId"><option value="">直连（不使用代理）</option></select></div>
-        <div><label>超时（秒）</label><input id="modalTimeout" type="number" min="10" max="900"></div>
       </div>
       <p class="muted" id="modalProviderHint" style="margin-top:8px">渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。</p>
       <label class="checkline"><input id="modalEnabled" type="checkbox"> 启用渠道</label>
@@ -1532,7 +1531,6 @@ Source prompt:
         base_url: String(ch.base_url || ch.baseUrl || '').trim(),
         api_key: String(ch.api_key || ch.apiKey || '').trim(),
         model: String(ch.model || enabled[0] || '').trim(),
-        timeout: Number(ch.timeout || (videoType ? 300 : 280)),
         enabled: !(ch.enabled === false || ch.enabled === 'false' || ch.enabled === 0),
         enabled_models: enabled,
         model_download_proxy_ids: collectModelDownloadProxyIds(ch, enabled),
@@ -1561,7 +1559,6 @@ Source prompt:
       CONFIG.video_channels = (CONFIG.video_channels || []).map(ch => {
         ch = normalizeChannel(ch);
         ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'openai_video';
-        if (Number(ch.timeout || 0) < 60) ch.timeout = 300;
         const enabledSet = new Set(ch.enabled_models || []);
         const out = {};
         for (const [model, provider] of Object.entries(ch.model_provider_types || {})) {
@@ -1609,13 +1606,13 @@ Source prompt:
       return newChannel;
     }
     function newChannel() {
-      return normalizeChannel({name:'new-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:false, models_cache:[]});
+      return normalizeChannel({name:'new-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
     }
     function newAuditChannel() {
-      return normalizeChannel({name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], timeout:280, enabled:false, models_cache:[]});
+      return normalizeChannel({name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
     }
     function newVideoChannel() {
-      return normalizeChannel({name:'video-channel', provider_type:'openai_video', base_url:'https://api.openai.com/v1', api_key:'', model:'', enabled_models:[], timeout:300, enabled:false, models_cache:[]});
+      return normalizeChannel({name:'video-channel', provider_type:'openai_video', base_url:'https://api.openai.com/v1', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
     }
     function applyProviderDefaults(ch, force = false, kind = 'image') {
       ch = ch && typeof ch === 'object' ? ch : {};
@@ -1809,7 +1806,6 @@ Source prompt:
         proxy_id: ($('modalProxyId') && $('modalProxyId').value) || '',
         proxy: '',
         model: (enabled[0] || source.model || ''),
-        timeout: Number($('modalTimeout').value || (EDITING_CHANNEL_KIND === 'video' ? 300 : 280)),
         enabled: $('modalEnabled').checked,
         enabled_models: enabled,
         model_provider_types: collectModalProviderTypes(enabled),
@@ -1909,7 +1905,6 @@ Source prompt:
       $('modalBaseUrl').value = ch.base_url || '';
       $('modalApiKey').value = ch.api_key || '';
       fillChannelProxyOptions(ch.proxy_id || '');
-      $('modalTimeout').value = ch.timeout || (EDITING_CHANNEL_KIND === 'video' ? 300 : 280);
       $('modalEnabled').checked = ch.enabled !== false;
       $('cacheSearch').value = '';
       $('manualModel').value = '';
@@ -4010,7 +4005,7 @@ Source prompt:
     };
     $('manualModel').onkeydown = event => { if (event.key === 'Enter') $('manualAdd').click(); };
     // Modal field edits stay local until「保存渠道」
-    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxyId','modalTimeout','modalEnabled'].forEach(id => {
+    ['modalChannelName','modalBaseUrl','modalApiKey','modalProxyId','modalEnabled'].forEach(id => {
       const el = $(id);
       if (!el) return;
       const eventName = el.type === 'checkbox' || el.type === 'number' ? 'change' : 'input';

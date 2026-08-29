@@ -181,7 +181,6 @@ class ImageChannelConfig:
     base_url: str
     api_key: str
     model: str
-    timeout: int = 180
     enabled: bool = True
     enabled_models: List[str] = field(default_factory=list)
     model_provider_types: Dict[str, str] = field(default_factory=dict)
@@ -240,7 +239,9 @@ class ImageChannelConfig:
                     base_url=self.base_url,
                     api_key=primary_key,
                     model=model,
-                    timeout=max(10, int(global_timeout or self.timeout or 180)),
+                    # Channel timeout was removed; every target inherits the
+                    # image/video global timeout selected by its caller.
+                    timeout=max(10, int(global_timeout or 180)),
                     proxy=self.proxy,
                     extra=extra,
                     api_keys=list(keys),
@@ -310,6 +311,7 @@ class AICatConfig:
         migrated = migrate_config(data)
         raw = normalize_config_tree(deep_merge(DEFAULT_CONFIG, migrated))
         raw = normalize_legacy_keys(raw)
+        raw = strip_channel_timeouts(raw)
 
         web = ensure_dict(raw, "web")
         image = ensure_dict(raw, "image")
@@ -357,6 +359,9 @@ class AICatConfig:
             for item in raw_list:
                 if not isinstance(item, dict):
                     continue
+                # Drop the retired per-channel timeout so old values cannot
+                # reappear in the persisted configuration/UI payload.
+                item.pop("timeout", None)
                 name = str(item.get("name") or item.get("id") or "").strip()
                 ch = by_name.get(name)
                 if not ch:
@@ -368,6 +373,9 @@ class AICatConfig:
                     item["proxy"] = ch.proxy
                 elif "proxy" in item and ch.proxy_id:
                     item.pop("proxy", None)
+            # template_list_items normalizes wrapper values into a new list;
+            # assign it back so the cleaned list is what callers persist.
+            raw[key] = raw_list
 
         prompt_en_mode = str(image.get("prompt_en_mode") or image.get("promptEnMode") or "if_cjk").strip().lower() or "if_cjk"
         if prompt_en_mode not in {"if_cjk", "always", "cjk", "chinese", "zh"}:
@@ -791,7 +799,6 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
         base_url=normalize_image_base_url(str(raw.get("base_url") or raw.get("baseUrl") or "").strip()),
         api_key=api_key_stored,
         model=model or (enabled_models[0] if enabled_models else ""),
-        timeout=to_int(raw.get("timeout"), 180, minimum=10, maximum=900),
         enabled=to_bool(raw.get("enabled"), True),
         enabled_models=unique_values(enabled_models),
         model_provider_types={model: provider for model, provider in model_provider_types.items() if model in set(enabled_models)},
@@ -836,8 +843,6 @@ def _build_video_channel(raw: Any) -> ImageChannelConfig:
             if vt:
                 fixed_map[str(model)] = vt
     channel.model_provider_types = fixed_map
-    if channel.timeout < 60:
-        channel.timeout = 300
     return channel
 
 
@@ -1104,9 +1109,6 @@ def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
         channel.enabled = False
         if isinstance(raw, dict):
             raw["enabled"] = False
-    if channel.timeout < 10:
-        errors.append({"field": "timeout", "message": f"{kind_label} {label} 超时过短"})
-
     return {
         "ok": not errors,
         "errors": errors,
@@ -1156,6 +1158,7 @@ def sanitize_channels_for_save(raw: Dict[str, Any]) -> Dict[str, Any]:
                 cleaned.append(item)
                 continue
             row = copy.deepcopy(item)
+            row.pop("timeout", None)
             if kind == "video":
                 preflight_video_channel(row)
             else:
@@ -1244,6 +1247,22 @@ def template_list_items(value: Any) -> List[Any]:
             return []
         return [item for item in re.split(r"[\n,]+", text) if item.strip()]
     return [value]
+
+
+def strip_channel_timeouts(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Return config data without the retired per-channel timeout field."""
+    data = copy.deepcopy(raw if isinstance(raw, dict) else {})
+    for key in ("image_channels", "audit_channels", "video_channels"):
+        items = template_list_items(data.get(key))
+        cleaned: List[Any] = []
+        for item in items:
+            if isinstance(item, dict):
+                item = copy.deepcopy(item)
+                item.pop("timeout", None)
+            cleaned.append(item)
+        if key in data or cleaned:
+            data[key] = cleaned
+    return data
 
 
 def ensure_dict(data: Dict[str, Any], key: str) -> Dict[str, Any]:

@@ -338,7 +338,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.9")
+        self.assertEqual(PLUGIN_VERSION, "1.4.10")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5573,7 +5573,7 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 27)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 30)
         titles = {x["title"] for x in plugin_main.COS_LOOK_SETS}
         self.assertEqual(
             titles,
@@ -5594,7 +5594,7 @@ class LegFocusTests(unittest.TestCase):
                 "铂金发白蕾丝长裙",
                 "西施·青绿渐变旗袍",
                 "黄结白围裙女仆",
-                "银紫深V广袖",
+                "汉服·银紫深V广袖",
                 "露背蓝纱古装",
                 "姬小满·黑金橙短装",
                 "西施·诗语江南",
@@ -5605,6 +5605,9 @@ class LegFocusTests(unittest.TestCase):
                 "秧秧·蓝白碎花泳装",
                 "卡提希娅·黑裙飞鸟",
                 "青绿双辫广袖长裙",
+                "满穗·灰白和风",
+                "小乔·白熊围巾",
+                "芙宁娜·奶油浅蓝荷叶裙",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -5742,6 +5745,193 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("深棕双麻花辫青绿广袖长裙", twin)
         self.assertIn("粉红花囊", twin)
         self.assertNotIn("《", twin)
+        mansui = prompts["mansui_gray_wafu"]
+        self.assertIn("满穗风格的灰白色和风 COS 造型", mansui)
+        self.assertIn("自然裸腿", mansui)
+        self.assertIn("不要中筒袜、短袜或厚重打底袜", mansui)
+        xiao_qiao = prompts["xiao_qiao_white_bear"]
+        self.assertIn("薄荷绿白熊主题", xiao_qiao)
+        self.assertIn("黄色长围巾", xiao_qiao)
+        self.assertIn("白色不透明过膝袜或连贯白色腿部服装", xiao_qiao)
+        self.assertIn("不要中筒袜、短袜或袜口截断", xiao_qiao)
+        furina = prompts["furina_cream_blue_ruffle"]
+        self.assertIn("芙宁娜风格的奶油浅蓝荷叶裙 COS 造型", furina)
+        self.assertIn("灰蓝色大蝴蝶结", furina)
+        self.assertIn("多层蓝灰色布料和奶油白荷叶边", furina)
+        for title in ("满穗·灰白和风", "小乔·白熊围巾", "芙宁娜·奶油浅蓝荷叶裙"):
+            self.assertEqual(
+                [item["title"] for item in plugin_main.match_cos_look_sets(title)],
+                [title],
+            )
+
+    def test_cos_look_matching_and_count_shorthand(self) -> None:
+        if "astrbot" not in sys.modules:
+            astrbot = types.ModuleType("astrbot")
+            api = types.ModuleType("astrbot.api")
+            star = types.ModuleType("astrbot.api.star")
+            event = types.ModuleType("astrbot.api.event")
+            comps = types.ModuleType("astrbot.api.message_components")
+
+            class Star:
+                pass
+
+            def register(*a, **k):
+                def deco(cls):
+                    return cls
+                return deco
+
+            class filter:
+                class PermissionType:
+                    ADMIN = "admin"
+                    MEMBER = "member"
+
+                @staticmethod
+                def command(*a, **k):
+                    def deco(fn):
+                        return fn
+                    return deco
+
+                @staticmethod
+                def permission_type(*a, **k):
+                    def deco(fn):
+                        return fn
+                    return deco
+
+            star.Context = object
+            star.Star = Star
+            star.register = register
+            event.AstrMessageEvent = object
+            event.filter = filter
+            comps.Image = type("Image", (), {})
+            api.star = star
+            api.event = event
+            api.message_components = comps
+            api.llm_tool = lambda *a, **k: (lambda f: f)
+            api.logger = types.SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+                debug=lambda *a, **k: None,
+            )
+            astrbot.api = api
+            sys.modules["astrbot"] = astrbot
+            sys.modules["astrbot.api"] = api
+            sys.modules["astrbot.api.star"] = star
+            sys.modules["astrbot.api.event"] = event
+            sys.modules["astrbot.api.message_components"] = comps
+            sys.modules["astrbot.core"] = types.ModuleType("astrbot.core")
+            sys.modules["astrbot.core.utils"] = types.ModuleType("astrbot.core.utils")
+            pathmod = types.ModuleType("astrbot.core.utils.astrbot_path")
+            pathmod.get_astrbot_data_path = lambda: tempfile.gettempdir()
+            sys.modules["astrbot.core.utils.astrbot_path"] = pathmod
+        import astrbot_plugin_selfie_image.main as plugin_main
+
+        xishi_ids = {item["id"] for item in plugin_main.match_cos_look_sets("西施")}
+        self.assertEqual(
+            xishi_ids,
+            {"xishi_fan_qipao", "xishi_cyan_qipao", "xishi_shiyu_jiangnan", "xishi_crop_qipao"},
+        )
+        qipao_ids = {item["id"] for item in plugin_main.match_cos_look_sets("旗袍")}
+        self.assertEqual(
+            qipao_ids,
+            {
+                "xishi_fan_qipao", "yinzi_white_qipao", "xishi_cyan_qipao",
+                "xishi_crop_qipao",
+            },
+        )
+        xishi_qipao_ids = {item["id"] for item in plugin_main.match_cos_look_sets("西施旗袍")}
+        self.assertEqual(
+            xishi_qipao_ids,
+            {"xishi_fan_qipao", "xishi_cyan_qipao", "xishi_crop_qipao"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("芙宁娜")},
+            {"furina_cream_blue_ruffle"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("满穗")},
+            {"mansui_gray_wafu"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("白熊")},
+            {"xiao_qiao_white_bear"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("汉服")},
+            {
+                "hanfu_peach", "mint_sheer_hanfu", "silver_deepv_hanfu",
+            },
+        )
+        for query in ("银紫深V广袖", "汉服·银紫深V广袖"):
+            self.assertEqual(
+                {item["id"] for item in plugin_main.match_cos_look_sets(query)},
+                {"silver_deepv_hanfu"},
+            )
+        for query in ("公孙离", "离恨烟", "公孙离·离恨烟"):
+            self.assertEqual(
+                {item["id"] for item in plugin_main.match_cos_look_sets(query)},
+                {"gongsunli_lihenyan"},
+            )
+        self.assertEqual(plugin_main.match_cos_look_sets("离恨"), [])
+        self.assertEqual(
+            plugin_main._cos_item_terms({"title": "公孙离·离恨烟"}),
+            ["公孙离·离恨烟", "公孙离", "离恨烟"],
+        )
+        self.assertEqual(plugin_main.match_cos_look_sets("夜晚霓虹街道"), [])
+        self.assertEqual(plugin_main.match_cos_look_sets("鹿角"), [])
+        self.assertEqual(plugin_main.match_cos_look_sets("王者荣耀"), [])
+
+        class _P:
+            pass
+
+        for query, expected_ids in (
+            ("西施", xishi_ids),
+            ("旗袍", qipao_ids),
+            ("西施旗袍", xishi_qipao_ids),
+        ):
+            for _ in range(20):
+                action = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), query, False)
+                match = re.search(r"【cos:([a-z0-9_]+)】", action)
+                self.assertIsNotNone(match, action)
+                self.assertIn(match.group(1), expected_ids, action)
+            unmatched = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), f"{query} 夜景", False)
+            self.assertIn(f"用户补充要求优先：{query} 夜景", unmatched)
+
+        plugin = object.__new__(plugin_main.SelfieImagePlugin)
+        plugin.config = type("Config", (), {"image_max_batch_count": 10})()
+        for text, expected_extra, expected_count in (
+            ("3 西施", "西施", 3),
+            ("西施 3", "西施", 3),
+            ("3旗袍", "旗袍", 3),
+            ("三旗袍", "旗袍", 3),
+            ("旗袍3", "旗袍", 3),
+            ("3张西施", "西施", 3),
+        ):
+            extra, count = plugin._extract_command_count(text, allow_attached=True)
+            self.assertEqual((extra, count), (expected_extra, expected_count))
+        self.assertEqual(plugin._extract_command_count("3旗袍"), ("3旗袍", 1))
+
+        class Event:
+            def __init__(self, message: str) -> None:
+                self.message_str = message
+
+            def plain_result(self, text: str) -> str:
+                return text
+
+        async def collect_list_response(message: str) -> list[str]:
+            return [
+                item
+                async for item in plugin_main.SelfieImagePlugin.cmd_look_cos(
+                    object.__new__(plugin_main.SelfieImagePlugin), Event(message)
+                )
+            ]
+
+        for alias in ("列表", "全部", "查看"):
+            response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
+            self.assertEqual(len(response), 1)
+            self.assertIn("看看COS 随机池（30套）：", response[0])
+            for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
+                self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
         self.assertNotIn("yao_cinnamoroll", {x["id"] for x in plugin_main.COS_LOOK_SETS})
         for removed in (

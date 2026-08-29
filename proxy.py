@@ -17,7 +17,7 @@ IMAGE_DOWNLOAD_WAIT_SECONDS = 30
 
 
 def image_client_timeout(seconds: Optional[int] = None) -> aiohttp.ClientTimeout:
-    """Bound one upstream image request without truncating the channel timeout."""
+    """Bound one upstream image request without truncating its global budget."""
     requested = LOCAL_IMAGE_WAIT_SECONDS if seconds is None else int(seconds)
     total = max(20, requested)
     return aiohttp.ClientTimeout(total=total, connect=10, sock_connect=10, sock_read=total)
