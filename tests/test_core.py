@@ -6475,6 +6475,65 @@ class StudioStoreTests(unittest.TestCase):
                 )
                 self.assertEqual(picker.call_args.kwargs["query"], "捧脸")
 
+    def test_cos_command_parameter_matrix(self) -> None:
+        """COS parses count placement and forwards raw matching text end to end."""
+        import tempfile
+
+        from astrbot_plugin_selfie_image.preset import ImagePresetManager
+        stub_factory = SessionModelAndTaskTests()
+        stub_factory._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        class Event:
+            def __init__(self, message: str) -> None:
+                self.message_str = message
+
+            def plain_result(self, text: str) -> str:
+                return text
+
+        cases = (
+            ("/看看COS 捧脸 3", 3, "捧脸", "捧脸", "捧脸"),
+            ("/看看COS 西施 捧脸 2", 2, "西施 捧脸", "西施 捧脸", "捧脸"),
+            ("/看看COS 西施 捧脸 夜景 5张", 5, "西施 捧脸 夜景", "西施 捧脸 夜景", "捧脸"),
+            ("/看看COS 3张西施", 3, "西施", "西施", ""),
+            ("/看看COS 西施3", 3, "西施", "西施", ""),
+            ("/看看COS 西施 夜景三", 3, "西施 夜景", "西施 夜景", ""),
+            ("/看看COS 洛琪希xxx 3", 3, "洛琪希xxx", "洛琪希xxx", ""),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for message, expected_count, expected_extra, expected_query, expected_preset in cases:
+                stub = stub_factory._plugin_stub()
+                stub.presets = ImagePresetManager(tmp)
+                captured = {}
+
+                async def fake_handle(**kwargs):
+                    captured.update(kwargs)
+                    if False:
+                        yield None
+
+                stub._handle_selfie_command = fake_handle
+                async def invoke_command():
+                    return [
+                        item
+                        async for item in plugin_main.SelfieImagePlugin.cmd_look_cos(stub, Event(message))
+                    ]
+
+                output = asyncio.run(invoke_command())
+                self.assertEqual(output, [])
+                self.assertEqual(captured["requested_count_override"], expected_count, message)
+                self.assertEqual(captured["rebuild_match_query"], expected_query, message)
+                self.assertEqual(captured["preset_name"], expected_preset, message)
+                if expected_preset:
+                    self.assertIn("捧住她的脸颊", captured["rebuild_extra_request"], message)
+                else:
+                    self.assertIn(expected_extra.split()[0], captured["rebuild_extra_request"], message)
+
+        stub = stub_factory._plugin_stub()
+        for text in ("西施 2026 夜景", "西施 12a 夜景", "西施 3.14 夜景", "西施 9999", "3旗袍abc"):
+            expected = ("3旗袍abc", 1) if text == "3旗袍abc" else (text, 1)
+            self.assertEqual(stub._extract_command_count(text, allow_attached=True), expected)
+
     def test_clothes_followup_prefers_user_context_images(self) -> None:
         stub = SessionModelAndTaskTests()._plugin_stub()
         from astrbot_plugin_selfie_image import main as plugin_main

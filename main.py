@@ -3225,13 +3225,17 @@ class SelfieImagePlugin(Star):
         match = re.fullmatch(rf"({count_pattern}){suffix_pattern}(.+)", text)
         if match:
             count = self._parse_count_token(match.group(1))
-            if count:
-                return match.group(2).strip(), count
+            remainder = match.group(2).strip()
+            # Do not split ordinary numeric/alphanumeric tokens such as
+            # `2026`, `12a`, or `3.14` as a batch count.
+            if count and remainder and not re.search(r"[\dA-Za-z]", remainder):
+                return remainder, count
         match = re.fullmatch(rf"(.+?)({count_pattern}){suffix_pattern}", text)
         if match:
             count = self._parse_count_token(match.group(2))
-            if count:
-                return match.group(1).strip(), count
+            remainder = match.group(1).strip()
+            if count and remainder and not re.search(r"[\dA-Za-z]", remainder):
+                return remainder, count
         return text, 0
 
     def _command_tokens_for_count(self, text: str) -> List[str]:
