@@ -127,6 +127,7 @@ from .web import FlaskWebServer
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
 WEB_STARTUP_CONFIG_KEYS = ("web", "webEnable", "webHost", "webPort", "webToken")
 DEFAULT_WEB_TOKEN = str(DEFAULT_CONFIG["web"].get("token") or "changeme").strip().lower()
+IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS = 2.0
 
 
 def optional_event_message_type(priority: int = 100):
@@ -710,6 +711,7 @@ class SelfieImagePlugin(Star):
         # Reserve image slots per requested shot, not per whole command batch.
         self._image_batch_gate = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self._selfie_batch_gate = self._image_batch_gate
+        self._image_batch_cooldown_lock = asyncio.Lock()
         self.web_server = FlaskWebServer(self)
         self.dashboard_api = SelfieImageDashboardAPI(self)
         try:
@@ -5692,6 +5694,22 @@ class SelfieImagePlugin(Star):
             except asyncio.TimeoutError:
                 continue
 
+    def _ensure_image_batch_cooldown_lock(self) -> asyncio.Lock:
+        lock = getattr(self, "_image_batch_cooldown_lock", None)
+        if lock is None or not isinstance(lock, asyncio.Lock):
+            self._image_batch_cooldown_lock = asyncio.Lock()
+            lock = self._image_batch_cooldown_lock
+        return lock
+
+    async def _wait_for_image_batch_cooldown(self, task_id: str) -> bool:
+        """Stagger actual upstream starts, including shots released from the queue."""
+        lock = self._ensure_image_batch_cooldown_lock()
+        async with lock:
+            if self._task_cancel_requested(task_id):
+                return False
+            await asyncio.sleep(IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS)
+            return not self._task_cancel_requested(task_id)
+
     async def _run_counted_generation_shots(
         self,
         *,
@@ -5730,6 +5748,9 @@ class SelfieImagePlugin(Star):
                     cancelled = True
                     return
                 try:
+                    if total > 1 and not await self._wait_for_image_batch_cooldown(task_id):
+                        cancelled = True
+                        return
                     result = await run_one(index)
                 finally:
                     slot_gate.release()

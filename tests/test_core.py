@@ -7109,21 +7109,177 @@ class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             active -= 1
             return {"success": True, "files": ["generated.png"]}
 
-        result = await asyncio.wait_for(
-            plugin._run_counted_generation_shots(
-                task_id="task",
-                event=Event(),
-                total=10,
-                fail_label="failed",
-                run_one=run_one,
-                log_prefix="test batch",
-            ),
-            timeout=2,
-        )
+        with patch("astrbot_plugin_selfie_image.main.IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS", 0):
+            result = await asyncio.wait_for(
+                plugin._run_counted_generation_shots(
+                    task_id="task",
+                    event=Event(),
+                    total=10,
+                    fail_label="failed",
+                    run_one=run_one,
+                    log_prefix="test batch",
+                ),
+                timeout=2,
+            )
         self.assertEqual(result["succeeded_count"], 10)
         self.assertEqual(result["failed_count"], 0)
         self.assertEqual(peak, 3)
         self.assertEqual(plugin._image_batch_gate._value, 3)
+
+    async def test_batch_shots_wait_after_each_global_slot_acquisition(self) -> None:
+        from types import SimpleNamespace
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin.config = SimpleNamespace(
+            image_max_concurrent_tasks=1,
+            image_show_generation_info=False,
+            image_enable_daily_limit=False,
+            image_show_model_info=False,
+        )
+        plugin._image_batch_gate = asyncio.Semaphore(1)
+        plugin._selfie_batch_gate = plugin._image_batch_gate
+        plugin._image_batch_cooldown_lock = asyncio.Lock()
+        plugin._web_task_lock = threading.RLock()
+        plugin._web_tasks = {"task": {"cancel_requested": False}}
+        plugin._record_generated_images = lambda *_args: None
+
+        async def send_images(*_args):
+            return None
+
+        plugin._send_generated_images = send_images
+        acquired_at = []
+        started_at = []
+        acquire_slot = plugin._acquire_image_slot
+
+        async def tracked_acquire(task_id):
+            gate = await acquire_slot(task_id)
+            acquired_at.append(time.monotonic())
+            return gate
+
+        async def run_one(_index):
+            started_at.append(time.monotonic())
+            return {"success": True, "files": ["generated.png"]}
+
+        plugin._acquire_image_slot = tracked_acquire
+        cooldown = 0.02
+        with patch("astrbot_plugin_selfie_image.main.IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS", cooldown):
+            result = await plugin._run_counted_generation_shots(
+                task_id="task",
+                event=Event(),
+                total=3,
+                fail_label="failed",
+                run_one=run_one,
+                log_prefix="cooldown batch",
+            )
+
+        self.assertEqual(result["succeeded_count"], 3)
+        self.assertEqual(len(acquired_at), 3)
+        self.assertEqual(len(started_at), 3)
+        for acquired, started in zip(acquired_at, started_at):
+            self.assertGreaterEqual(started - acquired, cooldown * 0.75)
+        for previous, current in zip(started_at, started_at[1:]):
+            self.assertGreaterEqual(current - previous, cooldown * 0.75)
+
+    async def test_batch_with_free_parallel_slots_staggers_upstream_starts(self) -> None:
+        from types import SimpleNamespace
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin.config = SimpleNamespace(
+            image_max_concurrent_tasks=3,
+            image_show_generation_info=False,
+            image_enable_daily_limit=False,
+            image_show_model_info=False,
+        )
+        plugin._image_batch_gate = asyncio.Semaphore(3)
+        plugin._selfie_batch_gate = plugin._image_batch_gate
+        plugin._image_batch_cooldown_lock = asyncio.Lock()
+        plugin._web_task_lock = threading.RLock()
+        plugin._web_tasks = {"task": {"cancel_requested": False}}
+        plugin._record_generated_images = lambda *_args: None
+        plugin._send_generated_images = lambda *_args: asyncio.sleep(0)
+        started_at = []
+
+        async def run_one(_index):
+            started_at.append(time.monotonic())
+            return {"success": True, "files": ["generated.png"]}
+
+        cooldown = 0.02
+        with patch("astrbot_plugin_selfie_image.main.IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS", cooldown):
+            result = await plugin._run_counted_generation_shots(
+                task_id="task",
+                event=Event(),
+                total=3,
+                fail_label="failed",
+                run_one=run_one,
+                log_prefix="parallel cooldown batch",
+            )
+
+        self.assertEqual(result["succeeded_count"], 3)
+        self.assertEqual(len(started_at), 3)
+        for previous, current in zip(started_at, started_at[1:]):
+            self.assertGreaterEqual(current - previous, cooldown * 0.75)
+
+    async def test_single_shot_skips_batch_cooldown(self) -> None:
+        from types import SimpleNamespace
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin.config = SimpleNamespace(
+            image_max_concurrent_tasks=1,
+            image_show_generation_info=False,
+            image_enable_daily_limit=False,
+            image_show_model_info=False,
+        )
+        plugin._image_batch_gate = asyncio.Semaphore(1)
+        plugin._web_task_lock = threading.RLock()
+        plugin._web_tasks = {"task": {"cancel_requested": False}}
+        plugin._record_generated_images = lambda *_args: None
+
+        async def send_images(*_args):
+            return None
+
+        async def unexpected_cooldown(_task_id):
+            raise AssertionError("single image must not enter batch cooldown")
+
+        async def run_one(_index):
+            return {"success": True, "files": ["generated.png"]}
+
+        plugin._send_generated_images = send_images
+        plugin._wait_for_image_batch_cooldown = unexpected_cooldown
+        result = await plugin._run_counted_generation_shots(
+            task_id="task",
+            event=Event(),
+            total=1,
+            fail_label="failed",
+            run_one=run_one,
+            log_prefix="single shot",
+        )
+
+        self.assertEqual(result["succeeded_count"], 1)
+        self.assertEqual(plugin._image_batch_gate._value, 1)
 
 
 class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
