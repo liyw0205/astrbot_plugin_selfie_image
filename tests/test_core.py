@@ -6556,6 +6556,7 @@ class StudioStoreTests(unittest.TestCase):
             ("/看看COS 西施 捧脸 夜景 5张", 5, "西施 捧脸 夜景", "西施 捧脸 夜景", "捧脸"),
             ("/看看COS 夜景 捧脸 西施 5", 5, "夜景 捧脸 西施", "夜景 捧脸 西施", "捧脸"),
             ("/看看COS 捧脸 5 西施 夜景", 5, "捧脸 西施 夜景", "捧脸 西施 夜景", "捧脸"),
+            ("/看看COS 洛琪希 夜景 男友视角 3", 3, "洛琪希 夜景 男友视角", "洛琪希 夜景 男友视角", "男友视角"),
             ("/看看COS 3张西施", 3, "西施", "西施", ""),
             ("/看看COS 西施3", 3, "西施", "西施", ""),
             ("/看看COS 西施 夜景三", 3, "西施 夜景", "西施 夜景", ""),
@@ -6586,9 +6587,19 @@ class StudioStoreTests(unittest.TestCase):
                 self.assertEqual(captured["rebuild_match_query"], expected_query, message)
                 self.assertEqual(captured["preset_name"], expected_preset, message)
                 if expected_preset:
-                    self.assertIn("捧住她的脸颊", captured["rebuild_extra_request"], message)
+                    preset_markers = {
+                        "捧脸": "捧住她的脸颊",
+                        "男友视角": "Girlfriend is drunk",
+                    }
+                    self.assertIn(preset_markers[expected_preset], captured["rebuild_extra_request"], message)
                 else:
                     self.assertIn(expected_extra.split()[0], captured["rebuild_extra_request"], message)
+                if message == "/看看COS 洛琪希 夜景 男友视角 3":
+                    cos_marker = re.search(r"【cos:([a-z0-9_]+)】", captured["fallback"])
+                    self.assertIsNotNone(cos_marker, message)
+                    self.assertEqual(cos_marker.group(1), "roxy_cream", message)
+                    self.assertIn("洛琪希", captured["rebuild_extra_request"], message)
+                    self.assertIn("夜景", captured["rebuild_extra_request"], message)
 
         stub = stub_factory._plugin_stub()
         for text in ("西施 2026 夜景", "西施 12a 夜景", "西施 3.14 夜景", "西施 9999", "3旗袍abc"):
