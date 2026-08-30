@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
 from .constants import PROVIDER_TYPES, VIDEO_PROVIDER_TYPES
+from .proxy import LOCAL_IMAGE_WAIT_SECONDS
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -198,7 +199,7 @@ class ImageChannelConfig:
             return keys
         return split_api_keys(self.api_key)
 
-    def targets(self, global_timeout: int) -> List[ImageModelTarget]:
+    def targets(self, global_timeout: int, request_timeout: Optional[int] = None) -> List[ImageModelTarget]:
         if not self.enabled:
             return []
         models = self.enabled_models or ([self.model] if self.model else [])
@@ -239,9 +240,16 @@ class ImageChannelConfig:
                     base_url=self.base_url,
                     api_key=primary_key,
                     model=model,
-                    # Channel timeout was removed; every target inherits the
-                    # image/video global timeout selected by its caller.
-                    timeout=max(10, int(global_timeout or 180)),
+                    # Image requests have a per-model hard cap; callers may
+                    # override it for video targets, which use their global budget.
+                    timeout=max(
+                        10,
+                        int(
+                            request_timeout
+                            if request_timeout is not None
+                            else (global_timeout if is_video_proto or model_video_override else LOCAL_IMAGE_WAIT_SECONDS)
+                        ),
+                    ),
                     proxy=self.proxy,
                     extra=extra,
                     api_keys=list(keys),
@@ -520,7 +528,9 @@ class AICatConfig:
     def get_prioritized_targets(self) -> List[ImageModelTarget]:
         all_targets: List[ImageModelTarget] = []
         for channel in self.image_channels:
-            all_targets.extend(channel.targets(self.image_global_timeout))
+            all_targets.extend(
+                channel.targets(self.image_global_timeout, request_timeout=LOCAL_IMAGE_WAIT_SECONDS)
+            )
 
         priority = self.enabled_image_model_priority
         selected = self._prioritize_targets(all_targets, priority)
@@ -544,7 +554,9 @@ class AICatConfig:
     def get_audit_targets(self) -> List[ImageModelTarget]:
         targets: List[ImageModelTarget] = []
         for channel in self.audit_channels:
-            targets.extend(channel.targets(self.image_global_timeout))
+            targets.extend(
+                channel.targets(self.image_global_timeout, request_timeout=LOCAL_IMAGE_WAIT_SECONDS)
+            )
         return self._bind_download_proxies(self._prioritize_targets(targets, self.enabled_audit_model_priority))
 
     def get_prioritized_video_targets(self) -> List[ImageModelTarget]:
@@ -552,7 +564,8 @@ class AICatConfig:
             return []
         targets: List[ImageModelTarget] = []
         for channel in self.video_channels:
-            targets.extend(channel.targets(self.video_global_timeout or self.image_global_timeout))
+            video_timeout = self.video_global_timeout or self.image_global_timeout
+            targets.extend(channel.targets(video_timeout, request_timeout=video_timeout))
         return self._bind_download_proxies(self._prioritize_targets(targets, self.enabled_video_model_priority))
 
 

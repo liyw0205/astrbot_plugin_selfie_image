@@ -91,7 +91,7 @@ from .providers import (
     provider_type_from_channel_payload,
 )
 from .reference_collector import ReferenceCollector, extract_structured_image_sources
-from .proxy import channel_client_session, http_proxy_url, image_client_timeout, target_session_proxy
+from .proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, http_proxy_url, image_client_timeout, target_session_proxy
 from .video import VideoGenerateRequest, generate_video_with_fallback
 from .utils import (
     bytes_to_data_url,
@@ -4972,7 +4972,9 @@ class SelfieImagePlugin(Star):
     def _find_image_target(self, channel_name: str = "", model: str = "") -> Optional[ImageModelTarget]:
         targets: List[ImageModelTarget] = []
         for channel in self.config.image_channels:
-            targets.extend(channel.targets(self.config.image_global_timeout))
+            targets.extend(
+                channel.targets(self.config.image_global_timeout, request_timeout=LOCAL_IMAGE_WAIT_SECONDS)
+            )
         if not channel_name and not model:
             return targets[0] if targets else None
         for target in targets:

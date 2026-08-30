@@ -84,7 +84,7 @@ def _sync_try_model(target: ImageModelTarget, req: ImageGenerateRequest, budget:
                 return await adapter.generate(req)
 
     try:
-        return asyncio.run(asyncio.wait_for(_go(), timeout=max(3, int(budget) + 2)))
+        return asyncio.run(asyncio.wait_for(_go(), timeout=max(1, int(budget))))
     except asyncio.TimeoutError:
         return ImageGenerateResult(error=format_timeout_user_message("local", budget))
     except Exception as exc:
@@ -98,7 +98,15 @@ async def _try_model(
     session: Optional[aiohttp.ClientSession],
 ) -> ImageGenerateResult:
     if session is None:
-        return await asyncio.to_thread(_sync_try_model, target, req, budget)
+        work = asyncio.create_task(asyncio.to_thread(_sync_try_model, target, req, budget))
+        done, _ = await asyncio.wait({work}, timeout=max(1, int(budget)))
+        if work not in done:
+            work.cancel()
+            return ImageGenerateResult(error=format_timeout_user_message("local", budget))
+        try:
+            return work.result()
+        except Exception as exc:
+            return ImageGenerateResult(error=redact_sensitive_text(str(exc)))
     work = asyncio.create_task(_try_on_session(target, req, session, budget))
     done, _ = await asyncio.wait({work}, timeout=max(1, int(budget)))
     if work not in done:
@@ -161,11 +169,16 @@ async def generate_image_with_fallback(
                     error=redact_sensitive_text(format_timeout_user_message("global", chain_timeout)),
                     attempts=redact_sensitive_data(attempts),
                 )
-            # The global deadline limits the whole fallback chain; each model
-            # keeps its configured timeout instead of inheriting a 180s cap.
-            target_timeout = max(1, int(getattr(target, "timeout", 0) or LOCAL_IMAGE_WAIT_SECONDS))
+            # The global deadline limits the whole fallback chain. A single
+            # image-model request is hard-capped at 180s even if a caller
+            # supplies a target that still carries the global timeout.
+            target_timeout = max(
+                1,
+                min(LOCAL_IMAGE_WAIT_SECONDS, int(getattr(target, "timeout", 0) or LOCAL_IMAGE_WAIT_SECONDS)),
+            )
             budget = max(1, min(target_timeout, int(remain)))
             attempt_info = _target_attempt_base(target, index, key_index=key_index, multi_key=len(api_keys) > 1)
+            attempt_info["timeout_seconds"] = budget
             started = time.monotonic()
             active = _target_with_api_key(target, api_key) if api_key else target
             result = await _try_model(active, req, budget, session)
@@ -197,4 +210,9 @@ async def generate_image_with_fallback(
                 continue
             break
 
+    if time.monotonic() >= deadline:
+        return ImageGenerateResult(
+            error=redact_sensitive_text(format_timeout_user_message("global", chain_timeout)),
+            attempts=redact_sensitive_data(attempts),
+        )
     return ImageGenerateResult(error=redact_sensitive_text(last_error), attempts=redact_sensitive_data(attempts))

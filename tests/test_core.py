@@ -30,6 +30,7 @@ if "aiohttp" not in sys.modules:
 from astrbot_plugin_selfie_image.generator import generate_image_with_fallback
 from astrbot_plugin_selfie_image.proxy import (
     IMAGE_DOWNLOAD_WAIT_SECONDS,
+    LOCAL_IMAGE_WAIT_SECONDS,
     image_client_timeout,
     image_download_timeout,
     parse_channel_proxy,
@@ -346,6 +347,33 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(config.image_max_batch_count, 10)
         self.assertEqual(config.image_default_aspect_ratio, "9:16")
         self.assertEqual(DEFAULT_CONFIG["image"]["default_aspect_ratio"], "9:16")
+
+    def test_image_targets_use_model_cap_and_video_keeps_global_timeout(self) -> None:
+        config = AICatConfig.from_dict(
+            {
+                "image": {"global_timeout": 280},
+                "image_channels": [
+                    {
+                        "name": "image",
+                        "provider_type": "openai",
+                        "base_url": "https://image.test",
+                        "enabled_models": ["gpt-image-2"],
+                    }
+                ],
+                "video": {"global_timeout": 320},
+                "video_channels": [
+                    {
+                        "name": "video",
+                        "provider_type": "openai",
+                        "base_url": "https://video.test",
+                        "enabled_models": ["video-model"],
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(config.get_prioritized_targets()[0].timeout, LOCAL_IMAGE_WAIT_SECONDS)
+        self.assertEqual(config.get_prioritized_video_targets()[0].timeout, 320)
 
     def test_numeric_config_is_clamped(self) -> None:
         config = AICatConfig.from_dict({"image": {"max_batch_count": 99, "max_concurrent_tasks": 0}})
@@ -3176,7 +3204,7 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
-    async def test_fallback_uses_target_timeout_without_180_second_cap(self) -> None:
+    async def test_fallback_caps_each_model_request_at_180_seconds(self) -> None:
         target = make_target("openai", "gpt-image-2")
         target.timeout = 280
         budgets = []
@@ -3194,7 +3222,38 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.images, [PNG_BYTES])
-        self.assertEqual(budgets, [280])
+        self.assertEqual(budgets, [180])
+
+    async def test_fallback_retries_with_remaining_global_budget(self) -> None:
+        first = make_target("openai", "first")
+        second = make_target("openai", "second")
+        third = make_target("openai", "third")
+        first.timeout = second.timeout = third.timeout = 280
+        clock = types.SimpleNamespace(now=0.0)
+        budgets = []
+
+        def monotonic():
+            return clock.now
+
+        async def fake_try_model(active, req, budget, session):
+            budgets.append(budget)
+            clock.now += budget
+            return ImageGenerateResult(error="temporary failure")
+
+        with (
+            patch("astrbot_plugin_selfie_image.generator.time.monotonic", side_effect=monotonic),
+            patch("astrbot_plugin_selfie_image.generator._try_model", side_effect=fake_try_model),
+        ):
+            result = await generate_image_with_fallback(
+                [first, second, third],
+                ImageGenerateRequest(prompt="cat"),
+                FakeSession(),
+                global_timeout=280,
+            )
+
+        self.assertEqual(budgets, [180, 100])
+        self.assertEqual(len(result.attempts), 2)
+        self.assertEqual(result.error, "生图超时（280s）")
 
     def test_image_client_timeout_preserves_requested_model_budget(self) -> None:
         timeout_factory = lambda **kwargs: types.SimpleNamespace(**kwargs)
