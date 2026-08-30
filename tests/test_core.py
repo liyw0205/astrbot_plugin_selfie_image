@@ -6423,6 +6423,58 @@ class StudioStoreTests(unittest.TestCase):
             self.assertNotIn("参考男友", waist)
             short = plugin_main.SelfieImagePlugin._build_selfie_look_action(stub, "露腰", False)
             self.assertIn("【shot:crop_waist】", short)
+
+    def test_cos_command_expands_presets_without_polluting_pool_query(self) -> None:
+        """COS keeps character matching separate from expanded preset text."""
+        import tempfile
+        from astrbot_plugin_selfie_image.preset import ImagePresetManager
+
+        stub = SessionModelAndTaskTests()._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stub.presets = ImagePresetManager(tmp)
+            for raw, expected_count in (
+                ("捧脸 3", 3),
+                ("西施 捧脸 2", 2),
+                ("西施 捧脸 夜景 5", 5),
+            ):
+                extra, count = stub._extract_command_count(raw, allow_attached=True)
+                self.assertEqual(count, expected_count)
+                expanded, aspect, resolution, preset_name = (
+                    plugin_main.SelfieImagePlugin._expand_cos_user_text_with_preset(stub, extra)
+                )
+                self.assertEqual(preset_name, "捧脸")
+                self.assertIn("捧住她的脸颊", expanded)
+                self.assertEqual(aspect, "9:16")
+                self.assertEqual(resolution, "1K")
+                if raw.startswith("西施"):
+                    self.assertIn("西施", expanded)
+                if "夜景" in raw:
+                    self.assertIn("夜景", expanded)
+
+            raw = "西施 捧脸 夜景"
+            expanded, _, _, _ = plugin_main.SelfieImagePlugin._expand_cos_user_text_with_preset(stub, raw)
+            xishi_ids = {item["id"] for item in plugin_main.match_cos_look_sets("西施")}
+            for _ in range(20):
+                action = plugin_main.SelfieImagePlugin._build_cos_look_action(
+                    stub, expanded, False, match_query=raw
+                )
+                match = re.search(r"【cos:([a-z0-9_]+)】", action)
+                self.assertIsNotNone(match, action)
+                self.assertIn(match.group(1), xishi_ids, action)
+
+            # A preset body may mention a COS category; only the raw command
+            # query is allowed to select the pool.
+            stub.presets.add("捧脸", "捧住她的脸颊，旗袍细节清晰")
+            expanded, _, _, _ = plugin_main.SelfieImagePlugin._expand_cos_user_text_with_preset(stub, "捧脸")
+            with patch("astrbot_plugin_selfie_image.main.pick_cos_look_set") as picker:
+                picker.return_value = plugin_main.COS_LOOK_SETS[0]
+                plugin_main.SelfieImagePlugin._build_cos_look_action(
+                    stub, expanded, False, match_query="捧脸"
+                )
+                self.assertEqual(picker.call_args.kwargs["query"], "捧脸")
+
     def test_clothes_followup_prefers_user_context_images(self) -> None:
         stub = SessionModelAndTaskTests()._plugin_stub()
         from astrbot_plugin_selfie_image import main as plugin_main
