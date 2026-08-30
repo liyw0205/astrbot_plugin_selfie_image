@@ -6533,6 +6533,99 @@ class StudioStoreTests(unittest.TestCase):
         for text in ("西施 2026 夜景", "西施 12a 夜景", "西施 3.14 夜景", "西施 9999", "3旗袍abc"):
             expected = ("3旗袍abc", 1) if text == "3旗袍abc" else (text, 1)
             self.assertEqual(stub._extract_command_count(text, allow_attached=True), expected)
+        self.assertEqual(
+            stub._extract_command_count("十分漂亮", allow_trailing=True),
+            ("十分漂亮", 1),
+        )
+        self.assertEqual(
+            stub._extract_command_count("一只猫3", allow_trailing=True),
+            ("一只猫3", 1),
+        )
+
+    def test_image_commands_accept_count_before_or_after_prompt(self) -> None:
+        """All image/selfie commands accept the common count positions."""
+        import tempfile
+
+        factory = SessionModelAndTaskTests()
+        factory._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+        from astrbot_plugin_selfie_image.preset import ImagePresetManager
+
+        class Event:
+            def __init__(self, message: str) -> None:
+                self.message_str = message
+
+            def plain_result(self, text: str) -> str:
+                return text
+
+        async def invoke_prompt(command: str, message: str, with_ref: bool = False):
+            stub = factory._plugin_stub()
+            stub.presets = ImagePresetManager(tempfile.mkdtemp())
+            captured = {}
+            stub._quota_error_message = lambda *args, **kwargs: ""
+            stub._rate_limit_error_message = lambda *args, **kwargs: ""
+            async def progress(*args, **kwargs):
+                return "progress"
+
+            stub._build_contextual_progress_text = progress
+            stub._record_bot_text_context = lambda *args, **kwargs: None
+
+            async def refs(*args, **kwargs):
+                return [object()] if with_ref else []
+
+            async def refs_stats(*args, **kwargs):
+                return ([object()], 1, 0) if with_ref else ([], 0, 0)
+
+            stub._event_reference_images = refs
+            stub._event_reference_images_with_stats = refs_stats
+            stub.start_command_image_task = (
+                lambda *args, **kwargs: captured.update(summary=kwargs.get("summary", {})) or "task"
+            )
+            output = [item async for item in getattr(plugin_main.SelfieImagePlugin, command)(stub, Event(message))]
+            return captured, output
+
+        async def invoke_selfie(command: str, message: str):
+            stub = factory._plugin_stub()
+            stub.presets = ImagePresetManager(tempfile.mkdtemp())
+            captured = {}
+
+            async def handle(**kwargs):
+                captured.update(kwargs)
+                if False:
+                    yield None
+
+            stub._handle_selfie_command = handle
+            output = [item async for item in getattr(plugin_main.SelfieImagePlugin, command)(stub, Event(message))]
+            return captured, output
+
+        prompt_cases = (
+            ("cmd_draw", "/画 3 一只猫", False, "一只猫", 3),
+            ("cmd_draw", "/画 一只猫 3", False, "一只猫", 3),
+            ("cmd_draw", "/生图 一只猫 3", False, "一只猫", 3),
+            ("cmd_raw_text_to_image", "/文生图 3 一只猫", False, "一只猫", 3),
+            ("cmd_raw_text_to_image", "/文生图 一只猫 3", False, "一只猫", 3),
+            ("cmd_raw_text_to_image", "/文生图 一只猫 三张", False, "一只猫", 3),
+            ("cmd_raw_text_to_image", "/文生图 一位美女 捧脸 2", False, "一位美女 捧脸", 2),
+            ("cmd_raw_image_to_image", "/图生图 改成素描 3", True, "改成素描", 3),
+        )
+        for command, message, with_ref, expected_prompt, expected_count in prompt_cases:
+            captured, output = asyncio.run(invoke_prompt(command, message, with_ref))
+            self.assertEqual(output, ["progress"], message)
+            self.assertEqual(captured["summary"]["requested_count"], expected_count, message)
+            self.assertEqual(captured["summary"]["original_prompt"], expected_prompt, message)
+
+        selfie_cases = (
+            ("cmd_selfie", "/看看 一位美女 捧脸 2", "一位美女"),
+            ("cmd_selfie", "/自拍 2 一位美女 捧脸", "一位美女"),
+            ("cmd_look_legs", "/看看腿 白丝 夜景 2", "白丝"),
+            ("cmd_look_you", "/看看你 夜景 2", "夜景"),
+            ("cmd_group_selfie", "/合影 一位美女 捧脸 2", "一位美女"),
+        )
+        for command, message, expected_marker in selfie_cases:
+            captured, output = asyncio.run(invoke_selfie(command, message))
+            self.assertEqual(output, [])
+            self.assertEqual(captured["requested_count_override"], 2, message)
+            self.assertIn(expected_marker, captured.get("message_override", "") or captured.get("fallback", ""), message)
 
     def test_clothes_followup_prefers_user_context_images(self) -> None:
         stub = SessionModelAndTaskTests()._plugin_stub()

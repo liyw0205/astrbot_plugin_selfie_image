@@ -3228,7 +3228,11 @@ class SelfieImagePlugin(Star):
             remainder = match.group(2).strip()
             # Do not split ordinary numeric/alphanumeric tokens such as
             # `2026`, `12a`, or `3.14` as a batch count.
-            if count and remainder and not re.search(r"[\dA-Za-z]", remainder):
+            # Chinese number + classifier phrases (`一只猫`, `一位美女`) are
+            # ordinary prompt text, not attached batch shorthand.
+            classifiers = "只位个名件套条张幅次本辆杯碗颗粒朵座间栋台部份种组对双"
+            is_measure_phrase = bool(re.match(rf"[{classifiers}]", remainder))
+            if count and remainder and not re.search(r"[\dA-Za-z]", remainder) and not is_measure_phrase:
                 return remainder, count
         match = re.fullmatch(rf"(.+?)({count_pattern}){suffix_pattern}", text)
         if match:
@@ -3251,7 +3255,14 @@ class SelfieImagePlugin(Star):
             tokens.append(token)
         return tokens
 
-    def _extract_command_count(self, text: str, *, allow_attached: bool = False) -> Tuple[str, int]:
+    def _extract_command_count(
+        self,
+        text: str,
+        *,
+        allow_attached: bool = False,
+        allow_trailing: bool = False,
+    ) -> Tuple[str, int]:
+        """Extract a batch count from the conventional leading/trailing slots."""
         tokens = self._command_tokens_for_count(text)
         if not tokens:
             return "", 1
@@ -3259,7 +3270,7 @@ class SelfieImagePlugin(Star):
         # COS accepts a count after an arbitrary extra prompt, e.g.
         # `洛琪希 夜景 3`; other commands retain the legacy first-two-token
         # behavior so numbers inside free-form prompts are not reinterpreted.
-        if allow_attached and len(tokens) > 2:
+        if (allow_attached or allow_trailing) and len(tokens) > 2:
             indices.append(len(tokens) - 1)
         for index in dict.fromkeys(indices):
             if index >= len(tokens):
@@ -6972,7 +6983,7 @@ class SelfieImagePlugin(Star):
         """写想要的画面出图。有附图/引用图时按图改；没图时按文字出。不会自动带入形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, ("画", "生图"), fallback)
-        message, requested_count = self._extract_command_count(message)
+        message, requested_count = self._extract_command_count(message, allow_trailing=True)
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             yield event.plain_result(error)
@@ -7039,7 +7050,7 @@ class SelfieImagePlugin(Star):
         """按你写的原文出图，不走自拍人设包装，也不使用形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, "文生图", fallback)
-        message, requested_count = self._extract_command_count(message)
+        message, requested_count = self._extract_command_count(message, allow_trailing=True)
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             yield event.plain_result(error)
@@ -7097,7 +7108,7 @@ class SelfieImagePlugin(Star):
         """带图或引用图，按原文改图。需要附图，不会自动使用形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, "图生图", fallback)
-        message, requested_count = self._extract_command_count(message)
+        message, requested_count = self._extract_command_count(message, allow_trailing=True)
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             yield event.plain_result(error)
@@ -7168,7 +7179,7 @@ class SelfieImagePlugin(Star):
         """用当前形象自拍。可写动作、场景、换装；有附图时作服装/场景参考。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, ("自拍", "看看"), fallback_args)
-        raw_extra, requested_count = self._extract_command_count(raw_message)
+        raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
         # Resolve presets on raw user words first (e.g. /自拍 捧脸), then wrap action.
         expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         has_refs = bool(extract_image_sources_from_event(event))
@@ -7211,7 +7222,7 @@ class SelfieImagePlugin(Star):
         """日常下装穿搭记录；随机手机记录或朋友协助拍摄视角；可写数量。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看腿", fallback_args)
-        raw_extra, requested_count = self._extract_command_count(raw_message)
+        raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
         expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         fallback = self._build_leg_focus_action(expanded_extra, bool(extract_image_sources_from_event(event)))
         async for item in self._handle_selfie_command(
@@ -7298,7 +7309,7 @@ class SelfieImagePlugin(Star):
         """像别人随手拍你，带一点日常他拍感。使用当前形象。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看你", fallback_args)
-        raw_extra, requested_count = self._extract_command_count(raw_message)
+        raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
         expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         fallback = self._build_third_person_look_action(expanded_extra, bool(extract_image_sources_from_event(event)))
         async for item in self._handle_selfie_command(
@@ -7336,7 +7347,7 @@ class SelfieImagePlugin(Star):
         """和对象同框合影。可附图或@对方；自己使用当前形象。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, ("合影", "合照"), fallback)
-        raw_message, requested_count = self._extract_command_count(raw_message)
+        raw_message, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
         expanded_message, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_message)
         action = self._build_group_selfie_action(
             expanded_message,
