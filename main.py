@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-RECORD_KEEP_LIMIT = 300
-
 import asyncio
 import copy
 import hashlib
@@ -12,37 +10,24 @@ import json
 import os
 import random
 import re
-import secrets
-import shutil
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 
 try:
     from astrbot.api.star import Context, Star, register
     from astrbot.api.event import AstrMessageEvent, filter
-    from astrbot.api.message_components import Image
     from astrbot.api import llm_tool, logger
 except ImportError:  # Compatibility with older AstrBot layouts
     from astrbot.api.star import Context, Star, register
     from astrbot.api.event import AstrMessageEvent, filter
-    from astrbot.api.event.components import Image
     from astrbot.api import llm_tool
     from astrbot.api.utils import logger
-
-try:
-    from astrbot.api.message_components import Video  # type: ignore
-except Exception:
-    try:
-        from astrbot.api.event.components import Video  # type: ignore
-    except Exception:
-        Video = None  # type: ignore
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -51,25 +36,86 @@ except Exception:
         return os.path.join(os.getcwd(), "data")
 
 from .constants import (
-    LEGACY_CONFIG_FILENAME,
-    LEGACY_PLUGIN_NAME,
     PLUGIN_AUTHOR,
     PLUGIN_CONFIG_FILENAME,
     PLUGIN_DISPLAY_NAME,
     PLUGIN_NAME,
     PLUGIN_VERSION,
 )
+from .access_policy import (
+    access_status,
+    blocked_prompt_word,
+    permission_denied_message,
+    quota_error_message,
+)
+from .context_routing import (
+    compact_followup_text,
+    format_context_for_llm,
+    looks_like_clothes_followup,
+    looks_like_context_image_reference,
+    looks_like_edit_bot_result_followup,
+    recent_context_image_sources,
+)
+from .command_parser import (
+    command_tokens_for_count,
+    expand_cos_user_text_with_preset,
+    expand_user_text_with_preset,
+    extract_command_count,
+    normalize_count,
+    normalize_preset_input,
+    parse_count_token,
+    parse_prompt_options,
+    resolve_image_preset,
+    split_attached_count_token,
+    split_preset_command,
+)
+from .cos_looks import (
+    COS_LOOK_CATEGORY_TERMS,
+    COS_LOOK_SETS,
+    _cos_item_terms,
+    adapt_cos_outfit_for_camera,
+    build_cos_look_action,
+    format_cos_look_list,
+    list_cos_look_sets,
+    match_cos_look_sets,
+    parse_requested_cos_camera,
+    pick_cos_camera,
+    pick_cos_look_set,
+)
 from .generator import generate_image_with_fallback
+from .generation_store import GenerationStoreMixin, RECORD_KEEP_LIMIT
+from .generation_results import (
+    batch_failure_policy,
+    batch_failure_text,
+    batch_success_text,
+    normalize_generation_result,
+)
+from .leg_focus import (
+    CALF_CROP_POSES,
+    LEGFOCUS_CAMERA_WEIGHTS,
+    LEGFOCUS_RISKY_EXTRA_REPLACEMENTS,
+    LEGWEAR_BY_POSE,
+    LEGWEAR_PROMPTS,
+    LEGWEAR_REQUEST_PATTERN,
+    SAFE_LEGWEAR_LABELS,
+    STOCKING_FINISH_CHOICES,
+    build_leg_focus_action,
+    is_leg_calf_crop_action,
+    parse_requested_legwear,
+    pick_stocking_finish,
+)
+from .model_selection import (
+    available_model_labels,
+    find_model_target,
+    match_model_label,
+    prioritize_model_target,
+)
 from .preset import ImagePresetManager
 from .models import (
     AICatConfig,
     DEFAULT_CONFIG,
     ImageModelTarget,
-    deep_merge,
-    normalize_config_tree,
-    normalize_legacy_keys,
     preflight_video_channel,
-    strip_channel_timeouts,
 )
 from .persona import PersonaManager
 from .studio import (
@@ -82,6 +128,15 @@ from .studio import (
     prompts_for_template,
     resolve_slot_refs_for_run,
 )
+from .studio_adapter import StudioMixin
+from .config_manager import ConfigurationMixin
+from .conversation_context import ConversationContextMixin
+from .task_views import (
+    filter_image_tasks,
+    format_task_detail_text,
+    format_task_list_text,
+)
+from .task_manager import WebTaskMixin
 from .providers import (
     ImageGenerateRequest,
     ImageReference,
@@ -90,7 +145,36 @@ from .providers import (
     normalize_image_base_url,
     provider_type_from_channel_payload,
 )
-from .reference_collector import ReferenceCollector, extract_structured_image_sources
+from .prompt_composition import (
+    append_anatomy_constraints,
+    build_prompt_with_reference_instruction,
+)
+from .prompt_translation import parse_prompt_en_response
+from .audit_pipeline import AuditMixin
+from .reference_collector import extract_structured_image_sources
+from .reference_media import ReferenceMediaMixin
+from .response_text import (
+    ack_repeats_request,
+    clean_ack_message,
+    compact_for_repeat_check,
+    friendly_user_error_message,
+    looks_like_non_chinese_ack,
+    natural_ack_fallback,
+    natural_fail_fallback,
+    tool_soft_fail,
+    tool_success,
+    tool_unavailable,
+)
+from .selfie_actions import (
+    build_crop_waist_selfie_action,
+    build_group_selfie_action,
+    build_selfie_look_action,
+    build_third_person_look_action,
+    looks_like_crop_waist_request,
+    looks_like_group_selfie_intent,
+    looks_like_selfie_intent,
+    period_scene_light_pools,
+)
 from .proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, http_proxy_url, image_client_timeout, target_session_proxy
 from .video import VideoGenerateRequest, generate_video_with_fallback
 from .utils import (
@@ -125,8 +209,6 @@ from .dashboard_api import SelfieImageDashboardAPI
 from .web import FlaskWebServer
 
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
-WEB_STARTUP_CONFIG_KEYS = ("web", "webEnable", "webHost", "webPort", "webToken")
-DEFAULT_WEB_TOKEN = str(DEFAULT_CONFIG["web"].get("token") or "changeme").strip().lower()
 IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS = 2.0
 
 
@@ -142,499 +224,17 @@ def optional_event_message_type(priority: int = 100):
     return passthrough
 
 
-def anatomy_constraint_lines(*, style: str = "general") -> list[str]:
-    """Shared body-part constraints for selfie/draw prompts. Implemented in persona."""
-    from .persona import anatomy_constraint_lines as _lines
-
-    return _lines(style=style)
-
-
-def append_anatomy_constraints(prompt: str, *, language: str = "zh") -> str:
-    """Optional quality/anatomy pad for strong fixed selfie builtins only.
-
-    Freeform /画 /文生图 /图生图 should not use this — user/preset text already
-    carries intent, and stacking anatomy negatives conflicts or blows length.
-    """
-    raw = str(prompt or "").strip()
-    if not raw:
-        return raw
-    if language != "en":
-        return "\n".join(
-            [
-                raw,
-                "",
-                "构图与画面质量：",
-                "生成一张光线自然、透视稳定、主体清晰的完整画面；人物或动物结构自然完整。",
-                *anatomy_constraint_lines(style="general"),
-            ]
-        )
-    return "\n".join(
-        [
-            raw,
-            "",
-            "Composition and quality:",
-            "Use a coherent single image with natural lighting, stable perspective, clear subject focus, and complete natural anatomy for people or animals.",
-            *anatomy_constraint_lines(style="en"),
-        ]
-    )
-
-
-def build_prompt_with_reference_instruction(
-    prompt: str,
-    images: List[ImageReference],
-    *,
-    language: str = "zh",
-    enhance: bool = False,
-) -> str:
-    """Freeform draw/img2img wrapper.
-
-    Default (enhance=False): keep user/preset text intact. With refs, add a short
-    reference instruction only — no anatomy/negative dump.
-    enhance=True is for rare fixed pipelines that still want anatomy padding.
-    """
-    raw = str(prompt or "").strip()
-    if not images:
-        return append_anatomy_constraints(raw, language=language) if enhance else raw
-    if language != "en":
-        lines = [
-            "使用提供的参考图作为视觉参考。",
-            "按用户要求修改，并尽量保持相关人物身份、服装、姿势、场景与构图一致。",
-        ]
-        if enhance:
-            lines.extend(
-                [
-                    "画面光线、透视与色调统一，人体结构自然完整。",
-                    *anatomy_constraint_lines(style="general"),
-                ]
-            )
-        lines.extend(["", "用户要求：", raw])
-        return "\n".join(lines)
-    lines = [
-        "Use the provided reference image(s) as visual references.",
-        "Follow the user's requested changes while preserving relevant identity, outfit, pose, scene, and composition.",
-    ]
-    if enhance:
-        lines.extend(
-            [
-                "Create one coherent image with unified lighting, perspective, and natural complete anatomy.",
-                *anatomy_constraint_lines(style="en"),
-            ]
-        )
-    lines.extend(["", "User request:", raw])
-    return "\n".join(lines)
-
-
-LEGWEAR_BY_POSE = {
-    "sit": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
-    "sit_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
-    "kneel": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
-    "kneel_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
-    "side_lie": (("光腿神器", 6), ("白丝", 3), ("黑丝", 1)),
-    "side_lie_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 4)),
-    "hug_knee": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
-    "hug_knee_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
-    "cross_leg": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
-    "cross_leg_crop": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
-    "windowsill": (("光腿神器", 5), ("白丝", 3), ("黑丝", 2)),
-    "windowsill_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
-    "kneel_up": (("光腿神器", 5), ("白丝", 2), ("黑丝", 3)),
-    "kneel_front": (("光腿神器", 6), ("白丝", 2), ("黑丝", 2)),
-    "floor_fold": (("光腿神器", 6), ("白丝", 2), ("黑丝", 2)),
-    "one_knee_fix": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3)),
-    "reclined_knees_crop": (("光腿神器", 1), ("白丝", 6), ("黑丝", 5)),
-    "floor_knees_up_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
-    "desk_sit_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5)),
-    "bed_supine_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 4)),
-}
-
-# Poses that crop calves/feet off-frame to reduce weird lower-leg anatomy.
-CALF_CROP_POSES = frozenset(
-    name for name in LEGWEAR_BY_POSE if name.endswith("_crop")
-)
-
-# Camera choices are pose-aware so a phone selfie does not fight the physical
-# setup.  The weights still leave room for the alternate viewpoint.
-LEGFOCUS_CAMERA_WEIGHTS = {
-    "sit": (("selfie", 3), ("third", 2)),
-    "sit_crop": (("selfie", 4), ("third", 1)),
-    "kneel": (("selfie", 4), ("third", 1)),
-    "kneel_crop": (("selfie", 4), ("third", 1)),
-    "side_lie": (("selfie", 3), ("third", 2)),
-    "side_lie_crop": (("selfie", 4), ("third", 1)),
-    "hug_knee": (("selfie", 4), ("third", 1)),
-    "hug_knee_crop": (("selfie", 4), ("third", 1)),
-    "cross_leg": (("selfie", 2), ("third", 4)),
-    "cross_leg_crop": (("selfie", 3), ("third", 3)),
-    "windowsill": (("selfie", 1), ("third", 4)),
-    "windowsill_crop": (("selfie", 2), ("third", 4)),
-    "kneel_up": (("selfie", 1), ("third", 4)),
-    "kneel_front": (("selfie", 2), ("third", 4)),
-    "floor_fold": (("selfie", 4), ("third", 1)),
-    "one_knee_fix": (("selfie", 4), ("third", 2)),
-    "reclined_knees_crop": (("selfie", 5), ("third", 1)),
-    "floor_knees_up_crop": (("selfie", 5), ("third", 1)),
-    "desk_sit_crop": (("selfie", 3), ("third", 2)),
-    "bed_supine_crop": (("selfie", 6), ("third", 1)),
-}
-
-
-def is_leg_calf_crop_action(text: str) -> bool:
-    raw = str(text or "")
-    m = re.search(r"【pose:([a-z_]+)】", raw)
-    if m and m.group(1) in CALF_CROP_POSES:
-        return True
-    if "【legs:outfit】" in raw or "下半身穿搭" in raw or "穿搭展示" in raw:
-        return True
-    if "【crop:calves】" in raw or "双脚完整裁出画外" in raw:
-        return True
-    return "大腿" in raw and "小腿" in raw and "画外" in raw
-
-LEGWEAR_PROMPTS = {
-    "光腿神器": (
-        "本次服装搭配：自然肤色光腿神器，从大腿连续覆盖到膝部，材质自然，作为得体穿搭的一部分。"
-    ),
-    "白丝": (
-        "本次服装搭配：白色不透白丝，从大腿连续覆盖到膝部，袜口位于大腿上部，作为得体日常穿搭的一部分。"
-    ),
-    "黑丝": (
-        "本次服装搭配：黑色不透黑丝，从大腿连续覆盖到膝部，袜口位于大腿上部，作为得体日常穿搭的一部分。"
-    ),
-}
-
-# Stocking finishes. User asked to see 花边/腿环 again; keep 镂空/勒痕 out.
-STOCKING_FINISH_CHOICES: List[Tuple[str, int]] = [
-    ("袜口宽花边，素色袜身。", 4),
-    ("膝上细腿环，袜口平整。", 4),
-    ("袜口花边加细腿环。", 3),
-    ("袜口小蝴蝶结，素色袜身。", 2),
-    ("袜身带细竖纹，袜口平整。", 2),
-    ("袜口轻轻卷边，素色袜身。", 1),
-]
-
-
-def pick_stocking_finish() -> str:
-    bag: List[str] = []
-    for text, weight in STOCKING_FINISH_CHOICES:
-        bag.extend([text] * max(1, int(weight)))
-    return random.choice(bag)
-
-LEGWEAR_REQUEST_PATTERN = re.compile(
-    r"(?:光腿神器|光腿|白丝|黑丝|丝袜|短袜|堆堆袜|过膝袜|长筒袜|肉色丝袜|肉丝|连裤袜|长袜)"
-)
-
-LEGFOCUS_RISKY_EXTRA_REPLACEMENTS = (
-    ("掀衣摆", "整理衣摆"),
-    ("晒腿", "记录穿搭"),
-    ("主要看腿形", "重点看服装版型"),
-    ("看腿形", "看服装版型"),
-    ("不露脸", "服装局部取景"),
-    ("短裙", "日常裙装"),
-)
-
-SAFE_LEGWEAR_LABELS = {
-    "光腿神器": "自然肤色光腿神器，从大腿连续覆盖到膝部",
-    "白丝": "白色不透白丝，从大腿连续覆盖到膝部，袜口位于大腿上部",
-    "黑丝": "黑色不透黑丝，从大腿连续覆盖到膝部，袜口位于大腿上部",
-}
-
-
-# COS pool: garment silhouettes first. Work/source lock is optional —
-# character outfits may name a series; category outfits (hanfu, white dress)
-# only describe visible structure, never Douyin/author/title provenance.
-# Titles use `·` for the main split; matching accepts the full title or a
-# complete title segment, never an arbitrary substring.
-COS_LOOK_SETS: List[Dict[str, str]] = [
-    {"id": "roxy_cream", "title": "洛琪希·奶油睡衣", "prompt": "严格换装为《无职转生》洛琪希的奶油色居家睡衣两件套：米白奶油色无袖睡衣上衣，柔软微皱棉质，领口与肩线细荷叶边抽褶；胸前白色缎带大蝴蝶结与长飘带；同色宽松睡衣短裤；浅薰衣草紫超长发双麻花辫垂在胸前；姿势严格为跪坐在地毯上，双膝并拢，双腿收拢并拢压在身下，臀部坐在脚跟上，脚部不要向两侧张开，不要盘腿、分腿或站立；对镜坐在木地板地毯上；禁止蓝色旅行法师外套、宽檐帽、法杖。"},
-    {"id": "hanfu_peach", "title": "齐胸汉服·桃粉", "prompt": "严格换装为桃粉齐胸汉服：齐胸抹胸高腰，桃粉多层长裙，轻薄裙摆与细微花卉刺绣；高腰翠绿宽丝带和长飘带；黑发高髻配粉色牡丹与金簪；细金项链和长吊坠耳环；古风优雅，日常得体，不要现代礼服。"},
-    {"id": "mint_sheer_hanfu", "title": "薄荷粉纱汉服", "prompt": "严格换装为薄荷绿与淡粉渐变的轻纱汉服：外层宽袖薄纱袍，淡雅晕染花卉，内衬浅粉齐胸襦裙；深棕长发高髻、空气刘海，右侧白色绢花，左侧长辫垂腰；细银链小吊坠；清雅自然，日常得体，不要铠甲。"},
-    {"id": "rem_blue_lolita", "title": "蕾姆·蓝白女仆洛丽塔", "prompt": "严格换装为《Re:Zero》蕾姆的罗兹瓦尔宅邸经典蓝白女仆服，不是泛化女仆装：浅蓝短发、侧分长刘海，白色褶边女仆发箍与蓝色小花发饰；白色长袖蓬袖衬衣，外穿深蓝至蓝黑色贴身无袖女仆连衣裙/束身上衣，白色褶边胸襟和白色蕾丝围裙覆盖前胸，白色围裙腰带在腰后系大蝴蝶结；深蓝色膝上蓬裙，裙摆白色蕾丝荷叶边，后腰有分叉燕尾式深色后摆；白色过膝袜带深色腿环，黑色圆头玛丽珍女仆鞋。严格保持浅蓝、白、深蓝三色结构，室内柔光对镜全身；不要拉姆粉色女仆服、不要普通黑白法式女仆、不要黑色哥特洛丽塔、不要蓝色水手服、不要校服、不要短袖、不要现代服务员制服。"},
-    {"id": "white_slip_mini", "title": "白细肩带迷你裙", "prompt": "严格换装为白细肩带迷你裙：黑发直刘海，高马尾从脑后束起垂到后背。上身纯白细肩带吊带裙，肩带约一指宽，低圆领到锁骨下，无袖，胸腰一体、不束腰封。裙身单层轻薄缎面，自然垂褶，A字微扩，裙摆只到大腿中段。裸腿，白色厚底运动鞋、白鞋带。室内柔光对镜全身。不是拖地白婚纱，也不是齐胸长裙汉服。"},
-    {"id": "haiyue_petal_jelly", "title": "海月·白蓝花瓣水母", "prompt": "严格换装为《王者荣耀》海月这一版白蓝花瓣水母短款：深蓝近黑长直发垂过腰。上身近无袖，深甜心领，胸前层层象牙白与浅蓝立体花瓣荷叶，左胸一朵深蓝结晶花，细银链小吊坠垂在腹前；右侧肩上白蓝立体花簇。腰侧大开，露出肋与腰腹。下装高腰多层薄纱裙，髋上圈一圈白蓝紫花瓣荷叶，外层白到浅紫薄纱，左侧高开叉到大腿。主色象牙白、浅蓝、浅紫、少量深蓝。室内柔光对镜全身。不是原皮宽袖长袍汉服。"},
-    {"id": "xishi_fan_qipao", "title": "西施·同人短旗袍", "prompt": "严格换装为《王者荣耀》西施同人短旗袍这一版：铂金银白长直发中分，两侧长鬓，头顶一对薄荷白鹿角，一侧薄荷小花发饰。上身是贴身无袖短旗袍，高立领金滚边与金盘扣，领下低开到胸口，正中金绣花或贝壳纹。肩臂另接薄荷薄纱荷叶袖，纱袖垂到小腿。旗袍缎面银白微闪，下摆薄荷暗纹，金边包到大腿中段，一侧高开叉。白色不透明过膝袜，袜口白蕾丝。室内素墙对镜全身。不是原皮长裙水莲汉服。"},
-    {"id": "lanmeng_dragon_path", "title": "蓝梦·龙之道", "prompt": "严格换装为《永劫无间》蓝梦龙之道这一版：黑发齐刘海，两侧高发包，发上金珠与金缎带，长段泡泡马尾垂下。上身是浅金海波纹一字肩短上衣，无袖，只到胸下，露出腰腹；胸前菱形黑边开窗，黑滚边与盘扣。外搭松垮黑袍从一侧肩臂垂下。下装是黑色短裹裙，前腰大黑蝴蝶结，粗黄绳在腰间打结并垂到一侧，裙摆到大腿中段。黑珠项链配小金牌。室内柔光对镜全身。不是原皮多层长袍。"},
-    {"id": "dolia_ocean_ruffle", "title": "朵莉亚·海洋荷叶裙", "prompt": "严格换装为《王者荣耀》朵莉亚这一版海洋荷叶短裙：青绿蓝长卷发披肩，头顶小蓝发饰。上身细肩带低领短上衣，胸前白贝壳与红海星、细珍珠点缀，颈上贝壳吊坠项圈。腰线收束后接多层荷叶迷你裙，外层薄纱从青绿蓝渐变到蓝紫，内层白色衬裙，裙摆只到大腿，珍珠散在荷叶边上。无袖，裸腿。室内素墙对镜全身。不是原皮人鱼长尾。"},
-    {"id": "yinzi_white_qipao", "title": "殷紫萍·银白短旗袍", "prompt": "严格换装为《永劫无间》殷紫萍这一版银白短旗袍：银白长直发齐刘海，两侧高发包，包上白花瓣发饰、黑缎带和白流苏。上身高立领白缎旗袍，领口黑里，前中钥匙孔开窗到上胸，胸前银灰花卉云纹绣，腰侧开窗露腰。短荷叶肩饰，长白纱手套到腕。下装同料迷你裙到大腿中段，黑滚边，内层白荷叶衬裙，白色不透明过膝袜。室内柔光对镜全身。不是长袍旗袍。"},
-    {"id": "ganyu_bride", "title": "甘雨·花嫁", "prompt": "严格换装为《原神》甘雨花嫁这一版：淡蓝发高髻配齐刘海和侧缕，保留麒麟角，白蕾丝花冠和薄白头纱。上身白蕾丝立领项圈，珍珠链垂到胸口，中央金铃铛；无袖露肩白胸衣收腰，肩臂接蓬松白到淡蓝薄纱荷叶袖。下装多层白到淡蓝迷你蓬裙，薄纱荷叶很多，一侧更长的淡蓝纱片。白色不透明过膝袜。室内柔光对镜全身。不是原皮深蓝金边旗袍。"},
-    {"id": "yulinglong_gold_fox", "title": "玉玲珑·金狐", "prompt": "严格换装为《永劫无间》玉玲珑这一版金狐短装：浅金波浪长发中分，头顶竖起狐耳和细金额饰。上身近无袖，肤色薄纱贴身，胸口大颗青绿宝石和金纹，深色金边项圈，上臂金臂环。腰上金腰带垂几何金饰和蓝绿宝石，露出腰腹。下装香槟金薄纱短裙到大腿，高开叉，内层更浅。室内柔光对镜全身。不是原皮覆盖更多的汉服长袍。"},
-    {"id": "diaochan_sanguosha", "title": "貂蝉·三国杀", "prompt": "严格换装为《三国杀》貂蝉这一版：黑长直发，头顶两只螺旋黑发包、金缎缠绕，右侧一朵大金花。颈上金项圈。上身白色短上衣只到胸下，下沿荷叶边，整段腰腹露出。外罩粉红宽袖长纱，袖长过手。下装高腰薄荷缎裙，腰上金饰，左侧高开叉到髋，裙摆拖地，赤足。室内柔光对镜全身。不是齐胸长裙汉服。"},
-    {"id": "platinum_lace_gown", "title": "铂金发白蕾丝长裙", "prompt": "严格换装为铂金长直发白蕾丝长裙：头发中分，两缕垂到大腿。上身高领白蕾丝抽褶衣，短蓬袖蕾丝边，腰上同色宽带和扣。下装多层奶白长裙，薄纱外层，一侧用手掀起露出大腿。裸腿。室内素墙对镜全身。不是婚纱，也不是齐胸汉服。"},
-    {"id": "xishi_cyan_qipao", "title": "西施·青绿渐变旗袍", "prompt": "严格换装为《王者荣耀》西施这一版青绿渐变旗袍：黑长直发披背。上身高立领，白盘扣，领下到腰是青绿转到象牙白，深棕滚边；右胸白花蝶贴饰；七分袖，袖口白蕾丝，袖缝棕滚边。腰下白内裙微微鼓出。外裙下摆蓝花叶纹，一侧高开叉到大腿，内层白蕾丝衬裙。颈上一串白珠。室内素墙对镜全身。不是原皮长裙水莲，也不是鹿角同人短旗袍。"},
-    {"id": "yellow_bow_maid", "title": "黄结白围裙女仆", "prompt": "严格换装为深蓝底白围裙女仆装：黑长直发披背。上身深蓝底衣，白色荷叶水手领黑滚边；胸前大黄蝴蝶结，结心绿宝石。肩上白蓬袖，深蓝袖管，袖口白宽边黑条。腰上白围裙束出荷叶，裙摆白荷叶盖在深蓝裙外。白手套。室内柔光对镜全身。不是黑白法式女仆，也不是蕾姆蓝白女仆。"},
-    {"id": "silver_deepv_hanfu", "title": "汉服·银紫深V广袖", "prompt": "严格换装为银紫长直发深V广袖古装：头发中分垂过腰，右侧白花步摇。上身交领极低开到胸口，领边金云纹滚边；前中一条金绣直襟从领口通到裙摆；外层粉白薄纱，腰上浅粉腰带。广袖，肩头藕粉抽褶，袖身粉白薄纱。下装粉白多层长裙，前中金绣直条。室内柔光对镜全身。不是齐胸抹胸汉服。"},
-    {"id": "blue_backless_hanfu", "title": "露背蓝纱古装", "prompt": "严格换装为露背蓝纱古装：黑发高髻。构图必须是单人四分之三侧身，身体朝画面一侧转开，镜头同时看到一侧脸颊、一侧锁骨和从颈到腰的整片裸背，不要正面全身，也不要正对镜头的后脑勺。后颈一条亮蓝丝带打结，两根长带沿背沟垂下；后背无交叉带、无第二套肩带。右肩只搭一层浅蓝暗纹薄纱。袖和裙都是多层蓝纱，从冰蓝渐变到青绿再到宝蓝，广袖鼓起但不挡背，长裙拖地。人体只有两条胳膊、两只手，一只手自然垂在身侧，另一只手轻扶裙或纱，不要第三只手、不要重复手臂、不要镜子里再长出一只手。室内黑底柔光，单人侧身对镜。不是齐胸长裙，也不是白婚纱。"},
-    {"id": "jixiaoman_black_gold", "title": "姬小满·黑金橙短装", "prompt": "严格换装为《王者荣耀》姬小满这一版黑金橙短装：浅橙粉到珊瑚橙长发披肩。内层白领立领。外层黑色短款宽袖外套只到胸下，金滚边，胸前金纹与金链吊坠，整段腰腹露出。宽袖外黑内亮橙金，袖口金边。腰上金腰带。髋前一块大金六角护甲板，板上有圆环纹。下装黑色短裤，裤口白边，大腿裸出。髋侧一条浅紫白辫状长尾饰。室内柔光对镜全身。不是黄睡衣家居，不是黄短裙，也不是齐胸长裙汉服。"},
-    {"id": "xishi_shiyu_jiangnan", "title": "西施·诗语江南", "prompt": "严格换装为《王者荣耀》西施诗语江南这一版青绿短款：黑长发披肩，一侧编小辫，金花叶发饰。上身贴身青绿短衣，白花绣，金滚边；高立领金边；左肩一团青绿荷叶大结；内衬白底白花金边，前襟掀起露出腰腹。广袖，外层青绿金袖口，内层白袖金边。腰侧粉红流苏小囊。下装浅青绿白多层迷你蓬裙，裙摆只到大腿。白色不透明过膝袜，袜口宽米色边。室内素墙对镜全身。不是原皮长裙水莲，不是鹿角同人短旗袍，也不是青绿长旗袍。"},
-    {"id": "gongsunli_lihenyan", "title": "公孙离·离恨烟", "prompt": "严格换装为《王者荣耀》公孙离离恨烟这一版：深蓝近黑长发，头顶两只尖角高发包，包上红珠和金簪，金流苏垂侧。上身贴身白缎短旗袍，高立白领金绣，胸口正中大金螺旋圆徽；一侧长白袖金边，另一侧露肩，上臂金环。腰上金蓝绳结，垂金环、流苏和金葫芦。下装极短白底，两侧高开到髋，外搭青绿、粉、深蓝多层曳地薄纱。赤足。室内柔光对镜全身。不是大乔，不是普通白旗袍，也不是西施青绿旗袍。"},
-    {"id": "xishi_crop_qipao", "title": "西施·露腰短旗袍", "prompt": "严格换装为《王者荣耀》西施这一版露腰短旗袍两件套：黑长直发披肩。上身高立领青绿缎，白盘扣/蓝花结盘扣，深棕滚边，白花叶绣，只到胸下，整段腰腹露出；七分袖，袖口白蕾丝，袖身花纹棕滚边。下装高腰白荷叶短裙盖在青绿花纹迷你裙上，白蕾丝裙边，裙摆只到大腿上段。白色不透明过膝袜，袜口白蕾丝花边。室内素墙对镜全身。不是诗语江南广袖短衣，也不是鹿角同人短旗袍，也不是领下接到腰的青绿长旗袍。"},
-    {"id": "ying_black_red", "title": "影·黑白红短装", "prompt": "严格换装为《王者荣耀》影这一版黑白红短装：铂金银白长直发披肩，右侧一束鲜红流苏发饰。上身黑立领短衣，银纹护领；胸口正中大红圆宝石，宝石下大红V形开窗到胸，整段腰腹露出。袖不对称：持械那侧白纱垂袖，另一侧黑垂片。下装贴身亮黑短裤，髋侧垂白色长片。右手红环刃陀螺。室内柔光对镜全身。不是齐胸汉服，也不是全包黑袍。"},
-    {"id": "lusha_gold_tiara", "title": "露莎·白金短装", "prompt": "严格换装为铂金超长直发白金短装：头发拖地，齐刘海。头顶金冠，正中紫宝石，两侧金饰垂紫金缎带和细金链。上身无袖白抹胸，金交叉胸带，下沿金链；上臂金环。腰上宽金腰带，垂金片和流苏，腰腹露出。下装白短裙，两侧高开到大腿，后摆更长。金绑带高跟凉鞋，脚面紫结。室内柔光对镜全身。不是拖地白婚纱，也不是齐胸长裙汉服。"},
-    {"id": "yangyang_blue_floral_swim", "title": "秧秧·蓝白碎花泳装", "prompt": "严格换装为《鸣潮》秧秧这一版蓝白碎花泳装：黑长直发，发尾染蓝，左侧银发卡。上身细吊带白底蓝花比基尼，蓝荷叶滚边，胸前蓝结。无袖，整段腰腹露出。下装同料白底蓝花薄纱裹裙，左髋打结，一侧高开。室内柔光对镜全身。不是原皮长外套白裙，也不是普通白婚纱。"},
-    {"id": "cartethyia_black_bird", "title": "卡提希娅·黑裙飞鸟", "prompt": "严格换装为《鸣潮》卡提希娅这一版：浅冰蓝长发。颈上黑立领，正中金翼剑徽。上身白胸衣，蓝藤花绣，外罩黑色金环胸带。肩上白到浅蓝短披，肩头圆环纹。左上臂藕粉袖箍金环。下装黑色迷你裙，裙上白绣飞鸟，一侧蓝带和金链。赤足，银枝状脚环。室内柔光对镜全身。不是白婚纱，也不是齐胸汉服。"},
-    {"id": "mint_twin_braid_hanfu", "title": "青绿双辫广袖长裙", "prompt": "严格换装为深棕双麻花辫青绿广袖长裙：两股粗辫垂在胸前。上身淡青绿立领短衣，领前白花绣，内层白襟。广袖淡青绿，褐花藤绣，袖里白。腰侧粉红花囊。下装白到淡青绿多层蓬长裙。室内素墙对镜全身。不是齐胸抹胸汉服，也不是迷你短裙。"},
-    {"id": "mansui_gray_wafu", "title": "满穗·灰白和风", "prompt": "严格换装为满穗风格的灰白色和风 COS 造型：黑色长发齐刘海，双侧丸子头，白色大蝴蝶结发饰和白色飘带。上身宽松灰白色长袖上衣，柔软布料与自然褶皱，领口和胸前有深色细滚边；下装深灰色高腰长裙，多层自然垂落的褶皱裙摆，裙摆略带轻薄质感；自然裸腿，搭配简洁黑色平底鞋。单人竖屏手机高机位俯拍，人物跪坐或半跪在室外地面，抬头看向镜头，一只手在脸旁比 V，另一只手轻轻整理裙摆。背景是旧墙、灰色地面和少量散落树叶，阴天自然光，真实手机摄影质感，画面干净得体。不要中筒袜、短袜或厚重打底袜，不要字幕、贴纸、水印或额外人物。"},
-    {"id": "xiao_qiao_white_bear", "title": "小乔·白熊围巾", "prompt": "严格换装为薄荷绿白熊主题的完整 COS 造型：薄荷绿色长发或中长卷发，头顶白色圆形熊耳发饰，发间有少量彩色小装饰。上身白色宽松蓬袖上衣，袖口和肩部带薄荷绿色装饰；颈部围着粗针织黄色长围巾，围巾两端自然垂下；腰间有粉色蝴蝶结。下装亮蓝色和青绿色百褶短裙，裙面有白色和金黄色几何线条，裙前悬挂小人偶、星星和流苏装饰。腿部穿白色不透明过膝袜或连贯白色腿部服装，从大腿上方连续到脚踝，不要中筒袜、短袜或袜口截断；脚穿白色与米黄色动物毛绒拖鞋，带蓝色和粉色绑带装饰。单人竖屏手机正面全身摄影，室内客厅电视柜前，双手自然抬起整理黄色围巾，明亮普通房间光线，真实真人 COS 摄影质感。不要视频字幕、文字、水印、贴纸或第二个人。"},
-    {"id": "furina_cream_blue_ruffle", "title": "芙宁娜·奶油浅蓝荷叶裙", "prompt": "严格换装为芙宁娜风格的奶油浅蓝荷叶裙 COS 造型：白金色短卷发或齐肩波浪发，发丝中混合浅蓝色挑染，前额柔软碎发和两缕侧边卷发，头顶佩戴浅色猫耳发饰。上身奶油米白色荷叶边上衣，肩部和胸前有多层柔软荷叶边，长袖略宽松，面料带浅粉色和浅蓝色小花图案，胸前佩戴细链项链。腰部系灰蓝色大蝴蝶结。下装浅蓝灰色多层蓬松半身裙，由多层蓝灰色布料和奶油白荷叶边组成，每层边缘带细白色蕾丝，裙面有少量细小花朵装饰。单人竖屏手机正面近景或三分之二身构图，人物正对镜头，表情温柔自然，双手自然放在身体两侧或轻轻展开裙摆，画面从头顶拍到膝盖附近。室内温暖客厅背景，木色柜体和柔和环境光，真实真人 COS 摄影质感。不要字幕、猫咪贴纸、文字、水印、塑料皮肤、过度磨皮或额外人物。"},
-]
-
-COS_LOOK_CATEGORY_TERMS = (
-    "旗袍", "汉服", "女仆", "睡衣", "长裙", "短裙", "短装", "泳装", "古装",
-    "洛丽塔", "花嫁", "围裙", "白熊", "和风", "荷叶裙",
-)
-
-
-def _cos_item_terms(item: Mapping[str, Any]) -> List[str]:
-    """Return complete searchable segments from a pool item's title."""
-    title = str(item.get("title") or "")
-    compact_title = re.sub(r"\s+", "", title).lower()
-    terms: List[str] = [compact_title]
-    for part in re.split(r"[·/\s、，,：:（）()]+", title):
-        part = part.strip().lower()
-        if len(part) >= 2:
-            terms.append(part)
-    for term in COS_LOOK_CATEGORY_TERMS:
-        if term in title:
-            terms.append(term.lower())
-    return list(dict.fromkeys(term for term in terms if len(term) >= 2))
-
-
-def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
-    """Match a COS pool subset by full title, character, or outfit category."""
-    raw_query = re.sub(r"\s+", " ", str(text or "")).strip().lower()
-    if not raw_query:
-        return []
-    all_items = [dict(item) for item in COS_LOOK_SETS]
-    separators = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+"
-
-    def compact(value: str) -> str:
-        return re.sub(separators, "", str(value or "")).lower()
-
-    item_terms: Dict[str, set[str]] = {}
-    term_items: Dict[str, set[str]] = {}
-    category_term_set = {compact(term) for term in COS_LOOK_CATEGORY_TERMS}
-    for item in all_items:
-        item_id = str(item.get("id") or "")
-        terms = {compact(term) for term in _cos_item_terms(item)}
-        terms.discard("")
-        item_terms[item_id] = terms
-        for term in terms:
-            term_items.setdefault(term, set()).add(item_id)
-
-    known_terms = sorted(term_items, key=lambda term: (-len(term), term))
-
-    def segment_token(token: str) -> List[str]:
-        """Return known title segments only when they cover the whole token."""
-        value = compact(token)
-        if not value:
-            return []
-        best: List[Optional[List[str]]] = [None] * (len(value) + 1)
-        best[0] = []
-        for start in range(len(value)):
-            if best[start] is None:
-                continue
-            for term in known_terms:
-                if value.startswith(term, start):
-                    end = start + len(term)
-                    candidate = [*best[start], term]
-                    previous = best[end]
-                    if previous is None or len(candidate) < len(previous):
-                        best[end] = candidate
-        return best[-1] or []
-
-    # A full title can be separated by punctuation or spaces, but arbitrary
-    # substring matches are rejected (`洛琪希xxx` must remain extra text).
-    compact_query = compact(raw_query)
-    exact = [
-        dict(item)
-        for item in all_items
-        if compact(str(item.get("title") or "")) == compact_query
-    ]
-    if exact:
-        return exact
-
-    selected_name_terms: List[str] = []
-    selected_category_terms: List[str] = []
-    for token in re.split(separators, raw_query):
-        segments = segment_token(token)
-        if not segments:
-            continue
-        for term in segments:
-            if term in category_term_set:
-                selected_category_terms.append(term)
-            else:
-                selected_name_terms.append(term)
-    selected_name_terms = list(dict.fromkeys(selected_name_terms))
-    selected_category_terms = list(dict.fromkeys(selected_category_terms))
-
-    # Character/alias and category filters can be combined, so `西施旗袍`
-    # narrows to Xishi's qipao entries while plain `旗袍` keeps all qipaos.
-    if selected_name_terms or selected_category_terms:
-        pool = []
-        for item in all_items:
-            terms = item_terms.get(str(item.get("id") or ""), set())
-            if all(term in terms for term in selected_name_terms) and all(
-                category in terms for category in selected_category_terms
-            ):
-                pool.append(dict(item))
-        return pool
-
-    # No title segment matched: preserve the caller's text as an ordinary
-    # extra prompt instead of guessing a nearby title.
-    return []
-
-
-def pick_cos_look_set(*, avoid_id: str = "", query: str = "") -> Dict[str, str]:
-    matched = match_cos_look_sets(query)
-    pool = matched or list(COS_LOOK_SETS)
-    pool = [item for item in pool if str(item.get("id") or "") != str(avoid_id or "")]
-    if not pool:
-        pool = matched or list(COS_LOOK_SETS)
-    return dict(random.choice(pool))
-
-
-def format_cos_look_list() -> str:
-    """Format the ordered COS pool for the non-generating list command."""
-    lines = [f"看看COS 随机池（{len(COS_LOOK_SETS)}套）："]
-    lines.extend(f"{index}. {item.get('title') or '未命名套装'}" for index, item in enumerate(COS_LOOK_SETS, 1))
-    return "\n".join(lines)
-
-
-def parse_requested_cos_camera(text: str) -> str:
-    """Honor extra text: 他拍 / 自拍. Empty = random later."""
-    raw = str(text or "")
-    compact = re.sub(r"\s+", "", raw).lower()
-    blob = compact + raw.lower()
-    third_keys = (
-        "他拍",
-        "别人拍",
-        "别人帮拍",
-        "朋友拍",
-        "有人拍",
-        "被拍",
-        "抓拍",
-        "第三人称",
-        "路人视角",
-        "摄影师拍",
-        "不是自拍",
-        "非自拍",
-        "不要自拍",
-        "不要对镜",
-        "不拿手机",
-        "不要拿手机",
-        "不要手持手机",
-        "candid",
-        "thirdperson",
-        "notselfie",
-    )
-    selfie_keys = ("自拍", "对镜", "镜前", "镜子前", "自己拍", "selfie", "mirror")
-    if any(key in blob for key in third_keys):
-        return "third"
-    if any(key in blob for key in selfie_keys):
-        return "selfie"
-    return ""
-
-
-def pick_cos_camera(*, extra_request: str = "", avoid: str = "", camera: str = "") -> str:
-    forced = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
-    if forced in {"selfie", "third"}:
-        return forced
-    pool = ["selfie", "third"]
-    if avoid in pool:
-        pool = [item for item in pool if item != avoid] or pool
-    return random.choice(pool)
-
-
-def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
-    text = str(outfit or "")
-    if camera != "third":
-        return text
-    replacements = (
-        ("对镜坐在木地板地毯上", "坐在木地板地毯上"),
-        ("室内柔光对镜全身", "室内柔光半身"),
-        ("室内素墙对镜全身", "室内素墙半身"),
-        ("室内黑底柔光，单人侧身对镜", "室内黑底柔光，单人侧身半身"),
-        ("对镜全身", "对镜半身"),
-    )
-    for old, new in replacements:
-        text = text.replace(old, new)
-    return text.replace("对镜", "")
-
-
-def parse_requested_legwear(text: str) -> str:
-    """Honor explicit user legwear: 白丝 / 黑丝 / 光腿神器. Empty = random by pose."""
-    raw = str(text or "")
-    safe_tag = re.search(r"【wear:(white|black|bare)】", raw)
-    if safe_tag:
-        return {"white": "白丝", "black": "黑丝", "bare": "光腿神器"}[safe_tag.group(1)]
-    # Prefer explicit "本次腿部穿搭：X" if already built.
-    m = re.search(r"本次腿部穿搭[:：]\s*(光腿神器|白丝|黑丝)", raw)
-    if m:
-        return str(m.group(1) or "").strip()
-    # Drop boilerplate that always lists all three options (must not force 白丝).
-    cleaned = re.sub(r"若本次是白丝/黑丝[^。\n]*。?", " ", raw)
-    cleaned = re.sub(r"光腿神器[、,，/]白丝[、,，/或]黑丝", " ", cleaned)
-    cleaned = re.sub(r"白丝/黑丝", " ", cleaned)
-    # User command extras: first match wins (看看腿 白丝).
-    if re.search(r"白丝", cleaned):
-        return "白丝"
-    if re.search(r"黑丝", cleaned):
-        return "黑丝"
-    if re.search(r"光腿神器|(?<![一-龥])光腿(?![一-龥])", cleaned) or re.search(r"光腿", cleaned):
-        # bare 光腿 / 光腿神器
-        if re.search(r"光腿神器|光腿", cleaned):
-            return "光腿神器"
-    return ""
-
-
-def parse_prompt_en_response(text: str) -> str:
-    """Extract English prompt from translator JSON; empty means failure -> keep original."""
-    cleaned = str(text or "").strip()
-    if not cleaned:
-        return ""
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:\w+)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
-    try:
-        import json as _json
-
-        payload = None
-        try:
-            payload = _json.loads(cleaned)
-        except Exception:
-            matched = re.search(r"\{(?:[^{}]|\{[^{}]*\})*\}", cleaned, flags=re.S)
-            if matched:
-                payload = _json.loads(matched.group(0))
-        if isinstance(payload, dict):
-            if payload.get("ok") is False:
-                return ""
-            en = payload.get(
-                "en",
-                payload.get("english", payload.get("prompt", payload.get("translation", ""))),
-            )
-            en = str(en or "").strip()
-            if not en:
-                return ""
-            low = en.lower()
-            if low.startswith("{") or "return only one json" in low or "source prompt:" in low:
-                return ""
-            return en
-    except Exception:
-        pass
-    # Legacy plain-text fallback for old templates.
-    plain = re.sub(r"^(?:English\s*prompt|Translation|译文|英文)[:：]\s*", "", cleaned, flags=re.I).strip()
-    if not plain or plain.startswith("{"):
-        return ""
-    low = plain.lower()
-    if ("allow" in low and "reason" in low) or "return only one json" in low or "source prompt:" in low:
-        return ""
-    if "faithful language conversion only" in low or "translate the image-generation prompt" in low:
-        return ""
-    if "translate the video-generation prompt" in low:
-        return ""
-    return plain
-
-
 @register(PLUGIN_NAME, PLUGIN_AUTHOR, f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}", PLUGIN_VERSION)
-class SelfieImagePlugin(Star):
+class SelfieImagePlugin(
+    StudioMixin,
+    ReferenceMediaMixin,
+    ConversationContextMixin,
+    ConfigurationMixin,
+    AuditMixin,
+    GenerationStoreMixin,
+    WebTaskMixin,
+    Star,
+):
     def __init__(self, context: Context, config: Optional[dict] = None):
         super().__init__(context)
         plugin_data_dir = os.path.join(str(get_astrbot_data_path()), "plugin_data")
@@ -730,309 +330,6 @@ class SelfieImagePlugin(Star):
     async def terminate(self) -> None:
         self.web_server.stop()
 
-    def _migrate_legacy_data_dir(self, plugin_data_dir: str) -> None:
-        if os.path.exists(self.data_dir):
-            return
-        legacy_dir = os.path.join(plugin_data_dir, LEGACY_PLUGIN_NAME)
-        if not os.path.isdir(legacy_dir):
-            return
-        try:
-            shutil.copytree(legacy_dir, self.data_dir)
-            logger.info(f"[SelfieImage] 已迁移旧数据目录: {legacy_dir} -> {self.data_dir}")
-        except Exception as exc:
-            logger.warning(f"[SelfieImage] 迁移旧数据目录失败: {exc}", exc_info=True)
-
-    def _migrate_legacy_config_file(self) -> None:
-        legacy_path = os.path.join(self.data_dir, LEGACY_CONFIG_FILENAME)
-        if os.path.exists(self.config_path) or not os.path.exists(legacy_path):
-            return
-        try:
-            shutil.copy2(legacy_path, self.config_path)
-            logger.info(f"[SelfieImage] 已迁移旧配置文件: {legacy_path} -> {self.config_path}")
-        except Exception as exc:
-            logger.warning(f"[SelfieImage] 迁移旧配置文件失败: {exc}", exc_info=True)
-
-    def _config_object_to_dict(self, value: Any) -> Dict[str, Any]:
-        if value is None:
-            return {}
-        if isinstance(value, Mapping):
-            return {str(key): self._plain_config_value(item) for key, item in value.items()}
-        for method_name in ("to_dict", "dict", "model_dump"):
-            method = getattr(value, method_name, None)
-            if not callable(method):
-                continue
-            try:
-                converted = method()
-                if isinstance(converted, Mapping):
-                    return {str(key): self._plain_config_value(item) for key, item in converted.items()}
-            except Exception:
-                continue
-        items = getattr(value, "items", None)
-        if callable(items):
-            try:
-                return {str(key): self._plain_config_value(item) for key, item in items()}
-            except Exception:
-                pass
-        keys = getattr(value, "keys", None)
-        if callable(keys):
-            try:
-                return {str(key): self._plain_config_value(value[key]) for key in keys()}
-            except Exception:
-                pass
-        return {}
-
-    def _plain_config_value(self, value: Any) -> Any:
-        if isinstance(value, Mapping):
-            return {str(key): self._plain_config_value(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [self._plain_config_value(item) for item in value]
-        if isinstance(value, tuple):
-            return [self._plain_config_value(item) for item in value]
-        return copy.deepcopy(value)
-
-    def _generate_web_token(self) -> str:
-        return secrets.token_urlsafe(24)
-
-    def _set_mapping_web_token(self, data: MutableMapping[str, Any], token: str) -> None:
-        web = data.get("web")
-        if isinstance(web, MutableMapping):
-            web_value = web.get("value")
-            if isinstance(web_value, MutableMapping):
-                token_value = web_value.get("token")
-                if isinstance(token_value, MutableMapping) and "value" in token_value:
-                    token_value["value"] = token
-                else:
-                    web_value["token"] = token
-            else:
-                token_value = web.get("token")
-                if isinstance(token_value, MutableMapping) and "value" in token_value:
-                    token_value["value"] = token
-                else:
-                    web["token"] = token
-        else:
-            data["web"] = {"token": token}
-        if "webToken" in data:
-            legacy_token = data.get("webToken")
-            if isinstance(legacy_token, MutableMapping) and "value" in legacy_token:
-                legacy_token["value"] = token
-            else:
-                data["webToken"] = token
-
-    def _try_persist_native_web_token(self, token: str) -> bool:
-        persisted = False
-        if self._native_config is not None:
-            try:
-                if isinstance(self._native_config, MutableMapping):
-                    self._set_mapping_web_token(self._native_config, token)
-                else:
-                    native_config = self._config_object_to_dict(self._native_config)
-                    self._set_mapping_web_token(native_config, token)
-                    update = getattr(self._native_config, "update", None)
-                    if callable(update):
-                        update(native_config)
-                    else:
-                        for key, value in native_config.items():
-                            self._native_config[key] = value
-                save_config = getattr(self._native_config, "save_config", None)
-                if callable(save_config):
-                    save_config()
-                persisted = True
-            except Exception as exc:
-                logger.warning(f"[SelfieImage] 随机 Web Token 写回 AstrBot 配置对象失败: {exc}", exc_info=True)
-
-        if self._native_config_path:
-            try:
-                native_file_config = load_json_file(self._native_config_path)
-                self._set_mapping_web_token(native_file_config, token)
-                save_json_file(self._native_config_path, native_file_config)
-                persisted = True
-            except Exception as exc:
-                logger.warning(f"[SelfieImage] 随机 Web Token 写回 AstrBot 配置文件失败: {exc}", exc_info=True)
-        return persisted
-
-    def _extract_native_key_config(self, native_config: Dict[str, Any]) -> Dict[str, Any]:
-        normalized = normalize_legacy_keys(normalize_config_tree(copy.deepcopy(native_config or {})))
-        web = normalized.get("web") if isinstance(normalized.get("web"), dict) else {}
-        key_config = {"web": copy.deepcopy(DEFAULT_CONFIG["web"])}
-        for key in ("enable", "host", "port", "token"):
-            if key in web:
-                key_config["web"][key] = web[key]
-        if str(key_config["web"].get("token") or "").strip().lower() == DEFAULT_WEB_TOKEN:
-            token = self._generate_web_token()
-            key_config["web"]["token"] = token
-            persisted = self._try_persist_native_web_token(token)
-            suffix = "已写回 AstrBot 原生配置" if persisted else "未能自动写回配置，请手动保存"
-            logger.warning(f"[SelfieImage] web.token 为默认 changeme，已自动生成随机 Web Token: {token}（{suffix}）")
-        return key_config
-
-    def _strip_web_startup_config(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        cleaned = copy.deepcopy(data if isinstance(data, dict) else {})
-        for key in WEB_STARTUP_CONFIG_KEYS:
-            cleaned.pop(key, None)
-        return cleaned
-
-    def _load_initial_config(self) -> Dict[str, Any]:
-        persisted = self._strip_web_startup_config(load_json_file(self.config_path))
-        source = strip_channel_timeouts(
-            normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, persisted)))
-        )
-        source["web"] = copy.deepcopy(self.key_config["web"])
-        return source
-
-    def _persist_config(self) -> None:
-        with self._config_lock:
-            web_config = self._strip_web_startup_config(self.raw_config)
-            save_json_file(self.config_path, web_config)
-
-    def _apply_raw_config(self, raw: Dict[str, Any]) -> None:
-        raw = self._strip_web_startup_config(raw)
-        next_config = strip_channel_timeouts(
-            normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, raw)))
-        )
-        next_config["web"] = copy.deepcopy(self.key_config["web"])
-        self.raw_config = next_config
-        self.config = AICatConfig.from_dict(self.raw_config)
-        self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
-        self._image_batch_gate = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
-        self._selfie_batch_gate = self._image_batch_gate
-        self._persist_config()
-
-    def _start_web_server(self) -> None:
-        if not self.config.web_enable:
-            return
-        try:
-            self.web_server.start(self.config.web_host, self.config.web_port)
-            logger.info(f"[SelfieImage] Flask Web 已启动: http://{self.config.web_host}:{self.config.web_port}")
-        except Exception as exc:
-            logger.error(f"[SelfieImage] Flask Web 启动失败: {exc}", exc_info=True)
-
-    def get_config_for_web(self) -> Dict[str, Any]:
-        return self._strip_web_startup_config(self.raw_config)
-
-    def export_config_for_web(self) -> Dict[str, Any]:
-        exported = redact_sensitive_data(self.get_config_for_web())
-        if isinstance(exported, dict):
-            exported["schema_version"] = int(exported.get("schema_version") or 2)
-            exported["_export_note"] = "API key、Token、代理密码已脱敏；导入前请补回凭据。"
-        return exported
-
-    def preview_config_import(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        candidate = payload.get("config") if isinstance(payload.get("config"), dict) else payload
-        if not isinstance(candidate, dict):
-            raise ValueError("配置必须是 JSON 对象")
-        merged = deep_merge(self.raw_config, candidate)
-        from .models import preflight_config_channels
-        report = preflight_config_channels(merged)
-        return {"ok": bool(report.get("ok")), "schema_version": 2, "errors": report.get("errors", []), "config": redact_sensitive_data(candidate)}
-
-    def import_config_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        candidate = payload.get("config") if isinstance(payload.get("config"), dict) else payload
-        if not isinstance(candidate, dict):
-            raise ValueError("配置必须是 JSON 对象")
-        before = copy.deepcopy(self.raw_config)
-        try:
-            preview = self.preview_config_import(candidate)
-            if not preview["ok"]:
-                raise RuntimeError("配置预检未通过")
-            return self.update_config_from_web(candidate)
-        except Exception:
-            self._apply_raw_config(before)
-            self._persist_config()
-            raise
-
-    def list_proxies_for_web(self, *, mask_password: bool = True) -> List[Dict[str, Any]]:
-        from .models import normalize_proxies_list, public_proxy_row
-        rows = normalize_proxies_list((self.raw_config or {}).get("proxies") or [])
-        return [public_proxy_row(row, mask_password=mask_password) for row in rows]
-
-    def _find_proxy_row(self, proxy_id: str) -> Dict[str, Any]:
-        from .models import normalize_proxies_list
-        pid = str(proxy_id or "").strip()
-        if not pid:
-            raise ValueError("缺少代理 id")
-        for row in normalize_proxies_list((self.raw_config or {}).get("proxies") or []):
-            if str(row.get("id") or "") == pid:
-                return row
-        raise ValueError("代理不存在")
-
-    async def test_proxy_connectivity(self, proxy_id: str = "", proxy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        from .models import normalize_proxy_entry
-        from .proxy import probe_proxy_connectivity
-        if proxy_id:
-            row = self._find_proxy_row(proxy_id)
-        else:
-            row = normalize_proxy_entry(proxy or {})
-            if not row:
-                raise ValueError("代理参数无效")
-        result = await probe_proxy_connectivity(str(row.get("url") or ""))
-        result["proxy_id"] = str(row.get("id") or proxy_id or "")
-        result["proxy_name"] = str(row.get("name") or "")
-        return result
-
-    async def test_proxy_quality(self, proxy_id: str = "", proxy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        from .models import normalize_proxy_entry
-        from .proxy import probe_proxy_quality
-        if proxy_id:
-            row = self._find_proxy_row(proxy_id)
-        else:
-            row = normalize_proxy_entry(proxy or {})
-            if not row:
-                raise ValueError("代理参数无效")
-        result = await probe_proxy_quality(str(row.get("url") or ""))
-        result["proxy_id"] = str(row.get("id") or proxy_id or "")
-        result["proxy_name"] = str(row.get("name") or "")
-        return result
-
-    def update_config_from_web(self, patch: Dict[str, Any]) -> Dict[str, Any]:
-        with self._config_lock:
-            patch = self._strip_web_startup_config(patch)
-            if isinstance(patch, dict) and isinstance(patch.get("proxies"), list):
-                # Keep existing proxy passwords when UI sends blank / masked values.
-                old_by_id = {
-                    str(item.get("id") or ""): item
-                    for item in (self.raw_config.get("proxies") or [])
-                    if isinstance(item, dict) and item.get("id")
-                }
-                fixed = []
-                for item in patch["proxies"]:
-                    if not isinstance(item, dict):
-                        continue
-                    row = dict(item)
-                    pid = str(row.get("id") or "").strip()
-                    pwd = str(row.get("password") or "")
-                    if pid and old_by_id.get(pid) and pwd in {"", "******", "[REDACTED]", "«redacted»"}:
-                        old_pwd = str(old_by_id[pid].get("password") or "")
-                        if old_pwd and old_pwd not in {"******", "[REDACTED]"}:
-                            row["password"] = old_pwd
-                    fixed.append(row)
-                patch["proxies"] = fixed
-            merged = deep_merge(self.raw_config, patch)
-            from .models import preflight_config_channels, sanitize_channels_for_save
-
-            # Soft-fix empty-model channels before merge persist (auto-disable).
-            sanitize_channels_for_save(merged)
-            if isinstance(patch, dict):
-                sanitize_channels_for_save(patch)
-            report = preflight_config_channels(merged)
-            channel_keys = (
-                "image_channels",
-                "audit_channels",
-                "video_channels",
-                "imageChannels",
-                "auditChannels",
-                "videoChannels",
-            )
-            if isinstance(patch, dict) and any(key in patch for key in channel_keys):
-                if not report.get("ok"):
-                    raise RuntimeError(report.get("message") or "渠道配置预检未通过")
-                # Prefer sanitized tree from preflight when present.
-                if isinstance(report.get("config"), dict):
-                    for key in ("image_channels", "audit_channels", "video_channels"):
-                        if key in report["config"]:
-                            merged[key] = report["config"][key]
-            self._apply_raw_config(merged)
-            return self.get_config_for_web()
-
     def _today_key(self) -> str:
         return time.strftime("%Y-%m-%d", time.localtime())
 
@@ -1054,22 +351,6 @@ class SelfieImagePlugin(Star):
         with self._usage_lock:
             save_json_file(self.usage_path, self._current_usage_stats())
 
-    def _load_records(self) -> List[Dict[str, Any]]:
-        data = load_json_file(self.records_path)
-        items = data.get("records") if isinstance(data.get("records"), list) else []
-        records = [item for item in items if isinstance(item, dict)]
-        compacted = [compact_generation_record(redact_sensitive_data(item)) for item in records[:RECORD_KEEP_LIMIT]]
-        return compacted
-
-    def _persist_records(self) -> None:
-        with self._records_lock:
-            self._records = [
-                compact_generation_record(redact_sensitive_data(item))
-                for item in self._records[:RECORD_KEEP_LIMIT]
-                if isinstance(item, dict)
-            ]
-            save_json_file(self.records_path, {"records": self._records})
-
     def _record_generated_images(self, event: AstrMessageEvent, count: int) -> None:
         user_id = event_user_id(event)
         if not user_id:
@@ -1081,371 +362,6 @@ class SelfieImagePlugin(Star):
         record["last_at"] = int(time.time())
         record["group_id"] = event_group_id(event)
         self._persist_usage_stats()
-
-    def _session_key(self, event: Optional[AstrMessageEvent] = None) -> str:
-        if event is None:
-            return "web"
-        group_id = event_group_id(event)
-        user_id = event_user_id(event)
-        if group_id:
-            return f"group:{group_id}"
-        if user_id:
-            return f"private:{user_id}"
-        origin = getattr(event, "unified_msg_origin", None)
-        if origin:
-            return f"origin:{origin}"
-        return f"event:{id(event)}"
-
-    def _context_session_key(self, event: Optional[AstrMessageEvent] = None) -> str:
-        if event is None:
-            return "web"
-        origin = str(getattr(event, "unified_msg_origin", "") or "").strip()
-        return origin or self._session_key(event)
-
-    def _event_sender_name(self, event: Optional[AstrMessageEvent], is_bot: bool = False) -> str:
-        if is_bot:
-            return self._bot_display_name()
-        if event is None:
-            return "用户"
-        for method_name in ("get_sender_name", "get_sender_nickname", "get_user_name"):
-            method = getattr(event, method_name, None)
-            if callable(method):
-                try:
-                    value = str(method() or "").strip()
-                    if value:
-                        return value
-                except Exception:
-                    continue
-        sender = getattr(event, "sender", None)
-        for key in ("nickname", "name", "card", "display_name"):
-            value = getattr(sender, key, None)
-            if value:
-                return str(value).strip()
-        return event_user_id(event) or "用户"
-
-    def _event_message_id(self, event: Optional[AstrMessageEvent]) -> str:
-        if event is None:
-            return f"web:{time.time_ns()}"
-        message_obj = getattr(event, "message_obj", None)
-        for obj in (message_obj, event):
-            for key in ("message_id", "msg_id", "id"):
-                value = getattr(obj, key, None)
-                if value:
-                    return str(value)
-        return f"event:{id(event)}:{time.time_ns()}"
-
-    def _add_context_message(
-        self,
-        session_key: str,
-        sender_id: str,
-        sender_name: str,
-        content: str,
-        is_bot: bool = False,
-        image_sources: Optional[List[str]] = None,
-        msg_id: str = "",
-    ) -> None:
-        key = str(session_key or "").strip() or "unknown"
-        text = re.sub(r"\s+", " ", str(content or "")).strip()
-        sources = [str(item).strip() for item in (image_sources or []) if str(item).strip()]
-        if not text and sources:
-            text = "[图片]"
-        if not text and not sources:
-            return
-        record = {
-            "msg_id": msg_id or f"{time.time_ns()}",
-            "sender_id": str(sender_id or "").strip(),
-            "sender_name": str(sender_name or "").strip() or ("[Bot]" if is_bot else "用户"),
-            "content": text[:500],
-            "is_bot": bool(is_bot),
-            "has_image": bool(sources),
-            "image_sources": sources[:8],
-            "timestamp": time.time(),
-        }
-        with self._context_lock:
-            messages = self._conversation_context.setdefault(key, [])
-            if any(item.get("msg_id") == record["msg_id"] for item in messages[-5:]):
-                return
-            messages.append(record)
-            if len(messages) > self._context_max_messages:
-                del messages[: len(messages) - self._context_max_messages]
-            self._conversation_context.move_to_end(key)
-            while len(self._conversation_context) > self._context_max_sessions:
-                self._conversation_context.popitem(last=False)
-
-    def _recent_context_records(self, event: Optional[AstrMessageEvent], count: int = 12) -> List[Dict[str, Any]]:
-        key = self._context_session_key(event)
-        with self._context_lock:
-            records = list(self._conversation_context.get(key, []))
-        return records[-max(1, int(count or 1)) :]
-
-    def _remember_llm_generation(self, event: Optional[AstrMessageEvent], kind: str, params: Dict[str, Any]) -> None:
-        """保存本会话最近一次 LLM 生图请求，供重复生成使用。"""
-        key = self._context_session_key(event)
-        record = {
-            "kind": str(kind or ""),
-            "params": copy.deepcopy(params if isinstance(params, dict) else {}),
-            "timestamp": time.time(),
-        }
-        with self._llm_generation_lock:
-            self._last_llm_generations[key] = record
-            self._last_llm_generations.move_to_end(key)
-            while len(self._last_llm_generations) > self._context_max_sessions:
-                self._last_llm_generations.popitem(last=False)
-
-    def _last_llm_generation(self, event: Optional[AstrMessageEvent], feedback: str = "") -> Dict[str, Any]:
-        """获取最近一次 LLM 生图请求，并将用户修正要求附加到内容中。"""
-        key = self._context_session_key(event)
-        with self._llm_generation_lock:
-            record = copy.deepcopy(self._last_llm_generations.get(key) or {})
-        params = record.get("params") if isinstance(record.get("params"), dict) else {}
-        comment = str(feedback or "").strip()
-        if comment:
-            field = "action" if record.get("kind") == "selfie" else "prompt"
-            original = str(params.get(field) or "").strip()
-            params[field] = "\n".join(item for item in (original, f"优先修正用户反馈：{comment}") if item)
-        record["params"] = params
-        return record
-
-    def _format_context_for_llm(self, event: Optional[AstrMessageEvent], count: int = 12, max_chars: int = 1400) -> str:
-        lines: List[str] = []
-        total = 0
-        for record in reversed(self._recent_context_records(event, count)):
-            sender = "[Bot]" if record.get("is_bot") else str(record.get("sender_name") or "用户")
-            content = str(record.get("content") or "").strip()
-            image_tag = " [含图片]" if record.get("has_image") else ""
-            line = f"{sender}: {content}{image_tag}".strip()
-            if not line:
-                continue
-            if total + len(line) > max_chars:
-                break
-            lines.insert(0, line)
-            total += len(line) + 1
-        return "\n".join(lines)
-
-    def _extract_context_message_info(self, event: AstrMessageEvent) -> Dict[str, Any]:
-        content = extract_event_text(event)
-        sources = self._filter_reference_images(event, extract_image_sources_from_event(event, include_at_avatar=False))
-        return {"content": content or ("[图片]" if sources else ""), "image_sources": sources}
-
-    def _compact_followup_text(self, text: str) -> str:
-        """Normalize spoken follow-up text for keyword matching."""
-        compact = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(text or "").lower())
-        if not compact:
-            return ""
-        # 「这一身/这一套/那一套」口语里常夹「一」，压成「这身/这套/那套」便于匹配。
-        compact = re.sub(r"([这那])一([身套件])", r"\1\2", compact)
-        return compact
-
-    def _looks_like_context_image_reference(self, text: str) -> bool:
-        compact = self._compact_followup_text(text)
-        if not compact:
-            return False
-        keywords = [
-            "上图",
-            "上一张",
-            "上张",
-            "上一套",
-            "上套",
-            "刚才那张",
-            "刚刚那张",
-            "刚才那套",
-            "刚刚那套",
-            "刚发的",
-            "前面那张",
-            "前面那套",
-            "这张",
-            "这图",
-            "这个图",
-            "那张",
-            "那图",
-            "那套",
-            "那一套",
-            "继续改",
-            "接着改",
-            "在这个基础上",
-            "基于这张",
-            "参考这个",
-            "参考刚才",
-            "按刚才",
-            "用刚刚",
-            "用刚才",
-            "用上一",
-            "换回",
-            "同款",
-            "换成",
-            "改一下",
-            "修一下",
-            # 穿搭跟进：无图时也要回拉用户刚发的服装参考
-            "穿这个",
-            "穿这",
-            "穿上这个",
-            "穿上这",
-            "是穿这个",
-            "换这个",
-            "换上这个",
-            "换上这",
-            "这套",
-            "这身",
-            "这件",
-            "刚刚的衣服",
-            "刚才的衣服",
-            "不是刚刚的衣服",
-            "不是刚才的衣服",
-            "一模一样的衣服",
-            "复刻",
-            "照着穿",
-            "按这套",
-            "按这身",
-        ]
-        english = [
-            "previousimage",
-            "lastimage",
-            "lastphoto",
-            "thisimage",
-            "editthis",
-            "continueediting",
-            "basedonthis",
-            "sameasbefore",
-            "wearthis",
-            "putthison",
-            "sameoutfit",
-            "previousoutfit",
-            "lastoutfit",
-        ]
-        return any(keyword in compact for keyword in keywords) or any(keyword in compact for keyword in english)
-
-    def _looks_like_clothes_followup(self, text: str) -> bool:
-        """User wants outfit from a prior reference, not the bot's last selfie."""
-        compact = self._compact_followup_text(text)
-        if not compact:
-            return False
-        keys = [
-            "穿这个",
-            "穿这",
-            "穿上这个",
-            "是穿这个",
-            "换这个",
-            "换上这个",
-            "这套",
-            "这身",
-            "这件",
-            "那套",
-            "那一套",
-            "上一套",
-            "上套",
-            "衣服",
-            "服装",
-            "穿搭",
-            "刚刚的衣服",
-            "刚才的衣服",
-            "刚刚那套",
-            "刚才那套",
-            "不是刚刚的衣服",
-            "不是刚才的衣服",
-            "一模一样的衣服",
-            "复刻",
-            "照着穿",
-            "同款",
-            "outfit",
-            "wearthis",
-            "clothes",
-        ]
-        return any(k in compact for k in keys)
-
-    def _looks_like_edit_bot_result_followup(self, text: str) -> bool:
-        """User wants to reuse/edit the bot's recent generated image/outfit."""
-        compact = self._compact_followup_text(text)
-        if not compact:
-            return False
-        keys = [
-            "刚才那张",
-            "刚刚那张",
-            "刚才那套",
-            "刚刚那套",
-            "那一套",
-            "那套",
-            "上一张",
-            "上一套",
-            "上套",
-            "上张图",
-            "用刚刚",
-            "用刚才",
-            "用上一",
-            "换回刚刚",
-            "换回刚才",
-            "换回那套",
-            "换回上一",
-            "继续改",
-            "接着改",
-            "在这个基础上",
-            "基于这张",
-            "这张再",
-            "把刚才",
-            "刚生成",
-            "刚画的",
-            "刚发的",
-        ]
-        return any(k in compact for k in keys)
-
-    def _recent_context_image_sources(
-        self,
-        event: Optional[AstrMessageEvent],
-        max_images: int = 4,
-        *,
-        prefer_user: bool = True,
-        user_only: bool = False,
-        bot_only: bool = False,
-    ) -> List[str]:
-        """Return recent image sources.
-
-        - clothes follow-up: prefer/only user refs
-        - edit-bot follow-up (「用刚刚那一套」): prefer/only bot generated refs
-        """
-        user_sources: List[str] = []
-        bot_sources: List[str] = []
-        seen_user: set = set()
-        seen_bot: set = set()
-        for record in reversed(self._recent_context_records(event, count=24)):
-            is_bot = bool(record.get("is_bot"))
-            for source in reversed(list(record.get("image_sources") or [])):
-                text = str(source or "").strip()
-                if not text:
-                    continue
-                if is_bot:
-                    if text in seen_bot:
-                        continue
-                    seen_bot.add(text)
-                    bot_sources.append(text)
-                else:
-                    if text in seen_user:
-                        continue
-                    seen_user.add(text)
-                    user_sources.append(text)
-        limit = max(1, int(max_images or 1))
-        if bot_only:
-            return bot_sources[:limit]
-        if user_only:
-            return user_sources[:limit]
-        if prefer_user and user_sources:
-            # User refs first, then bot only to fill remaining slots if needed
-            out = list(user_sources)
-            for text in bot_sources:
-                if len(out) >= limit:
-                    break
-                if text not in out:
-                    out.append(text)
-            return out[:limit]
-        if (not prefer_user) and bot_sources:
-            # Bot results first (reuse previous outfit / edit last generation)
-            out = list(bot_sources)
-            for text in user_sources:
-                if len(out) >= limit:
-                    break
-                if text not in out:
-                    out.append(text)
-            return out[:limit]
-        merged = (bot_sources + user_sources) if not prefer_user else (user_sources + bot_sources)
-        return merged[:limit]
 
     @optional_event_message_type(priority=100)
     async def on_message_record(self, event: AstrMessageEvent) -> None:
@@ -1470,41 +386,31 @@ class SelfieImagePlugin(Star):
     def _access_status(self, event: AstrMessageEvent) -> Dict[str, Any]:
         user_id = event_user_id(event)
         group_id = event_group_id(event)
-        status = {"user_id": user_id, "group_id": group_id, "allowed": True, "unlimited": False, "whitelist": False, "reason": ""}
-        if user_id and user_id in self.config.blocked_users:
-            status.update({"allowed": False, "reason": "用户黑名单"})
-            return status
-        if self.config.usable_users and user_id not in self.config.usable_users:
-            status.update({"allowed": False, "reason": "可使用人员白名单"})
-            return status
-        if user_id in self.config.whitelist_users or (group_id and group_id in self.config.whitelist_groups):
-            status["unlimited"] = True
-            status["whitelist"] = True
-        return status
+        return access_status(
+            user_id=user_id,
+            group_id=group_id,
+            blocked_users=self.config.blocked_users,
+            usable_users=self.config.usable_users,
+            whitelist_users=self.config.whitelist_users,
+            whitelist_groups=self.config.whitelist_groups,
+        )
 
     def _permission_denied_message(self, event: AstrMessageEvent) -> str:
-        status = self._access_status(event)
-        if status.get("allowed"):
-            return ""
-        if status.get("reason") == "可使用人员白名单":
-            return "当前仅允许可使用人员白名单内用户使用生图功能。"
-        return "你已被加入用户黑名单，无法使用生图功能。"
+        return permission_denied_message(self._access_status(event))
 
     def _quota_error_message(self, event: AstrMessageEvent, requested_count: int = 1) -> str:
         permission_error = self._permission_denied_message(event)
         if permission_error:
             return permission_error
-        if not self.config.image_enable_daily_limit:
-            return ""
         status = self._access_status(event)
-        if status.get("unlimited"):
-            return ""
-        user_id = status.get("user_id") or ""
-        used = int(self._current_usage_stats().get("users", {}).get(user_id, {}).get("count", 0))
-        limit = self.config.image_daily_limit_count
-        if used + max(1, requested_count) <= limit:
-            return ""
-        return f"今日生图次数已用完：{used}/{limit}。"
+        status["allowed"] = True
+        return quota_error_message(
+            status,
+            self._current_usage_stats(),
+            enabled=self.config.image_enable_daily_limit,
+            limit=self.config.image_daily_limit_count,
+            requested_count=requested_count,
+        )
 
     def _rate_limit_error_message(self, event: AstrMessageEvent) -> str:
         if self._is_whitelisted(event):
@@ -1535,139 +441,29 @@ class SelfieImagePlugin(Star):
     def _validate_prompt(self, prompt: str, user_id: str = "", event: Optional[AstrMessageEvent] = None) -> str:
         if self._is_audit_exempt(event, user_id):
             return ""
-        text = str(prompt or "")
-        low_text = text.lower()
-        for word in self.config.image_blocked_words:
-            if word and str(word).lower() in low_text:
-                return f"提示词包含禁用词：{word}"
-        return ""
+        return blocked_prompt_word(prompt, self.config.image_blocked_words)
 
     def _bot_display_name(self) -> str:
         name = str(self.config.bot_name or "").strip()
         return name or "啊呜"
 
     def _compact_for_repeat_check(self, text: str) -> str:
-        return re.sub(r"[\s`*_~\"'“”‘’「」『』《》()\[\]{}，。！？、；：,.!?;:\-_/\\|]+", "", str(text or "")).lower()
+        return compact_for_repeat_check(text)
 
     def _ack_repeats_request(self, ack_message: str, user_request: str) -> bool:
-        request = str(user_request or "").strip()
-        if not request:
-            return False
-        ack_compact = self._compact_for_repeat_check(ack_message)
-        request_compact = self._compact_for_repeat_check(request)
-        if len(request_compact) >= 8 and request_compact in ack_compact:
-            return True
-        for piece in re.split(r"[\s，。！？、；：,.!?;:]+", request):
-            piece_compact = self._compact_for_repeat_check(piece)
-            if len(piece_compact) >= 8 and piece_compact in ack_compact:
-                return True
-        return False
+        return ack_repeats_request(ack_message, user_request)
 
     def _looks_like_non_chinese_ack(self, text: str) -> bool:
-        raw = str(text or "")
-        if not raw:
-            return False
-        chinese_count = len(re.findall(r"[\u4e00-\u9fff]", raw))
-        latin_count = len(re.findall(r"[A-Za-z]", raw))
-        if chinese_count == 0 and latin_count >= 4:
-            return True
-        return latin_count > chinese_count * 2 and latin_count >= 12
+        return looks_like_non_chinese_ack(text)
 
     def _clean_ack_message(self, ack_message: str, user_request: str) -> str:
-        custom = re.sub(r"\s+", " ", str(ack_message or "")).strip()
-        if not custom:
-            return ""
-        if self._looks_like_non_chinese_ack(custom):
-            return ""
-        if self._ack_repeats_request(custom, user_request):
-            return ""
-        stiff_markers = [
-            "沿着",
-            "顺着",
-            "照着",
-            "按这个",
-            "按照这个",
-            "根据你的提示",
-            "根据用户",
-            "用户需求",
-            "用户要求",
-            "提示词",
-            "prompt",
-            "生图",
-            "工具",
-            "配置",
-            "正在生成",
-            "开始生成",
-            "为你生成",
-            "帮你生成",
-            "收到",
-            "已收到",
-        ]
-        low = custom.lower()
-        if any(marker.lower() in low for marker in stiff_markers):
-            return ""
-        return custom[:80]
+        return clean_ack_message(ack_message, user_request)
 
     def _natural_ack_fallback(self, kind: str, count: int) -> str:
-        name = self._bot_display_name()
-        multi = count > 1
-        if kind == "selfie":
-            options = [
-                f"{name}去找一下角度。",
-                "等我一下，我对下光线。",
-                "我换个顺眼点的构图。",
-                "我先把画面收一下。",
-                "稍等，我抓个自然点的瞬间。",
-                "我试个更日常的角度。",
-                "等我，我把镜头感压轻一点。",
-                "我先看一下怎么拍更舒服。",
-            ]
-            if multi:
-                options.extend(["我多试几个角度。", f"{name}多拍几张看看。", "我换几版构图。"])
-            return random.choice(options)
-        options = [
-            f"{name}先把画面理一下。",
-            "我先想一下构图。",
-            "等我一下，我搭个画面。",
-            "我试着把这个感觉做出来。",
-            "稍等，我换个画面方向。",
-            "我先对一下主体和光线。",
-        ]
-        if multi:
-            options.extend(["我多试几版构图。", f"{name}多跑几张看看。"])
-        return random.choice(options)
+        return natural_ack_fallback(kind, count, self._bot_display_name())
 
     def _natural_fail_fallback(self, kind: str = "") -> str:
-        options_by_kind = {
-            "legs": [
-                "刚刚那版腿部比例不太顺。",
-                "这次腿部构图没出来。",
-                "刚才那张下半身有点乱。",
-                "这版角度不太对。",
-                "刚刚那张效果不行。",
-            ],
-            "selfie": [
-                "刚刚那版不太像我。",
-                "这次镜头感有点跑偏。",
-                "刚才那张效果不太对。",
-                "这版没出来想要的感觉。",
-                "刚刚那张不太行。",
-            ],
-            "group": [
-                "刚刚那版同框效果不太对。",
-                "这次合影站位有点乱。",
-                "刚才那张人物关系没处理好。",
-                "这版合照没出来想要的感觉。",
-            ],
-            "image": [
-                "刚刚那版画面不太对。",
-                "这次效果没出来。",
-                "刚才那张没成。",
-                "这版构图有点跑偏。",
-            ],
-        }
-        options = options_by_kind.get(kind) or options_by_kind["image"]
-        return random.choice(options)
+        return natural_fail_fallback(kind)
 
     def _selfie_ack_text(self, action: str, count: int, ack_message: str = "") -> str:
         custom = self._clean_ack_message(ack_message, action)
@@ -1691,1483 +487,6 @@ class SelfieImagePlugin(Star):
             self._progress_last_sent[key] = now
             return True
 
-    def _bot_account_ids(self, event: Optional[AstrMessageEvent] = None) -> List[str]:
-        ids = set()
-        # Context is global to the plugin and may expose the current user's
-        # ``user_id`` on some runtimes; that is never a bot identity.
-        context_keys = ("bot_id", "self_id", "account_id", "qq", "uin")
-        event_keys = ("bot_id", "self_id", "account_id", "qq", "uin")
-        robot_keys = ("bot_id", "self_id", "account_id", "qq", "uin", "user_id", "id")
-
-        sources: List[Tuple[Any, Tuple[str, ...]]] = [(self.context, context_keys)]
-        if event is not None:
-            sources.append((event, event_keys))
-            message_obj = getattr(event, "message_obj", None)
-            if message_obj is not None:
-                sources.append((message_obj, event_keys))
-            robot = getattr(event, "robot", None)
-            if robot is not None:
-                sources.append((robot, robot_keys))
-
-        for source, keys in sources:
-            for key in keys:
-                value = getattr(source, key, None)
-                if value:
-                    ids.add(str(value).strip())
-
-        for owner, _ in sources:
-            for getter_name in ("get_bot_id", "get_self_id", "get_account_id", "get_uin"):
-                getter = getattr(owner, getter_name, None)
-                if callable(getter):
-                    try:
-                        value = getter()
-                        if asyncio.iscoroutine(value):
-                            continue
-                        if value:
-                            ids.add(str(value).strip())
-                    except Exception:
-                        continue
-        return [item for item in ids if item]
-
-    def _reference_source_is_bot_avatar(self, source: str, bot_ids: Iterable[str]) -> bool:
-        text = str(source or "").strip()
-        ids = {str(bot_id).strip() for bot_id in bot_ids if str(bot_id).strip()}
-        if not text or not ids:
-            return False
-        try:
-            parsed = urlparse(text)
-        except Exception:
-            return False
-        if "qlogo.cn" not in parsed.netloc.lower():
-            return False
-        params = parse_qs(parsed.query)
-        for key in ("dst_uin", "uin", "nk", "qq", "user_id"):
-            for value in params.get(key, []):
-                if str(value).strip() in ids:
-                    return True
-        target = f"{parsed.path}?{parsed.query}"
-        return any(re.search(rf"(?<!\d){re.escape(bot_id)}(?!\d)", target) for bot_id in ids)
-
-    def _filter_reference_images(self, event: Optional[AstrMessageEvent], sources: List[str]) -> List[str]:
-        if not sources:
-            return sources
-        bot_ids = set(self._bot_account_ids(event))
-        if not bot_ids:
-            return sources
-        filtered: List[str] = []
-        for source in sources:
-            if self._reference_source_is_bot_avatar(source, bot_ids):
-                continue
-            filtered.append(source)
-        return filtered
-
-    def _parse_audit_response(self, text: str) -> Tuple[bool, str]:
-        return parse_audit_response_text(text)
-
-    def _find_audit_target(self, label: str) -> Optional[ImageModelTarget]:
-        value = str(label or "").strip()
-        if not value:
-            return None
-        targets = self.config.get_audit_targets()
-        if "/" in value:
-            channel_name, model = value.split("/", 1)
-            channel_name = channel_name.strip()
-            model = model.strip()
-            for target in targets:
-                if target.channel_name == channel_name and target.model == model:
-                    return target
-            return None
-        for target in targets:
-            if target.model == value:
-                return target
-        return None
-
-    def _record_image_md5(self, record: Mapping[str, Any]) -> str:
-        """Return the MD5 of cached image bytes, with legacy metadata fallback."""
-        value = str(record.get("md5") or "").strip().lower()
-        paths = record.get("generated_image_paths")
-        if isinstance(paths, list):
-            for path in paths:
-                try:
-                    loaded = self._load_cache_image_bytes(str(path or ""))
-                    if loaded:
-                        # The file bytes are authoritative; stale metadata cannot create a match.
-                        return hashlib.md5(loaded[0]).hexdigest()
-                except Exception:
-                    continue
-        return value if re.fullmatch(r"[0-9a-f]{32}", value) else ""
-
-    def _image_md5_variants(self, data: bytes) -> List[str]:
-        """Return direct and AstrBot JPEG-normalized MD5s for image bytes.
-
-        AstrBot converts quoted non-JPEG images to RGB JPEG (quality 95,
-        subsampling 0) before plugin handlers run.  Keep the original cache
-        digest authoritative, but also recognize that deterministic transport
-        representation when QQ does not expose the original image source.
-        """
-        if not data:
-            return []
-        direct = hashlib.md5(data).hexdigest()
-        variants = [direct]
-        try:
-            from PIL import Image as PILImage
-
-            with PILImage.open(BytesIO(data)) as opened:
-                image_format = str(opened.format or "").upper()
-                image_has_alpha = opened.mode in {"RGBA", "LA"} or (
-                    opened.mode == "P" and "transparency" in opened.info
-                )
-                image_is_animated = bool(
-                    getattr(opened, "is_animated", False)
-                    or getattr(opened, "n_frames", 1) > 1
-                )
-                if image_format == "JPEG" or image_has_alpha or image_is_animated:
-                    return variants
-                converted = opened.convert("RGB")
-                try:
-                    output = BytesIO()
-                    converted.save(output, "JPEG", quality=95, subsampling=0)
-                    normalized = hashlib.md5(output.getvalue()).hexdigest()
-                finally:
-                    converted.close()
-            if normalized not in variants:
-                variants.append(normalized)
-        except Exception:
-            # Pillow is supplied by AstrBot, but direct MD5 lookup remains
-            # available in minimal/older installations without it.
-            pass
-        return variants
-
-    def _find_generation_record_by_md5(self, md5: str) -> Optional[Dict[str, Any]]:
-        wanted = str(md5 or "").strip().lower()
-        if not re.fullmatch(r"[0-9a-f]{32}", wanted):
-            return None
-        with self._records_lock:
-            records = [dict(item) for item in self._records if isinstance(item, dict)]
-        for record in records:
-            if not record.get("generated_image_paths"):
-                continue
-            if str(record.get("media_type") or "image").lower() == "video":
-                continue
-            if self._record_image_md5(record) == wanted:
-                record["md5"] = wanted
-                return record
-            # Legacy batch rows may contain several cached paths but no per-image MD5.
-            for path in record.get("generated_image_paths") or []:
-                try:
-                    loaded = self._load_cache_image_bytes(str(path or ""))
-                    if loaded and wanted in self._image_md5_variants(loaded[0]):
-                        record["md5"] = wanted
-                        return record
-                except Exception:
-                    continue
-        return None
-
-    async def _reverse_image_prompt_with_llm(
-        self,
-        event: Optional[AstrMessageEvent],
-        image: bytes,
-    ) -> str:
-        """Use the current AstrBot chat LLM to reconstruct a prompt from an image."""
-        if event is None:
-            raise RuntimeError("当前会话不可用，无法调用 LLM 反推提示词。")
-        instruct = (
-            "请根据这张图片反推出一个适合图像生成模型使用的中文提示词。"
-            "只输出提示词正文，不要解释、不要 Markdown、不要猜测图片来源。"
-            "尽量描述主体、构图、视角、姿势、服装、场景、光线、风格和画面比例；"
-            "看不清或无法确定的内容不要编造。"
-        )
-        result = await self._call_text_llm(event, instruct, timeout=30, images=[image])
-        cleaned = str(result or "").strip()
-        fenced = re.match(r"^```(?:\w+)?\s*([\s\S]*?)\s*```$", cleaned)
-        if fenced:
-            cleaned = fenced.group(1).strip()
-        return cleaned[:6000]
-
-    async def _audit_chat_via_target(self, target: ImageModelTarget, text: str, images: Optional[List[bytes]] = None) -> str:
-        images = images or []
-        provider_type = str(target.provider_type or "").lower()
-        timeout = aiohttp.ClientTimeout(total=max(10, int(target.timeout or self.config.image_global_timeout or 180)))
-        proxy = str(target.proxy or "").strip() or None
-        async with aiohttp.ClientSession(trust_env=False) as session:
-            if provider_type == "gemini":
-                base = normalize_image_base_url(target.base_url) or "https://generativelanguage.googleapis.com"
-                base = re.sub(r"/v1beta(?:/.*)?$", "", base.rstrip("/"), flags=re.I)
-                model_path = target.model if target.model.startswith("models/") else f"models/{target.model}"
-                url = f"{base}/v1beta/{model_path}:generateContent"
-                parts: List[Dict[str, Any]] = [{"text": text}]
-                for image in images:
-                    parts.append({"inline_data": {"mime_type": detect_mime_by_bytes(image), "data": bytes_to_data_url(image, detect_mime_by_bytes(image)).split(",", 1)[-1]}})
-                headers = {"Content-Type": "application/json", "Accept": "application/json"}
-                if target.api_key:
-                    headers["x-goog-api-key"] = target.api_key
-                async with session.post(url, json={"contents": [{"parts": parts}]}, headers=headers, timeout=timeout, proxy=proxy) as response:
-                    if response.status >= 400:
-                        raise RuntimeError(f"审核接口失败: HTTP {response.status} {redact_sensitive_text(await response.text())[:200]}")
-                    data = await response.json(content_type=None)
-                texts: List[str] = []
-                for candidate in data.get("candidates", []) if isinstance(data, dict) else []:
-                    content = candidate.get("content") if isinstance(candidate, dict) else {}
-                    for part in content.get("parts", []) if isinstance(content, dict) else []:
-                        if isinstance(part, dict) and isinstance(part.get("text"), str):
-                            texts.append(part["text"])
-                return "\n".join(texts).strip()
-
-            base = normalize_image_base_url(target.base_url) or "https://api.openai.com"
-            url = f"{base}/v1/chat/completions"
-            headers = {"Content-Type": "application/json", "Accept": "application/json"}
-            if target.api_key:
-                headers["Authorization"] = f"Bearer {target.api_key}"
-            content: Any = [{"type": "text", "text": text}] if images else text
-            if images:
-                for image in images:
-                    content.append({"type": "image_url", "image_url": {"url": bytes_to_data_url(image, detect_mime_by_bytes(image))}})
-            payload = {"model": target.model, "messages": [{"role": "user", "content": content}], "stream": False}
-            async with session.post(url, json=payload, headers=headers, timeout=timeout, proxy=proxy) as response:
-                if response.status >= 400:
-                    raise RuntimeError(f"审核接口失败: HTTP {response.status} {redact_sensitive_text(await response.text())[:200]}")
-                data = await response.json(content_type=None)
-            if isinstance(data, dict):
-                choices = data.get("choices")
-                if isinstance(choices, list) and choices:
-                    message = choices[0].get("message") if isinstance(choices[0], dict) else {}
-                    if isinstance(message, dict):
-                        content = message.get("content")
-                        if isinstance(content, str):
-                            return content.strip()
-                        if isinstance(content, list):
-                            parts = [str(item.get("text") or "") for item in content if isinstance(item, dict)]
-                            return "\n".join(part for part in parts if part).strip()
-            return ""
-
-    async def _audit_prompt_via_astrbot(self, event: Optional[AstrMessageEvent], text: str) -> str:
-        if event is None:
-            return ""
-        provider_id = None
-        origin = getattr(event, "unified_msg_origin", None)
-        try:
-            getter = getattr(self.context, "get_using_provider", None)
-            if callable(getter):
-                provider = getter()
-                requester = getattr(provider, "text_chat", None) or getattr(provider, "request", None)
-                if callable(requester):
-                    response = await resolve_awaitable(requester(prompt=text))
-                    return str(getattr(response, "completion_text", response) or "").strip()
-        except Exception:
-            pass
-        try:
-            getter = getattr(self.context, "get_current_chat_provider_id", None)
-            if callable(getter):
-                provider_id = await getter(umo=origin) if origin else await getter()
-        except Exception:
-            provider_id = None
-        try:
-            generator = getattr(self.context, "llm_generate", None)
-            if callable(generator):
-                kwargs = {"prompt": text}
-                if provider_id:
-                    kwargs["chat_provider_id"] = provider_id
-                response = await generator(**kwargs)
-                return str(getattr(response, "completion_text", response) or "").strip()
-        except Exception:
-            return ""
-        return ""
-
-    async def _audit_prompt(self, prompt: str, user_id: str = "", event: Optional[AstrMessageEvent] = None) -> Tuple[bool, str]:
-        error = self._validate_prompt(prompt, user_id, event)
-        if error:
-            return False, error
-        if self._is_audit_exempt(event, user_id):
-            return True, ""
-        if not self.config.image_enable_prompt_audit:
-            return True, ""
-
-        audit_prompt = self.config.image_prompt_audit_template.replace("{prompt}", str(prompt or ""))
-        try:
-            target = self._find_audit_target(self.config.image_prompt_audit_model)
-            if target:
-                text = await self._audit_chat_via_target(target, audit_prompt)
-            elif event is not None:
-                text = await self._audit_prompt_via_astrbot(event, audit_prompt)
-            else:
-                return False, "未配置可用提示词审核模型"
-        except Exception as exc:
-            return False, str(exc)
-        return self._parse_audit_response(text)
-
-    async def _audit_output_images(self, files: List[str], user_id: str = "", prompt: str = "", event: Optional[AstrMessageEvent] = None) -> Tuple[bool, str]:
-        if self._is_audit_exempt(event, user_id):
-            return True, ""
-        if not self.config.image_enable_output_audit:
-            return True, ""
-        if not files:
-            return False, "没有待审核图片"
-
-        target = self._find_audit_target(self.config.image_output_audit_model)
-        if target is None:
-            return False, "未配置可用出图审核模型"
-        images: List[bytes] = []
-        for file_path in files:
-            with open(file_path, "rb") as handle:
-                images.append(handle.read())
-        audit_prompt = self.config.image_output_audit_template.replace("{prompt}", str(prompt or ""))
-        try:
-            text = await self._audit_chat_via_target(target, audit_prompt, images=images)
-        except Exception as exc:
-            return False, str(exc)
-        return self._parse_audit_response(text)
-
-
-    def _prompt_en_needed(self, text: str, *, media: str = "image") -> bool:
-        """Whether prompt EN translation is enabled and applicable for this text."""
-        if media == "video":
-            if not bool(getattr(self.config, "image_enable_video_prompt_en", False)):
-                return False
-        else:
-            if not bool(getattr(self.config, "image_enable_image_prompt_en", False)):
-                return False
-        mode = str(getattr(self.config, "image_prompt_en_mode", "if_cjk") or "if_cjk").strip().lower()
-        if mode == "always":
-            return True
-        # if_cjk (default): only when CJK present
-        return bool(re.search(r"[\u3400-\u9fff\uf900-\ufaff]", str(text or "")))
-
-    async def _translate_prompt_to_english(
-        self,
-        prompt: str,
-        *,
-        media: str = "image",
-        event: Optional[AstrMessageEvent] = None,
-    ) -> Tuple[str, Dict[str, Any]]:
-        """Translate generation prompt to English via audit-channel chat model.
-
-        Returns (translated_or_original, meta). Fail-open: on error keep original.
-        """
-        raw = str(prompt or "").strip()
-        meta: Dict[str, Any] = {"enabled": True, "applied": False, "media": media}
-        if not raw:
-            return raw, meta
-        if not self._prompt_en_needed(raw, media=media):
-            meta["skipped"] = "not_needed"
-            return raw, meta
-        template = (
-            getattr(self.config, "image_video_prompt_en_template", "")
-            if media == "video"
-            else getattr(self.config, "image_image_prompt_en_template", "")
-        )
-        template = str(template or "").strip()
-        if not template or "{prompt}" not in template:
-            from .models import DEFAULT_CONFIG
-            template = str(
-                DEFAULT_CONFIG["image"]["video_prompt_en_template"]
-                if media == "video"
-                else DEFAULT_CONFIG["image"]["image_prompt_en_template"]
-            )
-        instruct = template.replace("{prompt}", raw)
-        model_label = str(getattr(self.config, "image_prompt_en_model", "") or "").strip()
-        # Prefer dedicated EN model, else prompt-audit model, else first audit target.
-        try:
-            target = self._find_audit_target(model_label) if model_label else None
-            if target is None and self.config.image_prompt_audit_model:
-                target = self._find_audit_target(self.config.image_prompt_audit_model)
-            if target is None:
-                targets = self.config.get_audit_targets()
-                target = targets[0] if targets else None
-            text = ""
-            if target:
-                text = await self._audit_chat_via_target(target, instruct)
-                meta["model"] = target.label
-            elif event is not None:
-                text = await self._audit_prompt_via_astrbot(event, instruct)
-                meta["model"] = "astrbot"
-            else:
-                meta["error"] = "no_translate_model"
-                return raw, meta
-            cleaned = parse_prompt_en_response(text)
-            if not cleaned:
-                meta["error"] = "translate_parse_failed"
-                meta["raw_preview"] = redact_sensitive_text(str(text or ""))[:180]
-                return raw, meta  # fail-open: keep original prompt
-            meta["applied"] = True
-            meta["original_len"] = len(raw)
-            meta["translated_len"] = len(cleaned)
-            meta["format"] = "json"
-            return cleaned, meta
-        except Exception as exc:
-            meta["error"] = redact_sensitive_text(str(exc))[:200]
-            return raw, meta  # fail-open
-
-
-    def _record_task(self, record: Dict[str, Any]) -> None:
-        payload = copy.deepcopy(record)
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._commit_generation_records(payload)
-            return
-        loop.create_task(asyncio.to_thread(self._commit_generation_records, payload))
-
-    def _commit_generation_records(self, record: Dict[str, Any]) -> None:
-        # One generated image per monitor row. Batch/concurrency must not pile shots together.
-        for piece in split_generation_record_images(record):
-            self._commit_generation_record(piece)
-
-    def _commit_generation_record(self, record: Dict[str, Any]) -> None:
-        stale_cache_paths: List[str] = []
-        response_data = record.get("response_data")
-        if "attempts" not in record and isinstance(response_data, Mapping):
-            record["attempts"] = list(response_data.get("attempts") or [])
-        # Enrich failure fields for monitor list/detail (also backfills empty used_model).
-        try:
-            from .error_classify import summarize_generation_failures
-
-            attempts = list(record.get("attempts") or [])
-            if not attempts and isinstance(response_data, Mapping):
-                attempts = list(response_data.get("attempts") or [])
-            summary = summarize_generation_failures(
-                attempts,
-                fallback_error=str(record.get("error") or ""),
-            )
-            # Intermediate failures are useful even when final attempt succeeded.
-            if summary.get("failure_reasons"):
-                record["failure_reasons"] = summary["failure_reasons"]
-            if record.get("success") is False:
-                if summary.get("failure_reason"):
-                    record["failure_reason"] = summary["failure_reason"]
-                if not str(record.get("used_model") or "").strip() and summary.get("last_failed_model"):
-                    record["used_model"] = summary["last_failed_model"]
-                if not str(record.get("error") or "").strip() and summary.get("failure_reason"):
-                    record["error"] = summary["failure_reason"]
-            # success path: never promote intermediate failures into top-level failure_reason/error
-            elif "failure_reason" in record and record.get("success") is True:
-                record.pop("failure_reason", None)
-        except Exception:
-            pass
-        with self._records_lock:
-            record = compact_generation_record(redact_sensitive_data(dict(record)))
-            self._record_seq += 1
-            record.setdefault("id", f"{int(time.time() * 1000)}-{self._record_seq}")
-            record["time"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-            self._records.insert(0, record)
-            evicted_records = self._records[RECORD_KEEP_LIMIT:]
-            if evicted_records:
-                del self._records[RECORD_KEEP_LIMIT:]
-                stale_cache_paths = collect_unreferenced_record_cache_paths(evicted_records, self._records)
-            self._persist_records()
-        if stale_cache_paths:
-            safe_delete_relative_files(self.generated_dir, stale_cache_paths)
-
-    def get_recent_records(self, *, summary: bool = False) -> List[Dict[str, Any]]:
-        with self._records_lock:
-            # Avoid deepcopy of fat nested blobs on every list poll.
-            records = [dict(item) if isinstance(item, dict) else item for item in self._records[:RECORD_KEEP_LIMIT]]
-        if summary:
-            return redact_sensitive_data(
-                [summarize_record_for_list(self._enrich_record_for_web(item)) for item in records if isinstance(item, dict)]
-            )
-        return redact_sensitive_data([self._enrich_record_for_web(item) for item in records if isinstance(item, dict)])
-
-    def get_generation_metrics(self) -> Dict[str, Any]:
-        """Return redacted aggregate metrics from retained generation records."""
-        with self._records_lock:
-            records = [dict(item) for item in self._records if isinstance(item, dict)]
-        status_counts: Dict[str, int] = {}
-        category_counts: Dict[str, int] = {}
-        model_counts: Dict[str, Dict[str, int]] = {}
-        channel_counts: Dict[str, Dict[str, Any]] = {}
-        elapsed_values: List[float] = []
-        requested = succeeded = failed = 0
-        for record in records:
-            response = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
-            status = str(record.get("status") or response.get("status") or ("succeeded" if record.get("success") else "failed"))
-            status_counts[status] = status_counts.get(status, 0) + 1
-            try:
-                requested += max(1, int(record.get("requested_count") or response.get("requested_count") or record.get("count") or 1))
-                succeeded += max(0, int(record.get("succeeded_count") or response.get("succeeded_count") or (record.get("count") if record.get("success") else 0) or 0))
-                failed += max(0, int(record.get("failed_count") or response.get("failed_count") or (0 if record.get("success") else 1)))
-            except (TypeError, ValueError):
-                pass
-            try:
-                elapsed = float(record.get("elapsed_seconds") or response.get("elapsed_seconds") or 0)
-                if elapsed > 0:
-                    elapsed_values.append(elapsed)
-            except (TypeError, ValueError):
-                pass
-            model = str(record.get("used_model") or response.get("used_model") or "未知").strip() or "未知"
-            bucket = model_counts.setdefault(model, {"records": 0, "success": 0, "failed": 0})
-            bucket["records"] += 1
-            bucket["success"] += int(status == "succeeded")
-            bucket["failed"] += int(status in {"failed", "partial_success"})
-            attempts = list(record.get("attempts") or response.get("attempts") or [])
-            attempt_channels: List[str] = []
-            for attempt in attempts:
-                if not isinstance(attempt, Mapping):
-                    continue
-                channel = str(attempt.get("channel") or attempt.get("provider_type") or "unknown").strip() or "unknown"
-                attempt_channels.append(channel)
-                channel_bucket = channel_counts.setdefault(channel, {
-                    "attempts": 0,
-                    "success": 0,
-                    "failed": 0,
-                    "elapsed_seconds": 0.0,
-                    "error_categories": {},
-                    "fallbacks": 0,
-                })
-                channel_bucket["attempts"] += 1
-                success_attempt = bool(attempt.get("success"))
-                channel_bucket["success"] += int(success_attempt)
-                channel_bucket["failed"] += int(not success_attempt)
-                try:
-                    channel_bucket["elapsed_seconds"] += max(0.0, float(attempt.get("elapsed_seconds") or 0))
-                except (TypeError, ValueError):
-                    pass
-                if not success_attempt:
-                    category = str(attempt.get("error_category") or "unknown")
-                    category_counts[category] = category_counts.get(category, 0) + 1
-                    categories = channel_bucket["error_categories"]
-                    categories[category] = categories.get(category, 0) + 1
-            for previous, current in zip(attempt_channels, attempt_channels[1:]):
-                if previous != current:
-                    channel_counts[current]["fallbacks"] += 1
-        elapsed_values.sort()
-        def percentile(percent: float) -> float:
-            if not elapsed_values:
-                return 0.0
-            index = min(len(elapsed_values) - 1, int(round((len(elapsed_values) - 1) * percent)))
-            return round(elapsed_values[index], 2)
-        return {
-            "retained_records": len(records),
-            "requested_images": requested,
-            "succeeded_images": succeeded,
-            "failed_images": failed,
-            "status_counts": status_counts,
-            "error_categories": category_counts,
-            "models": model_counts,
-            "channels": {
-                channel: {
-                    **values,
-                    "elapsed_seconds": round(float(values["elapsed_seconds"]), 2),
-                    "success_rate": round(values["success"] / values["attempts"], 4) if values["attempts"] else 0.0,
-                }
-                for channel, values in channel_counts.items()
-            },
-            "elapsed_seconds": {"p50": percentile(0.50), "p95": percentile(0.95), "max": round(max(elapsed_values), 2) if elapsed_values else 0.0},
-        }
-
-    def _composition_metadata(self, prompt: str, source: str, aspect_ratio: str, resolution: str, reference_count: int) -> Dict[str, Any]:
-        text = str(prompt or "").strip()
-        lowered = text.lower()
-        if "看看腿" in text or "look_legs" in lowered:
-            strategy = "look_legs"
-        elif "全身" in text or "full body" in lowered:
-            strategy = "full_body"
-        elif "半身" in text or "portrait" in lowered:
-            strategy = "half_body"
-        else:
-            strategy = "selfie_default" if "selfie" in str(source or "").lower() else "custom"
-        prompt_hash = hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()[:16] if text else ""
-        return {
-            "strategy": strategy,
-            "prompt_hash": prompt_hash,
-            "aspect_ratio": str(aspect_ratio or "自动"),
-            "resolution": str(resolution or "1K"),
-            "reference_image_count": max(0, int(reference_count or 0)),
-        }
-
-    def get_record_for_web(self, record_id: str) -> Dict[str, Any]:
-        target_id = str(record_id or "").strip()
-        with self._records_lock:
-            for record in self._records:
-                if str(record.get("id") or "") == target_id:
-                    return redact_sensitive_data(self._enrich_record_for_web(copy.deepcopy(record)))
-        raise ValueError("记录不存在或已清理")
-
-    def _enrich_record_for_web(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        """Backfill failure fields for monitor without rewriting disk."""
-        if not isinstance(record, dict):
-            return record
-        try:
-            from .error_classify import summarize_generation_failures
-
-            attempts = list(record.get("attempts") or [])
-            response_data = record.get("response_data")
-            if not attempts and isinstance(response_data, Mapping):
-                attempts = list(response_data.get("attempts") or [])
-            if not attempts:
-                return record
-            summary = summarize_generation_failures(
-                attempts,
-                fallback_error=str(record.get("error") or record.get("failure_reason") or ""),
-            )
-            # Always surface intermediate failed attempts (including final-success retries).
-            if not record.get("failure_reasons") and summary.get("failure_reasons"):
-                record["failure_reasons"] = summary["failure_reasons"]
-            if record.get("success") is False:
-                if not str(record.get("failure_reason") or "").strip() and summary.get("failure_reason"):
-                    record["failure_reason"] = summary["failure_reason"]
-                if not str(record.get("used_model") or "").strip() and summary.get("last_failed_model"):
-                    record["used_model"] = summary["last_failed_model"]
-            elif record.get("success") is True:
-                # Final success should not look like a terminal failure in the detail header.
-                record.pop("failure_reason", None)
-        except Exception:
-            pass
-        return record
-
-    def clear_recent_records(self) -> int:
-        with self._records_lock:
-            count = len(self._records)
-            records = copy.deepcopy(self._records)
-            self._records.clear()
-            self._persist_records()
-        safe_delete_relative_files(self.generated_dir, collect_record_cache_paths(records))
-        return count
-
-    def _web_task_timestamp(self) -> str:
-        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-
-    def _load_web_tasks(self) -> Dict[str, Dict[str, Any]]:
-        data = load_json_file(self.tasks_path)
-        if not isinstance(data, dict):
-            return {}
-        raw_tasks = data.get("tasks") if isinstance(data.get("tasks"), dict) else {}
-        tasks: Dict[str, Dict[str, Any]] = {}
-        expired_on_start = False
-        for task_id, raw in raw_tasks.items():
-            if not isinstance(raw, dict):
-                continue
-            task = copy.deepcopy(raw)
-            task["task_id"] = str(task.get("task_id") or task_id)
-            if task.get("status") in {"queued", "running"}:
-                task["status"] = "expired"
-                task["success"] = False
-                task["error"] = "插件重启后未恢复该任务，请重新提交"
-                task["finished_ts"] = time.time()
-                task["finished_at"] = self._web_task_timestamp()
-                expired_on_start = True
-            tasks[task["task_id"]] = task
-        if expired_on_start:
-            save_json_file(self.tasks_path, {"tasks": tasks})
-        return tasks
-
-    def _persist_web_tasks_locked(self) -> None:
-        path = str(getattr(self, "tasks_path", "") or "").strip()
-        if not path:
-            return
-        save_json_file(path, {"tasks": self._web_tasks})
-
-    def _request_fingerprint(self, payload: Mapping[str, Any], owner_session: str = "") -> str:
-        """Build a short-lived dedupe key without persisting request contents."""
-        image_values = list(payload.get("images") or [])
-        if payload.get("image"):
-            image_values.append(payload.get("image"))
-        image_hashes = []
-        for value in image_values:
-            raw = str(value or "").encode("utf-8", "ignore")
-            image_hashes.append(hashlib.sha256(raw).hexdigest()[:24])
-        fields = {
-            "owner_session": str(owner_session or ""),
-            "media_type": str(payload.get("media_type") or "image").strip().lower(),
-            "prompt": str(payload.get("prompt") or payload.get("original_prompt") or "").strip(),
-            "channel": str(payload.get("channel") or "").strip(),
-            "model": str(payload.get("model") or "").strip(),
-            "aspect_ratio": str(payload.get("aspect_ratio") or "").strip(),
-            "resolution": str(payload.get("resolution") or "").strip(),
-            "duration": str(payload.get("duration") or "").strip(),
-            "count": str(payload.get("count") or 1).strip(),
-            "prompt_enhance": str(payload.get("prompt_enhance") or "").strip().lower(),
-            "image_hashes": image_hashes,
-        }
-        encoded = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(encoded.encode("utf-8", "ignore")).hexdigest()[:24]
-
-    def _find_recent_duplicate_task_locked(self, fingerprint: str, *, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
-        if not fingerprint:
-            return None
-        current = float(now or time.time())
-        for task in self._web_tasks.values():
-            if not isinstance(task, dict) or task.get("request_fingerprint") != fingerprint:
-                continue
-            if task.get("status") not in {"queued", "running"}:
-                continue
-            if current - float(task.get("created_ts") or 0) > 120:
-                continue
-            return copy.deepcopy(task)
-        return None
-
-    def _summarize_web_test_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        raw_images = list(payload.get("images") or [])
-        if payload.get("image"):
-            raw_images.append(payload.get("image"))
-        media_type = str(payload.get("media_type") or "image").strip().lower()
-        if media_type == "video":
-            return {
-                "media_type": "video",
-                "original_prompt": str(payload.get("prompt") or "").strip() or "一段自然流畅的短视频",
-                "channel": str(payload.get("channel") or "").strip(),
-                "model": str(payload.get("model") or "").strip(),
-                "aspect_ratio": str(payload.get("aspect_ratio") or "16:9"),
-                "duration": int(payload.get("duration") or self.config.video_default_duration or 5),
-                "raw_reference_image_count": len(raw_images),
-            }
-        prompt_enhance_raw = payload.get("prompt_enhance", True)
-        prompt_enhance = not (
-            prompt_enhance_raw is False
-            or str(prompt_enhance_raw).strip().lower() in {"false", "0", "no", "off", "关闭", "否"}
-        )
-        return {
-            "original_prompt": str(payload.get("prompt") or "").strip() or "看着镜头自然自拍",
-            "channel": str(payload.get("channel") or "").strip(),
-            "model": str(payload.get("model") or "").strip(),
-            "aspect_ratio": str(payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16"),
-            "resolution": str(payload.get("resolution") or self.config.image_default_resolution or "1K"),
-            "prompt_enhance": prompt_enhance,
-            "use_selfie_reference": bool(payload.get("use_selfie_reference")),
-            "raw_reference_image_count": len(raw_images),
-        }
-
-    def _prune_web_tasks_locked(self) -> None:
-        if len(self._web_tasks) <= 50:
-            return
-        finished = [
-            (float(task.get("updated_ts") or 0), task_id)
-            for task_id, task in self._web_tasks.items()
-            if task.get("status") in {"succeeded", "partial_success", "failed", "cancelled", "expired"}
-        ]
-        finished.sort(key=lambda item: item[0])
-        while len(self._web_tasks) > 50 and finished:
-            _, task_id = finished.pop(0)
-            self._web_tasks.pop(task_id, None)
-
-    def _set_web_image_task(self, task_id: str, **fields: Any) -> None:
-        with self._web_task_lock:
-            task = self._web_tasks.get(task_id)
-            if not task:
-                return
-            now = time.time()
-            task.update(fields)
-            task["updated_ts"] = now
-            task["updated_at"] = self._web_task_timestamp()
-            self._prune_web_tasks_locked()
-            self._persist_web_tasks_locked()
-
-    def get_web_image_task(self, task_id: str) -> Dict[str, Any]:
-        with self._web_task_lock:
-            task = self._web_tasks.get(str(task_id or "").strip())
-            if not task:
-                raise ValueError("任务不存在或已清理")
-            data = copy.deepcopy(task)
-        if data.get("status") in {"queued", "running"}:
-            started = float(data.get("started_ts") or data.get("created_ts") or time.time())
-            data["running_seconds"] = round(max(0.0, time.time() - started), 2)
-        return redact_sensitive_data(data)
-
-    def start_web_image_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if not isinstance(payload, dict):
-            raise RuntimeError("请求体必须是 JSON 对象")
-        loop = getattr(self, "loop", None)
-        if loop is None or not loop.is_running():
-            raise RuntimeError("AstrBot 事件循环未就绪，无法启动后台生图任务")
-        payload_copy = copy.deepcopy(payload)
-        media_type = str(payload_copy.get("media_type") or "image").strip().lower()
-        if media_type not in {"image", "video"}:
-            raise RuntimeError("media_type 必须是 image 或 video")
-        self._validate_web_test_selection(payload_copy)
-        force_regenerate = bool(payload_copy.get("force_regenerate") or payload_copy.get("force"))
-        fingerprint = self._request_fingerprint(payload_copy, "web")
-        with self._web_task_lock:
-            if not force_regenerate:
-                duplicate = self._find_recent_duplicate_task_locked(fingerprint)
-                if duplicate:
-                    duplicate["deduplicated"] = True
-                    return redact_sensitive_data(duplicate)
-            self._web_task_seq += 1
-            task_id = f"web-{int(time.time() * 1000)}-{self._web_task_seq}"
-            now = time.time()
-            self._web_tasks[task_id] = {
-                "task_id": task_id,
-                "status": "queued",
-                "success": None,
-                "error": "",
-                "created_ts": now,
-                "updated_ts": now,
-                "created_at": self._web_task_timestamp(),
-                "updated_at": self._web_task_timestamp(),
-                "request_data": self._summarize_web_test_payload(payload_copy),
-                "result": None,
-                "source": "web-video-test" if media_type == "video" else "web-test",
-                "owner_session": "web",
-                "cancel_requested": False,
-                "request_fingerprint": fingerprint,
-                "deduplicated": False,
-            }
-            self._prune_web_tasks_locked()
-            self._persist_web_tasks_locked()
-        asyncio.run_coroutine_threadsafe(self._run_web_image_task(task_id, payload_copy), loop)
-        return self.get_web_image_task(task_id)
-
-    async def _run_web_image_task(self, task_id: str, payload: Dict[str, Any]) -> None:
-        self._set_web_image_task(task_id, status="running", started_ts=time.time(), started_at=self._web_task_timestamp())
-        try:
-            if self._task_cancel_requested(task_id):
-                raise RuntimeError("任务已取消")
-            media_type = str(payload.get("media_type") or "image").strip().lower()
-            result = await (self.web_test_video(payload) if media_type == "video" else self.web_test_image(payload))
-            result = self._normalize_generation_result(result, payload.get("count") or 1)
-            result = redact_sensitive_data(result)
-            if self._task_cancel_requested(task_id):
-                self._set_web_image_task(
-                    task_id,
-                    status="cancelled",
-                    success=False,
-                    error="任务已取消",
-                    result={"success": False, "error": "任务已取消"},
-                    finished_ts=time.time(),
-                    finished_at=self._web_task_timestamp(),
-                )
-                return
-            success = bool(result.get("success"))
-            error = "" if success else redact_sensitive_text(str(result.get("error") or "这次没顺好"))
-            self._set_web_image_task(
-                task_id,
-                status=str(result.get("status") or ("succeeded" if success else "failed")),
-                success=success,
-                error=error,
-                requested_count=result.get("requested_count", 1),
-                succeeded_count=result.get("succeeded_count", 0),
-                failed_count=result.get("failed_count", 0),
-                result=result,
-                finished_ts=time.time(),
-                finished_at=self._web_task_timestamp(),
-            )
-        except Exception as exc:
-            error = redact_sensitive_text(str(exc))
-            cancelled = "取消" in error
-            self._set_web_image_task(
-                task_id,
-                status="cancelled" if cancelled else "failed",
-                success=False,
-                error=error,
-                result={"success": False, "error": error},
-                finished_ts=time.time(),
-                finished_at=self._web_task_timestamp(),
-            )
-
-    def _cache_relative_path(self, path: str) -> str:
-        try:
-            return os.path.relpath(os.path.abspath(path), os.path.abspath(self.generated_dir))
-        except Exception:
-            return str(path or "")
-
-    def _cache_absolute_path(self, rel_path: str) -> str:
-        base = os.path.abspath(self.generated_dir)
-        raw_path = str(rel_path or "").strip()
-        if not raw_path:
-            raise ValueError("图片路径不能为空")
-        path = os.path.abspath(os.path.join(base, raw_path))
-        if path == base or not path.startswith(base + os.sep):
-            raise ValueError("非法图片路径")
-        return path
-
-    def get_cached_image_info(self, rel_path: str) -> Dict[str, Any]:
-        abs_path = self._cache_absolute_path(rel_path)
-        exists = os.path.exists(abs_path) and os.path.isfile(abs_path)
-        mime = "image/png"
-        is_image = False
-        is_video = False
-        if exists:
-            with open(abs_path, "rb") as handle:
-                head = handle.read(512)
-            is_image = looks_like_image_bytes(head)
-            is_video = head[4:12].startswith(b"ftyp") or abs_path.lower().endswith((".mp4", ".webm", ".mov"))
-            if is_image:
-                mime = detect_mime_by_bytes(head)
-            elif is_video:
-                mime = "video/webm" if abs_path.lower().endswith(".webm") else "video/quicktime" if abs_path.lower().endswith(".mov") else "video/mp4"
-        return {
-            "path": rel_path,
-            "absolute_path": abs_path,
-            "name": os.path.basename(abs_path),
-            "exists": exists,
-            "is_image": is_image,
-            "is_video": is_video,
-            "mime_type": mime,
-        }
-
-    def _save_cache_image(self, data: bytes, prefix: str, mime: str = "") -> str:
-        path = save_image_bytes(data, self.generated_dir, prefix=prefix, mime=mime or detect_mime_by_bytes(data))
-        return self._cache_relative_path(path)
-
-    def _load_cache_image_bytes(self, rel_path: str) -> Optional[Tuple[bytes, str]]:
-        try:
-            info = self.get_cached_image_info(rel_path)
-        except Exception:
-            return None
-        if not info.get("exists") or info.get("is_image") is False:
-            return None
-        try:
-            with open(info["absolute_path"], "rb") as handle:
-                data = handle.read()
-        except OSError:
-            return None
-        if not data:
-            return None
-        mime = str(info.get("mime_type") or detect_mime_by_bytes(data) or "image/png")
-        return data, mime
-
-    # --- Studio / 画布 ---
-    def studio_list(self) -> Dict[str, Any]:
-        # Ensure default presets are seeded for picker / QQ /预设
-        try:
-            self.presets.load()
-        except Exception:
-            pass
-        return {
-            "sessions": self.studio.list_sessions(),
-            "builtin_prompts": BUILTIN_PROMPTS,
-            "templates": list_studio_templates(),
-            "prompt_presets": self.list_prompt_presets_for_web(),
-            "cos_look_sets": self.list_cos_look_sets_for_web(),
-        }
-
-    def list_prompt_presets_for_web(self) -> List[Dict[str, Any]]:
-        """Merged builtin global + user image_presets for 画布/试画 picker."""
-        merged: Dict[str, Dict[str, Any]] = {}
-        for item in global_prompt_presets():
-            name = str(item.get("name") or item.get("title") or "").strip()
-            if not name:
-                continue
-            merged[name] = dict(item)
-            merged[name]["name"] = name
-            merged[name]["title"] = name
-        try:
-            for item in self.presets.list_public():
-                name = str(item.get("name") or "").strip()
-                if not name:
-                    continue
-                # user file wins on same name (may already include seeded builtins)
-                row = dict(item)
-                row["name"] = name
-                row["title"] = name
-                if name in merged and row.get("source") == "user":
-                    row["source"] = "preset"
-                merged[name] = row
-        except Exception:
-            pass
-        rows = list(merged.values())
-        rows.sort(key=lambda r: str(r.get("name") or ""))
-        return rows
-
-    def list_cos_look_sets_for_web(self) -> List[Dict[str, str]]:
-        """Expose the command COS pool to the canvas and quick-test pickers."""
-        return [
-            {
-                "id": str(item.get("id") or "").strip(),
-                "title": str(item.get("title") or "").strip(),
-                "prompt": str(item.get("prompt") or "").strip(),
-            }
-            for item in COS_LOOK_SETS
-            if str(item.get("id") or "").strip()
-            and str(item.get("title") or "").strip()
-            and str(item.get("prompt") or "").strip()
-        ]
-
-    def studio_get(self, session_id: str) -> Dict[str, Any]:
-        return self.studio.get(session_id)
-
-    def studio_create(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        payload = payload if isinstance(payload, dict) else {}
-        title = str(payload.get("title") or "").strip()
-        template = str(payload.get("template") or payload.get("template_id") or "").strip()
-        use_group = payload.get("use_group_template", None)
-        if isinstance(use_group, str):
-            use_group = use_group.strip().lower() not in {"0", "false", "no", "off", "否"}
-        tid = normalize_template_id(template, use_group_template=use_group if template == "" else None)
-        session = self.studio.create(title, template=tid, use_group_template=use_group if not template else None)
-        # Prefill identity/base from persona when template wants it
-        graph = session.get("graph") or {}
-        if graph.get("use_persona_identity") and self.persona.has_reference_image():
-            ref = self.persona.get_reference_image()
-            if ref and ref.get("data"):
-                rel = self._save_cache_image(ref["data"], "studio", ref.get("mime_type") or "image/png")
-                identity = next(
-                    (
-                        s
-                        for s in session.get("slots") or []
-                        if s.get("role") in {"identity", "base"}
-                    ),
-                    None,
-                )
-                if identity:
-                    session = self.studio.set_slot_image(
-                        session["id"],
-                        identity["id"],
-                        image_path=rel,
-                        source="persona",
-                        mime=str(ref.get("mime_type") or "image/png"),
-                    )
-        return session
-
-    def studio_delete(self, session_id: str) -> Dict[str, Any]:
-        self.studio.delete(session_id)
-        return {"deleted": True, "id": session_id}
-
-    def studio_update(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if not isinstance(payload, dict):
-            raise ValueError("请求体必须是 JSON 对象")
-        patch = payload.get("graph") if isinstance(payload.get("graph"), dict) else payload
-        if "title" in payload and "title" not in patch:
-            patch = dict(patch)
-            patch["title"] = payload.get("title")
-        return self.studio.update_graph(session_id, patch)
-
-    def studio_set_slot(self, session_id: str, slot_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if not isinstance(payload, dict):
-            raise ValueError("请求体必须是 JSON 对象")
-        if payload.get("clear"):
-            return self.studio.clear_slot(session_id, slot_id)
-        # from existing cache path
-        from_path = str(payload.get("image_path") or payload.get("path") or "").strip()
-        if from_path:
-            info = self.get_cached_image_info(from_path)
-            if not info.get("exists") or info.get("is_image") is False:
-                raise ValueError("图片不存在或不是有效图片")
-            return self.studio.set_slot_image(
-                session_id,
-                slot_id,
-                image_path=from_path,
-                source=str(payload.get("source") or "record"),
-                mime=str(info.get("mime_type") or ""),
-                label=str(payload.get("label") or ""),
-            )
-        raw = payload.get("image") or payload.get("data_url") or ""
-        data, mime = data_url_to_bytes(str(raw or ""))
-        if not data:
-            raise ValueError("请提供图片 data_url 或 image_path")
-        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
-        if len(data) > max_bytes:
-            raise ValueError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
-        mime = normalize_image_mime(mime or detect_mime_by_bytes(data))
-        rel = self._save_cache_image(data, "studio", mime)
-        return self.studio.set_slot_image(
-            session_id,
-            slot_id,
-            image_path=rel,
-            source=str(payload.get("source") or "upload"),
-            mime=mime,
-            label=str(payload.get("label") or ""),
-        )
-
-    def studio_add_slot(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        payload = payload if isinstance(payload, dict) else {}
-        return self.studio.add_slot(
-            session_id,
-            role=str(payload.get("role") or "extra"),
-            label=str(payload.get("label") or ""),
-        )
-
-    def studio_reorder(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        order = payload.get("order") or payload.get("input_order") or []
-        if not isinstance(order, list):
-            raise ValueError("order 必须是数组")
-        return self.studio.reorder_slots(session_id, order)
-
-    def studio_promote(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        result_id = str(payload.get("result_id") or "").strip()
-        if not result_id:
-            raise ValueError("需要 result_id")
-        role = str(payload.get("role") or "").strip()
-        slot_id = str(payload.get("slot_id") or "").strip()
-        if role:
-            return self.studio.promote_result_to_role(
-                session_id,
-                result_id,
-                role,
-                create_if_missing=payload.get("create_if_missing", True) is not False,
-            )
-        if not slot_id:
-            raise ValueError("需要 slot_id 或 role")
-        return self.studio.promote_result_to_slot(session_id, result_id, slot_id)
-
-    def studio_gallery_images(self, limit: int = 24) -> Dict[str, Any]:
-        """Recent successful generated images from records for 画布「从记录选图」."""
-        try:
-            limit_n = max(1, min(48, int(limit or 24)))
-        except Exception:
-            limit_n = 24
-        items: List[Dict[str, Any]] = []
-        seen = set()
-        for record in self.get_recent_records():
-            if not record.get("success"):
-                continue
-            resp = record.get("response_data") if isinstance(record.get("response_data"), dict) else {}
-            req = record.get("request_data") if isinstance(record.get("request_data"), dict) else {}
-            paths = list(resp.get("generated_image_paths") or resp.get("image_paths") or [])
-            if not paths:
-                # some older shapes
-                paths = list(record.get("generated_image_paths") or [])
-            for path in paths:
-                text = str(path or "").strip()
-                if not text or text in seen:
-                    continue
-                seen.add(text)
-                info = self.get_cached_image_info(text)
-                if not info.get("exists"):
-                    continue
-                items.append(
-                    {
-                        "path": text,
-                        "record_id": record.get("id"),
-                        "created_at": record.get("created_at") or record.get("time") or "",
-                        "model": resp.get("model") or req.get("model") or "",
-                        "prompt": str(req.get("original_prompt") or req.get("prompt") or "")[:80],
-                        "source": record.get("source") or "",
-                    }
-                )
-                if len(items) >= limit_n:
-                    return {"items": items, "count": len(items)}
-        return {"items": items, "count": len(items)}
-
-    def start_studio_run(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Queue a studio generation using current session slots + graph."""
-        payload = payload if isinstance(payload, dict) else {}
-        session = self.studio.get(session_id)
-        # Prevent double-submit while last run still running
-        last = session.get("last_run") if isinstance(session.get("last_run"), dict) else {}
-        if str(last.get("status") or "") == "running":
-            task_id = str(last.get("task_id") or "").strip()
-            if task_id:
-                try:
-                    existing = self.get_web_image_task(task_id)
-                    st = str(existing.get("status") or "")
-                    if st in {"queued", "running"}:
-                        raise RuntimeError("当前画布正在生成，请稍候或等完成后再点")
-                except ValueError:
-                    pass
-                except RuntimeError:
-                    raise
-        if isinstance(payload.get("graph"), dict):
-            session = self.studio.update_graph(session_id, payload["graph"])
-        loop = getattr(self, "loop", None)
-        if loop is None or not loop.is_running():
-            raise RuntimeError("AstrBot 事件循环未就绪，无法启动画布生成")
-
-        graph = session.get("graph") or {}
-        action = build_studio_action(session)
-        aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
-        resolution = str(graph.get("resolution") or self.config.image_default_resolution or "1K")
-        try:
-            count = max(1, min(4, int(graph.get("count") or 1)))
-        except Exception:
-            count = 1
-        mode = str(graph.get("mode") or "group")
-        persona_ref = self.persona.get_reference_image() if graph.get("use_persona_identity", True) else None
-        raw_refs, used_slots = resolve_slot_refs_for_run(
-            session,
-            persona_ref=persona_ref,
-            load_path_bytes=self._load_cache_image_bytes,
-        )
-        if mode in {"group", "selfie", "i2i"} and not raw_refs:
-            raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
-
-        summary = {
-            "session_id": session_id,
-            "mode": mode,
-            "prompt": action,
-            "aspect_ratio": aspect,
-            "resolution": resolution,
-            "count": count,
-            "used_slots": used_slots,
-            "kind": "studio",
-        }
-        with self._web_task_lock:
-            self._web_task_seq += 1
-            task_id = f"web-studio-{int(time.time() * 1000)}-{self._web_task_seq}"
-            now = time.time()
-            self._web_tasks[task_id] = {
-                "task_id": task_id,
-                "status": "queued",
-                "success": None,
-                "error": "",
-                "created_ts": now,
-                "updated_ts": now,
-                "created_at": self._web_task_timestamp(),
-                "updated_at": self._web_task_timestamp(),
-                "request_data": redact_sensitive_data(dict(summary)),
-                "result": None,
-                "source": "studio-run",
-                "owner_session": "web",
-                "cancel_requested": False,
-                "studio_session_id": session_id,
-            }
-            self._prune_web_tasks_locked()
-            self._persist_web_tasks_locked()
-
-        self.studio.attach_run_start(session_id, task_id, summary)
-        asyncio.run_coroutine_threadsafe(self._run_studio_task(task_id, session_id), loop)
-        return self.get_web_image_task(task_id)
-
-    async def _run_studio_task(self, task_id: str, session_id: str) -> None:
-        self._set_web_image_task(task_id, status="running", started_ts=time.time(), started_at=self._web_task_timestamp())
-        try:
-            if self._task_cancel_requested(task_id):
-                raise RuntimeError("任务已取消")
-            session = self.studio.get(session_id)
-            graph = session.get("graph") or {}
-            action = build_studio_action(session)
-            aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
-            resolution = str(graph.get("resolution") or self.config.image_default_resolution or "1K")
-            try:
-                count = max(1, min(4, int(graph.get("count") or 1)))
-            except Exception:
-                count = 1
-            mode = str(graph.get("mode") or "group").strip().lower() or "group"
-            persona_ref = self.persona.get_reference_image() if graph.get("use_persona_identity", True) else None
-            raw_refs, _ = resolve_slot_refs_for_run(
-                session,
-                persona_ref=persona_ref,
-                load_path_bytes=self._load_cache_image_bytes,
-            )
-            refs = [ImageReference(data=data, mime_type=mime) for data, mime in raw_refs]
-            if mode in {"group", "selfie", "i2i"} and not refs:
-                raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
-
-            if mode in {"group", "selfie"}:
-                if mode == "selfie":
-                    action = self._normalize_selfie_action(action, bool(refs))
-                await self.persona.ensure_daily_selfie_profile(action)
-                # refs already include identity first when available; do not re-prepend persona
-                has_identity = bool(refs)
-                extra_count = max(0, len(refs) - 1) if has_identity else len(refs)
-                prompt = self.persona.build_selfie_prompt(
-                    action=action,
-                    bot_name=self.config.bot_name,
-                    personality=self.config.personality,
-                    has_reference_image=has_identity,
-                    extra_reference_count=extra_count,
-                )
-                prompt_en_meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
-                if self._prompt_en_needed(action, media="image"):
-                    from .prompt_templates import build_selfie_builtin_prompt, extract_user_prompt
-
-                    user_text = extract_user_prompt(action)
-                    translated_user = ""
-                    if user_text:
-                        translated_user, prompt_en_meta = await self._translate_prompt_to_english(
-                            user_text, media="image", event=None
-                        )
-                        if not prompt_en_meta.get("applied"):
-                            translated_user = ""
-                    else:
-                        prompt_en_meta.update({"enabled": True, "applied": True, "scope": "builtin_only"})
-                    if prompt_en_meta.get("applied"):
-                        prompt = build_selfie_builtin_prompt(
-                            action,
-                            language="en",
-                            has_reference_image=has_identity,
-                            extra_reference_count=extra_count,
-                            appearance_type=self.persona.get_appearance_type(),
-                            user_text=translated_user,
-                        )
-            else:
-                user_prompt = action
-                prompt_en_meta = {"enabled": False, "applied": False, "scope": "user_text_only"}
-                if self._prompt_en_needed(user_prompt, media="image"):
-                    translated, prompt_en_meta = await self._translate_prompt_to_english(
-                        user_prompt, media="image", event=None
-                    )
-                    if prompt_en_meta.get("applied") and translated:
-                        user_prompt = translated
-                prompt = build_prompt_with_reference_instruction(
-                    user_prompt,
-                    refs,
-                    language="en" if self.config.image_enable_image_prompt_en else "zh",
-                )
-
-            all_paths: List[str] = []
-            last_error = ""
-            used_model = ""
-            last_result: Dict[str, Any] = {}
-            for _ in range(max(1, count)):
-                if self._task_cancel_requested(task_id):
-                    raise RuntimeError("任务已取消")
-                result = await self._run_image_generation(
-                    prompt=prompt,
-                    aspect_ratio=aspect,
-                    resolution=resolution,
-                    refs=refs,
-                    source="studio-run",
-                    original_prompt=action,
-                    event=None,
-                    prompt_en_meta=prompt_en_meta,
-                )
-                last_result = result if isinstance(result, dict) else {}
-                if not last_result.get("success"):
-                    last_error = str(last_result.get("error") or "生成失败")
-                    break
-                used_model = str(last_result.get("used_model") or used_model)
-                for path in last_result.get("image_paths") or last_result.get("generated_image_paths") or []:
-                    text = str(path or "").strip()
-                    if text:
-                        all_paths.append(text)
-
-            success = bool(all_paths) and not last_error
-            error = "" if success else (last_error or "生成失败")
-            self.studio.attach_run_finish(
-                session_id,
-                task_id,
-                success=success,
-                error=error,
-                result_paths=all_paths,
-                used_model=used_model,
-            )
-            result_payload = {
-                "success": success,
-                "error": error,
-                "image_paths": all_paths,
-                "generated_image_paths": all_paths,
-                "used_model": used_model,
-                "session_id": session_id,
-                "elapsed_seconds": last_result.get("elapsed_seconds"),
-            }
-            self._set_web_image_task(
-                task_id,
-                status="succeeded" if success else "failed",
-                success=success,
-                error=error,
-                result=redact_sensitive_data(result_payload),
-                finished_ts=time.time(),
-                finished_at=self._web_task_timestamp(),
-            )
-        except Exception as exc:
-            error = redact_sensitive_text(str(exc))
-            try:
-                self.studio.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[])
-            except Exception:
-                pass
-            cancelled = "取消" in error
-            self._set_web_image_task(
-                task_id,
-                status="cancelled" if cancelled else "failed",
-                success=False,
-                error=error,
-                result={"success": False, "error": error, "session_id": session_id},
-                finished_ts=time.time(),
-                finished_at=self._web_task_timestamp(),
-            )
-
-    def _save_reference_images_to_cache(self, refs: List[ImageReference]) -> List[str]:
-        paths: List[str] = []
-        for ref in refs:
-            if ref.data:
-                paths.append(self._save_cache_image(ref.data, "request", ref.mime_type))
-        return paths
-
-    def _cache_size_bytes(self) -> int:
-        total = 0
-        for root, _, files in os.walk(self.generated_dir):
-            for name in files:
-                path = os.path.join(root, name)
-                try:
-                    total += os.path.getsize(path)
-                except OSError:
-                    pass
-        return total
-
-    def _cleanup_image_cache_if_needed(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
-        limit = max(10, int(self.config.image_cache_limit_mb or 100)) * 1024 * 1024
-        total = self._cache_size_bytes()
-        deleted: List[str] = []
-        if total <= limit:
-            return {"limit_bytes": limit, "total_bytes": total, "deleted": deleted}
-        with self._records_lock:
-            referenced_paths = collect_record_cache_paths(self._records)
-        candidates = collect_cache_cleanup_candidates(self.generated_dir, protected_paths, referenced_paths)
-        for path in candidates:
-            try:
-                size = os.path.getsize(path)
-                os.remove(path)
-                deleted.append(self._cache_relative_path(path))
-                total = max(0, total - size)
-            except OSError:
-                pass
-            if total <= limit:
-                break
-        return {"limit_bytes": limit, "total_bytes": total, "deleted": deleted}
-
-    def get_cache_cleanup_preview(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
-        """Return a dry-run cache cleanup plan without deleting files."""
-        limit = max(10, int(self.config.image_cache_limit_mb or 100)) * 1024 * 1024
-        total = self._cache_size_bytes()
-        with self._records_lock:
-            referenced_paths = collect_record_cache_paths(self._records)
-        candidates = collect_cache_cleanup_candidates(self.generated_dir, protected_paths, referenced_paths)
-        planned: List[Dict[str, Any]] = []
-        remaining = total
-        if total > limit:
-            for path in candidates:
-                try:
-                    size = os.path.getsize(path)
-                except OSError:
-                    continue
-                planned.append({"path": self._cache_relative_path(path), "size_bytes": size})
-                remaining = max(0, remaining - size)
-                if remaining <= limit:
-                    break
-        return {
-            "limit_bytes": limit,
-            "total_bytes": total,
-            "would_delete_bytes": total - remaining,
-            "remaining_bytes": remaining,
-            "would_delete": planned,
-        }
-
-    def clear_channel_health(self, channel: str = "") -> Dict[str, Any]:
-        with self._channel_health_lock:
-            if channel:
-                self._channel_health.pop(str(channel).strip(), None)
-            else:
-                self._channel_health.clear()
-            return self.get_channel_health()
-
-    def get_channel_health(self) -> Dict[str, Any]:
-        now = time.time()
-        with self._channel_health_lock:
-            return {
-                name: {**dict(state), "cooldown_remaining": round(max(0.0, float(state.get("cooldown_until") or 0) - now), 2)}
-                for name, state in self._channel_health.items()
-            }
-
-    def _channel_is_healthy(self, channel: str) -> bool:
-        with self._channel_health_lock:
-            state = self._channel_health.get(str(channel).strip()) or {}
-            return float(state.get("cooldown_until") or 0) <= time.time()
-
-    def _record_channel_health(self, attempts: Iterable[Mapping[str, Any]]) -> None:
-        now = time.time()
-        for attempt in attempts:
-            channel = str(attempt.get("channel") or "").strip()
-            if not channel:
-                continue
-            category = str(attempt.get("error_category") or "").strip()
-            success = bool(attempt.get("success"))
-            if not success and category not in {"network", "server", "timeout_create", "timeout_poll"}:
-                continue
-            with self._channel_health_lock:
-                state = self._channel_health.setdefault(channel, {"consecutive_failures": 0, "last_error_category": ""})
-                if success:
-                    state["consecutive_failures"] = 0
-                    state["cooldown_until"] = 0
-                    state["last_success_ts"] = now
-                    continue
-                if category not in {"network", "server", "timeout_create", "timeout_poll"}:
-                    continue
-                state["consecutive_failures"] = int(state.get("consecutive_failures") or 0) + 1
-                state["last_error_category"] = category
-                state["last_error_ts"] = now
-                if state["consecutive_failures"] >= 3:
-                    state["cooldown_until"] = now + 60
-
     def _source_context(self, event: Optional[AstrMessageEvent], source: str, user_id: str = "") -> Dict[str, Any]:
         uid = event_user_id(event) if event is not None else str(user_id or "")
         gid = event_group_id(event) if event is not None else ""
@@ -3185,92 +504,22 @@ class SelfieImagePlugin(Star):
             "chat_type": "group" if gid else ("private" if uid else "web"),
         }
 
+    def _image_parser_defaults(self) -> Tuple[str, str]:
+        aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
+        resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
+        return aspect, resolution
+
     def _normalize_count(self, count: Any) -> int:
-        try:
-            value = int(float(str(count).strip()))
-        except Exception:
-            value = 1
-        return max(1, min(self.config.image_max_batch_count, value))
+        return normalize_count(count, self.config.image_max_batch_count)
 
     def _parse_count_token(self, token: str) -> int:
-        text = str(token or "").strip().translate(str.maketrans("０１２３４５６７８９", "0123456789"))
-        if not text:
-            return 0
-        match = re.fullmatch(r"(\d{1,2})(?:张|次|幅)?", text)
-        if match:
-            value = int(match.group(1))
-            return value if value > 0 else 0
-
-        chinese_digits = {
-            "一": 1,
-            "二": 2,
-            "两": 2,
-            "俩": 2,
-            "三": 3,
-            "四": 4,
-            "五": 5,
-            "六": 6,
-            "七": 7,
-            "八": 8,
-            "九": 9,
-            "十": 10,
-        }
-        chinese = re.fullmatch(r"([一二两俩三四五六七八九十]{1,3})(?:张|次|幅)?", text)
-        if not chinese:
-            return 0
-        value_text = chinese.group(1)
-        if value_text == "十":
-            return 10
-        if "十" in value_text:
-            before, _, after = value_text.partition("十")
-            tens = chinese_digits.get(before, 1) if before else 1
-            ones = chinese_digits.get(after, 0) if after else 0
-            value = tens * 10 + ones
-            return value if value > 0 else 0
-        return chinese_digits.get(value_text, 0)
+        return parse_count_token(token)
 
     def _split_attached_count_token(self, token: str) -> Tuple[str, int]:
-        """Split COS shorthand such as `3旗袍`, `3张西施`, or `西施3`."""
-        text = str(token or "").strip().translate(str.maketrans("０１２３４５６７８９", "0123456789"))
-        if not text:
-            return "", 0
-        count = self._parse_count_token(text)
-        if count:
-            return "", count
-        count_pattern = r"(?:\d{1,2}|[一二两俩三四五六七八九十]{1,3})"
-        suffix_pattern = r"(?:张|次|幅)?"
-        match = re.fullmatch(rf"({count_pattern}){suffix_pattern}(.+)", text)
-        if match:
-            count = self._parse_count_token(match.group(1))
-            remainder = match.group(2).strip()
-            # Do not split ordinary numeric/alphanumeric tokens such as
-            # `2026`, `12a`, or `3.14` as a batch count.
-            # Chinese number + classifier phrases (`一只猫`, `一位美女`) are
-            # ordinary prompt text, not attached batch shorthand.
-            classifiers = "只位个名件套条张幅次本辆杯碗颗粒朵座间栋台部份种组对双"
-            is_measure_phrase = bool(re.match(rf"[{classifiers}]", remainder))
-            if count and remainder and not re.search(r"[\dA-Za-z]", remainder) and not is_measure_phrase:
-                return remainder, count
-        match = re.fullmatch(rf"(.+?)({count_pattern}){suffix_pattern}", text)
-        if match:
-            count = self._parse_count_token(match.group(2))
-            remainder = match.group(1).strip()
-            if count and remainder and not re.search(r"[\dA-Za-z]", remainder):
-                return remainder, count
-        return text, 0
+        return split_attached_count_token(token)
 
     def _command_tokens_for_count(self, text: str) -> List[str]:
-        raw_tokens = re.sub(r"\s+", " ", str(text or "").strip()).split()
-        tokens: List[str] = []
-        for index, token in enumerate(raw_tokens):
-            if index < 2:
-                parts = [part.strip() for part in re.split(r"[\/／]+", token) if part.strip()]
-                count_like_parts = sum(1 for part in parts if self._parse_count_token(part))
-                if 1 < len(parts) <= 2 and count_like_parts == 1:
-                    tokens.extend(parts)
-                    continue
-            tokens.append(token)
-        return tokens
+        return command_tokens_for_count(text)
 
     def _extract_command_count(
         self,
@@ -3279,412 +528,71 @@ class SelfieImagePlugin(Star):
         allow_attached: bool = False,
         allow_trailing: bool = False,
     ) -> Tuple[str, int]:
-        """Extract a batch count from flexible command parameter positions."""
-        tokens = self._command_tokens_for_count(text)
-        if not tokens:
-            return "", 1
-        indices = [0, 1]
-        # Once a command opts into flexible parsing, a standalone count may
-        # occur anywhere (`美女 捧脸 2 夜景`). COS additionally accepts
-        # attached shorthand such as `3旗袍` or `西施3` in every position.
-        if allow_trailing or allow_attached:
-            indices.extend(range(2, len(tokens)))
-        for index in dict.fromkeys(indices):
-            if index >= len(tokens):
-                continue
-            count = self._parse_count_token(tokens[index])
-            if count:
-                remaining = [token for pos, token in enumerate(tokens) if pos != index]
-                return " ".join(remaining).strip(), self._normalize_count(count)
-            if allow_attached:
-                remainder, count = self._split_attached_count_token(tokens[index])
-                if count:
-                    remaining = [token for pos, token in enumerate(tokens) if pos != index]
-                    if remainder:
-                        remaining.insert(index, remainder)
-                    return " ".join(remaining).strip(), self._normalize_count(count)
-        return " ".join(tokens).strip(), 1
+        return extract_command_count(
+            text,
+            self.config.image_max_batch_count,
+            allow_attached=allow_attached,
+            allow_trailing=allow_trailing,
+        )
 
-    def _parse_prompt_options(self, text: str, aspect_ratio: str = "", resolution: str = "") -> Tuple[str, str, str]:
-        prompt = str(text or "").strip()
-        aspect = str(aspect_ratio or self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
-        resol = str(resolution or self.config.image_default_resolution or "1K").strip() or "1K"
-        matches = list(re.finditer(r"--([a-zA-Z0-9_\-]+)(?:[=\s]+([^\s]+))?", prompt))
-        for match in reversed(matches):
-            key = match.group(1).lower().replace("-", "_")
-            value = str(match.group(2) or "").strip()
-            if key in {"ar", "aspect", "aspect_ratio", "ratio"} and value:
-                aspect = value
-                prompt = prompt[: match.start()] + prompt[match.end() :]
-            elif key in {"resolution", "res", "quality"} and value:
-                resol = value
-                prompt = prompt[: match.start()] + prompt[match.end() :]
-            elif key == "size" and value:
-                if "2048" in value or value.upper() == "2K":
-                    resol = "2K"
-                elif "4096" in value or value.upper() == "4K":
-                    resol = "4K"
-                prompt = prompt[: match.start()] + prompt[match.end() :]
-        return re.sub(r"\s+", " ", prompt).strip(), aspect, resol
+    def _parse_prompt_options(
+        self,
+        text: str,
+        aspect_ratio: str = "",
+        resolution: str = "",
+    ) -> Tuple[str, str, str]:
+        default_aspect, default_resolution = self._image_parser_defaults()
+        return parse_prompt_options(
+            text,
+            aspect_ratio,
+            resolution,
+            default_aspect_ratio=default_aspect,
+            default_resolution=default_resolution,
+        )
 
-    def _resolve_image_preset(self, prompt: str, aspect_ratio: str = "", resolution: str = "") -> Tuple[str, str, str, str, str]:
-        cleaned_prompt, aspect, resol = self._parse_prompt_options(prompt, aspect_ratio, resolution)
-        resolved = self.presets.resolve(cleaned_prompt)
-        preset_name = str(resolved.get("preset_name") or "").strip()
+    def _resolve_image_preset(
+        self,
+        prompt: str,
+        aspect_ratio: str = "",
+        resolution: str = "",
+    ) -> Tuple[str, str, str, str, str]:
+        default_aspect, default_resolution = self._image_parser_defaults()
+        return resolve_image_preset(
+            prompt,
+            aspect_ratio,
+            resolution,
+            presets=self.presets,
+            default_aspect_ratio=default_aspect,
+            default_resolution=default_resolution,
+        )
 
-        if preset_name:
-            cleaned_prompt = str(resolved.get("prompt") or cleaned_prompt).strip()
-            default_aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
-            default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
-            preset_aspect = str(resolved.get("aspect_ratio") or "").strip()
-            preset_resolution = str(resolved.get("resolution") or "").strip()
-            if preset_aspect and aspect == default_aspect:
-                aspect = preset_aspect
-            if preset_resolution and resol == default_resolution:
-                resol = preset_resolution
+    def _expand_user_text_with_preset(
+        self, raw_text: str
+    ) -> Tuple[str, str, str, str]:
+        default_aspect, default_resolution = self._image_parser_defaults()
+        return expand_user_text_with_preset(
+            raw_text,
+            presets=self.presets,
+            default_aspect_ratio=default_aspect,
+            default_resolution=default_resolution,
+        )
 
-        return cleaned_prompt, aspect, resol, preset_name, str(resolved.get("description") or "").strip()
-
-    def _expand_user_text_with_preset(self, raw_text: str) -> Tuple[str, str, str, str]:
-        """Resolve presets against raw user words before action wrappers.
-
-        Preset names are parameters rather than a fixed prefix, so commands
-        such as ``文生图 一位美女 捧脸 2`` can expand ``捧脸`` in place while
-        keeping the surrounding words as ordinary prompt text.
-        """
-        text = str(raw_text or "").strip()
-        if not text:
-            return "", "", "", ""
-        # Ensure seeded defaults are loaded (no-op if already present).
-        try:
-            self.presets.load()
-        except Exception:
-            pass
-        expanded, aspect, resolution, preset_name, _ = self._resolve_image_preset(text)
-        if preset_name:
-            return str(expanded or text).strip(), aspect, resolution, preset_name
-
-        cleaned, aspect, resolution = self._parse_prompt_options(text)
-        separators = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+"
-        pieces = re.split(rf"({separators})", cleaned)
-        output: List[str] = []
-        found_name = ""
-        default_aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
-        default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
-        for piece in pieces:
-            if not piece or re.fullmatch(separators, piece):
-                output.append(piece)
-                continue
-            resolved = self.presets.resolve(piece)
-            part_name = str(resolved.get("preset_name") or "").strip()
-            if not part_name:
-                output.append(piece)
-                continue
-            output.append(str(resolved.get("prompt") or piece).strip())
-            if not found_name:
-                found_name = part_name
-                part_aspect = str(resolved.get("aspect_ratio") or "").strip()
-                part_resolution = str(resolved.get("resolution") or "").strip()
-                if part_aspect and aspect == default_aspect:
-                    aspect = part_aspect
-                if part_resolution and resolution == default_resolution:
-                    resolution = part_resolution
-        return "".join(output).strip() or cleaned, aspect, resolution, found_name
-
-    def _expand_cos_user_text_with_preset(self, raw_text: str) -> Tuple[str, str, str, str]:
-        """Expand a COS preset token while keeping surrounding title/query text."""
-        text = str(raw_text or "").strip()
-        if not text:
-            return "", "", "", ""
-
-        # Preserve the existing prefix form (`捧脸 夜景`) and prompt options.
-        expanded, aspect, resolution, preset_name = self._expand_user_text_with_preset(text)
-        if preset_name:
-            return expanded, aspect, resolution, preset_name
-
-        # COS queries may put the title segment before a preset (`西施 捧脸`).
-        # Resolve exact preset tokens separated by whitespace/punctuation, not
-        # arbitrary substrings inside a free-form prompt.
-        pieces = re.split(r"([\s·/／、，,：:（）()\[\]【】;；。.!！？?]+)", expanded)
-        output: List[str] = []
-        found_name = ""
-        default_aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
-        default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
-        for piece in pieces:
-            if not piece or re.fullmatch(r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+", piece):
-                output.append(piece)
-                continue
-            part_expanded, part_aspect, part_resolution, part_name = self._expand_user_text_with_preset(piece)
-            if not part_name:
-                output.append(piece)
-                continue
-            output.append(part_expanded)
-            if not found_name:
-                found_name = part_name
-                if aspect == default_aspect and part_aspect:
-                    aspect = part_aspect
-                if resolution == default_resolution and part_resolution:
-                    resolution = part_resolution
-        return "".join(output).strip(), aspect, resolution, found_name
+    def _expand_cos_user_text_with_preset(
+        self, raw_text: str
+    ) -> Tuple[str, str, str, str]:
+        default_aspect, default_resolution = self._image_parser_defaults()
+        return expand_cos_user_text_with_preset(
+            raw_text,
+            presets=self.presets,
+            default_aspect_ratio=default_aspect,
+            default_resolution=default_resolution,
+        )
 
     def _normalize_preset_input(self, text: str) -> str:
-        return str(text or "").strip().replace("\r", " ").replace("\n", " ")
+        return normalize_preset_input(text)
 
     def _split_preset_command(self, text: str) -> Tuple[str, str]:
-        value = self._normalize_preset_input(text)
-        if not value:
-            return "", ""
-        if " " in value:
-            head, tail = value.split(" ", 1)
-            return head.strip(), tail.strip()
-        return value, ""
-
-    async def _event_reference_images_with_stats(
-        self,
-        event: AstrMessageEvent,
-        include_at_avatar: bool = False,
-        context_hint: str = "",
-        allow_context_fallback: bool = False,
-        include_persona: bool = False,
-        extra_sources: Optional[List[str]] = None,
-        include_image_alternates: bool = False,
-    ) -> Tuple[List[ImageReference], int, int]:
-        """Collect event references via unified ReferenceCollector (target 11)."""
-        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
-        persona_path = ""
-        if include_persona:
-            if self.persona.has_reference_image():
-                persona_path = str(self.persona.get_reference_path() or "")
-            elif bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
-                logo = str(getattr(self, "_bundled_logo_path", "") or "")
-                if logo and os.path.isfile(logo):
-                    persona_path = logo
-        hint = str(context_hint or extract_event_text(event) or "")
-        # Clothes / "wear this" → user prior outfit ref.
-        # "用刚刚那一套/上一套" → bot's recent generated image first.
-        edit_bot = self._looks_like_edit_bot_result_followup(hint)
-        clothes = self._looks_like_clothes_followup(hint)
-        user_only = clothes and not edit_bot
-        bot_only = edit_bot and not clothes
-        prefer_user = not edit_bot
-        context_sources = self._recent_context_image_sources(
-            event,
-            prefer_user=prefer_user,
-            user_only=user_only,
-            bot_only=bot_only,
-        )
-        collector = ReferenceCollector(
-            max_bytes=max_bytes,
-            bot_ids=self._bot_account_ids(event),
-            persona_path=persona_path,
-            context_sources=context_sources,
-            extra_sources=extra_sources or [],
-            include_at_avatar=include_at_avatar,
-            include_persona=include_persona,
-            allow_context_fallback=allow_context_fallback,
-            context_hint=hint,
-            looks_like_context_ref=self._looks_like_context_image_reference,
-            include_image_alternates=include_image_alternates,
-        )
-        async with aiohttp.ClientSession(trust_env=False) as session:
-            collected = await collector.collect(event, session)
-        # Default return keeps historical semantics: object refs only (persona separate).
-        refs = collected.for_draw(include_persona=include_persona)
-        if collected.failed_count and not refs:
-            logger.warning(
-                f"[SelfieImage] 参考图读取失败或超时: {collected.failed_count}/{collected.source_count}"
-            )
-        return refs, collected.source_count, collected.failed_count
-
-    async def _collect_event_references(
-        self,
-        event: AstrMessageEvent,
-        *,
-        include_at_avatar: bool = False,
-        context_hint: str = "",
-        allow_context_fallback: bool = False,
-        include_persona: bool = False,
-        extra_sources: Optional[List[str]] = None,
-        include_image_alternates: bool = False,
-    ):
-        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
-        persona_path = ""
-        if include_persona:
-            if self.persona.has_reference_image():
-                persona_path = str(self.persona.get_reference_path() or "")
-            elif bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
-                logo = str(getattr(self, "_bundled_logo_path", "") or "")
-                if logo and os.path.isfile(logo):
-                    persona_path = logo
-        hint = str(context_hint or extract_event_text(event) or "")
-        edit_bot = self._looks_like_edit_bot_result_followup(hint)
-        clothes = self._looks_like_clothes_followup(hint)
-        user_only = clothes and not edit_bot
-        bot_only = edit_bot and not clothes
-        prefer_user = not edit_bot
-        collector = ReferenceCollector(
-            max_bytes=max_bytes,
-            bot_ids=self._bot_account_ids(event),
-            persona_path=persona_path,
-            context_sources=self._recent_context_image_sources(
-                event,
-                prefer_user=prefer_user,
-                user_only=user_only,
-                bot_only=bot_only,
-            ),
-            extra_sources=extra_sources or [],
-            include_at_avatar=include_at_avatar,
-            include_persona=include_persona,
-            allow_context_fallback=allow_context_fallback,
-            context_hint=hint,
-            looks_like_context_ref=self._looks_like_context_image_reference,
-            include_image_alternates=include_image_alternates,
-        )
-        async with aiohttp.ClientSession(trust_env=False) as session:
-            return await collector.collect(event, session)
-
-    async def _event_reference_images(
-        self,
-        event: AstrMessageEvent,
-        include_at_avatar: bool = False,
-        context_hint: str = "",
-        allow_context_fallback: bool = False,
-        include_persona: bool = False,
-        extra_sources: Optional[List[str]] = None,
-        include_image_alternates: bool = False,
-    ) -> List[ImageReference]:
-        refs, _, _ = await self._event_reference_images_with_stats(
-            event,
-            include_at_avatar=include_at_avatar,
-            context_hint=context_hint,
-            allow_context_fallback=allow_context_fallback,
-            include_persona=include_persona,
-            extra_sources=extra_sources,
-            include_image_alternates=include_image_alternates,
-        )
-        return refs
-
-    def _create_image_component(self, file_path: str) -> Any:
-        path = os.path.abspath(file_path)
-        if hasattr(Image, "fromFileSystem"):
-            return Image.fromFileSystem(path)
-        if hasattr(Image, "from_file_system"):
-            return Image.from_file_system(path)
-        return Image(file=path)
-
-    def _create_video_component(self, file_path: str) -> Any:
-        path = os.path.abspath(file_path)
-        if Video is None:
-            # Fallback: some platforms accept file path as plain text; prefer Image-like file field if present.
-            return {"type": "video", "file": path}
-        if hasattr(Video, "fromFileSystem"):
-            return Video.fromFileSystem(path)
-        if hasattr(Video, "from_file_system"):
-            return Video.from_file_system(path)
-        if hasattr(Video, "fromURL") and str(file_path).startswith("http"):
-            return Video.fromURL(file_path)
-        try:
-            return Video(file=path)
-        except Exception:
-            return Video(path) if callable(Video) else {"type": "video", "file": path}
-
-    async def _send_generated_video(self, event: AstrMessageEvent, file_path: str, caption: str = "") -> None:
-        components: List[Any] = []
-        if caption:
-            try:
-                from astrbot.api.message_components import Plain  # type: ignore
-            except Exception:
-                try:
-                    from astrbot.api.event.components import Plain  # type: ignore
-                except Exception:
-                    Plain = None  # type: ignore
-            if Plain is not None:
-                components.append(Plain(caption) if not callable(Plain) or True else Plain(text=caption))
-        components.append(self._create_video_component(file_path))
-        try:
-            await event.send(event.chain_result(components))
-        except Exception:
-            # Some adapters dislike mixed chains; send separately.
-            if caption:
-                try:
-                    await event.send(event.plain_result(caption))
-                except Exception:
-                    pass
-            await event.send(event.chain_result([self._create_video_component(file_path)]))
-
-    def _persona_identity_reference(self) -> Optional[ImageReference]:
-        """形象参考：优先用户上传；无图时按开关回退 logo，或返回 None 走人设文案。"""
-        persona_ref = self.persona.get_reference_image()
-        if persona_ref:
-            return ImageReference(data=persona_ref["data"], mime_type=persona_ref["mime_type"])
-        if not bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
-            return None
-        logo = str(getattr(self, "_bundled_logo_path", "") or "")
-        if not logo or not os.path.isfile(logo):
-            return None
-        try:
-            with open(logo, "rb") as handle:
-                data = handle.read()
-            if not data:
-                return None
-            return ImageReference(data=data, mime_type=detect_mime_by_bytes(data) or "image/png")
-        except OSError:
-            return None
-
-    def _persona_auxiliary_references(self, action: str = "") -> List[ImageReference]:
-        """Load auxiliary identity images; group photos intentionally use primary only."""
-        intent = self.persona.analyze_selfie_intent(action)
-        if intent.is_group_photo:
-            return []
-        return [
-            ImageReference(data=item["data"], mime_type=item["mime_type"])
-            for item in self.persona.get_auxiliary_reference_images()
-            if item.get("data")
-        ]
-
-    def _video_persona_reference(self) -> Optional[ImageReference]:
-        """将当前形象图作为视频首帧参考。"""
-        return self._persona_identity_reference()
-
-    async def _send_generated_images(self, event: AstrMessageEvent, files: Iterable[str]) -> int:
-        sent = 0
-        for file_path in files:
-            try:
-                await event.send(event.chain_result([self._create_image_component(file_path)]))
-            except Exception as exc:
-                logger.warning("[SelfieImage] image send failed: %s", redact_sensitive_text(str(exc)))
-                owner = self._session_key(event)
-                with self._send_failures_lock:
-                    self._send_failures.setdefault(owner, []).append(self._cache_relative_path(file_path))
-                continue
-            self._record_bot_image_context(event, [file_path])
-            sent += 1
-            await asyncio.sleep(0.4)
-        return sent
-
-    async def retry_failed_images(self, event: AstrMessageEvent) -> Dict[str, Any]:
-        owner = self._session_key(event)
-        with self._send_failures_lock:
-            paths = list(self._send_failures.get(owner) or [])
-        sent = 0
-        remaining = []
-        for rel_path in paths:
-            try:
-                abs_path = self._cache_absolute_path(rel_path)
-            except Exception:
-                continue
-            if not os.path.isfile(abs_path):
-                continue
-            if await self._send_generated_images(event, [abs_path]):
-                sent += 1
-            else:
-                remaining.append(rel_path)
-        with self._send_failures_lock:
-            if remaining:
-                self._send_failures[owner] = remaining
-            else:
-                self._send_failures.pop(owner, None)
-        return {"success": sent > 0, "sent": sent, "remaining": len(remaining)}
+        return split_preset_command(text)
 
     async def _send_progress_text(self, event: AstrMessageEvent, text: str) -> None:
         if not self._progress_text_allowed(event):
@@ -3959,44 +867,20 @@ class SelfieImagePlugin(Star):
         return False, "未知操作"
 
     def _friendly_user_error_message(self, error: str, fallback: str = "") -> str:
-        text = str(error or "").strip()
-        if not text:
-            return fallback or "我刚刚没抓稳这个感觉，换个方向再试试好不好。"
-        if "可使用人员白名单" in text:
-            return "这个功能现在还只对少数人开放。"
-        if "用户黑名单" in text:
-            return "现在先不方便给你看这类内容。"
-        if "今日生图次数已用完" in text:
-            return "我今天已经拍得有点多了，明天再来找我好不好。"
-        if "请求太频繁" in text:
-            return "先让我缓一小会儿，我等下就继续给你看。"
-        if "提示词审核未通过" in text or "图片内容审核未通过" in text or "提示词包含禁用词" in text:
-            return "这次这个方向我不太方便照着来，换个说法或者换个感觉试试。"
-        if "当前没有可用的生图模型" in text or "未配置可用出图审核模型" in text or "未启用" in text:
-            return random.choice(["这会儿接口没接上，晚点再试。", "现在暂时出不了图，等配置恢复再来。"])
-        if "缺少生图提示词" in text or "请输入提示词" in text:
-            return "你想让我往什么感觉走？也可以直接丢张参考图给我。"
-        detail = redact_sensitive_text(text)
-        detail = re.sub(r"[\r\n\t]+", " ", detail)
-        detail = re.sub(r"Traceback \(most recent call last\):.*", "", detail, flags=re.I)
-        detail = re.sub(r"\s+", " ", detail).strip(" ：:;；")
-        return detail[:180] + ("…" if len(detail) > 180 else "") if detail else (fallback or self._natural_fail_fallback("image"))
+        return friendly_user_error_message(
+            error,
+            fallback,
+            default_fail=lambda: self._natural_fail_fallback("image"),
+        )
 
     def _tool_soft_fail(self, error: str, fallback: str = "") -> str:
-        message = self._friendly_user_error_message(error, fallback)
-        return f"[TOOL_FAILED] {message}\n请用简体中文、用你自己的语气自然安抚用户，别提生成、工具、配置、次数、冷却或审核这些词。"
+        return tool_soft_fail(error, fallback, self._friendly_user_error_message)
 
     def _tool_unavailable(self, fallback: str) -> str:
-        return f"[TOOL_UNAVAILABLE] {fallback}\n请用简体中文、用你自己的语气自然安抚用户，别提功能、工具或配置。"
+        return tool_unavailable(fallback)
 
     def _tool_success(self, kind: str = "image", count: int = 1) -> str:
-        label = "照片" if kind == "selfie" else "图片"
-        count_text = f"，共 {count} 张" if count > 1 else ""
-        return (
-            f"[TOOL_SUCCESS] {label}已经发给用户{count_text}。\n"
-            "请用简体中文、按当前人格自然收尾一句，也可以很短。"
-            "不要复述请求，不要说生成、绘制、工具、调用、任务、已完成、已发送、配置、模型、提示词或审核。"
-        )
+        return tool_success(kind, count)
 
     def _build_leg_focus_action(
         self,
@@ -4006,135 +890,12 @@ class SelfieImagePlugin(Star):
         avoid_pose: str = "",
         force_legwear: str = "",
     ) -> str:
-        """生成中性的日常下装构图，并按姿势选择兼容的自拍或第三人称摄影视角。"""
-        pose_pool = [
-            # Keep the established non-standing pose families.  Only the standing
-            # top-down variant was removed; the crop variants remain available.
-            ("sit", 2),
-            ("sit_crop", 3),
-            ("kneel", 2),
-            ("kneel_crop", 3),
-            ("side_lie", 2),
-            ("side_lie_crop", 3),
-            ("hug_knee", 2),
-            ("hug_knee_crop", 3),
-            ("cross_leg", 2),
-            ("cross_leg_crop", 3),
-            ("windowsill", 2),
-            ("windowsill_crop", 3),
-            ("kneel_up", 2),
-            ("kneel_front", 2),
-            ("floor_fold", 2),
-            ("one_knee_fix", 2),
-            ("reclined_knees_crop", 3),
-            ("floor_knees_up_crop", 3),
-            ("desk_sit_crop", 3),
-            ("bed_supine_crop", 3),
-        ]
-        if avoid_pose:
-            filtered = [(name, w) for name, w in pose_pool if name != avoid_pose]
-            if filtered:
-                pose_pool = filtered
-        names = [n for n, _ in pose_pool]
-        weights = [w for _, w in pose_pool]
-        pose_bucket = random.choices(names, weights=weights, k=1)[0]
-
-        pose_variants = {
-            "sit": ["椅上或沙发自然坐好，衣摆顺着坐姿落下，室内光线柔和。"],
-            "sit_crop": ["椅上或沙发自然坐好，衣摆顺着坐姿落下，近距离记录腰线到膝部附近的服装。"],
-            "kneel": ["在地毯或软垫上自然跪坐，双膝并拢、重心稳定，上身略前倾，衣摆平整落下。"],
-            "kneel_crop": ["在地毯或软垫上自然跪坐，双膝并拢、重心稳定，近距离记录衣摆到膝部附近的搭配。"],
-            "side_lie": ["在床边或沙发上侧躺曲腿，一侧自然弯曲、另一侧放松伸展，衣料和靠垫形成生活化背景。"],
-            "side_lie_crop": ["在床边或沙发上侧躺曲腿，姿势放松可维持，近距离记录衣摆到膝部附近的服装层次。"],
-            "hug_knee": ["坐在床边或地毯上自然抱膝，双手轻扶膝部或衣摆，姿势舒适可维持。"],
-            "hug_knee_crop": ["坐在床边或地毯上自然抱膝，衣摆随着收膝姿势落下，画面聚焦衣摆到膝部附近。"],
-            "cross_leg": ["坐在椅上或沙发上自然翘二郎腿，衣摆和服装搭配协调，重心稳定，像普通生活随拍。"],
-            "cross_leg_crop": ["坐在椅上或沙发上自然交叠双侧下装，近距离记录腰线到膝部附近的搭配，边界清楚。"],
-            "windowsill": ["稳坐窗台或矮柜边，一侧轻踩台沿、另一侧自然垂下，衣摆自然落下，窗光柔和。"],
-            "windowsill_crop": ["稳坐窗台或矮柜边，保持窗边坐姿与稳定重心，近距离记录衣料、颜色和褶皱。"],
-            "kneel_up": ["在软垫上采用较高的跪姿，上身略直、重心稳定，衣物自然垂落。"],
-            "kneel_front": ["面向镜头跪坐在地毯上，双膝并拢、衣摆整洁，保持日常记录感。"],
-            "floor_fold": ["坐在地毯或木地板上自然屈膝，双侧衣摆向身前折叠，衣物层次清楚。"],
-            "one_knee_fix": ["一侧单膝触地、另一侧自然支撑，手轻整理衣摆或袜口，动作生活化且重心稳定。"],
-            "reclined_knees_crop": ["在沙发或座椅上轻松靠坐，膝部自然向前弯曲，近距离记录服装版型。"],
-            "floor_knees_up_crop": ["在地毯或木地板上轻松席地坐，膝部自然收近，近距离记录衣摆和材质。"],
-            "desk_sit_crop": ["坐在桌前椅上，桌沿可入镜，近距离记录衣摆、颜色和材质。"],
-            "bed_supine_crop": ["在床上由靠垫支撑轻松靠坐，衣摆和床品自然铺开，保持居家随拍感。"],
-        }
-        pose_labels = {
-            "sit": "坐姿穿搭记录", "sit_crop": "坐姿近景记录",
-            "kneel": "跪坐记录", "kneel_crop": "跪坐近景",
-            "side_lie": "侧躺曲腿记录", "side_lie_crop": "侧躺曲腿近景",
-            "hug_knee": "收膝坐姿记录", "hug_knee_crop": "收膝坐姿近景",
-            "cross_leg": "交叠坐姿记录", "cross_leg_crop": "交叠坐姿近景",
-            "windowsill": "窗边坐姿记录", "windowsill_crop": "窗边坐姿近景",
-            "kneel_up": "高位跪姿", "kneel_front": "正面跪坐",
-            "floor_fold": "席地屈膝坐姿",
-            "one_knee_fix": "单膝整理衣摆",
-            "reclined_knees_crop": "沙发靠坐近景", "floor_knees_up_crop": "席地坐近景",
-            "desk_sit_crop": "桌前坐姿近景", "bed_supine_crop": "床上靠坐近景",
-        }
-        variants = pose_variants.get(pose_bucket) or pose_variants["sit_crop"]
-        pose_label = pose_labels.get(pose_bucket, "坐姿下装展示")
-        camera_bag = [
-            kind
-            for kind, weight in LEGFOCUS_CAMERA_WEIGHTS.get(
-                pose_bucket,
-                (("selfie", 1), ("third", 1)),
-            )
-            for _ in range(weight)
-        ]
-        camera_kind = random.choice(camera_bag)
-        camera_line = (
-            "第一人称手机自拍：人物自己举手机向下记录日常服装局部，镜头从腰线附近取到膝部附近。"
-            if camera_kind == "selfie"
-            else "第三人称摄影照片：由画面外的朋友用手机拍摄日常服装局部，镜头从腰线附近取到膝部附近。"
+        return build_leg_focus_action(
+            extra_request,
+            has_refs,
+            avoid_pose=avoid_pose,
+            force_legwear=force_legwear,
         )
-        # Keep the frame on the clothing area instead of using body-focused wording.
-        hard_crop = (
-            "日常服装局部记录，取景范围从腰线附近到膝部附近；服装得体、不透明，"
-            "画面用于记录颜色、材质和层次，不强调身体细节。"
-        )
-        anatomy_rules = "单人、成年人；姿态放松自然，服装穿着完整；画面重点是日常服装搭配。"
-        requested = str(force_legwear or "").strip()
-        if requested not in LEGWEAR_PROMPTS:
-            requested = parse_requested_legwear(extra_request)
-        if requested in LEGWEAR_PROMPTS:
-            legwear = requested
-        else:
-            legwear_options = LEGWEAR_BY_POSE.get(pose_bucket, LEGWEAR_BY_POSE["sit_crop"])
-            legwear = random.choices(
-                [name for name, _ in legwear_options],
-                weights=[weight for _, weight in legwear_options],
-                k=1,
-            )[0]
-        legwear_label = SAFE_LEGWEAR_LABELS.get(legwear, "光腿神器、白丝或黑丝三选一")
-        legwear_rule = (
-            f"本次服装搭配已锁定为：{legwear_label}；"
-            "腿部穿搭只允许光腿神器、白丝、黑丝三选一；参考图中的袜子、腿部服装和鞋袜搭配全部忽略，不得复制；"
-            "禁止中筒袜、短袜、运动袜、船袜、堆堆袜、普通棉袜或袜子停在小腿中段。"
-        )
-        base = (
-            "成年人物日常穿搭记录。竖屏手机记录照。"
-            f"{camera_line}"
-            "【legs:outfit】"
-            f"【姿势】{pose_label}：{random.choice(variants)}"
-            f"{legwear_rule}"
-            f"{anatomy_rules}"
-            f"{hard_crop}"
-        )
-        if has_refs:
-            base += " 用户提供的图片只参考氛围、构图、姿势和室内环境；不参考或复制其中任何袜子、腿部穿搭或鞋袜搭配，主角身份仍以 AI 自拍形象参考图为准。"
-        # Strip sock/legwear tokens from free-text extra so they don't fight the locked choice.
-        extra = LEGWEAR_REQUEST_PATTERN.sub("", str(extra_request or ""))
-        for risky_text, neutral_text in LEGFOCUS_RISKY_EXTRA_REPLACEMENTS:
-            extra = extra.replace(risky_text, neutral_text)
-        extra = re.sub(r"\s+", " ", extra).strip(" 。、，")
-        if extra:
-            base = base.rstrip("。") + f"。用户补充要求优先：{extra}。"
-        wear_tag = {"白丝": "white", "黑丝": "black", "光腿神器": "bare"}.get(legwear, "daily")
-        base += f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_bucket}】"
-        return base
 
     def _normalize_selfie_action(self, action: str, has_refs: bool) -> str:
         """为腿部自拍补全单一姿势与腿部穿搭。"""
@@ -4150,33 +911,7 @@ class SelfieImagePlugin(Star):
 
     @staticmethod
     def _period_scene_light_pools(kind: str = "selfie") -> tuple[list[str], list[str]]:
-        from .persona import current_period
-
-        period = current_period()
-        if kind == "look_you":
-            day_scenes = ["窗边沙发", "书桌前", "阳台栏杆", "厨房台边"]
-            night_scenes = ["窗边沙发", "书桌前", "夜灯房间", "厨房台边"]
-            cafe_day = ["咖啡馆座位", "楼下咖啡外摆", "街边树荫", "书店角落"]
-            if period in {"morning", "noon"}:
-                scenes = day_scenes + cafe_day
-                lights = ["窗光", "阴天柔光"]
-            elif period == "afternoon":
-                scenes = day_scenes + cafe_day
-                lights = ["窗光", "阴天柔光"]
-            elif period == "evening":
-                scenes = night_scenes + ["阳台栏杆", "雨后屋檐"]
-                lights = ["暖台灯", "窗光"]
-            else:
-                scenes = night_scenes
-                lights = ["暖台灯", "夜灯房间柔光"]
-            return scenes, lights
-        if period in {"morning", "noon"}:
-            return ["浅色墙与窗边", "书桌与杯具", "阳台栏杆旁", "镜前整洁台面"], ["窗光柔和", "清晨清透光", "阴天漫射"]
-        if period == "afternoon":
-            return ["浅色墙与窗边", "书桌与杯具", "沙发与抱枕", "阳台栏杆旁"], ["窗光柔和", "阴天漫射"]
-        if period == "evening":
-            return ["暖灯房间一角", "沙发与抱枕", "书桌与杯具", "床边靠坐"], ["暖黄台灯", "窗光柔和"]
-        return ["暖灯房间一角", "沙发与抱枕", "床边靠坐", "镜前整洁台面"], ["暖黄台灯"]
+        return period_scene_light_pools(kind)
 
     def _build_selfie_look_action(
         self,
@@ -4185,103 +920,55 @@ class SelfieImagePlugin(Star):
         *,
         avoid_shot: str = "",
     ) -> str:
-        """普通自拍 / 看看：机位+场景+小动作随机，默认看镜头。"""
-        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
-        # Clothing style presets (e.g. 漏腰) need torso framing, not arm_half face selfie.
-        if SelfieImagePlugin._looks_like_crop_waist_request(extra):
-            return SelfieImagePlugin._build_crop_waist_selfie_action(self, extra, has_refs)
-
-        shot_pool = [
-            ("arm_half", 3),
-            ("mirror_half", 2),
-            ("window_side", 2),
-            ("desk_sit", 2),
-            ("sofa_casual", 2),
-            ("high_angle", 1),
-            ("close_portrait", 1),
-        ]
-        if avoid_shot:
-            filtered = [(n, w) for n, w in shot_pool if n != avoid_shot]
-            if filtered:
-                shot_pool = filtered
-        names = [n for n, _ in shot_pool]
-        weights = [w for _, w in shot_pool]
-        shot = random.choices(names, weights=weights, k=1)[0]
-
-        shot_lines = {
-            "arm_half": "手机自拍臂半身：手臂微伸举机，胸口以上到头顶入镜，眼神看镜头，表情自然松弛。",
-            "mirror_half": "镜子半身自拍：镜中看镜头（看向手机镜头方向），构图干净，不要拍进乱糟糟背景堆。",
-            "window_side": "窗边侧光半身自拍：身体略侧、脸仍转向镜头，窗光柔和，轮廓清楚。",
-            "desk_sit": "书桌前坐下自拍：略俯视半身，手可托腮或扶桌沿，看镜头，居家学习/摸鱼感。",
-            "sofa_casual": "沙发窝着随手自拍：半身或胸像，靠垫入镜一点，看镜头，轻松日常。",
-            "high_angle": "稍高机位自拍：镜头略高于眼，脸自然抬一点看镜头，显精神，不要过度仰拍变形。",
-            "close_portrait": "近景胸像自拍：脸与肩为主，眼神对焦镜头，五官清晰，浅景深。",
-        }
-        gestures = [
-            "嘴角轻微笑意",
-            "一只手整理发丝或衣领",
-            "托腮听人说话的轻松感",
-            "比个很小的 OK 或比心（含蓄）",
-            "双手捧杯刚抬眼",
-            "刚坐好整理袖口",
-        ]
-        scenes, lights = SelfieImagePlugin._period_scene_light_pools("selfie")
-        scene = random.choice(scenes)
-        gesture = random.choice(gestures)
-        light = random.choice(lights)
-        base = (
-            "【自拍 / 看看模式】展示 AI 现在的样子。"
-            "第一人称自拍视角（自己举机或镜前自拍），不是别人代拍。"
-            "必须看向镜头：眼睛对焦镜头方向，表情自然有神；不要眼神飘走或心不在焉。"
-            "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
-            "竖屏手机近景半身：像短视频封面那样拍得近，但质感仍是真实皮肤、真实布料和接触阴影；窗光或暖灯，不要棚拍、不要美颜滤镜、不要塑料皮肤。"
-            f"本次机位：{shot_lines.get(shot, shot_lines['arm_half'])}"
-            f"场景倾向：{scene}。小动作：{gesture}。光线：{light}。"
-            "画面干净日常，不要夸张摆拍。"
+        scene_provider = getattr(self, "_period_scene_light_pools", period_scene_light_pools)
+        return build_selfie_look_action(
+            extra_request,
+            has_refs,
+            avoid_shot=avoid_shot,
+            scene_light_provider=scene_provider,
         )
-        if has_refs:
-            base = "参考用户提供的图片氛围、场景或构图，" + base + " 主角身份仍以 AI 形象为准。"
-        if extra:
-            base += f" 用户补充要求优先：{extra}。"
-        base += f" 【shot:{shot}】"
-        return base
 
     @staticmethod
     def _looks_like_crop_waist_request(text: str) -> bool:
-        raw = str(text or "")
-        if not raw.strip():
-            return False
-        if any(k in raw for k in ("漏腰", "露腰", "露脐短上衣", "小蛮腰", "crop_waist", "crop top", "short top", "短上衣")):
-            return True
-        low = raw.lower()
-        has_inner = ("露脐" in raw) or ("短上衣" in raw) or ("crop top" in low) or ("short top" in low)
-        has_outer = (
-            ("外衫" in raw)
-            or ("开衫" in raw)
-            or ("半敞" in raw)
-            or ("衬衫" in raw and ("宽松" in raw or "敞开" in raw))
-            or ("oversized" in low)
-        )
-        return has_inner and has_outer
+        return looks_like_crop_waist_request(text)
 
-    def _build_crop_waist_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
-        """漏腰/露腰：腰腹构图 + 内外两层穿搭，避免被日常半身自拍机位冲掉。"""
-        base = (
-            "【自拍 / 漏腰模式】"
-            "一张漂亮的真人女孩，居家休闲自拍，室内光线柔和偏暗，角度略高。"
-            "本次换装优先：黑色短上衣，外面套宽松 oversized 深色长袖衬衫并敞开，"
-            "外层宽松带柔软褶皱，微微露出自然腰线；外衫不要整件贴肉。"
-            "放松地坐着或靠在深色沙发/床边，头发略显凌乱，像日常随意拍的照片。"
-            "保持 AI 身份长相与发色一致，画面干净得体。"
+    def _build_crop_waist_selfie_action(
+        self, extra_request: str = "", has_refs: bool = False
+    ) -> str:
+        return build_crop_waist_selfie_action(extra_request, has_refs)
+
+    def _build_third_person_look_action(
+        self,
+        extra_request: str = "",
+        has_refs: bool = False,
+        *,
+        avoid_shot: str = "",
+    ) -> str:
+        scene_provider = getattr(self, "_period_scene_light_pools", period_scene_light_pools)
+        return build_third_person_look_action(
+            extra_request,
+            has_refs,
+            avoid_shot=avoid_shot,
+            scene_light_provider=scene_provider,
         )
-        if has_refs:
-            base = "参考用户附图的氛围或构图，" + base
-        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
-        if extra and extra not in base:
-            if extra not in {"漏腰", "露腰", "漏腰杀", "小蛮腰"}:
-                base += f" 用户补充要求优先：{extra}。"
-        base += " 【shot:crop_waist】"
-        return base
+
+    def _build_group_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
+        appearance_type = "auto"
+        try:
+            appearance_type = self.persona.get_appearance_type()
+        except Exception:
+            pass
+        return build_group_selfie_action(
+            extra_request,
+            has_refs,
+            appearance_type=appearance_type,
+        )
+
+    def _looks_like_group_selfie_intent(self, text: str) -> bool:
+        return looks_like_group_selfie_intent(text)
+
+    def _looks_like_selfie_intent(self, text: str) -> bool:
+        return looks_like_selfie_intent(text, bot_name=str(self.config.bot_name or "").strip())
 
     def _build_cos_look_action(
         self,
@@ -4293,258 +980,15 @@ class SelfieImagePlugin(Star):
         camera: str = "",
         match_query: str = "",
     ) -> str:
-        """看看COS：随机套装；机位默认自拍/他拍随机，额外提示词可指定。"""
-        chosen = pick_cos_look_set(
+        return build_cos_look_action(
+            extra_request,
+            has_refs,
             avoid_id=avoid_id,
-            query=str(match_query).strip() if str(match_query).strip() else extra_request,
+            avoid_camera=avoid_camera,
+            camera=camera,
+            match_query=match_query,
+            picker=pick_cos_look_set,
         )
-        title = str(chosen.get("title") or "随机COS")
-        camera_kind = pick_cos_camera(extra_request=extra_request, avoid=avoid_camera, camera=camera)
-        outfit = adapt_cos_outfit_for_camera(str(chosen.get("prompt") or "").strip(), camera_kind)
-        cos_id = str(chosen.get("id") or "cos")
-        if camera_kind == "third":
-            framing = (
-                "【他拍 / 看看COS模式】"
-                "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
-                "别人视角的单人成品照：竖屏手机近景半身或环境人像，像随手拍的 COS 封面；画面里只有主角一个人；"
-                "拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角，不要拍到拍照过程；"
-                "不要对镜、不要镜子、不要手持手机入镜，不要第一人称伸手自拍，不要手臂挡脸挡衣服。"
-            )
-        else:
-            framing = (
-                "【自拍 / 看看COS模式】"
-                "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
-                "竖屏手机近景半身自拍：可对镜，但拍胸像到腰线，不要展会式全身棚拍；手机可出现在镜中；"
-                "不要第一人称伸手自拍，不要手臂挡脸挡衣服。"
-            )
-        base = (
-            framing
-            + "脸型五官必须保持形象参考，不要换成别人的脸；"
-            + "假发颜色/发型/发饰可按本套 COS 完整替换。"
-            + f"本次套装：{title}。"
-            + f"{outfit}"
-            + "服装颜色、层数、配饰、开叉、荷叶边、鞋履等结构要尽量齐全高还原；"
-            + "构图完整带上腰线；竖屏近景半身即可，不要简化成普通常服；画面干净得体。"
-        )
-        if has_refs:
-            base = "参考用户附图的氛围或构图，" + base
-        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
-        if extra and extra not in base:
-            base += f" 用户补充要求优先：{extra}。"
-        base += f" 【cos:{cos_id}】 【cam:{camera_kind}】"
-        return base
-
-    def _build_third_person_look_action(
-        self,
-        extra_request: str = "",
-        has_refs: bool = False,
-        *,
-        avoid_shot: str = "",
-    ) -> str:
-        """他拍 / 看看你：景别+场景+动作随机；正面近景优先看镜头。"""
-        shot_pool = [
-            ("half_front", 3),
-            ("three_quarter", 3),
-            ("env_mid", 2),
-            ("walk_candid", 1),
-            ("close_smile", 2),
-            ("low_over", 1),
-            ("lean_wall", 2),
-        ]
-        if avoid_shot:
-            filtered = [(n, w) for n, w in shot_pool if n != avoid_shot]
-            if filtered:
-                shot_pool = filtered
-        names = [n for n, _ in shot_pool]
-        weights = [w for _, w in shot_pool]
-        shot = random.choices(names, weights=weights, k=1)[0]
-
-        shot_lines = {
-            "half_front": "半身平视他拍：别人视角的单人半身照，AI 正面或微侧看镜头，眼神有焦点。",
-            "three_quarter": "三分之四侧身他拍：身体略侧、头转向镜头，像被叫名字时回头。",
-            "env_mid": "中远景环境人像：人物与场景都清楚，AI 仍是主体，自然看向镜头或刚抬头。",
-            "walk_candid": "走路抓拍：侧前方跟随感，步伐自然，可看镜头一瞬，生活感强。",
-            "close_smile": "近景胸像：脸与肩，浅景深，对镜头带一点笑意，五官清晰。",
-            "low_over": "轻微低机位过肩感：从略低处拍半身，仍看镜头，不要过度仰拍变形。",
-            "lean_wall": "靠墙/门框他拍：肩背轻靠，双手自然，看镜头，竖构图友好。",
-        }
-        actions = [
-            "端着杯子刚抬眼",
-            "托腮听人说话",
-            "整理袖口或发丝",
-            "翻书停顿抬头",
-            "双手插兜靠站",
-            "拎袋子侧身回看",
-            "刚坐下整理衣角",
-            "对镜头轻轻点头笑",
-        ]
-        scenes, lights = SelfieImagePlugin._period_scene_light_pools("look_you")
-        scene = random.choice(scenes)
-        action = random.choice(actions)
-        light = random.choice(lights)
-        base = (
-            "【他拍 / 看看你模式】展示 AI 当前样子的自然日常照片。"
-            "别人视角的单人成品照：镜头已经对准主角拍下，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角。"
-            "正面半身或近景时优先看向镜头，眼神自然有焦点；可以轻松回头，但不要整段心不在焉。"
-            "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
-            "竖屏手机近景半身：窗光或暖灯，真实皮肤和真实布料，不要美颜滤镜、不要棚拍精修。"
-            f"本次机位：{shot_lines.get(shot, shot_lines['half_front'])}"
-            f"场景倾向：{scene}。动作瞬间：{action}。光线：{light}。"
-            "写实手机拍照质感，不要影楼硬摆。"
-        )
-        if has_refs:
-            base = "参考用户提供的图片氛围、场景或构图，" + base
-        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
-        if extra:
-            base += f" 用户补充要求优先：{extra}。"
-        base += f" 【shot:{shot}】"
-        return base
-
-    def _build_group_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
-        appearance_type = "auto"
-        try:
-            appearance_type = self.persona.get_appearance_type()
-        except Exception:
-            appearance_type = "auto"
-        from .persona import appearance_type_instruction, group_style_lines
-
-        appearance_line = appearance_type_instruction(appearance_type, has_reference_image=True)
-        style_blob = " ".join(group_style_lines(appearance_type))
-        base = (
-            "合影 / 合照 / 同框。AI 自己必须作为画面主角之一，与用户指定或提供的对象自然同框合影。"
-            "AI 保持当前身份：性别、脸型五官、发型发色、体态一致；表情与眼神按本次合影氛围自然重画，不要原样复制形象参考图的固定表情。"
-            "形象参考图是女性则 AI 必须是女性，是男性则必须是男性；禁止无故改成异性。"
-            "如果同一张参考图里有多个可见人物 / 角色，按实际可见人数全部保留为独立同框对象。"
-        )
-        if appearance_line:
-            base += appearance_line
-        base += style_blob
-        base += (
-            "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动统一。"
-            "合影默认多数人看向镜头；竖屏手机近景半身，窗光或暖灯，真实皮肤，不要美颜滤镜、不要证件照站排。"
-            "AI 若面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
-        )
-        if has_refs:
-            base += (
-                " 用户提供或艾特对象的图片是合影角色来源，必须拟人/改画成与主角同一画风的独立完整人物；"
-                "玩偶、毛绒玩具、吉祥物、卡通立牌、表情包、道具等只取配色气质线索，禁止原样保留玩具外形、平面简笔画肢体，"
-                "禁止贴在主角衣服上或与身体衣物粘连融合；非人物按风格拟人，无性别默认女性。"
-            )
-        else:
-            base += " 没有合影对象参考图时，按文字要求生成自然同框完整人物；未指定性别时默认成年女性。"
-        extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
-        if extra:
-            base += f" 用户补充要求：{extra}。"
-        return base
-
-    def _looks_like_group_selfie_intent(self, text: str) -> bool:
-        value = str(text or "")
-        compact = re.sub(r"[\s，。！？、；：,.!?]", "", value.lower())
-        compact_keywords = [
-            "合影",
-            "合照",
-            "同框",
-            "一起拍",
-            "一起照",
-            "和我",
-            "跟我",
-            "与我",
-            "陪我",
-            "和你",
-            "跟你",
-            "与你",
-            "你和我",
-            "我和你",
-            "我们一起",
-            "groupselfie",
-            "groupphoto",
-            "phototogether",
-            "takeaphototogether",
-            "takeapicturetogether",
-            "sameframe",
-            "inthesameframe",
-            "sidebyside",
-            "standingnextto",
-            "twous",
-            "ustogether",
-        ]
-        if any(keyword in compact for keyword in compact_keywords):
-            return True
-        low = value.lower()
-        phrase_keywords = [
-            "group selfie",
-            "group photo",
-            "photo together",
-            "take a photo together",
-            "take a picture together",
-            "same frame",
-            "in the same frame",
-            "side by side",
-            "standing next to",
-            "two of us",
-            "us together",
-            "with me",
-            "with you",
-        ]
-        for keyword in phrase_keywords:
-            pattern = r"(?<![a-z0-9])" + re.escape(keyword).replace(r"\ ", r"\s+") + r"(?![a-z0-9])"
-            if re.search(pattern, low):
-                return True
-        return False
-
-    def _looks_like_selfie_intent(self, text: str) -> bool:
-        value = str(text or "")
-        low = value.lower()
-        bot_name = str(self.config.bot_name or "").strip()
-        keywords = [
-            "自拍",
-            "合影",
-            "合照",
-            "同框",
-            "形象照",
-            "和我",
-            "跟我",
-            "与我",
-            "陪我",
-            "和你",
-            "跟你",
-            "与你",
-            "你和我",
-            "我和你",
-            "我们一起",
-            "一起拍",
-            "一起照",
-            "你自己",
-            "你的照片",
-        ]
-        english_keywords = [
-            "selfie",
-            "group selfie",
-            "group photo",
-            "photo together",
-            "take a photo together",
-            "take a picture together",
-            "together with me",
-            "with me",
-            "with you",
-            "next to me",
-            "next to you",
-            "standing next to",
-            "side by side",
-            "same frame",
-            "in the same frame",
-            "two of us",
-            "us together",
-            "your photo",
-            "yourself",
-            "ai assistant",
-            "catgirl",
-            "ahwu",
-        ]
-        if bot_name:
-            keywords.append(bot_name)
-            english_keywords.append(bot_name.lower())
-        return any(keyword and keyword in value for keyword in keywords) or any(keyword and keyword in low for keyword in english_keywords)
 
     async def _run_llm_selfie_flow(
         self,
@@ -4605,12 +1049,7 @@ class SelfieImagePlugin(Star):
         return "\n".join(lines)
 
     def _batch_success_text(self, info: str, index: int, total: int) -> str:
-        text = str(info or "").strip()
-        if not text:
-            return ""
-        if total > 1:
-            return f"第 {index}/{total} 次请求完成。\n{text}"
-        return text
+        return batch_success_text(info, index, total)
 
     async def _run_image_generation(
         self,
@@ -4992,43 +1431,15 @@ class SelfieImagePlugin(Star):
             targets.extend(
                 channel.targets(self.config.image_global_timeout, request_timeout=LOCAL_IMAGE_WAIT_SECONDS)
             )
-        if not channel_name and not model:
-            return targets[0] if targets else None
-        for target in targets:
-            if channel_name and target.channel_name != channel_name:
-                continue
-            if model and target.model != model:
-                continue
-            return target
-        for target in targets:
-            if channel_name and target.channel_name == channel_name and not model:
-                return target
-        return None
+        return find_model_target(targets, channel_name, model)
 
     def _find_video_target(self, channel_name: str = "", model: str = "") -> Optional[ImageModelTarget]:
-        targets = self.config.get_prioritized_video_targets()
-        if not channel_name and not model:
-            return targets[0] if targets else None
-        for target in targets:
-            if channel_name and target.channel_name != channel_name:
-                continue
-            if model and target.model != model:
-                continue
-            return target
-        return next(
-            (target for target in targets if channel_name and target.channel_name == channel_name and not model),
-            None,
+        return find_model_target(
+            self.config.get_prioritized_video_targets(), channel_name, model
         )
 
     def _available_model_labels(self) -> List[str]:
-        labels: List[str] = []
-        seen = set()
-        for target in self.config.get_prioritized_targets():
-            if target.label in seen:
-                continue
-            seen.add(target.label)
-            labels.append(target.label)
-        return labels
+        return available_model_labels(self.config.get_prioritized_targets())
 
     def _get_session_model_override(self, event: Optional[AstrMessageEvent] = None) -> str:
         if event is None:
@@ -5051,30 +1462,7 @@ class SelfieImagePlugin(Star):
         return value
 
     def _match_model_label(self, raw: str) -> Optional[str]:
-        text = str(raw or "").strip()
-        if not text:
-            return None
-        labels = self._available_model_labels()
-        if not labels:
-            return None
-        if text.isdigit():
-            index = int(text) - 1
-            if 0 <= index < len(labels):
-                return labels[index]
-            return None
-        # Exact label / channel:model / bare model
-        for label in labels:
-            if text == label or text == label.replace("/", ":"):
-                return label
-        for label in labels:
-            channel, _, model = label.partition("/")
-            if text == model or text == f"{channel}:{model}":
-                return label
-        # Prefix / contains (single hit only)
-        hits = [label for label in labels if text in label or label.endswith(f"/{text}")]
-        if len(hits) == 1:
-            return hits[0]
-        return None
+        return match_model_label(raw, self._available_model_labels())
 
     def _resolve_generation_targets(
         self,
@@ -5084,24 +1472,9 @@ class SelfieImagePlugin(Star):
         if targets is not None:
             return list(targets)
         all_targets = self.config.get_prioritized_targets()
-        override = self._get_session_model_override(event)
-        if not override or not all_targets:
-            return all_targets
-        preferred: List[ImageModelTarget] = []
-        for target in all_targets:
-            if target.label == override:
-                preferred.append(target)
-                break
-        if not preferred and "/" in override:
-            channel, _, model = override.partition("/")
-            for target in all_targets:
-                if target.channel_name == channel and target.model == model:
-                    preferred.append(target)
-                    break
-        if not preferred:
-            return all_targets
-        rest = [target for target in all_targets if target.label != preferred[0].label]
-        return preferred + rest
+        return prioritize_model_target(
+            all_targets, self._get_session_model_override(event)
+        )
 
     def _list_image_tasks_for_session(
         self,
@@ -5112,60 +1485,19 @@ class SelfieImagePlugin(Star):
     ) -> List[Dict[str, Any]]:
         with self._web_task_lock:
             items = list(self._web_tasks.values())
-        active_status = {"queued", "running"}
-        rows: List[Dict[str, Any]] = []
-        for task in sorted(items, key=lambda item: float(item.get("created_ts") or 0), reverse=True):
-            owner = str(task.get("owner_session") or "")
-            if session_key and owner and owner != session_key:
-                continue
-            if not include_finished and task.get("status") not in active_status:
-                continue
-            # Hide pure web-test tasks from chat unless same session web owner is empty and source command
-            source = str(task.get("source") or "")
-            if session_key and source.startswith("web") and owner != session_key:
-                continue
-            rows.append(copy.deepcopy(task))
-            if len(rows) >= max(1, limit):
-                break
+        rows = filter_image_tasks(
+            items,
+            session_key,
+            include_finished=include_finished,
+            limit=limit,
+        )
         return [redact_sensitive_data(row) for row in rows]
 
     def _format_task_list_text(self, tasks: List[Dict[str, Any]]) -> str:
-        if not tasks:
-            return "现在没有进行中的出图/视频任务。"
-        lines = ["进行中的任务："]
-        for index, task in enumerate(tasks, 1):
-            task_id = str(task.get("task_id") or "")
-            status = str(task.get("status") or "")
-            status_cn = {"queued": "排队", "running": "进行中", "succeeded": "完成", "failed": "失败", "cancelled": "已取消"}.get(status, status)
-            req = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
-            kind = str(req.get("kind") or "")
-            if not kind:
-                source = str(task.get("source") or "")
-                kind = "视频" if "视频" in source or "video" in source.lower() else "出图"
-            prompt = str(req.get("original_prompt") or req.get("prompt") or req.get("mode") or "")[:40]
-            lines.append(f"{index}. {task_id} [{status_cn}/{kind}] {prompt}")
-        lines.append("查看：/生图任务 编号或任务号；取消：/生图取消 …")
-        return "\n".join(lines)
+        return format_task_list_text(tasks)
 
     def _format_task_detail_text(self, task: Dict[str, Any]) -> str:
-        req = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
-        result = task.get("result") if isinstance(task.get("result"), dict) else {}
-        status = str(task.get("status") or "")
-        status_cn = {"queued": "排队", "running": "绘制中", "succeeded": "完成", "failed": "失败", "cancelled": "已取消"}.get(status, status)
-        lines = [
-            f"任务 {task.get('task_id')}",
-            f"状态：{status_cn}",
-            f"说明：{str(req.get('original_prompt') or req.get('prompt') or '')[:120]}",
-        ]
-        if task.get("error"):
-            lines.append(f"原因：{task.get('error')}")
-        if result.get("used_model"):
-            lines.append(f"模型：{result.get('used_model')}")
-        if result.get("files"):
-            lines.append(f"图片：{len(result.get('files') or [])} 张")
-        if task.get("status") in {"queued", "running"}:
-            lines.append(f"已用时：{task.get('running_seconds', 0)} 秒")
-        return "\n".join(lines)
+        return format_task_detail_text(task)
 
     def cancel_image_task(
         self,
@@ -5850,59 +2182,10 @@ class SelfieImagePlugin(Star):
         }, total)
 
     def _batch_failure_policy(self) -> tuple[str, int]:
-        """Return (mode, skip_max). mode: stop | skip | skip_max."""
-        mode = str(getattr(self.config, "image_batch_on_failure", "skip") or "skip").strip().lower()
-        if mode in {"continue", "skip_continue", "skip-continue"}:
-            mode = "skip"
-        if mode not in {"stop", "skip", "skip_max"}:
-            mode = "skip"
-        try:
-            skip_max = int(getattr(self.config, "image_batch_skip_max", 2) or 2)
-        except Exception:
-            skip_max = 2
-        skip_max = max(0, min(8, skip_max))
-        return mode, skip_max
+        return batch_failure_policy(self.config)
 
     def _normalize_generation_result(self, result: Any, requested_count: int = 1) -> Dict[str, Any]:
-        """Add stable counts/status while accepting legacy result dictionaries."""
-        data = copy.deepcopy(result) if isinstance(result, dict) else {"success": False, "error": "无效结果"}
-        files = list(data.get("files") or data.get("image_paths") or data.get("generated_image_paths") or [])
-        try:
-            requested = max(1, int(data.get("batch_total") or requested_count or 1))
-        except (TypeError, ValueError):
-            requested = 1
-        try:
-            succeeded = max(0, min(requested, int(data.get("succeeded_count") or len(files))))
-        except (TypeError, ValueError):
-            succeeded = min(requested, len(files))
-        try:
-            failed = max(0, int(data.get("failed_count") or data.get("batch_skipped") or 0))
-        except (TypeError, ValueError):
-            failed = 0
-        if not succeeded and bool(data.get("success")):
-            succeeded = requested
-        if succeeded + failed > requested:
-            failed = max(0, requested - succeeded)
-        cancelled = bool(data.get("cancelled"))
-        if cancelled:
-            status = "cancelled"
-        elif succeeded >= requested and not failed:
-            status = "succeeded"
-        elif succeeded:
-            status = "partial_success"
-        else:
-            status = "failed"
-        data.update(
-            {
-                "files": files,
-                "requested_count": requested,
-                "succeeded_count": succeeded,
-                "failed_count": failed,
-                "status": status,
-                "success": status == "succeeded",
-            }
-        )
-        return data
+        return normalize_generation_result(result, requested_count)
 
     def _batch_shot_fail_text(
         self,
@@ -5916,31 +2199,16 @@ class SelfieImagePlugin(Star):
         skip_max: int,
         will_continue: bool,
     ) -> str:
-        """Single-cause progress line when one shot in a batch fails."""
-        single_shot = total <= 1
-        base = "这张没生成成功" if single_shot else f"第 {index}/{total} 张没出成"
-        detail = str(error or "").strip()
-        if detail:
-            # keep short
-            detail = re.sub(r"\s+", " ", detail)
-            if len(detail) > 80:
-                detail = detail[:79] + "…"
-            base = f"{base}：{detail}"
-        if single_shot:
-            return base
-        base = f"{base}。已出 {done_files} 张"
-        if will_continue:
-            if mode == "skip_max":
-                base = f"{base}，已跳过 {skipped}/{skip_max}，继续后面的"
-            else:
-                base = f"{base}，继续后面的"
-        else:
-            left = max(0, total - index)
-            if left:
-                base = f"{base}，后面 {left} 张先不跑了"
-            else:
-                base = f"{base}"
-        return base
+        return batch_failure_text(
+            index=index,
+            total=total,
+            done_files=done_files,
+            error=error,
+            mode=mode,
+            skipped=skipped,
+            skip_max=skip_max,
+            will_continue=will_continue,
+        )
 
     async def _batch_shot_fail_message(
         self,
@@ -6672,6 +2940,7 @@ class SelfieImagePlugin(Star):
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装；可写数量如 /自拍 3",
                 "· /看看腿　日常下装穿搭记录；腿部穿搭仅随机光腿神器、白丝或黑丝，可直接指定；随机手机记录或朋友协助拍摄视角；可写数量如 /看看腿 3",
                 "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
+                "· /查看生图提示词　引用或附带图片后，始终由当前聊天 LLM 反推生图提示词，不查询生图记录",
                 "· /看看COS　随机一套内置 COS 换装；数量、预设、随机池角色/类别和额外提示词可任意顺序，未匹配文本保留为额外提示；可发「看看COS 列表/全部/查看」浏览标题，如「看看COS 西施 捧脸 夜景 3」「看看COS 捧脸 3 西施」；默认随机自拍或他拍，也可写「自拍」「他拍」",
                 "· /看看你　像别人随手拍你；可写数量",
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象；可写数量",
@@ -6887,6 +3156,42 @@ class SelfieImagePlugin(Star):
             return
 
         yield event.plain_result(f"图片 MD5：{md5}\n未找到本插件的生图记录，正在让当前 LLM 反推提示词……")
+        try:
+            prompt = await self._reverse_image_prompt_with_llm(event, ref.data)
+        except Exception as exc:
+            logger.warning("[SelfieImage] 反推图片提示词失败: %s", redact_sensitive_text(str(exc)))
+            yield event.plain_result(f"图片 MD5：{md5}\n暂时无法反推提示词：{redact_sensitive_text(str(exc))[:200]}")
+            return
+        if not prompt:
+            yield event.plain_result(f"图片 MD5：{md5}\n当前 LLM 没有返回有效提示词。")
+            return
+        yield event.plain_result(f"图片 MD5：{md5}\nLLM 反推提示词：\n{prompt}")
+
+    @filter.command("查看生图提示词")
+    async def cmd_reverse_image_prompt(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """引用或附带一张图片，始终由当前聊天 LLM 反推生图提示词。"""
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        quoted_sources = await self._quoted_original_image_sources(event)
+        collect_kwargs: Dict[str, Any] = {
+            "include_at_avatar": False,
+            "context_hint": "查看生图提示词",
+            "allow_context_fallback": False,
+            "include_persona": False,
+            "include_image_alternates": True,
+        }
+        if quoted_sources:
+            collect_kwargs["extra_sources"] = quoted_sources
+        refs = await self._event_reference_images(event, **collect_kwargs)
+        if not refs:
+            yield event.plain_result("请引用或附带一张图片后再使用 /查看生图提示词。")
+            return
+
+        ref = refs[0]
+        md5 = hashlib.md5(ref.data).hexdigest()
+        yield event.plain_result(f"图片 MD5：{md5}\n正在让当前 LLM 反推生图提示词……")
         try:
             prompt = await self._reverse_image_prompt_with_llm(event, ref.data)
         except Exception as exc:

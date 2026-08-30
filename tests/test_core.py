@@ -468,10 +468,14 @@ class ConfigModelTests(unittest.TestCase):
         self.assertNotIn("Task: rewrite the user prompt", img_t)
         self.assertIn("faithful language conversion only", vid_t)
         self.assertIn('"ok":true', vid_t)
-        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
-        self.assertIn("def parse_prompt_en_response", main_src)
-        self.assertIn("translate_parse_failed", main_src)
-        self.assertIn("fail-open: keep original prompt", main_src)
+        root = Path(__file__).resolve().parents[1]
+        main_src = (root / "main.py").read_text(encoding="utf-8")
+        translation_src = (root / "prompt_translation.py").read_text(encoding="utf-8")
+        audit_src = (root / "audit_pipeline.py").read_text(encoding="utf-8")
+        self.assertIn("from .prompt_translation import parse_prompt_en_response", main_src)
+        self.assertIn("def parse_prompt_en_response", translation_src)
+        self.assertIn("translate_parse_failed", audit_src)
+        self.assertIn("fail-open: keep original prompt", audit_src)
 
         def parse(text: str) -> str:
             cleaned = str(text or "").strip()
@@ -636,6 +640,7 @@ class ConfigModelTests(unittest.TestCase):
 
     def test_generation_result_normalizes_legacy_and_partial_results(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+        from astrbot_plugin_selfie_image.generation_results import normalize_generation_result
 
         plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
         success = plugin._normalize_generation_result({"success": True, "files": ["a.png"]}, 1)
@@ -650,9 +655,15 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(partial["succeeded_count"], 1)
         self.assertEqual(partial["failed_count"], 1)
         self.assertFalse(partial["success"])
+        direct = normalize_generation_result(
+            {"success": False, "files": ["a.png"], "batch_total": 3, "batch_skipped": 1},
+            3,
+        )
+        self.assertEqual(direct["status"], "partial_success")
 
     def test_generation_metrics_aggregates_without_exposing_prompt(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+        from astrbot_plugin_selfie_image.generation_records import build_generation_metrics
 
         plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
         plugin._records_lock = threading.RLock()
@@ -671,6 +682,10 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(metrics["channels"]["channel-b"]["fallbacks"], 1)
         self.assertEqual(metrics["channels"]["channel-b"]["success_rate"], 1.0)
         self.assertNotIn("secret prompt", json.dumps(metrics, ensure_ascii=False))
+        self.assertEqual(
+            build_generation_metrics(plugin._records)["requested_images"],
+            metrics["requested_images"],
+        )
 
     def test_composition_metadata_is_hashed_and_classified(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
@@ -4732,6 +4747,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             "cmd_group_selfie": "自己使用当前形象",
             "cmd_persona_set": "自动 / 真人 / 动漫",
             "cmd_view_prompt": "引用一张图片",
+            "cmd_reverse_image_prompt": "当前聊天 LLM 反推",
         }
         for name, token in required.items():
             block = main_src.split(f"async def {name}", 1)[1].split("async def ", 1)[0]
@@ -4750,6 +4766,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("新任务自动排队", help_body)
         self.assertIn("同时画几张", help_body)
         self.assertIn("/查看提示词", help_body)
+        self.assertIn("/查看生图提示词", help_body)
         llm_selfie = main_src.split("async def _run_llm_selfie_flow", 1)[1].split("def _build_success_text", 1)[0]
         self.assertIn("_background_selfie_batches", llm_selfie)
         self.assertNotIn("for _ in range(requested_count)", llm_selfie)
@@ -5405,9 +5422,16 @@ class VideoV1Tests(unittest.TestCase):
             self.assertIn("EDITING_CHANNEL_KIND === 'image' || EDITING_CHANNEL_KIND === 'video'", html)
 
     def test_video_uses_persona_first_frame_across_entry_points(self) -> None:
-        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        root = Path(__file__).resolve().parents[1]
+        main_src = (root / "main.py").read_text(encoding="utf-8")
+        reference_src = (root / "reference_media.py").read_text(encoding="utf-8")
+        self.assertTrue(
+            hasattr(plugin_main.SelfieImagePlugin, "_video_persona_reference")
+        )
+        self.assertIn("def _video_persona_reference", reference_src)
         for token in (
-            "def _video_persona_reference",
             "@LLM_TOOL(name=\"generate_video\")",
             "tool_generate_video",
             "persona_ref = self._video_persona_reference()",
@@ -5649,9 +5673,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 30)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 38)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 30)
+        self.assertEqual(len(web_pool), 38)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -5661,8 +5685,8 @@ class LegFocusTests(unittest.TestCase):
             titles,
             {
                 "洛琪希·奶油睡衣",
-                "齐胸汉服·桃粉",
-                "薄荷粉纱汉服",
+                "古风·齐胸汉服·桃粉",
+                "古风·薄荷粉纱汉服",
                 "蕾姆·蓝白女仆洛丽塔",
                 "白细肩带迷你裙",
                 "海月·白蓝花瓣水母",
@@ -5676,8 +5700,8 @@ class LegFocusTests(unittest.TestCase):
                 "铂金发白蕾丝长裙",
                 "西施·青绿渐变旗袍",
                 "黄结白围裙女仆",
-                "汉服·银紫深V广袖",
-                "露背蓝纱古装",
+                "古风·汉服·银紫深V广袖",
+                "古风·露背蓝纱古装",
                 "姬小满·黑金橙短装",
                 "西施·诗语江南",
                 "公孙离·离恨烟",
@@ -5686,10 +5710,18 @@ class LegFocusTests(unittest.TestCase):
                 "露莎·白金短装",
                 "秧秧·蓝白碎花泳装",
                 "卡提希娅·黑裙飞鸟",
-                "青绿双辫广袖长裙",
+                "古风·青绿双辫广袖长裙",
+                "尤诺·金粉轻甲",
+                "古风·汉服挂脖肚兜套装",
                 "满穗·灰白和风",
                 "小乔·白熊围巾",
                 "芙宁娜·奶油浅蓝荷叶裙",
+                "小舞·浅粉白兔",
+                "王昭君·旧版原皮蓝白",
+                "玉玲珑·喜缘红线",
+                "二次元少女·橙青半透",
+                "瑶·薄荷冰蓝短裙",
+                "露娜·紫霞仙子",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -5823,6 +5855,39 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("《鸣潮》卡提希娅", cart)
         self.assertIn("白绣飞鸟", cart)
         self.assertIn("银枝状脚环", cart)
+        yuno = prompts["yuno_gold_pink_armor"]
+        self.assertIn("《鸣潮》尤诺", yuno)
+        self.assertIn("香槟金光泽胸甲", yuno)
+        self.assertIn("粉色沙发或软垫", yuno)
+        self.assertNotIn("抖音", yuno)
+        dudou = prompts["ancient_hanfu_halter_dudou"]
+        self.assertIn("国风汉服挂脖肚兜套装", dudou)
+        self.assertIn("花卉蕾丝刺绣", dudou)
+        self.assertIn("淡紫色薄纱披肩", dudou)
+        self.assertIn("保持自然遮挡", dudou)
+        xiaowu = prompts["xiaowu_pink_rabbit"]
+        self.assertIn("《斗罗大陆》小舞", xiaowu)
+        self.assertIn("浅粉白兔系 COS", xiaowu)
+        self.assertIn("银白镂空花纹饰片", xiaowu)
+        wangzhaojun = prompts["wangzhaojun_old_blue"]
+        self.assertIn("《王者荣耀》王昭君旧版原皮", wangzhaojun)
+        self.assertIn("白色毛绒披肩", wangzhaojun)
+        self.assertIn("亮蓝色缎面", wangzhaojun)
+        red_thread = prompts["yulinglong_red_thread"]
+        self.assertIn("《永劫无间》玉玲珑", red_thread)
+        self.assertIn("喜缘红线", red_thread)
+        self.assertIn("粉红色折扇", red_thread)
+        anime_girl = prompts["anime_girl_orange_mint"]
+        self.assertIn("橙金与薄荷青配色", anime_girl)
+        self.assertIn("粉色扶手椅", anime_girl)
+        yao = prompts["yao_mint_blue_dress"]
+        self.assertIn("《王者荣耀》瑶", yao)
+        self.assertIn("薄荷冰蓝梦幻短裙", yao)
+        self.assertIn("小狗毛绒挂件", yao)
+        luna = prompts["luna_zixia_fairy"]
+        self.assertIn("《王者荣耀》露娜", luna)
+        self.assertIn("紫霞仙子", luna)
+        self.assertIn("金色蝴蝶形护饰", luna)
         twin = prompts["mint_twin_braid_hanfu"]
         self.assertIn("深棕双麻花辫青绿广袖长裙", twin)
         self.assertIn("粉红花囊", twin)
@@ -5939,16 +6004,57 @@ class LegFocusTests(unittest.TestCase):
             {"xiao_qiao_white_bear"},
         )
         self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("小舞")},
+            {"xiaowu_pink_rabbit"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("王昭君")},
+            {"wangzhaojun_old_blue"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("玉玲珑")},
+            {"yulinglong_gold_fox", "yulinglong_red_thread"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("二次元少女")},
+            {"anime_girl_orange_mint"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("瑶")},
+            {"yao_mint_blue_dress"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("露娜")},
+            {"luna_zixia_fairy"},
+        )
+        self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("汉服")},
             {
                 "hanfu_peach", "mint_sheer_hanfu", "silver_deepv_hanfu",
+                "ancient_hanfu_halter_dudou",
             },
         )
-        for query in ("银紫深V广袖", "汉服·银紫深V广袖"):
+        for query in ("银紫深V广袖", "古风·汉服·银紫深V广袖"):
             self.assertEqual(
                 {item["id"] for item in plugin_main.match_cos_look_sets(query)},
                 {"silver_deepv_hanfu"},
             )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("古风")},
+            {
+                "hanfu_peach", "mint_sheer_hanfu", "silver_deepv_hanfu",
+                "blue_backless_hanfu", "mint_twin_braid_hanfu",
+                "ancient_hanfu_halter_dudou",
+            },
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("肚兜")},
+            {"ancient_hanfu_halter_dudou"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("挂脖肚兜")},
+            {"ancient_hanfu_halter_dudou"},
+        )
         for query in ("公孙离", "离恨烟", "公孙离·离恨烟"):
             self.assertEqual(
                 {item["id"] for item in plugin_main.match_cos_look_sets(query)},
@@ -6074,7 +6180,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（30套）：", response[0])
+            self.assertIn("看看COS 随机池（38套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
@@ -6326,18 +6432,29 @@ class LegFocusTests(unittest.TestCase):
             self.assertIn(expected, final)
 
     def test_legwear_is_pose_weighted(self) -> None:
-        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
-        self.assertIn('"side_lie": (("光腿神器", 6), ("白丝", 3), ("黑丝", 1))', main_src)
-        self.assertIn('"cross_leg": (("光腿神器", 2), ("白丝", 4), ("黑丝", 4))', main_src)
-        self.assertNotIn('"stand_topdown":', main_src)
+        from astrbot_plugin_selfie_image.leg_focus import LEGWEAR_BY_POSE
+
+        self.assertEqual(
+            LEGWEAR_BY_POSE["side_lie"],
+            (("光腿神器", 6), ("白丝", 3), ("黑丝", 1)),
+        )
+        self.assertEqual(
+            LEGWEAR_BY_POSE["cross_leg"],
+            (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
+        )
+        self.assertNotIn("stand_topdown", LEGWEAR_BY_POSE)
 
     def test_multi_image_commands_rebuild_each_shot(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
         self.assertIn("rebuild_each", main_src)
         self.assertIn("avoid_pose", main_src)
         self.assertIn("_build_selfie_look_action", main_src)
-        self.assertIn("arm_half", main_src)
-        self.assertIn("half_front", main_src)
+        from astrbot_plugin_selfie_image.selfie_actions import (
+            SELFIE_SHOT_LINES,
+            THIRD_PERSON_SHOT_LINES,
+        )
+        self.assertIn("arm_half", SELFIE_SHOT_LINES)
+        self.assertIn("half_front", THIRD_PERSON_SHOT_LINES)
         self.assertIn("command-look-you", main_src)
 
 
@@ -6883,6 +7000,76 @@ class StudioStoreTests(unittest.TestCase):
         for kwargs in collected_kwargs:
             self.assertTrue(kwargs["include_image_alternates"])
             self.assertNotIn("extra_sources", kwargs)
+
+    def test_reverse_image_prompt_always_calls_llm_without_record_lookup(self) -> None:
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        quoted = ImageReference(data=b"quoted-image", mime_type="image/png")
+        collected_kwargs = []
+        reversed_images = []
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+        async def collect_refs(_event, **kwargs):
+            collected_kwargs.append(kwargs)
+            return [quoted]
+
+        async def reverse(_event, image):
+            reversed_images.append(image)
+            return "一位少女，半身构图，自然光，写实摄影，9:16"
+
+        plugin._permission_denied_message = lambda _event: ""
+        plugin._quoted_original_image_sources = lambda _event: asyncio.sleep(0, result=[])
+        plugin._event_reference_images = collect_refs
+        plugin._reverse_image_prompt_with_llm = reverse
+        plugin._find_generation_record_by_md5 = lambda _md5: self.fail("unexpected generation record lookup")
+
+        async def run():
+            return [item async for item in plugin.cmd_reverse_image_prompt(Event())]
+
+        md5 = hashlib.md5(quoted.data).hexdigest()
+        output = asyncio.run(run())
+        self.assertEqual(
+            output,
+            [
+                f"图片 MD5：{md5}\n正在让当前 LLM 反推生图提示词……",
+                f"图片 MD5：{md5}\nLLM 反推提示词：\n一位少女，半身构图，自然光，写实摄影，9:16",
+            ],
+        )
+        self.assertEqual(reversed_images, [quoted.data])
+        self.assertEqual(
+            collected_kwargs,
+            [
+                {
+                    "include_at_avatar": False,
+                    "context_hint": "查看生图提示词",
+                    "allow_context_fallback": False,
+                    "include_persona": False,
+                    "include_image_alternates": True,
+                }
+            ],
+        )
+
+    def test_reverse_image_prompt_requires_an_image(self) -> None:
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+        plugin._permission_denied_message = lambda _event: ""
+        plugin._quoted_original_image_sources = lambda _event: asyncio.sleep(0, result=[])
+        plugin._event_reference_images = lambda _event, **_kwargs: asyncio.sleep(0, result=[])
+        plugin._reverse_image_prompt_with_llm = lambda *_args: self.fail("unexpected LLM call")
+
+        async def run():
+            return [item async for item in plugin.cmd_reverse_image_prompt(Event())]
+
+        self.assertEqual(
+            asyncio.run(run()),
+            ["请引用或附带一张图片后再使用 /查看生图提示词。"],
+        )
 
     def test_quoted_original_sources_are_fetched_by_reply_id(self) -> None:
         plugin = SessionModelAndTaskTests()._plugin_stub()
