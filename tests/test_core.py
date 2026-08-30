@@ -6495,6 +6495,8 @@ class StudioStoreTests(unittest.TestCase):
             ("/看看COS 捧脸 3", 3, "捧脸", "捧脸", "捧脸"),
             ("/看看COS 西施 捧脸 2", 2, "西施 捧脸", "西施 捧脸", "捧脸"),
             ("/看看COS 西施 捧脸 夜景 5张", 5, "西施 捧脸 夜景", "西施 捧脸 夜景", "捧脸"),
+            ("/看看COS 夜景 捧脸 西施 5", 5, "夜景 捧脸 西施", "夜景 捧脸 西施", "捧脸"),
+            ("/看看COS 捧脸 5 西施 夜景", 5, "捧脸 西施 夜景", "捧脸 西施 夜景", "捧脸"),
             ("/看看COS 3张西施", 3, "西施", "西施", ""),
             ("/看看COS 西施3", 3, "西施", "西施", ""),
             ("/看看COS 西施 夜景三", 3, "西施 夜景", "西施 夜景", ""),
@@ -6605,14 +6607,19 @@ class StudioStoreTests(unittest.TestCase):
             ("cmd_raw_text_to_image", "/文生图 3 一只猫", False, "一只猫", 3),
             ("cmd_raw_text_to_image", "/文生图 一只猫 3", False, "一只猫", 3),
             ("cmd_raw_text_to_image", "/文生图 一只猫 三张", False, "一只猫", 3),
-            ("cmd_raw_text_to_image", "/文生图 一位美女 捧脸 2", False, "一位美女 捧脸", 2),
+            ("cmd_raw_text_to_image", "/文生图 一位美女 捧脸 2", False, "一位美女", 2),
+            ("cmd_raw_text_to_image", "/文生图 2 捧脸 一位美女", False, "一位美女", 2),
+            ("cmd_raw_text_to_image", "/文生图 捧脸 2 一位美女", False, "一位美女", 2),
+            ("cmd_raw_text_to_image", "/文生图 一位美女 2 捧脸", False, "一位美女", 2),
             ("cmd_raw_image_to_image", "/图生图 改成素描 3", True, "改成素描", 3),
         )
         for command, message, with_ref, expected_prompt, expected_count in prompt_cases:
             captured, output = asyncio.run(invoke_prompt(command, message, with_ref))
             self.assertEqual(output, ["progress"], message)
             self.assertEqual(captured["summary"]["requested_count"], expected_count, message)
-            self.assertEqual(captured["summary"]["original_prompt"], expected_prompt, message)
+            self.assertIn(expected_prompt, captured["summary"]["original_prompt"], message)
+            if "捧脸" in message:
+                self.assertIn("捧住她的脸颊", captured["summary"]["original_prompt"], message)
 
         selfie_cases = (
             ("cmd_selfie", "/看看 一位美女 捧脸 2", "一位美女"),

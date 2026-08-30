@@ -3262,16 +3262,16 @@ class SelfieImagePlugin(Star):
         allow_attached: bool = False,
         allow_trailing: bool = False,
     ) -> Tuple[str, int]:
-        """Extract a batch count from the conventional leading/trailing slots."""
+        """Extract a batch count from flexible command parameter positions."""
         tokens = self._command_tokens_for_count(text)
         if not tokens:
             return "", 1
         indices = [0, 1]
-        # COS accepts a count after an arbitrary extra prompt, e.g.
-        # `洛琪希 夜景 3`; other commands retain the legacy first-two-token
-        # behavior so numbers inside free-form prompts are not reinterpreted.
-        if (allow_attached or allow_trailing) and len(tokens) > 2:
-            indices.append(len(tokens) - 1)
+        # Once a command opts into flexible parsing, a standalone count may
+        # occur anywhere (`美女 捧脸 2 夜景`). COS additionally accepts
+        # attached shorthand such as `3旗袍` or `西施3` in every position.
+        if allow_trailing or allow_attached:
+            indices.extend(range(2, len(tokens)))
         for index in dict.fromkeys(indices):
             if index >= len(tokens):
                 continue
@@ -3331,8 +3331,9 @@ class SelfieImagePlugin(Star):
     def _expand_user_text_with_preset(self, raw_text: str) -> Tuple[str, str, str, str]:
         """Resolve presets against raw user words before action wrappers.
 
-        Commands like /自拍 捧脸 previously wrapped text into a long random action,
-        so preset matching (name must be at the start) never fired.
+        Preset names are parameters rather than a fixed prefix, so commands
+        such as ``文生图 一位美女 捧脸 2`` can expand ``捧脸`` in place while
+        keeping the surrounding words as ordinary prompt text.
         """
         text = str(raw_text or "").strip()
         if not text:
@@ -3343,7 +3344,35 @@ class SelfieImagePlugin(Star):
         except Exception:
             pass
         expanded, aspect, resolution, preset_name, _ = self._resolve_image_preset(text)
-        return str(expanded or text).strip(), aspect, resolution, preset_name
+        if preset_name:
+            return str(expanded or text).strip(), aspect, resolution, preset_name
+
+        cleaned, aspect, resolution = self._parse_prompt_options(text)
+        separators = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+"
+        pieces = re.split(rf"({separators})", cleaned)
+        output: List[str] = []
+        found_name = ""
+        default_aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
+        default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
+        for piece in pieces:
+            if not piece or re.fullmatch(separators, piece):
+                output.append(piece)
+                continue
+            resolved = self.presets.resolve(piece)
+            part_name = str(resolved.get("preset_name") or "").strip()
+            if not part_name:
+                output.append(piece)
+                continue
+            output.append(str(resolved.get("prompt") or piece).strip())
+            if not found_name:
+                found_name = part_name
+                part_aspect = str(resolved.get("aspect_ratio") or "").strip()
+                part_resolution = str(resolved.get("resolution") or "").strip()
+                if part_aspect and aspect == default_aspect:
+                    aspect = part_aspect
+                if part_resolution and resolution == default_resolution:
+                    resolution = part_resolution
+        return "".join(output).strip() or cleaned, aspect, resolution, found_name
 
     def _expand_cos_user_text_with_preset(self, raw_text: str) -> Tuple[str, str, str, str]:
         """Expand a COS preset token while keeping surrounding title/query text."""
@@ -6605,7 +6634,7 @@ class SelfieImagePlugin(Star):
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装；可写数量如 /自拍 3",
                 "· /看看腿　日常下装穿搭记录；腿部穿搭仅随机光腿神器、白丝或黑丝，可直接指定；随机手机记录或朋友协助拍摄视角；可写数量如 /看看腿 3",
                 "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
-                "· /看看COS　随机一套内置 COS 换装；可发「看看COS 列表/全部/查看」浏览标题，也可按标题中的角色名或服装类别指定，如「看看COS 西施」「看看COS 旗袍」「看看COS 西施 夜景 3」「看看COS 3旗袍」；默认随机自拍或他拍，也可写「自拍」「他拍」",
+                "· /看看COS　随机一套内置 COS 换装；数量、预设、随机池角色/类别和额外提示词可任意顺序，未匹配文本保留为额外提示；可发「看看COS 列表/全部/查看」浏览标题，如「看看COS 西施 捧脸 夜景 3」「看看COS 捧脸 3 西施」；默认随机自拍或他拍，也可写「自拍」「他拍」",
                 "· /看看你　像别人随手拍你；可写数量",
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象；可写数量",
                 "",
@@ -6989,7 +7018,7 @@ class SelfieImagePlugin(Star):
             yield event.plain_result(error)
             return
 
-        prompt, aspect, resolution, _, _ = self._resolve_image_preset(message)
+        prompt, aspect, resolution, _ = self._expand_user_text_with_preset(message)
         refs = await self._event_reference_images(
             event,
             include_at_avatar=True,
@@ -7056,7 +7085,7 @@ class SelfieImagePlugin(Star):
             yield event.plain_result(error)
             return
 
-        prompt, aspect, resolution = self._parse_prompt_options(message)
+        prompt, aspect, resolution, _ = self._expand_user_text_with_preset(message)
         if not prompt:
             yield event.plain_result("请输入文生图提示词。")
             return
@@ -7114,7 +7143,7 @@ class SelfieImagePlugin(Star):
             yield event.plain_result(error)
             return
 
-        prompt, aspect, resolution = self._parse_prompt_options(message)
+        prompt, aspect, resolution, _ = self._expand_user_text_with_preset(message)
         refs, source_count, failed_count = await self._event_reference_images_with_stats(
             event,
             include_at_avatar=True,
