@@ -92,6 +92,7 @@ class SelfieImageDashboardAPI:
             ("studio/tasks/<task_id>", self.page_studio_task, ["GET"], "Selfie Image studio task"),
             ("studio/gallery", self.page_studio_gallery, ["GET"], "Selfie Image studio gallery from records"),
             ("prompt-presets", self.page_prompt_presets, ["GET"], "Selfie Image prompt presets"),
+            ("cos-look-sets", self.page_cos_look_sets, ["GET"], "Selfie Image COS look sets"),
             ("proxies", self.page_proxies_list, ["GET"], "Selfie Image proxy list"),
             ("proxies/test", self.page_proxy_test, ["POST"], "Selfie Image proxy connectivity test"),
             ("proxies/quality-check", self.page_proxy_quality, ["POST"], "Selfie Image proxy quality test"),
@@ -605,6 +606,13 @@ class SelfieImageDashboardAPI:
     async def page_prompt_presets(self) -> Any:
         try:
             data = self.plugin.list_prompt_presets_for_web()
+            return self._ok(data, count=len(data))
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_cos_look_sets(self) -> Any:
+        try:
+            data = self.plugin.list_cos_look_sets_for_web()
             return self._ok(data, count=len(data))
         except Exception as exc:
             return self._fail(str(exc), 500)

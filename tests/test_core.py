@@ -307,6 +307,12 @@ class FakeWebPlugin:
             return {"task_id": task_id, "status": "succeeded", "success": True}
         raise ValueError("任务不存在或已清理")
 
+    def list_prompt_presets_for_web(self):
+        return [{"name": "捧脸", "title": "捧脸", "prompt": "捧住脸颊"}]
+
+    def list_cos_look_sets_for_web(self):
+        return [{"id": "roxy_cream", "title": "洛琪希·奶油睡衣", "prompt": "洛琪希 COS 完整提示词"}]
+
     def get_cached_image_info(self, rel_path: str):
         base = os.path.abspath(self.generated_dir)
         raw_path = str(rel_path or "").strip()
@@ -3522,6 +3528,16 @@ class WebApiTests(unittest.TestCase):
         for key in ("auth", "host", "port", "token"):
             self.assertNotIn(key, data)
 
+    def test_cos_look_sets_api_uses_plugin_pool(self) -> None:
+        client = self.make_client(FakeWebPlugin(""))
+        response = client.get("/api/cos-look-sets")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json()["data"],
+            [{"id": "roxy_cream", "title": "洛琪希·奶油睡衣", "prompt": "洛琪希 COS 完整提示词"}],
+        )
+
     def test_auth_rejects_mismatched_tokens(self) -> None:
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
 
@@ -4595,6 +4611,7 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertTrue(any(p == f"/{PLUGIN_NAME}/page/health" for p in paths))
         self.assertTrue(any(p.endswith("/config") for p in paths))
         self.assertTrue(any("test-image-channel/tasks" in p for p in paths))
+        self.assertTrue(any(p.endswith("/cos-look-sets") for p in paths))
         # dual registration for bridge compatibility
         self.assertGreaterEqual(len(registered), 20)
 
@@ -5633,6 +5650,12 @@ class LegFocusTests(unittest.TestCase):
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
         self.assertEqual(len(plugin_main.COS_LOOK_SETS), 30)
+        web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
+        self.assertEqual(len(web_pool), 30)
+        self.assertEqual(
+            [(item["id"], item["title"], item["prompt"]) for item in web_pool],
+            [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
+        )
         titles = {x["title"] for x in plugin_main.COS_LOOK_SETS}
         self.assertEqual(
             titles,
@@ -6983,6 +7006,10 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("按模板新建", INDEX_HTML)
         self.assertIn("studioPresetBtn", INDEX_HTML)
         self.assertIn("testPresetBtn", INDEX_HTML)
+        self.assertIn("studioCosBtn", INDEX_HTML)
+        self.assertIn("testCosBtn", INDEX_HTML)
+        self.assertIn("renderCosPanel", INDEX_HTML)
+        self.assertIn("/api/cos-look-sets", INDEX_HTML)
         self.assertIn("syncPresetToggleButton", INDEX_HTML)
         self.assertIn("preset-chip", INDEX_HTML)
         self.assertIn("'收回'", INDEX_HTML)
@@ -7003,6 +7030,12 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("data-cache-path", INDEX_HTML)
         self.assertIn("loadProtectedImages(wrap)", INDEX_HTML)
         self.assertTrue(WEB_TASK_ID_RE.fullmatch("web-studio-12345678-1"))
+
+        dashboard_html = (
+            Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
+        ).read_text(encoding="utf-8")
+        for marker in ("studioCosBtn", "testCosBtn", "renderCosPanel", "/api/cos-look-sets"):
+            self.assertIn(marker, dashboard_html)
 
     def test_studio_promote_role_and_gallery(self) -> None:
         import tempfile

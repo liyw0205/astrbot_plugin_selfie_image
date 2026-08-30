@@ -621,10 +621,14 @@ INDEX_HTML = r"""<!doctype html>
       <label class="checkline"><input id="studioUsePersona" type="checkbox" checked> 缺形象槽时用当前形象</label>
       <div class="between">
         <label>提示词</label>
-        <button class="secondary" id="studioPresetBtn" type="button">预设</button>
+        <div class="actions">
+          <button class="secondary" id="studioPresetBtn" type="button">预设</button>
+          <button class="secondary" id="studioCosBtn" type="button">COS池</button>
+        </div>
       </div>
       <textarea id="studioPrompt" rows="3" placeholder="自然并肩合影…"></textarea>
       <div class="preset-panel" id="studioPresetPanel"></div>
+      <div class="preset-panel" id="studioCosPanel"></div>
       <div class="studio-chiprow" id="studioPromptChips"></div>
       <div class="between" style="margin-top:8px">
         <h3>参考槽位</h3>
@@ -657,10 +661,14 @@ INDEX_HTML = r"""<!doctype html>
       </div>
       <div class="between">
         <label id="testPromptLabel">想画什么</label>
-        <button class="secondary" id="testPresetBtn" type="button">预设</button>
+        <div class="actions">
+          <button class="secondary" id="testPresetBtn" type="button">预设</button>
+          <button class="secondary" id="testCosBtn" type="button">COS池</button>
+        </div>
       </div>
       <textarea id="testPrompt">一只可爱的白色猫咪，坐在樱花树下，柔和光线，精致插画风格</textarea>
       <div class="preset-panel" id="testPresetPanel"></div>
+      <div class="preset-panel" id="testCosPanel"></div>
       <div class="grid">
         <label class="checkline" id="promptEnhanceWrap"><input id="promptEnhance" type="checkbox"> 润色提示词</label>
         <label class="checkline" id="useSelfieWrap"><input id="useSelfie" type="checkbox"> 带上当前形象参考<span id="useSelfieHint"></span></label>
@@ -957,7 +965,7 @@ INDEX_HTML = r"""<!doctype html>
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], pollTimer: null, uploadSlotId: "", presetOpen: false, running: false, galleryTargetSlotId: "" };
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], cosLooks: [], pollTimer: null, uploadSlotId: "", presetOpen: false, cosOpen: false, running: false, galleryTargetSlotId: "" };
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -3561,6 +3569,11 @@ Source prompt:
       if (!btn) return;
       btn.textContent = open ? '收回' : '预设';
     }
+    function syncCosToggleButton(btnId, open) {
+      const btn = $(btnId);
+      if (!btn) return;
+      btn.textContent = open ? '收回' : 'COS池';
+    }
     function renderPresetPanel(panelId, targetInputId, open, btnId) {
       const panel = $(panelId);
       if (!panel) return;
@@ -3600,23 +3613,94 @@ Source prompt:
       } catch (_) {}
       return STUDIO.promptPresets || [];
     }
+    function renderCosPanel(panelId, targetInputId, open, btnId) {
+      const panel = $(panelId);
+      if (!panel) return;
+      if (btnId) syncCosToggleButton(btnId, open);
+      if (!open) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
+      panel.classList.add('open');
+      const rows = STUDIO.cosLooks || [];
+      if (!rows.length) {
+        panel.innerHTML = '<div class="status">COS池为空</div>';
+        return;
+      }
+      panel.innerHTML = rows.map((item, idx) => {
+        const title = escapeHtml(item.title || item.id || '未命名套装');
+        return `<button type="button" class="preset-chip" data-cos-idx="${idx}" title="${title}">${title}</button>`;
+      }).join('');
+      panel.querySelectorAll('[data-cos-idx]').forEach(btn => {
+        btn.onclick = () => {
+          const item = rows[Number(btn.getAttribute('data-cos-idx'))];
+          if (!item) return;
+          const input = $(targetInputId);
+          if (input) input.value = item.prompt || '';
+          panel.querySelectorAll('.preset-chip').forEach(el => el.classList.remove('active'));
+          btn.classList.add('active');
+        };
+      });
+    }
+    async function ensureCosLooksLoaded() {
+      if (STUDIO.cosLooks && STUDIO.cosLooks.length) return STUDIO.cosLooks;
+      try {
+        const res = await api('/api/cos-look-sets');
+        if (res.success) {
+          STUDIO.cosLooks = Array.isArray(res.data) ? res.data : [];
+          return STUDIO.cosLooks;
+        }
+      } catch (_) {}
+      return STUDIO.cosLooks || [];
+    }
     async function toggleStudioPresets() {
       STUDIO.presetOpen = !STUDIO.presetOpen;
+      STUDIO.cosOpen = false;
+      renderCosPanel('studioCosPanel', 'studioPrompt', false, 'studioCosBtn');
       if (STUDIO.presetOpen) {
         await ensurePromptPresetsLoaded();
         window.__TEST_PRESET_OPEN = false;
+        window.__TEST_COS_OPEN = false;
         renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
+        renderCosPanel('testCosPanel', 'testPrompt', false, 'testCosBtn');
       }
       renderPresetPanel('studioPresetPanel', 'studioPrompt', STUDIO.presetOpen, 'studioPresetBtn');
     }
+    async function toggleStudioCos() {
+      STUDIO.cosOpen = !STUDIO.cosOpen;
+      STUDIO.presetOpen = false;
+      renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
+      if (STUDIO.cosOpen) {
+        await ensureCosLooksLoaded();
+        window.__TEST_PRESET_OPEN = false;
+        window.__TEST_COS_OPEN = false;
+        renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
+        renderCosPanel('testCosPanel', 'testPrompt', false, 'testCosBtn');
+      }
+      renderCosPanel('studioCosPanel', 'studioPrompt', STUDIO.cosOpen, 'studioCosBtn');
+    }
     async function toggleTestPresets() {
       window.__TEST_PRESET_OPEN = !window.__TEST_PRESET_OPEN;
+      window.__TEST_COS_OPEN = false;
+      renderCosPanel('testCosPanel', 'testPrompt', false, 'testCosBtn');
       if (window.__TEST_PRESET_OPEN) {
         await ensurePromptPresetsLoaded();
         STUDIO.presetOpen = false;
+        STUDIO.cosOpen = false;
         renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
+        renderCosPanel('studioCosPanel', 'studioPrompt', false, 'studioCosBtn');
       }
       renderPresetPanel('testPresetPanel', 'testPrompt', !!window.__TEST_PRESET_OPEN, 'testPresetBtn');
+    }
+    async function toggleTestCos() {
+      window.__TEST_COS_OPEN = !window.__TEST_COS_OPEN;
+      window.__TEST_PRESET_OPEN = false;
+      renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
+      if (window.__TEST_COS_OPEN) {
+        await ensureCosLooksLoaded();
+        STUDIO.presetOpen = false;
+        STUDIO.cosOpen = false;
+        renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
+        renderCosPanel('studioCosPanel', 'studioPrompt', false, 'studioCosBtn');
+      }
+      renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
     }
 
     function renderStudioPromptChips() {
@@ -3870,6 +3954,7 @@ Source prompt:
       STUDIO.prompts = (res.data && res.data.builtin_prompts) || [];
       STUDIO.templates = (res.data && res.data.templates) || STUDIO.templates || [];
       if (res.data && res.data.prompt_presets) STUDIO.promptPresets = mergePromptPresets(res.data.prompt_presets);
+      if (res.data && Array.isArray(res.data.cos_look_sets)) STUDIO.cosLooks = res.data.cos_look_sets;
       if (selectId) {
         const detail = await studioApi('/api/studio/sessions/' + encodeURIComponent(selectId));
         if (detail.success) STUDIO.current = detail.data;
@@ -4015,7 +4100,9 @@ Source prompt:
     $('testVideoBtn').onclick = runVideoTest;
     if ($('studioCreateBtn')) $('studioCreateBtn').onclick = studioCreate;
     if ($('studioPresetBtn')) $('studioPresetBtn').onclick = toggleStudioPresets;
+    if ($('studioCosBtn')) $('studioCosBtn').onclick = toggleStudioCos;
     if ($('testPresetBtn')) $('testPresetBtn').onclick = toggleTestPresets;
+    if ($('testCosBtn')) $('testCosBtn').onclick = toggleTestCos;
     if ($('studioReloadBtn')) $('studioReloadBtn').onclick = () => loadStudioList(STUDIO.current && STUDIO.current.id);
     if ($('studioDeleteBtn')) $('studioDeleteBtn').onclick = studioDelete;
     if ($('studioSaveBtn')) $('studioSaveBtn').onclick = studioSave;
@@ -4698,5 +4785,23 @@ class FlaskWebServer:
                 return ok(self.plugin.studio_gallery_images(limit=limit))
             except Exception as exc:
                 return fail(str(exc), 400)
+
+        @app.route("/api/prompt-presets", methods=["GET"])
+        def prompt_presets() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                return ok(self.plugin.list_prompt_presets_for_web())
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/cos-look-sets", methods=["GET"])
+        def cos_look_sets() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                return ok(self.plugin.list_cos_look_sets_for_web())
+            except Exception as exc:
+                return fail(str(exc), 500)
 
         return app

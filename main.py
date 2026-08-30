@@ -2625,6 +2625,7 @@ class SelfieImagePlugin(Star):
             "builtin_prompts": BUILTIN_PROMPTS,
             "templates": list_studio_templates(),
             "prompt_presets": self.list_prompt_presets_for_web(),
+            "cos_look_sets": self.list_cos_look_sets_for_web(),
         }
 
     def list_prompt_presets_for_web(self) -> List[Dict[str, Any]]:
@@ -2654,6 +2655,20 @@ class SelfieImagePlugin(Star):
         rows = list(merged.values())
         rows.sort(key=lambda r: str(r.get("name") or ""))
         return rows
+
+    def list_cos_look_sets_for_web(self) -> List[Dict[str, str]]:
+        """Expose the command COS pool to the canvas and quick-test pickers."""
+        return [
+            {
+                "id": str(item.get("id") or "").strip(),
+                "title": str(item.get("title") or "").strip(),
+                "prompt": str(item.get("prompt") or "").strip(),
+            }
+            for item in COS_LOOK_SETS
+            if str(item.get("id") or "").strip()
+            and str(item.get("title") or "").strip()
+            and str(item.get("prompt") or "").strip()
+        ]
 
     def studio_get(self, session_id: str) -> Dict[str, Any]:
         return self.studio.get(session_id)
