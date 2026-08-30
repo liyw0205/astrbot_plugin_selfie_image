@@ -5884,6 +5884,15 @@ class LegFocusTests(unittest.TestCase):
         class _P:
             pass
 
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("洛琪希 夜景")},
+            {"roxy_cream"},
+        )
+        for query in ("洛琪希xxx", "洛琪希夜景"):
+            self.assertEqual(plugin_main.match_cos_look_sets(query), [])
+        unmatched_roxy = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "洛琪希xxx", False)
+        self.assertIn("用户补充要求优先：洛琪希xxx", unmatched_roxy)
+
         for query, expected_ids in (
             ("西施", xishi_ids),
             ("旗袍", qipao_ids),
@@ -5906,10 +5915,64 @@ class LegFocusTests(unittest.TestCase):
             ("三旗袍", "旗袍", 3),
             ("旗袍3", "旗袍", 3),
             ("3张西施", "西施", 3),
+            ("洛琪希 夜景 3", "洛琪希 夜景", 3),
+            ("洛琪希 夜景 3张", "洛琪希 夜景", 3),
+            ("洛琪希 夜景三", "洛琪希 夜景", 3),
         ):
             extra, count = plugin._extract_command_count(text, allow_attached=True)
             self.assertEqual((extra, count), (expected_extra, expected_count))
         self.assertEqual(plugin._extract_command_count("3旗袍"), ("3旗袍", 1))
+
+        # A batch rebuild must retain a matched COS query even when the query
+        # is already present in the selected outfit title/prompt.
+        batch_plugin = object.__new__(plugin_main.SelfieImagePlugin)
+        batch_plugin.config = type("Config", (), {"image_max_batch_count": 10})()
+        rebuilt_actions = []
+        rebuilt_queries = []
+
+        async def fake_build_prompt(event, action, extra_refs):
+            rebuilt_actions.append(action)
+            return action, [], {}
+
+        async def fake_generate(prompt, aspect, resolution, refs, **kwargs):
+            return {"success": True, "files": ["generated.png"]}
+
+        async def fake_counted(*, task_id, event, total, fail_label, run_one, log_prefix):
+            for index in range(total):
+                await run_one(index)
+            return {"success": True, "files": []}
+
+        real_build_cos_action = plugin_main.SelfieImagePlugin._build_cos_look_action
+
+        def fake_build_cos_action(extra_request="", has_refs=False, **kwargs):
+            rebuilt_queries.append(extra_request)
+            return real_build_cos_action(batch_plugin, extra_request, has_refs, **kwargs)
+
+        batch_plugin._build_selfie_prompt_and_refs_for_event = fake_build_prompt
+        batch_plugin._run_image_generation = fake_generate
+        batch_plugin._run_counted_generation_shots = fake_counted
+        batch_plugin._build_cos_look_action = fake_build_cos_action
+        initial_action = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "洛琪希", False)
+        asyncio.run(
+            batch_plugin._run_selfie_batches_unlocked(
+                "test-cos-batch",
+                object(),
+                initial_action,
+                [],
+                "command-look-cos",
+                3,
+                "9:16",
+                "1K",
+                "生成失败",
+                "洛琪希",
+            )
+        )
+        self.assertEqual(len(rebuilt_actions), 3)
+        self.assertEqual(rebuilt_queries, ["洛琪希"] * 3)
+        self.assertEqual(
+            {re.search(r"【cos:([a-z0-9_]+)】", action).group(1) for action in rebuilt_actions},
+            {"roxy_cream"},
+        )
 
         class Event:
             def __init__(self, message: str) -> None:

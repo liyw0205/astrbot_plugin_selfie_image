@@ -398,49 +398,82 @@ def _cos_item_terms(item: Mapping[str, Any]) -> List[str]:
 
 def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
     """Match a COS pool subset by full title, character, or outfit category."""
-    query = re.sub(r"\s+", "", str(text or "")).strip().lower()
-    if not query:
+    raw_query = re.sub(r"\s+", " ", str(text or "")).strip().lower()
+    if not raw_query:
         return []
     all_items = [dict(item) for item in COS_LOOK_SETS]
-    exact: List[Dict[str, str]] = []
-    category_terms = [term.lower() for term in COS_LOOK_CATEGORY_TERMS if term.lower() in query]
-    category_term_set = {term.lower() for term in COS_LOOK_CATEGORY_TERMS}
-    name_terms: List[str] = []
+    separators = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+"
+
+    def compact(value: str) -> str:
+        return re.sub(separators, "", str(value or "")).lower()
+
+    item_terms: Dict[str, set[str]] = {}
+    term_items: Dict[str, set[str]] = {}
+    category_term_set = {compact(term) for term in COS_LOOK_CATEGORY_TERMS}
     for item in all_items:
-        title = str(item.get("title") or "")
-        head = title.split("·", 1)[0].strip().lower()
-        if len(head) >= 2 and head in query:
-            name_terms.append(head)
-        for part in re.split(r"[·/\s、，,：:（）()]+", title):
-            part = part.strip().lower()
-            if (
-                len(part) >= 2
-                and part not in category_term_set
-                and part in query
-            ):
-                name_terms.append(part)
-    name_terms = list(dict.fromkeys(name_terms))
-    for item in COS_LOOK_SETS:
-        full_title = re.sub(r"\s+", "", str(item.get("title") or "")).lower()
-        if full_title and full_title in query:
-            exact.append(dict(item))
+        item_id = str(item.get("id") or "")
+        terms = {compact(term) for term in _cos_item_terms(item)}
+        terms.discard("")
+        item_terms[item_id] = terms
+        for term in terms:
+            term_items.setdefault(term, set()).add(item_id)
+
+    known_terms = sorted(term_items, key=lambda term: (-len(term), term))
+
+    def segment_token(token: str) -> List[str]:
+        """Return known title segments only when they cover the whole token."""
+        value = compact(token)
+        if not value:
+            return []
+        best: List[Optional[List[str]]] = [None] * (len(value) + 1)
+        best[0] = []
+        for start in range(len(value)):
+            if best[start] is None:
+                continue
+            for term in known_terms:
+                if value.startswith(term, start):
+                    end = start + len(term)
+                    candidate = [*best[start], term]
+                    previous = best[end]
+                    if previous is None or len(candidate) < len(previous):
+                        best[end] = candidate
+        return best[-1] or []
+
+    # A full title can be separated by punctuation or spaces, but arbitrary
+    # substring matches are rejected (`洛琪希xxx` must remain extra text).
+    compact_query = compact(raw_query)
+    exact = [
+        dict(item)
+        for item in all_items
+        if compact(str(item.get("title") or "")) == compact_query
+    ]
     if exact:
         return exact
 
+    selected_name_terms: List[str] = []
+    selected_category_terms: List[str] = []
+    for token in re.split(separators, raw_query):
+        segments = segment_token(token)
+        if not segments:
+            continue
+        for term in segments:
+            if term in category_term_set:
+                selected_category_terms.append(term)
+            else:
+                selected_name_terms.append(term)
+    selected_name_terms = list(dict.fromkeys(selected_name_terms))
+    selected_category_terms = list(dict.fromkeys(selected_category_terms))
+
     # Character/alias and category filters can be combined, so `西施旗袍`
     # narrows to Xishi's qipao entries while plain `旗袍` keeps all qipaos.
-    pool = all_items
-    if name_terms:
-        pool = [
-            item for item in pool
-            if any(term in name_terms for term in _cos_item_terms(item))
-        ]
-    if category_terms:
-        pool = [
-            item for item in pool
-            if all(category in _cos_item_terms(item) for category in category_terms)
-        ]
-    if name_terms or category_terms:
+    if selected_name_terms or selected_category_terms:
+        pool = []
+        for item in all_items:
+            terms = item_terms.get(str(item.get("id") or ""), set())
+            if all(term in terms for term in selected_name_terms) and all(
+                category in terms for category in selected_category_terms
+            ):
+                pool.append(dict(item))
         return pool
 
     # No title segment matched: preserve the caller's text as an ordinary
@@ -3218,7 +3251,13 @@ class SelfieImagePlugin(Star):
         tokens = self._command_tokens_for_count(text)
         if not tokens:
             return "", 1
-        for index in (0, 1):
+        indices = [0, 1]
+        # COS accepts a count after an arbitrary extra prompt, e.g.
+        # `洛琪希 夜景 3`; other commands retain the legacy first-two-token
+        # behavior so numbers inside free-form prompts are not reinterpreted.
+        if allow_attached and len(tokens) > 2:
+            indices.append(len(tokens) - 1)
+        for index in dict.fromkeys(indices):
             if index >= len(tokens):
                 continue
             count = self._parse_count_token(tokens[index])
@@ -5860,6 +5899,7 @@ class SelfieImagePlugin(Star):
         fail_label: str,
         *,
         queue_notified: bool = False,
+        rebuild_extra_request: str = "",
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         self._ensure_image_batch_gate()
@@ -5873,6 +5913,7 @@ class SelfieImagePlugin(Star):
             aspect,
             resolution,
             fail_label,
+            rebuild_extra_request,
         )
 
     async def _run_selfie_batches_unlocked(
@@ -5886,6 +5927,7 @@ class SelfieImagePlugin(Star):
         aspect: str,
         resolution: str,
         fail_label: str,
+        rebuild_extra_request: str = "",
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         # 多张拍摄时逐张更换机位或姿势。
@@ -5915,6 +5957,11 @@ class SelfieImagePlugin(Star):
                 extra_keep = str(m_extra.group(1) or "").strip()
                 extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear):[a-z0-9_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
+            # Keep the original command query even when it is already present
+            # in the selected outfit title/prompt and therefore has no user
+            # supplement marker in the wrapped action.
+            if rebuild_extra_request:
+                extra_keep = str(rebuild_extra_request).strip()
             # Keep user/locked legwear across rebuild rounds (extra text alone may have stripped 白丝).
             force_legwear = parse_requested_legwear(str(action or "")) or parse_requested_legwear(extra_keep)
             m_pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
@@ -6394,6 +6441,7 @@ class SelfieImagePlugin(Star):
         preset_aspect: str = "",
         preset_resolution: str = "",
         preset_name: str = "",
+        rebuild_extra_request: str = "",
     ) -> AsyncGenerator[Any, None]:
         message = message_override.strip() if message_override else extract_command_message(event, command_name, fallback)
         if requested_count_override > 0:
@@ -6451,6 +6499,7 @@ class SelfieImagePlugin(Star):
                 resolution,
                 fail_label,
                 queue_notified=queue_notified,
+                rebuild_extra_request=rebuild_extra_request,
             )
 
         task = self.start_command_image_task(
@@ -6495,7 +6544,7 @@ class SelfieImagePlugin(Star):
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装；可写数量如 /自拍 3",
                 "· /看看腿　日常下装穿搭记录；腿部穿搭仅随机光腿神器、白丝或黑丝，可直接指定；随机手机记录或朋友协助拍摄视角；可写数量如 /看看腿 3",
                 "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
-                "· /看看COS　随机一套内置 COS 换装；可发「看看COS 列表/全部/查看」浏览标题，也可按标题中的角色名或服装类别指定，如「看看COS 西施」「看看COS 旗袍」「看看COS 3旗袍」；默认随机自拍或他拍，也可写「自拍」「他拍」",
+                "· /看看COS　随机一套内置 COS 换装；可发「看看COS 列表/全部/查看」浏览标题，也可按标题中的角色名或服装类别指定，如「看看COS 西施」「看看COS 旗袍」「看看COS 西施 夜景 3」「看看COS 3旗袍」；默认随机自拍或他拍，也可写「自拍」「他拍」",
                 "· /看看你　像别人随手拍你；可写数量",
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象；可写数量",
                 "",
@@ -7176,6 +7225,7 @@ class SelfieImagePlugin(Star):
             preset_aspect=preset_aspect,
             preset_resolution=preset_resolution,
             preset_name=preset_name,
+            rebuild_extra_request=expanded_extra,
         ):
             yield item
 
