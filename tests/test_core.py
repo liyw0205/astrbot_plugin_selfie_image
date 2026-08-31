@@ -5673,9 +5673,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 38)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 40)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 38)
+        self.assertEqual(len(web_pool), 40)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -5722,6 +5722,8 @@ class LegFocusTests(unittest.TestCase):
                 "二次元少女·橙青半透",
                 "瑶·薄荷冰蓝短裙",
                 "露娜·紫霞仙子",
+                "古风·浅蓝花卉挂脖兜兜",
+                "神里绫华·白袖蓝袴",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -5901,11 +5903,26 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("黄色长围巾", xiao_qiao)
         self.assertIn("白色不透明过膝袜或连贯白色腿部服装", xiao_qiao)
         self.assertIn("不要中筒袜、短袜或袜口截断", xiao_qiao)
+        self.assertNotIn("客厅电视柜前", xiao_qiao)
         furina = prompts["furina_cream_blue_ruffle"]
         self.assertIn("芙宁娜风格的奶油浅蓝荷叶裙 COS 造型", furina)
         self.assertIn("灰蓝色大蝴蝶结", furina)
         self.assertIn("多层蓝灰色布料和奶油白荷叶边", furina)
-        for title in ("满穗·灰白和风", "小乔·白熊围巾", "芙宁娜·奶油浅蓝荷叶裙"):
+        blue_doudou = prompts["ancient_blue_floral_halter_doudou"]
+        self.assertIn("轻国风浅蓝花卉挂脖兜兜套装", blue_doudou)
+        self.assertIn("圆形镂空和金色古典扣饰", blue_doudou)
+        self.assertIn("浅蓝色半透明薄纱短衫", blue_doudou)
+        ayaka = prompts["kamisato_ayaka_white_blue_hakama"]
+        self.assertIn("《原神》神里绫华", ayaka)
+        self.assertIn("粉色水引结蝴蝶结耳饰", ayaka)
+        self.assertIn("深海军蓝色褶裙或袴裙", ayaka)
+        for title in (
+            "满穗·灰白和风",
+            "小乔·白熊围巾",
+            "芙宁娜·奶油浅蓝荷叶裙",
+            "古风·浅蓝花卉挂脖兜兜",
+            "神里绫华·白袖蓝袴",
+        ):
             self.assertEqual(
                 [item["title"] for item in plugin_main.match_cos_look_sets(title)],
                 [title],
@@ -6028,6 +6045,10 @@ class LegFocusTests(unittest.TestCase):
             {"luna_zixia_fairy"},
         )
         self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("神里绫华")},
+            {"kamisato_ayaka_white_blue_hakama"},
+        )
+        self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("汉服")},
             {
                 "hanfu_peach", "mint_sheer_hanfu", "silver_deepv_hanfu",
@@ -6044,8 +6065,12 @@ class LegFocusTests(unittest.TestCase):
             {
                 "hanfu_peach", "mint_sheer_hanfu", "silver_deepv_hanfu",
                 "blue_backless_hanfu", "mint_twin_braid_hanfu",
-                "ancient_hanfu_halter_dudou",
+                "ancient_hanfu_halter_dudou", "ancient_blue_floral_halter_doudou",
             },
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("兜兜")},
+            {"ancient_blue_floral_halter_doudou"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("肚兜")},
@@ -6180,7 +6205,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（38套）：", response[0])
+            self.assertIn("看看COS 随机池（40套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
