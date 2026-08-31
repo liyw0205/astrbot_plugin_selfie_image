@@ -535,7 +535,7 @@ class ConfigModelTests(unittest.TestCase):
             appearance_type="real",
         )
         self.assertIn("服装局部", zh)
-        self.assertIn("腰线附近到膝部附近", zh)
+        self.assertIn("自然的下半身服装局部", zh)
         self.assertIn("服装颜色、材质和层次", zh)
         self.assertIn("真人摄影质感", zh)
         self.assertIn("普通手机", zh)
@@ -549,7 +549,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("竖屏", selfie_zh)
         self.assertIn("真人摄影质感", selfie_zh)
         self.assertIn("普通手机", selfie_zh)
-        self.assertIn("waistline-to-knee framing", en)
+        self.assertIn("natural close lower-body outfit detail", en)
         self.assertIn("everyday clothing", en)
         self.assertIn("smartphone outfit record", en)
         self.assertIn("plastic skin", en)
@@ -4815,7 +4815,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("断臂", selfie)
             legs = manager.build_selfie_prompt("看看腿", "小助", "温柔", True, 0)
             self.assertIn("服装局部展示", legs)
-            self.assertIn("腰线附近到膝部附近", legs)
+            self.assertIn("自然的下半身服装局部", legs)
             self.assertIn("成年人物", legs)
             self.assertIn("服装的颜色、材质、层次", legs)
             self.assertIn("自然坐姿、跪坐、侧躺、抱膝、交叠坐姿、窗边坐或席地屈膝", legs)
@@ -5151,7 +5151,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 extra_reference_count=0,
             )
             self.assertIn("服装局部展示", text)
-            self.assertIn("腰线附近到膝部附近", text)
+            self.assertIn("自然的下半身服装局部", text)
             self.assertIn("成年人物", text)
             self.assertIn("不透明", text)
             self.assertIn("服装的颜色、材质、层次", text)
@@ -5546,7 +5546,7 @@ class LegFocusTests(unittest.TestCase):
             t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
             self.assertIn("【legs:outfit】", t)
             self.assertIn("成年人物", t)
-            self.assertIn("腰线附近到膝部附近", t)
+            self.assertIn("保持近距离下半身构图", t)
             self.assertIn("本次服装搭配", t)
             self.assertNotIn("晒腿", t)
             self.assertNotIn("主要看腿形", t)
@@ -5566,8 +5566,8 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("【pose:sit_crop】", forced_crop)
         self.assertIn("【legs:outfit】", forced_crop)
         self.assertIn("白色不透白丝", forced_crop)
-        self.assertIn("从大腿连续覆盖到膝部", forced_crop)
-        self.assertIn("腰线附近到膝部附近", forced_crop)
+        self.assertIn("从大腿上部沿可见腿部连续向下覆盖", forced_crop)
+        self.assertIn("不把膝关节或小腿作为固定裁切线", forced_crop)
         self.assertNotIn("脚部画外", forced_crop)
         from astrbot_plugin_selfie_image.persona import PersonaManager
         from astrbot_plugin_selfie_image.prompt_templates import build_selfie_builtin_prompt
@@ -5575,17 +5575,21 @@ class LegFocusTests(unittest.TestCase):
             final_crop = PersonaManager(tmp).build_selfie_prompt(forced_crop, "小助", "温柔", True, 0)
         self.assertIn("服装局部展示", final_crop)
         self.assertNotIn("换装要求", final_crop)
-        self.assertIn("腰线附近到膝部附近", final_crop)
-        self.assertIn("白色不透白丝（从大腿连续覆盖到膝部", final_crop)
+        self.assertIn("自然的下半身服装局部", final_crop)
+        self.assertIn("白色不透白丝（从大腿上部沿可见腿部连续向下覆盖", final_crop)
         self.assertIn("禁止中筒袜、短袜", final_crop)
+        self.assertIn("自然延伸到画面外", final_crop)
+        self.assertIn("合理遮挡", final_crop)
+        self.assertIn("禁止在膝关节、小腿中段或脚踝附近突然终止", final_crop)
+        self.assertIn("袜筒下缘直接当作小腿终点", final_crop)
         for conflict in ("脚趾五个分开", "身体从入镜部位连续到脚", "包住整脚到脚趾", "勒进大腿肉", "晒腿", "主要看腿形"):
             self.assertNotIn(conflict, final_crop)
         self.assertNotIn("微胖软肉", final_crop)
         self.assertNotIn("不要大象腿猪腿", final_crop)
         final_crop_en = build_selfie_builtin_prompt(forced_crop, language="en", has_reference_image=True)
-        self.assertIn("waistline-to-knee framing", final_crop_en)
+        self.assertIn("natural close lower-body outfit detail", final_crop_en)
         self.assertIn("everyday clothing", final_crop_en)
-        self.assertIn("opaque white thigh-high stockings, continuous from upper thigh to knee", final_crop_en)
+        self.assertIn("opaque white thigh-high stockings, continuous down every visible part of the legs", final_crop_en)
         self.assertIn("mid-calf socks", final_crop_en)
         with patch(
             "astrbot_plugin_selfie_image.main.random.choice",
@@ -5648,7 +5652,7 @@ class LegFocusTests(unittest.TestCase):
             text = plugin_main.LEGWEAR_PROMPTS[name]
             self.assertIn("不透", text)
             self.assertIn(name, text)
-            self.assertIn("从大腿连续覆盖到膝部", text)
+            self.assertIn("从大腿上部沿可见腿部连续向下覆盖", text)
             self.assertIn("袜口", text)
             self.assertNotIn("主要看腿形", text)
             self.assertNotIn("脚部", text)
@@ -6445,9 +6449,9 @@ class LegFocusTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.persona import PersonaManager
 
         for legwear, expected in (
-            ("光腿神器", "自然肤色光腿神器（从大腿连续覆盖到膝部）"),
-            ("白丝", "白色不透白丝（从大腿连续覆盖到膝部，袜口在大腿上部）"),
-            ("黑丝", "黑色不透黑丝（从大腿连续覆盖到膝部，袜口在大腿上部）"),
+            ("光腿神器", "自然肤色光腿神器（沿可见腿部连续覆盖）"),
+            ("白丝", "白色不透白丝（从大腿上部沿可见腿部连续向下覆盖，袜口在大腿上部）"),
+            ("黑丝", "黑色不透黑丝（从大腿上部沿可见腿部连续向下覆盖，袜口在大腿上部）"),
         ):
             action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
                 _P(), "", False, force_legwear=legwear
