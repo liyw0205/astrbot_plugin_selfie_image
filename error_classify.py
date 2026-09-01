@@ -10,6 +10,7 @@ import re
 from typing import Any, Dict, Optional
 
 from .proxy import LOCAL_IMAGE_WAIT_SECONDS
+from .utils import redact_sensitive_text
 
 
 def format_timeout_user_message(kind: str, seconds: Optional[int] = None) -> str:
@@ -79,6 +80,23 @@ def extract_http_status(error: str) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _server_error_detail(error: Any, status: int, limit: int = 240) -> str:
+    """Keep a safe, useful upstream 5xx message without exposing response pages."""
+    detail = redact_sensitive_text(str(error or ""))
+    detail = re.sub(
+        rf"^.*?\bHTTP\s+{status}\b\s*[:：-]?\s*",
+        "",
+        detail,
+        count=1,
+        flags=re.I | re.S,
+    )
+    detail = re.sub(r"[\r\n\t]+", " ", detail)
+    detail = re.sub(r"\s+", " ", detail).strip(" ：:;；")
+    if not detail or re.search(r"<!doctype\s+html|<html\b|<body\b", detail, flags=re.I):
+        return ""
+    return detail[:limit] + ("…" if len(detail) > limit else "")
 
 
 def classify_generation_error(error: Any) -> Dict[str, Any]:
@@ -153,6 +171,21 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
             "profile_switch_candidate": True,
         }
 
+    # Status is authoritative for server failures. Inspecting generic words such
+    # as "不存在" first would hide useful 5xx details and mark them fatal.
+    if status is not None and status >= 500:
+        detail = _server_error_detail(text, status)
+        user_message = f"上游服务异常（HTTP {status}）"
+        if detail:
+            user_message = f"{user_message}：{detail}"
+        return {
+            "category": "server",
+            "retryable": True,
+            "http_status": status,
+            "user_message": user_message,
+            "raw": text,
+        }
+
     for pattern in NON_RETRYABLE_PATTERNS:
         if re.search(pattern, lowered if pattern.isascii() else text, flags=re.I):
             if (
@@ -192,15 +225,6 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
                 "raw": text,
                 "profile_switch_candidate": True,
             }
-
-    if status is not None and status >= 500:
-        return {
-            "category": "server",
-            "retryable": True,
-            "http_status": status,
-            "user_message": f"上游服务异常（HTTP {status}）",
-            "raw": text,
-        }
 
     if status == 429:
         return {
@@ -267,7 +291,9 @@ def summarize_generation_failures(
             continue
         label = str(item.get("label") or item.get("model") or item.get("channel") or "").strip()
         raw = str(item.get("error") or "").strip()
-        info = classify_generation_error(" ".join(part for part in (raw, str(item.get("error_user_message") or ""), fallback_error) if part) or "生成失败")
+        stored_user_message = str(item.get("error_user_message") or "").strip()
+        source_error = raw or stored_user_message or str(fallback_error or "").strip() or "生成失败"
+        info = classify_generation_error(source_error)
         category = str(info.get("category") or item.get("error_category") or "").strip()
         user_message = str(info.get("user_message") or item.get("error_user_message") or raw or "生成失败").strip()
         if not raw and not user_message:

@@ -429,6 +429,38 @@ def redact_sensitive_data(value: Any) -> Any:
     return value
 
 
+def redact_channel_attempts(attempts: Any) -> List[Any]:
+    """Redact attempt metadata while retaining the channel's original error."""
+    source = list(attempts or [])
+    redacted = redact_sensitive_data(source)
+    if not isinstance(redacted, list):
+        return []
+    for original, safe in zip(source, redacted):
+        if isinstance(original, dict) and isinstance(safe, dict) and "error" in original:
+            safe["error"] = original.get("error")
+    return redacted
+
+
+def redact_generation_record(record: Any) -> Dict[str, Any]:
+    """Redact record metadata but keep authenticated channel diagnostics intact."""
+    if not isinstance(record, dict):
+        return {}
+    redacted = redact_sensitive_data(record)
+    if not isinstance(redacted, dict):
+        return {}
+
+    for key in ("attempts", "failure_reasons"):
+        if isinstance(record.get(key), list):
+            redacted[key] = redact_channel_attempts(record.get(key))
+
+    original_response = record.get("response_data")
+    safe_response = redacted.get("response_data")
+    if isinstance(original_response, dict) and isinstance(safe_response, dict):
+        if isinstance(original_response.get("attempts"), list):
+            safe_response["attempts"] = redact_channel_attempts(original_response.get("attempts"))
+    return redacted
+
+
 def _truncate_text(value: Any, limit: int) -> str:
     text = str(value or "")
     if limit <= 0 or len(text) <= limit:

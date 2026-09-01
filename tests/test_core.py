@@ -1101,6 +1101,29 @@ class ConfigModelTests(unittest.TestCase):
         self.assertFalse(classify_generation_error("The generated images appear to be unsafe")["retryable"])
         self.assertTrue(classify_generation_error("HTTP 503 upstream")["retryable"])
         self.assertEqual(classify_generation_error("HTTP 503 upstream")["category"], "server")
+        self.assertEqual(
+            classify_generation_error("HTTP 502: Upstream service temporarily unavailable")["user_message"],
+            "上游服务异常（HTTP 502）：Upstream service temporarily unavailable",
+        )
+        self.assertEqual(
+            classify_generation_error("HTTP 503: No available compatible accounts")["user_message"],
+            "上游服务异常（HTTP 503）：No available compatible accounts",
+        )
+        upstream_channel_error = classify_generation_error(
+            "HTTP 502: 分组 image-2 下模型 gpt-image-2 的可用渠道不存在（retry） (request id: test-request)"
+        )
+        self.assertTrue(upstream_channel_error["retryable"])
+        self.assertEqual(upstream_channel_error["category"], "server")
+        self.assertIn("可用渠道不存在", upstream_channel_error["user_message"])
+        self.assertEqual(
+            classify_generation_error("HTTP 502: <!doctype html><html><body>Bad gateway</body></html>")["user_message"],
+            "上游服务异常（HTTP 502）",
+        )
+        redacted_server_error = classify_generation_error(
+            "HTTP 500: token=abcdefghijklmnop upstream failed"
+        )["user_message"]
+        self.assertIn("token=[REDACTED]", redacted_server_error)
+        self.assertNotIn("abcdefghijklmnop", redacted_server_error)
         self.assertTrue(classify_generation_error("HTTP 429 rate limit")["retryable"])
         self.assertFalse(classify_generation_error("请求超时")["retryable"])
         self.assertEqual(classify_generation_error("请求超时")["user_message"], "模型超时（180s）")
@@ -1146,6 +1169,27 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(summary["last_failed_model"], "自建聚合/grok-imagine-image-quality")
         self.assertIn("内容未通过上游安全策略", summary["failure_reason"])
         self.assertEqual(len(summary["failure_reasons"]), 2)
+
+        server_summary = summarize_generation_failures(
+            [
+                {
+                    "attempt": 1,
+                    "label": "lmm/gpt-image-2",
+                    "success": False,
+                    "error": "HTTP 503: No available compatible accounts",
+                    "error_user_message": "上游服务异常（HTTP 503）",
+                }
+            ],
+            fallback_error="lmm/gpt-image-2: 上游服务异常（HTTP 503）",
+        )
+        self.assertEqual(
+            server_summary["failure_reason"],
+            "lmm/gpt-image-2: 上游服务异常（HTTP 503）：No available compatible accounts",
+        )
+        self.assertEqual(
+            server_summary["failure_reasons"][0]["error_user_message"],
+            "上游服务异常（HTTP 503）：No available compatible accounts",
+        )
 
         # Success path should still keep intermediate failure rows for monitor detail.
         success_summary = summarize_generation_failures(
@@ -1205,6 +1249,32 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(row.get("failed_attempt_count"), 1)
         self.assertNotIn("request_data", row)
         self.assertLessEqual(len(row.get("request_prompt") or ""), 241)
+
+    def test_generation_record_keeps_only_channel_error_raw(self) -> None:
+        from astrbot_plugin_selfie_image.utils import compact_generation_record, redact_generation_record
+
+        raw_error = "HTTP 500: token=raw-channel-secret"
+        record = redact_generation_record(
+            {
+                "error": "token=top-level-secret",
+                "headers": {"Authorization": "Bearer top-level-secret"},
+                "attempts": [
+                    {
+                        "label": "api_key=channel-label-secret",
+                        "success": False,
+                        "error": raw_error,
+                        "error_user_message": "HTTP 500: token=raw-channel-secret",
+                    }
+                ],
+            }
+        )
+        slim = compact_generation_record(record)
+
+        self.assertEqual(slim["attempts"][0]["error"], raw_error)
+        self.assertIn("api_key=[REDACTED]", slim["attempts"][0]["label"])
+        self.assertIn("token=[REDACTED]", slim["attempts"][0]["error_user_message"])
+        self.assertIn("token=[REDACTED]", slim["error"])
+        self.assertEqual(slim["headers"]["Authorization"], "[REDACTED]")
 
     def test_record_task_splits_multi_image_rows(self) -> None:
         from astrbot_plugin_selfie_image.utils import split_generation_record_images
@@ -3311,6 +3381,26 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([attempt["success"] for attempt in result.attempts], [False, True])
         self.assertEqual(result.attempts[0]["error"], "temporary failure")
 
+    async def test_fallback_preserves_server_error_detail(self) -> None:
+        target = make_target("openai", "gpt-image-2")
+        upstream_detail = "分组 image-2 下模型 gpt-image-2 的可用渠道不存在（retry）"
+
+        def create_fake_adapter(target, session):
+            return FakeGenerateAdapter(ImageGenerateResult(error=f"HTTP 502: {upstream_detail}"))
+
+        with patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter):
+            result = await generate_image_with_fallback(
+                [target],
+                ImageGenerateRequest(prompt="cat"),
+                FakeSession(),
+                max_attempts=1,
+            )
+
+        self.assertIn(upstream_detail, result.error)
+        self.assertIn(upstream_detail, result.attempts[0]["error_user_message"])
+        self.assertEqual(result.attempts[0]["error_category"], "server")
+        self.assertTrue(result.attempts[0]["retryable"])
+
     async def test_video_fallback_tries_next_target_after_failure(self) -> None:
         first = make_target("openai", "bad-video")
         second = make_target("openai", "good-video")
@@ -3452,7 +3542,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.images)
         self.assertEqual(result.error, "未配置生图模型")
 
-    async def test_fallback_redacts_sensitive_adapter_errors(self) -> None:
+    async def test_fallback_keeps_raw_error_only_in_channel_record(self) -> None:
         target = make_target("grok", "bad-model")
         secret_error = "Authorization: Bearer sk-live-secret-token and token=abcdefghijklmnop"
 
@@ -3467,11 +3557,12 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
                 max_attempts=1,
             )
 
-        attempt_text = json.dumps(result.attempts, ensure_ascii=False)
         self.assertIn("Bearer [REDACTED]", result.error)
         self.assertIn("token=[REDACTED]", result.error)
         self.assertNotIn("sk-live-secret-token", result.error)
-        self.assertNotIn("abcdefghijklmnop", attempt_text)
+        self.assertEqual(result.attempts[0]["error"], secret_error)
+        self.assertIn("Bearer [REDACTED]", result.attempts[0]["error_user_message"])
+        self.assertNotIn("sk-live-secret-token", result.attempts[0]["error_user_message"])
 
     async def test_fallback_redacts_sensitive_exceptions(self) -> None:
         target = make_target("grok", "bad-model")
@@ -3489,7 +3580,8 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIn("api_key=[REDACTED]", result.error)
-        self.assertNotIn("AIzaSySecretTokenValue", json.dumps(result.attempts, ensure_ascii=False))
+        self.assertIn("api_key=AIzaSySecretTokenValue", result.attempts[0]["error"])
+        self.assertIn("api_key=[REDACTED]", result.attempts[0]["error_user_message"])
 
     async def test_fallback_redacts_sensitive_target_fields_on_final_failure(self) -> None:
         target = ImageModelTarget(
@@ -3850,14 +3942,35 @@ class WebApiTests(unittest.TestCase):
     def test_records_and_task_status_routes_redact_sensitive_data(self) -> None:
         class SensitivePlugin(FakeWebPlugin):
             def get_recent_records(self, *args, **kwargs):
-                return [{"error": "api_key=plain-provider-secret", "headers": {"Cookie": "session=abcdef1234567890"}}]
+                return [{
+                    "error": "api_key=plain-provider-secret",
+                    "headers": {"Cookie": "session=abcdef1234567890"},
+                    "attempts": [{
+                        "error": "HTTP 500: token=raw-channel-secret",
+                        "error_user_message": "HTTP 500: token=[REDACTED]",
+                    }],
+                }]
 
             def get_record_for_web(self, record_id: str):
-                return {"id": record_id, "error": "token=abcdefghijklmnop", "headers": {"Authorization": "Bearer sk-live-secret-token"}}
+                return {
+                    "id": record_id,
+                    "error": "token=abcdefghijklmnop",
+                    "headers": {"Authorization": "Bearer sk-live-secret-token"},
+                    "attempts": [{
+                        "error": "HTTP 500: token=raw-channel-secret",
+                        "error_user_message": "HTTP 500: token=[REDACTED]",
+                    }],
+                }
 
             def get_web_image_task(self, task_id: str):
                 self.task_status_calls.append(task_id)
-                return {"task_id": task_id, "result": {"error": "Authorization: Bearer sk-live-secret-token"}}
+                return {
+                    "task_id": task_id,
+                    "result": {
+                        "error": "Authorization: Bearer sk-live-secret-token",
+                        "attempts": [{"error": "HTTP 500: token=raw-channel-secret"}],
+                    },
+                }
 
         plugin = SensitivePlugin("secret")
         client = self.make_client(plugin, host="0.0.0.0")
@@ -3875,10 +3988,13 @@ class WebApiTests(unittest.TestCase):
         self.assertIn("token=[REDACTED]", detail_text)
         self.assertIn('"Authorization": "[REDACTED]"', detail_text)
         self.assertIn("Bearer [REDACTED]", task_text)
+        self.assertIn("token=raw-channel-secret", records_text)
+        self.assertIn("token=raw-channel-secret", detail_text)
         self.assertNotIn("plain-provider-secret", records_text)
         self.assertNotIn("abcdefghijklmnop", detail_text)
         self.assertNotIn("sk-live-secret-token", detail_text)
         self.assertNotIn("sk-live-secret-token", task_text)
+        self.assertNotIn("raw-channel-secret", task_text)
 
     def test_selfie_write_apis_accept_empty_object_payloads(self) -> None:
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
@@ -5677,9 +5793,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 40)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 46)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 40)
+        self.assertEqual(len(web_pool), 46)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -5728,6 +5844,12 @@ class LegFocusTests(unittest.TestCase):
                 "露娜·紫霞仙子",
                 "古风·浅蓝花卉挂脖兜兜",
                 "神里绫华·白袖蓝袴",
+                "古风·青白水晶挂脖套装",
+                "杨玉环·银翎春语",
+                "少司缘·红金宽袖",
+                "古风·青绿花卉短襦裙",
+                "古风·淡粉月夜薄纱古装",
+                "和泉纱雾·粉色家居服",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -5771,9 +5893,9 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("不是原皮长裙水莲汉服", xishi)
         self.assertNotIn("抖音", xishi)
         lanmeng = prompts["lanmeng_dragon_path"]
-        self.assertIn("《永劫无间》蓝梦龙之道", lanmeng)
-        self.assertIn("浅金海波纹一字肩短上衣", lanmeng)
-        self.assertIn("不是原皮多层长袍", lanmeng)
+        self.assertIn("《永劫无间》蓝梦“龙之道”COS", lanmeng)
+        self.assertIn("黑金短款露腰服装", lanmeng)
+        self.assertIn("白色皮革电竞椅", lanmeng)
         self.assertNotIn("抖音", lanmeng)
         dolia = prompts["dolia_ocean_ruffle"]
         self.assertIn("《王者荣耀》朵莉亚", dolia)
@@ -5920,6 +6042,26 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("《原神》神里绫华", ayaka)
         self.assertIn("粉色水引结蝴蝶结耳饰", ayaka)
         self.assertIn("深海军蓝色褶裙或袴裙", ayaka)
+        crystal = prompts["ancient_mint_crystal_halter"]
+        self.assertIn("青白薄荷色轻国风挂脖套装", crystal)
+        self.assertIn("透明蓝绿色圆球水晶", crystal)
+        yangyuhuan = prompts["yangyuhuan_silver_feather"]
+        self.assertIn("《王者荣耀》杨玉环“银翎春语”COS", yangyuhuan)
+        self.assertIn("银色羽翎装饰", yangyuhuan)
+        shaosiyuan = prompts["shaosiyuan_red_gold_sleeves"]
+        self.assertIn("《王者荣耀》少司缘红金主题COS", shaosiyuan)
+        self.assertIn("极宽的红色长袖", shaosiyuan)
+        floral_short = prompts["ancient_mint_floral_short_ruqun"]
+        self.assertIn("青绿色花卉古风COS", floral_short)
+        self.assertIn("白色花朵发饰", floral_short)
+        moon_sheer = prompts["ancient_pink_moon_sheer"]
+        self.assertIn("淡粉色月夜薄纱古装", moon_sheer)
+        self.assertIn("白色长毛毯铺成的软榻", moon_sheer)
+        self.assertIn("一轮明月", moon_sheer)
+        sagiri = prompts["izumi_sagiri_pink_loungewear"]
+        self.assertIn("《埃罗芒阿老师》和泉纱雾风格", sagiri)
+        self.assertIn("棕色熊脸保护壳", sagiri)
+        self.assertNotIn("不要裸露", sagiri)
         for title in (
             "满穗·灰白和风",
             "小乔·白熊围巾",
@@ -6070,6 +6212,8 @@ class LegFocusTests(unittest.TestCase):
                 "hanfu_peach", "mint_sheer_hanfu", "silver_deepv_hanfu",
                 "blue_backless_hanfu", "mint_twin_braid_hanfu",
                 "ancient_hanfu_halter_dudou", "ancient_blue_floral_halter_doudou",
+                "ancient_mint_crystal_halter", "ancient_mint_floral_short_ruqun",
+                "ancient_pink_moon_sheer",
             },
         )
         self.assertEqual(
@@ -6209,7 +6353,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（40套）：", response[0])
+            self.assertIn("看看COS 随机池（46套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})

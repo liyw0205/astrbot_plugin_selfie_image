@@ -19,7 +19,7 @@ from .utils import (
     detect_mime_by_bytes,
     load_json_file,
     looks_like_image_bytes,
-    redact_sensitive_data,
+    redact_generation_record,
     safe_delete_relative_files,
     save_image_bytes,
     save_json_file,
@@ -35,13 +35,13 @@ class GenerationStoreMixin:
         data = load_json_file(self.records_path)
         items = data.get("records") if isinstance(data.get("records"), list) else []
         records = [item for item in items if isinstance(item, dict)]
-        compacted = [compact_generation_record(redact_sensitive_data(item)) for item in records[:RECORD_KEEP_LIMIT]]
+        compacted = [compact_generation_record(redact_generation_record(item)) for item in records[:RECORD_KEEP_LIMIT]]
         return compacted
 
     def _persist_records(self) -> None:
         with self._records_lock:
             self._records = [
-                compact_generation_record(redact_sensitive_data(item))
+                compact_generation_record(redact_generation_record(item))
                 for item in self._records[:RECORD_KEEP_LIMIT]
                 if isinstance(item, dict)
             ]
@@ -94,7 +94,7 @@ class GenerationStoreMixin:
         except Exception:
             pass
         with self._records_lock:
-            record = compact_generation_record(redact_sensitive_data(dict(record)))
+            record = compact_generation_record(redact_generation_record(dict(record)))
             self._record_seq += 1
             record.setdefault("id", f"{int(time.time() * 1000)}-{self._record_seq}")
             record["time"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -112,10 +112,16 @@ class GenerationStoreMixin:
             # Avoid deepcopy of fat nested blobs on every list poll.
             records = [dict(item) if isinstance(item, dict) else item for item in self._records[:RECORD_KEEP_LIMIT]]
         if summary:
-            return redact_sensitive_data(
-                [summarize_record_for_list(self._enrich_record_for_web(item)) for item in records if isinstance(item, dict)]
-            )
-        return redact_sensitive_data([self._enrich_record_for_web(item) for item in records if isinstance(item, dict)])
+            return [
+                redact_generation_record(summarize_record_for_list(self._enrich_record_for_web(item)))
+                for item in records
+                if isinstance(item, dict)
+            ]
+        return [
+            redact_generation_record(self._enrich_record_for_web(item))
+            for item in records
+            if isinstance(item, dict)
+        ]
 
     def get_generation_metrics(self) -> Dict[str, Any]:
         """Return redacted aggregate metrics from retained generation records."""
@@ -137,7 +143,7 @@ class GenerationStoreMixin:
         with self._records_lock:
             for record in self._records:
                 if str(record.get("id") or "") == target_id:
-                    return redact_sensitive_data(self._enrich_record_for_web(copy.deepcopy(record)))
+                    return redact_generation_record(self._enrich_record_for_web(copy.deepcopy(record)))
         raise ValueError("记录不存在或已清理")
 
     def _enrich_record_for_web(self, record: Dict[str, Any]) -> Dict[str, Any]:

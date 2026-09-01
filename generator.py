@@ -17,7 +17,7 @@ from .error_classify import classify_generation_error, format_timeout_user_messa
 from .models import ImageModelTarget
 from .proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, image_client_timeout, target_session_proxy
 from .providers import ImageGenerateRequest, ImageGenerateResult, create_adapter
-from .utils import redact_sensitive_data, redact_sensitive_text
+from .utils import redact_channel_attempts, redact_sensitive_text
 
 SUCCESS = "success"
 NEXT_KEY = "next_key"
@@ -88,7 +88,7 @@ def _sync_try_model(target: ImageModelTarget, req: ImageGenerateRequest, budget:
     except asyncio.TimeoutError:
         return ImageGenerateResult(error=format_timeout_user_message("local", budget))
     except Exception as exc:
-        return ImageGenerateResult(error=redact_sensitive_text(str(exc)))
+        return ImageGenerateResult(error=str(exc))
 
 
 async def _try_model(
@@ -106,7 +106,7 @@ async def _try_model(
         try:
             return work.result()
         except Exception as exc:
-            return ImageGenerateResult(error=redact_sensitive_text(str(exc)))
+            return ImageGenerateResult(error=str(exc))
     work = asyncio.create_task(_try_on_session(target, req, session, budget))
     done, _ = await asyncio.wait({work}, timeout=max(1, int(budget)))
     if work not in done:
@@ -115,7 +115,7 @@ async def _try_model(
     try:
         return work.result()
     except Exception as exc:
-        return ImageGenerateResult(error=redact_sensitive_text(str(exc)))
+        return ImageGenerateResult(error=str(exc))
 
 
 async def _try_on_session(
@@ -154,7 +154,7 @@ async def generate_image_with_fallback(
         if remain <= 1:
             return ImageGenerateResult(
                 error=redact_sensitive_text(format_timeout_user_message("global", chain_timeout)),
-                attempts=redact_sensitive_data(attempts),
+                attempts=redact_channel_attempts(attempts),
             )
 
         label = redact_sensitive_text(target.label)
@@ -167,7 +167,7 @@ async def generate_image_with_fallback(
             if remain <= 1:
                 return ImageGenerateResult(
                     error=redact_sensitive_text(format_timeout_user_message("global", chain_timeout)),
-                    attempts=redact_sensitive_data(attempts),
+                    attempts=redact_channel_attempts(attempts),
                 )
             # The global deadline limits the whole fallback chain. A single
             # image-model request is hard-capped at 180s even if a caller
@@ -192,15 +192,16 @@ async def generate_image_with_fallback(
                 attempt_info["image_count"] = len(result.images)
                 attempts.append(attempt_info)
                 result.used_model = label
-                result.attempts = redact_sensitive_data([*attempts, *getattr(result, "attempts", [])])
+                result.attempts = redact_channel_attempts([*attempts, *getattr(result, "attempts", [])])
                 return result
 
-            error_text = redact_sensitive_text(result.error or "生成失败")
-            class_info = classify_generation_error(error_text)
-            last_error = f"{label}: {class_info.get('user_message') or error_text}"
+            raw_error = str(result.error or "生成失败")
+            safe_error = redact_sensitive_text(raw_error)
+            class_info = classify_generation_error(safe_error)
+            last_error = f"{label}: {class_info.get('user_message') or safe_error}"
             attempt_info["success"] = False
-            attempt_info["error"] = error_text
-            attempt_info["error_user_message"] = str(class_info.get("user_message") or error_text)
+            attempt_info["error"] = raw_error
+            attempt_info["error_user_message"] = str(class_info.get("user_message") or safe_error)
             attempt_info["error_category"] = class_info.get("category")
             attempt_info["retryable"] = bool(class_info.get("retryable"))
             attempt_info["image_count"] = len(result.images or [])
@@ -213,6 +214,6 @@ async def generate_image_with_fallback(
     if time.monotonic() >= deadline:
         return ImageGenerateResult(
             error=redact_sensitive_text(format_timeout_user_message("global", chain_timeout)),
-            attempts=redact_sensitive_data(attempts),
+            attempts=redact_channel_attempts(attempts),
         )
-    return ImageGenerateResult(error=redact_sensitive_text(last_error), attempts=redact_sensitive_data(attempts))
+    return ImageGenerateResult(error=redact_sensitive_text(last_error), attempts=redact_channel_attempts(attempts))

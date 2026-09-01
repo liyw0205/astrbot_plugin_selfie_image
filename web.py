@@ -12,7 +12,7 @@ import re
 import threading
 from typing import Any, Optional
 
-from .utils import redact_sensitive_data, redact_sensitive_text
+from .utils import redact_generation_record, redact_sensitive_data, redact_sensitive_text
 
 
 try:
@@ -4582,7 +4582,11 @@ class FlaskWebServer:
         def records() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            data = redact_sensitive_data(self.plugin.get_recent_records(summary=True))
+            data = [
+                redact_generation_record(item)
+                for item in self.plugin.get_recent_records(summary=True)
+                if isinstance(item, dict)
+            ]
             page, meta, error_response = filtered_record_payload(data)
             if error_response:
                 return error_response
@@ -4596,7 +4600,7 @@ class FlaskWebServer:
             if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
                 return fail("非法记录 ID", 400)
             try:
-                return ok(redact_sensitive_data(self.plugin.get_record_for_web(record_id_text)))
+                return ok(redact_generation_record(self.plugin.get_record_for_web(record_id_text)))
             except Exception as exc:
                 return fail(str(exc), 404)
 

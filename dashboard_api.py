@@ -10,7 +10,7 @@ import json
 from typing import Any, Optional
 
 from .constants import PLUGIN_NAME
-from .utils import redact_sensitive_data, redact_sensitive_text
+from .utils import redact_generation_record, redact_sensitive_data, redact_sensitive_text
 from .web import (
     MAX_CACHE_IMAGE_PATH_LENGTH,
     MAX_RECORD_PAGE_LIMIT,
@@ -419,7 +419,11 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
 
     async def page_records(self) -> Any:
-        data = redact_sensitive_data(self.plugin.get_recent_records(summary=True))
+        data = [
+            redact_generation_record(item)
+            for item in self.plugin.get_recent_records(summary=True)
+            if isinstance(item, dict)
+        ]
         page, meta, error = self._filtered_records(data if isinstance(data, list) else [])
         if error:
             return error
@@ -445,7 +449,7 @@ class SelfieImageDashboardAPI:
         if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
             return self._fail("非法记录 ID", 400)
         try:
-            return self._ok(redact_sensitive_data(self.plugin.get_record_for_web(record_id_text)))
+            return self._ok(redact_generation_record(self.plugin.get_record_for_web(record_id_text)))
         except Exception as exc:
             return self._fail(str(exc), 404)
 
