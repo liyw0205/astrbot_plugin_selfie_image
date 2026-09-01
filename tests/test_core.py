@@ -5793,9 +5793,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 46)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 63)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 46)
+        self.assertEqual(len(web_pool), 63)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -5849,7 +5849,24 @@ class LegFocusTests(unittest.TestCase):
                 "少司缘·红金宽袖",
                 "古风·青绿花卉短襦裙",
                 "古风·淡粉月夜薄纱古装",
+                "白发·黑结挂脖围裙",
+                "古风·青红双丸子烟斗",
+                "古风·粉蓝花卉立领长裙",
                 "和泉纱雾·粉色家居服",
+                "小乔·丁香结",
+                "公孙离·玉兔公主",
+                "貂蝉·原皮",
+                "西施·乘鲤谣",
+                "西施·续相思",
+                "宵宫",
+                "小乔·线条小狗",
+                "雷电将军",
+                "芙宁娜·白蓝礼服",
+                "胡桃·往生堂黑红",
+                "刻晴·紫色短礼服",
+                "甘雨·冰蓝试衣",
+                "可莉·红白童趣",
+                "宵宫·烟花祭典",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -6062,6 +6079,52 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("《埃罗芒阿老师》和泉纱雾风格", sagiri)
         self.assertIn("棕色熊脸保护壳", sagiri)
         self.assertNotIn("不要裸露", sagiri)
+        xiaoqiao_clove = prompts["xiaoqiao_dingxiangjie"]
+        self.assertIn("《王者荣耀》小乔“丁香结”", xiaoqiao_clove)
+        self.assertIn("紫色大蝴蝶结发饰", xiaoqiao_clove)
+        gongsunli_rabbit = prompts["gongsunli_yutu_princess"]
+        self.assertIn("《王者荣耀》公孙离“玉兔公主”", gongsunli_rabbit)
+        self.assertIn("黄色宽腰封", gongsunli_rabbit)
+        diaochan_original = prompts["diaochan_original"]
+        self.assertIn("《王者荣耀》貂蝉原皮", diaochan_original)
+        self.assertIn("蓝色方形宝石", diaochan_original)
+        chengliyiao = prompts["xishi_chengliyiao"]
+        self.assertIn("《王者荣耀》西施“乘鲤谣”", chengliyiao)
+        self.assertIn("银色大型双螺旋", chengliyiao)
+        xuxiangsi = prompts["xishi_xuxiangsi"]
+        self.assertIn("《王者荣耀》西施“续相思”", xuxiangsi)
+        self.assertIn("复杂的银色、青绿色与粉金色莲花形花冠", xuxiangsi)
+        yoimiya = prompts["yoimiya_firework"]
+        self.assertIn("《原神》宵宫风格", yoimiya)
+        self.assertIn("黑色猫耳或兽耳发饰", yoimiya)
+        xiaoqiao_dog = prompts["xiaoqiao_line_dog"]
+        self.assertIn("小乔·线条小狗", xiaoqiao_dog)
+        self.assertIn("粉色爪印徽章", xiaoqiao_dog)
+        raiden = prompts["raiden_shogun_purple"]
+        self.assertIn("《原神》雷电将军风格 COS", raiden)
+        self.assertIn("紫色长发编织成麻花辫", raiden)
+        self.assertIn("雷元素印记", raiden)
+        furina_classic = prompts["furina_classic_blue_white"]
+        self.assertIn("《原神》芙宁娜经典白蓝礼服 COS", furina_classic)
+        self.assertIn("全身镜前", furina_classic)
+        hutao = prompts["hutao_wansheng"]
+        self.assertIn("《原神》胡桃经典黑红短装 COS", hutao)
+        self.assertIn("往生堂礼帽", hutao)
+        keqing = prompts["keqing_purple_dress"]
+        self.assertIn("《原神》刻晴经典紫色 COS", keqing)
+        self.assertIn("猫耳般轮廓", keqing)
+        ganyu_classic = prompts["ganyu_ice_blue"]
+        self.assertIn("《原神》甘雨经典 COS", ganyu_classic)
+        self.assertIn("麒麟角", ganyu_classic)
+        klee = prompts["klee_red_clover"]
+        self.assertIn("《原神》可莉经典 COS", klee)
+        self.assertIn("四叶草", klee)
+        self.assertNotIn("儿童角色必须完全穿衣", klee)
+        self.assertNotIn("不强调身体曲线", klee)
+        self.assertNotIn("不使用性感或成人化姿势", klee)
+        yoimiya_festival = prompts["yoimiya_firework_festival"]
+        self.assertIn("《原神》宵宫经典 COS", yoimiya_festival)
+        self.assertIn("烟花主题发饰", yoimiya_festival)
         for title in (
             "满穗·灰白和风",
             "小乔·白熊围巾",
@@ -6139,7 +6202,10 @@ class LegFocusTests(unittest.TestCase):
         xishi_ids = {item["id"] for item in plugin_main.match_cos_look_sets("西施")}
         self.assertEqual(
             xishi_ids,
-            {"xishi_fan_qipao", "xishi_cyan_qipao", "xishi_shiyu_jiangnan", "xishi_crop_qipao"},
+            {
+                "xishi_fan_qipao", "xishi_cyan_qipao", "xishi_shiyu_jiangnan",
+                "xishi_crop_qipao", "xishi_chengliyiao", "xishi_xuxiangsi",
+            },
         )
         qipao_ids = {item["id"] for item in plugin_main.match_cos_look_sets("旗袍")}
         self.assertEqual(
@@ -6156,7 +6222,31 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("芙宁娜")},
-            {"furina_cream_blue_ruffle"},
+            {"furina_cream_blue_ruffle", "furina_classic_blue_white"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("甘雨")},
+            {"ganyu_bride", "ganyu_ice_blue"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("宵宫")},
+            {"yoimiya_firework"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("宵宫·烟花祭典")},
+            {"yoimiya_firework_festival"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("胡桃")},
+            {"hutao_wansheng"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("刻晴")},
+            {"keqing_purple_dress"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("可莉")},
+            {"klee_red_clover"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("满穗")},
@@ -6214,6 +6304,7 @@ class LegFocusTests(unittest.TestCase):
                 "ancient_hanfu_halter_dudou", "ancient_blue_floral_halter_doudou",
                 "ancient_mint_crystal_halter", "ancient_mint_floral_short_ruqun",
                 "ancient_pink_moon_sheer",
+                "ancient_teal_red_pipe", "ancient_pink_blue_floral_collar",
             },
         )
         self.assertEqual(
@@ -6229,9 +6320,12 @@ class LegFocusTests(unittest.TestCase):
             {"ancient_hanfu_halter_dudou"},
         )
         for query in ("公孙离", "离恨烟", "公孙离·离恨烟"):
+            expected = {"gongsunli_lihenyan"}
+            if query == "公孙离":
+                expected.add("gongsunli_yutu_princess")
             self.assertEqual(
                 {item["id"] for item in plugin_main.match_cos_look_sets(query)},
-                {"gongsunli_lihenyan"},
+                expected,
             )
         self.assertEqual(plugin_main.match_cos_look_sets("离恨"), [])
         self.assertEqual(
@@ -6353,7 +6447,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（46套）：", response[0])
+            self.assertIn("看看COS 随机池（63套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
