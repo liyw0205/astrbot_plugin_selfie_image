@@ -22,7 +22,6 @@ from .utils import (
     detect_mime_by_bytes,
     parse_audit_response_text,
     redact_sensitive_text,
-    resolve_awaitable,
 )
 
 
@@ -150,6 +149,53 @@ class AuditMixin:
             cleaned = fenced.group(1).strip()
         return cleaned[:6000]
 
+    async def _describe_reference_images_for_generation(
+        self,
+        event: Optional[AstrMessageEvent],
+        images: List[bytes],
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Describe reference images for a text-only generation request.
+
+        A configured auxiliary target is preferred.  When it is left empty,
+        use the current AstrBot LLM, which is the same fallback used by the
+        other text features.  Requests without an event still use AstrBot's
+        currently selected provider when the runtime context exposes one.
+        """
+        if not images:
+            return "", {"enabled": True, "applied": False, "reason": "no_images"}
+        instruct = (
+            "请分析参考图片，并输出一段可直接用于图像生成的中文画面描述。"
+            "描述主体、外观、服装、姿势、构图、场景、光线和艺术风格；"
+            "只输出描述正文，不要解释、不要 Markdown、不要猜测图片来源，"
+            "看不清或无法确定的内容不要编造。"
+        )
+        configured = str(getattr(self.config, "image_ocr_model", "") or "").strip()
+        target = self._find_audit_target(configured) if configured else None
+        model = ""
+        text = ""
+        if target is not None:
+            text = await self._audit_chat_via_target(target, instruct, images=images)
+            model = target.label
+        elif event is not None or getattr(self, "context", None) is not None:
+            text = await self._call_text_llm(event, instruct, timeout=30, images=images)
+            model = "astrbot"
+        else:
+            raise RuntimeError("已启用图转文，但未配置图转文模型；当前请求没有可用的 LLM 会话。")
+        cleaned = str(text or "").strip()
+        fenced = re.match(r"^```(?:\w+)?\s*([\s\S]*?)\s*```$", cleaned)
+        if fenced:
+            cleaned = fenced.group(1).strip()
+        cleaned = cleaned[:6000]
+        if not cleaned:
+            raise RuntimeError("图转文模型没有返回有效描述。")
+        return cleaned, {
+            "enabled": True,
+            "applied": True,
+            "model": model,
+            "image_count": len(images),
+            "description": cleaned,
+        }
+
     async def _audit_chat_via_target(self, target: ImageModelTarget, text: str, images: Optional[List[bytes]] = None) -> str:
         images = images or []
         provider_type = str(target.provider_type or "").lower()
@@ -206,37 +252,18 @@ class AuditMixin:
                             return "\n".join(part for part in parts if part).strip()
             return ""
 
-    async def _audit_prompt_via_astrbot(self, event: Optional[AstrMessageEvent], text: str) -> str:
-        if event is None:
-            return ""
-        provider_id = None
-        origin = getattr(event, "unified_msg_origin", None)
-        try:
-            getter = getattr(self.context, "get_using_provider", None)
-            if callable(getter):
-                provider = getter()
-                requester = getattr(provider, "text_chat", None) or getattr(provider, "request", None)
-                if callable(requester):
-                    response = await resolve_awaitable(requester(prompt=text))
-                    return str(getattr(response, "completion_text", response) or "").strip()
-        except Exception:
-            pass
-        try:
-            getter = getattr(self.context, "get_current_chat_provider_id", None)
-            if callable(getter):
-                provider_id = await getter(umo=origin) if origin else await getter()
-        except Exception:
-            provider_id = None
-        try:
-            generator = getattr(self.context, "llm_generate", None)
-            if callable(generator):
-                kwargs = {"prompt": text}
-                if provider_id:
-                    kwargs["chat_provider_id"] = provider_id
-                response = await generator(**kwargs)
-                return str(getattr(response, "completion_text", response) or "").strip()
-        except Exception:
-            return ""
+    async def _audit_prompt_via_astrbot(
+        self,
+        event: Optional[AstrMessageEvent],
+        text: str,
+        images: Optional[List[bytes]] = None,
+    ) -> str:
+        """Call the currently selected AstrBot LLM for auxiliary work."""
+        caller = getattr(self, "_call_text_llm", None)
+        if callable(caller):
+            return str(
+                await caller(event, text, timeout=30, images=images)
+            ).strip()
         return ""
 
     async def _audit_prompt(self, prompt: str, user_id: str = "", event: Optional[AstrMessageEvent] = None) -> Tuple[bool, str]:
@@ -253,10 +280,8 @@ class AuditMixin:
             target = self._find_audit_target(self.config.image_prompt_audit_model)
             if target:
                 text = await self._audit_chat_via_target(target, audit_prompt)
-            elif event is not None:
-                text = await self._audit_prompt_via_astrbot(event, audit_prompt)
             else:
-                return False, "未配置可用提示词审核模型"
+                text = await self._audit_prompt_via_astrbot(event, audit_prompt)
         except Exception as exc:
             return False, str(exc)
         return self._parse_audit_response(text)
@@ -270,15 +295,16 @@ class AuditMixin:
             return False, "没有待审核图片"
 
         target = self._find_audit_target(self.config.image_output_audit_model)
-        if target is None:
-            return False, "未配置可用出图审核模型"
         images: List[bytes] = []
         for file_path in files:
             with open(file_path, "rb") as handle:
                 images.append(handle.read())
         audit_prompt = self.config.image_output_audit_template.replace("{prompt}", str(prompt or ""))
         try:
-            text = await self._audit_chat_via_target(target, audit_prompt, images=images)
+            if target is not None:
+                text = await self._audit_chat_via_target(target, audit_prompt, images=images)
+            else:
+                text = await self._audit_prompt_via_astrbot(event, audit_prompt, images=images)
         except Exception as exc:
             return False, str(exc)
         return self._parse_audit_response(text)
@@ -343,12 +369,9 @@ class AuditMixin:
             if target:
                 text = await self._audit_chat_via_target(target, instruct)
                 meta["model"] = target.label
-            elif event is not None:
+            else:
                 text = await self._audit_prompt_via_astrbot(event, instruct)
                 meta["model"] = "astrbot"
-            else:
-                meta["error"] = "no_translate_model"
-                return raw, meta
             cleaned = parse_prompt_en_response(text)
             if not cleaned:
                 meta["error"] = "translate_parse_failed"

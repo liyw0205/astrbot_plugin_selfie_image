@@ -615,8 +615,6 @@ class SelfieImagePlugin(
         timeout: int = 8,
         images: Optional[List[bytes]] = None,
     ) -> str:
-        if event is None:
-            return ""
         image_urls = [
             bytes_to_data_url(image, detect_mime_by_bytes(image))
             for image in (images or [])
@@ -1072,6 +1070,7 @@ class SelfieImagePlugin(
             return {"success": False, "error": "所有生图渠道暂时冷却中，请稍后重试或清除渠道健康状态"}
         selected_targets = healthy_targets or selected_targets
         request_prompt = str(prompt or "")
+        plain_request_prompt = request_prompt
         original_prompt = str(original_prompt or request_prompt)
         # Leg-focus actions are normalized into a neutral outfit prompt before generation.
         # Audit that effective prompt so command labels do not create false positives.
@@ -1083,6 +1082,74 @@ class SelfieImagePlugin(
         audit_prompt_text = request_prompt if is_leg_focus_request else (original_prompt or request_prompt)
         source_meta = self._source_context(event, source, audit_user_id)
         request_image_paths = self._save_reference_images_to_cache(refs)
+        image_to_text_targets = [
+            target
+            for target in selected_targets
+            if bool((getattr(target, "extra", {}) or {}).get("image_to_text_enabled"))
+        ]
+        image_to_text_meta: Dict[str, Any] = {
+            "enabled": bool(refs and image_to_text_targets),
+            "applied": False,
+            "target_count": len(image_to_text_targets),
+        }
+        if refs and image_to_text_targets:
+            try:
+                reference_description, image_to_text_meta = await self._describe_reference_images_for_generation(
+                    event, [ref.data for ref in refs if ref and ref.data]
+                )
+                # Keep the user's instruction intact while making the visual
+                # details available to models that receive a text-only request.
+                request_prompt = "\n\n".join(
+                    part for part in (
+                        request_prompt.strip(),
+                        f"参考图内容描述：{reference_description}",
+                    ) if part
+                )
+                audit_prompt_text = request_prompt
+            except Exception as exc:
+                error = f"图转文失败：{redact_sensitive_text(str(exc))}"
+                image_to_text_meta = {
+                    **image_to_text_meta,
+                    "applied": False,
+                    "error": redact_sensitive_text(str(exc)),
+                }
+                plain_targets = [target for target in selected_targets if target not in image_to_text_targets]
+                if plain_targets:
+                    # A failed helper must not block fallback models that still
+                    # support ordinary image-to-image requests.
+                    selected_targets = plain_targets
+                    image_to_text_targets = []
+                else:
+                    response_data = {"success": False, "stage": "image_to_text", "error": error}
+                    request_data = {
+                        "original_prompt": original_prompt,
+                        "request_prompt": request_prompt,
+                        "audit_prompt": audit_prompt_text,
+                        "aspect_ratio": aspect_ratio,
+                        "resolution": resolution,
+                        "reference_image_count": len(refs),
+                        "request_image_paths": request_image_paths,
+                        "targets": [redact_sensitive_text(target.label) for target in selected_targets],
+                        "image_to_text": image_to_text_meta,
+                    }
+                    self._record_task(
+                        {
+                            **source_meta,
+                            "success": False,
+                            "error": error,
+                            "prompt": request_prompt,
+                            "original_prompt": original_prompt,
+                            "request_prompt": request_prompt,
+                            "used_model": "",
+                            "elapsed_seconds": 0,
+                            "reference_images": len(refs),
+                            "request_data": request_data,
+                            "response_data": response_data,
+                            "request_image_paths": request_image_paths,
+                            "generated_image_paths": [],
+                        }
+                    )
+                    return {"success": False, "error": error, "request_data": request_data, "response_data": response_data}
         request_data = {
             "original_prompt": original_prompt,
             "request_prompt": request_prompt,
@@ -1092,6 +1159,7 @@ class SelfieImagePlugin(
             "reference_image_count": len(refs),
             "request_image_paths": request_image_paths,
             "targets": [redact_sensitive_text(target.label) for target in selected_targets],
+            "image_to_text": image_to_text_meta,
         }
         if prompt_en_meta:
             request_data["prompt_en"] = dict(prompt_en_meta)
@@ -1127,7 +1195,10 @@ class SelfieImagePlugin(
             return {"success": False, "error": f"提示词审核未通过：{audit_reason}"}
 
         # Optional: translate final image prompt to English for models weak on Chinese.
-        if prompt_en_meta is None and self._prompt_en_needed(request_prompt, media="image"):
+        if (
+            (prompt_en_meta is None or image_to_text_meta.get("applied"))
+            and self._prompt_en_needed(request_prompt, media="image")
+        ):
             translated, en_meta = await self._translate_prompt_to_english(
                 request_prompt, media="image", event=event
             )
@@ -1170,6 +1241,20 @@ class SelfieImagePlugin(
             allow_compat_retry=allow_compat_retry,
             max_image_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
         )
+
+        def request_for_target(target: ImageModelTarget) -> ImageGenerateRequest:
+            use_text_description = bool(
+                (getattr(target, "extra", {}) or {}).get("image_to_text_enabled") and refs
+            )
+            return ImageGenerateRequest(
+                prompt=request_prompt if use_text_description else plain_request_prompt,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                images=[] if use_text_description else refs,
+                allow_compat_retry=allow_compat_retry,
+                max_image_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
+            )
+
         started = time.monotonic()
         # trust_env=False: channel.proxy is explicit; do not inherit process HTTP(S)_PROXY
         # (common on ops hosts) and silently stall NewAPI image downloads/posts.
@@ -1180,9 +1265,32 @@ class SelfieImagePlugin(
                 None,
                 max_attempts=max_attempts,
                 global_timeout=self.config.image_global_timeout,
+                request_factory=request_for_target if image_to_text_targets else None,
             )
         elapsed = time.monotonic() - started
         self._record_channel_health(result.attempts)
+
+        if not result.error and result.images:
+            used_target = next(
+                (
+                    target
+                    for target in selected_targets
+                    if redact_sensitive_text(target.label) == result.used_model
+                ),
+                None,
+            )
+            used_image_to_text = bool(
+                used_target
+                and refs
+                and (getattr(used_target, "extra", {}) or {}).get("image_to_text_enabled")
+            )
+            request_data["image_to_text"]["used_by_model"] = used_image_to_text
+            if not used_image_to_text:
+                request_prompt = plain_request_prompt
+                request_data["request_prompt"] = plain_request_prompt
+                request_data["composition"] = self._composition_metadata(
+                    plain_request_prompt, source, aspect_ratio, resolution, len(refs)
+                )
 
         if result.error or not result.images:
             response_data = {

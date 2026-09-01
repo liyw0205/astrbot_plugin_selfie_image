@@ -184,6 +184,8 @@ class ImageChannelConfig:
     model: str
     enabled: bool = True
     enabled_models: List[str] = field(default_factory=list)
+    # Enabled image models that should first turn reference images into text.
+    image_to_text_models: List[str] = field(default_factory=list)
     model_provider_types: Dict[str, str] = field(default_factory=dict)
     model_download_proxy_ids: Dict[str, str] = field(default_factory=dict)
     models_cache: List[str] = field(default_factory=list)
@@ -229,6 +231,7 @@ class ImageChannelConfig:
                     protocol_lock=lock,
                 )
             extra = copy.deepcopy(self.extra)
+            extra["image_to_text_enabled"] = model in self.image_to_text_models
             # Per-model download-only proxy (result URL fetch). Request still uses channel proxy.
             dl_id = str((self.model_download_proxy_ids or {}).get(model) or "").strip()
             if dl_id:
@@ -374,6 +377,8 @@ class AICatConfig:
                 ch = by_name.get(name)
                 if not ch:
                     continue
+                if key == "image_channels":
+                    item["image_to_text_models"] = list(ch.image_to_text_models)
                 if ch.proxy_id:
                     item["proxy_id"] = ch.proxy_id
                 # Keep resolved URL only for runtime compatibility; UI uses proxy_id.
@@ -794,6 +799,40 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
     if model and not enabled_models:
         enabled_models = [model]
 
+    image_to_text_models: List[str] = []
+    raw_image_to_text = (
+        raw.get("image_to_text_models")
+        or raw.get("imageToTextModels")
+        or raw.get("ocr_models")
+        or raw.get("ocrModels")
+        or []
+    )
+    for item in as_list(raw_image_to_text):
+        if isinstance(item, dict):
+            name = str(item.get("id") or item.get("model") or item.get("name") or "").strip()
+            enabled = to_bool(item.get("enabled"), True)
+        else:
+            name = str(item or "").strip()
+            enabled = True
+        if name and enabled:
+            image_to_text_models.append(name)
+    # Also accept the per-model object form used by older/custom UIs.
+    for item in as_list(raw.get("enabled_models") or raw.get("enabledModels")):
+        if not isinstance(item, dict) or not to_bool(item.get("enabled"), True):
+            continue
+        name = str(item.get("id") or item.get("model") or item.get("name") or "").strip()
+        if name and to_bool(
+            item.get("image_to_text")
+            if "image_to_text" in item
+            else item.get("imageToText")
+            if "imageToText" in item
+            else item.get("ocr"),
+            False,
+        ):
+            image_to_text_models.append(name)
+    enabled_set = set(enabled_models)
+    image_to_text_models = unique_values([name for name in image_to_text_models if name in enabled_set])
+
     download_proxy_ids: Dict[str, str] = {}
     raw_dl = raw.get("model_download_proxy_ids") or raw.get("modelDownloadProxyIds") or raw.get("download_proxy_ids") or {}
     if isinstance(raw_dl, dict):
@@ -814,6 +853,7 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
         model=model or (enabled_models[0] if enabled_models else ""),
         enabled=to_bool(raw.get("enabled"), True),
         enabled_models=unique_values(enabled_models),
+        image_to_text_models=image_to_text_models,
         model_provider_types={model: provider for model, provider in model_provider_types.items() if model in set(enabled_models)},
         model_download_proxy_ids=download_proxy_ids,
         models_cache=split_values(raw.get("models_cache") or raw.get("modelsCache") or raw.get("available_models")),

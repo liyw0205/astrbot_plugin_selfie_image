@@ -381,6 +381,42 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(config.get_prioritized_targets()[0].timeout, LOCAL_IMAGE_WAIT_SECONDS)
         self.assertEqual(config.get_prioritized_video_targets()[0].timeout, 320)
 
+    def test_image_to_text_models_are_normalized_and_mark_targets(self) -> None:
+        config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "image",
+                        "provider_type": "openai",
+                        "base_url": "https://image.test",
+                        "api_key": "sk-test",
+                        "enabled_models": ["plain", "describe-first"],
+                        "image_to_text_models": ["describe-first", "disabled-model"],
+                    }
+                ]
+            }
+        )
+
+        channel = config.image_channels[0]
+        self.assertEqual(channel.image_to_text_models, ["describe-first"])
+        self.assertEqual(
+            config.raw["image_channels"][0]["image_to_text_models"],
+            ["describe-first"],
+        )
+        targets = {target.model: target for target in channel.targets(180)}
+        self.assertFalse(targets["plain"].extra["image_to_text_enabled"])
+        self.assertTrue(targets["describe-first"].extra["image_to_text_enabled"])
+
+    def test_dashboard_exposes_image_to_text_controls_and_auxiliary_labels(self) -> None:
+        html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
+        for doc in (html, INDEX_HTML):
+            self.assertIn("model-image-to-text", doc)
+            self.assertIn("image_to_text_models", doc)
+            self.assertIn("图转文模型", doc)
+            self.assertIn("留空时使用当前 LLM", doc)
+            self.assertIn("辅助功能", doc)
+            self.assertIn("加辅助渠道", doc)
+
     def test_numeric_config_is_clamped(self) -> None:
         config = AICatConfig.from_dict({"image": {"max_batch_count": 99, "max_concurrent_tasks": 0}})
         self.assertEqual(config.image_max_batch_count, 20)
@@ -3295,6 +3331,41 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fallback_builds_a_separate_request_for_each_target(self) -> None:
+        first = make_target("openai", "describe-first")
+        second = make_target("openai", "plain-edit")
+        calls = []
+
+        async def fake_try_model(active, request, budget, session):
+            calls.append((active.model, request.prompt, len(request.images)))
+            if active.model == "describe-first":
+                return ImageGenerateResult(error="temporary failure")
+            return ImageGenerateResult(images=[PNG_BYTES])
+
+        reference = ImageReference(data=PNG_BYTES, mime_type="image/png")
+        base_request = ImageGenerateRequest(prompt="original", images=[reference])
+
+        def request_factory(target):
+            if target.model == "describe-first":
+                return ImageGenerateRequest(prompt="original\n\n参考图内容描述：红衣人物", images=[])
+            return ImageGenerateRequest(prompt="original", images=[reference])
+
+        with patch("astrbot_plugin_selfie_image.generator._try_model", side_effect=fake_try_model):
+            result = await generate_image_with_fallback(
+                [first, second],
+                base_request,
+                FakeSession(),
+                request_factory=request_factory,
+            )
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(
+            calls,
+            [
+                ("describe-first", "original\n\n参考图内容描述：红衣人物", 0),
+                ("plain-edit", "original", 1),
+            ],
+        )
     async def test_fallback_caps_each_model_request_at_180_seconds(self) -> None:
         target = make_target("openai", "gpt-image-2")
         target.timeout = 280
@@ -4317,6 +4388,202 @@ class SessionModelAndTaskTests(unittest.TestCase):
         plugin._set_session_model_override(Ev(), "")
         ordered2 = plugin._resolve_generation_targets(Ev())
         self.assertEqual(ordered2[0].label, "secondary/alt-model")
+
+    def test_image_to_text_uses_configured_auxiliary_model(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config = AICatConfig.from_dict(
+            {
+                "image": {"ocr_model": "vision/qwen-vl"},
+                "audit_channels": [
+                    {
+                        "name": "vision",
+                        "provider_type": "openai",
+                        "base_url": "https://vision.test",
+                        "api_key": "sk-test",
+                        "enabled_models": ["qwen-vl"],
+                    }
+                ],
+            }
+        )
+        calls = []
+
+        async def via_target(target, prompt, images=None):
+            calls.append((target.label, images))
+            return "```\n红色外套人物，室内自然光\n```"
+
+        plugin._audit_chat_via_target = via_target
+        plugin._call_text_llm = lambda *_args, **_kwargs: self.fail("unexpected current LLM call")
+
+        description, meta = asyncio.run(
+            plugin._describe_reference_images_for_generation(object(), [PNG_BYTES])
+        )
+
+        self.assertEqual(description, "红色外套人物，室内自然光")
+        self.assertEqual(meta["model"], "vision/qwen-vl")
+        self.assertEqual(calls, [("vision/qwen-vl", [PNG_BYTES])])
+
+    def test_image_to_text_without_model_uses_current_llm(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config = AICatConfig.from_dict({"image": {"ocr_model": ""}})
+        event = object()
+        calls = []
+
+        async def current_llm(actual_event, prompt, timeout=8, images=None):
+            calls.append((actual_event, timeout, images))
+            return "人物侧身站立，暖光背景"
+
+        plugin._call_text_llm = current_llm
+        plugin._audit_chat_via_target = lambda *_args, **_kwargs: self.fail("unexpected auxiliary model call")
+
+        description, meta = asyncio.run(
+            plugin._describe_reference_images_for_generation(event, [PNG_BYTES])
+        )
+
+        self.assertEqual(description, "人物侧身站立，暖光背景")
+        self.assertEqual(meta["model"], "astrbot")
+        self.assertEqual(calls, [(event, 30, [PNG_BYTES])])
+
+    def test_prompt_audit_without_model_uses_current_llm(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config = AICatConfig.from_dict(
+            {"image": {"enable_prompt_audit": True, "prompt_audit_model": ""}}
+        )
+        plugin._validate_prompt = lambda *_args: ""
+        plugin._is_audit_exempt = lambda *_args: False
+        calls = []
+
+        async def current_llm(event, prompt, timeout=8, images=None):
+            calls.append((event, timeout, images))
+            return '{"allow":true,"reason":""}'
+
+        plugin._call_text_llm = current_llm
+        allowed, reason = asyncio.run(plugin._audit_prompt("cat", event=None))
+
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "")
+        self.assertEqual(calls, [(None, 30, None)])
+
+    def test_output_audit_without_model_uses_current_llm_with_images(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config = AICatConfig.from_dict(
+            {"image": {"enable_output_audit": True, "output_audit_model": ""}}
+        )
+        plugin._is_audit_exempt = lambda *_args: False
+        calls = []
+        with tempfile.NamedTemporaryFile(suffix=".png") as handle:
+            handle.write(PNG_BYTES)
+            handle.flush()
+
+            async def current_llm(event, prompt, timeout=8, images=None):
+                calls.append((event, timeout, images))
+                return '{"allow":true,"reason":""}'
+
+            plugin._call_text_llm = current_llm
+            allowed, reason = asyncio.run(
+                plugin._audit_output_images([handle.name], event=None)
+            )
+
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "")
+        self.assertEqual(calls, [(None, 30, [PNG_BYTES])])
+
+    def test_translation_without_model_uses_current_llm(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config = AICatConfig.from_dict(
+            {
+                "image": {
+                    "enable_image_prompt_en": True,
+                    "prompt_en_mode": "always",
+                    "prompt_en_model": "",
+                    "prompt_audit_model": "",
+                }
+            }
+        )
+        calls = []
+
+        async def current_llm(event, prompt, timeout=8, images=None):
+            calls.append((event, timeout, images))
+            return '{"ok":true,"en":"a natural portrait"}'
+
+        plugin._call_text_llm = current_llm
+        translated, meta = asyncio.run(
+            plugin._translate_prompt_to_english("一位自然的人像", event=None)
+        )
+
+        self.assertEqual(translated, "a natural portrait")
+        self.assertTrue(meta["applied"])
+        self.assertEqual(meta["model"], "astrbot")
+        self.assertEqual(calls, [(None, 30, None)])
+
+    def test_image_generation_converts_only_enabled_targets_to_text_requests(self) -> None:
+        plugin = self._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        plugin.config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "image",
+                        "provider_type": "openai",
+                        "base_url": "https://image.test",
+                        "api_key": "sk-test",
+                        "enabled_models": ["describe-first", "plain-edit"],
+                        "image_to_text_models": ["describe-first"],
+                    }
+                ]
+            }
+        )
+        targets = plugin.config.get_prioritized_targets()
+        reference = ImageReference(data=PNG_BYTES, mime_type="image/png")
+        captured = []
+
+        plugin._channel_is_healthy = lambda _name: True
+        plugin._save_reference_images_to_cache = lambda _refs: []
+        plugin._source_context = lambda *_args, **_kwargs: {}
+        plugin._cleanup_image_cache_if_needed = lambda _paths: {}
+        plugin._composition_metadata = lambda *_args, **_kwargs: {}
+        plugin._record_task = lambda _record: None
+        plugin._record_channel_health = lambda _attempts: None
+        plugin._semaphore = asyncio.Semaphore(1)
+
+        async def describe(_event, images):
+            self.assertEqual(images, [PNG_BYTES])
+            return "红衣人物，室内暖光", {"enabled": True, "applied": True, "model": "astrbot"}
+
+        async def audit(_prompt, _user_id, _event):
+            return True, ""
+
+        async def fake_generate(selected, request, session, **kwargs):
+            factory = kwargs["request_factory"]
+            for target in selected:
+                prepared = factory(target)
+                captured.append((target.model, prepared.prompt, len(prepared.images)))
+            return ImageGenerateResult(error="test stop", attempts=[])
+
+        plugin._describe_reference_images_for_generation = describe
+        plugin._audit_prompt = audit
+        plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+
+        with patch.object(plugin_main, "generate_image_with_fallback", side_effect=fake_generate):
+            result = asyncio.run(
+                plugin._run_image_generation(
+                    "保持人物神态",
+                    "9:16",
+                    "1K",
+                    [reference],
+                    targets=targets,
+                    event=object(),
+                )
+            )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(
+            captured,
+            [
+                ("describe-first", "保持人物神态\n\n参考图内容描述：红衣人物，室内暖光", 0),
+                ("plain-edit", "保持人物神态", 1),
+            ],
+        )
 
     def test_cancel_image_task_session_isolation(self) -> None:
         plugin = self._plugin_stub()

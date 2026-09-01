@@ -227,6 +227,9 @@
       .model-row.with-provider .model-controls { grid-template-columns: minmax(0, 1fr); }
     }
     .model-row .name { min-width: 0; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; white-space: normal; font-weight: 650; }
+    .model-name-stack { min-width: 0; display: grid; gap: 5px; align-content: center; }
+    .model-feature { display: inline-flex; align-items: center; gap: 5px; width: fit-content; color: var(--muted); font-size: 11px; font-weight: 600; }
+    .model-feature input { width: auto; margin: 0; }
     .model-row .actions { margin-top: 0; }
     .mini { padding: 5px 8px; font-size: 12px; }
     .table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -665,7 +668,7 @@
       <button data-tab="test" type="button">快速试画</button>
       <button data-tab="image" type="button">出图设置</button>
       <button data-tab="selfie" type="button">形象参考</button>
-      <button data-tab="audit" type="button">审核与翻译</button>
+      <button data-tab="audit" type="button">辅助功能</button>
       <button data-tab="raw" type="button">高级配置</button>
     </nav>
     <div class="topline">
@@ -720,14 +723,14 @@
         <h2>渠道</h2>
         <div class="actions" style="margin-top:0">
           <button class="secondary" type="button" onclick="addChannel()">加生图渠道</button>
-          <button class="secondary" type="button" onclick="addAuditChannel()">加审核渠道</button>
+          <button class="secondary" type="button" onclick="addAuditChannel()">加辅助渠道</button>
           <button class="secondary" type="button" onclick="addVideoChannel()">加视频渠道</button>
         </div>
       </div>
       <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。新建/编辑渠道点「保存渠道」才写入；列表里启停会马上保存，删除、复制和优先级也会自动保存。启用但没选模型时会自动关掉该渠道。</p>
       <div class="tabs-inline" role="tablist" aria-label="渠道分类">
         <button id="channelTabImage" class="active" type="button" onclick="switchChannelPane('image')">生图渠道</button>
-        <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">审核渠道</button>
+        <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">辅助渠道</button>
         <button id="channelTabVideo" type="button" onclick="switchChannelPane('video')">视频渠道</button>
       </div>
       <div id="channelPaneImage" class="channel-pane active"><div id="channelList"></div></div>
@@ -745,10 +748,10 @@
         <div id="priorityRows" class="model-list"></div>
       </div>
       <div class="priority-block" data-priority-kind="audit">
-        <h3>审核模型优先级</h3>
-        <p class="muted">只控制审核渠道；提示词审核、成品审核按此顺序寻找可用模型。</p>
+        <h3>辅助模型优先级</h3>
+        <p class="muted">只控制辅助渠道；文字审核、成品审核、图转文和翻译按此顺序寻找可用模型。</p>
         <div class="grid">
-          <div><label>选择审核模型</label><select id="auditPriorityPicker"></select></div>
+          <div><label>选择辅助模型</label><select id="auditPriorityPicker"></select></div>
           <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" onclick="addPriority('audit')">加入</button><button class="secondary" type="button" onclick="clearPriority('audit')">清空</button></div></div>
         </div>
         <textarea id="auditPriorityList" style="display:none"></textarea>
@@ -969,19 +972,19 @@
     </section>
 
     <section id="audit">
-      <h2>审核</h2>
+      <h2>辅助功能</h2>
       <div class="grid">
         <label class="checkline"><input id="enablePromptAudit" type="checkbox"> 出图前审文字</label>
         <label class="checkline"><input id="enableOutputAudit" type="checkbox"> 出图后审成品</label>
         <div><label>文字审核模型</label><select id="promptAuditModel"></select></div>
         <div><label>成品审核模型</label><select id="outputAuditModel"></select></div>
-        <div><label>识图模型</label><select id="ocrModel"></select></div>
+        <div><label>图转文模型</label><select id="ocrModel"></select><div class="muted">留空时使用当前 LLM</div></div>
       </div>
       <label>文字屏蔽词</label><textarea id="blockedWords"></textarea>
       <label>文字审核说明</label><textarea id="promptAuditTemplate"></textarea>
       <label>成品审核说明</label><textarea id="outputAuditTemplate"></textarea>
       <h3 style="margin-top:18px">提示词转英文</h3>
-      <p class="muted">部分模型对中文不友好。开启后，在真正请求渠道前把提示词译成英文；原文仍记入记录。走审核渠道对话模型，失败则保留原文。</p>
+      <p class="muted">部分模型对中文不友好。开启后，在真正请求渠道前把提示词译成英文；原文仍记入记录。走辅助渠道对话模型，失败则保留原文。</p>
       <div class="grid">
         <label class="checkline"><input id="enableImagePromptEn" type="checkbox"> 生图提示词转英文</label>
         <label class="checkline"><input id="enableVideoPromptEn" type="checkbox"> 视频提示词转英文</label>
@@ -995,7 +998,7 @@
       </div>
       <label>生图翻译说明</label><textarea id="imagePromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
       <label>视频翻译说明</label><textarea id="videoPromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
-      <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核请选能看图的模型。转英文与审核共用审核渠道模型。</div>
+      <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核和图转文请选能看图的模型；留空时使用当前 LLM。转英文与辅助功能共用辅助渠道模型。</div>
     </section>
 
     <section id="raw">
@@ -1712,6 +1715,34 @@ Source prompt:
       ch.model_download_proxy_ids = out;
       return ch;
     }
+    function collectModelImageToTextModels(ch, enabled) {
+      const enabledSet = new Set(enabled || []);
+      const out = new Set();
+      const sources = [ch.image_to_text_models, ch.imageToTextModels, ch.ocr_models, ch.ocrModels];
+      for (const source of sources) {
+        if (Array.isArray(source)) {
+          for (const item of source) {
+            const name = modelId(item);
+            if (name && enabledSet.has(name) && (typeof item !== 'object' || item.enabled !== false)) out.add(name);
+          }
+        } else if (source && typeof source === 'object') {
+          for (const [name, value] of Object.entries(source)) {
+            if (enabledSet.has(name) && !!value) out.add(name);
+          }
+        }
+      }
+      for (const item of ch.enabled_models || ch.enabledModels || []) {
+        if (!item || typeof item !== 'object') continue;
+        const name = modelId(item);
+        if (name && enabledSet.has(name) && !!(item.image_to_text ?? item.imageToText ?? item.ocr)) out.add(name);
+      }
+      return Array.from(out);
+    }
+    function compactModelImageToTextModels(ch) {
+      const enabledSet = new Set(ch.enabled_models || []);
+      ch.image_to_text_models = uniq((ch.image_to_text_models || []).filter(model => enabledSet.has(model)));
+      return ch;
+    }
     function collectModelProviderTypes(ch, enabled) {
       const enabledSet = new Set(enabled || []);
       const out = {};
@@ -1760,6 +1791,7 @@ Source prompt:
         model: String(ch.model || enabled[0] || '').trim(),
         enabled: !(ch.enabled === false || ch.enabled === 'false' || ch.enabled === 0),
         enabled_models: enabled,
+        image_to_text_models: collectModelImageToTextModels(ch, enabled),
         model_download_proxy_ids: collectModelDownloadProxyIds(ch, enabled),
         model_provider_types: collectModelProviderTypes(Object.assign({}, ch, {provider_type: providerType}), enabled),
         models_cache: cache,
@@ -1809,6 +1841,7 @@ Source prompt:
     function setChannelEnabledModels(ch, list) {
       ch.enabled_models = uniq(list);
       ch.model = ch.enabled_models[0] || '';
+      compactModelImageToTextModels(ch);
       compactModelProviderTypes(ch);
       softDisableChannelIfNoModels(ch);
     }
@@ -1996,7 +2029,7 @@ Source prompt:
     }
     function renderAuditChannels() {
       normalizeAuditChannels();
-      renderChannelCards('auditChannelList', CONFIG.audit_channels || [], 'audit', '还没有审核渠道。');
+      renderChannelCards('auditChannelList', CONFIG.audit_channels || [], 'audit', '还没有辅助渠道。');
     }
     function renderVideoChannels() {
       normalizeVideoChannels();
@@ -2041,6 +2074,7 @@ Source prompt:
         model: (enabled[0] || source.model || ''),
         enabled: $('modalEnabled').checked,
         enabled_models: enabled,
+        image_to_text_models: collectModalImageToTextModels(enabled),
         model_provider_types: collectModalProviderTypes(enabled),
         model_download_proxy_ids: collectModalDownloadProxyIds(enabled),
         models_cache: source.models_cache || []
@@ -2056,6 +2090,16 @@ Source prompt:
         const model = String(row.querySelector('.name')?.textContent || '').trim();
         const pid = String(row.querySelector('.model-download-proxy')?.value || '').trim();
         if (model && enabledSet.has(model) && pid) out[model] = pid;
+      });
+      return out;
+    }
+    function collectModalImageToTextModels(enabled) {
+      const enabledSet = new Set(enabled || []);
+      const out = [];
+      document.querySelectorAll('#enabledModels .model-row').forEach(row => {
+        const model = String(row.querySelector('.name')?.textContent || '').trim();
+        const checkbox = row.querySelector('.model-image-to-text');
+        if (model && enabledSet.has(model) && checkbox?.checked) out.push(model);
       });
       return out;
     }
@@ -2107,7 +2151,7 @@ Source prompt:
       }
       const titles = {
         image: isNew ? '新建生图渠道' : '编辑生图渠道',
-        audit: isNew ? '新建审核渠道' : '编辑审核渠道',
+        audit: isNew ? '新建辅助渠道' : '编辑辅助渠道',
         video: isNew ? '新建视频渠道' : '编辑视频渠道',
       };
       $('channelModalTitle').textContent = titles[EDITING_CHANNEL_KIND] || (isNew ? '新建渠道' : '编辑渠道');
@@ -2222,7 +2266,10 @@ Source prompt:
       }).join('') || '<div class="muted">没有匹配的缓存模型。</div>';
       $('enabledModels').innerHTML = enabled.map((item, i) => `
         <div class="model-row with-provider with-provider-download">
-          <div class="name" title="${escapeHtml(item)}">${escapeHtml(item)}</div>
+          <div class="model-name-stack">
+            <div class="name" title="${escapeHtml(item)}">${escapeHtml(item)}</div>
+            ${EDITING_CHANNEL_KIND === 'image' ? `<label class="model-feature"><input class="model-image-to-text" type="checkbox" ${((ch.image_to_text_models || []).includes(item)) ? 'checked' : ''} onchange="setModelImageToText(${i}, this.checked)">图转文</label>` : ''}
+          </div>
           <div class="model-controls">
             ${modelProviderSelectHtml(ch, item, i)}
             ${modelDownloadProxySelectHtml(ch, item, i)}
@@ -2233,6 +2280,21 @@ Source prompt:
             <button class="danger mini" type="button" onclick="removeEnabledModel('${escapeJs(item)}')">移除</button>
           </div>
         </div>`).join('') || '<div class="muted">还没有启用模型。</div>';
+    }
+    function setModelImageToText(index, enabled) {
+      const ch = currentModalChannel();
+      const model = (ch.enabled_models || [])[index] || '';
+      if (!model) return;
+      ch.image_to_text_models ||= [];
+      if (enabled) {
+        if (!ch.image_to_text_models.includes(model)) ch.image_to_text_models.push(model);
+      } else {
+        ch.image_to_text_models = ch.image_to_text_models.filter(item => item !== model);
+      }
+      compactModelImageToTextModels(ch);
+      storeModalChannel(ch);
+      CHANNEL_MODAL_DIRTY = true;
+      renderModalModels(ch);
     }
     function modelDownloadProxySelectHtml(ch, model, index) {
       const selected = String(((ch.model_download_proxy_ids || {})[model]) || '').trim();
@@ -2528,7 +2590,7 @@ Source prompt:
           <button class="secondary mini" type="button" onclick="movePriority('${kind}', ${i}, -1)">上移</button>
           <button class="secondary mini" type="button" onclick="movePriority('${kind}', ${i}, 1)">下移</button>
           <button class="danger mini" type="button" onclick="removePriority('${kind}', ${i})">移除</button>
-        </div></div>`).join('') || `<div class="muted">未设置${kind === 'image' ? '生图' : kind === 'audit' ? '审核' : '视频'}优先级时按启用顺序尝试。</div>`;
+        </div></div>`).join('') || `<div class="muted">未设置${kind === 'image' ? '生图' : kind === 'audit' ? '辅助' : '视频'}优先级时按启用顺序尝试。</div>`;
     }
     function renderAllPriorityRows() {
       for (const kind of ['image','audit','video']) {

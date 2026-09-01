@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 
@@ -137,6 +137,7 @@ async def generate_image_with_fallback(
     session: Optional[aiohttp.ClientSession] = None,
     max_attempts: Optional[int] = None,
     global_timeout: Optional[int] = None,
+    request_factory: Optional[Callable[[ImageModelTarget], ImageGenerateRequest]] = None,
 ) -> ImageGenerateResult:
     if not targets:
         return ImageGenerateResult(error="未配置生图模型")
@@ -181,7 +182,8 @@ async def generate_image_with_fallback(
             attempt_info["timeout_seconds"] = budget
             started = time.monotonic()
             active = _target_with_api_key(target, api_key) if api_key else target
-            result = await _try_model(active, req, budget, session)
+            active_req = request_factory(target) if request_factory is not None else req
+            result = await _try_model(active, active_req, budget, session)
             wall = time.monotonic() - started
             elapsed = round(min(wall, float(budget)), 2)
             attempt_info["elapsed_seconds"] = elapsed
