@@ -6463,7 +6463,7 @@ class LegFocusTests(unittest.TestCase):
             "qiong_white_gaming_room": ("穹白色电竞房短裙造型", "黑色电竞椅"),
             "change_luoxingzhan_close": ("《王者荣耀》嫦娥", "大型银金色弯月胸甲"),
             "luna_frost_moon_mirror": ("《王者荣耀》露娜", "银色交叉绑带"),
-            "shaoluo_pink_white_rabbit": ("少萝粉白兔系短装", "白色兔子卡通面具"),
+            "shaoluo_pink_white_rabbit": ("少萝粉白兔系短装", "白色兔耳发饰"),
             "haiyue_jellyfish_midshot": ("《王者荣耀》海月", "水母触须状布带"),
             "gongsunli_lihenyan_sleeves": ("《王者荣耀》公孙离“离恨烟”", "双臂水平向左右展开"),
             "gongsunli_yutu_braid_shadow": ("《王者荣耀》公孙离“玉兔公主”", "粗长麻花辫"),
@@ -6484,6 +6484,10 @@ class LegFocusTests(unittest.TestCase):
             self.assertIn(composition, prompts[cos_id])
             self.assertNotIn("参考视频", prompts[cos_id])
             self.assertNotIn("手机", prompts[cos_id])
+        shaoluo = prompts["shaoluo_pink_white_rabbit"]
+        self.assertIn("脸部清晰可见", shaoluo)
+        self.assertNotIn("白色兔子卡通面具", shaoluo)
+        self.assertNotIn("面具完整覆盖脸部", shaoluo)
         shuilaner_action = plugin_main.build_cos_look_action(
             camera="third",
             picker=lambda **_: next(
@@ -7215,7 +7219,16 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("捧脸", titles)
         globals_ = global_prompt_presets()
         gnames = {str(x.get("name")) for x in globals_}
-        for need in ("捧脸", "遮脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角", "漏腰"):
+        structure_presets = (
+            "深开襟", "下胸开窗", "侧胸镂空", "交叉绑带", "挂脖露背",
+            "侧腰双开窗", "极高侧开衩", "薄纱叠层", "开放侧身", "敞怀外套",
+            "前襟分离系带", "单肩斜向开胸", "胸腹竖向开口", "下胸弧形开窗",
+            "单侧全开裙摆", "前后分片围裹",
+        )
+        for need in (
+            "捧脸", "遮脸", "变真人", "果冻化", "真人化", "变COS",
+            "漫画封面", "证件照", "男友视角", "漏腰", *structure_presets,
+        ):
             self.assertIn(need, gnames)
         seed = default_image_preset_seed()
         self.assertIn("捧脸", seed)
@@ -7234,6 +7247,19 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("居家休闲自拍", lou)
         for bad in ("露脐", "肚脐", "胸部", "boyfriend-view", "参考男友", "midriff", "bra"):
             self.assertNotIn(bad, lou)
+        for name in structure_presets:
+            self.assertIn(name, seed)
+            self.assertIn("成年女性", seed[name]["prompt"])
+        self.assertIn("左右前襟向两侧展开", seed["深开襟"]["prompt"])
+        self.assertIn("宽幅弧形开窗", seed["下胸开窗"]["prompt"])
+        self.assertIn("大面积侧向镂空结构", seed["侧胸镂空"]["prompt"])
+        self.assertIn("大腿根部附近", seed["极高侧开衩"]["prompt"])
+        self.assertIn("左右分离的开放结构", seed["前襟分离系带"]["prompt"])
+        self.assertIn("斜向开放设计", seed["单肩斜向开胸"]["prompt"])
+        self.assertIn("纵向开口", seed["胸腹竖向开口"]["prompt"])
+        self.assertIn("宽幅弧形开窗", seed["下胸弧形开窗"]["prompt"])
+        self.assertIn("完整开放结构", seed["单侧全开裙摆"]["prompt"])
+        self.assertIn("前后分片的围裹式结构", seed["前后分片围裹"]["prompt"])
     def test_default_presets_seed(self) -> None:
         import tempfile
         from astrbot_plugin_selfie_image.preset import ImagePresetManager
@@ -7241,7 +7267,14 @@ class StudioStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mgr = ImagePresetManager(tmp)
             names = {n for n, _ in mgr.list()}
-            for need in ("捧脸", "遮脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角", "漏腰"):
+            for need in (
+                "捧脸", "遮脸", "变真人", "果冻化", "真人化", "变COS",
+                "漫画封面", "证件照", "男友视角", "漏腰", "深开襟",
+                "下胸开窗", "侧胸镂空", "交叉绑带", "挂脖露背",
+                "侧腰双开窗", "极高侧开衩", "薄纱叠层", "开放侧身", "敞怀外套",
+                "前襟分离系带", "单肩斜向开胸", "胸腹竖向开口", "下胸弧形开窗",
+                "单侧全开裙摆", "前后分片围裹",
+            ):
                 self.assertIn(need, names)
             # user override not clobbered
             mgr.add("捧脸", "自定义捧脸提示词")
@@ -7259,6 +7292,10 @@ class StudioStoreTests(unittest.TestCase):
             covered = mgr.resolve("遮脸")
             self.assertEqual(covered.get("preset_name"), "遮脸")
             self.assertIn("随机选择一种遮挡方式", covered.get("prompt") or "")
+            opened = mgr.resolve("深开襟 保持原发型")
+            self.assertEqual(opened.get("preset_name"), "深开襟")
+            self.assertIn("左右前襟向两侧展开", opened.get("prompt") or "")
+            self.assertIn("保持原发型", opened.get("prompt") or "")
     def test_selfie_command_expands_preset_before_action_wrap(self) -> None:
         """/自拍 捧脸 must expand preset on raw user text, not after long action wrap."""
         import tempfile
