@@ -6072,9 +6072,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 89)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 92)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 89)
+        self.assertEqual(len(web_pool), 92)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -6172,6 +6172,9 @@ class LegFocusTests(unittest.TestCase):
                 "妲己·狐耳黑金短装",
                 "公孙离·白绿金宽袖",
                 "爱弥斯·黑白蓝坐姿",
+                "洛琪希·露肩短睡裙",
+                "卡提希娅·白黑蓝短装",
+                "水兰儿·羊角提花短旗袍",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -6472,12 +6475,26 @@ class LegFocusTests(unittest.TestCase):
             "daji_fox_black_gold": ("《王者荣耀》妲己", "俏皮猫爪动作"),
             "gongsunli_white_green_ruffle": ("《王者荣耀》公孙离", "横屏近距离俯拍"),
             "aimisi_black_white_blue_seated": ("《鸣潮》爱弥斯", "胸口至膝部"),
+            "roxy_off_shoulder_sleep_dress": ("《无职转生》洛琪希", "奶油白色露肩短睡裙"),
+            "cartethyia_white_black_blue_short": ("《鸣潮》卡提希娅", "画面中只有一名人物"),
+            "shuilaner_horned_brocade_qipao": ("水兰儿AS109风格", "平视机位和正常拍摄距离"),
         }
         for cos_id, (source, composition) in new_cos_looks.items():
             self.assertIn(source, prompts[cos_id])
             self.assertIn(composition, prompts[cos_id])
             self.assertNotIn("参考视频", prompts[cos_id])
             self.assertNotIn("手机", prompts[cos_id])
+        shuilaner_action = plugin_main.build_cos_look_action(
+            camera="third",
+            picker=lambda **_: next(
+                item
+                for item in plugin_main.COS_LOOK_SETS
+                if item["id"] == "shuilaner_horned_brocade_qipao"
+            ),
+        )
+        self.assertIn("具体画幅、景别和机位遵循本套套装描述", shuilaner_action)
+        self.assertIn("平视机位和正常拍摄距离", shuilaner_action)
+        self.assertIn("竖屏全身构图", shuilaner_action)
         for title in (
             "满穗·灰白和风",
             "小乔·白熊围巾",
@@ -6494,6 +6511,9 @@ class LegFocusTests(unittest.TestCase):
             "嫦娥·落星盏金月短装",
             "小乔·战国袍",
             "爱弥斯·黑白蓝坐姿",
+            "洛琪希·露肩短睡裙",
+            "卡提希娅·白黑蓝短装",
+            "水兰儿·羊角提花短旗袍",
         ):
             self.assertEqual(
                 [item["title"] for item in plugin_main.match_cos_look_sets(title)],
@@ -6575,7 +6595,7 @@ class LegFocusTests(unittest.TestCase):
             qipao_ids,
             {
                 "xishi_fan_qipao", "yinzi_white_qipao", "xishi_cyan_qipao",
-                "xishi_crop_qipao",
+                "xishi_crop_qipao", "shuilaner_horned_brocade_qipao",
             },
         )
         xishi_qipao_ids = {item["id"] for item in plugin_main.match_cos_look_sets("西施旗袍")}
@@ -6590,6 +6610,14 @@ class LegFocusTests(unittest.TestCase):
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("甘雨")},
             {"ganyu_bride", "ganyu_ice_blue", "ganyu_blue_white_qilin_close"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("洛琪希")},
+            {"roxy_cream", "roxy_off_shoulder_sleep_dress"},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("卡提希娅")},
+            {"cartethyia_black_bird", "cartethyia_white_black_blue_short"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("宵宫")},
@@ -6711,7 +6739,7 @@ class LegFocusTests(unittest.TestCase):
 
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("洛琪希 夜景")},
-            {"roxy_cream"},
+            {"roxy_cream", "roxy_off_shoulder_sleep_dress"},
         )
         for query in ("洛琪希xxx", "洛琪希夜景"):
             self.assertEqual(plugin_main.match_cos_look_sets(query), [])
@@ -6796,7 +6824,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertEqual(rebuilt_queries, ["洛琪希"] * 3)
         self.assertEqual(
             {re.search(r"【cos:([a-z0-9_]+)】", action).group(1) for action in rebuilt_actions},
-            {"roxy_cream"},
+            {"roxy_cream", "roxy_off_shoulder_sleep_dress"},
         )
 
         class Event:
@@ -6817,7 +6845,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（89套）：", response[0])
+            self.assertIn("看看COS 随机池（92套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
@@ -7387,7 +7415,11 @@ class StudioStoreTests(unittest.TestCase):
                 if message == "/看看COS 洛琪希 夜景 男友视角 3":
                     cos_marker = re.search(r"【cos:([a-z0-9_]+)】", captured["fallback"])
                     self.assertIsNotNone(cos_marker, message)
-                    self.assertEqual(cos_marker.group(1), "roxy_cream", message)
+                    self.assertIn(
+                        cos_marker.group(1),
+                        {"roxy_cream", "roxy_off_shoulder_sleep_dress"},
+                        message,
+                    )
                     self.assertIn("洛琪希", captured["rebuild_extra_request"], message)
                     self.assertIn("夜景", captured["rebuild_extra_request"], message)
 
