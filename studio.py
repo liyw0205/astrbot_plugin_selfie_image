@@ -121,6 +121,19 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
         "global": True,
     },
     {
+        "id": "preset_cover_face",
+        "title": "遮脸",
+        "prompt": (
+            "自然遮住部分脸部，随机选择一种遮挡方式（二选一）：用一只手轻轻挡住脸颊或嘴部，"
+            "或者用手机从脸侧或下方自然遮住半张脸，不要同时出现两种遮挡。"
+            "至少保留一只眼睛和部分面部轮廓可见；手、手指、手臂或手机与人物连接自然，"
+            "透视、光影和遮挡关系正确，手指数量正常，不要手掌变形、手臂穿过脸部、整张脸完全被盖住、"
+            "道具贴脸或僵硬摆拍。保持人物身份、服装、姿势和场景不变，像自然随手拍。"
+        ),
+        "templates": ["selfie", "duo", "i2i", "clothes", "t2i", "blank"],
+        "global": True,
+    },
+    {
         "id": "preset_to_real",
         "title": "变真人",
         "prompt": (
@@ -243,7 +256,7 @@ STUDIO_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "selfie": {
         "id": "selfie",
         "title": "自拍 / 看看 / 看看腿",
-        "description": "看看腿生成日常下装穿搭记录，随机手机记录或朋友协助拍摄视角",
+        "description": "看看腿生成日常下装穿搭记录：腰部以下近景，上半身不入镜",
         "default_title": "自拍画布",
         "mode": "selfie",
         "aspect_ratio": "3:4",

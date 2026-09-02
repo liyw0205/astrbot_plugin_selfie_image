@@ -71,11 +71,12 @@ def build_selfie_builtin_prompt(
             "real": "realistic",
             "anime": "soft Kyoto Animation-like anime with a finer face and ethereal atmosphere",
         }.get(str(appearance_type), "visually consistent")
-        opening = (
-            f"Create one natural {style} vertical smartphone outfit record."
-            if is_legs
-            else f"Create one natural {style} vertical smartphone cover photo."
-        )
+        if is_legs:
+            opening = f"Create one natural {style} vertical smartphone outfit record."
+        elif is_cos:
+            opening = f"Create one natural {style} vertical COS cover photo."
+        else:
+            opening = f"Create one natural {style} vertical smartphone cover photo."
         lines = [opening]
         if is_legs:
             lines.append("Use the main reference only to keep the everyday outfit and natural proportions consistent; the complete person is outside the crop.")
@@ -114,9 +115,9 @@ def build_selfie_builtin_prompt(
                 else "Use exactly one selected legwear option: skin-tone leg-cover styling, opaque white thigh-high stockings, or opaque black thigh-high stockings; ignore all legwear, socks, and shoes in the references; avoid ordinary short, crew, or mid-calf socks."
             )
             lines.append(
-                "First-person phone selfie: the subject holds the phone and records a natural close lower-body outfit detail from above; let the pose and image boundary determine the visible range."
+                "First-person phone selfie framing: the camera points down from the waist and records a natural close lower-body outfit detail; the phone, arms, and upper body stay outside the frame."
                 if camera_kind == "selfie"
-                else "Third-person candid outfit photo: a friend outside the frame records a natural close lower-body outfit detail; let the pose and image boundary determine the visible range."
+                else "Third-person candid outfit photo framing: the photographer stays outside the frame and records a natural close lower-body outfit detail."
             )
             if feet_cropped:
                 lines.extend([
@@ -148,6 +149,14 @@ def build_selfie_builtin_prompt(
         if pose:
             pose_id = pose.group(1)
             pose_descriptions = {
+                "sofa_front_crop": "Sit at the front edge of a sofa with both knees naturally together, lower legs dropping straight down, and both feet resting fully on the floor; keep the waist-down framing stable.",
+                "chair_side_crop": "Sit on a wooden chair in a slight three-quarter side view; place one knee a little forward and the other slightly back, with both feet grounded and legs uncrossed.",
+                "sofa_cross_crop": "Sit on a sofa with both legs relaxed forward and ankles lightly overlapped while the knees stay aligned; keep the feet and sofa contact natural.",
+                "floor_knees_crop": "Sit on a rug with both knees gathered naturally and both lower legs folded behind the body; let the clothing and rug create coherent occlusion.",
+                "sofa_occlusion_crop": "Sit supported in the corner of a sofa with both knees bent forward; allow the sofa edge or cushion to hide the feet only with clear depth and continuous limbs.",
+                "stool_edge_crop": "Sit on a low stool with both knees forward; let one leg continue naturally beyond the lower image edge while the other drops vertically, without a joint-level crop.",
+                "floor_side_kneel_crop": "Use a stable side-kneeling seated pose on the floor with both knees gathered to one side; fold one lower leg forward with the foot grounded and the other naturally behind, keeping continuous limbs and coherent clothing or floor occlusion.",
+                "seat_knees_cross_crop": "Recline on a wide seat with both knees raised toward the camera; extend both lower legs forward and let the ankles overlap lightly in the foreground while keeping the seat support and leg anatomy natural.",
                 "sit": "Sit naturally on a chair or sofa; let the everyday outfit drape naturally in the close lower-body composition.",
                 "sit_crop": "Sit naturally on a chair or sofa; let the everyday outfit drape naturally in the close lower-body composition.",
                 "kneel": "Use a natural kneeling pose on a rug or cushion; fold both lower legs naturally behind the body.",
@@ -176,9 +185,9 @@ def build_selfie_builtin_prompt(
     camera_match = re.search(r"【cam:(selfie|third)】", str(action))
     camera_kind = str(camera_match.group(1) if camera_match else "selfie")
     camera_line_zh = (
-        "第一人称手机自拍：人物自己举手机向下记录自然的下半身服装局部，由姿势和画面边缘决定可见范围。"
+        "第一人称手机自拍：手机镜头从腰线向下记录下装局部，手机、手臂和上半身都在画面外。"
         if camera_kind == "selfie"
-        else "第三人称摄影照片：由画面外的朋友用手机拍摄自然的下半身服装局部，由姿势和画面边缘决定可见范围。"
+        else "第三人称摄影照片：拍摄者完全在画面外，镜头只记录腰部以下的下装局部。"
     )
     if is_legs and feet_cropped:
         legs_line = camera_line_zh + "成年人物的得体日常穿搭记录，采用近距离下半身局部构图；展示服装颜色、材质和层次，不刻意强调身体细节。"
@@ -192,6 +201,8 @@ def build_selfie_builtin_prompt(
             if camera_kind == "selfie"
             else "这是第三人称摄影照片。"
         )
+    elif is_cos:
+        photo_type_line = "这是竖屏 COS 换装成片。"
     else:
         photo_type_line = "这是自拍/日常照片。"
     identity_line = (
@@ -211,6 +222,12 @@ def build_selfie_builtin_prompt(
         photo_style_line = (
             "真人摄影质感：像普通手机竖屏近距离记录服装；使用窗光或房间环境光，"
             "保留真实布料厚度、细小褶皱和自然曝光变化；避免棚拍精修、塑料材质、插画感、3D渲染感和过度虚化。"
+        )
+    elif is_cos:
+        photo_style_line = (
+            "真人摄影质感：像竖屏近景随手拍到的 COS 成片；使用窗光或房间环境光，"
+            "保留自然曝光变化、真实布料厚度与细小褶皱、轻微皮肤纹理和接触阴影；避免棚拍精修、塑料皮肤、插画感、3D渲染感和过度虚化。"
+            if str(appearance_type) == "real" else ""
         )
     else:
         photo_style_line = (

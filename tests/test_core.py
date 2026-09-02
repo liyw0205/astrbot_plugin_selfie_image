@@ -5347,7 +5347,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("COS换装他拍模式", third_prompt)
             self.assertIn("别人视角的单人成品照", third_prompt)
             self.assertIn("不要第二个人", third_prompt)
-            self.assertIn("不要有人举着手机拍主角", third_prompt)
+            self.assertIn("不要拍到拍摄设备或拍摄过程", third_prompt)
+            self.assertNotIn("手机", third_prompt)
             self.assertNotIn("站在穿衣镜前", third_prompt)
             self.assertNotIn("朋友在旁边", third_prompt)
             # auto appearance: no forced real/anime style line
@@ -5920,16 +5921,17 @@ class LegFocusTests(unittest.TestCase):
 
         found = set()
         expected_poses = {
-            "sit", "sit_crop", "kneel", "kneel_crop", "side_lie", "side_lie_crop",
-            "hug_knee", "hug_knee_crop", "cross_leg", "cross_leg_crop", "windowsill",
-            "windowsill_crop", "kneel_up", "kneel_front", "floor_fold", "one_knee_fix",
-            "reclined_knees_crop", "floor_knees_up_crop", "desk_sit_crop", "bed_supine_crop",
+            "sofa_front_crop", "chair_side_crop", "sofa_cross_crop",
+            "floor_knees_crop", "sofa_occlusion_crop", "stool_edge_crop",
+            "floor_side_kneel_crop", "seat_knees_cross_crop",
         }
         for _ in range(360):
             t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
             self.assertIn("【legs:outfit】", t)
             self.assertIn("成年人物", t)
             self.assertIn("保持近距离下半身构图", t)
+            self.assertIn("【姿势池·", t)
+            self.assertIn("上半身", t)
             self.assertIn("本次服装搭配", t)
             self.assertNotIn("晒腿", t)
             self.assertNotIn("主要看腿形", t)
@@ -5944,9 +5946,17 @@ class LegFocusTests(unittest.TestCase):
             self.assertTrue(any(p == key for p in found), f"missing pose family {key} in {found}")
         self.assertNotIn("stand_topdown", found)
         forced_crop = None
-        with patch("astrbot_plugin_selfie_image.main.random.choices", side_effect=[["sit_crop"], ["白丝"]]):
+        with patch(
+            "astrbot_plugin_selfie_image.leg_focus.pick_leg_focus_pose",
+            return_value={
+                "id": "sofa_front_crop",
+                "title": "沙发正坐",
+                "prompt": "画面严格只拍腰部以下，上半身完全在画面外。",
+            },
+        ), patch("astrbot_plugin_selfie_image.main.random.choices", return_value=["白丝"]):
             forced_crop = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
-        self.assertIn("【pose:sit_crop】", forced_crop)
+        self.assertIn("【pose:sofa_front_crop】", forced_crop)
+        self.assertIn("【姿势池·沙发正坐】", forced_crop)
         self.assertIn("【legs:outfit】", forced_crop)
         self.assertIn("白色不透白丝", forced_crop)
         self.assertIn("从大腿上部沿可见腿部连续向下覆盖", forced_crop)
@@ -5959,6 +5969,8 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("服装局部展示", final_crop)
         self.assertNotIn("换装要求", final_crop)
         self.assertIn("自然的下半身服装局部", final_crop)
+        self.assertIn("本张使用看看腿随机姿势池条目", final_crop)
+        self.assertIn("上半身完全在画面外", final_crop)
         self.assertIn("白色不透白丝（从大腿上部沿可见腿部连续向下覆盖", final_crop)
         self.assertIn("禁止中筒袜、短袜", final_crop)
         self.assertIn("自然延伸到画面外", final_crop)
@@ -6060,9 +6072,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 63)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 67)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 63)
+        self.assertEqual(len(web_pool), 67)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -6134,6 +6146,10 @@ class LegFocusTests(unittest.TestCase):
                 "甘雨·冰蓝试衣",
                 "可莉·红白童趣",
                 "宵宫·烟花祭典",
+                "永雏塔菲·粉白黄宅舞服",
+                "古拉·小鲨鱼",
+                "小乔·少御粉色短装",
+                "瑶·小鹿主题",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -6344,7 +6360,8 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("一轮明月", moon_sheer)
         sagiri = prompts["izumi_sagiri_pink_loungewear"]
         self.assertIn("《埃罗芒阿老师》和泉纱雾风格", sagiri)
-        self.assertIn("棕色熊脸保护壳", sagiri)
+        self.assertIn("面部清晰无遮挡", sagiri)
+        self.assertNotIn("手机", sagiri)
         self.assertNotIn("不要裸露", sagiri)
         xiaoqiao_clove = prompts["xiaoqiao_dingxiangjie"]
         self.assertIn("《王者荣耀》小乔“丁香结”", xiaoqiao_clove)
@@ -6392,12 +6409,30 @@ class LegFocusTests(unittest.TestCase):
         yoimiya_festival = prompts["yoimiya_firework_festival"]
         self.assertIn("《原神》宵宫经典 COS", yoimiya_festival)
         self.assertIn("烟花主题发饰", yoimiya_festival)
+        taifei = prompts["yongchutafei_pink_yellow_dance"]
+        self.assertIn("永雏塔菲风格的粉白黄宅舞COS服", taifei)
+        self.assertIn("米白色室内墙面", taifei)
+        self.assertIn("巨大的淡粉色蝴蝶结", taifei)
+        self.assertNotIn("猫爪手套", taifei)
+        gura = prompts["gura_shark"]
+        self.assertIn("Hololive Gawr Gura", gura)
+        self.assertIn("红白色鲨鱼牙齿图案", gura)
+        xiaoqiao_shaoyu = prompts["xiaoqiao_shaoyu_pink"]
+        self.assertIn("小乔少御风格", xiaoqiao_shaoyu)
+        self.assertIn("白色大荷叶边", xiaoqiao_shaoyu)
+        self.assertNotIn("头部、脸部和发型完全不入镜", xiaoqiao_shaoyu)
+        yao_deer = prompts["yao_deer_theme"]
+        self.assertIn("小鹿主题COS", yao_deer)
+        self.assertIn("黑色枝状细角", yao_deer)
         for title in (
             "满穗·灰白和风",
             "小乔·白熊围巾",
             "芙宁娜·奶油浅蓝荷叶裙",
             "古风·浅蓝花卉挂脖兜兜",
             "神里绫华·白袖蓝袴",
+            "古拉·小鲨鱼",
+            "小乔·少御粉色短装",
+            "瑶·小鹿主题",
         ):
             self.assertEqual(
                 [item["title"] for item in plugin_main.match_cos_look_sets(title)],
@@ -6541,7 +6576,7 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("瑶")},
-            {"yao_mint_blue_dress"},
+            {"yao_mint_blue_dress", "yao_deer_theme"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("露娜")},
@@ -6714,7 +6749,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（63套）：", response[0])
+            self.assertIn("看看COS 随机池（67套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
@@ -6731,6 +6766,8 @@ class LegFocusTests(unittest.TestCase):
             "barbara_idol",
         ):
             self.assertNotIn(removed, {x["id"] for x in plugin_main.COS_LOOK_SETS})
+        for item in plugin_main.COS_LOOK_SETS:
+            self.assertNotIn("手机", item["prompt"], item["id"])
         wrap = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
         self.assertTrue("对镜" in wrap or "他拍" in wrap, wrap)
         self.assertNotIn("第一人称自拍或居家随手拍", wrap)
@@ -6740,6 +6777,7 @@ class LegFocusTests(unittest.TestCase):
         forced_selfie = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "对镜自拍", False)
         self.assertIn("【cam:selfie】", forced_selfie)
         self.assertIn("【自拍 / 看看COS模式】", forced_selfie)
+        self.assertNotIn("手机", forced_selfie)
         forced_third = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "他拍", False)
         self.assertIn("【cam:third】", forced_third)
         self.assertIn("【他拍 / 看看COS模式】", forced_third)
@@ -6748,7 +6786,8 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("室内柔光半身", adapted)
         self.assertNotIn("对镜", adapted)
         self.assertIn("不要第二个人", forced_third)
-        self.assertIn("不要有人举着手机拍主角", forced_third)
+        self.assertIn("不要拍到拍摄设备或拍摄过程", forced_third)
+        self.assertNotIn("手机", forced_third)
         look_you = plugin_main.SelfieImagePlugin._build_third_person_look_action(_P(), "", False)
         self.assertIn("别人视角的单人成品照", look_you)
         self.assertNotIn("朋友在对面用手机拍", look_you)
@@ -7080,12 +7119,18 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("捧脸", titles)
         globals_ = global_prompt_presets()
         gnames = {str(x.get("name")) for x in globals_}
-        for need in ("捧脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角", "漏腰"):
+        for need in ("捧脸", "遮脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角", "漏腰"):
             self.assertIn(need, gnames)
         seed = default_image_preset_seed()
         self.assertIn("捧脸", seed)
+        self.assertIn("遮脸", seed)
         self.assertIn("漏腰", seed)
         self.assertTrue(seed["捧脸"]["prompt"])
+        cover = seed["遮脸"]["prompt"]
+        self.assertIn("随机选择一种遮挡方式", cover)
+        self.assertIn("手机", cover)
+        self.assertIn("一只手", cover)
+        self.assertIn("不要同时出现两种遮挡", cover)
         lou = seed["漏腰"]["prompt"]
         self.assertIn("短上衣", lou)
         self.assertIn("oversized", lou)
@@ -7100,7 +7145,7 @@ class StudioStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mgr = ImagePresetManager(tmp)
             names = {n for n, _ in mgr.list()}
-            for need in ("捧脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角", "漏腰"):
+            for need in ("捧脸", "遮脸", "变真人", "果冻化", "真人化", "变COS", "漫画封面", "证件照", "男友视角", "漏腰"):
                 self.assertIn(need, names)
             # user override not clobbered
             mgr.add("捧脸", "自定义捧脸提示词")
@@ -7115,6 +7160,9 @@ class StudioStoreTests(unittest.TestCase):
             self.assertIn("腰线", rp)
             self.assertNotIn("露脐", rp)
             self.assertNotIn("参考男友", rp)
+            covered = mgr.resolve("遮脸")
+            self.assertEqual(covered.get("preset_name"), "遮脸")
+            self.assertIn("随机选择一种遮挡方式", covered.get("prompt") or "")
     def test_selfie_command_expands_preset_before_action_wrap(self) -> None:
         """/自拍 捧脸 must expand preset on raw user text, not after long action wrap."""
         import tempfile

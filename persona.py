@@ -990,9 +990,9 @@ class PersonaManager:
                     + ("他拍" if camera_is_third else "自拍")
                     + "，不是晒腿、不是合影。",
                     (
-                        "别人视角的单人成品照：竖屏手机近景半身，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角，不要对镜、不要手持手机入镜；禁止第一人称伸手挡脸挡身。"
+                        "别人视角的单人成品照：竖屏近景半身，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要拍到拍摄设备或拍摄过程，不要对镜；主角双手自然做动作，不要用物件遮脸挡衣服。"
                         if camera_is_third
-                        else "竖屏手机近景半身：可对镜拍胸像到腰线，不要展会式全身棚拍；手机可入镜；禁止第一人称伸手挡脸挡身。"
+                        else "竖屏近景半身自拍成片：可对镜取景，但拍摄设备完全在画面外；拍胸像到腰线，不要展会式全身棚拍；主角双手自然入镜或放在身侧，不要用物件遮脸挡衣服。"
                     ),
                     "保持形象参考的脸型五官与体态；假发颜色、发型、发饰按本套 COS 完整替换。",
                     "完整展示套装层次和腰线；竖屏近景半身即可，不要裁成只拍腿或只拍脸。",
@@ -1026,10 +1026,18 @@ class PersonaManager:
             camera_match = re.search(r"【cam:(selfie|third)】", act)
             camera_kind = str(camera_match.group(1) if camera_match else "selfie")
             pose_match = re.search(r"【pose:([a-z_]+)】", act)
+            pool_pose_match = re.search(
+                r"【姿势池·[^】]+】(.*?)(?=本次服装搭配已锁定为：|用户提供的图片只参考|【cam:|$)",
+                act,
+                re.S,
+            )
+            pool_pose_text = re.sub(
+                r"\s+", " ", str(pool_pose_match.group(1) if pool_pose_match else "")
+            ).strip(" 。；")
             camera_line = (
-                "第一人称手机自拍：人物自己举手机向下记录自然的下半身服装局部，由姿势和画面边缘决定可见范围。"
+                "第一人称手机自拍：手机镜头从腰线向下记录下装局部，手机、手臂和上半身都在画面外。"
                 if camera_kind == "selfie"
-                else "第三人称摄影照片：由画面外的朋友用手机拍摄自然的下半身服装局部，由姿势和画面边缘决定可见范围。"
+                else "第三人称摄影照片：拍摄者完全在画面外，镜头只记录腰部以下的下装局部。"
             )
             wear_match = re.search(r"本次服装搭配(?:已锁定为)?[:：]\s*([^。]+)", act)
             selected = ""
@@ -1086,6 +1094,8 @@ class PersonaManager:
                 pose_text = pose_descriptions.get(pose_match.group(1))
                 if pose_text:
                     mode_lines.append(f"本张构图固定为：{pose_text}；不要改成其他姿势。")
+            if pool_pose_text:
+                mode_lines.append(f"本张使用看看腿随机姿势池条目：{pool_pose_text}。")
             if intent.change_clothes:
                 mode_lines.append("本次同时包含换装要求：优先使用用户指定的服装/穿搭。")
         elif intent.is_third_person_photo:
