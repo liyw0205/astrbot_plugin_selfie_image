@@ -6072,9 +6072,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 67)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 89)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 67)
+        self.assertEqual(len(web_pool), 89)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -6150,6 +6150,28 @@ class LegFocusTests(unittest.TestCase):
                 "古拉·小鲨鱼",
                 "小乔·少御粉色短装",
                 "瑶·小鹿主题",
+                "和泉纱雾·粉绿印花短装",
+                "芭芭拉·白色偶像礼服",
+                "姬小满·黄黑坐姿短装",
+                "Saber·青花瓷短装",
+                "银狼·蓝黑街头短装",
+                "甘雨·蓝白麒麟装",
+                "少司缘·红绿宅舞宽袖",
+                "穹·电竞房白色短裙",
+                "嫦娥·落星盏金月短装",
+                "露娜·霜月吟冰蓝宽袖",
+                "少萝·粉白兔系短装",
+                "海月·水母薄纱试衣",
+                "公孙离·离恨烟展袖",
+                "公孙离·玉兔公主花辫",
+                "孙尚香·荧光绿短装",
+                "云缨·红白黑短装",
+                "少司缘·三星堆青绿金饰",
+                "少司缘·红绿超大宽袖",
+                "小乔·战国袍",
+                "妲己·狐耳黑金短装",
+                "公孙离·白绿金宽袖",
+                "爱弥斯·黑白蓝坐姿",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -6424,6 +6446,38 @@ class LegFocusTests(unittest.TestCase):
         yao_deer = prompts["yao_deer_theme"]
         self.assertIn("小鹿主题COS", yao_deer)
         self.assertIn("黑色枝状细角", yao_deer)
+        sagiri_print = prompts["izumi_sagiri_pink_green_print"]
+        self.assertIn("和泉纱雾风格的粉绿印花短装COS", sagiri_print)
+        self.assertIn("固定印有日文「エロマンガ先生」", sagiri_print)
+        self.assertNotIn("参考视频", sagiri_print)
+        new_cos_looks = {
+            "barbara_white_idol_dress": ("《原神》芭芭拉", "白色窗帘"),
+            "jixiaoman_yellow_black_seated": ("《王者荣耀》姬小满", "一条腿屈起并横向靠近镜头"),
+            "saber_blue_porcelain": ("《Fate》系列Saber", "正上方近距离俯拍"),
+            "silver_wolf_blue_black_street": ("《崩坏：星穹铁道》银狼", "彩色反光护目镜"),
+            "ganyu_blue_white_qilin_close": ("《原神》甘雨", "黑红渐变麒麟角"),
+            "shaosiyuan_red_green_dance": ("《王者荣耀》少司缘", "一只手食指竖起"),
+            "qiong_white_gaming_room": ("穹白色电竞房短裙造型", "黑色电竞椅"),
+            "change_luoxingzhan_close": ("《王者荣耀》嫦娥", "大型银金色弯月胸甲"),
+            "luna_frost_moon_mirror": ("《王者荣耀》露娜", "银色交叉绑带"),
+            "shaoluo_pink_white_rabbit": ("少萝粉白兔系短装", "白色兔子卡通面具"),
+            "haiyue_jellyfish_midshot": ("《王者荣耀》海月", "水母触须状布带"),
+            "gongsunli_lihenyan_sleeves": ("《王者荣耀》公孙离“离恨烟”", "双臂水平向左右展开"),
+            "gongsunli_yutu_braid_shadow": ("《王者荣耀》公孙离“玉兔公主”", "粗长麻花辫"),
+            "sun_shangxiang_neon_green": ("《王者荣耀》孙尚香", "荧光绿色多层不规则荷叶短裙"),
+            "yunying_red_white_black": ("《王者荣耀》云缨", "交叉金色皮带"),
+            "shaosiyuan_sanxingdui": ("《王者荣耀》少司缘三星堆", "方形近距离肖像"),
+            "shaosiyuan_oversized_red_green_sleeves": ("《王者荣耀》少司缘", "宽袖从身体两侧铺满整个画面"),
+            "xiaoqiao_warring_states_robe": ("《王者荣耀》小乔“战国袍”", "紫色流苏发簪"),
+            "daji_fox_black_gold": ("《王者荣耀》妲己", "俏皮猫爪动作"),
+            "gongsunli_white_green_ruffle": ("《王者荣耀》公孙离", "横屏近距离俯拍"),
+            "aimisi_black_white_blue_seated": ("《鸣潮》爱弥斯", "胸口至膝部"),
+        }
+        for cos_id, (source, composition) in new_cos_looks.items():
+            self.assertIn(source, prompts[cos_id])
+            self.assertIn(composition, prompts[cos_id])
+            self.assertNotIn("参考视频", prompts[cos_id])
+            self.assertNotIn("手机", prompts[cos_id])
         for title in (
             "满穗·灰白和风",
             "小乔·白熊围巾",
@@ -6433,6 +6487,13 @@ class LegFocusTests(unittest.TestCase):
             "古拉·小鲨鱼",
             "小乔·少御粉色短装",
             "瑶·小鹿主题",
+            "和泉纱雾·粉绿印花短装",
+            "芭芭拉·白色偶像礼服",
+            "Saber·青花瓷短装",
+            "银狼·蓝黑街头短装",
+            "嫦娥·落星盏金月短装",
+            "小乔·战国袍",
+            "爱弥斯·黑白蓝坐姿",
         ):
             self.assertEqual(
                 [item["title"] for item in plugin_main.match_cos_look_sets(title)],
@@ -6528,7 +6589,7 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("甘雨")},
-            {"ganyu_bride", "ganyu_ice_blue"},
+            {"ganyu_bride", "ganyu_ice_blue", "ganyu_blue_white_qilin_close"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("宵宫")},
@@ -6580,7 +6641,7 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("露娜")},
-            {"luna_zixia_fairy"},
+            {"luna_zixia_fairy", "luna_frost_moon_mirror"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("神里绫华")},
@@ -6624,7 +6685,14 @@ class LegFocusTests(unittest.TestCase):
         for query in ("公孙离", "离恨烟", "公孙离·离恨烟"):
             expected = {"gongsunli_lihenyan"}
             if query == "公孙离":
-                expected.add("gongsunli_yutu_princess")
+                expected.update(
+                    {
+                        "gongsunli_yutu_princess",
+                        "gongsunli_lihenyan_sleeves",
+                        "gongsunli_yutu_braid_shadow",
+                        "gongsunli_white_green_ruffle",
+                    }
+                )
             self.assertEqual(
                 {item["id"] for item in plugin_main.match_cos_look_sets(query)},
                 expected,
@@ -6749,7 +6817,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（67套）：", response[0])
+            self.assertIn("看看COS 随机池（89套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
