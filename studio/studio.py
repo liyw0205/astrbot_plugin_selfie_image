@@ -13,7 +13,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from .utils import load_json_file, save_json_file
+from ..core.utils import load_json_file, save_json_file
 
 STUDIO_FILENAME = "studio_sessions.json"
 MAX_SESSIONS = 40
@@ -392,6 +392,42 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
         "global": True,
     },
 ]
+
+# These clothing-structure presets can also be requested through the dynamic
+# "特殊预设" alias. Keep the alias itself out of the fixed preset seed so it
+# always expands to one concrete prompt before image generation.
+SPECIAL_PRESET_ALIAS = "特殊预设"
+SPECIAL_PROMPT_PRESET_IDS = frozenset(
+    {
+        "preset_deep_open_front",
+        "preset_underbust_cutout",
+        "preset_side_bust_cutout",
+        "preset_cross_strap_top",
+        "preset_halter_backless",
+        "preset_double_waist_cutout",
+        "preset_high_side_slit",
+        "preset_sheer_layers",
+        "preset_open_side_apron",
+        "preset_open_jacket",
+        "preset_split_lapel_ties",
+        "preset_asymmetric_diagonal_opening",
+        "preset_vertical_torso_opening",
+        "preset_underbust_arc_cutout",
+        "preset_single_side_open_skirt",
+        "preset_split_panel_wrap",
+    }
+)
+
+
+def special_prompt_presets() -> List[Dict[str, Any]]:
+    """Concrete built-in prompts eligible for the dynamic special-preset alias."""
+    return [
+        item
+        for item in BUILTIN_PROMPTS
+        if str(item.get("id") or "").strip() in SPECIAL_PROMPT_PRESET_IDS
+        and str(item.get("title") or "").strip()
+        and str(item.get("prompt") or "").strip()
+    ]
 
 # P0 templates: id -> layout defaults
 STUDIO_TEMPLATES: Dict[str, Dict[str, Any]] = {

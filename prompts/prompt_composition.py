@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import List
 
-from .persona import anatomy_constraint_lines
-from .providers import ImageReference
+from ..features.persona import anatomy_constraint_lines
+from ..core.providers import ImageReference
 
 
 def append_anatomy_constraints(prompt: str, *, language: str = "zh") -> str:

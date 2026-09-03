@@ -6,7 +6,7 @@ import random
 import re
 from collections.abc import Callable
 
-from .utils import redact_sensitive_text
+from ..core.utils import redact_sensitive_text
 
 
 def compact_for_repeat_check(text: str) -> str:

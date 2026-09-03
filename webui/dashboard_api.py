@@ -9,8 +9,8 @@ import base64
 import json
 from typing import Any, Optional
 
-from .constants import PLUGIN_NAME
-from .utils import redact_generation_record, redact_sensitive_data, redact_sensitive_text
+from ..core.constants import PLUGIN_NAME
+from ..core.utils import redact_generation_record, redact_sensitive_data, redact_sensitive_text
 from .web import (
     MAX_CACHE_IMAGE_PATH_LENGTH,
     MAX_RECORD_PAGE_LIMIT,

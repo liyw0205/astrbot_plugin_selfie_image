@@ -14,10 +14,10 @@ try:
 except ImportError:
     from astrbot.api.event import AstrMessageEvent
 
-from .models import DEFAULT_CONFIG, ImageModelTarget
-from .prompt_translation import parse_prompt_en_response
-from .providers import normalize_image_base_url
-from .utils import (
+from ..core.models import DEFAULT_CONFIG, ImageModelTarget
+from ..prompts.prompt_translation import parse_prompt_en_response
+from ..core.providers import normalize_image_base_url
+from ..core.utils import (
     bytes_to_data_url,
     detect_mime_by_bytes,
     parse_audit_response_text,
@@ -349,7 +349,7 @@ class AuditMixin:
         )
         template = str(template or "").strip()
         if not template or "{prompt}" not in template:
-            from .models import DEFAULT_CONFIG
+            from ..core.models import DEFAULT_CONFIG
             template = str(
                 DEFAULT_CONFIG["image"]["video_prompt_en_template"]
                 if media == "video"

@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from .providers import ImageReference
-from .utils import (
+from ..core.providers import ImageReference
+from ..core.utils import (
     detect_mime_by_bytes,
     extract_image_sources_from_event,
     extract_image_urls,

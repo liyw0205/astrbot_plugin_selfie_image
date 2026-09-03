@@ -10,7 +10,7 @@ import time
 from collections.abc import Mapping
 from typing import Any, Dict, Optional
 
-from .utils import (
+from ..core.utils import (
     load_json_file,
     redact_sensitive_data,
     redact_sensitive_text,

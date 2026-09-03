@@ -7,7 +7,7 @@ import re
 from collections.abc import Callable
 from typing import List, Tuple
 
-from .persona import appearance_type_instruction, current_period, group_style_lines
+from ..features.persona import appearance_type_instruction, current_period, group_style_lines
 
 
 SELFIE_SHOT_POOL = (

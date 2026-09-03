@@ -27,9 +27,9 @@ except Exception:
     except Exception:
         Video = None  # type: ignore
 
-from .providers import ImageReference
+from ..core.providers import ImageReference
 from .reference_collector import ReferenceCollector
-from .utils import detect_mime_by_bytes, extract_event_text, redact_sensitive_text
+from ..core.utils import detect_mime_by_bytes, extract_event_text, redact_sensitive_text
 
 
 class ReferenceMediaMixin:

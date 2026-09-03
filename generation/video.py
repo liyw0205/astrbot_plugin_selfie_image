@@ -24,12 +24,12 @@ from urllib.parse import quote, urlparse
 import aiohttp
 import requests
 
-from .error_classify import classify_generation_error
-from .models import ImageModelTarget
-from .proxy import channel_client_session, target_session_proxy
-from .provider_parser import normalize_image_base_url
-from .providers import ImageReference
-from .utils import bytes_to_data_url, redact_sensitive_text
+from ..core.error_classify import classify_generation_error
+from ..core.models import ImageModelTarget
+from ..core.proxy import channel_client_session, target_session_proxy
+from ..core.provider_parser import normalize_image_base_url
+from ..core.providers import ImageReference
+from ..core.utils import bytes_to_data_url, redact_sensitive_text
 
 
 @dataclass
@@ -379,7 +379,7 @@ async def generate_video_openai_compatible(
     save_dir: str,
 ) -> VideoGenerateResult:
     """Dispatch by video family protocol (sora/veo/seedance/agnes/…) + transport modes."""
-    from .models import normalize_video_provider_type, resolve_video_model_provider_type
+    from ..core.models import normalize_video_provider_type, resolve_video_model_provider_type
 
     started = time.monotonic()
     protocol = resolve_video_model_provider_type(

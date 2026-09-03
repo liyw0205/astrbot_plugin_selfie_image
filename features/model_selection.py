@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional
 
-from .models import ImageModelTarget
+from ..core.models import ImageModelTarget
 
 
 def find_model_target(

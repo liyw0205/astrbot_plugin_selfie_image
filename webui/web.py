@@ -12,7 +12,7 @@ import re
 import threading
 from typing import Any, Optional
 
-from .utils import redact_generation_record, redact_sensitive_data, redact_sensitive_text
+from ..core.utils import redact_generation_record, redact_sensitive_data, redact_sensitive_text
 
 
 try:
@@ -37,7 +37,7 @@ _LOGO_SRC_PLACEHOLDER = "__SELFIE_LOGO_SRC__"
 
 def _bundled_logo_data_url() -> str:
     """Inline logo so Flask and AstrBot iframe both show the same brand mark."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+    path = os.path.join(Path(__file__).resolve().parents[1], "logo.png")
     try:
         with open(path, "rb") as handle:
             raw = handle.read()
@@ -50,7 +50,7 @@ def _bundled_logo_data_url() -> str:
 
 def render_index_html(html: Optional[str] = None) -> str:
     if html is None:
-        external_page = Path(__file__).resolve().parent / "pages" / "dashboard" / "index.html"
+        external_page = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
         try:
             text = external_page.read_text(encoding="utf-8") if external_page.is_file() else INDEX_HTML
         except OSError:

@@ -20,7 +20,7 @@ from .context_routing import (
     looks_like_edit_bot_result_followup,
     recent_context_image_sources,
 )
-from .utils import event_group_id, event_user_id, extract_event_text, extract_image_sources_from_event
+from ..core.utils import event_group_id, event_user_id, extract_event_text, extract_image_sources_from_event
 
 
 class ConversationContextMixin:

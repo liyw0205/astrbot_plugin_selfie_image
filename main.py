@@ -35,20 +35,20 @@ except Exception:
     def get_astrbot_data_path() -> str:
         return os.path.join(os.getcwd(), "data")
 
-from .constants import (
+from .core.constants import (
     PLUGIN_AUTHOR,
     PLUGIN_CONFIG_FILENAME,
     PLUGIN_DISPLAY_NAME,
     PLUGIN_NAME,
     PLUGIN_VERSION,
 )
-from .access_policy import (
+from .features.access_policy import (
     access_status,
     blocked_prompt_word,
     permission_denied_message,
     quota_error_message,
 )
-from .context_routing import (
+from .features.context_routing import (
     compact_followup_text,
     format_context_for_llm,
     looks_like_clothes_followup,
@@ -56,7 +56,7 @@ from .context_routing import (
     looks_like_edit_bot_result_followup,
     recent_context_image_sources,
 )
-from .command_parser import (
+from .prompts.command_parser import (
     command_tokens_for_count,
     expand_cos_user_text_with_preset,
     expand_user_text_with_preset,
@@ -69,7 +69,7 @@ from .command_parser import (
     split_attached_count_token,
     split_preset_command,
 )
-from .cos_looks import (
+from .cos.cos_looks import (
     COS_LOOK_CATEGORY_TERMS,
     COS_LOOK_SETS,
     _cos_item_terms,
@@ -82,15 +82,15 @@ from .cos_looks import (
     pick_cos_camera,
     pick_cos_look_set,
 )
-from .generator import generate_image_with_fallback
-from .generation_store import GenerationStoreMixin, RECORD_KEEP_LIMIT
-from .generation_results import (
+from .generation.generator import generate_image_with_fallback
+from .generation.generation_store import GenerationStoreMixin, RECORD_KEEP_LIMIT
+from .generation.generation_results import (
     batch_failure_policy,
     batch_failure_text,
     batch_success_text,
     normalize_generation_result,
 )
-from .leg_focus import (
+from .cos.leg_focus import (
     CALF_CROP_POSES,
     LEGFOCUS_CAMERA_WEIGHTS,
     LEGFOCUS_RISKY_EXTRA_REPLACEMENTS,
@@ -104,21 +104,21 @@ from .leg_focus import (
     parse_requested_legwear,
     pick_stocking_finish,
 )
-from .model_selection import (
+from .features.model_selection import (
     available_model_labels,
     find_model_target,
     match_model_label,
     prioritize_model_target,
 )
-from .preset import ImagePresetManager
-from .models import (
+from .prompts.preset import ImagePresetManager
+from .core.models import (
     AICatConfig,
     DEFAULT_CONFIG,
     ImageModelTarget,
     preflight_video_channel,
 )
-from .persona import PersonaManager
-from .studio import (
+from .features.persona import PersonaManager
+from .studio.studio import (
     BUILTIN_PROMPTS,
     StudioStore,
     build_studio_action,
@@ -128,16 +128,16 @@ from .studio import (
     prompts_for_template,
     resolve_slot_refs_for_run,
 )
-from .studio_adapter import StudioMixin
-from .config_manager import ConfigurationMixin
-from .conversation_context import ConversationContextMixin
-from .task_views import (
+from .studio.studio_adapter import StudioMixin
+from .features.config_manager import ConfigurationMixin
+from .features.conversation_context import ConversationContextMixin
+from .tasks.task_views import (
     filter_image_tasks,
     format_task_detail_text,
     format_task_list_text,
 )
-from .task_manager import WebTaskMixin
-from .providers import (
+from .tasks.task_manager import WebTaskMixin
+from .core.providers import (
     ImageGenerateRequest,
     ImageReference,
     build_model_list_urls,
@@ -145,15 +145,15 @@ from .providers import (
     normalize_image_base_url,
     provider_type_from_channel_payload,
 )
-from .prompt_composition import (
+from .prompts.prompt_composition import (
     append_anatomy_constraints,
     build_prompt_with_reference_instruction,
 )
-from .prompt_translation import parse_prompt_en_response
-from .audit_pipeline import AuditMixin
-from .reference_collector import extract_structured_image_sources
-from .reference_media import ReferenceMediaMixin
-from .response_text import (
+from .prompts.prompt_translation import parse_prompt_en_response
+from .features.audit_pipeline import AuditMixin
+from .features.reference_collector import extract_structured_image_sources
+from .features.reference_media import ReferenceMediaMixin
+from .prompts.response_text import (
     ack_repeats_request,
     clean_ack_message,
     compact_for_repeat_check,
@@ -165,7 +165,7 @@ from .response_text import (
     tool_success,
     tool_unavailable,
 )
-from .selfie_actions import (
+from .prompts.selfie_actions import (
     build_crop_waist_selfie_action,
     build_group_selfie_action,
     build_selfie_look_action,
@@ -175,9 +175,9 @@ from .selfie_actions import (
     looks_like_selfie_intent,
     period_scene_light_pools,
 )
-from .proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, http_proxy_url, image_client_timeout, target_session_proxy
-from .video import VideoGenerateRequest, generate_video_with_fallback
-from .utils import (
+from .core.proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, http_proxy_url, image_client_timeout, target_session_proxy
+from .generation.video import VideoGenerateRequest, generate_video_with_fallback
+from .core.utils import (
     bytes_to_data_url,
     collect_record_cache_paths,
     collect_cache_cleanup_candidates,
@@ -205,8 +205,8 @@ from .utils import (
     save_json_file,
     summarize_record_for_list,
 )
-from .dashboard_api import SelfieImageDashboardAPI
-from .web import FlaskWebServer
+from .webui.dashboard_api import SelfieImageDashboardAPI
+from .webui.web import FlaskWebServer
 
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
 IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS = 2.0
@@ -1446,7 +1446,7 @@ class SelfieImagePlugin(
         meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
         if not self._prompt_en_needed(action, media="image"):
             return prompt, refs, meta
-        from .prompt_templates import build_selfie_builtin_prompt, extract_user_prompt
+        from .prompts.prompt_templates import build_selfie_builtin_prompt, extract_user_prompt
 
         user_text = extract_user_prompt(action)
         if not user_text:
@@ -2329,7 +2329,7 @@ class SelfieImagePlugin(
         will_continue: bool,
     ) -> str:
         """Prefer a soft LLM sentence while keeping a deterministic fallback."""
-        from .prompt_templates import build_batch_failure_llm_prompt
+        from .prompts.prompt_templates import build_batch_failure_llm_prompt
 
         reason = re.sub(r"\s+", " ", str(error or "").strip())[:160]
         llm_prompt = build_batch_failure_llm_prompt(
@@ -2579,7 +2579,7 @@ class SelfieImagePlugin(
                 }
             )
         else:
-            from .models import preflight_image_channel
+            from .core.models import preflight_image_channel
 
             report = preflight_image_channel(
                 {
@@ -3076,7 +3076,7 @@ class SelfieImagePlugin(
                 "· /形象清除　去掉参考图",
                 "· /形象刷新　刷新今日穿搭状态",
                 "",
-                "预设：/预设　列表；管理员可 /预设添加 名称:内容、/预设删除 名称",
+                "预设：/预设　列表；可在任意生图指令中写「特殊预设」随机选择一条服装结构预设；管理员可 /预设添加 名称:内容、/预设删除 名称",
                 "",
                 "说明：一次可写数量表示本条指令要生成的总张数；同时最多进行几张由「同时画几张上限」决定，不锁在单条指令里，新任务自动排队，超过同时上限才等待。图好了会直接发过来。",
                 "· /生图帮助　只看图卡",

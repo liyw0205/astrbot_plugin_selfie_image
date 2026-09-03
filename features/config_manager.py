@@ -15,8 +15,8 @@ try:
 except ImportError:
     from astrbot.api.utils import logger
 
-from .constants import LEGACY_CONFIG_FILENAME, LEGACY_PLUGIN_NAME
-from .models import (
+from ..core.constants import LEGACY_CONFIG_FILENAME, LEGACY_PLUGIN_NAME
+from ..core.models import (
     AICatConfig,
     DEFAULT_CONFIG,
     deep_merge,
@@ -24,7 +24,7 @@ from .models import (
     normalize_legacy_keys,
     strip_channel_timeouts,
 )
-from .utils import load_json_file, redact_sensitive_data, save_json_file
+from ..core.utils import load_json_file, redact_sensitive_data, save_json_file
 
 WEB_STARTUP_CONFIG_KEYS = ("web", "webEnable", "webHost", "webPort", "webToken")
 DEFAULT_WEB_TOKEN = str(DEFAULT_CONFIG["web"].get("token") or "changeme").strip().lower()
@@ -222,7 +222,7 @@ class ConfigurationMixin:
         if not isinstance(candidate, dict):
             raise ValueError("配置必须是 JSON 对象")
         merged = deep_merge(self.raw_config, candidate)
-        from .models import preflight_config_channels
+        from ..core.models import preflight_config_channels
         report = preflight_config_channels(merged)
         return {"ok": bool(report.get("ok")), "schema_version": 2, "errors": report.get("errors", []), "config": redact_sensitive_data(candidate)}
 
@@ -242,12 +242,12 @@ class ConfigurationMixin:
             raise
 
     def list_proxies_for_web(self, *, mask_password: bool = True) -> List[Dict[str, Any]]:
-        from .models import normalize_proxies_list, public_proxy_row
+        from ..core.models import normalize_proxies_list, public_proxy_row
         rows = normalize_proxies_list((self.raw_config or {}).get("proxies") or [])
         return [public_proxy_row(row, mask_password=mask_password) for row in rows]
 
     def _find_proxy_row(self, proxy_id: str) -> Dict[str, Any]:
-        from .models import normalize_proxies_list
+        from ..core.models import normalize_proxies_list
         pid = str(proxy_id or "").strip()
         if not pid:
             raise ValueError("缺少代理 id")
@@ -257,8 +257,8 @@ class ConfigurationMixin:
         raise ValueError("代理不存在")
 
     async def test_proxy_connectivity(self, proxy_id: str = "", proxy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        from .models import normalize_proxy_entry
-        from .proxy import probe_proxy_connectivity
+        from ..core.models import normalize_proxy_entry
+        from ..core.proxy import probe_proxy_connectivity
         if proxy_id:
             row = self._find_proxy_row(proxy_id)
         else:
@@ -271,8 +271,8 @@ class ConfigurationMixin:
         return result
 
     async def test_proxy_quality(self, proxy_id: str = "", proxy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        from .models import normalize_proxy_entry
-        from .proxy import probe_proxy_quality
+        from ..core.models import normalize_proxy_entry
+        from ..core.proxy import probe_proxy_quality
         if proxy_id:
             row = self._find_proxy_row(proxy_id)
         else:
@@ -308,7 +308,7 @@ class ConfigurationMixin:
                     fixed.append(row)
                 patch["proxies"] = fixed
             merged = deep_merge(self.raw_config, patch)
-            from .models import preflight_config_channels, sanitize_channels_for_save
+            from ..core.models import preflight_config_channels, sanitize_channels_for_save
 
             # Soft-fix empty-model channels before merge persist (auto-disable).
             sanitize_channels_for_save(merged)

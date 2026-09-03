@@ -27,22 +27,22 @@ if "aiohttp" not in sys.modules:
         FormData=lambda: None,
     )
 
-from astrbot_plugin_selfie_image.generator import generate_image_with_fallback
-from astrbot_plugin_selfie_image.proxy import (
+from astrbot_plugin_selfie_image.generation.generator import generate_image_with_fallback
+from astrbot_plugin_selfie_image.core.proxy import (
     IMAGE_DOWNLOAD_WAIT_SECONDS,
     LOCAL_IMAGE_WAIT_SECONDS,
     image_client_timeout,
     image_download_timeout,
     parse_channel_proxy,
 )
-from astrbot_plugin_selfie_image.video import VideoGenerateRequest, VideoGenerateResult, generate_video_with_fallback
-from astrbot_plugin_selfie_image.error_classify import (
+from astrbot_plugin_selfie_image.generation.video import VideoGenerateRequest, VideoGenerateResult, generate_video_with_fallback
+from astrbot_plugin_selfie_image.core.error_classify import (
     classify_generation_error,
     is_non_retryable_generation_error,
     is_param_profile_switch_error,
     is_transport_profile_switch_error,
 )
-from astrbot_plugin_selfie_image.models import (
+from astrbot_plugin_selfie_image.core.models import (
     AICatConfig,
     DEFAULT_CONFIG,
     ImageModelTarget,
@@ -53,7 +53,7 @@ from astrbot_plugin_selfie_image.models import (
     normalize_provider_type,
     resolve_model_provider_type,
 )
-from astrbot_plugin_selfie_image.providers import (
+from astrbot_plugin_selfie_image.core.providers import (
     AgnesImageAdapter,
     BaseImageAdapter,
     GeminiImageAdapter,
@@ -82,7 +82,7 @@ from astrbot_plugin_selfie_image.providers import (
     provider_type_from_channel_payload,
     response_preview,
 )
-from astrbot_plugin_selfie_image.utils import (
+from astrbot_plugin_selfie_image.core.utils import (
     bytes_to_data_url,
     collect_cache_cleanup_candidates,
     collect_record_cache_paths,
@@ -102,7 +102,7 @@ from astrbot_plugin_selfie_image.utils import (
     resolve_awaitable,
     safe_delete_relative_files,
 )
-from astrbot_plugin_selfie_image.web import Flask, FlaskWebServer, INDEX_HTML
+from astrbot_plugin_selfie_image.webui.web import Flask, FlaskWebServer, INDEX_HTML
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 128
@@ -339,13 +339,13 @@ class FakeWebPlugin:
 
 class ConfigModelTests(unittest.TestCase):
     def test_plugin_version_matches_metadata(self) -> None:
-        from astrbot_plugin_selfie_image.constants import PLUGIN_VERSION
+        from astrbot_plugin_selfie_image.core.constants import PLUGIN_VERSION
 
         metadata = (Path(__file__).resolve().parents[1] / "metadata.yaml").read_text(encoding="utf-8")
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.11")
+        self.assertEqual(PLUGIN_VERSION, "1.4.12")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -447,7 +447,7 @@ class ConfigModelTests(unittest.TestCase):
 
 
     def test_model_download_proxy_override(self) -> None:
-        from astrbot_plugin_selfie_image.models import AICatConfig
+        from astrbot_plugin_selfie_image.core.models import AICatConfig
         cfg = AICatConfig.from_dict({
             "proxies": [
                 {"id": "px_req", "protocol": "http", "host": "1.1.1.1", "port": 7890, "name": "req", "enabled": True},
@@ -471,8 +471,8 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual((by["m2"].extra or {}).get("download_proxy_id"), "px_dl")
         self.assertIn("2.2.2.2", (by["m2"].extra or {}).get("download_proxy") or "")
         from pathlib import Path
-        from astrbot_plugin_selfie_image.web import INDEX_HTML
-        providers = (Path(__file__).resolve().parents[1] / "providers.py").read_text(encoding="utf-8")
+        from astrbot_plugin_selfie_image.webui.web import INDEX_HTML
+        providers = (Path(__file__).resolve().parents[1] / "core/providers.py").read_text(encoding="utf-8")
         self.assertIn("download_proxy", providers)
         html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
         for doc in (html, INDEX_HTML):
@@ -494,7 +494,7 @@ class ConfigModelTests(unittest.TestCase):
         from pathlib import Path
         import json
         import re as _re
-        from astrbot_plugin_selfie_image.models import DEFAULT_CONFIG
+        from astrbot_plugin_selfie_image.core.models import DEFAULT_CONFIG
 
         img_t = DEFAULT_CONFIG["image"]["image_prompt_en_template"]
         vid_t = DEFAULT_CONFIG["image"]["video_prompt_en_template"]
@@ -506,9 +506,9 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn('"ok":true', vid_t)
         root = Path(__file__).resolve().parents[1]
         main_src = (root / "main.py").read_text(encoding="utf-8")
-        translation_src = (root / "prompt_translation.py").read_text(encoding="utf-8")
-        audit_src = (root / "audit_pipeline.py").read_text(encoding="utf-8")
-        self.assertIn("from .prompt_translation import parse_prompt_en_response", main_src)
+        translation_src = (root / "prompts/prompt_translation.py").read_text(encoding="utf-8")
+        audit_src = (root / "features/audit_pipeline.py").read_text(encoding="utf-8")
+        self.assertIn("from .prompts.prompt_translation import parse_prompt_en_response", main_src)
         self.assertIn("def parse_prompt_en_response", translation_src)
         self.assertIn("translate_parse_failed", audit_src)
         self.assertIn("fail-open: keep original prompt", audit_src)
@@ -538,7 +538,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(parse(fenced), "cat walk")
 
     def test_bilingual_prompt_only_replaces_user_text(self) -> None:
-        from astrbot_plugin_selfie_image.prompt_templates import BilingualPrompt
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import BilingualPrompt
 
         prompt = BilingualPrompt(
             builtin_zh="内置中文约束",
@@ -554,7 +554,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertNotIn("内置中文约束", prompt.render_en("turn back and smile by the sea"))
 
     def test_selfie_builtin_prompt_has_compact_english_version(self) -> None:
-        from astrbot_plugin_selfie_image.prompt_templates import build_selfie_builtin_prompt
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
 
         zh = build_selfie_builtin_prompt(
             "看看腿。用户补充要求优先：窗边白裙。 【pose:sit】",
@@ -624,7 +624,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("User request: a white dress by the window", translated)
 
     def test_batch_failure_llm_prompt_is_soft_and_keeps_single_reason(self) -> None:
-        from astrbot_plugin_selfie_image.prompt_templates import build_batch_failure_llm_prompt
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import build_batch_failure_llm_prompt
 
         prompt = build_batch_failure_llm_prompt(
             bot_name="啊呜",
@@ -641,7 +641,7 @@ class ConfigModelTests(unittest.TestCase):
 
     
     def test_batch_on_failure_config(self) -> None:
-        from astrbot_plugin_selfie_image.models import AICatConfig, DEFAULT_CONFIG
+        from astrbot_plugin_selfie_image.core.models import AICatConfig, DEFAULT_CONFIG
         self.assertEqual(DEFAULT_CONFIG["image"].get("batch_on_failure"), "skip")
         cfg = AICatConfig.from_dict({"image": {"batch_on_failure": "stop", "batch_skip_max": 3}})
         self.assertEqual(cfg.image_batch_on_failure, "stop")
@@ -676,7 +676,7 @@ class ConfigModelTests(unittest.TestCase):
 
     def test_generation_result_normalizes_legacy_and_partial_results(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
-        from astrbot_plugin_selfie_image.generation_results import normalize_generation_result
+        from astrbot_plugin_selfie_image.generation.generation_results import normalize_generation_result
 
         plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
         success = plugin._normalize_generation_result({"success": True, "files": ["a.png"]}, 1)
@@ -699,7 +699,7 @@ class ConfigModelTests(unittest.TestCase):
 
     def test_generation_metrics_aggregates_without_exposing_prompt(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
-        from astrbot_plugin_selfie_image.generation_records import build_generation_metrics
+        from astrbot_plugin_selfie_image.generation.generation_records import build_generation_metrics
 
         plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
         plugin._records_lock = threading.RLock()
@@ -833,8 +833,8 @@ class ConfigModelTests(unittest.TestCase):
             self.assertIn("重新提交", tasks["task-1"]["error"])
 
     def test_video_payload_grok_midgate_minimal(self) -> None:
-        from astrbot_plugin_selfie_image.models import ImageModelTarget
-        from astrbot_plugin_selfie_image.video import VideoGenerateRequest, _extract_task_id, _video_payload, build_video_generations_endpoint
+        from astrbot_plugin_selfie_image.core.models import ImageModelTarget
+        from astrbot_plugin_selfie_image.generation.video import VideoGenerateRequest, _extract_task_id, _video_payload, build_video_generations_endpoint
         target = ImageModelTarget(
             channel_name="t",
             provider_type="grok",
@@ -864,7 +864,7 @@ class ConfigModelTests(unittest.TestCase):
 
 
     def test_prompt_en_config_and_cjk_gate(self) -> None:
-        from astrbot_plugin_selfie_image.models import AICatConfig, DEFAULT_CONFIG
+        from astrbot_plugin_selfie_image.core.models import AICatConfig, DEFAULT_CONFIG
         self.assertIn("enable_image_prompt_en", DEFAULT_CONFIG["image"])
         self.assertIn("enable_video_prompt_en", DEFAULT_CONFIG["image"])
         cfg = AICatConfig.from_dict({
@@ -892,7 +892,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn('media="video"', main_src)
 
     def test_proxy_list_migrate_channel_proxy(self) -> None:
-        from astrbot_plugin_selfie_image.models import AICatConfig, normalize_proxy_entry
+        from astrbot_plugin_selfie_image.core.models import AICatConfig, normalize_proxy_entry
         row = normalize_proxy_entry({
             "protocol": "http", "host": "10.0.0.2", "port": 7890,
             "username": "u", "password": "p", "name": "home",
@@ -930,7 +930,7 @@ class ConfigModelTests(unittest.TestCase):
 
     def test_dashboard_has_proxy_page_and_channel_proxy_select(self) -> None:
         from pathlib import Path
-        from astrbot_plugin_selfie_image.web import INDEX_HTML
+        from astrbot_plugin_selfie_image.webui.web import INDEX_HTML
         html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
         for doc in (html, INDEX_HTML):
             self.assertIn('data-tab="proxies"', doc)
@@ -1079,7 +1079,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertTrue(report["ok"])
 
     def test_split_api_keys_and_target_rotation_list(self) -> None:
-        from astrbot_plugin_selfie_image.models import split_api_keys
+        from astrbot_plugin_selfie_image.core.models import split_api_keys
 
         self.assertEqual(split_api_keys("a\nb\nc"), ["a", "b", "c"])
         self.assertEqual(split_api_keys("a,b;c\na"), ["a", "b", "c"])
@@ -1118,7 +1118,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(t2.resolved_api_keys(), ["sk-a", "sk-b"])
 
     def test_safety_advances_to_next_target(self) -> None:
-        from astrbot_plugin_selfie_image.generator import _should_advance_to_next_target
+        from astrbot_plugin_selfie_image.generation.generator import _should_advance_to_next_target
         self.assertTrue(_should_advance_to_next_target({"category": "safety"}))
         self.assertTrue(_should_advance_to_next_target({"category": "param"}))
         self.assertTrue(_should_advance_to_next_target({"category": "timeout"}))
@@ -1182,7 +1182,7 @@ class ConfigModelTests(unittest.TestCase):
         )
         self.assertEqual(zh_safety["category"], "safety")
         self.assertIn("安全", zh_safety["user_message"])
-        from astrbot_plugin_selfie_image.error_classify import summarize_generation_failures
+        from astrbot_plugin_selfie_image.core.error_classify import summarize_generation_failures
 
         summary = summarize_generation_failures(
             [
@@ -1249,7 +1249,7 @@ class ConfigModelTests(unittest.TestCase):
 
 
     def test_compact_and_summarize_generation_records(self) -> None:
-        from astrbot_plugin_selfie_image.utils import compact_generation_record, summarize_record_for_list
+        from astrbot_plugin_selfie_image.core.utils import compact_generation_record, summarize_record_for_list
 
         fat = {
             "success": False,
@@ -1287,7 +1287,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertLessEqual(len(row.get("request_prompt") or ""), 241)
 
     def test_generation_record_keeps_only_channel_error_raw(self) -> None:
-        from astrbot_plugin_selfie_image.utils import compact_generation_record, redact_generation_record
+        from astrbot_plugin_selfie_image.core.utils import compact_generation_record, redact_generation_record
 
         raw_error = "HTTP 500: token=raw-channel-secret"
         record = redact_generation_record(
@@ -1313,7 +1313,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(slim["headers"]["Authorization"], "[REDACTED]")
 
     def test_record_task_splits_multi_image_rows(self) -> None:
-        from astrbot_plugin_selfie_image.utils import split_generation_record_images
+        from astrbot_plugin_selfie_image.core.utils import split_generation_record_images
 
         pieces = split_generation_record_images(
             {
@@ -2338,7 +2338,7 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         diagnostics = []
 
         timeout_factory = lambda **kwargs: types.SimpleNamespace(**kwargs)
-        with patch("astrbot_plugin_selfie_image.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
+        with patch("astrbot_plugin_selfie_image.core.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
             image = await fetch_generated_image_url(
                 session,
                 "https://cdn.example.test/generated.png?signature=secret",
@@ -2348,7 +2348,7 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(image, PNG_BYTES)
         self.assertEqual(session.requests[0]["timeout"].total, IMAGE_DOWNLOAD_WAIT_SECONDS)
-        with patch("astrbot_plugin_selfie_image.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
+        with patch("astrbot_plugin_selfie_image.core.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
             self.assertEqual(image_download_timeout(180).total, IMAGE_DOWNLOAD_WAIT_SECONDS)
 
     async def test_generated_url_download_diagnostics_do_not_include_query(self) -> None:
@@ -3350,7 +3350,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
                 return ImageGenerateRequest(prompt="original\n\n参考图内容描述：红衣人物", images=[])
             return ImageGenerateRequest(prompt="original", images=[reference])
 
-        with patch("astrbot_plugin_selfie_image.generator._try_model", side_effect=fake_try_model):
+        with patch("astrbot_plugin_selfie_image.generation.generator._try_model", side_effect=fake_try_model):
             result = await generate_image_with_fallback(
                 [first, second],
                 base_request,
@@ -3375,7 +3375,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
             budgets.append(budget)
             return ImageGenerateResult(images=[PNG_BYTES])
 
-        with patch("astrbot_plugin_selfie_image.generator._try_model", side_effect=fake_try_model):
+        with patch("astrbot_plugin_selfie_image.generation.generator._try_model", side_effect=fake_try_model):
             result = await generate_image_with_fallback(
                 [target],
                 ImageGenerateRequest(prompt="cat"),
@@ -3403,8 +3403,8 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
             return ImageGenerateResult(error="temporary failure")
 
         with (
-            patch("astrbot_plugin_selfie_image.generator.time.monotonic", side_effect=monotonic),
-            patch("astrbot_plugin_selfie_image.generator._try_model", side_effect=fake_try_model),
+            patch("astrbot_plugin_selfie_image.generation.generator.time.monotonic", side_effect=monotonic),
+            patch("astrbot_plugin_selfie_image.generation.generator._try_model", side_effect=fake_try_model),
         ):
             result = await generate_image_with_fallback(
                 [first, second, third],
@@ -3419,7 +3419,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
 
     def test_image_client_timeout_preserves_requested_model_budget(self) -> None:
         timeout_factory = lambda **kwargs: types.SimpleNamespace(**kwargs)
-        with patch("astrbot_plugin_selfie_image.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
+        with patch("astrbot_plugin_selfie_image.core.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
             timeout = image_client_timeout(280)
         self.assertEqual(timeout.total, 280)
         self.assertEqual(timeout.sock_read, 280)
@@ -3437,8 +3437,8 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
             return FakeGenerateAdapter(ImageGenerateResult(images=[PNG_BYTES]))
 
         with (
-            patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter),
-            patch("astrbot_plugin_selfie_image.generator.asyncio.sleep", side_effect=no_sleep),
+            patch("astrbot_plugin_selfie_image.generation.generator.create_adapter", side_effect=create_fake_adapter),
+            patch("astrbot_plugin_selfie_image.generation.generator.asyncio.sleep", side_effect=no_sleep),
         ):
             result = await generate_image_with_fallback(
                 [first, second],
@@ -3459,7 +3459,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         def create_fake_adapter(target, session):
             return FakeGenerateAdapter(ImageGenerateResult(error=f"HTTP 502: {upstream_detail}"))
 
-        with patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter):
+        with patch("astrbot_plugin_selfie_image.generation.generator.create_adapter", side_effect=create_fake_adapter):
             result = await generate_image_with_fallback(
                 [target],
                 ImageGenerateRequest(prompt="cat"),
@@ -3491,7 +3491,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
                 attempts=[{"label": target.label, "success": True}],
             )
 
-        with patch("astrbot_plugin_selfie_image.video.generate_video_openai_compatible", side_effect=fake_generate):
+        with patch("astrbot_plugin_selfie_image.generation.video.generate_video_openai_compatible", side_effect=fake_generate):
             result = await generate_video_with_fallback(
                 [first, second],
                 VideoGenerateRequest(prompt="move naturally"),
@@ -3514,7 +3514,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
                 return FakeGenerateAdapter(ImageGenerateResult(error="HTTP 401: Invalid token"))
             return FakeGenerateAdapter(ImageGenerateResult(images=[PNG_BYTES]))
 
-        with patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter):
+        with patch("astrbot_plugin_selfie_image.generation.generator.create_adapter", side_effect=create_fake_adapter):
             result = await generate_image_with_fallback(
                 [first, second],
                 ImageGenerateRequest(prompt="cat"),
@@ -3553,8 +3553,8 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         with (
-            patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter),
-            patch("astrbot_plugin_selfie_image.generator.asyncio.sleep", side_effect=no_sleep),
+            patch("astrbot_plugin_selfie_image.generation.generator.create_adapter", side_effect=create_fake_adapter),
+            patch("astrbot_plugin_selfie_image.generation.generator.asyncio.sleep", side_effect=no_sleep),
         ):
             result = await generate_image_with_fallback(
                 [first, second],
@@ -3594,7 +3594,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         def create_fake_adapter(active_target, session):
             return RotatingAdapter(active_target, session)
 
-        with patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter):
+        with patch("astrbot_plugin_selfie_image.generation.generator.create_adapter", side_effect=create_fake_adapter):
             result = await generate_image_with_fallback(
                 [target],
                 ImageGenerateRequest(prompt="cat"),
@@ -3620,7 +3620,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         def create_fake_adapter(target, session):
             return FakeGenerateAdapter(ImageGenerateResult(error=secret_error))
 
-        with patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter):
+        with patch("astrbot_plugin_selfie_image.generation.generator.create_adapter", side_effect=create_fake_adapter):
             result = await generate_image_with_fallback(
                 [target],
                 ImageGenerateRequest(prompt="cat"),
@@ -3642,7 +3642,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
             async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
                 raise RuntimeError("api_key=AIzaSySecretTokenValue")
 
-        with patch("astrbot_plugin_selfie_image.generator.create_adapter", return_value=RaisingAdapter()):
+        with patch("astrbot_plugin_selfie_image.generation.generator.create_adapter", return_value=RaisingAdapter()):
             result = await generate_image_with_fallback(
                 [target],
                 ImageGenerateRequest(prompt="cat"),
@@ -3667,7 +3667,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         def create_fake_adapter(target, session):
             return FakeGenerateAdapter(ImageGenerateResult(error="temporary failure"))
 
-        with patch("astrbot_plugin_selfie_image.generator.create_adapter", side_effect=create_fake_adapter):
+        with patch("astrbot_plugin_selfie_image.generation.generator.create_adapter", side_effect=create_fake_adapter):
             result = await generate_image_with_fallback(
                 [target],
                 ImageGenerateRequest(prompt="cat"),
@@ -4621,13 +4621,13 @@ class SessionModelAndTaskTests(unittest.TestCase):
 
 class ReferenceCollectorTests(unittest.TestCase):
     def test_extract_buckets_message_quote_at_and_forward(self) -> None:
-        from astrbot_plugin_selfie_image.reference_collector import (
+        from astrbot_plugin_selfie_image.features.reference_collector import (
             CollectedReferences,
             dedupe_image_references,
             extract_structured_image_sources,
             filter_bot_avatar_sources,
         )
-        from astrbot_plugin_selfie_image.providers import ImageReference
+        from astrbot_plugin_selfie_image.core.providers import ImageReference
 
         class Image:
             def __init__(self, url="", path=""):
@@ -4701,7 +4701,7 @@ class ReferenceCollectorTests(unittest.TestCase):
         self.assertEqual(len(collected.for_draw(include_persona=False)), 1)
 
     def test_plain_text_event_has_no_images(self) -> None:
-        from astrbot_plugin_selfie_image.reference_collector import extract_structured_image_sources
+        from astrbot_plugin_selfie_image.features.reference_collector import extract_structured_image_sources
 
         class Plain:
             def __init__(self, text=""):
@@ -4722,7 +4722,7 @@ class ReferenceCollectorTests(unittest.TestCase):
         self.assertEqual(sum(len(v) for v in buckets.values()), 0)
 
     def test_context_fallback_is_opt_in_for_cos_style_collection(self) -> None:
-        from astrbot_plugin_selfie_image.reference_collector import ReferenceCollector
+        from astrbot_plugin_selfie_image.features.reference_collector import ReferenceCollector
 
         class Event:
             message_obj = None
@@ -4749,7 +4749,7 @@ class ReferenceCollectorTests(unittest.TestCase):
         self.assertEqual(explicit_buckets["context"], [])
 
     def test_explicit_current_message_image_remains_message_reference(self) -> None:
-        from astrbot_plugin_selfie_image.reference_collector import ReferenceCollector
+        from astrbot_plugin_selfie_image.features.reference_collector import ReferenceCollector
 
         class Image:
             def __init__(self):
@@ -4778,7 +4778,7 @@ class ReferenceCollectorTests(unittest.TestCase):
         self.assertEqual(buckets["context"], [])
 
     def test_image_file_is_used_when_path_has_empty_default(self) -> None:
-        from astrbot_plugin_selfie_image.reference_collector import extract_structured_image_sources
+        from astrbot_plugin_selfie_image.features.reference_collector import extract_structured_image_sources
 
         class Image:
             def __init__(self):
@@ -4814,7 +4814,7 @@ class ReferenceCollectorTests(unittest.TestCase):
         )
 
     def test_raw_onebot_image_segment_is_extracted(self) -> None:
-        from astrbot_plugin_selfie_image.reference_collector import extract_structured_image_sources
+        from astrbot_plugin_selfie_image.features.reference_collector import extract_structured_image_sources
 
         class Event:
             message_obj = None
@@ -4839,7 +4839,7 @@ class ReferenceCollectorTests(unittest.TestCase):
         )
 
     async def _collect_with_onebot_image_resolution(self, local_path: str):
-        from astrbot_plugin_selfie_image.reference_collector import ReferenceCollector
+        from astrbot_plugin_selfie_image.features.reference_collector import ReferenceCollector
 
         class Image:
             file = "qq-file-id"
@@ -4983,15 +4983,15 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("开始试画", page_html)
         logo = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "logo.png"
         self.assertTrue(logo.is_file())
-        from astrbot_plugin_selfie_image.web import render_index_html
+        from astrbot_plugin_selfie_image.webui.web import render_index_html
 
         rendered = render_index_html()
         self.assertIn("data:image/png;base64,", rendered)
         self.assertNotIn("__SELFIE_LOGO_SRC__", rendered)
 
     def test_dashboard_api_registers_token_free_routes(self) -> None:
-        from astrbot_plugin_selfie_image.dashboard_api import SelfieImageDashboardAPI
-        from astrbot_plugin_selfie_image.constants import PLUGIN_NAME
+        from astrbot_plugin_selfie_image.webui.dashboard_api import SelfieImageDashboardAPI
+        from astrbot_plugin_selfie_image.core.constants import PLUGIN_NAME
 
         registered = []
 
@@ -5014,9 +5014,9 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertGreaterEqual(len(registered), 20)
 
     def test_openai_fast_path_and_trust_env_false_still_present(self) -> None:
-        providers = Path(__file__).resolve().parents[1] / "providers.py"
+        providers = Path(__file__).resolve().parents[1] / "core/providers.py"
         main = Path(__file__).resolve().parents[1] / "main.py"
-        parser = Path(__file__).resolve().parents[1] / "provider_parser.py"
+        parser = Path(__file__).resolve().parents[1] / "core/provider_parser.py"
         self.assertIn("extract_openai_images_data", providers.read_text(encoding="utf-8"))
         self.assertIn("def extract_openai_images_data", parser.read_text(encoding="utf-8"))
         self.assertIn("ClientSession(trust_env=False)", main.read_text(encoding="utf-8"))
@@ -5164,7 +5164,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("_run_counted_generation_shots", main_src)
 
     def test_anatomy_constraints_ban_third_limb_and_same_side_pairs(self) -> None:
-        from astrbot_plugin_selfie_image.persona import PersonaManager, anatomy_constraint_lines
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager, anatomy_constraint_lines
 
         lines = "\n".join(anatomy_constraint_lines(style="general"))
         for token in ("左右手/脚各一", "肩肘腕连续连接", "单人限定"):
@@ -5359,7 +5359,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("形象类型：", auto_prompt)
 
     def test_appearance_type_auto_real_anime_prompt_injection(self) -> None:
-        from astrbot_plugin_selfie_image.persona import PersonaManager
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
@@ -5481,7 +5481,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertNotIn("仅当用户明确要求二次元/动漫合影时，才允许整体二次元画风", text)
 
     def test_selfie_prompt_requires_eye_contact_when_facing_camera(self) -> None:
-        from astrbot_plugin_selfie_image.persona import PersonaManager
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
@@ -5523,7 +5523,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
 
     def test_legs_persona_uses_only_supported_legwear(self) -> None:
-        from astrbot_plugin_selfie_image.persona import PersonaManager
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
@@ -5556,7 +5556,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("居家拖鞋", text)
 
     def test_daily_profile_does_not_add_unselected_legwear(self) -> None:
-        from astrbot_plugin_selfie_image.persona import fallback_daily_profile
+        from astrbot_plugin_selfie_image.features.persona import fallback_daily_profile
 
         for _ in range(30):
             outfit = fallback_daily_profile("2026-08-09", "seed").outfit
@@ -5564,7 +5564,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 self.assertNotIn(forbidden, outfit)
 
     def test_look_you_and_selfie_persona_have_variety_hints(self) -> None:
-        from astrbot_plugin_selfie_image.persona import PersonaManager
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
@@ -5592,7 +5592,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
 class VideoV1Tests(unittest.TestCase):
     def test_video_channel_config_and_preflight(self) -> None:
-        from astrbot_plugin_selfie_image.models import AICatConfig, preflight_video_channel
+        from astrbot_plugin_selfie_image.core.models import AICatConfig, preflight_video_channel
 
         bad = preflight_video_channel({"name": "v1"})
         self.assertFalse(bad["ok"])
@@ -5660,7 +5660,7 @@ class VideoV1Tests(unittest.TestCase):
         self.assertEqual(disabled.get_prioritized_video_targets(), [])
 
     def test_image_audit_video_priorities_are_independent(self) -> None:
-        from astrbot_plugin_selfie_image.models import AICatConfig
+        from astrbot_plugin_selfie_image.core.models import AICatConfig
 
         cfg = AICatConfig.from_dict(
             {
@@ -5685,7 +5685,7 @@ class VideoV1Tests(unittest.TestCase):
         self.assertNotEqual(cfg.enabled_image_model_priority, cfg.enabled_video_model_priority)
 
     def test_dashboard_separates_priorities_and_has_video_test(self) -> None:
-        from astrbot_plugin_selfie_image.web import INDEX_HTML
+        from astrbot_plugin_selfie_image.webui.web import INDEX_HTML
 
         for token in (
             "enabled_audit_model_priority",
@@ -5700,7 +5700,7 @@ class VideoV1Tests(unittest.TestCase):
             self.assertIn(token, INDEX_HTML)
 
     def test_video_protocol_normalize_and_infer(self) -> None:
-        from astrbot_plugin_selfie_image.models import (
+        from astrbot_plugin_selfie_image.core.models import (
             infer_video_provider_type_from_model,
             normalize_video_provider_type,
             resolve_video_model_provider_type,
@@ -5737,7 +5737,7 @@ class VideoV1Tests(unittest.TestCase):
 
     def test_agnes_official_endpoints_and_frames(self) -> None:
         from types import SimpleNamespace
-        from astrbot_plugin_selfie_image.video import (
+        from astrbot_plugin_selfie_image.generation.video import (
             VideoGenerateRequest,
             _agnes_payload,
             _extract_video_url,
@@ -5771,7 +5771,7 @@ class VideoV1Tests(unittest.TestCase):
 
 
     def test_video_endpoint_and_extractors(self) -> None:
-        from astrbot_plugin_selfie_image.video import (
+        from astrbot_plugin_selfie_image.generation.video import (
             build_video_generations_endpoint,
             _extract_task_id,
             _extract_video_url,
@@ -5792,7 +5792,7 @@ class VideoV1Tests(unittest.TestCase):
         self.assertIn("视频：", main_src)
 
     def test_video_proxy_covers_polling_and_download(self) -> None:
-        video_src = (Path(__file__).resolve().parents[1] / "video.py").read_text(encoding="utf-8")
+        video_src = (Path(__file__).resolve().parents[1] / "generation/video.py").read_text(encoding="utf-8")
         for token in (
             "async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeout: int, proxy: str = \"\")",
             "proxy=proxy or None",
@@ -5810,7 +5810,7 @@ class VideoV1Tests(unittest.TestCase):
 
         root = Path(__file__).resolve().parents[1]
         main_src = (root / "main.py").read_text(encoding="utf-8")
-        reference_src = (root / "reference_media.py").read_text(encoding="utf-8")
+        reference_src = (root / "features/reference_media.py").read_text(encoding="utf-8")
         self.assertTrue(
             hasattr(plugin_main.SelfieImagePlugin, "_video_persona_reference")
         )
@@ -5947,7 +5947,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertNotIn("stand_topdown", found)
         forced_crop = None
         with patch(
-            "astrbot_plugin_selfie_image.leg_focus.pick_leg_focus_pose",
+            "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_pose",
             return_value={
                 "id": "sofa_front_crop",
                 "title": "沙发正坐",
@@ -5962,8 +5962,8 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("从大腿上部沿可见腿部连续向下覆盖", forced_crop)
         self.assertIn("不把膝关节或小腿作为固定裁切线", forced_crop)
         self.assertNotIn("脚部画外", forced_crop)
-        from astrbot_plugin_selfie_image.persona import PersonaManager
-        from astrbot_plugin_selfie_image.prompt_templates import build_selfie_builtin_prompt
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
         with tempfile.TemporaryDirectory() as tmp:
             final_crop = PersonaManager(tmp).build_selfie_prompt(forced_crop, "小助", "温柔", True, 0)
         self.assertIn("服装局部展示", final_crop)
@@ -6922,7 +6922,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("白色长袖蓬袖衬衣", rem_prompt)
 
 
-        from astrbot_plugin_selfie_image.persona import PersonaManager, current_period, period_label
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager, current_period, period_label
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
             manager.data["daily_selfie_profile"] = {
@@ -7090,7 +7090,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("本次服装搭配已锁定为：自然肤色光腿神器", bare)
         forced = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False, force_legwear="白丝")
         self.assertIn("本次服装搭配已锁定为：白色不透白丝", forced)
-        from astrbot_plugin_selfie_image.persona import PersonaManager
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         for legwear, expected in (
             ("光腿神器", "自然肤色光腿神器（沿可见腿部连续覆盖）"),
@@ -7105,7 +7105,7 @@ class LegFocusTests(unittest.TestCase):
             self.assertIn(expected, final)
 
     def test_legwear_is_pose_weighted(self) -> None:
-        from astrbot_plugin_selfie_image.leg_focus import LEGWEAR_BY_POSE
+        from astrbot_plugin_selfie_image.cos.leg_focus import LEGWEAR_BY_POSE
 
         self.assertEqual(
             LEGWEAR_BY_POSE["side_lie"],
@@ -7122,7 +7122,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("rebuild_each", main_src)
         self.assertIn("avoid_pose", main_src)
         self.assertIn("_build_selfie_look_action", main_src)
-        from astrbot_plugin_selfie_image.selfie_actions import (
+        from astrbot_plugin_selfie_image.prompts.selfie_actions import (
             SELFIE_SHOT_LINES,
             THIRD_PERSON_SHOT_LINES,
         )
@@ -7143,7 +7143,7 @@ class LegFocusTests(unittest.TestCase):
 
 class StudioStoreTests(unittest.TestCase):
     def test_selfie_template_mentions_look_legs_outfit_record(self) -> None:
-        from astrbot_plugin_selfie_image.studio import list_studio_templates
+        from astrbot_plugin_selfie_image.studio.studio import list_studio_templates
 
         templates = {item["id"]: item for item in list_studio_templates()}
         description = templates["selfie"]["description"]
@@ -7152,7 +7152,7 @@ class StudioStoreTests(unittest.TestCase):
 
     def test_group_template_and_persist(self) -> None:
         import tempfile
-        from astrbot_plugin_selfie_image.studio import (
+        from astrbot_plugin_selfie_image.studio.studio import (
             StudioStore,
             build_studio_action,
             BUILTIN_PROMPTS,
@@ -7180,7 +7180,7 @@ class StudioStoreTests(unittest.TestCase):
 
     def test_p0_templates_layouts(self) -> None:
         import tempfile
-        from astrbot_plugin_selfie_image.studio import StudioStore, list_studio_templates, prompts_for_template
+        from astrbot_plugin_selfie_image.studio.studio import StudioStore, list_studio_templates, prompts_for_template
 
         ids = {t["id"] for t in list_studio_templates()}
         for need in ("duo", "group", "selfie", "clothes", "i2i", "t2i", "blank"):
@@ -7209,7 +7209,13 @@ class StudioStoreTests(unittest.TestCase):
 
 
     def test_template_chips_do_not_leak(self) -> None:
-        from astrbot_plugin_selfie_image.studio import prompts_for_template, global_prompt_presets, default_image_preset_seed
+        from astrbot_plugin_selfie_image.studio.studio import (
+            SPECIAL_PRESET_ALIAS,
+            default_image_preset_seed,
+            global_prompt_presets,
+            prompts_for_template,
+            special_prompt_presets,
+        )
 
         duo = prompts_for_template("duo")
         titles = {str(x.get("title")) for x in duo}
@@ -7230,6 +7236,9 @@ class StudioStoreTests(unittest.TestCase):
             "漫画封面", "证件照", "男友视角", "漏腰", *structure_presets,
         ):
             self.assertIn(need, gnames)
+        special = special_prompt_presets()
+        self.assertEqual(SPECIAL_PRESET_ALIAS, "特殊预设")
+        self.assertEqual({str(item.get("title")) for item in special}, set(structure_presets))
         seed = default_image_preset_seed()
         self.assertIn("捧脸", seed)
         self.assertIn("遮脸", seed)
@@ -7262,7 +7271,8 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("前后分片的围裹式结构", seed["前后分片围裹"]["prompt"])
     def test_default_presets_seed(self) -> None:
         import tempfile
-        from astrbot_plugin_selfie_image.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.studio.studio import special_prompt_presets
 
         with tempfile.TemporaryDirectory() as tmp:
             mgr = ImagePresetManager(tmp)
@@ -7296,10 +7306,18 @@ class StudioStoreTests(unittest.TestCase):
             self.assertEqual(opened.get("preset_name"), "深开襟")
             self.assertIn("左右前襟向两侧展开", opened.get("prompt") or "")
             self.assertIn("保持原发型", opened.get("prompt") or "")
+            selected = special_prompt_presets()[0]
+            with patch("astrbot_plugin_selfie_image.prompts.preset.random.choice", return_value=selected):
+                special = mgr.resolve("特殊预设 夜景")
+            self.assertEqual(special.get("preset_name"), "特殊预设")
+            self.assertEqual(special.get("description"), f"随机选中：{selected['title']}")
+            self.assertIn(selected["prompt"], special.get("prompt") or "")
+            self.assertIn("夜景", special.get("prompt") or "")
     def test_selfie_command_expands_preset_before_action_wrap(self) -> None:
         """/自拍 捧脸 must expand preset on raw user text, not after long action wrap."""
         import tempfile
-        from astrbot_plugin_selfie_image.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.studio.studio import special_prompt_presets
 
         stub = SessionModelAndTaskTests()._plugin_stub()
         from astrbot_plugin_selfie_image import main as plugin_main
@@ -7314,6 +7332,16 @@ class StudioStoreTests(unittest.TestCase):
             self.assertEqual(name, "捧脸")
             self.assertIn("捧住她的脸颊", expanded)
             self.assertNotEqual(expanded, "捧脸")
+            selected = special_prompt_presets()[-1]
+            with patch("astrbot_plugin_selfie_image.prompts.preset.random.choice", return_value=selected):
+                special_expanded, _, _, special_name = (
+                    plugin_main.SelfieImagePlugin._expand_user_text_with_preset(
+                        stub, "看看旗袍 特殊预设"
+                    )
+                )
+            self.assertEqual(special_name, "特殊预设")
+            self.assertIn("看看旗袍", special_expanded)
+            self.assertIn(selected["prompt"], special_expanded)
             # Wrapped action still carries expanded preset as 用户补充要求
             action = plugin_main.SelfieImagePlugin._build_selfie_look_action(stub, expanded, False)
             self.assertIn("捧住她的脸颊", action)
@@ -7341,7 +7369,7 @@ class StudioStoreTests(unittest.TestCase):
     def test_cos_command_expands_presets_without_polluting_pool_query(self) -> None:
         """COS keeps character matching separate from expanded preset text."""
         import tempfile
-        from astrbot_plugin_selfie_image.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
 
         stub = SessionModelAndTaskTests()._plugin_stub()
         from astrbot_plugin_selfie_image import main as plugin_main
@@ -7393,7 +7421,7 @@ class StudioStoreTests(unittest.TestCase):
         """COS parses count placement and forwards raw matching text end to end."""
         import tempfile
 
-        from astrbot_plugin_selfie_image.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
         stub_factory = SessionModelAndTaskTests()
         stub_factory._plugin_stub()
         from astrbot_plugin_selfie_image import main as plugin_main
@@ -7480,7 +7508,7 @@ class StudioStoreTests(unittest.TestCase):
         factory = SessionModelAndTaskTests()
         factory._plugin_stub()
         from astrbot_plugin_selfie_image import main as plugin_main
-        from astrbot_plugin_selfie_image.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
 
         class Event:
             def __init__(self, message: str) -> None:
@@ -7905,7 +7933,7 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("更年轻一点", received["action"])
 
     def test_dashboard_has_studio_tab(self) -> None:
-        from astrbot_plugin_selfie_image.web import INDEX_HTML, WEB_TASK_ID_RE
+        from astrbot_plugin_selfie_image.webui.web import INDEX_HTML, WEB_TASK_ID_RE
 
         self.assertIn('data-tab="studio"', INDEX_HTML)
         self.assertIn("studioTemplateSelect", INDEX_HTML)
@@ -7945,7 +7973,7 @@ class StudioStoreTests(unittest.TestCase):
 
     def test_studio_promote_role_and_gallery(self) -> None:
         import tempfile
-        from astrbot_plugin_selfie_image.studio import StudioStore
+        from astrbot_plugin_selfie_image.studio.studio import StudioStore
 
         with tempfile.TemporaryDirectory() as tmp:
             store = StudioStore(tmp)
@@ -8190,7 +8218,7 @@ class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
 
 class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_daily_profile_prefers_valid_llm_json(self) -> None:
-        from astrbot_plugin_selfie_image.persona import PersonaManager
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         periods = {key: f"{key} 的自然状态" for key in ("morning", "noon", "afternoon", "evening", "night", "late_night")}
         with tempfile.TemporaryDirectory() as tmp:
@@ -8204,7 +8232,7 @@ class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(profile.outfit, "浅蓝衬衫和白色长裙")
 
     async def test_daily_profile_falls_back_when_llm_fails(self) -> None:
-        from astrbot_plugin_selfie_image.persona import PersonaManager
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
@@ -8219,7 +8247,7 @@ class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(token, profile.outfit)
 
     def test_auxiliary_identity_references_are_limited_and_keep_primary(self) -> None:
-        from astrbot_plugin_selfie_image.persona import PersonaManager
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)

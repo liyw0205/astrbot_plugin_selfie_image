@@ -6,9 +6,9 @@ import asyncio
 import time
 from typing import Any, Dict, List, Optional
 
-from .cos_looks import list_cos_look_sets
-from .prompt_composition import build_prompt_with_reference_instruction
-from .providers import ImageReference
+from ..cos.cos_looks import list_cos_look_sets
+from ..prompts.prompt_composition import build_prompt_with_reference_instruction
+from ..core.providers import ImageReference
 from .studio import (
     BUILTIN_PROMPTS,
     build_studio_action,
@@ -17,7 +17,7 @@ from .studio import (
     normalize_template_id,
     resolve_slot_refs_for_run,
 )
-from .utils import (
+from ..core.utils import (
     data_url_to_bytes,
     detect_mime_by_bytes,
     normalize_image_mime,
@@ -350,7 +350,7 @@ class StudioMixin:
                 )
                 prompt_en_meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
                 if self._prompt_en_needed(action, media="image"):
-                    from .prompt_templates import build_selfie_builtin_prompt, extract_user_prompt
+                    from ..prompts.prompt_templates import build_selfie_builtin_prompt, extract_user_prompt
 
                     user_text = extract_user_prompt(action)
                     translated_user = ""

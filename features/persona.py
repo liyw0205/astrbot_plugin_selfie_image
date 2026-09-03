@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
-from .utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
+from ..core.utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
 
 
 APPEARANCE_TYPES = ("auto", "real", "anime")

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import random
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from .utils import load_json_file, save_json_file
+from ..core.utils import load_json_file, save_json_file
 
 
 @dataclass
@@ -20,7 +21,7 @@ class ImagePreset:
 
 def _default_seed() -> Dict[str, Dict[str, str]]:
     try:
-        from .studio import default_image_preset_seed
+        from ..studio.studio import default_image_preset_seed
 
         return default_image_preset_seed()
     except Exception:
@@ -183,6 +184,27 @@ class ImagePresetManager:
 
     def _match_preset(self, text: str) -> Tuple[str, Optional[ImagePreset], str]:
         lowered = text.lower()
+        # "特殊预设" expands to one concrete built-in structure preset at run time.
+        try:
+            from ..studio.studio import SPECIAL_PRESET_ALIAS, special_prompt_presets
+
+            alias = str(SPECIAL_PRESET_ALIAS or "特殊预设").strip()
+            alias_lower = alias.lower()
+            if alias and (lowered == alias_lower or lowered.startswith(alias_lower + " ")):
+                choices = special_prompt_presets()
+                if choices:
+                    selected = random.choice(choices)
+                    title = str(selected.get("title") or "").strip()
+                    prompt = str(selected.get("prompt") or "").strip()
+                    rest = "" if lowered == alias_lower else text[len(alias) :].strip()
+                    if prompt:
+                        return alias, ImagePreset(
+                            prompt=prompt,
+                            description=f"随机选中：{title}" if title else alias,
+                        ), rest
+        except Exception:
+            pass
+
         # Common aliases for built-in titles (user often types near-homophones).
         alias_map = {
             "露腰": "漏腰",

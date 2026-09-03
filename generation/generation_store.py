@@ -10,8 +10,8 @@ from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .generation_records import build_generation_metrics, composition_metadata
-from .providers import ImageReference
-from .utils import (
+from ..core.providers import ImageReference
+from ..core.utils import (
     collect_cache_cleanup_candidates,
     collect_record_cache_paths,
     collect_unreferenced_record_cache_paths,
@@ -69,7 +69,7 @@ class GenerationStoreMixin:
             record["attempts"] = list(response_data.get("attempts") or [])
         # Enrich failure fields for monitor list/detail (also backfills empty used_model).
         try:
-            from .error_classify import summarize_generation_failures
+            from ..core.error_classify import summarize_generation_failures
 
             attempts = list(record.get("attempts") or [])
             if not attempts and isinstance(response_data, Mapping):
@@ -151,7 +151,7 @@ class GenerationStoreMixin:
         if not isinstance(record, dict):
             return record
         try:
-            from .error_classify import summarize_generation_failures
+            from ..core.error_classify import summarize_generation_failures
 
             attempts = list(record.get("attempts") or [])
             response_data = record.get("response_data")
