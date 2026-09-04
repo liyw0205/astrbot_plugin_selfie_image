@@ -6238,6 +6238,12 @@ class LegFocusTests(unittest.TestCase):
         ):
             self.assertIn("横向红色绸缎仪式眼罩", prompts[ninghongye_id])
             self.assertIn("绝不能露出眼睛", prompts[ninghongye_id])
+        sun_star_lord = prompts["jiyingying_sun_star_lord"]
+        self.assertIn("黑色三角底层", sun_star_lord)
+        self.assertIn("透明长纱裙片", sun_star_lord)
+        self.assertIn("赤足", sun_star_lord)
+        self.assertNotIn("白色贴身短裤", sun_star_lord)
+        self.assertNotIn("脚穿细带凉鞋", sun_star_lord)
         self.assertIn("齐胸抹胸高腰", prompts["hanfu_peach"])
         self.assertIn("外层宽袖薄纱袍", prompts["mint_sheer_hanfu"])
         white = prompts["white_slip_mini"]
