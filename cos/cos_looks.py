@@ -258,6 +258,19 @@ def parse_requested_cos_camera(text: str) -> str:
     return ""
 
 
+def requests_phone_face_cover(text: str) -> bool:
+    """Return whether an explicit request asks for a phone to cover the face."""
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    phone_words = ("手机", "iphone", "phone")
+    face_cover_words = (
+        "遮脸", "遮住脸", "挡脸", "挡住脸", "遮面", "挡面",
+        "遮住半张脸", "半张脸", "遮挡脸部", "遮住部分脸",
+    )
+    return any(word in compact for word in phone_words) and any(
+        word in compact for word in face_cover_words
+    )
+
+
 def pick_cos_camera(*, extra_request: str = "", avoid: str = "", camera: str = "") -> str:
     forced = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
     if forced in {"selfie", "third"}:
@@ -304,24 +317,42 @@ def build_cos_look_action(
     camera_kind = pick_cos_camera(
         extra_request=extra_request, avoid=avoid_camera, camera=camera
     )
+    phone_face_cover = requests_phone_face_cover(extra_request)
     outfit = adapt_cos_outfit_for_camera(
         str(chosen.get("prompt") or "").strip(), camera_kind
     )
     cos_id = str(chosen.get("id") or "cos")
     if camera_kind == "third":
+        hand_rule = (
+            "不要对镜、不要镜子；允许画面内唯一一部普通手机从脸侧或下方自然遮住半张脸，"
+            "但手机只能由主角既有的一只手握持并占用该手；若该手原本做动作或持道具，手机替代该动作或道具，原道具不入镜；"
+            "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或第二台拍摄设备；"
+            "若套装姿势已明确占用双手或不宜举手机，保留原姿势和道具，不额外添加手机，也不强行遮脸。"
+            if phone_face_cover
+            else "不要对镜、不要镜子；主角双手自然做动作，未明确要求遮脸时不要用物件遮脸挡衣服。"
+        )
         framing = (
             "【他拍 / 看看COS模式】"
             "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
             "别人视角的单人成品照：具体画幅、景别和机位遵循本套套装描述，未指定时采用竖屏近景半身或环境人像；画面里只有主角一个人；"
-            "拍摄者完全在画面外，不要第二个人，不要拍到拍摄设备或拍摄过程；"
-            "不要对镜、不要镜子；主角双手自然做动作，不要用物件遮脸挡衣服。"
+            "拍摄者完全在画面外，不要第二个人，不要拍到"
+            + ("拍摄过程或其它拍摄设备；" if phone_face_cover else "拍摄设备或拍摄过程；")
+            + hand_rule
         )
     else:
+        hand_rule = (
+            "可对镜取景；画面内仅允许一部普通手机从脸侧或下方自然遮住半张脸，"
+            "手机只能由主角既有的一只手握持并占用该手；若该手原本做动作或持道具，手机替代该动作或道具，原道具不入镜；"
+            "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或其它拍摄设备；"
+            "若套装姿势已明确占用双手或不宜举手机，保留原姿势和道具，不额外添加手机，也不强行遮脸。"
+            if phone_face_cover
+            else "可对镜取景，但拍摄设备完全在画面外；主角双手自然入镜或放在身侧，未明确要求遮脸时不要用物件遮脸挡衣服。"
+        )
         framing = (
             "【自拍 / 看看COS模式】"
             "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
-            "单人自拍成片：具体画幅、景别和机位遵循本套套装描述，未指定时采用竖屏近景半身；可对镜取景，但拍摄设备完全在画面外；"
-            "主角双手自然入镜或放在身侧，不要用物件遮脸挡衣服。"
+            "单人自拍成片：具体画幅、景别和机位遵循本套套装描述，未指定时采用竖屏近景半身；"
+            + hand_rule
         )
     base = (
         framing

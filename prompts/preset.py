@@ -10,6 +10,18 @@ from typing import Dict, List, Optional, Tuple
 from ..core.utils import load_json_file, save_json_file
 
 
+# Upgrade only the exact old built-in value. User-customized presets remain untouched.
+LEGACY_BUILTIN_PROMPT_REPLACEMENTS = {
+    "遮脸": (
+        "自然遮住部分脸部，随机选择一种遮挡方式（二选一）：用一只手轻轻挡住脸颊或嘴部，"
+        "或者用手机从脸侧或下方自然遮住半张脸，不要同时出现两种遮挡。"
+        "至少保留一只眼睛和部分面部轮廓可见；手、手指、手臂或手机与人物连接自然，"
+        "透视、光影和遮挡关系正确，手指数量正常，不要手掌变形、手臂穿过脸部、整张脸完全被盖住、"
+        "道具贴脸或僵硬摆拍。保持人物身份、服装、姿势和场景不变，像自然随手拍。"
+    ),
+}
+
+
 @dataclass
 class ImagePreset:
     prompt: str
@@ -55,18 +67,23 @@ class ImagePresetManager:
                 extra_prompt=str(value.get("extra_prompt") or value.get("extraPrompt") or "").strip(),
             )
 
-        # Seed missing built-in defaults without overwriting user edits.
+        # Seed missing built-in defaults and upgrade only exact legacy defaults.
         dirty = False
         for name, value in _default_seed().items():
             key = str(name or "").strip()
             prompt = str((value or {}).get("prompt") or "").strip()
-            if not key or not prompt or key in presets:
+            if not key or not prompt:
                 continue
-            presets[key] = ImagePreset(
-                prompt=prompt,
-                description=str((value or {}).get("description") or key).strip(),
-            )
-            dirty = True
+            existing = presets.get(key)
+            if existing is None:
+                presets[key] = ImagePreset(
+                    prompt=prompt,
+                    description=str((value or {}).get("description") or key).strip(),
+                )
+                dirty = True
+            elif existing.prompt == LEGACY_BUILTIN_PROMPT_REPLACEMENTS.get(key):
+                existing.prompt = prompt
+                dirty = True
 
         self.presets = presets
         if dirty or (not raw and presets):

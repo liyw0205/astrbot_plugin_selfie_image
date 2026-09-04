@@ -33,6 +33,19 @@ def is_leg_calf_crop_action(text: str) -> bool:
     return "看看腿" in raw or "下半身穿搭" in raw or "穿搭展示" in raw
 
 
+def requests_phone_face_cover(text: str) -> bool:
+    """Detect the explicit phone-face-cover preset without changing normal COS output."""
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    phone_words = ("手机", "iphone", "phone")
+    face_cover_words = (
+        "遮脸", "遮住脸", "挡脸", "挡住脸", "遮面", "挡面",
+        "遮住半张脸", "半张脸", "遮挡脸部", "遮住部分脸",
+    )
+    return any(word in compact for word in phone_words) and any(
+        word in compact for word in face_cover_words
+    )
+
+
 
 def normalize_appearance_type(value: Any) -> str:
     raw = str(value or "").strip().lower()
@@ -983,17 +996,33 @@ class PersonaManager:
         mode_lines: list[str] = []
         if intent.is_cos_look:
             camera_is_third = bool(intent.is_third_person_photo)
+            phone_face_cover = requests_phone_face_cover(act)
+            if phone_face_cover:
+                camera_line = (
+                    "别人视角的单人成品照：竖屏近景半身，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，"
+                    "不要拍到拍摄过程或其它拍摄设备，不要对镜；画面只允许主角既有的一只手握持唯一一部普通手机，"
+                    "手机从脸侧或下方自然遮住半张脸。手机占用这只既有手，替代它原本的动作或道具，原道具不入镜；"
+                    "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机。"
+                    "若双手都被套装姿势明确占用或不宜举手机，保持原姿势和道具，不额外添加手机，也不强行遮脸。"
+                    if camera_is_third
+                    else "竖屏近景半身自拍成片：可对镜取景；画面只允许主角既有的一只手握持唯一一部普通手机，"
+                    "手机从脸侧或下方自然遮住半张脸。手机占用这只既有手，替代它原本的动作或道具，原道具不入镜；"
+                    "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或其它拍摄设备。"
+                    "若双手都被套装姿势明确占用或不宜举手机，保持原姿势和道具，不额外添加手机，也不强行遮脸。"
+                )
+            else:
+                camera_line = (
+                    "别人视角的单人成品照：竖屏近景半身，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要拍到拍摄设备或拍摄过程，不要对镜；主角双手自然做动作，不要用物件遮脸挡衣服。"
+                    if camera_is_third
+                    else "竖屏近景半身自拍成片：可对镜取景，但拍摄设备完全在画面外；拍胸像到腰线，不要展会式全身棚拍；主角双手自然入镜或放在身侧，不要用物件遮脸挡衣服。"
+                )
             mode_lines.extend(
                 [
                     "【COS换装他拍模式】" if camera_is_third else "【COS换装自拍模式】",
                     "这是 COS 换装"
                     + ("他拍" if camera_is_third else "自拍")
                     + "，不是晒腿、不是合影。",
-                    (
-                        "别人视角的单人成品照：竖屏近景半身，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要拍到拍摄设备或拍摄过程，不要对镜；主角双手自然做动作，不要用物件遮脸挡衣服。"
-                        if camera_is_third
-                        else "竖屏近景半身自拍成片：可对镜取景，但拍摄设备完全在画面外；拍胸像到腰线，不要展会式全身棚拍；主角双手自然入镜或放在身侧，不要用物件遮脸挡衣服。"
-                    ),
+                    camera_line,
                     "保持形象参考的脸型五官与体态；假发颜色、发型、发饰按本套 COS 完整替换。",
                     "完整展示套装层次和腰线；竖屏近景半身即可，不要裁成只拍腿或只拍脸。",
                     "构图以展示 COS 服装为主；表情按新造型自然重画。",

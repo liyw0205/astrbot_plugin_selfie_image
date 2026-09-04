@@ -7245,10 +7245,12 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("漏腰", seed)
         self.assertTrue(seed["捧脸"]["prompt"])
         cover = seed["遮脸"]["prompt"]
-        self.assertIn("随机选择一种遮挡方式", cover)
-        self.assertIn("手机", cover)
-        self.assertIn("一只手", cover)
-        self.assertIn("不要同时出现两种遮挡", cover)
+        self.assertIn("仅使用一部普通手机", cover)
+        self.assertIn("只占用这只既有手", cover)
+        self.assertIn("手机替代该动作或道具", cover)
+        self.assertIn("恰好两条手臂、两只手", cover)
+        self.assertIn("不额外添加手机，也不强行遮脸", cover)
+        self.assertNotIn("随机选择一种遮挡方式", cover)
         lou = seed["漏腰"]["prompt"]
         self.assertIn("短上衣", lou)
         self.assertIn("oversized", lou)
@@ -7271,7 +7273,10 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("前后分片的围裹式结构", seed["前后分片围裹"]["prompt"])
     def test_default_presets_seed(self) -> None:
         import tempfile
-        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.prompts.preset import (
+            LEGACY_BUILTIN_PROMPT_REPLACEMENTS,
+            ImagePresetManager,
+        )
         from astrbot_plugin_selfie_image.studio.studio import special_prompt_presets
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -7301,7 +7306,8 @@ class StudioStoreTests(unittest.TestCase):
             self.assertNotIn("参考男友", rp)
             covered = mgr.resolve("遮脸")
             self.assertEqual(covered.get("preset_name"), "遮脸")
-            self.assertIn("随机选择一种遮挡方式", covered.get("prompt") or "")
+            self.assertIn("仅使用一部普通手机", covered.get("prompt") or "")
+            self.assertIn("不要为手机新增手", covered.get("prompt") or "")
             opened = mgr.resolve("深开襟 保持原发型")
             self.assertEqual(opened.get("preset_name"), "深开襟")
             self.assertIn("左右前襟向两侧展开", opened.get("prompt") or "")
@@ -7313,6 +7319,56 @@ class StudioStoreTests(unittest.TestCase):
             self.assertEqual(special.get("description"), f"随机选中：{selected['title']}")
             self.assertIn(selected["prompt"], special.get("prompt") or "")
             self.assertIn("夜景", special.get("prompt") or "")
+
+    def test_legacy_cover_face_preset_upgrades_without_overwriting_custom_value(self) -> None:
+        import tempfile
+        from astrbot_plugin_selfie_image.prompts.preset import (
+            LEGACY_BUILTIN_PROMPT_REPLACEMENTS,
+            ImagePresetManager,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "image_presets.json"
+            path.write_text(
+                json.dumps({"遮脸": {"prompt": LEGACY_BUILTIN_PROMPT_REPLACEMENTS["遮脸"]}}),
+                encoding="utf-8",
+            )
+            upgraded = ImagePresetManager(tmp)
+            self.assertIn("仅使用一部普通手机", upgraded.presets["遮脸"].prompt)
+
+            upgraded.add("遮脸", "我的自定义遮脸提示词")
+            preserved = ImagePresetManager(tmp)
+            self.assertEqual(preserved.presets["遮脸"].prompt, "我的自定义遮脸提示词")
+
+    def test_phone_cover_face_cos_reuses_existing_hand(self) -> None:
+        import tempfile
+
+        from astrbot_plugin_selfie_image.cos.cos_looks import COS_LOOK_SETS, build_cos_look_action
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
+        from astrbot_plugin_selfie_image.studio.studio import default_image_preset_seed
+
+        cover = default_image_preset_seed()["遮脸"]["prompt"]
+        pipe_cos = next(item for item in COS_LOOK_SETS if item["id"] == "ancient_teal_red_pipe")
+        action = build_cos_look_action(
+            cover,
+            camera="third",
+            picker=lambda **_kwargs: pipe_cos,
+        )
+        self.assertIn("唯一一部普通手机", action)
+        self.assertIn("手机替代该动作或道具，原道具不入镜", action)
+        self.assertIn("恰好两条手臂、两只手", action)
+        self.assertIn("第二台拍摄设备", action)
+        self.assertNotIn("不要用物件遮脸挡衣服", action)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = PersonaManager(tmp).build_selfie_prompt(
+                action, "小助", "温柔", True, 0
+            )
+        self.assertIn("画面只允许主角既有的一只手握持唯一一部普通手机", prompt)
+        self.assertIn("替代它原本的动作或道具，原道具不入镜", prompt)
+        self.assertIn("恰好两条手臂、两只手", prompt)
+        self.assertNotIn("不要用物件遮脸挡衣服", prompt)
+
     def test_selfie_command_expands_preset_before_action_wrap(self) -> None:
         """/自拍 捧脸 must expand preset on raw user text, not after long action wrap."""
         import tempfile
@@ -7561,6 +7617,7 @@ class StudioStoreTests(unittest.TestCase):
             ("cmd_draw", "/画 3 一只猫", False, "一只猫", 3),
             ("cmd_draw", "/画 一只猫 3", False, "一只猫", 3),
             ("cmd_draw", "/生图 一只猫 3", False, "一只猫", 3),
+            ("cmd_draw", "@心酱 画 捧脸 10", False, "捧住她的脸颊", 10),
             ("cmd_raw_text_to_image", "/文生图 3 一只猫", False, "一只猫", 3),
             ("cmd_raw_text_to_image", "/文生图 一只猫 3", False, "一只猫", 3),
             ("cmd_raw_text_to_image", "/文生图 一只猫 三张", False, "一只猫", 3),
@@ -7577,6 +7634,18 @@ class StudioStoreTests(unittest.TestCase):
             self.assertIn(expected_prompt, captured["summary"]["original_prompt"], message)
             if "捧脸" in message:
                 self.assertIn("捧住她的脸颊", captured["summary"]["original_prompt"], message)
+
+        from astrbot_plugin_selfie_image.studio.studio import special_prompt_presets
+
+        selected = special_prompt_presets()[0]
+        with patch("astrbot_plugin_selfie_image.prompts.preset.random.choice", return_value=selected):
+            captured, output = asyncio.run(
+                invoke_prompt("cmd_draw", "@心酱 画 特殊预设 10")
+            )
+        self.assertEqual(output, ["progress"])
+        self.assertEqual(captured["summary"]["requested_count"], 10)
+        self.assertIn(selected["prompt"], captured["summary"]["original_prompt"])
+        self.assertNotIn("特殊预设", captured["summary"]["original_prompt"])
 
         selfie_cases = (
             ("cmd_selfie", "/看看 一位美女 捧脸 2", "一位美女"),

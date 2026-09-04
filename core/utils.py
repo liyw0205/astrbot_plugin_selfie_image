@@ -871,7 +871,9 @@ def extract_command_message(event: Any, command: Any, fallback: str = "") -> str
         return fallback.strip()
     commands = [command] if isinstance(command, str) else [str(item) for item in command if str(item).strip()]
     for item in commands:
-        pattern = rf"^\s*[/!！.]?{re.escape(item)}(?:\s+([\s\S]*))?$"
+        # Some adapters retain the bot @mention in message_str even though the
+        # command dispatcher has already selected this handler.
+        pattern = rf"^\s*(?:@\S+\s+)?[/!！.]?{re.escape(item)}(?:\s+([\s\S]*))?$"
         match = re.match(pattern, text)
         if match:
             return (match.group(1) or "").strip()
