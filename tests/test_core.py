@@ -6072,9 +6072,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 92)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 114)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 92)
+        self.assertEqual(len(web_pool), 114)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -6175,6 +6175,28 @@ class LegFocusTests(unittest.TestCase):
                 "洛琪希·露肩短睡裙",
                 "卡提希娅·白黑蓝短装",
                 "水兰儿·羊角提花短旗袍",
+                "胡桃·龙之道·至纯",
+                "胡桃·鲤梦浮光",
+                "胡桃·春日序曲·晨风",
+                "胡桃·怦然心动·软暖甜梦",
+                "胡桃·夏日派对·高校水着",
+                "胡桃·春桃笑",
+                "殷紫萍·春日序曲·朝颜",
+                "殷紫萍·绛璇仙子",
+                "殷紫萍·兰庭月",
+                "殷紫萍·古岛异闻·永夜幽华",
+                "殷紫萍·2674·幻械姬",
+                "殷紫萍·诗画四友·春鸠梅",
+                "宁红夜·赤皓新囍",
+                "宁红夜·西行劫·蜘蛛精",
+                "宁红夜·封神录·云霄娘娘",
+                "宁红夜·冥神",
+                "宁红夜·梨园传奇·素贞",
+                "宁红夜·龙之道·白知",
+                "季莹莹·寂熄祸星",
+                "季莹莹·观山海·夫诸",
+                "季莹莹·琳琅·观山海·太阳星主",
+                "季莹莹·封神录·哪吒",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -6198,6 +6220,24 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("分叉燕尾式深色后摆", rem["prompt"])
         self.assertIn("不要拉姆粉色女仆服", rem["prompt"])
         prompts = {x["id"]: x["prompt"] for x in plugin_main.COS_LOOK_SETS}
+        self.assertEqual(
+            [item["id"] for item in plugin_main.match_cos_look_sets("宁红夜 赤皓新囍")],
+            ["ninghongye_red_hao_new_joy"],
+        )
+        self.assertEqual(
+            [item["id"] for item in plugin_main.match_cos_look_sets("季莹莹 封神录 哪吒")],
+            ["jiyingying_nezha"],
+        )
+        for ninghongye_id in (
+            "ninghongye_red_hao_new_joy",
+            "ninghongye_spider_demon",
+            "ninghongye_cloud_fairy",
+            "ninghongye_underworld_goddess",
+            "ninghongye_plain_white_snake",
+            "ninghongye_dragon_path_baizhi",
+        ):
+            self.assertIn("横向红色绸缎仪式眼罩", prompts[ninghongye_id])
+            self.assertIn("绝不能露出眼睛", prompts[ninghongye_id])
         self.assertIn("齐胸抹胸高腰", prompts["hanfu_peach"])
         self.assertIn("外层宽袖薄纱袍", prompts["mint_sheer_hanfu"])
         white = prompts["white_slip_mini"]
@@ -6633,7 +6673,15 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("胡桃")},
-            {"hutao_wansheng"},
+            {
+                "hutao_wansheng",
+                "hutao_dragon_path_zhichun",
+                "hutao_koi_dream_glow",
+                "hutao_spring_morning_breeze",
+                "hutao_warm_sweet_dream",
+                "hutao_high_school_swimsuit",
+                "hutao_spring_peach_smile",
+            },
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("刻晴")},
@@ -6849,7 +6897,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（92套）：", response[0])
+            self.assertIn("看看COS 随机池（114套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
