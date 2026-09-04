@@ -7119,6 +7119,63 @@ class LegFocusTests(unittest.TestCase):
         self.assertNotIn("短袜", normalized_extra)
         self.assertEqual(plugin._normalize_selfie_action(normalized, False), normalized)
 
+    def test_selfie_batch_cos_text_does_not_switch_to_cos_pool(self) -> None:
+        """Only /看看COS may rebuild an action from the random COS pool."""
+        stub_factory = SessionModelAndTaskTests()
+        batch_plugin = stub_factory._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        batch_plugin.config = type("Config", (), {"image_max_batch_count": 10})()
+        rebuilt_actions = []
+        selfie_requests = []
+
+        async def fake_build_prompt(event, action, extra_refs):
+            rebuilt_actions.append(action)
+            return action, [], {}
+
+        async def fake_generate(prompt, aspect, resolution, refs, **kwargs):
+            return {"success": True, "files": ["generated.png"]}
+
+        async def fake_counted(*, task_id, event, total, fail_label, run_one, log_prefix):
+            for index in range(total):
+                await run_one(index)
+            return {"success": True, "files": []}
+
+        def fake_build_selfie_action(extra_request="", has_refs=False, **kwargs):
+            selfie_requests.append(extra_request)
+            return f"普通自拍重建 {len(selfie_requests)} 【shot:arm_half】"
+
+        def fail_build_cos_action(*args, **kwargs):
+            raise AssertionError("普通 /自拍 不应进入 COS 随机池")
+
+        batch_plugin._build_selfie_prompt_and_refs_for_event = fake_build_prompt
+        batch_plugin._run_image_generation = fake_generate
+        batch_plugin._run_counted_generation_shots = fake_counted
+        batch_plugin._build_selfie_look_action = fake_build_selfie_action
+        batch_plugin._build_cos_look_action = fail_build_cos_action
+
+        for initial_action in (
+            "【自拍 / 看看模式】用户补充要求优先：COS 菲比",
+            "【自拍 / 看看模式】用户补充要求优先：看看COS风格的菲比",
+            "【自拍 / 看看模式】用户补充要求优先：COS 菲比 【cos:phoebe_white_gold_sanctuary】",
+        ):
+            asyncio.run(
+                batch_plugin._run_selfie_batches_unlocked(
+                    "test-selfie-cos-text",
+                    object(),
+                    initial_action,
+                    [],
+                    "command-selfie",
+                    2,
+                    "9:16",
+                    "1K",
+                    "生成失败",
+                )
+            )
+
+        self.assertEqual(len(rebuilt_actions), 6)
+        self.assertEqual(len(selfie_requests), 6)
+
     def test_user_requested_legwear_is_honored(self) -> None:
         import sys
         import types

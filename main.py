@@ -2489,7 +2489,7 @@ class SelfieImagePlugin(
                     m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
                     if m_pose:
                         last_pose = str(m_pose.group(1) or last_pose)
-                elif source == "command-look-cos" or "看看COS" in str(action or "") or "【cos:" in str(action or ""):
+                elif source == "command-look-cos":
                     round_action = self._build_cos_look_action(
                         extra_keep,
                         bool(extra_refs),
