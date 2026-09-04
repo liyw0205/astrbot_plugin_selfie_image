@@ -324,17 +324,11 @@ class GenerationStoreMixin:
             return self.get_channel_health()
 
     def get_channel_health(self) -> Dict[str, Any]:
-        now = time.time()
         with self._channel_health_lock:
             return {
-                name: {**dict(state), "cooldown_remaining": round(max(0.0, float(state.get("cooldown_until") or 0) - now), 2)}
+                name: dict(state)
                 for name, state in self._channel_health.items()
             }
-
-    def _channel_is_healthy(self, channel: str) -> bool:
-        with self._channel_health_lock:
-            state = self._channel_health.get(str(channel).strip()) or {}
-            return float(state.get("cooldown_until") or 0) <= time.time()
 
     def _record_channel_health(self, attempts: Iterable[Mapping[str, Any]]) -> None:
         now = time.time()
@@ -350,7 +344,6 @@ class GenerationStoreMixin:
                 state = self._channel_health.setdefault(channel, {"consecutive_failures": 0, "last_error_category": ""})
                 if success:
                     state["consecutive_failures"] = 0
-                    state["cooldown_until"] = 0
                     state["last_success_ts"] = now
                     continue
                 if category not in {"network", "server", "timeout_create", "timeout_poll"}:
@@ -358,5 +351,3 @@ class GenerationStoreMixin:
                 state["consecutive_failures"] = int(state.get("consecutive_failures") or 0) + 1
                 state["last_error_category"] = category
                 state["last_error_ts"] = now
-                if state["consecutive_failures"] >= 3:
-                    state["cooldown_until"] = now + 60

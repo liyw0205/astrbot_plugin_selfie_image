@@ -1064,11 +1064,9 @@ class SelfieImagePlugin(
         allow_compat_retry: bool = True,
         prompt_en_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        # Enabled channels remain eligible after transient failures. Operators
+        # decide whether to disable or remove an unavailable channel.
         selected_targets = targets or self._resolve_generation_targets(event)
-        healthy_targets = [target for target in selected_targets if self._channel_is_healthy(target.channel_name)]
-        if selected_targets and not healthy_targets:
-            return {"success": False, "error": "所有生图渠道暂时冷却中，请稍后重试或清除渠道健康状态"}
-        selected_targets = healthy_targets or selected_targets
         request_prompt = str(prompt or "")
         plain_request_prompt = request_prompt
         original_prompt = str(original_prompt or request_prompt)

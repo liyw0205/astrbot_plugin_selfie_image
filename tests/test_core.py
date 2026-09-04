@@ -759,7 +759,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(migrated.raw["schema_version"], 2)
         self.assertEqual(migrated.image_max_concurrent_tasks, 3)
 
-    def test_channel_health_cooldown_ignores_non_operational_errors(self) -> None:
+    def test_channel_health_records_operational_failures_without_cooldown(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 
         plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
@@ -771,7 +771,10 @@ class ConfigModelTests(unittest.TestCase):
         ])
         self.assertEqual(plugin.get_channel_health(), {})
         plugin._record_channel_health([{"channel": "x", "success": False, "error_category": "server"}] * 3)
-        self.assertGreater(plugin.get_channel_health()["x"]["cooldown_remaining"], 0)
+        health = plugin.get_channel_health()["x"]
+        self.assertEqual(health["consecutive_failures"], 3)
+        self.assertNotIn("cooldown_until", health)
+        self.assertNotIn("cooldown_remaining", health)
         plugin.clear_channel_health("x")
         self.assertNotIn("x", plugin.get_channel_health())
 
@@ -4537,7 +4540,6 @@ class SessionModelAndTaskTests(unittest.TestCase):
         reference = ImageReference(data=PNG_BYTES, mime_type="image/png")
         captured = []
 
-        plugin._channel_is_healthy = lambda _name: True
         plugin._save_reference_images_to_cache = lambda _refs: []
         plugin._source_context = lambda *_args, **_kwargs: {}
         plugin._cleanup_image_cache_if_needed = lambda _paths: {}
@@ -6072,9 +6074,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 114)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 116)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 114)
+        self.assertEqual(len(web_pool), 116)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -6197,6 +6199,8 @@ class LegFocusTests(unittest.TestCase):
                 "季莹莹·观山海·夫诸",
                 "季莹莹·琳琅·观山海·太阳星主",
                 "季莹莹·封神录·哪吒",
+                "砂狼白子·黑白运动服",
+                "菲比·白金圣洁礼服",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -6228,6 +6232,14 @@ class LegFocusTests(unittest.TestCase):
             [item["id"] for item in plugin_main.match_cos_look_sets("季莹莹 封神录 哪吒")],
             ["jiyingying_nezha"],
         )
+        self.assertEqual(
+            [item["id"] for item in plugin_main.match_cos_look_sets("砂狼白子")],
+            ["shiroko_black_white_tracksuit"],
+        )
+        self.assertEqual(
+            [item["id"] for item in plugin_main.match_cos_look_sets("菲比")],
+            ["phoebe_white_gold_sanctuary"],
+        )
         for ninghongye_id in (
             "ninghongye_red_hao_new_joy",
             "ninghongye_spider_demon",
@@ -6238,12 +6250,28 @@ class LegFocusTests(unittest.TestCase):
         ):
             self.assertIn("横向红色绸缎仪式眼罩", prompts[ninghongye_id])
             self.assertIn("绝不能露出眼睛", prompts[ninghongye_id])
+            self.assertIn("完全不透明", prompts[ninghongye_id])
+            self.assertIn("不得透光", prompts[ninghongye_id])
+            self.assertIn("眼睛、眼白和眼睑全部不可见", prompts[ninghongye_id])
         sun_star_lord = prompts["jiyingying_sun_star_lord"]
-        self.assertIn("黑色三角底层", sun_star_lord)
+        self.assertIn("白色、浅金色的半透明纱裙片与珠网结构", sun_star_lord)
         self.assertIn("透明长纱裙片", sun_star_lord)
         self.assertIn("赤足", sun_star_lord)
+        self.assertNotIn("黑色三角底层", sun_star_lord)
         self.assertNotIn("白色贴身短裤", sun_star_lord)
         self.assertNotIn("脚穿细带凉鞋", sun_star_lord)
+        orchid = prompts["yinzi_orchid_courtyard_moon"]
+        self.assertIn("双腿裸露不穿袜", orchid)
+        self.assertNotIn("白色连裤袜", orchid)
+        spring_oriole = prompts["yinzi_spring_oriole_plum"]
+        self.assertIn("双腿裸露不穿袜", spring_oriole)
+        self.assertNotIn("白色丝袜", spring_oriole)
+        warm_dream = prompts["hutao_warm_sweet_dream"]
+        self.assertIn("后背大面积露出", warm_dream)
+        self.assertIn("细肩带固定", warm_dream)
+        cloud_fairy = prompts["ninghongye_cloud_fairy"]
+        self.assertIn("双臂大部裸露", cloud_fairy)
+        self.assertIn("不形成连贯长袖", cloud_fairy)
         self.assertIn("齐胸抹胸高腰", prompts["hanfu_peach"])
         self.assertIn("外层宽袖薄纱袍", prompts["mint_sheer_hanfu"])
         white = prompts["white_slip_mini"]
@@ -6524,6 +6552,8 @@ class LegFocusTests(unittest.TestCase):
             "roxy_off_shoulder_sleep_dress": ("《无职转生》洛琪希", "奶油白色露肩短睡裙"),
             "cartethyia_white_black_blue_short": ("《鸣潮》卡提希娅", "画面中只有一名人物"),
             "shuilaner_horned_brocade_qipao": ("水兰儿AS109风格", "平视机位和正常拍摄距离"),
+            "shiroko_black_white_tracksuit": ("《碧蓝档案》砂狼白子", "黑色拉链运动外套"),
+            "phoebe_white_gold_sanctuary": ("《鸣潮》菲比", "白色与浅金色多层短裙"),
         }
         for cos_id, (source, composition) in new_cos_looks.items():
             self.assertIn(source, prompts[cos_id])
@@ -6534,6 +6564,15 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("脸部清晰可见", shaoluo)
         self.assertNotIn("白色兔子卡通面具", shaoluo)
         self.assertNotIn("面具完整覆盖脸部", shaoluo)
+        shiroko = prompts["shiroko_black_white_tracksuit"]
+        self.assertIn("亮青绿色滚边", shiroko)
+        self.assertIn("白色不透明过膝长袜", shiroko)
+        self.assertIn("住宅走廊或室内门厅", shiroko)
+        phoebe = prompts["phoebe_white_gold_sanctuary"]
+        self.assertIn("金黄色长卷发", phoebe)
+        self.assertIn("背景明亮、轮廓清楚", phoebe)
+        self.assertIn("不添加雾气、雾霾、烟雾或朦胧遮挡", phoebe)
+        self.assertNotIn("参考视频", phoebe)
         shuilaner_action = plugin_main.build_cos_look_action(
             camera="third",
             picker=lambda **_: next(
@@ -6564,6 +6603,8 @@ class LegFocusTests(unittest.TestCase):
             "洛琪希·露肩短睡裙",
             "卡提希娅·白黑蓝短装",
             "水兰儿·羊角提花短旗袍",
+            "砂狼白子·黑白运动服",
+            "菲比·白金圣洁礼服",
         ):
             self.assertEqual(
                 [item["title"] for item in plugin_main.match_cos_look_sets(title)],
@@ -6903,7 +6944,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（114套）：", response[0])
+            self.assertIn("看看COS 随机池（116套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
