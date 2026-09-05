@@ -603,7 +603,7 @@ class SelfieImageDashboardAPI:
 
     async def page_studio_gallery(self) -> Any:
         try:
-            limit = int(request.args.get("limit") or 24)
+            limit = int(self._query_value("limit") or 24)
         except Exception:
             limit = 24
         try:
@@ -613,8 +613,7 @@ class SelfieImageDashboardAPI:
 
     async def page_prompt_presets(self) -> Any:
         try:
-            args = getattr(request, "args", {}) if request is not None else {}
-            kind = args.get("kind") or args.get("media_type") or "image"
+            kind = self._query_value("kind") or self._query_value("media_type") or "image"
             data = self.plugin.list_prompt_presets_for_web(kind)
             return self._ok(data, count=len(data))
         except Exception as exc:
@@ -622,8 +621,7 @@ class SelfieImageDashboardAPI:
 
     async def page_prompt_presets_manage(self) -> Any:
         try:
-            args = getattr(request, "args", {}) if request is not None else {}
-            kind = args.get("kind") or args.get("media_type") or "image"
+            kind = self._query_value("kind") or self._query_value("media_type") or "image"
             return self._ok(self.plugin.list_managed_prompt_presets_for_web(kind))
         except Exception as exc:
             return self._fail(str(exc), 500)

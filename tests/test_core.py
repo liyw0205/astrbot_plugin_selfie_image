@@ -5040,6 +5040,37 @@ class DashboardEmbedContractTests(unittest.TestCase):
         # dual registration for bridge compatibility
         self.assertGreaterEqual(len(registered), 20)
 
+    def test_dashboard_preset_api_reads_kind_from_query(self) -> None:
+        import astrbot_plugin_selfie_image.webui.dashboard_api as dashboard_api
+        from astrbot_plugin_selfie_image.webui.dashboard_api import SelfieImageDashboardAPI
+
+        class Plugin:
+            def __init__(self) -> None:
+                self.kinds = []
+
+            def list_prompt_presets_for_web(self, kind):
+                self.kinds.append(kind)
+                return [{"name": kind}]
+
+            def list_managed_prompt_presets_for_web(self, kind):
+                self.kinds.append(kind)
+                return [{"name": kind}]
+
+        plugin = Plugin()
+        api = SelfieImageDashboardAPI(plugin)
+        old_request, old_json_response = dashboard_api.request, dashboard_api.json_response
+        dashboard_api.request = types.SimpleNamespace(query={"kind": "video"})
+        dashboard_api.json_response = lambda payload, **_: payload
+        try:
+            managed = asyncio.run(api.page_prompt_presets_manage())
+            picker = asyncio.run(api.page_prompt_presets())
+        finally:
+            dashboard_api.request, dashboard_api.json_response = old_request, old_json_response
+
+        self.assertEqual(plugin.kinds, ["video", "video"])
+        self.assertEqual(managed["data"]["data"][0]["name"], "video")
+        self.assertEqual(picker["data"]["data"][0]["name"], "video")
+
     def test_openai_fast_path_and_trust_env_false_still_present(self) -> None:
         providers = Path(__file__).resolve().parents[1] / "core/providers.py"
         main = Path(__file__).resolve().parents[1] / "main.py"
