@@ -943,7 +943,10 @@ INDEX_HTML = r"""<!doctype html>
     }
     const AUDIT_PROVIDERS = ['openai','gemini','gemini_openai'];
     // Video model-family protocols (like image provider types). Auto by model name; manual override.
-    const VIDEO_PROVIDERS = ['openai_video','sora','veo','seedance','agnes','kling','cogvideo','grok','video_chat','video_sync'];
+    // Video provider choices are temporarily limited to Agnes. Keep the full
+    // protocol set for normalizing legacy saved channels and model overrides.
+    const VIDEO_PROVIDERS = ['agnes'];
+    const VIDEO_PROVIDER_TYPES = ['openai_video','sora','veo','seedance','agnes','kling','cogvideo','grok','video_chat','video_sync'];
     const VIDEO_PROVIDER_LABELS = {
       openai_video: '通用 OpenAI 视频（/videos/generations）',
       sora: 'Sora',
@@ -1411,7 +1414,7 @@ Source prompt:
         chat: 'video_chat', video_chat: 'video_chat'
       };
       let normalized = aliases[raw] || raw;
-      if (VIDEO_PROVIDERS.includes(normalized)) return normalized;
+      if (VIDEO_PROVIDER_TYPES.includes(normalized)) return normalized;
       if (raw.includes('sora')) return 'sora';
       if (raw.includes('veo')) return 'veo';
       if (raw.includes('seedance')) return 'seedance';
@@ -1653,7 +1656,7 @@ Source prompt:
       return normalizeChannel({name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
     }
     function newVideoChannel() {
-      return normalizeChannel({name:'video-channel', provider_type:'openai_video', base_url:'https://api.openai.com/v1', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
+      return normalizeChannel({name:'video-channel', provider_type:'agnes', base_url:'https://apihub.agnes-ai.com', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
     }
     function applyProviderDefaults(ch, force = false, kind = 'image') {
       ch = ch && typeof ch === 'object' ? ch : {};
@@ -1963,7 +1966,7 @@ Source prompt:
       $('modalStatus').textContent = isNew ? '填写后点「保存渠道」才会加入列表；关闭则不添加。' : '';
       if ($('modalProviderHint')) {
         $('modalProviderHint').textContent = EDITING_CHANNEL_KIND === 'video'
-          ? '视频协议可选：异步轮询 / 同步等待 / 对话回链。模型旁可「自动」识别或手动指定；与生图渠道用法一致。'
+          ? '当前视频渠道暂仅支持 Agnes；模型旁可「自动」识别或手动指定协议。'
           : EDITING_CHANNEL_KIND === 'image'
             ? '选择渠道默认类型；模型旁可改协议，下载代理仅影响结果图/视频拉取。'
             : '渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。';
@@ -2173,7 +2176,8 @@ Source prompt:
         : normalizeChannel(channelListFor(EDITING_CHANNEL_KIND)[index]);
       $('modalStatus').textContent = `正在刷新 ${ch.name || '渠道'} 模型...`;
       try {
-        const res = await api('/api/refresh-image-models', {method:'POST', body: JSON.stringify({channel: ch})});
+        const refreshPayload = Object.assign({}, ch, {media_type: EDITING_CHANNEL_KIND});
+        const res = await api('/api/refresh-image-models', {method:'POST', body: JSON.stringify({channel: refreshPayload})});
         ch.models_cache = res.data || [];
         if (EDITING_CHANNEL_IS_NEW || index === EDITING_CHANNEL_INDEX) {
           storeModalChannel(ch);

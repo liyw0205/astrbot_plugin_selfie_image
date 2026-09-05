@@ -2816,12 +2816,23 @@ class SelfieImagePlugin(
         }
 
     async def web_refresh_image_models(self, payload: Dict[str, Any]) -> List[str]:
-        channel_payload = payload.get("channel") if isinstance(payload.get("channel"), dict) else payload
+        raw_payload = payload if isinstance(payload, dict) else {}
+        channel_payload = raw_payload.get("channel") if isinstance(raw_payload.get("channel"), dict) else raw_payload
         base_url = str(channel_payload.get("base_url") or channel_payload.get("baseUrl") or "").strip()
         api_key = str(channel_payload.get("api_key") or channel_payload.get("apiKey") or "").strip()
         provider_type = provider_type_from_channel_payload(channel_payload)
         proxy = str(channel_payload.get("proxy") or "").strip()
-        if provider_type == "agnes":
+        # Agnes image channels historically use the native default model because
+        # some Agnes deployments do not expose a model-list endpoint. Video
+        # channels use the same gateway/key but must query its real model list.
+        media_type = str(
+            channel_payload.get("media_type")
+            or channel_payload.get("mediaType")
+            or raw_payload.get("media_type")
+            or raw_payload.get("mediaType")
+            or ""
+        ).strip().lower()
+        if provider_type == "agnes" and media_type != "video":
             return ["agnes-image-2.1-flash"]
         candidates = build_model_list_urls(base_url, provider_type)
         if not candidates:
@@ -2852,7 +2863,9 @@ class SelfieImagePlugin(
         raise RuntimeError("\n".join(errors))
 
     def _extract_model_ids(self, data: Any) -> List[str]:
-        return extract_model_ids_from_response(data)
+        # Refreshing a channel is an inventory operation: keep every model the
+        # upstream returned, in its original order, without family-name rules.
+        return extract_model_ids_from_response(data, preserve_order=True)
 
     async def _iter_draw_batch(
         self,

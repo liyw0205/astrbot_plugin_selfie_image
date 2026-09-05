@@ -72,18 +72,26 @@ def provider_type_from_channel_payload(payload: Any, default: str = "openai") ->
     return normalize_provider_type(value) or normalize_provider_type(default) or "openai"
 
 
-def extract_model_ids_from_response(data: Any) -> List[str]:
-    result: Set[str] = set()
+def extract_model_ids_from_response(data: Any, *, preserve_order: bool = False) -> List[str]:
+    """Read model identifiers without applying provider/model-name rules.
+
+    ``preserve_order`` is used by the refresh endpoint so the cache follows the
+    upstream list. The default keeps the historical sorted result for callers
+    that use this helper as a set-like lookup.
+    """
+    result: List[str] = []
+    seen: Set[str] = set()
     primary_keys = ("id", "name", "model", "model_id", "modelId", "model_name", "modelName", "slug")
     fallback_keys = ("display_name", "displayName")
     container_keys = ("data", "models", "items", "results", "list", "model_list", "modelList", "available_models", "availableModels", "model_ids", "modelIds")
 
     def add(value: Any) -> None:
         text = str(value or "").strip()
-        if text:
-            result.add(text)
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
 
-    def walk(value: Any) -> None:
+    def walk(value: Any, allow_mapping_keys: bool = False) -> None:
         if value is None:
             return
         if isinstance(value, str):
@@ -101,16 +109,36 @@ def extract_model_ids_from_response(data: Any) -> List[str]:
             if isinstance(value.get(key), str):
                 add(value.get(key))
                 found_primary = True
+                if preserve_order:
+                    break
         if not found_primary:
             for key in fallback_keys:
                 if isinstance(value.get(key), str):
                     add(value.get(key))
+                    if preserve_order:
+                        break
 
+        walked_container = False
         for key in container_keys:
-            walk(value.get(key))
+            if key in value:
+                walked_container = True
+                walk(value.get(key), allow_mapping_keys=True)
+
+        # Some gateways expose models as ``{"model-name": {...}}`` instead
+        # of a list of objects. Only use mapping keys when the object itself
+        # has no recognized model field/container, avoiding metadata leakage.
+        if allow_mapping_keys and not found_primary and not walked_container:
+            entries = [(str(key).strip(), item) for key, item in value.items() if str(key).strip()]
+            nested_before = len(result)
+            for _, item in entries:
+                if isinstance(item, (dict, list, tuple)):
+                    walk(item)
+            if len(result) == nested_before:
+                for key, _ in entries:
+                    add(key)
 
     walk(data)
-    return sorted(result)
+    return result if preserve_order else sorted(result)
 
 
 def b64_to_bytes(value: str) -> bytes:
