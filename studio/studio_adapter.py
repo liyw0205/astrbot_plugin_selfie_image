@@ -49,6 +49,11 @@ class StudioMixin:
             name = str(item.get("name") or item.get("title") or "").strip()
             if not name:
                 continue
+            try:
+                if self.presets.is_builtin_deleted(name):
+                    continue
+            except Exception:
+                pass
             merged[name] = dict(item)
             merged[name]["name"] = name
             merged[name]["title"] = name
@@ -69,6 +74,33 @@ class StudioMixin:
         rows = list(merged.values())
         rows.sort(key=lambda r: str(r.get("name") or ""))
         return rows
+
+    def list_managed_prompt_presets_for_web(self) -> List[Dict[str, str]]:
+        """Return the persisted preset set used by the preset management page."""
+        self.presets.load()
+        return self.presets.list_management()
+
+    def save_prompt_preset_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self.presets.load()
+        ok, message = self.presets.save_management(payload or {})
+        if not ok:
+            raise ValueError(message)
+        return {"message": message, "presets": self.presets.list_management()}
+
+    def delete_prompt_preset_from_web(self, name: str) -> Dict[str, Any]:
+        self.presets.load()
+        ok, message = self.presets.remove(name)
+        if not ok:
+            raise ValueError(message)
+        return {"message": message, "presets": self.presets.list_management()}
+
+    def import_prompt_presets_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self.presets.load()
+        source = payload.get("presets") if isinstance(payload, dict) else None
+        if source is None and isinstance(payload, dict):
+            source = payload.get("items")
+        imported, message = self.presets.import_management(source)
+        return {"message": message, "imported": imported, "presets": self.presets.list_management()}
 
     def list_cos_look_sets_for_web(self) -> List[Dict[str, str]]:
         """Expose the command COS pool to the canvas and quick-test pickers."""

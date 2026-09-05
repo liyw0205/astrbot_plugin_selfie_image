@@ -275,6 +275,17 @@
     .studio-gallery-item .cap { font-size:10px; color:var(--muted); margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .studio-slot .slot-actions button.mini { padding:3px 6px; font-size:11px; }
     .studio-results .actions { flex-wrap:wrap; gap:4px; }
+    .preset-manager-list { display:grid; gap:10px; margin-top:14px; }
+    .preset-manager-row { display:grid; grid-template-columns:minmax(150px,.35fr) minmax(0,1fr) auto; gap:12px; align-items:start; padding:13px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--panel); box-shadow:var(--shadow-soft); }
+    .preset-manager-name { min-width:0; font-weight:700; overflow-wrap:anywhere; }
+    .preset-manager-meta { display:flex; gap:6px; flex-wrap:wrap; margin-top:5px; }
+    .preset-manager-prompt { min-width:0; color:var(--text-secondary); white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.55; max-height:92px; overflow:auto; }
+    .preset-manager-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+    .preset-transfer-text { min-height:360px; width:100%; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; }
+    @media (max-width: 760px) {
+      .preset-manager-row { grid-template-columns:minmax(0,1fr); }
+      .preset-manager-actions { justify-content:flex-start; }
+    }
 
     .model-attempts { display:grid; gap:5px; min-width:180px; }
     .model-attempt-badge { display:inline-flex; align-items:center; width:max-content; max-width:220px; padding:3px 7px; border-radius:6px; font-size:12px; font-weight:600; overflow-wrap:anywhere; }
@@ -425,6 +436,7 @@
     nav.page-nav button[data-tab="proxies"]::before { content: "◌"; }
     nav.page-nav button[data-tab="monitor"]::before { content: "☷"; }
     nav.page-nav button[data-tab="studio"]::before { content: "✦"; }
+    nav.page-nav button[data-tab="presets"]::before { content: "✎"; }
     nav.page-nav button[data-tab="test"]::before { content: "◎"; }
     nav.page-nav button[data-tab="image"]::before { content: "▧"; }
     nav.page-nav button[data-tab="selfie"]::before { content: "◉"; }
@@ -665,6 +677,7 @@
       <button data-tab="proxies" type="button">代理设置</button>
       <button data-tab="monitor" type="button">生成记录</button>
       <button data-tab="studio" type="button">创作画布</button>
+      <button data-tab="presets" type="button">预设管理</button>
       <button data-tab="test" type="button">快速试画</button>
       <button data-tab="image" type="button">出图设置</button>
       <button data-tab="selfie" type="button">形象参考</button>
@@ -872,6 +885,25 @@
       <h3>结果</h3>
       <div class="studio-results" id="studioResults"></div>
       <input id="studioFilePick" type="file" accept="image/*" style="display:none">
+    </section>
+
+    <section id="presets">
+      <div class="between">
+        <div>
+          <h2>预设管理</h2>
+          <p class="muted">管理生图指令里的预设。导入导出使用 JSON 文本，不会下载文件。</p>
+        </div>
+        <div class="actions">
+          <button class="ok" id="presetAddBtn" type="button">新增预设</button>
+          <button class="secondary" id="presetImportBtn" type="button">导入文本</button>
+          <button class="secondary" id="presetExportBtn" type="button">导出并复制</button>
+        </div>
+      </div>
+      <div class="between" style="margin-top:12px">
+        <span id="presetManagerStatus" class="status">正在读取预设…</span>
+        <button class="secondary" id="presetReloadBtn" type="button">刷新列表</button>
+      </div>
+      <div id="presetManagerList" class="preset-manager-list"></div>
     </section>
 
     <section id="test">
@@ -1112,6 +1144,52 @@
     </div>
   </div>
 
+  <div id="presetEditorModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2 id="presetEditorTitle">新增预设</h2>
+        <button class="secondary" type="button" onclick="closePresetEditor()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid">
+          <div><label>预设名</label><input id="presetName" maxlength="100" placeholder="例如：夜景人像"></div>
+          <div><label>画面比例（可选）</label><input id="presetAspect" placeholder="例如：9:16"></div>
+          <div><label>清晰度（可选）</label><input id="presetResolution" placeholder="例如：1K"></div>
+          <div><label>说明（可选）</label><input id="presetDescription" placeholder="给自己看的备注"></div>
+        </div>
+        <label>提示词</label><textarea id="presetPrompt" rows="7" placeholder="输入这个预设要追加的提示词"></textarea>
+        <label>额外提示词（可选）</label><textarea id="presetExtraPrompt" rows="4" placeholder="会和主提示词一起使用"></textarea>
+        <div id="presetEditorStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" type="button" onclick="closePresetEditor()">取消</button>
+          <button class="ok" id="presetEditorSaveBtn" type="button">保存预设</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="presetTransferModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2 id="presetTransferTitle">预设文本</h2>
+        <button class="secondary" type="button" onclick="closePresetTransfer()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p id="presetTransferHint" class="muted">文本可以直接复制或粘贴；这里不会创建文件。</p>
+        <textarea id="presetTransferText" class="preset-transfer-text" spellcheck="false"></textarea>
+        <div id="presetTransferStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" id="presetTransferCopyBtn" type="button">复制到剪贴板</button>
+          <button class="ok" id="presetTransferImportBtn" type="button" style="display:none">导入并合并</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="toastWrap" class="toast-wrap"></div>
 
   <!-- bridge sdk -->
@@ -1214,6 +1292,8 @@
     let TEST_TASK_ID = '';
     let TEST_MODE = 'image';
     let DASHBOARD_BRIDGE = null;
+    let PRESET_MANAGE_ROWS = [];
+    let PRESET_EDIT_ORIGINAL = '';
 
     function isEmbeddedFrame() {
       try {
@@ -3937,6 +4017,170 @@ Source prompt:
       } catch (_) {}
       return STUDIO.promptPresets || [];
     }
+    function presetManagerStatus(text, bad = false) {
+      const el = $('presetManagerStatus');
+      if (!el) return;
+      el.textContent = text || '';
+      el.className = 'status' + (bad ? ' bad' : '');
+    }
+    async function loadManagedPromptPresets() {
+      try {
+        const res = await api('/api/prompt-presets/manage');
+        const data = res.data;
+        PRESET_MANAGE_ROWS = Array.isArray(data) ? data : (data && Array.isArray(data.presets) ? data.presets : []);
+        renderManagedPromptPresets();
+        presetManagerStatus(`共 ${PRESET_MANAGE_ROWS.length} 个预设`);
+      } catch (e) {
+        PRESET_MANAGE_ROWS = [];
+        renderManagedPromptPresets();
+        presetManagerStatus(e.message || '预设读取失败', true);
+      }
+    }
+    function renderManagedPromptPresets() {
+      const wrap = $('presetManagerList');
+      if (!wrap) return;
+      if (!PRESET_MANAGE_ROWS.length) {
+        wrap.innerHTML = '<div class="status">暂无预设，先新增一个。</div>';
+        return;
+      }
+      wrap.innerHTML = PRESET_MANAGE_ROWS.map((item, idx) => {
+        const name = escapeHtml(item.name || item.title || '未命名');
+        const prompt = escapeHtml(item.prompt || '');
+        const desc = escapeHtml(item.description || '');
+        const source = item.source === 'builtin' ? '内置' : '自定义';
+        const meta = [item.aspect_ratio ? '比例 ' + escapeHtml(item.aspect_ratio) : '', item.resolution ? '清晰度 ' + escapeHtml(item.resolution) : '', source]
+          .filter(Boolean).map(v => `<span class="pill">${v}</span>`).join('');
+        return `<article class="preset-manager-row">
+          <div><div class="preset-manager-name">${name}</div><div class="preset-manager-meta">${meta}</div>${desc ? `<div class="muted" style="margin-top:6px">${desc}</div>` : ''}</div>
+          <div class="preset-manager-prompt">${prompt}</div>
+          <div class="preset-manager-actions"><button class="secondary mini" type="button" data-preset-edit="${idx}">编辑</button><button class="danger mini" type="button" data-preset-delete="${idx}">删除</button></div>
+        </article>`;
+      }).join('');
+      wrap.querySelectorAll('[data-preset-edit]').forEach(btn => btn.onclick = () => openPresetEditor(PRESET_MANAGE_ROWS[Number(btn.dataset.presetEdit)]));
+      wrap.querySelectorAll('[data-preset-delete]').forEach(btn => btn.onclick = () => deleteManagedPromptPreset(PRESET_MANAGE_ROWS[Number(btn.dataset.presetDelete)]));
+    }
+    function openPresetEditor(row = null) {
+      PRESET_EDIT_ORIGINAL = row ? String(row.name || '') : '';
+      $('presetEditorTitle').textContent = row ? '编辑预设' : '新增预设';
+      $('presetName').value = row?.name || '';
+      $('presetPrompt').value = row?.prompt || '';
+      $('presetDescription').value = row?.description || '';
+      $('presetAspect').value = row?.aspect_ratio || '';
+      $('presetResolution').value = row?.resolution || '';
+      $('presetExtraPrompt').value = row?.extra_prompt || '';
+      $('presetEditorStatus').textContent = '';
+      $('presetEditorModal').classList.add('show');
+      $('presetName').focus();
+    }
+    function closePresetEditor() {
+      $('presetEditorModal').classList.remove('show');
+      PRESET_EDIT_ORIGINAL = '';
+    }
+    async function saveManagedPromptPreset() {
+      const body = {
+        original_name: PRESET_EDIT_ORIGINAL,
+        name: $('presetName').value.trim(),
+        prompt: $('presetPrompt').value.trim(),
+        description: $('presetDescription').value.trim(),
+        aspect_ratio: $('presetAspect').value.trim(),
+        resolution: $('presetResolution').value.trim(),
+        extra_prompt: $('presetExtraPrompt').value.trim()
+      };
+      if (!body.name || !body.prompt) {
+        $('presetEditorStatus').textContent = '预设名和提示词不能为空';
+        return;
+      }
+      $('presetEditorStatus').textContent = '保存中…';
+      try {
+        const res = await api('/api/prompt-presets/manage/save', {method:'POST', body:JSON.stringify(body)});
+        closePresetEditor();
+        await loadManagedPromptPresets();
+        STUDIO.promptPresets = [];
+        await ensurePromptPresetsLoaded();
+        showToast((res.data && res.data.message) || '预设已保存', 'ok');
+      } catch (e) {
+        $('presetEditorStatus').textContent = e.message || '保存失败';
+      }
+    }
+    async function deleteManagedPromptPreset(row) {
+      if (!row || !row.name) return;
+      if (!window.confirm(`确定删除预设「${row.name}」吗？`)) return;
+      try {
+        const res = await api('/api/prompt-presets/manage/delete', {method:'POST', body:JSON.stringify({name:row.name})});
+        await loadManagedPromptPresets();
+        STUDIO.promptPresets = [];
+        await ensurePromptPresetsLoaded();
+        showToast((res.data && res.data.message) || '预设已删除', 'ok');
+      } catch (e) {
+        presetManagerStatus(e.message || '删除失败', true);
+      }
+    }
+    function presetTransferPayload() {
+      return {
+        version: 1,
+        type: 'selfie-image-prompt-presets',
+        presets: PRESET_MANAGE_ROWS.map(item => ({
+          name: item.name || item.title || '', prompt: item.prompt || '', description: item.description || '',
+          aspect_ratio: item.aspect_ratio || '', resolution: item.resolution || '', extra_prompt: item.extra_prompt || ''
+        }))
+      };
+    }
+    async function openPresetExport() {
+      if (!PRESET_MANAGE_ROWS.length) await loadManagedPromptPresets();
+      $('presetTransferTitle').textContent = '导出预设文本';
+      $('presetTransferHint').textContent = '已生成 JSON 文本。系统会尝试写入剪贴板，失败时请在下方文本框中手动全选复制。';
+      $('presetTransferText').value = JSON.stringify(presetTransferPayload(), null, 2);
+      $('presetTransferImportBtn').style.display = 'none';
+      $('presetTransferCopyBtn').style.display = '';
+      $('presetTransferStatus').textContent = '';
+      $('presetTransferModal').classList.add('show');
+      try { await copyPresetTransfer(); } catch (_) {}
+    }
+    function openPresetImport() {
+      $('presetTransferTitle').textContent = '导入预设文本';
+      $('presetTransferHint').textContent = '把导出的 JSON 粘贴到这里，导入会按名称合并，重名预设将被覆盖。';
+      $('presetTransferText').value = '';
+      $('presetTransferCopyBtn').style.display = 'none';
+      $('presetTransferImportBtn').style.display = '';
+      $('presetTransferStatus').textContent = '';
+      $('presetTransferModal').classList.add('show');
+      $('presetTransferText').focus();
+    }
+    function closePresetTransfer() { $('presetTransferModal').classList.remove('show'); }
+    async function copyPresetTransfer() {
+      const text = $('presetTransferText').value || '';
+      if (!text) return;
+      try {
+        await copyTextToClipboard(text);
+        $('presetTransferStatus').textContent = '已写入剪贴板，也可以继续从上方文本框手动复制。';
+        showToast('预设 JSON 已复制', 'ok');
+      } catch (e) {
+        $('presetTransferStatus').textContent = '自动复制失败，请点击文本框后手动全选复制。';
+        $('presetTransferText').focus();
+        $('presetTransferText').select();
+      }
+    }
+    async function importPresetTransfer() {
+      let parsed;
+      try { parsed = JSON.parse($('presetTransferText').value || ''); }
+      catch (_) { $('presetTransferStatus').textContent = 'JSON 格式不正确'; return; }
+      const presets = Array.isArray(parsed) ? parsed : parsed && (parsed.presets || parsed.items || parsed);
+      if (!Array.isArray(presets) && (!presets || typeof presets !== 'object')) {
+        $('presetTransferStatus').textContent = '没有找到 presets 数组';
+        return;
+      }
+      $('presetTransferStatus').textContent = '导入中…';
+      try {
+        const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets})});
+        closePresetTransfer();
+        await loadManagedPromptPresets();
+        STUDIO.promptPresets = [];
+        await ensurePromptPresetsLoaded();
+        showToast((res.data && res.data.message) || '预设已导入', 'ok');
+      } catch (e) {
+        $('presetTransferStatus').textContent = e.message || '导入失败';
+      }
+    }
     function renderCosPanel(panelId, targetInputId, open, btnId) {
       const panel = $(panelId);
       if (!panel) return;
@@ -4393,6 +4637,7 @@ Source prompt:
         $(btn.dataset.tab).classList.add('active');
         if (btn.dataset.tab === 'monitor') { loadRecords(); loadMetrics(); }
         if (btn.dataset.tab === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
+        if (btn.dataset.tab === 'presets') loadManagedPromptPresets();
         if (btn.dataset.tab === 'selfie') refreshSelfie();
         if (btn.dataset.tab === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
       };
@@ -4400,6 +4645,13 @@ Source prompt:
     $('loginBtn').onclick = enterApp;
     $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };
     $('logoutBtn').onclick = logout;
+    $('presetAddBtn').onclick = () => openPresetEditor();
+    $('presetImportBtn').onclick = openPresetImport;
+    $('presetExportBtn').onclick = openPresetExport;
+    $('presetReloadBtn').onclick = loadManagedPromptPresets;
+    $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
+    $('presetTransferCopyBtn').onclick = copyPresetTransfer;
+    $('presetTransferImportBtn').onclick = importPresetTransfer;
     $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(); };
     $('pageSaveAll').onclick = saveAll;
     $('pageRefreshAll').onclick = refreshDashboardData;

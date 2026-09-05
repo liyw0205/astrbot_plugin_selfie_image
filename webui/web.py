@@ -4243,6 +4243,20 @@ Source prompt:
 </html>"""
 
 
+def _load_external_index_html() -> str:
+    """Use the maintained page file when available; retain the embedded page as fallback."""
+    external_page = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
+    try:
+        if external_page.is_file():
+            return external_page.read_text(encoding="utf-8")
+    except OSError:
+        pass
+    return INDEX_HTML
+
+
+INDEX_HTML = _load_external_index_html()
+
+
 class _ServerThread(threading.Thread):
     def __init__(self, app: Any, host: str, port: int):
         super().__init__(daemon=True)
@@ -4864,6 +4878,54 @@ class FlaskWebServer:
                 return ok(self.plugin.list_prompt_presets_for_web())
             except Exception as exc:
                 return fail(str(exc), 500)
+
+        @app.route("/api/prompt-presets/manage", methods=["GET"])
+        def prompt_presets_manage() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                return ok(self.plugin.list_managed_prompt_presets_for_web())
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/prompt-presets/manage/save", methods=["POST"])
+        def prompt_preset_save() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.save_prompt_preset_from_web(payload or {}))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/prompt-presets/manage/delete", methods=["POST"])
+        def prompt_preset_delete() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            name = str((payload or {}).get("name") or "").strip()
+            if not name:
+                return fail("缺少预设名", 400)
+            try:
+                return ok(self.plugin.delete_prompt_preset_from_web(name))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/prompt-presets/manage/import", methods=["POST"])
+        def prompt_presets_import() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.import_prompt_presets_from_web(payload or {}))
+            except Exception as exc:
+                return fail(str(exc), 400)
 
         @app.route("/api/cos-look-sets", methods=["GET"])
         def cos_look_sets() -> Any:

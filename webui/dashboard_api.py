@@ -92,6 +92,10 @@ class SelfieImageDashboardAPI:
             ("studio/tasks/<task_id>", self.page_studio_task, ["GET"], "Selfie Image studio task"),
             ("studio/gallery", self.page_studio_gallery, ["GET"], "Selfie Image studio gallery from records"),
             ("prompt-presets", self.page_prompt_presets, ["GET"], "Selfie Image prompt presets"),
+            ("prompt-presets/manage", self.page_prompt_presets_manage, ["GET"], "Selfie Image managed prompt presets"),
+            ("prompt-presets/manage/save", self.page_prompt_preset_save, ["POST"], "Selfie Image save prompt preset"),
+            ("prompt-presets/manage/delete", self.page_prompt_preset_delete, ["POST"], "Selfie Image delete prompt preset"),
+            ("prompt-presets/manage/import", self.page_prompt_presets_import, ["POST"], "Selfie Image import prompt presets"),
             ("cos-look-sets", self.page_cos_look_sets, ["GET"], "Selfie Image COS look sets"),
             ("proxies", self.page_proxies_list, ["GET"], "Selfie Image proxy list"),
             ("proxies/test", self.page_proxy_test, ["POST"], "Selfie Image proxy connectivity test"),
@@ -613,6 +617,42 @@ class SelfieImageDashboardAPI:
             return self._ok(data, count=len(data))
         except Exception as exc:
             return self._fail(str(exc), 500)
+
+    async def page_prompt_presets_manage(self) -> Any:
+        try:
+            return self._ok(self.plugin.list_managed_prompt_presets_for_web())
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_prompt_preset_save(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.save_prompt_preset_from_web(payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_prompt_preset_delete(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            name = str((payload or {}).get("name") or "").strip()
+            if not name:
+                return self._fail("缺少预设名", 400)
+            return self._ok(self.plugin.delete_prompt_preset_from_web(name))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_prompt_presets_import(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.import_prompt_presets_from_web(payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
 
     async def page_cos_look_sets(self) -> Any:
         try:

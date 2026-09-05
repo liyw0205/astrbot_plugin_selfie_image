@@ -7582,6 +7582,59 @@ class StudioStoreTests(unittest.TestCase):
             preserved = ImagePresetManager(tmp)
             self.assertEqual(preserved.presets["遮脸"].prompt, "我的自定义遮脸提示词")
 
+    def test_web_preset_management_round_trip_and_atomic_import(self) -> None:
+        import tempfile
+
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = ImagePresetManager(tmp)
+            ok, message = manager.save_management(
+                {
+                    "name": "夜景人像",
+                    "prompt": "夜景人像，柔和侧光",
+                    "description": "管理页测试",
+                    "aspect_ratio": "9:16",
+                    "resolution": "1K",
+                    "extra_prompt": "保留自然肤质",
+                }
+            )
+            self.assertTrue(ok, message)
+            row = next(item for item in manager.list_management() if item["name"] == "夜景人像")
+            self.assertEqual(row["extra_prompt"], "保留自然肤质")
+
+            with self.assertRaises(ValueError):
+                manager.import_management(
+                    [
+                        {"name": "应回滚", "prompt": "有效内容"},
+                        {"name": "无效", "prompt": ""},
+                    ]
+                )
+            self.assertFalse(manager.has_preset("应回滚"))
+
+            self.assertTrue(manager.remove("遮脸")[0])
+            reloaded = ImagePresetManager(tmp)
+            self.assertFalse(reloaded.has_preset("遮脸"))
+            self.assertTrue(reloaded.has_preset("夜景人像"))
+
+    def test_dashboard_contains_preset_management_page_and_apis(self) -> None:
+        from pathlib import Path
+        from astrbot_plugin_selfie_image.webui.web import INDEX_HTML
+
+        page = (Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        for document in (page, INDEX_HTML):
+            for marker in (
+                'data-tab="presets"',
+                'id="presetManagerList"',
+                'id="presetTransferModal"',
+                "/api/prompt-presets/manage",
+                "导出并复制",
+                "自动复制失败",
+            ):
+                self.assertIn(marker, document)
+
     def test_phone_cover_face_cos_reuses_existing_hand(self) -> None:
         import tempfile
 
