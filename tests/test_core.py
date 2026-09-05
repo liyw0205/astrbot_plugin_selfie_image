@@ -6074,9 +6074,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 116)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 121)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 116)
+        self.assertEqual(len(web_pool), 121)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -6201,6 +6201,11 @@ class LegFocusTests(unittest.TestCase):
                 "季莹莹·封神录·哪吒",
                 "砂狼白子·黑白运动服",
                 "菲比·白金圣洁礼服",
+                "古风·白金红绸宽袖",
+                "丹花伊吹·红白运动装",
+                "白色蕾丝·露腰短装",
+                "古风·白蓝露背仙纱",
+                "C.C.（CC）·皇后装·白虎粉金礼服",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -6240,6 +6245,16 @@ class LegFocusTests(unittest.TestCase):
             [item["id"] for item in plugin_main.match_cos_look_sets("菲比")],
             ["phoebe_white_gold_sanctuary"],
         )
+        self.assertEqual(
+            [item["id"] for item in plugin_main.match_cos_look_sets("丹花伊吹")],
+            ["ibuki_red_white_sportswear"],
+        )
+        for query in ("C.C.", "CC", "C.C.皇后装", "CC皇后装"):
+            self.assertEqual(
+                [item["id"] for item in plugin_main.match_cos_look_sets(query)],
+                ["cc_white_tiger_pink_gold_dress"],
+            )
+        self.assertEqual(plugin_main.match_cos_look_sets("C"), [])
         for ninghongye_id in (
             "ninghongye_red_hao_new_joy",
             "ninghongye_spider_demon",
@@ -6573,6 +6588,24 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("背景明亮、轮廓清楚", phoebe)
         self.assertIn("不添加雾气、雾霾、烟雾或朦胧遮挡", phoebe)
         self.assertNotIn("参考视频", phoebe)
+        white_gold_red = prompts["ancient_white_gold_red_sleeves"]
+        self.assertIn("浅金色织锦抹胸", white_gold_red)
+        self.assertIn("亮蓝色细滚边", white_gold_red)
+        self.assertIn("正红色长丝带", white_gold_red)
+        ibuki = prompts["ibuki_red_white_sportswear"]
+        self.assertIn("《碧蓝档案》丹花伊吹", ibuki)
+        self.assertIn("红色高腰运动短裤", ibuki)
+        self.assertIn("白色短袖紧身运动T恤", ibuki)
+        lace_shorts = prompts["white_lace_waist_shorts"]
+        self.assertIn("白色蕾丝束腰短背心", lace_shorts)
+        self.assertIn("白色宽松高腰灯笼短裤", lace_shorts)
+        backless = prompts["ancient_white_blue_backless_gauze"]
+        self.assertIn("整片裸背", backless)
+        self.assertIn("浅冰蓝色宽袖", backless)
+        cc_dress = prompts["cc_white_tiger_pink_gold_dress"]
+        self.assertIn("《叛逆的鲁鲁修》（Code Geass）C.C.（CC）皇后装", cc_dress)
+        self.assertIn("极长橄榄绿色直发", cc_dress)
+        self.assertIn("粉色缎面高开叉长裙", cc_dress)
         shuilaner_action = plugin_main.build_cos_look_action(
             camera="third",
             picker=lambda **_: next(
@@ -6795,6 +6828,7 @@ class LegFocusTests(unittest.TestCase):
                 "ancient_mint_crystal_halter", "ancient_mint_floral_short_ruqun",
                 "ancient_pink_moon_sheer",
                 "ancient_teal_red_pipe", "ancient_pink_blue_floral_collar",
+                "ancient_white_gold_red_sleeves", "ancient_white_blue_backless_gauze",
             },
         )
         self.assertEqual(
@@ -6944,7 +6978,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（116套）：", response[0])
+            self.assertIn("看看COS 随机池（121套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
