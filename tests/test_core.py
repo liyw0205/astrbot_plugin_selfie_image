@@ -6074,9 +6074,9 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 121)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 122)
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 121)
+        self.assertEqual(len(web_pool), 122)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -6206,6 +6206,7 @@ class LegFocusTests(unittest.TestCase):
                 "白色蕾丝·露腰短装",
                 "古风·白蓝露背仙纱",
                 "C.C.（CC）·皇后装·白虎粉金礼服",
+                "辉夜·巫女红白神乐服",
             },
         )
         for item in plugin_main.COS_LOOK_SETS:
@@ -6255,6 +6256,11 @@ class LegFocusTests(unittest.TestCase):
                 ["cc_white_tiger_pink_gold_dress"],
             )
         self.assertEqual(plugin_main.match_cos_look_sets("C"), [])
+        for query in ("辉夜", "巫女", "辉夜巫女"):
+            self.assertEqual(
+                [item["id"] for item in plugin_main.match_cos_look_sets(query)],
+                ["kaguya_miko_red_white_crown"],
+            )
         for ninghongye_id in (
             "ninghongye_red_hao_new_joy",
             "ninghongye_spider_demon",
@@ -6606,6 +6612,11 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("《叛逆的鲁鲁修》（Code Geass）C.C.（CC）皇后装", cc_dress)
         self.assertIn("极长橄榄绿色直发", cc_dress)
         self.assertIn("粉色缎面高开叉长裙", cc_dress)
+        kaguya = prompts["kaguya_miko_red_white_crown"]
+        self.assertIn("巫女辉夜主题", kaguya)
+        self.assertIn("中央固定一颗圆形金色球体", kaguya)
+        self.assertIn("正红色缎面大蝴蝶结", kaguya)
+        self.assertIn("白色半透明长纱片", kaguya)
         shuilaner_action = plugin_main.build_cos_look_action(
             camera="third",
             picker=lambda **_: next(
@@ -6978,7 +6989,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（121套）：", response[0])
+            self.assertIn("看看COS 随机池（122套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
