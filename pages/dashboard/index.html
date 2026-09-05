@@ -1306,6 +1306,7 @@
     let PRESET_MANAGE_ROWS = [];
     let PRESET_EDIT_ORIGINAL = '';
     let PRESET_KIND = 'image';
+    let PRESET_LOAD_SEQ = 0;
 
     function isEmbeddedFrame() {
       try {
@@ -4116,14 +4117,19 @@ Source prompt:
       el.className = 'status' + (bad ? ' bad' : '');
     }
     async function loadManagedPromptPresets(kind = PRESET_KIND) {
-      PRESET_KIND = kind === 'video' ? 'video' : 'image';
+      const requestedKind = kind === 'video' ? 'video' : 'image';
+      PRESET_KIND = requestedKind;
+      const loadSeq = ++PRESET_LOAD_SEQ;
       try {
-        const res = await api('/api/prompt-presets/manage?kind=' + encodeURIComponent(PRESET_KIND));
+        const res = await api('/api/prompt-presets/manage?kind=' + encodeURIComponent(requestedKind));
+        // A slower request from the previous tab must not overwrite the current list.
+        if (loadSeq !== PRESET_LOAD_SEQ || requestedKind !== PRESET_KIND) return;
         const data = res.data;
         PRESET_MANAGE_ROWS = Array.isArray(data) ? data : (data && Array.isArray(data.presets) ? data.presets : []);
         renderManagedPromptPresets();
         presetManagerStatus(`${PRESET_KIND === 'video' ? '视频' : '生图'}预设 · 共 ${PRESET_MANAGE_ROWS.length} 个`);
       } catch (e) {
+        if (loadSeq !== PRESET_LOAD_SEQ || requestedKind !== PRESET_KIND) return;
         PRESET_MANAGE_ROWS = [];
         renderManagedPromptPresets();
         presetManagerStatus(e.message || '预设读取失败', true);
