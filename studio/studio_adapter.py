@@ -42,8 +42,15 @@ class StudioMixin:
             "cos_look_sets": self.list_cos_look_sets_for_web(),
         }
 
-    def list_prompt_presets_for_web(self) -> List[Dict[str, Any]]:
-        """Merged builtin global + user image_presets for 画布/试画 picker."""
+    def list_prompt_presets_for_web(self, kind: str = "image") -> List[Dict[str, Any]]:
+        """Return the picker presets for one media kind."""
+        kind = "video" if str(kind or "").strip().lower() == "video" else "image"
+        if kind == "video":
+            manager = getattr(self, "video_presets", None)
+            if manager is not None:
+                manager.load()
+                return manager.list_public()
+            return []
         merged: Dict[str, Dict[str, Any]] = {}
         for item in global_prompt_presets():
             name = str(item.get("name") or item.get("title") or "").strip()
@@ -75,32 +82,42 @@ class StudioMixin:
         rows.sort(key=lambda r: str(r.get("name") or ""))
         return rows
 
-    def list_managed_prompt_presets_for_web(self) -> List[Dict[str, str]]:
+    def list_managed_prompt_presets_for_web(self, kind: str = "image") -> List[Dict[str, str]]:
         """Return the persisted preset set used by the preset management page."""
-        self.presets.load()
-        return self.presets.list_management()
+        manager = (getattr(self, "video_presets", self.presets)
+                   if str(kind or "").strip().lower() == "video" else self.presets)
+        manager.load()
+        return manager.list_management()
 
     def save_prompt_preset_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        self.presets.load()
-        ok, message = self.presets.save_management(payload or {})
+        payload = dict(payload or {})
+        manager = (getattr(self, "video_presets", self.presets)
+                   if str(payload.get("kind") or payload.get("media_type") or "").strip().lower() == "video" else self.presets)
+        manager.load()
+        ok, message = manager.save_management(payload)
         if not ok:
             raise ValueError(message)
-        return {"message": message, "presets": self.presets.list_management()}
+        return {"message": message, "kind": "video" if manager is getattr(self, "video_presets", None) else "image", "presets": manager.list_management()}
 
-    def delete_prompt_preset_from_web(self, name: str) -> Dict[str, Any]:
-        self.presets.load()
-        ok, message = self.presets.remove(name)
+    def delete_prompt_preset_from_web(self, name: str, kind: str = "image") -> Dict[str, Any]:
+        manager = (getattr(self, "video_presets", self.presets)
+                   if str(kind or "").strip().lower() == "video" else self.presets)
+        manager.load()
+        ok, message = manager.remove(name)
         if not ok:
             raise ValueError(message)
-        return {"message": message, "presets": self.presets.list_management()}
+        return {"message": message, "kind": "video" if manager is getattr(self, "video_presets", None) else "image", "presets": manager.list_management()}
 
     def import_prompt_presets_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        self.presets.load()
+        payload = dict(payload or {})
+        manager = (getattr(self, "video_presets", self.presets)
+                   if str(payload.get("kind") or payload.get("media_type") or "").strip().lower() == "video" else self.presets)
+        manager.load()
         source = payload.get("presets") if isinstance(payload, dict) else None
         if source is None and isinstance(payload, dict):
             source = payload.get("items")
-        imported, message = self.presets.import_management(source)
-        return {"message": message, "imported": imported, "presets": self.presets.list_management()}
+        imported, message = manager.import_management(source)
+        return {"message": message, "imported": imported, "kind": "video" if manager is getattr(self, "video_presets", None) else "image", "presets": manager.list_management()}
 
     def list_cos_look_sets_for_web(self) -> List[Dict[str, str]]:
         """Expose the command COS pool to the canvas and quick-test pickers."""

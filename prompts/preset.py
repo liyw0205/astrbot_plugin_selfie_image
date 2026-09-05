@@ -29,6 +29,7 @@ class ImagePreset:
     resolution: str = ""
     description: str = ""
     extra_prompt: str = ""
+    duration: int = 0
 
 
 def _default_seed() -> Dict[str, Dict[str, str]]:
@@ -42,9 +43,14 @@ def _default_seed() -> Dict[str, Dict[str, str]]:
 
 class ImagePresetManager:
     _DELETED_BUILTINS_KEY = "__deleted_builtin_presets__"
+    PRESET_FILENAME = "image_presets.json"
+
+    @staticmethod
+    def _builtin_seed() -> Dict[str, Dict[str, str]]:
+        return _default_seed()
 
     def __init__(self, data_dir: str):
-        self.file_path = os.path.join(data_dir, "image_presets.json")
+        self.file_path = os.path.join(data_dir, self.PRESET_FILENAME)
         self.presets: Dict[str, ImagePreset] = {}
         self._deleted_builtin_names: set[str] = set()
         self.load()
@@ -75,11 +81,12 @@ class ImagePresetManager:
                 resolution=str(value.get("resolution") or "").strip(),
                 description=str(value.get("description") or "").strip(),
                 extra_prompt=str(value.get("extra_prompt") or value.get("extraPrompt") or "").strip(),
+                duration=self._parse_duration(value.get("duration")),
             )
 
         # Seed missing built-in defaults and upgrade only exact legacy defaults.
         dirty = False
-        for name, value in _default_seed().items():
+        for name, value in self._builtin_seed().items():
             key = str(name or "").strip()
             prompt = str((value or {}).get("prompt") or "").strip()
             if not key or not prompt:
@@ -91,6 +98,7 @@ class ImagePresetManager:
                 presets[key] = ImagePreset(
                     prompt=prompt,
                     description=str((value or {}).get("description") or key).strip(),
+                    duration=self._parse_duration((value or {}).get("duration")),
                 )
                 dirty = True
             elif existing.prompt == LEGACY_BUILTIN_PROMPT_REPLACEMENTS.get(key):
@@ -109,6 +117,7 @@ class ImagePresetManager:
                 "resolution": preset.resolution,
                 "description": preset.description,
                 "extra_prompt": preset.extra_prompt,
+                "duration": preset.duration,
             }
             for name, preset in self.presets.items()
         }
@@ -135,6 +144,7 @@ class ImagePresetManager:
                     "aspect_ratio": preset.aspect_ratio or "",
                     "resolution": preset.resolution or "",
                     "extra_prompt": preset.extra_prompt or "",
+                    "duration": preset.duration,
                     "source": "user",
                 }
             )
@@ -166,14 +176,14 @@ class ImagePresetManager:
             return False, f"预设不存在: {name}"
 
         self.presets.pop(key, None)
-        if key in _default_seed():
+        if key in self._builtin_seed():
             self._deleted_builtin_names.add(key)
         self.save()
         return True, f"已删除预设 {name}"
 
     def list_management(self) -> List[Dict[str, str]]:
         """Return editable presets, including fields hidden by the picker."""
-        builtin_names = set(_default_seed())
+        builtin_names = set(self._builtin_seed())
         rows: List[Dict[str, str]] = []
         for name, preset in self.list():
             rows.append(
@@ -185,6 +195,7 @@ class ImagePresetManager:
                     "aspect_ratio": preset.aspect_ratio or "",
                     "resolution": preset.resolution or "",
                     "extra_prompt": preset.extra_prompt or "",
+                    "duration": preset.duration,
                     "source": "builtin" if name in builtin_names else "user",
                 }
             )
@@ -200,7 +211,7 @@ class ImagePresetManager:
         previous_deleted = set(self._deleted_builtin_names)
         if original_name and original_name != name:
             self.presets.pop(original_name, None)
-            if original_name in _default_seed():
+            if original_name in self._builtin_seed():
                 self._deleted_builtin_names.add(original_name)
         self.presets[name] = preset
         self._deleted_builtin_names.discard(name)
@@ -212,8 +223,8 @@ class ImagePresetManager:
             raise
         return True, f"已保存预设 {name}"
 
-    @staticmethod
     def _prepare_management_payload(
+        self,
         payload: Dict[str, object],
     ) -> Tuple[Optional[Tuple[str, str, ImagePreset]], str]:
         if not isinstance(payload, dict):
@@ -239,6 +250,7 @@ class ImagePresetManager:
                     resolution=str(payload.get("resolution") or "").strip(),
                     description=str(payload.get("description") or "").strip(),
                     extra_prompt=str(payload.get("extra_prompt") or payload.get("extraPrompt") or "").strip(),
+                    duration=self._parse_duration(payload.get("duration")),
                 ),
             ),
             "",
@@ -277,7 +289,7 @@ class ImagePresetManager:
         for name, original_name, preset in prepared_items:
             if original_name and original_name != name:
                 candidate_presets.pop(original_name, None)
-                if original_name in _default_seed():
+                if original_name in self._builtin_seed():
                     candidate_deleted.add(original_name)
             candidate_presets[name] = preset
             candidate_deleted.discard(name)
@@ -316,6 +328,7 @@ class ImagePresetManager:
             "preset_name": preset_name,
             "description": preset.description,
             "extra_prompt": preset.extra_prompt,
+            "duration": preset.duration,
         }
 
     def has_preset(self, name: str) -> bool:
@@ -334,10 +347,18 @@ class ImagePresetManager:
                         resolution=str(obj.get("resolution") or "").strip(),
                         description=str(obj.get("description") or "").strip(),
                         extra_prompt=str(obj.get("extra_prompt") or obj.get("extraPrompt") or "").strip(),
+                        duration=self._parse_duration(obj.get("duration")),
                     )
             except Exception:
                 pass
         return ImagePreset(prompt=raw_value)
+
+    @staticmethod
+    def _parse_duration(value: object) -> int:
+        try:
+            return max(0, min(60, int(float(str(value or 0).strip()))))
+        except Exception:
+            return 0
 
     def _normalize_text(self, text: str) -> str:
         return str(text or "").strip().replace("\t", " ").replace("\n", " ").replace("\r", " ").replace("  ", " ")
@@ -389,3 +410,18 @@ class ImagePresetManager:
 
     def _join_prompt(self, parts: List[str]) -> str:
         return " ".join(part for part in parts if str(part or "").strip()).strip()
+
+
+class VideoPresetManager(ImagePresetManager):
+    """独立保存视频提示词预设，沿用管理页的增删改导入导出格式。"""
+
+    PRESET_FILENAME = "video_presets.json"
+
+    @staticmethod
+    def _builtin_seed() -> Dict[str, Dict[str, str]]:
+        try:
+            from ..studio.studio import default_video_preset_seed
+
+            return default_video_preset_seed()
+        except Exception:
+            return {}

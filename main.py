@@ -110,7 +110,7 @@ from .features.model_selection import (
     match_model_label,
     prioritize_model_target,
 )
-from .prompts.preset import ImagePresetManager
+from .prompts.preset import ImagePresetManager, VideoPresetManager
 from .core.models import (
     AICatConfig,
     DEFAULT_CONFIG,
@@ -304,6 +304,7 @@ class SelfieImagePlugin(
         self.config = AICatConfig.from_dict(self.raw_config)
         self.persona = PersonaManager(self.data_dir)
         self.presets = ImagePresetManager(self.data_dir)
+        self.video_presets = VideoPresetManager(self.data_dir)
         self.studio = StudioStore(self.data_dir)
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
@@ -862,6 +863,79 @@ class SelfieImagePlugin(
             return self.presets.add(name, value)
         if action == "delete":
             return self.presets.remove(payload)
+        return False, "未知操作"
+
+    def _video_preset_list_text(self, page: int = 1, page_size: int = 20) -> Tuple[str, int, int]:
+        self.video_presets.load()
+        presets = self.video_presets.list()
+        total = len(presets)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        current_page = min(total_pages, max(1, page))
+        start = (current_page - 1) * page_size
+        items = presets[start:start + page_size]
+        lines = [
+            f"📋 视频预设 第 {current_page}/{total_pages} 页",
+            f"当前共有 {total} 个预设。",
+            "",
+            "使用方式：",
+            "1. /视频 预设名 额外动作说明",
+            "2. /视频预设 添加 名称:提示词（管理员）",
+            "3. /视频预设 删除 名称（管理员）",
+            "4. /视频预设 查看 [页码/预设名]（管理员）",
+            "",
+        ]
+        if total_pages > 1:
+            if current_page < total_pages:
+                lines.append(f"下一页：/视频预设 {current_page + 1}")
+            if current_page > 1:
+                lines.append(f"上一页：/视频预设 {current_page - 1}")
+            lines.append("")
+        lines.append("暂无预设。" if not items else "预设名：")
+        for idx, (name, preset) in enumerate(items, start=start + 1):
+            duration = f" ({preset.duration}s)" if preset.duration else ""
+            lines.append(f"{idx}. {name}{duration}")
+        return "\n".join(lines), current_page, total_pages
+
+    def _video_preset_detail_text(self, page: int = 1, page_size: int = 20) -> Tuple[str, int, int]:
+        self.video_presets.load()
+        presets = self.video_presets.list()
+        total = len(presets)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        current_page = min(total_pages, max(1, page))
+        start = (current_page - 1) * page_size
+        items = presets[start:start + page_size]
+        lines = [f"📋 视频预设详情 第 {current_page}/{total_pages} 页", f"当前共有 {total} 个预设。", "仅管理员可见。", ""]
+        if not items:
+            lines.append("暂无预设。")
+        else:
+            for idx, (name, preset) in enumerate(items, start=start + 1):
+                lines.extend(self._preset_detail_lines(idx, name, preset))
+        return "\n".join(lines), current_page, total_pages
+
+    def _video_preset_single_detail_text(self, name: str) -> Tuple[bool, str]:
+        target = str(name or "").strip()
+        if not target:
+            return False, "格式：/视频预设 查看 预设名"
+        self.video_presets.load()
+        for preset_name, preset in self.video_presets.list():
+            if preset_name == target:
+                duration = f"\n默认时长: {preset.duration}s" if preset.duration else ""
+                return True, f"📋 视频预设详情\n\n{preset_name}\n提示词: {preset.prompt}{duration}"
+        return False, f"预设不存在: {target}"
+
+    def _handle_video_preset_mutation(self, event: AstrMessageEvent, action: str, payload: str) -> Tuple[bool, str]:
+        if not self._is_admin_event(event):
+            return False, "仅管理员可以管理预设。"
+        if action == "add":
+            if ":" in payload:
+                name, value = payload.split(":", 1)
+            elif "：" in payload:
+                name, value = payload.split("：", 1)
+            else:
+                return False, "格式：/视频预设 添加 名称:提示词"
+            return self.video_presets.add(name, value)
+        if action == "delete":
+            return self.video_presets.remove(payload)
         return False, "未知操作"
 
     def _friendly_user_error_message(self, error: str, fallback: str = "") -> str:
@@ -1595,6 +1669,7 @@ class SelfieImagePlugin(
         *,
         include_finished: bool = False,
         limit: int = 10,
+        media_type: str = "",
     ) -> List[Dict[str, Any]]:
         with self._web_task_lock:
             items = list(self._web_tasks.values())
@@ -1603,6 +1678,7 @@ class SelfieImagePlugin(
             session_key,
             include_finished=include_finished,
             limit=limit,
+            media_type=media_type,
         )
         return [redact_sensitive_data(row) for row in rows]
 
@@ -1611,6 +1687,122 @@ class SelfieImagePlugin(
 
     def _format_task_detail_text(self, task: Dict[str, Any]) -> str:
         return format_task_detail_text(task)
+
+    @staticmethod
+    def _task_media_type(task: Mapping[str, Any]) -> str:
+        request = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
+        value = str(task.get("media_type") or request.get("media_type") or "").strip().lower()
+        if value in {"image", "video"}:
+            return value
+        kind = str(request.get("kind") or "").strip().lower()
+        source = str(task.get("source") or "").strip().lower()
+        return "video" if kind == "video" or "视频" in kind or "video" in source else "image"
+
+    async def _command_task_list(
+        self,
+        event: AstrMessageEvent,
+        command_name: str,
+        fallback: str,
+        *,
+        media_type: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        message = extract_command_message(event, command_name, fallback).strip()
+        session_key = self._session_key(event)
+        is_admin = self._is_admin_event(event)
+        if message:
+            try:
+                task = self.get_web_image_task(message)
+            except Exception:
+                active = self._list_image_tasks_for_session(
+                    session_key, include_finished=False, limit=20, media_type=media_type
+                )
+                if message.isdigit():
+                    index = int(message) - 1
+                    if 0 <= index < len(active):
+                        task = active[index]
+                    else:
+                        yield event.plain_result("没找到这个进行中的编号，或任务号不对。")
+                        return
+                else:
+                    yield event.plain_result("没有这单，或已经清理了。")
+                    return
+            if media_type and self._task_media_type(task) != media_type:
+                yield event.plain_result("这个任务不属于视频任务。" if media_type == "video" else "这个任务不属于生图任务。")
+                return
+            owner = str(task.get("owner_session") or "")
+            if owner and owner != session_key and not is_admin:
+                yield event.plain_result("不能看别人会话里的任务。")
+                return
+            if task.get("status") in {"queued", "running"}:
+                try:
+                    task = self.get_web_image_task(str(task.get("task_id") or message))
+                except Exception:
+                    pass
+            yield event.plain_result(self._format_task_detail_text(task))
+            return
+        tasks = self._list_image_tasks_for_session(
+            session_key, include_finished=False, limit=10, media_type=media_type
+        )
+        yield event.plain_result(
+            "现在没有进行中的视频任务。"
+            if media_type == "video" and not tasks
+            else self._format_task_list_text(tasks)
+        )
+
+    async def _command_task_cancel(
+        self,
+        event: AstrMessageEvent,
+        command_name: str,
+        fallback: str,
+        *,
+        media_type: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        message = extract_command_message(event, command_name, fallback).strip()
+        session_key = self._session_key(event)
+        is_admin = self._is_admin_event(event)
+        if not message:
+            active = self._list_image_tasks_for_session(
+                session_key, include_finished=False, limit=5, media_type=media_type
+            )
+            if active:
+                yield event.plain_result("请跟任务号或列表里的编号。\n" + self._format_task_list_text(active))
+            else:
+                yield event.plain_result("现在没有可取消的视频任务。" if media_type == "video" else "现在没有可取消的出图。")
+            return
+        task_id = message
+        if message.isdigit():
+            active = self._list_image_tasks_for_session(
+                session_key, include_finished=False, limit=20, media_type=media_type
+            )
+            index = int(message) - 1
+            if 0 <= index < len(active):
+                task_id = str(active[index].get("task_id") or "")
+            else:
+                yield event.plain_result("未找到对应的进行中任务，请检查编号或任务ID。")
+                return
+        elif media_type:
+            try:
+                task = self.get_web_image_task(task_id)
+            except Exception:
+                task = None
+            if task and self._task_media_type(task) != media_type:
+                yield event.plain_result("这个任务不属于视频任务。" if media_type == "video" else "这个任务不属于生图任务。")
+                return
+        try:
+            text = self.cancel_image_task(task_id, session_key=session_key, is_admin=is_admin)
+            yield event.plain_result(text)
+        except PermissionError as exc:
+            yield event.plain_result(str(exc))
+        except Exception as exc:
+            yield event.plain_result(redact_sensitive_text(str(exc)))
 
     def cancel_image_task(
         self,
@@ -1891,11 +2083,37 @@ class SelfieImagePlugin(
     def _parse_video_duration(self, text: str) -> Tuple[str, Optional[int]]:
         raw = str(text or "")
         duration = None
-        match = re.search(r"(?:--duration|--dur|-d)\s*(\d{1,2})\b", raw, flags=re.I)
+        match = re.search(r"(?:--duration|--dur|-d)(?:\s*=\s*|\s+)(\d{1,2})\s*s?\b", raw, flags=re.I)
         if match:
             duration = max(1, min(60, int(match.group(1))))
             raw = (raw[: match.start()] + raw[match.end() :]).strip()
+        if duration is None:
+            suffix = re.search(r"(?:^|\s)(?:时长|长度)\s*(\d{1,2})\s*秒?\b", raw, flags=re.I)
+            if suffix:
+                duration = max(1, min(60, int(suffix.group(1))))
+                raw = (raw[: suffix.start()] + raw[suffix.end() :]).strip()
+        if duration is None:
+            bare = re.search(r"(?:^|\s)(\d{1,2})\s*秒(?:\s|$)", raw, flags=re.I)
+            if bare:
+                duration = max(1, min(60, int(bare.group(1))))
+                raw = (raw[: bare.start()] + raw[bare.end() :]).strip()
         return raw, duration
+
+    def _expand_video_prompt_with_preset(
+        self, raw_prompt: str, duration: Optional[int] = None
+    ) -> Tuple[str, Optional[int], str]:
+        text = str(raw_prompt or "").strip()
+        if not text:
+            return "", duration, ""
+        try:
+            self.video_presets.load()
+            resolved = self.video_presets.resolve(text)
+        except Exception:
+            return text, duration, ""
+        preset_name = str(resolved.get("preset_name") or "").strip()
+        prompt = str(resolved.get("prompt") or text).strip()
+        preset_duration = self.video_presets._parse_duration(resolved.get("duration"))
+        return prompt, duration if duration is not None else (preset_duration or None), preset_name
 
     async def _handle_video_command(
         self,
@@ -1911,6 +2129,7 @@ class SelfieImagePlugin(
             return
         raw_message = extract_command_message(event, command_name, fallback).strip()
         prompt, duration = self._parse_video_duration(raw_message)
+        prompt, duration, _ = self._expand_video_prompt_with_preset(prompt, duration)
         refs = await self._event_reference_images(
             event,
             include_at_avatar=False,
@@ -3089,6 +3308,9 @@ class SelfieImagePlugin(
                 "· /视频　写想要的动态；有图就图生视频，没图就用当前形象图作首帧",
                 "· /文生视频　只用文字出视频，不带图、不用形象图",
                 "· /图生视频　附图/引用图优先作首帧；没图时用当前形象图",
+                "· /视频任务　只看进行中的视频任务；可跟任务号或列表编号",
+                "· /视频取消　取消视频任务；可跟任务号或列表编号",
+                "· /视频预设　查看、使用和管理视频预设；时长可写 --duration 8 或 时长8秒",
                 "",
                 "自动判断：",
                 "· /画：有图=图生图，没图=文生图；不会自动塞形象图",
@@ -3463,6 +3685,24 @@ class SelfieImagePlugin(
             yield event.plain_result(str(exc))
         except Exception as exc:
             yield event.plain_result(redact_sensitive_text(str(exc)))
+
+    @filter.command("视频任务")
+    async def cmd_video_tasks(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
+        """只查看进行中的视频任务。可跟任务号或当前列表编号。"""
+        fallback = " ".join(item for item in [p1, p2] if item).strip()
+        async for item in self._command_task_list(
+            event, "视频任务", fallback, media_type="video"
+        ):
+            yield item
+
+    @filter.command("视频取消")
+    async def cmd_video_task_cancel(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
+        """只取消排队中或进行中的视频任务。可跟任务号或当前列表编号。"""
+        fallback = " ".join(item for item in [p1, p2] if item).strip()
+        async for item in self._command_task_cancel(
+            event, "视频取消", fallback, media_type="video"
+        ):
+            yield item
 
     @filter.command("生图重发")
     async def cmd_image_retry_failed(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
@@ -4109,6 +4349,66 @@ class SelfieImagePlugin(
                 ]
             )
         )
+
+    @filter.command("视频预设", prefix_optional=True)
+    async def cmd_video_preset(
+        self,
+        event: AstrMessageEvent,
+        p1: str = "",
+        p2: str = "",
+        p3: str = "",
+        p4: str = "",
+        p5: str = "",
+        p6: str = "",
+        p7: str = "",
+        p8: str = "",
+        p9: str = "",
+        p10: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        """查看、使用或管理视频提示词预设。"""
+        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
+        text = self._normalize_preset_input(extract_command_message(event, "视频预设", fallback))
+        if not text:
+            body, _, _ = self._video_preset_list_text(1)
+            yield event.plain_result(body)
+            return
+        head, tail = self._split_preset_command(text)
+        if head.isdigit() or head in {"列表", "list"}:
+            page = int(head) if head.isdigit() else (int(tail) if tail.isdigit() else 1)
+            body, _, _ = self._video_preset_list_text(page)
+            yield event.plain_result(body)
+            return
+        if head in {"查看", "详情", "view", "detail"}:
+            if not self._is_admin_event(event):
+                yield event.plain_result("仅管理员可以查看视频预设内容。")
+                return
+            if not tail or tail.isdigit():
+                body, _, _ = self._video_preset_detail_text(int(tail) if tail.isdigit() else 1)
+                yield event.plain_result(body)
+            else:
+                success, body = self._video_preset_single_detail_text(tail)
+                yield event.plain_result(body if success else f"❌ {body}")
+            return
+        if head in {"添加", "add", "新增"}:
+            if not tail:
+                yield event.plain_result("格式：/视频预设 添加 名称:提示词")
+                return
+            success, message = self._handle_video_preset_mutation(event, "add", tail)
+            yield event.plain_result(f"{'✅' if success else '❌'} {message}")
+            return
+        if head in {"删除", "del", "delete", "remove", "删"}:
+            if not tail:
+                yield event.plain_result("格式：/视频预设 删除 名称")
+                return
+            success, message = self._handle_video_preset_mutation(event, "delete", tail)
+            yield event.plain_result(f"{'✅' if success else '❌'} {message}")
+            return
+        success, body = self._video_preset_single_detail_text(text)
+        if success:
+            yield event.plain_result(body + "\n\n使用：/视频 " + text)
+        else:
+            body, _, _ = self._video_preset_list_text(1)
+            yield event.plain_result(body + "\n\n用法：/视频预设 名称、/视频预设 添加 名称:提示词、/视频预设 删除 名称")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("预设添加", prefix_optional=True)

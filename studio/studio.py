@@ -648,6 +648,33 @@ def default_image_preset_seed() -> Dict[str, Dict[str, str]]:
     return seed
 
 
+def default_video_preset_seed() -> Dict[str, Dict[str, Any]]:
+    """Name -> preset dict for video command and Web management defaults."""
+    return {
+        "Whiplash完整舞蹈": {
+            "prompt": (
+                "在练习室镜面背景中跳《Whiplash》完整舞蹈，音乐同步，动作精准卡点：1-4拍：右脚踩点、左脚交叉、小碎步，"
+                "右手扣颈侧，猛甩头到左侧，耳朵贴肩，头发带风，手臂快抬2次；5-8拍：屈膝下蹲，三点式绕胯左→后→右，"
+                "双手W型上抬3次，头左右小甩；9-12拍：快速交换跳成丁字步，右手举左手叉腰，顶胯+快速抖肩；13-16拍："
+                "踩步重心前移，摸头顶肩后拉，身体反wave，前戳手顶胯；17-20拍：左脚后撤坐胯定格，眼神冷感，力量干净利落。"
+                "画质高清，流畅运镜，舞台灯光，韩团直拍风格"
+            ),
+            "description": "练习室镜面完整舞蹈，韩团直拍风格",
+            "duration": 12,
+        },
+        "镜头推进": {
+            "prompt": "镜头平稳向前推进，主体自然呼吸并轻轻看向镜头，动作连贯，真实光影，画面稳定，高清细节",
+            "description": "适合人物或静物的平稳推进镜头",
+            "duration": 5,
+        },
+        "转身定格": {
+            "prompt": "人物先保持姿势，随后自然转身回眸，衣摆和头发随动作轻微摆动，最后定格看向镜头，动作流畅，运镜克制",
+            "description": "转身回眸并定格",
+            "duration": 5,
+        },
+    }
+
+
 def slots_for_template(template_id: str) -> List[Dict[str, Any]]:
     meta = STUDIO_TEMPLATES.get(normalize_template_id(template_id)) or {}
     slots: List[Dict[str, Any]] = []

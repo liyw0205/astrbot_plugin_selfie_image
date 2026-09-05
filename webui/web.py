@@ -4875,7 +4875,8 @@ class FlaskWebServer:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             try:
-                return ok(self.plugin.list_prompt_presets_for_web())
+                kind = request.args.get("kind") or request.args.get("media_type") or "image"
+                return ok(self.plugin.list_prompt_presets_for_web(kind))
             except Exception as exc:
                 return fail(str(exc), 500)
 
@@ -4884,7 +4885,8 @@ class FlaskWebServer:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             try:
-                return ok(self.plugin.list_managed_prompt_presets_for_web())
+                kind = request.args.get("kind") or request.args.get("media_type") or "image"
+                return ok(self.plugin.list_managed_prompt_presets_for_web(kind))
             except Exception as exc:
                 return fail(str(exc), 500)
 
@@ -4908,10 +4910,11 @@ class FlaskWebServer:
             if error_response:
                 return error_response
             name = str((payload or {}).get("name") or "").strip()
+            kind = str((payload or {}).get("kind") or (payload or {}).get("media_type") or "image")
             if not name:
                 return fail("缺少预设名", 400)
             try:
-                return ok(self.plugin.delete_prompt_preset_from_web(name))
+                return ok(self.plugin.delete_prompt_preset_from_web(name, kind))
             except Exception as exc:
                 return fail(str(exc), 400)
 

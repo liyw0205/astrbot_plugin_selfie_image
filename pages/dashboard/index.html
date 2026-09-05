@@ -897,13 +897,17 @@
       <div class="between">
         <div>
           <h2>预设管理</h2>
-          <p class="muted">管理生图指令里的预设。导入导出使用 JSON 文本，不会下载文件。</p>
+          <p class="muted">管理生图和视频指令里的预设。导入导出使用 JSON 文本，不会下载文件。</p>
         </div>
         <div class="actions">
           <button class="ok" id="presetAddBtn" type="button">新增预设</button>
           <button class="secondary" id="presetImportBtn" type="button">导入文本</button>
           <button class="secondary" id="presetExportBtn" type="button">导出并复制</button>
         </div>
+      </div>
+      <div class="tabs-inline" style="margin-top:12px" role="tablist" aria-label="预设类型">
+        <button id="presetKindImage" class="active" type="button" role="tab">生图预设</button>
+        <button id="presetKindVideo" type="button" role="tab">视频预设</button>
       </div>
       <div class="between" style="margin-top:12px">
         <span id="presetManagerStatus" class="status">正在读取预设…</span>
@@ -1159,8 +1163,9 @@
       <div class="modal-body">
         <div class="grid">
           <div><label>预设名</label><input id="presetName" maxlength="100" placeholder="例如：夜景人像"></div>
-          <div><label>画面比例（可选）</label><input id="presetAspect" placeholder="例如：9:16"></div>
-          <div><label>清晰度（可选）</label><input id="presetResolution" placeholder="例如：1K"></div>
+          <div id="presetAspectWrap"><label>画面比例（可选）</label><input id="presetAspect" placeholder="例如：9:16"></div>
+          <div id="presetResolutionWrap"><label>清晰度（可选）</label><input id="presetResolution" placeholder="例如：1K"></div>
+          <div id="presetDurationWrap" style="display:none"><label>默认时长（秒，可选）</label><input id="presetDuration" type="number" min="1" max="60" placeholder="例如：5"></div>
           <div><label>说明（可选）</label><input id="presetDescription" placeholder="给自己看的备注"></div>
         </div>
         <label>提示词</label><textarea id="presetPrompt" rows="7" placeholder="输入这个预设要追加的提示词"></textarea>
@@ -1276,7 +1281,7 @@
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], cosLooks: [], pollTimer: null, uploadSlotId: "", presetOpen: false, cosOpen: false, running: false, galleryTargetSlotId: "" };
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], pollTimer: null, uploadSlotId: "", presetOpen: false, cosOpen: false, running: false, galleryTargetSlotId: "" };
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -1300,6 +1305,7 @@
     let DASHBOARD_BRIDGE = null;
     let PRESET_MANAGE_ROWS = [];
     let PRESET_EDIT_ORIGINAL = '';
+    let PRESET_KIND = 'image';
 
     function isEmbeddedFrame() {
       try {
@@ -3678,6 +3684,11 @@ Source prompt:
       }
       refreshModelSelectors();
       clearTestData(false);
+      if (window.__TEST_PRESET_OPEN) {
+        ensurePromptPresetsLoaded(TEST_MODE === 'video' ? 'video' : 'image').then(() =>
+          renderPresetPanel('testPresetPanel', 'testPrompt', true, 'testPresetBtn')
+        );
+      }
     }
     function setTestBusy(busy) {
       $('testImageBtn').disabled = !!busy;
@@ -4072,22 +4083,31 @@ Source prompt:
           if (!item) return;
           const input = $(targetInputId);
           if (input) input.value = item.prompt || '';
+          if (targetInputId === 'testPrompt' && TEST_MODE === 'video' && item.duration) {
+            $('testDuration').value = item.duration;
+          }
           panel.querySelectorAll('.preset-chip').forEach(el => el.classList.remove('active'));
           btn.classList.add('active');
           // Do not auto-collapse; user closes via 收回.
         };
       });
     }
-    async function ensurePromptPresetsLoaded() {
-      if (STUDIO.promptPresets && STUDIO.promptPresets.length) return STUDIO.promptPresets;
+    async function ensurePromptPresetsLoaded(kind = (TEST_MODE === 'video' ? 'video' : 'image')) {
+      kind = kind === 'video' ? 'video' : 'image';
+      STUDIO.promptPresetsByKind = STUDIO.promptPresetsByKind || {image: [], video: []};
+      if (STUDIO.promptPresetsByKind[kind] && STUDIO.promptPresetsByKind[kind].length) {
+        STUDIO.promptPresets = STUDIO.promptPresetsByKind[kind];
+        return STUDIO.promptPresets;
+      }
       try {
-        const res = await api('/api/prompt-presets');
+        const res = await api('/api/prompt-presets?kind=' + encodeURIComponent(kind));
         if (res.success) {
-          STUDIO.promptPresets = mergePromptPresets(res.data || []);
+          STUDIO.promptPresetsByKind[kind] = mergePromptPresets(res.data || []);
+          STUDIO.promptPresets = STUDIO.promptPresetsByKind[kind];
           return STUDIO.promptPresets;
         }
       } catch (_) {}
-      return STUDIO.promptPresets || [];
+      return STUDIO.promptPresetsByKind[kind] || [];
     }
     function presetManagerStatus(text, bad = false) {
       const el = $('presetManagerStatus');
@@ -4095,13 +4115,14 @@ Source prompt:
       el.textContent = text || '';
       el.className = 'status' + (bad ? ' bad' : '');
     }
-    async function loadManagedPromptPresets() {
+    async function loadManagedPromptPresets(kind = PRESET_KIND) {
+      PRESET_KIND = kind === 'video' ? 'video' : 'image';
       try {
-        const res = await api('/api/prompt-presets/manage');
+        const res = await api('/api/prompt-presets/manage?kind=' + encodeURIComponent(PRESET_KIND));
         const data = res.data;
         PRESET_MANAGE_ROWS = Array.isArray(data) ? data : (data && Array.isArray(data.presets) ? data.presets : []);
         renderManagedPromptPresets();
-        presetManagerStatus(`共 ${PRESET_MANAGE_ROWS.length} 个预设`);
+        presetManagerStatus(`${PRESET_KIND === 'video' ? '视频' : '生图'}预设 · 共 ${PRESET_MANAGE_ROWS.length} 个`);
       } catch (e) {
         PRESET_MANAGE_ROWS = [];
         renderManagedPromptPresets();
@@ -4120,7 +4141,7 @@ Source prompt:
         const prompt = escapeHtml(item.prompt || '');
         const desc = escapeHtml(item.description || '');
         const source = item.source === 'builtin' ? '内置' : '自定义';
-        const meta = [item.aspect_ratio ? '比例 ' + escapeHtml(item.aspect_ratio) : '', item.resolution ? '清晰度 ' + escapeHtml(item.resolution) : '', source]
+        const meta = [item.aspect_ratio ? '比例 ' + escapeHtml(item.aspect_ratio) : '', item.resolution ? '清晰度 ' + escapeHtml(item.resolution) : '', item.duration ? '时长 ' + escapeHtml(String(item.duration)) + 's' : '', source]
           .filter(Boolean).map(v => `<span class="pill">${v}</span>`).join('');
         return `<article class="preset-manager-row">
           <div><div class="preset-manager-name">${name}</div><div class="preset-manager-meta">${meta}</div>${desc ? `<div class="muted" style="margin-top:6px">${desc}</div>` : ''}</div>
@@ -4131,6 +4152,12 @@ Source prompt:
       wrap.querySelectorAll('[data-preset-edit]').forEach(btn => btn.onclick = () => openPresetEditor(PRESET_MANAGE_ROWS[Number(btn.dataset.presetEdit)]));
       wrap.querySelectorAll('[data-preset-delete]').forEach(btn => btn.onclick = () => deleteManagedPromptPreset(PRESET_MANAGE_ROWS[Number(btn.dataset.presetDelete)]));
     }
+    async function switchPresetKind(kind) {
+      PRESET_KIND = kind === 'video' ? 'video' : 'image';
+      $('presetKindImage').classList.toggle('active', PRESET_KIND === 'image');
+      $('presetKindVideo').classList.toggle('active', PRESET_KIND === 'video');
+      await loadManagedPromptPresets(PRESET_KIND);
+    }
     function openPresetEditor(row = null) {
       PRESET_EDIT_ORIGINAL = row ? String(row.name || '') : '';
       $('presetEditorTitle').textContent = row ? '编辑预设' : '新增预设';
@@ -4140,6 +4167,11 @@ Source prompt:
       $('presetAspect').value = row?.aspect_ratio || '';
       $('presetResolution').value = row?.resolution || '';
       $('presetExtraPrompt').value = row?.extra_prompt || '';
+      $('presetDuration').value = row?.duration || '';
+      const isVideo = PRESET_KIND === 'video';
+      $('presetAspectWrap').style.display = isVideo ? 'none' : '';
+      $('presetResolutionWrap').style.display = isVideo ? 'none' : '';
+      $('presetDurationWrap').style.display = isVideo ? '' : 'none';
       $('presetEditorStatus').textContent = '';
       $('presetEditorModal').classList.add('show');
       $('presetName').focus();
@@ -4156,7 +4188,9 @@ Source prompt:
         description: $('presetDescription').value.trim(),
         aspect_ratio: $('presetAspect').value.trim(),
         resolution: $('presetResolution').value.trim(),
-        extra_prompt: $('presetExtraPrompt').value.trim()
+        extra_prompt: $('presetExtraPrompt').value.trim(),
+        duration: $('presetDuration').value.trim(),
+        kind: PRESET_KIND
       };
       if (!body.name || !body.prompt) {
         $('presetEditorStatus').textContent = '预设名和提示词不能为空';
@@ -4167,8 +4201,8 @@ Source prompt:
         const res = await api('/api/prompt-presets/manage/save', {method:'POST', body:JSON.stringify(body)});
         closePresetEditor();
         await loadManagedPromptPresets();
-        STUDIO.promptPresets = [];
-        await ensurePromptPresetsLoaded();
+        STUDIO.promptPresetsByKind[PRESET_KIND] = [];
+        await ensurePromptPresetsLoaded(PRESET_KIND);
         showToast((res.data && res.data.message) || '预设已保存', 'ok');
       } catch (e) {
         $('presetEditorStatus').textContent = e.message || '保存失败';
@@ -4178,10 +4212,10 @@ Source prompt:
       if (!row || !row.name) return;
       if (!window.confirm(`确定删除预设「${row.name}」吗？`)) return;
       try {
-        const res = await api('/api/prompt-presets/manage/delete', {method:'POST', body:JSON.stringify({name:row.name})});
-        await loadManagedPromptPresets();
-        STUDIO.promptPresets = [];
-        await ensurePromptPresetsLoaded();
+        const res = await api('/api/prompt-presets/manage/delete', {method:'POST', body:JSON.stringify({name:row.name, kind:PRESET_KIND})});
+        await loadManagedPromptPresets(PRESET_KIND);
+        STUDIO.promptPresetsByKind[PRESET_KIND] = [];
+        await ensurePromptPresetsLoaded(PRESET_KIND);
         showToast((res.data && res.data.message) || '预设已删除', 'ok');
       } catch (e) {
         presetManagerStatus(e.message || '删除失败', true);
@@ -4190,15 +4224,16 @@ Source prompt:
     function presetTransferPayload() {
       return {
         version: 1,
-        type: 'selfie-image-prompt-presets',
+        type: PRESET_KIND === 'video' ? 'selfie-video-prompt-presets' : 'selfie-image-prompt-presets',
+        kind: PRESET_KIND,
         presets: PRESET_MANAGE_ROWS.map(item => ({
           name: item.name || item.title || '', prompt: item.prompt || '', description: item.description || '',
-          aspect_ratio: item.aspect_ratio || '', resolution: item.resolution || '', extra_prompt: item.extra_prompt || ''
+          aspect_ratio: item.aspect_ratio || '', resolution: item.resolution || '', extra_prompt: item.extra_prompt || '', duration: item.duration || 0
         }))
       };
     }
     async function openPresetExport() {
-      if (!PRESET_MANAGE_ROWS.length) await loadManagedPromptPresets();
+      if (!PRESET_MANAGE_ROWS.length) await loadManagedPromptPresets(PRESET_KIND);
       $('presetTransferTitle').textContent = '导出预设文本';
       $('presetTransferHint').textContent = '已生成 JSON 文本。系统会尝试写入剪贴板，失败时请在下方文本框中手动全选复制。';
       $('presetTransferText').value = JSON.stringify(presetTransferPayload(), null, 2);
@@ -4243,11 +4278,11 @@ Source prompt:
       }
       $('presetTransferStatus').textContent = '导入中…';
       try {
-        const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets})});
+        const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind:PRESET_KIND})});
         closePresetTransfer();
-        await loadManagedPromptPresets();
-        STUDIO.promptPresets = [];
-        await ensurePromptPresetsLoaded();
+        await loadManagedPromptPresets(PRESET_KIND);
+        STUDIO.promptPresetsByKind[PRESET_KIND] = [];
+        await ensurePromptPresetsLoaded(PRESET_KIND);
         showToast((res.data && res.data.message) || '预设已导入', 'ok');
       } catch (e) {
         $('presetTransferStatus').textContent = e.message || '导入失败';
@@ -4593,7 +4628,10 @@ Source prompt:
       STUDIO.sessions = (res.data && res.data.sessions) || [];
       STUDIO.prompts = (res.data && res.data.builtin_prompts) || [];
       STUDIO.templates = (res.data && res.data.templates) || STUDIO.templates || [];
-      if (res.data && res.data.prompt_presets) STUDIO.promptPresets = mergePromptPresets(res.data.prompt_presets);
+      if (res.data && res.data.prompt_presets) {
+        STUDIO.promptPresetsByKind.image = mergePromptPresets(res.data.prompt_presets);
+        STUDIO.promptPresets = STUDIO.promptPresetsByKind.image;
+      }
       if (res.data && Array.isArray(res.data.cos_look_sets)) STUDIO.cosLooks = res.data.cos_look_sets;
       if (selectId) {
         const detail = await studioApi('/api/studio/sessions/' + encodeURIComponent(selectId));
@@ -4709,7 +4747,7 @@ Source prompt:
         $(btn.dataset.tab).classList.add('active');
         if (btn.dataset.tab === 'monitor') { loadRecords(); loadMetrics(); }
         if (btn.dataset.tab === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
-        if (btn.dataset.tab === 'presets') loadManagedPromptPresets();
+        if (btn.dataset.tab === 'presets') loadManagedPromptPresets(PRESET_KIND);
         if (btn.dataset.tab === 'selfie') refreshSelfie();
         if (btn.dataset.tab === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
       };
@@ -4718,6 +4756,8 @@ Source prompt:
     $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };
     $('logoutBtn').onclick = logout;
     $('presetAddBtn').onclick = () => openPresetEditor();
+    $('presetKindImage').onclick = () => switchPresetKind('image');
+    $('presetKindVideo').onclick = () => switchPresetKind('video');
     $('presetImportBtn').onclick = openPresetImport;
     $('presetExportBtn').onclick = openPresetExport;
     $('presetReloadBtn').onclick = loadManagedPromptPresets;
