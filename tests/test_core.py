@@ -5121,7 +5121,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
         self.assertTrue(hasattr(plugin_main, "SelfieImagePlugin"))
         # command handlers exist
-        for name in ("cmd_help", "cmd_help_text", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel", "cmd_video", "cmd_t2v", "cmd_i2v"):
+        for name in ("cmd_help", "cmd_help_text", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel", "cmd_video", "cmd_t2v", "cmd_i2v", "cmd_persona_video"):
             self.assertTrue(hasattr(plugin_main.SelfieImagePlugin, name), name)
 
     def test_help_uses_shipped_static_poster_only(self) -> None:
@@ -5150,9 +5150,10 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             "cmd_draw": "不会自动带入形象图",
             "cmd_raw_text_to_image": "不使用形象图",
             "cmd_raw_image_to_image": "不会自动使用形象图",
-            "cmd_video": "当前形象图作首帧",
+            "cmd_video": "没图默认按文字生成",
             "cmd_t2v": "也不使用形象图",
-            "cmd_i2v": "用当前形象图",
+            "cmd_i2v": "不会自动使用当前形象图",
+            "cmd_persona_video": "当前形象图作为首帧",
             "cmd_selfie": "用当前形象自拍",
             "cmd_group_selfie": "自己使用当前形象",
             "cmd_persona_set": "自动 / 真人 / 动漫",
@@ -5171,6 +5172,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("自动判断", help_body)
         self.assertIn("不会自动塞形象图", help_body)
         self.assertIn("有图=图生视频", help_body)
+        self.assertIn("没图=文生视频", help_body)
+        self.assertIn("/形象视频", help_body)
         self.assertIn("/画 3", help_body)
         self.assertIn("/自拍 3", help_body)
         self.assertIn("新任务自动排队", help_body)
@@ -5861,6 +5864,7 @@ class VideoV1Tests(unittest.TestCase):
         self.assertIn('@filter.command("视频")', main_src)
         self.assertIn('@filter.command("文生视频")', main_src)
         self.assertIn('@filter.command("图生视频")', main_src)
+        self.assertIn('@filter.command("形象视频")', main_src)
         self.assertIn("视频：", main_src)
 
     def test_video_proxy_covers_polling_and_download(self) -> None:
@@ -5877,7 +5881,7 @@ class VideoV1Tests(unittest.TestCase):
         for html in (INDEX_HTML, (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")):
             self.assertIn("EDITING_CHANNEL_KIND === 'image' || EDITING_CHANNEL_KIND === 'video'", html)
 
-    def test_video_uses_persona_first_frame_across_entry_points(self) -> None:
+    def test_video_persona_reference_is_explicit_across_entry_points(self) -> None:
         from astrbot_plugin_selfie_image import main as plugin_main
 
         root = Path(__file__).resolve().parents[1]
@@ -5890,7 +5894,8 @@ class VideoV1Tests(unittest.TestCase):
         for token in (
             "@LLM_TOOL(name=\"generate_video\")",
             "tool_generate_video",
-            "persona_ref = self._video_persona_reference()",
+            "_video_prompt_requests_persona",
+            "persona_ref = self._configured_video_persona_reference()",
             "refs = [persona_ref]",
             "if payload.get(\"use_selfie_reference\") and not refs:",
             "valid_targets: List[ImageModelTarget] = []",
@@ -5900,7 +5905,19 @@ class VideoV1Tests(unittest.TestCase):
         for html in (INDEX_HTML, (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")):
             self.assertIn("TEST_MODE !== 't2v'", html)
             self.assertIn("use_selfie_reference: TEST_MODE !== 't2v'", html)
-            self.assertIn("无首帧时使用当前形象参考", html)
+            self.assertIn("勾选后使用当前形象参考", html)
+
+    def test_video_prompt_persona_intent_requires_explicit_self_reference(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        matcher = plugin_main.SelfieImagePlugin._video_prompt_requests_persona
+        self.assertTrue(matcher("我出镜跳一段舞"))
+        self.assertTrue(matcher("使用当前形象，保持我的脸"))
+        self.assertTrue(matcher("自拍视频，镜头推进"))
+        self.assertTrue(matcher("让你出镜跳一段舞"))
+        self.assertFalse(matcher("一只小猫在草地上奔跑"))
+        self.assertFalse(matcher("不要使用形象图，纯文字生成"))
+        self.assertFalse(matcher("不要使用当前形象，纯文生视频"))
 
 
 class LegFocusTests(unittest.TestCase):

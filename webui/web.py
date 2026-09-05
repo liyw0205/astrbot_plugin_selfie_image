@@ -3255,7 +3255,7 @@ Source prompt:
       $('promptEnhanceWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
       $('useSelfieWrap').style.display = '';
       $('useSelfie').disabled = TEST_MODE === 't2v';
-      $('useSelfieHint').textContent = TEST_MODE === 'video' ? '（无首帧时使用当前形象参考）' : '';
+      $('useSelfieHint').textContent = TEST_MODE === 'video' ? '（勾选后使用当前形象参考）' : '';
       $('testPromptLabel').textContent = TEST_MODE === 'video' ? '想生成什么视频' : '想画什么';
       $('testRefsLabel').textContent = TEST_MODE === 'video' ? '首帧参考图（可选一张）' : '额外参考图';
       $('testRefs').multiple = TEST_MODE === 'image';

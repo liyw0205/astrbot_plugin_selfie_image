@@ -2099,6 +2099,70 @@ class SelfieImagePlugin(
                 raw = (raw[: bare.start()] + raw[bare.end() :]).strip()
         return raw, duration
 
+    @staticmethod
+    def _video_prompt_requests_persona(text: str) -> bool:
+        """Return whether a video request explicitly asks to use the current persona."""
+        raw = str(text or "").strip().lower()
+        if not raw:
+            return False
+        compact = re.sub(r"[\s,，。.!！?？、;；:：'\"“”‘’()（）【】\[\]]+", "", raw)
+        if any(
+            token in compact
+            for token in (
+                "不要形象图",
+                "不用形象图",
+                "不使用形象图",
+                "不带形象图",
+                "不要用当前形象",
+                "不用当前形象",
+                "不使用当前形象",
+                "不要带当前形象",
+                "不要使用当前形象",
+                "不要用我的形象",
+                "不用我的形象",
+                "不使用我的形象",
+                "纯文字生成",
+                "纯文生视频",
+                "不要首帧",
+                "不需要首帧",
+            )
+        ):
+            return False
+        return any(
+            token in compact
+            for token in (
+                "我出镜",
+                "自己出镜",
+                "本人出镜",
+                "我来出镜",
+                "我的形象",
+                "当前形象",
+                "用我的形象",
+                "用当前形象",
+                "使用我的形象",
+                "使用当前形象",
+                "形象图",
+                "我的脸",
+                "保持我的脸",
+                "保持脸部身份",
+                "自拍视频",
+                "自拍",
+                "ai出镜",
+                "ai自己",
+                "让你出镜",
+                "让你跳",
+                "你出镜",
+                "你跳舞",
+                "你来跳",
+            )
+        )
+
+    def _configured_video_persona_reference(self) -> Optional[ImageReference]:
+        """Use only a configured persona image; never substitute the plugin logo."""
+        if not self.persona.has_reference_image():
+            return None
+        return self._video_persona_reference()
+
     def _expand_video_prompt_with_preset(
         self, raw_prompt: str, duration: Optional[int] = None
     ) -> Tuple[str, Optional[int], str]:
@@ -2130,31 +2194,52 @@ class SelfieImagePlugin(
         raw_message = extract_command_message(event, command_name, fallback).strip()
         prompt, duration = self._parse_video_duration(raw_message)
         prompt, duration, _ = self._expand_video_prompt_with_preset(prompt, duration)
-        refs = await self._event_reference_images(
-            event,
-            include_at_avatar=False,
-            allow_context_fallback=True,
-            include_persona=False,
-        )
-        if mode == "t2v":
-            refs = []
-        elif not refs:
-            persona_ref = self._video_persona_reference()
-            if persona_ref:
-                refs = [persona_ref]
-            elif mode == "i2v":
-                yield event.plain_result("图生视频需要附图、引用图片，或先设置当前形象图作为首帧。")
+        if not prompt:
+            label = "形象图生视频" if mode == "persona" else ("图生视频" if mode == "i2v" else "文生视频")
+            yield event.plain_result(f"请写上{label}的内容，例如：/{command_name if isinstance(command_name, str) else '视频'} 小猫在草地上跑")
+            return
+
+        refs: List[ImageReference] = []
+        event_refs: List[ImageReference] = []
+        use_persona_reference = mode == "persona"
+        if mode != "t2v" and mode != "persona":
+            event_refs = await self._event_reference_images(
+                event,
+                include_at_avatar=False,
+                allow_context_fallback=False,
+                include_persona=False,
+            )
+        if mode == "i2v":
+            refs = event_refs
+            if not refs:
+                yield event.plain_result("图生视频需要附图或引用图片；如要使用当前形象图，请使用 /形象视频。")
                 return
-        if mode == "auto" and refs:
+        elif mode == "persona":
+            persona_ref = self._configured_video_persona_reference()
+            if not persona_ref:
+                yield event.plain_result("形象视频需要先使用 /形象设置 上传当前形象图。")
+                return
+            refs = [persona_ref]
+        elif mode == "auto":
+            if event_refs:
+                refs = event_refs
+            elif self._video_prompt_requests_persona(prompt):
+                persona_ref = self._configured_video_persona_reference()
+                if not persona_ref:
+                    yield event.plain_result("这段视频要求使用当前形象图，请先使用 /形象设置 上传形象图，或改用 /文生视频。")
+                    return
+                refs = [persona_ref]
+                use_persona_reference = True
+
+        if use_persona_reference:
+            mode_label = "形象图生视频"
+        elif mode == "auto" and refs:
             mode_label = "图生视频"
         elif mode == "i2v":
             mode_label = "图生视频"
         else:
             mode_label = "文生视频"
             refs = []
-        if not prompt:
-            yield event.plain_result(f"请写上{mode_label}的内容，例如：/{command_name if isinstance(command_name, str) else '视频'} 小猫在草地上跑")
-            return
 
         progress = f"收到，开始{mode_label}（通常比出图慢，请稍等）。"
         if duration:
@@ -2211,7 +2296,7 @@ class SelfieImagePlugin(
 
     @filter.command("视频")
     async def cmd_video(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
-        """写想要的动态出视频。带图/引用图优先作首帧；没图时用当前形象图作首帧。"""
+        """写想要的动态出视频；有附图/引用图时作首帧，没图默认按文字生成，明确本人出镜时才使用当前形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
         async for item in self._handle_video_command(event, "视频", fallback, mode="auto"):
             yield item
@@ -2225,9 +2310,16 @@ class SelfieImagePlugin(
 
     @filter.command("图生视频")
     async def cmd_i2v(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
-        """按图出视频。附图/引用图优先作首帧；没图时用当前形象图。"""
+        """按附图或引用图出视频；没有图片时不会自动使用当前形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
         async for item in self._handle_video_command(event, "图生视频", fallback, mode="i2v"):
+            yield item
+
+    @filter.command("形象视频")
+    async def cmd_persona_video(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        """使用当前形象图作为首帧出视频；需要先设置形象图。"""
+        fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
+        async for item in self._handle_video_command(event, "形象视频", fallback, mode="persona"):
             yield item
 
     async def _run_command_image_task(self, task_id: str, event: AstrMessageEvent, runner) -> None:
@@ -3305,16 +3397,17 @@ class SelfieImagePlugin(
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象；可写数量",
                 "",
                 "视频：",
-                "· /视频　写想要的动态；有图就图生视频，没图就用当前形象图作首帧",
+                "· /视频　写想要的动态；有附图/引用图就图生视频，没图默认按文字生成；明确我出镜时才用当前形象图",
                 "· /文生视频　只用文字出视频，不带图、不用形象图",
-                "· /图生视频　附图/引用图优先作首帧；没图时用当前形象图",
+                "· /图生视频　必须附图或引用图作首帧，不会自动使用当前形象图",
+                "· /形象视频　使用当前形象图作首帧；需先设置形象图",
                 "· /视频任务　只看进行中的视频任务；可跟任务号或列表编号",
                 "· /视频取消　取消视频任务；可跟任务号或列表编号",
                 "· /视频预设　查看、使用和管理视频预设；时长可写 --duration 8 或 时长8秒",
                 "",
                 "自动判断：",
                 "· /画：有图=图生图，没图=文生图；不会自动塞形象图",
-                "· /视频：有图=图生视频，没图=用形象图作首帧",
+                "· /视频：有图=图生视频，没图=文生视频；明确要求本人/当前形象出镜时才使用形象图",
                 "· 自拍/合影/看看：会用当前形象；形象类型可设自动、真人、动漫",
                 "",
                 "模型与进度：",
@@ -4587,8 +4680,8 @@ class SelfieImagePlugin(
         ack_message: str = "",
     ) -> Optional[str]:
         """
-        生成短视频。默认把当前 AI 形象图作为首帧；用户附图时优先使用附图作为首帧。
-        用户要求 AI 自己动态、自拍视频、让 AI 出镜动作时使用本工具。
+        生成短视频。用户附图或引用图时使用该图片作为首帧；明确要求 AI 自己出镜时使用当前形象图，普通视频请求不自动带入形象图。
+        用户要求 AI 自己动态、自拍视频、让 AI 出镜动作时使用本工具；普通场景视频直接按文字生成。
         Args:
             prompt(string): 视频内容，描述动作、镜头、场景和光线。
             duration(number): 视频时长，1-60 秒；留空使用 5 秒。
@@ -4605,12 +4698,16 @@ class SelfieImagePlugin(
             event,
             include_at_avatar=False,
             context_hint=action,
-            allow_context_fallback=True,
+            allow_context_fallback=False,
         )
-        if not refs:
-            persona_ref = self._video_persona_reference()
-            if persona_ref:
-                refs = [persona_ref]
+        if not refs and self._video_prompt_requests_persona(action):
+            persona_ref = self._configured_video_persona_reference()
+            if not persona_ref:
+                return self._tool_soft_fail(
+                    "这段视频要求使用当前形象图，但还没有设置形象图",
+                    "请先上传形象图，再让我生成这段视频。",
+                )
+            refs = [persona_ref]
         await self._send_progress_text(
             event,
             await self._build_contextual_progress_text(event, "video", action, 1, ack_message),
