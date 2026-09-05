@@ -449,12 +449,29 @@ def redact_generation_record(record: Any) -> Dict[str, Any]:
     if not isinstance(redacted, dict):
         return {}
 
+    # Media origins are explicitly shown/copied in the dashboard. Preserve the
+    # upstream value instead of redacting query parameters or base64 payloads.
+    def restore_media_fields(source: Dict[str, Any], target: Dict[str, Any]) -> None:
+        for key in ("video_url", "video_source"):
+            if key in source:
+                target[key] = source.get(key) or ""
+        if isinstance(source.get("generated_image_sources"), list):
+            target["generated_image_sources"] = [
+                {"type": str(item.get("type") or ""), "value": str(item.get("value") or "")}
+                for item in source["generated_image_sources"]
+                if isinstance(item, dict) and str(item.get("value") or "").strip()
+            ]
+
+    restore_media_fields(record, redacted)
+    original_response = record.get("response_data")
+    safe_response = redacted.get("response_data")
+    if isinstance(original_response, dict) and isinstance(safe_response, dict):
+        restore_media_fields(original_response, safe_response)
+
     for key in ("attempts", "failure_reasons"):
         if isinstance(record.get(key), list):
             redacted[key] = redact_channel_attempts(record.get(key))
 
-    original_response = record.get("response_data")
-    safe_response = redacted.get("response_data")
     if isinstance(original_response, dict) and isinstance(safe_response, dict):
         if isinstance(original_response.get("attempts"), list):
             safe_response["attempts"] = redact_channel_attempts(original_response.get("attempts"))
@@ -478,6 +495,9 @@ def split_generation_record_images(record: Dict[str, Any]) -> List[Dict[str, Any
     if not isinstance(raw_md5s, list):
         raw_md5s = raw.get("generated_image_md5s")
     md5s = [str(value or "").strip().lower() for value in (raw_md5s or [])]
+    raw_sources = raw.get("generated_image_sources")
+    if not isinstance(raw_sources, list):
+        raw_sources = []
     if not md5s and raw.get("md5"):
         md5s = [str(raw.get("md5") or "").strip().lower()]
     # ``md5s`` is only an input for splitting a batch; persisted rows use ``md5``.
@@ -486,6 +506,8 @@ def split_generation_record_images(record: Dict[str, Any]) -> List[Dict[str, Any
     if len(paths) <= 1:
         if paths:
             raw["generated_image_paths"] = paths
+            if raw_sources:
+                raw["generated_image_sources"] = raw_sources[:1]
             if raw.get("success"):
                 raw["count"] = 1
             raw["md5"] = md5s[0] if md5s else str(raw.get("md5") or "").strip().lower()
@@ -495,12 +517,16 @@ def split_generation_record_images(record: Dict[str, Any]) -> List[Dict[str, Any
     for index, path in enumerate(paths):
         piece = dict(raw)
         piece["generated_image_paths"] = [path]
+        if index < len(raw_sources):
+            piece["generated_image_sources"] = [raw_sources[index]]
         piece["count"] = 1
         piece["md5"] = md5s[index] if index < len(md5s) else ""
         piece.pop("id", None)
         if resp:
             slim_resp = dict(resp)
             slim_resp["generated_image_paths"] = [path]
+            if index < len(raw_sources):
+                slim_resp["generated_image_sources"] = [raw_sources[index]]
             slim_resp["count"] = 1
             piece["response_data"] = slim_resp
         pieces.append(piece)
@@ -555,7 +581,22 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "generated_video_paths": resp.get("generated_video_paths")
             if isinstance(resp.get("generated_video_paths"), list)
             else [],
+            "generated_image_sources": resp.get("generated_image_sources")
+            if isinstance(resp.get("generated_image_sources"), list)
+            else [],
+            "video_url": resp.get("video_url") or "",
+            "video_source": resp.get("video_source") or "",
         }
+
+    if isinstance(out.get("generated_image_sources"), list):
+        out["generated_image_sources"] = [
+            {
+                "type": str(item.get("type") or "").strip(),
+                "value": str(item.get("value") or ""),
+            }
+            for item in out["generated_image_sources"]
+            if isinstance(item, dict) and str(item.get("value") or "").strip()
+        ]
 
     attempts_in = out.get("attempts")
     if not isinstance(attempts_in, list) and isinstance(resp, dict):

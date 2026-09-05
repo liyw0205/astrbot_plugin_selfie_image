@@ -45,6 +45,7 @@ class VideoGenerateRequest:
 class VideoGenerateResult:
     video_path: str = ""
     video_url: str = ""
+    video_source: str = ""
     error: str = ""
     used_model: str = ""
     attempts: List[Dict[str, Any]] = field(default_factory=list)
@@ -483,6 +484,7 @@ async def generate_video_openai_compatible(
         key_attempt = dict(attempt_info)
         if len(keys) > 1:
             key_attempt["key_index"] = key_index + 1
+        video_source = ""
         try:
             if protocol == "video_chat":
                 video_url = await _generate_via_chat(
@@ -532,6 +534,7 @@ async def generate_video_openai_compatible(
                     family=async_family,
                 )
 
+            video_source = str(video_url or "")
             raw = await _download_video_bytes(session, video_url, timeout=timeout, proxy=str((target.extra or {}).get("download_proxy") or target.proxy or ""))
             os.makedirs(save_dir, exist_ok=True)
             path = os.path.join(save_dir, f"video_{int(time.time() * 1000)}.mp4")
@@ -541,6 +544,7 @@ async def generate_video_openai_compatible(
             return VideoGenerateResult(
                 video_path=path,
                 video_url=video_url if str(video_url).startswith("http") else "",
+                video_source=video_source,
                 used_model=target.label,
                 attempts=[key_attempt],
                 elapsed_seconds=round(time.monotonic() - started, 2),
@@ -552,6 +556,7 @@ async def generate_video_openai_compatible(
             key_attempt["error_category"] = "timeout"
             return VideoGenerateResult(
                 error=last_error,
+                video_source=video_source,
                 attempts=[key_attempt],
                 used_model=target.label,
                 elapsed_seconds=round(time.monotonic() - started, 2),
@@ -567,6 +572,7 @@ async def generate_video_openai_compatible(
             if not class_info.get("retryable", True):
                 return VideoGenerateResult(
                     error=last_error,
+                    video_source=video_source,
                     attempts=[key_attempt],
                     used_model=target.label,
                     elapsed_seconds=round(time.monotonic() - started, 2),
@@ -575,12 +581,13 @@ async def generate_video_openai_compatible(
                 continue
             return VideoGenerateResult(
                 error=last_error,
+                video_source=video_source,
                 attempts=[key_attempt],
                 used_model=target.label,
                 elapsed_seconds=round(time.monotonic() - started, 2),
             )
 
-    return VideoGenerateResult(error=last_error or "视频生成失败", used_model=target.label)
+    return VideoGenerateResult(error=last_error or "视频生成失败", video_source=video_source, used_model=target.label)
 
 
 def _normalize_aspect_ratio(size: str) -> str:
@@ -1262,6 +1269,7 @@ async def generate_video_with_fallback(
         return VideoGenerateResult(error="当前没有可用的视频模型，请先在配置里启用视频渠道")
     attempts: List[Dict[str, Any]] = []
     last_error = ""
+    last_source = ""
     for target in targets:
         async with channel_client_session(target.proxy, session) as target_session:
             result = await generate_video_openai_compatible(
@@ -1275,9 +1283,10 @@ async def generate_video_with_fallback(
             result.attempts = attempts
             return result
         last_error = result.error or last_error
+        last_source = result.video_source or last_source
         # stop on non-retryable
         if result.attempts:
             cat = str((result.attempts[-1] or {}).get("error_category") or "")
             if cat in {"auth", "unsafe", "not_found"} and len(targets) == 1:
                 break
-    return VideoGenerateResult(error=last_error or "视频生成失败", attempts=attempts)
+    return VideoGenerateResult(error=last_error or "视频生成失败", video_source=last_source, attempts=attempts)

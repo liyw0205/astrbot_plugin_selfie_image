@@ -72,6 +72,7 @@ from astrbot_plugin_selfie_image.core.providers import (
     extract_model_ids_from_response,
     extract_image_urls_from_text,
     fetch_generated_image_url,
+    image_sources_from_response,
     http_error_preview,
     images_from_response_unknown,
     looks_like_binary_image,
@@ -1288,6 +1289,30 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(row.get("failed_attempt_count"), 1)
         self.assertNotIn("request_data", row)
         self.assertLessEqual(len(row.get("request_prompt") or ""), 241)
+
+    def test_media_sources_keep_original_values_and_follow_image_order(self) -> None:
+        from astrbot_plugin_selfie_image.core.utils import compact_generation_record, redact_generation_record
+
+        sources = image_sources_from_response(
+            {"data": [{"b64_json": "data:image/png;base64,AAAA"}, {"url": "/images/result.png"}]},
+            "https://api.example.test/v1/images",
+        )
+        self.assertEqual(
+            sources,
+            [
+                {"type": "base64", "value": "data:image/png;base64,AAAA"},
+                {"type": "url", "value": "https://api.example.test/images/result.png"},
+            ],
+        )
+        record = redact_generation_record(
+            {
+                "generated_image_sources": [{"type": "url", "value": "https://cdn.example.test/a.png?api_key=secretvalue"}],
+                "response_data": {"video_source": "https://cdn.example.test/v.mp4?api_key=secretvalue"},
+            }
+        )
+        slim = compact_generation_record(record)
+        self.assertEqual(record["generated_image_sources"][0]["value"], "https://cdn.example.test/a.png?api_key=secretvalue")
+        self.assertEqual(slim["response_data"]["video_source"], "https://cdn.example.test/v.mp4?api_key=secretvalue")
 
     def test_generation_record_keeps_only_channel_error_raw(self) -> None:
         from astrbot_plugin_selfie_image.core.utils import compact_generation_record, redact_generation_record

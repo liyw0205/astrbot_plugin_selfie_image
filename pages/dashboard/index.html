@@ -343,6 +343,12 @@
     .media-head { display:flex; align-items:center; gap:8px; margin:14px 0 8px; }
     .media-head h3 { margin:0; }
     .media-head .copy-btn, .media-head .dl-btn { width:30px; height:30px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:8px; }
+    .media-source-badge { display:inline-flex; align-items:center; min-height:22px; padding:2px 7px; border-radius:999px; font-size:11px; font-weight:700; line-height:1.2; border:1px solid var(--line); background:#f4f4f5; color:#667085; }
+    .media-source-badge.url { background:#eaf8ef; color:#067647; border-color:#abe2c0; }
+    .media-source-badge.base64 { background:#fff7e8; color:#b54708; border-color:#f7d7a8; }
+    .media-source-badge.local { background:#f4f4f5; color:#667085; }
+    .media-source-line { display:flex; align-items:center; gap:6px; margin-top:6px; min-height:24px; }
+    .media-source-line .copy-btn { width:24px; height:24px; border-radius:7px; }
     .images .thumb-card { position:relative; }
     .images .thumb-dl { position:absolute; top:8px; right:8px; width:30px; height:30px; padding:0; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.92); }
     .video-card { position:relative; margin-top:8px; }
@@ -3395,12 +3401,54 @@ Source prompt:
         if (path) loadProtectedImage(img, path);
       });
     }
-    function videoThumbs(paths) {
+    function normalizeMediaSources(sources) {
+      const list = Array.isArray(sources) ? sources : (sources ? [sources] : []);
+      return list.map(item => {
+        const value = typeof item === 'string' ? item.trim() : String(item?.value || '').trim();
+        if (!value) return null;
+        const rawType = typeof item === 'object' ? String(item?.type || '').trim().toLowerCase() : '';
+        const type = rawType === 'base64' || value.toLowerCase().startsWith('data:') || value.toLowerCase().startsWith('base64://') ? 'base64' : (rawType === 'url' || /^https?:\/\//i.test(value) ? 'url' : 'local');
+        return {type, value};
+      }).filter(Boolean);
+    }
+    function mediaSourceLabel(source) {
+      const type = source?.type || 'local';
+      return type === 'base64' ? 'Base64' : type === 'url' ? 'URL' : '本地缓存';
+    }
+    function mediaSourceBadge(source) {
+      const normalized = source || {type: 'local'};
+      const title = normalized.type === 'base64' ? '原始 Base64' : normalized.type === 'url' ? '原始 URL' : '仅有本地缓存文件';
+      return `<span class="media-source-badge ${escapeHtml(normalized.type || 'local')}" title="${title}">${escapeHtml(mediaSourceLabel(normalized))}</span>`;
+    }
+    function mediaSourceSummary(sources) {
+      const list = normalizeMediaSources(sources);
+      if (!list.length) return {text: '本地缓存', sources: []};
+      const counts = {};
+      for (const source of list) counts[source.type] = (counts[source.type] || 0) + 1;
+      const text = Object.entries(counts).map(([type, count]) => `${mediaSourceLabel({type})}${count > 1 ? ` ×${count}` : ''}`).join(' / ');
+      return {text, sources: list};
+    }
+    function mediaHead(title, sources) {
+      const summary = mediaSourceSummary(sources);
+      const sourceArg = escapeJs(JSON.stringify(summary.sources));
+      const copy = summary.sources.length
+        ? `<button class="copy-btn" type="button" title="复制原始来源" aria-label="复制原始来源" onclick="copyMediaSources(${sourceArg})">${copyIconSvg()}</button>`
+        : '';
+      const badgeType = summary.sources.length && summary.sources.every(source => source.type === summary.sources[0].type) ? summary.sources[0].type : 'local';
+      return `<div class="media-head"><h3>${escapeHtml(title)}</h3><span class="media-source-badge ${badgeType}">${escapeHtml(summary.text)}</span>${copy}</div>`;
+    }
+    function mediaItemSource(sources, index) {
+      const list = normalizeMediaSources(sources);
+      const source = list[index] || null;
+      return `<div class="media-source-line">${mediaSourceBadge(source || {type: 'local'})}${source ? `<button class="copy-btn" type="button" title="复制原始来源" aria-label="复制原始来源" onclick="copyMediaSource(${escapeJs(JSON.stringify(source))})">${copyIconSvg()}</button>` : ''}</div>`;
+    }
+    function videoThumbs(paths, source) {
       const list = (paths || []).filter(Boolean);
-      if (!list.length) return '<div class="media-head"><h3>生成视频</h3></div><div class="muted">没有生成视频</div>';
-      return '<div class="media-head"><h3>生成视频</h3></div>' + list.map(path => {
+      const sources = normalizeMediaSources(source);
+      if (!list.length) return `${mediaHead('生成视频', sources)}<div class="muted">没有生成视频</div>`;
+      return mediaHead('生成视频', sources) + list.map((path, index) => {
         const name = String(path).split('/').pop() || 'video.mp4';
-        return `<div class="video-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button><video controls preload="metadata" style="width:100%;max-height:480px;border-radius:12px" data-cache-video="${escapeHtml(path)}"></video></div>`;
+        return `<div class="video-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button><video controls preload="metadata" style="width:100%;max-height:480px;border-radius:12px" data-cache-video="${escapeHtml(path)}"></video>${mediaItemSource(sources, index)}</div>`;
       }).join('');
     }
     async function loadProtectedVideo(video, path) {
@@ -3426,14 +3474,15 @@ Source prompt:
         if (path) loadProtectedVideo(video, path);
       });
     }
-    function imageThumbs(paths, title = '图片') {
+    function imageThumbs(paths, title = '图片', sources = []) {
       const items = (paths || []).filter(Boolean);
-      if (!items.length) return `<div class="media-head"><h3>${escapeHtml(title)}</h3></div><div class="muted">无图片</div>`;
-      const grid = `<div class="images">${items.map(path => {
+      const normalizedSources = normalizeMediaSources(sources);
+      if (!items.length) return `${mediaHead(title, normalizedSources)}<div class="muted">无图片</div>`;
+      const grid = `<div class="images">${items.map((path, index) => {
         const name = String(path).split('/').pop() || 'image';
-        return `<div class="thumb-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button><img data-cache-path="${escapeHtml(path)}" alt="${escapeHtml(path)}"><div class="muted">${escapeHtml(path)}</div></div>`;
+        return `<div class="thumb-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button><img data-cache-path="${escapeHtml(path)}" alt="${escapeHtml(path)}"><div class="muted">${escapeHtml(path)}</div>${mediaItemSource(normalizedSources, index)}</div>`;
       }).join('')}</div>`;
-      return `<div class="media-head"><h3>${escapeHtml(title)}</h3></div>${grid}`;
+      return `${mediaHead(title, normalizedSources)}${grid}`;
     }
     function downloadIconSvg() {
       return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>';
@@ -3504,6 +3553,32 @@ Source prompt:
       document.body.removeChild(area);
       if (!ok) throw new Error('复制失败');
     }
+    async function copyMediaSource(source) {
+      const item = normalizeMediaSources(source)[0];
+      if (!item) {
+        showToast('没有原始链接或 base64', 'bad');
+        return;
+      }
+      try {
+        await copyTextToClipboard(item.value);
+        showToast(`已复制${mediaSourceLabel(item)}来源`, 'ok');
+      } catch (e) {
+        showToast(e.message || '复制失败', 'bad');
+      }
+    }
+    async function copyMediaSources(sources) {
+      const list = normalizeMediaSources(sources);
+      if (!list.length) {
+        showToast('没有原始链接或 base64', 'bad');
+        return;
+      }
+      try {
+        await copyTextToClipboard(list.map(item => item.value).join('\n'));
+        showToast(`已复制${list.length > 1 ? `${list.length}项` : mediaSourceLabel(list[0])}来源`, 'ok');
+      } catch (e) {
+        showToast(e.message || '复制失败', 'bad');
+      }
+    }
     async function copyRecordField(field) {
       const r = CURRENT_RECORD || {};
       const text = field === 'request_prompt'
@@ -3554,8 +3629,8 @@ Source prompt:
         ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
         ${promptDetailBlock('响应数据', 'response_data', JSON.stringify(r.response_data || {}, null, 2))}
         ${imageThumbs(r.request_image_paths || [], '请求图')}
-        ${imageThumbs(r.generated_image_paths || [], '生成图')}
-        ${videoThumbs(r.generated_video_paths || [])}
+        ${imageThumbs(r.generated_image_paths || [], '生成图', r.generated_image_sources || r.response_data?.generated_image_sources || [])}
+        ${videoThumbs(r.generated_video_paths || [], r.response_data?.video_source || r.response_data?.video_url || r.video_source || r.video_url || '')}
       `;
       $('recordModal').classList.add('show');
       loadProtectedImages($('recordDetailBody'));
@@ -3620,14 +3695,11 @@ Source prompt:
       $('testStatus').textContent = `成功：${data.used_model || ''}，耗时 ${data.elapsed_seconds}s，参考图 ${data.reference_images || 0} 张`;
       $('testImages').innerHTML = '';
       if (data.generated_video_paths && data.generated_video_paths.length) {
-        $('testImages').innerHTML = videoThumbs(data.generated_video_paths);
+        $('testImages').innerHTML = videoThumbs(data.generated_video_paths, data.video_source || data.video_url || '');
         loadProtectedVideos($('testImages'));
       } else {
-        for (const path of data.generated_image_paths || []) {
-          const img = document.createElement('img');
-          $('testImages').appendChild(img);
-          loadProtectedImage(img, path);
-        }
+        $('testImages').innerHTML = imageThumbs(data.generated_image_paths || [], '生成图', data.generated_image_sources || []);
+        loadProtectedImages($('testImages'));
       }
       showTestPanel('result');
     }

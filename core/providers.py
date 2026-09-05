@@ -64,6 +64,7 @@ class ImageGenerateRequest:
 @dataclass
 class ImageGenerateResult:
     images: List[bytes] = field(default_factory=list)
+    source_media: List[Dict[str, str]] = field(default_factory=list)
     error: str = ""
     used_model: str = ""
     attempts: List[Dict[str, Any]] = field(default_factory=list)
@@ -167,6 +168,7 @@ class BaseImageAdapter:
     ) -> ImageGenerateResult:
         download_proxy = str((self.target.extra or {}).get("download_proxy") or "").strip() or str(self.target.proxy or "").strip()
         download_diagnostics: List[str] = []
+        source_media = image_sources_from_response(data, base_url)
         images = await images_from_response_unknown(
             self.session,
             data,
@@ -177,7 +179,7 @@ class BaseImageAdapter:
             download_diagnostics,
         )
         if images:
-            return ImageGenerateResult(images=images)
+            return ImageGenerateResult(images=images, source_media=source_media)
         preview = response_preview(data)
         collected = collect_images_from_unknown(data)
         prefix = f"{provider_name} " if provider_name else ""
@@ -204,6 +206,27 @@ class BaseImageAdapter:
 
     async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         raise NotImplementedError
+
+
+def image_sources_from_response(data: Any, base_url: str = "") -> List[Dict[str, str]]:
+    """Keep the upstream URL/base64 source after the adapter downloads image bytes."""
+    collected = collect_images_from_unknown(data)
+    sources: List[Dict[str, str]] = []
+    seen = set()
+    for value in collected.get("b64") or []:
+        source = str(value or "").strip()
+        if not source or source in seen:
+            continue
+        seen.add(source)
+        sources.append({"type": "base64", "value": source})
+    # Match the downloader's order for URL-backed images.
+    for value in [*(collected.get("urls") or []), *(collected.get("others") or [])]:
+        source = resolve_response_url(str(value or ""), base_url) if base_url else str(value or "").strip()
+        if not source or not source.lower().startswith(("http://", "https://")) or source in seen:
+            continue
+        seen.add(source)
+        sources.append({"type": "url", "value": source})
+    return sources
 
 
 def map_aspect_ratio_to_openai_size(aspect: str) -> str:
@@ -359,7 +382,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 return ImageGenerateResult(error=last_error)
             images = extract_openai_images_data(data, req.max_image_bytes)
             if images:
-                return ImageGenerateResult(images=images)
+                return ImageGenerateResult(images=images, source_media=image_sources_from_response(data, base))
             return await self.result_from_response(data, req, base, detailed_error=True)
         return ImageGenerateResult(error=last_error or "接口未返回有效 JSON")
 
@@ -449,7 +472,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
                 if not error and data is not None:
                     images = extract_openai_images_data(data, req.max_image_bytes)
                     if images:
-                        return ImageGenerateResult(images=images)
+                        return ImageGenerateResult(images=images, source_media=image_sources_from_response(data, base))
                     return await self.result_from_response(data, req, base, detailed_error=True)
                 last_error = error or "接口未返回有效 JSON"
                 # Switch profile on param/schema issues or incomplete transfer resets.

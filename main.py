@@ -1297,6 +1297,7 @@ class SelfieImagePlugin(
                 "error": result.error or "未生成任何图片",
                 "used_model": result.used_model,
                 "elapsed_seconds": round(elapsed, 2),
+                "generated_image_sources": result.source_media,
                 "attempts": result.attempts,
             }
             self._record_task(
@@ -1314,6 +1315,7 @@ class SelfieImagePlugin(
                     "response_data": response_data,
                     "request_image_paths": request_image_paths,
                     "generated_image_paths": [],
+                    "generated_image_sources": result.source_media,
                 }
             )
             return {
@@ -1343,6 +1345,7 @@ class SelfieImagePlugin(
                 "used_model": result.used_model,
                 "elapsed_seconds": round(elapsed, 2),
                 "generated_image_paths": generated_image_paths,
+                "generated_image_sources": result.source_media,
                 "blocked_images_retained": True,
                 "attempts": result.attempts,
             }
@@ -1361,6 +1364,7 @@ class SelfieImagePlugin(
                     "response_data": response_data,
                     "request_image_paths": request_image_paths,
                     "generated_image_paths": generated_image_paths,
+                    "generated_image_sources": result.source_media,
                     "md5s": generated_image_md5s,
                 }
             )
@@ -1380,6 +1384,7 @@ class SelfieImagePlugin(
             "elapsed_seconds": round(elapsed, 2),
             "count": len(files),
             "generated_image_paths": generated_image_paths,
+            "generated_image_sources": result.source_media,
             "cache_cleanup": cleanup,
             "attempts": result.attempts,
         }
@@ -1398,6 +1403,7 @@ class SelfieImagePlugin(
                 "response_data": response_data,
                 "request_image_paths": request_image_paths,
                 "generated_image_paths": generated_image_paths,
+                "generated_image_sources": result.source_media,
                 "md5s": generated_image_md5s,
             }
         )
@@ -1412,6 +1418,7 @@ class SelfieImagePlugin(
             "response_data": response_data,
             "request_image_paths": request_image_paths,
             "attempts": result.attempts,
+            "generated_image_sources": result.source_media,
         }
 
     async def _build_selfie_prompt_and_refs(self, action: str, extra_refs: List[ImageReference], event: Optional[AstrMessageEvent] = None) -> Tuple[str, List[ImageReference]]:
@@ -1782,7 +1789,11 @@ class SelfieImagePlugin(
                         "prompt_en": prompt_en_meta,
                         "request_prompt_en": req.prompt if prompt_en_meta.get("applied") else "",
                     },
-                    "response_data": {"attempts": result.attempts},
+                    "response_data": {
+                        "attempts": result.attempts,
+                        "video_url": result.video_url,
+                        "video_source": result.video_source,
+                    },
                     "request_image_paths": [],
                     "generated_image_paths": [],
                     "generated_video_paths": [],
@@ -1815,7 +1826,11 @@ class SelfieImagePlugin(
                     "prompt_en": prompt_en_meta,
                     "request_prompt_en": req.prompt if prompt_en_meta.get("applied") else "",
                 },
-                "response_data": {"attempts": result.attempts, "video_url": result.video_url},
+                "response_data": {
+                    "attempts": result.attempts,
+                    "video_url": result.video_url,
+                    "video_source": result.video_source,
+                },
                 "request_image_paths": [],
                 "generated_image_paths": [],
                 "generated_video_paths": [video_rel],
@@ -1825,6 +1840,7 @@ class SelfieImagePlugin(
             "success": True,
             "video_path": result.video_path,
             "video_url": result.video_url,
+            "video_source": result.video_source,
             "used_model": result.used_model,
             "attempts": result.attempts,
             "elapsed_seconds": result.elapsed_seconds,
@@ -2790,7 +2806,11 @@ class SelfieImagePlugin(
             "elapsed_seconds": elapsed,
             "reference_images": len(refs),
             "request_data": self._summarize_web_test_payload(payload),
-            "response_data": {"attempts": result.attempts, "video_url": result.video_url},
+            "response_data": {
+                "attempts": result.attempts,
+                "video_url": result.video_url,
+                "video_source": result.video_source,
+            },
             "request_image_paths": [],
             "generated_image_paths": [],
             "generated_video_paths": [self._cache_relative_path(result.video_path)] if result.video_path else [],
@@ -2811,6 +2831,7 @@ class SelfieImagePlugin(
             "elapsed_seconds": elapsed,
             "reference_images": len(refs),
             "video_url": result.video_url,
+            "video_source": result.video_source,
             "generated_video_paths": [self._cache_relative_path(result.video_path)],
             "attempts": result.attempts,
         }
