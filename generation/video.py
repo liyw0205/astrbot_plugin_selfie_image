@@ -18,7 +18,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import quote, urlparse
 
 import aiohttp
@@ -182,17 +182,40 @@ def _extract_task_id(payload: Any) -> str:
 
 def _extract_video_id(payload: Any) -> str:
     if isinstance(payload, dict):
-        for key in ("video_id", "task_id", "id"):
-            value = payload.get(key)
-            if value:
-                return str(value)
+        value = payload.get("video_id")
+        if value:
+            return str(value)
+        # Prefer a nested official video_id over a top-level legacy task id.
         for value in payload.values():
             found = _extract_video_id(value)
             if found:
                 return found
+        for key in ("task_id", "id"):
+            value = payload.get(key)
+            if value:
+                return str(value)
     elif isinstance(payload, (list, tuple)):
         for item in payload:
             found = _extract_video_id(item)
+            if found:
+                return found
+    return ""
+
+
+def _extract_agnes_task_id(payload: Any) -> str:
+    """Extract the legacy task identifier used by /v1/videos/<TASK_ID>."""
+    if isinstance(payload, dict):
+        for key in ("task_id", "request_id", "id"):
+            value = payload.get(key)
+            if value:
+                return str(value)
+        for value in payload.values():
+            found = _extract_agnes_task_id(value)
+            if found:
+                return found
+    elif isinstance(payload, (list, tuple)):
+        for item in payload:
+            found = _extract_agnes_task_id(item)
             if found:
                 return found
     return ""
@@ -261,6 +284,53 @@ def _extract_video_url(data: Any) -> str:
 def _ref_to_data_url(ref: ImageReference) -> str:
     mime = str(ref.mime_type or "image/png").strip() or "image/png"
     return bytes_to_data_url(ref.data, mime)
+
+
+def _agnes_video_family(model: str) -> str:
+    """Return the Agnes video request family selected by the model name."""
+    normalized = str(model or "").strip().lower().replace("_", "-")
+    if "agnes-video-2.5-flash" in normalized or "agnes-video-25-flash" in normalized:
+        return "v25_flash"
+    if "agnes-video-2.5" in normalized or "agnes-video-25" in normalized:
+        return "v25"
+    return "v20"
+
+
+def _agnes_media_values(
+    references: Optional[Sequence[ImageReference]],
+    b64_images: Sequence[str],
+) -> List[str]:
+    """Use public reference URLs when available and data URLs as a local fallback."""
+    values: List[str] = []
+    refs = list(references or [])
+    b64_index = 0
+    for ref in refs:
+        source_url = str(getattr(ref, "source_url", "") or "").strip()
+        if source_url.lower().startswith(("http://", "https://")):
+            values.append(source_url)
+            continue
+        if getattr(ref, "data", None) and b64_index < len(b64_images):
+            if b64_images[b64_index]:
+                values.append(str(b64_images[b64_index]))
+            b64_index += 1
+    if not values:
+        values.extend(str(item) for item in b64_images if str(item).strip())
+    return values
+
+
+def _agnes_string_list(value: Any) -> List[str]:
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: List[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            item = item.get("url") or item.get("source_url") or item.get("uri") or ""
+        text = str(item or "").strip()
+        if text:
+            result.append(text)
+    return result
 
 
 async def _read_error(response: aiohttp.ClientResponse) -> str:
@@ -688,10 +758,11 @@ async def _generate_via_async(
     return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout, proxy=target.proxy)
 
 
-def _agnes_payload(
+def _agnes_v20_payload(
     target: ImageModelTarget,
     request: VideoGenerateRequest,
     b64_images: List[str],
+    references: Optional[Sequence[ImageReference]] = None,
 ) -> Dict[str, Any]:
     """Build official Agnes Video V2.0 create-task body."""
     extra = dict(request.extra or {}) if isinstance(request.extra, dict) else {}
@@ -738,9 +809,9 @@ def _agnes_payload(
 
     # image / keyframes
     image_url = str(extra.get("image") or extra.get("image_url") or "").strip()
-    if not image_url and b64_images:
-        # Prefer source_url on refs if caller put http URLs into extra only; data URL as last resort.
-        image_url = b64_images[0]
+    media_values = _agnes_media_values(references, b64_images)
+    if not image_url and media_values:
+        image_url = media_values[0]
     if image_url:
         payload["image"] = image_url
     keyframes = extra.get("keyframes") or extra.get("images")
@@ -750,6 +821,124 @@ def _agnes_payload(
     elif isinstance(extra.get("extra_body"), dict):
         payload["extra_body"] = extra.get("extra_body")
     return payload
+
+
+def _agnes_v25_payload(
+    target: ImageModelTarget,
+    request: VideoGenerateRequest,
+    b64_images: List[str],
+    references: Optional[Sequence[ImageReference]] = None,
+    *,
+    flash: bool = False,
+) -> Dict[str, Any]:
+    """Build Agnes Video 2.5/2.5 Flash's mode-based request body."""
+    extra = dict(request.extra or {}) if isinstance(request.extra, dict) else {}
+    media_values = _agnes_media_values(references, b64_images)
+
+    try:
+        seconds = max(4, min(12, int(extra.get("seconds") or request.duration or 5)))
+    except Exception:
+        seconds = 5
+
+    raw_size = str(extra.get("size") or request.size or "").strip().upper()
+    if raw_size not in {"720P", "1080P", "1K", "2K"}:
+        raw_size = "720P"
+    if flash:
+        raw_size = "720P"
+
+    aspect = str(extra.get("aspect_ratio") or "").strip()
+    if not aspect:
+        aspect = _normalize_aspect_ratio(str(request.size or "").strip())
+    if not re.match(r"^\d+(?::\d+)$", aspect):
+        aspect = "16:9"
+
+    first_frame = str(extra.get("first_frame") or "").strip()
+    last_frame = str(extra.get("last_frame") or "").strip()
+    if not first_frame and isinstance(extra.get("keyframes"), (list, tuple)):
+        keyframes = _agnes_string_list(extra.get("keyframes"))
+        if keyframes:
+            first_frame = keyframes[0]
+        if len(keyframes) > 1:
+            last_frame = keyframes[1]
+
+    explicit_mode = str(extra.get("mode") or "").strip().lower()
+    if explicit_mode in {"keyframes", "key_frame", "i2v"}:
+        explicit_mode = "keyframe"
+    if explicit_mode not in {"text", "keyframe", "reference"}:
+        explicit_mode = ""
+
+    images = _agnes_string_list(extra.get("images"))
+    audios = _agnes_string_list(extra.get("audios"))
+    videos = extra.get("videos")
+    if isinstance(videos, (list, tuple)):
+        videos = list(videos)
+    elif videos:
+        videos = [videos]
+    else:
+        videos = []
+
+    if explicit_mode:
+        mode = explicit_mode
+    elif first_frame or last_frame:
+        mode = "keyframe"
+    elif images or audios or videos:
+        mode = "reference"
+    elif media_values:
+        mode = "keyframe"
+        first_frame = media_values[0]
+    else:
+        mode = "text"
+
+    if mode == "reference" and not images and media_values:
+        images = list(media_values)
+
+    payload: Dict[str, Any] = {
+        "model": target.model or ("agnes-video-2.5-flash" if flash else "agnes-video-2.5"),
+        "prompt": str(request.prompt or "").strip(),
+        "seconds": str(seconds),
+        "mode": mode,
+        "size": raw_size,
+        "aspect_ratio": aspect,
+        "n": 1,
+    }
+
+    if extra.get("seed") is not None:
+        payload["seed"] = extra.get("seed")
+    if extra.get("negative_prompt"):
+        payload["negative_prompt"] = str(extra.get("negative_prompt"))
+
+    # The API rejects media fields that do not belong to the selected mode.
+    if mode == "keyframe":
+        if first_frame:
+            payload["first_frame"] = first_frame
+        elif media_values:
+            payload["first_frame"] = media_values[0]
+        if last_frame:
+            payload["last_frame"] = last_frame
+    elif mode == "reference":
+        if images:
+            payload["images"] = images[:5] if flash else images
+        if audios:
+            payload["audios"] = audios[:3] if flash else audios
+        # Flash explicitly does not support valid video inputs.
+        if videos and not flash:
+            payload["videos"] = videos
+    return payload
+
+
+def _agnes_payload(
+    target: ImageModelTarget,
+    request: VideoGenerateRequest,
+    b64_images: List[str],
+    references: Optional[Sequence[ImageReference]] = None,
+) -> Dict[str, Any]:
+    """Build the Agnes request selected by ``target.model``."""
+    family = _agnes_video_family(str(target.model or ""))
+    if family == "v25_flash":
+        return _agnes_v25_payload(target, request, b64_images, references, flash=True)
+    if family == "v25":
+        return _agnes_v25_payload(target, request, b64_images, references)
+    return _agnes_v20_payload(target, request, b64_images, references)
 
 
 async def _generate_via_agnes(
@@ -770,7 +959,7 @@ async def _generate_via_agnes(
     endpoint = build_agnes_videos_endpoint(target.base_url)
     if not endpoint:
         raise RuntimeError("Agnes 视频渠道 base_url 无效")
-    payload = _agnes_payload(target, request, b64_images)
+    payload = _agnes_payload(target, request, b64_images, request.images)
     auth = str(headers.get("Authorization") or "").strip()
     if not auth and target.api_key:
         auth = f"Bearer {target.api_key}"
@@ -824,11 +1013,15 @@ async def _generate_via_agnes(
     video_url = _extract_video_url(data)
     if video_url:
         return video_url
-    video_id = _extract_video_id(data) or _extract_task_id(data)
+    video_id = _extract_video_id(data)
+    task_id = _extract_agnes_task_id(data)
+    if not video_id:
+        video_id = task_id
     if not video_id:
         raise RuntimeError(f"Agnes 未返回 video_id/task_id: {str(data)[:400]}")
     poll_url = build_agnes_result_url(target.base_url, video_id, model=str(target.model or "agnes-video-v2.0"))
-    legacy = f"{endpoint.rstrip('/')}/{quote(video_id, safe='')}"
+    legacy_id = task_id or video_id
+    legacy = f"{endpoint.rstrip('/')}/{quote(legacy_id, safe='')}"
     return await _poll_agnes_task_urllib(
         poll_url=poll_url,
         legacy_poll_url=legacy,

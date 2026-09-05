@@ -5742,6 +5742,7 @@ class VideoV1Tests(unittest.TestCase):
         from astrbot_plugin_selfie_image.generation.video import (
             VideoGenerateRequest,
             _agnes_payload,
+            _agnes_video_family,
             _extract_video_url,
             agnes_num_frames_for_duration,
             agnes_size_wh,
@@ -5770,6 +5771,50 @@ class VideoV1Tests(unittest.TestCase):
         self.assertEqual(payload["width"], 1152)
         self.assertEqual(payload["height"], 768)
         self.assertIn("cat on beach", payload["prompt"])
+
+        target25 = SimpleNamespace(model="agnes-video-2.5")
+        reference = ImageReference(data=PNG_BYTES, source_url="https://cdn.example/ref.png")
+        payload25 = _agnes_payload(
+            target25,
+            VideoGenerateRequest(
+                prompt="animate this",
+                duration=9,
+                size="9:16",
+                extra={"size": "1080P", "seconds": "7"},
+                images=[reference],
+            ),
+            ["data:image/png;base64,AAAA"],
+            [reference],
+        )
+        self.assertEqual(_agnes_video_family(target25.model), "v25")
+        self.assertEqual(payload25["mode"], "keyframe")
+        self.assertEqual(payload25["seconds"], "7")
+        self.assertEqual(payload25["size"], "1080P")
+        self.assertEqual(payload25["aspect_ratio"], "9:16")
+        self.assertEqual(payload25["first_frame"], "https://cdn.example/ref.png")
+        self.assertNotIn("num_frames", payload25)
+        self.assertNotIn("frame_rate", payload25)
+
+        target_flash = SimpleNamespace(model="agnes-video-2.5-flash")
+        payload_flash = _agnes_payload(
+            target_flash,
+            VideoGenerateRequest(
+                prompt="reference mode",
+                extra={
+                    "mode": "reference",
+                    "size": "2K",
+                    "images": [f"https://cdn.example/{i}.png" for i in range(7)],
+                    "audios": [f"https://cdn.example/{i}.mp3" for i in range(5)],
+                    "videos": [{"url": "https://cdn.example/input.mp4"}],
+                },
+            ),
+            [],
+        )
+        self.assertEqual(_agnes_video_family(target_flash.model), "v25_flash")
+        self.assertEqual(payload_flash["size"], "720P")
+        self.assertEqual(len(payload_flash["images"]), 5)
+        self.assertEqual(len(payload_flash["audios"]), 3)
+        self.assertNotIn("videos", payload_flash)
 
 
     def test_video_endpoint_and_extractors(self) -> None:
