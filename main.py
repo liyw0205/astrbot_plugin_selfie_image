@@ -2322,6 +2322,13 @@ class SelfieImagePlugin(
         async for item in self._handle_video_command(event, "形象视频", fallback, mode="persona"):
             yield item
 
+    @filter.command("看看视频")
+    async def cmd_look_video(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        """使用当前形象图主动出视频；需要先设置形象图。"""
+        fallback = " ".join(item for item in [p1, p2, p3] if item).strip()
+        async for item in self._handle_video_command(event, "看看视频", fallback, mode="persona"):
+            yield item
+
     async def _run_command_image_task(self, task_id: str, event: AstrMessageEvent, runner) -> None:
         if self._task_cancel_requested(task_id):
             self._set_web_image_task(
@@ -3401,6 +3408,7 @@ class SelfieImagePlugin(
                 "· /文生视频　只用文字出视频，不带图、不用形象图",
                 "· /图生视频　必须附图或引用图作首帧，不会自动使用当前形象图",
                 "· /形象视频　使用当前形象图作首帧；需先设置形象图",
+                "· /看看视频　使用当前形象图主动出视频；需先设置形象图",
                 "· /视频任务　只看进行中的视频任务；可跟任务号或列表编号",
                 "· /视频取消　取消视频任务；可跟任务号或列表编号",
                 "· /视频预设　查看、使用和管理视频预设；时长可写 --duration 8 或 时长8秒",

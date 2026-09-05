@@ -5152,7 +5152,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
         self.assertTrue(hasattr(plugin_main, "SelfieImagePlugin"))
         # command handlers exist
-        for name in ("cmd_help", "cmd_help_text", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel", "cmd_video", "cmd_t2v", "cmd_i2v", "cmd_persona_video"):
+        for name in ("cmd_help", "cmd_help_text", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel", "cmd_video", "cmd_t2v", "cmd_i2v", "cmd_persona_video", "cmd_look_video"):
             self.assertTrue(hasattr(plugin_main.SelfieImagePlugin, name), name)
 
     def test_help_uses_shipped_static_poster_only(self) -> None:
@@ -5185,6 +5185,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             "cmd_t2v": "也不使用形象图",
             "cmd_i2v": "不会自动使用当前形象图",
             "cmd_persona_video": "当前形象图作为首帧",
+            "cmd_look_video": "当前形象图主动出视频",
             "cmd_selfie": "用当前形象自拍",
             "cmd_group_selfie": "自己使用当前形象",
             "cmd_persona_set": "自动 / 真人 / 动漫",
@@ -5205,6 +5206,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("有图=图生视频", help_body)
         self.assertIn("没图=文生视频", help_body)
         self.assertIn("/形象视频", help_body)
+        self.assertIn("/看看视频", help_body)
         self.assertIn("/画 3", help_body)
         self.assertIn("/自拍 3", help_body)
         self.assertIn("新任务自动排队", help_body)
@@ -5896,6 +5898,7 @@ class VideoV1Tests(unittest.TestCase):
         self.assertIn('@filter.command("文生视频")', main_src)
         self.assertIn('@filter.command("图生视频")', main_src)
         self.assertIn('@filter.command("形象视频")', main_src)
+        self.assertIn('@filter.command("看看视频")', main_src)
         self.assertIn("视频：", main_src)
 
     def test_video_proxy_covers_polling_and_download(self) -> None:
@@ -5949,6 +5952,12 @@ class VideoV1Tests(unittest.TestCase):
         self.assertFalse(matcher("一只小猫在草地上奔跑"))
         self.assertFalse(matcher("不要使用形象图，纯文字生成"))
         self.assertFalse(matcher("不要使用当前形象，纯文生视频"))
+
+    def test_look_video_command_uses_persona_mode(self) -> None:
+        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+        block = main_src.split("async def cmd_look_video", 1)[1].split("async def ", 1)[0]
+        self.assertIn('@filter.command("看看视频")', main_src)
+        self.assertIn('self._handle_video_command(event, "看看视频", fallback, mode="persona")', block)
 
 
 class LegFocusTests(unittest.TestCase):
