@@ -5654,6 +5654,97 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
 
 class VideoV1Tests(unittest.TestCase):
+    def test_video_preflight_failure_is_recorded_as_video(self) -> None:
+        factory = SessionModelAndTaskTests()
+        plugin = factory._plugin_stub()
+        plugin.config.video_enable = True
+        plugin.config.get_prioritized_video_targets = lambda: []
+        records = []
+        plugin._record_task = records.append
+        plugin._source_context = lambda *_args, **_kwargs: {}
+
+        result = asyncio.run(plugin._run_video_generation(object(), "test video", []))
+
+        self.assertFalse(result["success"])
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["media_type"], "video")
+        self.assertFalse(records[0]["success"])
+        self.assertEqual(records[0]["response_data"]["stage"], "select_channel")
+
+    def test_video_generation_failure_is_recorded_with_attempts(self) -> None:
+        factory = SessionModelAndTaskTests()
+        plugin = factory._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        plugin.config.video_enable = True
+        target = make_target("agnes", "agnes-video-2.5")
+        plugin.config.get_prioritized_video_targets = lambda: [target]
+        plugin._video_semaphore = asyncio.Semaphore(1)
+        plugin.video_dir = tempfile.gettempdir()
+        plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+        plugin._record_channel_health = lambda _attempts: None
+        records = []
+        plugin._record_task = records.append
+        plugin._source_context = lambda *_args, **_kwargs: {}
+
+        async def failed_video(*_args, **_kwargs):
+            return VideoGenerateResult(
+                error="upstream video failure",
+                used_model=target.label,
+                attempts=[{"label": target.label, "success": False, "error": "upstream video failure"}],
+            )
+
+        class Session:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        with (
+            patch.object(plugin_main, "generate_video_with_fallback", side_effect=failed_video),
+            patch.object(plugin_main.aiohttp, "ClientSession", return_value=Session()),
+        ):
+            result = asyncio.run(plugin._run_video_generation(object(), "test video", []))
+
+        self.assertFalse(result["success"])
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["media_type"], "video")
+        self.assertEqual(records[0]["response_data"]["stage"], "generate")
+        self.assertEqual(records[0]["attempts"][0]["label"], target.label)
+
+    def test_video_task_exception_uses_video_record_and_notice(self) -> None:
+        factory = SessionModelAndTaskTests()
+        plugin = factory._plugin_stub()
+        plugin._task_cancel_requested = lambda _task_id: False
+        plugin._set_web_image_task = lambda *_args, **_kwargs: None
+        plugin._web_tasks = {
+            "task-video": {
+                "source": "command-视频",
+                "request_data": {"kind": "video", "prompt": "test video"},
+            }
+        }
+        plugin._web_task_timestamp = lambda: "t"
+        records = []
+        plugin._record_task = records.append
+        notices = []
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, message):
+                notices.append(message)
+
+        async def failed_runner(_task_id):
+            raise RuntimeError()
+
+        asyncio.run(plugin._run_command_image_task("task-video", Event(), failed_runner))
+
+        self.assertEqual(records[0]["media_type"], "video")
+        self.assertTrue(notices)
+        self.assertIn("视频没有完成", notices[0])
+
     def test_video_channel_config_and_preflight(self) -> None:
         from astrbot_plugin_selfie_image.core.models import AICatConfig, preflight_video_channel
 

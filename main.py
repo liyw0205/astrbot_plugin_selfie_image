@@ -1340,7 +1340,9 @@ class SelfieImagePlugin(
                 request_factory=request_for_target if image_to_text_targets else None,
             )
         elapsed = time.monotonic() - started
-        self._record_channel_health(result.attempts)
+        record_channel_health = getattr(self, "_record_channel_health", None)
+        if callable(record_channel_health):
+            record_channel_health(result.attempts)
 
         if not result.error and result.images:
             used_target = next(
@@ -1908,11 +1910,55 @@ class SelfieImagePlugin(
         source: str = "command-video",
         duration: Optional[int] = None,
     ) -> Dict[str, Any]:
+        started = time.monotonic()
+        try:
+            requested_duration = max(
+                1,
+                min(
+                    60,
+                    int(duration if duration is not None else getattr(self.config, "video_default_duration", 5) or 5),
+                ),
+            )
+        except (TypeError, ValueError):
+            requested_duration = 5
+
+        def failure(
+            error: str,
+            *,
+            stage: str,
+            used_model: str = "",
+            attempts: Optional[List[Dict[str, Any]]] = None,
+            request_prompt: str = "",
+            request_data: Optional[Dict[str, Any]] = None,
+            response_data: Optional[Dict[str, Any]] = None,
+        ) -> Dict[str, Any]:
+            return self._record_video_failure(
+                event,
+                prompt,
+                refs,
+                source=source,
+                duration=requested_duration,
+                error=error,
+                stage=stage,
+                used_model=used_model,
+                attempts=attempts,
+                request_prompt=request_prompt or str(prompt or "").strip(),
+                request_data=request_data,
+                response_data=response_data,
+                elapsed_seconds=time.monotonic() - started,
+            )
+
         targets = list(self.config.get_prioritized_video_targets())
         if not getattr(self.config, "video_enable", True):
-            return {"success": False, "error": "视频功能已关闭，请在配置里打开 video.enable"}
+            return failure(
+                "视频功能已关闭，请在配置里打开 video.enable",
+                stage="preflight",
+            )
         if not targets:
-            return {"success": False, "error": "还没有可用的视频渠道，请先在配置里添加并启用 video_channels"}
+            return failure(
+                "还没有可用的视频渠道，请先在配置里添加并启用 video_channels",
+                stage="select_channel",
+            )
         # Skip malformed targets without blocking later configured video channels.
         valid_targets: List[ImageModelTarget] = []
         invalid_messages: List[str] = []
@@ -1933,71 +1979,83 @@ class SelfieImagePlugin(
             else:
                 invalid_messages.append(str(report.get("message") or candidate.label))
         if not valid_targets:
-            return {"success": False, "error": invalid_messages[0] if invalid_messages else "视频渠道配置不完整"}
+            return failure(
+                invalid_messages[0] if invalid_messages else "视频渠道配置不完整",
+                stage="preflight",
+                request_data={
+                    "targets": [redact_sensitive_text(target.label) for target in targets],
+                    "invalid_channels": invalid_messages,
+                },
+            )
         targets = valid_targets
 
         video_prompt = str(prompt or "").strip()
         prompt_en_meta = {}
-        if self._prompt_en_needed(video_prompt, media="video"):
-            translated, prompt_en_meta = await self._translate_prompt_to_english(
-                video_prompt, media="video", event=event
+        try:
+            if self._prompt_en_needed(video_prompt, media="video"):
+                translated, prompt_en_meta = await self._translate_prompt_to_english(
+                    video_prompt, media="video", event=event
+                )
+                if prompt_en_meta.get("applied") and translated:
+                    video_prompt = translated
+        except Exception as exc:
+            return failure(
+                f"视频提示词处理失败：{redact_sensitive_text(str(exc))}",
+                stage="prompt_translation",
+                request_prompt=video_prompt,
+                request_data={"prompt_en": prompt_en_meta},
             )
-            if prompt_en_meta.get("applied") and translated:
-                video_prompt = translated
 
         req = VideoGenerateRequest(
             prompt=video_prompt,
             images=list(refs or [])[:1],  # I2V: first frame only (big_banana style)
-            duration=int(duration if duration is not None else getattr(self.config, "video_default_duration", 5) or 5),
+            duration=requested_duration,
         )
         if not req.prompt:
-            return {"success": False, "error": "请写一下想生成的视频内容"}
+            return failure("请写一下想生成的视频内容", stage="validate", request_prompt="")
 
-        async with self._video_semaphore:
-            async with aiohttp.ClientSession(trust_env=False) as session:
-                result = await generate_video_with_fallback(
-                    targets,
-                    req,
-                    session,
-                    save_dir=self.video_dir,
-                )
-        if result.error or not result.video_path:
-            self._record_task(
-                {
-                    **self._source_context(event, source),
-                    "media_type": "video",
-                    "success": False,
-                    "error": result.error or "视频没有生成出来",
-                    "prompt": req.prompt,
-                    "original_prompt": prompt,
-                    "request_prompt": req.prompt,
-                    "used_model": result.used_model,
-                    "elapsed_seconds": result.elapsed_seconds,
-                    "reference_images": len(refs),
-                    "request_data": {
-                        "duration": req.duration,
-                        "size": req.size,
-                        "reference_images": len(refs),
-                        "prompt_en": prompt_en_meta,
-                        "request_prompt_en": req.prompt if prompt_en_meta.get("applied") else "",
-                    },
-                    "response_data": {
-                        "attempts": result.attempts,
-                        "video_url": result.video_url,
-                        "video_source": result.video_source,
-                    },
-                    "request_image_paths": [],
-                    "generated_image_paths": [],
-                    "generated_video_paths": [],
-                }
+        request_data = {
+            "duration": req.duration,
+            "size": req.size,
+            "reference_images": len(refs),
+            "targets": [redact_sensitive_text(target.label) for target in targets],
+            "prompt_en": prompt_en_meta,
+            "request_prompt_en": req.prompt if prompt_en_meta.get("applied") else "",
+        }
+
+        try:
+            async with self._video_semaphore:
+                async with aiohttp.ClientSession(trust_env=False) as session:
+                    result = await generate_video_with_fallback(
+                        targets,
+                        req,
+                        session,
+                        save_dir=self.video_dir,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return failure(
+                f"视频生成异常：{redact_sensitive_text(str(exc))}",
+                stage="generate_exception",
+                request_prompt=req.prompt,
+                request_data=request_data,
             )
-            return {
-                "success": False,
-                "error": result.error or "视频没有生成出来",
-                "used_model": result.used_model,
-                "attempts": result.attempts,
-                "elapsed_seconds": result.elapsed_seconds,
-            }
+        self._record_channel_health(result.attempts)
+        if result.error or not result.video_path:
+            return failure(
+                result.error or "视频没有生成出来",
+                stage="generate",
+                used_model=result.used_model,
+                attempts=result.attempts,
+                request_prompt=req.prompt,
+                request_data=request_data,
+                response_data={
+                    "attempts": result.attempts,
+                    "video_url": result.video_url,
+                    "video_source": result.video_source,
+                },
+            )
         video_rel = self._cache_relative_path(result.video_path)
         self._record_task(
             {
@@ -2011,13 +2069,7 @@ class SelfieImagePlugin(
                 "used_model": result.used_model,
                 "elapsed_seconds": result.elapsed_seconds,
                 "reference_images": len(refs),
-                "request_data": {
-                    "duration": req.duration,
-                    "size": req.size,
-                    "reference_images": len(refs),
-                    "prompt_en": prompt_en_meta,
-                    "request_prompt_en": req.prompt if prompt_en_meta.get("applied") else "",
-                },
+                "request_data": request_data,
                 "response_data": {
                     "attempts": result.attempts,
                     "video_url": result.video_url,
@@ -2037,6 +2089,74 @@ class SelfieImagePlugin(
             "attempts": result.attempts,
             "elapsed_seconds": result.elapsed_seconds,
             "files": [result.video_path],
+        }
+
+    def _record_video_failure(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+        refs: List[ImageReference],
+        *,
+        source: str,
+        duration: int,
+        error: str,
+        stage: str,
+        used_model: str = "",
+        attempts: Optional[List[Dict[str, Any]]] = None,
+        request_prompt: str = "",
+        request_data: Optional[Dict[str, Any]] = None,
+        response_data: Optional[Dict[str, Any]] = None,
+        elapsed_seconds: float = 0.0,
+    ) -> Dict[str, Any]:
+        safe_error = redact_sensitive_text(str(error or "视频没有生成出来"))
+        attempt_rows = list(attempts or [])
+        request_info = {
+            "duration": int(duration or 5),
+            "size": "",
+            "reference_images": len(refs),
+        }
+        if isinstance(request_data, dict):
+            request_info.update(request_data)
+        response_info = {
+            "success": False,
+            "stage": stage,
+            "error": safe_error,
+            "attempts": attempt_rows,
+        }
+        if isinstance(response_data, dict):
+            response_info.update(response_data)
+            response_info.setdefault("stage", stage)
+            response_info.setdefault("error", safe_error)
+            response_info.setdefault("attempts", attempt_rows)
+        elapsed = float(elapsed_seconds or 0)
+        self._record_task(
+            {
+                **self._source_context(event, source),
+                "media_type": "video",
+                "success": False,
+                "error": safe_error,
+                "prompt": request_prompt or str(prompt or "").strip(),
+                "original_prompt": str(prompt or "").strip(),
+                "request_prompt": request_prompt or str(prompt or "").strip(),
+                "used_model": used_model,
+                "elapsed_seconds": elapsed,
+                "reference_images": len(refs),
+                "request_data": request_info,
+                "response_data": response_info,
+                "attempts": attempt_rows,
+                "request_image_paths": [],
+                "generated_image_paths": [],
+                "generated_video_paths": [],
+            }
+        )
+        return {
+            "success": False,
+            "error": safe_error,
+            "used_model": used_model,
+            "attempts": attempt_rows,
+            "elapsed_seconds": elapsed,
+            "request_data": request_info,
+            "response_data": response_info,
         }
 
     async def _background_video_job(
@@ -2393,6 +2513,7 @@ class SelfieImagePlugin(
                 finished_at=self._web_task_timestamp(),
             )
             # Ensure monitor still gets a row when runner crashes before generate_images records.
+            is_video = False
             try:
                 task_meta = {}
                 try:
@@ -2405,10 +2526,14 @@ class SelfieImagePlugin(
                 summary = task_meta.get("request_data") or task_meta.get("summary") or {}
                 if isinstance(summary, dict):
                     prompt = str(summary.get("prompt") or summary.get("action") or "")
+                is_video = str(summary.get("kind") or "").strip().lower() == "video"
+                if not is_video:
+                    is_video = "video" in source.lower() or "视频" in source
                 self._record_task(
                     {
                         "source": source,
                         "source_label": source,
+                        "media_type": "video" if is_video else "image",
                         "success": False,
                         "error": error,
                         "prompt": prompt,
@@ -2421,13 +2546,21 @@ class SelfieImagePlugin(
                         "response_data": {"success": False, "stage": "task_exception", "error": error},
                         "request_image_paths": [],
                         "generated_image_paths": [],
+                        **({"generated_video_paths": []} if is_video else {}),
                         "attempts": [],
                     }
                 )
             except Exception as rec_exc:
                 logger.warning(f"[SelfieImage] 任务异常落库失败: {rec_exc}")
             try:
-                await event.send(event.plain_result(self._friendly_user_error_message(error, "生图没有完成")))
+                await event.send(
+                    event.plain_result(
+                        self._friendly_user_error_message(
+                            error,
+                            "视频没有完成" if is_video else "生图没有完成",
+                        )
+                    )
+                )
             except Exception as send_exc:
                 logger.warning(f"[SelfieImage] 后台任务失败通知发送失败: {send_exc}")
 
