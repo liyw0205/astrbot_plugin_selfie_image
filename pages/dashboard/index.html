@@ -1302,6 +1302,8 @@
     let CHANNEL_MODAL_DIRTY = false;
     let SUPPRESS_AUTOSAVE = false;
     let CURRENT_RECORD = null;
+    const RECORD_MEDIA_SOURCE_CACHE = new Map();
+    const RECORD_MEDIA_SOURCE_REQUESTS = new Map();
     let TEST_TASK_POLL_TIMER = null;
     let TEST_TASK_ID = '';
     let TEST_MODE = 'image';
@@ -3641,19 +3643,43 @@ Source prompt:
     async function loadRecordMediaSources() {
       const id = String(CURRENT_RECORD?.id || '').trim();
       if (!id) return {generated_image_sources: [], video_source: ''};
-      const res = await api('/api/records/' + encodeURIComponent(id) + '/media-sources');
-      return res.data || {};
+      if (RECORD_MEDIA_SOURCE_CACHE.has(id)) return RECORD_MEDIA_SOURCE_CACHE.get(id);
+      if (RECORD_MEDIA_SOURCE_REQUESTS.has(id)) return RECORD_MEDIA_SOURCE_REQUESTS.get(id);
+      const request = api('/api/records/' + encodeURIComponent(id) + '/media-sources')
+        .then(res => {
+          const data = res.data || {};
+          if (RECORD_MEDIA_SOURCE_CACHE.size >= 12) {
+            const oldest = RECORD_MEDIA_SOURCE_CACHE.keys().next().value;
+            if (oldest && oldest !== id) RECORD_MEDIA_SOURCE_CACHE.delete(oldest);
+          }
+          RECORD_MEDIA_SOURCE_CACHE.set(id, data);
+          return data;
+        })
+        .finally(() => RECORD_MEDIA_SOURCE_REQUESTS.delete(id));
+      RECORD_MEDIA_SOURCE_REQUESTS.set(id, request);
+      return request;
+    }
+    function prefetchRecordMediaSources() {
+      if (!String(CURRENT_RECORD?.id || '').trim()) return;
+      loadRecordMediaSources().catch(() => {});
+    }
+    function cachedRecordMediaSources() {
+      const id = String(CURRENT_RECORD?.id || '').trim();
+      return id ? RECORD_MEDIA_SOURCE_CACHE.get(id) || null : null;
+    }
+    function resolveCachedMediaSource(item) {
+      const data = cachedRecordMediaSources();
+      if (!data) return null;
+      const all = normalizeMediaSources(data.generated_image_sources || []);
+      return all[item?.index ?? -1] || (data.video_source ? normalizeMediaSources([data.video_source])[0] : null);
     }
     async function copyMediaSource(source) {
       const item = normalizeMediaSources(source)[0];
       let resolved = item;
       if (!resolved || resolved.deferred || !resolved.value || resolved.value.startsWith('[Base64')) {
-        try {
-          const data = await loadRecordMediaSources();
-          const all = normalizeMediaSources(data.generated_image_sources || []);
-          resolved = all[item?.index ?? -1] || (data.video_source ? normalizeMediaSources([data.video_source])[0] : null);
-        } catch (e) {
-          showToast(e.message || '原始来源读取失败', 'bad');
+        resolved = resolveCachedMediaSource(item);
+        if (!resolved) {
+          showToast(RECORD_MEDIA_SOURCE_REQUESTS.has(String(CURRENT_RECORD?.id || '').trim()) ? '原始来源正在加载，请稍后再点' : '原始来源未加载', 'bad');
           return;
         }
       }
@@ -3672,14 +3698,13 @@ Source prompt:
       const list = normalizeMediaSources(sources);
       let resolvedList = list;
       if (list.some(item => item.deferred || !item.value || item.value.startsWith('[Base64'))) {
-        try {
-          const data = await loadRecordMediaSources();
-          resolvedList = normalizeMediaSources(data.generated_image_sources || []);
-          if (!resolvedList.length && data.video_source) resolvedList = normalizeMediaSources([data.video_source]);
-        } catch (e) {
-          showToast(e.message || '原始来源读取失败', 'bad');
+        const data = cachedRecordMediaSources();
+        if (!data) {
+          showToast(RECORD_MEDIA_SOURCE_REQUESTS.has(String(CURRENT_RECORD?.id || '').trim()) ? '原始来源正在加载，请稍后再点' : '原始来源未加载', 'bad');
           return;
         }
+        resolvedList = normalizeMediaSources(data.generated_image_sources || []);
+        if (!resolvedList.length && data.video_source) resolvedList = normalizeMediaSources([data.video_source]);
       }
       if (!resolvedList.length) {
         showToast('没有原始链接或 base64', 'bad');
@@ -3736,6 +3761,7 @@ Source prompt:
       }
       if (!r) return;
       CURRENT_RECORD = r;
+      prefetchRecordMediaSources();
       $('recordDetailBody').innerHTML = `
         <div class="grid">
           <div><label>时间</label><div class="status">${escapeHtml(r.time || '')}</div></div>

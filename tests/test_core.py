@@ -6012,6 +6012,10 @@ class VideoV1Tests(unittest.TestCase):
             "generatedMediaDetailBlock",
             "base64-copy",
             "copyMediaSource",
+            "RECORD_MEDIA_SOURCE_CACHE",
+            "RECORD_MEDIA_SOURCE_REQUESTS",
+            "cachedRecordMediaSources",
+            "prefetchRecordMediaSources",
         ):
             self.assertIn(token, INDEX_HTML)
 
