@@ -1329,10 +1329,11 @@ class ConfigModelTests(unittest.TestCase):
             }
         )
         self.assertLess(len(json.dumps(detail)), 2_000)
-        self.assertEqual(detail["generated_image_sources"][0]["value"], "")
+        self.assertEqual(detail["generated_image_sources"][0]["value"], "[Base64，点击复制按钮获取原文]")
+        self.assertTrue(detail["generated_image_sources"][0]["deferred"])
         self.assertEqual(detail["generated_image_sources"][0]["size"], len(inline))
-        self.assertEqual(detail["response_data"]["generated_image_sources"][0]["value"], "")
-        self.assertEqual(detail["response_data"]["video_source"]["value"], "")
+        self.assertEqual(detail["response_data"]["generated_image_sources"][0]["value"], "[Base64，点击复制按钮获取原文]")
+        self.assertEqual(detail["response_data"]["video_source"]["value"], "[Base64，点击复制按钮获取原文]")
 
     def test_generation_record_keeps_only_channel_error_raw(self) -> None:
         from astrbot_plugin_selfie_image.core.utils import compact_generation_record, redact_generation_record

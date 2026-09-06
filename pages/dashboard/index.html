@@ -3417,7 +3417,7 @@ Source prompt:
         if (!value && !placeholder) return null;
         const rawType = typeof item === 'object' ? String(item?.type || '').trim().toLowerCase() : '';
         const type = rawType === 'base64' || value.toLowerCase().startsWith('data:') || value.toLowerCase().startsWith('base64://') ? 'base64' : (rawType === 'url' || /^https?:\/\//i.test(value) ? 'url' : 'local');
-        return {type, value, index: isObject && Number.isInteger(item?.index) ? item.index : undefined, size: isObject ? item?.size : undefined};
+        return {type, value, deferred: isObject && item?.deferred === true, index: isObject && Number.isInteger(item?.index) ? item.index : undefined, size: isObject ? item?.size : undefined};
       }).filter(Boolean);
     }
     function mediaSourceLabel(source) {
@@ -3599,7 +3599,7 @@ Source prompt:
     async function copyMediaSource(source) {
       const item = normalizeMediaSources(source)[0];
       let resolved = item;
-      if (!resolved || !resolved.value) {
+      if (!resolved || resolved.deferred || !resolved.value || resolved.value.startsWith('[Base64')) {
         try {
           const data = await loadRecordMediaSources();
           const all = normalizeMediaSources(data.generated_image_sources || []);
@@ -3623,7 +3623,7 @@ Source prompt:
     async function copyMediaSources(sources) {
       const list = normalizeMediaSources(sources);
       let resolvedList = list;
-      if (list.some(item => !item.value)) {
+      if (list.some(item => item.deferred || !item.value || item.value.startsWith('[Base64'))) {
         try {
           const data = await loadRecordMediaSources();
           resolvedList = normalizeMediaSources(data.generated_image_sources || []);
@@ -3693,11 +3693,13 @@ Source prompt:
         ${promptDetailBlock('请求提示词', 'request_prompt', r.request_prompt || r.prompt || '')}
         ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
         ${promptDetailBlock('响应数据', 'response_data', JSON.stringify(r.response_data || {}, null, 2))}
-        ${imageThumbs(r.request_image_paths || [], '请求图', [], true)}
-        ${imageThumbs(r.generated_image_paths || [], '生成图', r.generated_image_sources || r.response_data?.generated_image_sources || [], true)}
-        ${videoThumbs(r.generated_video_paths || [], r.response_data?.video_source || r.response_data?.video_url || r.video_source || r.video_url || '', true)}
+        ${imageThumbs(r.request_image_paths || [], '请求图')}
+        ${imageThumbs(r.generated_image_paths || [], '生成图', r.generated_image_sources || r.response_data?.generated_image_sources || [])}
+        ${videoThumbs(r.generated_video_paths || [], r.response_data?.video_source || r.response_data?.video_url || r.video_source || r.video_url || '')}
       `;
       $('recordModal').classList.add('show');
+      loadProtectedImages($('recordDetailBody'));
+      loadProtectedVideos($('recordDetailBody'));
     }
     function closeRecordDetail() {
       $('recordModal').classList.remove('show');

@@ -497,7 +497,13 @@ def _detail_media_source(source: Any, index: int = -1) -> Any:
     if not str(value or "").strip():
         return {"type": source_type or "local", "value": "", "index": index} if index >= 0 else ""
     if _is_inline_media_source(value, source_type):
-        result = {"type": "base64", "value": "", "size": len(str(value)), "index": index}
+        result = {
+            "type": "base64",
+            "value": "[Base64，点击复制按钮获取原文]",
+            "deferred": True,
+            "size": len(str(value)),
+            "index": index,
+        }
         return result
     result = {"type": source_type or "url", "value": str(value)}
     if index >= 0:
