@@ -58,11 +58,12 @@ class GenerationStoreMixin:
                 for item in self._records[:RECORD_KEEP_LIMIT]
                 if isinstance(item, dict)
             ]
+            retained_records = list(self._records)
             save_json_file(self.records_path, {"records": self._records})
         if evicted_records:
             safe_delete_relative_files(
                 self.generated_dir,
-                collect_unreferenced_record_cache_paths(evicted_records, self._records),
+                collect_unreferenced_record_cache_paths(evicted_records, retained_records),
             )
 
 
