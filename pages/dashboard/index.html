@@ -3446,7 +3446,7 @@ Source prompt:
       const summary = mediaSourceSummary(sources);
       const sourceArg = escapeJs(JSON.stringify(summary.sources));
       const copy = summary.sources.length
-        ? `<button class="copy-btn" type="button" title="打开原始来源" aria-label="打开原始来源" onclick="copyMediaSources(${sourceArg},'${escapeJs(kind)}')">${copyIconSvg()}</button>`
+        ? `<button class="copy-btn" type="button" title="打开原始来源" aria-label="打开原始来源" onclick="copyMediaSources(${sourceArg},'${escapeJs(kind)}')">${openIconSvg()}</button>`
         : '';
       const badgeType = summary.sources.length && summary.sources.every(source => source.type === summary.sources[0].type) ? summary.sources[0].type : 'local';
       return `<div class="media-head"><h3>${escapeHtml(title)}</h3><span class="media-source-badge ${badgeType}">${escapeHtml(summary.text)}</span>${copy}</div>`;
@@ -3454,7 +3454,7 @@ Source prompt:
     function mediaItemSource(sources, index, kind = 'image') {
       const list = normalizeMediaSources(sources);
       const source = list[index] || null;
-      return `<div class="media-source-line">${mediaSourceBadge(source || {type: 'local'})}${source ? `<button class="copy-btn" type="button" title="打开原始来源" aria-label="打开原始来源" onclick="copyMediaSource(${escapeJs(JSON.stringify(source))},'${escapeJs(kind)}')">${copyIconSvg()}</button>` : ''}</div>`;
+      return `<div class="media-source-line">${mediaSourceBadge(source || {type: 'local'})}${source ? `<button class="copy-btn" type="button" title="打开原始来源" aria-label="打开原始来源" onclick="copyMediaSource(${escapeJs(JSON.stringify(source))},'${escapeJs(kind)}')">${openIconSvg()}</button>` : ''}</div>`;
     }
     function loadRecordMediaPreview(button, kind, path) {
       const shell = button && button.closest('.media-preview-shell');
@@ -3568,6 +3568,9 @@ Source prompt:
     function copyIconSvg() {
       return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
     }
+    function openIconSvg() {
+      return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>';
+    }
     function promptDetailBlock(title, field, text) {
       return `
         <div class="detail-title">
@@ -3611,7 +3614,7 @@ Source prompt:
       for (const copyArg of copies) {
         const pos = rendered.indexOf(marker);
         if (pos < 0) break;
-        const button = `<button class="base64-copy" type="button" title="打开原始 Base64" onclick="copyMediaSource(${escapeJs(JSON.stringify(copyArg))})">${copyIconSvg()}Base64（点击打开）</button>`;
+        const button = `<button class="base64-copy" type="button" title="打开原始 Base64" onclick="copyMediaSource(${escapeJs(JSON.stringify(copyArg))})">${openIconSvg()}Base64（点击打开）</button>`;
         rendered = rendered.slice(0, pos) + button + rendered.slice(pos + marker.length);
       }
       return `
