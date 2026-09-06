@@ -485,7 +485,24 @@ def redact_generation_record(record: Any) -> Dict[str, Any]:
     """Redact record metadata but keep authenticated channel diagnostics intact."""
     if not isinstance(record, dict):
         return {}
-    redacted = redact_sensitive_data(record)
+
+    # Media origins are restored below. Remove them from the recursive secret
+    # scanner first so startup/persistence does not rescan multi-megabyte Base64.
+    working = dict(record)
+    working_response = record.get("response_data")
+    if isinstance(working_response, dict):
+        working_response = dict(working_response)
+        working["response_data"] = working_response
+    for container in (working, working_response):
+        if not isinstance(container, dict):
+            continue
+        if "generated_image_sources" in container:
+            container["generated_image_sources"] = []
+        for key in ("video_url", "video_source"):
+            if key in container:
+                container[key] = ""
+
+    redacted = redact_sensitive_data(working)
     if not isinstance(redacted, dict):
         return {}
 
