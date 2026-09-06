@@ -7974,7 +7974,7 @@ class StudioStoreTests(unittest.TestCase):
             ):
                 self.assertIn(marker, document)
 
-    def test_dashboard_media_source_opens_manual_copy_window(self) -> None:
+    def test_dashboard_media_source_opens_render_window(self) -> None:
         from pathlib import Path
         from astrbot_plugin_selfie_image.webui.web import INDEX_HTML
 
@@ -7983,14 +7983,14 @@ class StudioStoreTests(unittest.TestCase):
         )
         for document in (page, INDEX_HTML):
             for marker in (
-                'id="mediaSourceModal"',
-                'id="mediaSourceText"',
-                "showMediaSourceWindow",
-                "selectMediaSourceText",
-                "Base64（点击查看）",
+                "openMediaSourcePopup",
+                "renderMediaSourcePopup",
+                "mediaSourceBrowserValue",
+                "Base64（点击打开）",
+                "window.open('', '_blank')",
             ):
                 self.assertIn(marker, document)
-            self.assertNotIn("已复制${mediaSourceLabel(resolved)}来源", document)
+            self.assertNotIn('id="mediaSourceModal"', document)
 
     def test_phone_cover_face_cos_reuses_existing_hand(self) -> None:
         import tempfile

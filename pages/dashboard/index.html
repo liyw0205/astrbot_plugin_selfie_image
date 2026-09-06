@@ -177,7 +177,6 @@
     .pill.gray { background: #f1f3f5; color: #57606a; border-color: transparent; }
     .modal-mask { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(27,28,29,.42); padding: 14px; z-index: 50; }
     .modal-mask.show { display: flex; }
-    #mediaSourceModal { z-index: 70; }
     .modal {
       width: min(900px, 100%); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden;
       background: #fff; border-radius: var(--radius-lg); border: 1px solid var(--line); padding: 16px; box-shadow: 0 18px 60px rgba(27,28,29,.16);
@@ -283,7 +282,6 @@
     .preset-manager-prompt { min-width:0; color:var(--text-secondary); white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.55; max-height:92px; overflow:auto; }
     .preset-manager-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
     .preset-transfer-text { min-height:360px; width:100%; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; }
-    .media-source-text { min-height:260px; max-height:62vh; width:100%; resize:vertical; }
     @media (max-width: 760px) {
       .preset-manager-row { grid-template-columns:minmax(0,1fr); }
       .preset-manager-actions { justify-content:flex-start; }
@@ -1156,24 +1154,6 @@
         <button class="secondary" type="button" onclick="closeRecordDetail()">关闭</button>
       </div>
       <div class="modal-body"><div id="recordDetailBody"></div></div>
-    </div>
-  </div>
-
-  <div id="mediaSourceModal" class="modal-mask">
-    <div class="modal" style="width:min(860px,100%)">
-      <div class="between">
-        <h2 id="mediaSourceModalTitle">原始来源</h2>
-        <button class="secondary" type="button" onclick="closeMediaSourceWindow()">关闭</button>
-      </div>
-      <div class="modal-body">
-        <textarea id="mediaSourceText" class="media-source-text" readonly spellcheck="false"></textarea>
-      </div>
-      <div class="modal-footer">
-        <div class="actions" style="margin-top:0;justify-content:flex-end">
-          <button class="secondary" type="button" onclick="selectMediaSourceText()">全选</button>
-          <button class="ok" type="button" onclick="closeMediaSourceWindow()">完成</button>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -3462,19 +3442,19 @@ Source prompt:
       const text = Object.entries(counts).map(([type, count]) => `${mediaSourceLabel({type})}${count > 1 ? ` ×${count}` : ''}`).join(' / ');
       return {text, sources: list};
     }
-    function mediaHead(title, sources) {
+    function mediaHead(title, sources, kind = 'image') {
       const summary = mediaSourceSummary(sources);
       const sourceArg = escapeJs(JSON.stringify(summary.sources));
       const copy = summary.sources.length
-        ? `<button class="copy-btn" type="button" title="查看原始来源" aria-label="查看原始来源" onclick="copyMediaSources(${sourceArg})">${copyIconSvg()}</button>`
+        ? `<button class="copy-btn" type="button" title="打开原始来源" aria-label="打开原始来源" onclick="copyMediaSources(${sourceArg},'${escapeJs(kind)}')">${copyIconSvg()}</button>`
         : '';
       const badgeType = summary.sources.length && summary.sources.every(source => source.type === summary.sources[0].type) ? summary.sources[0].type : 'local';
       return `<div class="media-head"><h3>${escapeHtml(title)}</h3><span class="media-source-badge ${badgeType}">${escapeHtml(summary.text)}</span>${copy}</div>`;
     }
-    function mediaItemSource(sources, index) {
+    function mediaItemSource(sources, index, kind = 'image') {
       const list = normalizeMediaSources(sources);
       const source = list[index] || null;
-      return `<div class="media-source-line">${mediaSourceBadge(source || {type: 'local'})}${source ? `<button class="copy-btn" type="button" title="查看原始来源" aria-label="查看原始来源" onclick="copyMediaSource(${escapeJs(JSON.stringify(source))})">${copyIconSvg()}</button>` : ''}</div>`;
+      return `<div class="media-source-line">${mediaSourceBadge(source || {type: 'local'})}${source ? `<button class="copy-btn" type="button" title="打开原始来源" aria-label="打开原始来源" onclick="copyMediaSource(${escapeJs(JSON.stringify(source))},'${escapeJs(kind)}')">${copyIconSvg()}</button>` : ''}</div>`;
     }
     function loadRecordMediaPreview(button, kind, path) {
       const shell = button && button.closest('.media-preview-shell');
@@ -3505,11 +3485,11 @@ Source prompt:
     function videoThumbs(paths, source, lazy = false) {
       const list = (paths || []).filter(Boolean);
       const sources = normalizeMediaSources(source);
-      if (!list.length) return `${mediaHead('生成视频', sources)}<div class="muted">没有生成视频</div>`;
-      return mediaHead('生成视频', sources) + list.map((path, index) => {
+      if (!list.length) return `${mediaHead('生成视频', sources, 'video')}<div class="muted">没有生成视频</div>`;
+      return mediaHead('生成视频', sources, 'video') + list.map((path, index) => {
         const name = String(path).split('/').pop() || 'video.mp4';
         const preview = lazy ? lazyMediaPreview('video', path) : `<video controls preload="metadata" style="width:100%;max-height:480px;border-radius:12px" data-cache-video="${escapeHtml(path)}"></video>`;
-        return `<div class="video-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button>${preview}${mediaItemSource(sources, index)}</div>`;
+        return `<div class="video-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button>${preview}${mediaItemSource(sources, index, 'video')}</div>`;
       }).join('');
     }
     async function loadProtectedVideo(video, path) {
@@ -3538,13 +3518,13 @@ Source prompt:
     function imageThumbs(paths, title = '图片', sources = [], lazy = false) {
       const items = (paths || []).filter(Boolean);
       const normalizedSources = normalizeMediaSources(sources);
-      if (!items.length) return `${mediaHead(title, normalizedSources)}<div class="muted">无图片</div>`;
+      if (!items.length) return `${mediaHead(title, normalizedSources, 'image')}<div class="muted">无图片</div>`;
       const grid = `<div class="images">${items.map((path, index) => {
         const name = String(path).split('/').pop() || 'image';
         const preview = lazy ? lazyMediaPreview('image', path) : `<img data-cache-path="${escapeHtml(path)}" alt="${escapeHtml(path)}">`;
-        return `<div class="thumb-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button>${preview}<div class="muted">${escapeHtml(path)}</div>${mediaItemSource(normalizedSources, index)}</div>`;
+        return `<div class="thumb-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button>${preview}<div class="muted">${escapeHtml(path)}</div>${mediaItemSource(normalizedSources, index, 'image')}</div>`;
       }).join('')}</div>`;
-      return `${mediaHead(title, normalizedSources)}${grid}`;
+      return `${mediaHead(title, normalizedSources, 'image')}${grid}`;
     }
     function downloadIconSvg() {
       return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>';
@@ -3631,7 +3611,7 @@ Source prompt:
       for (const copyArg of copies) {
         const pos = rendered.indexOf(marker);
         if (pos < 0) break;
-        const button = `<button class="base64-copy" type="button" title="查看原始 Base64" onclick="copyMediaSource(${escapeJs(JSON.stringify(copyArg))})">${copyIconSvg()}Base64（点击查看）</button>`;
+        const button = `<button class="base64-copy" type="button" title="打开原始 Base64" onclick="copyMediaSource(${escapeJs(JSON.stringify(copyArg))})">${copyIconSvg()}Base64（点击打开）</button>`;
         rendered = rendered.slice(0, pos) + button + rendered.slice(pos + marker.length);
       }
       return `
@@ -3660,25 +3640,64 @@ Source prompt:
       document.body.removeChild(area);
       if (!ok) throw new Error('复制失败');
     }
-    function selectMediaSourceText() {
-      const field = $('mediaSourceText');
-      if (!field) return;
-      field.focus();
-      field.select();
-      field.setSelectionRange(0, field.value.length);
+    function openMediaSourcePopup() {
+      const popup = window.open('', '_blank');
+      if (!popup) {
+        showToast('浏览器阻止了新窗口，请允许弹窗后重试', 'bad');
+        return null;
+      }
+      return popup;
     }
-    function showMediaSourceWindow(text, label = '原始来源') {
-      const field = $('mediaSourceText');
-      const title = $('mediaSourceModalTitle');
-      if (!field || !$('mediaSourceModal')) return;
-      field.value = String(text ?? '');
-      if (title) title.textContent = label || '原始来源';
-      $('mediaSourceModal').classList.add('show');
-      requestAnimationFrame(selectMediaSourceText);
+    function mediaSourceMime(source, kind = 'image') {
+      const value = String(source?.value || '').trim();
+      const declared = String(source?.mime || source?.mime_type || '').trim().toLowerCase();
+      if (declared) return declared;
+      const dataMatch = value.match(/^data:([^;,]+)/i);
+      if (dataMatch) return dataMatch[1].toLowerCase();
+      const path = value.split(/[?#]/, 1)[0].toLowerCase();
+      const extensionMimes = {
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
+        '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml',
+        '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/mp4'
+      };
+      const match = Object.keys(extensionMimes).find(ext => path.endsWith(ext));
+      return match ? extensionMimes[match] : (kind === 'video' ? 'video/mp4' : 'image/png');
     }
-    function closeMediaSourceWindow() {
-      const modal = $('mediaSourceModal');
-      if (modal) modal.classList.remove('show');
+    function mediaSourceBrowserValue(source, kind = 'image') {
+      const value = String(source?.value || '').trim();
+      if (!value) return '';
+      if (source?.type !== 'base64') return value;
+      if (/^data:/i.test(value)) return value;
+      const payload = value.replace(/^base64:\/\//i, '').replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+      const padded = payload + '='.repeat((4 - payload.length % 4) % 4);
+      return `data:${mediaSourceMime(source, kind)};base64,${padded}`;
+    }
+    function renderMediaSourcePopup(popup, sources, label = '原始来源', kind = 'image') {
+      if (!popup || popup.closed) return;
+      const doc = popup.document;
+      doc.open();
+      doc.close();
+      doc.title = label || '原始来源';
+      doc.body.style.cssText = 'margin:0;min-height:100vh;padding:12px;box-sizing:border-box;background:#111;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:12px;';
+      const list = Array.isArray(sources) ? sources : [sources];
+      list.forEach(source => {
+        const value = mediaSourceBrowserValue(source, source?.mediaKind || kind);
+        if (!value) return;
+        const mime = mediaSourceMime(source, source?.mediaKind || kind);
+        const isVideo = mime.startsWith('video/') || source?.mediaKind === 'video';
+        const media = doc.createElement(isVideo ? 'video' : 'img');
+        media.src = value;
+        media.style.cssText = 'display:block;max-width:100%;max-height:calc(100vh - 24px);object-fit:contain;background:#000;';
+        if (isVideo) {
+          media.controls = true;
+          media.autoplay = false;
+          media.playsInline = true;
+        } else {
+          media.alt = label || '原始图片';
+          media.decoding = 'async';
+        }
+        doc.body.appendChild(media);
+      });
     }
     async function loadRecordMediaSources() {
       const id = String(CURRENT_RECORD?.id || '').trim();
@@ -3740,16 +3759,30 @@ Source prompt:
       }
       return resolved;
     }
-    async function copyMediaSource(source) {
+    async function copyMediaSource(source, kind = 'image') {
+      const popup = openMediaSourcePopup();
+      if (!popup) return;
       const resolved = await resolveMediaSourceForDisplay(source);
-      if (!resolved) return;
+      if (!resolved) {
+        if (!popup.closed) popup.close();
+        return;
+      }
+      if (resolved.type === 'local') {
+        if (!popup.closed) popup.close();
+        showToast('当前只有本地缓存，没有可打开的原始来源', 'bad');
+        return;
+      }
       try {
-        showMediaSourceWindow(resolved.value, `原始来源（${mediaSourceLabel(resolved)}）`);
+        resolved.mediaKind = resolved.mediaKind || kind;
+        renderMediaSourcePopup(popup, [resolved], `原始来源（${mediaSourceLabel(resolved)}）`, kind);
       } catch (e) {
+        if (!popup.closed) popup.close();
         showToast(e.message || '原始来源读取失败', 'bad');
       }
     }
-    async function copyMediaSources(sources) {
+    async function copyMediaSources(sources, kind = 'image') {
+      const popup = openMediaSourcePopup();
+      if (!popup) return;
       const list = normalizeMediaSources(sources);
       let resolvedList = list;
       if (list.some(item => item.deferred || !item.value || item.value.startsWith('[Base64'))) {
@@ -3768,18 +3801,23 @@ Source prompt:
         }
       }
       if (!resolvedList.length) {
+        if (!popup.closed) popup.close();
         showToast('没有原始链接或 base64', 'bad');
         return;
       }
       resolvedList = resolvedList.filter(item => item && item.value && !item.value.startsWith('[Base64'));
+      resolvedList = resolvedList.filter(item => item.type !== 'local');
       if (!resolvedList.length) {
+        if (!popup.closed) popup.close();
         showToast('没有原始链接或 base64', 'bad');
         return;
       }
       try {
         const label = resolvedList.length > 1 ? `原始来源（${resolvedList.length}项）` : `原始来源（${mediaSourceLabel(resolvedList[0])}）`;
-        showMediaSourceWindow(resolvedList.map(item => item.value).join('\n'), label);
+        resolvedList.forEach(item => { item.mediaKind = item.mediaKind || kind; });
+        renderMediaSourcePopup(popup, resolvedList, label, kind);
       } catch (e) {
+        if (!popup.closed) popup.close();
         showToast(e.message || '原始来源读取失败', 'bad');
       }
     }
