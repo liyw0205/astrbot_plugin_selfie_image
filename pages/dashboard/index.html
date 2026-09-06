@@ -349,6 +349,9 @@
     .media-source-badge.local { background:#f4f4f5; color:#667085; }
     .media-source-line { display:flex; align-items:center; gap:6px; margin-top:6px; min-height:24px; }
     .media-source-line .copy-btn { width:24px; height:24px; border-radius:7px; }
+    .base64-copy { display:inline-flex; align-items:center; gap:5px; margin:0 2px; padding:2px 7px; border:1px solid #f7d7a8; border-radius:6px; background:#fff7e8; color:#b54708; font:inherit; font-size:12px; line-height:1.35; cursor:pointer; vertical-align:middle; }
+    .base64-copy:hover { background:#ffefcf; border-color:#e9b96e; }
+    .base64-copy svg { width:13px; height:13px; flex:0 0 auto; }
     .images .thumb-card { position:relative; }
     .images .thumb-dl { position:absolute; top:8px; right:8px; width:30px; height:30px; padding:0; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.92); }
     .video-card { position:relative; margin-top:8px; }
@@ -3572,6 +3575,51 @@ Source prompt:
         <pre>${escapeHtml(text || '')}</pre>
       `;
     }
+    function collectResponseBase64Copies(value, path = [], result = []) {
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => collectResponseBase64Copies(item, path.concat(index), result));
+        return result;
+      }
+      if (!value || typeof value !== 'object') return result;
+      const type = String(value.type || '').trim().toLowerCase();
+      const text = String(value.value || '');
+      if (type === 'base64' && (value.deferred === true || text.startsWith('[Base64'))) {
+        let imageIndex;
+        for (let i = path.length - 2; i >= 0; i -= 1) {
+          if (path[i] === 'generated_image_sources' && Number.isInteger(path[i + 1])) {
+            imageIndex = path[i + 1];
+            break;
+          }
+        }
+        const copyArg = {type: 'base64', deferred: true};
+        if (Number.isInteger(imageIndex)) copyArg.index = imageIndex;
+        result.push(copyArg);
+      }
+      Object.entries(value).forEach(([key, item]) => {
+        collectResponseBase64Copies(item, path.concat(key), result);
+      });
+      return result;
+    }
+    function responseDataDetailBlock(value) {
+      const data = value && typeof value === 'object' ? value : {};
+      const raw = JSON.stringify(data, null, 2);
+      const copies = collectResponseBase64Copies(data);
+      const marker = escapeHtml('[Base64，点击复制按钮获取原文]');
+      let rendered = escapeHtml(raw);
+      for (const copyArg of copies) {
+        const pos = rendered.indexOf(marker);
+        if (pos < 0) break;
+        const button = `<button class="base64-copy" type="button" title="复制原始 Base64" onclick="copyMediaSource(${escapeJs(JSON.stringify(copyArg))})">${copyIconSvg()}Base64（点击复制）</button>`;
+        rendered = rendered.slice(0, pos) + button + rendered.slice(pos + marker.length);
+      }
+      return `
+        <div class="detail-title">
+          <h3>响应数据</h3>
+          <button class="copy-btn" type="button" title="复制响应数据" aria-label="复制响应数据" onclick="copyRecordField('response_data')">${copyIconSvg()}</button>
+        </div>
+        <pre>${rendered}</pre>
+      `;
+    }
     async function copyTextToClipboard(text) {
       const value = String(text ?? '');
       if (navigator.clipboard && window.isSecureContext) {
@@ -3664,6 +3712,20 @@ Source prompt:
         showToast(e.message || '复制失败', 'bad');
       }
     }
+    function generatedMediaDetailBlock(record) {
+      const imagePaths = (record.generated_image_paths?.length ? record.generated_image_paths : (record.response_data?.generated_image_paths || [])).filter(Boolean);
+      const videoPaths = (record.generated_video_paths?.length ? record.generated_video_paths : (record.response_data?.generated_video_paths || [])).filter(Boolean);
+      const mediaType = String(record.media_type || '').trim().toLowerCase();
+      const isVideo = mediaType === 'video' || (!imagePaths.length && videoPaths.length);
+      if (isVideo) {
+        const source = record.response_data?.video_source || record.response_data?.video_url || record.video_source || record.video_url || '';
+        return videoThumbs(videoPaths, source);
+      }
+      const sources = Array.isArray(record.generated_image_sources) && record.generated_image_sources.length
+        ? record.generated_image_sources
+        : (record.response_data?.generated_image_sources || []);
+      return imageThumbs(imagePaths, '生成图', sources);
+    }
     async function openRecordDetail(id) {
       let r = RECORDS.find(item => String(item.id || '') === String(id || ''));
       try {
@@ -3692,10 +3754,9 @@ Source prompt:
         ${promptDetailBlock('原始提示词', 'original_prompt', r.original_prompt || '')}
         ${promptDetailBlock('请求提示词', 'request_prompt', r.request_prompt || r.prompt || '')}
         ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
-        ${promptDetailBlock('响应数据', 'response_data', JSON.stringify(r.response_data || {}, null, 2))}
+        ${responseDataDetailBlock(r.response_data || {})}
         ${imageThumbs(r.request_image_paths || [], '请求图')}
-        ${imageThumbs(r.generated_image_paths || [], '生成图', (Array.isArray(r.generated_image_sources) && r.generated_image_sources.length ? r.generated_image_sources : (r.response_data?.generated_image_sources || [])))}
-        ${videoThumbs(r.generated_video_paths || [], r.response_data?.video_source || r.response_data?.video_url || r.video_source || r.video_url || '')}
+        ${generatedMediaDetailBlock(r)}
       `;
       $('recordModal').classList.add('show');
       loadProtectedImages($('recordDetailBody'));

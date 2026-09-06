@@ -6008,6 +6008,10 @@ class VideoV1Tests(unittest.TestCase):
             "/api/test-video-channel/tasks",
             "generated_video_paths",
             "记录类型",
+            "responseDataDetailBlock",
+            "generatedMediaDetailBlock",
+            "base64-copy",
+            "copyMediaSource",
         ):
             self.assertIn(token, INDEX_HTML)
 
