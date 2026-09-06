@@ -35,17 +35,35 @@ class GenerationStoreMixin:
         data = load_json_file(self.records_path)
         items = data.get("records") if isinstance(data.get("records"), list) else []
         records = [item for item in items if isinstance(item, dict)]
-        compacted = [compact_generation_record(redact_generation_record(item)) for item in records[:RECORD_KEEP_LIMIT]]
+        retained = records[:RECORD_KEEP_LIMIT]
+        evicted = records[RECORD_KEEP_LIMIT:]
+        compacted = [compact_generation_record(redact_generation_record(item)) for item in retained]
+        if evicted:
+            # Loading used to trim only the in-memory list, leaving stale rows
+            # in generation_records.json until a later write happened.
+            save_json_file(self.records_path, {"records": compacted})
+            generated_dir = str(getattr(self, "generated_dir", "") or "")
+            if generated_dir:
+                safe_delete_relative_files(
+                    generated_dir,
+                    collect_unreferenced_record_cache_paths(evicted, compacted),
+                )
         return compacted
 
     def _persist_records(self) -> None:
         with self._records_lock:
+            evicted_records = self._records[RECORD_KEEP_LIMIT:]
             self._records = [
                 compact_generation_record(redact_generation_record(item))
                 for item in self._records[:RECORD_KEEP_LIMIT]
                 if isinstance(item, dict)
             ]
             save_json_file(self.records_path, {"records": self._records})
+        if evicted_records:
+            safe_delete_relative_files(
+                self.generated_dir,
+                collect_unreferenced_record_cache_paths(evicted_records, self._records),
+            )
 
 
     def _record_task(self, record: Dict[str, Any]) -> None:

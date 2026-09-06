@@ -441,6 +441,46 @@ def redact_channel_attempts(attempts: Any) -> List[Any]:
     return redacted
 
 
+def _media_source_kind(value: Any, source_type: Any = "") -> str:
+    """Infer a stable source type without inspecting or displaying the payload."""
+    kind = str(source_type or "").strip().lower()
+    text = str(value or "").strip()
+    lowered = text.lower()
+    if kind == "base64" or lowered.startswith(("data:", "base64://")):
+        return "base64"
+    compact = re.sub(r"\s+", "", text)
+    if len(compact) >= 100 and re.fullmatch(r"[A-Za-z0-9+/_=-]+", compact):
+        return "base64"
+    if kind in {"url", "local", "base64"}:
+        return kind
+    if lowered.startswith(("http://", "https://")):
+        return "url"
+    return "local"
+
+
+def _preserve_media_sources(sources: Any) -> List[Dict[str, str]]:
+    """Retain media origins from both current objects and legacy string arrays."""
+    if not isinstance(sources, list):
+        return []
+    preserved: List[Dict[str, str]] = []
+    for item in sources:
+        if isinstance(item, dict):
+            value = item.get("value")
+            if value is None:
+                value = item.get("url") or item.get("source") or item.get("data")
+            source_type = item.get("type") or ""
+        elif isinstance(item, str):
+            value = item
+            source_type = ""
+        else:
+            continue
+        text = str(value or "").strip()
+        if not text:
+            continue
+        preserved.append({"type": _media_source_kind(text, source_type), "value": text})
+    return preserved
+
+
 def redact_generation_record(record: Any) -> Dict[str, Any]:
     """Redact record metadata but keep authenticated channel diagnostics intact."""
     if not isinstance(record, dict):
@@ -456,11 +496,7 @@ def redact_generation_record(record: Any) -> Dict[str, Any]:
             if key in source:
                 target[key] = source.get(key) or ""
         if isinstance(source.get("generated_image_sources"), list):
-            target["generated_image_sources"] = [
-                {"type": str(item.get("type") or ""), "value": str(item.get("value") or "")}
-                for item in source["generated_image_sources"]
-                if isinstance(item, dict) and str(item.get("value") or "").strip()
-            ]
+            target["generated_image_sources"] = _preserve_media_sources(source["generated_image_sources"])
 
     restore_media_fields(record, redacted)
     original_response = record.get("response_data")
@@ -479,11 +515,7 @@ def redact_generation_record(record: Any) -> Dict[str, Any]:
 
 
 def _is_inline_media_source(value: Any, source_type: str = "") -> bool:
-    kind = str(source_type or "").strip().lower()
-    if kind == "base64":
-        return True
-    text = str(value or "").strip().lower()
-    return text.startswith("data:") or text.startswith("base64://")
+    return _media_source_kind(value, source_type) == "base64"
 
 
 def _detail_media_source(source: Any, index: int = -1) -> Any:
@@ -569,8 +601,10 @@ def generation_record_media_sources(record: Any) -> Dict[str, Any]:
         return {"generated_image_sources": [], "video_source": ""}
     response_data = record.get("response_data") if isinstance(record.get("response_data"), dict) else {}
     image_sources = record.get("generated_image_sources")
-    if not isinstance(image_sources, list):
-        image_sources = response_data.get("generated_image_sources")
+    if not isinstance(image_sources, list) or not image_sources:
+        fallback_sources = response_data.get("generated_image_sources")
+        if isinstance(fallback_sources, list) and fallback_sources:
+            image_sources = fallback_sources
     if not isinstance(image_sources, list):
         image_sources = []
     video_source = record.get("video_source") or record.get("video_url") or response_data.get("video_source") or response_data.get("video_url") or ""
@@ -691,14 +725,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     if isinstance(out.get("generated_image_sources"), list):
-        out["generated_image_sources"] = [
-            {
-                "type": str(item.get("type") or "").strip(),
-                "value": str(item.get("value") or ""),
-            }
-            for item in out["generated_image_sources"]
-            if isinstance(item, dict) and str(item.get("value") or "").strip()
-        ]
+        out["generated_image_sources"] = _preserve_media_sources(out["generated_image_sources"])
 
     attempts_in = out.get("attempts")
     if not isinstance(attempts_in, list) and isinstance(resp, dict):

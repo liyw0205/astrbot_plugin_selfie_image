@@ -1335,6 +1335,36 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(detail["response_data"]["generated_image_sources"][0]["value"], "[Base64，点击复制按钮获取原文]")
         self.assertEqual(detail["response_data"]["video_source"]["value"], "[Base64，点击复制按钮获取原文]")
 
+    def test_media_sources_preserve_legacy_string_arrays(self) -> None:
+        from astrbot_plugin_selfie_image.core.utils import (
+            compact_generation_record,
+            generation_record_media_sources,
+            redact_generation_record,
+            redact_generation_record_for_detail,
+        )
+
+        inline = "data:image/png;base64," + ("A" * 100)
+        record = {
+            "generated_image_sources": [inline, "https://cdn.example.test/result.png"],
+            "response_data": {"generated_image_sources": [inline, "https://cdn.example.test/result.png"]},
+        }
+        safe = redact_generation_record(record)
+        compacted = compact_generation_record(safe)
+        self.assertEqual(len(compacted["generated_image_sources"]), 2)
+        self.assertEqual(compacted["generated_image_sources"][0]["type"], "base64")
+        self.assertEqual(compacted["generated_image_sources"][0]["value"], inline)
+        self.assertEqual(compacted["response_data"]["generated_image_sources"][1]["value"], "https://cdn.example.test/result.png")
+        self.assertEqual(generation_record_media_sources(compacted)["generated_image_sources"][0]["value"], inline)
+
+        fallback = generation_record_media_sources(
+            {"generated_image_sources": [], "response_data": {"generated_image_sources": [inline]}}
+        )
+        self.assertEqual(fallback["generated_image_sources"][0], inline)
+
+        detail = redact_generation_record_for_detail(record)
+        self.assertTrue(detail["generated_image_sources"][0]["deferred"])
+        self.assertEqual(detail["generated_image_sources"][1]["value"], "https://cdn.example.test/result.png")
+
     def test_generation_record_keeps_only_channel_error_raw(self) -> None:
         from astrbot_plugin_selfie_image.core.utils import compact_generation_record, redact_generation_record
 
@@ -1919,6 +1949,24 @@ class ImageUtilityTests(unittest.TestCase):
 
             self.assertEqual(safe_delete_relative_files("", ["absolute_inside.png"]), [])
             self.assertTrue(absolute_inside.exists())
+
+    def test_loading_records_rewrites_rows_beyond_retention_limit(self) -> None:
+        from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin, RECORD_KEEP_LIMIT
+
+        with tempfile.TemporaryDirectory() as directory:
+            records_path = Path(directory) / "generation_records.json"
+            records = [{"id": str(index), "generated_image_paths": [f"{index}.png"]} for index in range(RECORD_KEEP_LIMIT + 2)]
+            records_path.write_text(json.dumps({"records": records}), encoding="utf-8")
+            plugin = GenerationStoreMixin.__new__(GenerationStoreMixin)
+            plugin.records_path = str(records_path)
+            plugin.generated_dir = str(Path(directory) / "image_cache")
+            Path(plugin.generated_dir).mkdir()
+
+            loaded = plugin._load_records()
+            persisted = json.loads(records_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(loaded), RECORD_KEEP_LIMIT)
+            self.assertEqual(len(persisted["records"]), RECORD_KEEP_LIMIT)
+            self.assertEqual(persisted["records"][0]["id"], "0")
 
     def test_unreferenced_record_cache_paths_keep_shared_files(self) -> None:
         removed = [

@@ -3694,7 +3694,7 @@ Source prompt:
         ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
         ${promptDetailBlock('响应数据', 'response_data', JSON.stringify(r.response_data || {}, null, 2))}
         ${imageThumbs(r.request_image_paths || [], '请求图')}
-        ${imageThumbs(r.generated_image_paths || [], '生成图', r.generated_image_sources || r.response_data?.generated_image_sources || [])}
+        ${imageThumbs(r.generated_image_paths || [], '生成图', (Array.isArray(r.generated_image_sources) && r.generated_image_sources.length ? r.generated_image_sources : (r.response_data?.generated_image_sources || [])))}
         ${videoThumbs(r.generated_video_paths || [], r.response_data?.video_source || r.response_data?.video_url || r.video_source || r.video_url || '')}
       `;
       $('recordModal').classList.add('show');
