@@ -12,7 +12,13 @@ import re
 import threading
 from typing import Any, Optional
 
-from ..core.utils import redact_generation_record, redact_sensitive_data, redact_sensitive_text
+from ..core.utils import (
+    generation_record_media_sources,
+    redact_generation_record,
+    redact_generation_record_for_detail,
+    redact_sensitive_data,
+    redact_sensitive_text,
+)
 
 
 try:
@@ -4688,7 +4694,19 @@ class FlaskWebServer:
             if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
                 return fail("非法记录 ID", 400)
             try:
-                return ok(redact_generation_record(self.plugin.get_record_for_web(record_id_text)))
+                return ok(redact_generation_record_for_detail(self.plugin.get_record_for_web(record_id_text)))
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        @app.route("/api/records/<record_id>/media-sources", methods=["GET"])
+        def record_media_sources(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            record_id_text = str(record_id or "").strip()
+            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
+                return fail("非法记录 ID", 400)
+            try:
+                return ok(generation_record_media_sources(self.plugin.get_record_for_web(record_id_text)))
             except Exception as exc:
                 return fail(str(exc), 404)
 

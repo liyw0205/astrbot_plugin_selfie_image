@@ -1314,6 +1314,26 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(record["generated_image_sources"][0]["value"], "https://cdn.example.test/a.png?api_key=secretvalue")
         self.assertEqual(slim["response_data"]["video_source"], "https://cdn.example.test/v.mp4?api_key=secretvalue")
 
+    def test_detail_record_defers_large_inline_media(self) -> None:
+        from astrbot_plugin_selfie_image.core.utils import redact_generation_record_for_detail
+
+        inline = "data:image/png;base64," + ("A" * 100_000)
+        detail = redact_generation_record_for_detail(
+            {
+                "id": "record-1",
+                "generated_image_sources": [{"type": "base64", "value": inline}],
+                "response_data": {
+                    "generated_image_sources": [{"type": "base64", "value": inline}],
+                    "video_source": inline,
+                },
+            }
+        )
+        self.assertLess(len(json.dumps(detail)), 2_000)
+        self.assertEqual(detail["generated_image_sources"][0]["value"], "")
+        self.assertEqual(detail["generated_image_sources"][0]["size"], len(inline))
+        self.assertEqual(detail["response_data"]["generated_image_sources"][0]["value"], "")
+        self.assertEqual(detail["response_data"]["video_source"]["value"], "")
+
     def test_generation_record_keeps_only_channel_error_raw(self) -> None:
         from astrbot_plugin_selfie_image.core.utils import compact_generation_record, redact_generation_record
 
@@ -4064,6 +4084,10 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"]["id"], 1)
         self.assertEqual(response.get_json()["data"]["request_data"], {"prompt": "test"})
+
+        response = client.get("/api/records/1/media-sources", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"], {"generated_image_sources": [], "video_source": ""})
 
         response = client.get("/api/records/" + ("x" * 200), headers=headers)
         self.assertEqual(response.status_code, 400)

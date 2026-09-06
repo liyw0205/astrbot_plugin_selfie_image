@@ -478,6 +478,102 @@ def redact_generation_record(record: Any) -> Dict[str, Any]:
     return redacted
 
 
+def _is_inline_media_source(value: Any, source_type: str = "") -> bool:
+    kind = str(source_type or "").strip().lower()
+    if kind == "base64":
+        return True
+    text = str(value or "").strip().lower()
+    return text.startswith("data:") or text.startswith("base64://")
+
+
+def _detail_media_source(source: Any, index: int = -1) -> Any:
+    """Keep URL sources in detail responses, but defer large inline payloads."""
+    if isinstance(source, dict):
+        source_type = str(source.get("type") or "").strip().lower()
+        value = source.get("value") or ""
+    else:
+        source_type = ""
+        value = source
+    if not str(value or "").strip():
+        return {"type": source_type or "local", "value": "", "index": index} if index >= 0 else ""
+    if _is_inline_media_source(value, source_type):
+        result = {"type": "base64", "value": "", "size": len(str(value)), "index": index}
+        return result
+    result = {"type": source_type or "url", "value": str(value)}
+    if index >= 0:
+        result["index"] = index
+    return result
+
+
+def redact_generation_record_for_detail(record: Any) -> Dict[str, Any]:
+    """Return a fast detail payload; inline media is fetched only on demand."""
+    if not isinstance(record, dict):
+        return {}
+
+    # Do not run the sensitive-text scanner over multi-megabyte data URLs. Keep
+    # a typed placeholder through redaction, then restore only the small detail
+    # metadata (URL values remain visible; inline payloads stay deferred).
+    working = dict(record)
+    detail_media: Dict[str, Any] = {}
+
+    def strip_media(container: Dict[str, Any], target: Dict[str, Any]) -> None:
+        sources = container.get("generated_image_sources")
+        if isinstance(sources, list):
+            target["generated_image_sources"] = [
+                _detail_media_source(item, index)
+                for index, item in enumerate(sources)
+                if isinstance(item, (dict, str))
+            ]
+            container["generated_image_sources"] = target["generated_image_sources"]
+        for key in ("video_source", "video_url"):
+            if key in container:
+                target[key] = _detail_media_source(container.get(key)) if _is_inline_media_source(container.get(key)) else container.get(key) or ""
+                container[key] = target[key]
+
+    strip_media(working, detail_media)
+    response_data = working.get("response_data")
+    if isinstance(response_data, dict):
+        response_copy = dict(response_data)
+        working["response_data"] = response_copy
+        detail_response: Dict[str, Any] = {}
+        strip_media(response_copy, detail_response)
+        detail_media["response_data"] = detail_response
+
+    redacted = redact_sensitive_data(working)
+    if not isinstance(redacted, dict):
+        return {}
+
+    for key, value in detail_media.items():
+        if key == "response_data" and isinstance(value, dict) and isinstance(redacted.get(key), dict):
+            redacted[key].update(value)
+        else:
+            redacted[key] = value
+    for key in ("attempts", "failure_reasons"):
+        if isinstance(record.get(key), list):
+            redacted[key] = redact_channel_attempts(record.get(key))
+    if isinstance(record.get("response_data"), dict) and isinstance(record["response_data"].get("attempts"), list):
+        if isinstance(redacted.get("response_data"), dict):
+            redacted["response_data"]["attempts"] = redact_channel_attempts(record["response_data"]["attempts"])
+    return redacted
+
+
+def generation_record_media_sources(record: Any) -> Dict[str, Any]:
+    """Extract original media sources for an explicit copy action."""
+    if not isinstance(record, dict):
+        return {"generated_image_sources": [], "video_source": ""}
+    response_data = record.get("response_data") if isinstance(record.get("response_data"), dict) else {}
+    image_sources = record.get("generated_image_sources")
+    if not isinstance(image_sources, list):
+        image_sources = response_data.get("generated_image_sources")
+    if not isinstance(image_sources, list):
+        image_sources = []
+    video_source = record.get("video_source") or record.get("video_url") or response_data.get("video_source") or response_data.get("video_url") or ""
+    return {
+        "generated_image_sources": image_sources,
+        "video_source": video_source,
+    }
+
+
 def _truncate_text(value: Any, limit: int) -> str:
     text = str(value or "")
     if limit <= 0 or len(text) <= limit:

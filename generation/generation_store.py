@@ -143,7 +143,11 @@ class GenerationStoreMixin:
         with self._records_lock:
             for record in self._records:
                 if str(record.get("id") or "") == target_id:
-                    return redact_generation_record(self._enrich_record_for_web(copy.deepcopy(record)))
+                    # Web handlers redact the response according to its use. In
+                    # particular, detail responses must remove inline Base64
+                    # before JSON serialization, while copy actions need the
+                    # original media source on demand.
+                    return self._enrich_record_for_web(copy.deepcopy(record))
         raise ValueError("记录不存在或已清理")
 
     def _enrich_record_for_web(self, record: Dict[str, Any]) -> Dict[str, Any]:

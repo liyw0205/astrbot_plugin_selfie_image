@@ -10,7 +10,13 @@ import json
 from typing import Any, Optional
 
 from ..core.constants import PLUGIN_NAME
-from ..core.utils import redact_generation_record, redact_sensitive_data, redact_sensitive_text
+from ..core.utils import (
+    generation_record_media_sources,
+    redact_generation_record,
+    redact_generation_record_for_detail,
+    redact_sensitive_data,
+    redact_sensitive_text,
+)
 from .web import (
     MAX_CACHE_IMAGE_PATH_LENGTH,
     MAX_RECORD_PAGE_LIMIT,
@@ -74,6 +80,7 @@ class SelfieImageDashboardAPI:
             ("refresh-image-models", self.page_refresh_image_models, ["POST"], "Selfie Image refresh models"),
             ("records", self.page_records, ["GET"], "Selfie Image generation records"),
             ("metrics", self.page_metrics, ["GET"], "Selfie Image generation metrics"),
+            ("records/<record_id>/media-sources", self.page_record_media_sources, ["GET"], "Selfie Image record media sources"),
             ("records/<record_id>", self.page_record_detail, ["GET"], "Selfie Image record detail"),
             ("records/clear", self.page_records_clear, ["POST"], "Selfie Image clear records"),
             ("cache-image", self.page_cache_image_file, ["GET"], "Selfie Image cache image download"),
@@ -453,7 +460,16 @@ class SelfieImageDashboardAPI:
         if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
             return self._fail("非法记录 ID", 400)
         try:
-            return self._ok(redact_generation_record(self.plugin.get_record_for_web(record_id_text)))
+            return self._ok(redact_generation_record_for_detail(self.plugin.get_record_for_web(record_id_text)))
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    async def page_record_media_sources(self, record_id: str) -> Any:
+        record_id_text = str(record_id or "").strip()
+        if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
+            return self._fail("非法记录 ID", 400)
+        try:
+            return self._ok(generation_record_media_sources(self.plugin.get_record_for_web(record_id_text)))
         except Exception as exc:
             return self._fail(str(exc), 404)
 
