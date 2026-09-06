@@ -572,15 +572,29 @@ class AICatConfig:
             video_timeout = self.video_global_timeout or self.image_global_timeout
             targets.extend(channel.targets(video_timeout, request_timeout=video_timeout))
         priority = self.enabled_video_model_priority
-        selected = self._prioritize_targets(targets, priority)
         if priority:
-            allowed = set(priority)
-            selected = [
-                target for target in selected
-                if target.label in allowed
-                or f"{target.channel_name}:{target.model}" in allowed
-                or target.model in allowed
-            ]
+            # A bare model id is allowed for convenience, but it must resolve
+            # to one deterministic target.  Previously every channel carrying
+            # the same model id passed the allow-list filter, which made the
+            # fallback chain call models that were not actually selected.
+            by_label = {target.label: target for target in targets}
+            by_colon = {f"{target.channel_name}:{target.model}": target for target in targets}
+            by_model: Dict[str, List[ImageModelTarget]] = {}
+            for target in targets:
+                by_model.setdefault(target.model, []).append(target)
+            selected: List[ImageModelTarget] = []
+            seen = set()
+            for raw_key in priority:
+                key = str(raw_key or "").strip()
+                target = by_label.get(key) or by_colon.get(key)
+                if target is None:
+                    candidates = by_model.get(key) or []
+                    target = candidates[0] if candidates else None
+                if target and target.label not in seen:
+                    selected.append(target)
+                    seen.add(target.label)
+        else:
+            selected = targets
         return self._bind_download_proxies(selected)
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import json
 import os
 import re
@@ -30,6 +31,14 @@ from ..core.proxy import channel_client_session, target_session_proxy
 from ..core.provider_parser import normalize_image_base_url
 from ..core.providers import ImageReference
 from ..core.utils import bytes_to_data_url, redact_sensitive_text
+
+
+class VideoGenerationError(RuntimeError):
+    """An upstream error annotated with the operation that produced it."""
+
+    def __init__(self, message: str, *, stage: str = "create") -> None:
+        super().__init__(message)
+        self.stage = stage
 
 
 @dataclass
@@ -83,13 +92,15 @@ def build_agnes_videos_endpoint(base_url: str) -> str:
 
 
 def build_agnes_result_url(base_url: str, video_id: str, model: str = "") -> str:
-    """Official poll: GET {origin}/agnesapi?video_id=...[&model_name=...]."""
+    """Build the version-specific Agnes result endpoint."""
     raw = str(base_url or "").strip() or "https://apihub.agnes-ai.com"
     parsed = urlparse(raw if "://" in raw else f"https://{raw}")
     origin = f"{parsed.scheme or 'https'}://{parsed.netloc}" if parsed.netloc else "https://apihub.agnes-ai.com"
     vid = quote(str(video_id or "").strip(), safe="")
     url = f"{origin.rstrip('/')}/agnesapi?video_id={vid}"
     model_name = str(model or "").strip()
+    # Keep the explicit model on every Agnes poll.  It is required for 2.5
+    # keyframe/reference jobs and accepted by the V2.0 compatibility endpoint.
     if model_name:
         url += f"&model_name={quote(model_name, safe='')}"
     return url
@@ -120,6 +131,9 @@ def agnes_size_wh(size: str) -> tuple[int, int]:
     """Map size/aspect hint to official default-ish width/height."""
     text = str(size or "").strip().lower().replace("：", ":")
     presets = {
+        # Agnes V2.0 documents 1152x768 as its recommended default.  The
+        # service normalizes this to a supported preset, so do not replace it
+        # with a mathematically exact 16:9 size here.
         "16:9": (1152, 768),
         "9:16": (768, 1152),
         "1:1": (1024, 1024),
@@ -244,6 +258,13 @@ def _extract_video_url(data: Any) -> str:
         if isinstance(data, str) and data.startswith("http"):
             return _extract_url(data)
         return ""
+    for key in ("b64_json", "base64", "b64"):
+        encoded = data.get(key)
+        if isinstance(encoded, str) and encoded.strip():
+            value = encoded.strip()
+            if value.startswith("data:"):
+                return value
+            return f"data:video/mp4;base64,{value}"
     # Agnes completed payload: metadata.url
     meta = data.get("metadata")
     if isinstance(meta, dict):
@@ -268,7 +289,9 @@ def _extract_video_url(data: Any) -> str:
         if isinstance(item, dict):
             return _extract_video_url(item)
         if isinstance(item, str):
-            return _extract_url(item)
+            if item.strip().startswith(("http", "data:")):
+                return _extract_url(item)
+            return ""
     if isinstance(data_field, dict):
         return _extract_video_url(data_field)
     # chat-style
@@ -364,6 +387,17 @@ async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeou
             data = await response.read()
             if not data:
                 raise RuntimeError("视频下载结果为空")
+            content_type = str(response.headers.get("Content-Type") or "").lower()
+            stripped = data.lstrip()
+            if "json" in content_type or "html" in content_type or stripped.startswith((b"{", b"[", b"<")):
+                try:
+                    parsed = json.loads(data.decode("utf-8", "replace"))
+                except Exception:
+                    parsed = None
+                nested = _extract_video_url(parsed) if parsed is not None else ""
+                if nested and nested != url:
+                    return await _download_video_bytes(session, nested, timeout, proxy)
+                raise RuntimeError("视频下载接口返回了 JSON/HTML，而不是视频文件")
             return data
 
     def _via_urllib() -> bytes:
@@ -371,8 +405,23 @@ async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeou
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy})) if proxy else urllib.request.build_opener()
         with opener.open(req, timeout=max(30, int(timeout or 60))) as resp:
             data = resp.read()
+            content_type = str(resp.headers.get("Content-Type") or "").lower()
         if not data:
             raise RuntimeError("视频下载结果为空")
+        stripped = data.lstrip()
+        if "json" in content_type or "html" in content_type or stripped.startswith((b"{", b"[", b"<")):
+            try:
+                parsed = json.loads(data.decode("utf-8", "replace"))
+            except Exception:
+                parsed = None
+            nested = _extract_video_url(parsed) if parsed is not None else ""
+            if nested and nested != url:
+                # Keep urllib fallback self-contained; data URLs can be decoded
+                # without opening a second network connection.
+                if nested.startswith("data:"):
+                    _, encoded = nested.split(",", 1)
+                    return base64.b64decode(encoded)
+            raise RuntimeError("视频下载接口返回了 JSON/HTML，而不是视频文件")
         return data
 
     try:
@@ -406,9 +455,12 @@ async def _poll_task(
     timeout_seconds: int,
     proxy: str = "",
 ) -> str:
-    max_retries = max(3, int(timeout_seconds) // 10)
-    for attempt in range(max_retries):
-        await asyncio.sleep(10)
+    deadline = time.monotonic() + max(1, int(timeout_seconds or 1))
+    last_error = ""
+    attempt = 0
+    while time.monotonic() < deadline:
+        await asyncio.sleep(min(10, max(0.0, deadline - time.monotonic())))
+        attempt += 1
         try:
             async with session.get(
                 poll_url,
@@ -417,6 +469,12 @@ async def _poll_task(
                 proxy=proxy or None,
             ) as response:
                 if response.status >= 400:
+                    error = await _read_error(response)
+                    last_error = error
+                    # A malformed/authenticated/missing task cannot become
+                    # healthy by polling again.  Preserve the upstream body.
+                    if response.status in {400, 401, 403, 404, 422}:
+                        raise VideoGenerationError(error, stage="poll")
                     continue
                 data = await response.json(content_type=None)
             status = _extract_task_status(data)
@@ -435,11 +493,16 @@ async def _poll_task(
             early = _extract_video_url(data)
             if early and status in {"", "SUCCESS", "SUCCEEDED", "COMPLETED"}:
                 return early
-        except RuntimeError:
+        except VideoGenerationError:
             raise
-        except Exception:
+        except RuntimeError as exc:
+            last_error = str(exc)
+            raise
+        except Exception as exc:
+            last_error = redact_sensitive_text(str(exc))
             continue
-    raise RuntimeError(f"视频生成轮询超时（已等约 {timeout_seconds}s）")
+    detail = f"：{last_error}" if last_error else ""
+    raise VideoGenerationError(f"视频生成轮询超时（已等约 {timeout_seconds}s）{detail}", stage="poll")
 
 
 async def generate_video_openai_compatible(
@@ -448,6 +511,7 @@ async def generate_video_openai_compatible(
     session: aiohttp.ClientSession,
     *,
     save_dir: str,
+    timeout_override: Optional[int] = None,
 ) -> VideoGenerateResult:
     """Dispatch by video family protocol (sora/veo/seedance/agnes/…) + transport modes."""
     from ..core.models import normalize_video_provider_type, resolve_video_model_provider_type
@@ -469,8 +533,9 @@ async def generate_video_openai_compatible(
     if not keys:
         return VideoGenerateResult(error="视频渠道缺少 api_key", attempts=[attempt_info])
 
-    timeout = max(60, int(target.timeout or 300))
+    timeout = max(1, int(timeout_override or target.timeout or 300))
     last_error = ""
+    key_attempts: List[Dict[str, Any]] = []
     b64_images = [_ref_to_data_url(ref) for ref in (request.images or [])[:3] if ref and ref.data]
 
     for key_index, api_key in enumerate(keys):
@@ -482,9 +547,13 @@ async def generate_video_openai_compatible(
             "Connection": "close",
         }
         key_attempt = dict(attempt_info)
+        key_attempt["attempt"] = key_index + 1
+        key_attempt["timeout_seconds"] = timeout
         if len(keys) > 1:
             key_attempt["key_index"] = key_index + 1
         video_source = ""
+        stage = "create"
+        key_started = time.monotonic()
         try:
             if protocol == "video_chat":
                 video_url = await _generate_via_chat(
@@ -535,18 +604,21 @@ async def generate_video_openai_compatible(
                 )
 
             video_source = str(video_url or "")
+            stage = "download"
             raw = await _download_video_bytes(session, video_url, timeout=timeout, proxy=str((target.extra or {}).get("download_proxy") or target.proxy or ""))
             os.makedirs(save_dir, exist_ok=True)
             path = os.path.join(save_dir, f"video_{int(time.time() * 1000)}.mp4")
             with open(path, "wb") as handle:
                 handle.write(raw)
             key_attempt["success"] = True
+            key_attempt["retryable"] = False
+            key_attempt["elapsed_seconds"] = round(time.monotonic() - key_started, 2)
             return VideoGenerateResult(
                 video_path=path,
                 video_url=video_url if str(video_url).startswith("http") else "",
                 video_source=video_source,
                 used_model=target.label,
-                attempts=[key_attempt],
+                attempts=[*key_attempts, key_attempt],
                 elapsed_seconds=round(time.monotonic() - started, 2),
             )
         except asyncio.TimeoutError:
@@ -554,40 +626,46 @@ async def generate_video_openai_compatible(
             last_error = "视频请求超时（未自动重提，以免重复扣费）"
             key_attempt["error"] = last_error
             key_attempt["error_category"] = "timeout"
+            key_attempt["retryable"] = False
+            key_attempt["stage"] = stage
+            key_attempt["elapsed_seconds"] = round(time.monotonic() - key_started, 2)
             return VideoGenerateResult(
                 error=last_error,
                 video_source=video_source,
-                attempts=[key_attempt],
+                attempts=[*key_attempts, key_attempt],
                 used_model=target.label,
                 elapsed_seconds=round(time.monotonic() - started, 2),
             )
         except Exception as exc:
             last_error = redact_sensitive_text(str(exc))
             class_info = classify_generation_error(last_error)
+            error_stage = str(getattr(exc, "stage", "") or stage)
             key_attempt["error"] = last_error
             key_attempt["error_category"] = class_info.get("category")
-            # Poll/create failures already spent wait time — still report elapsed
-            if class_info.get("category") in {"auth", "rate_limit"} and key_index + 1 < len(keys):
-                continue
-            if not class_info.get("retryable", True):
-                return VideoGenerateResult(
-                    error=last_error,
-                    video_source=video_source,
-                    attempts=[key_attempt],
-                    used_model=target.label,
-                    elapsed_seconds=round(time.monotonic() - started, 2),
-                )
-            if key_index + 1 < len(keys):
+            key_attempt["stage"] = error_stage
+            key_attempt["retryable"] = bool(class_info.get("retryable"))
+            key_attempt["elapsed_seconds"] = round(time.monotonic() - key_started, 2)
+            # Only an explicit create-stage auth/rate-limit response is safe to
+            # retry with another key.  A timeout/network/server response may
+            # have created a billable task already.
+            if error_stage == "create" and class_info.get("category") in {"auth", "rate_limit"} and key_index + 1 < len(keys):
+                key_attempts.append(key_attempt)
                 continue
             return VideoGenerateResult(
                 error=last_error,
                 video_source=video_source,
-                attempts=[key_attempt],
+                attempts=[*key_attempts, key_attempt],
                 used_model=target.label,
                 elapsed_seconds=round(time.monotonic() - started, 2),
             )
 
-    return VideoGenerateResult(error=last_error or "视频生成失败", video_source=video_source, used_model=target.label)
+    return VideoGenerateResult(
+        error=last_error or "视频生成失败",
+        video_source=video_source,
+        used_model=target.label,
+        attempts=key_attempts,
+        elapsed_seconds=round(time.monotonic() - started, 2),
+    )
 
 
 def _normalize_aspect_ratio(size: str) -> str:
@@ -739,20 +817,28 @@ async def _generate_via_async(
     endpoint = build_video_generations_endpoint(target.base_url)
     payload = _video_payload(target, request, b64_images, family=family)
     create_timeout = min(45, timeout)
-    async with session.post(
-        endpoint,
-        headers=headers,
-        json=payload,
-        timeout=aiohttp.ClientTimeout(total=create_timeout),
-        proxy=(target.proxy or None),
-    ) as response:
-        body_text = await response.text()
-        if response.status >= 400:
-            raise RuntimeError(redact_sensitive_text(f"HTTP {response.status}: {body_text[:800]}"))
-        try:
-            data = await response.json(content_type=None)
-        except Exception:
-            data = {"url": body_text.strip()} if str(body_text).strip().startswith("http") else {"raw": body_text}
+    try:
+        async with session.post(
+            endpoint,
+            headers=headers,
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=create_timeout),
+            proxy=(target.proxy or None),
+        ) as response:
+            body_text = await response.text()
+            if response.status >= 400:
+                raise VideoGenerationError(
+                    redact_sensitive_text(f"HTTP {response.status}: {body_text[:800]}"),
+                    stage="create",
+                )
+            try:
+                data = await response.json(content_type=None)
+            except Exception:
+                data = {"url": body_text.strip()} if str(body_text).strip().startswith("http") else {"raw": body_text}
+    except VideoGenerationError:
+        raise
+    except Exception as exc:
+        raise VideoGenerationError(redact_sensitive_text(str(exc)), stage="create") from exc
     if not isinstance(data, dict):
         data = {"data": data}
     video_url = _extract_video_url(data)
@@ -762,7 +848,12 @@ async def _generate_via_async(
     if not task_id:
         raise RuntimeError(f"未返回视频地址或任务号: {str(data)[:400]}")
     poll_url = _task_poll_url(endpoint, task_id, data)
-    return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout, proxy=target.proxy)
+    try:
+        return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout, proxy=target.proxy)
+    except VideoGenerationError:
+        raise
+    except Exception as exc:
+        raise VideoGenerationError(str(exc), stage="poll") from exc
 
 
 def _agnes_v20_payload(
@@ -967,6 +1058,34 @@ async def _generate_via_agnes(
     if not endpoint:
         raise RuntimeError("Agnes 视频渠道 base_url 无效")
     payload = _agnes_payload(target, request, b64_images, request.images)
+    media_fields = (
+        "image",
+        "first_frame",
+        "last_frame",
+        "images",
+        "audios",
+        "videos",
+    )
+    local_media = []
+    for field_name in media_fields:
+        value = payload.get(field_name)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if isinstance(item, dict):
+                item = item.get("url") or item.get("uri") or ""
+            if str(item or "").strip().lower().startswith("data:"):
+                local_media.append(field_name)
+    extra_media = payload.get("extra_body")
+    if isinstance(extra_media, dict):
+        nested = extra_media.get("image")
+        for item in (nested if isinstance(nested, list) else [nested]):
+            if str(item or "").strip().lower().startswith("data:"):
+                local_media.append("extra_body.image")
+    if local_media:
+        raise VideoGenerationError(
+            "Agnes 视频图生视频要求参考图片为可公开访问的 URL，当前参考图是本地数据，未提交任务",
+            stage="validate",
+        )
     auth = str(headers.get("Authorization") or "").strip()
     if not auth and target.api_key:
         auth = f"Bearer {target.api_key}"
@@ -1016,7 +1135,14 @@ async def _generate_via_agnes(
             data = {"data": data}
         return data
 
-    data = await asyncio.to_thread(_create)
+    try:
+        data = await asyncio.to_thread(_create)
+    except VideoGenerationError:
+        raise
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        raise VideoGenerationError(str(exc), stage="create") from exc
     video_url = _extract_video_url(data)
     if video_url:
         return video_url
@@ -1029,13 +1155,21 @@ async def _generate_via_agnes(
     poll_url = build_agnes_result_url(target.base_url, video_id, model=str(target.model or "agnes-video-v2.0"))
     legacy_id = task_id or video_id
     legacy = f"{endpoint.rstrip('/')}/{quote(legacy_id, safe='')}"
-    return await _poll_agnes_task_urllib(
-        poll_url=poll_url,
-        legacy_poll_url=legacy,
-        authorization=auth,
-        timeout_seconds=timeout,
-        proxy=socks_proxy or target.proxy,
-    )
+    try:
+        return await _poll_agnes_task_urllib(
+            poll_url=poll_url,
+            legacy_poll_url=legacy,
+            authorization=auth,
+            timeout_seconds=timeout,
+            proxy=socks_proxy or target.proxy,
+            model=str(target.model or ""),
+        )
+    except VideoGenerationError:
+        raise
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        raise VideoGenerationError(str(exc), stage="poll") from exc
 
 
 async def _poll_agnes_task_urllib(
@@ -1045,11 +1179,12 @@ async def _poll_agnes_task_urllib(
     authorization: str,
     timeout_seconds: int,
     proxy: str = "",
+    model: str = "",
 ) -> str:
-    max_retries = max(6, int(timeout_seconds) // 8)
     urls = [u for u in (poll_url, legacy_poll_url) if u]
     last_error = ""
     deadline = time.monotonic() + max(30, int(timeout_seconds or 300))
+    poll_interval = 2 if _agnes_video_family(model) != "v20" else 8
 
     def _get(url: str) -> Dict[str, Any]:
         if str(proxy or "").lower().startswith(("socks5://", "socks5h://")):
@@ -1092,15 +1227,25 @@ async def _poll_agnes_task_urllib(
             raise RuntimeError(f"Agnes 轮询返回异常: {str(data)[:200]}")
         return data
 
-    for attempt in range(max_retries):
-        if time.monotonic() > deadline:
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        if time.monotonic() >= deadline:
             break
-        await asyncio.sleep(8 if attempt else 3)
+        await asyncio.sleep(min(poll_interval if attempt else 1, max(0.0, deadline - time.monotonic())))
         for url in urls:
             try:
                 data = await asyncio.to_thread(_get, url)
             except RuntimeError as exc:
                 last_error = str(exc)
+                info = classify_generation_error(last_error)
+                # The legacy /v1/videos/{task_id} endpoint commonly returns
+                # 404 for a valid V2.5 video_id.  Let the primary /agnesapi
+                # result endpoint decide instead of aborting the poll.
+                if url != urls[0] and "HTTP 404" in last_error:
+                    continue
+                if not info.get("retryable", True):
+                    raise VideoGenerationError(last_error, stage="poll") from exc
                 continue
             except Exception as exc:
                 last_error = redact_sensitive_text(str(exc))
@@ -1110,16 +1255,22 @@ async def _poll_agnes_task_urllib(
                 got = _extract_video_url(data)
                 if got:
                     return got
-                raise RuntimeError(f"Agnes 任务完成但无 metadata.url: {str(data)[:300]}")
+                raise VideoGenerationError(f"Agnes 任务完成但无 metadata.url: {str(data)[:300]}", stage="poll")
             if status in {"FAIL", "FAILED", "FAILURE", "ERROR", "CANCELLED", "CANCELED"}:
                 err = data.get("error")
                 if isinstance(err, dict):
                     err = err.get("message") or str(err)
-                raise RuntimeError(str(err or data.get("message") or "Agnes 视频任务失败"))
+                raise VideoGenerationError(str(err or data.get("message") or "Agnes 视频任务失败"), stage="poll")
+            # A few compatible gateways omit ``status`` once metadata.url is
+            # ready. Accept the URL directly instead of waiting until timeout.
+            got = _extract_video_url(data)
+            if got and not status:
+                return got
             # queued / pending / in_progress — continue outer loop
             break
-    raise RuntimeError(
+    raise VideoGenerationError(
         f"Agnes 视频轮询超时（已等约 {timeout_seconds}s）" + (f"：{last_error}" if last_error else "")
+        , stage="poll"
     )
 
 
@@ -1130,14 +1281,25 @@ async def _poll_agnes_task(
     legacy_poll_url: str,
     headers: Dict[str, str],
     timeout_seconds: int,
+    model: str = "",
 ) -> str:
     """Deprecated aiohttp poll kept for compatibility; prefer urllib path."""
     auth = str(headers.get("Authorization") or "")
+    # Older callers only supplied the URL.  Recover model_name when present so
+    # Agnes 2.5 still gets its shorter polling interval without breaking them.
+    if not model:
+        try:
+            from urllib.parse import parse_qs
+
+            model = str(parse_qs(urlparse(poll_url).query).get("model_name", [""])[0] or "")
+        except Exception:
+            model = ""
     return await _poll_agnes_task_urllib(
         poll_url=poll_url,
         legacy_poll_url=legacy_poll_url,
         authorization=auth,
         timeout_seconds=timeout_seconds,
+        model=model,
     )
 
 
@@ -1154,20 +1316,28 @@ async def _generate_via_sync(
     """Long POST /videos/generations waiting for final URL (no re-POST on timeout)."""
     endpoint = build_video_generations_endpoint(target.base_url)
     payload = _video_payload(target, request, b64_images, family=family)
-    async with session.post(
-        endpoint,
-        headers=headers,
-        json=payload,
-        timeout=aiohttp.ClientTimeout(total=timeout),
-        proxy=(target.proxy or None),
-    ) as response:
-        body_text = await response.text()
-        if response.status >= 400:
-            raise RuntimeError(redact_sensitive_text(f"HTTP {response.status}: {body_text[:800]}"))
-        try:
-            data = await response.json(content_type=None)
-        except Exception:
-            data = {"url": body_text.strip()} if str(body_text).strip().startswith("http") else {"raw": body_text}
+    try:
+        async with session.post(
+            endpoint,
+            headers=headers,
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+            proxy=(target.proxy or None),
+        ) as response:
+            body_text = await response.text()
+            if response.status >= 400:
+                raise VideoGenerationError(
+                    redact_sensitive_text(f"HTTP {response.status}: {body_text[:800]}"),
+                    stage="create",
+                )
+            try:
+                data = await response.json(content_type=None)
+            except Exception:
+                data = {"url": body_text.strip()} if str(body_text).strip().startswith("http") else {"raw": body_text}
+    except VideoGenerationError:
+        raise
+    except Exception as exc:
+        raise VideoGenerationError(redact_sensitive_text(str(exc)), stage="create") from exc
     if not isinstance(data, dict):
         data = {"data": data}
     video_url = _extract_video_url(data)
@@ -1176,7 +1346,12 @@ async def _generate_via_sync(
     task_id = _extract_task_id(data)
     if task_id:
         poll_url = _task_poll_url(endpoint, task_id, data)
-        return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout, proxy=target.proxy)
+        try:
+            return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout, proxy=target.proxy)
+        except VideoGenerationError:
+            raise
+        except Exception as exc:
+            raise VideoGenerationError(str(exc), stage="poll") from exc
     raise RuntimeError(f"同步接口未返回视频地址: {str(data)[:400]}")
 
 
@@ -1264,29 +1439,64 @@ async def generate_video_with_fallback(
     session: aiohttp.ClientSession,
     *,
     save_dir: str,
+    global_timeout: Optional[int] = None,
 ) -> VideoGenerateResult:
     if not targets:
         return VideoGenerateResult(error="当前没有可用的视频模型，请先在配置里启用视频渠道")
     attempts: List[Dict[str, Any]] = []
     last_error = ""
     last_source = ""
+    chain_timeout = max(
+        10,
+        int(global_timeout or max((int(getattr(target, "timeout", 0) or 0) for target in targets), default=300)),
+    )
+    deadline = time.monotonic() + chain_timeout
     for target in targets:
-        async with channel_client_session(target.proxy, session) as target_session:
-            result = await generate_video_openai_compatible(
-                target_session_proxy(target),
-                request,
-                target_session,
-                save_dir=save_dir,
-            )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        active_target = copy.copy(target)
+        active_target.timeout = max(1, int(remaining))
+        async with channel_client_session(active_target.proxy, session) as target_session:
+            try:
+                result = await asyncio.wait_for(
+                    generate_video_openai_compatible(
+                        target_session_proxy(active_target),
+                        request,
+                        target_session,
+                        save_dir=save_dir,
+                    ),
+                    timeout=max(1, remaining),
+                )
+            except asyncio.TimeoutError:
+                result = VideoGenerateResult(
+                    error=f"视频生成全局超时（{chain_timeout}s）",
+                    attempts=[
+                        {
+                            "attempt": len(attempts) + 1,
+                            "channel": target.channel_name,
+                            "model": target.model,
+                            "provider": target.provider_type,
+                            "success": False,
+                            "error": f"视频生成全局超时（{chain_timeout}s）",
+                            "error_category": "timeout",
+                            "retryable": False,
+                            "timeout_seconds": int(max(1, remaining)),
+                            "elapsed_seconds": round(max(0.0, chain_timeout - max(0.0, deadline - time.monotonic())), 2),
+                        }
+                    ],
+                )
         attempts.extend(result.attempts or [])
         if result.video_path and not result.error:
             result.attempts = attempts
             return result
         last_error = result.error or last_error
         last_source = result.video_source or last_source
-        # stop on non-retryable
+        # Stop on errors that cannot be fixed by changing the channel.  A
+        # timeout also ends the whole chain so a billable task is never
+        # duplicated on another provider.
         if result.attempts:
             cat = str((result.attempts[-1] or {}).get("error_category") or "")
-            if cat in {"auth", "unsafe", "not_found"} and len(targets) == 1:
+            if cat in {"auth", "safety", "param", "not_found", "fatal", "timeout"}:
                 break
     return VideoGenerateResult(error=last_error or "视频生成失败", video_source=last_source, attempts=attempts)

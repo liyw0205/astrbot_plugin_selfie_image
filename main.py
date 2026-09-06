@@ -1140,7 +1140,12 @@ class SelfieImagePlugin(
     ) -> Dict[str, Any]:
         # Enabled channels remain eligible after transient failures. Operators
         # decide whether to disable or remove an unavailable channel.
-        selected_targets = targets or self._resolve_generation_targets(event)
+        # ``targets=[]`` is an intentional explicit selection (for example a
+        # disabled channel test); do not silently replace it with all configured
+        # channels via truthiness.
+        selected_targets = (
+            self._resolve_generation_targets(event) if targets is None else list(targets)
+        )
         request_prompt = str(prompt or "")
         plain_request_prompt = request_prompt
         original_prompt = str(original_prompt or request_prompt)
@@ -1623,9 +1628,19 @@ class SelfieImagePlugin(
         return find_model_target(targets, channel_name, model)
 
     def _find_video_target(self, channel_name: str = "", model: str = "") -> Optional[ImageModelTarget]:
-        return find_model_target(
-            self.config.get_prioritized_video_targets(), channel_name, model
-        )
+        if channel_name or model:
+            # Web test selections are explicit and must not be rejected merely
+            # because the model is absent from the fallback priority list.
+            targets: List[ImageModelTarget] = []
+            for channel in self.config.video_channels:
+                targets.extend(
+                    channel.targets(
+                        self.config.video_global_timeout,
+                        request_timeout=self.config.video_global_timeout,
+                    )
+                )
+            return find_model_target(targets, channel_name, model)
+        return find_model_target(self.config.get_prioritized_video_targets())
 
     def _available_model_labels(self) -> List[str]:
         return available_model_labels(self.config.get_prioritized_targets())
@@ -1921,6 +1936,7 @@ class SelfieImagePlugin(
             )
         except (TypeError, ValueError):
             requested_duration = 5
+        request_image_paths = self._save_reference_images_to_cache(refs)
 
         def failure(
             error: str,
@@ -1945,6 +1961,7 @@ class SelfieImagePlugin(
                 request_prompt=request_prompt or str(prompt or "").strip(),
                 request_data=request_data,
                 response_data=response_data,
+                request_image_paths=request_image_paths,
                 elapsed_seconds=time.monotonic() - started,
             )
 
@@ -1988,6 +2005,15 @@ class SelfieImagePlugin(
                 },
             )
         targets = valid_targets
+        # Agnes Video 2.5 documents a strict 4-12 second string range.  Clamp
+        # before building the request so the record and user-facing progress
+        # text match the value actually submitted.
+        if targets and all(
+            "agnes-video-2.5" in str(target.model or "").lower()
+            or "agnes-video-25" in str(target.model or "").lower()
+            for target in targets
+        ):
+            requested_duration = max(4, min(12, requested_duration))
 
         video_prompt = str(prompt or "").strip()
         prompt_en_meta = {}
@@ -2015,7 +2041,9 @@ class SelfieImagePlugin(
             return failure("请写一下想生成的视频内容", stage="validate", request_prompt="")
 
         request_data = {
+            "requested_duration": requested_duration,
             "duration": req.duration,
+            "timeout_seconds": int(getattr(self.config, "video_global_timeout", 300) or 300),
             "size": req.size,
             "reference_images": len(refs),
             "targets": [redact_sensitive_text(target.label) for target in targets],
@@ -2031,6 +2059,7 @@ class SelfieImagePlugin(
                         req,
                         session,
                         save_dir=self.video_dir,
+                        global_timeout=self.config.video_global_timeout,
                     )
         except asyncio.CancelledError:
             raise
@@ -2057,6 +2086,11 @@ class SelfieImagePlugin(
                 },
             )
         video_rel = self._cache_relative_path(result.video_path)
+        cache_cleanup = self._cleanup_image_cache_if_needed(
+            [*request_image_paths, video_rel]
+        )
+        if cache_cleanup.get("deleted"):
+            request_data["cache_cleanup"] = cache_cleanup
         self._record_task(
             {
                 **self._source_context(event, source),
@@ -2075,7 +2109,7 @@ class SelfieImagePlugin(
                     "video_url": result.video_url,
                     "video_source": result.video_source,
                 },
-                "request_image_paths": [],
+                "request_image_paths": request_image_paths,
                 "generated_image_paths": [],
                 "generated_video_paths": [video_rel],
             }
@@ -2088,6 +2122,7 @@ class SelfieImagePlugin(
             "used_model": result.used_model,
             "attempts": result.attempts,
             "elapsed_seconds": result.elapsed_seconds,
+            "request_image_paths": request_image_paths,
             "files": [result.video_path],
         }
 
@@ -2106,6 +2141,7 @@ class SelfieImagePlugin(
         request_prompt: str = "",
         request_data: Optional[Dict[str, Any]] = None,
         response_data: Optional[Dict[str, Any]] = None,
+        request_image_paths: Optional[List[str]] = None,
         elapsed_seconds: float = 0.0,
     ) -> Dict[str, Any]:
         safe_error = redact_sensitive_text(str(error or "视频没有生成出来"))
@@ -2144,7 +2180,7 @@ class SelfieImagePlugin(
                 "request_data": request_info,
                 "response_data": response_info,
                 "attempts": attempt_rows,
-                "request_image_paths": [],
+                "request_image_paths": list(request_image_paths or []),
                 "generated_image_paths": [],
                 "generated_video_paths": [],
             }
@@ -2157,6 +2193,7 @@ class SelfieImagePlugin(
             "elapsed_seconds": elapsed,
             "request_data": request_info,
             "response_data": response_info,
+            "request_image_paths": list(request_image_paths or []),
         }
 
     async def _background_video_job(
@@ -2340,6 +2377,7 @@ class SelfieImagePlugin(
                 yield event.plain_result("形象视频需要先使用 /形象设置 上传当前形象图。")
                 return
             refs = [persona_ref]
+
         elif mode == "auto":
             if event_refs:
                 refs = event_refs
@@ -3234,6 +3272,8 @@ class SelfieImagePlugin(
                 raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
             refs = [persona_ref]
 
+        request_image_paths = self._save_reference_images_to_cache(refs)
+
         started = time.monotonic()
         req = VideoGenerateRequest(
             prompt=prompt,
@@ -3243,8 +3283,18 @@ class SelfieImagePlugin(
         )
         async with self._video_semaphore:
             async with aiohttp.ClientSession(trust_env=False) as session:
-                result = await generate_video_with_fallback([target], req, session, save_dir=self.video_dir)
+                result = await generate_video_with_fallback(
+                    [target],
+                    req,
+                    session,
+                    save_dir=self.video_dir,
+                    global_timeout=self.config.video_global_timeout,
+                )
         elapsed = round(float(result.elapsed_seconds or (time.monotonic() - started)), 2)
+        generated_video_rel = self._cache_relative_path(result.video_path) if result.video_path else ""
+        cache_cleanup = self._cleanup_image_cache_if_needed(
+            [*request_image_paths, generated_video_rel]
+        )
         record = {
             **self._source_context(None, "web-video-test"),
             "media_type": "video",
@@ -3256,15 +3306,20 @@ class SelfieImagePlugin(
             "used_model": result.used_model or target.label,
             "elapsed_seconds": elapsed,
             "reference_images": len(refs),
-            "request_data": self._summarize_web_test_payload(payload),
+            "request_data": {
+                **self._summarize_web_test_payload(payload),
+                "requested_duration": duration,
+                "timeout_seconds": int(self.config.video_global_timeout or 300),
+                "cache_cleanup": cache_cleanup,
+            },
             "response_data": {
                 "attempts": result.attempts,
                 "video_url": result.video_url,
                 "video_source": result.video_source,
             },
-            "request_image_paths": [],
+            "request_image_paths": request_image_paths,
             "generated_image_paths": [],
-            "generated_video_paths": [self._cache_relative_path(result.video_path)] if result.video_path else [],
+            "generated_video_paths": [generated_video_rel] if generated_video_rel else [],
         }
         self._record_task(record)
         if result.error or not result.video_path:
@@ -3273,6 +3328,7 @@ class SelfieImagePlugin(
                 "error": result.error or "视频没有生成出来",
                 "used_model": result.used_model or target.label,
                 "elapsed_seconds": elapsed,
+                "request_image_paths": request_image_paths,
                 "attempts": result.attempts,
                 "generated_video_paths": [],
             }
@@ -3281,6 +3337,7 @@ class SelfieImagePlugin(
             "used_model": result.used_model or target.label,
             "elapsed_seconds": elapsed,
             "reference_images": len(refs),
+            "request_image_paths": request_image_paths,
             "video_url": result.video_url,
             "video_source": result.video_source,
             "generated_video_paths": [self._cache_relative_path(result.video_path)],
@@ -3294,18 +3351,6 @@ class SelfieImagePlugin(
         api_key = str(channel_payload.get("api_key") or channel_payload.get("apiKey") or "").strip()
         provider_type = provider_type_from_channel_payload(channel_payload)
         proxy = str(channel_payload.get("proxy") or "").strip()
-        # Agnes image channels historically use the native default model because
-        # some Agnes deployments do not expose a model-list endpoint. Video
-        # channels use the same gateway/key but must query its real model list.
-        media_type = str(
-            channel_payload.get("media_type")
-            or channel_payload.get("mediaType")
-            or raw_payload.get("media_type")
-            or raw_payload.get("mediaType")
-            or ""
-        ).strip().lower()
-        if provider_type == "agnes" and media_type != "video":
-            return ["agnes-image-2.1-flash"]
         candidates = build_model_list_urls(base_url, provider_type)
         if not candidates:
             raise RuntimeError("base_url 为空")

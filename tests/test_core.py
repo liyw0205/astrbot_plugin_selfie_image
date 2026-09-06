@@ -346,7 +346,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.13")
+        self.assertEqual(PLUGIN_VERSION, "1.4.14")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3251,8 +3251,25 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(payload["size"], "1024x682")
+        self.assertEqual(payload["size"], "1K")
+        self.assertEqual(payload["ratio"], "3:2")
         self.assertEqual(payload["extra_body"]["image"], ["https://example.test/ref.png"])
+        self.assertEqual(payload["extra_body"]["response_format"], "b64_json")
+
+    def test_agnes_v20_payload_uses_exact_size_and_url_response(self) -> None:
+        target = make_target("agnes", "agnes-image-2.0-flash")
+        adapter = AgnesImageAdapter(target, FakeSession())
+
+        payload = adapter.build_payload(
+            ImageGenerateRequest(
+                prompt="portrait",
+                aspect_ratio="3:2",
+                images=[ImageReference(data=PNG_BYTES, source_url="https://example.test/ref.png")],
+            )
+        )
+
+        self.assertEqual(payload["size"], "1024x682")
+        self.assertNotIn("ratio", payload)
         self.assertEqual(payload["extra_body"]["response_format"], "url")
 
     def test_novelai_size_and_official_payload(self) -> None:
@@ -3334,8 +3351,9 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.images, [PNG_BYTES])
         payload = session.requests[0]["json"]
         self.assertEqual(session.requests[0]["url"], "https://example.test/v1/images/generations")
-        self.assertEqual(payload["size"], "576x1024")
-        self.assertEqual(payload["extra_body"]["response_format"], "url")
+        self.assertEqual(payload["size"], "1K")
+        self.assertEqual(payload["ratio"], "9:16")
+        self.assertEqual(payload["extra_body"]["response_format"], "b64_json")
         self.assertTrue(payload["extra_body"]["image"][0].startswith("data:image/png;base64,"))
 
     async def test_agnes_http_error_uses_error_message_preview(self) -> None:
@@ -5863,6 +5881,30 @@ class VideoV1Tests(unittest.TestCase):
             [target.label for target in cfg.get_prioritized_video_targets()],
             ["小水管/agnes-video-2.5-flash"],
         )
+
+    def test_video_priority_bare_model_resolves_to_one_target(self) -> None:
+        cfg = AICatConfig.from_dict(
+            {
+                "video_channels": [
+                    {
+                        "name": "first",
+                        "base_url": "https://first.example",
+                        "api_key": "key-a",
+                        "enabled_models": ["agnes-video-2.5"],
+                    },
+                    {
+                        "name": "second",
+                        "base_url": "https://second.example",
+                        "api_key": "key-b",
+                        "enabled_models": ["agnes-video-2.5"],
+                    },
+                ],
+                "enabled_video_model_priority": ["agnes-video-2.5"],
+            }
+        )
+
+        targets = cfg.get_prioritized_video_targets()
+        self.assertEqual([target.label for target in targets], ["first/agnes-video-2.5"])
 
     def test_dashboard_separates_priorities_and_has_video_test(self) -> None:
         from astrbot_plugin_selfie_image.webui.web import INDEX_HTML

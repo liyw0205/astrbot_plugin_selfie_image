@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -277,6 +278,28 @@ def map_aspect_ratio_to_agnes_size(aspect: str) -> str:
     if aspect == "21:9":
         return "1024x439"
     return "1024x1024"
+
+
+def _agnes_image_family(model: str) -> str:
+    """Select the image request schema from the Agnes model id.
+
+    Agnes Image 2.0 accepts exact pixel sizes, while 2.1/2.5 use resolution
+    tiers and an optional ``ratio`` field.  Model ids are intentionally the
+    source of truth because one channel may expose multiple Agnes versions.
+    """
+    normalized = str(model or "").strip().lower().replace("_", "-")
+    if re.search(r"agnes-image-(?:v?2\.0|20)(?:-|$)", normalized):
+        return "v20"
+    return "v21"
+
+
+def _agnes_image_resolution(value: str) -> str:
+    text = str(value or "").strip().upper()
+    if text in {"1K", "2K", "3K", "4K"}:
+        return text
+    # Agnes Image 2.1/2.5 accept resolution tiers rather than exact pixels.
+    # Legacy pixel-size values therefore fall back to the smallest tier.
+    return "1K"
 
 
 def is_gpt_image_model(model: str) -> bool:
@@ -655,15 +678,25 @@ class AgnesImageAdapter(BaseImageAdapter):
         return bytes_to_data_url(image.data, image.mime_type)
 
     def build_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
+        model = self.target.model or self.default_model
+        family = _agnes_image_family(model)
         payload: Dict[str, Any] = {
-            "model": self.target.model or self.default_model,
+            "model": model,
             "prompt": req.prompt,
-            "size": map_aspect_ratio_to_agnes_size(req.aspect_ratio),
+            "size": (
+                map_aspect_ratio_to_agnes_size(req.aspect_ratio)
+                if family == "v20"
+                else _agnes_image_resolution(req.resolution)
+            ),
         }
+        if family != "v20" and req.aspect_ratio and req.aspect_ratio not in {"自动", ""}:
+            payload["ratio"] = str(req.aspect_ratio).strip()
         extra_body: Dict[str, Any] = {}
         if req.images:
             extra_body["image"] = [self._reference_image_value(image) for image in req.images if image.data]
-            extra_body["response_format"] = "url"
+            # Agnes 2.1/2.5 documents b64_json for image-to-image; 2.0 keeps
+            # the URL response used by older deployments.
+            extra_body["response_format"] = "b64_json" if family != "v20" else "url"
         if extra_body:
             payload["extra_body"] = extra_body
         return payload
