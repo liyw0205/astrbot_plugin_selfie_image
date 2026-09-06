@@ -5838,6 +5838,32 @@ class VideoV1Tests(unittest.TestCase):
         self.assertNotEqual(cfg.enabled_image_model_priority, cfg.enabled_audit_model_priority)
         self.assertNotEqual(cfg.enabled_image_model_priority, cfg.enabled_video_model_priority)
 
+    def test_video_priority_excludes_enabled_targets_not_in_priority(self) -> None:
+        cfg = AICatConfig.from_dict(
+            {
+                "video_channels": [
+                    {
+                        "name": "agnes",
+                        "base_url": "https://agnes.example",
+                        "api_key": "key-a",
+                        "enabled_models": ["agnes-video-2.5-flash"],
+                    },
+                    {
+                        "name": "小水管",
+                        "base_url": "https://pipe.example",
+                        "api_key": "key-b",
+                        "enabled_models": ["agnes-video-2.5-flash"],
+                    },
+                ],
+                "enabled_video_model_priority": ["小水管/agnes-video-2.5-flash"],
+            }
+        )
+
+        self.assertEqual(
+            [target.label for target in cfg.get_prioritized_video_targets()],
+            ["小水管/agnes-video-2.5-flash"],
+        )
+
     def test_dashboard_separates_priorities_and_has_video_test(self) -> None:
         from astrbot_plugin_selfie_image.webui.web import INDEX_HTML
 

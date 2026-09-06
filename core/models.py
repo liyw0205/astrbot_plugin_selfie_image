@@ -571,7 +571,17 @@ class AICatConfig:
         for channel in self.video_channels:
             video_timeout = self.video_global_timeout or self.image_global_timeout
             targets.extend(channel.targets(video_timeout, request_timeout=video_timeout))
-        return self._bind_download_proxies(self._prioritize_targets(targets, self.enabled_video_model_priority))
+        priority = self.enabled_video_model_priority
+        selected = self._prioritize_targets(targets, priority)
+        if priority:
+            allowed = set(priority)
+            selected = [
+                target for target in selected
+                if target.label in allowed
+                or f"{target.channel_name}:{target.model}" in allowed
+                or target.model in allowed
+            ]
+        return self._bind_download_proxies(selected)
 
 
 def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
