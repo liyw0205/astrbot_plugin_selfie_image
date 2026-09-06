@@ -7983,14 +7983,15 @@ class StudioStoreTests(unittest.TestCase):
         )
         for document in (page, INDEX_HTML):
             for marker in (
-                "openMediaSourcePopup",
-                "renderMediaSourcePopup",
+                "openMediaSourceModal",
+                "renderMediaSourceModal",
                 "mediaSourceBrowserValue",
                 "Base64（点击打开）",
-                "window.open('', '_blank')",
+                'id="mediaSourceModal"',
+                'id="mediaSourcePreview"',
             ):
                 self.assertIn(marker, document)
-            self.assertNotIn('id="mediaSourceModal"', document)
+            self.assertNotIn("window.open('', '_blank')", document)
 
     def test_phone_cover_face_cos_reuses_existing_hand(self) -> None:
         import tempfile

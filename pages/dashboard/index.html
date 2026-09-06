@@ -177,12 +177,17 @@
     .pill.gray { background: #f1f3f5; color: #57606a; border-color: transparent; }
     .modal-mask { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(27,28,29,.42); padding: 14px; z-index: 50; }
     .modal-mask.show { display: flex; }
+    #mediaSourceModal { z-index: 70; }
     .modal {
       width: min(900px, 100%); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden;
       background: #fff; border-radius: var(--radius-lg); border: 1px solid var(--line); padding: 16px; box-shadow: 0 18px 60px rgba(27,28,29,.16);
     }
     .modal-body { overflow: auto; padding-right: 4px; }
     .modal-footer { position: sticky; bottom: 0; margin-top: 14px; padding-top: 12px; background: linear-gradient(180deg, rgba(255,255,255,0), #fff 24px); }
+    .media-source-modal-dialog { width: min(960px, 100%); max-height: 92vh; background: #111; color: #fff; }
+    .media-source-modal-dialog .modal-footer { background: linear-gradient(180deg, rgba(17,17,17,0), #111 24px); }
+    .media-source-preview { min-height: 220px; max-height: calc(92vh - 120px); overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px; padding: 4px; }
+    .media-source-preview img, .media-source-preview video { display: block; max-width: 100%; max-height: calc(92vh - 150px); object-fit: contain; background: #000; }
     .toast-wrap { position: fixed; right: 16px; top: 16px; z-index: 100; display: grid; gap: 8px; pointer-events: none; }
     .toast { min-width: 220px; max-width: min(360px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 12px; background: rgba(27,28,29,.94); color: #fff; box-shadow: 0 14px 32px rgba(0,0,0,.16); }
     .toast.ok { background: rgba(0,200,83,.94); }
@@ -1154,6 +1159,16 @@
         <button class="secondary" type="button" onclick="closeRecordDetail()">关闭</button>
       </div>
       <div class="modal-body"><div id="recordDetailBody"></div></div>
+    </div>
+  </div>
+
+  <div id="mediaSourceModal" class="modal-mask">
+    <div class="modal media-source-modal-dialog">
+      <div class="between">
+        <h2 id="mediaSourceModalTitle">原始来源</h2>
+        <button class="secondary" type="button" onclick="closeMediaSourceModal()">关闭</button>
+      </div>
+      <div id="mediaSourcePreview" class="media-source-preview"></div>
     </div>
   </div>
 
@@ -3643,13 +3658,26 @@ Source prompt:
       document.body.removeChild(area);
       if (!ok) throw new Error('复制失败');
     }
-    function openMediaSourcePopup() {
-      const popup = window.open('', '_blank');
-      if (!popup) {
-        showToast('浏览器阻止了新窗口，请允许弹窗后重试', 'bad');
-        return null;
-      }
-      return popup;
+    function openMediaSourceModal(label = '原始来源') {
+      const modal = $('mediaSourceModal');
+      const title = $('mediaSourceModalTitle');
+      const preview = $('mediaSourcePreview');
+      if (!modal || !preview) return false;
+      if (title) title.textContent = label || '原始来源';
+      preview.replaceChildren();
+      const loading = document.createElement('div');
+      loading.className = 'muted';
+      loading.style.color = '#fff';
+      loading.textContent = '正在加载原始来源…';
+      preview.appendChild(loading);
+      modal.classList.add('show');
+      return true;
+    }
+    function closeMediaSourceModal() {
+      const modal = $('mediaSourceModal');
+      const preview = $('mediaSourcePreview');
+      if (preview) preview.replaceChildren();
+      if (modal) modal.classList.remove('show');
     }
     function mediaSourceMime(source, kind = 'image') {
       const value = String(source?.value || '').trim();
@@ -3675,22 +3703,20 @@ Source prompt:
       const padded = payload + '='.repeat((4 - payload.length % 4) % 4);
       return `data:${mediaSourceMime(source, kind)};base64,${padded}`;
     }
-    function renderMediaSourcePopup(popup, sources, label = '原始来源', kind = 'image') {
-      if (!popup || popup.closed) return;
-      const doc = popup.document;
-      doc.open();
-      doc.close();
-      doc.title = label || '原始来源';
-      doc.body.style.cssText = 'margin:0;min-height:100vh;padding:12px;box-sizing:border-box;background:#111;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:12px;';
+    function renderMediaSourceModal(sources, label = '原始来源', kind = 'image') {
+      const preview = $('mediaSourcePreview');
+      if (!preview) return;
+      const title = $('mediaSourceModalTitle');
+      if (title) title.textContent = label || '原始来源';
+      preview.replaceChildren();
       const list = Array.isArray(sources) ? sources : [sources];
       list.forEach(source => {
         const value = mediaSourceBrowserValue(source, source?.mediaKind || kind);
         if (!value) return;
         const mime = mediaSourceMime(source, source?.mediaKind || kind);
         const isVideo = mime.startsWith('video/') || source?.mediaKind === 'video';
-        const media = doc.createElement(isVideo ? 'video' : 'img');
+        const media = document.createElement(isVideo ? 'video' : 'img');
         media.src = value;
-        media.style.cssText = 'display:block;max-width:100%;max-height:calc(100vh - 24px);object-fit:contain;background:#000;';
         if (isVideo) {
           media.controls = true;
           media.autoplay = false;
@@ -3699,8 +3725,14 @@ Source prompt:
           media.alt = label || '原始图片';
           media.decoding = 'async';
         }
-        doc.body.appendChild(media);
+        preview.appendChild(media);
       });
+      if (!preview.children.length) {
+        const empty = document.createElement('div');
+        empty.className = 'status';
+        empty.textContent = '没有可渲染的原始来源';
+        preview.appendChild(empty);
+      }
     }
     async function loadRecordMediaSources() {
       const id = String(CURRENT_RECORD?.id || '').trim();
@@ -3763,29 +3795,27 @@ Source prompt:
       return resolved;
     }
     async function copyMediaSource(source, kind = 'image') {
-      const popup = openMediaSourcePopup();
-      if (!popup) return;
+      if (!openMediaSourceModal('原始来源')) return;
       const resolved = await resolveMediaSourceForDisplay(source);
       if (!resolved) {
-        if (!popup.closed) popup.close();
+        closeMediaSourceModal();
         return;
       }
       if (resolved.type === 'local') {
-        if (!popup.closed) popup.close();
+        closeMediaSourceModal();
         showToast('当前只有本地缓存，没有可打开的原始来源', 'bad');
         return;
       }
       try {
         resolved.mediaKind = resolved.mediaKind || kind;
-        renderMediaSourcePopup(popup, [resolved], `原始来源（${mediaSourceLabel(resolved)}）`, kind);
+        renderMediaSourceModal([resolved], `原始来源（${mediaSourceLabel(resolved)}）`, kind);
       } catch (e) {
-        if (!popup.closed) popup.close();
+        closeMediaSourceModal();
         showToast(e.message || '原始来源读取失败', 'bad');
       }
     }
     async function copyMediaSources(sources, kind = 'image') {
-      const popup = openMediaSourcePopup();
-      if (!popup) return;
+      if (!openMediaSourceModal('原始来源')) return;
       const list = normalizeMediaSources(sources);
       let resolvedList = list;
       if (list.some(item => item.deferred || !item.value || item.value.startsWith('[Base64'))) {
@@ -3804,23 +3834,23 @@ Source prompt:
         }
       }
       if (!resolvedList.length) {
-        if (!popup.closed) popup.close();
+        closeMediaSourceModal();
         showToast('没有原始链接或 base64', 'bad');
         return;
       }
       resolvedList = resolvedList.filter(item => item && item.value && !item.value.startsWith('[Base64'));
       resolvedList = resolvedList.filter(item => item.type !== 'local');
       if (!resolvedList.length) {
-        if (!popup.closed) popup.close();
+        closeMediaSourceModal();
         showToast('没有原始链接或 base64', 'bad');
         return;
       }
       try {
         const label = resolvedList.length > 1 ? `原始来源（${resolvedList.length}项）` : `原始来源（${mediaSourceLabel(resolvedList[0])}）`;
         resolvedList.forEach(item => { item.mediaKind = item.mediaKind || kind; });
-        renderMediaSourcePopup(popup, resolvedList, label, kind);
+        renderMediaSourceModal(resolvedList, label, kind);
       } catch (e) {
-        if (!popup.closed) popup.close();
+        closeMediaSourceModal();
         showToast(e.message || '原始来源读取失败', 'bad');
       }
     }
@@ -3859,6 +3889,7 @@ Source prompt:
       return imageThumbs(imagePaths, '生成图', sources);
     }
     async function openRecordDetail(id) {
+      closeMediaSourceModal();
       let r = RECORDS.find(item => String(item.id || '') === String(id || ''));
       try {
         const res = await api('/api/records/' + encodeURIComponent(String(id || '')));
@@ -3896,6 +3927,7 @@ Source prompt:
       loadProtectedVideos($('recordDetailBody'));
     }
     function closeRecordDetail() {
+      closeMediaSourceModal();
       $('recordModal').classList.remove('show');
       CURRENT_RECORD = null;
     }
