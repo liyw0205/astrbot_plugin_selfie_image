@@ -3741,6 +3741,23 @@ class WebApiTests(unittest.TestCase):
         server.port = 14514
         return server._create_app().test_client()
 
+    def test_stopping_web_server_releases_port_for_immediate_reload(self) -> None:
+        plugin = FakeWebPlugin("")
+        self.addCleanup(plugin.close)
+
+        first = FlaskWebServer(plugin)
+        first.start("127.0.0.1", 0)
+        self.assertIsNotNone(first.thread)
+        port = first.thread.server.server_port
+        time.sleep(0.05)
+        first.stop()
+
+        second = FlaskWebServer(plugin)
+        try:
+            second.start("127.0.0.1", port)
+        finally:
+            second.stop()
+
     def test_api_requires_token_when_configured(self) -> None:
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
         self.assertEqual(client.get("/api/health").status_code, 401)

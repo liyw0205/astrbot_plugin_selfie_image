@@ -4268,7 +4268,13 @@ class _ServerThread(threading.Thread):
         self.server.serve_forever()
 
     def shutdown(self) -> None:
-        self.server.shutdown()
+        try:
+            self.server.shutdown()
+        finally:
+            # ``shutdown`` stops serve_forever but does not release the
+            # listening socket. Close it so an immediate plugin reload can
+            # bind the same port again.
+            self.server.server_close()
 
 
 class FlaskWebServer:
@@ -4291,9 +4297,11 @@ class FlaskWebServer:
         self.thread.start()
 
     def stop(self) -> None:
-        if not self.thread:
+        thread = self.thread
+        if not thread:
             return
-        self.thread.shutdown()
+        thread.shutdown()
+        thread.join(timeout=5)
         self.thread = None
 
     def _run_async(self, coro: Any, timeout: Optional[float] = None) -> Any:
