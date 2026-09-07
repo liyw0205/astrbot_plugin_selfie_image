@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 
-from ..core.error_classify import classify_generation_error, format_timeout_user_message
+from ..core.error_classify import classify_generation_error, format_timeout_user_message, retry_action, retry_after_seconds
 from ..core.models import ImageModelTarget
 from ..core.proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, image_client_timeout, target_session_proxy
 from ..core.providers import ImageGenerateRequest, ImageGenerateResult, create_adapter
@@ -22,6 +22,7 @@ from ..core.utils import redact_channel_attempts, redact_sensitive_text
 SUCCESS = "success"
 NEXT_KEY = "next_key"
 NEXT_MODEL = "next_model"
+STOP = "stop"
 
 
 def _target_attempt_base(target: ImageModelTarget, attempt: int, key_index: int = 0, *, multi_key: bool = False) -> Dict[str, Any]:
@@ -192,8 +193,11 @@ async def generate_image_with_fallback(
             if decision == SUCCESS:
                 attempt_info["success"] = True
                 attempt_info["image_count"] = len(result.images)
+                attempt_info["retry_count"] = sum(1 for item in attempts if not item.get("success"))
+                attempt_info["retry_action"] = STOP
                 attempts.append(attempt_info)
                 result.used_model = label
+                result.retry_count = sum(1 for item in attempts if not item.get("success"))
                 result.attempts = redact_channel_attempts([*attempts, *getattr(result, "attempts", [])])
                 return result
 
@@ -207,9 +211,32 @@ async def generate_image_with_fallback(
             attempt_info["error_category"] = class_info.get("category")
             attempt_info["retryable"] = bool(class_info.get("retryable"))
             attempt_info["image_count"] = len(result.images or [])
+            attempt_info["retry_count"] = sum(1 for item in attempts if not item.get("success"))
+            next_key_available = decision == NEXT_KEY and key_index + 1 < len(api_keys)
+            next_target_available = index < limit
+            action = retry_action(
+                safe_error,
+                has_next_key=next_key_available,
+                has_next_target=next_target_available,
+            )
+            # Keep existing key/model rotation behavior while exposing the
+            # policy decision to records and monitoring consumers.
+            if decision == NEXT_KEY and next_key_available:
+                action = NEXT_KEY
+            elif decision == NEXT_MODEL and next_target_available:
+                action = NEXT_MODEL
+            else:
+                action = STOP
+            attempt_info["retry_action"] = action
+            attempt_info["retry_reason"] = str(class_info.get("category") or "unknown")
+            delay = retry_after_seconds(safe_error)
+            if delay:
+                attempt_info["retry_after_seconds"] = delay
             attempts.append(attempt_info)
 
             if decision == NEXT_KEY and key_index + 1 < len(api_keys):
+                if delay:
+                    await asyncio.sleep(delay)
                 continue
             break
 
@@ -218,4 +245,7 @@ async def generate_image_with_fallback(
             error=redact_sensitive_text(format_timeout_user_message("global", chain_timeout)),
             attempts=redact_channel_attempts(attempts),
         )
-    return ImageGenerateResult(error=redact_sensitive_text(last_error), attempts=redact_channel_attempts(attempts))
+    result = ImageGenerateResult(error=redact_sensitive_text(last_error), attempts=redact_channel_attempts(attempts))
+    result.retry_count = sum(1 for item in attempts if not item.get("success"))
+    result.retry_exhausted = bool(attempts)
+    return result

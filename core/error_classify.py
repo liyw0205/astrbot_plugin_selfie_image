@@ -28,6 +28,11 @@ def format_timeout_user_message(kind: str, seconds: Optional[int] = None) -> str
 # HTTP statuses that must not burn extra attempts (auth / not found / bad request class).
 NON_RETRYABLE_HTTP_STATUSES = {400, 401, 403, 404, 422}
 
+# A retry means moving to an alternate key/channel, or retrying a non-billable
+# transport step. The generator never re-POSTs the same model request after a
+# timeout because the upstream may already have accepted it.
+RETRYABLE_ERROR_CATEGORIES = frozenset({"timeout", "network", "server", "rate_limit", "unknown"})
+
 # 429 is rate-limit: retryable (possibly next key later).
 # 408/409/425/429/5xx generally retryable except we treat pure client 4xx above as stop.
 
@@ -246,6 +251,34 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
 
 def is_non_retryable_generation_error(error: Any) -> bool:
     return not bool(classify_generation_error(error).get("retryable", True))
+
+
+def retry_after_seconds(error: Any, maximum: int = 30) -> int:
+    """Extract a bounded Retry-After hint from provider error text."""
+    text = str(error or "")
+    match = re.search(r"(?:retry[-_ ]?after|请在|等待)\s*[:：=]?\s*(\d+)\s*(?:s|秒)?", text, flags=re.I)
+    if not match:
+        return 0
+    try:
+        return max(0, min(maximum, int(match.group(1))))
+    except (TypeError, ValueError):
+        return 0
+
+
+def retry_action(
+    error: Any,
+    *,
+    has_next_key: bool = False,
+    has_next_target: bool = False,
+) -> str:
+    """Return the safe next action for an attempt: ``next_key``, ``next_model`` or ``stop``."""
+    info = classify_generation_error(error)
+    category = str(info.get("category") or "unknown")
+    if has_next_key and category in {"auth", "rate_limit"}:
+        return "next_key"
+    if has_next_target and (bool(info.get("retryable")) or category in {"auth", "param", "not_found", "safety", "fatal"}):
+        return "next_model"
+    return "stop"
 
 
 def is_param_profile_switch_error(error: Any) -> bool:

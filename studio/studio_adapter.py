@@ -190,6 +190,7 @@ class StudioMixin:
                 source=str(payload.get("source") or "record"),
                 mime=str(info.get("mime_type") or ""),
                 label=str(payload.get("label") or ""),
+                source_record_id=str(payload.get("source_record_id") or "").strip(),
             )
         raw = payload.get("image") or payload.get("data_url") or ""
         data, mime = data_url_to_bytes(str(raw or ""))
@@ -207,6 +208,7 @@ class StudioMixin:
             source=str(payload.get("source") or "upload"),
             mime=mime,
             label=str(payload.get("label") or ""),
+            source_record_id=str(payload.get("source_record_id") or "").strip(),
         )
 
     def studio_add_slot(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -279,6 +281,133 @@ class StudioMixin:
                     return {"items": items, "count": len(items)}
         return {"items": items, "count": len(items)}
 
+    def studio_add_asset(self, record_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Put a generated image asset into a canvas, optionally appending a preset."""
+        payload = payload if isinstance(payload, dict) else {}
+        record_id = str(record_id or "").strip()
+        record = self.get_record_for_web(record_id)
+        if str(record.get("media_type") or "image").strip().lower() == "video":
+            raise ValueError("视频资产不能作为图片参考加入画布")
+        response = record.get("response_data") if isinstance(record.get("response_data"), dict) else {}
+        paths = list(record.get("generated_image_paths") or response.get("generated_image_paths") or [])
+        image_path = str(paths[0] if paths else "").strip()
+        if not image_path:
+            raise ValueError("该资产没有可用的图片缓存")
+        info = self.get_cached_image_info(image_path)
+        if not info.get("exists") or info.get("is_image") is False:
+            raise ValueError("资产缓存不存在或不是有效图片")
+
+        preset_name = str(payload.get("preset_name") or payload.get("preset") or "").strip()
+        preset_prompt = ""
+        if preset_name:
+            presets = self.list_prompt_presets_for_web("image")
+            preset = next((item for item in presets if str(item.get("name") or item.get("title") or "").strip() == preset_name), None)
+            if not preset:
+                raise ValueError("预设不存在或已删除")
+            preset_prompt = str(preset.get("prompt") or "").strip()
+
+        session_id = str(payload.get("session_id") or "").strip()
+        created = False
+        if session_id:
+            session = self.studio.get(session_id)
+        else:
+            title = str(payload.get("title") or "").strip() or "资产重做"
+            session = self.studio_create({"title": title, "template": str(payload.get("template") or "i2i")})
+            session_id = str(session.get("id") or "")
+            created = True
+        slots = [item for item in (session.get("slots") or []) if isinstance(item, dict)]
+        slot_id = str(payload.get("slot_id") or "").strip()
+        if slot_id and not any(str(item.get("id") or "") == slot_id for item in slots):
+            raise ValueError("指定槽位不存在")
+        if not slot_id:
+            preferred = {"base", "identity", "extra", "style", "detail"}
+            target = next((item for item in slots if str(item.get("role") or "") in preferred and not str(item.get("image_path") or "").strip()), None)
+            if target is None:
+                target = next((item for item in slots if not str(item.get("image_path") or "").strip()), None)
+            if target is None:
+                session = self.studio_add_slot(session_id, {"role": "extra", "label": "资产参考"})
+                target = next(item for item in session.get("slots") or [] if str(item.get("role") or "") == "extra" and not str(item.get("image_path") or "").strip())
+            slot_id = str(target.get("id") or "")
+        label = str(payload.get("label") or "").strip() or str(image_path.rsplit("/", 1)[-1])[:40]
+        session = self.studio.set_slot_image(
+            session_id,
+            slot_id,
+            image_path=image_path,
+            source="asset",
+            mime=str(info.get("mime_type") or "image/png"),
+            label=label,
+            source_record_id=record_id,
+        )
+
+        applied_preset = ""
+        if preset_name:
+            graph = session.get("graph") if isinstance(session.get("graph"), dict) else {}
+            current_prompt = str(graph.get("prompt") or "").strip()
+            if preset_prompt and preset_prompt not in current_prompt:
+                combined = "\n\n".join(item for item in (current_prompt, preset_prompt) if item)
+                session = self.studio.update_graph(session_id, {"prompt": combined})
+            applied_preset = preset_name
+        return {
+            "session": session,
+            "session_id": session_id,
+            "slot_id": slot_id,
+            "record_id": record_id,
+            "created": created,
+            "preset_name": applied_preset,
+        }
+
+    def studio_add_assets(self, record_ids: Any, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Add several image assets to one canvas without losing per-item errors."""
+        payload = payload if isinstance(payload, dict) else {}
+        if isinstance(record_ids, (str, bytes)):
+            values = [record_ids]
+        elif isinstance(record_ids, (list, tuple, set)):
+            values = list(record_ids)
+        else:
+            values = []
+        ids = list(dict.fromkeys(str(item or "").strip() for item in values if str(item or "").strip()))
+        if not ids:
+            raise ValueError("至少选择一项资产")
+        if len(ids) > 12:
+            raise ValueError("单次最多加入 12 项图片资产")
+        common = {
+            key: payload[key]
+            for key in ("session_id", "slot_id", "preset_name", "preset", "title", "template", "label")
+            if key in payload
+        }
+        added: List[Dict[str, Any]] = []
+        errors: List[Dict[str, str]] = []
+        session_id = str(common.get("session_id") or "").strip()
+        for record_id in ids:
+            item_payload = dict(common)
+            if session_id:
+                item_payload["session_id"] = session_id
+            # A slot is selected automatically for batch input; a caller-provided
+            # slot is meaningful only for a single asset.
+            if len(ids) > 1:
+                item_payload.pop("slot_id", None)
+            try:
+                result = self.studio_add_asset(record_id, item_payload)
+                session_id = str(result.get("session_id") or session_id).strip()
+                added.append({
+                    "record_id": str(record_id),
+                    "slot_id": result.get("slot_id") or "",
+                    "preset_name": result.get("preset_name") or "",
+                })
+            except Exception as exc:
+                errors.append({"record_id": str(record_id), "error": redact_sensitive_text(str(exc))})
+        if not added:
+            raise ValueError(errors[0]["error"] if errors else "没有可加入画布的图片资产")
+        session = self.studio.get(session_id) if session_id else None
+        return {
+            "session": session,
+            "session_id": session_id,
+            "added": added,
+            "errors": errors,
+            "added_count": len(added),
+            "error_count": len(errors),
+        }
+
     def start_studio_run(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Queue a studio generation using current session slots + graph."""
         payload = payload if isinstance(payload, dict) else {}
@@ -320,6 +449,13 @@ class StudioMixin:
         )
         if mode in {"group", "selfie", "i2i"} and not raw_refs:
             raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
+        source_asset_ids = [
+            str(slot.get("source_record_id") or "").strip()
+            for slot in (session.get("slots") or [])
+            if isinstance(slot, dict)
+            and str(slot.get("id") or "") in set(used_slots)
+            and str(slot.get("source_record_id") or "").strip()
+        ][:24]
 
         summary = {
             "session_id": session_id,
@@ -329,6 +465,7 @@ class StudioMixin:
             "resolution": resolution,
             "count": count,
             "used_slots": used_slots,
+            "source_asset_ids": source_asset_ids,
             "kind": "studio",
         }
         with self._web_task_lock:
@@ -350,16 +487,34 @@ class StudioMixin:
                 "owner_session": "web",
                 "cancel_requested": False,
                 "studio_session_id": session_id,
+                **self._task_runtime_defaults(),
+                **self._task_progress_defaults(count),
             }
             self._prune_web_tasks_locked()
             self._persist_web_tasks_locked()
 
         self.studio.attach_run_start(session_id, task_id, summary)
-        asyncio.run_coroutine_threadsafe(self._run_studio_task(task_id, session_id), loop)
+        runtime_future = asyncio.run_coroutine_threadsafe(self._run_studio_task(task_id, session_id), loop)
+        runtime_tasks = getattr(self, "_runtime_generation_tasks", None)
+        if runtime_tasks is None:
+            runtime_tasks = {}
+            self._runtime_generation_tasks = runtime_tasks
+        runtime_tasks[task_id] = runtime_future
+        runtime_future.add_done_callback(
+            lambda _task, tid=task_id: getattr(self, "_runtime_generation_tasks", {}).pop(tid, None)
+        )
         return self.get_web_image_task(task_id)
 
     async def _run_studio_task(self, task_id: str, session_id: str) -> None:
-        self._set_web_image_task(task_id, status="running", started_ts=time.time(), started_at=self._web_task_timestamp())
+        self._set_web_image_task(
+            task_id,
+            status="running",
+            started_ts=time.time(),
+            started_at=self._web_task_timestamp(),
+            generation_started_ts=time.time(),
+            queue_waiting=False,
+            queue_position=0,
+        )
         try:
             if self._task_cancel_requested(task_id):
                 raise RuntimeError("任务已取消")
@@ -374,12 +529,19 @@ class StudioMixin:
                 count = 1
             mode = str(graph.get("mode") or "group").strip().lower() or "group"
             persona_ref = self.persona.get_reference_image() if graph.get("use_persona_identity", True) else None
-            raw_refs, _ = resolve_slot_refs_for_run(
+            raw_refs, used_slots = resolve_slot_refs_for_run(
                 session,
                 persona_ref=persona_ref,
                 load_path_bytes=self._load_cache_image_bytes,
             )
             refs = [ImageReference(data=data, mime_type=mime) for data, mime in raw_refs]
+            source_asset_ids = [
+                str(slot.get("source_record_id") or "").strip()
+                for slot in (session.get("slots") or [])
+                if isinstance(slot, dict)
+                and str(slot.get("id") or "") in set(used_slots)
+                and str(slot.get("source_record_id") or "").strip()
+            ][:24]
             if mode in {"group", "selfie", "i2i"} and not refs:
                 raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
 
@@ -439,7 +601,10 @@ class StudioMixin:
             last_error = ""
             used_model = ""
             last_result: Dict[str, Any] = {}
-            for _ in range(max(1, count)):
+            succeeded_count = 0
+            failed_count = 0
+            completed_count = 0
+            for index in range(max(1, count)):
                 if self._task_cancel_requested(task_id):
                     raise RuntimeError("任务已取消")
                 result = await self._run_image_generation(
@@ -451,16 +616,79 @@ class StudioMixin:
                     original_prompt=action,
                     event=None,
                     prompt_en_meta=prompt_en_meta,
+                    record_context={
+                        "studio_session_id": session_id,
+                        "studio_task_id": task_id,
+                        "studio_template": session.get("template") or "",
+                        "studio_source_asset_ids": source_asset_ids,
+                    },
                 )
                 last_result = result if isinstance(result, dict) else {}
                 if not last_result.get("success"):
                     last_error = str(last_result.get("error") or "生成失败")
+                    failed_count += 1
+                    completed_count += 1
+                    self._set_web_image_task(
+                        task_id,
+                        completed_count=completed_count,
+                        succeeded_count=succeeded_count,
+                        failed_count=failed_count,
+                        progress_percent=int(round(completed_count * 100 / max(1, count))),
+                        current_index=index + 1,
+                    )
                     break
+                succeeded_count += 1
+                completed_count += 1
                 used_model = str(last_result.get("used_model") or used_model)
                 for path in last_result.get("image_paths") or last_result.get("generated_image_paths") or []:
                     text = str(path or "").strip()
                     if text:
                         all_paths.append(text)
+                self._set_web_image_task(
+                    task_id,
+                    completed_count=completed_count,
+                    succeeded_count=succeeded_count,
+                    failed_count=failed_count,
+                    progress_percent=int(round(completed_count * 100 / max(1, count))),
+                    current_index=index + 1,
+                )
+
+            # Cancellation may arrive after the final upstream response but before
+            # the task is committed. It must remain cancelled in that race.
+            if self._task_cancel_requested(task_id):
+                error = "任务已取消"
+                self.studio.attach_run_finish(
+                    session_id,
+                    task_id,
+                    success=False,
+                    error=error,
+                    result_paths=all_paths,
+                    used_model=used_model,
+                    source_asset_ids=source_asset_ids,
+                    status="cancelled",
+                )
+                self._set_web_image_task(
+                    task_id,
+                    status="cancelled",
+                    success=False,
+                    error=error,
+                    completed_count=completed_count,
+                    succeeded_count=succeeded_count,
+                    failed_count=failed_count,
+                    progress_percent=int(round(completed_count * 100 / max(1, count))),
+                    current_index=completed_count,
+                    result={
+                        "success": False,
+                        "error": error,
+                        "cancelled": True,
+                        "image_paths": all_paths,
+                        "generated_image_paths": all_paths,
+                        "session_id": session_id,
+                    },
+                    finished_ts=time.time(),
+                    finished_at=self._web_task_timestamp(),
+                )
+                return
 
             success = bool(all_paths) and not last_error
             error = "" if success else (last_error or "生成失败")
@@ -471,6 +699,8 @@ class StudioMixin:
                 error=error,
                 result_paths=all_paths,
                 used_model=used_model,
+                source_asset_ids=source_asset_ids,
+                status="partial_success" if failed_count and succeeded_count else ("succeeded" if success else "failed"),
             )
             result_payload = {
                 "success": success,
@@ -480,23 +710,49 @@ class StudioMixin:
                 "used_model": used_model,
                 "session_id": session_id,
                 "elapsed_seconds": last_result.get("elapsed_seconds"),
+                "requested_count": count,
+                "completed_count": completed_count,
+                "succeeded_count": succeeded_count,
+                "failed_count": failed_count,
             }
             self._set_web_image_task(
                 task_id,
-                status="succeeded" if success else "failed",
+                status="partial_success" if failed_count and succeeded_count else ("succeeded" if success else "failed"),
                 success=success,
                 error=error,
+                requested_count=count,
+                completed_count=completed_count,
+                succeeded_count=succeeded_count,
+                failed_count=failed_count,
+                progress_percent=int(round(completed_count * 100 / max(1, count))),
+                current_index=completed_count,
                 result=redact_sensitive_data(result_payload),
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
             )
-        except Exception as exc:
-            error = redact_sensitive_text(str(exc))
+        except asyncio.CancelledError:
+            error = "任务已取消"
             try:
-                self.studio.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[])
+                self.studio.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[], status="cancelled")
             except Exception:
                 pass
+            self._set_web_image_task(
+                task_id,
+                status="cancelled",
+                success=False,
+                error=error,
+                result={"success": False, "error": error, "cancelled": True, "session_id": session_id},
+                finished_ts=time.time(),
+                finished_at=self._web_task_timestamp(),
+            )
+            return
+        except Exception as exc:
+            error = redact_sensitive_text(str(exc))
             cancelled = "取消" in error
+            try:
+                self.studio.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[], status="cancelled" if cancelled else "failed")
+            except Exception:
+                pass
             self._set_web_image_task(
                 task_id,
                 status="cancelled" if cancelled else "failed",

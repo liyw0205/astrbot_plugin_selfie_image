@@ -882,6 +882,7 @@ class StudioStore:
         source: str = "upload",
         mime: str = "",
         label: str = "",
+        source_record_id: str = "",
     ) -> Dict[str, Any]:
         with self._lock:
             session = self._require(session_id)
@@ -889,6 +890,10 @@ class StudioStore:
             slot["image_path"] = str(image_path or "").strip()
             slot["source"] = str(source or "upload").strip()
             slot["mime"] = str(mime or "").strip()
+            if source_record_id:
+                slot["source_record_id"] = str(source_record_id).strip()[:128]
+            else:
+                slot.pop("source_record_id", None)
             if label:
                 slot["label"] = str(label).strip()[:40]
             session["updated_at"] = _now()
@@ -902,6 +907,7 @@ class StudioStore:
             slot["image_path"] = ""
             slot["source"] = ""
             slot["mime"] = ""
+            slot.pop("source_record_id", None)
             session["updated_at"] = _now()
             self._persist()
             return public_session(session)
@@ -970,6 +976,8 @@ class StudioStore:
         error: str = "",
         result_paths: Optional[List[str]] = None,
         used_model: str = "",
+        source_asset_ids: Optional[List[str]] = None,
+        status: str = "",
     ) -> Dict[str, Any]:
         with self._lock:
             session = self._require(session_id)
@@ -978,7 +986,7 @@ class StudioStore:
             last.update(
                 {
                     "task_id": task_id,
-                    "status": "succeeded" if success else "failed",
+                    "status": status if status in {"succeeded", "partial_success", "failed", "cancelled"} else ("succeeded" if success else "failed"),
                     "finished_at": _now(),
                     "error": str(error or ""),
                     "result_paths": paths,
@@ -988,16 +996,21 @@ class StudioStore:
             session["last_run"] = last
             if success and paths:
                 results = list(session.get("results") or [])
+                asset_ids = [str(item).strip() for item in (source_asset_ids or []) if str(item).strip()][:24]
                 for path in paths:
+                    result = {
+                        "id": _new_id("res"),
+                        "image_path": path,
+                        "created_at": _now(),
+                        "task_id": task_id,
+                        "used_model": used_model,
+                        "studio_session_id": session_id,
+                    }
+                    if asset_ids:
+                        result["source_asset_ids"] = list(asset_ids)
                     results.insert(
                         0,
-                        {
-                            "id": _new_id("res"),
-                            "image_path": path,
-                            "created_at": _now(),
-                            "task_id": task_id,
-                            "used_model": used_model,
-                        },
+                        result,
                     )
                 session["results"] = results[:MAX_RESULTS_KEEP]
             session["updated_at"] = _now()
@@ -1020,6 +1033,7 @@ class StudioStore:
             slot = self._find_slot(session, slot_id)
             slot["image_path"] = path
             slot["source"] = "generated"
+            slot.pop("source_record_id", None)
             session["updated_at"] = _now()
             self._persist()
             return public_session(session)
@@ -1086,6 +1100,7 @@ class StudioStore:
                 raise ValueError(f"没有「{role_labels.get(role_key, role_key)}」槽位")
             slot["image_path"] = path
             slot["source"] = "generated"
+            slot.pop("source_record_id", None)
             session["updated_at"] = _now()
             self._persist()
             return public_session(session)

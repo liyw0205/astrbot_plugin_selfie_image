@@ -19,6 +19,7 @@ from ..core.utils import (
     redact_sensitive_data,
     redact_sensitive_text,
 )
+from ..generation.generation_records import metric_window_seconds
 
 
 try:
@@ -32,11 +33,13 @@ except Exception:  # pragma: no cover - handled at runtime in AstrBot env
     make_server = None  # type: ignore
 
 
-WEB_TASK_ID_RE = re.compile(r"^(?:web|web-studio)-\d{8,}-\d+$")
+WEB_TASK_ID_RE = re.compile(r"^(?:web|web-studio|cmd)-\d{8,}-\d+$")
 MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
 MAX_WEB_RECORD_ID_LENGTH = 128
-MAX_RECORD_PAGE_LIMIT = 300
+MAX_RECORD_PAGE_LIMIT = 1000
+MAX_ASSET_PAGE_LIMIT = 100
+MAX_TASK_PAGE_LIMIT = 200
 PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 _LOGO_SRC_PLACEHOLDER = "__SELFIE_LOGO_SRC__"
 
@@ -583,6 +586,8 @@ INDEX_HTML = r"""<!doctype html>
         <div><label>来源筛选</label><input id="monitorSource" list="monitorSourceList" placeholder="输入来源关键词"><datalist id="monitorSourceList"></datalist></div>
         <div><label>模型筛选</label><select id="monitorModel"><option value="">全部</option></select></div>
         <div><label>状态</label><select id="monitorSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
+        <div><label>资产标记</label><select id="monitorAsset"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
+        <div><label>标签</label><input id="monitorTag" placeholder="输入标签"></div>
       </div>
       <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
       <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
@@ -652,6 +657,7 @@ INDEX_HTML = r"""<!doctype html>
         <button class="ok" id="studioSaveBtn" type="button">保存设置</button>
         <button class="ok" id="studioRunBtn" type="button">开始生成</button>
         <button class="secondary" id="studioRerunBtn" type="button">再生成</button>
+        <button class="danger" id="studioCancelBtn" type="button" style="display:none">取消任务</button>
       </div>
       <div id="studioStatus" class="status">选模板后点「按模板新建」，或打开已有会话。</div>
       <h3>结果</h3>
@@ -686,6 +692,7 @@ INDEX_HTML = r"""<!doctype html>
       <div class="actions">
         <button class="ok" id="testImageBtn">开始试画</button>
         <button class="ok" id="testVideoBtn" style="display:none">开始试视频</button>
+        <button class="danger" id="testCancelBtn" type="button" style="display:none">取消任务</button>
         <button class="secondary" onclick="showTestPanel('request')">看请求</button>
         <button class="secondary" onclick="showTestPanel('response')">看响应</button>
         <button class="secondary" onclick="showTestPanel('result')">看结果</button>
@@ -977,7 +984,7 @@ INDEX_HTML = r"""<!doctype html>
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], cosLooks: [], pollTimer: null, uploadSlotId: "", presetOpen: false, cosOpen: false, running: false, galleryTargetSlotId: "" };
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], cosLooks: [], pollTimer: null, taskId: "", uploadSlotId: "", presetOpen: false, cosOpen: false, running: false, galleryTargetSlotId: "" };
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -2830,6 +2837,11 @@ Source prompt:
       if (source) params.set('source', source);
       if (model) params.set('model', model);
       if (success) params.set('success', success);
+      const asset = $('monitorAsset')?.value || '';
+      if (asset === 'favorite') params.set('favorite', 'true');
+      if (asset === 'pinned') params.set('pinned', 'true');
+      const tag = $('monitorTag')?.value.trim() || '';
+      if (tag) params.set('tag', tag);
       params.set('limit', String(MONITOR_PAGE_SIZE));
       params.set('offset', String((Math.max(1, page) - 1) * MONITOR_PAGE_SIZE));
       return '/api/records?' + params.toString();
@@ -3221,6 +3233,17 @@ Source prompt:
         ${recordFailureReasonsBlock(r)}
         ${promptDetailBlock('原始提示词', 'original_prompt', r.original_prompt || '')}
         ${promptDetailBlock('请求提示词', 'request_prompt', r.request_prompt || r.prompt || '')}
+        <div class="detail-title"><h3>资产标记</h3></div>
+        <div class="grid">
+          <label class="checkline"><input id="recordFavorite" type="checkbox" ${r.favorite ? 'checked' : ''}> 收藏</label>
+          <label class="checkline"><input id="recordPinned" type="checkbox" ${r.pinned ? 'checked' : ''}> 置顶</label>
+          <div><label>标签</label><input id="recordTags" value="${escapeHtml((r.tags || []).join(', '))}" placeholder="多个标签用逗号分隔"></div>
+          <div><label>备注</label><input id="recordNote" value="${escapeHtml(r.note || '')}" maxlength="2000"></div>
+        </div>
+        <div class="actions"><button class="ok mini" type="button" onclick="saveRecordAsset()">保存标记</button><button class="secondary mini" type="button" onclick="reuseRecordPrompt()">复用提示词</button></div>
+        <div class="detail-title"><h3>重试生成</h3></div>
+        <div class="grid"><div><label>修改要求（可选）</label><input id="recordRetryFeedback" maxlength="2000" placeholder="例如：更明亮、动作更自然"></div></div>
+        <div class="actions"><button class="ok mini" type="button" onclick="retryCurrentRecord()">重试生成</button><span id="recordRetryStatus" class="muted"></span></div>
         ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
         ${promptDetailBlock('响应数据', 'response_data', JSON.stringify(r.response_data || {}, null, 2))}
         ${imageThumbs(r.request_image_paths || [], '请求图')}
@@ -3234,6 +3257,85 @@ Source prompt:
     function closeRecordDetail() {
       $('recordModal').classList.remove('show');
       CURRENT_RECORD = null;
+    }
+    async function saveRecordAsset() {
+      const id = String(CURRENT_RECORD?.id || '').trim();
+      if (!id) return;
+      try {
+        const tags = String($('recordTags')?.value || '').split(/[,，]/).map(item => item.trim()).filter(Boolean);
+        const res = await api('/api/records/' + encodeURIComponent(id) + '/metadata', {
+          method: 'POST', body: JSON.stringify({
+            favorite: !!$('recordFavorite')?.checked,
+            pinned: !!$('recordPinned')?.checked,
+            tags,
+            note: String($('recordNote')?.value || ''),
+          })
+        });
+        CURRENT_RECORD = Object.assign(CURRENT_RECORD || {}, res.data || {});
+        showToast('资产标记已保存', 'ok');
+        await loadRecords(false);
+      } catch (e) { showToast(e.message || '保存失败', 'bad'); }
+    }
+    async function reuseRecordPrompt() {
+      const id = String(CURRENT_RECORD?.id || '').trim();
+      if (!id) return;
+      try {
+        const res = await api('/api/records/' + encodeURIComponent(id) + '/reuse');
+        const prompt = String(res.data?.prompt || '');
+        if (!prompt) throw new Error('历史提示词为空');
+        await copyTextToClipboard(prompt);
+        showToast('提示词已复制，可粘贴到出图输入框', 'ok');
+      } catch (e) { showToast(e.message || '复用失败', 'bad'); }
+    }
+    function recordRetryTaskStatusPath(taskId, mediaType) {
+      const kind = mediaType === 'video' ? 'video' : 'image';
+      return `/api/test-${kind}-channel/tasks/${encodeURIComponent(taskId)}`;
+    }
+    async function pollRecordRetryTask(taskId, mediaType, failStreak = 0) {
+      const status = $('recordRetryStatus');
+      try {
+        const res = await api(recordRetryTaskStatusPath(taskId, mediaType));
+        const task = res.data || {};
+        if (task.status === 'queued' || task.status === 'running') {
+          if (status) status.textContent = task.status === 'queued' ? '排队中…' : `生成中 ${Number(task.running_seconds || 0)}s`;
+          setTimeout(() => pollRecordRetryTask(taskId, mediaType, 0), 2000);
+          return;
+        }
+        if (status) status.textContent = task.success ? '已完成' : (task.error || '生成失败');
+        if (task.success) {
+          showToast('重试生成完成', 'ok');
+          await Promise.all([loadRecords(false), loadAssets(false), loadAssetTags(), loadMetrics()]);
+        } else {
+          showToast(task.error || '重试生成失败', 'bad');
+        }
+      } catch (e) {
+        if (failStreak < 6) {
+          if (status) status.textContent = `状态读取失败，正在重试（${failStreak + 1}/6）…`;
+          setTimeout(() => pollRecordRetryTask(taskId, mediaType, failStreak + 1), 2000);
+        } else if (status) {
+          status.textContent = e.message || '重试状态读取失败';
+        }
+      }
+    }
+    async function retryCurrentRecord() {
+      const id = String(CURRENT_RECORD?.id || '').trim();
+      if (!id) return;
+      const feedback = String($('recordRetryFeedback')?.value || '').trim();
+      const status = $('recordRetryStatus');
+      try {
+        if (status) status.textContent = '正在提交…';
+        const res = await api('/api/records/' + encodeURIComponent(id) + '/retry', {
+          method: 'POST', body: JSON.stringify({feedback})
+        });
+        const task = res.data || {};
+        if (!task.task_id) throw new Error('后台任务提交失败：未返回 task_id');
+        if (status) status.textContent = `任务 ${task.task_id} 已提交`;
+        showToast('已提交重试任务', 'ok');
+        pollRecordRetryTask(task.task_id, String(CURRENT_RECORD?.media_type || 'image').toLowerCase());
+      } catch (e) {
+        if (status) status.textContent = e.message || '提交失败';
+        showToast(e.message || '重试提交失败', 'bad');
+      }
     }
 
     async function readFileDataUrl(file) {
@@ -3277,13 +3379,51 @@ Source prompt:
     function setTestBusy(busy) {
       $('testImageBtn').disabled = !!busy;
       $('testVideoBtn').disabled = !!busy;
+      $('testCancelBtn').style.display = busy && TEST_TASK_ID ? '' : 'none';
       $('testImageBtn').textContent = busy && TEST_MODE === 'image' ? '正在画…' : '开始试画';
       $('testVideoBtn').textContent = busy && TEST_MODE === 'video' ? '正在生成…' : '开始试视频';
     }
+    function taskProgressText(task) {
+      const requested = Number(task?.requested_count || 0);
+      if (!requested) return '';
+      const completed = Math.max(0, Number(task?.completed_count || 0));
+      const percent = Math.max(0, Math.min(100, Number(task?.progress_percent ?? Math.round(completed * 100 / requested))));
+      return `${completed}/${requested}（${percent}%）`;
+    }
+    async function cancelTestTask() {
+      const taskId = String(TEST_TASK_ID || '').trim();
+      if (!taskId) return;
+      clearTestTaskPoll();
+      $('testCancelBtn').disabled = true;
+      $('testStatus').textContent = '正在取消任务…';
+      try {
+        const res = await api('/api/tasks/' + encodeURIComponent(taskId) + '/cancel', {method:'POST', body: JSON.stringify({})});
+        const task = res.data || {};
+        setTestBusy(false);
+        safeStorageRemove('selfieImageLastTestTaskId');
+        safeStorageRemove('selfieImageLastTestMode');
+        renderImageTestResult(testTaskResult(task));
+      } catch (e) {
+        $('testCancelBtn').disabled = false;
+        $('testStatus').textContent = e.message || '取消失败';
+      }
+    }
+    function testTaskResult(task) {
+      const raw = task && task.result && typeof task.result === 'object' ? {...task.result} : {};
+      const response = raw.response_data && typeof raw.response_data === 'object' ? raw.response_data : {};
+      const taskError = (task && (task.error || (task.status === 'failed' ? response.error : ''))) || '';
+      const error = raw.error || response.error || taskError || '';
+      const terminalFailure = task && (task.success === false || ['failed', 'cancelled', 'expired'].includes(String(task.status || '').toLowerCase()));
+      const terminalSuccess = task && (task.success === true || String(task.status || '').toLowerCase() === 'succeeded');
+      if (raw.success === false || terminalFailure) raw.success = false;
+      else if (raw.success !== true && terminalSuccess) raw.success = true;
+      if (error) raw.error = error;
+      return raw;
+    }
     function renderImageTestResult(data) {
       $('testResponseData').textContent = JSON.stringify(data || {}, null, 2);
-      if (!data || data.success === false) {
-        $('testStatus').textContent = `失败：${(data && data.error) || '这次没顺好'}`;
+      if (!data || data.success !== true) {
+        $('testStatus').textContent = `失败：${(data && (data.error || data.response_data?.error)) || '这次没顺好'}`;
         showTestPanel('response');
         return;
       }
@@ -3324,14 +3464,15 @@ Source prompt:
           const hint = seconds >= 20
             ? ' 有的中转要 15–60 秒，先等等；超过设定超时才会判失败。'
             : '';
-          $('testStatus').textContent = `任务 ${task.task_id || TEST_TASK_ID} ${label}，已用 ${seconds}s。${hint}关掉页面也不会停。`;
+          const progress = taskProgressText(task);
+          $('testStatus').textContent = `任务 ${task.task_id || TEST_TASK_ID} ${label}${progress ? ` ${progress}` : ''}，已用 ${seconds}s。${hint}关掉页面也不会停。`;
           TEST_TASK_POLL_TIMER = setTimeout(() => pollImageTestTask(TEST_TASK_ID, 0), 2000);
           return;
         }
         setTestBusy(false);
         safeStorageRemove('selfieImageLastTestTaskId');
       safeStorageRemove('selfieImageLastTestMode');
-        renderImageTestResult(task.result || {success:false, error: task.error || '任务未返回结果'});
+        renderImageTestResult(testTaskResult(task));
         try { await loadRecords(); } catch (_) {}
       } catch (e) {
         if (TEST_TASK_ID !== taskId) return;
@@ -3367,7 +3508,7 @@ Source prompt:
       safeStorageRemove('selfieImageLastTestMode');
           $('testResponseData').textContent = JSON.stringify(task, null, 2);
           if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
-          renderImageTestResult(task.result || {success:false, error: task.error || '任务未返回结果'});
+          renderImageTestResult(testTaskResult(task));
           try { await loadRecords(); } catch (_) {}
         }
       } catch (_) {
@@ -3932,6 +4073,25 @@ Source prompt:
       }
       if (again) again.disabled = !!running;
       if ($('studioPickRecordBtn')) $('studioPickRecordBtn').disabled = !!running;
+      if ($('studioCancelBtn')) $('studioCancelBtn').style.display = running && STUDIO.taskId ? '' : 'none';
+    }
+    async function cancelStudioTask() {
+      const taskId = String(STUDIO.taskId || '').trim();
+      if (!taskId) return;
+      studioStopPoll();
+      $('studioCancelBtn').disabled = true;
+      $('studioStatus').textContent = '正在取消任务…';
+      try {
+        const res = await studioApi('/api/tasks/' + encodeURIComponent(taskId) + '/cancel', {method:'POST', body: JSON.stringify({})});
+        const task = res.data || {};
+        STUDIO.taskId = '';
+        setStudioRunningUI(false);
+        $('studioStatus').textContent = task.error || '任务已取消';
+        if (STUDIO.current?.id) await loadStudioList(STUDIO.current.id);
+      } catch (e) {
+        $('studioCancelBtn').disabled = false;
+        $('studioStatus').textContent = e.message || '取消失败';
+      }
     }
     async function openStudioGallery(slotId) {
       if (!STUDIO.current) return showToast('请先选择画布', 'bad');
@@ -4011,9 +4171,12 @@ Source prompt:
       setSelectOptions('studioAspect', ['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'], g.aspect_ratio || '自动');
       const lr = s.last_run;
       const running = !!(lr && lr.status === 'running') || !!STUDIO.running;
+      if (lr && lr.status === 'running') STUDIO.taskId = lr.task_id || STUDIO.taskId;
       setStudioRunningUI(running && lr && lr.status === 'running');
       if (lr && lr.status === 'running') $('studioStatus').textContent = '生成中… ' + (lr.task_id || '');
       else if (lr && lr.status === 'succeeded') $('studioStatus').textContent = '完成 · ' + (lr.used_model || '') + ' · ' + ((lr.result_paths||[]).length) + ' 张';
+      else if (lr && lr.status === 'cancelled') $('studioStatus').textContent = '已取消';
+      else if (lr && lr.status === 'partial_success') $('studioStatus').textContent = '部分完成 · ' + ((lr.result_paths||[]).length) + ' 张';
       else if (lr && lr.status === 'failed') $('studioStatus').textContent = '失败：' + (lr.error || '');
       else $('studioStatus').textContent = '已加载：' + (s.title || s.id) + (s.template ? ' · 模板 ' + s.template : '');
       renderStudioSlots();
@@ -4095,6 +4258,8 @@ Source prompt:
         return showToast(res.message || '启动失败', 'bad');
       }
       const taskId = res.data && res.data.task_id;
+      STUDIO.taskId = taskId || '';
+      setStudioRunningUI(true);
       showToast('开始生成', 'ok');
       studioStopPoll();
       STUDIO.pollTimer = setInterval(async () => {
@@ -4103,11 +4268,13 @@ Source prompt:
           if (!st.success) return;
           const task = st.data || {};
           if (task.status === 'queued' || task.status === 'running') {
-            $('studioStatus').textContent = '生成中… ' + (task.running_seconds != null ? task.running_seconds + 's' : '');
+            const progress = taskProgressText(task);
+            $('studioStatus').textContent = '生成中… ' + (progress ? progress + ' · ' : '') + (task.running_seconds != null ? task.running_seconds + 's' : '');
             setStudioRunningUI(true);
             return;
           }
           studioStopPoll();
+          STUDIO.taskId = '';
           setStudioRunningUI(false);
           await loadStudioList(STUDIO.current.id);
           if (task.success) showToast('画布生成完成', 'ok');
@@ -4170,6 +4337,7 @@ Source prompt:
     });
     $('testImageBtn').onclick = runImageTest;
     $('testVideoBtn').onclick = runVideoTest;
+    $('testCancelBtn').onclick = cancelTestTask;
     if ($('studioCreateBtn')) $('studioCreateBtn').onclick = studioCreate;
     if ($('studioPresetBtn')) $('studioPresetBtn').onclick = toggleStudioPresets;
     if ($('studioCosBtn')) $('studioCosBtn').onclick = toggleStudioCos;
@@ -4180,6 +4348,7 @@ Source prompt:
     if ($('studioSaveBtn')) $('studioSaveBtn').onclick = studioSave;
     if ($('studioRunBtn')) $('studioRunBtn').onclick = studioRun;
     if ($('studioRerunBtn')) $('studioRerunBtn').onclick = studioRun;
+    if ($('studioCancelBtn')) $('studioCancelBtn').onclick = cancelStudioTask;
     if ($('studioPickRecordBtn')) $('studioPickRecordBtn').onclick = () => openStudioGallery('');
     if ($('studioAddSlotBtn')) $('studioAddSlotBtn').onclick = async () => {
       if (!STUDIO.current) return showToast('请先新建画布', 'bad');
@@ -4211,9 +4380,10 @@ Source prompt:
     mirrorValue('defaultAspect', 'selfieAspect');
     mirrorValue('selfieAspect', 'defaultAspect');
     $('monitorSource').oninput = monitorFilterChanged;
-    ['monitorMedia','monitorModel','monitorSuccess'].forEach(id => {
+    ['monitorMedia','monitorModel','monitorSuccess','monitorAsset'].forEach(id => {
       $(id).onchange = monitorFilterChanged;
     });
+    if ($('monitorTag')) $('monitorTag').oninput = monitorFilterChanged;
 
     (async function init() {
       for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, '自动');
@@ -4400,6 +4570,16 @@ class FlaskWebServer:
                     return False
             return True
 
+        def query_bool(value: Any) -> Optional[bool]:
+            lowered = str(value or "").strip().lower()
+            if not lowered:
+                return None
+            if lowered in {"1", "true", "yes", "on", "是", "开启"}:
+                return True
+            if lowered in {"0", "false", "no", "off", "否", "关闭"}:
+                return False
+            return None
+
         def filtered_record_payload(records: list[Any]) -> Any:
             source = str(request.args.get("source") or "").strip().lower()
             model = str(request.args.get("model") or "").strip().lower()
@@ -4407,6 +4587,9 @@ class FlaskWebServer:
             if media_type not in {"", "image", "video"}:
                 return None, None, fail("media_type 必须是 image 或 video", 400)
             success = str(request.args.get("success") or "").strip().lower()
+            favorite = query_bool(request.args.get("favorite"))
+            pinned = query_bool(request.args.get("pinned"))
+            tag = str(request.args.get("tag") or "").strip().lower()
             keyword = str(request.args.get("q") or request.args.get("keyword") or "").strip().lower()
             if success and success not in {"1", "0", "true", "false", "yes", "no", "ok", "success", "succeeded", "failed", "失败", "成功"}:
                 return None, None, fail("success 必须是 true 或 false", 400)
@@ -4423,6 +4606,9 @@ class FlaskWebServer:
                 record
                 for record in records
                 if record_matches_query(record, source, model, success, keyword, media_type)
+                and (favorite is None or bool(record.get("favorite")) is favorite)
+                and (pinned is None or bool(record.get("pinned")) is pinned)
+                and (not tag or tag in {str(item).strip().lower() for item in (record.get("tags") or [])})
             ]
             page = filtered[offset : offset + limit]
             meta = {
@@ -4471,11 +4657,57 @@ class FlaskWebServer:
                     "status": "ok",
                     "config_path": getattr(self.plugin, "config_path", ""),
                     "records_path": getattr(self.plugin, "records_path", ""),
+                    "records_db_path": getattr(self.plugin, "records_db_path", ""),
+                    "media_sources_dir": getattr(self.plugin, "media_sources_dir", ""),
                     "cache_dir": getattr(self.plugin, "generated_dir", ""),
                     "cache_size_mb": round(float(self.plugin._cache_size_bytes()) / 1024 / 1024, 2),
                     "cache_limit_mb": getattr(self.plugin.config, "image_cache_limit_mb", 100),
                 }
             )
+
+        @app.route("/api/metrics", methods=["GET"])
+        def metrics() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                try:
+                    window_seconds = metric_window_seconds(request.args.get("window"))
+                except ValueError as exc:
+                    return fail(str(exc), 400)
+                if window_seconds is None:
+                    metrics_data = self.plugin.get_generation_metrics()
+                else:
+                    metrics_data = self.plugin.get_generation_metrics(window_seconds=window_seconds)
+                return ok(redact_sensitive_data(metrics_data))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/tasks", methods=["GET"])
+        def tasks() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            media_type = str(request.args.get("media_type") or "").strip().lower()
+            if media_type not in {"", "image", "video"}:
+                return fail("media_type 必须是 image 或 video", 400)
+            include_finished = str(request.args.get("include_finished") or "").strip().lower() in {"1", "true", "yes", "on"}
+            raw_limit = str(request.args.get("limit") or "50").strip()
+            try:
+                limit = int(raw_limit)
+            except ValueError:
+                return fail("limit 必须是整数", 400)
+            if limit < 1:
+                return fail("limit 不能小于 1", 400)
+            if limit > MAX_TASK_PAGE_LIMIT:
+                return fail(f"limit 不能大于 {MAX_TASK_PAGE_LIMIT}", 400)
+            try:
+                data = self.plugin.list_web_tasks(
+                    include_finished=include_finished,
+                    limit=limit,
+                    media_type=media_type,
+                )
+                return ok(redact_sensitive_data(data))
+            except Exception as exc:
+                return fail(str(exc), 400)
 
         @app.route("/api/config", methods=["GET", "POST"])
         def config_route() -> Any:
@@ -4583,6 +4815,30 @@ class FlaskWebServer:
                 return fail("非法任务 ID", 400)
             try:
                 return ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        @app.route("/api/tasks/<task_id>/cancel", methods=["POST"])
+        @app.route("/api/test-image-channel/tasks/<task_id>/cancel", methods=["POST"])
+        @app.route("/api/test-video-channel/tasks/<task_id>/cancel", methods=["POST"])
+        @app.route("/api/studio/tasks/<task_id>/cancel", methods=["POST"])
+        def cancel_generation_task(task_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            task_id_text = str(task_id or "").strip()
+            if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
+                return fail("非法任务 ID", 400)
+            try:
+                task = self.plugin.get_web_image_task(task_id_text)
+                if str(task.get("status") or "") not in {"queued", "running"}:
+                    return fail("任务已经结束，不能取消", 409)
+                message = self.plugin.cancel_image_task(task_id_text, is_admin=True)
+                updated = self.plugin.get_web_image_task(task_id_text)
+                if str(updated.get("status") or "") not in {"cancelled"} and not updated.get("cancel_requested"):
+                    return fail("任务已经结束，不能取消", 409)
+                return ok(redact_sensitive_data(updated), message=message)
+            except PermissionError as exc:
+                return fail(str(exc), 403)
             except Exception as exc:
                 return fail(str(exc), 404)
 
@@ -4709,6 +4965,212 @@ class FlaskWebServer:
                 return ok(generation_record_media_sources(self.plugin.get_record_for_web(record_id_text)))
             except Exception as exc:
                 return fail(str(exc), 404)
+
+        @app.route("/api/records/<record_id>/metadata", methods=["POST"])
+        @app.route("/api/records/<record_id>/asset", methods=["POST"])
+        def record_metadata(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            record_id_text = str(record_id or "").strip()
+            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
+                return fail("非法记录 ID", 400)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.update_record_asset_metadata(record_id_text, payload or {}), message="资产标记已保存")
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        @app.route("/api/records/<record_id>/reuse", methods=["GET", "POST"])
+        def record_reuse(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            record_id_text = str(record_id or "").strip()
+            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
+                return fail("非法记录 ID", 400)
+            try:
+                return ok(self.plugin.get_record_reuse_payload(record_id_text))
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        @app.route("/api/records/<record_id>/retry", methods=["POST"])
+        def record_retry(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            record_id_text = str(record_id or "").strip()
+            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
+                return fail("非法记录 ID", 400)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            retry = getattr(self.plugin, "start_record_retry_task", None)
+            if not callable(retry):
+                return fail("当前版本不支持记录重试", 501)
+            try:
+                task = retry(record_id_text, str((payload or {}).get("feedback") or ""))
+                return ok(redact_sensitive_data(task), message="已提交重试任务")
+            except ValueError as exc:
+                return fail(str(exc), 400)
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/assets", methods=["GET"])
+        def assets() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            favorite = query_bool(request.args.get("favorite"))
+            pinned = query_bool(request.args.get("pinned"))
+            try:
+                media_type = str(request.args.get("media_type") or "").strip().lower()
+                if media_type not in {"", "image", "video"}:
+                    return fail("media_type 必须是 image 或 video", 400)
+                raw_success = str(request.args.get("success") or "").strip().lower()
+                success = query_bool(raw_success)
+                if raw_success and success is None:
+                    return fail("success 必须是 true 或 false", 400)
+                raw_limit = str(request.args.get("limit") or "48").strip()
+                raw_offset = str(request.args.get("offset") or "0").strip()
+                try:
+                    limit = int(raw_limit)
+                    offset = int(raw_offset)
+                except ValueError:
+                    return fail("limit 和 offset 必须是整数", 400)
+                if limit < 1:
+                    return fail("limit 不能小于 1", 400)
+                if limit > MAX_ASSET_PAGE_LIMIT:
+                    return fail(f"limit 不能大于 {MAX_ASSET_PAGE_LIMIT}", 400)
+                if offset < 0:
+                    return fail("offset 不能小于 0", 400)
+                sort = str(request.args.get("sort") or "recent").strip().lower()
+                if sort not in {"recent", "oldest", "priority", "pinned", "favorite", "asc"}:
+                    return fail("sort 必须是 recent、oldest、priority、pinned、favorite 或 asc", 400)
+                query = getattr(self.plugin, "query_asset_records", None)
+                if callable(query):
+                    data, meta = query(
+                        favorite=favorite,
+                        pinned=pinned,
+                        tag=str(request.args.get("tag") or ""),
+                        source=str(request.args.get("source") or ""),
+                        model=str(request.args.get("model") or ""),
+                        media_type=media_type,
+                        success=success,
+                        keyword=str(request.args.get("q") or request.args.get("keyword") or ""),
+                        start_time=str(request.args.get("start_time") or ""),
+                        end_time=str(request.args.get("end_time") or ""),
+                        offset=offset,
+                        limit=limit,
+                        sort=sort,
+                    )
+                    return ok(data, count=len(data), **meta)
+                data = self.plugin.get_asset_records(
+                    favorite=favorite,
+                    pinned=pinned,
+                    tag=str(request.args.get("tag") or ""),
+                )
+                return ok(data, count=len(data), total=len(data), filtered=len(data), offset=0, limit=len(data))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/assets/tags", methods=["GET"])
+        def assets_tags() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                getter = getattr(self.plugin, "list_asset_tags", None)
+                if not callable(getter):
+                    return fail("当前版本不支持资产标签列表", 501)
+                return ok(getter())
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/assets/export", methods=["GET"])
+        def assets_export() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                exporter = getattr(self.plugin, "export_asset_metadata", None)
+                if not callable(exporter):
+                    return fail("当前版本不支持资产导出", 501)
+                raw_ids = str(request.args.get("ids") or "").strip()
+                ids = [item.strip() for item in raw_ids.split(",") if item.strip()] if raw_ids else None
+                if ids is not None and len(ids) > MAX_RECORD_PAGE_LIMIT:
+                    return fail(f"单次最多导出 {MAX_RECORD_PAGE_LIMIT} 条资产", 400)
+                return ok(exporter(ids))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/assets/import", methods=["POST"])
+        def assets_import() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                importer = getattr(self.plugin, "import_asset_metadata", None)
+                if not callable(importer):
+                    return fail("当前版本不支持资产导入", 501)
+                return ok(importer(payload or {}), message="资产元数据已导入")
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/assets/metadata", methods=["POST"])
+        def assets_metadata() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
+            if not isinstance(ids, list):
+                return fail("ids 必须是数组", 400)
+            try:
+                return ok(self.plugin.update_records_asset_metadata(ids, payload or {}), message="批量资产标记已保存")
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/assets/delete", methods=["POST"])
+        def assets_delete() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
+            if not isinstance(ids, list):
+                return fail("ids 必须是数组", 400)
+            try:
+                return ok(self.plugin.delete_records(ids), message="资产已删除")
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/assets/<record_id>/studio", methods=["POST"])
+        def asset_studio(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.studio_add_asset(record_id, payload or {}), message="资产已加入画布")
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/assets/studio", methods=["POST"])
+        def assets_studio() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
+            if not isinstance(ids, list):
+                return fail("ids 必须是数组", 400)
+            try:
+                return ok(self.plugin.studio_add_assets(ids, payload or {}), message="资产已加入画布")
+            except Exception as exc:
+                return fail(str(exc), 400)
 
         @app.route("/api/records/clear", methods=["POST"])
         def records_clear() -> Any:

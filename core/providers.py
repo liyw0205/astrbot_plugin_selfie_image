@@ -69,6 +69,8 @@ class ImageGenerateResult:
     error: str = ""
     used_model: str = ""
     attempts: List[Dict[str, Any]] = field(default_factory=list)
+    retry_count: int = 0
+    retry_exhausted: bool = False
 
 
 class BaseImageAdapter:

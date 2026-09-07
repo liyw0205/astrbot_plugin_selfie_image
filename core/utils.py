@@ -710,6 +710,20 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(rd.get("request_image_paths"), list)
             else [],
         }
+        # Keep lightweight workflow links while still excluding the original
+        # prompt and provider-sensitive request details from the index payload.
+        for key in (
+            "studio_session_id",
+            "studio_task_id",
+            "studio_template",
+            "studio_source_asset_ids",
+            "retry_record_id",
+        ):
+            value = rd.get(key)
+            if isinstance(value, (str, int, float, bool)):
+                slim_rd[key] = value
+            elif isinstance(value, list):
+                slim_rd[key] = [str(item).strip() for item in value if str(item).strip()][:24]
         pe = rd.get("prompt_en")
         if isinstance(pe, dict):
             slim_rd["prompt_en"] = {
@@ -739,6 +753,8 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             else [],
             "video_url": resp.get("video_url") or "",
             "video_source": resp.get("video_source") or "",
+            "retry_count": resp.get("retry_count"),
+            "retry_exhausted": resp.get("retry_exhausted"),
         }
 
     if isinstance(out.get("generated_image_sources"), list):
@@ -763,6 +779,10 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
                     "error_category": item.get("error_category") or "",
                     "elapsed_seconds": item.get("elapsed_seconds"),
                     "timeout": item.get("timeout"),
+                    "retry_count": item.get("retry_count"),
+                    "retry_action": item.get("retry_action") or "",
+                    "retry_reason": item.get("retry_reason") or "",
+                    "retry_after_seconds": item.get("retry_after_seconds"),
                 }
             )
     if slim_attempts:
@@ -837,6 +857,10 @@ def summarize_record_for_list(record: Dict[str, Any]) -> Dict[str, Any]:
         "generated_video_paths": record.get("generated_video_paths")
         if isinstance(record.get("generated_video_paths"), list)
         else [],
+        "favorite": bool(record.get("favorite") or record.get("is_favorite")),
+        "pinned": bool(record.get("pinned") or record.get("is_pinned")),
+        "tags": [str(item).strip() for item in (record.get("tags") or []) if str(item).strip()][:30],
+        "note": str(record.get("note") or record.get("asset_note") or "")[:2000],
         "has_detail": True,
     }
 

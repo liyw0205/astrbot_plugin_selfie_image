@@ -10,6 +10,7 @@ import json
 from typing import Any, Optional
 
 from ..core.constants import PLUGIN_NAME
+from ..generation.generation_records import metric_window_seconds
 from ..core.utils import (
     generation_record_media_sources,
     redact_generation_record,
@@ -18,8 +19,10 @@ from ..core.utils import (
     redact_sensitive_text,
 )
 from .web import (
+    MAX_ASSET_PAGE_LIMIT,
     MAX_CACHE_IMAGE_PATH_LENGTH,
     MAX_RECORD_PAGE_LIMIT,
+    MAX_TASK_PAGE_LIMIT,
     MAX_WEB_RECORD_ID_LENGTH,
     MAX_WEB_TASK_ID_LENGTH,
     WEB_TASK_ID_RE,
@@ -70,6 +73,8 @@ class SelfieImageDashboardAPI:
                 ["GET"],
                 "Selfie Image channel test task status",
             ),
+            ("tasks/<task_id>/cancel", self.page_task_cancel, ["POST"], "Selfie Image cancel task"),
+            ("test-image-channel/tasks/<task_id>/cancel", self.page_task_cancel, ["POST"], "Selfie Image cancel image task"),
             ("test-video-channel/tasks", self.page_test_video_task_start, ["POST"], "Selfie Image start video channel test"),
             (
                 "test-video-channel/tasks/<task_id>",
@@ -77,11 +82,25 @@ class SelfieImageDashboardAPI:
                 ["GET"],
                 "Selfie Image video channel test task status",
             ),
+            ("test-video-channel/tasks/<task_id>/cancel", self.page_task_cancel, ["POST"], "Selfie Image cancel video task"),
             ("refresh-image-models", self.page_refresh_image_models, ["POST"], "Selfie Image refresh models"),
             ("records", self.page_records, ["GET"], "Selfie Image generation records"),
             ("metrics", self.page_metrics, ["GET"], "Selfie Image generation metrics"),
+            ("tasks", self.page_tasks, ["GET"], "Selfie Image task queue"),
             ("records/<record_id>/media-sources", self.page_record_media_sources, ["GET"], "Selfie Image record media sources"),
             ("records/<record_id>", self.page_record_detail, ["GET"], "Selfie Image record detail"),
+            ("records/<record_id>/metadata", self.page_record_metadata, ["POST"], "Selfie Image record metadata"),
+            ("records/<record_id>/asset", self.page_record_metadata, ["POST"], "Selfie Image record asset metadata"),
+            ("records/<record_id>/reuse", self.page_record_reuse, ["GET", "POST"], "Selfie Image reuse record"),
+            ("records/<record_id>/retry", self.page_record_retry, ["POST"], "Selfie Image retry record generation"),
+            ("assets", self.page_assets, ["GET"], "Selfie Image asset library"),
+            ("assets/tags", self.page_assets_tags, ["GET"], "Selfie Image asset tags"),
+            ("assets/export", self.page_assets_export, ["GET"], "Selfie Image asset metadata export"),
+            ("assets/import", self.page_assets_import, ["POST"], "Selfie Image asset metadata import"),
+            ("assets/metadata", self.page_assets_metadata, ["POST"], "Selfie Image batch asset metadata"),
+            ("assets/delete", self.page_assets_delete, ["POST"], "Selfie Image batch asset delete"),
+            ("assets/studio", self.page_assets_studio, ["POST"], "Selfie Image batch add assets to studio"),
+            ("assets/<record_id>/studio", self.page_asset_studio, ["POST"], "Selfie Image add asset to studio"),
             ("records/clear", self.page_records_clear, ["POST"], "Selfie Image clear records"),
             ("cache-image", self.page_cache_image_file, ["GET"], "Selfie Image cache image download"),
             ("cache-image-preview", self.page_cache_image_preview, ["GET"], "Selfie Image cache image preview"),
@@ -97,6 +116,7 @@ class SelfieImageDashboardAPI:
             ("studio/sessions/<session_id>/promote", self.page_studio_promote, ["POST"], "Selfie Image studio promote"),
             ("studio/sessions/<session_id>/run", self.page_studio_run, ["POST"], "Selfie Image studio run"),
             ("studio/tasks/<task_id>", self.page_studio_task, ["GET"], "Selfie Image studio task"),
+            ("studio/tasks/<task_id>/cancel", self.page_task_cancel, ["POST"], "Selfie Image cancel studio task"),
             ("studio/gallery", self.page_studio_gallery, ["GET"], "Selfie Image studio gallery from records"),
             ("prompt-presets", self.page_prompt_presets, ["GET"], "Selfie Image prompt presets"),
             ("prompt-presets/manage", self.page_prompt_presets_manage, ["GET"], "Selfie Image managed prompt presets"),
@@ -194,6 +214,17 @@ class SelfieImageDashboardAPI:
                 return False
         return True
 
+    @staticmethod
+    def _query_bool(value: str) -> Optional[bool]:
+        lowered = str(value or "").strip().lower()
+        if not lowered:
+            return None
+        if lowered in {"1", "true", "yes", "on", "是", "开启"}:
+            return True
+        if lowered in {"0", "false", "no", "off", "否", "关闭"}:
+            return False
+        return None
+
     def _filtered_records(self, records: list[Any]) -> tuple[Optional[list], Optional[dict], Any]:
         source = self._query_value("source").strip().lower()
         model = self._query_value("model").strip().lower()
@@ -201,6 +232,9 @@ class SelfieImageDashboardAPI:
         if media_type not in {"", "image", "video"}:
             return None, None, self._fail("media_type 必须是 image 或 video", 400)
         success = self._query_value("success").strip().lower()
+        favorite = self._query_bool(self._query_value("favorite"))
+        pinned = self._query_bool(self._query_value("pinned"))
+        tag = self._query_value("tag").strip().lower()
         keyword = (self._query_value("q") or self._query_value("keyword")).strip().lower()
         if success and success not in {
             "1",
@@ -232,6 +266,9 @@ class SelfieImageDashboardAPI:
             record
             for record in records
             if self._record_matches(record, source, model, success, keyword, media_type)
+            and (favorite is None or bool(record.get("favorite")) is favorite)
+            and (pinned is None or bool(record.get("pinned")) is pinned)
+            and (not tag or tag in {str(item).strip().lower() for item in (record.get("tags") or [])})
         ]
         page = filtered[offset : offset + limit]
         meta = {
@@ -253,6 +290,8 @@ class SelfieImageDashboardAPI:
                 "source": "dashboard",
                 "config_path": getattr(plugin, "config_path", ""),
                 "records_path": getattr(plugin, "records_path", ""),
+                "records_db_path": getattr(plugin, "records_db_path", ""),
+                "media_sources_dir": getattr(plugin, "media_sources_dir", ""),
                 "cache_dir": getattr(plugin, "generated_dir", ""),
                 "cache_size_mb": round(float(plugin._cache_size_bytes()) / 1024 / 1024, 2),
                 "cache_limit_mb": getattr(plugin.config, "image_cache_limit_mb", 100),
@@ -418,6 +457,27 @@ class SelfieImageDashboardAPI:
         except Exception as exc:
             return self._fail(str(exc), 404)
 
+    async def page_task_cancel(self, task_id: str) -> Any:
+        task_id_text = str(task_id or "").strip()
+        if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
+            return self._fail("非法任务 ID", 400)
+        try:
+            task = self.plugin.get_web_image_task(task_id_text)
+            if str(task.get("status") or "") not in {"queued", "running"}:
+                return self._fail("任务已经结束，不能取消", 409)
+            message = self.plugin.cancel_image_task(task_id_text, is_admin=True)
+            updated = self.plugin.get_web_image_task(task_id_text)
+            if str(updated.get("status") or "") not in {"cancelled"} and not updated.get("cancel_requested"):
+                return self._fail("任务已经结束，不能取消", 409)
+            return self._ok(
+                redact_sensitive_data(updated),
+                message=message,
+            )
+        except PermissionError as exc:
+            return self._fail(str(exc), 403)
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
     async def page_refresh_image_models(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
@@ -451,9 +511,38 @@ class SelfieImageDashboardAPI:
 
     async def page_metrics(self) -> Any:
         try:
-            return self._ok(redact_sensitive_data(self.plugin.get_generation_metrics()))
+            try:
+                window_seconds = metric_window_seconds(self._query_value("window"))
+            except ValueError as exc:
+                return self._fail(str(exc), 400)
+            if window_seconds is None:
+                metrics_data = self.plugin.get_generation_metrics()
+            else:
+                metrics_data = self.plugin.get_generation_metrics(window_seconds=window_seconds)
+            return self._ok(redact_sensitive_data(metrics_data))
         except Exception as exc:
             return self._fail(str(exc), 500)
+
+    async def page_tasks(self) -> Any:
+        try:
+            media_type = self._query_value("media_type").strip().lower()
+            if media_type not in {"", "image", "video"}:
+                return self._fail("media_type 必须是 image 或 video", 400)
+            include_finished = self._query_value("include_finished").strip().lower() in {"1", "true", "yes", "on"}
+            limit, error = self._int_query("limit", 50, 1, MAX_TASK_PAGE_LIMIT)
+            if error or limit is None:
+                return error
+            return self._ok(
+                redact_sensitive_data(
+                    self.plugin.list_web_tasks(
+                        include_finished=include_finished,
+                        limit=limit,
+                        media_type=media_type,
+                    )
+                )
+            )
+        except Exception as exc:
+            return self._fail(str(exc), 400)
 
     async def page_record_detail(self, record_id: str) -> Any:
         record_id_text = str(record_id or "").strip()
@@ -472,6 +561,167 @@ class SelfieImageDashboardAPI:
             return self._ok(generation_record_media_sources(self.plugin.get_record_for_web(record_id_text)))
         except Exception as exc:
             return self._fail(str(exc), 404)
+
+    async def page_record_metadata(self, record_id: str) -> Any:
+        record_id_text = str(record_id or "").strip()
+        if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
+            return self._fail("非法记录 ID", 400)
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.update_record_asset_metadata(record_id_text, payload or {}), message="资产标记已保存")
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    async def page_record_reuse(self, record_id: str) -> Any:
+        record_id_text = str(record_id or "").strip()
+        if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
+            return self._fail("非法记录 ID", 400)
+        try:
+            return self._ok(self.plugin.get_record_reuse_payload(record_id_text))
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    async def page_record_retry(self, record_id: str) -> Any:
+        record_id_text = str(record_id or "").strip()
+        if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
+            return self._fail("非法记录 ID", 400)
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        retry = getattr(self.plugin, "start_record_retry_task", None)
+        if not callable(retry):
+            return self._fail("当前版本不支持记录重试", 501)
+        try:
+            task = retry(record_id_text, str((payload or {}).get("feedback") or ""))
+            return self._ok(redact_sensitive_data(task), message="已提交重试任务")
+        except ValueError as exc:
+            return self._fail(str(exc), 400)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_assets(self) -> Any:
+        favorite = self._query_bool(self._query_value("favorite"))
+        pinned = self._query_bool(self._query_value("pinned"))
+        try:
+            media_type = self._query_value("media_type").strip().lower()
+            if media_type not in {"", "image", "video"}:
+                return self._fail("media_type 必须是 image 或 video", 400)
+            raw_success = self._query_value("success").strip().lower()
+            success = self._query_bool(raw_success)
+            if raw_success and success is None:
+                return self._fail("success 必须是 true 或 false", 400)
+            offset, error = self._int_query("offset", 0, 0, 10000)
+            if error:
+                return error
+            limit, error = self._int_query("limit", 48, 1, MAX_ASSET_PAGE_LIMIT)
+            if error:
+                return error
+            sort = self._query_value("sort", "recent").strip().lower()
+            if sort not in {"recent", "oldest", "priority", "pinned", "favorite", "asc"}:
+                return self._fail("sort 必须是 recent、oldest、priority、pinned、favorite 或 asc", 400)
+            query = getattr(self.plugin, "query_asset_records", None)
+            if callable(query):
+                data, meta = query(
+                    favorite=favorite,
+                    pinned=pinned,
+                    tag=self._query_value("tag"),
+                    source=self._query_value("source"),
+                    model=self._query_value("model"),
+                    media_type=media_type,
+                    success=success,
+                    keyword=self._query_value("q") or self._query_value("keyword"),
+                    start_time=self._query_value("start_time"),
+                    end_time=self._query_value("end_time"),
+                    offset=int(offset or 0),
+                    limit=int(limit or 48),
+                    sort=sort,
+                )
+                return self._ok(data, count=len(data), **meta)
+            data = self.plugin.get_asset_records(favorite=favorite, pinned=pinned, tag=self._query_value("tag"))
+            return self._ok(data, count=len(data), total=len(data), filtered=len(data), offset=0, limit=len(data))
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_assets_metadata(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
+        if not isinstance(ids, list):
+            return self._fail("ids 必须是数组", 400)
+        try:
+            return self._ok(self.plugin.update_records_asset_metadata(ids, payload or {}), message="批量资产标记已保存")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_assets_tags(self) -> Any:
+        try:
+            getter = getattr(self.plugin, "list_asset_tags", None)
+            if not callable(getter):
+                return self._fail("当前版本不支持资产标签列表", 501)
+            return self._ok(getter())
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_assets_export(self) -> Any:
+        try:
+            exporter = getattr(self.plugin, "export_asset_metadata", None)
+            if not callable(exporter):
+                return self._fail("当前版本不支持资产导出", 501)
+            raw_ids = self._query_value("ids").strip()
+            ids = [item.strip() for item in raw_ids.split(",") if item.strip()] if raw_ids else None
+            if ids is not None and len(ids) > MAX_RECORD_PAGE_LIMIT:
+                return self._fail(f"单次最多导出 {MAX_RECORD_PAGE_LIMIT} 条资产", 400)
+            return self._ok(exporter(ids))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_assets_import(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            importer = getattr(self.plugin, "import_asset_metadata", None)
+            if not callable(importer):
+                return self._fail("当前版本不支持资产导入", 501)
+            return self._ok(importer(payload or {}), message="资产元数据已导入")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_assets_delete(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
+        if not isinstance(ids, list):
+            return self._fail("ids 必须是数组", 400)
+        try:
+            return self._ok(self.plugin.delete_records(ids), message="资产已删除")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_asset_studio(self, record_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.studio_add_asset(record_id, payload or {}), message="资产已加入画布")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_assets_studio(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
+        if not isinstance(ids, list):
+            return self._fail("ids 必须是数组", 400)
+        try:
+            return self._ok(self.plugin.studio_add_assets(ids, payload or {}), message="资产已加入画布")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
 
     async def page_records_clear(self) -> Any:
         payload, error = await self._json_object_payload()

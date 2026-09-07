@@ -59,6 +59,34 @@ def normalize_generation_result(result: Any, requested_count: int = 1) -> Dict[s
         status = "partial_success"
     else:
         status = "failed"
+    try:
+        completed = max(
+            0,
+            min(
+                requested,
+                int(data.get("completed_count") if "completed_count" in data else succeeded + failed),
+            ),
+        )
+    except (TypeError, ValueError):
+        completed = min(requested, succeeded + failed)
+    try:
+        progress_percent = max(
+            0,
+            min(
+                100,
+                int(
+                    data.get("progress_percent")
+                    if "progress_percent" in data
+                    else round(completed * 100 / requested)
+                ),
+            ),
+        )
+    except (TypeError, ValueError):
+        progress_percent = int(round(completed * 100 / requested))
+    try:
+        current_index = max(0, int(data.get("current_index") or completed))
+    except (TypeError, ValueError):
+        current_index = completed
     data.update(
         {
             "files": files,
@@ -67,6 +95,9 @@ def normalize_generation_result(result: Any, requested_count: int = 1) -> Dict[s
             "failed_count": failed,
             "status": status,
             "success": status == "succeeded",
+            "completed_count": completed,
+            "progress_percent": progress_percent,
+            "current_index": current_index,
         }
     )
     return data

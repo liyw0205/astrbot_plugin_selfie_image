@@ -246,6 +246,9 @@ class FakeWebPlugin:
     def get_recent_records(self, *args, **kwargs):
         return [{"id": 1, "success": True}]
 
+    def get_generation_metrics(self):
+        return {"retained_records": 1, "requested_images": 1, "secret": "should not be returned"}
+
     def get_record_for_web(self, record_id: str):
         if str(record_id) == "1":
             return {
@@ -346,7 +349,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.4.14")
+        self.assertEqual(PLUGIN_VERSION, "1.6.0")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -698,6 +701,22 @@ class ConfigModelTests(unittest.TestCase):
         )
         self.assertEqual(direct["status"], "partial_success")
 
+    def test_task_detail_formats_partial_status_and_progress(self) -> None:
+        from astrbot_plugin_selfie_image.tasks.task_views import format_task_detail_text
+
+        text = format_task_detail_text(
+            {
+                "task_id": "cmd-12345678-1",
+                "status": "partial_success",
+                "requested_count": 3,
+                "completed_count": 2,
+                "progress_percent": 67,
+                "request_data": {"prompt": "测试"},
+            }
+        )
+        self.assertIn("部分完成", text)
+        self.assertIn("进度：2/3（67%）", text)
+
     def test_generation_metrics_aggregates_without_exposing_prompt(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
         from astrbot_plugin_selfie_image.generation.generation_records import build_generation_metrics
@@ -754,6 +773,64 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(channels["a"]["fallbacks"], 0)
         self.assertEqual(channels["b"]["fallbacks"], 1)
         self.assertEqual(channels["a"]["error_categories"], {"auth": 1, "rate_limit": 1})
+
+    def test_generation_metrics_supports_windows_quality_and_recommendations(self) -> None:
+        from astrbot_plugin_selfie_image.generation.generation_records import build_generation_metrics, metric_window_seconds
+
+        now = 2_000_000.0
+        records = [
+            {
+                "created_ts": now - 30,
+                "success": True,
+                "status": "succeeded",
+                "count": 1,
+                "used_model": "model-a",
+                "elapsed_seconds": 70,
+                "attempts": [
+                    {"channel": "unstable", "success": False, "error_category": "rate_limit", "elapsed_seconds": 20},
+                    {"channel": "unstable", "success": False, "error_category": "rate_limit", "elapsed_seconds": 20},
+                    {"channel": "unstable", "success": False, "error_category": "server", "elapsed_seconds": 20},
+                    {"channel": "fallback", "success": True, "elapsed_seconds": 30},
+                ],
+            },
+            {
+                "created_ts": now - 90 * 24 * 60 * 60,
+                "success": False,
+                "status": "failed",
+                "count": 1,
+                "used_model": "old-model",
+                "elapsed_seconds": 4,
+                "attempts": [{"channel": "old", "success": False, "error_category": "param"}],
+            },
+            {
+                "created_ts": now - 100,
+                "success": True,
+                "status": "succeeded",
+                "count": 1,
+                "elapsed_seconds": 1,
+                "attempts": [],
+            },
+            {
+                "created_ts": now - 200,
+                "success": True,
+                "status": "succeeded",
+                "count": 1,
+                "elapsed_seconds": 2,
+                "attempts": [],
+            },
+        ]
+        metrics = build_generation_metrics(records, window_seconds=metric_window_seconds("24h"), now=now)
+        self.assertEqual(metrics["retained_records"], 3)
+        self.assertEqual(metrics["total_retained_records"], 4)
+        self.assertEqual(metrics["window_seconds"], 24 * 60 * 60)
+        self.assertEqual(metrics["quality"]["image_success_rate"], 1.0)
+        self.assertGreater(metrics["quality"]["fallback_rate"], 0)
+        self.assertEqual(metrics["models"]["model-a"]["success_rate"], 1.0)
+        codes = {item["code"] for item in metrics["recommendations"]}
+        self.assertIn("rate_limit_pressure", codes)
+        self.assertIn("slow_generation", codes)
+        with self.assertRaises(ValueError):
+            metric_window_seconds("2h")
 
     def test_config_schema_migration_preserves_explicit_concurrency(self) -> None:
         migrated = AICatConfig.from_dict({"image": {"max_concurrent_tasks": 3}})
@@ -3838,6 +3915,77 @@ class WebApiTests(unittest.TestCase):
         for key in ("auth", "host", "port", "token"):
             self.assertNotIn(key, data)
 
+    def test_metrics_api_requires_token_and_returns_redacted_metrics(self) -> None:
+        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
+        self.assertEqual(client.get("/api/metrics").status_code, 401)
+
+        response = client.get("/api/metrics", headers={"X-Selfie-Image-Token": "secret"})
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()["data"]
+        self.assertEqual(data["retained_records"], 1)
+        self.assertNotIn("should not be returned", json.dumps(data, ensure_ascii=False))
+
+    def test_metrics_api_accepts_window_and_rejects_unknown_window(self) -> None:
+        class MetricsPlugin(FakeWebPlugin):
+            def get_generation_metrics(self, **kwargs):
+                self.metrics_kwargs = kwargs
+                return {"retained_records": 2, "window_seconds": kwargs.get("window_seconds", 0)}
+
+        plugin = MetricsPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+        response = client.get("/api/metrics?window=24h", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["window_seconds"], 24 * 60 * 60)
+        self.assertEqual(plugin.metrics_kwargs, {"window_seconds": 24 * 60 * 60})
+
+        invalid = client.get("/api/metrics?window=2h", headers=headers)
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("window 必须是", invalid.get_json()["error"])
+
+    def test_tasks_api_requires_auth_validates_filters_and_redacts_payload(self) -> None:
+        class QueuePlugin(FakeWebPlugin):
+            def list_web_tasks(self, **kwargs):
+                self.task_query = kwargs
+                return {
+                    "summary": {"total_active": 1, "queued": 1, "running": 0},
+                    "tasks": [
+                        {
+                            "task_id": "web-12345678-1",
+                            "status": "queued",
+                            "queue_waiting": True,
+                            "request_data": {"prompt": "safe", "api_key": "sk-live-secret"},
+                            "secret": "should not be returned",
+                        }
+                    ],
+                }
+
+        plugin = QueuePlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        self.assertEqual(client.get("/api/tasks").status_code, 401)
+
+        response = client.get(
+            "/api/tasks",
+            query_string={"media_type": "video", "include_finished": "true", "limit": "12"},
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()["data"]
+        self.assertIn("summary", payload)
+        self.assertIn("tasks", payload)
+        self.assertNotIn("sk-live-secret", json.dumps(payload, ensure_ascii=False))
+        self.assertNotIn("should not be returned", json.dumps(payload, ensure_ascii=False))
+        self.assertEqual(plugin.task_query, {"include_finished": True, "limit": 12, "media_type": "video"})
+
+        for value in ("0", "201", "not-a-number"):
+            bad = client.get("/api/tasks", query_string={"limit": value}, headers=headers)
+            self.assertEqual(bad.status_code, 400)
+
+        bad_media = client.get("/api/tasks", query_string={"media_type": "audio"}, headers=headers)
+        self.assertEqual(bad_media.status_code, 400)
+
     def test_cos_look_sets_api_uses_plugin_pool(self) -> None:
         client = self.make_client(FakeWebPlugin(""))
         response = client.get("/api/cos-look-sets")
@@ -4122,6 +4270,103 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("success 必须是 true 或 false", response.get_json()["error"])
 
+    def test_assets_api_supports_filters_pagination_and_batch_actions(self) -> None:
+        class AssetPlugin(FakeWebPlugin):
+            def query_asset_records(self, **kwargs):
+                self.asset_query = kwargs
+                return ([
+                    {
+                        "id": "asset-1",
+                        "media_type": "image",
+                        "generated_image_paths": ["asset.png"],
+                        "favorite": True,
+                    }
+                ], {"total": 3, "filtered": 1, "offset": kwargs["offset"], "limit": kwargs["limit"]})
+
+            def update_records_asset_metadata(self, ids, payload):
+                self.asset_metadata = (ids, payload)
+                return {"updated": ids, "missing": [], "updated_count": len(ids)}
+
+            def delete_records(self, ids):
+                self.asset_deleted = ids
+                return {"deleted": ids, "missing": [], "deleted_count": len(ids)}
+
+            def list_asset_tags(self):
+                return [{"tag": "portrait", "count": 2}]
+
+            def export_asset_metadata(self, ids=None):
+                self.asset_export_ids = ids
+                return {"format": "selfie-image-asset-metadata", "version": 1, "count": 1, "records": [{"id": "asset-1"}]}
+
+            def import_asset_metadata(self, payload):
+                self.asset_import_payload = payload
+                return {"updated": ["asset-1"], "missing": [], "invalid": [], "updated_count": 1}
+
+        plugin = AssetPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        self.assertEqual(client.get("/api/assets").status_code, 401)
+        response = client.get(
+            "/api/assets",
+            query_string={
+                "q": "portrait",
+                "source": "群",
+                "model": "model-a",
+                "media_type": "image",
+                "success": "true",
+                "tag": "favorite",
+                "start_time": "2026-09-01",
+                "end_time": "2026-09-07",
+                "sort": "priority",
+                "offset": "24",
+                "limit": "12",
+            },
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["data"][0]["id"], "asset-1")
+        self.assertEqual(payload["filtered"], 1)
+        self.assertEqual(plugin.asset_query["offset"], 24)
+        self.assertEqual(plugin.asset_query["limit"], 12)
+        self.assertEqual(plugin.asset_query["sort"], "priority")
+
+        response = client.post("/api/assets/metadata", json={"ids": ["asset-1"], "favorite": False}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(plugin.asset_metadata, (["asset-1"], {"ids": ["asset-1"], "favorite": False}))
+        response = client.post("/api/assets/delete", json={"record_ids": ["asset-1"]}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(plugin.asset_deleted, ["asset-1"])
+        response = client.get("/api/assets/tags", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"], [{"tag": "portrait", "count": 2}])
+        response = client.get("/api/assets/export", query_string={"ids": "asset-1"}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["format"], "selfie-image-asset-metadata")
+        self.assertEqual(plugin.asset_export_ids, ["asset-1"])
+        response = client.post("/api/assets/import", json={"records": [{"id": "asset-1", "tags": ["x"]}]}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(plugin.asset_import_payload, {"records": [{"id": "asset-1", "tags": ["x"]}]})
+
+    def test_assets_api_rejects_invalid_filters_and_payloads(self) -> None:
+        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+        response = client.get("/api/assets", query_string={"media_type": "audio"}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("media_type 必须是 image 或 video", response.get_json()["error"])
+        response = client.get("/api/assets", query_string={"limit": "0"}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+        response = client.post("/api/assets/metadata", json={"ids": "asset-1"}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("ids 必须是数组", response.get_json()["error"])
+        response = client.post("/api/assets/delete", json=["asset-1"], headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("请求体必须是 JSON 对象", response.get_json()["error"])
+        self.assertEqual(client.get("/api/assets/export", headers=headers).status_code, 501)
+        response = client.post("/api/assets/import", json={"records": []}, headers=headers)
+        self.assertEqual(response.status_code, 501)
+
     def test_record_detail_api_requires_auth_validates_id_and_returns_record(self) -> None:
         plugin = FakeWebPlugin("secret")
         client = self.make_client(plugin, host="0.0.0.0")
@@ -4304,6 +4549,37 @@ class WebApiTests(unittest.TestCase):
         self.assertNotIn("plain-provider-secret", sync_text)
         self.assertNotIn("abcdefghijklmnop", task_text)
 
+    def test_record_retry_route_queues_feedback_and_validates_id(self) -> None:
+        class RetryPlugin(FakeWebPlugin):
+            def __init__(self, token: str) -> None:
+                super().__init__(token)
+                self.retry_calls = []
+
+            def start_record_retry_task(self, record_id: str, feedback: str = ""):
+                self.retry_calls.append((record_id, feedback))
+                return {"task_id": "web-12345678-7", "status": "queued"}
+
+        plugin = RetryPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        self.assertEqual(client.post("/api/records/1/retry", json={}, headers=headers).status_code, 200)
+        response = client.post(
+            "/api/records/record-a/retry",
+            json={"feedback": "更明亮一点"},
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(plugin.retry_calls, [("1", ""), ("record-a", "更明亮一点")])
+
+        response = client.post(
+            "/api/records/" + ("x" * 129) + "/retry",
+            json={},
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("非法记录 ID", response.get_json()["error"])
+
     def test_web_error_responses_redact_sensitive_text(self) -> None:
         class FailingPlugin(FakeWebPlugin):
             async def refresh_selfie_profile_from_web(self):
@@ -4340,6 +4616,44 @@ class WebApiTests(unittest.TestCase):
         response = client.get("/api/test-image-channel/tasks/web-12345678-2", headers=headers)
         self.assertEqual(response.status_code, 404)
         self.assertIn("任务不存在", response.get_json()["error"])
+
+    def test_task_cancel_route_auth_validation_and_finished_conflict(self) -> None:
+        class CancelPlugin(FakeWebPlugin):
+            def __init__(self, token: str) -> None:
+                super().__init__(token)
+                self.cancelled = []
+                self.task = {
+                    "task_id": "cmd-12345678-1",
+                    "status": "queued",
+                    "success": None,
+                    "cancel_requested": False,
+                }
+
+            def get_web_image_task(self, task_id: str):
+                if task_id != self.task["task_id"]:
+                    raise ValueError("任务不存在或已清理")
+                return copy.deepcopy(self.task)
+
+            def cancel_image_task(self, task_id: str, **_kwargs):
+                self.cancelled.append(task_id)
+                self.task.update({"status": "cancelled", "success": False, "cancel_requested": True, "error": "任务已取消"})
+                return "已立即取消 " + task_id
+
+        plugin = CancelPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+
+        self.assertEqual(client.post("/api/tasks/cmd-12345678-1/cancel").status_code, 401)
+        bad = client.post("/api/tasks/cmd-invalid/cancel", headers=headers)
+        self.assertEqual(bad.status_code, 400)
+        response = client.post("/api/tasks/cmd-12345678-1/cancel", headers=headers, json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["status"], "cancelled")
+        self.assertEqual(plugin.cancelled, ["cmd-12345678-1"])
+
+        ended = client.post("/api/tasks/cmd-12345678-1/cancel", headers=headers, json={})
+        self.assertEqual(ended.status_code, 409)
+        self.assertIn("已经结束", ended.get_json()["error"])
 
     def test_cache_image_route_serves_files_and_rejects_traversal(self) -> None:
         plugin = FakeWebPlugin("secret")
@@ -4753,6 +5067,37 @@ class SessionModelAndTaskTests(unittest.TestCase):
         listed = plugin._list_image_tasks_for_session("group:b", include_finished=False)
         self.assertEqual(listed, [])
 
+    def test_command_task_cancellation_wins_late_success_result(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_tasks["cmd-12345678-1"] = {
+            "task_id": "cmd-12345678-1",
+            "status": "running",
+            "success": None,
+            "cancel_requested": False,
+            "requested_count": 3,
+            "completed_count": 2,
+            "succeeded_count": 2,
+            "failed_count": 0,
+        }
+        plugin._web_task_timestamp = lambda: "t"
+        plugin._release_quota_reservation = lambda _task_id: None
+
+        async def runner(task_id):
+            plugin._web_tasks[task_id]["cancel_requested"] = True
+            return {"success": True, "files": ["late.png"], "requested_count": 3}
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        asyncio.run(plugin._run_command_image_task("cmd-12345678-1", Event(), runner))
+        self.assertEqual(plugin._web_tasks["cmd-12345678-1"]["status"], "cancelled")
+        self.assertFalse(plugin._web_tasks["cmd-12345678-1"]["success"])
+        self.assertEqual(plugin._web_tasks["cmd-12345678-1"]["requested_count"], 3)
+
 
 class ReferenceCollectorTests(unittest.TestCase):
     def test_extract_buckets_message_quote_at_and_forward(self) -> None:
@@ -5109,6 +5454,11 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("normalizeVideoProviderType", self.html)
         self.assertIn("toastOnOk", self.html)
         self.assertIn("allowWhileModal", self.html)
+        self.assertIn('id="monitorMetricsWindow"', self.html)
+        self.assertIn("/api/metrics?window=", self.html)
+        self.assertIn("quality.record_success_rate", self.html)
+        self.assertIn("const models =", self.html)
+        self.assertIn("recommendations", self.html)
         page = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
         page_html = page.read_text(encoding="utf-8")
         self.assertIn("#3c96ca", page_html)
@@ -5178,6 +5528,31 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertEqual(plugin.kinds, ["video", "video"])
         self.assertEqual(managed["data"]["data"][0]["name"], "video")
         self.assertEqual(picker["data"]["data"][0]["name"], "video")
+
+    def test_dashboard_metrics_api_accepts_window_and_rejects_unknown_window(self) -> None:
+        import astrbot_plugin_selfie_image.webui.dashboard_api as dashboard_api
+        from astrbot_plugin_selfie_image.webui.dashboard_api import SelfieImageDashboardAPI
+
+        class Plugin:
+            def get_generation_metrics(self, **kwargs):
+                self.metrics_kwargs = kwargs
+                return {"window_seconds": kwargs.get("window_seconds", 0)}
+
+        plugin = Plugin()
+        api = SelfieImageDashboardAPI(plugin)
+        old_request, old_json_response, old_error_response = dashboard_api.request, dashboard_api.json_response, dashboard_api.error_response
+        dashboard_api.json_response = lambda payload, **_: payload
+        dashboard_api.error_response = lambda message, **kwargs: {"error": message, "status": kwargs.get("status_code")}
+        try:
+            dashboard_api.request = types.SimpleNamespace(query={"window": "7d"})
+            result = asyncio.run(api.page_metrics())
+            self.assertEqual(result["data"]["data"]["window_seconds"], 7 * 24 * 60 * 60)
+            self.assertEqual(plugin.metrics_kwargs, {"window_seconds": 7 * 24 * 60 * 60})
+            dashboard_api.request = types.SimpleNamespace(query={"window": "2h"})
+            invalid = asyncio.run(api.page_metrics())
+            self.assertEqual(invalid["status"], 400)
+        finally:
+            dashboard_api.request, dashboard_api.json_response, dashboard_api.error_response = old_request, old_json_response, old_error_response
 
     def test_openai_fast_path_and_trust_env_false_still_present(self) -> None:
         providers = Path(__file__).resolve().parents[1] / "core/providers.py"
@@ -6066,6 +6441,7 @@ class VideoV1Tests(unittest.TestCase):
             agnes_size_wh,
             build_agnes_result_url,
             build_agnes_videos_endpoint,
+            video_error_user_message,
         )
 
         self.assertTrue(build_agnes_videos_endpoint("https://apihub.agnes-ai.com").endswith("/v1/videos"))
@@ -6112,6 +6488,25 @@ class VideoV1Tests(unittest.TestCase):
         self.assertEqual(payload25["first_frame"], "https://cdn.example/ref.png")
         self.assertNotIn("num_frames", payload25)
         self.assertNotIn("frame_rate", payload25)
+
+        local_reference = ImageReference(data=PNG_BYTES)
+        local_payload = _agnes_payload(
+            target25,
+            VideoGenerateRequest(prompt="animate local image", duration=5, images=[local_reference]),
+            ["data:image/png;base64,AAAA"],
+            [local_reference],
+        )
+        self.assertTrue(local_payload["first_frame"].startswith("data:image/png;base64,"))
+
+        auth_message = video_error_user_message("HTTP 401: Bearer super-secret-token")
+        self.assertIn("鉴权失败", auth_message)
+        self.assertNotIn("super-secret-token", auth_message)
+        server_message = video_error_user_message(
+            "HTTP 503: https://user:password@example.test/result?token=secret-token"
+        )
+        self.assertIn("上游服务异常", server_message)
+        self.assertNotIn("password", server_message)
+        self.assertNotIn("secret-token", server_message)
 
         target_flash = SimpleNamespace(model="agnes-video-2.5-flash")
         payload_flash = _agnes_payload(
@@ -8654,6 +9049,71 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("窗边白裙", received["action"])
         self.assertIn("更年轻一点", received["action"])
 
+    def test_record_retry_payload_reuses_prompt_and_cached_references(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        stub = object.__new__(plugin_main.SelfieImagePlugin)
+        stub.config = types.SimpleNamespace(
+            image_max_image_size_mb=10,
+            image_default_aspect_ratio="9:16",
+            image_default_resolution="1K",
+            video_default_duration=5,
+        )
+        stub.get_record_for_web = lambda record_id: {
+            "id": record_id,
+            "media_type": "image",
+            "prompt": "original prompt",
+            "request_prompt": "expanded prompt",
+            "request_image_paths": ["request.png"],
+            "request_data": {"aspect_ratio": "3:4", "resolution": "2K", "channel": "main", "model": "image-1"},
+        }
+        stub._load_cache_image_bytes = lambda path: (PNG_BYTES, "image/png")
+
+        payload = plugin_main.SelfieImagePlugin.build_record_retry_payload(stub, "record-1", "more light")
+        self.assertEqual(payload["media_type"], "image")
+        self.assertEqual(payload["channel"], "main")
+        self.assertEqual(payload["model"], "image-1")
+        self.assertEqual(payload["aspect_ratio"], "3:4")
+        self.assertEqual(payload["resolution"], "2K")
+        self.assertFalse(payload["prompt_enhance"])
+        self.assertEqual(len(payload["images"]), 1)
+        self.assertIn("expanded prompt", payload["prompt"])
+        self.assertIn("more light", payload["prompt"])
+
+    def test_web_task_retry_summary_keeps_parent_record_id(self) -> None:
+        from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
+
+        stub = object.__new__(WebTaskMixin)
+        stub.config = types.SimpleNamespace(image_default_aspect_ratio="9:16", image_default_resolution="1K", video_default_duration=5)
+        image = stub._summarize_web_test_payload({"prompt": "retry", "_retry_record_id": "record-42", "images": []})
+        video = stub._summarize_web_test_payload({"media_type": "video", "prompt": "retry", "_retry_record_id": "record-42"})
+        self.assertEqual(image["retry_record_id"], "record-42")
+        self.assertEqual(video["retry_record_id"], "record-42")
+
+    def test_web_task_list_omits_request_and_result_payloads(self) -> None:
+        from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
+
+        stub = object.__new__(WebTaskMixin)
+        stub._web_task_lock = threading.RLock()
+        stub._web_tasks = {
+            "web-12345678-1": {
+                "task_id": "web-12345678-1",
+                "status": "succeeded",
+                "success": True,
+                "created_ts": 1,
+                "updated_ts": 2,
+                "request_data": {"media_type": "video", "prompt": "private"},
+                "result": {"video_path": "/private/video.mp4"},
+                "request_fingerprint": "private-fingerprint",
+                "owner_session": "private-session",
+            }
+        }
+        listed = stub.list_web_tasks(include_finished=True)
+        row = listed["tasks"][0]
+        self.assertEqual(row["media_type"], "video")
+        for key in ("request_data", "result", "request_fingerprint", "owner_session"):
+            self.assertNotIn(key, row)
+
     def test_dashboard_has_studio_tab(self) -> None:
         from astrbot_plugin_selfie_image.webui.web import INDEX_HTML, WEB_TASK_ID_RE
 
@@ -8682,9 +9142,12 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("作底图", INDEX_HTML)
         self.assertIn("作服装", INDEX_HTML)
         self.assertIn("studioMoveSlot", INDEX_HTML)
+        self.assertIn("studioDropSlot", INDEX_HTML)
         self.assertIn("setStudioRunningUI", INDEX_HTML)
         self.assertIn("data-cache-path", INDEX_HTML)
         self.assertIn("loadProtectedImages(wrap)", INDEX_HTML)
+        self.assertIn("/api/assets/studio", INDEX_HTML)
+        self.assertIn("addSelectedAssetToStudio", INDEX_HTML)
         self.assertTrue(WEB_TASK_ID_RE.fullmatch("web-studio-12345678-1"))
 
         dashboard_html = (
@@ -8713,6 +9176,64 @@ class StudioStoreTests(unittest.TestCase):
             listed = store.list_sessions()
             self.assertTrue(listed)
             self.assertIn("thumb_path", listed[0])
+
+    def test_studio_slot_and_result_keep_asset_links(self) -> None:
+        import tempfile
+        from astrbot_plugin_selfie_image.studio.studio import StudioStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StudioStore(tmp)
+            session = store.create("linked", template="i2i")
+            slot_id = session["slots"][0]["id"]
+            updated = store.set_slot_image(
+                session["id"], slot_id, image_path="generated/source.png", source="asset", source_record_id="record-7"
+            )
+            slot = next(item for item in updated["slots"] if item["id"] == slot_id)
+            self.assertEqual(slot["source_record_id"], "record-7")
+            finished = store.attach_run_finish(
+                session["id"], "web-studio-12345678-1", success=True,
+                result_paths=["generated/result.png"], source_asset_ids=["record-7"],
+            )
+            self.assertEqual(finished["results"][0]["studio_session_id"], session["id"])
+            self.assertEqual(finished["results"][0]["source_asset_ids"], ["record-7"])
+
+    def test_studio_reorder_persists_input_order(self) -> None:
+        import tempfile
+        from astrbot_plugin_selfie_image.studio.studio import StudioStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StudioStore(tmp)
+            session = store.create("ordered", template="i2i")
+            original = [item["id"] for item in session["slots"]]
+            order = list(reversed(original))
+            updated = store.reorder_slots(session["id"], order)
+            self.assertEqual([item["id"] for item in updated["slots"]], order)
+            self.assertEqual(updated["graph"]["input_order"], order)
+
+            reloaded = StudioStore(tmp).get(session["id"])
+            self.assertEqual([item["id"] for item in reloaded["slots"]], order)
+            self.assertEqual(reloaded["graph"]["input_order"], order)
+
+    def test_studio_batch_asset_add_keeps_partial_errors(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio_adapter import StudioMixin
+
+        stub = object.__new__(StudioMixin)
+        calls = []
+
+        def add_one(record_id, payload):
+            calls.append((record_id, dict(payload)))
+            if record_id == "bad":
+                raise ValueError("视频资产不能作为图片参考加入画布")
+            return {"session_id": "studio-batch", "slot_id": "slot-" + record_id, "preset_name": "捧脸"}
+
+        stub.studio_add_asset = add_one
+        stub.studio = types.SimpleNamespace(get=lambda session_id: {"id": session_id, "slots": []})
+        result = StudioMixin.studio_add_assets(stub, ["good-1", "bad", "good-2"], {"preset_name": "捧脸"})
+        self.assertEqual(result["added_count"], 2)
+        self.assertEqual(result["error_count"], 1)
+        self.assertEqual(result["errors"][0]["record_id"], "bad")
+        self.assertEqual(result["session_id"], "studio-batch")
+        self.assertNotIn("slot_id", calls[1][1])
 
 
 class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
@@ -8781,6 +9302,38 @@ class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["failed_count"], 0)
         self.assertEqual(peak, 3)
         self.assertEqual(plugin._image_batch_gate._value, 3)
+
+    async def test_batch_persists_progress_after_each_completed_shot(self) -> None:
+        from types import SimpleNamespace
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin.config = SimpleNamespace(image_max_concurrent_tasks=1, image_show_generation_info=False, image_enable_daily_limit=False, image_show_model_info=False)
+        plugin._image_batch_gate = asyncio.Semaphore(1)
+        plugin._web_task_lock = threading.RLock()
+        plugin._web_tasks = {"task": {"cancel_requested": False}}
+        plugin._record_generated_images = lambda *_args: None
+        plugin._send_generated_images = lambda *_args: asyncio.sleep(0)
+        updates = []
+        plugin._set_web_image_task = lambda _task_id, **fields: updates.append(dict(fields))
+
+        async def run_one(_index):
+            return {"success": True, "files": ["generated.png"]}
+
+        with patch("astrbot_plugin_selfie_image.main.IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS", 0):
+            result = await plugin._run_counted_generation_shots(
+                task_id="task", event=Event(), total=3, fail_label="failed", run_one=run_one, log_prefix="progress batch"
+            )
+        self.assertEqual(result["completed_count"], 3)
+        self.assertEqual(sorted({item["completed_count"] for item in updates}), [1, 2, 3])
+        self.assertEqual(updates[-1]["progress_percent"], 100)
 
     async def test_batch_shots_wait_after_each_global_slot_acquisition(self) -> None:
         from types import SimpleNamespace

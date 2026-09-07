@@ -176,7 +176,7 @@ from .prompts.selfie_actions import (
     period_scene_light_pools,
 )
 from .core.proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, http_proxy_url, image_client_timeout, target_session_proxy
-from .generation.video import VideoGenerateRequest, generate_video_with_fallback
+from .generation.video import VideoGenerateRequest, generate_video_with_fallback, video_error_user_message
 from .core.utils import (
     bytes_to_data_url,
     collect_record_cache_paths,
@@ -245,9 +245,12 @@ class SelfieImagePlugin(
         self._migrate_legacy_config_file()
         self.usage_path = os.path.join(self.data_dir, "usage_stats.json")
         self.records_path = os.path.join(self.data_dir, "generation_records.json")
+        self.records_db_path = os.path.join(self.data_dir, "generation_records.sqlite3")
+        self.media_sources_dir = os.path.join(self.data_dir, "media_sources")
         self.tasks_path = os.path.join(self.data_dir, "generation_tasks.json")
         self.generated_dir = os.path.join(self.data_dir, "image_cache")
         os.makedirs(self.generated_dir, exist_ok=True)
+        os.makedirs(self.media_sources_dir, exist_ok=True)
         self.video_dir = os.path.join(self.generated_dir, "video")
         os.makedirs(self.video_dir, exist_ok=True)
         self._plugin_root = os.path.dirname(os.path.abspath(__file__))
@@ -271,6 +274,8 @@ class SelfieImagePlugin(
         self._native_config_path = str(getattr(config, "config_path", "") or "")
         self._config_lock = threading.RLock()
         self._usage_lock = threading.RLock()
+        self._quota_reservation_lock = threading.RLock()
+        self._quota_reservations: Dict[str, Dict[str, Any]] = {}
         self._records_lock = threading.RLock()
         self._progress_lock = threading.RLock()
         self._progress_last_sent: Dict[str, float] = {}
@@ -405,13 +410,83 @@ class SelfieImagePlugin(
             return permission_error
         status = self._access_status(event)
         status["allowed"] = True
+        user_id = event_user_id(event)
+        lock = getattr(self, "_quota_reservation_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._quota_reservation_lock = lock
+        reservations = getattr(self, "_quota_reservations", {})
+        with lock:
+            reserved = sum(
+                int(item.get("count") or 0)
+                for item in reservations.values()
+                if str(item.get("user_id") or "") == user_id
+            )
         return quota_error_message(
             status,
             self._current_usage_stats(),
             enabled=self.config.image_enable_daily_limit,
             limit=self.config.image_daily_limit_count,
-            requested_count=requested_count,
+            requested_count=max(1, int(requested_count or 1)) + reserved,
         )
+
+    def _reserve_quota_for_task(
+        self,
+        task_id: str,
+        event: AstrMessageEvent,
+        requested_count: int,
+        *,
+        media_type: str = "image",
+    ) -> str:
+        """Atomically reserve daily image slots while a queued task runs."""
+        if str(media_type or "image").strip().lower() == "video":
+            return ""
+        count = max(1, int(requested_count or 1))
+        if not bool(getattr(self.config, "image_enable_daily_limit", False)):
+            return ""
+        status = self._access_status(event)
+        if status.get("unlimited") or not status.get("allowed"):
+            return ""
+        user_id = event_user_id(event)
+        reservation_lock = getattr(self, "_quota_reservation_lock", None)
+        if reservation_lock is None:
+            reservation_lock = threading.RLock()
+            self._quota_reservation_lock = reservation_lock
+        reservations = getattr(self, "_quota_reservations", None)
+        if reservations is None:
+            reservations = {}
+            self._quota_reservations = reservations
+        usage_lock = getattr(self, "_usage_lock", None)
+        if usage_lock is None:
+            usage_lock = threading.RLock()
+            self._usage_lock = usage_lock
+        with reservation_lock, usage_lock:
+            stats = self._current_usage_stats()
+            users = stats.get("users") if isinstance(stats.get("users"), dict) else {}
+            row = users.get(user_id) if isinstance(users.get(user_id), dict) else {}
+            used = int(row.get("count") or 0)
+            reserved = sum(
+                int(item.get("count") or 0)
+                for item in reservations.values()
+                if str(item.get("user_id") or "") == user_id
+            )
+            limit = int(getattr(self.config, "image_daily_limit_count", 0) or 0)
+            if used + reserved + count > limit:
+                return f"今日生图次数已用完：{used + reserved}/{limit}。"
+            reservations[str(task_id)] = {
+                "user_id": user_id,
+                "count": count,
+                "created_ts": time.time(),
+            }
+        return ""
+
+    def _release_quota_reservation(self, task_id: str) -> None:
+        lock = getattr(self, "_quota_reservation_lock", None)
+        reservations = getattr(self, "_quota_reservations", None)
+        if lock is None or reservations is None:
+            return
+        with lock:
+            reservations.pop(str(task_id or ""), None)
 
     def _rate_limit_error_message(self, event: AstrMessageEvent) -> str:
         if self._is_whitelisted(event):
@@ -1137,6 +1212,7 @@ class SelfieImagePlugin(
         max_attempts: Optional[int] = None,
         allow_compat_retry: bool = True,
         prompt_en_meta: Optional[Dict[str, Any]] = None,
+        record_context: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         # Enabled channels remain eligible after transient failures. Operators
         # decide whether to disable or remove an unavailable channel.
@@ -1158,6 +1234,22 @@ class SelfieImagePlugin(
         )
         audit_prompt_text = request_prompt if is_leg_focus_request else (original_prompt or request_prompt)
         source_meta = self._source_context(event, source, audit_user_id)
+        # Workflow links are intentionally small and non-sensitive. Keeping
+        # them at the record top level makes detail/list consumers independent
+        # from the request-data compaction policy.
+        if isinstance(record_context, Mapping):
+            for key in (
+                "studio_session_id",
+                "studio_task_id",
+                "studio_template",
+                "studio_source_asset_ids",
+                "retry_record_id",
+            ):
+                value = record_context.get(key)
+                if isinstance(value, (str, int, float, bool)):
+                    source_meta[key] = value
+                elif isinstance(value, list):
+                    source_meta[key] = [str(item).strip() for item in value if str(item).strip()][:24]
         request_image_paths = self._save_reference_images_to_cache(refs)
         image_to_text_targets = [
             target
@@ -1238,6 +1330,19 @@ class SelfieImagePlugin(
             "targets": [redact_sensitive_text(target.label) for target in selected_targets],
             "image_to_text": image_to_text_meta,
         }
+        if isinstance(record_context, Mapping):
+            for key in (
+                "studio_session_id",
+                "studio_task_id",
+                "studio_template",
+                "studio_source_asset_ids",
+                "retry_record_id",
+            ):
+                value = record_context.get(key)
+                if isinstance(value, (str, int, float, bool)):
+                    request_data[key] = value
+                elif isinstance(value, list):
+                    request_data[key] = [str(item).strip() for item in value if str(item).strip()][:24]
         if prompt_en_meta:
             request_data["prompt_en"] = dict(prompt_en_meta)
             if prompt_en_meta.get("applied"):
@@ -1265,6 +1370,8 @@ class SelfieImagePlugin(
                     "reference_images": len(refs),
                     "request_data": request_data,
                     "response_data": response_data,
+                    "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                    "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
                     "request_image_paths": request_image_paths,
                     "generated_image_paths": [],
                 }
@@ -1304,6 +1411,8 @@ class SelfieImagePlugin(
                     "reference_images": len(refs),
                     "request_data": request_data,
                     "response_data": response_data,
+                    "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                    "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
                     "request_image_paths": request_image_paths,
                     "generated_image_paths": [],
                 }
@@ -1380,6 +1489,8 @@ class SelfieImagePlugin(
                 "elapsed_seconds": round(elapsed, 2),
                 "generated_image_sources": result.source_media,
                 "attempts": result.attempts,
+                "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
             }
             self._record_task(
                 {
@@ -1394,6 +1505,8 @@ class SelfieImagePlugin(
                     "reference_images": len(refs),
                     "request_data": request_data,
                     "response_data": response_data,
+                    "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                    "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
                     "request_image_paths": request_image_paths,
                     "generated_image_paths": [],
                     "generated_image_sources": result.source_media,
@@ -1408,6 +1521,8 @@ class SelfieImagePlugin(
                 "response_data": response_data,
                 "request_image_paths": request_image_paths,
                 "attempts": result.attempts,
+                "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
             }
 
         generated_images = [image for image in result.images if image]
@@ -1429,6 +1544,8 @@ class SelfieImagePlugin(
                 "generated_image_sources": result.source_media,
                 "blocked_images_retained": True,
                 "attempts": result.attempts,
+                "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
             }
             self._record_task(
                 {
@@ -1443,6 +1560,8 @@ class SelfieImagePlugin(
                     "reference_images": len(refs),
                     "request_data": request_data,
                     "response_data": response_data,
+                    "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                    "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
                     "request_image_paths": request_image_paths,
                     "generated_image_paths": generated_image_paths,
                     "generated_image_sources": result.source_media,
@@ -1456,6 +1575,8 @@ class SelfieImagePlugin(
                 "used_model": result.used_model,
                 "image_paths": generated_image_paths,
                 "attempts": result.attempts,
+                "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
             }
 
         cleanup = self._cleanup_image_cache_if_needed([*request_image_paths, *generated_image_paths])
@@ -1468,6 +1589,8 @@ class SelfieImagePlugin(
             "generated_image_sources": result.source_media,
             "cache_cleanup": cleanup,
             "attempts": result.attempts,
+            "retry_count": int(getattr(result, "retry_count", 0) or 0),
+            "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
         }
         self._record_task(
             {
@@ -1482,6 +1605,8 @@ class SelfieImagePlugin(
                 "count": len(files),
                 "request_data": request_data,
                 "response_data": response_data,
+                "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
                 "request_image_paths": request_image_paths,
                 "generated_image_paths": generated_image_paths,
                 "generated_image_sources": result.source_media,
@@ -1499,6 +1624,8 @@ class SelfieImagePlugin(
             "response_data": response_data,
             "request_image_paths": request_image_paths,
             "attempts": result.attempts,
+            "retry_count": int(getattr(result, "retry_count", 0) or 0),
+            "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
             "generated_image_sources": result.source_media,
         }
 
@@ -1641,6 +1768,89 @@ class SelfieImagePlugin(
                 )
             return find_model_target(targets, channel_name, model)
         return find_model_target(self.config.get_prioritized_video_targets())
+
+    def _record_retry_reference_data_urls(self, record: Mapping[str, Any]) -> List[str]:
+        """Load cached request images for a record retry without exposing paths."""
+        raw_paths = record.get("request_image_paths")
+        if not isinstance(raw_paths, list):
+            return []
+        urls: List[str] = []
+        max_bytes = int(getattr(self.config, "image_max_image_size_mb", 10) or 10) * 1024 * 1024
+        for raw_path in raw_paths[:16]:
+            try:
+                loaded = self._load_cache_image_bytes(str(raw_path or ""))
+            except Exception:
+                loaded = None
+            if not loaded:
+                continue
+            data, mime = loaded
+            if not data or len(data) > max_bytes:
+                continue
+            urls.append(bytes_to_data_url(data, mime))
+        return urls
+
+    def build_record_retry_payload(self, record_id: str, feedback: str = "") -> Dict[str, Any]:
+        """Build a sanitized web-task request from a retained generation record."""
+        record = self.get_record_for_web(record_id)
+        request_data = record.get("request_data") if isinstance(record.get("request_data"), Mapping) else {}
+        media_type = str(record.get("media_type") or "image").strip().lower()
+        if media_type not in {"image", "video"}:
+            media_type = "image"
+        prompt = str(
+            record.get("request_prompt")
+            or record.get("prompt")
+            or record.get("original_prompt")
+            or request_data.get("original_prompt")
+            or ""
+        ).strip()
+        if not prompt:
+            raise ValueError("这条记录没有可重试的提示词")
+        feedback_text = str(feedback or "").strip()[:2000]
+        if feedback_text:
+            prompt = f"{prompt}\n\nAdditional revision request: {feedback_text}"
+        payload: Dict[str, Any] = {
+            "media_type": media_type,
+            "prompt": prompt[:50000],
+            "channel": str(request_data.get("channel") or "").strip(),
+            "model": str(request_data.get("model") or "").strip(),
+            "aspect_ratio": str(
+                request_data.get("aspect_ratio")
+                or request_data.get("size")
+                or ("16:9" if media_type == "video" else getattr(self.config, "image_default_aspect_ratio", "9:16"))
+            ).strip(),
+            "images": self._record_retry_reference_data_urls(record),
+            "force_regenerate": True,
+            "_retry_record_id": str(record.get("id") or record_id).strip(),
+        }
+        if media_type == "image":
+            # The stored request prompt is already the expanded prompt. Reusing
+            # it avoids translating or appending a second reference instruction.
+            payload["resolution"] = str(
+                request_data.get("resolution") or getattr(self.config, "image_default_resolution", "1K")
+            ).strip()
+            payload["prompt_enhance"] = False
+            payload["use_selfie_reference"] = bool(
+                request_data.get("use_selfie_reference") and not payload["images"]
+            )
+        else:
+            payload["duration"] = max(
+                1,
+                min(
+                    60,
+                    int(
+                        request_data.get("duration")
+                        or request_data.get("requested_duration")
+                        or getattr(self.config, "video_default_duration", 5)
+                        or 5
+                    ),
+                ),
+            )
+        return payload
+
+    def start_record_retry_task(self, record_id: str, feedback: str = "") -> Dict[str, Any]:
+        """Queue a record retry through the existing persistent web task manager."""
+        payload = self.build_record_retry_payload(record_id, feedback)
+        return self.start_web_image_task(payload)
 
     def _available_model_labels(self) -> List[str]:
         return available_model_labels(self.config.get_prioritized_targets())
@@ -1840,7 +2050,7 @@ class SelfieImagePlugin(
             if owner and session_key and owner != session_key and not is_admin:
                 raise PermissionError("不能取消其他会话的生图任务")
             status = str(task.get("status") or "")
-            if status in {"succeeded", "failed", "cancelled"}:
+            if status in {"succeeded", "partial_success", "failed", "cancelled", "expired"}:
                 return f"这单已经结束了（{status}），不用再取消"
             task["cancel_requested"] = True
             now = time.time()
@@ -1853,7 +2063,10 @@ class SelfieImagePlugin(
             task["finished_at"] = self._web_task_timestamp()
             self._persist_web_tasks_locked()
             runtime_task = getattr(self, "_runtime_generation_tasks", {}).get(tid)
-            if runtime_task is not None and not runtime_task.done():
+            # Studio coroutines must get a chance to persist the session's
+            # cancelled last_run state; their cancellation flag is checked at
+            # each generation boundary and before the final commit.
+            if runtime_task is not None and not runtime_task.done() and not task.get("studio_session_id"):
                 runtime_task.cancel()
             return f"已立即取消 {tid}"
 
@@ -1885,11 +2098,26 @@ class SelfieImagePlugin(
             self._web_task_seq += 1
             task_id = f"cmd-{int(time.time() * 1000)}-{self._web_task_seq}"
             now = time.time()
+            media_type = "video" if str(request_summary.get("kind") or request_summary.get("media_type") or "").strip().lower() == "video" else "image"
+            requested_count = max(1, int(request_summary.get("requested_count") or request_summary.get("count") or 1))
+            quota_error = self._reserve_quota_for_task(
+                task_id,
+                event,
+                requested_count,
+                media_type=media_type,
+            )
+            reservation_lock = getattr(self, "_quota_reservation_lock", None)
+            if reservation_lock is None:
+                reservation_lock = threading.RLock()
+                self._quota_reservation_lock = reservation_lock
+            reservations = getattr(self, "_quota_reservations", {})
+            with reservation_lock:
+                reserved_count = int((reservations.get(task_id) or {}).get("count") or 0)
             self._web_tasks[task_id] = {
                 "task_id": task_id,
-                "status": "queued",
-                "success": None,
-                "error": "",
+                "status": "failed" if quota_error else "queued",
+                "success": False if quota_error else None,
+                "error": quota_error,
                 "created_ts": now,
                 "updated_ts": now,
                 "created_at": self._web_task_timestamp(),
@@ -1902,9 +2130,15 @@ class SelfieImagePlugin(
                 "cancel_requested": False,
                 "request_fingerprint": fingerprint,
                 "deduplicated": False,
+                "quota_reserved": reserved_count,
+                "quota_error": quota_error,
+                **self._task_runtime_defaults(),
+                **self._task_progress_defaults(requested_count),
             }
             self._prune_web_tasks_locked()
             self._persist_web_tasks_locked()
+        if quota_error:
+            return self.get_web_image_task(task_id)
         runtime_task = asyncio.create_task(self._run_command_image_task(task_id, event, runner))
         runtime_tasks = getattr(self, "_runtime_generation_tasks", None)
         if runtime_tasks is None:
@@ -1924,6 +2158,7 @@ class SelfieImagePlugin(
         *,
         source: str = "command-video",
         duration: Optional[int] = None,
+        task_id: str = "",
     ) -> Dict[str, Any]:
         started = time.monotonic()
         try:
@@ -2051,16 +2286,21 @@ class SelfieImagePlugin(
             "request_prompt_en": req.prompt if prompt_en_meta.get("applied") else "",
         }
 
+        video_slot = await self._acquire_video_slot(task_id) if task_id else None
+        if task_id and video_slot is None:
+            return {"success": False, "error": "任务已取消", "cancelled": True}
+        acquired_video_slot = bool(task_id and video_slot is not None)
+        if not task_id:
+            await self._video_semaphore.acquire()
         try:
-            async with self._video_semaphore:
-                async with aiohttp.ClientSession(trust_env=False) as session:
-                    result = await generate_video_with_fallback(
-                        targets,
-                        req,
-                        session,
-                        save_dir=self.video_dir,
-                        global_timeout=self.config.video_global_timeout,
-                    )
+            async with aiohttp.ClientSession(trust_env=False) as session:
+                result = await generate_video_with_fallback(
+                    targets,
+                    req,
+                    session,
+                    save_dir=self.video_dir,
+                    global_timeout=self.config.video_global_timeout,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -2070,6 +2310,9 @@ class SelfieImagePlugin(
                 request_prompt=req.prompt,
                 request_data=request_data,
             )
+        finally:
+            if acquired_video_slot or not task_id:
+                self._video_semaphore.release()
         self._record_channel_health(result.attempts)
         if result.error or not result.video_path:
             return failure(
@@ -2081,6 +2324,8 @@ class SelfieImagePlugin(
                 request_data=request_data,
                 response_data={
                     "attempts": result.attempts,
+                    "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                    "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
                     "video_url": result.video_url,
                     "video_source": result.video_source,
                 },
@@ -2106,6 +2351,8 @@ class SelfieImagePlugin(
                 "request_data": request_data,
                 "response_data": {
                     "attempts": result.attempts,
+                    "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                    "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
                     "video_url": result.video_url,
                     "video_source": result.video_source,
                 },
@@ -2121,6 +2368,8 @@ class SelfieImagePlugin(
             "video_source": result.video_source,
             "used_model": result.used_model,
             "attempts": result.attempts,
+            "retry_count": int(getattr(result, "retry_count", 0) or 0),
+            "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
             "elapsed_seconds": result.elapsed_seconds,
             "request_image_paths": request_image_paths,
             "files": [result.video_path],
@@ -2144,7 +2393,7 @@ class SelfieImagePlugin(
         request_image_paths: Optional[List[str]] = None,
         elapsed_seconds: float = 0.0,
     ) -> Dict[str, Any]:
-        safe_error = redact_sensitive_text(str(error or "视频没有生成出来"))
+        safe_error = video_error_user_message(error, "视频没有生成出来")
         attempt_rows = list(attempts or [])
         request_info = {
             "duration": int(duration or 5),
@@ -2164,6 +2413,7 @@ class SelfieImagePlugin(
             response_info.setdefault("stage", stage)
             response_info.setdefault("error", safe_error)
             response_info.setdefault("attempts", attempt_rows)
+        response_info["error"] = video_error_user_message(response_info.get("error") or safe_error, safe_error)
         elapsed = float(elapsed_seconds or 0)
         self._record_task(
             {
@@ -2180,6 +2430,8 @@ class SelfieImagePlugin(
                 "request_data": request_info,
                 "response_data": response_info,
                 "attempts": attempt_rows,
+                "retry_count": sum(1 for item in attempt_rows if isinstance(item, dict) and not item.get("success")),
+                "retry_exhausted": bool(attempt_rows),
                 "request_image_paths": list(request_image_paths or []),
                 "generated_image_paths": [],
                 "generated_video_paths": [],
@@ -2207,7 +2459,7 @@ class SelfieImagePlugin(
     ) -> Dict[str, Any]:
         if self._task_cancel_requested(task_id):
             return {"success": False, "error": "任务已取消", "cancelled": True}
-        result = await self._run_video_generation(event, prompt, refs, source=source)
+        result = await self._run_video_generation(event, prompt, refs, source=source, task_id=task_id)
         if self._task_cancel_requested(task_id) and not result.get("success"):
             return {"success": False, "error": "任务已取消", "cancelled": True}
         if not result.get("success"):
@@ -2412,6 +2664,7 @@ class SelfieImagePlugin(
                 refs,
                 source=f"command-{mode_label}",
                 duration=duration,
+                task_id=task_id,
             )
             if not result.get("success"):
                 error = self._friendly_user_error_message(str(result.get("error") or ""), "视频没有完成")
@@ -2489,6 +2742,7 @@ class SelfieImagePlugin(
 
     async def _run_command_image_task(self, task_id: str, event: AstrMessageEvent, runner) -> None:
         if self._task_cancel_requested(task_id):
+            self._release_quota_reservation(task_id)
             self._set_web_image_task(
                 task_id,
                 status="cancelled",
@@ -2510,8 +2764,19 @@ class SelfieImagePlugin(
             result = await runner(task_id)
             result = self._normalize_generation_result(result)
             result = redact_sensitive_data(result)
-            if self._task_cancel_requested(task_id) and not result.get("success"):
-                result = {"success": False, "error": "任务已取消", "cancelled": True}
+            # A cancellation request wins the race with a late upstream response.
+            if self._task_cancel_requested(task_id):
+                with self._web_task_lock:
+                    previous = dict(self._web_tasks.get(task_id) or {})
+                result = {
+                    "success": False,
+                    "error": "任务已取消",
+                    "cancelled": True,
+                    "requested_count": int(previous.get("requested_count") or result.get("requested_count") or 1),
+                    "completed_count": int(previous.get("completed_count") or result.get("completed_count") or 0),
+                    "succeeded_count": int(previous.get("succeeded_count") or result.get("succeeded_count") or 0),
+                    "failed_count": int(previous.get("failed_count") or result.get("failed_count") or 0),
+                }
             success = bool(result.get("success"))
             cancelled = bool(result.get("cancelled")) or str(result.get("error") or "").find("取消") >= 0
             error = "" if success else redact_sensitive_text(str(result.get("error") or ("任务已取消" if cancelled else "这次没顺好")))
@@ -2601,6 +2866,8 @@ class SelfieImagePlugin(
                 )
             except Exception as send_exc:
                 logger.warning(f"[SelfieImage] 后台任务失败通知发送失败: {send_exc}")
+        finally:
+            self._release_quota_reservation(task_id)
 
 
 
@@ -2628,14 +2895,112 @@ class SelfieImagePlugin(
     async def _acquire_image_slot(self, task_id: str) -> Optional[asyncio.Semaphore]:
         """Acquire one slot; a batch may be larger than the global limit."""
         gate = self._ensure_image_batch_gate()
+        queued_marked = False
         while True:
             if self._task_cancel_requested(task_id):
                 return None
+            available = int(getattr(gate, "_value", 0))
+            if available <= 0 and not queued_marked:
+                with self._web_task_lock:
+                    current_task = dict(self._web_tasks.get(task_id) or {})
+                    waiting = sum(
+                        1
+                        for item in self._web_tasks.values()
+                        if isinstance(item, dict)
+                        and item.get("status") in {"queued", "running"}
+                        and item.get("queue_waiting")
+                    )
+                if "requested_count" in current_task:
+                    self._set_web_image_task(
+                        task_id,
+                        queue_waiting=True,
+                        queue_wait_started_ts=time.time(),
+                        queue_position=waiting + 1,
+                        active_slots=max(0, self._image_inflight_limit() - available),
+                        max_concurrent_tasks=self._image_inflight_limit(),
+                    )
+                queued_marked = True
             try:
                 await asyncio.wait_for(gate.acquire(), timeout=1.0)
+                now = time.time()
+                with self._web_task_lock:
+                    current = dict(self._web_tasks.get(task_id) or {})
+                wait_started = current.get("queue_wait_started_ts")
+                queue_wait = 0.0
+                if wait_started:
+                    try:
+                        queue_wait = max(0.0, now - float(wait_started))
+                    except (TypeError, ValueError):
+                        queue_wait = 0.0
+                if "requested_count" in current:
+                    self._set_web_image_task(
+                        task_id,
+                        queue_waiting=False,
+                        queue_position=0,
+                        queue_wait_seconds=round(queue_wait, 2),
+                        generation_started_ts=now,
+                        active_slots=max(0, self._image_inflight_limit() - int(getattr(gate, "_value", 0))),
+                        max_concurrent_tasks=self._image_inflight_limit(),
+                    )
                 return gate
             except asyncio.TimeoutError:
                 continue
+
+    async def _acquire_video_slot(self, task_id: str) -> Optional[asyncio.Semaphore]:
+        """Acquire the video semaphore while exposing queue wait to task clients."""
+        gate = self._video_semaphore
+        marked = False
+        while True:
+            if self._task_cancel_requested(task_id):
+                return None
+            available = int(getattr(gate, "_value", 0))
+            if available <= 0 and not marked:
+                with self._web_task_lock:
+                    current_task = dict(self._web_tasks.get(task_id) or {})
+                    waiting = sum(
+                        1
+                        for item in self._web_tasks.values()
+                        if isinstance(item, dict)
+                        and item.get("status") in {"queued", "running"}
+                        and item.get("queue_waiting")
+                        and self._task_media_type(item) == "video"
+                    )
+                if "requested_count" in current_task:
+                    self._set_web_image_task(
+                        task_id,
+                        queue_waiting=True,
+                        queue_wait_started_ts=time.time(),
+                        queue_position=waiting + 1,
+                        active_slots=max(0, self._video_inflight_limit() - available),
+                        max_concurrent_tasks=self._video_inflight_limit(),
+                    )
+                marked = True
+            try:
+                await asyncio.wait_for(gate.acquire(), timeout=1.0)
+                now = time.time()
+                with self._web_task_lock:
+                    current = dict(self._web_tasks.get(task_id) or {})
+                wait_started = current.get("queue_wait_started_ts")
+                try:
+                    queue_wait = max(0.0, now - float(wait_started)) if wait_started else 0.0
+                except (TypeError, ValueError):
+                    queue_wait = 0.0
+                if "requested_count" in current:
+                    self._set_web_image_task(
+                        task_id,
+                        queue_waiting=False,
+                        queue_position=0,
+                        queue_wait_seconds=round(queue_wait, 2),
+                        generation_started_ts=now,
+                        active_slots=max(0, self._video_inflight_limit() - int(getattr(gate, "_value", 0))),
+                        max_concurrent_tasks=self._video_inflight_limit(),
+                    )
+                return gate
+            except asyncio.TimeoutError:
+                continue
+
+    def _video_inflight_limit(self) -> int:
+        return max(1, min(5, int(getattr(self.config, "video_max_concurrent_tasks", 1) or 1)))
 
     def _ensure_image_batch_cooldown_lock(self) -> asyncio.Lock:
         lock = getattr(self, "_image_batch_cooldown_lock", None)
@@ -2677,32 +3042,60 @@ class SelfieImagePlugin(
         last_failure_error = ""
         cancelled = False
         succeeded_shots = 0
+        cancelled_shots = 0
+
+        def persist_progress(index: int = 0) -> None:
+            completed = min(total, succeeded_shots + skipped_shots + cancelled_shots)
+            self._set_web_image_task(
+                task_id,
+                requested_count=total,
+                completed_count=completed,
+                succeeded_count=succeeded_shots,
+                failed_count=skipped_shots,
+                progress_percent=int(round(completed * 100 / max(1, total))),
+                current_index=max(0, int(index or 0)),
+            )
 
         async def one(index: int) -> None:
-            nonlocal stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled, succeeded_shots, last_failure_error
+            nonlocal stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled, succeeded_shots, cancelled_shots, last_failure_error
             async with sem:
                 if stop or self._task_cancel_requested(task_id):
                     if self._task_cancel_requested(task_id):
-                        cancelled = True
+                        async with send_lock:
+                            cancelled = True
+                            cancelled_shots += 1
+                            persist_progress(index + 1)
                     return
                 logger.info(f"[SelfieImage] {log_prefix} {index + 1}/{total} inflight={inflight} task={task_id}")
                 slot_gate = await self._acquire_image_slot(task_id)
                 if slot_gate is None:
-                    cancelled = True
+                    async with send_lock:
+                        cancelled = True
+                        cancelled_shots += 1
+                        persist_progress(index + 1)
                     return
                 try:
                     if total > 1 and not await self._wait_for_image_batch_cooldown(task_id):
-                        cancelled = True
+                        async with send_lock:
+                            cancelled = True
+                            cancelled_shots += 1
+                            persist_progress(index + 1)
                         return
                     result = await run_one(index)
                 finally:
                     slot_gate.release()
             async with send_lock:
                 if stop:
+                    if self._task_cancel_requested(task_id):
+                        cancelled = True
+                        cancelled_shots += 1
+                        persist_progress(index + 1)
                     return
                 if self._task_cancel_requested(task_id):
                     cancelled = True
                     stop = True
+                    cancelled_shots += 1
+                    persist_progress(index + 1)
                     return
                 if not result.get("success"):
                     raw_err = str(result.get("failure_reason") or result.get("error") or "")
@@ -2714,6 +3107,7 @@ class SelfieImagePlugin(
                     last_failure_error = raw_err
                     error = self._friendly_user_error_message(raw_err, fail_label)
                     skipped_shots += 1
+                    persist_progress(index + 1)
                     mode, skip_max = self._batch_failure_policy()
                     has_remaining = index < total
                     will_continue = has_remaining and (
@@ -2745,6 +3139,7 @@ class SelfieImagePlugin(
                     await self._send_generated_images(event, files)
                     all_files.extend(files)
                     succeeded_shots += 1
+                persist_progress(index + 1)
                 info = self._batch_success_text(
                     self._build_success_text(last_elapsed, len(files), used_model, event),
                     index + 1,
@@ -2765,6 +3160,7 @@ class SelfieImagePlugin(
                     "cancelled": True,
                     "files": all_files,
                     "batch_total": total,
+                    "completed_count": min(total, succeeded_shots + skipped_shots + cancelled_shots),
                     "succeeded_count": succeeded_shots,
                     "failed_count": skipped_shots,
                 },
@@ -2778,6 +3174,7 @@ class SelfieImagePlugin(
                 "batch_total": total,
                 "batch_failed_at": failed_at,
                 "batch_skipped": skipped_shots,
+                "completed_count": min(total, succeeded_shots + skipped_shots),
                 "succeeded_count": succeeded_shots,
                 "failed_count": skipped_shots,
             }, total)
@@ -2788,6 +3185,7 @@ class SelfieImagePlugin(
             "elapsed_seconds": last_elapsed,
             "batch_total": total,
             "batch_skipped": skipped_shots,
+            "completed_count": min(total, succeeded_shots + skipped_shots),
             "succeeded_count": succeeded_shots,
             "failed_count": skipped_shots,
         }, total)
@@ -3128,6 +3526,9 @@ class SelfieImagePlugin(
             "use_selfie_reference": bool(payload.get("use_selfie_reference")),
             "raw_reference_image_count": len(raw_images),
         }
+        retry_record_id = str(payload.get("_retry_record_id") or payload.get("retry_record_id") or "").strip()
+        if retry_record_id:
+            request_summary["retry_record_id"] = retry_record_id[:128]
         prompt_en_meta: Optional[Dict[str, Any]] = None
 
         try:
@@ -3193,6 +3594,7 @@ class SelfieImagePlugin(
                 max_attempts=1,
                 allow_compat_retry=False,
                 prompt_en_meta=prompt_en_meta,
+                record_context={"retry_record_id": retry_record_id} if retry_record_id else None,
             )
         except Exception as exc:
             error = str(exc)
@@ -3212,6 +3614,7 @@ class SelfieImagePlugin(
                     "response_data": response_data,
                     "request_image_paths": [],
                     "generated_image_paths": [],
+                    "retry_record_id": retry_record_id,
                 }
             )
             raise
@@ -3244,12 +3647,13 @@ class SelfieImagePlugin(
             "generated_image_paths": result.get("image_paths") or [],
         }
 
-    async def web_test_video(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def web_test_video(self, payload: Dict[str, Any], *, task_id: str = "") -> Dict[str, Any]:
         channel_name = str(payload.get("channel") or "").strip()
         model_name = str(payload.get("model") or "").strip()
         prompt = str(payload.get("prompt") or "").strip() or "一段自然流畅的短视频"
         aspect = str(payload.get("aspect_ratio") or "16:9").strip() or "16:9"
         duration = max(1, min(60, int(payload.get("duration") or self.config.video_default_duration or 5)))
+        retry_record_id = str(payload.get("_retry_record_id") or payload.get("retry_record_id") or "").strip()
         target = self._find_video_target(channel_name, model_name)
         if not target:
             raise RuntimeError("未找到指定视频模型")
@@ -3281,7 +3685,17 @@ class SelfieImagePlugin(
             duration=duration,
             size=aspect,
         )
-        async with self._video_semaphore:
+        video_slot = await self._acquire_video_slot(task_id) if task_id else None
+        if task_id and video_slot is None:
+            return {
+                "success": False,
+                "error": "任务已取消",
+                "cancelled": True,
+            }
+        acquired_video_slot = bool(task_id and video_slot is not None)
+        if not task_id:
+            await self._video_semaphore.acquire()
+        try:
             async with aiohttp.ClientSession(trust_env=False) as session:
                 result = await generate_video_with_fallback(
                     [target],
@@ -3290,7 +3704,11 @@ class SelfieImagePlugin(
                     save_dir=self.video_dir,
                     global_timeout=self.config.video_global_timeout,
                 )
+        finally:
+            if acquired_video_slot or not task_id:
+                self._video_semaphore.release()
         elapsed = round(float(result.elapsed_seconds or (time.monotonic() - started)), 2)
+        safe_result_error = video_error_user_message(result.error, "视频没有生成出来") if result.error else ""
         generated_video_rel = self._cache_relative_path(result.video_path) if result.video_path else ""
         cache_cleanup = self._cleanup_image_cache_if_needed(
             [*request_image_paths, generated_video_rel]
@@ -3299,7 +3717,7 @@ class SelfieImagePlugin(
             **self._source_context(None, "web-video-test"),
             "media_type": "video",
             "success": not bool(result.error) and bool(result.video_path),
-            "error": result.error or "",
+            "error": safe_result_error,
             "prompt": prompt,
             "original_prompt": prompt,
             "request_prompt": prompt,
@@ -3314,22 +3732,28 @@ class SelfieImagePlugin(
             },
             "response_data": {
                 "attempts": result.attempts,
+                "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
                 "video_url": result.video_url,
                 "video_source": result.video_source,
+                "error": safe_result_error,
             },
             "request_image_paths": request_image_paths,
             "generated_image_paths": [],
             "generated_video_paths": [generated_video_rel] if generated_video_rel else [],
+            "retry_record_id": retry_record_id,
         }
         self._record_task(record)
         if result.error or not result.video_path:
             return {
                 "success": False,
-                "error": result.error or "视频没有生成出来",
+                "error": safe_error,
                 "used_model": result.used_model or target.label,
                 "elapsed_seconds": elapsed,
                 "request_image_paths": request_image_paths,
                 "attempts": result.attempts,
+                "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
                 "generated_video_paths": [],
             }
         return {
@@ -3342,6 +3766,8 @@ class SelfieImagePlugin(
             "video_source": result.video_source,
             "generated_video_paths": [self._cache_relative_path(result.video_path)],
             "attempts": result.attempts,
+            "retry_count": int(getattr(result, "retry_count", 0) or 0),
+            "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
         }
 
     async def web_refresh_image_models(self, payload: Dict[str, Any]) -> List[str]:

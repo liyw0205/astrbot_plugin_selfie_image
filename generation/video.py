@@ -59,6 +59,8 @@ class VideoGenerateResult:
     used_model: str = ""
     attempts: List[Dict[str, Any]] = field(default_factory=list)
     elapsed_seconds: float = 0.0
+    retry_count: int = 0
+    retry_exhausted: bool = False
 
 
 def build_video_generations_endpoint(base_url: str) -> str:
@@ -365,6 +367,24 @@ async def _read_error(response: aiohttp.ClientResponse) -> str:
     return redact_sensitive_text(f"HTTP {response.status}: {(text or '')[:800]}")
 
 
+def video_error_user_message(error: Any, fallback: str = "视频生成失败") -> str:
+    """Return a short, redacted video error suitable for records and UI."""
+    safe = redact_sensitive_text(str(error or "").strip())
+    if not safe:
+        return fallback
+    info = classify_generation_error(safe)
+    category = str(info.get("category") or "")
+    if category == "timeout":
+        global_timeout = re.search(r"视频生成全局超时[（(](\d+)\s*(?:秒|s)[）)]", safe, flags=re.I)
+        if global_timeout:
+            return f"视频超时（{global_timeout.group(1)}s）"
+        return "视频请求超时，请稍后重试"
+    message = redact_sensitive_text(str(info.get("user_message") or safe)).strip()
+    message = re.sub(r"[\r\n\t]+", " ", message)
+    message = re.sub(r"\s+", " ", message).strip(" ：:;；")
+    return (message[:500] + ("…" if len(message) > 500 else "")) if message else fallback
+
+
 async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeout: int, proxy: str = "") -> bytes:
     if url.startswith("data:"):
         # data:video/mp4;base64,...
@@ -623,8 +643,10 @@ async def generate_video_openai_compatible(
             )
         except asyncio.TimeoutError:
             # Only treat as "create billable timeout" for short create calls; long Agnes polls raise RuntimeError.
-            last_error = "视频请求超时（未自动重提，以免重复扣费）"
-            key_attempt["error"] = last_error
+            raw_error = "视频请求超时（未自动重提，以免重复提交）"
+            last_error = video_error_user_message(raw_error)
+            key_attempt["error"] = redact_sensitive_text(raw_error)
+            key_attempt["error_user_message"] = last_error
             key_attempt["error_category"] = "timeout"
             key_attempt["retryable"] = False
             key_attempt["stage"] = stage
@@ -637,10 +659,12 @@ async def generate_video_openai_compatible(
                 elapsed_seconds=round(time.monotonic() - started, 2),
             )
         except Exception as exc:
-            last_error = redact_sensitive_text(str(exc))
-            class_info = classify_generation_error(last_error)
+            raw_error = redact_sensitive_text(str(exc))
+            class_info = classify_generation_error(raw_error)
+            last_error = video_error_user_message(raw_error)
             error_stage = str(getattr(exc, "stage", "") or stage)
-            key_attempt["error"] = last_error
+            key_attempt["error"] = raw_error
+            key_attempt["error_user_message"] = last_error
             key_attempt["error_category"] = class_info.get("category")
             key_attempt["stage"] = error_stage
             key_attempt["retryable"] = bool(class_info.get("retryable"))
@@ -660,7 +684,7 @@ async def generate_video_openai_compatible(
             )
 
     return VideoGenerateResult(
-        error=last_error or "视频生成失败",
+        error=video_error_user_message(last_error),
         video_source=video_source,
         used_model=target.label,
         attempts=key_attempts,
@@ -1058,34 +1082,9 @@ async def _generate_via_agnes(
     if not endpoint:
         raise RuntimeError("Agnes 视频渠道 base_url 无效")
     payload = _agnes_payload(target, request, b64_images, request.images)
-    media_fields = (
-        "image",
-        "first_frame",
-        "last_frame",
-        "images",
-        "audios",
-        "videos",
-    )
-    local_media = []
-    for field_name in media_fields:
-        value = payload.get(field_name)
-        values = value if isinstance(value, list) else [value]
-        for item in values:
-            if isinstance(item, dict):
-                item = item.get("url") or item.get("uri") or ""
-            if str(item or "").strip().lower().startswith("data:"):
-                local_media.append(field_name)
-    extra_media = payload.get("extra_body")
-    if isinstance(extra_media, dict):
-        nested = extra_media.get("image")
-        for item in (nested if isinstance(nested, list) else [nested]):
-            if str(item or "").strip().lower().startswith("data:"):
-                local_media.append("extra_body.image")
-    if local_media:
-        raise VideoGenerationError(
-            "Agnes 视频图生视频要求参考图片为可公开访问的 URL，当前参考图是本地数据，未提交任务",
-            stage="validate",
-        )
+    # Agnes accepts data URLs for local reference images.  _agnes_media_values
+    # prefers a public source_url when one exists, but the data URL fallback is
+    # required for local uploads and saved persona images.
     auth = str(headers.get("Authorization") or "").strip()
     if not auth and target.api_key:
         auth = f"Bearer {target.api_key}"
@@ -1470,7 +1469,7 @@ async def generate_video_with_fallback(
                 )
             except asyncio.TimeoutError:
                 result = VideoGenerateResult(
-                    error=f"视频生成全局超时（{chain_timeout}s）",
+                    error=video_error_user_message(f"视频生成全局超时（{chain_timeout}s）"),
                     attempts=[
                         {
                             "attempt": len(attempts) + 1,
@@ -1479,6 +1478,9 @@ async def generate_video_with_fallback(
                             "provider": target.provider_type,
                             "success": False,
                             "error": f"视频生成全局超时（{chain_timeout}s）",
+                            "error_user_message": video_error_user_message(
+                                f"视频生成全局超时（{chain_timeout}s）"
+                            ),
                             "error_category": "timeout",
                             "retryable": False,
                             "timeout_seconds": int(max(1, remaining)),
@@ -1489,6 +1491,7 @@ async def generate_video_with_fallback(
         attempts.extend(result.attempts or [])
         if result.video_path and not result.error:
             result.attempts = attempts
+            result.retry_count = sum(1 for item in attempts if isinstance(item, dict) and not item.get("success"))
             return result
         last_error = result.error or last_error
         last_source = result.video_source or last_source
@@ -1499,4 +1502,10 @@ async def generate_video_with_fallback(
             cat = str((result.attempts[-1] or {}).get("error_category") or "")
             if cat in {"auth", "safety", "param", "not_found", "fatal", "timeout"}:
                 break
-    return VideoGenerateResult(error=last_error or "视频生成失败", video_source=last_source, attempts=attempts)
+    return VideoGenerateResult(
+        error=video_error_user_message(last_error),
+        video_source=last_source,
+        attempts=attempts,
+        retry_count=sum(1 for item in attempts if isinstance(item, dict) and not item.get("success")),
+        retry_exhausted=bool(attempts),
+    )

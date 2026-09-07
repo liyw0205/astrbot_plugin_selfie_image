@@ -2,11 +2,11 @@
 
 给 AstrBot 用的生图与 AI 自拍插件。支持文生图、图生图、固定形象自拍/合影/换装，以及 Web / 内嵌管理面板。
 
-- 当前稳定版：`1.4.14`
+- 当前稳定版：`1.6.0`
 - 需要 AstrBot：`>=4.13.0,<5`
 - 仓库：https://github.com/liyw0205/astrbot_plugin_selfie_image
 
-1.3.88 增加后台重复请求去重、渠道失败短暂冷却、配置脱敏导入导出、发送失败图片重发（`/生图重发`）、缓存清理预览，并统一 Flask 与 AstrBot 内置 Web 的 Bento Studio 界面。
+1.3.88 增加后台重复请求去重、渠道失败短暂冷却、配置脱敏导入导出、发送失败图片重发（`/生图重发`）、缓存清理预览，并统一 Flask 与 AstrBot 内置 Web 的 Bento Studio 界面。当前任务监控还会显示队列等待、并发槽位、超时预警和模型重试原因；生成指标可按时间窗口查看成功率、回退率和运维建议。
 
 ## 能做什么
 
@@ -54,7 +54,7 @@ pip install -r requirements.txt
 - 跟随 AstrBot 登录态，不必再输 Web Token
 - 与独立 Web 共用同一份配置
 
-面板里可管理：渠道与模型优先级、试画、记录、形象、审核、画布编排、预设等。
+面板里可管理：渠道与模型优先级、试画、记录、资产收藏/置顶/标签、历史提示词复用与重试生成、形象、审核、画布编排、预设等。
 
 ## 常用指令
 
@@ -133,7 +133,9 @@ NovelAI 支持官方接口或兼容网关；视频渠道需单独配置协议/�
 
 - 配置：`plugin_data/astrbot_plugin_selfie_image/selfie_image_config.json`
 - 出图缓存：`.../image_cache`
-- 生成记录、形象参考、预设等：同目录下对应文件
+- 生成记录索引：`generation_records.sqlite3`（旧 `generation_records.json` 会自动备份为 `.bak`）
+- 原始媒体来源：`media_sources/`（仅在详情/复制操作时按需读取）
+- 形象参考、预设等：同目录下对应文件
 
 缓存超过设定上限时会自动清理较旧文件。
 

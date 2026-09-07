@@ -11,8 +11,10 @@ STATUS_LABELS = {
     "queued": "排队",
     "running": "进行中",
     "succeeded": "完成",
+    "partial_success": "部分完成",
     "failed": "失败",
     "cancelled": "已取消",
+    "expired": "已过期",
 }
 
 
@@ -81,7 +83,13 @@ def format_task_list_text(tasks: Iterable[Mapping[str, Any]]) -> str:
             or request.get("mode")
             or ""
         )[:40]
-        lines.append(f"{index}. {task_id} [{status_cn}/{kind}] {prompt}")
+        progress = _progress_text(task)
+        suffix = f" {progress}" if progress else ""
+        queue = _queue_text(task)
+        warning = str(task.get("timeout_warning") or "").strip()
+        suffix += f" {queue}" if queue else ""
+        suffix += f"（{warning}）" if warning else ""
+        lines.append(f"{index}. {task_id} [{status_cn}/{kind}] {prompt}{suffix}")
     lines.append(
         "查看：/视频任务 编号或任务号；取消：/视频取消 …"
         if video_only
@@ -101,6 +109,14 @@ def format_task_detail_text(task: Mapping[str, Any]) -> str:
         f"状态：{detail_labels.get(status, status)}",
         f"说明：{str(request.get('original_prompt') or request.get('prompt') or '')[:120]}",
     ]
+    progress = _progress_text(task)
+    if progress:
+        lines.append(f"进度：{progress}")
+    queue = _queue_text(task)
+    if queue:
+        lines.append(f"队列：{queue}")
+    if task.get("timeout_warning"):
+        lines.append(f"提示：{task.get('timeout_warning')}")
     if task.get("error"):
         lines.append(f"原因：{task.get('error')}")
     if result.get("used_model"):
@@ -111,3 +127,35 @@ def format_task_detail_text(task: Mapping[str, Any]) -> str:
     if task.get("status") in {"queued", "running"}:
         lines.append(f"已用时：{task.get('running_seconds', 0)} 秒")
     return "\n".join(lines)
+
+
+def _progress_text(task: Mapping[str, Any]) -> str:
+    try:
+        requested = max(0, int(task.get("requested_count") or 0))
+        completed = max(0, int(task.get("completed_count") or 0))
+    except (TypeError, ValueError):
+        return ""
+    if requested <= 0:
+        return ""
+    percent = task.get("progress_percent")
+    try:
+        percent_value = max(0, min(100, int(percent)))
+    except (TypeError, ValueError):
+        percent_value = int(round(completed * 100 / requested))
+    return f"{completed}/{requested}（{percent_value}%）"
+
+
+def _queue_text(task: Mapping[str, Any]) -> str:
+    try:
+        wait = max(0.0, float(task.get("queue_wait_seconds") or 0))
+    except (TypeError, ValueError):
+        wait = 0.0
+    if task.get("queue_waiting"):
+        try:
+            position = max(0, int(task.get("queue_position") or 0))
+        except (TypeError, ValueError):
+            position = 0
+        return f"排队 {wait:.1f}s" + (f" 第{position}位" if position else "")
+    if wait > 0:
+        return f"等待 {wait:.1f}s"
+    return ""
