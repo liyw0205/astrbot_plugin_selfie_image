@@ -1164,17 +1164,33 @@ class SelfieImagePlugin(
             allow_context_fallback=True,
         )
         action = self._normalize_selfie_action(action, bool(extra_refs))
-        result = await self._background_selfie_batches(
-            "llm-generate-selfie",
+        async def runner(task_id: str) -> Dict[str, Any]:
+            return await self._background_selfie_batches(
+                task_id,
+                event,
+                action,
+                extra_refs,
+                "llm-generate-selfie",
+                requested_count,
+                aspect,
+                resolution,
+                self._natural_fail_fallback("selfie"),
+            )
+
+        task = self.start_command_image_task(
             event,
-            action,
-            extra_refs,
-            "llm-generate-selfie",
-            requested_count,
-            aspect,
-            resolution,
-            self._natural_fail_fallback("selfie"),
+            source="llm-generate-selfie",
+            summary={
+                "original_prompt": action,
+                "aspect_ratio": aspect,
+                "resolution": resolution,
+                "requested_count": requested_count,
+                "reference_image_count": len(extra_refs),
+                "kind": "LLM 自拍",
+            },
+            runner=runner,
         )
+        result = await self._await_command_image_task(task)
         if not result.get("success") and not result.get("files"):
             return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("selfie"))
         return self._tool_success("selfie", len(result.get("files") or []) or requested_count)
@@ -2149,6 +2165,31 @@ class SelfieImagePlugin(
             lambda _task, tid=task_id: getattr(self, "_runtime_generation_tasks", {}).pop(tid, None)
         )
         return self.get_web_image_task(task_id)
+
+    async def _await_command_image_task(self, task: Mapping[str, Any]) -> Dict[str, Any]:
+        """Wait for a chat task while keeping its live state visible to task commands."""
+        task_id = str(task.get("task_id") or "").strip()
+        if not task_id:
+            return {"success": False, "error": "任务创建失败"}
+        runtime_task = getattr(self, "_runtime_generation_tasks", {}).get(task_id)
+        if runtime_task is not None:
+            try:
+                await asyncio.shield(runtime_task)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"[SelfieImage] 等待任务 {task_id} 失败: {exc}")
+        try:
+            completed = self.get_web_image_task(task_id)
+        except Exception as exc:
+            return {"success": False, "error": redact_sensitive_text(str(exc))}
+        result = completed.get("result")
+        if isinstance(result, dict):
+            return dict(result)
+        return {
+            "success": bool(completed.get("success")),
+            "error": str(completed.get("error") or "任务没有返回结果"),
+        }
 
     async def _run_video_generation(
         self,
@@ -4014,7 +4055,7 @@ class SelfieImagePlugin(
                 "· /图生视频　必须附图或引用图作首帧，不会自动使用当前形象图",
                 "· /形象视频　使用当前形象图作首帧；需先设置形象图",
                 "· /看看视频　使用当前形象图主动出视频；需先设置形象图",
-                "· /视频任务　只看进行中的视频任务；可跟任务号或列表编号",
+                "· /视频任务　查看进行中的视频任务，包含 LLM 调用；可跟任务号或列表编号",
                 "· /视频取消　取消视频任务；可跟任务号或列表编号",
                 "· /视频预设　查看、使用和管理视频预设；时长可写 --duration 8 或 时长8秒",
                 "",
@@ -4025,7 +4066,7 @@ class SelfieImagePlugin(
                 "",
                 "模型与进度：",
                 "· /生图模型　看列表；跟序号或 渠道/模型 切换（只影响当前群/私聊）；发「清除」恢复默认",
-                "· /生图任务　看出图/视频进行中的任务；可跟任务号",
+                "· /生图任务　看出图/视频进行中的任务，包含 LLM 调用；可跟任务号",
                 "· /生图取消　取消还在排的/进行中的任务",
                 "",
                 "形象：",
@@ -5223,18 +5264,34 @@ class SelfieImagePlugin(
             context_hint=prompt,
             allow_context_fallback=True,
         )
-        result = await self._background_draw_batches(
-            "llm-generate-image",
+        async def runner(task_id: str) -> Dict[str, Any]:
+            return await self._background_draw_batches(
+                task_id,
+                event,
+                prompt,
+                aspect,
+                resol,
+                refs,
+                "llm-generate-image",
+                requested_count,
+                passthrough=True,
+                fail_label=self._natural_fail_fallback("image"),
+            )
+
+        task = self.start_command_image_task(
             event,
-            prompt,
-            aspect,
-            resol,
-            refs,
-            "llm-generate-image",
-            requested_count,
-            passthrough=True,
-            fail_label=self._natural_fail_fallback("image"),
+            source="llm-generate-image",
+            summary={
+                "original_prompt": prompt,
+                "aspect_ratio": aspect,
+                "resolution": resol,
+                "requested_count": requested_count,
+                "reference_image_count": len(refs),
+                "kind": "LLM 生图",
+            },
+            runner=runner,
         )
+        result = await self._await_command_image_task(task)
         if not result.get("success") and not result.get("files"):
             return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("image"))
         return self._tool_success("image", len(result.get("files") or []) or requested_count)
@@ -5325,7 +5382,28 @@ class SelfieImagePlugin(
             event,
             await self._build_contextual_progress_text(event, "video", action, 1, ack_message),
         )
-        result = await self._run_video_generation(event, action, refs, source="llm-generate-video", duration=seconds)
+        async def runner(task_id: str) -> Dict[str, Any]:
+            return await self._run_video_generation(
+                event,
+                action,
+                refs,
+                source="llm-generate-video",
+                duration=seconds,
+                task_id=task_id,
+            )
+
+        task = self.start_command_image_task(
+            event,
+            source="llm-generate-video",
+            summary={
+                "original_prompt": action,
+                "duration": seconds,
+                "reference_image_count": len(refs),
+                "kind": "video",
+            },
+            runner=runner,
+        )
+        result = await self._await_command_image_task(task)
         if not result.get("success"):
             return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("video"))
         path = str(result.get("video_path") or "")

@@ -349,7 +349,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.2")
+        self.assertEqual(PLUGIN_VERSION, "1.6.3")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5066,6 +5066,99 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual(plugin._web_tasks["cmd-2"]["status"], "cancelled")
         listed = plugin._list_image_tasks_for_session("group:b", include_finished=False)
         self.assertEqual(listed, [])
+
+    def test_llm_tool_tasks_are_visible_while_running(self) -> None:
+        """LLM tool calls must register the same live tasks as slash commands."""
+        plugin = self._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        plugin._runtime_generation_tasks = {}
+        plugin._session_key = lambda _event=None: "group:llm"
+        plugin._reserve_quota_for_task = lambda *_args, **_kwargs: ""
+        plugin._release_quota_reservation = lambda _task_id: None
+        plugin._remember_llm_generation = lambda *_args, **_kwargs: None
+        plugin._normalize_count = lambda value: max(1, int(value or 1))
+        plugin._quota_error_message = lambda *_args, **_kwargs: ""
+        plugin._rate_limit_error_message = lambda *_args, **_kwargs: ""
+        plugin._natural_fail_fallback = lambda kind: f"{kind} failed"
+        plugin._tool_success = lambda kind, count: f"{kind}:{count}"
+        plugin._tool_soft_fail = lambda error, *_args: f"failed:{error}"
+        plugin._resolve_image_preset = lambda prompt, *_args: (prompt, "9:16", "1K", "", "")
+        plugin._looks_like_selfie_intent = lambda _prompt: False
+
+        class Event:
+            pass
+
+        async def scenario() -> None:
+            image_started = asyncio.Event()
+            image_release = asyncio.Event()
+
+            async def progress_text(*_args, **_kwargs):
+                return "progress"
+
+            async def send_progress(*_args, **_kwargs):
+                return None
+
+            async def references(*_args, **_kwargs):
+                return []
+
+            async def draw_batches(task_id, *_args, **_kwargs):
+                image_started.set()
+                await image_release.wait()
+                return {"success": True, "files": ["image.png"], "requested_count": 1}
+
+            plugin._build_contextual_progress_text = progress_text
+            plugin._send_progress_text = send_progress
+            plugin._event_reference_images = references
+            plugin._background_draw_batches = draw_batches
+
+            image_call = asyncio.create_task(
+                plugin_main.SelfieImagePlugin.tool_generate_image(
+                    plugin, Event(), "约 20 岁的角色", count=1
+                )
+            )
+            await image_started.wait()
+            image_tasks = plugin._list_image_tasks_for_session("group:llm", include_finished=False)
+            self.assertEqual(len(image_tasks), 1)
+            self.assertEqual(image_tasks[0]["source"], "llm-generate-image")
+            self.assertEqual(image_tasks[0]["status"], "running")
+            image_release.set()
+            self.assertEqual(await image_call, "image:1")
+
+            video_started = asyncio.Event()
+            video_release = asyncio.Event()
+            sent_videos = []
+
+            async def run_video(_event, _prompt, _refs, *, task_id="", **_kwargs):
+                self.assertTrue(task_id.startswith("cmd-"))
+                video_started.set()
+                await video_release.wait()
+                return {"success": True, "video_path": "clip.mp4"}
+
+            async def send_video(_event, path, **_kwargs):
+                sent_videos.append(path)
+
+            plugin._video_prompt_requests_persona = lambda _prompt: False
+            plugin._run_video_generation = run_video
+            plugin._send_generated_video = send_video
+
+            video_call = asyncio.create_task(
+                plugin_main.SelfieImagePlugin.tool_generate_video(
+                    plugin, Event(), "镜头缓慢推进", duration=5
+                )
+            )
+            await video_started.wait()
+            video_tasks = plugin._list_image_tasks_for_session(
+                "group:llm", include_finished=False, media_type="video"
+            )
+            self.assertEqual(len(video_tasks), 1)
+            self.assertEqual(video_tasks[0]["source"], "llm-generate-video")
+            self.assertEqual(video_tasks[0]["status"], "running")
+            video_release.set()
+            self.assertEqual(await video_call, "video:1")
+            self.assertEqual(sent_videos, ["clip.mp4"])
+
+        asyncio.run(scenario())
 
     def test_command_task_cancellation_wins_late_success_result(self) -> None:
         plugin = self._plugin_stub()
