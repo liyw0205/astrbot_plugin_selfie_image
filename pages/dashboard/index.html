@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="logo.png">
   <title>Selfie Image 管理面板</title>
   <style>
     :root {
@@ -182,15 +183,16 @@
       width: min(900px, 100%); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden;
       background: #fff; border-radius: var(--radius-lg); border: 1px solid var(--line); padding: 16px; box-shadow: 0 18px 60px rgba(27,28,29,.16);
     }
+    .studio-create-dialog { width: min(480px, 100%); }
     .modal-body { overflow: auto; padding-right: 4px; }
     .modal-footer { position: sticky; bottom: 0; margin-top: 14px; padding-top: 12px; background: linear-gradient(180deg, rgba(255,255,255,0), #fff 24px); }
     .media-source-modal-dialog { width: min(960px, 100%); max-height: 92vh; background: #111; color: #fff; }
     .media-source-modal-dialog .modal-footer { background: linear-gradient(180deg, rgba(17,17,17,0), #111 24px); }
     .media-source-preview { min-height: 220px; max-height: calc(92vh - 120px); overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px; padding: 4px; }
     .media-source-preview img, .media-source-preview video { display: block; max-width: 100%; max-height: calc(92vh - 150px); object-fit: contain; background: #000; }
-    .toast-wrap { position: fixed; right: 16px; top: 16px; z-index: 100; display: grid; gap: 8px; pointer-events: none; }
-    .toast { min-width: 220px; max-width: min(360px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 12px; background: rgba(27,28,29,.94); color: #fff; box-shadow: 0 14px 32px rgba(0,0,0,.16); }
-    .toast.ok { background: rgba(0,200,83,.94); }
+    .toast-wrap { position: fixed; right: 16px; top: 16px; z-index: 100; display: grid; justify-items: end; gap: 8px; pointer-events: none; }
+    .toast { width: max-content; min-width: 0; max-width: min(360px, calc(100vw - 32px)); padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--text); box-shadow: 0 10px 24px rgba(0,0,0,.12); white-space: nowrap; font-size: 12px; }
+    .toast.ok { background: #fff; color: var(--text); border-color: #dfe3ea; }
     .toast.bad { background: rgba(244,67,54,.94); }
     .detail-title { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
     .detail-title h3 { margin: 0; }
@@ -278,7 +280,7 @@
     .studio-slots { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-top:10px; }
     .studio-slot { border:1px solid var(--line); border-radius:var(--radius-md); background:#fff; padding:10px; min-height:170px; display:flex; flex-direction:column; gap:8px; box-shadow:var(--shadow); }
     .studio-slot .slot-label { font-size:12px; font-weight:650; color:var(--muted); }
-    .studio-slot img { width:100%; height:110px; object-fit:cover; border-radius:8px; border:1px solid var(--line); background:#f8fafc; display:none; }
+    .studio-slot img { width:100%; height:110px; object-fit:contain; padding:4px; border-radius:8px; border:1px solid var(--line); background:#f8fafc; display:none; }
     .studio-slot.empty img { display:none; }
     .studio-slot.has-image img { display:block; }
     .studio-slot .slot-actions { display:flex; gap:6px; flex-wrap:wrap; }
@@ -306,13 +308,21 @@
     .studio-gallery.open { display:block; }
     .studio-gallery-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px; max-height:280px; overflow:auto; }
     .studio-gallery-item { border:1px solid var(--line); border-radius:8px; background:#fff; padding:4px; cursor:pointer; }
-    .studio-gallery-item img { width:100%; height:72px; object-fit:cover; border-radius:6px; display:block; }
+    .studio-gallery-thumb { position:relative; height:72px; display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:6px; background:#f1f4f7; }
+    .studio-gallery-thumb img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; padding:2px; border-radius:6px; display:block; }
+    .studio-gallery-thumb .status { width:100%; min-height:0; padding:6px; border:0; border-radius:0; background:transparent; text-align:center; font-size:10px; }
+    .studio-gallery-thumb.loaded .status { display:none; }
     .studio-gallery-item .cap { font-size:10px; color:var(--muted); margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .studio-slot .slot-actions button.mini { padding:3px 6px; font-size:11px; }
+    .studio-slot.picking-record { grid-column:1 / -1; }
+    .studio-slot-picker { width:100%; margin-top:2px; padding-top:8px; border-top:1px solid var(--line); }
+    .studio-slot-picker .studio-gallery-grid { max-height:260px; }
     .studio-slot[draggable="true"] { cursor: grab; }
     .studio-slot.dragging { opacity: .55; }
     .studio-slot.drag-over { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-weak); }
     .studio-results .actions { flex-wrap:wrap; gap:4px; }
+    .studio-empty { margin-top: 12px; padding: 22px 16px; text-align: center; border: 1px dashed var(--line-strong); border-radius: var(--radius-md); background: var(--panel-soft); }
+    .studio-empty[hidden], .studio-editor[hidden] { display: none; }
     .preset-manager-list { display:grid; gap:10px; margin-top:14px; }
     .preset-manager-row { display:grid; grid-template-columns:minmax(150px,.35fr) minmax(0,1fr) auto; gap:12px; align-items:start; padding:13px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--panel); box-shadow:var(--shadow-soft); }
     .preset-manager-name { min-width:0; font-weight:700; overflow-wrap:anywhere; }
@@ -399,8 +409,68 @@
     .checkline input { width: auto; }
     .topline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .topline input { max-width: 280px; }
-    .page-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-soft); }
-    .page-actions .muted { min-width: 0; }
+    .sidebar-backdrop { display: none; position: fixed; inset: 0; z-index: 15; background: rgba(22, 24, 35, .34); }
+    .floating-action-section { padding-bottom: 120px; }
+    section#channels.floating-action-section { padding-bottom: 188px; }
+    .floating-actions {
+      display: none;
+      position: fixed;
+      right: 24px;
+      bottom: max(136px, calc(env(safe-area-inset-bottom) + 112px));
+      z-index: 12;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .floating-actions button {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 46px;
+      height: 46px;
+      min-width: 46px;
+      min-height: 46px;
+      flex: 0 0 46px;
+      margin: 0;
+      padding: 0 !important;
+      border-radius: 50% !important;
+      white-space: nowrap;
+      font-size: 20px;
+      line-height: 1;
+      box-shadow: 0 8px 20px rgba(42, 43, 66, .16) !important;
+    }
+    .floating-actions button > .floating-icon { display: inline-flex; align-items: center; justify-content: center; font-size: 20px; line-height: 1; }
+    .floating-actions button > .floating-icon svg { width: 20px; height: 20px; display: block; }
+    .floating-actions button.has-label { flex-direction: column; gap: 1px; }
+    .floating-actions button.has-label > .floating-icon svg { width: 17px; height: 17px; }
+    .floating-actions button.has-label .floating-label { display: block; font-size: 10px; font-weight: 700; line-height: 1; }
+    .floating-actions button[data-tooltip]::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      right: calc(100% + 10px);
+      top: 50%;
+      transform: translateY(-50%) translateX(4px);
+      width: max-content;
+      max-width: 180px;
+      padding: 6px 9px;
+      border-radius: 7px;
+      background: #272936;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.2;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .15s ease, transform .15s ease;
+    }
+    .floating-actions button[data-tooltip]:hover::after,
+    .floating-actions button[data-tooltip]:focus-visible::after {
+      opacity: 1;
+      transform: translateY(-50%) translateX(0);
+    }
+    section.active .floating-actions { display: flex; }
     body.dashboard-embedded { background: var(--bg); }
     @media (max-width: 1100px) {
       .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -456,10 +526,12 @@
     body.authed { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 100vh; }
     body.authed header.app-shell {
       display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 22px;
-      width: 224px; max-width: none; min-height: 100vh; margin: 0; padding: 25px 15px;
+      width: 224px; max-width: none; min-height: 100vh; height: 100vh; height: 100dvh; max-height: 100dvh;
+      overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+      margin: 0; padding: 25px 15px;
       background: var(--panel); border-right: 1px solid var(--line); color: var(--text); position: fixed; inset: 0 auto 0 0; z-index: 20;
     }
-    body.authed main.app-shell { display: block; width: 100%; max-width: 1440px; margin: 0 auto; padding: 28px 38px 42px 262px; }
+    body.authed main.app-shell { display: block; grid-column: 2; width: 100%; max-width: 1440px; margin: 0 auto; padding: 28px 38px 42px 262px; }
     .header-brand { align-items: center; gap: 10px; padding: 0 10px 24px; border-bottom: 1px solid var(--line); }
     .header-logo { width: 34px; height: 34px; border-radius: 12px; box-shadow: none; border: 0; background: var(--text); }
     .header-eyebrow { color: var(--primary); font-size: 10px; letter-spacing: .14em; margin: 0 0 3px; }
@@ -470,7 +542,7 @@
     body.authed header.app-shell .topline::after { content: "● 系统运行正常"; color: var(--ok); font-size: 10px; order: 4; }
     body.authed #reloadAll, body.authed #logoutBtn { width: 100%; text-align: left; padding: 9px 10px; border: 0; background: transparent; color: var(--muted); }
     body.authed #reloadAll:hover, body.authed #logoutBtn:hover { background: var(--panel-soft); color: var(--primary); }
-    nav.page-nav { display: grid; gap: 5px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+    nav.page-nav { display: grid; grid-template-columns: 1fr; gap: 5px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
     nav.page-nav::before { content: "WORKSPACE"; color: #a0a2b0; font-size: 10px; letter-spacing: .14em; padding: 0 11px 5px; }
     nav.page-nav button, nav.page-nav button.secondary, nav.page-nav button.ok, nav.page-nav button.danger {
       min-height: 40px; justify-content: flex-start; gap: 10px; padding: 9px 12px; border: 0; border-radius: 10px;
@@ -522,13 +594,16 @@
     .bento-hero p { max-width: 420px; color: #b9bbca; font-size: 12px; line-height: 1.6; position: relative; z-index: 1; }
     .bento-hero button { position: relative; z-index: 1; margin-top: 5px; background: #fff !important; border-color: #fff !important; color: var(--text); }
     .bento-quick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .bento-tile { min-height: 90px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--primary-weak); }
+    .bento-tile { display: block; width: 100%; min-height: 90px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--primary-weak); color: var(--text); text-align: left; cursor: pointer; transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
+    .bento-tile:hover, .bento-tile:focus-visible { background: var(--primary-weak); color: var(--text); border-color: color-mix(in srgb, var(--primary) 38%, var(--line)); transform: translateY(-1px); box-shadow: var(--shadow-soft); outline: none; }
     .bento-tile:nth-child(2) { background: #e6f8f0; }
     .bento-tile:nth-child(3) { background: #fff1df; }
     .bento-tile:nth-child(4) { background: var(--panel); }
+    .bento-tile:nth-child(4):hover, .bento-tile:nth-child(4):focus-visible { background: var(--panel); }
     .bento-tile b { display: block; font-size: 13px; margin: 9px 0 4px; }
     .bento-tile span { color: var(--text-secondary); font-size: 10px; }
-    .bento-icon { color: var(--primary); font-size: 17px; }
+    .bento-icon { display: inline-flex; color: var(--primary); }
+    .bento-icon svg { width: 18px; height: 18px; display: block; }
     .bento-tile:nth-child(2) .bento-icon { color: var(--ok); }
     .bento-tile:nth-child(3) .bento-icon { color: #c17a2d; }
     .base-config { margin-top: 0; }
@@ -633,46 +708,30 @@
     }
     html, body { max-width: 100%; overflow-x: hidden; }
     body.authed main.app-shell, body.authed main.app-shell * { min-width: 0; }
-    body.authed main.app-shell { width: auto; max-width: none; padding-left: 38px; }
-    body.authed.dashboard-embedded main.app-shell { width: auto; max-width: none; }
-    body.authed.dashboard-embedded { display: block; min-height: 0; }
-    body.authed.dashboard-embedded header.app-shell {
-      display: flex; position: static; width: 100%; min-height: 0; height: auto; padding: 16px 28px 0;
-      flex-direction: column; gap: 12px; border-right: 0; border-bottom: 1px solid var(--line);
-    }
-    body.authed.dashboard-embedded .header-brand,
-    body.authed.dashboard-embedded header.app-shell .topline { display: none; }
-    body.authed.dashboard-embedded nav.page-nav { grid-template-columns: repeat(5, minmax(0, 1fr)); width: 100%; }
-    body.authed.dashboard-embedded nav.page-nav::before { display: none; }
-    body.authed.dashboard-embedded nav.page-nav button { justify-content: center; text-align: center; }
-    body.authed.dashboard-embedded main.app-shell { display: block; width: 100%; max-width: 1440px; margin: 0 auto; padding: 24px 28px 36px; }
+    body.authed main.app-shell { width: 100%; max-width: none; padding-left: 38px; }
     body.authed main.app-shell img, body.authed main.app-shell video, body.authed main.app-shell iframe { max-width: 100%; }
     body.authed section { overflow: hidden; }
     body.authed .grid, body.authed .grid3, body.authed .grid4, body.authed .channel-row,
     body.authed .baseurl-row, body.authed .proxy-card, body.authed .proxy-actions,
     body.authed .proxy-kpi, body.authed .proxy-qgrid { min-width: 0; }
     body.authed textarea { max-width: 100%; }
-    @media (max-width: 1180px) and (min-width: 901px) {
-      body.authed { grid-template-columns: 204px minmax(0, 1fr); }
-      body.authed header.app-shell { width: 204px; padding: 22px 12px; }
+    @media (max-width: 1180px) {
+      body.authed { display: block; }
+      body.authed.sidebar-open { overflow: hidden; }
+      body.authed.sidebar-open .sidebar-backdrop { display: block; }
+      body.authed header.app-shell { width: 224px; transform: translateX(-100%); transition: transform .2s ease; box-shadow: 10px 0 30px rgba(0,0,0,.12); }
+      body.authed header.app-shell.mobile-open { transform: translateX(0); }
       body.authed main.app-shell { padding: 24px 24px 36px; }
+      body.authed main.app-shell::before { display: none; }
+      .bento-mobile-menu { display: inline-flex !important; }
+      nav.page-nav { margin-top: 0; }
       .bento-welcome { grid-template-columns: 1fr; }
       .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .channel-row { grid-template-columns: minmax(0, 1fr) 120px 90px; }
       .channel-row .actions { grid-column: 1 / -1; }
     }
     @media (max-width: 900px) {
-      body.authed { display: block; }
-      body.authed header.app-shell { width: 224px; transform: translateX(-100%); transition: transform .2s ease; box-shadow: 10px 0 30px rgba(0,0,0,.12); }
-      body.authed header.app-shell.mobile-open { transform: translateX(0); }
       body.authed main.app-shell { padding: 20px 16px 32px; }
-      body.authed main.app-shell::before { display: none; }
-      .bento-mobile-menu { display: inline-flex !important; }
-      nav.page-nav { margin-top: 0; }
-      .bento-welcome { grid-template-columns: 1fr; }
-      body.authed.dashboard-embedded header.app-shell { position: static; width: 100%; transform: none !important; padding: 12px 16px 0; }
-      body.authed.dashboard-embedded nav.page-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      body.authed.dashboard-embedded main.app-shell { padding: 16px 16px 28px; }
     }
     @media (max-width: 640px) {
       body.authed main.app-shell { padding: 14px 10px 28px; }
@@ -687,8 +746,10 @@
       .between { align-items: flex-start; flex-wrap: wrap; }
       .topline { width: 100%; }
       .topline input { max-width: 100%; }
-      .page-actions { align-items: stretch; }
-      .page-actions button { flex: 1 1 140px; }
+      .floating-actions {
+        right: 12px;
+        bottom: max(124px, calc(env(safe-area-inset-bottom) + 112px));
+      }
       .proxy-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .proxy-kpi, .proxy-qgrid { grid-template-columns: 1fr; }
       .modal { width: calc(100vw - 20px); padding: 12px; }
@@ -713,14 +774,14 @@
 
   <header class="app-shell">
     <div class="header-brand">
-      <img class="header-logo" src="__SELFIE_LOGO_SRC__" alt="" onerror="this.style.display='none'">
+      <img class="header-logo" src="logo.png" alt="" onerror="this.style.display='none'">
       <div>
         <p class="header-eyebrow">Selfie Image</p>
         <h1>生图 · 自拍 管理</h1>
         <p class="header-sub">渠道、试画、形象与记录</p>
       </div>
     </div>
-    <nav class="page-nav" aria-label="功能分区">
+    <nav id="pageNav" class="page-nav" aria-label="功能分区">
       <button data-tab="base" class="active" type="button">工作台</button>
       <button data-tab="channels" type="button">模型渠道</button>
       <button data-tab="proxies" type="button">代理设置</button>
@@ -735,19 +796,18 @@
       <button data-tab="raw" type="button">高级配置</button>
     </nav>
     <div class="topline">
-      <button id="reloadAll" class="secondary">刷新</button>
+      <button id="reloadAll" class="secondary">刷新全部</button>
       <button id="logoutBtn" class="secondary">退出</button>
     </div>
   </header>
+  <div id="sidebarBackdrop" class="sidebar-backdrop" aria-hidden="true"></div>
   <main class="app-shell">
     <button id="bentoMobileMenu" class="bento-mobile-menu" type="button" style="display:none;margin:0 0 16px;background:var(--panel);border-color:var(--line);color:var(--text);box-shadow:var(--shadow-soft)">☰　Selfie Image</button>
-    <div class="page-actions" aria-label="页面操作">
-      <button id="pageSaveAll" class="ok" type="button">保存配置</button>
-      <button id="pageRefreshAll" class="secondary" type="button">刷新数据</button>
-      <span id="pageActionStatus" class="muted" role="status"></span>
-    </div>
 
-    <section id="base" class="active">
+    <section id="base" class="active floating-action-section">
+      <div class="floating-actions" aria-label="工作台操作">
+        <button id="pageSaveAll" class="ok" type="button" data-tooltip="保存配置" aria-label="保存配置" title="保存配置"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5z"></path><path d="M8 3v6h8V3"></path><path d="M8 21v-7h8v7"></path></svg></span></button>
+      </div>
       <div class="bento-welcome">
         <div class="bento-hero">
           <div class="eyebrow">CREATIVE WORKSPACE</div>
@@ -756,10 +816,10 @@
           <button type="button" onclick="document.querySelector('[data-tab=\"test\"]').click()">开始一次创作　→</button>
         </div>
         <div class="bento-quick">
-          <div class="bento-tile"><div class="bento-icon">✦</div><b>快速试画</b><span>从文字开始创作</span></div>
-          <div class="bento-tile"><div class="bento-icon">◉</div><b>形象参考</b><span>管理固定形象</span></div>
-          <div class="bento-tile"><div class="bento-icon">◫</div><b>模型渠道</b><span>检查运行状态</span></div>
-          <div class="bento-tile"><div class="bento-icon">☷</div><b>生成记录</b><span>查看最近任务</span></div>
+          <button class="bento-tile" type="button" onclick="document.querySelector('[data-tab=\"studio\"]').click()"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>创作画布</b><span>编排参考并开始创作</span></button>
+          <button class="bento-tile" type="button" onclick="document.querySelector('[data-tab=\"selfie\"]').click()"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg></div><b>形象参考</b><span>管理固定形象</span></button>
+          <button class="bento-tile" type="button" onclick="document.querySelector('[data-tab=\"channels\"]').click()"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg></div><b>模型渠道</b><span>检查运行状态</span></button>
+          <button class="bento-tile" type="button" onclick="document.querySelector('[data-tab=\"monitor\"]').click()"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="3" cy="6" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="12" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="18" r=".7" fill="currentColor" stroke="none"></circle></svg></div><b>生成记录</b><span>查看最近任务</span></button>
         </div>
       </div>
       <div class="between">
@@ -781,14 +841,9 @@
       <div id="baseStatus" class="status" style="margin-top:12px"></div>
     </section>
 
-    <section id="channels">
+    <section id="channels" class="floating-action-section">
       <div class="between">
         <h2>渠道</h2>
-        <div class="actions" style="margin-top:0">
-          <button class="secondary" type="button" onclick="addChannel()">加生图渠道</button>
-          <button class="secondary" type="button" onclick="addAuditChannel()">加辅助渠道</button>
-          <button class="secondary" type="button" onclick="addVideoChannel()">加视频渠道</button>
-        </div>
       </div>
       <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。新建/编辑渠道点「保存渠道」才写入；列表里启停会马上保存，删除、复制和优先级也会自动保存。启用但没选模型时会自动关掉该渠道。</p>
       <div class="tabs-inline" role="tablist" aria-label="渠道分类">
@@ -831,28 +886,32 @@
         <div id="videoPriorityRows" class="model-list"></div>
       </div>
       <div id="channelStatus" class="status" style="margin-top:12px"></div>
+      <div class="floating-actions" aria-label="添加渠道">
+        <button class="secondary has-label" type="button" data-channel-add="image" onclick="addChannel()" data-tooltip="添加生图渠道" aria-label="添加生图渠道" title="添加生图渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">图</span></button>
+        <button class="secondary has-label" type="button" data-channel-add="audit" onclick="addAuditChannel()" data-tooltip="添加辅助渠道" aria-label="添加辅助渠道" title="添加辅助渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">辅</span></button>
+        <button class="secondary has-label" type="button" data-channel-add="video" onclick="addVideoChannel()" data-tooltip="添加视频渠道" aria-label="添加视频渠道" title="添加视频渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">视</span></button>
+      </div>
     </section>
 
 
-    <section id="proxies">
+    <section id="proxies" class="floating-action-section">
       <div class="between">
         <h2>代理</h2>
-        <div class="actions" style="margin-top:0">
-          <button class="secondary" type="button" onclick="renderProxyList()">刷新</button>
-          <button class="ok" type="button" onclick="openProxyModal(-1)">添加代理</button>
-        </div>
       </div>
       <p class="muted">统一管理 HTTP / SOCKS5 代理。渠道只从已启用列表中选择；连通测试看出口，质量测试探测常用生图站点是否可达。</p>
       <div id="proxyList" class="model-list" style="margin-top:12px"></div>
       <div id="proxyStatus" class="status" style="margin-top:12px"></div>
+      <div class="floating-actions" aria-label="代理操作">
+        <button class="secondary" type="button" onclick="renderProxyList()" data-tooltip="刷新列表" aria-label="刷新列表" title="刷新列表"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
+        <button class="ok" type="button" onclick="openProxyModal(-1)" data-tooltip="添加代理" aria-label="添加代理" title="添加代理"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
+      </div>
     </section>
 
-    <section id="monitor">
+    <section id="monitor" class="floating-action-section">
       <div class="between">
         <h2>生成记录</h2>
         <div class="actions" style="margin-top:0">
-          <button class="secondary" onclick="loadRecords()">刷新</button>
-          <button class="danger" onclick="clearRecords()">清空</button>
+          <button class="danger" onclick="clearRecords()">清空记录</button>
         </div>
       </div>
       <div class="grid4">
@@ -866,21 +925,23 @@
       </div>
       <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
       <div id="monitorMetrics" class="status" style="margin-top:12px"></div>
-      <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新</button></div>
+      <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button></div>
       <div id="taskQueueSummary" class="status"></div>
       <div style="overflow:auto;margin-top:8px"><table class="table" id="taskQueueTable"></table></div>
       <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
       <div id="monitorPager" class="actions"></div>
+      <div class="floating-actions" aria-label="记录操作">
+        <button class="secondary" type="button" onclick="loadRecords(true)" data-tooltip="刷新记录" aria-label="刷新记录" title="刷新记录"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
+      </div>
     </section>
 
-    <section id="assets">
+    <section id="assets" class="floating-action-section">
       <div class="between">
         <div>
           <h2>资产库</h2>
           <p class="muted">集中浏览已生成的图片和视频，支持组合筛选与批量整理。</p>
         </div>
         <div class="actions" style="margin-top:0">
-          <button class="secondary" type="button" onclick="loadAssets()">刷新</button>
           <select id="assetStudioPreset" class="mini" title="加入画布时附加的预设"><option value="">加入画布（不套预设）</option></select>
           <button class="secondary mini" type="button" onclick="addSelectedAssetToStudio()">加入画布</button>
           <button class="secondary" type="button" onclick="exportAssets()">导出元数据</button>
@@ -923,10 +984,13 @@
       <div id="assetGrid" class="asset-grid"></div>
       <div id="assetPager" class="actions"></div>
       <div id="assetStatus" class="status" style="margin-top:12px"></div>
+      <div class="floating-actions" aria-label="资产操作">
+        <button class="secondary" type="button" onclick="loadAssets()" data-tooltip="刷新资产" aria-label="刷新资产" title="刷新资产"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
+      </div>
     </section>
 
 
-    <section id="studio">
+    <section id="studio" class="floating-action-section">
       <div class="between">
         <h2>画布</h2>
         <span class="status">多参考编排 · 多模板 · 仅图片</span>
@@ -936,74 +1000,74 @@
           <label>画布会话</label>
           <select id="studioSessionSelect"></select>
         </div>
-        <div>
-          <label>新建模板</label>
-          <select id="studioTemplateSelect"></select>
-        </div>
-        <div>
-          <label>标题</label>
-          <input id="studioTitle" placeholder="画布标题">
-        </div>
         <div class="actions" style="align-items:end">
-          <button class="ok" id="studioCreateBtn" type="button">按模板新建</button>
-          <button class="secondary" id="studioReloadBtn" type="button">刷新</button>
-          <button class="danger" id="studioDeleteBtn" type="button">删除</button>
+          <button class="secondary" id="studioReloadBtn" type="button">刷新会话</button>
+          <button class="danger" id="studioDeleteBtn" type="button" disabled>删除</button>
         </div>
       </div>
-      <div class="grid">
-        <div><label>模式</label>
-          <select id="studioMode">
-            <option value="group">合影</option>
-            <option value="selfie">自拍</option>
-            <option value="i2i">图生图</option>
-            <option value="t2i">文生图</option>
-          </select>
-        </div>
-        <div><label>画面比例</label><select id="studioAspect"></select></div>
-        <div><label>清晰度</label><select id="studioResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
-        <div><label>张数</label><input id="studioCount" type="number" min="1" max="4" value="1"></div>
+      <div id="studioEmptyState" class="studio-empty">
+        <strong>还没有打开画布会话</strong>
+        <div class="muted" style="margin-top:6px">点击右下角加号，选择模板并新建一个会话。</div>
       </div>
-      <label class="checkline"><input id="studioUsePersona" type="checkbox" checked> 缺形象槽时用当前形象</label>
-      <div class="between">
-        <label>提示词</label>
+      <div id="studioEditor" class="studio-editor" hidden>
+        <div class="grid">
+          <div><label>标题</label><input id="studioTitle" placeholder="画布标题"></div>
+          <div><label>模式</label>
+            <select id="studioMode">
+              <option value="group">合影</option>
+              <option value="selfie">自拍</option>
+              <option value="i2i">图生图</option>
+              <option value="t2i">文生图</option>
+            </select>
+          </div>
+          <div><label>画面比例</label><select id="studioAspect"></select></div>
+          <div><label>清晰度</label><select id="studioResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+          <div><label>张数</label><input id="studioCount" type="number" min="1" max="4" value="1"></div>
+        </div>
+        <label class="checkline"><input id="studioUsePersona" type="checkbox" checked> 缺形象槽时用当前形象</label>
+        <div class="between">
+          <label>提示词</label>
+          <div class="actions">
+            <button class="secondary" id="studioPresetBtn" type="button">预设</button>
+            <button class="secondary" id="studioCosBtn" type="button">COS池</button>
+          </div>
+        </div>
+        <textarea id="studioPrompt" rows="3" placeholder="自然并肩合影…"></textarea>
+        <div class="preset-panel" id="studioPresetPanel"></div>
+        <div class="preset-panel" id="studioCosPanel"></div>
+        <div class="studio-chiprow" id="studioPromptChips"></div>
+        <div class="between" style="margin-top:8px">
+          <h3>参考槽位</h3>
+          <div class="actions">
+            <button class="secondary" id="studioPickRecordBtn" type="button">从记录选图</button>
+            <button class="secondary" id="studioAddSlotBtn" type="button">加槽位</button>
+          </div>
+        </div>
+        <div class="studio-gallery" id="studioGallery"></div>
+        <div class="studio-slots" id="studioSlots"></div>
         <div class="actions">
-          <button class="secondary" id="studioPresetBtn" type="button">预设</button>
-          <button class="secondary" id="studioCosBtn" type="button">COS池</button>
+          <button class="ok" id="studioSaveBtn" type="button">保存设置</button>
+          <button class="ok" id="studioRunBtn" type="button">开始生成</button>
+          <button class="secondary" id="studioRerunBtn" type="button">再生成</button>
+          <button class="danger" id="studioCancelBtn" type="button" style="display:none">取消任务</button>
         </div>
+        <div id="studioStatus" class="status">画布已打开。</div>
+        <h3>结果</h3>
+        <div class="studio-results" id="studioResults"></div>
+        <input id="studioFilePick" type="file" accept="image/*" style="display:none">
       </div>
-      <textarea id="studioPrompt" rows="3" placeholder="自然并肩合影…"></textarea>
-      <div class="preset-panel" id="studioPresetPanel"></div>
-      <div class="preset-panel" id="studioCosPanel"></div>
-      <div class="studio-chiprow" id="studioPromptChips"></div>
-      <div class="between" style="margin-top:8px">
-        <h3>参考槽位</h3>
-        <div class="actions">
-          <button class="secondary" id="studioPickRecordBtn" type="button">从记录选图</button>
-          <button class="secondary" id="studioAddSlotBtn" type="button">加槽位</button>
-        </div>
+      <div class="floating-actions" aria-label="画布操作">
+        <button class="ok" id="studioCreateBtn" type="button" data-tooltip="按模板新建" aria-label="按模板新建" title="按模板新建"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
       </div>
-      <div class="studio-gallery" id="studioGallery"></div>
-      <div class="studio-slots" id="studioSlots"></div>
-      <div class="actions">
-        <button class="ok" id="studioSaveBtn" type="button">保存设置</button>
-        <button class="ok" id="studioRunBtn" type="button">开始生成</button>
-        <button class="secondary" id="studioRerunBtn" type="button">再生成</button>
-        <button class="danger" id="studioCancelBtn" type="button" style="display:none">取消任务</button>
-      </div>
-      <div id="studioStatus" class="status">选模板后点「按模板新建」，或打开已有会话。</div>
-      <h3>结果</h3>
-      <div class="studio-results" id="studioResults"></div>
-      <input id="studioFilePick" type="file" accept="image/*" style="display:none">
     </section>
 
-    <section id="presets">
+    <section id="presets" class="floating-action-section">
       <div class="between">
         <div>
           <h2>预设管理</h2>
           <p class="muted">管理生图和视频指令里的预设。导入导出使用 JSON 文本，不会下载文件。</p>
         </div>
         <div class="actions">
-          <button class="ok" id="presetAddBtn" type="button">新增预设</button>
           <button class="secondary" id="presetImportBtn" type="button">导入文本</button>
           <button class="secondary" id="presetExportBtn" type="button">导出并复制</button>
         </div>
@@ -1017,6 +1081,9 @@
         <button class="secondary" id="presetReloadBtn" type="button">刷新列表</button>
       </div>
       <div id="presetManagerList" class="preset-manager-list"></div>
+      <div class="floating-actions" aria-label="预设操作">
+        <button class="ok" id="presetAddBtn" type="button" data-tooltip="新增预设" aria-label="新增预设" title="新增预设"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
+      </div>
     </section>
 
     <section id="test">
@@ -1147,15 +1214,17 @@
       <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核和图转文请选能看图的模型；留空时使用当前 LLM。转英文与辅助功能共用辅助渠道模型。</div>
     </section>
 
-    <section id="raw">
+    <section id="raw" class="floating-action-section">
       <h2>高级 · 配置原文</h2>
       <p class="muted">这里改的是插件自己的配置，不包含 AstrBot 启动用的网页地址和口令。</p>
       <textarea id="configText" style="min-height:360px"></textarea>
       <div class="actions">
         <button onclick="loadConfig()">读取 JSON</button>
-        <button class="ok" onclick="saveJsonConfig()">保存 JSON</button>
       </div>
       <div id="configStatus" class="status"></div>
+      <div class="floating-actions" aria-label="配置操作">
+        <button class="ok" type="button" onclick="saveJsonConfig()" data-tooltip="保存 JSON" aria-label="保存 JSON" title="保存 JSON"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5z"></path><path d="M8 3v6h8V3"></path><path d="M8 21v-7h8v7"></path></svg></span></button>
+      </div>
     </section>
   </main>
 
@@ -1315,9 +1384,32 @@
     </div>
   </div>
 
+  <div id="studioCreateModal" class="modal-mask">
+    <div class="modal studio-create-dialog">
+      <div class="between">
+        <h2>新建画布会话</h2>
+        <button class="secondary" type="button" onclick="closeStudioCreateModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted">先选择一个模板，创建后可以在画布中继续调整提示词、参考槽位和生成参数。</p>
+        <label>模板</label>
+        <select id="studioTemplateSelect"></select>
+        <label style="margin-top:12px">标题（可选）</label>
+        <input id="studioCreateTitle" placeholder="例如：周末合影">
+        <div id="studioCreateStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" type="button" onclick="closeStudioCreateModal()">取消</button>
+          <button class="ok" id="studioCreateConfirmBtn" type="button">创建会话</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="toastWrap" class="toast-wrap"></div>
 
-  <!-- bridge sdk -->
+  <!-- AstrBot rewrites this URL with its short-lived page token when embedded. -->
   <script src="/api/plugin/page/bridge-sdk.js"></script>
   <script>
     const $ = id => document.getElementById(id);
@@ -1430,8 +1522,8 @@
     const PROTECTED_MEDIA_LOAD_QUEUE = [];
     const PROTECTED_MEDIA_LOAD_CONCURRENCY = 2;
     let PROTECTED_MEDIA_LOAD_ACTIVE = 0;
-    const PROTECTED_MEDIA_CACHE_MAX_ENTRIES = 36;
-    const PROTECTED_MEDIA_CACHE_MAX_BYTES = 128 * 1024 * 1024;
+    const PROTECTED_MEDIA_CACHE_MAX_ENTRIES = 100;
+    const PROTECTED_MEDIA_CACHE_MAX_BYTES = 200 * 1024 * 1024;
     let PROTECTED_MEDIA_CACHE_BYTES = 0;
     let PROTECTED_MEDIA_CACHE_SCOPE = '';
     let PROTECTED_MEDIA_CACHE_VERSION = 0;
@@ -1589,6 +1681,9 @@
       }
       document.querySelectorAll('[data-priority-kind]').forEach(block => {
         block.style.display = block.getAttribute('data-priority-kind') === ACTIVE_CHANNEL_PANE ? '' : 'none';
+      });
+      document.querySelectorAll('[data-channel-add]').forEach(button => {
+        button.hidden = button.getAttribute('data-channel-add') !== ACTIVE_CHANNEL_PANE;
       });
     }
     const DEFAULT_IMAGE_PROMPT_EN_TEMPLATE = `Translate the image-generation prompt into natural English.
@@ -2223,7 +2318,12 @@ Source prompt:
         `;
         const enableInput = card.querySelector('input[type="checkbox"]');
         enableInput.onchange = async event => {
-          const target = list[i];
+          // Rendering selectors normalizes lists in place by replacing the
+          // array; resolve the row again so the toggle never edits a stale list.
+          const currentList = channelListFor(kind) || [];
+          const target = currentList[i];
+          if (!target) return;
+          const previous = target.enabled !== false;
           const want = !!event.target.checked;
           target.enabled = want;
           if (want && softDisableChannelIfNoModels(target)) {
@@ -2246,8 +2346,9 @@ Source prompt:
           refreshModelSelectors();
           const saved = await scheduleChannelListAutoSave();
           if (!saved) {
-            target.enabled = !want;
-            enableInput.checked = !want;
+            const rollbackList = channelListFor(kind) || [];
+            if (rollbackList[i]) rollbackList[i].enabled = previous;
+            enableInput.checked = previous;
             renderAllChannelLists();
             showToast('渠道开关保存失败，已恢复原状态', 'bad');
           }
@@ -3237,9 +3338,46 @@ Source prompt:
       }
     }
 
+    function channelListSaveSnapshot() {
+      ensureConfig();
+      normalizeChannels();
+      normalizeAuditChannels();
+      normalizeVideoChannels();
+      for (const ch of [...(CONFIG.image_channels || []), ...(CONFIG.audit_channels || []), ...(CONFIG.video_channels || [])]) {
+        softDisableChannelIfNoModels(ch);
+      }
+      const copy = value => JSON.parse(JSON.stringify(value || []));
+      return {
+        image_channels: copy(CONFIG.image_channels),
+        audit_channels: copy(CONFIG.audit_channels),
+        video_channels: copy(CONFIG.video_channels),
+        enabled_image_model_priority: $('priorityList') ? textList('priorityList') : copy(CONFIG.enabled_image_model_priority),
+        enabled_audit_model_priority: $('auditPriorityList') ? textList('auditPriorityList') : copy(CONFIG.enabled_audit_model_priority),
+        enabled_video_model_priority: $('videoPriorityList') ? textList('videoPriorityList') : copy(CONFIG.enabled_video_model_priority),
+        image_model_call_mode: ($('imageModelCallMode') && $('imageModelCallMode').value) || CONFIG.image_model_call_mode || 'sequence',
+      };
+    }
+    async function persistChannelListSnapshot(snapshot) {
+      try {
+        const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: snapshot})});
+        CONFIG = res.data || CONFIG;
+        ensureConfig();
+        renderAllChannelLists();
+        refreshModelSelectors();
+        return true;
+      } catch (e) {
+        setMultiStatus(e.message);
+        showToast(e.message, 'bad');
+        return false;
+      }
+    }
     async function scheduleChannelListAutoSave() {
       if (isChannelModalOpen()) return false;
-      return await persistConfig(false, '', { toast: false, toastError: true, quiet: true });
+      const snapshot = channelListSaveSnapshot();
+      const run = () => persistChannelListSnapshot(snapshot);
+      const next = PERSIST_TAIL.then(run, run);
+      PERSIST_TAIL = next.then(() => true, () => true);
+      return await next;
     }
     async function saveJsonConfig() {
       try {
@@ -3268,30 +3406,6 @@ Source prompt:
       } catch (e) {
         $('health').textContent = e.message;
         $('healthPill').textContent = '未连接';
-      }
-    }
-    async function refreshDashboardData() {
-      if ($('pageActionStatus')) $('pageActionStatus').textContent = '正在刷新…';
-      try {
-        // Wait for a pending channel/list save before reading the server state back.
-        await PERSIST_TAIL;
-        await Promise.allSettled([
-          checkHealth(),
-          loadConfig(),
-          refreshSelfie(),
-          loadRecords(),
-          loadAssets(),
-          loadAssetTags(),
-          loadAssetStudioPresets(),
-          loadMetrics(),
-          loadTasks(false),
-          loadStudioList(STUDIO.current && STUDIO.current.id),
-        ]);
-        if ($('pageActionStatus')) $('pageActionStatus').textContent = '已刷新';
-        showToast('页面数据已刷新', 'ok');
-      } catch (e) {
-        if ($('pageActionStatus')) $('pageActionStatus').textContent = e.message || '刷新失败';
-        showToast(e.message || '刷新失败', 'bad');
       }
     }
     function monitorQueryPath(page = MONITOR_PAGE) {
@@ -3371,7 +3485,7 @@ Source prompt:
         }
       }
     }
-    async function loadRecords(showRefreshToast = true) {
+    async function loadRecords(showRefreshToast = false) {
       try {
         const res = await api(monitorQueryPath(MONITOR_PAGE));
         RECORDS = res.data || [];
@@ -3392,11 +3506,14 @@ Source prompt:
       } catch (e) { $('monitorStats').textContent = e.message; }
     }
     async function clearRecords() {
+      if (!window.confirm('确定清空全部生成记录吗？此操作不可撤销。')) return;
       try {
         await api('/api/records/clear', {method:'POST', body:'{}'});
+        MONITOR_PAGE = 1;
         RECORDS = [];
         RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
         renderRecords();
+        await loadMetrics();
         showToast('记录已清空', 'ok');
       } catch (e) { $('monitorStats').textContent = e.message; }
     }
@@ -4023,8 +4140,30 @@ Source prompt:
         const media = await getProtectedMedia(path);
         const url = protectedMediaUrl(media);
         if (!url) throw new Error('图片已清理');
+        const thumb = img.closest('.studio-gallery-thumb');
+        const placeholder = thumb?.querySelector('[data-media-placeholder]');
+        img.addEventListener('load', () => {
+          if (thumb) thumb.classList.add('loaded');
+          if (placeholder) placeholder.hidden = true;
+        }, {once: true});
+        img.addEventListener('error', () => {
+          if (placeholder) {
+            placeholder.hidden = false;
+            placeholder.textContent = '图片加载失败';
+            img.remove();
+            return;
+          }
+          img.replaceWith(Object.assign(document.createElement('div'), {className: 'status', textContent: '图片加载失败'}));
+        }, {once: true});
         img.src = url;
       } catch (e) {
+        const placeholder = img.closest('.studio-gallery-thumb')?.querySelector('[data-media-placeholder]');
+        if (placeholder) {
+          placeholder.hidden = false;
+          placeholder.textContent = e.message || '图片加载失败';
+          img.remove();
+          return;
+        }
         const div = document.createElement('div');
         div.className = 'status';
         div.textContent = e.message || '图片已清理';
@@ -4059,7 +4198,7 @@ Source prompt:
       drainProtectedMediaLoadQueue();
     }
     function loadProtectedImages(root = document) {
-      const queued = root?.id === 'assetGrid';
+      const queued = root?.id === 'assetGrid' || root?.dataset?.protectedMediaQueued === 'true';
       root.querySelectorAll('img[data-cache-path]').forEach(img => {
         const path = img.getAttribute('data-cache-path') || '';
         img.removeAttribute('data-cache-path');
@@ -4841,7 +4980,7 @@ Source prompt:
         safeStorageRemove('selfieImageLastTestTaskId');
       safeStorageRemove('selfieImageLastTestMode');
         renderImageTestResult(testTaskResult(task));
-        try { await loadRecords(); } catch (_) {}
+        try { await loadRecords(false); } catch (_) {}
       } catch (e) {
         if (TEST_TASK_ID !== taskId) return;
         // Ignore transient poll errors while task is still running.
@@ -4877,7 +5016,7 @@ Source prompt:
           $('testResponseData').textContent = JSON.stringify(task, null, 2);
           if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
           renderImageTestResult(testTaskResult(task));
-          try { await loadRecords(); } catch (_) {}
+          try { await loadRecords(false); } catch (_) {}
         }
       } catch (_) {
         safeStorageRemove('selfieImageLastTestTaskId');
@@ -5525,6 +5664,41 @@ Source prompt:
         el.appendChild(opt);
       }
     }
+    function upsertStudioSessionSummary(session) {
+      if (!session || !session.id) return;
+      const summary = {
+        id: session.id,
+        title: session.title || '',
+        updated_at: session.updated_at || session.created_at || '',
+        template: session.template || '',
+        mode: (session.graph && session.graph.mode) || '',
+        slot_count: (session.slots || []).length,
+        result_count: (session.results || []).length,
+        last_status: (session.last_run && session.last_run.status) || '',
+        last_run: session.last_run || null,
+      };
+      STUDIO.sessions = [summary, ...(STUDIO.sessions || []).filter(item => item.id !== summary.id)];
+    }
+    function syncStudioEditorVisibility() {
+      const hasSession = !!(STUDIO.current && STUDIO.current.id);
+      const editor = $('studioEditor');
+      const empty = $('studioEmptyState');
+      if (editor) editor.hidden = !hasSession;
+      if (empty) empty.hidden = hasSession;
+      if ($('studioDeleteBtn')) $('studioDeleteBtn').disabled = !hasSession;
+    }
+    function openStudioCreateModal() {
+      renderStudioTemplateSelect();
+      $('studioCreateTitle').value = '';
+      $('studioCreateStatus').textContent = '';
+      $('studioCreateConfirmBtn').disabled = false;
+      $('studioCreateModal').classList.add('show');
+      setTimeout(() => $('studioCreateTitle')?.focus(), 0);
+    }
+    function closeStudioCreateModal() {
+      $('studioCreateModal').classList.remove('show');
+      $('studioCreateConfirmBtn').disabled = false;
+    }
     function renderStudioSlots() {
       const wrap = $('studioSlots');
       if (!wrap) return;
@@ -5704,35 +5878,61 @@ Source prompt:
         $('studioStatus').textContent = e.message || '取消失败';
       }
     }
+    function closeStudioGallery() {
+      const panel = $('studioGallery');
+      if (panel) { panel.classList.remove('open'); panel.innerHTML = ''; }
+      document.querySelectorAll('#studioSlots .studio-slot-picker').forEach(picker => {
+        const card = picker.closest('.studio-slot');
+        if (card) { card.classList.remove('picking-record'); card.draggable = true; }
+        picker.remove();
+      });
+      STUDIO.galleryTargetSlotId = '';
+    }
     async function openStudioGallery(slotId) {
       if (!STUDIO.current) return showToast('请先选择画布', 'bad');
+      closeStudioGallery();
       STUDIO.galleryTargetSlotId = slotId || '';
-      const panel = $('studioGallery');
+      let panel = $('studioGallery');
+      if (slotId) {
+        const card = [...document.querySelectorAll('#studioSlots .studio-slot')]
+          .find(item => item.dataset.slotId === String(slotId));
+        if (!card) return showToast('槽位已刷新，请重试', 'bad');
+        card.classList.add('picking-record');
+        card.draggable = false;
+        panel = document.createElement('div');
+        panel.className = 'studio-slot-picker';
+        card.appendChild(panel);
+      } else if (panel) {
+        panel.classList.add('open');
+      }
       if (!panel) return;
-      panel.classList.add('open');
       panel.innerHTML = '<div class="status">加载记录图…</div>';
       const res = await studioApi('/api/studio/gallery?limit=24');
       if (!res.success) {
-        panel.innerHTML = `<div class="status">${escapeHtml(res.message || '加载失败')}</div>`;
+        panel.innerHTML = `<div class="between"><div class="status">${escapeHtml(res.message || '加载失败')}</div>
+          <button type="button" class="secondary mini" data-studio-gallery-close>收起</button></div>`;
+        panel.querySelector('[data-studio-gallery-close]').onclick = closeStudioGallery;
         return;
       }
       const items = (res.data && res.data.items) || [];
       if (!items.length) {
-        panel.innerHTML = '<div class="status">暂无成功记录图</div>';
+        panel.innerHTML = '<div class="between"><div class="status">暂无成功记录图</div><button type="button" class="secondary mini" data-studio-gallery-close>收起</button></div>';
+        panel.querySelector('[data-studio-gallery-close]').onclick = closeStudioGallery;
         return;
       }
       const targetHint = STUDIO.galleryTargetSlotId
-        ? '点击图片放入当前槽'
-        : '先点槽位「记录」，或点图后选默认空槽/形象槽';
+        ? '选择一张记录图片放入此槽位'
+        : '点图后将放入默认空槽或形象槽';
       panel.innerHTML = `<div class="between"><div class="status">${targetHint}</div>
-        <button type="button" class="secondary mini" id="studioGalleryClose">收起</button></div>
-        <div class="studio-gallery-grid" id="studioGalleryGrid"></div>`;
-      $('studioGalleryClose').onclick = () => { panel.classList.remove('open'); panel.innerHTML=''; STUDIO.galleryTargetSlotId=''; };
-      const grid = $('studioGalleryGrid');
+        <button type="button" class="secondary mini" data-studio-gallery-close>收起</button></div>
+        <div class="studio-gallery-grid"></div>`;
+      panel.querySelector('[data-studio-gallery-close]').onclick = closeStudioGallery;
+      const grid = panel.querySelector('.studio-gallery-grid');
+      grid.dataset.protectedMediaQueued = 'true';
       for (const item of items) {
         const cell = document.createElement('div');
         cell.className = 'studio-gallery-item';
-        cell.innerHTML = `<img data-cache-path="${escapeHtml(item.path || '')}" alt=""><div class="cap">${escapeHtml(item.prompt || item.model || item.path || '')}</div>`;
+        cell.innerHTML = `<div class="studio-gallery-thumb"><div class="status" data-media-placeholder>加载图片…</div><img data-cache-path="${escapeHtml(item.path || '')}" alt=""></div><div class="cap">${escapeHtml(item.prompt || item.model || item.path || '')}</div>`;
         cell.onclick = () => studioPickGalleryPath(item.path, item.record_id);
         grid.appendChild(cell);
       }
@@ -5752,13 +5952,12 @@ Source prompt:
       });
       if (!res.success) return showToast(res.message || '放入失败', 'bad');
       STUDIO.current = res.data;
-      STUDIO.galleryTargetSlotId = '';
-      const panel = $('studioGallery');
-      if (panel) { panel.classList.remove('open'); panel.innerHTML = ''; }
+      closeStudioGallery();
       renderStudio();
       showToast('已从记录放入槽位', 'ok');
     }
     function renderStudio() {
+      syncStudioEditorVisibility();
       renderStudioSessionSelect();
       renderStudioTemplateSelect();
       fillStudioAspect();
@@ -5815,15 +6014,26 @@ Source prompt:
     }
     async function studioCreate() {
       const template = ($('studioTemplateSelect') && $('studioTemplateSelect').value) || 'duo';
-      const title = ($('studioTitle').value || '').trim();
-      const res = await studioApi('/api/studio/sessions', {
-        method:'POST',
-        body: JSON.stringify({ title, template })
-      });
-      if (!res.success) return showToast(res.message || '创建失败', 'bad');
-      STUDIO.current = res.data;
-      await loadStudioList(res.data.id);
-      showToast('已新建：' + (res.data.template || template), 'ok');
+      const title = ($('studioCreateTitle').value || '').trim();
+      const confirm = $('studioCreateConfirmBtn');
+      const status = $('studioCreateStatus');
+      if (confirm) confirm.disabled = true;
+      if (status) status.textContent = '创建中…';
+      try {
+        const res = await studioApi('/api/studio/sessions', {
+          method:'POST',
+          body: JSON.stringify({ title, template })
+        });
+        if (!res.success) throw new Error(res.message || '创建失败');
+        STUDIO.current = res.data;
+        upsertStudioSessionSummary(res.data);
+        closeStudioCreateModal();
+        renderStudio();
+        showToast('已新建：' + (res.data.template || template), 'ok');
+      } catch (e) {
+        if (status) status.textContent = e.message || '创建失败';
+        if (confirm) confirm.disabled = false;
+      }
     }
     async function studioSave() {
       if (!STUDIO.current) return showToast('请先新建或选择画布', 'bad');
@@ -5920,7 +6130,7 @@ Source prompt:
         document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
         btn.classList.add('active');
         $(btn.dataset.tab).classList.add('active');
-        if (btn.dataset.tab === 'monitor') { loadRecords(); loadMetrics(); loadTasks(); }
+        if (btn.dataset.tab === 'monitor') { loadRecords(false); loadMetrics(); loadTasks(); }
         if (btn.dataset.tab === 'assets') { loadAssets(); loadAssetTags(); loadAssetStudioPresets(); }
         if (btn.dataset.tab === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
         if (btn.dataset.tab === 'presets') loadManagedPromptPresets(PRESET_KIND);
@@ -5940,9 +6150,8 @@ Source prompt:
     $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
     $('presetTransferCopyBtn').onclick = copyPresetTransfer;
     $('presetTransferImportBtn').onclick = importPresetTransfer;
-    $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(); await loadMetrics(); await loadTasks(false); await loadAssets(); await loadAssetTags(); await loadAssetStudioPresets(); };
+    $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(false); await loadMetrics(); await loadTasks(false); await loadAssets(); await loadAssetTags(); await loadAssetStudioPresets(); };
     $('pageSaveAll').onclick = saveAll;
-    $('pageRefreshAll').onclick = refreshDashboardData;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;
     $('modalProvider').onchange = modalProviderChanged;
@@ -5966,7 +6175,11 @@ Source prompt:
     $('testImageBtn').onclick = runImageTest;
     $('testVideoBtn').onclick = runVideoTest;
     $('testCancelBtn').onclick = cancelTestTask;
-    if ($('studioCreateBtn')) $('studioCreateBtn').onclick = studioCreate;
+    if ($('studioCreateBtn')) $('studioCreateBtn').onclick = openStudioCreateModal;
+    if ($('studioCreateConfirmBtn')) $('studioCreateConfirmBtn').onclick = studioCreate;
+    if ($('studioCreateModal')) $('studioCreateModal').addEventListener('click', event => {
+      if (event.target === $('studioCreateModal')) closeStudioCreateModal();
+    });
     if ($('studioPresetBtn')) $('studioPresetBtn').onclick = toggleStudioPresets;
     if ($('studioCosBtn')) $('studioCosBtn').onclick = toggleStudioCos;
     if ($('testPresetBtn')) $('testPresetBtn').onclick = toggleTestPresets;
@@ -6059,10 +6272,26 @@ Source prompt:
     (function () {
       const menu = document.getElementById('bentoMobileMenu');
       const shell = document.querySelector('header.app-shell');
-      if (!menu || !shell) return;
-      menu.addEventListener('click', function () { shell.classList.toggle('mobile-open'); });
+      const backdrop = document.getElementById('sidebarBackdrop');
+      const closeSidebar = function () {
+        if (!shell) return;
+        shell.classList.remove('mobile-open');
+        document.body.classList.remove('sidebar-open');
+        if (backdrop) backdrop.setAttribute('aria-hidden', 'true');
+      };
+      if (menu && shell) {
+        menu.addEventListener('click', function () {
+          const open = !shell.classList.contains('mobile-open');
+          shell.classList.toggle('mobile-open', open);
+          document.body.classList.toggle('sidebar-open', open);
+          if (backdrop) backdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
+        });
+      }
+      if (backdrop) backdrop.addEventListener('click', closeSidebar);
       document.querySelectorAll('.page-nav button').forEach(function (button) {
-        button.addEventListener('click', function () { shell.classList.remove('mobile-open'); });
+        button.addEventListener('click', function () {
+          closeSidebar();
+        });
       });
     })();
   </script>

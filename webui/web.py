@@ -68,7 +68,9 @@ def render_index_html(html: Optional[str] = None) -> str:
         text = str(html)
     logo = _bundled_logo_data_url()
     if logo:
-        return text.replace(_LOGO_SRC_PLACEHOLDER, logo)
+        # Standalone Flask pages inline the logo; AstrBot-served plugin pages
+        # keep the relative asset URL so its page token can be appended.
+        return text.replace(_LOGO_SRC_PLACEHOLDER, logo).replace('src="logo.png"', f'src="{logo}"').replace('href="logo.png"', f'href="{logo}"')
     # Hide broken image slot when logo file is missing.
     return text.replace(f'src="{_LOGO_SRC_PLACEHOLDER}"', 'src="" style="display:none"')
 
@@ -78,6 +80,7 @@ INDEX_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="logo.png">
   <title>Selfie Image 管理面板</title>
   <style>
     :root {
@@ -136,6 +139,15 @@ INDEX_HTML = r"""<!doctype html>
     }
     body.authed header.app-shell { display: flex; }
     body.authed main.app-shell { display: grid; }
+    body.authed { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 100vh; }
+    body.authed header.app-shell {
+      width: 224px; max-width: none; min-height: 100vh; margin: 0; padding: 25px 15px;
+      align-items: stretch; justify-content: flex-start; flex-direction: column; gap: 22px;
+      position: fixed; inset: 0 auto 0 0; z-index: 20; border-right: 1px solid var(--line);
+    }
+    body.authed main.app-shell {
+      grid-column: 2; width: 100%; max-width: 1440px; margin: 0 auto; padding: 28px 38px 42px 262px;
+    }
     .login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 18px; }
     body.authed .login-page { display: none; }
     .login-box {
@@ -145,7 +157,7 @@ INDEX_HTML = r"""<!doctype html>
     .login-box h1 { color: var(--text); margin-bottom: 8px; font-size: 1.25rem; }
     nav.page-nav {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: 1fr;
       gap: 8px;
       padding: 10px;
       margin: 0 0 4px;
@@ -416,11 +428,18 @@ INDEX_HTML = r"""<!doctype html>
     .topline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .topline input { max-width: 280px; }
     body.dashboard-embedded { background: var(--bg); }
-    @media (max-width: 1100px) {
+    @media (max-width: 1180px) {
+      body.authed { display: block; }
+      body.authed header.app-shell { width: 224px; transform: translateX(-100%); transition: transform .2s ease; box-shadow: 10px 0 30px rgba(0,0,0,.12); }
+      body.authed header.app-shell.mobile-open { transform: translateX(0); }
+      body.authed main.app-shell { padding: 24px 24px 36px; }
       .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .channel-row { grid-template-columns: minmax(160px, 1fr) 120px 90px; }
       .channel-row .actions { grid-column: 1 / -1; }
-      nav.page-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      nav.page-nav { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 900px) {
+      body.authed main.app-shell { padding: 20px 16px 32px; }
     }
     @media (max-width: 760px) {
       body.authed header.app-shell { display: block; }
@@ -461,7 +480,7 @@ INDEX_HTML = r"""<!doctype html>
 
   <header class="app-shell">
     <div class="header-brand">
-      <img class="header-logo" src="__SELFIE_LOGO_SRC__" alt="" onerror="this.style.display='none'">
+      <img class="header-logo" src="logo.png" alt="" onerror="this.style.display='none'">
       <div>
         <p class="header-eyebrow">Selfie Image</p>
         <h1>生图 · 自拍 管理</h1>
@@ -906,7 +925,7 @@ INDEX_HTML = r"""<!doctype html>
 
   <div id="toastWrap" class="toast-wrap"></div>
 
-  <!-- bridge sdk -->
+  <!-- AstrBot rewrites this URL with its short-lived page token when embedded. -->
   <script src="/api/plugin/page/bridge-sdk.js"></script>
   <script>
     const $ = id => document.getElementById(id);
@@ -4647,6 +4666,23 @@ class FlaskWebServer:
         @app.route("/index.html", methods=["GET"])
         def index() -> Any:
             return render_index_html()
+
+        @app.route("/logo.png", methods=["GET"])
+        def logo() -> Any:
+            logo_path = Path(__file__).resolve().parents[1] / "logo.png"
+            if not logo_path.is_file():
+                return fail("Logo not found", 404)
+            return send_file(logo_path, mimetype="image/png", max_age=3600)
+
+        @app.route("/api/plugin/page/bridge-sdk.js", methods=["GET"])
+        def bridge_sdk_fallback() -> Any:
+            # AstrBot replaces this URL with its real bridge when embedded.
+            # The standalone Flask page only needs a successful script load.
+            return (
+                "window.AstrBotPluginPage = window.AstrBotPluginPage || undefined;\n",
+                200,
+                {"Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store"},
+            )
 
         @app.route("/api/health", methods=["GET"])
         def health() -> Any:
