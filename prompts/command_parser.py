@@ -97,6 +97,34 @@ def command_tokens_for_count(text: str) -> List[str]:
     return tokens
 
 
+def extract_explicit_count_option(tokens: List[str]) -> Tuple[List[str], int]:
+    """Extract ``-c`` count options from any position in a command prompt."""
+    for index, raw_token in enumerate(tokens):
+        token = str(raw_token or "").strip().translate(FULLWIDTH_DIGIT_TRANS)
+        lowered = token.lower()
+        if lowered == "-c":
+            if index + 1 >= len(tokens):
+                continue
+            count = parse_count_token(tokens[index + 1])
+            if count:
+                remaining = [
+                    item for pos, item in enumerate(tokens) if pos not in {index, index + 1}
+                ]
+                return remaining, count
+            continue
+
+        if not lowered.startswith("-c"):
+            continue
+        value = token[2:]
+        if value.startswith("="):
+            value = value[1:]
+        count = parse_count_token(value)
+        if count:
+            remaining = [item for pos, item in enumerate(tokens) if pos != index]
+            return remaining, count
+    return tokens, 0
+
+
 def extract_command_count(
     text: str,
     max_count: int,
@@ -108,6 +136,13 @@ def extract_command_count(
     tokens = command_tokens_for_count(text)
     if not tokens:
         return "", 1
+
+    # ``-c`` is explicit, can be placed anywhere, and must win over a number
+    # that happens to be part of the prompt, such as "20 岁".
+    remaining, count = extract_explicit_count_option(tokens)
+    if count:
+        return " ".join(remaining).strip(), normalize_count(count, max_count)
+
     indices = [0, 1]
     if allow_trailing or allow_attached:
         indices.extend(range(2, len(tokens)))

@@ -349,7 +349,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.1")
+        self.assertEqual(PLUGIN_VERSION, "1.6.2")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5691,7 +5691,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("/形象视频", help_body)
         self.assertIn("/看看视频", help_body)
         self.assertIn("/画 3", help_body)
-        self.assertIn("/自拍 3", help_body)
+        self.assertIn("-c 3", help_body)
+        self.assertIn("20 岁", help_body)
         self.assertIn("新任务自动排队", help_body)
         self.assertIn("同时画几张", help_body)
         self.assertIn("/查看提示词", help_body)
@@ -8604,6 +8605,18 @@ class StudioStoreTests(unittest.TestCase):
             stub._extract_command_count("一只猫3", allow_trailing=True),
             ("一只猫3", 1),
         )
+        for text, expected_extra, expected_count in (
+            ("-c 3 一位约 20 岁的角色", "一位约 20 岁的角色", 3),
+            ("一位约 20 岁的角色 -c 3 夜景", "一位约 20 岁的角色 夜景", 3),
+            ("一位约 20 岁的角色 -c=3", "一位约 20 岁的角色", 3),
+            ("一位约 20 岁的角色 -c3", "一位约 20 岁的角色", 3),
+            ("一位约 20 岁的角色 -c 三张", "一位约 20 岁的角色", 3),
+        ):
+            self.assertEqual(
+                stub._extract_command_count(text, allow_trailing=True),
+                (expected_extra, expected_count),
+                text,
+            )
 
     def test_image_commands_accept_count_before_or_after_prompt(self) -> None:
         """All image/selfie commands accept the common count positions."""
@@ -8673,6 +8686,13 @@ class StudioStoreTests(unittest.TestCase):
             ("cmd_raw_text_to_image", "/文生图 2 捧脸 一位美女", False, "一位美女", 2),
             ("cmd_raw_text_to_image", "/文生图 捧脸 2 一位美女", False, "一位美女", 2),
             ("cmd_raw_text_to_image", "/文生图 一位美女 2 捧脸", False, "一位美女", 2),
+            (
+                "cmd_raw_text_to_image",
+                "/文生图 一位约 20 岁的角色 -c 3 夜景",
+                False,
+                "一位约 20 岁的角色 夜景",
+                3,
+            ),
             ("cmd_raw_image_to_image", "/图生图 改成素描 3", True, "改成素描", 3),
         )
         for command, message, with_ref, expected_prompt, expected_count in prompt_cases:
