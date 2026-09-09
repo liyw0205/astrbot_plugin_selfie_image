@@ -395,7 +395,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.9")
+        self.assertEqual(PLUGIN_VERSION, "1.6.10")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5822,6 +5822,37 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertFalse(plugin._web_tasks["cmd-12345678-1"]["success"])
         self.assertEqual(plugin._web_tasks["cmd-12345678-1"]["requested_count"], 3)
 
+    def test_command_task_cancelled_before_runner_writes_failure_record(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_tasks["cmd-pre-cancel"] = {
+            "task_id": "cmd-pre-cancel",
+            "status": "queued",
+            "source": "command-画",
+            "request_data": {"prompt": "取消前的提示词", "kind": "image"},
+            "cancel_requested": True,
+        }
+        plugin._task_cancel_requested = lambda _task_id: True
+        plugin._release_quota_reservation = lambda _task_id: None
+        records = []
+        plugin._record_task = records.append
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        async def runner(_task_id):
+            self.fail("取消前不应启动 runner")
+
+        asyncio.run(plugin._run_command_image_task("cmd-pre-cancel", Event(), runner))
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["task_id"], "cmd-pre-cancel")
+        self.assertEqual(records[0]["status"], "cancelled")
+        self.assertTrue(records[0]["cancelled"])
+
     def test_command_task_waits_for_record_commits_before_terminal_state(self) -> None:
         plugin = self._plugin_stub()
         plugin._web_tasks["cmd-record-order"] = {
@@ -5871,6 +5902,35 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertIn("wait", events)
         self.assertLess(events.index("wait"), events.index(("state", "succeeded")))
         self.assertEqual(terminal_stages[-1], ("complete", "已完成"))
+
+    def test_web_task_exception_writes_failure_record_without_duplicate_generation_row(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_tasks["web-failure-record"] = {
+            "task_id": "web-failure-record",
+            "status": "running",
+            "source": "web-test",
+            "request_data": {"prompt": "Web 异常提示词", "kind": "image"},
+            "cancel_requested": False,
+        }
+        plugin._task_cancel_requested = lambda _task_id: False
+        records = []
+        plugin._record_task = records.append
+
+        async def failed_image(_payload):
+            raise RuntimeError("上游测试异常")
+
+        plugin.web_test_image = failed_image
+        asyncio.run(
+            plugin._run_web_image_task(
+                "web-failure-record",
+                {"media_type": "image", "prompt": "Web 异常提示词"},
+            )
+        )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["task_id"], "web-failure-record")
+        self.assertEqual(records[0]["request_data"]["stage"], "task_exception")
+        self.assertEqual(plugin._web_tasks["web-failure-record"]["status"], "failed")
 
 
 class ReferenceCollectorTests(unittest.TestCase):

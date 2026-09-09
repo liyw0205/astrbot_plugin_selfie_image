@@ -908,6 +908,18 @@ class WebTaskMixin:
             result = self._normalize_generation_result(result, payload.get("count") or 1)
             result = redact_sensitive_data(result)
             if self._task_cancel_requested(task_id):
+                ensure_failure = getattr(self, "_ensure_task_failure_record", None)
+                if callable(ensure_failure):
+                    await ensure_failure(
+                        task_id,
+                        error="任务已取消",
+                        cancelled=True,
+                        stage="cancelled",
+                        media_type=media_type,
+                        source=str(payload.get("source") or ("web-video-test" if media_type == "video" else "web-test")),
+                        prompt=str(payload.get("prompt") or ""),
+                        request_data=payload,
+                    )
                 self._set_web_image_task(
                     task_id,
                     status="cancelled",
@@ -994,9 +1006,46 @@ class WebTaskMixin:
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
             )
+        except asyncio.CancelledError:
+            ensure_failure = getattr(self, "_ensure_task_failure_record", None)
+            if callable(ensure_failure):
+                await ensure_failure(
+                    task_id,
+                    error="任务已取消",
+                    cancelled=True,
+                    stage="cancelled",
+                    media_type=media_type,
+                    source=str(payload.get("source") or ("web-video-test" if media_type == "video" else "web-test")),
+                    prompt=str(payload.get("prompt") or ""),
+                    request_data=payload,
+                )
+            self._set_web_image_task(
+                task_id,
+                status="cancelled",
+                success=False,
+                generation_stage="cancelled",
+                generation_stage_label="已取消",
+                error="任务已取消",
+                result={"success": False, "error": "任务已取消", "cancelled": True},
+                finished_ts=time.time(),
+                finished_at=self._web_task_timestamp(),
+            )
+            return
         except Exception as exc:
             error = redact_sensitive_text(str(exc))
             cancelled = "取消" in error
+            ensure_failure = getattr(self, "_ensure_task_failure_record", None)
+            if callable(ensure_failure):
+                await ensure_failure(
+                    task_id,
+                    error=error,
+                    cancelled=cancelled,
+                    stage="cancelled" if cancelled else "task_exception",
+                    media_type=media_type,
+                    source=str(payload.get("source") or ("web-video-test" if media_type == "video" else "web-test")),
+                    prompt=str(payload.get("prompt") or ""),
+                    request_data=payload,
+                )
             self._set_web_image_task(
                 task_id,
                 status="cancelled" if cancelled else "failed",

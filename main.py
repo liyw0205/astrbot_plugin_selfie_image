@@ -3300,8 +3300,149 @@ class SelfieImagePlugin(
         async for item in self._handle_video_command(event, "看看视频", fallback, mode="persona"):
             yield item
 
+    async def _ensure_task_failure_record(
+        self,
+        task_id: str,
+        *,
+        error: str,
+        cancelled: bool = False,
+        stage: str = "task_exception",
+        media_type: str = "",
+        source: str = "",
+        prompt: str = "",
+        request_data: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        """Persist one failure row when a queue task stops before generation.
+
+        Generation handlers normally write their own row.  Queue cancellation
+        or a runner exception can happen before those handlers run, so keep a
+        small idempotent fallback that preserves the task-to-record link.
+        """
+        tid = str(task_id or "").strip()
+        if not tid:
+            return
+        wait_commits = getattr(self, "_wait_for_record_commits", None)
+        if callable(wait_commits):
+            await wait_commits(tid)
+        try:
+            task = self.get_web_image_task(tid)
+        except Exception:
+            task = {}
+        linked = task.get("record_ids") if isinstance(task, Mapping) else []
+        result = task.get("result") if isinstance(task, Mapping) else {}
+        if not isinstance(linked, list):
+            linked = []
+        if isinstance(result, Mapping) and isinstance(result.get("record_ids"), list):
+            linked = [*linked, *result.get("record_ids")]
+        records = getattr(self, "_records", None)
+        records_lock = getattr(self, "_records_lock", None)
+        linked_records = []
+        if isinstance(records, list) and records_lock is not None:
+            try:
+                with records_lock:
+                    linked_records = [
+                        row
+                        for row in records
+                        if isinstance(row, Mapping)
+                        and str(row.get("task_id") or "").strip() == tid
+                    ]
+                    if any(
+                        isinstance(row, Mapping)
+                        and (
+                            row.get("success") is False
+                            or str(row.get("status") or "")
+                            in {"failed", "cancelled", "delivery_failed"}
+                        )
+                        for row in linked_records
+                    ):
+                        return
+            except Exception:
+                linked_records = []
+        # Earlier batch shots may already be successful while this task later
+        # gets cancelled or crashes. Suppress only when a matching failure row
+        # exists; otherwise keep the later terminal state inspectable.
+        if any(str(item or "").strip() for item in linked) and not linked_records:
+            return
+
+        request = dict(request_data) if isinstance(request_data, Mapping) else {}
+        task_request = task.get("request_data") if isinstance(task, Mapping) else {}
+        if isinstance(task_request, Mapping):
+            request = {**dict(task_request), **request}
+        # Queue payloads may carry full reference-image data URLs. Keep the
+        # fallback row inspectable without duplicating those blobs in history.
+        for key in ("images", "image", "_task_id", "api_key", "api_keys"):
+            request.pop(key, None)
+        source = str(source or (task.get("source") if isinstance(task, Mapping) else "") or "task").strip()
+        prompt = str(
+            prompt
+            or request.get("prompt")
+            or request.get("action")
+            or request.get("original_prompt")
+            or ""
+        ).strip()
+        kind = str(media_type or request.get("kind") or "").strip().lower()
+        if kind not in {"image", "video"}:
+            kind = "video" if "video" in source.lower() or "视频" in source else "image"
+        safe_error = redact_sensitive_text(str(error or ("任务已取消" if cancelled else "任务失败")))[:2000]
+        request["stage"] = str(stage or "task_exception")
+        request["task_id"] = tid
+        try:
+            reference_images = max(
+                0,
+                int(
+                    request.get("reference_image_count")
+                    or request.get("raw_reference_image_count")
+                    or 0
+                ),
+            )
+        except (TypeError, ValueError):
+            reference_images = 0
+        record = {
+            "source": source,
+            "source_label": "Web" if source.startswith("web") else source,
+            "media_type": kind,
+            "success": False,
+            "generation_success": False,
+            "delivery_success": None,
+            "status": "cancelled" if cancelled else "failed",
+            "cancelled": bool(cancelled),
+            "error": safe_error,
+            "prompt": prompt,
+            "original_prompt": str(request.get("original_prompt") or prompt),
+            "request_prompt": prompt,
+            "final_prompt": prompt,
+            "used_model": "",
+            "elapsed_seconds": 0,
+            "reference_images": reference_images,
+            "request_data": redact_sensitive_data(request),
+            "response_data": redact_sensitive_data(
+                {"success": False, "stage": str(stage or "task_exception"), "error": safe_error, "cancelled": bool(cancelled)}
+            ),
+            "request_image_paths": [],
+            "generated_image_paths": [],
+            "attempts": [],
+            "retry_count": 0,
+            "retry_exhausted": False,
+            "task_id": tid,
+        }
+        if kind == "video":
+            record["generated_video_paths"] = []
+        try:
+            self._record_task(record)
+        except Exception as exc:
+            logger.warning(f"[SelfieImage] 任务失败记录落库失败: {exc}")
+            return
+        if callable(wait_commits):
+            await wait_commits(tid)
+
     async def _run_command_image_task(self, task_id: str, event: AstrMessageEvent, runner) -> None:
         if self._task_cancel_requested(task_id):
+            await self._ensure_task_failure_record(
+                task_id,
+                error="任务已取消",
+                cancelled=True,
+                stage="cancelled",
+            )
             self._release_quota_reservation(task_id)
             self._set_web_image_task(
                 task_id,
@@ -3400,9 +3541,12 @@ class SelfieImagePlugin(
                 finished_at=self._web_task_timestamp(),
             )
         except asyncio.CancelledError:
-            wait_commits = getattr(self, "_wait_for_record_commits", None)
-            if callable(wait_commits):
-                await wait_commits(task_id)
+            await self._ensure_task_failure_record(
+                task_id,
+                error="任务已取消",
+                cancelled=True,
+                stage="cancelled",
+            )
             self._set_web_image_task(
                 task_id,
                 status="cancelled",
@@ -3418,53 +3562,29 @@ class SelfieImagePlugin(
         except Exception as exc:
             error = redact_sensitive_text(str(exc))
             cancelled = "取消" in error
-            # Ensure monitor still gets a row when runner crashes before generate_images records.
-            is_video = False
+            task_meta = {}
             try:
+                with self._web_task_lock:
+                    task_meta = dict((self._web_tasks or {}).get(task_id) or {})
+            except Exception:
                 task_meta = {}
-                try:
-                    with self._web_task_lock:
-                        task_meta = dict((self._web_tasks or {}).get(task_id) or {})
-                except Exception:
-                    task_meta = {}
-                source = str(task_meta.get("source") or "command-task")
-                prompt = ""
-                summary = task_meta.get("request_data") or task_meta.get("summary") or {}
-                if isinstance(summary, dict):
-                    prompt = str(summary.get("prompt") or summary.get("action") or "")
-                is_video = str(summary.get("kind") or "").strip().lower() == "video"
-                if not is_video:
-                    is_video = "video" in source.lower() or "视频" in source
-                self._record_task(
-                    {
-                        "source": source,
-                        "source_label": source,
-                        "media_type": "video" if is_video else "image",
-                        "success": False,
-                        "generation_success": False,
-                        "delivery_success": None,
-                        "error": error,
-                        "prompt": prompt,
-                        "original_prompt": prompt,
-                        "request_prompt": prompt,
-                        "final_prompt": prompt,
-                        "used_model": "",
-                        "elapsed_seconds": 0,
-                        "reference_images": 0,
-                        "request_data": {"stage": "task_exception"},
-                        "response_data": {"success": False, "stage": "task_exception", "error": error},
-                        "request_image_paths": [],
-                        "generated_image_paths": [],
-                        **({"generated_video_paths": []} if is_video else {}),
-                        "task_id": task_id,
-                        "attempts": [],
-                    }
-                )
-            except Exception as rec_exc:
-                logger.warning(f"[SelfieImage] 任务异常落库失败: {rec_exc}")
-            wait_commits = getattr(self, "_wait_for_record_commits", None)
-            if callable(wait_commits):
-                await wait_commits(task_id)
+            source = str(task_meta.get("source") or "command-task")
+            summary = task_meta.get("request_data") or task_meta.get("summary") or {}
+            summary = summary if isinstance(summary, dict) else {}
+            prompt = str(summary.get("prompt") or summary.get("action") or "")
+            is_video = str(summary.get("kind") or "").strip().lower() == "video"
+            if not is_video:
+                is_video = "video" in source.lower() or "视频" in source
+            await self._ensure_task_failure_record(
+                task_id,
+                error=error,
+                cancelled=cancelled,
+                stage="cancelled" if cancelled else "task_exception",
+                media_type="video" if is_video else "image",
+                source=source,
+                prompt=prompt,
+                request_data=summary,
+            )
             # The fallback record above is deliberately written before this
             # terminal update.  This preserves the task -> record ordering on
             # runner exceptions just like the normal generation path.
