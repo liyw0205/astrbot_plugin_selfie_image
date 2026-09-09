@@ -691,6 +691,24 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(record, dict):
         return {}
     out = dict(record)
+    # Older records only persisted ``success``.  Materialize the lifecycle
+    # status during compaction so list/detail consumers can distinguish a
+    # delivery failure from a generation failure without re-deriving it.
+    status = str(out.get("status") or "").strip().lower()
+    if not status:
+        if bool(out.get("cancelled")):
+            status = "cancelled"
+        elif bool(out.get("delivery_failed")) or (
+            bool(out.get("generation_success")) and out.get("delivery_success") is False
+        ):
+            status = "delivery_failed"
+        elif bool(out.get("success")):
+            status = "succeeded"
+        elif bool(out.get("generation_success")):
+            status = "partial_success"
+        else:
+            status = "failed"
+        out["status"] = status
     value = str(out.get("md5") or "").strip().lower()
     # Keep the key present so older records render an explicit empty value.
     out["md5"] = value if re.fullmatch(r"[0-9a-f]{32}", value) else ""
@@ -700,16 +718,138 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             out[key] = _truncate_text(out.get(key), lim)
 
     rd = out.get("request_data")
+    # Keep an explicit route on every record. Older rows only exposed the
+    # combined ``used_model`` label (or buried the route in attempts), which
+    # made the detail view depend on parsing provider-specific strings.
+    route_channel = str(out.get("channel") or "").strip()
+    route_model = str(out.get("model") or "").strip()
+    if isinstance(rd, dict):
+        route_channel = route_channel or str(rd.get("channel") or "").strip()
+        route_model = route_model or str(rd.get("model") or "").strip()
+    route_attempts: List[Any] = []
+    if isinstance(out.get("attempts"), list):
+        route_attempts.extend(out.get("attempts") or [])
+    response_for_route = out.get("response_data")
+    if not route_attempts and isinstance(response_for_route, dict) and isinstance(response_for_route.get("attempts"), list):
+        route_attempts.extend(response_for_route.get("attempts") or [])
+    # Prefer the successful attempt; otherwise use the last attempted target.
+    for attempt in reversed(route_attempts):
+        if not isinstance(attempt, dict):
+            continue
+        if attempt.get("success") or not route_channel or not route_model:
+            channel_value = str(attempt.get("channel") or "").strip()
+            model_value = str(attempt.get("model") or "").strip()
+            if channel_value:
+                route_channel = channel_value
+            if model_value:
+                route_model = model_value
+            if route_channel and route_model and attempt.get("success"):
+                break
+    used_model = str(out.get("used_model") or "").strip()
+    if (not route_channel or not route_model) and used_model:
+        # Target labels are emitted as ``channel/model``. Keep this only as a
+        # legacy fallback; structured attempt fields above remain authoritative.
+        label_channel, separator, label_model = used_model.partition("/")
+        if separator:
+            route_channel = route_channel or label_channel.strip()
+            route_model = route_model or label_model.strip()
+        elif not route_model:
+            route_model = used_model
+    if route_channel:
+        out["channel"] = _truncate_text(route_channel, 300)
+    if route_model:
+        out["model"] = _truncate_text(route_model, 300)
+    if isinstance(rd, dict) and (route_channel or route_model):
+        # Retry payloads read the compact request_data object, so backfill the
+        # inferred route there as well as at the record top level.
+        rd = dict(rd)
+        if route_channel:
+            rd.setdefault("channel", route_channel)
+        if route_model:
+            rd.setdefault("model", route_model)
+
     if isinstance(rd, dict):
         slim_rd: Dict[str, Any] = {
             "aspect_ratio": rd.get("aspect_ratio"),
             "resolution": rd.get("resolution"),
             "reference_image_count": rd.get("reference_image_count"),
+            "reference_images": rd.get("reference_images"),
             "targets": rd.get("targets") if isinstance(rd.get("targets"), list) else [],
             "request_image_paths": rd.get("request_image_paths")
             if isinstance(rd.get("request_image_paths"), list)
             else [],
         }
+        # Keep the small, user-visible request parameters needed to explain a
+        # historical generation.  Provider request bodies and raw prompt
+        # duplicates intentionally stay out of the compact index.
+        for key in (
+            "requested_count",
+            "count",
+            "raw_reference_image_count",
+            "duration",
+            "requested_duration",
+            "timeout_seconds",
+            "size",
+            "media_type",
+            "channel",
+            "model",
+            "prompt_enhance",
+            "use_selfie_reference",
+            # Keep the effective audit text available when a request was
+            # normalized before the provider call.  It is still bounded and
+            # passes through the normal redaction step above.
+            "audit_prompt",
+            "request_prompt_en",
+            "cos",
+            "cos_pose",
+            "cos_scene",
+            "cos_view",
+        ):
+            value = rd.get(key)
+            if isinstance(value, (str, int, float, bool)):
+                if isinstance(value, str) and key in {"audit_prompt", "request_prompt_en"}:
+                    value = _truncate_text(value, 6000)
+                slim_rd[key] = value
+        image_to_text = rd.get("image_to_text")
+        if isinstance(image_to_text, dict):
+            # Only retain the small status fields used by the detail view;
+            # provider responses and inline reference data stay excluded.
+            slim_image_to_text: Dict[str, Any] = {}
+            for key in ("enabled", "applied", "target_count", "used_by_model"):
+                value = image_to_text.get(key)
+                if isinstance(value, (str, int, float, bool)):
+                    slim_image_to_text[key] = value
+            if image_to_text.get("error"):
+                slim_image_to_text["error"] = _truncate_text(image_to_text.get("error"), 300)
+            if slim_image_to_text:
+                slim_rd["image_to_text"] = slim_image_to_text
+        cache_cleanup = rd.get("cache_cleanup") or rd.get("cache_cleanup_before_generation")
+        if isinstance(cache_cleanup, dict):
+            slim_cleanup: Dict[str, Any] = {}
+            for key in ("deleted_count", "would_delete_count", "deleted_bytes", "would_delete_bytes"):
+                value = cache_cleanup.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    slim_cleanup[key] = value
+            if slim_cleanup:
+                slim_rd["cache_cleanup"] = slim_cleanup
+        composition = rd.get("composition")
+        if isinstance(composition, dict):
+            # ``composition`` is generated locally and contains only stable
+            # classification fields; copy an allow-list to avoid retaining
+            # arbitrary provider metadata.
+            slim_composition: Dict[str, Any] = {}
+            for key in (
+                "strategy",
+                "prompt_hash",
+                "aspect_ratio",
+                "resolution",
+                "reference_image_count",
+            ):
+                value = composition.get(key)
+                if isinstance(value, (str, int, float, bool)):
+                    slim_composition[key] = value
+            if slim_composition:
+                slim_rd["composition"] = slim_composition
         # Keep lightweight workflow links while still excluding the original
         # prompt and provider-sensitive request details from the index payload.
         for key in (
@@ -732,13 +872,69 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
                 "format": pe.get("format"),
             }
         out["request_data"] = slim_rd
+        for key in (
+            "requested_count",
+            "duration",
+            "requested_duration",
+            "raw_reference_image_count",
+            "timeout_seconds",
+            "size",
+            "composition",
+        ):
+            if key not in out and key in slim_rd:
+                out[key] = slim_rd[key]
+        if "requested_count" not in out:
+            count_value = slim_rd.get("count")
+            if isinstance(count_value, (int, float)) and not isinstance(count_value, bool):
+                out["requested_count"] = max(1, int(count_value))
+
+    # ``prompt`` is the actual text sent to the provider after reference
+    # instructions / optional translation.  Persist an explicit alias so the
+    # detail view can distinguish it from the user's original request.
+    final_prompt = out.get("final_prompt")
+    if not final_prompt and isinstance(rd, dict):
+        final_prompt = rd.get("request_prompt_en") or rd.get("request_prompt")
+    if not final_prompt:
+        final_prompt = out.get("prompt") or out.get("request_prompt")
+    if final_prompt:
+        out["final_prompt"] = _truncate_text(final_prompt, 6000)
+
+    # COS randomization is encoded in action markers.  Promote the markers to
+    # compact scalar fields so records remain searchable/reproducible even
+    # when the surrounding prompt is truncated or translated.
+    marker_text = " ".join(
+        str(out.get(key) or "")
+        for key in ("original_prompt", "request_prompt", "prompt", "final_prompt")
+    )
+    if isinstance(rd, dict):
+        marker_text += " " + " ".join(str(rd.get(key) or "") for key in ("request_prompt", "request_prompt_en"))
+    for key, pattern in (
+        ("cos", r"【cos:([a-z0-9_]+)】"),
+        ("cos_pose", r"【cos_pose:([a-z0-9_]+)】"),
+        ("cos_scene", r"【cos_scene:([a-z0-9_]+)】"),
+        ("cos_view", r"【cos_view:([a-z0-9_]+)】"),
+    ):
+        value = out.get(key)
+        if not isinstance(value, str) or not value.strip():
+            match = re.search(pattern, marker_text, flags=re.I)
+            value = match.group(1).lower() if match else ""
+        if value:
+            out[key] = str(value).strip().lower()
+            if isinstance(out.get("request_data"), dict):
+                out["request_data"].setdefault(key, out[key])
 
     resp = out.get("response_data")
     if isinstance(resp, dict):
         out["response_data"] = {
             "success": resp.get("success"),
+            "status": resp.get("status"),
             "stage": resp.get("stage"),
             "error": _truncate_text(resp.get("error"), 500),
+            "generation_success": resp.get("generation_success"),
+            "delivery_success": resp.get("delivery_success"),
+            "delivery_failed": resp.get("delivery_failed"),
+            "delivery_error": _truncate_text(resp.get("delivery_error"), 800),
+            "blocked_images_retained": resp.get("blocked_images_retained"),
             "used_model": resp.get("used_model"),
             "elapsed_seconds": resp.get("elapsed_seconds"),
             "count": resp.get("count"),
@@ -771,6 +967,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             slim_attempts.append(
                 {
                     "attempt": item.get("attempt"),
+                    "channel": item.get("channel") or "",
                     "label": item.get("label") or item.get("model") or item.get("channel") or "",
                     "model": item.get("model") or "",
                     "success": item.get("success"),
@@ -826,13 +1023,41 @@ def summarize_record_for_list(record: Dict[str, Any]) -> Dict[str, Any]:
             }
             for a in failed_attempts
         ]
+    request_data = record.get("request_data") if isinstance(record.get("request_data"), dict) else {}
+    channel = str(record.get("channel") or request_data.get("channel") or "").strip()
+    model = str(record.get("model") or request_data.get("model") or "").strip()
+    attempts_for_route = attempts
+    if not attempts_for_route:
+        response = record.get("response_data") if isinstance(record.get("response_data"), dict) else {}
+        attempts_for_route = response.get("attempts") if isinstance(response.get("attempts"), list) else []
+    for attempt in reversed(attempts_for_route):
+        if not isinstance(attempt, dict):
+            continue
+        if attempt.get("success") or not channel or not model:
+            channel = channel or str(attempt.get("channel") or "").strip()
+            model = model or str(attempt.get("model") or "").strip()
+        if channel and model and attempt.get("success"):
+            break
+    if (not channel or not model) and record.get("used_model"):
+        label_channel, separator, label_model = str(record.get("used_model") or "").partition("/")
+        if separator:
+            channel = channel or label_channel.strip()
+            model = model or label_model.strip()
+        else:
+            model = model or str(record.get("used_model") or "").strip()
     return {
         "id": record.get("id"),
+        "task_id": str(record.get("task_id") or "").strip(),
         "time": record.get("time"),
         "source": record.get("source"),
         "source_label": record.get("source_label"),
         "success": record.get("success"),
+        "status": record.get("status") or ("succeeded" if record.get("success") else "failed"),
+        "generation_success": record.get("generation_success"),
+        "delivery_success": record.get("delivery_success"),
         "media_type": record.get("media_type") or "image",
+        "channel": channel,
+        "model": model,
         "used_model": record.get("used_model") or "",
         "elapsed_seconds": record.get("elapsed_seconds"),
         "group_id": record.get("group_id") or "",

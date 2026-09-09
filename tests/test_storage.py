@@ -19,7 +19,7 @@ class TestStorage:
         plugin.records_db_path = os.path.join(root, "generation_records.sqlite3")
         plugin.media_sources_dir = os.path.join(root, "media_sources")
         plugin.generated_dir = os.path.join(root, "image_cache")
-        plugin.config = SimpleNamespace(image_cache_limit_mb=10)
+        plugin.config = SimpleNamespace(image_cache_limit_mb=10, image_cache_limit_count=10)
         plugin._records_lock = threading.RLock()
         plugin._records = []
         plugin._record_seq = 0
@@ -84,6 +84,90 @@ class TestStorage:
             reloaded._records = reloaded._load_records()
             assert reloaded.get_asset_records(favorite=True)[0]["tags"] == ["one", "two"]
 
+    def test_delivery_failure_is_visible_in_record_list_and_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            plugin._commit_generation_record(
+                {
+                    "id": "delivery-1",
+                    "task_id": "cmd-12345678-1",
+                    "success": True,
+                    "generation_success": True,
+                    "delivery_success": None,
+                    "generated_image_paths": ["generated.png"],
+                    "response_data": {"success": True},
+                }
+            )
+            changed = plugin._update_generation_records_delivery(
+                "cmd-12345678-1",
+                delivered=False,
+                error="发送失败",
+                paths=["generated.png"],
+            )
+            assert changed == 1
+            row = plugin.get_recent_records(summary=True)[0]
+            assert row["status"] == "delivery_failed"
+            assert row["error"] == "发送失败"
+            detail = plugin.get_record_for_web("delivery-1")
+            assert detail["delivery_success"] is False
+            assert detail["response_data"]["delivery_error"] == "发送失败"
+
+    def test_legacy_record_detail_backfills_channel_and_model(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            plugin._records = [
+                {
+                    "id": "legacy-route",
+                    "success": True,
+                    "used_model": "relay/image-model-v2",
+                    "request_data": {"original_prompt": "old row"},
+                    "attempts": [
+                        {
+                            "channel": "relay",
+                            "model": "image-model-v2",
+                            "success": True,
+                        }
+                    ],
+                }
+            ]
+            detail = plugin.get_record_for_web("legacy-route")
+            assert detail["channel"] == "relay"
+            assert detail["model"] == "image-model-v2"
+            assert detail["request_data"]["channel"] == "relay"
+            assert detail["request_data"]["model"] == "image-model-v2"
+
+    def test_task_links_are_backfilled_for_each_batch_record(self) -> None:
+        """A completed batch exposes concrete record IDs, not only its task ID."""
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            plugin._web_tasks = {
+                "web-12345678-1": {
+                    "task_id": "web-12345678-1",
+                    "status": "running",
+                    "result": {},
+                }
+            }
+            plugin._web_task_lock = threading.RLock()
+            persisted = []
+            plugin._persist_web_tasks_locked = lambda: persisted.append(True)
+
+            plugin._commit_generation_records(
+                {
+                    "task_id": "web-12345678-1",
+                    "success": True,
+                    "count": 2,
+                    "generated_image_paths": ["one.png", "two.png"],
+                    "response_data": {"success": True, "count": 2},
+                }
+            )
+
+            linked = plugin._web_tasks["web-12345678-1"]["record_ids"]
+            assert len(linked) == 2
+            assert set(linked) == {row["id"] for row in plugin._records}
+            assert plugin._web_tasks["web-12345678-1"]["record_id"] == linked[0]
+            assert plugin._web_tasks["web-12345678-1"]["result"]["record_ids"] == linked
+            assert persisted
+
     def test_favorite_asset_cache_path_is_protected(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             plugin = self._plugin(root)
@@ -97,6 +181,56 @@ class TestStorage:
             )
             preview = plugin.get_cache_cleanup_preview()
             assert all(item["path"] != "favorite.png" for item in preview["would_delete"])
+
+    def test_cache_cleanup_enforces_count_without_deleting_record_media(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            referenced = Path(plugin.generated_dir) / "referenced.png"
+            referenced.write_bytes(b"r")
+            plugin._commit_generation_record(
+                {"id": "keep", "success": True, "generated_image_paths": ["referenced.png"]}
+            )
+            for index in range(11):
+                path = Path(plugin.generated_dir) / f"orphan-{index:02}.png"
+                path.write_bytes(bytes([index]))
+                os.utime(path, (1000 + index, 1000 + index))
+
+            preview = plugin.get_cache_cleanup_preview()
+            assert preview["total_count"] == 12
+            assert preview["would_delete_count"] == 2
+            assert all(item["path"] != "referenced.png" for item in preview["would_delete"])
+
+            cleaned = plugin._cleanup_image_cache_if_needed()
+            assert len(cleaned["deleted"]) == 2
+            assert cleaned["total_count"] == 10
+            assert referenced.exists()
+
+    def test_manual_cache_cleanup_requires_matching_preview_token(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            for index in range(11):
+                path = Path(plugin.generated_dir) / f"orphan-{index:02}.png"
+                path.write_bytes(bytes([index]))
+                os.utime(path, (1000 + index, 1000 + index))
+
+            preview = plugin.cleanup_image_cache_from_web()
+            assert preview["requires_confirmation"] is True
+            plan = preview["preview"]
+            assert plan["would_delete_count"] == 1
+            assert len(plan["plan_token"]) == 32
+
+            try:
+                plugin.cleanup_image_cache_from_web(confirm=True, plan_token="stale-token")
+            except ValueError as exc:
+                assert "重新预览" in str(exc)
+            else:
+                raise AssertionError("stale cache cleanup token should be rejected")
+            assert len(list(Path(plugin.generated_dir).iterdir())) == 11
+
+            result = plugin.cleanup_image_cache_from_web(confirm=True, plan_token=plan["plan_token"])
+            assert result["confirmed"] is True
+            assert len(result["result"]["deleted"]) == 1
+            assert result["result"]["total_count"] == 10
 
     def test_asset_query_paginates_and_combines_filters(self) -> None:
         with tempfile.TemporaryDirectory() as root:

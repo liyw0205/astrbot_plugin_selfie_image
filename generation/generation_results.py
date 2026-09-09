@@ -51,8 +51,17 @@ def normalize_generation_result(result: Any, requested_count: int = 1) -> Dict[s
     if succeeded + failed > requested:
         failed = max(0, requested - succeeded)
     cancelled = bool(data.get("cancelled"))
+    generation_success = data.get("generation_success")
+    if generation_success is None:
+        generation_success = succeeded > 0
+    delivery_success = data.get("delivery_success")
+    delivery_failed = bool(data.get("delivery_failed")) or str(data.get("status") or "") == "delivery_failed"
+    if delivery_success is False and bool(generation_success):
+        delivery_failed = True
     if cancelled:
         status = "cancelled"
+    elif delivery_failed and bool(generation_success):
+        status = "delivery_failed"
     elif succeeded >= requested and not failed:
         status = "succeeded"
     elif succeeded:
@@ -95,6 +104,13 @@ def normalize_generation_result(result: Any, requested_count: int = 1) -> Dict[s
             "failed_count": failed,
             "status": status,
             "success": status == "succeeded",
+            "generation_success": bool(generation_success),
+            "delivery_success": (
+                False
+                if delivery_failed
+                else (True if delivery_success is None and generation_success else None if delivery_success is None else bool(delivery_success))
+            ),
+            "delivery_failed": delivery_failed,
             "completed_count": completed,
             "progress_percent": progress_percent,
             "current_index": current_index,

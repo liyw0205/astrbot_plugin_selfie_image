@@ -28,7 +28,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max_concurrent_tasks": 10,
         "global_timeout": 280,
         "max_image_size_mb": 10,
-        "cache_limit_mb": 100,
+        "cache_limit_mb": 200,
+        "cache_limit_count": 100,
         "show_generation_info": False,
         "show_model_info": False,
         "rate_limit_seconds": 0,
@@ -277,6 +278,7 @@ class AICatConfig:
     image_global_timeout: int
     image_max_image_size_mb: int
     image_cache_limit_mb: int
+    image_cache_limit_count: int
     image_show_generation_info: bool
     image_show_model_info: bool
     image_rate_limit_seconds: int
@@ -430,7 +432,8 @@ class AICatConfig:
             image_max_concurrent_tasks=to_int(image.get("max_concurrent_tasks"), 10, minimum=1, maximum=10),
             image_global_timeout=to_int(image.get("global_timeout"), 180, minimum=10, maximum=900),
             image_max_image_size_mb=to_int(image.get("max_image_size_mb"), 10, minimum=1, maximum=100),
-            image_cache_limit_mb=to_int(image.get("cache_limit_mb"), 100, minimum=10, maximum=102400),
+            image_cache_limit_mb=to_int(image.get("cache_limit_mb"), 200, minimum=10, maximum=102400),
+            image_cache_limit_count=to_int(image.get("cache_limit_count"), 100, minimum=10, maximum=10000),
             image_show_generation_info=to_bool(image.get("show_generation_info"), False),
             image_show_model_info=to_bool(image.get("show_model_info"), False),
             image_rate_limit_seconds=to_int(image.get("rate_limit_seconds"), 0, minimum=0, maximum=3600),
@@ -626,6 +629,7 @@ def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
         "imageGlobalTimeoutMs": "global_timeout",
         "imageMaxImageSizeMB": "max_image_size_mb",
         "imageCacheLimitMB": "cache_limit_mb",
+        "imageCacheLimitCount": "cache_limit_count",
         "imageShowGenerationInfo": "show_generation_info",
         "imageShowModelInfo": "show_model_info",
         "imageRateLimitSeconds": "rate_limit_seconds",

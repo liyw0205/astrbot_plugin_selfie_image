@@ -24,6 +24,10 @@ CHINESE_DIGITS = {
 COUNT_PATTERN = r"(?:\d{1,2}|[一二两俩三四五六七八九十]{1,3})"
 COUNT_SUFFIX_PATTERN = r"(?:张|次|幅)?"
 PROMPT_SEPARATOR_PATTERN = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+"
+NON_COUNT_FOLLOWING_UNITS = {
+    "岁", "年", "月", "日", "号", "点", "时", "分", "秒",
+    "厘米", "米", "公里", "mm", "cm", "m", "km", "kg", "斤", "%",
+}
 
 
 def normalize_count(count: Any, max_count: int) -> int:
@@ -125,6 +129,19 @@ def extract_explicit_count_option(tokens: List[str]) -> Tuple[List[str], int]:
     return tokens, 0
 
 
+def is_prompt_quantity(tokens: List[str], index: int) -> bool:
+    """Keep natural prompt numbers such as ``约 20 岁`` out of legacy counts."""
+    if not 0 <= index < len(tokens):
+        return False
+    token = str(tokens[index] or "").strip().translate(FULLWIDTH_DIGIT_TRANS)
+    if not re.fullmatch(COUNT_PATTERN, token):
+        return False
+    if index + 1 >= len(tokens):
+        return False
+    following = str(tokens[index + 1] or "").strip().lower()
+    return any(following == unit or following.startswith(unit) for unit in NON_COUNT_FOLLOWING_UNITS)
+
+
 def extract_command_count(
     text: str,
     max_count: int,
@@ -150,7 +167,7 @@ def extract_command_count(
         if index >= len(tokens):
             continue
         count = parse_count_token(tokens[index])
-        if count:
+        if count and not is_prompt_quantity(tokens, index):
             remaining = [token for pos, token in enumerate(tokens) if pos != index]
             return " ".join(remaining).strip(), normalize_count(count, max_count)
         if allow_attached:

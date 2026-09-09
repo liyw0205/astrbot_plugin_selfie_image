@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import base64
 import json
+import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from ..core.constants import PLUGIN_NAME
@@ -87,6 +89,10 @@ class SelfieImageDashboardAPI:
             ("records", self.page_records, ["GET"], "Selfie Image generation records"),
             ("metrics", self.page_metrics, ["GET"], "Selfie Image generation metrics"),
             ("tasks", self.page_tasks, ["GET"], "Selfie Image task queue"),
+            ("tasks/export", self.page_tasks_export, ["GET"], "Selfie Image export tasks"),
+            ("tasks/delete", self.page_tasks_delete, ["POST"], "Selfie Image delete tasks"),
+            ("tasks/retry", self.page_tasks_retry, ["POST"], "Selfie Image retry tasks"),
+            ("tasks/<task_id>", self.page_task_detail, ["GET"], "Selfie Image task detail"),
             ("records/<record_id>/media-sources", self.page_record_media_sources, ["GET"], "Selfie Image record media sources"),
             ("records/<record_id>", self.page_record_detail, ["GET"], "Selfie Image record detail"),
             ("records/<record_id>/metadata", self.page_record_metadata, ["POST"], "Selfie Image record metadata"),
@@ -102,6 +108,7 @@ class SelfieImageDashboardAPI:
             ("assets/studio", self.page_assets_studio, ["POST"], "Selfie Image batch add assets to studio"),
             ("assets/<record_id>/studio", self.page_asset_studio, ["POST"], "Selfie Image add asset to studio"),
             ("records/clear", self.page_records_clear, ["POST"], "Selfie Image clear records"),
+            ("cache/cleanup", self.page_cache_cleanup, ["POST"], "Selfie Image cleanup cache"),
             ("cache-image", self.page_cache_image_file, ["GET"], "Selfie Image cache image download"),
             ("cache-image-preview", self.page_cache_image_preview, ["GET"], "Selfie Image cache image preview"),
             ("auth/check", self.page_auth_check, ["POST", "GET"], "Selfie Image dashboard auth check"),
@@ -175,6 +182,28 @@ class SelfieImageDashboardAPI:
         if value < minimum:
             return None, self._fail(f"{name} 不能小于 {minimum}", 400)
         return min(value, maximum), None
+
+    def _timestamp_query(self, name: str, *, end_of_day: bool = False) -> tuple[Optional[float], Any]:
+        """Parse an ISO date/time filter into a Unix timestamp.
+
+        Date-only values are interpreted in the server's local timezone so a
+        dashboard date range includes the complete selected day.
+        """
+        raw = self._query_value(name, "").strip()
+        if not raw:
+            return None, None
+        try:
+            if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
+                parsed = datetime.strptime(raw, "%Y-%m-%d")
+                if end_of_day:
+                    parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+                return time.mktime(parsed.timetuple()) + parsed.microsecond / 1_000_000, None
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return time.mktime(parsed.timetuple()) + parsed.microsecond / 1_000_000, None
+            return parsed.astimezone(timezone.utc).timestamp(), None
+        except (TypeError, ValueError):
+            return None, self._fail(f"{name} 必须是 YYYY-MM-DD 或 ISO 时间", 400)
 
     def _record_matches(self, record: Any, source: str, model: str, success: str, keyword: str, media_type: str = "") -> bool:
         if not isinstance(record, dict):
@@ -284,6 +313,10 @@ class SelfieImageDashboardAPI:
 
     async def page_health(self) -> Any:
         plugin = self.plugin
+        stats = getattr(plugin, "_cache_stats", None)
+        cache_bytes, cache_count = stats() if callable(stats) else (plugin._cache_size_bytes(), 0)
+        get_health = getattr(plugin, "get_channel_health", None)
+        get_preview = getattr(plugin, "get_cache_cleanup_preview", None)
         return self._ok(
             {
                 "status": "ok",
@@ -293,10 +326,12 @@ class SelfieImageDashboardAPI:
                 "records_db_path": getattr(plugin, "records_db_path", ""),
                 "media_sources_dir": getattr(plugin, "media_sources_dir", ""),
                 "cache_dir": getattr(plugin, "generated_dir", ""),
-                "cache_size_mb": round(float(plugin._cache_size_bytes()) / 1024 / 1024, 2),
-                "cache_limit_mb": getattr(plugin.config, "image_cache_limit_mb", 100),
-                "channel_health": plugin.get_channel_health(),
-                "cache_cleanup_preview": plugin.get_cache_cleanup_preview(),
+                "cache_size_mb": round(float(cache_bytes) / 1024 / 1024, 2),
+                "cache_file_count": cache_count,
+                "cache_limit_mb": getattr(plugin.config, "image_cache_limit_mb", 200),
+                "cache_limit_count": getattr(plugin.config, "image_cache_limit_count", 100),
+                "channel_health": get_health() if callable(get_health) else {},
+                "cache_cleanup_preview": get_preview() if callable(get_preview) else {},
             }
         )
 
@@ -529,18 +564,119 @@ class SelfieImageDashboardAPI:
             if media_type not in {"", "image", "video"}:
                 return self._fail("media_type 必须是 image 或 video", 400)
             include_finished = self._query_value("include_finished").strip().lower() in {"1", "true", "yes", "on"}
+            status_query = self._query_value("status").strip().lower()
+            valid_statuses = {
+                "queued", "running", "succeeded", "partial_success", "failed",
+                "delivery_failed", "cancelled", "expired",
+            }
+            if status_query:
+                requested_statuses = {item.strip() for item in status_query.split(",") if item.strip()}
+                if requested_statuses - valid_statuses:
+                    return self._fail("status 包含不支持的任务状态", 400)
             limit, error = self._int_query("limit", 50, 1, MAX_TASK_PAGE_LIMIT)
             if error or limit is None:
                 return error
+            start_ts, error = self._timestamp_query("start_date")
+            if error:
+                return error
+            end_ts, error = self._timestamp_query("end_date", end_of_day=True)
+            if error:
+                return error
+            task_kwargs = {
+                "include_finished": include_finished,
+                "limit": limit,
+                "media_type": media_type,
+            }
+            optional_filters = {
+                "source": self._query_value("source"),
+                "status": self._query_value("status"),
+                "model": self._query_value("model"),
+                "keyword": self._query_value("q") or self._query_value("keyword"),
+            }
+            for key, value in optional_filters.items():
+                if str(value or "").strip():
+                    task_kwargs[key] = value
+            if start_ts is not None:
+                task_kwargs["start_ts"] = start_ts
+            if end_ts is not None:
+                task_kwargs["end_ts"] = end_ts
             return self._ok(
                 redact_sensitive_data(
-                    self.plugin.list_web_tasks(
-                        include_finished=include_finished,
-                        limit=limit,
-                        media_type=media_type,
-                    )
+                    self.plugin.list_web_tasks(**task_kwargs)
                 )
             )
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_task_detail(self, task_id: str) -> Any:
+        """Return the redacted task detail used by the embedded dashboard."""
+        task_id_text = str(task_id or "").strip()
+        if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
+            return self._fail("非法任务 ID", 400)
+        try:
+            getter = getattr(self.plugin, "get_web_task_detail", None)
+            data = getter(task_id_text) if callable(getter) else self.plugin.get_web_image_task(task_id_text)
+            return self._ok(redact_sensitive_data(data))
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    @staticmethod
+    def _task_ids_from_payload(payload: Any) -> tuple[Optional[list[str]], Any]:
+        raw = (payload or {}).get("ids", (payload or {}).get("task_ids")) if isinstance(payload, dict) else None
+        if not isinstance(raw, list):
+            return None, "ids 必须是数组"
+        ids = list(dict.fromkeys(str(item or "").strip() for item in raw if str(item or "").strip()))
+        if not ids:
+            return None, "至少选择一条任务"
+        if len(ids) > 200:
+            return None, "单次最多操作 200 条任务"
+        for task_id in ids:
+            if len(task_id) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id):
+                return None, "包含非法任务 ID"
+        return ids, None
+
+    async def page_tasks_export(self) -> Any:
+        raw_ids = self._query_value("ids").strip()
+        ids = [item.strip() for item in raw_ids.split(",") if item.strip()] if raw_ids else None
+        if ids is not None:
+            if len(ids) > 200 or any(len(item) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(item) for item in ids):
+                return self._fail("包含非法任务 ID", 400)
+        try:
+            exporter = getattr(self.plugin, "export_web_tasks", None)
+            if not callable(exporter):
+                return self._fail("当前版本不支持任务导出", 501)
+            return self._ok(exporter(ids))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_tasks_delete(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        ids, validation_error = self._task_ids_from_payload(payload)
+        if validation_error:
+            return self._fail(validation_error, 400)
+        try:
+            deleter = getattr(self.plugin, "delete_web_tasks", None)
+            if not callable(deleter):
+                return self._fail("当前版本不支持任务删除", 501)
+            return self._ok(deleter(ids or []), message="任务记录已删除")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_tasks_retry(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        ids, validation_error = self._task_ids_from_payload(payload)
+        if validation_error:
+            return self._fail(validation_error, 400)
+        try:
+            retrier = getattr(self.plugin, "retry_web_tasks", None)
+            if not callable(retrier):
+                return self._fail("当前版本不支持任务重试", 501)
+            feedback = str((payload or {}).get("feedback") or "").strip()[:2000]
+            return self._ok(retrier(ids or [], feedback), message="已提交任务重试")
         except Exception as exc:
             return self._fail(str(exc), 400)
 
@@ -728,6 +864,26 @@ class SelfieImageDashboardAPI:
         if error:
             return error
         return self._ok({"deleted": self.plugin.clear_recent_records()})
+
+    async def page_cache_cleanup(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        cleanup = getattr(self.plugin, "cleanup_image_cache_from_web", None)
+        if not callable(cleanup):
+            return self._fail("当前版本不支持手动缓存清理", 501)
+        raw_confirm = (payload or {}).get("confirm", False)
+        confirm = bool(raw_confirm) if not isinstance(raw_confirm, str) else raw_confirm.strip().lower() in {"1", "true", "yes", "on"}
+        token = str((payload or {}).get("plan_token") or "").strip()
+        try:
+            data = cleanup(confirm=confirm, plan_token=token)
+            if not confirm:
+                return self._ok(data)
+            return self._ok(data, message="缓存清理完成")
+        except ValueError as exc:
+            return self._fail(str(exc), 409)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
 
     async def page_cache_image_file(self) -> Any:
         try:

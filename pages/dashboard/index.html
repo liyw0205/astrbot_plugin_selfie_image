@@ -179,6 +179,10 @@
     .modal-mask { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(27,28,29,.42); padding: 14px; z-index: 50; }
     .modal-mask.show { display: flex; }
     #mediaSourceModal { z-index: 70; }
+    #confirmModal { z-index: 90; }
+    .confirm-dialog { width: min(460px, 100%); }
+    .confirm-dialog .modal-body { line-height: 1.55; }
+    .confirm-dialog .confirm-message { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
     .modal {
       width: min(900px, 100%); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden;
       background: #fff; border-radius: var(--radius-lg); border: 1px solid var(--line); padding: 16px; box-shadow: 0 18px 60px rgba(27,28,29,.16);
@@ -827,9 +831,13 @@
         <span id="healthPill" class="pill">未连接</span>
       </div>
       <label>连接状态</label><div id="health" class="status">还没连上</div>
+      <div class="actions" style="margin-top:8px">
+        <button id="cleanupCacheBtn" class="danger" type="button" title="仅清理未被记录、收藏或置顶资产引用的超限缓存">清理可回收缓存</button>
+      </div>
       <div class="grid">
         <div><label>图片缓存上限（MB）</label><input id="cacheLimitMB" type="number" min="10" max="102400"></div>
-        <div><label>说明</label><div class="status">请求图和生成图存在同一缓存目录；超过上限会自动删最旧的，直到回到上限以下。</div></div>
+        <div><label>图片缓存上限（张）</label><input id="cacheLimitCount" type="number" min="10" max="10000"></div>
+        <div><label>说明</label><div class="status">默认 100 张 / 200 MB；请求图和生成图共用缓存。自动清理只移除未被生成记录引用的旧文件。</div></div>
       </div>
       <h3>谁能用</h3>
       <div class="grid">
@@ -926,6 +934,26 @@
       <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
       <div id="monitorMetrics" class="status" style="margin-top:12px"></div>
       <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button></div>
+      <div class="grid" style="margin-top:8px">
+        <div><label>显示范围</label><select id="taskQueueScope" onchange="loadTasks(false)"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
+        <div><label>媒体类型</label><select id="taskQueueMedia" onchange="loadTasks(false)"><option value="">全部</option><option value="image">图片</option><option value="video">视频</option></select></div>
+        <div><label>任务状态</label><select id="taskQueueStatus" onchange="taskQueueFilterChanged()"><option value="">全部</option><option value="queued">排队</option><option value="running">进行中</option><option value="succeeded">完成</option><option value="partial_success">部分完成</option><option value="failed">失败</option><option value="delivery_failed">发送失败</option><option value="cancelled">已取消</option><option value="expired">已过期</option></select></div>
+        <div><label>来源筛选</label><input id="taskQueueSource" placeholder="例如：LLM、画布、重试" oninput="taskQueueFilterChanged()"></div>
+        <div><label>模型筛选</label><input id="taskQueueModel" placeholder="输入模型名" oninput="taskQueueFilterChanged()"></div>
+        <div><label>关键词</label><input id="taskQueueKeyword" placeholder="提示词或失败原因" oninput="taskQueueFilterChanged()"></div>
+        <div><label>开始日期</label><input id="taskQueueStartDate" type="date" onchange="taskQueueFilterChanged()"></div>
+        <div><label>结束日期</label><input id="taskQueueEndDate" type="date" onchange="taskQueueFilterChanged()"></div>
+      </div>
+      <div class="between" style="margin-top:10px;gap:8px">
+        <span id="taskSelectionStatus" class="muted">未选择任务</span>
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary mini" type="button" onclick="selectVisibleTasks()">选择当前页</button>
+          <button class="secondary mini" type="button" onclick="clearTaskSelection()">取消选择</button>
+          <button class="secondary mini" type="button" onclick="exportSelectedTasks()">导出任务</button>
+          <button class="ok mini" type="button" onclick="retrySelectedTasks()">批量重试</button>
+          <button class="danger mini" type="button" onclick="deleteSelectedTasks()">删除任务</button>
+        </div>
+      </div>
       <div id="taskQueueSummary" class="status"></div>
       <div style="overflow:auto;margin-top:8px"><table class="table" id="taskQueueTable"></table></div>
       <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
@@ -1093,6 +1121,7 @@
         <div><label>模型</label><select id="testModel"></select></div>
         <div><label>画面比例</label><select id="testAspect"></select></div>
         <div id="testResolutionWrap"><label>清晰度</label><select id="testResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+        <div id="testCountWrap"><label>生成数量</label><input id="testCount" type="number" min="1" max="20" value="1" title="单次试画最多生成几张"></div>
         <div id="testDurationWrap" style="display:none"><label>视频时长（秒）</label><input id="testDuration" type="number" min="1" max="60" value="5"></div>
       </div>
       <div class="between">
@@ -1327,6 +1356,16 @@
     </div>
   </div>
 
+  <div id="taskModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2>任务详情</h2>
+        <button class="secondary" type="button" onclick="closeTaskDetail()">关闭</button>
+      </div>
+      <div class="modal-body"><div id="taskDetailBody"></div></div>
+    </div>
+  </div>
+
   <div id="mediaSourceModal" class="modal-mask">
     <div class="modal media-source-modal-dialog">
       <div class="between">
@@ -1402,6 +1441,24 @@
         <div class="actions" style="margin-top:0;justify-content:flex-end">
           <button class="secondary" type="button" onclick="closeStudioCreateModal()">取消</button>
           <button class="ok" id="studioCreateConfirmBtn" type="button">创建会话</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal confirm-dialog">
+      <div class="between">
+        <h2 id="confirmTitle">请确认操作</h2>
+        <button class="secondary" type="button" id="confirmCloseBtn" aria-label="关闭确认窗口">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirmMessage" class="confirm-message"></p>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" type="button" id="confirmCancelBtn">取消</button>
+          <button class="danger" type="button" id="confirmProceedBtn">确认</button>
         </div>
       </div>
     </div>
@@ -1497,6 +1554,7 @@
     let ASSET_META = {total: 0, filtered: 0, offset: 0, limit: ASSET_PAGE_SIZE};
     let ASSET_PAGE = 1;
     const ASSET_SELECTION = new Set();
+    const TASK_SELECTION = new Set();
     let ASSET_LOAD_TIMER = null;
     let ASSET_STUDIO_PRESETS = [];
     let AUTH_TOKEN = safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '';
@@ -1504,6 +1562,7 @@
     let AUTO_SAVE_TIMER = null;
     let MONITOR_LOAD_TIMER = null;
     let TASK_LOAD_TIMER = null;
+    let TASK_FILTER_TIMER = null;
     let ACTIVE_CHANNEL_PANE = 'image';
     let EDITING_CHANNEL_INDEX = -1;
     let EDITING_CHANNEL_KIND = 'image';
@@ -1669,6 +1728,36 @@
       wrap.appendChild(node);
       setTimeout(() => node.remove(), 2600);
     }
+    let CONFIRM_RESOLVER = null;
+    let CONFIRM_PREVIOUS_FOCUS = null;
+    function closeConfirmAction(accepted = false) {
+      const modal = $('confirmModal');
+      if (modal) modal.classList.remove('show');
+      const resolver = CONFIRM_RESOLVER;
+      CONFIRM_RESOLVER = null;
+      const previousFocus = CONFIRM_PREVIOUS_FOCUS;
+      CONFIRM_PREVIOUS_FOCUS = null;
+      if (resolver) resolver(Boolean(accepted));
+      if (previousFocus && typeof previousFocus.focus === 'function' && document.contains(previousFocus)) {
+        setTimeout(() => previousFocus.focus(), 0);
+      }
+    }
+    function confirmAction(message, options = {}) {
+      const modal = $('confirmModal');
+      if (!modal) return Promise.resolve(false);
+      if (CONFIRM_RESOLVER) closeConfirmAction(false);
+      $('confirmTitle').textContent = String(options.title || '请确认操作');
+      $('confirmMessage').textContent = String(message || '确定继续吗？');
+      $('confirmProceedBtn').textContent = String(options.confirmText || '确认');
+      $('confirmProceedBtn').className = options.danger === false ? 'ok' : 'danger';
+      CONFIRM_PREVIOUS_FOCUS = document.activeElement && typeof document.activeElement.focus === 'function'
+        ? document.activeElement
+        : null;
+      modal.classList.add('show');
+      const proceed = $('confirmProceedBtn');
+      if (proceed) proceed.focus();
+      return new Promise(resolve => { CONFIRM_RESOLVER = resolve; });
+    }
     function switchChannelPane(kind = 'image') {
       ACTIVE_CHANNEL_PANE = (kind === 'audit' || kind === 'video') ? kind : 'image';
       const map = { image: 'channelTabImage', audit: 'channelTabAudit', video: 'channelTabVideo' };
@@ -1745,7 +1834,8 @@ Source prompt:
       img.max_concurrent_tasks ??= 3;
       img.global_timeout ??= 280;
       img.max_image_size_mb ??= 10;
-      img.cache_limit_mb ??= 100;
+      img.cache_limit_mb ??= 200;
+      img.cache_limit_count ??= 100;
       img.max_batch_count ??= 10;
       img.batch_on_failure ??= 'skip';
       img.batch_skip_max ??= 2;
@@ -1794,10 +1884,17 @@ Source prompt:
         for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, img.default_aspect_ratio || '9:16');
         $('defaultResolution').value = img.default_resolution || '1K';
         $('testResolution').value = img.default_resolution || '1K';
+        if ($('testCount')) {
+          const testCountLimit = Math.max(1, Math.min(20, Number(img.max_batch_count || 10)));
+          $('testCount').max = String(testCountLimit);
+          const currentTestCount = Number($('testCount').value || 1);
+          $('testCount').value = String(Math.max(1, Math.min(testCountLimit, currentTestCount)));
+        }
         $('maxConcurrent').value = img.max_concurrent_tasks;
         $('globalTimeout').value = img.global_timeout;
         $('maxImageSize').value = img.max_image_size_mb;
         $('cacheLimitMB').value = img.cache_limit_mb;
+        $('cacheLimitCount').value = img.cache_limit_count;
         $('maxBatchCount').value = img.max_batch_count;
          if ($('batchOnFailure')) {
            const m = String(img.batch_on_failure || 'skip');
@@ -1856,7 +1953,8 @@ Source prompt:
       CONFIG.image.max_concurrent_tasks = Number($('maxConcurrent').value || 3);
       CONFIG.image.global_timeout = Number($('globalTimeout').value || 280);
       CONFIG.image.max_image_size_mb = Number($('maxImageSize').value || 10);
-      CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 100);
+      CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 200);
+      CONFIG.image.cache_limit_count = Number($('cacheLimitCount').value || 100);
       CONFIG.image.max_batch_count = Number($('maxBatchCount').value || 10);
        CONFIG.image.batch_on_failure = ($('batchOnFailure') && $('batchOnFailure').value) || 'skip';
        if (!['stop','skip','skip_max'].includes(CONFIG.image.batch_on_failure)) CONFIG.image.batch_on_failure = 'skip';
@@ -2129,6 +2227,10 @@ Source prompt:
         proxy: String(ch.proxy || '').trim(),
         extra: ch.extra && typeof ch.extra === 'object' ? ch.extra : {}
       };
+      // API keys are masked by the server. Preserve the marker while loading
+      // and saving; the server restores the original secret for existing rows.
+      if (ch.api_key === '******' || ch.api_key === '[REDACTED]') normalized.api_key = ch.api_key;
+      if (Array.isArray(ch.api_keys)) normalized.api_keys = ch.api_keys.slice();
       if (videoType || String(providerType).startsWith('video_')) {
         return compactModelProviderTypes(normalized);
       }
@@ -2244,7 +2346,7 @@ Source prompt:
       openChannelModal(-1, 'video', { isNew: true });
     }
     function removeChannel(index, kind = 'image') {
-      // AstrBot iframe often blocks window.confirm; use two-click page button instead.
+      // AstrBot iframe may block native confirmation dialogs; use two-click page button instead.
       const list = channelListFor(kind);
       if (!list || index < 0 || index >= list.length) return;
       const key = `${kind}:${index}`;
@@ -2415,6 +2517,10 @@ Source prompt:
         model_download_proxy_ids: collectModalDownloadProxyIds(enabled),
         models_cache: source.models_cache || []
       }));
+      // Editing a masked channel without touching the field must not submit an
+      // empty credential and accidentally clear the stored key.
+      if (!ch.api_key && source.api_key) ch.api_key = source.api_key;
+      if (Array.isArray(source.api_keys) && source.api_keys.length && !ch.api_keys) ch.api_keys = source.api_keys.slice();
       softDisableChannelIfNoModels(ch);
       if ($('modalEnabled')) $('modalEnabled').checked = ch.enabled !== false;
       return ch;
@@ -3396,8 +3502,8 @@ Source prompt:
         const d = res.data || {};
         $('health').innerHTML = `
           <div><b>状态：</b>${escapeHtml(d.status || 'ok')}</div>
-          <div><b>图片缓存：</b>${escapeHtml(String(d.cache_size_mb ?? 0))} / ${escapeHtml(String(d.cache_limit_mb ?? 100))} MB</div>
-          <div><b>缓存预览：</b>预计清理 ${escapeHtml(String(Math.round(Number(d.cache_cleanup_preview?.would_delete_bytes || 0) / 1024 / 1024)))} MB</div>
+          <div><b>图片缓存：</b>${escapeHtml(String(d.cache_file_count ?? 0))} / ${escapeHtml(String(d.cache_limit_count ?? 100))} 张，${escapeHtml(String(d.cache_size_mb ?? 0))} / ${escapeHtml(String(d.cache_limit_mb ?? 200))} MB</div>
+          <div><b>缓存预览：</b>预计清理 ${escapeHtml(String(d.cache_cleanup_preview?.would_delete_count ?? 0))} 张，${escapeHtml(String(Math.round(Number(d.cache_cleanup_preview?.would_delete_bytes || 0) / 1024 / 1024)))} MB</div>
           <div><b>缓存目录：</b>${escapeHtml(d.cache_dir || '')}</div>
           <div><b>监控记录：</b>${escapeHtml(d.records_path || '')}</div>
           <div><b>配置文件：</b>${escapeHtml(d.config_path || '')}</div>
@@ -3406,6 +3512,40 @@ Source prompt:
       } catch (e) {
         $('health').textContent = e.message;
         $('healthPill').textContent = '未连接';
+      }
+    }
+    async function cleanupCache() {
+      const button = $('cleanupCacheBtn');
+      if (button) button.disabled = true;
+      try {
+        const previewResponse = await api('/api/cache/cleanup', {method:'POST', body:'{}'});
+        const previewData = previewResponse.data || {};
+        const preview = previewData.preview || {};
+        const count = Number(preview.would_delete_count || 0);
+        const bytes = Number(preview.would_delete_bytes || 0);
+        if (!count) {
+          showToast('当前没有超限且可回收的缓存', 'info');
+          return;
+        }
+        const mb = (bytes / 1024 / 1024).toFixed(1);
+        const accepted = await confirmAction(
+          `将清理 ${count} 个未被记录引用的缓存文件（约 ${mb} MB）。\n生成记录、收藏和置顶资产不会被清理。`,
+          {title:'清理可回收缓存', confirmText:'确认清理'}
+        );
+        if (!accepted) return;
+        const resultResponse = await api('/api/cache/cleanup', {
+          method:'POST',
+          body: JSON.stringify({confirm:true, plan_token: preview.plan_token || ''})
+        });
+        const result = resultResponse.data?.result || {};
+        const deleted = Array.isArray(result.deleted) ? result.deleted.length : Number(result.deleted_count || 0);
+        showToast(`已清理 ${deleted} 个缓存文件`, 'ok');
+        await checkHealth();
+      } catch (e) {
+        showToast(e.message || '缓存清理失败', 'bad');
+        await checkHealth();
+      } finally {
+        if (button) button.disabled = false;
       }
     }
     function monitorQueryPath(page = MONITOR_PAGE) {
@@ -3445,7 +3585,7 @@ Source prompt:
       } catch (e) { $('monitorMetrics').textContent = e.message; }
     }
     function taskQueueStatusLabel(status) {
-      return ({queued:'排队', running:'进行中', succeeded:'完成', partial_success:'部分完成', failed:'失败', cancelled:'已取消', expired:'已过期'})[status] || status || '未知';
+      return ({queued:'排队', running:'进行中', succeeded:'完成', partial_success:'部分完成', failed:'失败', delivery_failed:'生成成功但发送失败', cancelled:'已取消', expired:'已过期'})[status] || status || '未知';
     }
     function taskQueueProgress(task) {
       const requested = Number(task?.requested_count || 0);
@@ -3454,28 +3594,212 @@ Source prompt:
       const percent = Math.max(0, Math.min(100, Number(task?.progress_percent ?? Math.round(completed * 100 / requested))));
       return `${completed}/${requested}（${percent}%）`;
     }
+    function taskQueueStage(task) {
+      return String(task?.generation_stage_label || '').trim();
+    }
+    function taskQueueTiming(task) {
+      if (task?.media_type !== 'video') return '';
+      const queueSeconds = Number(task?.queue_wait_seconds || 0);
+      const runningSeconds = Number(task?.running_seconds || 0);
+      const parts = [];
+      if (task?.queue_waiting || queueSeconds > 0) parts.push(`已等 ${queueSeconds.toFixed(1)}s`);
+      if (runningSeconds > 0) parts.push(`已用 ${runningSeconds.toFixed(1)}s`);
+      return parts.join(' · ');
+    }
+    function taskQueueScope() {
+      return $('taskQueueScope')?.value === 'recent' ? 'recent' : 'active';
+    }
+    function taskQueueMedia() {
+      const value = String($('taskQueueMedia')?.value || '').trim();
+      return value === 'image' || value === 'video' ? value : '';
+    }
+    function taskQueueQueryPath() {
+      const scope = taskQueueScope();
+      const params = new URLSearchParams({limit: scope === 'recent' ? '100' : '50'});
+      if (scope === 'recent') params.set('include_finished', 'true');
+      const mediaType = taskQueueMedia();
+      if (mediaType) params.set('media_type', mediaType);
+      const fields = [
+        ['status', 'taskQueueStatus'], ['source', 'taskQueueSource'], ['model', 'taskQueueModel'],
+        ['q', 'taskQueueKeyword'], ['start_date', 'taskQueueStartDate'], ['end_date', 'taskQueueEndDate']
+      ];
+      fields.forEach(([name, id]) => {
+        const value = String($(id)?.value || '').trim();
+        if (value) params.set(name, value);
+      });
+      return '/api/tasks?' + params.toString();
+    }
+    function taskQueueFilterChanged() {
+      clearTimeout(TASK_FILTER_TIMER);
+      TASK_FILTER_TIMER = setTimeout(() => loadTasks(false), 260);
+    }
+    function selectedTaskIds() {
+      return Array.from(TASK_SELECTION).filter(Boolean);
+    }
+    function updateTaskSelectionStatus(rows = []) {
+      const visibleIds = new Set((Array.isArray(rows) ? rows : []).map(item => String(item?.task_id || '').trim()).filter(Boolean));
+      const visibleSelected = Array.from(visibleIds).filter(id => TASK_SELECTION.has(id)).length;
+      const total = selectedTaskIds().length;
+      if ($('taskSelectionStatus')) $('taskSelectionStatus').textContent = total
+        ? `已选择 ${total} 项${visibleSelected !== total ? `（当前页 ${visibleSelected}）` : ''}`
+        : '未选择任务';
+    }
+    function toggleTaskSelection(id, checked) {
+      const value = String(id || '').trim();
+      if (!value) return;
+      if (checked) TASK_SELECTION.add(value); else TASK_SELECTION.delete(value);
+      updateTaskSelectionStatus();
+    }
+    function selectVisibleTasks() {
+      document.querySelectorAll('#taskQueueTable input[data-task-select]').forEach(input => {
+        const id = String(input.getAttribute('data-task-select') || '').trim();
+        if (id) TASK_SELECTION.add(id);
+        input.checked = true;
+      });
+      updateTaskSelectionStatus();
+    }
+    function clearTaskSelection() {
+      TASK_SELECTION.clear();
+      document.querySelectorAll('#taskQueueTable input[data-task-select]').forEach(input => { input.checked = false; });
+      updateTaskSelectionStatus();
+    }
+    async function deleteSelectedTasks() {
+      const ids = selectedTaskIds();
+      if (!ids.length) return showToast('请先选择任务', 'bad');
+      if (!await confirmAction(`确定删除选中的 ${ids.length} 项任务记录？生成记录和缓存不会受影响。`, {title:'删除任务记录', confirmText:'删除任务'})) return;
+      try {
+        const res = await api('/api/tasks/delete', {method:'POST', body: JSON.stringify({ids})});
+        const data = res.data || {};
+        (data.deleted || []).concat(data.missing || []).forEach(id => TASK_SELECTION.delete(String(id || '')));
+        await loadTasks(false);
+        showToast(`已删除 ${Number(data.deleted_count || 0)} 项任务`, 'ok');
+      } catch (e) { showToast(e.message || '任务删除失败', 'bad'); }
+    }
+    async function retrySelectedTasks() {
+      const ids = selectedTaskIds();
+      if (!ids.length) return showToast('请先选择任务', 'bad');
+      if (!await confirmAction(`确定重试选中的 ${ids.length} 项任务？只有已关联生成记录的任务可以重试。`, {title:'批量重试任务', confirmText:'开始重试', danger:false})) return;
+      try {
+        const res = await api('/api/tasks/retry', {method:'POST', body: JSON.stringify({ids})});
+        const data = res.data || {};
+        showToast(`已提交 ${Number(data.submitted_count || 0)} 项重试`, data.submitted_count ? 'ok' : 'bad');
+        clearTaskSelection();
+        await loadTasks(false);
+      } catch (e) { showToast(e.message || '批量重试失败', 'bad'); }
+    }
+    async function exportSelectedTasks() {
+      try {
+        const ids = selectedTaskIds();
+        const suffix = ids.length ? `?ids=${encodeURIComponent(ids.join(','))}` : '';
+        const res = await api('/api/tasks/export' + suffix);
+        const payload = res.data || {};
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json;charset=utf-8'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `selfie-image-tasks-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        showToast(`已导出 ${Number(payload.count || 0)} 项任务`, 'ok');
+      } catch (e) { showToast(e.message || '任务导出失败', 'bad'); }
+    }
+    function closeTaskDetail() {
+      $('taskModal')?.classList.remove('show');
+    }
+    function taskDetailPrompt(label, value) {
+      const text = String(value || '').trim();
+      return text ? `<div><label>${escapeHtml(label)}</label><pre class="status" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(text)}</pre></div>` : '';
+    }
+    async function retryTaskFromRecord(recordId) {
+      if (!recordId) return;
+      try {
+        const res = await api('/api/records/' + encodeURIComponent(recordId) + '/retry', {method:'POST', body:'{}'});
+        const task = res.data || {};
+        showToast(task.task_id ? '已提交重试任务' : '重试已提交', 'ok');
+        await loadTasks(false);
+      } catch (e) { showToast(e.message || '重试提交失败', 'bad'); }
+    }
+    async function openTaskDetail(taskId) {
+      const modal = $('taskModal');
+      const body = $('taskDetailBody');
+      if (!modal || !body || !taskId) return;
+      body.innerHTML = '<div class="muted">正在读取任务详情…</div>';
+      modal.classList.add('show');
+      try {
+        const res = await api('/api/tasks/' + encodeURIComponent(taskId));
+        const task = res.data || {};
+        const params = task.parameters || {};
+        const attempts = Array.isArray(task.attempts) ? task.attempts : [];
+        const attemptRows = attempts.length
+          ? `<div style="overflow:auto;margin-top:12px"><table class="table"><thead><tr><th>#</th><th>渠道/模型</th><th>结果</th><th>耗时</th><th>原因</th></tr></thead><tbody>${attempts.map(item => `<tr><td>${escapeHtml(String(item.attempt || ''))}</td><td>${escapeHtml(String(item.model || item.channel || ''))}</td><td>${item.success ? '成功' : '失败'}</td><td>${escapeHtml(String(item.elapsed_seconds ?? '-'))}s</td><td>${escapeHtml(String(item.error || item.error_category || ''))}</td></tr>`).join('')}</tbody></table></div>`
+          : '<div class="muted" style="margin-top:12px">尚无渠道尝试明细</div>';
+        const parameterRows = Object.entries(params).map(([key, value]) => `<div><label>${escapeHtml(key)}</label><div class="status">${escapeHtml(typeof value === 'object' ? JSON.stringify(value) : String(value))}</div></div>`).join('');
+        const recordId = String(task.retry_record_id || task.record_id || '').trim();
+        const recordIds = Array.isArray(task.record_ids) ? task.record_ids.map(item => String(item || '').trim()).filter(Boolean) : [];
+        const linkedRecordIds = [...new Set(recordIds)];
+        const deliveryNote = task.status === 'delivery_failed'
+          ? '<div class="status" style="margin-top:12px">图片/视频已经生成，但发送到会话失败；可在关联记录中重新执行。</div>'
+          : '';
+        body.innerHTML = `
+          <div class="grid">
+            <div><label>任务</label><div class="status mono">${escapeHtml(String(task.task_id || ''))}</div></div>
+            <div><label>状态</label><div class="status">${escapeHtml(taskQueueStatusLabel(task.status))}</div></div>
+            <div><label>来源</label><div class="status">${escapeHtml(String(task.source_label || task.source || '未知'))}</div></div>
+            <div><label>媒体</label><div class="status">${task.media_type === 'video' ? '视频' : '图片'}</div></div>
+            <div><label>模型</label><div class="status">${escapeHtml(String(task.used_model || '未记录'))}</div></div>
+          <div><label>进度</label><div class="status">${escapeHtml([taskQueueProgress(task), taskQueueTiming(task)].filter(Boolean).join(' · ') || '-')}</div></div>
+            <div><label>生成阶段</label><div class="status">${escapeHtml(taskQueueStage(task) || '-')}</div></div>
+            <div><label>生成/发送</label><div class="status">${task.generation_success === true ? '生成成功' : task.generation_success === false ? '生成失败' : '-'}${task.delivery_success === true ? ' · 已发送' : task.delivery_success === false ? ' · 发送失败' : ''}</div></div>
+          </div>
+          ${task.error ? `<div style="margin-top:12px"><label>失败原因</label><div class="status">${escapeHtml(String(task.error))}</div></div>` : ''}
+          ${deliveryNote}
+          ${taskDetailPrompt('原始提示词', task.original_prompt)}
+          ${taskDetailPrompt('最终提示词', task.final_prompt)}
+          ${parameterRows ? `<div class="grid" style="margin-top:12px">${parameterRows}</div>` : ''}
+          <div class="detail-title" style="margin-top:14px"><h3>关联记录</h3>${linkedRecordIds.length ? linkedRecordIds.map(id => `<button class="secondary mini task-record-open" data-record-id="${escapeHtml(id)}" type="button">查看 ${escapeHtml(id)}</button>`).join(' ') : recordId ? `<button class="secondary mini task-record-open" data-record-id="${escapeHtml(recordId)}" type="button">查看来源记录</button>` : '<span class="muted">生成记录尚未写入</span>'}${recordId ? `<button class="ok mini task-record-retry" data-record-id="${escapeHtml(recordId)}" type="button">重新执行来源</button>` : ''}</div>
+          ${attemptRows}`;
+        body.querySelectorAll('.task-record-open').forEach(button => button.addEventListener('click', () => { closeTaskDetail(); openRecordDetail(button.dataset.recordId || ''); }));
+        body.querySelector('.task-record-retry')?.addEventListener('click', () => retryTaskFromRecord(recordId));
+      } catch (e) {
+        body.innerHTML = `<div class="status">${escapeHtml(e.message || '任务详情读取失败')}</div>`;
+      }
+    }
     async function loadTasks(schedule = true) {
       try {
-        const res = await api('/api/tasks?limit=50');
+        const scope = taskQueueScope();
+        const res = await api(taskQueueQueryPath());
         const data = res.data || {};
         const summary = data.summary || {};
-        const media = summary.by_media_type || {};
-        $('taskQueueSummary').textContent = `排队 ${Number(summary.queued || 0)} · 进行中 ${Number(summary.running || 0)} · 图片槽位 ${Number(summary.image_active_slots || 0)}/${Number(summary.image_max_concurrent_tasks || 0)} · 视频槽位 ${Number(summary.video_active_slots || 0)}/${Number(summary.video_max_concurrent_tasks || 0)}`;
+        const prefix = scope === 'recent' ? '最近任务' : '活动任务';
+        const filteredTotal = Number(summary.filtered_total ?? (Array.isArray(data.tasks) ? data.tasks.length : 0));
+        $('taskQueueSummary').textContent = `${prefix} · 匹配 ${filteredTotal} · 排队 ${Number(summary.queued || 0)} · 进行中 ${Number(summary.running || 0)} · 图片槽位 ${Number(summary.image_active_slots || 0)}/${Number(summary.image_max_concurrent_tasks || 0)} · 视频槽位 ${Number(summary.video_active_slots || 0)}/${Number(summary.video_max_concurrent_tasks || 0)}`;
         const rows = Array.isArray(data.tasks) ? data.tasks : [];
-        $('taskQueueTable').innerHTML = rows.length ? `<thead><tr><th>任务</th><th>类型</th><th>状态</th><th>进度</th><th>队列等待</th><th>提示</th><th></th></tr></thead><tbody>${rows.map(task => {
+        $('taskQueueTable').innerHTML = rows.length ? `<thead><tr><th></th><th>任务</th><th>来源</th><th>类型</th><th>状态</th><th>提示词</th><th>模型/原因</th><th></th></tr></thead><tbody>${rows.map(task => {
           const id = escapeHtml(String(task.task_id || ''));
-          const type = task.media_type === 'video' || task.request_data?.kind === 'video' ? '视频' : '图片';
-          const progress = taskQueueProgress(task);
-          const wait = Number(task.queue_wait_seconds || 0).toFixed(1) + 's';
-          const warning = task.timeout_warning || '';
+          const rawId = String(task.task_id || '');
+          const type = task.media_type === 'video' ? '视频' : '图片';
           const canCancel = task.status === 'queued' || task.status === 'running';
-          return `<tr><td class="mono">${id}</td><td>${type}</td><td>${taskQueueStatusLabel(task.status)}</td><td>${progress || '-'}</td><td>${wait}${task.queue_waiting ? ` · 第${Number(task.queue_position || 0)}位` : ''}</td><td>${escapeHtml(warning)}</td><td>${canCancel ? `<button class="danger mini task-cancel-btn" data-task-id="${id}" type="button">取消</button>` : ''}</td></tr>`;
-        }).join('')}</tbody>` : '<tbody><tr><td colspan="7" class="muted">当前没有活动任务</td></tr></tbody>';
-        $('taskQueueTable').querySelectorAll('.task-cancel-btn').forEach(btn => btn.onclick = async () => {
+          const info = task.error || task.used_model || task.timeout_warning || '-';
+          const stage = taskQueueStage(task);
+          const progress = taskQueueProgress(task);
+          const statusMeta = [stage, progress, taskQueueTiming(task), task.timeout_warning].filter(Boolean).join(' · ');
+          return `<tr class="task-detail-row" data-task-id="${id}" style="cursor:pointer"><td><input type="checkbox" data-task-select="${id}" aria-label="选择任务 ${id}" ${TASK_SELECTION.has(rawId) ? 'checked' : ''}></td><td class="mono">${id}</td><td>${escapeHtml(String(task.source_label || task.source || '未知'))}</td><td>${type}</td><td>${taskQueueStatusLabel(task.status)}${statusMeta ? `<br><span class="muted">${escapeHtml(statusMeta)}</span>` : ''}</td><td title="${escapeHtml(String(task.prompt_summary || ''))}">${escapeHtml(String(task.prompt_summary || '-'))}</td><td>${escapeHtml(String(info))}</td><td>${canCancel ? `<button class="danger mini task-cancel-btn" data-task-id="${id}" type="button">取消</button>` : '<button class="secondary mini task-detail-btn" data-task-id="' + id + '" type="button">详情</button>'}</td></tr>`;
+        }).join('')}</tbody>` : `<tbody><tr><td colspan="8" class="muted">${scope === 'recent' ? '没有最近任务' : '当前没有活动任务'}</td></tr></tbody>`;
+        $('taskQueueTable').querySelectorAll('input[data-task-select]').forEach(input => input.onchange = event => {
+          event.stopPropagation();
+          toggleTaskSelection(input.getAttribute('data-task-select') || '', input.checked);
+        });
+        $('taskQueueTable').querySelectorAll('.task-cancel-btn').forEach(btn => btn.onclick = async event => {
+          event.stopPropagation();
           btn.disabled = true;
           try { await api('/api/tasks/' + encodeURIComponent(btn.dataset.taskId) + '/cancel', {method:'POST', body:'{}'}); showToast('任务已取消', 'ok'); await loadTasks(false); }
           catch (e) { btn.disabled = false; showToast(e.message || '取消失败', 'bad'); }
         });
+        $('taskQueueTable').querySelectorAll('.task-detail-btn').forEach(btn => btn.onclick = event => { event.stopPropagation(); openTaskDetail(btn.dataset.taskId); });
+        $('taskQueueTable').querySelectorAll('.task-detail-row').forEach(row => row.onclick = event => {
+          if (!event.target.closest('button,input')) openTaskDetail(row.dataset.taskId);
+        });
+        updateTaskSelectionStatus(rows);
       } catch (e) {
         if ($('taskQueueSummary')) $('taskQueueSummary').textContent = e.message || '任务队列读取失败';
       } finally {
@@ -3506,7 +3830,7 @@ Source prompt:
       } catch (e) { $('monitorStats').textContent = e.message; }
     }
     async function clearRecords() {
-      if (!window.confirm('确定清空全部生成记录吗？此操作不可撤销。')) return;
+      if (!await confirmAction('确定清空全部生成记录吗？此操作不可撤销。', {title:'清空生成记录', confirmText:'清空记录'})) return;
       try {
         await api('/api/records/clear', {method:'POST', body:'{}'});
         MONITOR_PAGE = 1;
@@ -3548,6 +3872,57 @@ Source prompt:
       if (record.timeout || record.error_category === 'timeout' || attempts.some(attempt => attempt?.timeout || attempt?.error_category === 'timeout')) return '超时';
       const seconds = Number(record.elapsed_seconds);
       return Number.isFinite(seconds) && seconds >= 0 ? `${seconds.toFixed(2)}秒` : '空';
+    }
+    function recordDetailValue(value, fallback = '') {
+      if (value === undefined || value === null || value === '') return fallback;
+      if (typeof value === 'boolean') return value ? '是' : '否';
+      return String(value);
+    }
+    function recordParameterBlock(record) {
+      const r = record || {};
+      const rd = r.request_data && typeof r.request_data === 'object' ? r.request_data : {};
+      const composition = rd.composition && typeof rd.composition === 'object' ? rd.composition : {};
+      const rows = [];
+      const add = (label, value, fallback = '') => {
+        const text = recordDetailValue(value, fallback);
+        if (text && text !== '-') rows.push(`<div><label>${escapeHtml(label)}</label><div class="status">${escapeHtml(text)}</div></div>`);
+      };
+      const requested = rd.requested_count ?? rd.count ?? r.requested_count ?? r.count;
+      const actual = r.count ?? r.succeeded_count ?? '';
+      add('请求张数', requested);
+      if (actual !== '' && String(actual) !== String(requested)) add('实际生成张数', actual);
+      add('画面比例', rd.aspect_ratio || composition.aspect_ratio);
+      add('清晰度', rd.resolution || composition.resolution);
+      add('视频尺寸', rd.size);
+      const videoDuration = rd.duration ?? rd.requested_duration;
+      add('视频时长', videoDuration !== undefined && videoDuration !== null && videoDuration !== '' ? `${videoDuration} 秒` : '');
+      add('全局超时', rd.timeout_seconds !== undefined && rd.timeout_seconds !== null && rd.timeout_seconds !== '' ? `${rd.timeout_seconds} 秒` : '');
+      add('参考图（实际）', rd.reference_image_count ?? r.reference_images);
+      add('参考图（原始）', rd.raw_reference_image_count);
+      add('渠道', rd.channel);
+      add('模型', rd.model || r.used_model);
+      const response = r.response_data && typeof r.response_data === 'object' ? r.response_data : {};
+      const retryCount = r.retry_count ?? response.retry_count;
+      add('模型重试次数', retryCount !== undefined && retryCount !== null && retryCount !== '' ? `${retryCount} 次` : '');
+      add('记录状态', r.status || response.status);
+      if (r.delivery_success === false || response.delivery_success === false) {
+        add('发送失败原因', r.delivery_error || response.delivery_error || r.error);
+      }
+      if (response.stage === 'output_audit' || response.blocked_images_retained === true) {
+        add('审核结果', response.blocked_images_retained === true ? '输出审核未通过（已保留拦截图）' : '输出审核未通过');
+      }
+      if (rd.prompt_en && typeof rd.prompt_en === 'object') {
+        add('英文提示词', rd.prompt_en.applied ? '已翻译并发送' : (rd.prompt_en.enabled ? '已启用但未应用' : '未启用'));
+      }
+      if (rd.image_to_text && typeof rd.image_to_text === 'object') {
+        add('参考图转文字', rd.image_to_text.applied ? '已应用描述' : (rd.image_to_text.enabled ? '已启用但未应用' : '未启用'));
+      }
+      add('构图策略', composition.strategy);
+      add('提示词指纹', composition.prompt_hash);
+      const cosLabels = {cos: 'COS 套装', cos_pose: 'COS 姿势', cos_scene: 'COS 场景', cos_view: 'COS 视角'};
+      Object.entries(cosLabels).forEach(([key, label]) => add(label, r[key] || rd[key]));
+      if (!rows.length) return '';
+      return `<div class="detail-title"><h3>请求参数与随机结果</h3></div><div class="grid">${rows.join('')}</div>`;
     }
     function recordModelLabel(record) {
       return String(record.label || record.model || record.target || record.used_model || '').trim() || '未记录模型';
@@ -3998,7 +4373,7 @@ Source prompt:
       const ids = selectedAssetIds();
       const selected = ASSET_RECORDS.filter(record => ASSET_SELECTION.has(String(record.id || '')));
       if (!ids.length) return showToast('请先选择资产', 'bad');
-      if (!window.confirm(`确定删除选中的 ${ids.length} 项资产？缓存文件仅在没有其他记录引用时清理。`)) return;
+      if (!await confirmAction(`确定删除选中的 ${ids.length} 项资产？缓存文件仅在没有其他记录引用时清理。`, {title:'删除资产', confirmText:'删除资产'})) return;
       try {
         const res = await api('/api/assets/delete', {method: 'POST', body: JSON.stringify({ids})});
         selected.forEach(record => {
@@ -4675,6 +5050,10 @@ Source prompt:
       const r = CURRENT_RECORD || {};
       const text = field === 'request_prompt'
         ? (r.request_prompt || r.prompt || '')
+        : field === 'final_prompt'
+          ? (r.final_prompt || r.request_data?.request_prompt_en || r.request_prompt || r.prompt || '')
+          : field === 'request_prompt_en'
+            ? (r.request_data?.request_prompt_en || '')
         : field === 'request_data'
           ? JSON.stringify(r.request_data || {}, null, 2)
           : field === 'response_data'
@@ -4729,15 +5108,20 @@ Source prompt:
           <div><label>类型</label><div class="status">${r.media_type === 'video' ? '视频' : '图片'}</div></div>
           <div><label>MD5</label><div class="status" style="overflow-wrap:anywhere">${escapeHtml(String(r.md5 || '空'))}</div></div>
           <div><label>用时</label><div class="status">${escapeHtml(formatRecordElapsed(r))}</div></div>
+          ${r.generation_success !== undefined || r.delivery_success !== undefined ? `<div><label>生成/发送</label><div class="status">${r.generation_success === true ? '生成成功' : r.generation_success === false ? '生成失败' : '-'}${r.delivery_success === true ? ' · 已发送' : r.delivery_success === false ? ' · 发送失败' : ''}</div></div>` : ''}
           <div><label>模型重试</label><div class="status">${recordRetryModelChain(r)}</div></div>
+          ${r.task_id ? `<div><label>关联任务</label><div class="status mono">${escapeHtml(String(r.task_id))}</div></div>` : ''}
           <div><label>调用入口</label><div class="status">${escapeHtml(r.source || '')}</div></div>
           <div><label>群号</label><div class="status">${escapeHtml(r.group_id || '')}</div></div>
           <div><label>Q号</label><div class="status">${escapeHtml(r.user_id || '')}</div></div>
           ${r.success === false ? `<div><label>最后失败</label><div class="status">${escapeHtml(recordFailureReason(r) || r.error || '')}</div></div>` : ''}
         </div>
         ${recordFailureReasonsBlock(r)}
+        ${recordParameterBlock(r)}
         ${promptDetailBlock('原始提示词', 'original_prompt', r.original_prompt || '')}
         ${promptDetailBlock('请求提示词', 'request_prompt', r.request_prompt || r.prompt || '')}
+        ${r.final_prompt || r.request_data?.request_prompt_en ? promptDetailBlock('最终实际提示词（发送给模型）', 'final_prompt', r.final_prompt || r.request_data?.request_prompt_en || '') : ''}
+        ${r.request_data?.request_prompt_en ? promptDetailBlock('英文请求提示词', 'request_prompt_en', r.request_data.request_prompt_en) : ''}
         <div class="detail-title"><h3>资产标记</h3></div>
         <div class="grid">
           <label class="checkline"><input id="recordFavorite" type="checkbox" ${r.favorite ? 'checked' : ''}> 收藏</label>
@@ -4864,6 +5248,7 @@ Source prompt:
       $('testImageBtn').style.display = TEST_MODE === 'image' ? '' : 'none';
       $('testVideoBtn').style.display = TEST_MODE === 'video' ? '' : 'none';
       $('testResolutionWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
+      if ($('testCountWrap')) $('testCountWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
       $('testDurationWrap').style.display = TEST_MODE === 'video' ? '' : 'none';
       $('promptEnhanceWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
       $('useSelfieWrap').style.display = '';
@@ -4900,6 +5285,9 @@ Source prompt:
       const percent = Math.max(0, Math.min(100, Number(task?.progress_percent ?? Math.round(completed * 100 / requested))));
       return `${completed}/${requested}（${percent}%）`;
     }
+    function taskStageText(task) {
+      return String(task?.generation_stage_label || '').trim();
+    }
     async function cancelTestTask() {
       const taskId = String(TEST_TASK_ID || '').trim();
       if (!taskId) return;
@@ -4925,6 +5313,7 @@ Source prompt:
       const error = raw.error || response.error || taskError || '';
       const terminalFailure = task && (task.success === false || ['failed', 'cancelled', 'expired'].includes(String(task.status || '').toLowerCase()));
       const terminalSuccess = task && (task.success === true || String(task.status || '').toLowerCase() === 'succeeded');
+      if (task?.status && !raw.status) raw.status = String(task.status);
       if (raw.success === false || terminalFailure) raw.success = false;
       else if (raw.success !== true && terminalSuccess) raw.success = true;
       if (error) raw.error = error;
@@ -4932,12 +5321,18 @@ Source prompt:
     }
     function renderImageTestResult(data) {
       $('testResponseData').textContent = JSON.stringify(data || {}, null, 2);
-      if (!data || data.success !== true) {
+      const imagePaths = Array.isArray(data?.generated_image_paths) ? data.generated_image_paths : [];
+      const videoPaths = Array.isArray(data?.generated_video_paths) ? data.generated_video_paths : [];
+      const partial = String(data?.status || '').toLowerCase() === 'partial_success';
+      const hasMedia = imagePaths.length > 0 || videoPaths.length > 0;
+      if (!data || (data.success !== true && !(partial && hasMedia))) {
         $('testStatus').textContent = `失败：${(data && (data.error || data.response_data?.error)) || '这次没顺好'}`;
         showTestPanel('response');
         return;
       }
-      $('testStatus').textContent = `成功：${data.used_model || ''}，耗时 ${data.elapsed_seconds}s，参考图 ${data.reference_images || 0} 张`;
+      const generatedCount = Number(data.succeeded_count || data.generated_image_paths?.length || 0);
+      const prefix = partial ? '部分完成' : '成功';
+      $('testStatus').textContent = `${prefix}：${data.used_model || ''}，耗时 ${data.elapsed_seconds}s，${generatedCount || 1} 张，参考图 ${data.reference_images || 0} 张${partial && data.error ? `；${data.error}` : ''}`;
       $('testImages').innerHTML = '';
       if (data.generated_video_paths && data.generated_video_paths.length) {
         $('testImages').innerHTML = videoThumbs(data.generated_video_paths, data.video_source || data.video_url || '');
@@ -4972,7 +5367,8 @@ Source prompt:
             ? ' 有的中转要 15–60 秒，先等等；超过设定超时才会判失败。'
             : '';
           const progress = taskProgressText(task);
-          $('testStatus').textContent = `任务 ${task.task_id || TEST_TASK_ID} ${label}${progress ? ` ${progress}` : ''}，已用 ${seconds}s。${hint}关掉页面也不会停。`;
+          const stage = taskStageText(task);
+          $('testStatus').textContent = `任务 ${task.task_id || TEST_TASK_ID} ${label}${stage ? ` · ${stage}` : ''}${progress ? ` ${progress}` : ''}，已用 ${seconds}s。${hint}关掉页面也不会停。`;
           TEST_TASK_POLL_TIMER = setTimeout(() => pollImageTestTask(TEST_TASK_ID, 0), 2000);
           return;
         }
@@ -5044,6 +5440,7 @@ Source prompt:
           prompt: $('testPrompt').value.trim(),
           aspect_ratio: $('testAspect').value,
           resolution: $('testResolution').value,
+          count: TEST_MODE === 'image' ? Number($('testCount')?.value || 1) : 1,
           duration: Number($('testDuration').value || CONFIG.video?.default_duration || 5),
           prompt_enhance: TEST_MODE === 'image' && $('promptEnhance').checked,
           use_selfie_reference: TEST_MODE !== 't2v' && $('useSelfie').checked,
@@ -5123,6 +5520,7 @@ Source prompt:
       } catch (e) { $('selfieStatus').textContent = e.message; }
     }
     async function clearSelfie() {
+      if (!await confirmAction('确定清除当前自拍形象参考图吗？清除后后续生成将不再使用这张形象图。', {title:'清除形象参考图', confirmText:'清除参考图'})) return;
       try { await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); await refreshSelfie(); showToast('参考图已清除', 'ok'); }
       catch (e) { $('selfieStatus').textContent = e.message; }
     }
@@ -5454,7 +5852,7 @@ Source prompt:
     }
     async function deleteManagedPromptPreset(row) {
       if (!row || !row.name) return;
-      if (!window.confirm(`确定删除预设「${row.name}」吗？`)) return;
+      if (!await confirmAction(`确定删除预设「${row.name}」吗？`, {title:'删除预设', confirmText:'删除预设'})) return;
       try {
         const res = await api('/api/prompt-presets/manage/delete', {method:'POST', body:JSON.stringify({name:row.name, kind:PRESET_KIND})});
         await loadManagedPromptPresets(PRESET_KIND);
@@ -5545,7 +5943,10 @@ Source prompt:
       }
       panel.innerHTML = rows.map((item, idx) => {
         const title = escapeHtml(item.title || item.id || '未命名套装');
-        return `<button type="button" class="preset-chip" data-cos-idx="${idx}" title="${title}">${title}</button>`;
+        const compatibility = item.compatibility && item.compatibility.variation_enabled
+          ? '可随机姿势/场景'
+          : '固定构图';
+        return `<button type="button" class="preset-chip" data-cos-idx="${idx}" title="${title} · ${compatibility}">${title}</button>`;
       }).join('');
       panel.querySelectorAll('[data-cos-idx]').forEach(btn => {
         btn.onclick = () => {
@@ -5731,6 +6132,10 @@ Source prompt:
         };
         card.querySelector('[data-act="record"]').onclick = () => openStudioGallery(slot.id);
         card.querySelector('[data-act="clear"]').onclick = async () => {
+          if (!await confirmAction(`确定清空槽位「${slot.label || slot.role || '当前槽位'}」吗？槽位引用会移除，原记录不会删除。`, {
+            title: '清空画布槽位',
+            confirmText: '清空槽位'
+          })) return;
           const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(session.id)}/slots/${encodeURIComponent(slot.id)}`, {
             method: 'POST', body: JSON.stringify({ clear: true })
           });
@@ -6058,6 +6463,8 @@ Source prompt:
     }
     async function studioDelete() {
       if (!STUDIO.current) return;
+      const title = String(STUDIO.current.title || STUDIO.current.id || '当前画布');
+      if (!await confirmAction(`确定删除画布「${title}」吗？会话中的槽位和运行记录也会移除。`, {title:'删除画布会话', confirmText:'删除画布'})) return;
       const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/delete', {
         method:'POST', body: JSON.stringify({})
       });
@@ -6093,7 +6500,8 @@ Source prompt:
           const task = st.data || {};
           if (task.status === 'queued' || task.status === 'running') {
             const progress = taskProgressText(task);
-            $('studioStatus').textContent = '生成中… ' + (progress ? progress + ' · ' : '') + (task.running_seconds != null ? task.running_seconds + 's' : '');
+            const stage = taskStageText(task);
+            $('studioStatus').textContent = '生成中… ' + (stage ? stage + ' · ' : '') + (progress ? progress + ' · ' : '') + (task.running_seconds != null ? task.running_seconds + 's' : '');
             setStudioRunningUI(true);
             return;
           }
@@ -6141,6 +6549,36 @@ Source prompt:
     $('loginBtn').onclick = enterApp;
     $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };
     $('logoutBtn').onclick = logout;
+    if ($('confirmProceedBtn')) $('confirmProceedBtn').onclick = () => closeConfirmAction(true);
+    if ($('confirmCancelBtn')) $('confirmCancelBtn').onclick = () => closeConfirmAction(false);
+    if ($('confirmCloseBtn')) $('confirmCloseBtn').onclick = () => closeConfirmAction(false);
+    if ($('confirmModal')) $('confirmModal').addEventListener('click', event => {
+      if (event.target === $('confirmModal')) closeConfirmAction(false);
+    });
+    document.querySelectorAll('.modal-mask').forEach(mask => mask.addEventListener('click', event => {
+      if (event.target !== mask || mask === $('confirmModal')) return;
+      if (mask === $('channelModal')) closeChannelModal();
+      else if (mask === $('proxyModal')) closeProxyModal();
+      else if (mask === $('recordModal')) closeRecordDetail();
+      else if (mask === $('taskModal')) closeTaskDetail();
+      else if (mask === $('mediaSourceModal')) closeMediaSourceModal();
+      else if (mask === $('presetEditorModal')) closePresetEditor();
+      else if (mask === $('presetTransferModal')) closePresetTransfer();
+      else if (mask === $('studioCreateModal')) closeStudioCreateModal();
+    }));
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      if ($('confirmModal')?.classList.contains('show')) { closeConfirmAction(false); return; }
+      if ($('mediaSourceModal')?.classList.contains('show')) { closeMediaSourceModal(); return; }
+      if ($('taskModal')?.classList.contains('show')) { closeTaskDetail(); return; }
+      if ($('recordModal')?.classList.contains('show')) { closeRecordDetail(); return; }
+      if ($('channelModal')?.classList.contains('show')) { closeChannelModal(); return; }
+      if ($('proxyModal')?.classList.contains('show')) { closeProxyModal(); return; }
+      if ($('presetEditorModal')?.classList.contains('show')) { closePresetEditor(); return; }
+      if ($('presetTransferModal')?.classList.contains('show')) { closePresetTransfer(); return; }
+      if ($('studioCreateModal')?.classList.contains('show')) closeStudioCreateModal();
+    });
+    if ($('cleanupCacheBtn')) $('cleanupCacheBtn').onclick = cleanupCache;
     $('presetAddBtn').onclick = () => openPresetEditor();
     $('presetKindImage').onclick = () => switchPresetKind('image');
     $('presetKindVideo').onclick = () => switchPresetKind('video');

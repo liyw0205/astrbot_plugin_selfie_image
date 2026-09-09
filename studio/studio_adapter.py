@@ -119,7 +119,7 @@ class StudioMixin:
         imported, message = manager.import_management(source)
         return {"message": message, "imported": imported, "kind": "video" if manager is getattr(self, "video_presets", None) else "image", "presets": manager.list_management()}
 
-    def list_cos_look_sets_for_web(self) -> List[Dict[str, str]]:
+    def list_cos_look_sets_for_web(self) -> List[Dict[str, Any]]:
         """Expose the command COS pool to the canvas and quick-test pickers."""
         return list_cos_look_sets()
 
@@ -489,6 +489,8 @@ class StudioMixin:
                 "studio_session_id": session_id,
                 **self._task_runtime_defaults(),
                 **self._task_progress_defaults(count),
+                "generation_stage": "preflight",
+                "generation_stage_label": "准备画布任务",
             }
             self._prune_web_tasks_locked()
             self._persist_web_tasks_locked()
@@ -514,6 +516,8 @@ class StudioMixin:
             generation_started_ts=time.time(),
             queue_waiting=False,
             queue_position=0,
+            generation_stage="preflight",
+            generation_stage_label="准备画布任务",
         )
         try:
             if self._task_cancel_requested(task_id):
@@ -545,6 +549,11 @@ class StudioMixin:
             if mode in {"group", "selfie", "i2i"} and not refs:
                 raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
 
+            self._set_web_image_task(
+                task_id,
+                generation_stage="prompt_translation",
+                generation_stage_label="处理画布提示词",
+            )
             if mode in {"group", "selfie"}:
                 if mode == "selfie":
                     action = self._normalize_selfie_action(action, bool(refs))
@@ -597,13 +606,42 @@ class StudioMixin:
                     language="en" if self.config.image_enable_image_prompt_en else "zh",
                 )
 
+            # Keep the canvas request inspectable while it is running.  The
+            # initial task summary only contains the user's action; recording
+            # the effective prompt here lets the task center show both sides
+            # of the prompt transformation before the first result arrives.
+            studio_request_data = {
+                "session_id": session_id,
+                "kind": "studio",
+                "mode": mode,
+                "original_prompt": action,
+                "prompt": action,
+                "request_prompt": prompt,
+                "aspect_ratio": aspect,
+                "resolution": resolution,
+                "count": count,
+                "requested_count": count,
+                "used_slots": used_slots,
+                "source_asset_ids": source_asset_ids,
+            }
+            self._set_web_image_task(
+                task_id,
+                request_data=redact_sensitive_data(studio_request_data),
+            )
+
             all_paths: List[str] = []
             last_error = ""
             used_model = ""
             last_result: Dict[str, Any] = {}
+            all_attempts: List[Dict[str, Any]] = []
             succeeded_count = 0
             failed_count = 0
             completed_count = 0
+            self._set_web_image_task(
+                task_id,
+                generation_stage="generating",
+                generation_stage_label="生成画布结果",
+            )
             for index in range(max(1, count)):
                 if self._task_cancel_requested(task_id):
                     raise RuntimeError("任务已取消")
@@ -617,6 +655,7 @@ class StudioMixin:
                     event=None,
                     prompt_en_meta=prompt_en_meta,
                     record_context={
+                        "task_id": task_id,
                         "studio_session_id": session_id,
                         "studio_task_id": task_id,
                         "studio_template": session.get("template") or "",
@@ -624,6 +663,11 @@ class StudioMixin:
                     },
                 )
                 last_result = result if isinstance(result, dict) else {}
+                raw_attempts = last_result.get("attempts")
+                if isinstance(raw_attempts, list):
+                    all_attempts.extend(
+                        item for item in raw_attempts if isinstance(item, dict)
+                    )
                 if not last_result.get("success"):
                     last_error = str(last_result.get("error") or "生成失败")
                     failed_count += 1
@@ -657,6 +701,9 @@ class StudioMixin:
             # the task is committed. It must remain cancelled in that race.
             if self._task_cancel_requested(task_id):
                 error = "任务已取消"
+                wait_commits = getattr(self, "_wait_for_record_commits", None)
+                if callable(wait_commits):
+                    await wait_commits(task_id)
                 self.studio.attach_run_finish(
                     session_id,
                     task_id,
@@ -671,6 +718,8 @@ class StudioMixin:
                     task_id,
                     status="cancelled",
                     success=False,
+                    generation_stage="cancelled",
+                    generation_stage_label="已取消",
                     error=error,
                     completed_count=completed_count,
                     succeeded_count=succeeded_count,
@@ -692,6 +741,11 @@ class StudioMixin:
 
             success = bool(all_paths) and not last_error
             error = "" if success else (last_error or "生成失败")
+            terminal_stage = "complete" if all_paths else "failed"
+            terminal_stage_label = "已完成" if success else "部分完成" if all_paths else "已失败"
+            wait_commits = getattr(self, "_wait_for_record_commits", None)
+            if callable(wait_commits):
+                await wait_commits(task_id)
             self.studio.attach_run_finish(
                 session_id,
                 task_id,
@@ -702,11 +756,34 @@ class StudioMixin:
                 source_asset_ids=source_asset_ids,
                 status="partial_success" if failed_count and succeeded_count else ("succeeded" if success else "failed"),
             )
+            request_data = dict(studio_request_data)
+            if isinstance(last_result.get("request_data"), dict):
+                request_data.update(last_result["request_data"])
+            # The generation helper may translate or otherwise normalize the
+            # prompt per channel, so prefer its final value when available.
+            original_prompt = str(last_result.get("original_prompt") or action)
+            final_prompt = str(last_result.get("final_prompt") or prompt)
+            request_data.update(
+                {
+                    "original_prompt": original_prompt,
+                    "prompt": original_prompt,
+                    "request_prompt": str(
+                        last_result.get("request_prompt")
+                        or request_data.get("request_prompt")
+                        or final_prompt
+                    ),
+                }
+            )
             result_payload = {
                 "success": success,
                 "error": error,
                 "image_paths": all_paths,
                 "generated_image_paths": all_paths,
+                "original_prompt": original_prompt,
+                "final_prompt": final_prompt,
+                "request_prompt": request_data.get("request_prompt") or final_prompt,
+                "request_data": redact_sensitive_data(request_data),
+                "attempts": all_attempts,
                 "used_model": used_model,
                 "session_id": session_id,
                 "elapsed_seconds": last_result.get("elapsed_seconds"),
@@ -719,6 +796,8 @@ class StudioMixin:
                 task_id,
                 status="partial_success" if failed_count and succeeded_count else ("succeeded" if success else "failed"),
                 success=success,
+                generation_stage=terminal_stage,
+                generation_stage_label=terminal_stage_label,
                 error=error,
                 requested_count=count,
                 completed_count=completed_count,
@@ -732,6 +811,9 @@ class StudioMixin:
             )
         except asyncio.CancelledError:
             error = "任务已取消"
+            wait_commits = getattr(self, "_wait_for_record_commits", None)
+            if callable(wait_commits):
+                await wait_commits(task_id)
             try:
                 self.studio.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[], status="cancelled")
             except Exception:
@@ -740,6 +822,8 @@ class StudioMixin:
                 task_id,
                 status="cancelled",
                 success=False,
+                generation_stage="cancelled",
+                generation_stage_label="已取消",
                 error=error,
                 result={"success": False, "error": error, "cancelled": True, "session_id": session_id},
                 finished_ts=time.time(),
@@ -749,6 +833,9 @@ class StudioMixin:
         except Exception as exc:
             error = redact_sensitive_text(str(exc))
             cancelled = "取消" in error
+            wait_commits = getattr(self, "_wait_for_record_commits", None)
+            if callable(wait_commits):
+                await wait_commits(task_id)
             try:
                 self.studio.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[], status="cancelled" if cancelled else "failed")
             except Exception:
@@ -757,6 +844,8 @@ class StudioMixin:
                 task_id,
                 status="cancelled" if cancelled else "failed",
                 success=False,
+                generation_stage="cancelled" if cancelled else "failed",
+                generation_stage_label="已取消" if cancelled else "已失败",
                 error=error,
                 result={"success": False, "error": error, "session_id": session_id},
                 finished_ts=time.time(),

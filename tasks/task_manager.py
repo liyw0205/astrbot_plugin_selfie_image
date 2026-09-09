@@ -8,7 +8,7 @@ import hashlib
 import json
 import time
 from collections.abc import Mapping
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from ..core.utils import (
     load_json_file,
@@ -16,9 +16,31 @@ from ..core.utils import (
     redact_sensitive_text,
     save_json_file,
 )
+from .task_views import task_source_label
 
 
 class WebTaskMixin:
+    _TASK_TERMINAL_STATUSES = {
+        "succeeded",
+        "partial_success",
+        "failed",
+        "delivery_failed",
+        "cancelled",
+        "expired",
+    }
+
+    def _normalize_web_image_count(self, value: Any = 1) -> int:
+        """Clamp Web image batches to the same configured limit as commands."""
+        try:
+            requested = int(value or 1)
+        except (TypeError, ValueError):
+            requested = 1
+        try:
+            limit = int(getattr(getattr(self, "config", None), "image_max_batch_count", 20) or 20)
+        except (TypeError, ValueError):
+            limit = 20
+        return max(1, min(20, limit, requested))
+
     def _web_task_timestamp(self) -> str:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
@@ -58,6 +80,8 @@ class WebTaskMixin:
             "active_slots": 0,
             "max_concurrent_tasks": 0,
             "timeout_warning": "",
+            "generation_stage": "",
+            "generation_stage_label": "",
         }
 
     def _load_web_tasks(self) -> Dict[str, Dict[str, Any]]:
@@ -141,6 +165,7 @@ class WebTaskMixin:
         if media_type == "video":
             summary = {
                 "media_type": "video",
+                "requested_count": 1,
                 "original_prompt": str(payload.get("prompt") or "").strip()
                 or "一段自然流畅的短视频",
                 "channel": str(payload.get("channel") or "").strip(),
@@ -178,10 +203,8 @@ class WebTaskMixin:
             "use_selfie_reference": bool(payload.get("use_selfie_reference")),
             "raw_reference_image_count": len(raw_images),
         }
-        try:
-            summary["count"] = max(1, int(payload.get("count") or 1))
-        except (TypeError, ValueError):
-            summary["count"] = 1
+        summary["count"] = self._normalize_web_image_count(payload.get("count"))
+        summary["requested_count"] = summary["count"]
         retry_id = str(payload.get("_retry_record_id") or payload.get("retry_record_id") or "").strip()
         if retry_id:
             summary["retry_record_id"] = retry_id[:128]
@@ -194,7 +217,7 @@ class WebTaskMixin:
             (float(task.get("updated_ts") or 0), task_id)
             for task_id, task in self._web_tasks.items()
             if task.get("status")
-            in {"succeeded", "partial_success", "failed", "cancelled", "expired"}
+            in {"succeeded", "partial_success", "failed", "delivery_failed", "cancelled", "expired"}
         ]
         finished.sort(key=lambda item: item[0])
         while len(self._web_tasks) > 50 and finished:
@@ -273,17 +296,246 @@ class WebTaskMixin:
             data["timeout_warning_code"] = warning_code
         return redact_sensitive_data(data)
 
+    @staticmethod
+    def _task_prompt_summary(task: Mapping[str, Any], *, limit: int = 120) -> str:
+        request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
+        result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+        text = str(
+            request.get("original_prompt")
+            or request.get("prompt")
+            or result.get("original_prompt")
+            or result.get("prompt")
+            or ""
+        )
+        compact = " ".join(text.split())
+        return compact[:limit] + ("..." if len(compact) > limit else "")
+
+    @staticmethod
+    def _task_attempt_summaries(task: Mapping[str, Any]) -> list[Dict[str, Any]]:
+        result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+        response = result.get("response_data") if isinstance(result.get("response_data"), Mapping) else {}
+        raw_attempts = result.get("attempts") or response.get("attempts") or []
+        rows: list[Dict[str, Any]] = []
+        for index, raw in enumerate(raw_attempts if isinstance(raw_attempts, list) else [], 1):
+            if not isinstance(raw, Mapping):
+                continue
+            error = redact_sensitive_text(str(raw.get("error_user_message") or raw.get("error") or ""))
+            rows.append(
+                {
+                    "attempt": int(raw.get("attempt") or index),
+                    "channel": redact_sensitive_text(str(raw.get("channel") or ""))[:120],
+                    "model": redact_sensitive_text(str(raw.get("label") or raw.get("model") or ""))[:160],
+                    "success": bool(raw.get("success")),
+                    "elapsed_seconds": raw.get("elapsed_seconds"),
+                    "error_category": str(raw.get("error_category") or "")[:64],
+                    "error": error[:240],
+                }
+            )
+        return rows
+
+    def _task_list_row(self, task: Mapping[str, Any]) -> Dict[str, Any]:
+        """Create the small, poll-safe task shape used by the task center."""
+        request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
+        result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+        used_model = str(
+            result.get("used_model")
+            or task.get("used_model")
+            or request.get("model")
+            or ""
+        ).strip()
+        retry_record_id = str(
+            request.get("retry_record_id")
+            or task.get("retry_record_id")
+            or result.get("retry_record_id")
+            or ""
+        ).strip()
+        linked_record_ids = task.get("record_ids")
+        if not isinstance(linked_record_ids, list):
+            linked_record_ids = result.get("record_ids") if isinstance(result.get("record_ids"), list) else []
+        linked_record_ids = [str(item).strip() for item in linked_record_ids if str(item).strip()][:200]
+        public_keys = (
+            "task_id",
+            "status",
+            "success",
+            "created_ts",
+            "updated_ts",
+            "created_at",
+            "updated_at",
+            "started_ts",
+            "started_at",
+            "finished_ts",
+            "finished_at",
+            "cancel_requested",
+            "requested_count",
+            "completed_count",
+            "succeeded_count",
+            "failed_count",
+            "progress_percent",
+            "current_index",
+            "queue_waiting",
+            "queue_position",
+            "queue_wait_seconds",
+            "running_seconds",
+            "generation_started_ts",
+            "active_slots",
+            "max_concurrent_tasks",
+            "timeout_warning",
+            "timeout_warning_code",
+            "generation_stage",
+            "generation_stage_label",
+            "generation_success",
+            "delivery_success",
+            "delivery_failed",
+            "delivery_error",
+        )
+        row = {key: task.get(key) for key in public_keys if key in task}
+        row.update(
+            {
+                "media_type": self._task_media_type(task),
+                "source": str(task.get("source") or ""),
+                "source_label": task_source_label(task),
+                "prompt_summary": self._task_prompt_summary(task),
+                "used_model": redact_sensitive_text(used_model)[:180],
+                "error": redact_sensitive_text(str(task.get("error") or result.get("error") or ""))[:320],
+                # ``record_id`` is kept for the source record of retry tasks;
+                # ``record_ids`` contains records produced by this task.
+                "record_id": retry_record_id[:128],
+                "retry_record_id": retry_record_id[:128],
+                "record_ids": linked_record_ids,
+                "can_retry": bool(retry_record_id),
+            }
+        )
+        return redact_sensitive_data(row)
+
+    def get_web_task_detail(self, task_id: str) -> Dict[str, Any]:
+        """Return a redacted detail view without request bodies or local file paths."""
+        task = self.get_web_image_task(task_id)
+        request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
+        result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+        detail = self._task_list_row(task)
+        original_prompt = str(
+            request.get("original_prompt")
+            or request.get("prompt")
+            or result.get("original_prompt")
+            or ""
+        ).strip()
+        final_prompt = str(
+            result.get("final_prompt")
+            or result.get("request_prompt")
+            or request.get("request_prompt_en")
+            or request.get("request_prompt")
+            or ""
+        ).strip()
+        detail.update(
+            {
+                "original_prompt": redact_sensitive_text(original_prompt)[:50000],
+                "final_prompt": redact_sensitive_text(final_prompt)[:50000],
+                "parameters": {
+                    key: redact_sensitive_data(request.get(key))
+                    for key in (
+                        "kind",
+                        "mode",
+                        "session_id",
+                        "studio_template",
+                        "channel",
+                        "model",
+                        "aspect_ratio",
+                        "resolution",
+                        "duration",
+                        "requested_duration",
+                        "timeout_seconds",
+                        "size",
+                        "count",
+                        "requested_count",
+                        "prompt_enhance",
+                        "reference_image_count",
+                        "raw_reference_image_count",
+                        "used_slots",
+                        "source_asset_ids",
+                        "studio_source_asset_ids",
+                        "composition",
+                        "cos",
+                        "cos_pose",
+                        "cos_scene",
+                        "cos_view",
+                        "request_prompt_en",
+                    )
+                    if request.get(key) not in (None, "")
+                },
+                "record_ids": list(detail.get("record_ids") or []),
+                "attempts": self._task_attempt_summaries(task),
+                "result_summary": {
+                    "file_count": len(
+                        result.get("files")
+                        or result.get("image_paths")
+                        or result.get("generated_image_paths")
+                        or result.get("generated_video_paths")
+                        or []
+                    ),
+                    "used_model": redact_sensitive_text(str(result.get("used_model") or ""))[:180],
+                    "elapsed_seconds": result.get("elapsed_seconds"),
+                    "generation_success": result.get("generation_success"),
+                    "delivery_success": result.get("delivery_success"),
+                },
+            }
+        )
+        return redact_sensitive_data(detail)
+
     def list_web_tasks(
         self,
         *,
         include_finished: bool = False,
         limit: int = 50,
         media_type: str = "",
+        source: str = "",
+        status: str = "",
+        model: str = "",
+        keyword: str = "",
+        start_ts: Optional[float] = None,
+        end_ts: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Return an admin-facing task snapshot without request bodies or secrets."""
+        """Return an admin-facing task snapshot without request bodies or secrets.
+
+        Filters are applied to the persisted task metadata before ``limit`` so
+        the dashboard can browse recent history without downloading every task
+        row.  ``source``, ``model`` and ``keyword`` are case-insensitive
+        substring filters; ``status`` accepts a comma-separated set of
+        internal status values.
+        """
         wanted = str(media_type or "").strip().lower()
         if wanted not in {"", "image", "video"}:
             raise ValueError("media_type 必须是 image 或 video")
+        source_query = str(source or "").strip().lower()
+        model_query = str(model or "").strip().lower()
+        keyword_query = str(keyword or "").strip().lower()
+        status_values = {
+            item.strip().lower()
+            for item in str(status or "").split(",")
+            if item and item.strip()
+        }
+        valid_statuses = {
+            "queued",
+            "running",
+            "succeeded",
+            "partial_success",
+            "failed",
+            "delivery_failed",
+            "cancelled",
+            "expired",
+        }
+        unknown_statuses = status_values - valid_statuses
+        if unknown_statuses:
+            raise ValueError("status 包含不支持的任务状态")
+        try:
+            start_value = float(start_ts) if start_ts is not None else None
+        except (TypeError, ValueError):
+            raise ValueError("start_ts 必须是时间戳") from None
+        try:
+            end_value = float(end_ts) if end_ts is not None else None
+        except (TypeError, ValueError):
+            raise ValueError("end_ts 必须是时间戳") from None
+        if start_value is not None and end_value is not None and start_value > end_value:
+            raise ValueError("开始时间不能晚于结束时间")
         with self._web_task_lock:
             raw_tasks = sorted(
                 (copy.deepcopy(item) for item in self._web_tasks.values() if isinstance(item, dict)),
@@ -291,23 +543,66 @@ class WebTaskMixin:
                 reverse=True,
             )
         active = {"queued", "running"}
-        rows = []
+        filtered_tasks = []
         for raw in raw_tasks:
             if not include_finished and raw.get("status") not in active:
                 continue
             if wanted and self._task_media_type(raw) != wanted:
                 continue
+            raw_status = str(raw.get("status") or "").strip().lower()
+            if status_values and raw_status not in status_values:
+                continue
+            if source_query:
+                source_text = " ".join(
+                    (
+                        str(raw.get("source") or ""),
+                        task_source_label(raw),
+                    )
+                ).lower()
+                if source_query not in source_text:
+                    continue
+            if model_query:
+                request = raw.get("request_data") if isinstance(raw.get("request_data"), Mapping) else {}
+                result = raw.get("result") if isinstance(raw.get("result"), Mapping) else {}
+                model_text = " ".join(
+                    (
+                        str(raw.get("used_model") or ""),
+                        str(request.get("model") or ""),
+                        str(result.get("used_model") or ""),
+                    )
+                ).lower()
+                if model_query not in model_text:
+                    continue
+            if keyword_query:
+                request = raw.get("request_data") if isinstance(raw.get("request_data"), Mapping) else {}
+                result = raw.get("result") if isinstance(raw.get("result"), Mapping) else {}
+                keyword_text = " ".join(
+                    (
+                        self._task_prompt_summary(raw, limit=10000),
+                        str(raw.get("error") or ""),
+                        str(request.get("original_prompt") or request.get("prompt") or ""),
+                        str(result.get("error") or ""),
+                    )
+                ).lower()
+                if keyword_query not in keyword_text:
+                    continue
+            try:
+                created_ts = float(raw.get("created_ts") or 0)
+            except (TypeError, ValueError):
+                created_ts = 0.0
+            if start_value is not None and created_ts < start_value:
+                continue
+            if end_value is not None and created_ts > end_value:
+                continue
+            filtered_tasks.append(raw)
+
+        rows = []
+        for raw in filtered_tasks:
             try:
                 row = self.get_web_image_task(str(raw.get("task_id") or ""))
             except Exception:
                 row = redact_sensitive_data(raw)
-            # The queue view only needs lifecycle telemetry. Keep prompts,
-            # result payloads, fingerprints, and session ownership in the
-            # task-detail endpoint instead of repeating them in every poll.
-            row["media_type"] = self._task_media_type(row)
-            for private_key in ("request_data", "result", "request_fingerprint", "owner_session"):
-                row.pop(private_key, None)
-            rows.append(row)
+            rows.append(self._task_list_row(row))
             if len(rows) >= max(1, min(200, int(limit or 50))):
                 break
 
@@ -334,6 +629,7 @@ class WebTaskMixin:
             "tasks": rows,
             "summary": {
                 "total_active": len(all_active),
+                "filtered_total": len(filtered_tasks),
                 "queued": status_counts.get("queued", 0),
                 "running": status_counts.get("running", 0),
                 "by_media_type": media_counts,
@@ -342,6 +638,155 @@ class WebTaskMixin:
                 "video_active_slots": video_active,
                 "video_max_concurrent_tasks": video_max,
             },
+            "filters": {
+                "include_finished": bool(include_finished),
+                "media_type": wanted,
+                "source": source_query,
+                "status": sorted(status_values),
+                "model": model_query,
+                "keyword": keyword_query,
+                "start_ts": start_value,
+                "end_ts": end_value,
+            },
+        }
+
+    @staticmethod
+    def _normalize_task_ids(task_ids: Iterable[Any]) -> List[str]:
+        if isinstance(task_ids, (str, bytes)):
+            values = [task_ids]
+        else:
+            values = list(task_ids or [])
+        return list(dict.fromkeys(str(item or "").strip() for item in values if str(item or "").strip()))
+
+    def delete_web_tasks(self, task_ids: Iterable[Any]) -> Dict[str, Any]:
+        """Delete terminal task metadata while leaving generation records intact."""
+        ids = self._normalize_task_ids(task_ids)
+        if not ids:
+            raise ValueError("至少选择一条任务")
+        if len(ids) > 200:
+            raise ValueError("单次最多删除 200 条任务")
+        deleted: List[str] = []
+        missing: List[str] = []
+        skipped: List[Dict[str, str]] = []
+        with self._web_task_lock:
+            for task_id in ids:
+                task = self._web_tasks.get(task_id)
+                if not isinstance(task, dict):
+                    missing.append(task_id)
+                    continue
+                status = str(task.get("status") or "").strip().lower()
+                if status not in self._TASK_TERMINAL_STATUSES:
+                    skipped.append({"task_id": task_id, "reason": "活动任务不能删除"})
+                    continue
+                self._web_tasks.pop(task_id, None)
+                deleted.append(task_id)
+            if deleted:
+                self._persist_web_tasks_locked()
+        return {
+            "deleted": deleted,
+            "missing": missing,
+            "skipped": skipped,
+            "deleted_count": len(deleted),
+        }
+
+    def retry_web_tasks(self, task_ids: Iterable[Any], feedback: str = "") -> Dict[str, Any]:
+        """Submit retries for records linked to selected terminal tasks.
+
+        Task payloads intentionally omit request bodies, so a retry is only
+        possible when the task has at least one retained generation record.
+        Each linked record is retried independently and receives the optional
+        feedback string.
+        """
+        ids = self._normalize_task_ids(task_ids)
+        if not ids:
+            raise ValueError("至少选择一条任务")
+        if len(ids) > 200:
+            raise ValueError("单次最多重试 200 条任务")
+        retry = getattr(self, "start_record_retry_task", None)
+        if not callable(retry):
+            raise RuntimeError("当前版本不支持任务重试")
+        submitted: List[Dict[str, Any]] = []
+        missing: List[str] = []
+        skipped: List[Dict[str, str]] = []
+        errors: List[Dict[str, str]] = []
+        seen_records: set[str] = set()
+        with self._web_task_lock:
+            selected = {task_id: copy.deepcopy(self._web_tasks.get(task_id)) for task_id in ids}
+        for task_id in ids:
+            task = selected.get(task_id)
+            if not isinstance(task, dict):
+                missing.append(task_id)
+                continue
+            status = str(task.get("status") or "").strip().lower()
+            if status not in self._TASK_TERMINAL_STATUSES:
+                skipped.append({"task_id": task_id, "reason": "活动任务不能重试"})
+                continue
+            record_ids = task.get("record_ids")
+            if not isinstance(record_ids, list):
+                record_ids = []
+            retry_id = str(task.get("retry_record_id") or task.get("record_id") or "").strip()
+            record_ids = self._normalize_task_ids([*record_ids, retry_id])
+            record_ids = [record_id for record_id in record_ids if record_id not in seen_records]
+            if not record_ids:
+                skipped.append({"task_id": task_id, "reason": "没有可重试的生成记录"})
+                continue
+            for record_id in record_ids:
+                seen_records.add(record_id)
+                try:
+                    retry_task = retry(record_id, str(feedback or "").strip()[:2000])
+                    submitted.append(
+                        {
+                            "task_id": task_id,
+                            "record_id": record_id,
+                            "retry_task_id": str((retry_task or {}).get("task_id") or ""),
+                        }
+                    )
+                except Exception as exc:
+                    errors.append(
+                        {
+                            "task_id": task_id,
+                            "record_id": record_id,
+                            "error": redact_sensitive_text(str(exc))[:320],
+                        }
+                    )
+        return {
+            "submitted": submitted,
+            "missing": missing,
+            "skipped": skipped,
+            "errors": errors,
+            "submitted_count": len(submitted),
+        }
+
+    def export_web_tasks(self, task_ids: Optional[Iterable[Any]] = None) -> Dict[str, Any]:
+        """Export redacted task rows for offline troubleshooting."""
+        ids = self._normalize_task_ids(task_ids or []) if task_ids is not None else []
+        if len(ids) > 200:
+            raise ValueError("单次最多导出 200 条任务")
+        selected = set(ids)
+        with self._web_task_lock:
+            raw_tasks = sorted(
+                (copy.deepcopy(item) for item in self._web_tasks.values() if isinstance(item, dict)),
+                key=lambda item: float(item.get("created_ts") or 0),
+                reverse=True,
+            )
+        rows: List[Dict[str, Any]] = []
+        for raw in raw_tasks:
+            task_id = str(raw.get("task_id") or "").strip()
+            if selected and task_id not in selected:
+                continue
+            try:
+                detail = self.get_web_image_task(task_id)
+            except Exception:
+                detail = raw
+            rows.append(self._task_list_row(detail))
+            if len(rows) >= 200:
+                break
+        return {
+            "format": "selfie-image-task-export",
+            "version": 1,
+            "exported_at": self._web_task_timestamp(),
+            "count": len(rows),
+            "tasks": rows,
         }
 
     def start_web_image_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -355,6 +800,15 @@ class WebTaskMixin:
         if media_type not in {"image", "video"}:
             raise RuntimeError("media_type 必须是 image 或 video")
         self._validate_web_test_selection(payload_copy)
+        requested_count = (
+            self._normalize_web_image_count(payload_copy.get("count"))
+            if media_type == "image"
+            else 1
+        )
+        if media_type == "image":
+            # Pass the normalized value to both the task summary and the
+            # runner so quota reservation, progress, and execution agree.
+            payload_copy["count"] = requested_count
         force_regenerate = bool(
             payload_copy.get("force_regenerate") or payload_copy.get("force")
         )
@@ -368,12 +822,6 @@ class WebTaskMixin:
             self._web_task_seq += 1
             task_id = f"web-{int(time.time() * 1000)}-{self._web_task_seq}"
             now = time.time()
-            requested_count = 1
-            if media_type == "image":
-                try:
-                    requested_count = max(1, int(payload_copy.get("count") or 1))
-                except (TypeError, ValueError):
-                    requested_count = 1
             self._web_tasks[task_id] = {
                 "task_id": task_id,
                 "status": "queued",
@@ -385,13 +833,23 @@ class WebTaskMixin:
                 "updated_at": self._web_task_timestamp(),
                 "request_data": self._summarize_web_test_payload(payload_copy),
                 "result": None,
-                "source": "web-video-test" if media_type == "video" else "web-test",
+                "source": (
+                    "record-video-retry"
+                    if media_type == "video" and (payload_copy.get("_retry_record_id") or payload_copy.get("retry_record_id"))
+                    else "record-retry"
+                    if payload_copy.get("_retry_record_id") or payload_copy.get("retry_record_id")
+                    else "web-video-test"
+                    if media_type == "video"
+                    else "web-test"
+                ),
                 "owner_session": "web",
                 "cancel_requested": False,
                 "request_fingerprint": fingerprint,
                 "deduplicated": False,
                 **self._task_runtime_defaults(),
                 **self._task_progress_defaults(requested_count),
+                "generation_stage": "preflight",
+                "generation_stage_label": "准备视频任务" if media_type == "video" else "准备图片任务",
             }
             self._prune_web_tasks_locked()
             self._persist_web_tasks_locked()
@@ -422,15 +880,21 @@ class WebTaskMixin:
             status="running",
             started_ts=time.time(),
             started_at=self._web_task_timestamp(),
+            generation_stage="preflight",
+            generation_stage_label="准备视频任务" if media_type == "video" else "准备图片任务",
             **runtime_fields,
         )
         try:
             if self._task_cancel_requested(task_id):
                 raise RuntimeError("任务已取消")
+            # Keep the queue ID in-memory only; generation handlers copy it to
+            # their record metadata and the compact request summary omits it.
+            run_payload = copy.deepcopy(payload)
+            run_payload["_task_id"] = task_id
             result = await (
-                self.web_test_video(payload, task_id=task_id)
+                self.web_test_video(run_payload, task_id=task_id)
                 if media_type == "video"
-                else self.web_test_image(payload)
+                else self.web_test_image(run_payload)
             )
             result = self._normalize_generation_result(result, payload.get("count") or 1)
             result = redact_sensitive_data(result)
@@ -439,13 +903,22 @@ class WebTaskMixin:
                     task_id,
                     status="cancelled",
                     success=False,
+                    generation_stage="cancelled",
+                    generation_stage_label="已取消",
                     error="任务已取消",
                     result={"success": False, "error": "任务已取消"},
                     finished_ts=time.time(),
                     finished_at=self._web_task_timestamp(),
                 )
                 return
+            wait_commits = getattr(self, "_wait_for_record_commits", None)
+            if callable(wait_commits):
+                await wait_commits(task_id)
             success = bool(result.get("success"))
+            generation_success = bool(result.get("generation_success"))
+            delivery_failed = bool(result.get("delivery_failed")) or (
+                generation_success and result.get("delivery_success") is False
+            ) or str(result.get("status") or "") == "delivery_failed"
             requested_count = int(result.get("requested_count") or payload.get("count") or 1)
             succeeded_count = int(result.get("succeeded_count") or 0)
             failed_count = int(result.get("failed_count") or 0)
@@ -455,11 +928,53 @@ class WebTaskMixin:
             error = "" if success else redact_sensitive_text(str(result_error or "这次没顺好"))
             if not success and not result.get("error"):
                 result["error"] = error
+            mark_delivery = getattr(self, "_mark_task_records_delivery", None)
+            record_paths = (
+                result.get("image_paths")
+                or result.get("generated_image_paths")
+                or result.get("generated_video_paths")
+                or []
+            )
+            # Partial batches still return their successful files to the Web
+            # client.  Mark those records as delivered instead of leaving
+            # their transport state indefinitely unknown.
+            if callable(mark_delivery) and (success or delivery_failed or record_paths):
+                await mark_delivery(
+                    task_id,
+                    delivered=bool(not delivery_failed),
+                    error=error if delivery_failed else "",
+                    paths=record_paths,
+                )
+            terminal_status = str(
+                result.get("status") or ("succeeded" if success else "failed")
+            )
+            partial_success = terminal_status == "partial_success" or (
+                not success and succeeded_count > 0
+            )
+            terminal_stage = "complete" if success or delivery_failed or partial_success else "failed"
+            terminal_stage_label = (
+                "部分完成"
+                if partial_success
+                else "已完成"
+                if success or delivery_failed
+                else "已失败"
+            )
             self._set_web_image_task(
                 task_id,
-                status=str(result.get("status") or ("succeeded" if success else "failed")),
+                status=terminal_status,
                 success=success,
+                generation_stage=terminal_stage,
+                generation_stage_label=terminal_stage_label,
                 error=error,
+                generation_success=generation_success or success,
+                delivery_success=(
+                    False
+                    if delivery_failed
+                    else True
+                    if success or record_paths
+                    else result.get("delivery_success")
+                ),
+                delivery_failed=delivery_failed,
                 requested_count=result.get("requested_count", 1),
                 completed_count=completed_count,
                 succeeded_count=succeeded_count,
@@ -477,6 +992,8 @@ class WebTaskMixin:
                 task_id,
                 status="cancelled" if cancelled else "failed",
                 success=False,
+                generation_stage="cancelled" if cancelled else "failed",
+                generation_stage_label="已取消" if cancelled else "已失败",
                 error=error,
                 completed_count=0,
                 progress_percent=0,

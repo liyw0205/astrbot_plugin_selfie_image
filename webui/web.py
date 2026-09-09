@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from ..core.utils import (
@@ -1156,6 +1158,81 @@ INDEX_HTML = r"""<!doctype html>
       wrap.appendChild(node);
       setTimeout(() => node.remove(), 2600);
     }
+    let INLINE_CONFIRM = null;
+    function closeInlineConfirm(accepted = false) {
+      const state = INLINE_CONFIRM;
+      if (!state) return;
+      INLINE_CONFIRM = null;
+      document.removeEventListener('keydown', state.onKey);
+      state.mask.remove();
+      if (state.previousFocus && typeof state.previousFocus.focus === 'function' && document.contains(state.previousFocus)) {
+        setTimeout(() => state.previousFocus.focus(), 0);
+      }
+      state.resolve(Boolean(accepted));
+    }
+    function confirmAction(message, options = {}) {
+      if (INLINE_CONFIRM) closeInlineConfirm(false);
+      const mask = document.createElement('div');
+      mask.className = 'modal-mask show';
+      mask.style.zIndex = '90';
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      const head = document.createElement('div');
+      head.className = 'between';
+      const title = document.createElement('h2');
+      title.textContent = String(options.title || '请确认操作');
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'secondary';
+      close.textContent = '关闭';
+      head.append(title, close);
+      const body = document.createElement('div');
+      body.className = 'modal-body';
+      const text = document.createElement('p');
+      text.className = 'muted';
+      text.style.whiteSpace = 'pre-wrap';
+      text.textContent = String(message || '确定继续吗？');
+      body.appendChild(text);
+      const footer = document.createElement('div');
+      footer.className = 'modal-footer';
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      actions.style.marginTop = '0';
+      actions.style.justifyContent = 'flex-end';
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'secondary';
+      cancel.textContent = '取消';
+      const proceed = document.createElement('button');
+      proceed.type = 'button';
+      proceed.className = options.danger === false ? 'ok' : 'danger';
+      proceed.textContent = String(options.confirmText || '确认');
+      actions.append(cancel, proceed);
+      footer.appendChild(actions);
+      modal.append(head, body, footer);
+      mask.appendChild(modal);
+      document.body.appendChild(mask);
+      const previousFocus = document.activeElement && typeof document.activeElement.focus === 'function'
+        ? document.activeElement
+        : null;
+      return new Promise(resolve => {
+        const onKey = event => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            closeInlineConfirm(false);
+          }
+        };
+        INLINE_CONFIRM = {mask, onKey, previousFocus, resolve};
+        document.addEventListener('keydown', onKey);
+        close.onclick = () => closeInlineConfirm(false);
+        cancel.onclick = () => closeInlineConfirm(false);
+        proceed.onclick = () => closeInlineConfirm(true);
+        mask.onclick = event => {
+          if (event.target === mask) closeInlineConfirm(false);
+        };
+        proceed.focus();
+      });
+    }
     function switchChannelPane(kind = 'image') {
       ACTIVE_CHANNEL_PANE = (kind === 'audit' || kind === 'video') ? kind : 'image';
       const map = { image: 'channelTabImage', audit: 'channelTabAudit', video: 'channelTabVideo' };
@@ -1615,6 +1692,10 @@ Source prompt:
         proxy: String(ch.proxy || '').trim(),
         extra: ch.extra && typeof ch.extra === 'object' ? ch.extra : {}
       };
+      // API keys are masked by the server.  Preserve the marker while loading
+      // and saving; the server restores the original secret for existing rows.
+      if (ch.api_key === '******' || ch.api_key === '[REDACTED]') normalized.api_key = ch.api_key;
+      if (Array.isArray(ch.api_keys)) normalized.api_keys = ch.api_keys.slice();
       if (videoType || String(providerType).startsWith('video_')) {
         return compactModelProviderTypes(normalized);
       }
@@ -1730,7 +1811,7 @@ Source prompt:
       openChannelModal(-1, 'video', { isNew: true });
     }
     function removeChannel(index, kind = 'image') {
-      // AstrBot iframe often blocks window.confirm; use two-click page button instead.
+      // AstrBot iframe may block native confirmation dialogs; use two-click page button instead.
       const list = channelListFor(kind);
       if (!list || index < 0 || index >= list.length) return;
       const key = `${kind}:${index}`;
@@ -1889,6 +1970,10 @@ Source prompt:
         model_download_proxy_ids: collectModalDownloadProxyIds(enabled),
         models_cache: source.models_cache || []
       }));
+      // Editing a masked channel without touching the field must not submit an
+      // empty credential and accidentally clear the stored key.
+      if (!ch.api_key && source.api_key) ch.api_key = source.api_key;
+      if (Array.isArray(source.api_keys) && source.api_keys.length && !ch.api_keys) ch.api_keys = source.api_keys.slice();
       softDisableChannelIfNoModels(ch);
       if ($('modalEnabled')) $('modalEnabled').checked = ch.enabled !== false;
       return ch;
@@ -2885,6 +2970,7 @@ Source prompt:
       } catch (e) { $('monitorStats').textContent = e.message; }
     }
     async function clearRecords() {
+      if (!await confirmAction('确定清空全部生成记录吗？此操作不可撤销。', {title:'清空生成记录', confirmText:'清空记录'})) return;
       try {
         await api('/api/records/clear', {method:'POST', body:'{}'});
         RECORDS = [];
@@ -3409,6 +3495,9 @@ Source prompt:
       const percent = Math.max(0, Math.min(100, Number(task?.progress_percent ?? Math.round(completed * 100 / requested))));
       return `${completed}/${requested}（${percent}%）`;
     }
+    function taskStageText(task) {
+      return String(task?.generation_stage_label || '').trim();
+    }
     async function cancelTestTask() {
       const taskId = String(TEST_TASK_ID || '').trim();
       if (!taskId) return;
@@ -3484,7 +3573,8 @@ Source prompt:
             ? ' 有的中转要 15–60 秒，先等等；超过设定超时才会判失败。'
             : '';
           const progress = taskProgressText(task);
-          $('testStatus').textContent = `任务 ${task.task_id || TEST_TASK_ID} ${label}${progress ? ` ${progress}` : ''}，已用 ${seconds}s。${hint}关掉页面也不会停。`;
+          const stage = taskStageText(task);
+          $('testStatus').textContent = `任务 ${task.task_id || TEST_TASK_ID} ${label}${stage ? ` · ${stage}` : ''}${progress ? ` ${progress}` : ''}，已用 ${seconds}s。${hint}关掉页面也不会停。`;
           TEST_TASK_POLL_TIMER = setTimeout(() => pollImageTestTask(TEST_TASK_ID, 0), 2000);
           return;
         }
@@ -4007,6 +4097,10 @@ Source prompt:
         };
         card.querySelector('[data-act="record"]').onclick = () => openStudioGallery(slot.id);
         card.querySelector('[data-act="clear"]').onclick = async () => {
+          if (!await confirmAction(`确定清空槽位「${slot.label || slot.role || '当前槽位'}」吗？槽位引用会移除，原记录不会删除。`, {
+            title: '清空画布槽位',
+            confirmText: '清空槽位'
+          })) return;
           const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(session.id)}/slots/${encodeURIComponent(slot.id)}`, {
             method: 'POST', body: JSON.stringify({ clear: true })
           });
@@ -4332,6 +4426,18 @@ Source prompt:
     });
     $('loginBtn').onclick = enterApp;
     $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };
+    document.querySelectorAll('.modal-mask').forEach(mask => mask.addEventListener('click', event => {
+      if (event.target !== mask) return;
+      if (mask === $('channelModal')) closeChannelModal();
+      else if (mask === $('proxyModal')) closeProxyModal();
+      else if (mask === $('recordModal')) closeRecordDetail();
+    }));
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      if ($('channelModal')?.classList.contains('show')) { closeChannelModal(); return; }
+      if ($('proxyModal')?.classList.contains('show')) closeProxyModal();
+      else if ($('recordModal')?.classList.contains('show')) closeRecordDetail();
+    });
     $('logoutBtn').onclick = logout;
     $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(); };
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
@@ -4688,6 +4794,10 @@ class FlaskWebServer:
         def health() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
+            stats = getattr(self.plugin, "_cache_stats", None)
+            cache_bytes, cache_count = stats() if callable(stats) else (self.plugin._cache_size_bytes(), 0)
+            get_health = getattr(self.plugin, "get_channel_health", None)
+            get_preview = getattr(self.plugin, "get_cache_cleanup_preview", None)
             return ok(
                 {
                     "status": "ok",
@@ -4696,8 +4806,12 @@ class FlaskWebServer:
                     "records_db_path": getattr(self.plugin, "records_db_path", ""),
                     "media_sources_dir": getattr(self.plugin, "media_sources_dir", ""),
                     "cache_dir": getattr(self.plugin, "generated_dir", ""),
-                    "cache_size_mb": round(float(self.plugin._cache_size_bytes()) / 1024 / 1024, 2),
-                    "cache_limit_mb": getattr(self.plugin.config, "image_cache_limit_mb", 100),
+                    "cache_size_mb": round(float(cache_bytes) / 1024 / 1024, 2),
+                    "cache_file_count": cache_count,
+                    "cache_limit_mb": getattr(self.plugin.config, "image_cache_limit_mb", 200),
+                    "cache_limit_count": getattr(self.plugin.config, "image_cache_limit_count", 100),
+                    "channel_health": get_health() if callable(get_health) else {},
+                    "cache_cleanup_preview": get_preview() if callable(get_preview) else {},
                 }
             )
 
@@ -4726,6 +4840,15 @@ class FlaskWebServer:
             if media_type not in {"", "image", "video"}:
                 return fail("media_type 必须是 image 或 video", 400)
             include_finished = str(request.args.get("include_finished") or "").strip().lower() in {"1", "true", "yes", "on"}
+            status_query = str(request.args.get("status") or "").strip().lower()
+            valid_statuses = {
+                "queued", "running", "succeeded", "partial_success", "failed",
+                "delivery_failed", "cancelled", "expired",
+            }
+            if status_query:
+                requested_statuses = {item.strip() for item in status_query.split(",") if item.strip()}
+                if requested_statuses - valid_statuses:
+                    return fail("status 包含不支持的任务状态", 400)
             raw_limit = str(request.args.get("limit") or "50").strip()
             try:
                 limit = int(raw_limit)
@@ -4735,13 +4858,133 @@ class FlaskWebServer:
                 return fail("limit 不能小于 1", 400)
             if limit > MAX_TASK_PAGE_LIMIT:
                 return fail(f"limit 不能大于 {MAX_TASK_PAGE_LIMIT}", 400)
+            def parse_timestamp(name: str, *, end_of_day: bool = False) -> tuple[Optional[float], Optional[Any]]:
+                raw = str(request.args.get(name) or "").strip()
+                if not raw:
+                    return None, None
+                try:
+                    if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
+                        parsed = datetime.strptime(raw, "%Y-%m-%d")
+                        if end_of_day:
+                            parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+                        return time.mktime(parsed.timetuple()) + parsed.microsecond / 1_000_000, None
+                    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        return time.mktime(parsed.timetuple()) + parsed.microsecond / 1_000_000, None
+                    return parsed.astimezone(timezone.utc).timestamp(), None
+                except (TypeError, ValueError):
+                    return None, fail(f"{name} 必须是 YYYY-MM-DD 或 ISO 时间", 400)
+
+            start_ts, parse_error = parse_timestamp("start_date")
+            if parse_error:
+                return parse_error
+            end_ts, parse_error = parse_timestamp("end_date", end_of_day=True)
+            if parse_error:
+                return parse_error
+            task_kwargs = {
+                "include_finished": include_finished,
+                "limit": limit,
+                "media_type": media_type,
+            }
+            optional_filters = {
+                "source": str(request.args.get("source") or ""),
+                "status": str(request.args.get("status") or ""),
+                "model": str(request.args.get("model") or ""),
+                "keyword": str(request.args.get("q") or request.args.get("keyword") or ""),
+            }
+            for key, value in optional_filters.items():
+                if value.strip():
+                    task_kwargs[key] = value
+            if start_ts is not None:
+                task_kwargs["start_ts"] = start_ts
+            if end_ts is not None:
+                task_kwargs["end_ts"] = end_ts
             try:
-                data = self.plugin.list_web_tasks(
-                    include_finished=include_finished,
-                    limit=limit,
-                    media_type=media_type,
-                )
+                data = self.plugin.list_web_tasks(**task_kwargs)
                 return ok(redact_sensitive_data(data))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/tasks/<task_id>", methods=["GET"])
+        def task_detail(task_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            task_id_text = str(task_id or "").strip()
+            if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
+                return fail("非法任务 ID", 400)
+            try:
+                getter = getattr(self.plugin, "get_web_task_detail", None)
+                data = getter(task_id_text) if callable(getter) else self.plugin.get_web_image_task(task_id_text)
+                return ok(redact_sensitive_data(data))
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        def task_ids_from_payload(payload: Any) -> tuple[Optional[list[str]], Optional[str]]:
+            raw = (payload or {}).get("ids", (payload or {}).get("task_ids")) if isinstance(payload, dict) else None
+            if not isinstance(raw, list):
+                return None, "ids 必须是数组"
+            ids = list(dict.fromkeys(str(item or "").strip() for item in raw if str(item or "").strip()))
+            if not ids:
+                return None, "至少选择一条任务"
+            if len(ids) > 200:
+                return None, "单次最多操作 200 条任务"
+            if any(len(task_id) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id) for task_id in ids):
+                return None, "包含非法任务 ID"
+            return ids, None
+
+        @app.route("/api/tasks/export", methods=["GET"])
+        def tasks_export() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            raw_ids = str(request.args.get("ids") or "").strip()
+            ids = [item.strip() for item in raw_ids.split(",") if item.strip()] if raw_ids else None
+            if ids is not None and (
+                len(ids) > 200
+                or any(len(task_id) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id) for task_id in ids)
+            ):
+                return fail("包含非法任务 ID", 400)
+            exporter = getattr(self.plugin, "export_web_tasks", None)
+            if not callable(exporter):
+                return fail("当前版本不支持任务导出", 501)
+            try:
+                return ok(exporter(ids))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/tasks/delete", methods=["POST"])
+        def tasks_delete() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            ids, validation_error = task_ids_from_payload(payload)
+            if validation_error:
+                return fail(validation_error, 400)
+            deleter = getattr(self.plugin, "delete_web_tasks", None)
+            if not callable(deleter):
+                return fail("当前版本不支持任务删除", 501)
+            try:
+                return ok(deleter(ids or []), message="任务记录已删除")
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/tasks/retry", methods=["POST"])
+        def tasks_retry() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            ids, validation_error = task_ids_from_payload(payload)
+            if validation_error:
+                return fail(validation_error, 400)
+            retrier = getattr(self.plugin, "retry_web_tasks", None)
+            if not callable(retrier):
+                return fail("当前版本不支持任务重试", 501)
+            try:
+                feedback = str((payload or {}).get("feedback") or "").strip()[:2000]
+                return ok(retrier(ids or [], feedback), message="已提交任务重试")
             except Exception as exc:
                 return fail(str(exc), 400)
 
@@ -5216,6 +5459,31 @@ class FlaskWebServer:
             if error_response:
                 return error_response
             return ok({"deleted": self.plugin.clear_recent_records()})
+
+        @app.route("/api/cache/cleanup", methods=["POST"])
+        def cache_cleanup() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            cleanup = getattr(self.plugin, "cleanup_image_cache_from_web", None)
+            if not callable(cleanup):
+                return fail("当前版本不支持手动缓存清理", 501)
+            raw_confirm = (payload or {}).get("confirm", False)
+            confirm = (
+                bool(raw_confirm)
+                if not isinstance(raw_confirm, str)
+                else str(raw_confirm).strip().lower() in {"1", "true", "yes", "on"}
+            )
+            token = str((payload or {}).get("plan_token") or "").strip()
+            try:
+                data = cleanup(confirm=confirm, plan_token=token)
+                return ok(data, message="缓存清理完成" if confirm else "请确认缓存清理")
+            except ValueError as exc:
+                return fail(str(exc), 409)
+            except Exception as exc:
+                return fail(str(exc), 500)
 
         @app.route("/api/cache-image", methods=["GET"])
         def cache_image() -> Any:

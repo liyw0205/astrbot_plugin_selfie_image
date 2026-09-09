@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -24,6 +25,7 @@ from ..core.utils import (
     load_json_file,
     looks_like_image_bytes,
     redact_generation_record,
+    redact_sensitive_text,
     safe_delete_relative_files,
     save_image_bytes,
     save_json_file,
@@ -32,6 +34,15 @@ from ..core.utils import (
 )
 
 RECORD_KEEP_LIMIT = 1000
+CHANNEL_COOLDOWN_FAILURE_THRESHOLD = 3
+CHANNEL_COOLDOWN_SECONDS = 60
+CHANNEL_TRANSIENT_ERROR_CATEGORIES = {
+    "network",
+    "server",
+    "timeout",
+    "timeout_create",
+    "timeout_poll",
+}
 
 
 class GenerationStoreMixin:
@@ -243,7 +254,69 @@ class GenerationStoreMixin:
         except RuntimeError:
             self._commit_generation_records(payload)
             return
-        loop.create_task(asyncio.to_thread(self._commit_generation_records, payload))
+        commit_task = loop.create_task(asyncio.to_thread(self._commit_generation_records, payload))
+        # Keep a short-lived handle for queue tasks.  The web task runner can
+        # await these commits before publishing its terminal status, avoiding a
+        # visible window where a completed task has no linked record yet.
+        task_id = str(payload.get("task_id") or "").strip()
+        if task_id:
+            pending = getattr(self, "_pending_record_commits", None)
+            if pending is None:
+                pending = {}
+                self._pending_record_commits = pending
+            pending.setdefault(task_id, set()).add(commit_task)
+
+            def remove_done(_future: Any, *, tid: str = task_id, handle: Any = commit_task) -> None:
+                bucket = pending.get(tid)
+                if not bucket:
+                    return
+                bucket.discard(handle)
+                if not bucket:
+                    pending.pop(tid, None)
+
+            commit_task.add_done_callback(remove_done)
+
+    async def _wait_for_record_commits(self, task_id: str, timeout: float = 2.0) -> None:
+        """Wait briefly for records produced by one queue task to be persisted."""
+        tid = str(task_id or "").strip()
+        if not tid:
+            return
+        pending = getattr(self, "_pending_record_commits", None)
+        if not isinstance(pending, dict):
+            return
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, float(timeout or 0.0))
+        while True:
+            futures = list(pending.get(tid) or ())
+            if not futures:
+                return
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*futures, return_exceptions=True),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                return
+
+    async def _mark_task_records_delivery(
+        self,
+        task_id: str,
+        *,
+        delivered: bool,
+        error: str = "",
+        paths: Optional[Iterable[str]] = None,
+    ) -> int:
+        """Wait for a task's record writes, then persist transport outcome."""
+        await self._wait_for_record_commits(task_id)
+        return self._update_generation_records_delivery(
+            task_id,
+            delivered=delivered,
+            error=error,
+            paths=paths,
+        )
 
     def _commit_generation_records(self, record: Dict[str, Any]) -> None:
         # One generated image per monitor row. Batch/concurrency must not pile shots together.
@@ -252,6 +325,19 @@ class GenerationStoreMixin:
 
     def _commit_generation_record(self, record: Dict[str, Any]) -> None:
         stale_cache_paths: List[str] = []
+        # A generation task can produce more than one retained record (batch
+        # images are split below).  Keep the task link on every resulting row
+        # and backfill the task with the concrete record IDs after persistence.
+        task_id = str(
+            record.get("task_id")
+            or (
+                record.get("request_data", {}).get("task_id")
+                if isinstance(record.get("request_data"), Mapping)
+                else ""
+            )
+            or ""
+        ).strip()
+        committed_record_id = ""
         response_data = record.get("response_data")
         if "attempts" not in record and isinstance(response_data, Mapping):
             record["attempts"] = list(response_data.get("attempts") or [])
@@ -298,8 +384,148 @@ class GenerationStoreMixin:
                 stale_cache_paths = collect_unreferenced_record_cache_paths(evicted_records, self._records)
             self._persist_records()
             self._delete_media_sidecars(evicted_records)
+            committed_record_id = str(record.get("id") or "").strip()
         if stale_cache_paths:
             safe_delete_relative_files(self.generated_dir, stale_cache_paths)
+        if task_id and committed_record_id:
+            self._link_generation_record_to_task(task_id, committed_record_id)
+
+    def _link_generation_record_to_task(self, task_id: str, record_id: str) -> None:
+        """Backfill task -> record links without making records depend on tasks."""
+        tid = str(task_id or "").strip()
+        rid = str(record_id or "").strip()
+        if not tid or not rid:
+            return
+        task_lock = getattr(self, "_web_task_lock", None)
+        tasks = getattr(self, "_web_tasks", None)
+        if task_lock is None or not isinstance(tasks, dict):
+            return
+        try:
+            with task_lock:
+                task = tasks.get(tid)
+                if not isinstance(task, dict):
+                    return
+                record_ids = task.get("record_ids")
+                if not isinstance(record_ids, list):
+                    record_ids = []
+                record_ids = [str(item).strip() for item in record_ids if str(item).strip()]
+                if rid not in record_ids:
+                    record_ids.append(rid)
+                task["record_ids"] = record_ids[:200]
+                task.setdefault("record_id", record_ids[0] if record_ids else rid)
+                result = task.get("result")
+                if isinstance(result, dict):
+                    result_ids = result.get("record_ids")
+                    if not isinstance(result_ids, list):
+                        result_ids = []
+                    result_ids = [str(item).strip() for item in result_ids if str(item).strip()]
+                    if rid not in result_ids:
+                        result_ids.append(rid)
+                    result["record_ids"] = result_ids[:200]
+                    result.setdefault("record_id", result_ids[0] if result_ids else rid)
+                now = time.time()
+                task["updated_ts"] = now
+                task["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+                persist = getattr(self, "_persist_web_tasks_locked", None)
+                if callable(persist):
+                    persist()
+        except Exception:
+            # A missing/retired task must never make record persistence fail.
+            return
+
+    def _update_generation_records_delivery(
+        self,
+        task_id: str,
+        *,
+        delivered: bool,
+        error: str = "",
+        paths: Optional[Iterable[str]] = None,
+    ) -> int:
+        """Mark records produced by a task after the outbound send finishes.
+
+        Generation and transport are separate lifecycle stages.  Records are
+        written as soon as the provider returns, while chat delivery happens
+        afterwards; this small update keeps the monitor honest when delivery
+        succeeds or fails without rewriting media sidecars.
+        """
+        tid = str(task_id or "").strip()
+        if not tid:
+            return 0
+        safe_error = redact_sensitive_text(str(error or ""))[:800]
+        path_filter = set()
+        for raw_path in paths or ():
+            text = str(raw_path or "").strip()
+            if not text:
+                continue
+            try:
+                path_filter.add(
+                    self._cache_relative_path(text)
+                    if os.path.isabs(text)
+                    else os.path.normpath(text)
+                )
+            except Exception:
+                path_filter.add(text)
+        changed = 0
+        records_lock = getattr(self, "_records_lock", None)
+        records = getattr(self, "_records", None)
+        if records_lock is None or not isinstance(records, list):
+            return 0
+        with records_lock:
+            matches = [
+                record
+                for record in self._records
+                if isinstance(record, dict)
+                and str(record.get("task_id") or "").strip() == tid
+                and (
+                    not path_filter
+                    or bool(
+                        path_filter.intersection(
+                            {
+                                str(item).strip()
+                                for key in ("generated_image_paths", "generated_video_paths")
+                                for item in (record.get(key) if isinstance(record.get(key), list) else [])
+                                if str(item).strip()
+                            }
+                        )
+                    )
+                )
+            ]
+            if not matches:
+                return 0
+            for record in matches:
+                previous_delivery_error = str(record.get("delivery_error") or "")
+                record["generation_success"] = True
+                record["delivery_success"] = bool(delivered)
+                record["delivery_failed"] = not delivered
+                if delivered:
+                    if record.get("status") == "delivery_failed":
+                        record["status"] = "succeeded" if record.get("success") else "failed"
+                    record.pop("delivery_error", None)
+                    if previous_delivery_error and record.get("error") == previous_delivery_error:
+                        record["error"] = ""
+                else:
+                    record["status"] = "delivery_failed"
+                    record["success"] = False
+                    if safe_error:
+                        record["delivery_error"] = safe_error
+                        # Surface transport failures in list views as well as
+                        # the detail-only delivery_error field.
+                        record["error"] = safe_error
+                response = record.get("response_data")
+                if isinstance(response, dict):
+                    previous_response_error = str(response.get("delivery_error") or "")
+                    response["generation_success"] = True
+                    response["delivery_success"] = bool(delivered)
+                    response["delivery_failed"] = not delivered
+                    if safe_error and not delivered:
+                        response["delivery_error"] = safe_error
+                        response["error"] = safe_error
+                    elif delivered and previous_response_error and response.get("error") == previous_response_error:
+                        response["error"] = ""
+                    response["status"] = record.get("status")
+                changed += 1
+            self._persist_records()
+        return changed
 
     def get_recent_records(self, *, summary: bool = False) -> List[Dict[str, Any]]:
         with self._records_lock:
@@ -348,6 +574,41 @@ class GenerationStoreMixin:
         """Backfill failure fields for monitor without rewriting disk."""
         if not isinstance(record, dict):
             return record
+        # Historical rows may predate the explicit route fields. Infer them
+        # for web consumers without rewriting the stored record.
+        request_data = record.get("request_data") if isinstance(record.get("request_data"), Mapping) else {}
+        channel = str(record.get("channel") or request_data.get("channel") or "").strip()
+        model = str(record.get("model") or request_data.get("model") or "").strip()
+        attempts_for_route = record.get("attempts") if isinstance(record.get("attempts"), list) else []
+        response_for_route = record.get("response_data")
+        if not attempts_for_route and isinstance(response_for_route, Mapping):
+            attempts_for_route = response_for_route.get("attempts") if isinstance(response_for_route.get("attempts"), list) else []
+        for attempt in reversed(attempts_for_route):
+            if not isinstance(attempt, Mapping):
+                continue
+            if attempt.get("success") or not channel or not model:
+                channel = channel or str(attempt.get("channel") or "").strip()
+                model = model or str(attempt.get("model") or "").strip()
+            if channel and model and attempt.get("success"):
+                break
+        if (not channel or not model) and record.get("used_model"):
+            label_channel, separator, label_model = str(record.get("used_model") or "").partition("/")
+            if separator:
+                channel = channel or label_channel.strip()
+                model = model or label_model.strip()
+            else:
+                model = model or str(record.get("used_model") or "").strip()
+        if channel:
+            record["channel"] = channel
+        if model:
+            record["model"] = model
+        if isinstance(request_data, Mapping) and (channel or model):
+            request_copy = dict(request_data)
+            if channel:
+                request_copy.setdefault("channel", channel)
+            if model:
+                request_copy.setdefault("model", model)
+            record["request_data"] = request_copy
         try:
             from ..core.error_classify import summarize_generation_failures
 
@@ -764,15 +1025,22 @@ class GenerationStoreMixin:
         return paths
 
     def _cache_size_bytes(self) -> int:
+        total, _ = self._cache_stats()
+        return total
+
+    def _cache_stats(self) -> Tuple[int, int]:
+        """Return total bytes and regular-file count for the unified media cache."""
         total = 0
+        count = 0
         for root, _, files in os.walk(self.generated_dir):
             for name in files:
                 path = os.path.join(root, name)
                 try:
                     total += os.path.getsize(path)
+                    count += 1
                 except OSError:
                     pass
-        return total
+        return total, count
 
     def _asset_protected_cache_paths(self) -> List[str]:
         """Keep media referenced by pinned/favorite assets during cache GC."""
@@ -784,55 +1052,101 @@ class GenerationStoreMixin:
             ]
         return collect_record_cache_paths(protected_records)
 
-    def _cleanup_image_cache_if_needed(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
-        limit = max(10, int(self.config.image_cache_limit_mb or 100)) * 1024 * 1024
-        total = self._cache_size_bytes()
-        deleted: List[str] = []
-        if total <= limit:
-            return {"limit_bytes": limit, "total_bytes": total, "deleted": deleted}
+    def _cache_cleanup_plan(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+        """Build the shared count-and-size cleanup plan without deleting files."""
+        limit_bytes = max(10, int(getattr(self.config, "image_cache_limit_mb", 200) or 200)) * 1024 * 1024
+        limit_count = max(10, int(getattr(self.config, "image_cache_limit_count", 100) or 100))
+        total_bytes, total_count = self._cache_stats()
         with self._records_lock:
             referenced_paths = collect_record_cache_paths(self._records)
-        protected = list(protected_paths or []) + self._asset_protected_cache_paths()
+        # Existing records must stay viewable and retryable. Automatic cleanup
+        # only removes stale files that no retained record still references.
+        protected = [
+            *list(protected_paths or []),
+            *referenced_paths,
+            *self._asset_protected_cache_paths(),
+        ]
         candidates = collect_cache_cleanup_candidates(self.generated_dir, protected, referenced_paths)
+        planned: List[Dict[str, Any]] = []
+        remaining_bytes = total_bytes
+        remaining_count = total_count
         for path in candidates:
+            if remaining_bytes <= limit_bytes and remaining_count <= limit_count:
+                break
             try:
                 size = os.path.getsize(path)
-                os.remove(path)
-                deleted.append(self._cache_relative_path(path))
-                total = max(0, total - size)
             except OSError:
-                pass
-            if total <= limit:
-                break
-        return {"limit_bytes": limit, "total_bytes": total, "deleted": deleted}
+                continue
+            planned.append({"path": self._cache_relative_path(path), "size_bytes": size})
+            remaining_bytes = max(0, remaining_bytes - size)
+            remaining_count = max(0, remaining_count - 1)
+        # The preview token lets the UI confirm the exact plan it showed to
+        # the user.  It contains only relative paths, sizes and limits; no
+        # prompt or other sensitive record data is exposed.
+        token_payload = {
+            "limit_bytes": limit_bytes,
+            "limit_count": limit_count,
+            "total_bytes": total_bytes,
+            "total_count": total_count,
+            "would_delete": planned,
+        }
+        plan_token = hashlib.sha256(
+            json.dumps(token_payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:32]
+        return {
+            "limit_bytes": limit_bytes,
+            "limit_count": limit_count,
+            "total_bytes": total_bytes,
+            "total_count": total_count,
+            "remaining_bytes": remaining_bytes,
+            "remaining_count": remaining_count,
+            "would_delete_bytes": total_bytes - remaining_bytes,
+            "would_delete_count": total_count - remaining_count,
+            "would_delete": planned,
+            "plan_token": plan_token,
+        }
+
+    def _cleanup_image_cache_if_needed(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+        plan = self._cache_cleanup_plan(protected_paths)
+        deleted: List[str] = []
+        for item in plan["would_delete"]:
+            rel_path = str(item.get("path") or "")
+            try:
+                os.remove(self._cache_absolute_path(rel_path))
+                deleted.append(rel_path)
+            except (OSError, ValueError):
+                continue
+        total_bytes, total_count = self._cache_stats()
+        return {
+            "limit_bytes": plan["limit_bytes"],
+            "limit_count": plan["limit_count"],
+            "initial_total_bytes": plan["total_bytes"],
+            "initial_total_count": plan["total_count"],
+            "total_bytes": total_bytes,
+            "total_count": total_count,
+            "deleted": deleted,
+        }
 
     def get_cache_cleanup_preview(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
         """Return a dry-run cache cleanup plan without deleting files."""
-        limit = max(10, int(self.config.image_cache_limit_mb or 100)) * 1024 * 1024
-        total = self._cache_size_bytes()
-        with self._records_lock:
-            referenced_paths = collect_record_cache_paths(self._records)
-        protected = list(protected_paths or []) + self._asset_protected_cache_paths()
-        candidates = collect_cache_cleanup_candidates(self.generated_dir, protected, referenced_paths)
-        planned: List[Dict[str, Any]] = []
-        remaining = total
-        if total > limit:
-            for path in candidates:
-                try:
-                    size = os.path.getsize(path)
-                except OSError:
-                    continue
-                planned.append({"path": self._cache_relative_path(path), "size_bytes": size})
-                remaining = max(0, remaining - size)
-                if remaining <= limit:
-                    break
-        return {
-            "limit_bytes": limit,
-            "total_bytes": total,
-            "would_delete_bytes": total - remaining,
-            "remaining_bytes": remaining,
-            "would_delete": planned,
-        }
+        return self._cache_cleanup_plan(protected_paths)
+
+    def cleanup_image_cache_from_web(self, *, confirm: bool = False, plan_token: str = "") -> Dict[str, Any]:
+        """Preview or execute the current orphan-cache cleanup plan.
+
+        Manual cleanup is deliberately limited to the same protected,
+        count/size-aware candidates used by automatic GC.  A confirmation
+        token prevents a stale UI preview from silently deleting a different
+        set of files after the cache changed.
+        """
+        plan = self._cache_cleanup_plan()
+        if not confirm:
+            return {"requires_confirmation": bool(plan.get("would_delete")), "preview": plan}
+        token = str(plan_token or "").strip()
+        if plan.get("would_delete") and token != str(plan.get("plan_token") or ""):
+            raise ValueError("缓存内容已变化，请重新预览后再确认清理")
+        result = self._cleanup_image_cache_if_needed()
+        return {"confirmed": True, "preview": plan, "result": result}
 
     def clear_channel_health(self, channel: str = "") -> Dict[str, Any]:
         with self._channel_health_lock:
@@ -843,11 +1157,81 @@ class GenerationStoreMixin:
             return self.get_channel_health()
 
     def get_channel_health(self) -> Dict[str, Any]:
+        now = time.time()
         with self._channel_health_lock:
-            return {
-                name: dict(state)
-                for name, state in self._channel_health.items()
-            }
+            result: Dict[str, Any] = {}
+            for name, raw_state in self._channel_health.items():
+                state = dict(raw_state)
+                attempts = max(0, int(state.get("attempts") or 0))
+                successes = max(0, int(state.get("successes") or 0))
+                elapsed = max(0.0, float(state.get("total_elapsed_seconds") or 0))
+                cooldown_until = max(0.0, float(state.get("cooldown_until") or 0))
+                remaining = max(0, int(round(cooldown_until - now)))
+                state["success_rate"] = round(successes / attempts, 4) if attempts else None
+                state["average_elapsed_seconds"] = round(elapsed / attempts, 2) if attempts else 0.0
+                state["cooling_down"] = remaining > 0
+                state["cooldown_remaining_seconds"] = remaining
+                result[name] = state
+            return result
+
+    def _select_healthy_generation_targets(self, targets: Iterable[Any]) -> Tuple[List[Any], List[Dict[str, Any]]]:
+        """Skip temporarily unhealthy channels while preserving a no-dead-end fallback."""
+        items = list(targets or [])
+        if not items:
+            return [], []
+        now = time.time()
+        lock = getattr(self, "_channel_health_lock", None)
+        health = getattr(self, "_channel_health", {})
+        if lock is None or not isinstance(health, dict):
+            states: Dict[str, Dict[str, Any]] = {}
+        else:
+            with lock:
+                states = {name: dict(state) for name, state in health.items()}
+
+        available: List[Any] = []
+        cooling: List[Tuple[int, Any, float]] = []
+        for index, target in enumerate(items):
+            channel = str(getattr(target, "channel_name", "") or "").strip()
+            cooldown_until = float((states.get(channel) or {}).get("cooldown_until") or 0)
+            if channel and cooldown_until > now:
+                cooling.append((index, target, cooldown_until))
+            else:
+                available.append(target)
+
+        selected = available
+        if not selected and cooling:
+            # All channels are cooling down. Keep the channel that recovers
+            # first so a transient failure never makes generation unavailable.
+            _, earliest_target, _ = min(cooling, key=lambda item: (item[2], item[0]))
+            earliest_channel = str(getattr(earliest_target, "channel_name", "") or "").strip()
+            selected = [
+                target
+                for _, target, _ in cooling
+                if str(getattr(target, "channel_name", "") or "").strip() == earliest_channel
+            ]
+
+        selected_ids = {id(target) for target in selected}
+        skipped: List[Dict[str, Any]] = []
+        for _, target, cooldown_until in cooling:
+            if id(target) in selected_ids:
+                continue
+            remaining = max(1, int(round(cooldown_until - now)))
+            label = redact_sensitive_text(str(getattr(target, "label", "") or ""))
+            skipped.append(
+                {
+                    "channel": redact_sensitive_text(str(getattr(target, "channel_name", "") or "")),
+                    "model": redact_sensitive_text(str(getattr(target, "model", "") or "")),
+                    "label": label,
+                    "success": False,
+                    "error": f"渠道冷却中，已跳过（约 {remaining}s 后恢复）",
+                    "error_user_message": f"渠道冷却中，已跳过（约 {remaining}s 后恢复）",
+                    "error_category": "cooldown",
+                    "retryable": True,
+                    "retry_action": "next_model",
+                    "cooldown_remaining_seconds": remaining,
+                }
+            )
+        return selected, skipped
 
     def _record_channel_health(self, attempts: Iterable[Mapping[str, Any]]) -> None:
         now = time.time()
@@ -857,16 +1241,40 @@ class GenerationStoreMixin:
                 continue
             category = str(attempt.get("error_category") or "").strip()
             success = bool(attempt.get("success"))
-            if not success and category not in {"network", "server", "timeout_create", "timeout_poll"}:
-                continue
             with self._channel_health_lock:
-                state = self._channel_health.setdefault(channel, {"consecutive_failures": 0, "last_error_category": ""})
+                state = self._channel_health.setdefault(
+                    channel,
+                    {
+                        "consecutive_failures": 0,
+                        "last_error_category": "",
+                        "attempts": 0,
+                        "successes": 0,
+                        "failures": 0,
+                        "total_elapsed_seconds": 0.0,
+                    },
+                )
+                state["attempts"] = int(state.get("attempts") or 0) + 1
+                try:
+                    state["total_elapsed_seconds"] = float(state.get("total_elapsed_seconds") or 0) + max(
+                        0.0, float(attempt.get("elapsed_seconds") or 0)
+                    )
+                except (TypeError, ValueError):
+                    pass
                 if success:
+                    state["successes"] = int(state.get("successes") or 0) + 1
                     state["consecutive_failures"] = 0
                     state["last_success_ts"] = now
+                    state.pop("cooldown_until", None)
                     continue
-                if category not in {"network", "server", "timeout_create", "timeout_poll"}:
+                state["failures"] = int(state.get("failures") or 0) + 1
+                state["last_error_category"] = category
+                state["last_error"] = redact_sensitive_text(
+                    str(attempt.get("error_user_message") or attempt.get("error") or "")
+                )[:240]
+                state["last_error_ts"] = now
+                if category not in CHANNEL_TRANSIENT_ERROR_CATEGORIES:
+                    state["consecutive_failures"] = 0
                     continue
                 state["consecutive_failures"] = int(state.get("consecutive_failures") or 0) + 1
-                state["last_error_category"] = category
-                state["last_error_ts"] = now
+                if state["consecutive_failures"] >= CHANNEL_COOLDOWN_FAILURE_THRESHOLD:
+                    state["cooldown_until"] = now + CHANNEL_COOLDOWN_SECONDS

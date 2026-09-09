@@ -29,6 +29,87 @@ from ..core.utils import load_json_file, redact_sensitive_data, save_json_file
 WEB_STARTUP_CONFIG_KEYS = ("web", "webEnable", "webHost", "webPort", "webToken")
 DEFAULT_WEB_TOKEN = str(DEFAULT_CONFIG["web"].get("token") or "changeme").strip().lower()
 
+# Credentials are never sent to the browser.  The dashboard still submits the
+# complete channel list when saving, so these markers must round-trip without
+# replacing an existing secret.  Keep the set deliberately small and explicit
+# to avoid treating a real (albeit short) key as a placeholder.
+WEB_SECRET_PLACEHOLDERS = frozenset({"", "******", "[REDACTED]", "«redacted»"})
+
+
+def _is_web_secret_placeholder(value: Any) -> bool:
+    return str(value or "").strip() in WEB_SECRET_PLACEHOLDERS
+
+
+def _mask_web_channel_credentials(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a dashboard-safe config copy with channel API keys masked."""
+    safe = copy.deepcopy(config if isinstance(config, dict) else {})
+    for key in ("image_channels", "audit_channels", "video_channels"):
+        rows = safe.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if row.get("api_key"):
+                row["api_key"] = "******"
+            if row.get("api_keys"):
+                # Keep the field shape so older/custom UIs do not mistake it
+                # for a missing value, but never reveal key count or content.
+                row["api_keys"] = ["******"]
+    proxies = safe.get("proxies")
+    if isinstance(proxies, list):
+        for row in proxies:
+            if isinstance(row, dict) and row.get("password"):
+                row["password"] = "******"
+    return safe
+
+
+def _restore_web_channel_credentials(
+    patch: Dict[str, Any],
+    current: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Restore existing channel keys when the dashboard sends mask markers."""
+    result = copy.deepcopy(patch if isinstance(patch, dict) else {})
+    current = current if isinstance(current, dict) else {}
+    for key in ("image_channels", "audit_channels", "video_channels"):
+        rows = result.get(key)
+        old_rows = current.get(key)
+        if not isinstance(rows, list) or not isinstance(old_rows, list):
+            continue
+        old_by_id = {}
+        for index, old in enumerate(old_rows):
+            if not isinstance(old, dict):
+                continue
+            identity = str(old.get("id") or old.get("name") or "").strip()
+            if identity:
+                old_by_id[identity] = old
+            old_by_id.setdefault(f"__index__:{index}", old)
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            identity = str(row.get("id") or row.get("name") or "").strip()
+            old = old_by_id.get(identity) or old_by_id.get(f"__index__:{index}")
+            if not old:
+                continue
+            incoming_key = row.get("api_key")
+            incoming_keys = row.get("api_keys")
+            if _is_web_secret_placeholder(incoming_key) and old.get("api_key"):
+                row["api_key"] = copy.deepcopy(old.get("api_key"))
+            masked_key_list = (
+                isinstance(incoming_keys, list)
+                and (not incoming_keys or all(_is_web_secret_placeholder(item) for item in incoming_keys))
+            ) or _is_web_secret_placeholder(incoming_keys)
+            if masked_key_list:
+                if _is_web_secret_placeholder(incoming_key) and old.get("api_keys"):
+                    # The browser sent the untouched masked form: preserve the
+                    # complete key rotation list.
+                    row["api_keys"] = copy.deepcopy(old.get("api_keys"))
+                else:
+                    # A newly typed api_key takes precedence over a stale
+                    # masked api_keys array emitted by the previous response.
+                    row.pop("api_keys", None)
+    return result
+
 
 class ConfigurationMixin:
     def _migrate_legacy_data_dir(self, plugin_data_dir: str) -> None:
@@ -208,7 +289,10 @@ class ConfigurationMixin:
             logger.error(f"[SelfieImage] Flask Web 启动失败: {exc}", exc_info=True)
 
     def get_config_for_web(self) -> Dict[str, Any]:
-        return self._strip_web_startup_config(self.raw_config)
+        # The browser only needs to know that a credential exists.  Returning
+        # the actual key here made a read-only dashboard session a credential
+        # exfiltration vector; save requests restore masked values below.
+        return _mask_web_channel_credentials(self._strip_web_startup_config(self.raw_config))
 
     def export_config_for_web(self) -> Dict[str, Any]:
         exported = redact_sensitive_data(self.get_config_for_web())
@@ -287,6 +371,7 @@ class ConfigurationMixin:
     def update_config_from_web(self, patch: Dict[str, Any]) -> Dict[str, Any]:
         with self._config_lock:
             patch = self._strip_web_startup_config(patch)
+            patch = _restore_web_channel_credentials(patch, self.raw_config)
             if isinstance(patch, dict) and isinstance(patch.get("proxies"), list):
                 # Keep existing proxy passwords when UI sends blank / masked values.
                 old_by_id = {

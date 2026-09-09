@@ -986,7 +986,7 @@ class StudioStore:
             last.update(
                 {
                     "task_id": task_id,
-                    "status": status if status in {"succeeded", "partial_success", "failed", "cancelled"} else ("succeeded" if success else "failed"),
+                    "status": status if status in {"succeeded", "partial_success", "failed", "delivery_failed", "cancelled"} else ("succeeded" if success else "failed"),
                     "finished_at": _now(),
                     "error": str(error or ""),
                     "result_paths": paths,

@@ -342,6 +342,52 @@ class FakeWebPlugin:
 
 
 class ConfigModelTests(unittest.TestCase):
+    def test_web_config_masks_channel_credentials_and_restores_markers(self) -> None:
+        from astrbot_plugin_selfie_image.features.config_manager import (
+            _mask_web_channel_credentials,
+            _restore_web_channel_credentials,
+        )
+
+        current = {
+            "image_channels": [
+                {
+                    "id": "main",
+                    "name": "main",
+                    "api_key": "key-one\nkey-two",
+                    "api_keys": ["key-one", "key-two"],
+                }
+            ],
+            "proxies": [{"id": "proxy", "password": "proxy-secret"}],
+        }
+        safe = _mask_web_channel_credentials(current)
+        self.assertEqual(safe["image_channels"][0]["api_key"], "******")
+        self.assertEqual(safe["image_channels"][0]["api_keys"], ["******"])
+        self.assertEqual(safe["proxies"][0]["password"], "******")
+        # Masking must not mutate the in-memory source config.
+        self.assertEqual(current["image_channels"][0]["api_key"], "key-one\nkey-two")
+
+        restored = _restore_web_channel_credentials(
+            {
+                "image_channels": [
+                    {"id": "main", "name": "renamed", "api_key": "******", "api_keys": ["******"]}
+                ]
+            },
+            current,
+        )
+        self.assertEqual(restored["image_channels"][0]["api_key"], "key-one\nkey-two")
+        self.assertEqual(restored["image_channels"][0]["api_keys"], ["key-one", "key-two"])
+
+        replaced = _restore_web_channel_credentials(
+            {
+                "image_channels": [
+                    {"id": "main", "api_key": "new-key", "api_keys": ["******"]}
+                ]
+            },
+            current,
+        )
+        self.assertEqual(replaced["image_channels"][0]["api_key"], "new-key")
+        self.assertNotIn("api_keys", replaced["image_channels"][0])
+
     def test_plugin_version_matches_metadata(self) -> None:
         from astrbot_plugin_selfie_image.core.constants import PLUGIN_VERSION
 
@@ -701,6 +747,22 @@ class ConfigModelTests(unittest.TestCase):
         )
         self.assertEqual(direct["status"], "partial_success")
 
+        delivery_failed = normalize_generation_result(
+            {
+                "success": False,
+                "files": ["a.png"],
+                "batch_total": 1,
+                "generation_success": True,
+                "delivery_success": False,
+                "delivery_failed": True,
+            },
+            1,
+        )
+        self.assertEqual(delivery_failed["status"], "delivery_failed")
+        self.assertTrue(delivery_failed["generation_success"])
+        self.assertFalse(delivery_failed["delivery_success"])
+        self.assertFalse(delivery_failed["success"])
+
     def test_task_detail_formats_partial_status_and_progress(self) -> None:
         from astrbot_plugin_selfie_image.tasks.task_views import format_task_detail_text
 
@@ -711,11 +773,66 @@ class ConfigModelTests(unittest.TestCase):
                 "requested_count": 3,
                 "completed_count": 2,
                 "progress_percent": 67,
+                "generation_stage_label": "生成/轮询视频结果",
                 "request_data": {"prompt": "测试"},
             }
         )
         self.assertIn("部分完成", text)
         self.assertIn("进度：2/3（67%）", text)
+        self.assertIn("生成阶段：生成/轮询视频结果", text)
+
+        text_with_prompts = format_task_detail_text(
+            {
+                "task_id": "web-studio-12345678-1",
+                "status": "succeeded",
+                "source": "studio-run",
+                "request_data": {
+                    "kind": "studio",
+                    "original_prompt": "白裙站在窗边",
+                    "request_prompt": "a woman in a white dress by the window",
+                },
+                "result": {
+                    "image_paths": ["generated/a.png"],
+                    "attempts": [{"label": "primary/gpt-image-2", "success": True, "elapsed_seconds": 1.2}],
+                },
+            }
+        )
+        self.assertIn("来源：创作画布", text_with_prompts)
+        self.assertIn("最终提示词：a woman in a white dress by the window", text_with_prompts)
+        self.assertIn("渠道尝试：#1 primary/gpt-image-2 成功 1.2s", text_with_prompts)
+
+    def test_task_history_view_formats_finished_and_media_specific_tasks(self) -> None:
+        from astrbot_plugin_selfie_image.tasks.task_views import format_task_list_text
+
+        rows = [
+            {
+                "task_id": "cmd-12345678-2",
+                "status": "succeeded",
+                "media_type": "video",
+                "request_data": {"kind": "video", "original_prompt": "镜头推进"},
+            },
+            {
+                "task_id": "cmd-12345678-1",
+                "status": "failed",
+                "media_type": "video",
+                "request_data": {"kind": "video", "original_prompt": "舞蹈"},
+            },
+        ]
+        text = format_task_list_text(rows, include_finished=True, media_type="video")
+        self.assertIn("最近的视频任务", text)
+        self.assertIn("完成/视频", text)
+        self.assertIn("失败/视频", text)
+        self.assertIn("查看详情：/视频任务 历史 编号或任务号", text)
+
+    def test_task_history_request_aliases(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        for value in ("历史", "最近", "完成", "记录", "history", "recent", " 历史！"):
+            self.assertTrue(SelfieImagePlugin._is_task_history_request(value), value)
+        self.assertFalse(SelfieImagePlugin._is_task_history_request("cmd-12345678-1"))
+        self.assertEqual(SelfieImagePlugin._parse_task_history_request("历史 12"), (True, 12))
+        self.assertEqual(SelfieImagePlugin._parse_task_history_request("recent: 3"), (True, 3))
+        self.assertEqual(SelfieImagePlugin._parse_task_history_request("历史 abc"), (False, None))
 
     def test_generation_metrics_aggregates_without_exposing_prompt(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
@@ -837,7 +954,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(migrated.raw["schema_version"], 2)
         self.assertEqual(migrated.image_max_concurrent_tasks, 3)
 
-    def test_channel_health_records_operational_failures_without_cooldown(self) -> None:
+    def test_channel_health_records_metrics_and_cools_down_transient_failures(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 
         plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
@@ -847,14 +964,44 @@ class ConfigModelTests(unittest.TestCase):
             {"channel": "x", "success": False, "error_category": "param"},
             {"channel": "x", "success": False, "error_category": "safety"},
         ])
-        self.assertEqual(plugin.get_channel_health(), {})
+        initial = plugin.get_channel_health()["x"]
+        self.assertEqual(initial["attempts"], 2)
+        self.assertEqual(initial["consecutive_failures"], 0)
+        self.assertFalse(initial["cooling_down"])
         plugin._record_channel_health([{"channel": "x", "success": False, "error_category": "server"}] * 3)
         health = plugin.get_channel_health()["x"]
         self.assertEqual(health["consecutive_failures"], 3)
-        self.assertNotIn("cooldown_until", health)
-        self.assertNotIn("cooldown_remaining", health)
+        self.assertEqual(health["attempts"], 5)
+        self.assertEqual(health["failures"], 5)
+        self.assertTrue(health["cooling_down"])
+        self.assertGreater(health["cooldown_remaining_seconds"], 0)
         plugin.clear_channel_health("x")
         self.assertNotIn("x", plugin.get_channel_health())
+
+    def test_channel_health_skips_cooling_channels_but_keeps_earliest_fallback(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin._channel_health_lock = threading.RLock()
+        plugin._channel_health = {
+            "bad": {"cooldown_until": time.time() + 50},
+            "also-bad": {"cooldown_until": time.time() + 30},
+        }
+        targets = [
+            ImageModelTarget("bad", "openai", "https://bad.test", "k", "m1", 30),
+            ImageModelTarget("good", "openai", "https://good.test", "k", "m2", 30),
+        ]
+        selected, skipped = plugin._select_healthy_generation_targets(targets)
+        self.assertEqual([item.channel_name for item in selected], ["good"])
+        self.assertEqual(skipped[0]["error_category"], "cooldown")
+
+        only_cooling = [
+            ImageModelTarget("bad", "openai", "https://bad.test", "k", "m1", 30),
+            ImageModelTarget("also-bad", "openai", "https://also.test", "k", "m2", 30),
+        ]
+        selected, skipped = plugin._select_healthy_generation_targets(only_cooling)
+        self.assertEqual([item.channel_name for item in selected], ["also-bad"])
+        self.assertEqual([item["channel"] for item in skipped], ["bad"])
 
     def test_request_fingerprint_is_stable_and_does_not_include_plain_prompt(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
@@ -1336,7 +1483,7 @@ class ConfigModelTests(unittest.TestCase):
             "success": False,
             "md5": "A" * 32,
             "prompt": "P" * 9000,
-            "original_prompt": "O" * 2000,
+            "original_prompt": "COS 【cos:hutao_dragon_path_zhichun】 【cos_pose:half_turn】 【cos_scene:studio】 【cos_view:selfie】",
             "request_prompt": "R" * 9000,
             "error": "boom",
             "request_data": {
@@ -1345,13 +1492,33 @@ class ConfigModelTests(unittest.TestCase):
                 "aspect_ratio": "1:1",
                 "resolution": "1K",
                 "reference_image_count": 1,
+                "raw_reference_image_count": 2,
+                "requested_count": 4,
+                "duration": 7,
+                "timeout_seconds": 300,
+                "size": "16:9",
                 "targets": ["m1"],
                 "request_image_paths": ["a.png"],
+                "request_prompt_en": "translated prompt",
+                "audit_prompt": "effective prompt for audit",
+                "image_to_text": {"enabled": True, "applied": True, "target_count": 1, "used_by_model": True, "error": ""},
+                "composition": {
+                    "strategy": "full_body",
+                    "prompt_hash": "abc123",
+                    "aspect_ratio": "1:1",
+                    "resolution": "1K",
+                },
             },
             "response_data": {
                 "success": False,
                 "stage": "generate",
                 "error": "e",
+                "status": "delivery_failed",
+                "generation_success": True,
+                "delivery_success": False,
+                "delivery_failed": True,
+                "delivery_error": "send failed",
+                "blocked_images_retained": True,
                 "attempts": [{"label": "m1", "success": False, "error": "x" * 2000}],
             },
             "attempts": [{"label": "m1", "success": False, "error": "x" * 2000, "error_category": "safety"}],
@@ -1361,6 +1528,21 @@ class ConfigModelTests(unittest.TestCase):
         self.assertNotIn("original_prompt", slim.get("request_data") or {})
         self.assertLessEqual(len(slim["attempts"][0]["error"]), 801)
         self.assertEqual(slim["md5"], "a" * 32)
+        self.assertEqual(slim["requested_count"], 4)
+        self.assertEqual(slim["duration"], 7)
+        self.assertEqual(slim["raw_reference_image_count"], 2)
+        self.assertEqual(slim["request_data"]["request_prompt_en"], "translated prompt")
+        self.assertEqual(slim["request_data"]["audit_prompt"], "effective prompt for audit")
+        self.assertTrue(slim["request_data"]["image_to_text"]["used_by_model"])
+        self.assertEqual(slim["request_data"]["composition"]["strategy"], "full_body")
+        self.assertEqual(slim["response_data"]["status"], "delivery_failed")
+        self.assertFalse(slim["response_data"]["delivery_success"])
+        self.assertTrue(slim["response_data"]["blocked_images_retained"])
+        self.assertEqual(slim["cos"], "hutao_dragon_path_zhichun")
+        self.assertEqual(slim["cos_pose"], "half_turn")
+        self.assertEqual(slim["cos_scene"], "studio")
+        self.assertEqual(slim["cos_view"], "selfie")
+        self.assertEqual(slim["final_prompt"], "translated prompt")
         row = summarize_record_for_list(slim)
         self.assertTrue(row.get("has_detail"))
         self.assertEqual(row.get("failed_attempt_count"), 1)
@@ -1467,6 +1649,39 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("token=[REDACTED]", slim["attempts"][0]["error_user_message"])
         self.assertIn("token=[REDACTED]", slim["error"])
         self.assertEqual(slim["headers"]["Authorization"], "[REDACTED]")
+
+    def test_generation_record_exposes_explicit_channel_and_model(self) -> None:
+        from astrbot_plugin_selfie_image.core.utils import compact_generation_record, summarize_record_for_list
+
+        record = compact_generation_record(
+            {
+                "success": True,
+                "used_model": "relay/image-model-v2",
+                "request_data": {"original_prompt": "portrait"},
+                "attempts": [
+                    {
+                        "channel": "primary",
+                        "model": "image-model-v1",
+                        "label": "primary/image-model-v1",
+                        "success": False,
+                    },
+                    {
+                        "channel": "relay",
+                        "model": "image-model-v2",
+                        "label": "relay/image-model-v2",
+                        "success": True,
+                    },
+                ],
+            }
+        )
+        self.assertEqual(record["channel"], "relay")
+        self.assertEqual(record["model"], "image-model-v2")
+        self.assertEqual(record["request_data"]["channel"], "relay")
+        self.assertEqual(record["request_data"]["model"], "image-model-v2")
+        self.assertEqual(record["attempts"][1]["channel"], "relay")
+        row = summarize_record_for_list(record)
+        self.assertEqual(row["channel"], "relay")
+        self.assertEqual(row["model"], "image-model-v2")
 
     def test_record_task_splits_multi_image_rows(self) -> None:
         from astrbot_plugin_selfie_image.core.utils import split_generation_record_images
@@ -3912,8 +4127,51 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()["data"]
         self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["cache_file_count"], 0)
+        self.assertEqual(data["cache_limit_count"], 100)
+        self.assertEqual(data["cache_cleanup_preview"], {})
         for key in ("auth", "host", "port", "token"):
             self.assertNotIn(key, data)
+
+    def test_cache_cleanup_route_requires_confirmation_and_forwards_plan_token(self) -> None:
+        class CachePlugin(FakeWebPlugin):
+            def __init__(self, token: str) -> None:
+                super().__init__(token)
+                self.cleanup_calls = []
+
+            def cleanup_image_cache_from_web(self, **kwargs):
+                self.cleanup_calls.append(kwargs)
+                if not kwargs.get("confirm"):
+                    return {
+                        "requires_confirmation": True,
+                        "preview": {"would_delete_count": 1, "would_delete_bytes": 10, "plan_token": "plan-1"},
+                    }
+                if kwargs.get("plan_token") != "plan-1":
+                    raise ValueError("缓存内容已变化，请重新预览后再确认清理")
+                return {"confirmed": True, "result": {"deleted": ["orphan.png"]}}
+
+        plugin = CachePlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+        self.assertEqual(client.post("/api/cache/cleanup", json={}, headers=headers).status_code, 200)
+        self.assertEqual(plugin.cleanup_calls[-1], {"confirm": False, "plan_token": ""})
+
+        response = client.post(
+            "/api/cache/cleanup",
+            json={"confirm": True, "plan_token": "plan-1"},
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(plugin.cleanup_calls[-1], {"confirm": True, "plan_token": "plan-1"})
+        self.assertEqual(response.get_json()["data"]["result"]["deleted"], ["orphan.png"])
+
+        conflict = client.post(
+            "/api/cache/cleanup",
+            json={"confirm": True, "plan_token": "stale"},
+            headers=headers,
+        )
+        self.assertEqual(conflict.status_code, 409)
+        self.assertIn("重新预览", conflict.get_json()["error"])
 
     def test_metrics_api_requires_token_and_returns_redacted_metrics(self) -> None:
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
@@ -3985,6 +4243,92 @@ class WebApiTests(unittest.TestCase):
 
         bad_media = client.get("/api/tasks", query_string={"media_type": "audio"}, headers=headers)
         self.assertEqual(bad_media.status_code, 400)
+
+    def test_tasks_api_accepts_history_filters_and_validates_status_and_dates(self) -> None:
+        class QueuePlugin(FakeWebPlugin):
+            def list_web_tasks(self, **kwargs):
+                self.task_query = kwargs
+                return {"summary": {}, "tasks": []}
+
+        plugin = QueuePlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+        response = client.get(
+            "/api/tasks",
+            query_string={
+                "include_finished": "true",
+                "source": "LLM",
+                "status": "failed,delivery_failed",
+                "model": "vision",
+                "q": "portrait",
+                "start_date": "2026-09-01",
+                "end_date": "2026-09-09",
+            },
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(plugin.task_query["source"], "LLM")
+        self.assertEqual(plugin.task_query["status"], "failed,delivery_failed")
+        self.assertEqual(plugin.task_query["model"], "vision")
+        self.assertEqual(plugin.task_query["keyword"], "portrait")
+        self.assertLess(plugin.task_query["start_ts"], plugin.task_query["end_ts"])
+
+        bad_status = client.get("/api/tasks?status=unknown", headers=headers)
+        self.assertEqual(bad_status.status_code, 400)
+        bad_date = client.get("/api/tasks?start_date=not-a-date", headers=headers)
+        self.assertEqual(bad_date.status_code, 400)
+
+    def test_tasks_batch_routes_require_valid_ids_and_forward_operations(self) -> None:
+        class BatchPlugin(FakeWebPlugin):
+            def export_web_tasks(self, ids=None):
+                self.export_ids = ids
+                return {"count": 1, "tasks": []}
+
+            def delete_web_tasks(self, ids):
+                self.delete_ids = ids
+                return {"deleted_count": len(ids), "deleted": ids}
+
+            def retry_web_tasks(self, ids, feedback=""):
+                self.retry_args = (ids, feedback)
+                return {"submitted_count": len(ids)}
+
+        plugin = BatchPlugin("secret")
+        client = self.make_client(plugin, host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+        exported = client.get("/api/tasks/export?ids=web-12345678-1", headers=headers)
+        self.assertEqual(exported.status_code, 200)
+        self.assertEqual(plugin.export_ids, ["web-12345678-1"])
+        deleted = client.post("/api/tasks/delete", json={"ids": ["web-12345678-1"]}, headers=headers)
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(plugin.delete_ids, ["web-12345678-1"])
+        retried = client.post(
+            "/api/tasks/retry",
+            json={"ids": ["web-12345678-1"], "feedback": "more light"},
+            headers=headers,
+        )
+        self.assertEqual(retried.status_code, 200)
+        self.assertEqual(plugin.retry_args, (["web-12345678-1"], "more light"))
+        invalid = client.post("/api/tasks/delete", json={"ids": ["not-a-task"]}, headers=headers)
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_task_detail_api_is_registered_and_uses_redacted_detail(self) -> None:
+        class DetailPlugin(FakeWebPlugin):
+            def get_web_task_detail(self, task_id):
+                return {
+                    "task_id": task_id,
+                    "status": "succeeded",
+                    "original_prompt": "safe prompt",
+                    "secret": "should not be returned",
+                }
+
+        client = self.make_client(DetailPlugin("secret"), host="0.0.0.0")
+        headers = {"X-Selfie-Image-Token": "secret"}
+        response = client.get("/api/tasks/web-12345678-1", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()["data"]
+        self.assertEqual(payload["task_id"], "web-12345678-1")
+        self.assertNotIn("should not be returned", json.dumps(payload, ensure_ascii=False))
+        self.assertEqual(client.get("/api/tasks/invalid!", headers=headers).status_code, 400)
 
     def test_cos_look_sets_api_uses_plugin_pool(self) -> None:
         client = self.make_client(FakeWebPlugin(""))
@@ -5034,6 +5378,84 @@ class SessionModelAndTaskTests(unittest.TestCase):
             ],
         )
 
+    def test_image_generation_audit_rejection_records_without_unbound_result(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._save_reference_images_to_cache = lambda _refs: []
+        plugin._source_context = lambda *_args, **_kwargs: {}
+        plugin._cleanup_image_cache_if_needed = lambda _paths: {}
+        plugin._composition_metadata = lambda *_args, **_kwargs: {}
+        plugin._record_task = lambda record: setattr(plugin, "audit_record", record)
+        plugin._semaphore = asyncio.Semaphore(1)
+
+        async def audit(*_args, **_kwargs):
+            return False, "blocked"
+
+        plugin._audit_prompt = audit
+        plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+
+        result = asyncio.run(
+            plugin._run_image_generation(
+                "blocked prompt",
+                "1:1",
+                "1K",
+                [],
+                targets=[make_target()],
+                event=object(),
+            )
+        )
+
+        self.assertFalse(result["success"])
+        self.assertIn("审核未通过", result["error"])
+        self.assertEqual(plugin.audit_record["retry_count"], 0)
+        self.assertFalse(plugin.audit_record["generation_success"])
+
+    def test_image_generation_publishes_intermediate_stages(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._save_reference_images_to_cache = lambda _refs: []
+        plugin._source_context = lambda *_args, **_kwargs: {}
+        plugin._cleanup_image_cache_if_needed = lambda _paths: {}
+        plugin._composition_metadata = lambda *_args, **_kwargs: {}
+        plugin._record_task = lambda _record: None
+        plugin._semaphore = asyncio.Semaphore(1)
+        stages = []
+        plugin._set_web_image_task = lambda _task_id, **fields: stages.append(
+            (fields.get("generation_stage"), fields.get("generation_stage_label"))
+        )
+
+        async def audit(*_args, **_kwargs):
+            return True, ""
+
+        async def fake_generate(*_args, **_kwargs):
+            return ImageGenerateResult(error="test stop", attempts=[])
+
+        plugin._audit_prompt = audit
+        plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        with patch.object(plugin_main, "generate_image_with_fallback", side_effect=fake_generate):
+            result = asyncio.run(
+                plugin._run_image_generation(
+                    "测试阶段",
+                    "1:1",
+                    "1K",
+                    [],
+                    targets=[make_target()],
+                    event=object(),
+                    record_context={"task_id": "web-stage-image"},
+                )
+            )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(
+            stages,
+            [
+                ("preflight", "准备图片请求"),
+                ("prompt_translation", "处理图片提示词"),
+                ("queue", "等待图片并发槽位"),
+                ("generating", "生成图片结果"),
+            ],
+        )
+
     def test_cancel_image_task_session_isolation(self) -> None:
         plugin = self._plugin_stub()
         plugin._web_task_timestamp = lambda: "t"
@@ -5066,6 +5488,112 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual(plugin._web_tasks["cmd-2"]["status"], "cancelled")
         listed = plugin._list_image_tasks_for_session("group:b", include_finished=False)
         self.assertEqual(listed, [])
+
+    def test_cancel_image_task_does_not_overwrite_delivery_failure(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_task_timestamp = lambda: "t"
+        plugin._web_tasks["cmd-delivery-failed"] = {
+            "task_id": "cmd-delivery-failed",
+            "status": "delivery_failed",
+            "success": False,
+            "owner_session": "group:a",
+            "source": "command-draw",
+            "error": "发送失败",
+            "created_ts": 1.0,
+            "updated_ts": 1.0,
+            "cancel_requested": False,
+        }
+
+        message = plugin.cancel_image_task("cmd-delivery-failed", session_key="group:a")
+
+        self.assertIn("已经结束", message)
+        self.assertEqual(plugin._web_tasks["cmd-delivery-failed"]["status"], "delivery_failed")
+        self.assertFalse(plugin._web_tasks["cmd-delivery-failed"]["cancel_requested"])
+
+    def test_studio_task_detail_exposes_prompt_transform_and_source_label(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_tasks["web-studio-12345678-1"] = {
+            "task_id": "web-studio-12345678-1",
+            "status": "succeeded",
+            "success": True,
+            "source": "studio-run",
+            "owner_session": "web",
+            "created_ts": 1.0,
+            "updated_ts": 2.0,
+            "request_data": {
+                "kind": "studio",
+                "original_prompt": "白裙站在窗边",
+                "request_prompt": "a woman in a white dress by the window",
+            },
+            "result": {
+                "success": True,
+                "original_prompt": "白裙站在窗边",
+                "final_prompt": "a woman in a white dress by the window",
+                "attempts": [{"label": "primary/gpt-image-2", "success": True, "elapsed_seconds": 1.2}],
+            },
+        }
+
+        detail = plugin.get_web_task_detail("web-studio-12345678-1")
+        self.assertEqual(detail["source_label"], "创作画布")
+        self.assertEqual(detail["original_prompt"], "白裙站在窗边")
+        self.assertEqual(detail["final_prompt"], "a woman in a white dress by the window")
+        self.assertEqual(detail["attempts"][0]["model"], "primary/gpt-image-2")
+
+    def test_web_image_count_uses_configured_limit(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config = AICatConfig.from_dict({"image": {"max_batch_count": 3}})
+
+        self.assertEqual(plugin._normalize_web_image_count(0), 1)
+        self.assertEqual(plugin._normalize_web_image_count(2), 2)
+        self.assertEqual(plugin._normalize_web_image_count(99), 3)
+
+    def test_web_image_batch_runs_each_requested_shot_and_reports_progress(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config = AICatConfig.from_dict({"image": {"max_batch_count": 3}})
+        plugin._validate_web_test_selection = lambda _payload: None
+        plugin._find_image_target = lambda _channel, _model: make_target()
+        plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+        plugin._record_task = lambda _record: None
+        plugin._task_cancel_requested = lambda _task_id: False
+        progress = []
+        plugin._set_web_image_task = lambda _task_id, **fields: progress.append(dict(fields))
+        calls = []
+
+        async def fake_generation(**kwargs):
+            calls.append(kwargs)
+            index = len(calls)
+            return {
+                "success": True,
+                "image_paths": [f"generated/{index}.png"],
+                "request_data": {},
+                "response_data": {},
+                "attempts": [{"label": "test", "success": True}],
+                "elapsed_seconds": 0.1,
+                "used_model": "test-channel/agnes-image-2.1-flash",
+                "original_prompt": kwargs["original_prompt"],
+                "final_prompt": kwargs["prompt"],
+            }
+
+        plugin._run_image_generation = fake_generation
+        result = asyncio.run(
+            plugin.web_test_image(
+                {
+                    "_task_id": "web-12345678-1",
+                    "channel": "test-channel",
+                    "model": "agnes-image-2.1-flash",
+                    "prompt": "测试批量",
+                    "count": 3,
+                }
+            )
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(result["requested_count"], 3)
+        self.assertEqual(result["completed_count"], 3)
+        self.assertEqual(result["succeeded_count"], 3)
+        self.assertEqual(len(result["generated_image_paths"]), 3)
+        self.assertEqual(progress[-1]["progress_percent"], 100)
 
     def test_llm_tool_tasks_are_visible_while_running(self) -> None:
         """LLM tool calls must register the same live tasks as slash commands."""
@@ -5190,6 +5718,56 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual(plugin._web_tasks["cmd-12345678-1"]["status"], "cancelled")
         self.assertFalse(plugin._web_tasks["cmd-12345678-1"]["success"])
         self.assertEqual(plugin._web_tasks["cmd-12345678-1"]["requested_count"], 3)
+
+    def test_command_task_waits_for_record_commits_before_terminal_state(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_tasks["cmd-record-order"] = {
+            "task_id": "cmd-record-order",
+            "status": "queued",
+            "success": None,
+            "cancel_requested": False,
+            "requested_count": 1,
+        }
+        plugin._task_cancel_requested = lambda _task_id: False
+        plugin._release_quota_reservation = lambda _task_id: None
+        events = []
+
+        async def wait_commits(_task_id):
+            events.append("wait")
+
+        plugin._wait_for_record_commits = wait_commits
+        terminal_stages = []
+
+        def set_task(_task_id, **fields):
+            events.append(("state", fields.get("status")))
+            if fields.get("generation_stage"):
+                terminal_stages.append(
+                    (fields.get("generation_stage"), fields.get("generation_stage_label"))
+                )
+
+        plugin._set_web_image_task = set_task
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        async def runner(_task_id):
+            return {
+                "success": True,
+                "files": ["generated.png"],
+                "generation_success": True,
+                "delivery_success": True,
+                "requested_count": 1,
+            }
+
+        asyncio.run(plugin._run_command_image_task("cmd-record-order", Event(), runner))
+        self.assertEqual(events[0], ("state", "running"))
+        self.assertIn("wait", events)
+        self.assertLess(events.index("wait"), events.index(("state", "succeeded")))
+        self.assertEqual(terminal_stages[-1], ("complete", "已完成"))
 
 
 class ReferenceCollectorTests(unittest.TestCase):
@@ -5552,6 +6130,16 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("quality.record_success_rate", self.html)
         self.assertIn("const models =", self.html)
         self.assertIn("recommendations", self.html)
+        self.assertIn("generation_stage_label", self.html)
+        self.assertIn("taskStageText", self.html)
+        page_html = Path(__file__).resolve().parents[1].joinpath("pages", "dashboard", "index.html").read_text(encoding="utf-8")
+        self.assertIn("generation_stage_label", page_html)
+        self.assertIn("taskQueueStage", page_html)
+        # The embedded fallback must use the accessible in-page confirmation
+        # flow as well; native dialogs are blocked by some AstrBot hosts.
+        self.assertIn("function confirmAction(message, options = {})", self.html)
+        self.assertNotIn("window.confirm('确定清空全部生成记录吗？", self.html)
+        self.assertNotIn("window.confirm(`确定清空槽位", self.html)
         page = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
         page_html = page.read_text(encoding="utf-8")
         self.assertIn("#3c96ca", page_html)
@@ -8511,6 +9099,96 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("恰好两条手臂、两只手", prompt)
         self.assertNotIn("不要用物件遮脸挡衣服", prompt)
 
+    def test_yongjie_cos_compatibility_randomization_and_fixed_looks(self) -> None:
+        from astrbot_plugin_selfie_image.cos.cos_looks import (
+            COS_LOOK_SETS,
+            build_cos_look_action,
+            keep_cos_outfit_requested,
+            list_cos_look_sets,
+        )
+
+        random_look = next(item for item in COS_LOOK_SETS if item["id"] == "hutao_dragon_path_zhichun")
+        action = build_cos_look_action(
+            "",
+            camera="third",
+            picker=lambda **_kwargs: random_look,
+        )
+        self.assertIn("本次随机兼容组合优先于套装正文中的非服装陈列描述", action)
+        self.assertRegex(action, r"【cos_pose:(?:standing_detail|half_turn|seated_composed|walking_turn)】")
+        self.assertRegex(action, r"【cos_scene:(?:studio|elegant_room|courtyard)】")
+        self.assertIn("【cos_view:third】", action)
+
+        fixed_look = next(item for item in COS_LOOK_SETS if item["id"] == "lanmeng_dragon_path")
+        fixed_action = build_cos_look_action(
+            "",
+            camera="selfie",
+            picker=lambda **_kwargs: fixed_look,
+        )
+        self.assertNotIn("本次随机兼容组合", fixed_action)
+        self.assertNotIn("【cos_pose:", fixed_action)
+        self.assertNotIn("【cos_scene:", fixed_action)
+
+        catalog = {item["id"]: item for item in list_cos_look_sets()}
+        self.assertTrue(catalog[random_look["id"]]["compatibility"]["variation_enabled"])
+        self.assertFalse(catalog[fixed_look["id"]]["compatibility"]["variation_enabled"])
+        self.assertTrue(keep_cos_outfit_requested("保持服饰，只换姿势和场景"))
+        self.assertFalse(keep_cos_outfit_requested("夜景他拍"))
+
+    def test_non_yongjie_flexible_cos_gets_compatibility_pool(self) -> None:
+        from astrbot_plugin_selfie_image.cos.cos_looks import (
+            cos_look_compatibility,
+            list_cos_look_sets,
+        )
+
+        flexible = cos_look_compatibility("hanfu_peach")
+        self.assertTrue(flexible["variation_enabled"])
+        self.assertIn("standing_detail", flexible["pose_ids"])
+        self.assertIn("courtyard", flexible["scene_ids"])
+        self.assertEqual(flexible["recommended_pose_ids"], flexible["pose_ids"])
+        self.assertEqual(flexible["recommended_scene_ids"], flexible["scene_ids"])
+        self.assertEqual(flexible["recommended_view_ids"], ["selfie", "third"])
+        self.assertEqual(flexible["incompatible_pose_ids"], [])
+        self.assertEqual(flexible["incompatible_scene_ids"], [])
+        self.assertEqual(flexible["fixed_reason"], "")
+
+        swimsuit = cos_look_compatibility("hutao_high_school_swimsuit")
+        self.assertEqual(swimsuit["scene_ids"], ["studio", "elegant_room"])
+        self.assertEqual(swimsuit["incompatible_scene_ids"], ["courtyard"])
+
+        # Outfits with hand-authored staging remain fixed until reviewed.
+        fixed = cos_look_compatibility("roxy_cream")
+        self.assertFalse(fixed["variation_enabled"])
+        self.assertEqual(fixed["pose_ids"], [])
+        self.assertEqual(fixed["recommended_pose_ids"], [])
+        self.assertEqual(fixed["recommended_scene_ids"], [])
+        self.assertEqual(fixed["recommended_view_ids"], ["selfie", "third"])
+        self.assertEqual(
+            fixed["incompatible_pose_ids"],
+            ["standing_detail", "half_turn", "seated_composed", "walking_turn"],
+        )
+        self.assertEqual(
+            fixed["incompatible_scene_ids"],
+            ["studio", "elegant_room", "courtyard"],
+        )
+        self.assertTrue(fixed["fixed_reason"])
+
+        # Every catalog entry exposes the same stable schema, so dashboard
+        # clients never need outfit-specific key checks.
+        required = {
+            "variation_enabled",
+            "pose_ids",
+            "scene_ids",
+            "view_ids",
+            "recommended_pose_ids",
+            "recommended_scene_ids",
+            "recommended_view_ids",
+            "incompatible_pose_ids",
+            "incompatible_scene_ids",
+            "fixed_reason",
+        }
+        for item in list_cos_look_sets():
+            self.assertTrue(required.issubset(item["compatibility"].keys()), item["id"])
+
     def test_selfie_command_expands_preset_before_action_wrap(self) -> None:
         """/自拍 捧脸 must expand preset on raw user text, not after long action wrap."""
         import tempfile
@@ -8698,6 +9376,12 @@ class StudioStoreTests(unittest.TestCase):
             stub._extract_command_count("一只猫3", allow_trailing=True),
             ("一只猫3", 1),
         )
+        for text in ("一位约 20 岁的角色", "少女 20 岁 夜景", "20 年后的城市", "晚上 8 点的街道"):
+            self.assertEqual(
+                stub._extract_command_count(text, allow_trailing=True),
+                (text, 1),
+                text,
+            )
         for text, expected_extra, expected_count in (
             ("-c 3 一位约 20 岁的角色", "一位约 20 岁的角色", 3),
             ("一位约 20 岁的角色 -c 3 夜景", "一位约 20 岁的角色 夜景", 3),
@@ -9227,6 +9911,86 @@ class StudioStoreTests(unittest.TestCase):
         for key in ("request_data", "result", "request_fingerprint", "owner_session"):
             self.assertNotIn(key, row)
 
+    def test_web_task_list_filters_history_by_source_status_model_keyword_and_time(self) -> None:
+        from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
+
+        stub = object.__new__(WebTaskMixin)
+        stub._web_task_lock = threading.RLock()
+        stub.config = types.SimpleNamespace(image_max_concurrent_tasks=2, video_max_concurrent_tasks=1)
+        now = time.time()
+        stub._web_tasks = {
+            "cmd-12345678-1": {
+                "task_id": "cmd-12345678-1",
+                "status": "failed",
+                "success": False,
+                "created_ts": now,
+                "updated_ts": now,
+                "request_data": {"original_prompt": "portrait in studio", "model": "vision-a"},
+                "result": {"used_model": "vision-a", "error": "timeout"},
+                "source": "llm-generate-image",
+            },
+            "web-12345678-2": {
+                "task_id": "web-12345678-2",
+                "status": "succeeded",
+                "success": True,
+                "created_ts": now - 86400 * 3,
+                "updated_ts": now - 86400 * 3,
+                "request_data": {"original_prompt": "landscape", "model": "vision-b"},
+                "result": {"used_model": "vision-b"},
+                "source": "web-test",
+            },
+        }
+        result = stub.list_web_tasks(
+            include_finished=True,
+            source="llm",
+            status="failed",
+            model="vision-a",
+            keyword="portrait",
+            start_ts=now - 60,
+            end_ts=now + 60,
+        )
+        self.assertEqual([row["task_id"] for row in result["tasks"]], ["cmd-12345678-1"])
+        self.assertEqual(result["summary"]["filtered_total"], 1)
+        self.assertEqual(result["filters"]["status"], ["failed"])
+
+    def test_web_task_batch_delete_retry_and_export_keep_records_separate(self) -> None:
+        from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
+
+        stub = object.__new__(WebTaskMixin)
+        stub._web_task_lock = threading.RLock()
+        stub._web_tasks = {
+            "web-12345678-1": {
+                "task_id": "web-12345678-1",
+                "status": "failed",
+                "success": False,
+                "created_ts": 2,
+                "updated_ts": 2,
+                "source": "web-test",
+                "record_ids": ["record-1"],
+                "request_data": {"original_prompt": "retry me"},
+            },
+            "cmd-12345678-2": {
+                "task_id": "cmd-12345678-2",
+                "status": "running",
+                "success": None,
+                "created_ts": 1,
+                "updated_ts": 1,
+                "source": "command-draw",
+            },
+        }
+        retry_calls = []
+        stub.start_record_retry_task = lambda record_id, feedback: retry_calls.append((record_id, feedback)) or {"task_id": "web-99999999-1"}
+        retry_result = stub.retry_web_tasks(["web-12345678-1", "cmd-12345678-2"], "brighter")
+        self.assertEqual(retry_result["submitted_count"], 1)
+        self.assertEqual(retry_calls, [("record-1", "brighter")])
+        delete_result = stub.delete_web_tasks(["web-12345678-1", "cmd-12345678-2", "missing"])
+        self.assertEqual(delete_result["deleted"], ["web-12345678-1"])
+        self.assertEqual(delete_result["missing"], ["missing"])
+        self.assertEqual(delete_result["skipped"][0]["task_id"], "cmd-12345678-2")
+        exported = stub.export_web_tasks()
+        self.assertEqual(exported["count"], 1)
+        self.assertEqual(exported["tasks"][0]["task_id"], "cmd-12345678-2")
+
     def test_dashboard_has_studio_tab(self) -> None:
         from astrbot_plugin_selfie_image.webui.web import INDEX_HTML, WEB_TASK_ID_RE
 
@@ -9447,6 +10211,53 @@ class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["completed_count"], 3)
         self.assertEqual(sorted({item["completed_count"] for item in updates}), [1, 2, 3])
         self.assertEqual(updates[-1]["progress_percent"], 100)
+
+    async def test_batch_result_aggregates_channel_attempts_for_task_detail(self) -> None:
+        from types import SimpleNamespace
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin.config = SimpleNamespace(
+            image_max_concurrent_tasks=2,
+            image_show_generation_info=False,
+            image_enable_daily_limit=False,
+            image_show_model_info=False,
+        )
+        plugin._image_batch_gate = asyncio.Semaphore(2)
+        plugin._web_task_lock = threading.RLock()
+        plugin._web_tasks = {"task": {"cancel_requested": False}}
+        plugin._record_generated_images = lambda *_args: None
+        plugin._send_generated_images = lambda *_args: asyncio.sleep(0)
+
+        async def run_one(index):
+            return {
+                "success": True,
+                "files": [f"generated-{index}.png"],
+                "attempts": [{"label": f"channel/model-{index}", "success": True}],
+            }
+
+        with patch("astrbot_plugin_selfie_image.main.IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS", 0):
+            result = await plugin._run_counted_generation_shots(
+                task_id="task",
+                event=Event(),
+                total=2,
+                fail_label="failed",
+                run_one=run_one,
+                log_prefix="attempt batch",
+            )
+
+        self.assertEqual(len(result["attempts"]), 2)
+        self.assertEqual(
+            {item["label"] for item in result["attempts"]},
+            {"channel/model-0", "channel/model-1"},
+        )
 
     async def test_batch_shots_wait_after_each_global_slot_acquisition(self) -> None:
         from types import SimpleNamespace

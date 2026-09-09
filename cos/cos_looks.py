@@ -135,6 +135,187 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
     {"id": "kaguya_miko_red_white_crown", "title": "辉夜·巫女红白神乐服", "prompt": "严格换装为巫女辉夜主题的红白神乐服COS：成年女性真人COSER，黑色齐眉厚刘海短波波头，两侧各束一小段短发并系白色蝴蝶结，耳侧垂下白色细带与红色细绳结。头戴大型金色神乐冠，冠架横向展开为对称的波浪形金色装饰，中央固定一颗圆形金色球体，左右两端垂下红色长绳、金色小铃和细小流苏，冠饰稳定贴在头顶，不要鹿角或动物耳朵。上身是红白配色巫女服：白色立领内衫，领口与衣襟以红色包边，外层红色短款上衣在胸前形成清晰V形交叠；胸前与腰部固定一只夸张的正红色缎面大蝴蝶结，结面有立体褶皱，中央结带和长尾自然垂落。双臂连接宽大的红色长袖，袖口向下展开；肩部和身体两侧再垂落白色半透明长纱片，边缘轻薄有自然褶皱。上衣下方露出一段腰腹，下装为白色高腰褶皱短裙或安全短裤，腿部搭配白色过膝袜。人物正面或三分之四侧身站立、半跪或轻抬双手作巫女手势，竖屏近距离从头部拍到大腿；背景为简洁的浅灰色室内墙面或窗帘，冷暖混合柔光，真实真人COS与细腻二次元妆面结合。不要完整长袍、现代连衣裙、其他发色或过长披发、鹿角、动物耳朵、武器、额外人物、文字或水印。"},
 ]
 
+# A COS record describes the outfit. This matrix separately controls which
+# reusable pose/scene combinations are safe to apply without changing it.
+COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, str]] = {
+    "standing_detail": {
+        "title": "自然站姿",
+        "prompt": "自然站立，身体微微侧转，一只手轻整理衣摆或配饰，完整展示服装层次；重心稳定，手脚数量正常。",
+    },
+    "half_turn": {
+        "title": "侧身回看",
+        "prompt": "三分之二侧身回看镜头，一手自然停在腰侧或裙摆旁，另一只手不遮挡服装主体；衣料和饰品受重力自然垂落。",
+    },
+    "seated_composed": {
+        "title": "端正坐姿",
+        "prompt": "端正坐在低凳或椅子边缘，双腿自然并拢或斜向一侧，双手只做轻微整理衣袖或裙摆的动作；不要盘腿、夸张折叠或悬空肢体。",
+    },
+    "walking_turn": {
+        "title": "轻步转身",
+        "prompt": "刚完成一步轻缓转身的自然瞬间，衣摆、袖片或流苏只有轻微运动感；人物姿态稳定，避免奔跑、跳跃和战斗动作。",
+    },
+}
+
+COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, str]] = {
+    "studio": {
+        "title": "简洁影棚",
+        "prompt": "干净的中性影棚背景，柔和定向摄影光，背景只保留低干扰的纯色或浅灰渐变墙面，不出现文字、灯架或其他人物。",
+    },
+    "elegant_room": {
+        "title": "雅致室内",
+        "prompt": "整洁雅致的室内环境，木质屏风、低柜或素色墙面作为远景，柔和环境光；环境不抢主体，不出现镜子中的倒影或额外人物。",
+    },
+    "courtyard": {
+        "title": "庭院廊下",
+        "prompt": "安静的庭院廊下或石阶边，背景只有虚化的木格、绿植和自然日光；地面接触关系真实，不出现游客、武器或大型特效。",
+    },
+}
+
+YONGJIE_RANDOM_COS_IDS = frozenset(
+    {
+        "hutao_dragon_path_zhichun",
+        "hutao_koi_dream_glow",
+        "hutao_spring_morning_breeze",
+        "hutao_warm_sweet_dream",
+        "hutao_high_school_swimsuit",
+        "hutao_spring_peach_smile",
+        "yinzi_spring_morning_glory",
+        "yinzi_crimson_jade_immortal",
+        "yinzi_orchid_courtyard_moon",
+        "yinzi_evernight_splendor",
+        "yinzi_2674_mecha_princess",
+        "yinzi_spring_oriole_plum",
+        "ninghongye_red_hao_new_joy",
+        "ninghongye_spider_demon",
+        "ninghongye_cloud_fairy",
+        "ninghongye_underworld_goddess",
+        "ninghongye_plain_white_snake",
+        "ninghongye_dragon_path_baizhi",
+        "jiyingying_extinguished_calamity_star",
+        "jiyingying_white_deer",
+        "jiyingying_sun_star_lord",
+        "jiyingying_nezha",
+    }
+)
+
+# These entries intentionally keep their hand-authored staging. They are not
+# put in the common random pool because their pose, crop, prop, or scenery is
+# part of the outfit reference itself.
+YONGJIE_FIXED_COS_IDS = frozenset(
+    {
+        "lanmeng_dragon_path",
+        "yinzi_white_qipao",
+        "yulinglong_gold_fox",
+        "yulinglong_red_thread",
+    }
+)
+
+# A small, conservative first batch of non-永劫套装 whose正文只描述服饰，
+# 没有锁定姿势或场景。 其余套装继续保持固定构图，待逐套复核后再加入，
+# 避免把“坐姿/特写/专属布景”误换成通用随机环境。
+GENERIC_RANDOM_COS_IDS = frozenset(
+    {
+        "hanfu_peach",
+        "mint_sheer_hanfu",
+    }
+)
+
+
+def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
+    """Return a serializable compatibility profile for one COS look.
+
+    The ``recommended_*`` names are intentionally present for every outfit,
+    including fixed-composition outfits.  Consumers can therefore render the
+    same matrix without guessing whether an omitted field means "unknown" or
+    "not applicable".  The older ``pose_ids``/``scene_ids``/``view_ids``
+    aliases remain for callers written before the matrix was exposed.
+    """
+    look_id = str(cos_id or "").strip()
+    if look_id in YONGJIE_RANDOM_COS_IDS or look_id in GENERIC_RANDOM_COS_IDS:
+        scene_ids = ["studio", "elegant_room", "courtyard"]
+        if look_id == "hutao_high_school_swimsuit":
+            # This outfit forbids beach props, so keep it in neutral locations.
+            scene_ids = ["studio", "elegant_room"]
+        poses = list(COS_RANDOM_POSE_CLASSES)
+        views = ["selfie", "third"]
+        incompatible_scenes = [
+            scene_id for scene_id in COS_RANDOM_SCENE_CLASSES if scene_id not in scene_ids
+        ]
+        return {
+            "variation_enabled": True,
+            "pose_ids": poses,
+            "scene_ids": scene_ids,
+            "view_ids": views,
+            "recommended_pose_ids": list(poses),
+            "recommended_scene_ids": list(scene_ids),
+            "recommended_view_ids": list(views),
+            "incompatible_pose_ids": [],
+            "incompatible_scene_ids": incompatible_scenes,
+            "fixed_reason": "",
+        }
+
+    # Fixed outfits retain their authored crop, props, posture, or scenery.
+    # Empty recommendations are explicit: they do not mean that metadata is
+    # missing and prevent a UI from accidentally adding generic variation.
+    fixed_reason = "套装正文包含固定姿势、构图或环境，暂不启用通用随机池"
+    if look_id in YONGJIE_FIXED_COS_IDS:
+        fixed_reason = "永劫无间套装已定义专属姿势、构图或布景，保持原始描述"
+    views = ["selfie", "third"]
+    return {
+        "variation_enabled": False,
+        "pose_ids": [],
+        "scene_ids": [],
+        "view_ids": views,
+        "recommended_pose_ids": [],
+        "recommended_scene_ids": [],
+        "recommended_view_ids": list(views),
+        # Explicitly list every generic class as incompatible for fixed looks;
+        # this prevents a future client from treating empty recommendations as
+        # an omitted/unknown compatibility decision.
+        "incompatible_pose_ids": list(COS_RANDOM_POSE_CLASSES),
+        "incompatible_scene_ids": list(COS_RANDOM_SCENE_CLASSES),
+        "fixed_reason": fixed_reason,
+    }
+
+
+def get_cos_look_by_id(cos_id: str) -> Dict[str, Any]:
+    look_id = str(cos_id or "").strip()
+    return next((dict(item) for item in COS_LOOK_SETS if str(item.get("id") or "") == look_id), {})
+
+
+def pick_cos_variation(
+    cos_id: str,
+    *,
+    avoid_pose: str = "",
+    avoid_scene: str = "",
+) -> Dict[str, str]:
+    """Select one compatible pose and scene, or return an empty fixed profile."""
+    profile = cos_look_compatibility(cos_id)
+    if not profile["variation_enabled"]:
+        return {"pose_id": "", "scene_id": "", "prompt": ""}
+    pose_ids = [item for item in profile["pose_ids"] if item != avoid_pose] or list(profile["pose_ids"])
+    scene_ids = [item for item in profile["scene_ids"] if item != avoid_scene] or list(profile["scene_ids"])
+    pose_id = random.choice(pose_ids)
+    scene_id = random.choice(scene_ids)
+    return {
+        "pose_id": pose_id,
+        "scene_id": scene_id,
+        "prompt": (
+            "本次随机兼容组合优先于套装正文中的非服装陈列描述："
+            + COS_RANDOM_POSE_CLASSES[pose_id]["prompt"]
+            + COS_RANDOM_SCENE_CLASSES[scene_id]["prompt"]
+        ),
+    }
+
+
+def keep_cos_outfit_requested(text: str) -> bool:
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    return any(
+        marker in compact
+        for marker in ("保持服饰", "服装不变", "不换衣服", "保持套装", "保持cos", "只换姿势", "只换场景", "只换镜头")
+    )
+
+
 COS_LOOK_CATEGORY_TERMS = (
     "旗袍", "汉服", "女仆", "睡衣", "长裙", "短裙", "短装", "运动服", "礼服", "泳装", "古装", "古风", "巫女", "肚兜", "挂脖",
     "洛丽塔", "花嫁", "围裙", "白熊", "和风", "荷叶裙", "兜兜", "袴裙",
@@ -261,13 +442,14 @@ def format_cos_look_list() -> str:
     return "\n".join(lines)
 
 
-def list_cos_look_sets() -> List[Dict[str, str]]:
+def list_cos_look_sets() -> List[Dict[str, Any]]:
     """Return validated copies for dashboard and quick-test pickers."""
     return [
         {
             "id": str(item.get("id") or "").strip(),
             "title": str(item.get("title") or "").strip(),
             "prompt": str(item.get("prompt") or "").strip(),
+            "compatibility": cos_look_compatibility(str(item.get("id") or "")),
         }
         for item in COS_LOOK_SETS
         if str(item.get("id") or "").strip()
@@ -339,13 +521,16 @@ def build_cos_look_action(
     *,
     avoid_id: str = "",
     avoid_camera: str = "",
+    avoid_pose: str = "",
+    avoid_scene: str = "",
     camera: str = "",
     match_query: str = "",
+    force_id: str = "",
     picker: Optional[Callable[..., Mapping[str, Any]]] = None,
 ) -> str:
     """Build one matched or random COS action with a compatible camera."""
     choose = picker or pick_cos_look_set
-    chosen = choose(
+    chosen = get_cos_look_by_id(force_id) or choose(
         avoid_id=avoid_id,
         query=str(match_query).strip() if str(match_query).strip() else extra_request,
     )
@@ -358,6 +543,7 @@ def build_cos_look_action(
         str(chosen.get("prompt") or "").strip(), camera_kind
     )
     cos_id = str(chosen.get("id") or "cos")
+    variation = pick_cos_variation(cos_id, avoid_pose=avoid_pose, avoid_scene=avoid_scene)
     if camera_kind == "third":
         hand_rule = (
             "不要对镜、不要镜子；允许画面内唯一一部普通手机从脸侧或下方自然遮住半张脸，"
@@ -399,9 +585,17 @@ def build_cos_look_action(
         + "服装颜色、层数、配饰、开叉、荷叶边、鞋履等结构要尽量齐全高还原；"
         + "构图要求以本套套装描述为准；本套未指定构图时，完整带上腰线并采用竖屏近景半身；不要简化成普通常服；画面干净得体。"
     )
+    if variation["prompt"]:
+        base += variation["prompt"]
     if has_refs:
         base = "参考用户附图的氛围或构图，" + base
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
     if extra and extra not in base:
         base += f" 用户补充要求优先：{extra}。"
-    return base + f" 【cos:{cos_id}】 【cam:{camera_kind}】"
+    return (
+        base
+        + f" 【cos:{cos_id}】 【cam:{camera_kind}】"
+        + (f" 【cos_pose:{variation['pose_id']}】" if variation["pose_id"] else "")
+        + (f" 【cos_scene:{variation['scene_id']}】" if variation["scene_id"] else "")
+        + f" 【cos_view:{camera_kind}】"
+    )
