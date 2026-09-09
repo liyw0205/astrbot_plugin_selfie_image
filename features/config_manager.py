@@ -23,6 +23,8 @@ from ..core.models import (
     normalize_config_tree,
     normalize_legacy_keys,
     strip_channel_timeouts,
+    is_masked_secret,
+    usable_api_keys,
 )
 from ..core.utils import load_json_file, redact_sensitive_data, save_json_file
 
@@ -33,11 +35,36 @@ DEFAULT_WEB_TOKEN = str(DEFAULT_CONFIG["web"].get("token") or "changeme").strip(
 # complete channel list when saving, so these markers must round-trip without
 # replacing an existing secret.  Keep the set deliberately small and explicit
 # to avoid treating a real (albeit short) key as a placeholder.
-WEB_SECRET_PLACEHOLDERS = frozenset({"", "******", "[REDACTED]", "«redacted»"})
+WEB_SECRET_PLACEHOLDERS = frozenset(
+    {"", "******", "[REDACTED]", "<REDACTED>", "«redacted»", "redacted", "masked", "hidden", "已隐藏"}
+)
 
 
 def _is_web_secret_placeholder(value: Any) -> bool:
-    return str(value or "").strip() in WEB_SECRET_PLACEHOLDERS
+    return is_masked_secret(value) or str(value or "").strip().lower() in WEB_SECRET_PLACEHOLDERS
+
+
+def _channel_credential_fields(row: Any) -> tuple[Any, Any, bool, bool]:
+    """Read snake/camel credential fields while retaining presence metadata."""
+    if not isinstance(row, dict):
+        return "", [], False, False
+    has_key = "api_key" in row or "apiKey" in row
+    has_keys = "api_keys" in row or "apiKeys" in row
+    key = row.get("api_key") if "api_key" in row else row.get("apiKey")
+    keys = row.get("api_keys") if "api_keys" in row else row.get("apiKeys")
+    return key, keys, has_key, has_keys
+
+
+def _channel_identity(row: Any) -> str:
+    if not isinstance(row, dict):
+        return ""
+    return str(
+        row.get("id")
+        or row.get("channel_id")
+        or row.get("channelId")
+        or row.get("name")
+        or ""
+    ).strip()
 
 
 def _mask_web_channel_credentials(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -50,12 +77,15 @@ def _mask_web_channel_credentials(config: Dict[str, Any]) -> Dict[str, Any]:
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            if row.get("api_key"):
-                row["api_key"] = "******"
-            if row.get("api_keys"):
+            for field in ("api_key", "apiKey"):
+                if row.get(field):
+                    row[field] = "******"
+            for field in ("api_keys", "apiKeys"):
+                if not row.get(field):
+                    continue
                 # Keep the field shape so older/custom UIs do not mistake it
                 # for a missing value, but never reveal key count or content.
-                row["api_keys"] = ["******"]
+                row[field] = ["******"]
     proxies = safe.get("proxies")
     if isinstance(proxies, list):
         for row in proxies:
@@ -80,34 +110,55 @@ def _restore_web_channel_credentials(
         for index, old in enumerate(old_rows):
             if not isinstance(old, dict):
                 continue
-            identity = str(old.get("id") or old.get("name") or "").strip()
+            identity = _channel_identity(old)
             if identity:
                 old_by_id[identity] = old
+                old_by_id.setdefault(identity.casefold(), old)
             old_by_id.setdefault(f"__index__:{index}", old)
         for index, row in enumerate(rows):
             if not isinstance(row, dict):
                 continue
-            identity = str(row.get("id") or row.get("name") or "").strip()
-            old = old_by_id.get(identity) or old_by_id.get(f"__index__:{index}")
+            identity = _channel_identity(row)
+            old = old_by_id.get(identity) or old_by_id.get(identity.casefold()) or old_by_id.get(f"__index__:{index}")
             if not old:
                 continue
-            incoming_key = row.get("api_key")
-            incoming_keys = row.get("api_keys")
-            if _is_web_secret_placeholder(incoming_key) and old.get("api_key"):
-                row["api_key"] = copy.deepcopy(old.get("api_key"))
-            masked_key_list = (
-                isinstance(incoming_keys, list)
-                and (not incoming_keys or all(_is_web_secret_placeholder(item) for item in incoming_keys))
-            ) or _is_web_secret_placeholder(incoming_keys)
-            if masked_key_list:
-                if _is_web_secret_placeholder(incoming_key) and old.get("api_keys"):
-                    # The browser sent the untouched masked form: preserve the
-                    # complete key rotation list.
-                    row["api_keys"] = copy.deepcopy(old.get("api_keys"))
-                else:
-                    # A newly typed api_key takes precedence over a stale
-                    # masked api_keys array emitted by the previous response.
-                    row.pop("api_keys", None)
+            incoming_key, incoming_keys, has_key, has_keys = _channel_credential_fields(row)
+            old_key, old_keys, _, _ = _channel_credential_fields(old)
+            old_real_keys = usable_api_keys(old_keys)
+            old_real_primary = usable_api_keys(old_key)
+            incoming_real_keys = usable_api_keys(incoming_keys)
+            incoming_real_primary = usable_api_keys(incoming_key)
+            incoming_masked = (has_key and _is_web_secret_placeholder(incoming_key)) or (
+                has_keys
+                and (
+                    _is_web_secret_placeholder(incoming_keys)
+                    or (
+                        isinstance(incoming_keys, (list, tuple))
+                        and all(_is_web_secret_placeholder(item) for item in incoming_keys)
+                    )
+                )
+            )
+
+            # A typed key wins over an old masked api_keys array. Otherwise
+            # restore the old real value, including when the browser omitted
+            # the credential fields entirely.
+            if incoming_real_primary or incoming_real_keys:
+                row["api_key"] = copy.deepcopy(incoming_key if incoming_real_primary else incoming_real_keys[0])
+                row.pop("apiKey", None)
+                row.pop("api_keys", None)
+                row.pop("apiKeys", None)
+                if not incoming_real_primary and len(incoming_real_keys) > 1:
+                    row["api_keys"] = copy.deepcopy(incoming_real_keys)
+            elif incoming_masked or not has_key and not has_keys:
+                if old_real_primary:
+                    row["api_key"] = copy.deepcopy(old_key)
+                elif old_real_keys:
+                    row["api_key"] = copy.deepcopy(old_real_keys[0])
+                row.pop("apiKey", None)
+                row.pop("api_keys", None)
+                row.pop("apiKeys", None)
+                if old_real_keys and isinstance(old_keys, (list, tuple)) and len(old_real_keys) > 1:
+                    row["api_keys"] = copy.deepcopy(old_real_keys)
     return result
 
 

@@ -117,6 +117,7 @@ from .core.models import (
     AICatConfig,
     DEFAULT_CONFIG,
     ImageModelTarget,
+    usable_api_keys,
     preflight_video_channel,
 )
 from .features.persona import PersonaManager
@@ -2027,20 +2028,9 @@ class SelfieImagePlugin(
         use a key explicitly entered in the modal.
         """
         payload = channel_payload if isinstance(channel_payload, Mapping) else {}
-        placeholder_values = {"", "******", "[REDACTED]", "«redacted»"}
-
-        def usable(value: Any) -> str:
-            text = str(value or "").strip()
-            return "" if text in placeholder_values else text
-
         def first_usable(value: Any) -> str:
-            if isinstance(value, (list, tuple, set)):
-                for item in value:
-                    key = usable(item)
-                    if key:
-                        return key
-                return ""
-            return usable(value)
+            keys = usable_api_keys(value)
+            return keys[0] if keys else ""
 
         kind = str(media_type or "image").strip().lower()
         if kind == "video":
@@ -2050,16 +2040,33 @@ class SelfieImagePlugin(
         else:
             configured_channels = list(getattr(self.config, "image_channels", []) or [])
 
-        name = str(payload.get("name") or payload.get("id") or "").strip()
+        name = str(
+            payload.get("name")
+            or payload.get("id")
+            or payload.get("channel_id")
+            or payload.get("channelId")
+            or ""
+        ).strip()
         base_url = str(payload.get("base_url") or payload.get("baseUrl") or "").strip().rstrip("/")
+
+        def base_variants(value: Any) -> set[str]:
+            text = str(value or "").strip().rstrip("/")
+            variants = {text}
+            if text.lower().endswith("/v1"):
+                variants.add(text[:-3].rstrip("/"))
+            else:
+                variants.add(f"{text}/v1")
+            return {item for item in variants if item}
+
+        payload_bases = base_variants(base_url)
         matched = None
         if name:
             matched = next(
                 (
                     channel
                     for channel in configured_channels
-                    if str(getattr(channel, "name", "") or "").strip() == name
-                    or str(getattr(channel, "id", "") or "").strip() == name
+                    if str(getattr(channel, "name", "") or "").strip().casefold() == name.casefold()
+                    or str(getattr(channel, "id", "") or "").strip().casefold() == name.casefold()
                 ),
                 None,
             )
@@ -2068,7 +2075,7 @@ class SelfieImagePlugin(
                 (
                     channel
                     for channel in configured_channels
-                    if str(getattr(channel, "base_url", "") or "").strip().rstrip("/") == base_url
+                    if base_variants(getattr(channel, "base_url", "")) & payload_bases
                 ),
                 None,
             )

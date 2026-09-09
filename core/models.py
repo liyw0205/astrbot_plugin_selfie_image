@@ -11,6 +11,35 @@ from .constants import PROVIDER_TYPES, VIDEO_PROVIDER_TYPES
 from .proxy import LOCAL_IMAGE_WAIT_SECONDS
 
 
+MASKED_SECRET_VALUES = frozenset(
+    {
+        "",
+        "******",
+        "[REDACTED]",
+        "<REDACTED>",
+        "«redacted»",
+        "redacted",
+        "masked",
+        "hidden",
+        "已隐藏",
+    }
+)
+
+
+def is_masked_secret(value: Any) -> bool:
+    """Recognize dashboard redaction markers without rejecting real keys."""
+    text = str(value or "").strip()
+    if text.lower() in {item.lower() for item in MASKED_SECRET_VALUES}:
+        return True
+    compact = text.replace(" ", "")
+    return bool(compact) and len(compact) >= 3 and all(char in "*•●·" for char in compact)
+
+
+def usable_api_keys(value: Any) -> List[str]:
+    """Split credentials and discard values emitted by secret masking."""
+    return [item for item in split_api_keys(value) if not is_masked_secret(item)]
+
+
 DEFAULT_CONFIG: Dict[str, Any] = {
     "schema_version": 2,
     "bot_name": "啊呜",
@@ -149,11 +178,10 @@ class ImageModelTarget:
         return f"{self.channel_name}/{self.model}"
 
     def resolved_api_keys(self) -> List[str]:
-        keys = [str(item).strip() for item in (self.api_keys or []) if str(item).strip()]
+        keys = usable_api_keys(self.api_keys)
         if keys:
             return unique_values(keys)
-        primary = str(self.api_key or "").strip()
-        return [primary] if primary else []
+        return usable_api_keys(self.api_key)
 
 
 def split_api_keys(value: Any) -> List[str]:
@@ -197,10 +225,10 @@ class ImageChannelConfig:
     api_keys: List[str] = field(default_factory=list)
 
     def resolved_api_keys(self) -> List[str]:
-        keys = split_api_keys(self.api_keys)
+        keys = usable_api_keys(self.api_keys)
         if keys:
             return keys
-        return split_api_keys(self.api_key)
+        return usable_api_keys(self.api_key)
 
     def targets(self, global_timeout: int, request_timeout: Optional[int] = None) -> List[ImageModelTarget]:
         if not self.enabled:
@@ -813,11 +841,10 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
 
     api_key_value = raw.get("api_key") or raw.get("apiKey") or ""
     api_keys_value = raw.get("api_keys") or raw.get("apiKeys") or ""
-    # Prefer explicit api_keys list; fall back to api_key (may be multiline).
-    api_keys = split_api_keys(api_keys_value) or split_api_keys(api_key_value)
-    if not api_keys and api_key_value:
-        api_keys = split_api_keys(api_key_value)
-    api_key_primary = api_keys[0] if api_keys else str(api_key_value or "").strip()
+    # Prefer explicit real keys; stale masked arrays from pre-1.6.5 builds
+    # must not win over the real api_key field.
+    api_keys = usable_api_keys(api_keys_value) or usable_api_keys(api_key_value)
+    api_key_primary = api_keys[0] if api_keys else ""
     # Persist multi-line form in api_key for Web textarea round-trip compatibility.
     api_key_stored = "\n".join(api_keys) if len(api_keys) > 1 else api_key_primary
 
@@ -1181,7 +1208,7 @@ def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
         errors.append({"field": "provider_type", "message": f"{kind_label} {label} 的 provider_type 无效"})
     if not str(channel.base_url or "").strip():
         errors.append({"field": "base_url", "message": f"{kind_label} {label} 缺少 base_url"})
-    if not str(channel.api_key or "").strip() and not (getattr(channel, "api_keys", None) or []):
+    if not channel.resolved_api_keys():
         errors.append({"field": "api_key", "message": f"{kind_label} {label} 缺少 api_key"})
     models = channel.enabled_models or ([channel.model] if channel.model else [])
     if not models and channel.enabled:
@@ -1210,7 +1237,7 @@ def preflight_video_channel(raw: Any) -> Dict[str, Any]:
         errors.append({"field": "name", "message": "视频渠道缺少名称"})
     if not str(channel.base_url or "").strip():
         errors.append({"field": "base_url", "message": f"视频渠道 {label} 缺少 base_url"})
-    if not str(channel.api_key or "").strip() and not (getattr(channel, "api_keys", None) or []):
+    if not channel.resolved_api_keys():
         errors.append({"field": "api_key", "message": f"视频渠道 {label} 缺少 api_key"})
     models = channel.enabled_models or ([channel.model] if channel.model else [])
     if not models and channel.enabled:

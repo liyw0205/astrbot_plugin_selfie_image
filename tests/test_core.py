@@ -388,6 +388,53 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(replaced["image_channels"][0]["api_key"], "new-key")
         self.assertNotIn("api_keys", replaced["image_channels"][0])
 
+    def test_masked_api_keys_fall_back_to_real_primary_key(self) -> None:
+        from astrbot_plugin_selfie_image.features.config_manager import _restore_web_channel_credentials
+
+        current = {
+            "image_channels": [
+                {
+                    "name": "噜皮生图",
+                    "api_key": "lupi-real-key",
+                    # This shape was written by an older masked dashboard.
+                    "api_keys": ["******"],
+                }
+            ]
+        }
+        restored = _restore_web_channel_credentials(
+            {"image_channels": [{"name": "噜皮生图", "api_key": "******", "api_keys": ["******"]}]},
+            current,
+        )
+        self.assertEqual(restored["image_channels"][0]["api_key"], "lupi-real-key")
+        self.assertNotIn("api_keys", restored["image_channels"][0])
+
+        config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "竞技场",
+                        "base_url": "https://arena.example.test",
+                        "api_key": "arena-real-key",
+                        "api_keys": ["******"],
+                        "model": "gpt-image-2",
+                    }
+                ]
+            }
+        )
+        channel = config.image_channels[0]
+        self.assertEqual(channel.resolved_api_keys(), ["arena-real-key"])
+        self.assertEqual(channel.targets(180)[0].resolved_api_keys(), ["arena-real-key"])
+
+    def test_masked_channel_aliases_are_restored(self) -> None:
+        from astrbot_plugin_selfie_image.features.config_manager import _restore_web_channel_credentials
+
+        restored = _restore_web_channel_credentials(
+            {"image_channels": [{"name": "sub", "apiKey": "******", "apiKeys": ["******"]}]},
+            {"image_channels": [{"name": "sub", "apiKey": "sub-real-key"}]},
+        )
+        self.assertEqual(restored["image_channels"][0]["api_key"], "sub-real-key")
+        self.assertNotIn("apiKey", restored["image_channels"][0])
+
     def test_plugin_version_matches_metadata(self) -> None:
         from astrbot_plugin_selfie_image.core.constants import PLUGIN_VERSION
 
@@ -395,7 +442,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.11")
+        self.assertEqual(PLUGIN_VERSION, "1.6.12")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
