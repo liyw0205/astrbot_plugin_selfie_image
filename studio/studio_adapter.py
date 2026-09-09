@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any, Dict, List, Optional
 
@@ -26,7 +27,147 @@ from ..core.utils import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class StudioMixin:
+    async def _ensure_studio_failure_record(
+        self,
+        task_id: str,
+        session_id: str,
+        *,
+        error: str,
+        cancelled: bool = False,
+        session: Optional[Dict[str, Any]] = None,
+        action: str = "",
+        prompt: str = "",
+        mode: str = "",
+        aspect_ratio: str = "",
+        resolution: str = "",
+        count: int = 1,
+        used_slots: Optional[List[str]] = None,
+        source_asset_ids: Optional[List[str]] = None,
+        reference_image_count: int = 0,
+        stage: str = "preflight",
+        completed_count: int = 0,
+    ) -> None:
+        """Persist one inspectable row when Studio fails before generation.
+
+        Normal generation failures are already recorded by
+        ``_run_image_generation``.  Waiting first and checking the task links
+        keeps this fallback idempotent when an exception races an async record
+        commit or occurs after an earlier shot in a batch.
+        """
+        wait_commits = getattr(self, "_wait_for_record_commits", None)
+        if callable(wait_commits):
+            await wait_commits(task_id)
+        try:
+            current = self.get_web_image_task(task_id)
+        except Exception:
+            current = {}
+        linked = current.get("record_ids") if isinstance(current, dict) else []
+        if not isinstance(linked, list):
+            linked = []
+        result = current.get("result") if isinstance(current, dict) else {}
+        result_linked = result.get("record_ids") if isinstance(result, dict) else []
+        if not isinstance(result_linked, list):
+            result_linked = []
+        linked_ids = {
+            str(item or "").strip()
+            for item in [*linked, *result_linked]
+            if str(item or "").strip()
+        }
+        linked_count = len(linked_ids)
+        try:
+            completed_count = max(0, int(completed_count or 0))
+        except (TypeError, ValueError):
+            completed_count = 0
+        # A task may already have records for earlier shots.  Only suppress
+        # the fallback when the current shot has also produced a row; this
+        # preserves a failure/cancel row for a later shot that crashed before
+        # ``_run_image_generation`` could persist anything.
+        if linked_count > completed_count or (linked_count and completed_count == 0):
+            return
+
+        request = current.get("request_data") if isinstance(current, dict) else {}
+        request = dict(request) if isinstance(request, dict) else {}
+        session = session if isinstance(session, dict) else {}
+        graph = session.get("graph") if isinstance(session.get("graph"), dict) else {}
+        template = str(session.get("template") or graph.get("template") or "").strip()
+        action = str(action or request.get("original_prompt") or request.get("prompt") or "").strip()
+        prompt = str(prompt or request.get("request_prompt") or action).strip()
+        used_slots = [str(item).strip() for item in (used_slots or []) if str(item).strip()][:24]
+        source_asset_ids = [str(item).strip() for item in (source_asset_ids or []) if str(item).strip()][:24]
+        try:
+            reference_image_count = max(0, int(reference_image_count or 0))
+        except (TypeError, ValueError):
+            reference_image_count = 0
+        try:
+            count = max(1, min(4, int(count or 1)))
+        except (TypeError, ValueError):
+            count = 1
+        request_data = {
+            **request,
+            "session_id": session_id,
+            "kind": "studio",
+            "mode": str(mode or graph.get("mode") or "group").strip().lower() or "group",
+            "studio_template": template,
+            "original_prompt": action,
+            "prompt": action,
+            "request_prompt": prompt,
+            "aspect_ratio": str(aspect_ratio or graph.get("aspect_ratio") or "9:16"),
+            "resolution": str(resolution or graph.get("resolution") or "1K"),
+            "count": count,
+            "requested_count": count,
+            "used_slots": used_slots,
+            "source_asset_ids": source_asset_ids,
+            "reference_image_count": reference_image_count,
+            "stage": str(stage or "preflight"),
+        }
+        response_data = {
+            "success": False,
+            "stage": str(stage or "preflight"),
+            "error": str(error or ("任务已取消" if cancelled else "生成失败")),
+            "cancelled": bool(cancelled),
+        }
+        record = {
+            "source": "studio-run",
+            "source_label": "Web",
+            "media_type": "image",
+            "success": False,
+            "generation_success": False,
+            "delivery_success": None,
+            "status": "cancelled" if cancelled else "failed",
+            "cancelled": bool(cancelled),
+            "error": response_data["error"],
+            "prompt": prompt,
+            "original_prompt": action,
+            "request_prompt": prompt,
+            "final_prompt": prompt,
+            "used_model": "",
+            "elapsed_seconds": 0,
+            "reference_images": reference_image_count,
+            "request_data": redact_sensitive_data(request_data),
+            "response_data": redact_sensitive_data(response_data),
+            "request_image_paths": [],
+            "generated_image_paths": [],
+            "attempts": [],
+            "retry_count": 0,
+            "retry_exhausted": False,
+            "task_id": task_id,
+            "studio_session_id": session_id,
+            "studio_task_id": task_id,
+            "studio_template": template,
+            "studio_source_asset_ids": source_asset_ids,
+        }
+        try:
+            self._record_task(record)
+        except Exception as exc:
+            logger.warning(f"[SelfieImage] Studio 失败记录落库失败: {exc}")
+            return
+        if callable(wait_commits):
+            await wait_commits(task_id)
+
     # --- Studio / 画布 ---
     def studio_list(self) -> Dict[str, Any]:
         # Ensure default presets are seeded for picker / QQ /预设
@@ -519,6 +660,18 @@ class StudioMixin:
             generation_stage="preflight",
             generation_stage_label="准备画布任务",
         )
+        session: Dict[str, Any] = {}
+        action = ""
+        prompt = ""
+        mode = ""
+        aspect = str(getattr(self.config, "image_default_aspect_ratio", "9:16") or "9:16")
+        resolution = str(getattr(self.config, "image_default_resolution", "1K") or "1K")
+        count = 1
+        used_slots: List[str] = []
+        source_asset_ids: List[str] = []
+        refs: List[ImageReference] = []
+        failure_stage = "preflight"
+        completed_count = 0
         try:
             if self._task_cancel_requested(task_id):
                 raise RuntimeError("任务已取消")
@@ -549,6 +702,7 @@ class StudioMixin:
             if mode in {"group", "selfie", "i2i"} and not refs:
                 raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
 
+            failure_stage = "prompt_translation"
             self._set_web_image_task(
                 task_id,
                 generation_stage="prompt_translation",
@@ -605,6 +759,8 @@ class StudioMixin:
                     refs,
                     language="en" if self.config.image_enable_image_prompt_en else "zh",
                 )
+
+            failure_stage = "generating"
 
             # Keep the canvas request inspectable while it is running.  The
             # initial task summary only contains the user's action; recording
@@ -811,6 +967,24 @@ class StudioMixin:
             )
         except asyncio.CancelledError:
             error = "任务已取消"
+            await self._ensure_studio_failure_record(
+                task_id,
+                session_id,
+                error=error,
+                cancelled=True,
+                session=session,
+                action=action,
+                prompt=prompt,
+                mode=mode,
+                aspect_ratio=aspect,
+                resolution=resolution,
+                count=count,
+                used_slots=used_slots,
+                source_asset_ids=source_asset_ids,
+                reference_image_count=len(refs),
+                stage="cancelled",
+                completed_count=completed_count,
+            )
             wait_commits = getattr(self, "_wait_for_record_commits", None)
             if callable(wait_commits):
                 await wait_commits(task_id)
@@ -833,6 +1007,24 @@ class StudioMixin:
         except Exception as exc:
             error = redact_sensitive_text(str(exc))
             cancelled = "取消" in error
+            await self._ensure_studio_failure_record(
+                task_id,
+                session_id,
+                error=error,
+                cancelled=cancelled,
+                session=session,
+                action=action,
+                prompt=prompt,
+                mode=mode,
+                aspect_ratio=aspect,
+                resolution=resolution,
+                count=count,
+                used_slots=used_slots,
+                source_asset_ids=source_asset_ids,
+                reference_image_count=len(refs),
+                stage="cancelled" if cancelled else failure_stage,
+                completed_count=completed_count,
+            )
             wait_commits = getattr(self, "_wait_for_record_commits", None)
             if callable(wait_commits):
                 await wait_commits(task_id)

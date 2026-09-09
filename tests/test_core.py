@@ -395,7 +395,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.8")
+        self.assertEqual(PLUGIN_VERSION, "1.6.9")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -8903,6 +8903,132 @@ class LegFocusTests(unittest.TestCase):
 
 
 class StudioStoreTests(unittest.TestCase):
+    def test_studio_preflight_failure_creates_linked_record(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio_adapter import StudioMixin
+
+        stub = object.__new__(StudioMixin)
+        records = []
+        task = {
+            "task_id": "web-studio-12345678-1",
+            "request_data": {"prompt": "窗边人像", "count": 1},
+            "record_ids": [],
+        }
+        stub.get_web_image_task = lambda _task_id: dict(task)
+        stub._wait_for_record_commits = lambda _task_id: asyncio.sleep(0)
+        stub._record_task = records.append
+
+        asyncio.run(
+            stub._ensure_studio_failure_record(
+                task_id=task["task_id"],
+                session_id="studio-1",
+                error="请至少放一张参考图，或先设置形象参考图",
+                session={
+                    "template": "selfie",
+                    "graph": {"mode": "selfie", "count": 2, "aspect_ratio": "3:4"},
+                },
+                action="窗边人像",
+                used_slots=["identity"],
+                reference_image_count=0,
+                stage="preflight",
+            )
+        )
+
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertFalse(record["success"])
+        self.assertEqual(record["source"], "studio-run")
+        self.assertEqual(record["task_id"], task["task_id"])
+        self.assertEqual(record["studio_session_id"], "studio-1")
+        self.assertEqual(record["studio_template"], "selfie")
+        self.assertEqual(record["request_data"]["aspect_ratio"], "3:4")
+        self.assertEqual(record["request_data"]["used_slots"], ["identity"])
+        self.assertEqual(record["response_data"]["stage"], "preflight")
+
+    def test_studio_failure_fallback_does_not_duplicate_linked_record(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio_adapter import StudioMixin
+
+        stub = object.__new__(StudioMixin)
+        records = []
+        stub.get_web_image_task = lambda _task_id: {"record_ids": ["record-1"], "request_data": {}}
+        stub._wait_for_record_commits = lambda _task_id: asyncio.sleep(0)
+        stub._record_task = records.append
+
+        asyncio.run(
+            stub._ensure_studio_failure_record(
+                task_id="web-studio-12345678-2",
+                session_id="studio-2",
+                error="上游失败",
+                stage="generating",
+            )
+        )
+
+        self.assertEqual(records, [])
+
+    def test_studio_later_shot_failure_keeps_failure_row_after_prior_result(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio_adapter import StudioMixin
+
+        stub = object.__new__(StudioMixin)
+        records = []
+        stub.get_web_image_task = lambda _task_id: {"record_ids": ["record-1"], "request_data": {}}
+        stub._wait_for_record_commits = lambda _task_id: asyncio.sleep(0)
+        stub._record_task = records.append
+
+        asyncio.run(
+            stub._ensure_studio_failure_record(
+                task_id="web-studio-12345678-3",
+                session_id="studio-3",
+                error="第二张生成前失败",
+                stage="generating",
+                completed_count=1,
+            )
+        )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["task_id"], "web-studio-12345678-3")
+        self.assertEqual(records[0]["response_data"]["stage"], "generating")
+
+    def test_run_studio_task_preflight_error_updates_task_and_record(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio_adapter import StudioMixin
+
+        stub = object.__new__(StudioMixin)
+        task_id = "web-studio-12345678-4"
+        state = {
+            "task_id": task_id,
+            "status": "queued",
+            "request_data": {"kind": "studio", "prompt": "没有参考图"},
+            "result": None,
+            "record_ids": [],
+        }
+        records = []
+        updates = []
+        session = {
+            "id": "studio-4",
+            "template": "selfie",
+            "graph": {"mode": "selfie", "prompt": "没有参考图", "count": 1},
+            "slots": [],
+        }
+        stub.config = types.SimpleNamespace(image_default_aspect_ratio="9:16", image_default_resolution="1K")
+        stub.studio = types.SimpleNamespace(
+            get=lambda _session_id: session,
+            attach_run_finish=lambda *_args, **_kwargs: None,
+        )
+        stub.persona = types.SimpleNamespace(get_reference_image=lambda: None)
+        stub._task_cancel_requested = lambda _task_id: False
+        stub._web_task_timestamp = lambda: "now"
+        stub._set_web_image_task = lambda _task_id, **fields: (updates.append(fields), state.update(fields))
+        stub.get_web_image_task = lambda _task_id: dict(state)
+        stub._wait_for_record_commits = lambda _task_id: asyncio.sleep(0)
+        stub._record_task = records.append
+        stub._load_cache_image_bytes = lambda _path: None
+
+        asyncio.run(stub._run_studio_task(task_id, session["id"]))
+
+        self.assertEqual(state["status"], "failed")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["task_id"], task_id)
+        self.assertEqual(records[0]["response_data"]["stage"], "preflight")
+        self.assertTrue(any(item.get("generation_stage") == "failed" for item in updates))
+
     def test_selfie_template_mentions_look_legs_outfit_record(self) -> None:
         from astrbot_plugin_selfie_image.studio.studio import list_studio_templates
 
