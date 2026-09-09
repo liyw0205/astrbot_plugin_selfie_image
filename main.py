@@ -4237,6 +4237,7 @@ class SelfieImagePlugin(
                     "provider_type": channel.provider_type,
                     "base_url": channel.base_url,
                     "api_key": channel.api_key,
+                    "api_keys": channel.api_keys,
                     "model": channel.model,
                     "enabled_models": channel.enabled_models,
                     "enabled": channel.enabled,
@@ -4793,7 +4794,11 @@ class SelfieImagePlugin(
         candidates = build_model_list_urls(base_url, provider_type)
         if not candidates:
             raise RuntimeError("base_url 为空")
-        headers = {"Accept": "application/json"}
+        headers = {
+            "Accept": "application/json",
+            "Connection": "close",
+            "User-Agent": "AI-Cat/1.0",
+        }
         if provider_type == "gemini" and api_key:
             headers["x-goog-api-key"] = api_key
         elif api_key:

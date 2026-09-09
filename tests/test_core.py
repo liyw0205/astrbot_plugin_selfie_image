@@ -395,7 +395,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.6")
+        self.assertEqual(PLUGIN_VERSION, "1.6.7")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -2838,6 +2838,8 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(image, PNG_BYTES)
         self.assertEqual(session.requests[0]["timeout"].total, IMAGE_DOWNLOAD_WAIT_SECONDS)
+        self.assertEqual(session.requests[0]["headers"]["User-Agent"], "AI-Cat/1.0")
+        self.assertEqual(session.requests[0]["headers"]["Connection"], "close")
         with patch("astrbot_plugin_selfie_image.core.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
             self.assertEqual(image_download_timeout(180).total, IMAGE_DOWNLOAD_WAIT_SECONDS)
 
