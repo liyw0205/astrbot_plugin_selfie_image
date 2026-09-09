@@ -395,7 +395,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.4")
+        self.assertEqual(PLUGIN_VERSION, "1.6.5")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -2070,6 +2070,48 @@ class ImageUtilityTests(unittest.TestCase):
                 "https://generativelanguage.googleapis.com/models",
             ],
         )
+
+    def test_dashboard_model_refresh_resolves_masked_key_from_saved_channel(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin.config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "sub",
+                        "provider_type": "openai",
+                        "base_url": "https://sub.example.test",
+                        "api_key": "stored-provider-secret",
+                        "model": "gpt-image-2",
+                        "enabled_models": ["gpt-image-2"],
+                    }
+                ]
+            }
+        )
+
+        key, proxy = plugin._web_channel_runtime_credentials(
+            {
+                "name": "sub",
+                "base_url": "https://sub.example.test",
+                "api_key": "******",
+            },
+            "image",
+        )
+        self.assertEqual(key, "stored-provider-secret")
+        self.assertEqual(proxy, "")
+
+        # New unsaved channels still use the value explicitly entered in the
+        # modal; a masked marker must never become an Authorization token.
+        key, _ = plugin._web_channel_runtime_credentials(
+            {
+                "name": "new-channel",
+                "base_url": "https://new.example.test",
+                "api_key": "new-provider-secret",
+            },
+            "image",
+        )
+        self.assertEqual(key, "new-provider-secret")
 
     def test_channel_payload_provider_type_accepts_legacy_keys_and_aliases(self) -> None:
         self.assertEqual(provider_type_from_channel_payload({"providerType": "google"}), "gemini")

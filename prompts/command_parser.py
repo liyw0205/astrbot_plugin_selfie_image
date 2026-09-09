@@ -29,6 +29,91 @@ NON_COUNT_FOLLOWING_UNITS = {
     "厘米", "米", "公里", "mm", "cm", "m", "km", "kg", "斤", "%",
 }
 
+# Creative template options are intentionally limited to known variable names.
+# Unknown ``--foo`` tokens remain in the prompt so existing provider-specific
+# options and natural language are not silently discarded.
+TEMPLATE_OPTION_ALIASES = {
+    "角色": "role",
+    "人物": "role",
+    "主体": "role",
+    "role": "role",
+    "character": "role",
+    "服饰": "outfit",
+    "服装": "outfit",
+    "穿搭": "outfit",
+    "outfit": "outfit",
+    "clothes": "outfit",
+    "场景": "scene",
+    "环境": "scene",
+    "地点": "scene",
+    "scene": "scene",
+    "environment": "scene",
+    "姿势": "pose",
+    "动作": "pose",
+    "pose": "pose",
+    "action": "pose",
+    "镜头": "shot",
+    "机位": "shot",
+    "shot": "shot",
+    "camera": "shot",
+    "视角": "view",
+    "view": "view",
+    "构图": "composition",
+    "composition": "composition",
+    "光线": "lighting",
+    "lighting": "lighting",
+    "时长": "duration",
+    "duration": "duration",
+}
+
+
+def extract_template_options(text: str) -> Tuple[str, dict[str, str], bool]:
+    """Extract known creative variable options from arbitrary prompt positions.
+
+    Examples::
+
+        ``{角色}在{场景} --角色 宁红夜 --场景=庭院``
+        ``--template-random`` / ``--随机变量`` enables random defaults.
+
+    Values are one shell-like token, with a quoted value allowed for spaces.
+    Unknown options are preserved for the existing option/preset parsers.
+    """
+    raw = str(text or "")
+    values: dict[str, str] = {}
+    randomize = False
+    pattern = re.compile(
+        r"(?<!\S)--(?P<name>[A-Za-z][A-Za-z0-9_-]*|[^\s=]+)"
+        r"(?:\s*=\s*|\s+)"
+        r"(?P<value>\"[^\"]*\"|'[^']*'|[^\s]+)"
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal randomize
+        raw_name = str(match.group("name") or "").strip()
+        lowered = raw_name.lower()
+        if lowered in {"template-random", "randomize", "random-template"} or raw_name in {"随机变量", "随机缺省"}:
+            # A value-looking token belongs to the prompt unless it is a
+            # recognized boolean switch; this branch is handled below too.
+            return match.group(0)
+        key = TEMPLATE_OPTION_ALIASES.get(raw_name, TEMPLATE_OPTION_ALIASES.get(lowered, ""))
+        if not key:
+            return match.group(0)
+        value = str(match.group("value") or "").strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1].strip()
+        if value:
+            values[key] = value
+        return " "
+
+    cleaned = pattern.sub(replace, raw)
+    # Boolean switches do not need a value and therefore are handled after the
+    # value-bearing expression.  They are removed only when standalone.
+    switch = re.compile(r"(?<!\S)(?:--template-random|--randomize|--random-template|--随机变量|--随机缺省)(?=\s|$)", re.IGNORECASE)
+    if switch.search(cleaned):
+        randomize = True
+        cleaned = switch.sub(" ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip(), values, randomize
+
 
 def normalize_count(count: Any, max_count: int) -> int:
     try:

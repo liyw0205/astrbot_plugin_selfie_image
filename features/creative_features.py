@@ -253,6 +253,57 @@ def parse_video_storyboard(text: str) -> Dict[str, Any]:
     }
 
 
+def normalize_storyboard_payload(value: Any, fallback_prompt: str = "") -> Dict[str, Any]:
+    """Normalize an edited dashboard storyboard or plain storyboard text.
+
+    The browser may send either the parser result (``enabled/shots/prompt``),
+    a list of shot objects, or free-form text.  Invalid/empty rows are removed
+    and durations are clamped to a sensible per-shot range before the payload
+    reaches a video provider.
+    """
+    if isinstance(value, Mapping):
+        raw_shots = value.get("shots")
+        if isinstance(raw_shots, Sequence) and not isinstance(raw_shots, (str, bytes)):
+            shots: List[Dict[str, Any]] = []
+            for raw in raw_shots:
+                if not isinstance(raw, Mapping):
+                    continue
+                description = str(raw.get("description") or raw.get("prompt") or "").strip()
+                if not description:
+                    continue
+                try:
+                    duration = float(raw.get("duration") or 0)
+                except (TypeError, ValueError):
+                    duration = 0.0
+                shots.append(
+                    {
+                        "index": len(shots) + 1,
+                        "description": description[:10000],
+                        "duration": max(0.0, min(60.0, duration)),
+                    }
+                )
+            if shots:
+                default_duration = round(5.0 / len(shots), 2)
+                for shot in shots:
+                    if not shot["duration"]:
+                        shot["duration"] = default_duration
+                return {
+                    "enabled": True,
+                    "shots": shots,
+                    "prompt": "；".join(
+                        f"镜头{shot['index']}（约{shot['duration']:g}秒）：{shot['description']}"
+                        for shot in shots
+                    ),
+                }
+        text = str(value.get("prompt") or value.get("text") or "").strip()
+        if text:
+            return parse_video_storyboard(text)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return normalize_storyboard_payload({"shots": value}, fallback_prompt)
+    text = str(value or fallback_prompt or "").strip()
+    return parse_video_storyboard(text)
+
+
 def apply_retry_strategy(
     payload: Mapping[str, Any],
     strategy: str = "full",
@@ -390,6 +441,9 @@ class CreativeFeaturesMixin:
 
     def parse_storyboard_for_web(self, prompt: str) -> Dict[str, Any]:
         return parse_video_storyboard(prompt)
+
+    def normalize_storyboard_for_web(self, value: Any, fallback_prompt: str = "") -> Dict[str, Any]:
+        return normalize_storyboard_payload(value, fallback_prompt)
 
     def list_cos_pools_for_web(self) -> Dict[str, Any]:
         from ..cos.cos_looks import list_cos_look_sets

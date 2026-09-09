@@ -60,6 +60,7 @@ from .prompts.command_parser import (
     command_tokens_for_count,
     expand_cos_user_text_with_preset,
     expand_user_text_with_preset,
+    extract_template_options,
     extract_command_count,
     normalize_count,
     normalize_preset_input,
@@ -620,6 +621,28 @@ class SelfieImagePlugin(
             self.config.image_max_batch_count,
             allow_attached=allow_attached,
             allow_trailing=allow_trailing,
+        )
+
+    def _render_command_template(self, text: str) -> Tuple[str, Dict[str, str], bool, List[str]]:
+        """Render known template variables while preserving normal options.
+
+        The command layer deliberately leaves unresolved placeholders intact
+        unless the user opts into random defaults.  ``--variation`` is handled
+        later by the batch runner, where each shot can receive its own values.
+        """
+        cleaned, values, randomize = extract_template_options(text)
+        rendered = self.render_creative_prompt(
+            cleaned,
+            {
+                "template_values": values,
+                "template_randomize": randomize,
+            },
+        )
+        return (
+            str(rendered.get("prompt") or cleaned).strip(),
+            {str(key): str(value) for key, value in values.items()},
+            bool(randomize),
+            [str(item) for item in (rendered.get("unresolved") or []) if str(item).strip()],
         )
 
     def _parse_prompt_options(
@@ -1927,6 +1950,79 @@ class SelfieImagePlugin(
             return find_model_target(targets, channel_name, model)
         return find_model_target(self.config.get_prioritized_video_targets())
 
+    def _web_channel_runtime_credentials(
+        self,
+        channel_payload: Mapping[str, Any],
+        media_type: str = "image",
+    ) -> Tuple[str, str]:
+        """Resolve a dashboard channel's runtime key without trusting masked input.
+
+        The dashboard intentionally receives ``******`` instead of secrets.  A
+        model refresh is a transient request and therefore bypasses the config
+        save/restore path; resolve an existing channel by name (or base URL)
+        before building its Authorization header.  New unsaved channels still
+        use a key explicitly entered in the modal.
+        """
+        payload = channel_payload if isinstance(channel_payload, Mapping) else {}
+        placeholder_values = {"", "******", "[REDACTED]", "«redacted»"}
+
+        def usable(value: Any) -> str:
+            text = str(value or "").strip()
+            return "" if text in placeholder_values else text
+
+        def first_usable(value: Any) -> str:
+            if isinstance(value, (list, tuple, set)):
+                for item in value:
+                    key = usable(item)
+                    if key:
+                        return key
+                return ""
+            return usable(value)
+
+        kind = str(media_type or "image").strip().lower()
+        if kind == "video":
+            configured_channels = list(getattr(self.config, "video_channels", []) or [])
+        elif kind == "audit":
+            configured_channels = list(getattr(self.config, "audit_channels", []) or [])
+        else:
+            configured_channels = list(getattr(self.config, "image_channels", []) or [])
+
+        name = str(payload.get("name") or payload.get("id") or "").strip()
+        base_url = str(payload.get("base_url") or payload.get("baseUrl") or "").strip().rstrip("/")
+        matched = None
+        if name:
+            matched = next(
+                (
+                    channel
+                    for channel in configured_channels
+                    if str(getattr(channel, "name", "") or "").strip() == name
+                    or str(getattr(channel, "id", "") or "").strip() == name
+                ),
+                None,
+            )
+        if matched is None and base_url:
+            matched = next(
+                (
+                    channel
+                    for channel in configured_channels
+                    if str(getattr(channel, "base_url", "") or "").strip().rstrip("/") == base_url
+                ),
+                None,
+            )
+        if matched is not None:
+            keys = getattr(matched, "resolved_api_keys", None)
+            if callable(keys):
+                runtime_key = first_usable(keys())
+            else:
+                runtime_key = first_usable(getattr(matched, "api_key", ""))
+            if runtime_key:
+                return runtime_key, str(getattr(matched, "proxy", "") or "").strip()
+
+        incoming_key = first_usable(payload.get("api_keys")) or first_usable(
+            payload.get("api_key") or payload.get("apiKey")
+        )
+        return incoming_key, str(payload.get("proxy") or "").strip()
+
     def _record_retry_reference_data_urls(self, record: Mapping[str, Any]) -> List[str]:
         """Load cached request images for a record retry without exposing paths."""
         raw_paths = record.get("request_image_paths")
@@ -2975,7 +3071,13 @@ class SelfieImagePlugin(
             return
         raw_message = extract_command_message(event, command_name, fallback).strip()
         prompt, duration = self._parse_video_duration(raw_message)
+        prompt, template_values, template_randomize, _ = self._render_command_template(prompt)
         prompt, duration, _ = self._expand_video_prompt_with_preset(prompt, duration)
+        rendered = self.render_creative_prompt(
+            prompt,
+            {"template_values": template_values, "template_randomize": template_randomize},
+        )
+        prompt = str(rendered.get("prompt") or prompt).strip()
         if not prompt:
             label = "形象图生视频" if mode == "persona" else ("图生视频" if mode == "i2v" else "文生视频")
             yield event.plain_result(f"请写上{label}的内容，例如：/{command_name if isinstance(command_name, str) else '视频'} 小猫在草地上跑")
@@ -3092,6 +3194,9 @@ class SelfieImagePlugin(
                 "duration": duration or getattr(self.config, "video_default_duration", 5),
                 "has_image": bool(refs),
                 "kind": "video",
+                "template_values": template_values,
+                "template_randomize": template_randomize,
+                "template_unresolved": rendered.get("unresolved") or [],
             },
             runner=runner_with_duration,
         )
@@ -4093,14 +4198,48 @@ class SelfieImagePlugin(
         if payload.get("image"):
             raw_images.append(payload.get("image"))
 
-        original_prompt = str(payload.get("prompt") or "").strip() or "看着镜头自然自拍"
-        original_prompt, variation_enabled, variation_field = parse_variation_request(original_prompt)
+        raw_prompt = str(payload.get("prompt") or "").strip() or "看着镜头自然自拍"
+        template_values = payload.get("template_values") if isinstance(payload.get("template_values"), Mapping) else {}
+        template_randomize = payload.get("template_randomize") in {True, 1, "1", "true", "yes", "on", "是", "开启"}
+        template_result = self.render_creative_prompt(
+            raw_prompt,
+            {
+                "template_values": template_values,
+                "template_randomize": template_randomize,
+                "template_pools": payload.get("template_pools"),
+                "template_seed": payload.get("template_seed"),
+            },
+        )
+        original_prompt = str(template_result.get("prompt") or raw_prompt).strip()
+        original_prompt, parsed_variation_enabled, parsed_variation_field = parse_variation_request(original_prompt)
+        raw_variation_enabled = payload.get("variation_enabled")
+        variation_enabled = (
+            raw_variation_enabled is True
+            or raw_variation_enabled in {1, "1", "true", "yes", "on", "是", "开启"}
+            or parsed_variation_enabled
+        )
+        raw_variation_fields = payload.get("variation_fields") or payload.get("vary")
+        if isinstance(raw_variation_fields, str):
+            variation_fields = [item.strip() for item in re.split(r"[,，\s]+", raw_variation_fields) if item.strip()]
+        elif isinstance(raw_variation_fields, (list, tuple, set)):
+            variation_fields = [str(item).strip() for item in raw_variation_fields if str(item).strip()]
+        else:
+            variation_fields = []
+        variation_field = parsed_variation_field or (variation_fields[0] if len(variation_fields) == 1 else "")
+        normalize_web_count = getattr(self, "_normalize_web_image_count", None)
+        if callable(normalize_web_count):
+            requested_count = normalize_web_count(payload.get("count"))
+        else:
+            try:
+                requested_count = max(1, min(20, int(payload.get("count") or 1)))
+            except (TypeError, ValueError):
+                requested_count = 1
         variation_rows = []
         if variation_enabled:
-            fields = [variation_field] if variation_field else ["pose", "scene", "shot"]
+            fields = variation_fields or ([variation_field] if variation_field else ["pose", "scene", "shot"])
             variation_rows = self.build_creative_variations(
                 original_prompt,
-                max(1, int(payload.get("count") or 1)),
+                requested_count,
                 {"variation_fields": fields},
             )
         aspect = str(payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
@@ -4120,16 +4259,15 @@ class SelfieImagePlugin(
             "use_selfie_reference": bool(payload.get("use_selfie_reference")),
             "raw_reference_image_count": len(raw_images),
             "variation_enabled": variation_enabled,
-            "variation_fields": [variation_field] if variation_field else (["pose", "scene", "shot"] if variation_enabled else []),
+            "variation_fields": fields if variation_enabled else [],
+            "template": {
+                "raw_prompt": raw_prompt,
+                "values": {str(key): str(value) for key, value in template_values.items()},
+                "randomize_missing": template_randomize,
+                "randomized": template_result.get("randomized") or {},
+                "unresolved": template_result.get("unresolved") or [],
+            },
         }
-        normalize_web_count = getattr(self, "_normalize_web_image_count", None)
-        if callable(normalize_web_count):
-            requested_count = normalize_web_count(payload.get("count"))
-        else:
-            try:
-                requested_count = max(1, min(20, int(payload.get("count") or 1)))
-            except (TypeError, ValueError):
-                requested_count = 1
         request_summary["requested_count"] = requested_count
         request_summary["count"] = requested_count
         retry_record_id = str(payload.get("_retry_record_id") or payload.get("retry_record_id") or "").strip()
@@ -4282,6 +4420,13 @@ class SelfieImagePlugin(
             request_data = dict(last_result.get("request_data") or request_summary)
             request_data.update(
                 {
+                    key: value
+                    for key, value in request_summary.items()
+                    if key not in set()
+                }
+            )
+            request_data.update(
+                {
                     "original_prompt": original_prompt,
                     "requested_count": requested_count,
                     "count": requested_count,
@@ -4385,8 +4530,23 @@ class SelfieImagePlugin(
             )
         channel_name = str(payload.get("channel") or "").strip()
         model_name = str(payload.get("model") or "").strip()
-        prompt = str(payload.get("prompt") or "").strip() or "一段自然流畅的短视频"
-        storyboard = parse_video_storyboard(prompt)
+        raw_prompt = str(payload.get("prompt") or "").strip() or "一段自然流畅的短视频"
+        template_values = payload.get("template_values") if isinstance(payload.get("template_values"), Mapping) else {}
+        template_randomize = payload.get("template_randomize") in {True, 1, "1", "true", "yes", "on", "是", "开启"}
+        template_result = self.render_creative_prompt(
+            raw_prompt,
+            {
+                "template_values": template_values,
+                "template_randomize": template_randomize,
+                "template_pools": payload.get("template_pools"),
+                "template_seed": payload.get("template_seed"),
+            },
+        )
+        prompt = str(template_result.get("prompt") or raw_prompt).strip()
+        storyboard_value = payload.get("storyboard")
+        if storyboard_value is None:
+            storyboard_value = payload.get("storyboard_text")
+        storyboard = self.normalize_storyboard_for_web(storyboard_value, prompt)
         if storyboard.get("enabled"):
             prompt = str(storyboard.get("prompt") or prompt).strip()
         aspect = str(payload.get("aspect_ratio") or "16:9").strip() or "16:9"
@@ -4487,6 +4647,13 @@ class SelfieImagePlugin(
             "request_data": {
                 **self._summarize_web_test_payload(payload),
                 "storyboard": storyboard if storyboard.get("enabled") else {"enabled": False, "shots": []},
+                "template": {
+                    "raw_prompt": raw_prompt,
+                    "values": {str(key): str(value) for key, value in template_values.items()},
+                    "randomize_missing": template_randomize,
+                    "randomized": template_result.get("randomized") or {},
+                    "unresolved": template_result.get("unresolved") or [],
+                },
                 "requested_duration": duration,
                 "timeout_seconds": int(self.config.video_global_timeout or 300),
                 "cache_cleanup": cache_cleanup,
@@ -4535,6 +4702,13 @@ class SelfieImagePlugin(
             "request_data": {
                 **self._summarize_web_test_payload(payload),
                 "storyboard": storyboard if storyboard.get("enabled") else {"enabled": False, "shots": []},
+                "template": {
+                    "raw_prompt": raw_prompt,
+                    "values": {str(key): str(value) for key, value in template_values.items()},
+                    "randomize_missing": template_randomize,
+                    "randomized": template_result.get("randomized") or {},
+                    "unresolved": template_result.get("unresolved") or [],
+                },
             },
             "storyboard": storyboard if storyboard.get("enabled") else {"enabled": False, "shots": []},
             "video_url": result.video_url,
@@ -4549,9 +4723,10 @@ class SelfieImagePlugin(
         raw_payload = payload if isinstance(payload, dict) else {}
         channel_payload = raw_payload.get("channel") if isinstance(raw_payload.get("channel"), dict) else raw_payload
         base_url = str(channel_payload.get("base_url") or channel_payload.get("baseUrl") or "").strip()
-        api_key = str(channel_payload.get("api_key") or channel_payload.get("apiKey") or "").strip()
+        media_type = str(channel_payload.get("media_type") or raw_payload.get("media_type") or "image").strip().lower()
+        api_key, configured_proxy = self._web_channel_runtime_credentials(channel_payload, media_type)
         provider_type = provider_type_from_channel_payload(channel_payload)
-        proxy = str(channel_payload.get("proxy") or "").strip()
+        proxy = str(channel_payload.get("proxy") or configured_proxy or "").strip()
         candidates = build_model_list_urls(base_url, provider_type)
         if not candidates:
             raise RuntimeError("base_url 为空")
@@ -5230,12 +5405,18 @@ class SelfieImagePlugin(
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, ("画", "生图"), fallback)
         message, requested_count = self._extract_command_count(message, allow_trailing=True)
+        message, template_values, template_randomize, _ = self._render_command_template(message)
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             yield event.plain_result(error)
             return
 
         prompt, aspect, resolution, _ = self._expand_user_text_with_preset(message)
+        rendered = self.render_creative_prompt(
+            prompt,
+            {"template_values": template_values, "template_randomize": template_randomize},
+        )
+        prompt = str(rendered.get("prompt") or prompt).strip()
         refs = await self._event_reference_images(
             event,
             include_at_avatar=True,
@@ -5273,6 +5454,9 @@ class SelfieImagePlugin(
                 "resolution": resolution,
                 "requested_count": requested_count,
                 "reference_image_count": len(refs),
+                "template_values": template_values,
+                "template_randomize": template_randomize,
+                "template_unresolved": rendered.get("unresolved") or [],
             },
             runner=runner,
         )
@@ -5297,12 +5481,18 @@ class SelfieImagePlugin(
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, "文生图", fallback)
         message, requested_count = self._extract_command_count(message, allow_trailing=True)
+        message, template_values, template_randomize, _ = self._render_command_template(message)
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
             yield event.plain_result(error)
             return
 
         prompt, aspect, resolution, _ = self._expand_user_text_with_preset(message)
+        rendered = self.render_creative_prompt(
+            prompt,
+            {"template_values": template_values, "template_randomize": template_randomize},
+        )
+        prompt = str(rendered.get("prompt") or prompt).strip()
         if not prompt:
             yield event.plain_result("请输入文生图提示词。")
             return
@@ -5331,6 +5521,9 @@ class SelfieImagePlugin(
                 "aspect_ratio": aspect,
                 "resolution": resolution,
                 "requested_count": requested_count,
+                "template_values": template_values,
+                "template_randomize": template_randomize,
+                "template_unresolved": rendered.get("unresolved") or [],
             },
             runner=runner,
         )

@@ -10,9 +10,11 @@ from astrbot_plugin_selfie_image.features.creative_features import (
     apply_retry_strategy,
     build_prompt_variations,
     compare_generation_records,
+    normalize_storyboard_payload,
     parse_video_storyboard,
     render_prompt_template,
 )
+from astrbot_plugin_selfie_image.prompts.command_parser import extract_template_options
 
 
 def test_template_variables_support_chinese_aliases_and_explicit_values() -> None:
@@ -48,6 +50,32 @@ def test_storyboard_parses_lines_and_durations() -> None:
     parenthesized = parse_video_storyboard("镜头1：推近角色（2秒）")
     assert parenthesized["shots"][0]["duration"] == 2
     assert parenthesized["shots"][0]["description"] == "推近角色"
+
+
+def test_storyboard_normalizes_edited_dashboard_rows() -> None:
+    parsed = normalize_storyboard_payload(
+        {"shots": [{"description": "镜头推进", "duration": "2"}, {"prompt": "转身", "duration": 0}]}
+    )
+    assert parsed["enabled"] is True
+    assert parsed["shots"][0]["duration"] == 2
+    assert parsed["shots"][1]["index"] == 2
+    assert "镜头2" in parsed["prompt"]
+
+
+def test_command_template_options_can_be_mixed_with_prompt() -> None:
+    cleaned, values, randomize = extract_template_options(
+        "{角色}在{场景} --场景=庭院廊下 --角色 \"宁红夜\" --template-random"
+    )
+    assert cleaned == "{角色}在{场景}"
+    assert values == {"scene": "庭院廊下", "role": "宁红夜"}
+    assert randomize is True
+
+
+def test_unknown_command_options_are_preserved() -> None:
+    cleaned, values, randomize = extract_template_options("猫 --ar 9:16 --unknown value")
+    assert cleaned == "猫 --ar 9:16 --unknown value"
+    assert values == {}
+    assert randomize is False
 
 
 def test_retry_strategies_are_bounded_and_preserve_prompt() -> None:

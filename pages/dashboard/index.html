@@ -249,6 +249,9 @@
     .preview { max-width: 260px; border: 1px solid var(--line); border-radius: var(--radius-md); display: none; margin-top: 10px; box-shadow: var(--shadow); }
     .images { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-top: 12px; }
     .images img { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); }
+    .comparison-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+    .comparison-card { min-width:0; border:1px solid var(--line); border-radius:var(--radius-md); padding:10px; background:#fff; }
+    .comparison-card .images { grid-template-columns:1fr; margin-top:8px; }
     .asset-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-soft); }
     .asset-toolbar .actions { margin-top: 0; }
     .asset-bulk-form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; width: 100%; }
@@ -306,6 +309,11 @@
       border-color: color-mix(in srgb, var(--primary) 35%, var(--line-strong));
       color: var(--primary-strong);
     }
+    .cos-panel-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; margin-bottom:4px; }
+    .cos-pool-row { display:flex; align-items:center; gap:5px; width:100%; }
+    .cos-pool-row .preset-chip { flex:1 1 auto; min-width:0; text-align:left; }
+    .cos-pool-row .preset-chip small { display:block; color:var(--muted); font-size:10px; margin-top:2px; }
+    .cos-favorite-btn, .cos-delete-btn { flex:0 0 auto; min-width:32px; padding:5px 7px; }
 
     .studio-chiprow button { padding:5px 10px; font-size:12px; }
     .studio-gallery { display:none; margin-top:10px; border:1px solid var(--line); border-radius:var(--radius-md); padding:10px; background:var(--panel-soft); }
@@ -947,6 +955,7 @@
       <div class="between" style="margin-top:10px;gap:8px">
         <span id="taskSelectionStatus" class="muted">未选择任务</span>
         <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <select id="taskRetryStrategy" class="mini" title="批量重试策略"><option value="full">完整保留参数</option><option value="model_only">只换模型</option><option value="channel_only">只换渠道</option><option value="lower_resolution">降低分辨率</option></select>
           <button class="secondary mini" type="button" onclick="selectVisibleTasks()">选择当前页</button>
           <button class="secondary mini" type="button" onclick="clearTaskSelection()">取消选择</button>
           <button class="secondary mini" type="button" onclick="exportSelectedTasks()">导出任务</button>
@@ -957,6 +966,14 @@
       <div id="taskQueueSummary" class="status"></div>
       <div style="overflow:auto;margin-top:8px"><table class="table" id="taskQueueTable"></table></div>
       <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
+      <div class="between" style="margin-top:8px;gap:8px">
+        <span id="recordSelectionStatus" class="muted">未选择记录</span>
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary mini" type="button" onclick="selectVisibleRecords()">选择当前页</button>
+          <button class="secondary mini" type="button" onclick="clearRecordSelection()">取消选择</button>
+          <button class="ok mini" type="button" onclick="compareSelectedRecords()">对比选中记录</button>
+        </div>
+      </div>
       <div id="monitorPager" class="actions"></div>
       <div class="floating-actions" aria-label="记录操作">
         <button class="secondary" type="button" onclick="loadRecords(true)" data-tooltip="刷新记录" aria-label="刷新记录" title="刷新记录"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
@@ -1132,6 +1149,33 @@
         </div>
       </div>
       <textarea id="testPrompt">一只可爱的白色猫咪，坐在樱花树下，柔和光线，精致插画风格</textarea>
+      <div class="detail-title"><h3>模板变量</h3><span class="muted">可直接写 {角色}、{场景} 等占位符</span></div>
+      <div class="grid4 creative-template-grid">
+        <div><label>角色</label><input id="testTemplateRole" placeholder="例如：宁红夜"></div>
+        <div><label>服饰</label><input id="testTemplateOutfit" placeholder="例如：红色旗袍"></div>
+        <div><label>场景</label><input id="testTemplateScene" placeholder="例如：庭院廊下"></div>
+        <div><label>姿势</label><input id="testTemplatePose" placeholder="例如：侧身回看"></div>
+        <div><label>镜头</label><input id="testTemplateShot" placeholder="例如：竖屏半身"></div>
+        <div><label>视角</label><input id="testTemplateView" placeholder="例如：他拍视角"></div>
+        <div><label>光线</label><input id="testTemplateLighting" placeholder="例如：窗光"></div>
+        <div class="actions" style="align-items:end;margin-top:0"><button class="secondary mini" id="testTemplatePreviewBtn" type="button">预览模板</button></div>
+      </div>
+      <div class="grid" style="margin-top:4px">
+        <label class="checkline"><input id="testTemplateRandomize" type="checkbox"> 未填写变量时随机补全</label>
+        <label class="checkline"><input id="testVariationEnabled" type="checkbox"> 批次变化（轮换姿势/场景/镜头）</label>
+      </div>
+      <div id="testVariationFieldsWrap" class="grid4" style="display:none;margin-top:4px">
+        <label class="checkline"><input type="checkbox" value="pose" data-test-vary checked> 姿势</label>
+        <label class="checkline"><input type="checkbox" value="scene" data-test-vary checked> 场景</label>
+        <label class="checkline"><input type="checkbox" value="shot" data-test-vary checked> 镜头</label>
+        <label class="checkline"><input type="checkbox" value="view" data-test-vary> 视角</label>
+      </div>
+      <div id="testStoryboardWrap" style="display:none;margin-top:8px">
+        <div class="between"><label for="testStoryboard">视频分镜（每行一个镜头，可写“时长2秒”）</label><button class="secondary mini" id="testStoryboardPreviewBtn" type="button">解析分镜</button></div>
+        <textarea id="testStoryboard" rows="4" placeholder="镜头1：镜头缓慢推进角色，时长2秒\n镜头2：角色转身看向窗外，时长3秒"></textarea>
+        <div id="testStoryboardPreview" class="status" style="margin-top:6px"></div>
+      </div>
+      <div id="testTemplatePreview" class="status" style="display:none;margin-top:8px"></div>
       <div class="preset-panel" id="testPresetPanel"></div>
       <div class="preset-panel" id="testCosPanel"></div>
       <div class="grid">
@@ -1356,6 +1400,16 @@
     </div>
   </div>
 
+  <div id="compareModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2>结果对比</h2>
+        <button class="secondary" type="button" onclick="closeCompareModal()">关闭</button>
+      </div>
+      <div class="modal-body"><div id="compareBody"></div></div>
+    </div>
+  </div>
+
   <div id="taskModal" class="modal-mask">
     <div class="modal">
       <div class="between">
@@ -1420,6 +1474,29 @@
           <button class="ok" id="presetTransferImportBtn" type="button" style="display:none">导入并合并</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="cosPoolModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2>维护 COS 池</h2>
+        <button class="secondary" type="button" onclick="closeCosPoolModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid">
+          <div><label>ID</label><input id="cosCustomId" maxlength="120" placeholder="例如：my-red-dress"></div>
+          <div><label>名称</label><input id="cosCustomTitle" maxlength="200" placeholder="例如：我的红色礼服"></div>
+        </div>
+        <label>服饰提示词</label><textarea id="cosCustomPrompt" rows="7" placeholder="只填写服饰细节；姿势和环境可留给通用随机池"></textarea>
+        <label>标签（可选，逗号分隔）</label><input id="cosCustomTags" placeholder="汉服,红色">
+        <div id="cosPoolStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer"><div class="actions" style="margin-top:0;justify-content:flex-end">
+        <button class="secondary" type="button" onclick="exportCosPool()">导出池</button>
+        <button class="secondary" type="button" onclick="openCosPoolImport()">导入池</button>
+        <button class="ok" type="button" onclick="saveCustomCos()">保存自定义 COS</button>
+      </div></div>
     </div>
   </div>
 
@@ -1545,7 +1622,7 @@
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], pollTimer: null, taskId: "", uploadSlotId: "", presetOpen: false, cosOpen: false, running: false, galleryTargetSlotId: "" };
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, taskId: "", uploadSlotId: "", presetOpen: false, cosOpen: false, running: false, galleryTargetSlotId: "" };
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -1555,6 +1632,7 @@
     let ASSET_PAGE = 1;
     const ASSET_SELECTION = new Set();
     const TASK_SELECTION = new Set();
+    const RECORD_SELECTION = new Set();
     let ASSET_LOAD_TIMER = null;
     let ASSET_STUDIO_PRESETS = [];
     let AUTH_TOKEN = safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '';
@@ -1594,6 +1672,7 @@
     let PRESET_EDIT_ORIGINAL = '';
     let PRESET_KIND = 'image';
     let PRESET_LOAD_SEQ = 0;
+    let CURRENT_COMPARE = null;
 
     function isEmbeddedFrame() {
       try {
@@ -3678,14 +3757,18 @@ Source prompt:
     async function retrySelectedTasks() {
       const ids = selectedTaskIds();
       if (!ids.length) return showToast('请先选择任务', 'bad');
-      if (!await confirmAction(`确定重试选中的 ${ids.length} 项任务？只有已关联生成记录的任务可以重试。`, {title:'批量重试任务', confirmText:'开始重试', danger:false})) return;
+      const strategy = String($('taskRetryStrategy')?.value || 'full');
+      if (!await confirmAction(`确定重试选中的 ${ids.length} 项任务？\n策略：${retryStrategyLabel(strategy)}\n只有已关联生成记录的任务可以重试。`, {title:'批量重试任务', confirmText:'开始重试', danger:false})) return;
       try {
-        const res = await api('/api/tasks/retry', {method:'POST', body: JSON.stringify({ids})});
+        const res = await api('/api/tasks/retry', {method:'POST', body: JSON.stringify({ids, strategy})});
         const data = res.data || {};
         showToast(`已提交 ${Number(data.submitted_count || 0)} 项重试`, data.submitted_count ? 'ok' : 'bad');
         clearTaskSelection();
         await loadTasks(false);
       } catch (e) { showToast(e.message || '批量重试失败', 'bad'); }
+    }
+    function retryStrategyLabel(strategy) {
+      return ({full:'完整保留参数', model_only:'只换模型', channel_only:'只换渠道', lower_resolution:'降低分辨率'})[String(strategy || 'full')] || '完整保留参数';
     }
     async function exportSelectedTasks() {
       try {
@@ -3710,10 +3793,10 @@ Source prompt:
       const text = String(value || '').trim();
       return text ? `<div><label>${escapeHtml(label)}</label><pre class="status" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(text)}</pre></div>` : '';
     }
-    async function retryTaskFromRecord(recordId) {
+    async function retryTaskFromRecord(recordId, strategy = 'full') {
       if (!recordId) return;
       try {
-        const res = await api('/api/records/' + encodeURIComponent(recordId) + '/retry', {method:'POST', body:'{}'});
+        const res = await api('/api/records/' + encodeURIComponent(recordId) + '/retry', {method:'POST', body:JSON.stringify({strategy})});
         const task = res.data || {};
         showToast(task.task_id ? '已提交重试任务' : '重试已提交', 'ok');
         await loadTasks(false);
@@ -3759,7 +3842,7 @@ Source prompt:
           <div class="detail-title" style="margin-top:14px"><h3>关联记录</h3>${linkedRecordIds.length ? linkedRecordIds.map(id => `<button class="secondary mini task-record-open" data-record-id="${escapeHtml(id)}" type="button">查看 ${escapeHtml(id)}</button>`).join(' ') : recordId ? `<button class="secondary mini task-record-open" data-record-id="${escapeHtml(recordId)}" type="button">查看来源记录</button>` : '<span class="muted">生成记录尚未写入</span>'}${recordId ? `<button class="ok mini task-record-retry" data-record-id="${escapeHtml(recordId)}" type="button">重新执行来源</button>` : ''}</div>
           ${attemptRows}`;
         body.querySelectorAll('.task-record-open').forEach(button => button.addEventListener('click', () => { closeTaskDetail(); openRecordDetail(button.dataset.recordId || ''); }));
-        body.querySelector('.task-record-retry')?.addEventListener('click', () => retryTaskFromRecord(recordId));
+        body.querySelector('.task-record-retry')?.addEventListener('click', () => retryTaskFromRecord(recordId, String($('taskRetryStrategy')?.value || 'full')));
       } catch (e) {
         body.innerHTML = `<div class="status">${escapeHtml(e.message || '任务详情读取失败')}</div>`;
       }
@@ -4049,9 +4132,22 @@ Source prompt:
         ['平均耗时', `${avg.toFixed(2)}s`],
         ['页码', `${MONITOR_PAGE}/${totalPages}`],
       ].map(([k,v]) => `<div class="stat-card"><div class="k">${k}</div><div class="v">${escapeHtml(String(v))}</div></div>`).join('');
-      $('recordTable').innerHTML = '<thead><tr><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型/失败原因</th></tr></thead><tbody>' +
-        (pageRows.length ? pageRows.map(r => `<tr style="cursor:pointer" title="点击查看详情" onclick="openRecordDetail('${escapeJs(r.id || '')}')"><td>${escapeHtml(r.time||'')}</td><td>${r.media_type === 'video' ? '视频' : '图片'}</td><td>${escapeHtml(r.source_label || r.source || '')}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">没有匹配的监控记录</td></tr>') +
+      $('recordTable').innerHTML = '<thead><tr><th></th><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型/失败原因</th></tr></thead><tbody>' +
+        (pageRows.length ? pageRows.map(r => {
+          const id = String(r.id || '');
+          return `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td>${escapeHtml(r.time||'')}</td><td>${r.media_type === 'video' ? '视频' : '图片'}</td><td>${escapeHtml(r.source_label || r.source || '')}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
+        }).join('') : '<tr><td colspan="7" class="muted">没有匹配的监控记录</td></tr>') +
         '</tbody>';
+      $('recordTable').querySelectorAll('input[data-record-select]').forEach(input => input.onchange = event => {
+        event.stopPropagation();
+        const id = String(input.getAttribute('data-record-select') || '').trim();
+        if (input.checked) RECORD_SELECTION.add(id); else RECORD_SELECTION.delete(id);
+        updateRecordSelectionStatus();
+      });
+      $('recordTable').querySelectorAll('.record-detail-row').forEach(row => row.onclick = event => {
+        if (!event.target.closest('input,button')) openRecordDetail(row.dataset.recordId || '');
+      });
+      updateRecordSelectionStatus();
       $('monitorPager').innerHTML = `
         <button class="secondary mini" type="button" onclick="setMonitorPage(1)" ${MONITOR_PAGE <= 1 ? 'disabled' : ''}>首页</button>
         <button class="secondary mini" type="button" onclick="setMonitorPage(${MONITOR_PAGE - 1})" ${MONITOR_PAGE <= 1 ? 'disabled' : ''}>上一页</button>
@@ -4059,6 +4155,57 @@ Source prompt:
         <button class="secondary mini" type="button" onclick="setMonitorPage(${MONITOR_PAGE + 1})" ${MONITOR_PAGE >= totalPages ? 'disabled' : ''}>下一页</button>
         <button class="secondary mini" type="button" onclick="setMonitorPage(${totalPages})" ${MONITOR_PAGE >= totalPages ? 'disabled' : ''}>末页</button>
       `;
+    }
+
+    function selectedRecordIds() { return Array.from(RECORD_SELECTION).filter(Boolean); }
+    function updateRecordSelectionStatus() {
+      const total = selectedRecordIds().length;
+      if ($('recordSelectionStatus')) $('recordSelectionStatus').textContent = total ? `已选择 ${total} 条记录` : '未选择记录';
+    }
+    function selectVisibleRecords() {
+      document.querySelectorAll('#recordTable input[data-record-select]').forEach(input => {
+        const id = String(input.getAttribute('data-record-select') || '').trim();
+        if (id) RECORD_SELECTION.add(id);
+        input.checked = true;
+      });
+      updateRecordSelectionStatus();
+    }
+    function clearRecordSelection() {
+      RECORD_SELECTION.clear();
+      document.querySelectorAll('#recordTable input[data-record-select]').forEach(input => { input.checked = false; });
+      updateRecordSelectionStatus();
+    }
+    function closeCompareModal() { $('compareModal')?.classList.remove('show'); CURRENT_COMPARE = null; }
+    function comparisonMediaMarkup(item) {
+      const images = Array.isArray(item.image_paths) ? item.image_paths : [];
+      const videos = Array.isArray(item.video_paths) ? item.video_paths : [];
+      if (videos.length) return videoThumbs(videos, '');
+      return images.length ? imageThumbs(images, '对比图') : '<div class="status">没有可预览的媒体</div>';
+    }
+    async function compareSelectedRecords() {
+      const ids = selectedRecordIds();
+      if (ids.length < 2) return showToast('至少选择两条记录', 'bad');
+      const body = $('compareBody');
+      if (!body) return;
+      body.innerHTML = '<div class="status">正在加载对比结果…</div>';
+      $('compareModal')?.classList.add('show');
+      try {
+        const res = await api('/api/records/compare', {method:'POST', body: JSON.stringify({ids, limit: 8})});
+        CURRENT_COMPARE = res.data || {};
+        const rows = Array.isArray(CURRENT_COMPARE.records) ? CURRENT_COMPARE.records : [];
+        body.innerHTML = rows.length ? `<div class="muted" style="margin-bottom:10px">共同提示词：${escapeHtml(CURRENT_COMPARE.common_prompt || '未记录')}</div><div class="comparison-grid">${rows.map(item => `<article class="comparison-card"><div class="between"><b>${escapeHtml(item.model || '未记录模型')}</b><span class="pill ${item.success ? 'green' : 'gray'}">${item.success ? '成功' : '失败'}</span></div><div class="muted">${escapeHtml(item.channel || '未记录渠道')} · ${escapeHtml(item.elapsed_seconds == null ? '-' : String(item.elapsed_seconds))}s</div>${comparisonMediaMarkup(item)}<div class="actions"><button class="secondary mini" type="button" data-compare-reuse="${escapeHtml(item.id)}">复用参数</button><button class="secondary mini" type="button" data-compare-favorite="${escapeHtml(item.id)}">收藏最佳</button></div></article>`).join('')}</div>` : '<div class="status">没有可对比的记录</div>';
+        body.querySelectorAll('[data-compare-reuse]').forEach(btn => btn.onclick = () => reuseRecordPromptById(btn.dataset.compareReuse || ''));
+        body.querySelectorAll('[data-compare-favorite]').forEach(btn => btn.onclick = () => markRecordFavoriteById(btn.dataset.compareFavorite || ''));
+        loadProtectedImages(body); loadProtectedVideos(body);
+      } catch (e) { body.innerHTML = `<div class="status">${escapeHtml(e.message || '对比失败')}</div>`; }
+    }
+    async function reuseRecordPromptById(id) {
+      try { const res = await api('/api/records/' + encodeURIComponent(id) + '/reuse'); await copyTextToClipboard(String(res.data?.prompt || '')); showToast('提示词已复制', 'ok'); }
+      catch (e) { showToast(e.message || '复用失败', 'bad'); }
+    }
+    async function markRecordFavoriteById(id) {
+      try { await api('/api/records/' + encodeURIComponent(id) + '/metadata', {method:'POST', body: JSON.stringify({favorite:true})}); showToast('已收藏该结果', 'ok'); await loadRecords(false); }
+      catch (e) { showToast(e.message || '收藏失败', 'bad'); }
     }
 
     function assetQueryPath(page = ASSET_PAGE) {
@@ -5132,6 +5279,7 @@ Source prompt:
         <div class="actions"><button class="ok mini" type="button" onclick="saveRecordAsset()">保存标记</button><button class="secondary mini" type="button" onclick="reuseRecordPrompt()">复用提示词</button></div>
         <div class="detail-title"><h3>重试生成</h3></div>
         <div class="grid"><div><label>修改要求（可选）</label><input id="recordRetryFeedback" maxlength="2000" placeholder="例如：更明亮、动作更自然"></div></div>
+        <div><label>重试策略</label><select id="recordRetryStrategy"><option value="full">完整保留参数</option><option value="model_only">只换模型</option><option value="channel_only">只换渠道</option><option value="lower_resolution">降低分辨率</option></select></div>
         <div class="actions"><button class="ok mini" type="button" onclick="retryCurrentRecord()">重试生成</button><span id="recordRetryStatus" class="muted"></span></div>
         ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
         ${responseDataDetailBlock(r.response_data || {})}
@@ -5210,11 +5358,12 @@ Source prompt:
       const id = String(CURRENT_RECORD?.id || '').trim();
       if (!id) return;
       const feedback = String($('recordRetryFeedback')?.value || '').trim();
+      const strategy = String($('recordRetryStrategy')?.value || 'full');
       const status = $('recordRetryStatus');
       try {
-        if (status) status.textContent = '正在提交…';
+        if (status) status.textContent = `正在提交（${retryStrategyLabel(strategy)}）…`;
         const res = await api('/api/records/' + encodeURIComponent(id) + '/retry', {
-          method: 'POST', body: JSON.stringify({feedback})
+          method: 'POST', body: JSON.stringify({feedback, strategy})
         });
         const task = res.data || {};
         if (!task.task_id) throw new Error('后台任务提交失败：未返回 task_id');
@@ -5235,6 +5384,59 @@ Source prompt:
         reader.readAsDataURL(file);
       });
     }
+    function testTemplateValues() {
+      const map = {
+        role: 'testTemplateRole', outfit: 'testTemplateOutfit', scene: 'testTemplateScene',
+        pose: 'testTemplatePose', shot: 'testTemplateShot', view: 'testTemplateView',
+        lighting: 'testTemplateLighting'
+      };
+      const values = {};
+      Object.entries(map).forEach(([key, id]) => {
+        const value = String($(id)?.value || '').trim();
+        if (value) values[key] = value;
+      });
+      return values;
+    }
+    function testVariationFields() {
+      return Array.from(document.querySelectorAll('[data-test-vary]:checked')).map(el => String(el.value || '').trim()).filter(Boolean);
+    }
+    function creativeTestPayload() {
+      const variationEnabled = !!$('testVariationEnabled')?.checked;
+      return {
+        template_values: testTemplateValues(),
+        template_randomize: !!$('testTemplateRandomize')?.checked,
+        variation_enabled: variationEnabled,
+        variation_fields: variationEnabled ? testVariationFields() : []
+      };
+    }
+    async function previewTestTemplate() {
+      const target = $('testTemplatePreview');
+      if (!target) return;
+      const body = {prompt: String($('testPrompt')?.value || ''), ...creativeTestPayload()};
+      target.style.display = '';
+      target.textContent = '正在预览…';
+      try {
+        const res = await api('/api/creative/template/render', {method:'POST', body: JSON.stringify(body)});
+        const data = res.data || {};
+        const unresolved = Array.isArray(data.unresolved) && data.unresolved.length ? `；未填写：${data.unresolved.join('、')}` : '';
+        const randomized = data.randomized && Object.keys(data.randomized).length ? `；随机：${Object.entries(data.randomized).map(([k,v]) => `${k}=${v}`).join('、')}` : '';
+        target.textContent = `预览：${data.prompt || body.prompt || ''}${unresolved}${randomized}`;
+      } catch (e) { target.textContent = e.message || '模板预览失败'; }
+    }
+    async function previewTestStoryboard() {
+      const target = $('testStoryboardPreview');
+      const text = String($('testStoryboard')?.value || '').trim();
+      if (!target) return;
+      if (!text) { target.textContent = '还没有填写分镜'; return; }
+      target.textContent = '正在解析…';
+      try {
+        const res = await api('/api/creative/storyboard', {method:'POST', body: JSON.stringify({prompt:text})});
+        const data = res.data || {};
+        target.textContent = data.enabled
+          ? data.shots.map(shot => `镜头${shot.index} · ${shot.duration}s · ${shot.description}`).join('\n')
+          : '未识别到多镜头格式，将按普通视频提示词处理';
+      } catch (e) { target.textContent = e.message || '分镜解析失败'; }
+    }
     function clearTestTaskPoll() {
       if (TEST_TASK_POLL_TIMER) {
         clearTimeout(TEST_TASK_POLL_TIMER);
@@ -5250,6 +5452,7 @@ Source prompt:
       $('testResolutionWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
       if ($('testCountWrap')) $('testCountWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
       $('testDurationWrap').style.display = TEST_MODE === 'video' ? '' : 'none';
+      if ($('testStoryboardWrap')) $('testStoryboardWrap').style.display = TEST_MODE === 'video' ? '' : 'none';
       $('promptEnhanceWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
       $('useSelfieWrap').style.display = '';
       $('useSelfie').disabled = TEST_MODE === 't2v';
@@ -5444,7 +5647,9 @@ Source prompt:
           duration: Number($('testDuration').value || CONFIG.video?.default_duration || 5),
           prompt_enhance: TEST_MODE === 'image' && $('promptEnhance').checked,
           use_selfie_reference: TEST_MODE !== 't2v' && $('useSelfie').checked,
-          images
+          images,
+          ...creativeTestPayload(),
+          storyboard: TEST_MODE === 'video' ? String($('testStoryboard')?.value || '').trim() : ''
         };
         $('testRequestData').textContent = JSON.stringify({...payload, images: `[${images.length} images]`}, null, 2);
         showTestPanel('request');
@@ -5938,16 +6143,19 @@ Source prompt:
       panel.classList.add('open');
       const rows = STUDIO.cosLooks || [];
       if (!rows.length) {
-        panel.innerHTML = '<div class="status">COS池为空</div>';
+        panel.innerHTML = '<div class="status">COS池为空<button class="secondary mini" type="button" data-cos-maintain>维护 COS 池</button></div>';
+        panel.querySelector('[data-cos-maintain]')?.addEventListener('click', openCosPoolModal);
         return;
       }
-      panel.innerHTML = rows.map((item, idx) => {
+      panel.innerHTML = `<div class="cos-panel-toolbar"><button class="secondary mini" type="button" data-cos-maintain>维护 COS 池</button><span class="muted">收藏项已置顶</span></div>` + rows.map((item, idx) => {
         const title = escapeHtml(item.title || item.id || '未命名套装');
         const compatibility = item.compatibility && item.compatibility.variation_enabled
           ? '可随机姿势/场景'
           : '固定构图';
-        return `<button type="button" class="preset-chip" data-cos-idx="${idx}" title="${title} · ${compatibility}">${title}</button>`;
+        const source = item.source === 'custom' ? '自定义' : (item.favorite ? '已收藏' : '内置');
+        return `<div class="cos-pool-row"><button type="button" class="preset-chip" data-cos-idx="${idx}" title="${title} · ${compatibility}">${title}<small>${escapeHtml(source)}</small></button><button type="button" class="secondary mini cos-favorite-btn" data-cos-favorite="${idx}" title="${item.favorite ? '取消收藏' : '收藏'}" aria-label="${item.favorite ? '取消收藏' : '收藏'}">${item.favorite ? '★' : '☆'}</button>${item.source === 'custom' ? `<button type="button" class="danger mini cos-delete-btn" data-cos-delete="${idx}" title="删除自定义 COS" aria-label="删除自定义 COS">×</button>` : ''}</div>`;
       }).join('');
+      panel.querySelector('[data-cos-maintain]')?.addEventListener('click', openCosPoolModal);
       panel.querySelectorAll('[data-cos-idx]').forEach(btn => {
         btn.onclick = () => {
           const item = rows[Number(btn.getAttribute('data-cos-idx'))];
@@ -5958,17 +6166,101 @@ Source prompt:
           btn.classList.add('active');
         };
       });
+      panel.querySelectorAll('[data-cos-favorite]').forEach(btn => btn.onclick = async event => {
+        event.stopPropagation();
+        const item = rows[Number(btn.dataset.cosFavorite)];
+        if (!item?.id) return;
+        try {
+          await api('/api/cos-pools/favorite', {method:'POST', body: JSON.stringify({id:item.id, enabled:!item.favorite})});
+          item.favorite = !item.favorite;
+          STUDIO.cosLooks = [...rows].sort(cosPoolSort);
+          renderCosPanel(panelId, targetInputId, true, btnId);
+        } catch (e) { showToast(e.message || '收藏失败', 'bad'); }
+      });
+      panel.querySelectorAll('[data-cos-delete]').forEach(btn => btn.onclick = async event => {
+        event.stopPropagation();
+        const item = rows[Number(btn.dataset.cosDelete)];
+        if (!item?.id || !await confirmAction(`确定删除自定义 COS「${item.title || item.id}」吗？`, {title:'删除自定义 COS', confirmText:'删除'})) return;
+        try {
+          await api('/api/cos-pools/custom/delete', {method:'POST', body: JSON.stringify({id:item.id})});
+          await ensureCosLooksLoaded(true);
+          renderCosPanel(panelId, targetInputId, true, btnId);
+          showToast('自定义 COS 已删除', 'ok');
+        } catch (e) { showToast(e.message || '删除失败', 'bad'); }
+      });
     }
-    async function ensureCosLooksLoaded() {
-      if (STUDIO.cosLooks && STUDIO.cosLooks.length) return STUDIO.cosLooks;
+    function cosPoolSort(a, b) {
+      if (!!a.favorite !== !!b.favorite) return a.favorite ? -1 : 1;
+      if (String(a.source || '') !== String(b.source || '')) return a.source === 'custom' ? -1 : 1;
+      return String(a.title || a.id || '').localeCompare(String(b.title || b.id || ''), 'zh');
+    }
+    async function ensureCosLooksLoaded(force = false) {
+      if (!force && STUDIO.cosLooks && STUDIO.cosLooks.length) return STUDIO.cosLooks;
       try {
-        const res = await api('/api/cos-look-sets');
+        const res = await api('/api/cos-pools');
         if (res.success) {
-          STUDIO.cosLooks = Array.isArray(res.data) ? res.data : [];
+          const data = res.data || {};
+          const builtins = Array.isArray(data.builtin) ? data.builtin : [];
+          const custom = Array.isArray(data.custom) ? data.custom : [];
+          STUDIO.cosPools = data;
+          STUDIO.cosLooks = [...builtins, ...custom].filter(item => item && item.id && item.prompt).sort(cosPoolSort);
           return STUDIO.cosLooks;
         }
-      } catch (_) {}
+      } catch (_) {
+        // Keep compatibility with older remote plugin instances that only
+        // expose the original immutable look-set endpoint.
+        try {
+          const legacy = await api('/api/cos-look-sets');
+          STUDIO.cosLooks = (Array.isArray(legacy.data) ? legacy.data : []).sort(cosPoolSort);
+          return STUDIO.cosLooks;
+        } catch (_) {}
+      }
       return STUDIO.cosLooks || [];
+    }
+    function openCosPoolModal() {
+      ['cosCustomId','cosCustomTitle','cosCustomPrompt','cosCustomTags'].forEach(id => { if ($(id)) $(id).value = ''; });
+      if ($('cosPoolStatus')) $('cosPoolStatus').textContent = '自定义 COS 只保存服饰提示词；姿势和环境由兼容矩阵决定。';
+      $('cosPoolModal')?.classList.add('show');
+      $('cosCustomId')?.focus();
+    }
+    function closeCosPoolModal() { $('cosPoolModal')?.classList.remove('show'); }
+    async function saveCustomCos() {
+      const id = String($('cosCustomId')?.value || '').trim();
+      const title = String($('cosCustomTitle')?.value || '').trim();
+      const prompt = String($('cosCustomPrompt')?.value || '').trim();
+      const status = $('cosPoolStatus');
+      if (!id || !title || !prompt) { if (status) status.textContent = 'ID、名称和服饰提示词不能为空'; return; }
+      try {
+        await api('/api/cos-pools/custom/save', {method:'POST', body: JSON.stringify({id, title, prompt, tags:String($('cosCustomTags')?.value || '').split(/[,，]/).map(v => v.trim()).filter(Boolean)})});
+        await ensureCosLooksLoaded(true);
+        closeCosPoolModal();
+        renderCosPanel('studioCosPanel', 'studioPrompt', !!STUDIO.cosOpen, 'studioCosBtn');
+        renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
+        showToast('自定义 COS 已保存', 'ok');
+      } catch (e) { if (status) status.textContent = e.message || '保存失败'; }
+    }
+    function exportCosPool() {
+      api('/api/cos-pools/export').then(res => {
+        const blob = new Blob([JSON.stringify(res.data || {}, null, 2)], {type:'application/json;charset=utf-8'});
+        const url = URL.createObjectURL(blob); const link = document.createElement('a');
+        link.href = url; link.download = `selfie-image-cos-pool-${new Date().toISOString().slice(0,10)}.json`;
+        document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }).catch(e => showToast(e.message || '导出失败', 'bad'));
+    }
+    function openCosPoolImport() {
+      const input = document.createElement('input'); input.type = 'file'; input.accept = 'application/json,.json';
+      input.onchange = async () => {
+        const file = input.files?.[0]; if (!file) return;
+        try {
+          const payload = JSON.parse(await file.text());
+          await api('/api/cos-pools/import', {method:'POST', body: JSON.stringify(payload)});
+          await ensureCosLooksLoaded(true); closeCosPoolModal();
+          renderCosPanel('studioCosPanel', 'studioPrompt', !!STUDIO.cosOpen, 'studioCosBtn');
+          renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
+          showToast('COS 池已导入', 'ok');
+        } catch (e) { if ($('cosPoolStatus')) $('cosPoolStatus').textContent = e.message || '导入失败'; }
+      };
+      input.click();
     }
     async function toggleStudioPresets() {
       STUDIO.presetOpen = !STUDIO.presetOpen;
@@ -6560,10 +6852,12 @@ Source prompt:
       if (mask === $('channelModal')) closeChannelModal();
       else if (mask === $('proxyModal')) closeProxyModal();
       else if (mask === $('recordModal')) closeRecordDetail();
+      else if (mask === $('compareModal')) closeCompareModal();
       else if (mask === $('taskModal')) closeTaskDetail();
       else if (mask === $('mediaSourceModal')) closeMediaSourceModal();
       else if (mask === $('presetEditorModal')) closePresetEditor();
       else if (mask === $('presetTransferModal')) closePresetTransfer();
+      else if (mask === $('cosPoolModal')) closeCosPoolModal();
       else if (mask === $('studioCreateModal')) closeStudioCreateModal();
     }));
     document.addEventListener('keydown', event => {
@@ -6572,10 +6866,12 @@ Source prompt:
       if ($('mediaSourceModal')?.classList.contains('show')) { closeMediaSourceModal(); return; }
       if ($('taskModal')?.classList.contains('show')) { closeTaskDetail(); return; }
       if ($('recordModal')?.classList.contains('show')) { closeRecordDetail(); return; }
+      if ($('compareModal')?.classList.contains('show')) { closeCompareModal(); return; }
       if ($('channelModal')?.classList.contains('show')) { closeChannelModal(); return; }
       if ($('proxyModal')?.classList.contains('show')) { closeProxyModal(); return; }
       if ($('presetEditorModal')?.classList.contains('show')) { closePresetEditor(); return; }
       if ($('presetTransferModal')?.classList.contains('show')) { closePresetTransfer(); return; }
+      if ($('cosPoolModal')?.classList.contains('show')) { closeCosPoolModal(); return; }
       if ($('studioCreateModal')?.classList.contains('show')) closeStudioCreateModal();
     });
     if ($('cleanupCacheBtn')) $('cleanupCacheBtn').onclick = cleanupCache;
@@ -6613,6 +6909,9 @@ Source prompt:
     $('testImageBtn').onclick = runImageTest;
     $('testVideoBtn').onclick = runVideoTest;
     $('testCancelBtn').onclick = cancelTestTask;
+    if ($('testTemplatePreviewBtn')) $('testTemplatePreviewBtn').onclick = previewTestTemplate;
+    if ($('testStoryboardPreviewBtn')) $('testStoryboardPreviewBtn').onclick = previewTestStoryboard;
+    if ($('testVariationEnabled')) $('testVariationEnabled').onchange = () => { $('testVariationFieldsWrap').style.display = $('testVariationEnabled').checked ? '' : 'none'; };
     if ($('studioCreateBtn')) $('studioCreateBtn').onclick = openStudioCreateModal;
     if ($('studioCreateConfirmBtn')) $('studioCreateConfirmBtn').onclick = studioCreate;
     if ($('studioCreateModal')) $('studioCreateModal').addEventListener('click', event => {
@@ -6622,6 +6921,7 @@ Source prompt:
     if ($('studioCosBtn')) $('studioCosBtn').onclick = toggleStudioCos;
     if ($('testPresetBtn')) $('testPresetBtn').onclick = toggleTestPresets;
     if ($('testCosBtn')) $('testCosBtn').onclick = toggleTestCos;
+    if ($('cosPoolModal')) $('cosPoolModal').addEventListener('click', event => { if (event.target === $('cosPoolModal')) closeCosPoolModal(); });
     if ($('studioReloadBtn')) $('studioReloadBtn').onclick = () => loadStudioList(STUDIO.current && STUDIO.current.id);
     if ($('studioDeleteBtn')) $('studioDeleteBtn').onclick = studioDelete;
     if ($('studioSaveBtn')) $('studioSaveBtn').onclick = studioSave;
