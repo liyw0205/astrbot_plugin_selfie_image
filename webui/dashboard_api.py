@@ -99,6 +99,7 @@ class SelfieImageDashboardAPI:
             ("records/<record_id>/asset", self.page_record_metadata, ["POST"], "Selfie Image record asset metadata"),
             ("records/<record_id>/reuse", self.page_record_reuse, ["GET", "POST"], "Selfie Image reuse record"),
             ("records/<record_id>/retry", self.page_record_retry, ["POST"], "Selfie Image retry record generation"),
+            ("records/compare", self.page_records_compare, ["POST"], "Selfie Image compare records"),
             ("assets", self.page_assets, ["GET"], "Selfie Image asset library"),
             ("assets/tags", self.page_assets_tags, ["GET"], "Selfie Image asset tags"),
             ("assets/export", self.page_assets_export, ["GET"], "Selfie Image asset metadata export"),
@@ -131,6 +132,15 @@ class SelfieImageDashboardAPI:
             ("prompt-presets/manage/delete", self.page_prompt_preset_delete, ["POST"], "Selfie Image delete prompt preset"),
             ("prompt-presets/manage/import", self.page_prompt_presets_import, ["POST"], "Selfie Image import prompt presets"),
             ("cos-look-sets", self.page_cos_look_sets, ["GET"], "Selfie Image COS look sets"),
+            ("cos-pools", self.page_cos_pools, ["GET"], "Selfie Image COS pools"),
+            ("cos-pools/favorite", self.page_cos_pool_favorite, ["POST"], "Selfie Image favorite COS"),
+            ("cos-pools/custom/save", self.page_cos_custom_save, ["POST"], "Selfie Image save custom COS"),
+            ("cos-pools/custom/delete", self.page_cos_custom_delete, ["POST"], "Selfie Image delete custom COS"),
+            ("cos-pools/export", self.page_cos_pool_export, ["GET"], "Selfie Image export COS pools"),
+            ("cos-pools/import", self.page_cos_pool_import, ["POST"], "Selfie Image import COS pools"),
+            ("creative/template/render", self.page_creative_template_render, ["POST"], "Selfie Image render prompt template"),
+            ("creative/variations", self.page_creative_variations, ["POST"], "Selfie Image build prompt variations"),
+            ("creative/storyboard", self.page_creative_storyboard, ["POST"], "Selfie Image parse video storyboard"),
             ("proxies", self.page_proxies_list, ["GET"], "Selfie Image proxy list"),
             ("proxies/test", self.page_proxy_test, ["POST"], "Selfie Image proxy connectivity test"),
             ("proxies/quality-check", self.page_proxy_quality, ["POST"], "Selfie Image proxy quality test"),
@@ -676,7 +686,12 @@ class SelfieImageDashboardAPI:
             if not callable(retrier):
                 return self._fail("当前版本不支持任务重试", 501)
             feedback = str((payload or {}).get("feedback") or "").strip()[:2000]
-            return self._ok(retrier(ids or [], feedback), message="已提交任务重试")
+            strategy = str((payload or {}).get("strategy") or (payload or {}).get("retry_strategy") or "full")
+            try:
+                result = retrier(ids or [], feedback, strategy)
+            except TypeError:
+                result = retrier(ids or [], feedback)
+            return self._ok(result, message="已提交任务重试")
         except Exception as exc:
             return self._fail(str(exc), 400)
 
@@ -730,12 +745,30 @@ class SelfieImageDashboardAPI:
         if not callable(retry):
             return self._fail("当前版本不支持记录重试", 501)
         try:
-            task = retry(record_id_text, str((payload or {}).get("feedback") or ""))
+            feedback = str((payload or {}).get("feedback") or "")
+            strategy = str((payload or {}).get("strategy") or (payload or {}).get("retry_strategy") or "full")
+            try:
+                task = retry(record_id_text, feedback, strategy)
+            except TypeError:
+                task = retry(record_id_text, feedback)
             return self._ok(redact_sensitive_data(task), message="已提交重试任务")
         except ValueError as exc:
             return self._fail(str(exc), 400)
         except Exception as exc:
             return self._fail(str(exc), 500)
+
+    async def page_records_compare(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
+        if not isinstance(ids, list):
+            return self._fail("ids 必须是数组", 400)
+        try:
+            data = self.plugin.compare_records_for_web(ids, int((payload or {}).get("limit") or 8))
+            return self._ok(data)
+        except Exception as exc:
+            return self._fail(str(exc), 400)
 
     async def page_assets(self) -> Any:
         favorite = self._query_bool(self._query_value("favorite"))
@@ -1085,3 +1118,86 @@ class SelfieImageDashboardAPI:
             return self._ok(data, count=len(data))
         except Exception as exc:
             return self._fail(str(exc), 500)
+
+    async def page_cos_pools(self) -> Any:
+        try:
+            return self._ok(self.plugin.list_cos_pools_for_web())
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_cos_pool_favorite(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            look_id = str((payload or {}).get("id") or (payload or {}).get("look_id") or "").strip()
+            enabled = (payload or {}).get("enabled", (payload or {}).get("favorite", True))
+            enabled = enabled if isinstance(enabled, bool) else str(enabled).lower() in {"1", "true", "yes", "on", "是", "开启"}
+            return self._ok(self.plugin.set_cos_favorite_for_web(look_id, enabled))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_cos_custom_save(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.save_custom_cos_for_web(payload or {}), message="自定义 COS 已保存")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_cos_custom_delete(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            look_id = str((payload or {}).get("id") or (payload or {}).get("look_id") or "").strip()
+            return self._ok(self.plugin.delete_custom_cos_for_web(look_id), message="自定义 COS 已删除")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_cos_pool_export(self) -> Any:
+        try:
+            return self._ok(self.plugin.export_cos_pool_for_web())
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_cos_pool_import(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.import_cos_pool_for_web(payload or {}), message="COS 池已导入")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_creative_template_render(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            prompt = str((payload or {}).get("prompt") or (payload or {}).get("template") or "")
+            return self._ok(self.plugin.render_creative_prompt(prompt, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_creative_variations(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            prompt = str((payload or {}).get("prompt") or "")
+            count = int((payload or {}).get("count") or 1)
+            return self._ok({"variations": self.build_creative_variations(prompt, count, payload or {})})
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_creative_storyboard(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            prompt = str((payload or {}).get("prompt") or (payload or {}).get("text") or "")
+            return self._ok(self.parse_storyboard_for_web(prompt))
+        except Exception as exc:
+            return self._fail(str(exc), 400)

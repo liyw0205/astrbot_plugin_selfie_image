@@ -689,7 +689,12 @@ class WebTaskMixin:
             "deleted_count": len(deleted),
         }
 
-    def retry_web_tasks(self, task_ids: Iterable[Any], feedback: str = "") -> Dict[str, Any]:
+    def retry_web_tasks(
+        self,
+        task_ids: Iterable[Any],
+        feedback: str = "",
+        strategy: str = "full",
+    ) -> Dict[str, Any]:
         """Submit retries for records linked to selected terminal tasks.
 
         Task payloads intentionally omit request bodies, so a retry is only
@@ -733,7 +738,11 @@ class WebTaskMixin:
             for record_id in record_ids:
                 seen_records.add(record_id)
                 try:
-                    retry_task = retry(record_id, str(feedback or "").strip()[:2000])
+                    try:
+                        retry_task = retry(record_id, str(feedback or "").strip()[:2000], strategy)
+                    except TypeError:
+                        # Keep compatibility with older plugin/test shims.
+                        retry_task = retry(record_id, str(feedback or "").strip()[:2000])
                     submitted.append(
                         {
                             "task_id": task_id,

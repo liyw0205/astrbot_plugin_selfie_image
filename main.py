@@ -152,6 +152,12 @@ from .prompts.prompt_composition import (
 )
 from .prompts.prompt_translation import parse_prompt_en_response
 from .features.audit_pipeline import AuditMixin
+from .features.creative_features import (
+    CreativeFeaturesMixin,
+    apply_retry_strategy,
+    parse_video_storyboard,
+    parse_variation_request,
+)
 from .features.reference_collector import extract_structured_image_sources
 from .features.reference_media import ReferenceMediaMixin
 from .prompts.response_text import (
@@ -228,6 +234,7 @@ def optional_event_message_type(priority: int = 100):
 @register(PLUGIN_NAME, PLUGIN_AUTHOR, f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}", PLUGIN_VERSION)
 class SelfieImagePlugin(
     StudioMixin,
+    CreativeFeaturesMixin,
     ReferenceMediaMixin,
     ConversationContextMixin,
     ConfigurationMixin,
@@ -311,6 +318,9 @@ class SelfieImagePlugin(
         self.persona = PersonaManager(self.data_dir)
         self.presets = ImagePresetManager(self.data_dir)
         self.video_presets = VideoPresetManager(self.data_dir)
+        from .cos.cos_pool import CosPoolStore
+
+        self.cos_pool = CosPoolStore(self.data_dir)
         self.studio = StudioStore(self.data_dir)
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
@@ -1131,6 +1141,26 @@ class SelfieImagePlugin(
         match_query: str = "",
         force_id: str = "",
     ) -> str:
+        chosen_force = force_id
+        if not chosen_force:
+            favorites = getattr(getattr(self, "cos_pool", None), "list_favorites", lambda: [])()
+            if favorites and not match_query and not extra_request:
+                chosen_force = random.choice(favorites)
+        custom = getattr(getattr(self, "cos_pool", None), "list_custom", lambda: [])()
+        custom_item = next((item for item in custom if str(item.get("id") or "") == str(chosen_force or "")), None)
+        if custom_item:
+            return build_cos_look_action(
+                extra_request,
+                has_refs,
+                avoid_id=avoid_id,
+                avoid_camera=avoid_camera,
+                avoid_pose=avoid_pose,
+                avoid_scene=avoid_scene,
+                camera=camera,
+                match_query="",
+                force_id="",
+                picker=lambda **_: dict(custom_item),
+            )
         return build_cos_look_action(
             extra_request,
             has_refs,
@@ -1140,7 +1170,7 @@ class SelfieImagePlugin(
             avoid_scene=avoid_scene,
             camera=camera,
             match_query=match_query,
-            force_id=force_id,
+            force_id=chosen_force,
             picker=pick_cos_look_set,
         )
 
@@ -1917,7 +1947,12 @@ class SelfieImagePlugin(
             urls.append(bytes_to_data_url(data, mime))
         return urls
 
-    def build_record_retry_payload(self, record_id: str, feedback: str = "") -> Dict[str, Any]:
+    def build_record_retry_payload(
+        self,
+        record_id: str,
+        feedback: str = "",
+        strategy: str = "full",
+    ) -> Dict[str, Any]:
         """Build a sanitized web-task request from a retained generation record."""
         record = self.get_record_for_web(record_id)
         request_data = record.get("request_data") if isinstance(record.get("request_data"), Mapping) else {}
@@ -1973,11 +2008,18 @@ class SelfieImagePlugin(
                     ),
                 ),
             )
-        return payload
+        response_data = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
+        attempts = response_data.get("attempts") if isinstance(response_data.get("attempts"), list) else record.get("attempts")
+        return apply_retry_strategy(payload, strategy, attempts=attempts if isinstance(attempts, list) else None)
 
-    def start_record_retry_task(self, record_id: str, feedback: str = "") -> Dict[str, Any]:
+    def start_record_retry_task(
+        self,
+        record_id: str,
+        feedback: str = "",
+        strategy: str = "full",
+    ) -> Dict[str, Any]:
         """Queue a record retry through the existing persistent web task manager."""
-        payload = self.build_record_retry_payload(record_id, feedback)
+        payload = self.build_record_retry_payload(record_id, feedback, strategy)
         return self.start_web_image_task(payload)
 
     def _available_model_labels(self) -> List[str]:
@@ -2519,6 +2561,9 @@ class SelfieImagePlugin(
             requested_duration = max(4, min(12, requested_duration))
 
         video_prompt = str(prompt or "").strip()
+        storyboard = parse_video_storyboard(video_prompt)
+        if storyboard.get("enabled"):
+            video_prompt = str(storyboard.get("prompt") or video_prompt).strip()
         prompt_en_meta = {}
         if task_id:
             self._set_web_image_task(
@@ -2560,6 +2605,7 @@ class SelfieImagePlugin(
             "targets": [redact_sensitive_text(target.label) for target in targets],
             "prompt_en": prompt_en_meta,
             "request_prompt_en": req.prompt if prompt_en_meta.get("applied") else "",
+            "storyboard": storyboard if storyboard.get("enabled") else {"enabled": False, "shots": []},
         }
         if cooldown_attempts:
             request_data["cooldown_skipped_channels"] = cooldown_attempts
@@ -3752,12 +3798,23 @@ class SelfieImagePlugin(
         fail_label: str = "",
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
+        base_prompt, variation_enabled, variation_field = parse_variation_request(prompt)
+        variation_prompts = [base_prompt]
+        if variation_enabled and total > 1:
+            fields = [variation_field] if variation_field else ["pose", "scene", "shot"]
+            variation_prompts = [
+                str(item.get("prompt") or base_prompt).strip()
+                for item in self.build_creative_variations(base_prompt, total, vary=fields)
+            ]
+        elif variation_enabled:
+            variation_prompts = [base_prompt]
 
         async def run_one(index: int) -> Dict[str, Any]:
+            shot_prompt = variation_prompts[min(index, len(variation_prompts) - 1)]
             if passthrough:
                 return await self._draw_passthrough_once(
                     event,
-                    prompt,
+                    shot_prompt,
                     aspect,
                     resolution,
                     refs,
@@ -3767,7 +3824,7 @@ class SelfieImagePlugin(
                 )
             return await self._draw_once(
                 event,
-                prompt,
+                shot_prompt,
                 aspect,
                 resolution,
                 refs,
@@ -4037,6 +4094,15 @@ class SelfieImagePlugin(
             raw_images.append(payload.get("image"))
 
         original_prompt = str(payload.get("prompt") or "").strip() or "看着镜头自然自拍"
+        original_prompt, variation_enabled, variation_field = parse_variation_request(original_prompt)
+        variation_rows = []
+        if variation_enabled:
+            fields = [variation_field] if variation_field else ["pose", "scene", "shot"]
+            variation_rows = self.build_creative_variations(
+                original_prompt,
+                max(1, int(payload.get("count") or 1)),
+                {"variation_fields": fields},
+            )
         aspect = str(payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
         resolution = str(payload.get("resolution") or self.config.image_default_resolution or "1K")
         prompt_enhance_raw = payload.get("prompt_enhance", True)
@@ -4053,6 +4119,8 @@ class SelfieImagePlugin(
             "prompt_enhance": prompt_enhance,
             "use_selfie_reference": bool(payload.get("use_selfie_reference")),
             "raw_reference_image_count": len(raw_images),
+            "variation_enabled": variation_enabled,
+            "variation_fields": [variation_field] if variation_field else (["pose", "scene", "shot"] if variation_enabled else []),
         }
         normalize_web_count = getattr(self, "_normalize_web_image_count", None)
         if callable(normalize_web_count):
@@ -4137,14 +4205,17 @@ class SelfieImagePlugin(
                 # task manager will publish the terminal cancelled state.
                 if task_id and self._task_cancel_requested(task_id):
                     break
+                shot_prompt = prompt
+                if variation_rows:
+                    shot_prompt = str(variation_rows[min(index, len(variation_rows) - 1)].get("prompt") or prompt)
                 one = await self._run_image_generation(
-                    prompt=prompt,
+                    prompt=shot_prompt,
                     aspect_ratio=aspect,
                     resolution=resolution,
                     refs=refs,
                     targets=[target],
                     source="web-test",
-                    original_prompt=original_prompt,
+                    original_prompt=shot_prompt,
                     event=None,
                     max_attempts=1,
                     allow_compat_retry=False,
@@ -4315,6 +4386,9 @@ class SelfieImagePlugin(
         channel_name = str(payload.get("channel") or "").strip()
         model_name = str(payload.get("model") or "").strip()
         prompt = str(payload.get("prompt") or "").strip() or "一段自然流畅的短视频"
+        storyboard = parse_video_storyboard(prompt)
+        if storyboard.get("enabled"):
+            prompt = str(storyboard.get("prompt") or prompt).strip()
         aspect = str(payload.get("aspect_ratio") or "16:9").strip() or "16:9"
         duration = max(1, min(60, int(payload.get("duration") or self.config.video_default_duration or 5)))
         retry_record_id = str(payload.get("_retry_record_id") or payload.get("retry_record_id") or "").strip()
@@ -4412,6 +4486,7 @@ class SelfieImagePlugin(
             "reference_images": len(refs),
             "request_data": {
                 **self._summarize_web_test_payload(payload),
+                "storyboard": storyboard if storyboard.get("enabled") else {"enabled": False, "shots": []},
                 "requested_duration": duration,
                 "timeout_seconds": int(self.config.video_global_timeout or 300),
                 "cache_cleanup": cache_cleanup,
@@ -4457,7 +4532,11 @@ class SelfieImagePlugin(
             "elapsed_seconds": elapsed,
             "reference_images": len(refs),
             "request_image_paths": request_image_paths,
-            "request_data": self._summarize_web_test_payload(payload),
+            "request_data": {
+                **self._summarize_web_test_payload(payload),
+                "storyboard": storyboard if storyboard.get("enabled") else {"enabled": False, "shots": []},
+            },
+            "storyboard": storyboard if storyboard.get("enabled") else {"enabled": False, "shots": []},
             "video_url": result.video_url,
             "video_source": result.video_source,
             "generated_video_paths": [self._cache_relative_path(result.video_path)],

@@ -4984,7 +4984,12 @@ class FlaskWebServer:
                 return fail("当前版本不支持任务重试", 501)
             try:
                 feedback = str((payload or {}).get("feedback") or "").strip()[:2000]
-                return ok(retrier(ids or [], feedback), message="已提交任务重试")
+                strategy = str((payload or {}).get("strategy") or (payload or {}).get("retry_strategy") or "full")
+                try:
+                    result = retrier(ids or [], feedback, strategy)
+                except TypeError:
+                    result = retrier(ids or [], feedback)
+                return ok(result, message="已提交任务重试")
             except Exception as exc:
                 return fail(str(exc), 400)
 
@@ -5287,7 +5292,14 @@ class FlaskWebServer:
             if not callable(retry):
                 return fail("当前版本不支持记录重试", 501)
             try:
-                task = retry(record_id_text, str((payload or {}).get("feedback") or ""))
+                feedback = str((payload or {}).get("feedback") or "")
+                strategy = str((payload or {}).get("strategy") or (payload or {}).get("retry_strategy") or "full")
+                try:
+                    task = retry(record_id_text, feedback, strategy)
+                except TypeError:
+                    # Keep compatibility with third-party/test plugin shims
+                    # that still expose the original two-argument method.
+                    task = retry(record_id_text, feedback)
                 return ok(redact_sensitive_data(task), message="已提交重试任务")
             except ValueError as exc:
                 return fail(str(exc), 400)
@@ -5730,5 +5742,131 @@ class FlaskWebServer:
                 return ok(self.plugin.list_cos_look_sets_for_web())
             except Exception as exc:
                 return fail(str(exc), 500)
+
+        @app.route("/api/cos-pools", methods=["GET"])
+        def cos_pools() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                return ok(self.plugin.list_cos_pools_for_web())
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/cos-pools/favorite", methods=["POST"])
+        def cos_pool_favorite() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                look_id = str((payload or {}).get("id") or (payload or {}).get("look_id") or "").strip()
+                enabled = (payload or {}).get("enabled", (payload or {}).get("favorite", True))
+                if not isinstance(enabled, bool):
+                    enabled = str(enabled).lower() in {"1", "true", "yes", "on", "是", "开启"}
+                return ok(self.plugin.set_cos_favorite_for_web(look_id, enabled))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/cos-pools/custom/save", methods=["POST"])
+        def cos_custom_save() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.save_custom_cos_for_web(payload or {}))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/cos-pools/custom/delete", methods=["POST"])
+        def cos_custom_delete() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                look_id = str((payload or {}).get("id") or (payload or {}).get("look_id") or "").strip()
+                return ok(self.plugin.delete_custom_cos_for_web(look_id))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/cos-pools/export", methods=["GET"])
+        def cos_pool_export() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                return ok(self.plugin.export_cos_pool_for_web())
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/cos-pools/import", methods=["POST"])
+        def cos_pool_import() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.import_cos_pool_for_web(payload or {}))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/creative/template/render", methods=["POST"])
+        def creative_template_render() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                prompt = str((payload or {}).get("prompt") or (payload or {}).get("template") or "")
+                return ok(self.plugin.render_creative_prompt(prompt, payload or {}))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/creative/variations", methods=["POST"])
+        def creative_variations() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                prompt = str((payload or {}).get("prompt") or "")
+                count = int((payload or {}).get("count") or 1)
+                return ok({"variations": self.plugin.build_creative_variations(prompt, count, payload or {})})
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/creative/storyboard", methods=["POST"])
+        def creative_storyboard() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                prompt = str((payload or {}).get("prompt") or (payload or {}).get("text") or "")
+                return ok(self.plugin.parse_storyboard_for_web(prompt))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/records/compare", methods=["POST"])
+        def records_compare() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
+            if not isinstance(ids, list):
+                return fail("ids 必须是数组", 400)
+            try:
+                return ok(self.plugin.compare_records_for_web(ids, int((payload or {}).get("limit") or 8)))
+            except Exception as exc:
+                return fail(str(exc), 400)
 
         return app
