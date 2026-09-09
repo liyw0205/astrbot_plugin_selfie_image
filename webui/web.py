@@ -3725,6 +3725,7 @@ Source prompt:
       } catch (e) { $('selfieStatus').textContent = e.message; }
     }
     async function clearSelfie() {
+      if (!await confirmAction('确定清除当前自拍形象参考图吗？清除后后续生成将不再使用这张形象图。', {title:'清除形象参考图', confirmText:'清除参考图'})) return;
       try { await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); await refreshSelfie(); showToast('参考图已清除', 'ok'); }
       catch (e) { $('selfieStatus').textContent = e.message; }
     }
@@ -4347,6 +4348,8 @@ Source prompt:
     }
     async function studioDelete() {
       if (!STUDIO.current) return;
+      const title = String(STUDIO.current.title || STUDIO.current.id || '当前画布');
+      if (!await confirmAction(`确定删除画布「${title}」吗？会话中的槽位和运行记录也会移除。`, {title:'删除画布会话', confirmText:'删除画布'})) return;
       const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/delete', {
         method:'POST', body: JSON.stringify({})
       });

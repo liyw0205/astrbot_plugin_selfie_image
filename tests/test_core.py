@@ -395,7 +395,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.7")
+        self.assertEqual(PLUGIN_VERSION, "1.6.8")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -10135,6 +10135,19 @@ class StudioStoreTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         for marker in ("studioCosBtn", "testCosBtn", "renderCosPanel", "/api/cos-look-sets"):
             self.assertIn(marker, dashboard_html)
+
+    def test_standalone_destructive_actions_use_shared_confirmation(self) -> None:
+        """Standalone Web and embedded dashboard must guard the same deletes."""
+        dashboard_html = (
+            Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
+        ).read_text(encoding="utf-8")
+        for html in (INDEX_HTML, dashboard_html):
+            selfie_block = html.split("async function clearSelfie()", 1)[1].split("async function saveAppearanceType", 1)[0]
+            studio_block = html.split("async function studioDelete()", 1)[1].split("async function studioRun", 1)[0]
+            self.assertIn("confirmAction(", selfie_block)
+            self.assertIn("confirmAction(", studio_block)
+            self.assertIn("/api/selfie-reference/clear", selfie_block)
+            self.assertIn("/delete", studio_block)
 
     def test_studio_promote_role_and_gallery(self) -> None:
         import tempfile
