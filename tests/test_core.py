@@ -435,6 +435,21 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(restored["image_channels"][0]["api_key"], "sub-real-key")
         self.assertNotIn("apiKey", restored["image_channels"][0])
 
+        config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "噜皮生图",
+                        "api_key": "******",
+                        "apiKey": "lupi-real-key",
+                        "api_keys": ["******"],
+                        "model": "gpt-image-2",
+                    }
+                ]
+            }
+        )
+        self.assertEqual(config.image_channels[0].resolved_api_keys(), ["lupi-real-key"])
+
     def test_plugin_version_matches_metadata(self) -> None:
         from astrbot_plugin_selfie_image.core.constants import PLUGIN_VERSION
 
@@ -442,7 +457,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.12")
+        self.assertEqual(PLUGIN_VERSION, "1.6.13")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})

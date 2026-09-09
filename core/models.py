@@ -839,11 +839,17 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
             if value:
                 enabled_models.append(value)
 
-    api_key_value = raw.get("api_key") or raw.get("apiKey") or ""
-    api_keys_value = raw.get("api_keys") or raw.get("apiKeys") or ""
+    api_key_values = [raw.get(key) for key in ("api_key", "apiKey") if key in raw]
+    api_keys_values = [raw.get(key) for key in ("api_keys", "apiKeys") if key in raw]
     # Prefer explicit real keys; stale masked arrays from pre-1.6.5 builds
     # must not win over the real api_key field.
-    api_keys = usable_api_keys(api_keys_value) or usable_api_keys(api_key_value)
+    api_keys: List[str] = []
+    for value in api_keys_values:
+        api_keys.extend(usable_api_keys(value))
+    if not api_keys:
+        for value in api_key_values:
+            api_keys.extend(usable_api_keys(value))
+    api_keys = unique_values(api_keys)
     api_key_primary = api_keys[0] if api_keys else ""
     # Persist multi-line form in api_key for Web textarea round-trip compatibility.
     api_key_stored = "\n".join(api_keys) if len(api_keys) > 1 else api_key_primary

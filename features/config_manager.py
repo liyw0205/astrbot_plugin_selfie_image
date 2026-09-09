@@ -50,8 +50,10 @@ def _channel_credential_fields(row: Any) -> tuple[Any, Any, bool, bool]:
         return "", [], False, False
     has_key = "api_key" in row or "apiKey" in row
     has_keys = "api_keys" in row or "apiKeys" in row
-    key = row.get("api_key") if "api_key" in row else row.get("apiKey")
-    keys = row.get("api_keys") if "api_keys" in row else row.get("apiKeys")
+    key_values = [row.get(field) for field in ("api_key", "apiKey") if field in row]
+    keys_values = [row.get(field) for field in ("api_keys", "apiKeys") if field in row]
+    key = next((value for value in key_values if usable_api_keys(value)), key_values[0] if key_values else "")
+    keys = next((value for value in keys_values if usable_api_keys(value)), keys_values[0] if keys_values else [])
     return key, keys, has_key, has_keys
 
 
