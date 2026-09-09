@@ -395,7 +395,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.5")
+        self.assertEqual(PLUGIN_VERSION, "1.6.6")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -2112,6 +2112,65 @@ class ImageUtilityTests(unittest.TestCase):
             "image",
         )
         self.assertEqual(key, "new-provider-secret")
+
+    def test_web_retry_strategy_selects_an_alternate_model_or_channel(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin.config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "primary",
+                        "base_url": "https://primary.example.test",
+                        "api_key": "primary-key",
+                        "model": "image-a",
+                        "enabled_models": ["image-a", "image-b"],
+                    },
+                    {
+                        "name": "backup",
+                        "base_url": "https://backup.example.test",
+                        "api_key": "backup-key",
+                        "model": "image-a",
+                        "enabled_models": ["image-a"],
+                    },
+                ]
+            }
+        )
+
+        alternate_model = plugin._find_web_retry_target(
+            {
+                "retry_strategy": "model_only",
+                "channel": "primary",
+                "model": "",
+                "retry_from_attempt": {"channel": "primary", "model": "image-a"},
+            },
+            media_type="image",
+        )
+        self.assertIsNotNone(alternate_model)
+        self.assertEqual((alternate_model.channel_name, alternate_model.model), ("primary", "image-b"))
+
+        alternate_channel = plugin._find_web_retry_target(
+            {
+                "retry_strategy": "channel_only",
+                "channel": "",
+                "model": "image-a",
+                "retry_from_attempt": {"channel": "primary", "model": "image-a"},
+            },
+            media_type="image",
+        )
+        self.assertIsNotNone(alternate_channel)
+        self.assertEqual((alternate_channel.channel_name, alternate_channel.model), ("backup", "image-a"))
+
+        with self.assertRaisesRegex(RuntimeError, "没有可切换的其他模型"):
+            plugin._find_web_retry_target(
+                {
+                    "retry_strategy": "model_only",
+                    "channel": "backup",
+                    "retry_from_attempt": {"channel": "backup", "model": "image-a"},
+                },
+                media_type="image",
+            )
 
     def test_channel_payload_provider_type_accepts_legacy_keys_and_aliases(self) -> None:
         self.assertEqual(provider_type_from_channel_payload({"providerType": "google"}), "gemini")

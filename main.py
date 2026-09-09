@@ -1950,6 +1950,69 @@ class SelfieImagePlugin(
             return find_model_target(targets, channel_name, model)
         return find_model_target(self.config.get_prioritized_video_targets())
 
+    @staticmethod
+    def _retry_attempt_route(payload: Mapping[str, Any]) -> Tuple[str, str]:
+        """Return the channel/model that the selected retry strategy must avoid."""
+        raw = payload.get("retry_from_attempt") if isinstance(payload, Mapping) else None
+        row = raw if isinstance(raw, Mapping) else {}
+        channel = str(row.get("channel") or "").strip()
+        model = str(row.get("model") or "").strip()
+        if "/" in model:
+            label_channel, _, label_model = model.partition("/")
+            if not channel:
+                channel = label_channel.strip()
+            model = label_model.strip()
+        return channel, model
+
+    def _find_web_retry_target(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        media_type: str,
+    ) -> Optional[ImageModelTarget]:
+        """Select a retry target while honoring model-only/channel-only semantics."""
+        strategy = str(payload.get("retry_strategy") or "full").strip().lower().replace("-", "_")
+        channel_name = str(payload.get("channel") or "").strip()
+        model_name = str(payload.get("model") or "").strip()
+        if strategy not in {"model_only", "channel_only"}:
+            return (
+                self._find_video_target(channel_name, model_name)
+                if media_type == "video"
+                else self._find_image_target(channel_name, model_name)
+            )
+        failed_channel, failed_model = self._retry_attempt_route(payload)
+        if media_type == "video":
+            targets: List[ImageModelTarget] = []
+            for channel in self.config.video_channels:
+                targets.extend(channel.targets(self.config.video_global_timeout, request_timeout=self.config.video_global_timeout))
+        else:
+            targets = []
+            for channel in self.config.image_channels:
+                targets.extend(channel.targets(self.config.image_global_timeout, request_timeout=LOCAL_IMAGE_WAIT_SECONDS))
+        if not targets:
+            return None
+        candidates = list(targets)
+        if strategy == "model_only":
+            wanted_channel = channel_name or failed_channel
+            candidates = [item for item in candidates if item.channel_name == wanted_channel]
+            if failed_model:
+                candidates = [item for item in candidates if item.model != failed_model]
+            if not candidates:
+                raise RuntimeError(f"渠道 {wanted_channel or '原渠道'} 没有可切换的其他模型")
+            return candidates[0]
+        if strategy == "channel_only":
+            wanted_model = model_name or failed_model
+            if wanted_model:
+                candidates = [item for item in candidates if item.model == wanted_model]
+            if failed_channel:
+                candidates = [item for item in candidates if item.channel_name != failed_channel]
+            elif channel_name:
+                candidates = [item for item in candidates if item.channel_name != channel_name]
+            if not candidates:
+                raise RuntimeError(f"模型 {wanted_model or '原模型'} 没有可切换的其他渠道")
+            return candidates[0]
+        return find_model_target(candidates, channel_name, model_name)
+
     def _web_channel_runtime_credentials(
         self,
         channel_payload: Mapping[str, Any],
@@ -4277,7 +4340,7 @@ class SelfieImagePlugin(
 
         try:
             self._validate_web_test_selection(payload)
-            target = self._find_image_target(channel_name, model_name)
+            target = self._find_web_retry_target(payload, media_type="image")
             if not target:
                 raise RuntimeError("未找到指定生图模型")
 
@@ -4552,7 +4615,7 @@ class SelfieImagePlugin(
         aspect = str(payload.get("aspect_ratio") or "16:9").strip() or "16:9"
         duration = max(1, min(60, int(payload.get("duration") or self.config.video_default_duration or 5)))
         retry_record_id = str(payload.get("_retry_record_id") or payload.get("retry_record_id") or "").strip()
-        target = self._find_video_target(channel_name, model_name)
+        target = self._find_web_retry_target(payload, media_type="video")
         if not target:
             raise RuntimeError("未找到指定视频模型")
 

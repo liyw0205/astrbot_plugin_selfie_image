@@ -326,15 +326,19 @@ def apply_retry_strategy(
     if normalized not in {"full", "model_only", "channel_only", "lower_resolution"}:
         raise ValueError("不支持的重试策略，可选：full、model_only、channel_only、lower_resolution")
     result = copy.deepcopy(dict(payload))
+    original_channel = str(result.get("channel") or "").strip()
+    original_model = str(result.get("model") or "").strip()
     rows = [item for item in (attempts or ()) if isinstance(item, Mapping)]
     failed = [item for item in rows if not item.get("success")]
     last_failed = failed[-1] if failed else (rows[-1] if rows else {})
     if normalized == "model_only":
-        result["channel"] = ""
+        # Keep the original channel and let target selection choose another
+        # enabled model from that channel.
         result["model"] = ""
         result["retry_strategy"] = normalized
     elif normalized == "channel_only":
-        result["model"] = ""
+        # Keep the original model and search for it on another channel.
+        result["channel"] = ""
         result["retry_strategy"] = normalized
     elif normalized == "lower_resolution":
         current = str(result.get("resolution") or result.get("size") or "1K").strip().upper()
@@ -347,10 +351,10 @@ def apply_retry_strategy(
         result["retry_strategy"] = normalized
     else:
         result["retry_strategy"] = "full"
-    if last_failed:
+    if last_failed or original_channel or original_model:
         result["retry_from_attempt"] = {
-            "channel": str(last_failed.get("channel") or "")[:120],
-            "model": str(last_failed.get("model") or last_failed.get("label") or "")[:160],
+            "channel": str(last_failed.get("channel") or original_channel)[:120],
+            "model": str(last_failed.get("model") or last_failed.get("label") or original_model)[:160],
             "error_category": str(last_failed.get("error_category") or "")[:64],
         }
     return result

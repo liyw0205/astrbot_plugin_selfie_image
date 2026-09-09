@@ -85,7 +85,9 @@ def test_retry_strategies_are_bounded_and_preserve_prompt() -> None:
     assert lowered["resolution"] == "2K"
     assert source["resolution"] == "4K"
     model_only = apply_retry_strategy(source, "model_only")
-    assert model_only["channel"] == "" and model_only["model"] == ""
+    assert model_only["channel"] == "bad" and model_only["model"] == ""
+    channel_only = apply_retry_strategy(source, "channel_only")
+    assert channel_only["channel"] == "" and channel_only["model"] == "bad-model"
 
 
 def test_cos_pool_round_trip_and_custom_validation() -> None:
