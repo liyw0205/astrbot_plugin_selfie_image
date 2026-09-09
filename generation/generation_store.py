@@ -26,6 +26,7 @@ from ..core.utils import (
     looks_like_image_bytes,
     redact_generation_record,
     redact_sensitive_text,
+    redact_sensitive_data,
     safe_delete_relative_files,
     save_image_bytes,
     save_json_file,
@@ -567,8 +568,72 @@ class GenerationStoreMixin:
                     # particular, detail responses must remove inline Base64
                     # before JSON serialization, while copy actions need the
                     # original media source on demand.
-                    return self._enrich_record_for_web(self._attach_media_sidecar(copy.deepcopy(record)))
+                    detail = self._enrich_record_for_web(self._attach_media_sidecar(copy.deepcopy(record)))
+                    detail["task_summary"] = self._record_task_summary(detail)
+                    return detail
         raise ValueError("记录不存在或已清理")
+
+    def _record_task_summary(self, record: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+        """Return a small, redacted snapshot of the task linked to a record."""
+        task_id = str(record.get("task_id") or "").strip()
+        if not task_id:
+            return None
+        task_lock = getattr(self, "_web_task_lock", None)
+        tasks = getattr(self, "_web_tasks", None)
+        if task_lock is None or not isinstance(tasks, dict):
+            return None
+        try:
+            with task_lock:
+                task = copy.deepcopy(tasks.get(task_id))
+        except Exception:
+            return None
+        if not isinstance(task, Mapping):
+            return None
+        request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
+        result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+        media_type = str(task.get("media_type") or request.get("media_type") or "").strip().lower()
+        if media_type not in {"image", "video"}:
+            kind = str(request.get("kind") or "").strip().lower()
+            source = str(task.get("source") or "").strip().lower()
+            media_type = "video" if kind == "video" or "视频" in kind or "video" in source else "image"
+        linked = task.get("record_ids")
+        if not isinstance(linked, list):
+            linked = result.get("record_ids") if isinstance(result.get("record_ids"), list) else []
+        linked_ids = list(dict.fromkeys(str(item).strip() for item in linked if str(item).strip()))[:200]
+        if not linked_ids and task_id == str(record.get("task_id") or "").strip():
+            linked_ids = [str(record.get("id") or "").strip()] if str(record.get("id") or "").strip() else []
+        try:
+            from ..tasks.task_views import task_source_label
+
+            source_label = task_source_label(task)
+        except Exception:
+            source_label = str(task.get("source") or "未知来源")
+        requested = task.get("requested_count") or request.get("requested_count") or request.get("count") or 1
+        completed = task.get("completed_count")
+        if completed is None:
+            completed = result.get("completed_count") or 0
+        succeeded = task.get("succeeded_count")
+        if succeeded is None:
+            succeeded = result.get("succeeded_count") or 0
+        failed = task.get("failed_count")
+        if failed is None:
+            failed = result.get("failed_count") or 0
+        return redact_sensitive_data(
+            {
+                "task_id": task_id,
+                "status": str(task.get("status") or "unknown"),
+                "source": redact_sensitive_text(str(task.get("source") or ""))[:120],
+                "source_label": redact_sensitive_text(str(source_label or "未知来源"))[:120],
+                "media_type": media_type,
+                "generation_stage": redact_sensitive_text(str(task.get("generation_stage") or ""))[:80],
+                "generation_stage_label": redact_sensitive_text(str(task.get("generation_stage_label") or ""))[:120],
+                "requested_count": requested,
+                "completed_count": completed,
+                "succeeded_count": succeeded,
+                "failed_count": failed,
+                "record_ids": linked_ids,
+            }
+        )
 
     def _enrich_record_for_web(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """Backfill failure fields for monitor without rewriting disk."""

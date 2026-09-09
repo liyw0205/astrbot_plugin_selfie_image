@@ -168,6 +168,42 @@ class TestStorage:
             assert plugin._web_tasks["web-12345678-1"]["result"]["record_ids"] == linked
             assert persisted
 
+    def test_record_detail_includes_redacted_task_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            plugin._web_task_lock = threading.RLock()
+            plugin._web_tasks = {
+                "web-12345678-2": {
+                    "task_id": "web-12345678-2",
+                    "status": "partial_success",
+                    "source": "web-test",
+                    "media_type": "image",
+                    "generation_stage": "partial",
+                    "generation_stage_label": "部分完成",
+                    "requested_count": 3,
+                    "completed_count": 2,
+                    "succeeded_count": 2,
+                    "failed_count": 1,
+                    "request_data": {"api_key": "provider-secret"},
+                    "result": {},
+                }
+            }
+            plugin._commit_generation_record(
+                {
+                    "id": "detail-task-record",
+                    "task_id": "web-12345678-2",
+                    "success": True,
+                    "generated_image_paths": [],
+                }
+            )
+
+            summary = plugin.get_record_for_web("detail-task-record")["task_summary"]
+            assert summary["task_id"] == "web-12345678-2"
+            assert summary["source_label"] == "Web 试画"
+            assert summary["status"] == "partial_success"
+            assert summary["completed_count"] == 2
+            assert "provider-secret" not in json.dumps(summary, ensure_ascii=False)
+
     def test_favorite_asset_cache_path_is_protected(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             plugin = self._plugin(root)

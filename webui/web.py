@@ -42,6 +42,7 @@ MAX_WEB_RECORD_ID_LENGTH = 128
 MAX_RECORD_PAGE_LIMIT = 1000
 MAX_ASSET_PAGE_LIMIT = 100
 MAX_TASK_PAGE_LIMIT = 200
+MAX_TASK_OFFSET = 1_000_000
 PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 _LOGO_SRC_PLACEHOLDER = "__SELFIE_LOGO_SRC__"
 
@@ -4861,6 +4862,15 @@ class FlaskWebServer:
                 return fail("limit 不能小于 1", 400)
             if limit > MAX_TASK_PAGE_LIMIT:
                 return fail(f"limit 不能大于 {MAX_TASK_PAGE_LIMIT}", 400)
+            raw_offset = str(request.args.get("offset") or "0").strip()
+            try:
+                offset = int(raw_offset)
+            except ValueError:
+                return fail("offset 必须是整数", 400)
+            if offset < 0:
+                return fail("offset 不能小于 0", 400)
+            if offset > MAX_TASK_OFFSET:
+                return fail(f"offset 不能大于 {MAX_TASK_OFFSET}", 400)
             def parse_timestamp(name: str, *, end_of_day: bool = False) -> tuple[Optional[float], Optional[Any]]:
                 raw = str(request.args.get(name) or "").strip()
                 if not raw:
@@ -4887,6 +4897,7 @@ class FlaskWebServer:
             task_kwargs = {
                 "include_finished": include_finished,
                 "limit": limit,
+                "offset": offset,
                 "media_type": media_type,
             }
             optional_filters = {

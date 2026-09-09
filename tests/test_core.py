@@ -395,7 +395,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.10")
+        self.assertEqual(PLUGIN_VERSION, "1.6.11")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4338,11 +4338,16 @@ class WebApiTests(unittest.TestCase):
         self.assertIn("tasks", payload)
         self.assertNotIn("sk-live-secret", json.dumps(payload, ensure_ascii=False))
         self.assertNotIn("should not be returned", json.dumps(payload, ensure_ascii=False))
-        self.assertEqual(plugin.task_query, {"include_finished": True, "limit": 12, "media_type": "video"})
+        self.assertEqual(plugin.task_query, {"include_finished": True, "limit": 12, "offset": 0, "media_type": "video"})
 
         for value in ("0", "201", "not-a-number"):
             bad = client.get("/api/tasks", query_string={"limit": value}, headers=headers)
             self.assertEqual(bad.status_code, 400)
+
+        paged = client.get("/api/tasks?offset=40&limit=12", headers=headers)
+        self.assertEqual(paged.status_code, 200)
+        self.assertEqual(plugin.task_query["offset"], 40)
+        self.assertEqual(client.get("/api/tasks?offset=-1", headers=headers).status_code, 400)
 
         bad_media = client.get("/api/tasks", query_string={"media_type": "audio"}, headers=headers)
         self.assertEqual(bad_media.status_code, 400)
@@ -10241,6 +10246,32 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual([row["task_id"] for row in result["tasks"]], ["cmd-12345678-1"])
         self.assertEqual(result["summary"]["filtered_total"], 1)
         self.assertEqual(result["filters"]["status"], ["failed"])
+
+    def test_web_task_list_paginates_after_filters(self) -> None:
+        from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
+
+        stub = object.__new__(WebTaskMixin)
+        stub._web_task_lock = threading.RLock()
+        stub.config = types.SimpleNamespace(image_max_concurrent_tasks=1, video_max_concurrent_tasks=1)
+        stub._web_tasks = {
+            f"web-12345678-{index}": {
+                "task_id": f"web-12345678-{index}",
+                "status": "succeeded",
+                "success": True,
+                "created_ts": float(10 - index),
+                "updated_ts": float(10 - index),
+                "source": "web-test",
+                "request_data": {"original_prompt": f"prompt-{index}"},
+                "result": {},
+            }
+            for index in range(1, 5)
+        }
+        page = stub.list_web_tasks(include_finished=True, limit=2, offset=1)
+        assert [row["task_id"] for row in page["tasks"]] == ["web-12345678-2", "web-12345678-3"]
+        assert page["offset"] == 1
+        assert page["limit"] == 2
+        assert page["total"] == 4
+        assert page["filtered_total"] == 4
 
     def test_web_task_batch_delete_retry_and_export_keep_records_separate(self) -> None:
         from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin

@@ -943,8 +943,8 @@
       <div id="monitorMetrics" class="status" style="margin-top:12px"></div>
       <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button></div>
       <div class="grid" style="margin-top:8px">
-        <div><label>显示范围</label><select id="taskQueueScope" onchange="loadTasks(false)"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
-        <div><label>媒体类型</label><select id="taskQueueMedia" onchange="loadTasks(false)"><option value="">全部</option><option value="image">图片</option><option value="video">视频</option></select></div>
+        <div><label>显示范围</label><select id="taskQueueScope" onchange="taskQueueViewChanged()"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
+        <div><label>媒体类型</label><select id="taskQueueMedia" onchange="taskQueueViewChanged()"><option value="">全部</option><option value="image">图片</option><option value="video">视频</option></select></div>
         <div><label>任务状态</label><select id="taskQueueStatus" onchange="taskQueueFilterChanged()"><option value="">全部</option><option value="queued">排队</option><option value="running">进行中</option><option value="succeeded">完成</option><option value="partial_success">部分完成</option><option value="failed">失败</option><option value="delivery_failed">发送失败</option><option value="cancelled">已取消</option><option value="expired">已过期</option></select></div>
         <div><label>来源筛选</label><input id="taskQueueSource" placeholder="例如：LLM、画布、重试" oninput="taskQueueFilterChanged()"></div>
         <div><label>模型筛选</label><input id="taskQueueModel" placeholder="输入模型名" oninput="taskQueueFilterChanged()"></div>
@@ -965,6 +965,7 @@
       </div>
       <div id="taskQueueSummary" class="status"></div>
       <div style="overflow:auto;margin-top:8px"><table class="table" id="taskQueueTable"></table></div>
+      <div id="taskQueuePager" class="actions" style="margin-top:8px;justify-content:flex-end"></div>
       <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
       <div class="between" style="margin-top:8px;gap:8px">
         <span id="recordSelectionStatus" class="muted">未选择记录</span>
@@ -1632,6 +1633,7 @@
     let ASSET_PAGE = 1;
     const ASSET_SELECTION = new Set();
     const TASK_SELECTION = new Set();
+    const TASK_PAGE_SIZE = 20;
     const RECORD_SELECTION = new Set();
     let ASSET_LOAD_TIMER = null;
     let ASSET_STUDIO_PRESETS = [];
@@ -1641,6 +1643,7 @@
     let MONITOR_LOAD_TIMER = null;
     let TASK_LOAD_TIMER = null;
     let TASK_FILTER_TIMER = null;
+    let TASK_PAGE = 1;
     let ACTIVE_CHANNEL_PANE = 'image';
     let EDITING_CHANNEL_INDEX = -1;
     let EDITING_CHANNEL_KIND = 'image';
@@ -3692,9 +3695,13 @@ Source prompt:
       const value = String($('taskQueueMedia')?.value || '').trim();
       return value === 'image' || value === 'video' ? value : '';
     }
+    function taskQueueViewChanged() {
+      TASK_PAGE = 1;
+      loadTasks(false);
+    }
     function taskQueueQueryPath() {
       const scope = taskQueueScope();
-      const params = new URLSearchParams({limit: scope === 'recent' ? '100' : '50'});
+      const params = new URLSearchParams({limit: String(TASK_PAGE_SIZE), offset: String((Math.max(1, TASK_PAGE) - 1) * TASK_PAGE_SIZE)});
       if (scope === 'recent') params.set('include_finished', 'true');
       const mediaType = taskQueueMedia();
       if (mediaType) params.set('media_type', mediaType);
@@ -3710,7 +3717,14 @@ Source prompt:
     }
     function taskQueueFilterChanged() {
       clearTimeout(TASK_FILTER_TIMER);
+      TASK_PAGE = 1;
       TASK_FILTER_TIMER = setTimeout(() => loadTasks(false), 260);
+    }
+    function setTaskPage(page) {
+      const total = Number($('taskQueuePager')?.dataset.total || 0);
+      const pages = Math.max(1, Math.ceil(total / TASK_PAGE_SIZE));
+      TASK_PAGE = Math.min(Math.max(1, Number(page) || 1), pages);
+      loadTasks(false);
     }
     function selectedTaskIds() {
       return Array.from(TASK_SELECTION).filter(Boolean);
@@ -3854,8 +3868,13 @@ Source prompt:
         const data = res.data || {};
         const summary = data.summary || {};
         const prefix = scope === 'recent' ? '最近任务' : '活动任务';
-        const filteredTotal = Number(summary.filtered_total ?? (Array.isArray(data.tasks) ? data.tasks.length : 0));
-        $('taskQueueSummary').textContent = `${prefix} · 匹配 ${filteredTotal} · 排队 ${Number(summary.queued || 0)} · 进行中 ${Number(summary.running || 0)} · 图片槽位 ${Number(summary.image_active_slots || 0)}/${Number(summary.image_max_concurrent_tasks || 0)} · 视频槽位 ${Number(summary.video_active_slots || 0)}/${Number(summary.video_max_concurrent_tasks || 0)}`;
+        const filteredTotal = Number(data.filtered_total ?? summary.filtered_total ?? (Array.isArray(data.tasks) ? data.tasks.length : 0));
+        const pageCount = Math.max(1, Math.ceil(filteredTotal / TASK_PAGE_SIZE));
+        if (TASK_PAGE > pageCount) {
+          TASK_PAGE = pageCount;
+          if (filteredTotal && !(Array.isArray(data.tasks) && data.tasks.length)) return loadTasks(false);
+        }
+        $('taskQueueSummary').textContent = `${prefix} · 第 ${TASK_PAGE}/${pageCount} 页 · 匹配 ${filteredTotal} · 排队 ${Number(summary.queued || 0)} · 进行中 ${Number(summary.running || 0)} · 图片槽位 ${Number(summary.image_active_slots || 0)}/${Number(summary.image_max_concurrent_tasks || 0)} · 视频槽位 ${Number(summary.video_active_slots || 0)}/${Number(summary.video_max_concurrent_tasks || 0)}`;
         const rows = Array.isArray(data.tasks) ? data.tasks : [];
         $('taskQueueTable').innerHTML = rows.length ? `<thead><tr><th></th><th>任务</th><th>来源</th><th>类型</th><th>状态</th><th>提示词</th><th>模型/原因</th><th></th></tr></thead><tbody>${rows.map(task => {
           const id = escapeHtml(String(task.task_id || ''));
@@ -3868,6 +3887,13 @@ Source prompt:
           const statusMeta = [stage, progress, taskQueueTiming(task), task.timeout_warning].filter(Boolean).join(' · ');
           return `<tr class="task-detail-row" data-task-id="${id}" style="cursor:pointer"><td><input type="checkbox" data-task-select="${id}" aria-label="选择任务 ${id}" ${TASK_SELECTION.has(rawId) ? 'checked' : ''}></td><td class="mono">${id}</td><td>${escapeHtml(String(task.source_label || task.source || '未知'))}</td><td>${type}</td><td>${taskQueueStatusLabel(task.status)}${statusMeta ? `<br><span class="muted">${escapeHtml(statusMeta)}</span>` : ''}</td><td title="${escapeHtml(String(task.prompt_summary || ''))}">${escapeHtml(String(task.prompt_summary || '-'))}</td><td>${escapeHtml(String(info))}</td><td>${canCancel ? `<button class="danger mini task-cancel-btn" data-task-id="${id}" type="button">取消</button>` : '<button class="secondary mini task-detail-btn" data-task-id="' + id + '" type="button">详情</button>'}</td></tr>`;
         }).join('')}</tbody>` : `<tbody><tr><td colspan="8" class="muted">${scope === 'recent' ? '没有最近任务' : '当前没有活动任务'}</td></tr></tbody>`;
+        const pager = $('taskQueuePager');
+        if (pager) {
+          pager.dataset.total = String(filteredTotal);
+          const start = filteredTotal ? ((TASK_PAGE - 1) * TASK_PAGE_SIZE) + 1 : 0;
+          const end = Math.min(filteredTotal, (TASK_PAGE - 1) * TASK_PAGE_SIZE + rows.length);
+          pager.innerHTML = `<span class="muted">${start}-${end} / ${filteredTotal}</span><button class="secondary mini" type="button" onclick="setTaskPage(${TASK_PAGE - 1})" ${TASK_PAGE <= 1 ? 'disabled' : ''}>上一页</button><button class="secondary mini" type="button" onclick="setTaskPage(${TASK_PAGE + 1})" ${TASK_PAGE >= pageCount ? 'disabled' : ''}>下一页</button>`;
+        }
         $('taskQueueTable').querySelectorAll('input[data-task-select]').forEach(input => input.onchange = event => {
           event.stopPropagation();
           toggleTaskSelection(input.getAttribute('data-task-select') || '', input.checked);
@@ -5231,6 +5257,16 @@ Source prompt:
         : (record.response_data?.generated_image_sources || []);
       return imageThumbs(imagePaths, '生成图', sources);
     }
+    function recordTaskSummaryBlock(record) {
+      const summary = record?.task_summary;
+      if (!summary || !summary.task_id) return '';
+      const requested = Number(summary.requested_count || 0);
+      const completed = Number(summary.completed_count || 0);
+      const progress = requested ? ` · ${completed}/${requested}` : '';
+      const stage = String(summary.generation_stage_label || '').trim();
+      const status = taskQueueStatusLabel(String(summary.status || ''));
+      return `<div class="detail-title" style="margin-top:12px"><h3>关联任务</h3><button class="secondary mini record-task-open" type="button" data-task-id="${escapeHtml(String(summary.task_id))}">查看任务</button></div><div class="status"><span class="mono">${escapeHtml(String(summary.task_id))}</span> · ${escapeHtml(String(summary.source_label || summary.source || '未知来源'))} · ${escapeHtml(status)}${progress}${stage ? ` · ${escapeHtml(stage)}` : ''}</div>`;
+    }
     async function openRecordDetail(id) {
       closeMediaSourceModal();
       if ($('recordDetailBody')) {
@@ -5257,12 +5293,13 @@ Source prompt:
           <div><label>用时</label><div class="status">${escapeHtml(formatRecordElapsed(r))}</div></div>
           ${r.generation_success !== undefined || r.delivery_success !== undefined ? `<div><label>生成/发送</label><div class="status">${r.generation_success === true ? '生成成功' : r.generation_success === false ? '生成失败' : '-'}${r.delivery_success === true ? ' · 已发送' : r.delivery_success === false ? ' · 发送失败' : ''}</div></div>` : ''}
           <div><label>模型重试</label><div class="status">${recordRetryModelChain(r)}</div></div>
-          ${r.task_id ? `<div><label>关联任务</label><div class="status mono">${escapeHtml(String(r.task_id))}</div></div>` : ''}
+          ${!r.task_summary && r.task_id ? `<div><label>关联任务</label><div class="status mono">${escapeHtml(String(r.task_id))}</div></div>` : ''}
           <div><label>调用入口</label><div class="status">${escapeHtml(r.source || '')}</div></div>
           <div><label>群号</label><div class="status">${escapeHtml(r.group_id || '')}</div></div>
           <div><label>Q号</label><div class="status">${escapeHtml(r.user_id || '')}</div></div>
           ${r.success === false ? `<div><label>最后失败</label><div class="status">${escapeHtml(recordFailureReason(r) || r.error || '')}</div></div>` : ''}
         </div>
+        ${recordTaskSummaryBlock(r)}
         ${recordFailureReasonsBlock(r)}
         ${recordParameterBlock(r)}
         ${promptDetailBlock('原始提示词', 'original_prompt', r.original_prompt || '')}
@@ -5287,6 +5324,12 @@ Source prompt:
         ${generatedMediaDetailBlock(r)}
       `;
       $('recordModal').classList.add('show');
+      $('recordDetailBody').querySelector('.record-task-open')?.addEventListener('click', event => {
+        const taskId = String(event.currentTarget?.dataset?.taskId || '').trim();
+        if (!taskId) return;
+        closeRecordDetail();
+        openTaskDetail(taskId);
+      });
       loadProtectedImages($('recordDetailBody'));
       loadProtectedVideos($('recordDetailBody'));
     }

@@ -486,6 +486,7 @@ class WebTaskMixin:
         *,
         include_finished: bool = False,
         limit: int = 50,
+        offset: int = 0,
         media_type: str = "",
         source: str = "",
         status: str = "",
@@ -502,6 +503,16 @@ class WebTaskMixin:
         substring filters; ``status`` accepts a comma-separated set of
         internal status values.
         """
+        try:
+            page_offset = int(offset or 0)
+        except (TypeError, ValueError):
+            raise ValueError("offset 必须是整数") from None
+        if page_offset < 0:
+            raise ValueError("offset 不能小于 0")
+        try:
+            page_limit = max(1, min(200, int(limit or 50)))
+        except (TypeError, ValueError):
+            raise ValueError("limit 必须是整数") from None
         wanted = str(media_type or "").strip().lower()
         if wanted not in {"", "image", "video"}:
             raise ValueError("media_type 必须是 image 或 video")
@@ -597,14 +608,12 @@ class WebTaskMixin:
             filtered_tasks.append(raw)
 
         rows = []
-        for raw in filtered_tasks:
+        for raw in filtered_tasks[page_offset : page_offset + page_limit]:
             try:
                 row = self.get_web_image_task(str(raw.get("task_id") or ""))
             except Exception:
                 row = redact_sensitive_data(raw)
             rows.append(self._task_list_row(row))
-            if len(rows) >= max(1, min(200, int(limit or 50))):
-                break
 
         all_active = [item for item in raw_tasks if item.get("status") in active]
         status_counts: Dict[str, int] = {}
@@ -638,6 +647,10 @@ class WebTaskMixin:
                 "video_active_slots": video_active,
                 "video_max_concurrent_tasks": video_max,
             },
+            "offset": page_offset,
+            "limit": page_limit,
+            "total": len(raw_tasks),
+            "filtered_total": len(filtered_tasks),
             "filters": {
                 "include_finished": bool(include_finished),
                 "media_type": wanted,

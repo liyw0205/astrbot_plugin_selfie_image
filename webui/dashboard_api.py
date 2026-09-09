@@ -25,6 +25,7 @@ from .web import (
     MAX_CACHE_IMAGE_PATH_LENGTH,
     MAX_RECORD_PAGE_LIMIT,
     MAX_TASK_PAGE_LIMIT,
+    MAX_TASK_OFFSET,
     MAX_WEB_RECORD_ID_LENGTH,
     MAX_WEB_TASK_ID_LENGTH,
     WEB_TASK_ID_RE,
@@ -586,6 +587,9 @@ class SelfieImageDashboardAPI:
             limit, error = self._int_query("limit", 50, 1, MAX_TASK_PAGE_LIMIT)
             if error or limit is None:
                 return error
+            offset, error = self._int_query("offset", 0, 0, MAX_TASK_OFFSET)
+            if error or offset is None:
+                return error
             start_ts, error = self._timestamp_query("start_date")
             if error:
                 return error
@@ -595,6 +599,7 @@ class SelfieImageDashboardAPI:
             task_kwargs = {
                 "include_finished": include_finished,
                 "limit": limit,
+                "offset": offset,
                 "media_type": media_type,
             }
             optional_filters = {
