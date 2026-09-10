@@ -32,6 +32,41 @@ from .reference_collector import ReferenceCollector
 from ..core.utils import detect_mime_by_bytes, extract_event_text, redact_sensitive_text
 
 
+class ImageDeliveryOutcome(int):
+    """Count successful sends while retaining ambiguous transport outcomes."""
+
+    def __new__(
+        cls,
+        sent: int = 0,
+        *,
+        failed: int = 0,
+        unknown: int = 0,
+    ):
+        value = int.__new__(cls, max(0, int(sent or 0)))
+        value.failed_count = max(0, int(failed or 0))
+        value.unknown_count = max(0, int(unknown or 0))
+        return value
+
+
+def _image_delivery_is_ambiguous(error: BaseException) -> bool:
+    """A send timeout can happen after the adapter accepted the message."""
+    if isinstance(error, TimeoutError):
+        return True
+    text = str(error or "").lower()
+    if re.search(r"retcode\s*[:=]\s*1200", text):
+        return True
+    return any(
+        marker in text
+        for marker in (
+            "timeout",
+            "timed out",
+            "retcode=1200",
+            "sendmsg",
+            "onmsginfolistupdate",
+        )
+    )
+
+
 class ReferenceMediaMixin:
     def _bot_account_ids(self, event: Optional[AstrMessageEvent] = None) -> List[str]:
         ids = set()
@@ -312,8 +347,10 @@ class ReferenceMediaMixin:
 
     async def _send_generated_images(
         self, event: AstrMessageEvent, files: Iterable[str]
-    ) -> int:
+    ) -> ImageDeliveryOutcome:
         sent = 0
+        failed = 0
+        unknown = 0
         for file_path in files:
             try:
                 await event.send(
@@ -324,16 +361,22 @@ class ReferenceMediaMixin:
                     "[SelfieImage] image send failed: %s",
                     redact_sensitive_text(str(exc)),
                 )
-                owner = self._session_key(event)
-                with self._send_failures_lock:
-                    self._send_failures.setdefault(owner, []).append(
-                        self._cache_relative_path(file_path)
-                    )
+                ambiguous = _image_delivery_is_ambiguous(exc)
+                if ambiguous:
+                    unknown += 1
+                else:
+                    failed += 1
+                if not ambiguous:
+                    owner = self._session_key(event)
+                    with self._send_failures_lock:
+                        self._send_failures.setdefault(owner, []).append(
+                            self._cache_relative_path(file_path)
+                        )
                 continue
             self._record_bot_image_context(event, [file_path])
             sent += 1
             await asyncio.sleep(0.4)
-        return sent
+        return ImageDeliveryOutcome(sent, failed=failed, unknown=unknown)
 
     async def retry_failed_images(self, event: AstrMessageEvent) -> dict:
         owner = self._session_key(event)
@@ -348,7 +391,8 @@ class ReferenceMediaMixin:
                 continue
             if not os.path.isfile(abs_path):
                 continue
-            if await self._send_generated_images(event, [abs_path]):
+            outcome = await self._send_generated_images(event, [abs_path])
+            if int(outcome) > 0:
                 sent += 1
             else:
                 remaining.append(rel_path)

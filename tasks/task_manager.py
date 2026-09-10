@@ -353,6 +353,15 @@ class WebTaskMixin:
         if not isinstance(linked_record_ids, list):
             linked_record_ids = result.get("record_ids") if isinstance(result.get("record_ids"), list) else []
         linked_record_ids = [str(item).strip() for item in linked_record_ids if str(item).strip()][:200]
+        prompt_text = redact_sensitive_text(
+            str(
+                request.get("original_prompt")
+                or request.get("prompt")
+                or result.get("original_prompt")
+                or result.get("prompt")
+                or ""
+            ).strip()
+        )[:50000]
         public_keys = (
             "task_id",
             "status",
@@ -385,6 +394,7 @@ class WebTaskMixin:
             "generation_stage_label",
             "generation_success",
             "delivery_success",
+            "delivery_unknown",
             "delivery_failed",
             "delivery_error",
         )
@@ -395,6 +405,7 @@ class WebTaskMixin:
                 "source": str(task.get("source") or ""),
                 "source_label": task_source_label(task),
                 "prompt_summary": self._task_prompt_summary(task),
+                "prompt": prompt_text,
                 "used_model": redact_sensitive_text(used_model)[:180],
                 "error": redact_sensitive_text(str(task.get("error") or result.get("error") or ""))[:320],
                 # ``record_id`` is kept for the source record of retry tasks;
@@ -476,6 +487,7 @@ class WebTaskMixin:
                     "elapsed_seconds": result.get("elapsed_seconds"),
                     "generation_success": result.get("generation_success"),
                     "delivery_success": result.get("delivery_success"),
+                    "delivery_unknown": result.get("delivery_unknown"),
                 },
             }
         )
@@ -950,9 +962,16 @@ class WebTaskMixin:
                 await wait_commits(task_id)
             success = bool(result.get("success"))
             generation_success = bool(result.get("generation_success"))
-            delivery_failed = bool(result.get("delivery_failed")) or (
-                generation_success and result.get("delivery_success") is False
-            ) or str(result.get("status") or "") == "delivery_failed"
+            delivery_unknown = bool(result.get("delivery_unknown"))
+            delivery_failed = (
+                bool(result.get("delivery_failed"))
+                or (
+                    generation_success
+                    and result.get("delivery_success") is False
+                    and not delivery_unknown
+                )
+                or str(result.get("status") or "") == "delivery_failed"
+            ) and not delivery_unknown
             requested_count = int(result.get("requested_count") or payload.get("count") or 1)
             succeeded_count = int(result.get("succeeded_count") or 0)
             failed_count = int(result.get("failed_count") or 0)
@@ -972,7 +991,7 @@ class WebTaskMixin:
             # Partial batches still return their successful files to the Web
             # client.  Mark those records as delivered instead of leaving
             # their transport state indefinitely unknown.
-            if callable(mark_delivery) and (success or delivery_failed or record_paths):
+            if callable(mark_delivery) and not delivery_unknown and (success or delivery_failed or record_paths):
                 await mark_delivery(
                     task_id,
                     delivered=bool(not delivery_failed),
@@ -1004,10 +1023,13 @@ class WebTaskMixin:
                 delivery_success=(
                     False
                     if delivery_failed
+                    else None
+                    if delivery_unknown
                     else True
                     if success or record_paths
                     else result.get("delivery_success")
                 ),
+                delivery_unknown=delivery_unknown,
                 delivery_failed=delivery_failed,
                 requested_count=result.get("requested_count", 1),
                 completed_count=completed_count,

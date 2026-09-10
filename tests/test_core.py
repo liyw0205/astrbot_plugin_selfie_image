@@ -825,6 +825,44 @@ class ConfigModelTests(unittest.TestCase):
         self.assertFalse(delivery_failed["delivery_success"])
         self.assertFalse(delivery_failed["success"])
 
+        delivery_unknown = normalize_generation_result(
+            {
+                "success": True,
+                "files": ["a.png"],
+                "batch_total": 1,
+                "generation_success": True,
+                "delivery_success": None,
+                "delivery_unknown": True,
+            },
+            1,
+        )
+        self.assertEqual(delivery_unknown["status"], "succeeded")
+        self.assertTrue(delivery_unknown["success"])
+        self.assertTrue(delivery_unknown["generation_success"])
+        self.assertIsNone(delivery_unknown["delivery_success"])
+        self.assertTrue(delivery_unknown["delivery_unknown"])
+        self.assertFalse(delivery_unknown["delivery_failed"])
+        conflicting_unknown = normalize_generation_result(
+            {
+                "success": False,
+                "files": ["a.png"],
+                "generation_success": True,
+                "status": "delivery_failed",
+                "delivery_failed": True,
+                "delivery_unknown": True,
+            },
+            1,
+        )
+        self.assertEqual(conflicting_unknown["status"], "succeeded")
+        self.assertIsNone(conflicting_unknown["delivery_success"])
+        self.assertFalse(conflicting_unknown["delivery_failed"])
+
+        dashboard_html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
+        for document in (dashboard_html, INDEX_HTML):
+            self.assertIn("task-prompt-cell", document)
+            self.assertIn("<details>", document)
+            self.assertIn("delivery_unknown", document)
+
     def test_task_detail_formats_partial_status_and_progress(self) -> None:
         from astrbot_plugin_selfie_image.tasks.task_views import format_task_detail_text
 
@@ -6034,6 +6072,84 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual(plugin._web_tasks["web-failure-record"]["status"], "failed")
 
 
+class ReferenceMediaDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_transport_timeout_is_unknown_and_not_queued_as_failure(self) -> None:
+        from astrbot_plugin_selfie_image.features.reference_media import ReferenceMediaMixin
+
+        class Event:
+            def chain_result(self, components):
+                return components
+
+            async def send(self, _message):
+                raise RuntimeError(
+                    "ActionFailed retcode=1200 Timeout: NodeIKernelMsgService/sendMsg"
+                )
+
+        plugin = object.__new__(ReferenceMediaMixin)
+        plugin._send_failures = {}
+        plugin._send_failures_lock = threading.RLock()
+        plugin._session_key = lambda _event: "group:test"
+        plugin._cache_relative_path = lambda path: "generated/" + Path(path).name
+        plugin._create_image_component = lambda path: path
+        plugin._record_bot_image_context = lambda *_args: None
+
+        outcome = await plugin._send_generated_images(Event(), ["/tmp/generated.png"])
+
+        self.assertEqual(int(outcome), 0)
+        self.assertEqual(outcome.failed_count, 0)
+        self.assertEqual(outcome.unknown_count, 1)
+        self.assertEqual(plugin._send_failures, {})
+
+    async def test_explicit_send_error_is_failed_and_retryable(self) -> None:
+        from astrbot_plugin_selfie_image.features.reference_media import ReferenceMediaMixin
+
+        class Event:
+            def chain_result(self, components):
+                return components
+
+            async def send(self, _message):
+                raise RuntimeError("permission denied by adapter")
+
+        plugin = object.__new__(ReferenceMediaMixin)
+        plugin._send_failures = {}
+        plugin._send_failures_lock = threading.RLock()
+        plugin._session_key = lambda _event: "group:test"
+        plugin._cache_relative_path = lambda path: "generated/" + Path(path).name
+        plugin._create_image_component = lambda path: path
+        plugin._record_bot_image_context = lambda *_args: None
+
+        outcome = await plugin._send_generated_images(Event(), ["/tmp/generated.png"])
+
+        self.assertEqual(int(outcome), 0)
+        self.assertEqual(outcome.failed_count, 1)
+        self.assertEqual(outcome.unknown_count, 0)
+        self.assertEqual(plugin._send_failures, {"group:test": ["generated/generated.png"]})
+
+    async def test_empty_timeout_exception_is_also_unknown(self) -> None:
+        from astrbot_plugin_selfie_image.features.reference_media import ReferenceMediaMixin
+
+        class Event:
+            def chain_result(self, components):
+                return components
+
+            async def send(self, _message):
+                raise TimeoutError()
+
+        plugin = object.__new__(ReferenceMediaMixin)
+        plugin._send_failures = {}
+        plugin._send_failures_lock = threading.RLock()
+        plugin._session_key = lambda _event: "group:test"
+        plugin._cache_relative_path = lambda path: "generated/" + Path(path).name
+        plugin._create_image_component = lambda path: path
+        plugin._record_bot_image_context = lambda *_args: None
+
+        outcome = await plugin._send_generated_images(Event(), ["/tmp/generated.png"])
+
+        self.assertEqual(outcome.unknown_count, 1)
+        self.assertEqual(outcome.failed_count, 0)
+        self.assertEqual(plugin._send_failures, {})
+
+
 class ReferenceCollectorTests(unittest.TestCase):
     def test_extract_buckets_message_quote_at_and_forward(self) -> None:
         from astrbot_plugin_selfie_image.features.reference_collector import (
@@ -10396,6 +10512,7 @@ class StudioStoreTests(unittest.TestCase):
         listed = stub.list_web_tasks(include_finished=True)
         row = listed["tasks"][0]
         self.assertEqual(row["media_type"], "video")
+        self.assertEqual(row["prompt"], "private")
         for key in ("request_data", "result", "request_fingerprint", "owner_session"):
             self.assertNotIn(key, row)
 

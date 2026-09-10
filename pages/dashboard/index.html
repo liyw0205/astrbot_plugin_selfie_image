@@ -246,6 +246,20 @@
     .table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .table th, .table td { text-align: left; border-bottom: 1px solid var(--line); padding: 8px; vertical-align: top; }
     .table th { background: #f8fafc; font-weight: 650; }
+    #taskQueueTable { table-layout: fixed; }
+    #taskQueueTable th:nth-child(1), #taskQueueTable td:nth-child(1) { width: 38px; }
+    #taskQueueTable th:nth-child(2), #taskQueueTable td:nth-child(2) { width: 170px; }
+    #taskQueueTable th:nth-child(3), #taskQueueTable td:nth-child(3) { width: 90px; }
+    #taskQueueTable th:nth-child(4), #taskQueueTable td:nth-child(4) { width: 54px; }
+    #taskQueueTable th:nth-child(5), #taskQueueTable td:nth-child(5) { width: 150px; }
+    #taskQueueTable th:nth-child(6), #taskQueueTable td:nth-child(6) { width: 260px; }
+    #taskQueueTable th:nth-child(7), #taskQueueTable td:nth-child(7) { width: 170px; }
+    #taskQueueTable th:nth-child(8), #taskQueueTable td:nth-child(8) { width: 66px; }
+    .task-prompt-cell { min-width: 0; max-width: 260px; }
+    .task-prompt-cell details { min-width: 0; }
+    .task-prompt-cell summary { cursor: pointer; color: var(--text-secondary); list-style-position: inside; }
+    .task-prompt-preview { display: inline-block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+    .task-prompt-full { max-height: 180px; overflow: auto; margin-top: 6px; padding: 7px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel-soft); border: 1px solid var(--line); border-radius: 6px; font-size: 12px; line-height: 1.45; }
     .preview { max-width: 260px; border: 1px solid var(--line); border-radius: var(--radius-md); display: none; margin-top: 10px; box-shadow: var(--shadow); }
     .images { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-top: 12px; }
     .images img { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); }
@@ -3710,6 +3724,12 @@ Source prompt:
     function taskQueueStage(task) {
       return String(task?.generation_stage_label || '').trim();
     }
+    function taskQueueDeliveryLabel(task) {
+      if (task?.delivery_unknown === true) return '发送状态未知（QQ 回执超时）';
+      if (task?.delivery_success === true) return '已发送';
+      if (task?.delivery_success === false) return '发送失败';
+      return '';
+    }
     function taskQueueTiming(task) {
       if (task?.media_type !== 'video') return '';
       const queueSeconds = Number(task?.queue_wait_seconds || 0);
@@ -3877,7 +3897,7 @@ Source prompt:
             <div><label>模型</label><div class="status">${escapeHtml(String(task.used_model || '未记录'))}</div></div>
           <div><label>进度</label><div class="status">${escapeHtml([taskQueueProgress(task), taskQueueTiming(task)].filter(Boolean).join(' · ') || '-')}</div></div>
             <div><label>生成阶段</label><div class="status">${escapeHtml(taskQueueStage(task) || '-')}</div></div>
-            <div><label>生成/发送</label><div class="status">${task.generation_success === true ? '生成成功' : task.generation_success === false ? '生成失败' : '-'}${task.delivery_success === true ? ' · 已发送' : task.delivery_success === false ? ' · 发送失败' : ''}</div></div>
+            <div><label>生成/发送</label><div class="status">${task.generation_success === true ? '生成成功' : task.generation_success === false ? '生成失败' : '-'}${taskQueueDeliveryLabel(task) ? ` · ${escapeHtml(taskQueueDeliveryLabel(task))}` : ''}</div></div>
           </div>
           ${task.error ? `<div style="margin-top:12px"><label>失败原因</label><div class="status">${escapeHtml(String(task.error))}</div></div>` : ''}
           ${deliveryNote}
@@ -3916,7 +3936,12 @@ Source prompt:
           const stage = taskQueueStage(task);
           const progress = taskQueueProgress(task);
           const statusMeta = [stage, progress, taskQueueTiming(task), task.timeout_warning].filter(Boolean).join(' · ');
-          return `<tr class="task-detail-row" data-task-id="${id}" style="cursor:pointer"><td><input type="checkbox" data-task-select="${id}" aria-label="选择任务 ${id}" ${TASK_SELECTION.has(rawId) ? 'checked' : ''}></td><td class="mono">${id}</td><td>${escapeHtml(String(task.source_label || task.source || '未知'))}</td><td>${type}</td><td>${taskQueueStatusLabel(task.status)}${statusMeta ? `<br><span class="muted">${escapeHtml(statusMeta)}</span>` : ''}</td><td title="${escapeHtml(String(task.prompt_summary || ''))}">${escapeHtml(String(task.prompt_summary || '-'))}</td><td>${escapeHtml(String(info))}</td><td>${canCancel ? `<button class="danger mini task-cancel-btn" data-task-id="${id}" type="button">取消</button>` : '<button class="secondary mini task-detail-btn" data-task-id="' + id + '" type="button">详情</button>'}</td></tr>`;
+          const prompt = String(task.prompt || task.prompt_summary || '').trim();
+          const promptPreview = String(task.prompt_summary || prompt || '-').trim();
+          const promptCell = prompt
+            ? `<details><summary><span class="task-prompt-preview">${escapeHtml(promptPreview)}</span></summary><div class="task-prompt-full">${escapeHtml(prompt)}</div></details>`
+            : '-';
+          return `<tr class="task-detail-row" data-task-id="${id}" style="cursor:pointer"><td><input type="checkbox" data-task-select="${id}" aria-label="选择任务 ${id}" ${TASK_SELECTION.has(rawId) ? 'checked' : ''}></td><td class="mono">${id}</td><td>${escapeHtml(String(task.source_label || task.source || '未知'))}</td><td>${type}</td><td>${taskQueueStatusLabel(task.status)}${statusMeta ? `<br><span class="muted">${escapeHtml(statusMeta)}</span>` : ''}</td><td class="task-prompt-cell">${promptCell}</td><td>${escapeHtml(String(info))}</td><td>${canCancel ? `<button class="danger mini task-cancel-btn" data-task-id="${id}" type="button">取消</button>` : '<button class="secondary mini task-detail-btn" data-task-id="' + id + '" type="button">详情</button>'}</td></tr>`;
         }).join('')}</tbody>` : `<tbody><tr><td colspan="8" class="muted">${scope === 'recent' ? '没有最近任务' : '当前没有活动任务'}</td></tr></tbody>`;
         const pager = $('taskQueuePager');
         if (pager) {
@@ -3937,7 +3962,7 @@ Source prompt:
         });
         $('taskQueueTable').querySelectorAll('.task-detail-btn').forEach(btn => btn.onclick = event => { event.stopPropagation(); openTaskDetail(btn.dataset.taskId); });
         $('taskQueueTable').querySelectorAll('.task-detail-row').forEach(row => row.onclick = event => {
-          if (!event.target.closest('button,input')) openTaskDetail(row.dataset.taskId);
+          if (!event.target.closest('button,input,details,summary')) openTaskDetail(row.dataset.taskId);
         });
         updateTaskSelectionStatus(rows);
       } catch (e) {

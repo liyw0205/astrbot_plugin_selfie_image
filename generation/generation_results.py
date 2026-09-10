@@ -55,8 +55,11 @@ def normalize_generation_result(result: Any, requested_count: int = 1) -> Dict[s
     if generation_success is None:
         generation_success = succeeded > 0
     delivery_success = data.get("delivery_success")
-    delivery_failed = bool(data.get("delivery_failed")) or str(data.get("status") or "") == "delivery_failed"
-    if delivery_success is False and bool(generation_success):
+    delivery_unknown = bool(data.get("delivery_unknown"))
+    delivery_failed = (
+        bool(data.get("delivery_failed")) or str(data.get("status") or "") == "delivery_failed"
+    ) and not delivery_unknown
+    if delivery_success is False and bool(generation_success) and not delivery_unknown:
         delivery_failed = True
     if cancelled:
         status = "cancelled"
@@ -108,8 +111,11 @@ def normalize_generation_result(result: Any, requested_count: int = 1) -> Dict[s
             "delivery_success": (
                 False
                 if delivery_failed
+                else None
+                if delivery_unknown
                 else (True if delivery_success is None and generation_success else None if delivery_success is None else bool(delivery_success))
             ),
+            "delivery_unknown": delivery_unknown,
             "delivery_failed": delivery_failed,
             "completed_count": completed,
             "progress_percent": progress_percent,

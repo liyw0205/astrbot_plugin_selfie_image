@@ -3497,9 +3497,16 @@ class SelfieImagePlugin(
             success = bool(result.get("success"))
             cancelled = bool(result.get("cancelled")) or str(result.get("error") or "").find("取消") >= 0
             generation_success = bool(result.get("generation_success"))
-            delivery_failed = bool(result.get("delivery_failed")) or (
-                generation_success and result.get("delivery_success") is False
-            ) or str(result.get("status") or "") == "delivery_failed"
+            delivery_unknown = bool(result.get("delivery_unknown"))
+            delivery_failed = (
+                bool(result.get("delivery_failed"))
+                or (
+                    generation_success
+                    and result.get("delivery_success") is False
+                    and not delivery_unknown
+                )
+                or str(result.get("status") or "") == "delivery_failed"
+            ) and not delivery_unknown
             if success and not generation_success:
                 generation_success = True
             if delivery_failed:
@@ -3539,8 +3546,17 @@ class SelfieImagePlugin(
                 generation_stage=terminal_stage,
                 generation_stage_label=terminal_stage_label,
                 generation_success=generation_success,
-                delivery_success=False if delivery_failed else (True if success else result.get("delivery_success")),
+                delivery_success=(
+                    False
+                    if delivery_failed
+                    else None
+                    if delivery_unknown
+                    else True
+                    if success
+                    else result.get("delivery_success")
+                ),
                 delivery_failed=delivery_failed,
+                delivery_unknown=delivery_unknown,
                 error=error,
                 requested_count=result.get("requested_count", 1),
                 succeeded_count=result.get("succeeded_count", 0),
@@ -3797,6 +3813,7 @@ class SelfieImagePlugin(
         succeeded_shots = 0
         cancelled_shots = 0
         delivery_failed_shots = 0
+        delivery_unknown_shots = 0
         delivery_error = ""
         all_attempts: List[Dict[str, Any]] = []
         final_prompt = ""
@@ -3816,7 +3833,7 @@ class SelfieImagePlugin(
             )
 
         async def one(index: int) -> None:
-            nonlocal stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled, succeeded_shots, cancelled_shots, last_failure_error, delivery_failed_shots, delivery_error, all_attempts, final_prompt, original_prompt, last_request_data
+            nonlocal stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled, succeeded_shots, cancelled_shots, last_failure_error, delivery_failed_shots, delivery_unknown_shots, delivery_error, all_attempts, final_prompt, original_prompt, last_request_data
             async with sem:
                 if stop or self._task_cancel_requested(task_id):
                     if self._task_cancel_requested(task_id):
@@ -3920,18 +3937,37 @@ class SelfieImagePlugin(
                 if files:
                     self._record_generated_images(event, 1)
                     sent = await self._send_generated_images(event, files)
-                    # Older/custom senders returned ``None`` after handling
-                    # the send.  Treat that as unknown-success for backwards
-                    # compatibility; the built-in sender returns a count.
-                    delivered = sent is None or int(sent or 0) >= len(files)
-                    if not delivered:
-                        delivery_failed_shots += len(files) - int(sent or 0)
+                    sent_count = int(sent or 0)
+                    explicit_failed = max(0, int(getattr(sent, "failed_count", 0) or 0))
+                    unknown = max(0, int(getattr(sent, "unknown_count", 0) or 0))
+                    # A transport timeout is not proof that QQ rejected the
+                    # message: the adapter can time out while waiting for its
+                    # receipt after the message has already appeared.
+                    if sent is None:
+                        delivered = True
+                        delivery_unknown = False
+                    elif explicit_failed:
+                        delivered = False
+                        delivery_unknown = False
+                        delivery_failed_shots += explicit_failed
+                        delivery_error = "部分生成结果发送失败，请在记录或失败图片入口重试"
+                    elif unknown:
+                        delivered = False
+                        delivery_unknown = True
+                        delivery_unknown_shots += unknown
+                    elif sent_count >= len(files):
+                        delivered = True
+                        delivery_unknown = False
+                    else:
+                        delivered = False
+                        delivery_unknown = False
+                        delivery_failed_shots += len(files) - sent_count
                         delivery_error = "部分生成结果发送失败，请在记录或失败图片入口重试"
                     wait_commits = getattr(self, "_wait_for_record_commits", None)
                     update_delivery = getattr(self, "_update_generation_records_delivery", None)
                     if callable(wait_commits):
                         await wait_commits(task_id)
-                    if callable(update_delivery):
+                    if callable(update_delivery) and not delivery_unknown:
                         update_delivery(
                             task_id,
                             delivered=delivered,
@@ -4009,6 +4045,15 @@ class SelfieImagePlugin(
                     "delivery_success": False,
                     "delivery_failed_count": delivery_failed_shots,
                     "error": delivery_error or "生成成功但发送失败",
+                }
+            )
+        elif delivery_unknown_shots:
+            result.update(
+                {
+                    "generation_success": succeeded_shots > 0,
+                    "delivery_success": None,
+                    "delivery_unknown": True,
+                    "delivery_unknown_count": delivery_unknown_shots,
                 }
             )
         else:
