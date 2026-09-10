@@ -457,7 +457,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.13")
+        self.assertEqual(PLUGIN_VERSION, "1.6.14")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -9333,7 +9333,8 @@ class StudioStoreTests(unittest.TestCase):
             "单侧全开裙摆", "前后分片围裹",
         )
         for need in (
-            "捧脸", "遮脸", "变真人", "果冻化", "真人化", "变COS",
+            "捧脸", "遮脸", "变真人", "变动漫", "变猫娘", "变Q版", "变像素",
+            "果冻化", "真人化", "变COS",
             "漫画封面", "证件照", "男友视角", "漏腰", *structure_presets,
         ):
             self.assertIn(need, gnames)
@@ -9352,6 +9353,10 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("恰好两条手臂、两只手", cover)
         self.assertIn("不额外添加手机，也不强行遮脸", cover)
         self.assertNotIn("随机选择一种遮挡方式", cover)
+        self.assertIn("二次元动漫角色", seed["变动漫"]["prompt"])
+        self.assertIn("一对与头部自然连接的猫耳", seed["变猫娘"]["prompt"])
+        self.assertIn("Q版动漫角色", seed["变Q版"]["prompt"])
+        self.assertIn("像素画风", seed["变像素"]["prompt"])
         lou = seed["漏腰"]["prompt"]
         self.assertIn("短上衣", lou)
         self.assertIn("oversized", lou)
@@ -9384,7 +9389,8 @@ class StudioStoreTests(unittest.TestCase):
             mgr = ImagePresetManager(tmp)
             names = {n for n, _ in mgr.list()}
             for need in (
-                "捧脸", "遮脸", "变真人", "果冻化", "真人化", "变COS",
+                "捧脸", "遮脸", "变真人", "变动漫", "变猫娘", "变Q版", "变像素",
+                "果冻化", "真人化", "变COS",
                 "漫画封面", "证件照", "男友视角", "漏腰", "深开襟",
                 "下胸开窗", "侧胸镂空", "交叉绑带", "挂脖露背",
                 "侧腰双开窗", "极高侧开衩", "薄纱叠层", "开放侧身", "敞怀外套",
