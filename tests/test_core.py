@@ -7924,9 +7924,27 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 122)
+        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 160)
+        from astrbot_plugin_selfie_image.cos.cos_looks import _cos_item_category_rank
+
+        category_ranks = [
+            _cos_item_category_rank(item)
+            for item in plugin_main.COS_LOOK_SETS
+        ]
+        self.assertEqual(category_ranks, sorted(category_ranks))
+        self.assertEqual(
+            len({item["id"] for item in plugin_main.COS_LOOK_SETS}),
+            len(plugin_main.COS_LOOK_SETS),
+        )
+        for item in plugin_main.COS_LOOK_SETS:
+            for forbidden in (
+                "血迹", "血腥", "幼儿体型", "儿童体型", "未成年", "过度裸露",
+                "透明裸露", "裸露内衣", "成人化妆容", "成人化姿势", "儿童房",
+                "畸形手指", "畸形手脚", "多余肢体", "第三只手", "重复手臂", "肢体变形",
+            ):
+                self.assertNotIn(forbidden, item["prompt"], item["id"])
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 122)
+        self.assertEqual(len(web_pool), 160)
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
@@ -7998,6 +8016,44 @@ class LegFocusTests(unittest.TestCase):
                 "甘雨·冰蓝试衣",
                 "可莉·红白童趣",
                 "宵宫·烟花祭典",
+                "莫娜·星命定轨",
+                "菲谢尔·断罪皇女",
+                "优菈·浪花骑士",
+                "申鹤·孤辰茕怀",
+                "珊瑚宫心海·海祇巫女",
+                "八重神子·鸣神大社巫女",
+                "夜兰·若你困于无光",
+                "纳西妲·白草净华",
+                "妮露·睡莲之章",
+                "迪希雅·炽鬃之狮",
+                "娜维娅·玫瑰与铳",
+                "克洛琳德·逐影猎人",
+                "玛拉妮·巡浪之歌",
+                "希诺宁·焮金摇曳",
+                "妮可·德玛拉·狡兔屋街头装",
+                "艾莲·乔·维多利亚女仆装",
+                "可琳·威克斯·维多利亚女仆",
+                "丽娜·维多利亚管家",
+                "格莉丝·霍华德·机械师工装",
+                "朱鸢·治安巡查制服",
+                "青衣·青花制服",
+                "简·杜·绯红潜行",
+                "星见雅·新艾利都特勤装",
+                "柏妮思·怀特·炽焰机车装",
+                "柳·对空六课制服",
+                "伊芙琳·护卫礼服",
+                "长离·赤霞灼灼",
+                "今汐·岁主令尹",
+                "吟霖·红绡提线",
+                "守岸人·星海礼服",
+                "椿·绯红花冠",
+                "赞妮·金色裁决",
+                "卡洛塔·冰蓝肖像",
+                "安可·黑白羊绒装",
+                "桃祈·边庭守备",
+                "丹瑾·绯红剑影",
+                "白芷·白蓝研究服",
+                "散华·冰纹护卫",
                 "永雏塔菲·粉白黄宅舞服",
                 "古拉·小鲨鱼",
                 "小乔·少御粉色短装",
@@ -8107,9 +8163,14 @@ class LegFocusTests(unittest.TestCase):
             )
         self.assertEqual(plugin_main.match_cos_look_sets("C"), [])
         for query in ("辉夜", "巫女", "辉夜巫女"):
+            expected_ids = (
+                ["kaguya_miko_red_white_crown", "kokomi_divine_priestess", "yae_miko_shrine"]
+                if query == "巫女"
+                else ["kaguya_miko_red_white_crown"]
+            )
             self.assertEqual(
                 [item["id"] for item in plugin_main.match_cos_look_sets(query)],
-                ["kaguya_miko_red_white_crown"],
+                expected_ids,
             )
         for ninghongye_id in (
             "ninghongye_red_hao_new_joy",
@@ -8209,8 +8270,8 @@ class LegFocusTests(unittest.TestCase):
         backless = prompts["blue_backless_hanfu"]
         self.assertIn("四分之三侧身", backless)
         self.assertIn("从颈到腰的整片裸背", backless)
-        self.assertIn("只有两条胳膊、两只手", backless)
-        self.assertIn("不要第三只手", backless)
+        self.assertIn("双手自然摆放", backless)
+        self.assertNotIn("第三只手", backless)
         self.assertIn("冰蓝渐变到青绿再到宝蓝", backless)
         self.assertNotIn("《", backless)
         jixiaoman = prompts["jixiaoman_black_gold"]
@@ -8379,6 +8440,62 @@ class LegFocusTests(unittest.TestCase):
         yoimiya_festival = prompts["yoimiya_firework_festival"]
         self.assertIn("《原神》宵宫经典 COS", yoimiya_festival)
         self.assertIn("烟花主题发饰", yoimiya_festival)
+        genshin_additions = {
+            "mona_astrologist_starry": ("《原神》莫娜经典占星术士 COS", "卧室全身镜"),
+            "fischl_immernachtreich": ("《原神》菲谢尔经典断罪皇女 COS", "黑紫色不对称短裙"),
+            "eula_spindrift_knight": ("《原神》优菈浪花骑士经典 COS", "骑士徽章"),
+            "shenhe_lonely_cloud": ("《原神》申鹤经典孤辰茕怀 COS", "红色绳结"),
+            "kokomi_divine_priestess": ("《原神》珊瑚宫心海经典海祇巫女 COS", "贝壳纹和小珍珠"),
+            "yae_miko_shrine": ("《原神》八重神子鸣神大社巫女 COS", "格栅窗"),
+            "yelan_midnight_blue": ("《原神》夜兰经典若你困于无光 COS", "白色毛绒短披肩"),
+            "nahida_floating_dream": ("《原神》纳西妲白草净华 COS", "成年女性体态"),
+            "nilou_lotus_dance": ("《原神》妮露睡莲之章 COS", "睡莲发饰"),
+            "dehya_flame_mane": ("《原神》迪希雅炽鬃之狮 COS", "金色结构护肩"),
+            "navia_rose_parasol": ("《原神》娜维娅玫瑰与铳经典 COS", "复古遮阳伞"),
+            "clorinde_shadow_hunter": ("《原神》克洛琳德逐影猎人 COS", "红色窄领带"),
+            "mualani_surfing_wave": ("《原神》玛拉妮巡浪之歌风格 COS", "海岛风房间"),
+            "xilonen_blazing_gold": ("《原神》希诺宁焮金摇曳风格 COS", "机能外套"),
+        }
+        for look_id, (identity, detail) in genshin_additions.items():
+            self.assertIn(identity, prompts[look_id])
+            self.assertIn(detail, prompts[look_id])
+            self.assertGreaterEqual(len(prompts[look_id]), 240)
+        zenless_additions = {
+            "nicole_demara_street": ("《绝区零》妮可·德玛拉狡兔屋经典街头 COS", "黑色短款机能夹克"),
+            "ellen_joe_victoria_maid": ("《绝区零》艾莲·乔维多利亚家政经典 COS", "白色蕾丝女仆发箍"),
+            "corin_wickes_victoria_maid": ("《绝区零》可琳·威克斯维多利亚家政女仆 COS", "厚实棉麻质感"),
+            "rina_victoria_butler": ("《绝区零》丽娜维多利亚家政管家 COS", "黑色高领贴身内衫"),
+            "grace_howard_mechanic": ("《绝区零》格莉丝·霍华德机械师 COS", "厚实帆布材质"),
+            "zhu_yuan_public_security": ("《绝区零》朱鸢新艾利都治安巡查制服 COS", "青绿色窄领带"),
+            "qingyi_blue_white_uniform": ("《绝区零》青衣青花制服风格 COS", "连续青花云纹"),
+            "jane_doe_crimson_infiltration": ("《绝区零》简·杜绯红潜行风格 COS", "哑光皮革与网眼拼接"),
+            "hoshimi_miyabi_special_ops": ("《绝区零》星见雅新艾利都特勤装 COS", "深紫色短款和风特勤外套"),
+            "burnice_white_flame_biker": ("《绝区零》柏妮思·怀特炽焰机车风 COS", "橙色与黑色拼接的短款机车夹克"),
+            "tsukishiro_yanagi_neps_uniform": ("《绝区零》月城柳对空六课制服 COS", "细框眼镜"),
+            "evelyn_guard_dress": ("《绝区零》伊芙琳护卫礼服风格 COS", "酒红色与黑色拼接的修身护卫礼服"),
+        }
+        for look_id, (identity, detail) in zenless_additions.items():
+            self.assertIn(identity, prompts[look_id])
+            self.assertIn(detail, prompts[look_id])
+            self.assertGreaterEqual(len(prompts[look_id]), 280)
+        wuthering_additions = {
+            "changli_red_gold_flame": ("《鸣潮》长离经典赤霞灼灼COS", "红橙色长发"),
+            "jinhsi_dragon_lord": ("《鸣潮》今汐岁主令尹COS", "白蓝渐变多层长裙"),
+            "yinlin_puppet_master": ("《鸣潮》吟霖经典红黑提线木偶风COS", "黑色小礼帽"),
+            "shorekeeper_stellar": ("《鸣潮》守岸人星海主题COS", "半透明白蓝披纱"),
+            "camellya_red_rose": ("《鸣潮》椿绯红花冠COS", "花瓣状薄纱"),
+            "zani_golden_verdict": ("《鸣潮》赞妮金白都市制服COS", "细框眼镜"),
+            "carlotta_frost_portrait": ("《鸣潮》卡洛塔冰蓝贵族礼服COS", "冰蓝色缎面束腰礼服"),
+            "encore_black_white_sheep": ("《鸣潮》安可黑白羊绒主题COS", "白色羊绒短斗篷"),
+            "taoqi_border_guard": ("《鸣潮》桃祈边庭守备COS", "浅绿色玉石发饰"),
+            "danjin_crimson_blade": ("《鸣潮》丹瑾绯红短装COS", "红黑色短款披肩"),
+            "baizhi_research_white_blue": ("《鸣潮》白芷白蓝研究服COS", "白色长款研究外套"),
+            "sanhua_ice_guard": ("《鸣潮》散华冰纹护卫COS", "冰蓝色滚边"),
+        }
+        for look_id, (identity, detail) in wuthering_additions.items():
+            self.assertIn(identity, prompts[look_id])
+            self.assertIn(detail, prompts[look_id])
+            self.assertGreaterEqual(len(prompts[look_id]), 250)
         taifei = prompts["yongchutafei_pink_yellow_dance"]
         self.assertIn("永雏塔菲风格的粉白黄宅舞COS服", taifei)
         self.assertIn("米白色室内墙面", taifei)
@@ -8747,6 +8864,50 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("《永劫无间》", selected["prompt"])
         self.assertIn("【cos:", cos_action)
         self.assertTrue(plugin_main.match_cos_look_sets("原神"))
+        zenless_ids = {
+            "nicole_demara_street", "ellen_joe_victoria_maid",
+            "corin_wickes_victoria_maid", "rina_victoria_butler",
+            "grace_howard_mechanic", "zhu_yuan_public_security",
+            "qingyi_blue_white_uniform", "jane_doe_crimson_infiltration",
+            "hoshimi_miyabi_special_ops", "burnice_white_flame_biker",
+            "tsukishiro_yanagi_neps_uniform", "evelyn_guard_dress",
+        }
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("绝区零")},
+            zenless_ids,
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("ZZZ")},
+            zenless_ids,
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("Zenless")},
+            zenless_ids,
+        )
+        wuthering_ids = {
+            "changli_red_gold_flame", "jinhsi_dragon_lord",
+            "yinlin_puppet_master", "shorekeeper_stellar",
+            "camellya_red_rose", "zani_golden_verdict",
+            "carlotta_frost_portrait", "encore_black_white_sheep",
+            "taoqi_border_guard", "danjin_crimson_blade",
+            "baizhi_research_white_blue", "sanhua_ice_guard",
+        }
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("鸣潮")},
+            wuthering_ids | {
+                "yangyang_blue_floral_swim", "cartethyia_black_bird",
+                "yuno_gold_pink_armor", "aimisi_black_white_blue_seated",
+                "cartethyia_white_black_blue_short", "phoebe_white_gold_sanctuary",
+            },
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("WuWa")},
+            {item["id"] for item in plugin_main.match_cos_look_sets("鸣潮")},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("Wuthering")},
+            {item["id"] for item in plugin_main.match_cos_look_sets("鸣潮")},
+        )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("王者")},
             series_ids,
@@ -8892,7 +9053,7 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（122套）：", response[0])
+            self.assertIn("看看COS 随机池（160套）：", response[0])
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
@@ -9888,6 +10049,7 @@ class StudioStoreTests(unittest.TestCase):
         import tempfile
 
         from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.studio.studio import special_prompt_presets
         stub_factory = SessionModelAndTaskTests()
         stub_factory._plugin_stub()
         from astrbot_plugin_selfie_image import main as plugin_main
@@ -9953,6 +10115,51 @@ class StudioStoreTests(unittest.TestCase):
                     )
                     self.assertIn("洛琪希", captured["rebuild_extra_request"], message)
                     self.assertIn("夜景", captured["rebuild_extra_request"], message)
+
+            special_stub = stub_factory._plugin_stub()
+            special_stub.presets = ImagePresetManager(tmp)
+            special_captured = {}
+
+            async def special_handle(**kwargs):
+                special_captured.update(kwargs)
+                if False:
+                    yield None
+
+            special_stub._handle_selfie_command = special_handle
+            async def collect_special_command():
+                return [
+                    item
+                    async for item in special_stub.cmd_look_cos(
+                        Event("/看看COS 西施 特殊预设 10")
+                    )
+                ]
+
+            output = asyncio.run(collect_special_command())
+            self.assertEqual(output, [])
+            variants = special_captured["rebuild_special_preset_variants"]
+            self.assertEqual(len(variants), 10)
+            self.assertEqual(variants[0], special_captured["rebuild_extra_request"])
+            self.assertEqual(special_captured["preset_name"], "特殊预设")
+            special_prompts = [str(item["prompt"]) for item in special_prompt_presets()]
+            for variant in variants:
+                self.assertTrue(any(prompt in variant for prompt in special_prompts))
+
+            choice_calls = []
+
+            def choose_first(items):
+                choice_calls.append(tuple(str(item["id"]) for item in items))
+                return items[0]
+
+            with patch("astrbot_plugin_selfie_image.main.random.choice", side_effect=choose_first):
+                repeated_variants, _, _, _ = (
+                    plugin_main.SelfieImagePlugin._expand_cos_special_preset_variants(
+                        special_stub,
+                        "西施 特殊预设",
+                        len(special_prompts) + 4,
+                    )
+                )
+            self.assertEqual(len(choice_calls), len(special_prompts) + 4)
+            self.assertEqual(len(set(repeated_variants)), 1)
 
         stub = stub_factory._plugin_stub()
         for text in ("西施 2026 夜景", "西施 12a 夜景", "西施 3.14 夜景", "西施 9999", "3旗袍abc"):

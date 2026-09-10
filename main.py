@@ -701,6 +701,48 @@ class SelfieImagePlugin(
             default_resolution=default_resolution,
         )
 
+    def _expand_cos_special_preset_variants(
+        self,
+        raw_text: str,
+        count: int,
+    ) -> Tuple[List[str], str, str, str]:
+        """Expand a dynamic COS preset independently for every batch shot."""
+        text = str(raw_text or "").strip()
+        if not text or count <= 0:
+            return [], "", "", ""
+        from .studio.studio import SPECIAL_PRESET_ALIAS, special_prompt_presets
+
+        alias = str(SPECIAL_PRESET_ALIAS or "特殊预设").strip()
+        if not alias or not re.search(re.escape(alias), text, flags=re.IGNORECASE):
+            return [], "", "", ""
+        choices = [
+            dict(item)
+            for item in special_prompt_presets()
+            if str(item.get("prompt") or "").strip()
+        ]
+        if not choices:
+            return [], "", "", ""
+
+        variants: List[str] = []
+        first_aspect = ""
+        first_resolution = ""
+        for index in range(max(1, int(count))):
+            selected = random.choice(choices)
+            selected_prompt = str(selected.get("prompt") or "").strip()
+            expanded_source = re.sub(
+                re.escape(alias),
+                lambda _match: selected_prompt,
+                text,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            expanded, aspect, resolution, _ = self._expand_cos_user_text_with_preset(expanded_source)
+            variants.append(expanded)
+            if index == 0:
+                first_aspect = aspect
+                first_resolution = resolution
+        return variants, first_aspect, first_resolution, alias
+
     def _normalize_preset_input(self, text: str) -> str:
         return normalize_preset_input(text)
 
@@ -4199,6 +4241,7 @@ class SelfieImagePlugin(
         queue_notified: bool = False,
         rebuild_extra_request: str = "",
         rebuild_match_query: str = "",
+        rebuild_special_preset_variants: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         self._ensure_image_batch_gate()
@@ -4214,6 +4257,7 @@ class SelfieImagePlugin(
             fail_label,
             rebuild_extra_request,
             rebuild_match_query,
+            rebuild_special_preset_variants,
         )
 
     async def _run_selfie_batches_unlocked(
@@ -4229,6 +4273,7 @@ class SelfieImagePlugin(
         fail_label: str,
         rebuild_extra_request: str = "",
         rebuild_match_query: str = "",
+        rebuild_special_preset_variants: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         # 多张拍摄时逐张更换机位或姿势。
@@ -4302,8 +4347,13 @@ class SelfieImagePlugin(
                     if m_pose:
                         last_pose = str(m_pose.group(1) or last_pose)
                 elif source == "command-look-cos":
+                    special_extra = (
+                        rebuild_special_preset_variants[index]
+                        if rebuild_special_preset_variants and index < len(rebuild_special_preset_variants)
+                        else extra_keep
+                    )
                     round_action = self._build_cos_look_action(
-                        extra_keep,
+                        special_extra,
                         bool(extra_refs),
                         avoid_id=last_cos,
                         avoid_camera=last_cam,
@@ -5141,6 +5191,7 @@ class SelfieImagePlugin(
         preset_name: str = "",
         rebuild_extra_request: str = "",
         rebuild_match_query: str = "",
+        rebuild_special_preset_variants: Optional[List[str]] = None,
     ) -> AsyncGenerator[Any, None]:
         message = message_override.strip() if message_override else extract_command_message(event, command_name, fallback)
         if requested_count_override > 0:
@@ -5200,6 +5251,7 @@ class SelfieImagePlugin(
                 queue_notified=queue_notified,
                 rebuild_extra_request=rebuild_extra_request,
                 rebuild_match_query=rebuild_match_query,
+                rebuild_special_preset_variants=rebuild_special_preset_variants,
             )
 
         task = self.start_command_image_task(
@@ -5960,7 +6012,15 @@ class SelfieImagePlugin(
         if cos_query_has_series_constraint(raw_extra) and not match_cos_look_sets(raw_extra):
             yield event.plain_result("未找到匹配的 COS 作品系列或套装，请检查作品名称后重试。")
             return
-        expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_cos_user_text_with_preset(raw_extra)
+        special_preset_variants, preset_aspect, preset_resolution, preset_name = (
+            self._expand_cos_special_preset_variants(raw_extra, requested_count)
+        )
+        if special_preset_variants:
+            expanded_extra = special_preset_variants[0]
+        else:
+            expanded_extra, preset_aspect, preset_resolution, preset_name = (
+                self._expand_cos_user_text_with_preset(raw_extra)
+            )
         has_refs = bool(extract_image_sources_from_event(event))
         fallback = self._build_cos_look_action(expanded_extra, has_refs, match_query=raw_extra)
         async for item in self._handle_selfie_command(
@@ -5980,6 +6040,7 @@ class SelfieImagePlugin(
             preset_name=preset_name,
             rebuild_extra_request=expanded_extra,
             rebuild_match_query=raw_extra,
+            rebuild_special_preset_variants=special_preset_variants,
         ):
             yield item
 
