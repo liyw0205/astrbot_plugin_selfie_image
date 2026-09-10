@@ -43,3 +43,16 @@ def test_record_source_buttons_copy_and_response_base64_opens():
     assert 'title="复制原始来源"' in PAGE
     assert 'title="打开原始 Base64"' in PAGE
     assert "Base64（点击打开）" in PAGE
+
+
+def test_dashboard_shortcuts_and_priority_pin_cover_all_model_kinds():
+    for target in ("test", "studio", "selfie", "channels", "monitor"):
+        assert f'data-nav-target="{target}"' in PAGE
+    assert "function navigateToTab" in PAGE
+    assert "main.app-shell > section" in PAGE
+    assert "function movePriorityToTop" in PAGE
+    assert "movePriorityToTop('${kind}', ${i})" in PAGE
+    assert "for (const kind of ['image','audit','video'])" in PAGE
+    assert "priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\\n')" in PAGE
+    assert "auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\\n')" in PAGE
+    assert "videoPriorityList').value = (CONFIG.enabled_video_model_priority || []).join('\\n')" in PAGE

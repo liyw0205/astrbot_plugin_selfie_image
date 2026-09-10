@@ -72,10 +72,12 @@ from .prompts.command_parser import (
 )
 from .cos.cos_looks import (
     COS_LOOK_CATEGORY_TERMS,
+    COS_LOOK_SERIES_ALIASES,
     COS_LOOK_SETS,
     _cos_item_terms,
     adapt_cos_outfit_for_camera,
     build_cos_look_action,
+    cos_query_has_series_constraint,
     format_cos_look_list,
     keep_cos_outfit_requested,
     list_cos_look_sets,
@@ -5902,6 +5904,12 @@ class SelfieImagePlugin(
             yield event.plain_result(format_cos_look_list())
             return
         raw_extra, requested_count = self._extract_command_count(raw_message, allow_attached=True)
+        # A declared series is a hard narrowing constraint.  Do not let an
+        # unknown or conflicting series fall through as an ordinary selfie
+        # request after COS matching returns no candidates.
+        if cos_query_has_series_constraint(raw_extra) and not match_cos_look_sets(raw_extra):
+            yield event.plain_result("未找到匹配的 COS 作品系列或套装，请检查作品名称后重试。")
+            return
         expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_cos_user_text_with_preset(raw_extra)
         has_refs = bool(extract_image_sources_from_event(event))
         fallback = self._build_cos_look_action(expanded_extra, has_refs, match_query=raw_extra)

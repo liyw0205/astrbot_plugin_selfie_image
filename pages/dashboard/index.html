@@ -825,13 +825,13 @@
           <div class="eyebrow">CREATIVE WORKSPACE</div>
           <h2>把灵感变成可以分享的画面。</h2>
           <p>从一次试画开始，管理你的模型渠道、形象参考与生成记录。</p>
-          <button type="button" onclick="document.querySelector('[data-tab=\"test\"]').click()">开始一次创作　→</button>
+          <button type="button" data-nav-target="test">开始一次创作　→</button>
         </div>
         <div class="bento-quick">
-          <button class="bento-tile" type="button" onclick="document.querySelector('[data-tab=\"studio\"]').click()"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>创作画布</b><span>编排参考并开始创作</span></button>
-          <button class="bento-tile" type="button" onclick="document.querySelector('[data-tab=\"selfie\"]').click()"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg></div><b>形象参考</b><span>管理固定形象</span></button>
-          <button class="bento-tile" type="button" onclick="document.querySelector('[data-tab=\"channels\"]').click()"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg></div><b>模型渠道</b><span>检查运行状态</span></button>
-          <button class="bento-tile" type="button" onclick="document.querySelector('[data-tab=\"monitor\"]').click()"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="3" cy="6" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="12" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="18" r=".7" fill="currentColor" stroke="none"></circle></svg></div><b>生成记录</b><span>查看最近任务</span></button>
+          <button class="bento-tile" type="button" data-nav-target="studio"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>创作画布</b><span>编排参考并开始创作</span></button>
+          <button class="bento-tile" type="button" data-nav-target="selfie"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg></div><b>形象参考</b><span>管理固定形象</span></button>
+          <button class="bento-tile" type="button" data-nav-target="channels"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg></div><b>模型渠道</b><span>检查运行状态</span></button>
+          <button class="bento-tile" type="button" data-nav-target="monitor"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="3" cy="6" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="12" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="18" r=".7" fill="currentColor" stroke="none"></circle></svg></div><b>生成记录</b><span>查看最近任务</span></button>
         </div>
       </div>
       <div class="between">
@@ -3097,6 +3097,13 @@ Source prompt:
       items.splice(next, 0, item);
       setPriorityItems(kind, items);
     }
+    function movePriorityToTop(kind, index) {
+      const ui = priorityUi(kind), items = textList(ui.list);
+      if (index <= 0 || index >= items.length) return;
+      const item = items.splice(index, 1)[0];
+      items.unshift(item);
+      setPriorityItems(kind, items);
+    }
     function removePriority(kind, index) {
       const ui = priorityUi(kind), items = textList(ui.list);
       items.splice(index, 1);
@@ -3112,7 +3119,8 @@ Source prompt:
       if (!box) return;
       box.innerHTML = items.map((item, i) => `
         <div class="model-row"><div class="name">${escapeHtml(item)}</div><div class="actions">
-          <button class="secondary mini" type="button" onclick="movePriority('${kind}', ${i}, -1)">上移</button>
+          <button class="secondary mini" type="button" onclick="movePriority('${kind}', ${i}, -1)" ${i === 0 ? 'disabled' : ''}>上移</button>
+          <button class="secondary mini" type="button" onclick="movePriorityToTop('${kind}', ${i})" ${i === 0 ? 'disabled' : ''}>置顶</button>
           <button class="secondary mini" type="button" onclick="movePriority('${kind}', ${i}, 1)">下移</button>
           <button class="danger mini" type="button" onclick="removePriority('${kind}', ${i})">移除</button>
         </div></div>`).join('') || `<div class="muted">未设置${kind === 'image' ? '生图' : kind === 'audit' ? '辅助' : '视频'}优先级时按启用顺序尝试。</div>`;
@@ -3554,6 +3562,16 @@ Source prompt:
         refreshModelSelectors();
         return true;
       } catch (e) {
+        // A failed autosave must leave the visible priority order aligned with
+        // the last known server config, so a retry cannot submit a partial or
+        // reordered snapshot by accident.
+        ensureConfig();
+        if ($('priorityList')) $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
+        if ($('auditPriorityList')) $('auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\n');
+        if ($('videoPriorityList')) $('videoPriorityList').value = (CONFIG.enabled_video_model_priority || []).join('\n');
+        renderAllChannelLists();
+        refreshModelSelectors();
+        renderAllPriorityRows();
         setMultiStatus(e.message);
         showToast(e.message, 'bad');
         return false;
@@ -6867,19 +6885,33 @@ Source prompt:
       showToast('参考图已放入槽位', 'ok');
     }
 
-    document.querySelectorAll('nav.page-nav button').forEach(btn => {
-      btn.onclick = () => {
-        document.querySelectorAll('nav.page-nav button').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
-        btn.classList.add('active');
-        $(btn.dataset.tab).classList.add('active');
-        if (btn.dataset.tab === 'monitor') { loadRecords(false); loadMetrics(); loadTasks(); }
-        if (btn.dataset.tab === 'assets') { loadAssets(); loadAssetTags(); loadAssetStudioPresets(); }
-        if (btn.dataset.tab === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
-        if (btn.dataset.tab === 'presets') loadManagedPromptPresets(PRESET_KIND);
-        if (btn.dataset.tab === 'selfie') refreshSelfie();
-        if (btn.dataset.tab === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
-      };
+    function navigateToTab(tab, options = {}) {
+      const target = String(tab || '').trim();
+      const button = [...document.querySelectorAll('nav.page-nav button[data-tab]')].find(item => item.dataset.tab === target);
+      const section = target ? $(target) : null;
+      if (!button || !section) return false;
+      const current = document.querySelector('nav.page-nav button.active')?.dataset.tab || '';
+      if (current === target && options.force !== true) return false;
+      document.querySelectorAll('nav.page-nav button').forEach(item => item.classList.toggle('active', item === button));
+      document.querySelectorAll('main.app-shell > section').forEach(item => item.classList.toggle('active', item === section));
+      if (target === 'monitor') { loadRecords(false); loadMetrics(); loadTasks(); }
+      if (target === 'assets') { loadAssets(); loadAssetTags(); loadAssetStudioPresets(); }
+      if (target === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
+      if (target === 'presets') loadManagedPromptPresets(PRESET_KIND);
+      if (target === 'selfie') refreshSelfie();
+      if (target === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
+      if (options.focus === true) button.focus();
+      return true;
+    }
+    document.querySelectorAll('nav.page-nav button[data-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        // Keep the proxy tab check explicit for embedded-page integrations.
+        const isProxyTab = btn.dataset.tab === 'proxies';
+        navigateToTab(btn.dataset.tab, { focus: isProxyTab });
+      });
+    });
+    document.querySelectorAll('[data-nav-target]').forEach(card => {
+      card.addEventListener('click', () => navigateToTab(card.dataset.navTarget));
     });
     $('loginBtn').onclick = enterApp;
     $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };

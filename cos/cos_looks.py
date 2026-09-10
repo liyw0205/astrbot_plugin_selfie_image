@@ -321,6 +321,64 @@ COS_LOOK_CATEGORY_TERMS = (
     "洛丽塔", "花嫁", "围裙", "白熊", "和风", "荷叶裙", "兜兜", "袴裙",
 )
 
+# Series are kept separately from outfit categories so a query such as
+# ``永劫无间 20 特殊预设`` narrows the pool without treating the count or
+# preset alias as an outfit name.  Aliases are intentionally conservative:
+# unknown series must not silently fall back to the entire COS pool.
+COS_LOOK_SERIES_ALIASES: Dict[str, tuple[str, ...]] = {
+    "王者荣耀": ("王者荣耀", "王者", "honorofkings", "hok"),
+    "永劫无间": ("永劫无间", "永劫", "naraka", "narakabladepoint"),
+    "原神": ("原神", "genshin", "genshinimpact"),
+}
+COS_LOOK_SERIES_MARKERS = ("系列", "作品", "游戏")
+COS_LOOK_IGNORED_QUERY_TERMS = frozenset({"特殊预设", "列表", "全部", "查看", "list", "all", "view"})
+
+
+def _compact_cos_match(value: str, separators: str) -> str:
+    normalized = re.sub(r"(?<=[a-z])\.(?=[a-z])", "", str(value or "").lower())
+    return re.sub(separators, "", normalized)
+
+
+def _cos_item_series(item: Mapping[str, Any]) -> str:
+    explicit = str(item.get("series") or "").strip()
+    if explicit in COS_LOOK_SERIES_ALIASES:
+        return explicit
+    prompt = str(item.get("prompt") or "")
+    title = str(item.get("title") or "")
+    for series in COS_LOOK_SERIES_ALIASES:
+        if f"《{series}》" in prompt or series in title:
+            return series
+    return ""
+
+
+def _cos_item_series_aliases(item: Mapping[str, Any], separators: str) -> set[str]:
+    series = _cos_item_series(item)
+    if not series:
+        return set()
+    return {
+        _compact_cos_match(alias, separators)
+        for alias in COS_LOOK_SERIES_ALIASES[series]
+        if _compact_cos_match(alias, separators)
+    }
+
+
+def cos_query_has_series_constraint(text: str) -> bool:
+    """Return whether a query explicitly narrows the COS pool by series."""
+    raw_query = re.sub(r"\s+", " ", str(text or "")).strip().lower()
+    if not raw_query:
+        return False
+    separators = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+"
+    compact = _compact_cos_match(raw_query, separators)
+    aliases = {
+        _compact_cos_match(alias, separators)
+        for values in COS_LOOK_SERIES_ALIASES.values()
+        for alias in values
+        if _compact_cos_match(alias, separators)
+    }
+    return any(alias and alias in compact for alias in aliases) or any(
+        marker in raw_query for marker in COS_LOOK_SERIES_MARKERS
+    )
+
 
 def _cos_item_terms(item: Mapping[str, Any]) -> List[str]:
     title = str(item.get("title") or "")
@@ -360,15 +418,25 @@ def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
         return re.sub(separators, "", normalized)
 
     item_terms: Dict[str, set[str]] = {}
+    item_series: Dict[str, str] = {}
     term_items: Dict[str, set[str]] = {}
+    series_alias_to_key = {
+        _compact_cos_match(alias, separators): series
+        for series, aliases in COS_LOOK_SERIES_ALIASES.items()
+        for alias in aliases
+        if _compact_cos_match(alias, separators)
+    }
     category_term_set = {compact(term) for term in COS_LOOK_CATEGORY_TERMS}
     for item in all_items:
         item_id = str(item.get("id") or "")
         terms = {compact(term) for term in _cos_item_terms(item)}
         terms.discard("")
         item_terms[item_id] = terms
+        item_series[item_id] = _cos_item_series(item)
         for term in terms:
             term_items.setdefault(term, set()).add(item_id)
+        for alias in _cos_item_series_aliases(item, separators):
+            term_items.setdefault(alias, set()).add(item_id)
     known_terms = sorted(term_items, key=lambda term: (-len(term), term))
 
     def segment_token(token: str) -> List[str]:
@@ -401,24 +469,53 @@ def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
 
     selected_name_terms: List[str] = []
     selected_category_terms: List[str] = []
+    selected_series_terms: List[str] = []
+    known_series_in_query = any(alias and alias in compact_query for alias in series_alias_to_key)
+    # An explicit but unknown series marker must not degrade into a character
+    # or category-only match (for example ``未知作品 西施``).
+    for token in re.split(separators, raw_query):
+        token_compact = compact(token)
+        if token_compact and any(marker in token for marker in COS_LOOK_SERIES_MARKERS):
+            # Accept natural forms such as ``王者荣耀作品`` while still
+            # rejecting an unknown marker before the query can fall back to a
+            # character/category-only match.
+            marker_stripped = token
+            for marker in COS_LOOK_SERIES_MARKERS:
+                marker_stripped = marker_stripped.replace(marker, "")
+            marker_compact = compact(marker_stripped)
+            if not marker_compact and known_series_in_query:
+                continue
+            if not any(alias and alias in marker_compact for alias in series_alias_to_key):
+                return []
+    # Detect aliases across whitespace (for example ``Honor of Kings``) and
+    # when a series token is adjacent to a count or preset label.
+    for alias, series in sorted(series_alias_to_key.items(), key=lambda pair: -len(pair[0])):
+        if alias and alias in compact_query:
+            selected_series_terms.append(series)
     for token in re.split(separators, raw_query):
         segments = segment_token(token)
         if not segments:
             continue
         for term in segments:
-            if term in category_term_set:
+            if term in series_alias_to_key:
+                selected_series_terms.append(series_alias_to_key[term])
+            elif term in {compact(value) for value in COS_LOOK_IGNORED_QUERY_TERMS}:
+                continue
+            elif term in category_term_set:
                 selected_category_terms.append(term)
             else:
                 selected_name_terms.append(term)
     selected_name_terms = list(dict.fromkeys(selected_name_terms))
     selected_category_terms = list(dict.fromkeys(selected_category_terms))
-    if selected_name_terms or selected_category_terms:
+    selected_series_terms = list(dict.fromkeys(selected_series_terms))
+    if selected_name_terms or selected_category_terms or selected_series_terms:
         pool = []
         for item in all_items:
-            terms = item_terms.get(str(item.get("id") or ""), set())
+            item_id = str(item.get("id") or "")
+            terms = item_terms.get(item_id, set())
             if all(term in terms for term in selected_name_terms) and all(
                 category in terms for category in selected_category_terms
-            ):
+            ) and all(item_series.get(item_id) == series for series in selected_series_terms):
                 pool.append(dict(item))
         return pool
     return []
@@ -426,6 +523,11 @@ def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
 
 def pick_cos_look_set(*, avoid_id: str = "", query: str = "") -> Dict[str, str]:
     matched = match_cos_look_sets(query)
+    # An explicit series constraint with no candidates must not silently
+    # broaden to the entire catalog.  Ordinary unmatched extra text retains
+    # the historical random fallback behavior.
+    if not matched and cos_query_has_series_constraint(query):
+        return {}
     pool = matched or list(COS_LOOK_SETS)
     pool = [item for item in pool if str(item.get("id") or "") != str(avoid_id or "")]
     if not pool:
@@ -449,6 +551,8 @@ def list_cos_look_sets() -> List[Dict[str, Any]]:
             "id": str(item.get("id") or "").strip(),
             "title": str(item.get("title") or "").strip(),
             "prompt": str(item.get("prompt") or "").strip(),
+            "series": _cos_item_series(item),
+            "series_aliases": list(COS_LOOK_SERIES_ALIASES.get(_cos_item_series(item), ())),
             "compatibility": cos_look_compatibility(str(item.get("id") or "")),
         }
         for item in COS_LOOK_SETS
@@ -534,6 +638,11 @@ def build_cos_look_action(
         avoid_id=avoid_id,
         query=str(match_query).strip() if str(match_query).strip() else extra_request,
     )
+    if not chosen:
+        # Keep the action contract intact when an explicit series has no
+        # matching outfit; callers can surface the empty selection instead of
+        # accidentally generating from the full catalog.
+        return ""
     title = str(chosen.get("title") or "随机COS")
     camera_kind = pick_cos_camera(
         extra_request=extra_request, avoid=avoid_camera, camera=camera

@@ -2082,6 +2082,17 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertIn("CONFIG.enabled_audit_model_priority = textList('auditPriorityList');", INDEX_HTML)
         self.assertIn("CONFIG.enabled_video_model_priority = textList('videoPriorityList');", INDEX_HTML)
 
+    def test_dashboard_shortcuts_and_priority_pin_use_stable_targets(self) -> None:
+        dashboard = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
+        for document in (dashboard, INDEX_HTML):
+            for target in ("test", "studio", "selfie", "channels", "monitor"):
+                self.assertIn(f'data-nav-target="{target}"', document)
+            self.assertIn("function navigateToTab", document)
+            self.assertIn("main.app-shell > section", document)
+            self.assertIn("function movePriorityToTop", document)
+            self.assertIn("movePriorityToTop('${kind}', ${i})", document)
+        self.assertNotIn("document.querySelector('[data-tab=\\\"monitor\\\"]')", dashboard)
+
     def test_base_url_normalization(self) -> None:
         self.assertEqual(normalize_image_base_url("https://example.com/v1/images/generations"), "https://example.com")
         self.assertEqual(normalize_image_base_url("https://example.com/v1/chat/completions"), "https://example.com")
@@ -4023,6 +4034,29 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.used_model, second.label)
         self.assertEqual([attempt["success"] for attempt in result.attempts], [False, True])
         self.assertEqual(result.attempts[0]["error"], "temporary failure")
+
+    def test_generation_record_task_links_are_written_for_terminal_paths(self) -> None:
+        from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
+
+        class Store(GenerationStoreMixin):
+            pass
+
+        store = Store()
+        store._web_task_lock = threading.RLock()
+        store._web_tasks = {
+            "cmd-link": {"task_id": "cmd-link", "status": "running", "result": {}}
+        }
+        persisted = []
+        store._persist_web_tasks_locked = lambda: persisted.append(True)
+        store._records_lock = threading.RLock()
+        store._records = []
+
+        store._link_generation_record_to_task("cmd-link", "record-1")
+        store._link_generation_record_to_task("cmd-link", "record-1")
+        task = store._web_tasks["cmd-link"]
+        self.assertEqual(task["record_ids"], ["record-1"])
+        self.assertEqual(task["result"]["record_ids"], ["record-1"])
+        self.assertEqual(len(persisted), 2)
 
     async def test_fallback_preserves_server_error_detail(self) -> None:
         target = make_target("openai", "gpt-image-2")
@@ -8567,7 +8601,60 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(plugin_main.match_cos_look_sets("夜晚霓虹街道"), [])
         self.assertEqual(plugin_main.match_cos_look_sets("鹿角"), [])
-        self.assertEqual(plugin_main.match_cos_look_sets("王者荣耀"), [])
+        series_ids = {item["id"] for item in plugin_main.match_cos_look_sets("王者荣耀")}
+        self.assertTrue(series_ids)
+        self.assertTrue(all("《王者荣耀》" in item["prompt"] for item in plugin_main.match_cos_look_sets("王者荣耀")))
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("王者荣耀 西施")},
+            xishi_ids,
+        )
+        self.assertTrue(plugin_main.match_cos_look_sets("永劫无间 20 特殊预设"))
+        self.assertTrue(all("《永劫无间》" in item["prompt"] for item in plugin_main.match_cos_look_sets("永劫无间 20 特殊预设")))
+        class _CosStub:
+            pass
+        cos_action = plugin_main.SelfieImagePlugin._build_cos_look_action(
+            _CosStub(), "永劫无间 特殊预设", False,
+            match_query="永劫无间 特殊预设",
+        )
+        cos_id = re.search(r"【cos:([a-z0-9_]+)】", cos_action)
+        self.assertIsNotNone(cos_id, cos_action)
+        selected = next(item for item in plugin_main.COS_LOOK_SETS if item["id"] == cos_id.group(1))
+        self.assertIn("《永劫无间》", selected["prompt"])
+        self.assertIn("【cos:", cos_action)
+        self.assertTrue(plugin_main.match_cos_look_sets("原神"))
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("王者")},
+            series_ids,
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("永劫")},
+            {item["id"] for item in plugin_main.match_cos_look_sets("永劫无间")},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("Genshin")},
+            {item["id"] for item in plugin_main.match_cos_look_sets("原神")},
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("Honor of Kings")},
+            series_ids,
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("王者荣耀作品")},
+            series_ids,
+        )
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("永劫无间系列")},
+            {item["id"] for item in plugin_main.match_cos_look_sets("永劫无间")},
+        )
+        self.assertEqual(plugin_main.match_cos_look_sets("王者荣耀 原神"), [])
+        self.assertEqual(plugin_main.match_cos_look_sets("未知作品"), [])
+        self.assertEqual(plugin_main.match_cos_look_sets("未知作品 西施"), [])
+        self.assertEqual(plugin_main.pick_cos_look_set(query="未知作品"), {})
+        self.assertIn("永劫无间", plugin_main.COS_LOOK_SERIES_ALIASES)
+        catalog = plugin_main.list_cos_look_sets()
+        hok_entry = next(item for item in catalog if item["id"] == "xishi_fan_qipao")
+        self.assertEqual(hok_entry["series"], "王者荣耀")
+        self.assertIn("王者", hok_entry["series_aliases"])
 
         class _P:
             pass
@@ -9528,6 +9615,22 @@ class StudioStoreTests(unittest.TestCase):
         )
         self.assertTrue(fixed["fixed_reason"])
 
+        # The non-永劫 review is intentionally conservative: only the two
+        # outfit-only hanfu entries use the shared random pool; every other
+        # non-永劫 entry retains an explicit fixed-composition reason.
+        from astrbot_plugin_selfie_image.cos.cos_looks import COS_LOOK_SETS
+        reviewed_generic = {
+            item["id"] for item in COS_LOOK_SETS
+            if cos_look_compatibility(item["id"])["variation_enabled"]
+            and "《永劫无间》" not in item["prompt"]
+        }
+        self.assertEqual(reviewed_generic, {"hanfu_peach", "mint_sheer_hanfu"})
+        for item in COS_LOOK_SETS:
+            profile = cos_look_compatibility(item["id"])
+            if item["id"] not in reviewed_generic and "《永劫无间》" not in item["prompt"]:
+                self.assertFalse(profile["variation_enabled"], item["id"])
+                self.assertTrue(profile["fixed_reason"], item["id"])
+
         # Every catalog entry exposes the same stable schema, so dashboard
         # clients never need outfit-specific key checks.
         required = {
@@ -9750,6 +9853,29 @@ class StudioStoreTests(unittest.TestCase):
                 (expected_extra, expected_count),
                 text,
             )
+
+    def test_cos_command_rejects_unknown_or_conflicting_series(self) -> None:
+        """Hard series constraints must return a message, never generic selfie output."""
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        class Event:
+            def __init__(self, message: str) -> None:
+                self.message_str = message
+
+            def plain_result(self, text: str) -> str:
+                return text
+
+        for message in ("/看看COS 未知作品 西施", "/看看COS 王者荣耀 原神"):
+            stub = SessionModelAndTaskTests()._plugin_stub()
+            async def unexpected_handle(**_kwargs):
+                raise AssertionError("series mismatch must not start a generation task")
+                if False:
+                    yield None
+            stub._handle_selfie_command = unexpected_handle
+            output = asyncio.run(
+                plugin_main.SelfieImagePlugin.cmd_look_cos(stub, Event(message)).__anext__()
+            )
+            self.assertIn("未找到匹配的 COS 作品系列或套装", output)
 
     def test_image_commands_accept_count_before_or_after_prompt(self) -> None:
         """All image/selfie commands accept the common count positions."""
