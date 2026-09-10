@@ -48,6 +48,20 @@ def test_record_and_asset_pagers_show_totals_and_ignore_stale_requests():
     assert "function setPagerLoading(id, loading)" in PAGE
 
 
+def test_record_and_asset_pages_cache_metadata_and_prefetch_neighbors():
+    assert "const RECORD_PAGE_CACHE = new Map();" in PAGE
+    assert "const ASSET_PAGE_CACHE = new Map();" in PAGE
+    assert "function requestCachedPage(path, requests)" in PAGE
+    assert "function prefetchPages(path, page, totalPages" in PAGE
+    assert "prefetchPages(requestPath, MONITOR_PAGE" in PAGE
+    assert "prefetchPages(requestPath, ASSET_PAGE" in PAGE
+    assert "function clearRecordPageCache()" in PAGE
+    assert "function clearAssetPageCache()" in PAGE
+    assert "let RECORD_PAGE_CACHE_VERSION = 0;" in PAGE
+    assert "let ASSET_PAGE_CACHE_VERSION = 0;" in PAGE
+    assert "pruneProtectedMediaLoadQueue();" in PAGE
+
+
 def test_record_source_buttons_copy_and_response_base64_opens():
     assert "copyMediaSourceValue" in PAGE
     assert 'title="复制原始来源"' in PAGE

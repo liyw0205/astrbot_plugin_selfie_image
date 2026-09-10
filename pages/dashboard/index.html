@@ -1640,6 +1640,13 @@
     let ASSET_LOAD_SEQ = 0;
     let RECORD_LOADING = false;
     let ASSET_LOADING = false;
+    const PAGE_CACHE_MAX_ENTRIES = 12;
+    const RECORD_PAGE_CACHE = new Map();
+    const ASSET_PAGE_CACHE = new Map();
+    const RECORD_PAGE_REQUESTS = new Map();
+    const ASSET_PAGE_REQUESTS = new Map();
+    let RECORD_PAGE_CACHE_VERSION = 0;
+    let ASSET_PAGE_CACHE_VERSION = 0;
     let ASSET_STUDIO_PRESETS = [];
     let AUTH_TOKEN = safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '';
     let IS_FILLING = false;
@@ -3957,20 +3964,111 @@ Source prompt:
       });
     }
 
+    function rememberPageCache(cache, key, value) {
+      cache.delete(key);
+      cache.set(key, value);
+      while (cache.size > PAGE_CACHE_MAX_ENTRIES) {
+        const oldest = cache.keys().next().value;
+        if (!oldest) break;
+        cache.delete(oldest);
+      }
+      return value;
+    }
+    function clearPageCache(cache, requests) {
+      cache.clear();
+      requests.clear();
+    }
+    function requestCachedPage(path, requests) {
+      const existing = requests.get(path);
+      if (existing) return existing;
+      const request = api(path);
+      requests.set(path, request);
+      request.then(
+        () => { if (requests.get(path) === request) requests.delete(path); },
+        () => { if (requests.get(path) === request) requests.delete(path); }
+      );
+      return request;
+    }
+    function pagePathAt(path, page, pageSize) {
+      const parts = String(path || '').split('?');
+      const params = new URLSearchParams(parts[1] || '');
+      params.set('offset', String((Math.max(1, page) - 1) * pageSize));
+      return `${parts[0]}?${params.toString()}`;
+    }
+    function recordPagePayload(res) {
+      const rows = Array.isArray(res.data) ? res.data : [];
+      return {
+        rows,
+        meta: {
+          total: Number(res.total ?? rows.length),
+          filtered: Number(res.filtered ?? rows.length),
+          offset: Number(res.offset ?? 0),
+          limit: Number(res.limit ?? MONITOR_PAGE_SIZE)
+        }
+      };
+    }
+    function assetPagePayload(res) {
+      const rows = Array.isArray(res.data) ? res.data : [];
+      return {
+        rows,
+        meta: {
+          total: Number(res.total ?? rows.length),
+          filtered: Number(res.filtered ?? rows.length),
+          offset: Number(res.offset ?? 0),
+          limit: Number(res.limit ?? ASSET_PAGE_SIZE)
+        }
+      };
+    }
+    function applyRecordPage(payload) {
+      RECORDS = payload.rows;
+      RECORD_META = payload.meta;
+    }
+    function applyAssetPage(payload) {
+      ASSET_RECORDS = payload.rows;
+      ASSET_META = payload.meta;
+    }
+    function prefetchPages(path, page, totalPages, pageSize, cache, requests, normalize, isValid = () => true) {
+      const targets = [page - 1, page + 1].filter(item => item >= 1 && item <= totalPages);
+      targets.forEach(target => {
+        const targetPath = pagePathAt(path, target, pageSize);
+        if (cache.has(targetPath)) return;
+        requestCachedPage(targetPath, requests)
+          .then(res => { if (isValid()) rememberPageCache(cache, targetPath, normalize(res)); })
+          .catch(() => {});
+      });
+    }
+    function clearRecordPageCache() {
+      RECORD_PAGE_CACHE_VERSION += 1;
+      clearPageCache(RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS);
+    }
+    function clearAssetPageCache() {
+      ASSET_PAGE_CACHE_VERSION += 1;
+      clearPageCache(ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS);
+    }
+
     async function loadRecords(showRefreshToast = false) {
       const requestSeq = ++RECORD_LOAD_SEQ;
-      RECORD_LOADING = true;
-      setPagerLoading('monitorPager', true);
+      const cacheVersion = RECORD_PAGE_CACHE_VERSION;
+      const requestPath = monitorQueryPath(MONITOR_PAGE);
+      const cached = RECORD_PAGE_CACHE.get(requestPath);
+      if (cached) {
+        applyRecordPage(cached);
+        RECORD_LOADING = false;
+        renderRecords();
+        const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / MONITOR_PAGE_SIZE));
+        prefetchPages(requestPath, MONITOR_PAGE, cachedPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
+      } else {
+        RECORD_LOADING = true;
+        setPagerLoading('monitorPager', true);
+      }
       try {
-        const res = await api(monitorQueryPath(MONITOR_PAGE));
+        // The cached equivalent of api(monitorQueryPath(MONITOR_PAGE)).
+        const res = await requestCachedPage(requestPath, RECORD_PAGE_REQUESTS);
         if (requestSeq !== RECORD_LOAD_SEQ) return;
-        RECORDS = res.data || [];
-        RECORD_META = {
-          total: Number(res.total ?? RECORDS.length),
-          filtered: Number(res.filtered ?? RECORDS.length),
-          offset: Number(res.offset ?? ((MONITOR_PAGE - 1) * MONITOR_PAGE_SIZE)),
-          limit: Number(res.limit ?? MONITOR_PAGE_SIZE)
-        };
+        if (cacheVersion !== RECORD_PAGE_CACHE_VERSION) return;
+        const payload = recordPagePayload(res);
+        rememberPageCache(RECORD_PAGE_CACHE, requestPath, payload);
+        applyRecordPage(payload);
         const totalPages = Math.max(1, Math.ceil((RECORD_META.filtered || 0) / MONITOR_PAGE_SIZE));
         if (!RECORDS.length && RECORD_META.filtered > 0 && MONITOR_PAGE > totalPages) {
           MONITOR_PAGE = totalPages;
@@ -3978,9 +4076,10 @@ Source prompt:
         }
         RECORD_LOADING = false;
         renderRecords();
+        prefetchPages(requestPath, MONITOR_PAGE, totalPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
         if (showRefreshToast) showToast('记录已刷新', 'ok');
       } catch (e) {
-        if (requestSeq === RECORD_LOAD_SEQ) $('monitorStats').textContent = e.message;
+        if (requestSeq === RECORD_LOAD_SEQ && !cached) $('monitorStats').textContent = e.message;
       } finally {
         if (requestSeq === RECORD_LOAD_SEQ) {
           RECORD_LOADING = false;
@@ -3992,6 +4091,8 @@ Source prompt:
       if (!await confirmAction('确定清空全部生成记录吗？此操作不可撤销。', {title:'清空生成记录', confirmText:'清空记录'})) return;
       try {
         await api('/api/records/clear', {method:'POST', body:'{}'});
+        clearRecordPageCache();
+        clearAssetPageCache();
         MONITOR_PAGE = 1;
         RECORDS = [];
         RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -4280,7 +4381,13 @@ Source prompt:
       catch (e) { showToast(e.message || '复用失败', 'bad'); }
     }
     async function markRecordFavoriteById(id) {
-      try { await api('/api/records/' + encodeURIComponent(id) + '/metadata', {method:'POST', body: JSON.stringify({favorite:true})}); showToast('已收藏该结果', 'ok'); await loadRecords(false); }
+      try {
+        await api('/api/records/' + encodeURIComponent(id) + '/metadata', {method:'POST', body: JSON.stringify({favorite:true})});
+        clearRecordPageCache();
+        clearAssetPageCache();
+        showToast('已收藏该结果', 'ok');
+        await loadRecords(false);
+      }
       catch (e) { showToast(e.message || '收藏失败', 'bad'); }
     }
 
@@ -4411,6 +4518,7 @@ Source prompt:
             </div>
           </article>`;
         }).join('') : '<div class="asset-empty muted">没有匹配的资产</div>';
+        pruneProtectedMediaLoadQueue();
         loadProtectedImages($('assetGrid'));
         loadProtectedVideos($('assetGrid'));
       }
@@ -4425,18 +4533,26 @@ Source prompt:
     }
     async function loadAssets(showRefreshToast = false) {
       const requestSeq = ++ASSET_LOAD_SEQ;
-      ASSET_LOADING = true;
-      setPagerLoading('assetPager', true);
+      const cacheVersion = ASSET_PAGE_CACHE_VERSION;
+      const requestPath = assetQueryPath(ASSET_PAGE);
+      const cached = ASSET_PAGE_CACHE.get(requestPath);
+      if (cached) {
+        applyAssetPage(cached);
+        ASSET_LOADING = false;
+        renderAssets();
+        const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / ASSET_PAGE_SIZE));
+        prefetchPages(requestPath, ASSET_PAGE, cachedPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
+      } else {
+        ASSET_LOADING = true;
+        setPagerLoading('assetPager', true);
+      }
       try {
-        const res = await api(assetQueryPath(ASSET_PAGE));
+        const res = await requestCachedPage(requestPath, ASSET_PAGE_REQUESTS);
         if (requestSeq !== ASSET_LOAD_SEQ) return;
-        ASSET_RECORDS = Array.isArray(res.data) ? res.data : [];
-        ASSET_META = {
-          total: Number(res.total ?? ASSET_RECORDS.length),
-          filtered: Number(res.filtered ?? ASSET_RECORDS.length),
-          offset: Number(res.offset ?? ((ASSET_PAGE - 1) * ASSET_PAGE_SIZE)),
-          limit: Number(res.limit ?? ASSET_PAGE_SIZE)
-        };
+        if (cacheVersion !== ASSET_PAGE_CACHE_VERSION) return;
+        const payload = assetPagePayload(res);
+        rememberPageCache(ASSET_PAGE_CACHE, requestPath, payload);
+        applyAssetPage(payload);
         const totalPages = Math.max(1, Math.ceil((ASSET_META.filtered || 0) / ASSET_PAGE_SIZE));
         if (!ASSET_RECORDS.length && ASSET_META.filtered > 0 && ASSET_PAGE > totalPages) {
           ASSET_PAGE = totalPages;
@@ -4444,9 +4560,10 @@ Source prompt:
         }
         ASSET_LOADING = false;
         renderAssets();
+        prefetchPages(requestPath, ASSET_PAGE, totalPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
         if (showRefreshToast) showToast('资产库已刷新', 'ok');
       } catch (e) {
-        if (requestSeq === ASSET_LOAD_SEQ && $('assetStatus')) $('assetStatus').textContent = e.message || '资产读取失败';
+        if (requestSeq === ASSET_LOAD_SEQ && !cached && $('assetStatus')) $('assetStatus').textContent = e.message || '资产读取失败';
       } finally {
         if (requestSeq === ASSET_LOAD_SEQ) {
           ASSET_LOADING = false;
@@ -4553,6 +4670,8 @@ Source prompt:
       if (!ids.length) return showToast('请先选择资产', 'bad');
       try {
         const res = await api('/api/assets/metadata', {method: 'POST', body: JSON.stringify({ids, [field]: value})});
+        clearAssetPageCache();
+        clearRecordPageCache();
         (res.data?.missing || []).forEach(id => ASSET_SELECTION.delete(String(id)));
         await loadAssets(false);
         showToast(res.message || '批量标记已保存', 'ok');
@@ -4597,6 +4716,8 @@ Source prompt:
         const payload = JSON.parse(text);
         if (!payload || typeof payload !== 'object' || !Array.isArray(payload.records)) throw new Error('导入文件必须包含 records 数组');
         const res = await api('/api/assets/import', {method: 'POST', body: JSON.stringify(payload)});
+        clearAssetPageCache();
+        clearRecordPageCache();
         await Promise.all([loadAssets(false), loadAssetTags()]);
         const count = Number(res.data?.updated_count || 0);
         showToast(res.message || `已导入 ${count} 条资产元数据`, 'ok');
@@ -4609,6 +4730,8 @@ Source prompt:
       if (!await confirmAction(`确定删除选中的 ${ids.length} 项资产？缓存文件仅在没有其他记录引用时清理。`, {title:'删除资产', confirmText:'删除资产'})) return;
       try {
         const res = await api('/api/assets/delete', {method: 'POST', body: JSON.stringify({ids})});
+        clearAssetPageCache();
+        clearRecordPageCache();
         selected.forEach(record => {
           const images = Array.isArray(record.generated_image_paths) ? record.generated_image_paths : [];
           const videos = Array.isArray(record.generated_video_paths) ? record.generated_video_paths : [];
@@ -4796,6 +4919,11 @@ Source prompt:
           PROTECTED_MEDIA_LOAD_ACTIVE = Math.max(0, PROTECTED_MEDIA_LOAD_ACTIVE - 1);
           drainProtectedMediaLoadQueue();
         });
+      }
+    }
+    function pruneProtectedMediaLoadQueue() {
+      for (let index = PROTECTED_MEDIA_LOAD_QUEUE.length - 1; index >= 0; index -= 1) {
+        if (!PROTECTED_MEDIA_LOAD_QUEUE[index]?.element?.isConnected) PROTECTED_MEDIA_LOAD_QUEUE.splice(index, 1);
       }
     }
     function enqueueProtectedMediaLoad(element, path, priority = 0) {
@@ -5412,6 +5540,8 @@ Source prompt:
           })
         });
         CURRENT_RECORD = Object.assign(CURRENT_RECORD || {}, res.data || {});
+        clearRecordPageCache();
+        clearAssetPageCache();
         showToast('资产标记已保存', 'ok');
         await loadRecords(false);
       } catch (e) { showToast(e.message || '保存失败', 'bad'); }
@@ -5443,6 +5573,8 @@ Source prompt:
         }
         if (status) status.textContent = task.success ? '已完成' : (task.error || '生成失败');
         if (task.success) {
+          clearRecordPageCache();
+          clearAssetPageCache();
           showToast('重试生成完成', 'ok');
           await Promise.all([loadRecords(false), loadAssets(false), loadAssetTags(), loadMetrics()]);
         } else {
@@ -5682,6 +5814,8 @@ Source prompt:
         safeStorageRemove('selfieImageLastTestTaskId');
       safeStorageRemove('selfieImageLastTestMode');
         renderImageTestResult(testTaskResult(task));
+        clearRecordPageCache();
+        clearAssetPageCache();
         try { await loadRecords(false); } catch (_) {}
       } catch (e) {
         if (TEST_TASK_ID !== taskId) return;
@@ -5718,6 +5852,8 @@ Source prompt:
           $('testResponseData').textContent = JSON.stringify(task, null, 2);
           if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
           renderImageTestResult(testTaskResult(task));
+          clearRecordPageCache();
+          clearAssetPageCache();
           try { await loadRecords(false); } catch (_) {}
         }
       } catch (_) {
