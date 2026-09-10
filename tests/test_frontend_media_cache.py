@@ -53,7 +53,7 @@ def test_record_and_asset_pages_cache_metadata_and_prefetch_neighbors():
     assert "const ASSET_PAGE_CACHE = new Map();" in PAGE
     assert "const PAGE_CACHE_TTL_MS = 30000;" in PAGE
     assert "function usablePageCache(cache, key)" in PAGE
-    assert "function requestCachedPage(path, requests)" in PAGE
+    assert "function requestCachedPage(path, requests, force = false)" in PAGE
     assert "function prefetchPages(path, page, totalPages" in PAGE
     assert "function observeProtectedMedia(element, path)" in PAGE
     assert "new IntersectionObserver" in PAGE

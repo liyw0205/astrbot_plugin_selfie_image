@@ -3992,7 +3992,8 @@ Source prompt:
       cache.clear();
       requests.clear();
     }
-    function requestCachedPage(path, requests) {
+    function requestCachedPage(path, requests, force = false) {
+      if (force) requests.delete(path);
       const existing = requests.get(path);
       if (existing) return existing;
       const request = api(path);
@@ -4088,7 +4089,7 @@ Source prompt:
       }
       try {
         // The cached equivalent of api(monitorQueryPath(MONITOR_PAGE)).
-        const res = await requestCachedPage(requestPath, RECORD_PAGE_REQUESTS);
+        const res = await requestCachedPage(requestPath, RECORD_PAGE_REQUESTS, showRefreshToast);
         if (requestSeq !== RECORD_LOAD_SEQ) return;
         if (cacheVersion !== RECORD_PAGE_CACHE_VERSION) return;
         const payload = recordPagePayload(res);
@@ -4575,7 +4576,7 @@ Source prompt:
         setPagerLoading('assetPager', true);
       }
       try {
-        const res = await requestCachedPage(requestPath, ASSET_PAGE_REQUESTS);
+        const res = await requestCachedPage(requestPath, ASSET_PAGE_REQUESTS, showRefreshToast);
         if (requestSeq !== ASSET_LOAD_SEQ) return;
         if (cacheVersion !== ASSET_PAGE_CACHE_VERSION) return;
         const payload = assetPagePayload(res);
