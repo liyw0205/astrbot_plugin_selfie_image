@@ -1031,7 +1031,7 @@
       <div id="assetPager" class="actions"></div>
       <div id="assetStatus" class="status" style="margin-top:12px"></div>
       <div class="floating-actions" aria-label="资产操作">
-        <button class="secondary" type="button" onclick="loadAssets()" data-tooltip="刷新资产" aria-label="刷新资产" title="刷新资产"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
+        <button class="secondary" type="button" onclick="loadAssets(true)" data-tooltip="刷新资产" aria-label="刷新资产" title="刷新资产"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
       </div>
     </section>
 
@@ -1641,6 +1641,7 @@
     let RECORD_LOADING = false;
     let ASSET_LOADING = false;
     const PAGE_CACHE_MAX_ENTRIES = 12;
+    const PAGE_CACHE_TTL_MS = 30000;
     const RECORD_PAGE_CACHE = new Map();
     const ASSET_PAGE_CACHE = new Map();
     const RECORD_PAGE_REQUESTS = new Map();
@@ -1670,6 +1671,7 @@
     // action can share one response instead of fetching the same path repeatedly.
     const PROTECTED_MEDIA_CACHE = new Map();
     const PROTECTED_MEDIA_REQUESTS = new Map();
+    let PROTECTED_MEDIA_OBSERVER = null;
     const PROTECTED_MEDIA_LOAD_QUEUE = [];
     const PROTECTED_MEDIA_LOAD_CONCURRENCY = 2;
     let PROTECTED_MEDIA_LOAD_ACTIVE = 0;
@@ -3965,6 +3967,7 @@ Source prompt:
     }
 
     function rememberPageCache(cache, key, value) {
+      value.cachedAt = Date.now();
       cache.delete(key);
       cache.set(key, value);
       while (cache.size > PAGE_CACHE_MAX_ENTRIES) {
@@ -3972,6 +3975,17 @@ Source prompt:
         if (!oldest) break;
         cache.delete(oldest);
       }
+      return value;
+    }
+    function usablePageCache(cache, key) {
+      const value = cache.get(key);
+      if (!value) return null;
+      if (Date.now() - Number(value.cachedAt || 0) > PAGE_CACHE_TTL_MS) {
+        cache.delete(key);
+        return null;
+      }
+      cache.delete(key);
+      cache.set(key, value);
       return value;
     }
     function clearPageCache(cache, requests) {
@@ -4027,13 +4041,21 @@ Source prompt:
       ASSET_RECORDS = payload.rows;
       ASSET_META = payload.meta;
     }
-    function prefetchPages(path, page, totalPages, pageSize, cache, requests, normalize, isValid = () => true) {
+    function prefetchPages(path, page, totalPages, pageSize, cache, requests, normalize, isValid = () => true, onPage = null) {
       const targets = [page - 1, page + 1].filter(item => item >= 1 && item <= totalPages);
       targets.forEach(target => {
         const targetPath = pagePathAt(path, target, pageSize);
-        if (cache.has(targetPath)) return;
+        const existing = usablePageCache(cache, targetPath);
+        if (existing) {
+          if (typeof onPage === 'function') onPage(existing);
+          return;
+        }
         requestCachedPage(targetPath, requests)
-          .then(res => { if (isValid()) rememberPageCache(cache, targetPath, normalize(res)); })
+          .then(res => {
+            if (!isValid()) return;
+            const payload = rememberPageCache(cache, targetPath, normalize(res));
+            if (typeof onPage === 'function') onPage(payload);
+          })
           .catch(() => {});
       });
     }
@@ -4050,13 +4072,16 @@ Source prompt:
       const requestSeq = ++RECORD_LOAD_SEQ;
       const cacheVersion = RECORD_PAGE_CACHE_VERSION;
       const requestPath = monitorQueryPath(MONITOR_PAGE);
-      const cached = RECORD_PAGE_CACHE.get(requestPath);
+      const cached = showRefreshToast ? null : usablePageCache(RECORD_PAGE_CACHE, requestPath);
+      if (showRefreshToast) RECORD_PAGE_CACHE.delete(requestPath);
       if (cached) {
         applyRecordPage(cached);
         RECORD_LOADING = false;
+        setPagerLoading('monitorPager', false);
         renderRecords();
         const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / MONITOR_PAGE_SIZE));
         prefetchPages(requestPath, MONITOR_PAGE, cachedPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
+        return;
       } else {
         RECORD_LOADING = true;
         setPagerLoading('monitorPager', true);
@@ -4535,13 +4560,16 @@ Source prompt:
       const requestSeq = ++ASSET_LOAD_SEQ;
       const cacheVersion = ASSET_PAGE_CACHE_VERSION;
       const requestPath = assetQueryPath(ASSET_PAGE);
-      const cached = ASSET_PAGE_CACHE.get(requestPath);
+      const cached = showRefreshToast ? null : usablePageCache(ASSET_PAGE_CACHE, requestPath);
+      if (showRefreshToast) ASSET_PAGE_CACHE.delete(requestPath);
       if (cached) {
         applyAssetPage(cached);
         ASSET_LOADING = false;
+        setPagerLoading('assetPager', false);
         renderAssets();
         const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / ASSET_PAGE_SIZE));
         prefetchPages(requestPath, ASSET_PAGE, cachedPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
+        return;
       } else {
         ASSET_LOADING = true;
         setPagerLoading('assetPager', true);
@@ -4910,6 +4938,29 @@ Source prompt:
         return 0;
       }
     }
+    function observeProtectedMedia(element, path) {
+      if (!element || !path) return;
+      if (typeof window.IntersectionObserver !== 'function') {
+        enqueueProtectedMediaLoad(element, path, protectedMediaViewportPriority(element));
+        return;
+      }
+      if (!PROTECTED_MEDIA_OBSERVER) {
+        PROTECTED_MEDIA_OBSERVER = new IntersectionObserver(entries => {
+          entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            const target = entry.target;
+            PROTECTED_MEDIA_OBSERVER?.unobserve(target);
+            const deferredPath = target.getAttribute('data-deferred-cache-path') || '';
+            target.removeAttribute('data-deferred-cache-path');
+            if (target.isConnected && deferredPath) {
+              enqueueProtectedMediaLoad(target, deferredPath, protectedMediaViewportPriority(target));
+            }
+          });
+        }, {rootMargin: '400px 0px', threshold: 0});
+      }
+      element.setAttribute('data-deferred-cache-path', path);
+      PROTECTED_MEDIA_OBSERVER.observe(element);
+    }
     function drainProtectedMediaLoadQueue() {
       while (PROTECTED_MEDIA_LOAD_QUEUE.length && PROTECTED_MEDIA_LOAD_ACTIVE < PROTECTED_MEDIA_LOAD_CONCURRENCY) {
         const task = PROTECTED_MEDIA_LOAD_QUEUE.shift();
@@ -4939,7 +4990,7 @@ Source prompt:
         const path = img.getAttribute('data-cache-path') || '';
         img.removeAttribute('data-cache-path');
         if (!path) return;
-        if (queued) enqueueProtectedMediaLoad(img, path, protectedMediaViewportPriority(img));
+        if (queued) observeProtectedMedia(img, path);
         else loadProtectedImage(img, path);
       });
     }
@@ -5038,7 +5089,7 @@ Source prompt:
         const path = video.getAttribute('data-cache-video');
         if (path) {
           video.removeAttribute('data-cache-video');
-          if (queued) enqueueProtectedMediaLoad(video, path, protectedMediaViewportPriority(video));
+          if (queued) observeProtectedMedia(video, path);
           else loadProtectedVideo(video, path);
         }
       });
@@ -7137,7 +7188,7 @@ Source prompt:
     $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
     $('presetTransferCopyBtn').onclick = copyPresetTransfer;
     $('presetTransferImportBtn').onclick = importPresetTransfer;
-    $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(false); await loadMetrics(); await loadTasks(false); await loadAssets(); await loadAssetTags(); await loadAssetStudioPresets(); };
+    $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(); await loadAssetStudioPresets(); };
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;

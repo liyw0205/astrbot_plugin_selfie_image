@@ -51,14 +51,20 @@ def test_record_and_asset_pagers_show_totals_and_ignore_stale_requests():
 def test_record_and_asset_pages_cache_metadata_and_prefetch_neighbors():
     assert "const RECORD_PAGE_CACHE = new Map();" in PAGE
     assert "const ASSET_PAGE_CACHE = new Map();" in PAGE
+    assert "const PAGE_CACHE_TTL_MS = 30000;" in PAGE
+    assert "function usablePageCache(cache, key)" in PAGE
     assert "function requestCachedPage(path, requests)" in PAGE
     assert "function prefetchPages(path, page, totalPages" in PAGE
+    assert "function observeProtectedMedia(element, path)" in PAGE
+    assert "new IntersectionObserver" in PAGE
     assert "prefetchPages(requestPath, MONITOR_PAGE" in PAGE
     assert "prefetchPages(requestPath, ASSET_PAGE" in PAGE
     assert "function clearRecordPageCache()" in PAGE
     assert "function clearAssetPageCache()" in PAGE
     assert "let RECORD_PAGE_CACHE_VERSION = 0;" in PAGE
     assert "let ASSET_PAGE_CACHE_VERSION = 0;" in PAGE
+    assert "if (showRefreshToast) RECORD_PAGE_CACHE.delete(requestPath);" in PAGE
+    assert "if (showRefreshToast) ASSET_PAGE_CACHE.delete(requestPath);" in PAGE
     assert "pruneProtectedMediaLoadQueue();" in PAGE
 
 
