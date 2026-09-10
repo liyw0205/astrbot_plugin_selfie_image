@@ -20,6 +20,11 @@ from .task_views import task_source_label
 
 
 class WebTaskMixin:
+    # Task snapshots are operational history, not the durable generation
+    # record archive. Keep a bounded recent window while never pruning active
+    # tasks; terminal records remain available through generation records.
+    WEB_TASK_KEEP_LIMIT = 50
+
     _TASK_TERMINAL_STATUSES = {
         "succeeded",
         "partial_success",
@@ -211,8 +216,7 @@ class WebTaskMixin:
         return summary
 
     def _prune_web_tasks_locked(self) -> None:
-        if len(self._web_tasks) <= 50:
-            return
+        keep_limit = max(1, int(getattr(self, "WEB_TASK_KEEP_LIMIT", 50) or 50))
         finished = [
             (float(task.get("updated_ts") or 0), task_id)
             for task_id, task in self._web_tasks.items()
@@ -220,7 +224,10 @@ class WebTaskMixin:
             in {"succeeded", "partial_success", "failed", "delivery_failed", "cancelled", "expired"}
         ]
         finished.sort(key=lambda item: item[0])
-        while len(self._web_tasks) > 50 and finished:
+        # Active tasks are operational state and must never consume the
+        # terminal-history allowance. Keep the newest ``keep_limit`` terminal
+        # snapshots while leaving every queued/running task untouched.
+        while len(finished) > keep_limit:
             _, task_id = finished.pop(0)
             self._web_tasks.pop(task_id, None)
 

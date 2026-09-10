@@ -35,6 +35,7 @@ from ..core.utils import (
 )
 
 RECORD_KEEP_LIMIT = 1000
+ASSET_QUERY_SCAN_LIMIT = RECORD_KEEP_LIMIT
 CHANNEL_COOLDOWN_FAILURE_THRESHOLD = 3
 CHANNEL_COOLDOWN_SECONDS = 60
 CHANNEL_TRANSIENT_ERROR_CATEGORIES = {
@@ -794,7 +795,9 @@ class GenerationStoreMixin:
         sort: str = "recent",
     ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
         """Filter the lightweight record index for the asset library."""
-        records = self.get_recent_records(summary=True)
+        # The durable record index currently retains at most 1000 rows; keep
+        # the query contract explicit instead of implying an unbounded scan.
+        records = self.get_recent_records(summary=True)[:ASSET_QUERY_SCAN_LIMIT]
         source_text = str(source or "").strip().lower()
         model_text = str(model or "").strip().lower()
         tag_text = str(tag or "").strip().lower()
@@ -1173,22 +1176,56 @@ class GenerationStoreMixin:
             "plan_token": plan_token,
         }
 
-    def _cleanup_image_cache_if_needed(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
-        plan = self._cache_cleanup_plan(protected_paths)
+    def _cleanup_image_cache_if_needed(
+        self,
+        protected_paths: Optional[Iterable[str]] = None,
+        *,
+        plan: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Execute a cleanup plan, or build one for automatic garbage collection.
+
+        Web confirmation passes the already validated preview plan so the
+        execution cannot silently switch to a newly computed candidate set.
+        Automatic callers omit ``plan`` and retain the existing behavior.
+        """
+        cleanup_plan = dict(plan) if isinstance(plan, Mapping) else self._cache_cleanup_plan(protected_paths)
+        planned_items = cleanup_plan.get("would_delete") or []
+        if isinstance(plan, Mapping):
+            # A token authenticates the preview, but it cannot prevent an
+            # external writer from replacing a file between validation and
+            # deletion. Preflight every confirmed item so execution only
+            # starts when the signed path/size snapshot is still present.
+            for item in planned_items:
+                if not isinstance(item, Mapping):
+                    raise ValueError("缓存清理计划无效，请重新预览")
+                rel_path = str(item.get("path") or "")
+                try:
+                    absolute = self._cache_absolute_path(rel_path)
+                    current_size = os.path.getsize(absolute)
+                except (OSError, ValueError):
+                    raise ValueError("缓存内容已变化，请重新预览后再确认清理") from None
+                try:
+                    expected_size = int(item.get("size_bytes"))
+                except (TypeError, ValueError):
+                    raise ValueError("缓存清理计划无效，请重新预览") from None
+                if current_size != expected_size:
+                    raise ValueError("缓存内容已变化，请重新预览后再确认清理")
         deleted: List[str] = []
-        for item in plan["would_delete"]:
+        for item in planned_items:
             rel_path = str(item.get("path") or "")
             try:
                 os.remove(self._cache_absolute_path(rel_path))
                 deleted.append(rel_path)
             except (OSError, ValueError):
+                if isinstance(plan, Mapping):
+                    raise ValueError("缓存内容已变化，请重新预览后再确认清理") from None
                 continue
         total_bytes, total_count = self._cache_stats()
         return {
-            "limit_bytes": plan["limit_bytes"],
-            "limit_count": plan["limit_count"],
-            "initial_total_bytes": plan["total_bytes"],
-            "initial_total_count": plan["total_count"],
+            "limit_bytes": cleanup_plan.get("limit_bytes", 0),
+            "limit_count": cleanup_plan.get("limit_count", 0),
+            "initial_total_bytes": cleanup_plan.get("total_bytes", total_bytes),
+            "initial_total_count": cleanup_plan.get("total_count", total_count),
             "total_bytes": total_bytes,
             "total_count": total_count,
             "deleted": deleted,
@@ -1210,9 +1247,18 @@ class GenerationStoreMixin:
         if not confirm:
             return {"requires_confirmation": bool(plan.get("would_delete")), "preview": plan}
         token = str(plan_token or "").strip()
-        if plan.get("would_delete") and token != str(plan.get("plan_token") or ""):
+        # An empty token is accepted only when the current plan is empty. A
+        # stale non-empty token must still be rejected if the cache changed
+        # enough that no deletion is currently needed.
+        current_token = str(plan.get("plan_token") or "")
+        if token and token != current_token:
             raise ValueError("缓存内容已变化，请重新预览后再确认清理")
-        result = self._cleanup_image_cache_if_needed()
+        if plan.get("would_delete") and token != current_token:
+            raise ValueError("缓存内容已变化，请重新预览后再确认清理")
+        # Execute the exact plan whose token was validated above. Do not
+        # recalculate candidates after confirmation, otherwise a concurrent
+        # cache change could delete files that were not shown in the preview.
+        result = self._cleanup_image_cache_if_needed(plan=plan)
         return {"confirmed": True, "preview": plan, "result": result}
 
     def clear_channel_health(self, channel: str = "") -> Dict[str, Any]:

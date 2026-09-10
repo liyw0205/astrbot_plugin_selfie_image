@@ -331,7 +331,6 @@ class SelfieImageDashboardAPI:
         return self._ok(
             {
                 "status": "ok",
-                "source": "dashboard",
                 "config_path": getattr(plugin, "config_path", ""),
                 "records_path": getattr(plugin, "records_path", ""),
                 "records_db_path": getattr(plugin, "records_db_path", ""),
@@ -812,9 +811,9 @@ class SelfieImageDashboardAPI:
                     limit=int(limit or 48),
                     sort=sort,
                 )
-                return self._ok(data, count=len(data), **meta)
+                return self._ok(redact_sensitive_data(data), count=len(data), **meta)
             data = self.plugin.get_asset_records(favorite=favorite, pinned=pinned, tag=self._query_value("tag"))
-            return self._ok(data, count=len(data), total=len(data), filtered=len(data), offset=0, limit=len(data))
+            return self._ok(redact_sensitive_data(data), count=len(data), total=len(data), filtered=len(data), offset=0, limit=len(data))
         except Exception as exc:
             return self._fail(str(exc), 500)
 

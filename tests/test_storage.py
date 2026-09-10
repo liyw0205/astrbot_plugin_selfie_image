@@ -8,6 +8,8 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
 
 
@@ -289,6 +291,87 @@ class TestStorage:
             assert result["confirmed"] is True
             assert len(result["result"]["deleted"]) == 1
             assert result["result"]["total_count"] == 10
+
+    def test_manual_cleanup_rejects_plan_when_candidate_is_deleted_or_added(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            for index in range(11):
+                path = Path(plugin.generated_dir) / f"orphan-{index:02}.png"
+                path.write_bytes(bytes([index]))
+                os.utime(path, (1000 + index, 1000 + index))
+
+            preview = plugin.cleanup_image_cache_from_web()
+            plan = preview["preview"]
+            planned_path = Path(plugin.generated_dir) / plan["would_delete"][0]["path"]
+            planned_path.unlink()
+            with pytest.raises(ValueError, match="重新预览"):
+                plugin.cleanup_image_cache_from_web(confirm=True, plan_token=plan["plan_token"])
+
+            replacement = Path(plugin.generated_dir) / "new.png"
+            replacement.write_bytes(b"new")
+            with pytest.raises(ValueError, match="重新预览"):
+                plugin.cleanup_image_cache_from_web(confirm=True, plan_token=plan["plan_token"])
+
+    def test_manual_cleanup_rejects_preview_when_protection_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            for index in range(11):
+                path = Path(plugin.generated_dir) / f"orphan-{index:02}.png"
+                path.write_bytes(bytes([index]))
+                os.utime(path, (1000 + index, 1000 + index))
+
+            preview = plugin.cleanup_image_cache_from_web()
+            plan = preview["preview"]
+            protected = plan["would_delete"][0]["path"]
+            plugin._commit_generation_record(
+                {"id": "pin-after-preview", "success": True, "pinned": True, "generated_image_paths": [protected]}
+            )
+            with pytest.raises(ValueError, match="重新预览"):
+                plugin.cleanup_image_cache_from_web(confirm=True, plan_token=plan["plan_token"])
+
+    def test_manual_cleanup_executes_confirmed_nested_video_plan_without_recomputing(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            video_dir = Path(plugin.generated_dir) / "video"
+            video_dir.mkdir()
+            for index in range(10):
+                path = Path(plugin.generated_dir) / f"image-{index:02}.png"
+                path.write_bytes(bytes([index]))
+                os.utime(path, (1100 + index, 1100 + index))
+            video = video_dir / "clip.mp4"
+            video.write_bytes(b"video")
+            os.utime(video, (1000, 1000))
+
+            preview = plugin.cleanup_image_cache_from_web()
+            token = preview["preview"]["plan_token"]
+            calls = []
+            original_plan = plugin._cache_cleanup_plan
+
+            def counted_plan(*args, **kwargs):
+                calls.append(True)
+                return original_plan(*args, **kwargs)
+
+            plugin._cache_cleanup_plan = counted_plan
+            result = plugin.cleanup_image_cache_from_web(confirm=True, plan_token=token)
+            assert result["confirmed"] is True
+            assert result["result"]["deleted"] == ["video/clip.mp4"]
+            assert not video.exists()
+            assert len(calls) == 1
+
+    def test_manual_cleanup_with_no_candidates_is_confirmed_without_deleting_records(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            for index in range(10):
+                path = Path(plugin.generated_dir) / f"kept-{index:02}.png"
+                path.write_bytes(bytes([index]))
+            plugin._commit_generation_record(
+                {"id": "kept-record", "success": True, "generated_image_paths": ["kept-00.png"]}
+            )
+
+            result = plugin.cleanup_image_cache_from_web(confirm=True, plan_token="")
+            assert result["confirmed"] is True
+            assert result["result"]["deleted"] == []
+            assert len(plugin._records) == 1
 
     def test_asset_query_paginates_and_combines_filters(self) -> None:
         with tempfile.TemporaryDirectory() as root:

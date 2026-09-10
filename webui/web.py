@@ -5367,13 +5367,13 @@ class FlaskWebServer:
                         limit=limit,
                         sort=sort,
                     )
-                    return ok(data, count=len(data), **meta)
+                    return ok(redact_sensitive_data(data), count=len(data), **meta)
                 data = self.plugin.get_asset_records(
                     favorite=favorite,
                     pinned=pinned,
                     tag=str(request.args.get("tag") or ""),
                 )
-                return ok(data, count=len(data), total=len(data), filtered=len(data), offset=0, limit=len(data))
+                return ok(redact_sensitive_data(data), count=len(data), total=len(data), filtered=len(data), offset=0, limit=len(data))
             except Exception as exc:
                 return fail(str(exc), 500)
 

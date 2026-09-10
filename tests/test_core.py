@@ -10593,6 +10593,29 @@ class StudioStoreTests(unittest.TestCase):
         assert page["total"] == 4
         assert page["filtered_total"] == 4
 
+    def test_web_task_retention_keeps_active_and_newest_terminal_history(self) -> None:
+        from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
+
+        stub = object.__new__(WebTaskMixin)
+        stub._web_tasks = {
+            "running": {"task_id": "running", "status": "running", "updated_ts": 9999},
+            **{
+                f"done-{index}": {
+                    "task_id": f"done-{index}",
+                    "status": "succeeded",
+                    "updated_ts": float(index),
+                }
+                for index in range(55)
+            },
+        }
+        stub._prune_web_tasks_locked()
+
+        self.assertIn("running", stub._web_tasks)
+        terminal = [task for task in stub._web_tasks.values() if task.get("status") == "succeeded"]
+        self.assertEqual(len(terminal), stub.WEB_TASK_KEEP_LIMIT)
+        self.assertNotIn("done-0", stub._web_tasks)
+        self.assertIn("done-54", stub._web_tasks)
+
     def test_web_task_batch_delete_retry_and_export_keep_records_separate(self) -> None:
         from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
 
