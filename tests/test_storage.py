@@ -241,6 +241,28 @@ class TestStorage:
             assert cleaned["total_count"] == 10
             assert referenced.exists()
 
+    def test_cache_cleanup_can_reclaim_media_referenced_only_by_ordinary_records(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            plugin.config.image_cache_limit_count = 10
+            for index in range(11):
+                name = f"record-{index:02}.png"
+                path = Path(plugin.generated_dir) / name
+                path.write_bytes(bytes([index]))
+                os.utime(path, (1000 + index, 1000 + index))
+                plugin._commit_generation_record(
+                    {"id": f"record-{index:02}", "success": True, "generated_image_paths": [name]}
+                )
+
+            preview = plugin.get_cache_cleanup_preview()
+            assert preview["would_delete_count"] == 1
+            assert preview["would_delete"][0]["path"] == "record-00.png"
+
+            cleaned = plugin._cleanup_image_cache_if_needed()
+            assert cleaned["deleted"] == ["record-00.png"]
+            assert not (Path(plugin.generated_dir) / "record-00.png").exists()
+            assert len(plugin._records) == 11
+
     def test_manual_cache_cleanup_requires_matching_preview_token(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             plugin = self._plugin(root)

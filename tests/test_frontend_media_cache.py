@@ -38,6 +38,16 @@ def test_asset_actions_are_delegated_and_media_loading_is_prioritized():
     assert "正在加载记录详情" in PAGE
 
 
+def test_record_and_asset_pagers_show_totals_and_ignore_stale_requests():
+    assert "第 ${ASSET_PAGE}/${totalPages} 页" in PAGE
+    assert "第 ${MONITOR_PAGE}/${totalPages} 页" in PAGE
+    assert "let ASSET_LOAD_SEQ = 0;" in PAGE
+    assert "let RECORD_LOAD_SEQ = 0;" in PAGE
+    assert "if (requestSeq !== ASSET_LOAD_SEQ) return;" in PAGE
+    assert "if (requestSeq !== RECORD_LOAD_SEQ) return;" in PAGE
+    assert "function setPagerLoading(id, loading)" in PAGE
+
+
 def test_record_source_buttons_copy_and_response_base64_opens():
     assert "copyMediaSourceValue" in PAGE
     assert 'title="复制原始来源"' in PAGE

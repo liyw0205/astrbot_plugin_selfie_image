@@ -1124,11 +1124,13 @@ class GenerationStoreMixin:
         total_bytes, total_count = self._cache_stats()
         with self._records_lock:
             referenced_paths = collect_record_cache_paths(self._records)
-        # Existing records must stay viewable and retryable. Automatic cleanup
-        # only removes stale files that no retained record still references.
+        # Record metadata remains available after media GC. Only files needed
+        # by the current operation and explicitly retained assets are kept.
+        # Ordinary record references are passed separately so unreferenced
+        # files are still preferred, while referenced files can be reclaimed
+        # when the cache limits cannot otherwise be met.
         protected = [
             *list(protected_paths or []),
-            *referenced_paths,
             *self._asset_protected_cache_paths(),
         ]
         candidates = collect_cache_cleanup_candidates(self.generated_dir, protected, referenced_paths)

@@ -1636,6 +1636,10 @@
     const TASK_PAGE_SIZE = 20;
     const RECORD_SELECTION = new Set();
     let ASSET_LOAD_TIMER = null;
+    let RECORD_LOAD_SEQ = 0;
+    let ASSET_LOAD_SEQ = 0;
+    let RECORD_LOADING = false;
+    let ASSET_LOADING = false;
     let ASSET_STUDIO_PRESETS = [];
     let AUTH_TOKEN = safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '';
     let IS_FILLING = false;
@@ -3629,7 +3633,7 @@ Source prompt:
         }
         const mb = (bytes / 1024 / 1024).toFixed(1);
         const accepted = await confirmAction(
-          `将清理 ${count} 个未被记录引用的缓存文件（约 ${mb} MB）。\n生成记录、收藏和置顶资产不会被清理。`,
+          `将清理 ${count} 个超出缓存上限的旧缓存文件（约 ${mb} MB）。\n普通生成记录只保留元数据，收藏和置顶资产不会被清理。`,
           {title:'清理可回收缓存', confirmText:'确认清理'}
         );
         if (!accepted) return;
@@ -3936,9 +3940,30 @@ Source prompt:
         }
       }
     }
+    function setPagerLoading(id, loading) {
+      const pager = $(id);
+      if (!pager) return;
+      pager.setAttribute('aria-busy', loading ? 'true' : 'false');
+      pager.querySelectorAll('button').forEach(button => {
+        if (loading) {
+          if (button.dataset.pagerDisabled === undefined) {
+            button.dataset.pagerDisabled = button.disabled ? '1' : '0';
+          }
+          button.disabled = true;
+        } else if (button.dataset.pagerDisabled !== undefined) {
+          button.disabled = button.dataset.pagerDisabled === '1';
+          delete button.dataset.pagerDisabled;
+        }
+      });
+    }
+
     async function loadRecords(showRefreshToast = false) {
+      const requestSeq = ++RECORD_LOAD_SEQ;
+      RECORD_LOADING = true;
+      setPagerLoading('monitorPager', true);
       try {
         const res = await api(monitorQueryPath(MONITOR_PAGE));
+        if (requestSeq !== RECORD_LOAD_SEQ) return;
         RECORDS = res.data || [];
         RECORD_META = {
           total: Number(res.total ?? RECORDS.length),
@@ -3951,10 +3976,17 @@ Source prompt:
           MONITOR_PAGE = totalPages;
           return await loadRecords(showRefreshToast);
         }
+        RECORD_LOADING = false;
         renderRecords();
-        loadMetrics();
         if (showRefreshToast) showToast('记录已刷新', 'ok');
-      } catch (e) { $('monitorStats').textContent = e.message; }
+      } catch (e) {
+        if (requestSeq === RECORD_LOAD_SEQ) $('monitorStats').textContent = e.message;
+      } finally {
+        if (requestSeq === RECORD_LOAD_SEQ) {
+          RECORD_LOADING = false;
+          setPagerLoading('monitorPager', false);
+        }
+      }
     }
     async function clearRecords() {
       if (!await confirmAction('确定清空全部生成记录吗？此操作不可撤销。', {title:'清空生成记录', confirmText:'清空记录'})) return;
@@ -3986,8 +4018,8 @@ Source prompt:
       ].join(' ');
     }
     function setMonitorPage(page) {
-      MONITOR_PAGE = page;
-      loadRecords(false);
+      MONITOR_PAGE = Math.max(1, Math.trunc(Number(page) || 1));
+      void loadRecords(false);
     }
     function monitorFilterChanged() {
       MONITOR_PAGE = 1;
@@ -4193,11 +4225,11 @@ Source prompt:
       });
       updateRecordSelectionStatus();
       $('monitorPager').innerHTML = `
-        <button class="secondary mini" type="button" onclick="setMonitorPage(1)" ${MONITOR_PAGE <= 1 ? 'disabled' : ''}>首页</button>
-        <button class="secondary mini" type="button" onclick="setMonitorPage(${MONITOR_PAGE - 1})" ${MONITOR_PAGE <= 1 ? 'disabled' : ''}>上一页</button>
-        <span class="pill gray">每页 ${MONITOR_PAGE_SIZE} 条，显示 ${pageRows.length ? start + 1 : 0}-${start + pageRows.length}</span>
-        <button class="secondary mini" type="button" onclick="setMonitorPage(${MONITOR_PAGE + 1})" ${MONITOR_PAGE >= totalPages ? 'disabled' : ''}>下一页</button>
-        <button class="secondary mini" type="button" onclick="setMonitorPage(${totalPages})" ${MONITOR_PAGE >= totalPages ? 'disabled' : ''}>末页</button>
+        <button class="secondary mini" type="button" onclick="setMonitorPage(1)" ${MONITOR_PAGE <= 1 || RECORD_LOADING ? 'disabled' : ''}>首页</button>
+        <button class="secondary mini" type="button" onclick="setMonitorPage(${MONITOR_PAGE - 1})" ${MONITOR_PAGE <= 1 || RECORD_LOADING ? 'disabled' : ''}>上一页</button>
+        <span class="pill gray">第 ${MONITOR_PAGE}/${totalPages} 页 · 每页 ${MONITOR_PAGE_SIZE} 条 · 显示 ${pageRows.length ? start + 1 : 0}-${start + pageRows.length} / 共 ${filteredCount} 条</span>
+        <button class="secondary mini" type="button" onclick="setMonitorPage(${MONITOR_PAGE + 1})" ${MONITOR_PAGE >= totalPages || RECORD_LOADING ? 'disabled' : ''}>下一页</button>
+        <button class="secondary mini" type="button" onclick="setMonitorPage(${totalPages})" ${MONITOR_PAGE >= totalPages || RECORD_LOADING ? 'disabled' : ''}>末页</button>
       `;
     }
 
@@ -4384,16 +4416,20 @@ Source prompt:
       }
       if ($('assetPager')) {
         $('assetPager').innerHTML = `
-          <button class="secondary mini" type="button" onclick="setAssetPage(1)" ${ASSET_PAGE <= 1 ? 'disabled' : ''}>首页</button>
-          <button class="secondary mini" type="button" onclick="setAssetPage(${ASSET_PAGE - 1})" ${ASSET_PAGE <= 1 ? 'disabled' : ''}>上一页</button>
-          <span class="pill gray">每页 ${ASSET_PAGE_SIZE} 条，显示 ${rows.length ? start + 1 : 0}-${start + rows.length}</span>
-          <button class="secondary mini" type="button" onclick="setAssetPage(${ASSET_PAGE + 1})" ${ASSET_PAGE >= totalPages ? 'disabled' : ''}>下一页</button>
-          <button class="secondary mini" type="button" onclick="setAssetPage(${totalPages})" ${ASSET_PAGE >= totalPages ? 'disabled' : ''}>末页</button>`;
+          <button class="secondary mini" type="button" onclick="setAssetPage(1)" ${ASSET_PAGE <= 1 || ASSET_LOADING ? 'disabled' : ''}>首页</button>
+          <button class="secondary mini" type="button" onclick="setAssetPage(${ASSET_PAGE - 1})" ${ASSET_PAGE <= 1 || ASSET_LOADING ? 'disabled' : ''}>上一页</button>
+          <span class="pill gray">第 ${ASSET_PAGE}/${totalPages} 页 · 每页 ${ASSET_PAGE_SIZE} 条 · 显示 ${rows.length ? start + 1 : 0}-${start + rows.length} / 共 ${filtered} 条</span>
+          <button class="secondary mini" type="button" onclick="setAssetPage(${ASSET_PAGE + 1})" ${ASSET_PAGE >= totalPages || ASSET_LOADING ? 'disabled' : ''}>下一页</button>
+          <button class="secondary mini" type="button" onclick="setAssetPage(${totalPages})" ${ASSET_PAGE >= totalPages || ASSET_LOADING ? 'disabled' : ''}>末页</button>`;
       }
     }
     async function loadAssets(showRefreshToast = false) {
+      const requestSeq = ++ASSET_LOAD_SEQ;
+      ASSET_LOADING = true;
+      setPagerLoading('assetPager', true);
       try {
         const res = await api(assetQueryPath(ASSET_PAGE));
+        if (requestSeq !== ASSET_LOAD_SEQ) return;
         ASSET_RECORDS = Array.isArray(res.data) ? res.data : [];
         ASSET_META = {
           total: Number(res.total ?? ASSET_RECORDS.length),
@@ -4406,15 +4442,21 @@ Source prompt:
           ASSET_PAGE = totalPages;
           return await loadAssets(showRefreshToast);
         }
+        ASSET_LOADING = false;
         renderAssets();
         if (showRefreshToast) showToast('资产库已刷新', 'ok');
       } catch (e) {
-        if ($('assetStatus')) $('assetStatus').textContent = e.message || '资产读取失败';
+        if (requestSeq === ASSET_LOAD_SEQ && $('assetStatus')) $('assetStatus').textContent = e.message || '资产读取失败';
+      } finally {
+        if (requestSeq === ASSET_LOAD_SEQ) {
+          ASSET_LOADING = false;
+          setPagerLoading('assetPager', false);
+        }
       }
     }
     function setAssetPage(page) {
-      ASSET_PAGE = Math.max(1, Number(page) || 1);
-      loadAssets(false);
+      ASSET_PAGE = Math.max(1, Math.trunc(Number(page) || 1));
+      void loadAssets(false);
     }
     function assetFilterChanged() {
       ASSET_PAGE = 1;
