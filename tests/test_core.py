@@ -7033,6 +7033,15 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             reloaded = PersonaManager(tmp)
             self.assertEqual(reloaded.get_appearance_type(), "auto")
 
+    def test_llm_image_character_name_does_not_trigger_selfie_pipeline(self) -> None:
+        from astrbot_plugin_selfie_image.prompts.selfie_actions import looks_like_selfie_intent
+
+        character_sheet = '一张二次元角色人设图，角色名为"心酱"，展示全身图、特写和背部展示。'
+        self.assertFalse(looks_like_selfie_intent(character_sheet, bot_name="心酱"))
+        self.assertFalse(looks_like_selfie_intent("生成心酱的人物立绘和角色设定图", bot_name="心酱"))
+        self.assertTrue(looks_like_selfie_intent("心酱穿上这套衣服拍一张自拍", bot_name="心酱"))
+        self.assertTrue(looks_like_selfie_intent("和心酱合影", bot_name="心酱"))
+
     def test_group_action_respects_appearance_type_anime(self) -> None:
         if "astrbot" not in sys.modules:
             astrbot = types.ModuleType("astrbot")

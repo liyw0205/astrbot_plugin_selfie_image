@@ -5659,11 +5659,16 @@ class SelfieImagePlugin(
             {"template_values": template_values, "template_randomize": template_randomize},
         )
         prompt = str(rendered.get("prompt") or prompt).strip()
+        # Plain LLM image generation may use the explicitly attached image or
+        # a clear "use the previous image" follow-up, but must not silently
+        # borrow the bot persona image.  Persona references belong to the
+        # dedicated generate_selfie path.
         refs = await self._event_reference_images(
             event,
             include_at_avatar=True,
             context_hint=prompt,
             allow_context_fallback=True,
+            include_persona=False,
         )
         if not prompt and refs:
             prompt = "根据参考图生成一张自然、清晰、符合原图语义的图片。"
@@ -6446,11 +6451,16 @@ class SelfieImagePlugin(
             event,
             await self._build_contextual_progress_text(event, "image", prompt, requested_count, ack_message),
         )
+        # Plain LLM image generation may use the explicitly attached image or
+        # a clear "use the previous image" follow-up, but must not silently
+        # borrow the bot persona image.  Persona references belong to the
+        # dedicated generate_selfie path.
         refs = await self._event_reference_images(
             event,
             include_at_avatar=True,
             context_hint=prompt,
             allow_context_fallback=True,
+            include_persona=False,
         )
         async def runner(task_id: str) -> Dict[str, Any]:
             return await self._background_draw_batches(

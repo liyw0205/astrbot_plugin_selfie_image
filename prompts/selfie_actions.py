@@ -295,10 +295,28 @@ def looks_like_selfie_intent(text: str, *, bot_name: str = "") -> bool:
         "next to you", "standing next to", "side by side", "same frame", "in the same frame",
         "two of us", "us together", "your photo", "yourself", "ai assistant", "catgirl", "ahwu",
     ]
-    name = str(bot_name or "").strip()
-    if name:
-        keywords.append(name)
-        english_keywords.append(name.lower())
-    return any(keyword and keyword in value for keyword in keywords) or any(
+    explicit = any(keyword and keyword in value for keyword in keywords) or any(
         keyword and keyword in low for keyword in english_keywords
     )
+    if explicit:
+        return True
+
+    # A bot name is not enough to select the persona/selfie pipeline.  LLM
+    # image prompts commonly mention the character name in a design sheet,
+    # portrait, or story illustration request.  Only treat a name as a
+    # selfie cue when it is paired with an unambiguous photo relationship.
+    name = str(bot_name or "").strip()
+    if not name:
+        return False
+    name_pos = value.find(name)
+    if name_pos < 0:
+        name_pos = low.find(name.lower())
+    if name_pos < 0:
+        return False
+    nearby = value[max(0, name_pos - 18) : name_pos + len(name) + 18]
+    relationship_tokens = (
+        "自拍", "拍照", "照片", "形象照", "看镜头", "对镜", "换装", "穿上",
+        "和我", "跟我", "与我", "陪我", "同框", "合影", "合照",
+        "selfie", "photo", "portrait", "outfit", "wear", "with me", "next to me",
+    )
+    return any(token in nearby.lower() for token in relationship_tokens)
