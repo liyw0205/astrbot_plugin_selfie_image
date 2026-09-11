@@ -6611,7 +6611,10 @@ Source prompt:
           const builtins = Array.isArray(data.builtin) ? data.builtin : [];
           const custom = Array.isArray(data.custom) ? data.custom : [];
           STUDIO.cosPools = data;
-          STUDIO.cosLooks = [...builtins, ...custom].filter(item => item && item.id && item.prompt).sort(cosPoolSort);
+          const builtinIds = new Set(builtins.map(item => String(item?.id || '').trim()).filter(Boolean));
+          STUDIO.cosLooks = [...builtins, ...custom.filter(item => !builtinIds.has(String(item?.id || '').trim()))]
+            .filter(item => item && item.id && item.prompt)
+            .sort(cosPoolSort);
           return STUDIO.cosLooks;
         }
       } catch (_) {

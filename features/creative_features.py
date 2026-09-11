@@ -455,10 +455,17 @@ class CreativeFeaturesMixin:
         pool = getattr(self, "cos_pool", None)
         favorites = set(pool.list_favorites()) if pool is not None else set()
         builtins = list_cos_look_sets()
+        builtin_ids = {str(item.get("id") or "").strip() for item in builtins if str(item.get("id") or "").strip()}
         for item in builtins:
             item["source"] = "builtin"
             item["favorite"] = str(item.get("id") or "") in favorites
         custom = pool.list_custom() if pool is not None else []
+        # A legacy custom file may contain a partial record reusing a built-in
+        # ID.  Keep the complete built-in record as the canonical pool item.
+        custom = [
+            item for item in custom
+            if str(item.get("id") or "").strip() not in builtin_ids
+        ]
         for item in custom:
             item["favorite"] = str(item.get("id") or "") in favorites
         return {

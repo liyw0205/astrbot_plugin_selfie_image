@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 
 from astrbot_plugin_selfie_image.cos.cos_pool import CosPoolStore
 from astrbot_plugin_selfie_image.features.creative_features import (
+    CreativeFeaturesMixin,
     apply_retry_strategy,
     build_prompt_variations,
     compare_generation_records,
@@ -104,6 +106,68 @@ def test_cos_pool_round_trip_and_custom_validation() -> None:
         assert restored.list_custom()[0]["title"] == "自定义"
         with pytest.raises(ValueError):
             store.save_custom({"id": "missing-prompt", "title": "无效"})
+
+
+def test_cos_pool_drops_legacy_builtin_id_duplicates() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / CosPoolStore.FILENAME
+        path.write_text(
+            json.dumps(
+                {
+                    "favorites": [],
+                    "custom": [
+                        {
+                            "id": "nahida_floating_dream",
+                            "title": "纳西妲·白草净华",
+                            "prompt": "旧的部分字段",
+                        },
+                        {
+                            "id": "custom-genshin",
+                            "title": "自定义原神套装",
+                            "prompt": "完整自定义服饰",
+                            "cos_type": "原神",
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        store = CosPoolStore(directory)
+        assert [item["id"] for item in store.list_custom()] == ["custom-genshin"]
+        assert store.list_custom()[0]["cos_type"] == "原神"
+        with pytest.raises(ValueError, match="不能使用内置套装 ID"):
+            store.save_custom(
+                {
+                    "id": "nahida_floating_dream",
+                    "title": "纳西妲·白草净华",
+                    "prompt": "再次覆盖",
+                }
+            )
+
+
+def test_cos_pool_web_contract_deduplicates_builtin_and_custom_ids() -> None:
+    class Pool:
+        def list_favorites(self):
+            return []
+
+        def list_custom(self):
+            return [
+                {
+                    "id": "nahida_floating_dream",
+                    "title": "纳西妲·白草净华",
+                    "prompt": "旧的部分字段",
+                    "source": "custom",
+                }
+            ]
+
+    plugin = CreativeFeaturesMixin()
+    plugin.cos_pool = Pool()
+    payload = plugin.list_cos_pools_for_web()
+    combined = list(payload["builtin"]) + list(payload["custom"])
+    nahida = [item for item in combined if item.get("id") == "nahida_floating_dream"]
+    assert len(nahida) == 1
+    assert nahida[0]["source"] == "builtin"
 
 
 def test_record_comparison_is_redacted_to_public_fields() -> None:

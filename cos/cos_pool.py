@@ -7,6 +7,7 @@ import os
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from ..core.utils import load_json_file, save_json_file
+from .cos_looks import get_cos_look_by_id
 
 
 class CosPoolStore:
@@ -31,24 +32,35 @@ class CosPoolStore:
             raw = {}
         favorites = raw.get("favorites")
         custom = raw.get("custom")
+        raw_custom = custom if isinstance(custom, (list, tuple)) else []
         self._data = {
             "favorites": list(dict.fromkeys(str(item).strip() for item in (favorites or []) if str(item).strip()))[:1000]
             if isinstance(favorites, (list, tuple, set))
             else [],
-            "custom": self._normalize_custom(custom if isinstance(custom, (list, tuple)) else []),
+            # Older versions allowed a custom item to reuse a built-in ID.
+            # Drop those records during load so the dashboard cannot render a
+            # partial custom row beside the complete built-in row.
+            "custom": self._normalize_custom(raw_custom),
         }
+        if len(self._data["custom"]) != len(raw_custom):
+            self.save()
+
+    @staticmethod
+    def _is_builtin_id(item_id: str) -> bool:
+        return bool(get_cos_look_by_id(item_id))
 
     @staticmethod
     def _normalize_item(item: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
         item_id = str(item.get("id") or item.get("name") or "").strip()
         title = str(item.get("title") or item.get("name") or "").strip()
         prompt = str(item.get("prompt") or "").strip()
-        if not item_id or not title or not prompt:
+        if not item_id or not title or not prompt or CosPoolStore._is_builtin_id(item_id):
             return None
         return {
             "id": item_id[:120],
             "title": title[:200],
             "prompt": prompt[:30000],
+            "cos_type": str(item.get("cos_type") or item.get("series") or "").strip()[:80],
             "source": "custom",
             "tags": [str(tag).strip()[:40] for tag in (item.get("tags") or []) if str(tag).strip()][:20]
             if isinstance(item.get("tags"), (list, tuple, set))
@@ -97,6 +109,9 @@ class CosPoolStore:
         return copy.deepcopy(self._data["custom"])
 
     def save_custom(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        item_id = str(payload.get("id") or payload.get("name") or "").strip()
+        if self._is_builtin_id(item_id):
+            raise ValueError("自定义 COS 不能使用内置套装 ID")
         normalized = self._normalize_item(payload)
         if normalized is None:
             raise ValueError("自定义 COS 必须包含 id、title 和 prompt")
