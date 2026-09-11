@@ -1228,6 +1228,8 @@ def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
         "errors": errors,
         "channel_name": label,
         "kind": kind,
+        "enabled": bool(channel.enabled),
+        "model_count": len(models),
         "auto_disabled": auto_disabled,
         "message": "；".join(item["message"] for item in errors),
     }
@@ -1256,6 +1258,8 @@ def preflight_video_channel(raw: Any) -> Dict[str, Any]:
         "errors": errors,
         "channel_name": label,
         "kind": "video",
+        "enabled": bool(channel.enabled),
+        "model_count": len(models),
         "auto_disabled": auto_disabled,
         "message": "；".join(item["message"] for item in errors),
     }

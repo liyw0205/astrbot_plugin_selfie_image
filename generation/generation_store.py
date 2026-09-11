@@ -9,11 +9,12 @@ import json
 import os
 import re
 import shutil
+import threading
 import time
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from .generation_records import build_generation_metrics, composition_metadata
+from .generation_records import _record_timestamp, build_generation_metrics, composition_metadata
 from .record_database import RecordDatabase
 from ..core.providers import ImageReference
 from ..core.utils import (
@@ -32,6 +33,7 @@ from ..core.utils import (
     save_json_file,
     split_generation_record_images,
     summarize_record_for_list,
+    bytes_to_data_url,
 )
 
 RECORD_KEEP_LIMIT = 1000
@@ -106,6 +108,101 @@ class GenerationStoreMixin:
             "video_source": copy.deepcopy(video_source),
         }
 
+    def _record_cache_media_paths(self, record: Mapping[str, Any]) -> List[str]:
+        """Return generated media paths in the same order as source entries."""
+        response = record.get("response_data")
+        response = response if isinstance(response, Mapping) else {}
+        paths = record.get("generated_image_paths")
+        if not isinstance(paths, list) or not paths:
+            paths = response.get("generated_image_paths")
+        if not isinstance(paths, list):
+            paths = []
+        return [str(path).strip() for path in paths if str(path or "").strip()]
+
+    def _compact_media_sources(self, record: Mapping[str, Any], sources: Mapping[str, Any]) -> Dict[str, Any]:
+        """Replace large inline image sources with paths to the saved cache files."""
+        compact = copy.deepcopy(dict(sources))
+        image_sources = compact.get("generated_image_sources")
+        paths = self._record_cache_media_paths(record)
+        if not isinstance(image_sources, list) or not paths:
+            return compact
+        converted: List[Any] = []
+        for index, source in enumerate(image_sources):
+            path = paths[index] if index < len(paths) else ""
+            if isinstance(source, Mapping):
+                source_type = str(source.get("type") or "").strip().lower()
+                value = str(source.get("value") or "").strip()
+                if source_type == "base64" and value and path:
+                    try:
+                        absolute = self._cache_absolute_path(path)
+                        if os.path.isfile(absolute):
+                            converted.append({"type": "cache_path", "value": path})
+                            continue
+                    except (OSError, ValueError):
+                        pass
+            elif isinstance(source, str) and source.strip() and path:
+                try:
+                    absolute = self._cache_absolute_path(path)
+                    if os.path.isfile(absolute):
+                        converted.append({"type": "cache_path", "value": path})
+                        continue
+                except (OSError, ValueError):
+                    pass
+            converted.append(source)
+        compact["generated_image_sources"] = converted
+        return compact
+
+    def _media_sources_limit_bytes(self) -> int:
+        try:
+            limit_mb = max(10, int(getattr(self.config, "image_cache_limit_mb", 200) or 200))
+        except (AttributeError, TypeError, ValueError):
+            limit_mb = 200
+        return limit_mb * 1024 * 1024
+
+    def _media_sources_size_bytes(self) -> int:
+        root = self._media_sources_root()
+        total = 0
+        if not root or not os.path.isdir(root):
+            return total
+        for current, _, names in os.walk(root):
+            for name in names:
+                try:
+                    total += os.path.getsize(os.path.join(current, name))
+                except OSError:
+                    continue
+        return total
+
+    def _schedule_media_sources_prune(self, records: Iterable[Mapping[str, Any]]) -> None:
+        """Run the potentially large sidecar sweep without holding record locks."""
+        try:
+            if self._media_sources_size_bytes() <= self._media_sources_limit_bytes():
+                return
+        except OSError:
+            return
+        cleanup_lock = getattr(self, "_media_sources_cleanup_lock", None)
+        if cleanup_lock is None:
+            cleanup_lock = threading.Lock()
+            self._media_sources_cleanup_lock = cleanup_lock
+        if not cleanup_lock.acquire(False):
+            return
+        try:
+            snapshot = [copy.deepcopy(item) for item in (records or ()) if isinstance(item, Mapping)]
+        except Exception:
+            cleanup_lock.release()
+            return
+
+        def worker() -> None:
+            try:
+                self._prune_orphan_media_sidecars(snapshot)
+            finally:
+                cleanup_lock.release()
+
+        threading.Thread(
+            target=worker,
+            name="selfie-media-source-cleanup",
+            daemon=True,
+        ).start()
+
     @staticmethod
     def _remove_media_sources(record: Dict[str, Any]) -> None:
         for key in ("generated_image_sources", "video_source", "video_url"):
@@ -124,7 +221,7 @@ class GenerationStoreMixin:
         return os.path.join(root, safe + ".json")
 
     def _write_media_sidecar(self, record_id: str, record: Mapping[str, Any]) -> str:
-        sources = self._record_media_sources(record)
+        sources = self._compact_media_sources(record, self._record_media_sources(record))
         if not sources["generated_image_sources"] and not sources["video_source"]:
             return ""
         path = self._sidecar_path(record_id)
@@ -146,7 +243,29 @@ class GenerationStoreMixin:
         if path == root or not path.startswith(os.path.abspath(root) + os.sep):
             return {"generated_image_sources": [], "video_source": ""}
         data = load_json_file(path)
-        return self._record_media_sources(data) if isinstance(data, Mapping) else {"generated_image_sources": [], "video_source": ""}
+        if not isinstance(data, Mapping):
+            return {"generated_image_sources": [], "video_source": ""}
+        sources = self._record_media_sources(data)
+        image_sources = sources.get("generated_image_sources")
+        if not isinstance(image_sources, list):
+            return sources
+        materialized: List[Any] = []
+        for source in image_sources:
+            if not isinstance(source, Mapping) or str(source.get("type") or "").strip().lower() != "cache_path":
+                materialized.append(source)
+                continue
+            try:
+                absolute = self._cache_absolute_path(str(source.get("value") or ""))
+                with open(absolute, "rb") as handle:
+                    blob = handle.read()
+                if not blob:
+                    materialized.append(source)
+                    continue
+                materialized.append({"type": "base64", "value": bytes_to_data_url(blob)})
+            except (OSError, ValueError):
+                materialized.append(source)
+        sources["generated_image_sources"] = materialized
+        return sources
 
     def _attach_media_sidecar(self, record: Dict[str, Any]) -> Dict[str, Any]:
         sources = self._read_media_sidecar(record)
@@ -172,6 +291,100 @@ class GenerationStoreMixin:
                         os.remove(path)
                 except OSError:
                     pass
+
+    def _prune_orphan_media_sidecars(self, records: Iterable[Mapping[str, Any]]) -> int:
+        """Remove media-source sidecars that no retained record can load."""
+        root = self._media_sources_root()
+        if not root or not os.path.isdir(root):
+            return 0
+        started_at = time.time()
+        expected = set()
+        for record in records or ():
+            if not isinstance(record, Mapping):
+                continue
+            record_id = str(record.get("id") or "").strip()
+            if record_id:
+                expected.add(os.path.basename(self._sidecar_path(record_id)))
+            declared = str(record.get("media_sources_file") or "").strip()
+            if declared and os.path.basename(declared) == declared and declared.endswith(".json"):
+                expected.add(declared)
+        deleted = 0
+        try:
+            names = os.listdir(root)
+        except OSError:
+            return 0
+        record_by_sidecar: Dict[str, Mapping[str, Any]] = {}
+        for record in records or ():
+            if not isinstance(record, Mapping):
+                continue
+            record_id = str(record.get("id") or "").strip()
+            if not record_id:
+                continue
+            record_by_sidecar[os.path.basename(self._sidecar_path(record_id))] = record
+            path = self._sidecar_path(record_id)
+            if not path or not os.path.isfile(path):
+                continue
+            data = load_json_file(path)
+            if not isinstance(data, Mapping):
+                continue
+            sources = self._record_media_sources(data)
+            compact_sources = self._compact_media_sources(record, sources)
+            if compact_sources == sources:
+                continue
+            try:
+                save_json_file(path, {"record_id": record_id, **compact_sources})
+            except OSError:
+                continue
+        sidecars: List[Tuple[float, int, str, bool, bool]] = []
+        for name in names:
+            if not name.endswith(".json") or name in expected:
+                continue
+            path = os.path.join(root, name)
+            try:
+                # A concurrent record commit may create its sidecar after the
+                # retained-record snapshot was taken. Let the next sweep
+                # inspect it instead of deleting a just-written sidecar.
+                if os.path.isfile(path) and os.path.getmtime(path) < started_at:
+                    os.remove(path)
+                    deleted += 1
+            except OSError:
+                continue
+        limit_bytes = self._media_sources_limit_bytes()
+        total_bytes = 0
+        for name in names:
+            if not name.endswith(".json") or name not in expected:
+                continue
+            path = os.path.join(root, name)
+            try:
+                size = os.path.getsize(path)
+                data = load_json_file(path)
+                sources = self._record_media_sources(data) if isinstance(data, Mapping) else {}
+                image_sources = sources.get("generated_image_sources") if isinstance(sources, Mapping) else []
+                has_inline = any(
+                    isinstance(item, Mapping) and str(item.get("type") or "").strip().lower() == "base64"
+                    for item in (image_sources or [])
+                )
+                record = record_by_sidecar.get(name) or {}
+                protected = bool(record.get("favorite") or record.get("pinned"))
+                sidecars.append((os.path.getmtime(path), size, path, has_inline, protected))
+                total_bytes += size
+            except OSError:
+                continue
+        # Old records whose generated cache has already disappeared cannot be
+        # displayed from the path anymore; bound their retained source blobs so
+        # the sidecar directory cannot grow without limit.
+        for _, size, path, has_inline, protected in sorted(sidecars):
+            if total_bytes <= limit_bytes:
+                break
+            if not has_inline or protected:
+                continue
+            try:
+                os.remove(path)
+                total_bytes -= size
+                deleted += 1
+            except OSError:
+                continue
+        return deleted
 
     def _backup_legacy_records(self, data: Any) -> None:
         path = str(getattr(self, "records_path", "") or "").strip()
@@ -201,7 +414,9 @@ class GenerationStoreMixin:
         evicted = records[RECORD_KEEP_LIMIT:]
         database = self._record_database()
         if database is not None and database.has_records():
-            return database.load_records(RECORD_KEEP_LIMIT)
+            loaded = database.load_records(RECORD_KEEP_LIMIT)
+            self._prune_orphan_media_sidecars(loaded)
+            return loaded
 
         compacted: List[Dict[str, Any]] = []
         for index, item in enumerate(retained):
@@ -226,6 +441,7 @@ class GenerationStoreMixin:
                     generated_dir,
                     collect_unreferenced_record_cache_paths(evicted, compacted),
                 )
+        self._prune_orphan_media_sidecars(compacted)
         return compacted
 
     def _persist_records(self) -> None:
@@ -247,6 +463,7 @@ class GenerationStoreMixin:
                 self.generated_dir,
                 collect_unreferenced_record_cache_paths(evicted_records, retained_records),
             )
+        self._schedule_media_sources_prune(retained_records)
 
 
     def _record_task(self, record: Dict[str, Any]) -> None:
@@ -1126,17 +1343,28 @@ class GenerationStoreMixin:
         limit_count = max(10, int(getattr(self.config, "image_cache_limit_count", 100) or 100))
         total_bytes, total_count = self._cache_stats()
         with self._records_lock:
-            referenced_paths = collect_record_cache_paths(self._records)
-        # Record metadata remains available after media GC. Only files needed
-        # by the current operation and explicitly retained assets are kept.
-        # Ordinary record references are passed separately so unreferenced
-        # files are still preferred, while referenced files can be reclaimed
-        # when the cache limits cannot otherwise be met.
+            records = [dict(item) for item in self._records if isinstance(item, Mapping)]
+        referenced_paths = collect_record_cache_paths(records)
+        record_timestamps: Dict[str, float] = {}
+        for record in records:
+            timestamp = _record_timestamp(record)
+            if timestamp <= 0:
+                continue
+            for path in collect_record_cache_paths([record]):
+                record_timestamps[path] = max(timestamp, record_timestamps.get(path, 0.0))
+        # Orphans are still reclaimed first. Referenced media is ordered by
+        # its record time, not file mtime, so an old request file cannot jump
+        # ahead of newer records merely because it was written earlier.
         protected = [
             *list(protected_paths or []),
             *self._asset_protected_cache_paths(),
         ]
-        candidates = collect_cache_cleanup_candidates(self.generated_dir, protected, referenced_paths)
+        candidates = collect_cache_cleanup_candidates(
+            self.generated_dir,
+            protected,
+            referenced_paths,
+            record_timestamps,
+        )
         planned: List[Dict[str, Any]] = []
         remaining_bytes = total_bytes
         remaining_count = total_count
@@ -1211,11 +1439,17 @@ class GenerationStoreMixin:
                 if current_size != expected_size:
                     raise ValueError("缓存内容已变化，请重新预览后再确认清理")
         deleted: List[str] = []
+        deleted_bytes = 0
         for item in planned_items:
             rel_path = str(item.get("path") or "")
             try:
+                item_size = max(0, int(item.get("size_bytes") or 0))
+            except (TypeError, ValueError):
+                item_size = 0
+            try:
                 os.remove(self._cache_absolute_path(rel_path))
                 deleted.append(rel_path)
+                deleted_bytes += item_size
             except (OSError, ValueError):
                 if isinstance(plan, Mapping):
                     raise ValueError("缓存内容已变化，请重新预览后再确认清理") from None
@@ -1229,6 +1463,17 @@ class GenerationStoreMixin:
             "total_bytes": total_bytes,
             "total_count": total_count,
             "deleted": deleted,
+            "deleted_count": len(deleted),
+            "deleted_bytes": deleted_bytes,
+            "would_delete_count": cleanup_plan.get("would_delete_count", len(planned_items)),
+            "would_delete_bytes": cleanup_plan.get(
+                "would_delete_bytes",
+                sum(
+                    max(0, int(item.get("size_bytes") or 0))
+                    for item in planned_items
+                    if isinstance(item, Mapping)
+                ),
+            ),
         }
 
     def get_cache_cleanup_preview(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:

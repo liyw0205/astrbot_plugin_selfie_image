@@ -61,6 +61,72 @@ class TestStorage:
             assert detail["generated_image_sources"][0]["value"] == inline
             assert list((Path(root) / "media_sources").glob("*.json"))
 
+    def test_loading_records_prunes_orphan_media_sidecars(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            plugin._commit_generation_record(
+                {
+                    "id": "kept",
+                    "success": True,
+                    "generated_image_paths": [],
+                    "generated_image_sources": [{"type": "url", "value": "https://example.test/image.png"}],
+                }
+            )
+            orphan = Path(plugin.media_sources_dir) / "orphan.json"
+            orphan.write_text(json.dumps({"record_id": "orphan"}), encoding="utf-8")
+
+            reloaded = self._plugin(root)
+            reloaded._records = reloaded._load_records()
+
+            assert not orphan.exists()
+            assert (Path(plugin.media_sources_dir) / "kept.json").exists()
+
+    def test_media_sidecar_prune_does_not_hold_record_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            plugin._records = [{"id": "keep", "success": True}]
+            plugin._media_sources_size_bytes = lambda: plugin._media_sources_limit_bytes() + 1
+            entered = threading.Event()
+            lock_available = threading.Event()
+
+            def fake_prune(_records):
+                entered.set()
+                if plugin._records_lock.acquire(timeout=1):
+                    lock_available.set()
+                    plugin._records_lock.release()
+
+            plugin._prune_orphan_media_sidecars = fake_prune
+            plugin._persist_records()
+
+            assert entered.wait(2)
+            assert lock_available.wait(2)
+
+    def test_media_sidecar_compacts_base64_to_cache_path(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            image = base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            )
+            (Path(plugin.generated_dir) / "generated.png").write_bytes(image)
+            inline = "data:image/png;base64," + base64.b64encode(image).decode("ascii")
+            plugin._commit_generation_record(
+                {
+                    "id": "compact-1",
+                    "success": True,
+                    "generated_image_paths": ["generated.png"],
+                    "generated_image_sources": [{"type": "base64", "value": inline}],
+                }
+            )
+
+            sidecar = Path(plugin.media_sources_dir) / "compact-1.json"
+            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+            assert payload["generated_image_sources"] == [{"type": "cache_path", "value": "generated.png"}]
+            assert sidecar.stat().st_size < 256
+
+            detail = plugin.get_record_for_web("compact-1")
+            assert detail["generated_image_sources"][0]["type"] == "base64"
+            assert detail["generated_image_sources"][0]["value"] == inline
+
     def test_asset_metadata_round_trips_through_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             plugin = self._plugin(root)
@@ -240,30 +306,56 @@ class TestStorage:
 
             cleaned = plugin._cleanup_image_cache_if_needed()
             assert len(cleaned["deleted"]) == 2
+            assert cleaned["deleted_count"] == 2
+            assert cleaned["deleted_bytes"] == 2
             assert cleaned["total_count"] == 10
             assert referenced.exists()
 
-    def test_cache_cleanup_can_reclaim_media_referenced_only_by_ordinary_records(self) -> None:
+    def test_cache_cleanup_orders_record_media_by_record_time(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             plugin = self._plugin(root)
             plugin.config.image_cache_limit_count = 10
-            for index in range(11):
-                name = f"record-{index:02}.png"
-                path = Path(plugin.generated_dir) / name
+            old_paths = ["request-old.png", "generated-old.png"] + [f"old-{index:02}.png" for index in range(4)]
+            new_paths = ["request-new.png", "generated-new.png"] + [f"new-{index:02}.png" for index in range(4)]
+            for index, path_name in enumerate([*old_paths, *new_paths]):
+                path = Path(plugin.generated_dir) / path_name
                 path.write_bytes(bytes([index]))
-                os.utime(path, (1000 + index, 1000 + index))
-                plugin._commit_generation_record(
-                    {"id": f"record-{index:02}", "success": True, "generated_image_paths": [name]}
-                )
+            # Make the newest request file look oldest on disk. Cleanup must
+            # still use the generation record time for referenced media.
+            os.utime(Path(plugin.generated_dir) / "request-new.png", (1000, 1000))
+            os.utime(Path(plugin.generated_dir) / "request-old.png", (2000, 2000))
+            os.utime(Path(plugin.generated_dir) / "generated-old.png", (2000, 2000))
+            plugin._records = [
+                {
+                    "id": "record-new",
+                    "time": "2026-09-12 12:00:00",
+                    "created_ts": 1_789_149_567.1792,
+                    "success": True,
+                    "request_image_paths": ["request-new.png"],
+                    "generated_image_paths": [*new_paths[1:]],
+                },
+                {
+                    "id": "record-old",
+                    "time": "2026-09-11 12:00:00",
+                    "created_ts": 1_789_149_567.1792,
+                    "success": True,
+                    "request_image_paths": ["request-old.png"],
+                    "generated_image_paths": [*old_paths[1:]],
+                },
+            ]
+            plugin._persist_records()
 
             preview = plugin.get_cache_cleanup_preview()
-            assert preview["would_delete_count"] == 1
-            assert preview["would_delete"][0]["path"] == "record-00.png"
+            assert preview["total_count"] == 12
+            assert preview["would_delete_count"] == 2
+            assert {item["path"] for item in preview["would_delete"]} == {"request-old.png", "generated-old.png"}
 
             cleaned = plugin._cleanup_image_cache_if_needed()
-            assert cleaned["deleted"] == ["record-00.png"]
-            assert not (Path(plugin.generated_dir) / "record-00.png").exists()
-            assert len(plugin._records) == 11
+            assert set(cleaned["deleted"]) == {"request-old.png", "generated-old.png"}
+            assert not (Path(plugin.generated_dir) / "request-old.png").exists()
+            assert not (Path(plugin.generated_dir) / "generated-old.png").exists()
+            assert (Path(plugin.generated_dir) / "request-new.png").exists()
+            assert (Path(plugin.generated_dir) / "generated-new.png").exists()
 
     def test_manual_cache_cleanup_requires_matching_preview_token(self) -> None:
         with tempfile.TemporaryDirectory() as root:

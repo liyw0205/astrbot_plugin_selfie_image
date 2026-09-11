@@ -1049,6 +1049,20 @@ class ConfigModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             metric_window_seconds("2h")
 
+    def test_record_timestamp_prefers_durable_record_time_over_bulk_created_ts(self) -> None:
+        from astrbot_plugin_selfie_image.generation.generation_records import _record_timestamp
+
+        old = {
+            "time": "2026-09-11 23:40:25",
+            "created_ts": 1_789_149_567.1792,
+        }
+        new = {
+            "time": "2026-09-12 01:59:18",
+            "created_ts": 1_789_149_567.1792,
+        }
+
+        self.assertLess(_record_timestamp(old), _record_timestamp(new))
+
     def test_config_schema_migration_preserves_explicit_concurrency(self) -> None:
         migrated = AICatConfig.from_dict({"image": {"max_concurrent_tasks": 3}})
         self.assertEqual(migrated.raw["schema_version"], 2)
@@ -1601,6 +1615,11 @@ class ConfigModelTests(unittest.TestCase):
                 "request_image_paths": ["a.png"],
                 "request_prompt_en": "translated prompt",
                 "audit_prompt": "effective prompt for audit",
+                "cache_cleanup_before_generation": {
+                    "deleted": ["orphan-old.png"],
+                    "deleted_count": 1,
+                    "deleted_bytes": 42,
+                },
                 "image_to_text": {"enabled": True, "applied": True, "target_count": 1, "used_by_model": True, "error": ""},
                 "composition": {
                     "strategy": "full_body",
@@ -1619,6 +1638,13 @@ class ConfigModelTests(unittest.TestCase):
                 "delivery_failed": True,
                 "delivery_error": "send failed",
                 "blocked_images_retained": True,
+                "cache_cleanup": {
+                    "deleted": ["request-old.png"],
+                    "limit_count": 100,
+                    "total_count": 101,
+                    "deleted_count": 1,
+                    "deleted_bytes": 42,
+                },
                 "attempts": [{"label": "m1", "success": False, "error": "x" * 2000}],
             },
             "attempts": [{"label": "m1", "success": False, "error": "x" * 2000, "error_category": "safety"}],
@@ -1633,11 +1659,19 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(slim["raw_reference_image_count"], 2)
         self.assertEqual(slim["request_data"]["request_prompt_en"], "translated prompt")
         self.assertEqual(slim["request_data"]["audit_prompt"], "effective prompt for audit")
+        self.assertEqual(
+            slim["request_data"]["cache_cleanup"],
+            {"deleted": ["orphan-old.png"], "deleted_count": 1, "deleted_bytes": 42},
+        )
         self.assertTrue(slim["request_data"]["image_to_text"]["used_by_model"])
         self.assertEqual(slim["request_data"]["composition"]["strategy"], "full_body")
         self.assertEqual(slim["response_data"]["status"], "delivery_failed")
         self.assertFalse(slim["response_data"]["delivery_success"])
         self.assertTrue(slim["response_data"]["blocked_images_retained"])
+        self.assertEqual(slim["response_data"]["cache_cleanup"]["deleted"], ["request-old.png"])
+        self.assertEqual(slim["response_data"]["cache_cleanup"]["deleted_count"], 1)
+        self.assertEqual(slim["response_data"]["cache_cleanup"]["deleted_bytes"], 42)
+        self.assertEqual(slim["response_data"]["cache_cleanup"]["total_count"], 101)
         self.assertEqual(slim["cos"], "hutao_dragon_path_zhichun")
         self.assertEqual(slim["cos_pose"], "half_turn")
         self.assertEqual(slim["cos_scene"], "studio")
@@ -2508,6 +2542,7 @@ class ImageUtilityTests(unittest.TestCase):
                 str(base),
                 protected_paths=["protected.png", str(base / "../outside.png")],
                 referenced_paths=["referenced_old.png"],
+                record_timestamps={"referenced_old.png": 5},
             )
 
             self.assertEqual(

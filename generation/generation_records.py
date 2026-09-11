@@ -28,6 +28,15 @@ def metric_window_seconds(value: Any) -> Optional[int]:
 
 
 def _record_timestamp(record: Mapping[str, Any]) -> float:
+    # ``time`` is the durable generation-record time. ``created_ts`` can be
+    # filled by a bulk database rewrite, which gives many records the same
+    # value and is therefore unsuitable for media age ordering.
+    text = str(record.get("time") or "").strip()
+    if text:
+        try:
+            return time.mktime(time.strptime(text[:19], "%Y-%m-%d %H:%M:%S"))
+        except (TypeError, ValueError, OverflowError):
+            pass
     for key in ("created_ts", "timestamp", "updated_ts"):
         try:
             value = float(record.get(key) or 0)
@@ -35,12 +44,6 @@ def _record_timestamp(record: Mapping[str, Any]) -> float:
             value = 0.0
         if value > 0:
             return value
-    text = str(record.get("time") or "").strip()
-    if text:
-        try:
-            return time.mktime(time.strptime(text[:19], "%Y-%m-%d %H:%M:%S"))
-        except (TypeError, ValueError, OverflowError):
-            pass
     return 0.0
 
 

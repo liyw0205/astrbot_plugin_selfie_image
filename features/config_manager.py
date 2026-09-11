@@ -22,11 +22,12 @@ from ..core.models import (
     deep_merge,
     normalize_config_tree,
     normalize_legacy_keys,
+    preflight_config_channels,
     strip_channel_timeouts,
     is_masked_secret,
     usable_api_keys,
 )
-from ..core.utils import load_json_file, redact_sensitive_data, save_json_file
+from ..core.utils import load_json_file, redact_sensitive_data, redact_sensitive_text, save_json_file
 
 WEB_STARTUP_CONFIG_KEYS = ("web", "webEnable", "webHost", "webPort", "webToken")
 DEFAULT_WEB_TOKEN = str(DEFAULT_CONFIG["web"].get("token") or "changeme").strip().lower()
@@ -165,6 +166,90 @@ def _restore_web_channel_credentials(
 
 
 class ConfigurationMixin:
+    def get_config_preflight_for_web(self) -> Dict[str, Any]:
+        """Return a credential-free startup/configuration readiness summary."""
+        try:
+            report = preflight_config_channels(getattr(self, "raw_config", {}))
+        except Exception as exc:
+            logger.error("[SelfieImage] 渠道配置预检异常: %s", type(exc).__name__, exc_info=True)
+            return {
+                "status": "error",
+                "ok": False,
+                "ready": False,
+                "channel_count": 0,
+                "valid_count": 0,
+                "enabled_count": 0,
+                "ready_count": 0,
+                "invalid_count": 0,
+                "auto_disabled_count": 0,
+                "errors": [{"field": "config", "message": "配置预检异常，请查看启动日志"}],
+            }
+
+        results = []
+        for key in ("image_channels", "audit_channels", "video_channels"):
+            rows = report.get(key) if isinstance(report, dict) else []
+            if isinstance(rows, list):
+                results.extend(row for row in rows if isinstance(row, dict))
+        generation_results = [
+            row for row in results if str(row.get("kind") or "").strip().lower() in {"image", "video"}
+        ]
+        errors = [
+            {
+                "field": str(item.get("field") or "config"),
+                "message": redact_sensitive_text(str(item.get("message") or "配置无效"))[:320],
+            }
+            for item in (report.get("errors") or [])
+            if isinstance(item, dict)
+        ][:50]
+        valid_count = sum(1 for row in results if row.get("ok"))
+        enabled_count = sum(1 for row in results if row.get("enabled"))
+        ready_count = sum(
+            1
+            for row in generation_results
+            if row.get("ok") and row.get("enabled") and int(row.get("model_count") or 0) > 0
+        )
+        invalid_count = sum(1 for row in results if not row.get("ok"))
+        auto_disabled_count = sum(1 for row in results if row.get("auto_disabled"))
+        if errors:
+            status = "invalid"
+        elif not generation_results:
+            status = "unconfigured"
+        elif not ready_count:
+            status = "unavailable"
+        else:
+            status = "ok"
+        return {
+            "status": status,
+            "ok": not errors,
+            "ready": bool(ready_count),
+            "channel_count": len(results),
+            "valid_count": valid_count,
+            "enabled_count": enabled_count,
+            "ready_count": ready_count,
+            "invalid_count": invalid_count,
+            "auto_disabled_count": auto_disabled_count,
+            "errors": errors,
+        }
+
+    def log_config_preflight(self) -> Dict[str, Any]:
+        """Log startup readiness without ever including channel credentials."""
+        report = self.get_config_preflight_for_web()
+        status = str(report.get("status") or "error")
+        if status == "ok":
+            logger.info(
+                "[SelfieImage] 渠道配置预检通过: %s/%s 个生成渠道可用",
+                report.get("ready_count", 0),
+                report.get("channel_count", 0),
+            )
+        else:
+            logger.warning(
+                "[SelfieImage] 渠道配置预检状态=%s: %s",
+                status,
+                "；".join(redact_sensitive_text(str(item.get("message") or "")) for item in report.get("errors", []))
+                or "没有可用的生成渠道",
+            )
+        return report
+
     def _migrate_legacy_data_dir(self, plugin_data_dir: str) -> None:
         if os.path.exists(self.data_dir):
             return

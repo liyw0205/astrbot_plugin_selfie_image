@@ -3658,7 +3658,7 @@ Source prompt:
         }
         const mb = (bytes / 1024 / 1024).toFixed(1);
         const accepted = await confirmAction(
-          `将清理 ${count} 个超出缓存上限的旧缓存文件（约 ${mb} MB）。\n普通生成记录只保留元数据，收藏和置顶资产不会被清理。`,
+          `将清理 ${count} 个超出缓存上限的旧缓存文件（约 ${mb} MB）。\n仍被生成记录引用的请求图和响应图不会被清理。`,
           {title:'清理可回收缓存', confirmText:'确认清理'}
         );
         if (!accepted) return;

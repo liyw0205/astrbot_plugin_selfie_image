@@ -31,12 +31,141 @@ from astrbot_plugin_selfie_image.webui.contracts import (
 )
 from astrbot_plugin_selfie_image.webui.services import (
     WebContractError,
+    build_health_payload,
     filter_record_page,
     parse_task_query,
 )
+from astrbot_plugin_selfie_image.features.config_manager import ConfigurationMixin
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_config_preflight_health_summary_distinguishes_unconfigured_and_ready() -> None:
+    probe = object.__new__(ConfigurationMixin)
+    probe.raw_config = {}
+    unconfigured = probe.get_config_preflight_for_web()
+    assert unconfigured["status"] == "unconfigured"
+    assert unconfigured["ready"] is False
+
+    probe.raw_config = {
+        "image_channels": [
+            {
+                "name": "local",
+                "provider_type": "openai",
+                "base_url": "https://example.test/v1",
+                "api_key": "sk-secret-must-not-leak",
+                "model": "gpt-image-2",
+                "enabled": True,
+            }
+        ]
+    }
+    ready = probe.get_config_preflight_for_web()
+    assert ready["status"] == "ok"
+    assert ready["ready"] is True
+    assert ready["ready_count"] == 1
+    assert "sk-secret-must-not-leak" not in str(ready)
+
+
+def test_config_preflight_health_summary_reports_invalid_channel_without_secret() -> None:
+    probe = object.__new__(ConfigurationMixin)
+    probe.raw_config = {
+        "image_channels": [
+            {
+                "name": "broken",
+                "provider_type": "openai",
+                "api_key": "sk-secret-must-not-leak",
+            }
+        ]
+    }
+    report = probe.get_config_preflight_for_web()
+    assert report["status"] == "invalid"
+    assert report["ready"] is False
+    assert report["invalid_count"] == 1
+    assert "sk-secret-must-not-leak" not in str(report)
+
+
+def test_health_payload_marks_configuration_degraded_but_preserves_diagnostics() -> None:
+    class Plugin:
+        config = SimpleNamespace(image_cache_limit_mb=200, image_cache_limit_count=100)
+        config_path = records_path = records_db_path = media_sources_dir = generated_dir = ""
+
+        def _cache_stats(self):
+            return 0, 0
+
+        def get_channel_health(self):
+            return {}
+
+        def get_cache_cleanup_preview(self):
+            return {}
+
+        def get_config_preflight_for_web(self):
+            return {
+                "status": "invalid",
+                "ok": False,
+                "ready": False,
+                "errors": [{"field": "api_key", "message": "生图渠道 broken 缺少 api_key"}],
+            }
+
+    payload = build_health_payload(Plugin())
+    assert payload["status"] == "degraded"
+    assert payload["config_preflight"]["status"] == "invalid"
+    assert payload["config_preflight"]["errors"][0]["field"] == "api_key"
+
+
+def test_dashboard_health_uses_the_same_configuration_diagnostics() -> None:
+    import astrbot_plugin_selfie_image.webui.dashboard_api as dashboard_api
+    from astrbot_plugin_selfie_image.webui.dashboard_api import SelfieImageDashboardAPI
+
+    class Plugin:
+        config = SimpleNamespace(image_cache_limit_mb=200, image_cache_limit_count=100)
+        config_path = records_path = records_db_path = media_sources_dir = generated_dir = ""
+
+        def _cache_stats(self):
+            return 0, 0
+
+        def get_channel_health(self):
+            return {}
+
+        def get_cache_cleanup_preview(self):
+            return {}
+
+        def get_config_preflight_for_web(self):
+            return {"status": "unavailable", "ok": True, "ready": False, "errors": []}
+
+    previous = dashboard_api.json_response
+    dashboard_api.json_response = lambda payload, **_: payload
+    try:
+        result = asyncio.run(SelfieImageDashboardAPI(Plugin()).page_health())
+    finally:
+        dashboard_api.json_response = previous
+    assert result["data"]["data"]["status"] == "degraded"
+    assert result["data"]["data"]["config_preflight"]["status"] == "unavailable"
+
+
+def test_flask_health_uses_the_same_configuration_diagnostics() -> None:
+    class Plugin:
+        config = SimpleNamespace(web_token="secret", image_cache_limit_mb=200, image_cache_limit_count=100)
+        config_path = records_path = records_db_path = media_sources_dir = generated_dir = ""
+
+        def _cache_stats(self):
+            return 0, 0
+
+        def get_channel_health(self):
+            return {}
+
+        def get_cache_cleanup_preview(self):
+            return {}
+
+        def get_config_preflight_for_web(self):
+            return {"status": "invalid", "ok": False, "ready": False, "errors": []}
+
+    client = FlaskWebServer(Plugin())._create_app().test_client()
+    response = client.get("/api/health", headers={"X-Selfie-Image-Token": "secret"})
+    assert response.status_code == 200
+    payload = response.get_json()["data"]
+    assert payload["status"] == "degraded"
+    assert payload["config_preflight"]["status"] == "invalid"
 
 
 def test_record_scope_stats_uses_filtered_full_set_and_explains_empty_scope() -> None:

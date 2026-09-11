@@ -352,6 +352,14 @@ class SelfieImagePlugin(
 
     async def initialize(self) -> None:
         self.loop = asyncio.get_running_loop()
+        self.log_config_preflight()
+        try:
+            cleanup = self._cleanup_image_cache_if_needed()
+            deleted = cleanup.get("deleted") if isinstance(cleanup, Mapping) else []
+            if deleted:
+                logger.info("[SelfieImage] startup cache cleanup removed %d orphan file(s)", len(deleted))
+        except Exception as exc:
+            logger.warning(f"[SelfieImage] 启动缓存清理失败：{exc}")
         self._start_web_server()
 
     async def terminate(self) -> None:

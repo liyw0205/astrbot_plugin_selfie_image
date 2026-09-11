@@ -300,6 +300,7 @@ def collect_cache_cleanup_candidates(
     base_dir: str,
     protected_paths: Optional[Iterable[Any]] = None,
     referenced_paths: Optional[Iterable[Any]] = None,
+    record_timestamps: Optional[Dict[Any, Any]] = None,
 ) -> List[str]:
     raw_base = str(base_dir or "").strip()
     if not raw_base:
@@ -318,7 +319,18 @@ def collect_cache_cleanup_candidates(
 
     protected = {path for path in (normalize_to_abs(item) for item in protected_paths or []) if path}
     referenced = {path for path in (normalize_to_abs(item) for item in referenced_paths or []) if path}
-    candidates: List[Tuple[int, float, str]] = []
+    timestamps: Dict[str, float] = {}
+    for raw_path, raw_timestamp in (record_timestamps or {}).items():
+        path = normalize_to_abs(raw_path)
+        if not path:
+            continue
+        try:
+            timestamp = float(raw_timestamp or 0)
+        except (TypeError, ValueError):
+            timestamp = 0.0
+        if timestamp > 0:
+            timestamps[path] = max(timestamp, timestamps.get(path, 0.0))
+    candidates: List[Tuple[int, float, float, str]] = []
     for root, _, files in os.walk(base):
         for name in files:
             path = os.path.abspath(os.path.join(root, name))
@@ -329,9 +341,14 @@ def collect_cache_cleanup_candidates(
             except OSError:
                 continue
             priority = 1 if path in referenced else 0
-            candidates.append((priority, mtime, path))
-    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
-    return [path for _, _, path in candidates]
+            # Referenced media follows its generation record's timestamp;
+            # request files often have an older mtime than their response.
+            sort_time = timestamps.get(path, 0.0) if path in referenced else 0.0
+            if sort_time <= 0:
+                sort_time = mtime
+            candidates.append((priority, sort_time, mtime, path))
+    candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+    return [path for _, _, _, path in candidates]
 
 
 def looks_like_image_url(text: str) -> bool:
@@ -826,10 +843,23 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
         cache_cleanup = rd.get("cache_cleanup") or rd.get("cache_cleanup_before_generation")
         if isinstance(cache_cleanup, dict):
             slim_cleanup: Dict[str, Any] = {}
-            for key in ("deleted_count", "would_delete_count", "deleted_bytes", "would_delete_bytes"):
+            for key in (
+                "deleted_count",
+                "would_delete_count",
+                "deleted_bytes",
+                "would_delete_bytes",
+            ):
                 value = cache_cleanup.get(key)
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     slim_cleanup[key] = value
+            for key in ("deleted", "would_delete"):
+                value = cache_cleanup.get(key)
+                if isinstance(value, list):
+                    slim_cleanup[key] = [
+                        str(item.get("path") if isinstance(item, dict) else item).strip()[:300]
+                        for item in value
+                        if str(item.get("path") if isinstance(item, dict) else item).strip()
+                    ][:100]
             if slim_cleanup:
                 slim_rd["cache_cleanup"] = slim_cleanup
         composition = rd.get("composition")
@@ -952,6 +982,30 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "retry_count": resp.get("retry_count"),
             "retry_exhausted": resp.get("retry_exhausted"),
         }
+        cache_cleanup = resp.get("cache_cleanup")
+        if isinstance(cache_cleanup, dict):
+            slim_cleanup: Dict[str, Any] = {}
+            for key in (
+                "limit_bytes",
+                "limit_count",
+                "initial_total_bytes",
+                "initial_total_count",
+                "total_bytes",
+                "total_count",
+                "deleted_count",
+                "would_delete_count",
+                "deleted_bytes",
+                "would_delete_bytes",
+            ):
+                value = cache_cleanup.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    slim_cleanup[key] = value
+            for key in ("deleted", "would_delete"):
+                value = cache_cleanup.get(key)
+                if isinstance(value, list):
+                    slim_cleanup[key] = [str(item).strip()[:300] for item in value if str(item).strip()][:100]
+            if slim_cleanup:
+                out["response_data"]["cache_cleanup"] = slim_cleanup
 
     if isinstance(out.get("generated_image_sources"), list):
         out["generated_image_sources"] = _preserve_media_sources(out["generated_image_sources"])

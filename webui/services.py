@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from ..generation.generation_records import build_record_scope_stats
+from ..core.utils import redact_sensitive_data
 
 
 class WebContractError(ValueError):
@@ -259,8 +260,28 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
     cache_bytes, cache_count = stats() if callable(stats) else (plugin._cache_size_bytes(), 0)
     get_health = getattr(plugin, "get_channel_health", None)
     get_preview = getattr(plugin, "get_cache_cleanup_preview", None)
+    get_preflight = getattr(plugin, "get_config_preflight_for_web", None)
+    if callable(get_preflight):
+        try:
+            config_preflight = get_preflight()
+        except Exception:
+            # Health must remain queryable even when a third-party plugin shim
+            # exposes a faulty diagnostics hook.
+            config_preflight = {
+                "status": "error",
+                "ok": False,
+                "ready": False,
+                "errors": [{"field": "config", "message": "配置预检异常，请查看启动日志"}],
+            }
+    else:
+        config_preflight = {}
+    if isinstance(config_preflight, Mapping):
+        config_preflight = redact_sensitive_data(dict(config_preflight))
+    overall_status = "ok"
+    if isinstance(config_preflight, Mapping) and str(config_preflight.get("status") or "ok") != "ok":
+        overall_status = "degraded"
     return {
-        "status": "ok",
+        "status": overall_status,
         "config_path": getattr(plugin, "config_path", ""),
         "records_path": getattr(plugin, "records_path", ""),
         "records_db_path": getattr(plugin, "records_db_path", ""),
@@ -271,6 +292,7 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
         "cache_limit_mb": getattr(plugin.config, "image_cache_limit_mb", 200),
         "cache_limit_count": getattr(plugin.config, "image_cache_limit_count", 100),
         "channel_health": get_health() if callable(get_health) else {},
+        "config_preflight": config_preflight,
         "cache_cleanup_preview": get_preview() if callable(get_preview) else {},
         "dashboard_page": dict(page_status or {}),
     }
