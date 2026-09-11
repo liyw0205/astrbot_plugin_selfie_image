@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import json
 import tempfile
@@ -267,6 +268,115 @@ def test_restart_load_releases_persisted_quota_marker() -> None:
         assert task["quota_reserved"] == 0
         assert task["quota_released"] is True
         assert task["quota_released_ts"]
+
+
+def test_quota_release_is_idempotent_and_task_notification_outcomes_are_durable() -> None:
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin._web_task_lock = __import__("threading").RLock()
+    plugin._quota_reservation_lock = __import__("threading").RLock()
+    plugin._quota_reservations = {
+        "cmd-12345678-1": {"user_id": "u1", "count": 2},
+    }
+    plugin._web_tasks = {
+        "cmd-12345678-1": {
+            "task_id": "cmd-12345678-1",
+            "status": "running",
+            "quota_reserved": 2,
+            "quota_released": False,
+            "user_notification_status": "pending",
+        }
+    }
+    persisted = []
+    plugin._persist_web_tasks_locked = lambda: persisted.append(True)
+    plugin._web_task_timestamp = lambda: "now"
+
+    plugin._release_quota_reservation("cmd-12345678-1")
+    plugin._release_quota_reservation("cmd-12345678-1")
+
+    task = plugin._web_tasks["cmd-12345678-1"]
+    assert plugin._quota_reservations == {}
+    assert task["quota_reserved"] == 0
+    assert task["quota_released"] is True
+    assert len(persisted) == 1
+
+    class Event:
+        def plain_result(self, text):
+            return text
+
+        async def send(self, _message):
+            return None
+
+    assert asyncio.run(plugin._send_task_notification("cmd-12345678-1", Event(), "已完成")) is True
+    assert task["user_notification_status"] == "sent"
+
+    class FailingEvent(Event):
+        async def send(self, _message):
+            raise RuntimeError("transport receipt unavailable")
+
+    assert asyncio.run(plugin._send_task_notification("cmd-12345678-1", FailingEvent(), "失败")) is False
+    assert task["user_notification_status"] == "failed"
+    assert "transport" in task["user_notification_reason"]
+
+
+def test_dashboard_and_flask_handlers_share_response_matrix(monkeypatch) -> None:
+    """Exercise both transport adapters against one plugin contract surface."""
+    import astrbot_plugin_selfie_image.webui.dashboard_api as dashboard_module
+
+    class ContractPlugin:
+        def __init__(self):
+            self.config = SimpleNamespace(web_token="secret")
+
+        def get_recent_records(self, *args, **kwargs):
+            return [{"id": "record-1", "success": True, "source": "web"}]
+
+        def cleanup_image_cache_from_web(self, **kwargs):
+            if kwargs.get("confirm"):
+                raise ValueError("缓存内容已变化，请重新预览后再确认清理")
+            return {"requires_confirmation": True}
+
+    plugin = ContractPlugin()
+    flask_client = FlaskWebServer(plugin)._create_app().test_client()
+    headers = {"X-Selfie-Image-Token": "secret"}
+
+    class FakeRequest:
+        query = {}
+        payload = {}
+
+        async def json(self, default=None):
+            return self.payload if self.payload is not None else default
+
+    response_factory = lambda payload, **_kwargs: payload
+    error_factory = lambda message, **kwargs: {"error": message, "status": kwargs.get("status_code")}
+    monkeypatch.setattr(dashboard_module, "request", FakeRequest())
+    monkeypatch.setattr(dashboard_module, "json_response", response_factory)
+    monkeypatch.setattr(dashboard_module, "error_response", error_factory)
+    api = dashboard_module.SelfieImageDashboardAPI(plugin)
+
+    FakeRequest.query = {"limit": "10"}
+    dashboard_success = asyncio.run(api.page_records())
+    flask_success = flask_client.get("/api/records?limit=10", headers=headers)
+    assert flask_success.status_code == 200
+    assert dashboard_success["data"]["success"] is True
+    assert dashboard_success["data"]["data"][0]["id"] == flask_success.get_json()["data"][0]["id"]
+
+    FakeRequest.query = {"success": "maybe"}
+    dashboard_bad = asyncio.run(api.page_records())
+    flask_bad = flask_client.get("/api/records?success=maybe", headers=headers)
+    assert dashboard_bad["status"] == flask_bad.status_code == 400
+
+    FakeRequest.payload = {"confirm": True, "plan_token": "stale"}
+    dashboard_conflict = asyncio.run(api.page_cache_cleanup())
+    flask_conflict = flask_client.post("/api/cache/cleanup", json=FakeRequest.payload, headers=headers)
+    assert dashboard_conflict["status"] == flask_conflict.status_code == 409
+
+    FakeRequest.query = {}
+    dashboard_unsupported = asyncio.run(api.page_assets_export())
+    flask_unsupported = flask_client.get("/api/assets/export", headers=headers)
+    assert dashboard_unsupported["status"] == flask_unsupported.status_code == 501
+
+    assert flask_client.get("/api/records").status_code == 401
+    auth = asyncio.run(api.page_auth_check())
+    assert auth["data"]["data"] == {"authorized": True, "source": "dashboard"}
 
 
 def test_flask_registers_every_task_cancel_alias() -> None:

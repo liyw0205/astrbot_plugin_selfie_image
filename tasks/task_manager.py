@@ -39,6 +39,14 @@ class WebTaskMixin:
         "expired",
     }
 
+    _TASK_NOTIFICATION_STATUSES = {
+        "pending",
+        "sent",
+        "failed",
+        "unknown",
+        "not_sent",
+    }
+
     def _normalize_web_image_count(self, value: Any = 1) -> int:
         """Clamp Web image batches to the same configured limit as commands."""
         try:
@@ -378,6 +386,50 @@ class WebTaskMixin:
             task["updated_at"] = self._web_task_timestamp()
             self._prune_web_tasks_locked()
             self._persist_web_tasks_locked()
+
+    def _set_task_notification_status(
+        self,
+        task_id: str,
+        status: str,
+        reason: str = "",
+    ) -> None:
+        """Persist the user-facing delivery outcome for a command task.
+
+        Generation and message delivery are separate outcomes. Keeping this
+        marker on the task snapshot lets the task center explain a successful
+        generation whose notification failed (or whose receipt is unknown)
+        without inferring it from a terminal generation status.
+        """
+        normalized = str(status or "").strip().lower()
+        if normalized not in self._TASK_NOTIFICATION_STATUSES:
+            normalized = "unknown"
+        tid = str(task_id or "").strip()
+        if not tid:
+            return
+        with self._web_task_lock:
+            task = self._web_tasks.get(tid)
+            if not isinstance(task, dict):
+                return
+            previous = str(task.get("user_notification_status") or "").strip().lower()
+            # A late fallback message must not turn an already recorded
+            # transport failure into an indeterminate state.
+            if normalized == "unknown" and previous in {"failed", "not_sent"}:
+                return
+            task["user_notification_status"] = normalized
+            task["user_notification_reason"] = redact_sensitive_text(str(reason or ""))[:320]
+            now = time.time()
+            task["updated_ts"] = now
+            task["updated_at"] = self._web_task_timestamp()
+            self._persist_web_tasks_locked()
+
+    def _task_notification_status(self, task_id: str) -> str:
+        """Read the persisted notification marker without exposing task data."""
+        tid = str(task_id or "").strip()
+        if not tid:
+            return ""
+        with self._web_task_lock:
+            task = self._web_tasks.get(tid)
+            return str(task.get("user_notification_status") or "").strip().lower() if isinstance(task, dict) else ""
 
     def get_web_image_task(self, task_id: str) -> Dict[str, Any]:
         with self._web_task_lock:

@@ -789,6 +789,27 @@ class SelfieImagePlugin(
         except Exception as exc:
             logger.warning(f"[SelfieImage] 发送进度消息失败: {exc}")
 
+    async def _send_task_notification(
+        self,
+        task_id: str,
+        event: AstrMessageEvent,
+        text: str,
+    ) -> bool:
+        """Send a terminal task message and persist its delivery outcome."""
+        try:
+            await event.send(event.plain_result(text))
+        except Exception as exc:
+            reason = redact_sensitive_text(str(exc))[:320]
+            setter = getattr(self, "_set_task_notification_status", None)
+            if callable(setter):
+                setter(task_id, "failed", reason)
+            logger.warning(f"[SelfieImage] 任务 {task_id} 通知发送失败: {exc}")
+            return False
+        setter = getattr(self, "_set_task_notification_status", None)
+        if callable(setter):
+            setter(task_id, "sent")
+        return True
+
     def _build_progress_text(self, kind: str, user_request: str, count: int, ack_message: str = "") -> str:
         if kind == "selfie":
             return self._selfie_ack_text(user_request, count, ack_message)
@@ -2648,6 +2669,8 @@ class SelfieImagePlugin(
                 "quota_released": not bool(reserved_count),
                 "quota_released_ts": now if not reserved_count else None,
                 "quota_error": quota_error,
+                "user_notification_status": "pending",
+                "user_notification_reason": "",
                 **self._task_runtime_defaults(),
                 **self._task_progress_defaults(requested_count),
                 "generation_stage": "preflight",
@@ -3059,10 +3082,7 @@ class SelfieImagePlugin(
             return {"success": False, "error": "任务已取消", "cancelled": True}
         if not result.get("success"):
             error = self._friendly_user_error_message(str(result.get("error") or ""), "视频没有完成")
-            try:
-                await event.send(event.plain_result(error))
-            except Exception:
-                pass
+            await self._send_task_notification(task_id, event, error)
             return result
         path = str(result.get("video_path") or "")
         used = str(result.get("used_model") or "")
@@ -3075,12 +3095,10 @@ class SelfieImagePlugin(
         caption = " ".join(bits)
         try:
             await self._send_generated_video(event, path, caption=caption)
+            self._set_task_notification_status(task_id, "sent")
         except Exception as exc:
             logger.warning(f"[SelfieImage] 发送视频失败，尝试仅回路径: {exc}")
-            try:
-                await event.send(event.plain_result(f"{caption}\n文件：{path}"))
-            except Exception:
-                pass
+            await self._send_task_notification(task_id, event, f"{caption}\n文件：{path}")
             mark_delivery = getattr(self, "_mark_task_records_delivery", None)
             if callable(mark_delivery):
                 await mark_delivery(
@@ -3288,10 +3306,7 @@ class SelfieImagePlugin(
             )
             if not result.get("success"):
                 error = self._friendly_user_error_message(str(result.get("error") or ""), "视频没有完成")
-                try:
-                    await event.send(event.plain_result(error))
-                except Exception:
-                    pass
+                await self._send_task_notification(task_id, event, error)
                 return result
             path = str(result.get("video_path") or "")
             used = str(result.get("used_model") or "")
@@ -3303,11 +3318,9 @@ class SelfieImagePlugin(
                 bits.append(f"模型 {used}")
             try:
                 await self._send_generated_video(event, path, caption=" ".join(bits))
+                self._set_task_notification_status(task_id, "sent")
             except Exception as exc:
-                try:
-                    await event.send(event.plain_result(f"{' '.join(bits)}\n文件：{path}"))
-                except Exception:
-                    pass
+                await self._send_task_notification(task_id, event, f"{' '.join(bits)}\n文件：{path}")
                 mark_delivery = getattr(self, "_mark_task_records_delivery", None)
                 if callable(mark_delivery):
                     await mark_delivery(
@@ -3526,6 +3539,7 @@ class SelfieImagePlugin(
                 stage="cancelled",
             )
             self._release_quota_reservation(task_id)
+            self._set_task_notification_status(task_id, "not_sent", "任务在开始生成前已取消")
             self._set_web_image_task(
                 task_id,
                 status="cancelled",
@@ -3568,6 +3582,16 @@ class SelfieImagePlugin(
             delivery_failed = terminal["delivery_failed"]
             error = redact_sensitive_text(terminal["error"])
             _cancelled_result = terminal["cancelled_result"]
+            notification_status = self._task_notification_status(task_id)
+            if delivery_unknown:
+                self._set_task_notification_status(task_id, "unknown", "消息投递结果未知")
+            elif _cancelled_result:
+                self._set_task_notification_status(task_id, "not_sent", "任务已取消，未发送生成结果")
+            elif notification_status in {"", "pending"}:
+                # Compatibility runners may finish without owning a message
+                # transport. Do not claim delivery succeeded without a send
+                # result recorded by the runner.
+                self._set_task_notification_status(task_id, "unknown", "任务完成但未收到消息投递回执")
             # Record writes run in a worker thread. Publish the terminal task
             # state only after those writes finish so record_ids are visible
             # immediately when a user opens task details.
@@ -3630,6 +3654,7 @@ class SelfieImagePlugin(
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
             )
+            self._set_task_notification_status(task_id, "not_sent", "任务执行被取消")
             return
         except Exception as exc:
             error = redact_sensitive_text(str(exc))
@@ -3671,17 +3696,14 @@ class SelfieImagePlugin(
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
             )
-            try:
-                await event.send(
-                    event.plain_result(
-                        self._friendly_user_error_message(
-                            error,
-                            "视频没有完成" if is_video else "生图没有完成",
-                        )
-                    )
-                )
-            except Exception as send_exc:
-                logger.warning(f"[SelfieImage] 后台任务失败通知发送失败: {send_exc}")
+            await self._send_task_notification(
+                task_id,
+                event,
+                self._friendly_user_error_message(
+                    error,
+                    "视频没有完成" if is_video else "生图没有完成",
+                ),
+            )
         finally:
             self._release_quota_reservation(task_id)
 
@@ -3970,10 +3992,7 @@ class SelfieImagePlugin(
                         skip_max=skip_max,
                         will_continue=will_continue,
                     )
-                    try:
-                        await event.send(event.plain_result(msg))
-                    except Exception:
-                        pass
+                    await self._send_task_notification(task_id, event, msg)
                     if not will_continue:
                         stop = True
                         failed_at = index + 1
@@ -4010,6 +4029,11 @@ class SelfieImagePlugin(
                         delivery_unknown = False
                         delivery_failed_shots += len(files) - sent_count
                         delivery_error = "部分生成结果发送失败，请在记录或失败图片入口重试"
+                    self._set_task_notification_status(
+                        task_id,
+                        "unknown" if delivery_unknown else "sent" if delivered else "failed",
+                        "消息投递结果未知" if delivery_unknown else delivery_error if not delivered else "",
+                    )
                     wait_commits = getattr(self, "_wait_for_record_commits", None)
                     update_delivery = getattr(self, "_update_generation_records_delivery", None)
                     if callable(wait_commits):
@@ -4030,10 +4054,7 @@ class SelfieImagePlugin(
                     total,
                 )
                 if info:
-                    try:
-                        await event.send(event.plain_result(info))
-                    except Exception:
-                        pass
+                    await self._send_task_notification(task_id, event, info)
 
         await asyncio.gather(*(one(i) for i in range(total)))
         if cancelled:
