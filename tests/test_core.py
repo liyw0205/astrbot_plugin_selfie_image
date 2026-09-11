@@ -9076,6 +9076,20 @@ class LegFocusTests(unittest.TestCase):
             {item["id"] for item in plugin_main.match_cos_look_sets("COS 10 纳西妲 特殊预设")},
             {"nahida_floating_dream"},
         )
+        nahida = next(item for item in plugin_main.COS_LOOK_SETS if item["id"] == "nahida_floating_dream")
+        self.assertEqual(nahida["cos_type"], "原神")
+        last_id = ""
+        for _ in range(10):
+            action = plugin_main.build_cos_look_action(
+                "纳西妲 特殊预设",
+                False,
+                avoid_id=last_id,
+                match_query="COS 10 纳西妲 特殊预设",
+            )
+            marker = re.search(r"【cos:([a-z0-9_]+)】", action)
+            self.assertIsNotNone(marker, action)
+            self.assertEqual(marker.group(1), "nahida_floating_dream", action)
+            last_id = marker.group(1)
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("Honor of Kings")},
             series_ids,

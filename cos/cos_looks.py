@@ -498,17 +498,17 @@ COS_LOOK_CATEGORY_TERMS = (
     "洛丽塔", "花嫁", "围裙", "白熊", "和风", "荷叶裙", "兜兜", "袴裙",
 )
 
-# Series are kept separately from outfit categories so a query such as
-# ``永劫无间 20 特殊预设`` narrows the pool without treating the count or
-# preset alias as an outfit name.  Aliases are intentionally conservative:
-# unknown series must not silently fall back to the entire COS pool.
-COS_LOOK_SERIES_ALIASES: Dict[str, tuple[str, ...]] = {
+# Every outfit is stored in one catalog.  ``cos_type`` identifies the source
+# game/series while title segments identify the character and look.  Keep the
+# old series name as an API alias for dashboard and plugin compatibility.
+COS_LOOK_TYPE_ALIASES: Dict[str, tuple[str, ...]] = {
     "王者荣耀": ("王者荣耀", "王者", "honorofkings", "hok"),
     "永劫无间": ("永劫无间", "永劫", "naraka", "narakabladepoint"),
     "原神": ("原神", "genshin", "genshinimpact"),
     "绝区零": ("绝区零", "zenless", "zenlesszonezero", "zzz"),
     "鸣潮": ("鸣潮", "wuthering", "wutheringwaves", "wuwa"),
 }
+COS_LOOK_SERIES_ALIASES = COS_LOOK_TYPE_ALIASES
 COS_LOOK_SERIES_MARKERS = ("系列", "作品", "游戏")
 # ``COS`` can remain in adapter fallback arguments when the command prefix is
 # parsed separately. It is a mode marker, not an outfit/character term.
@@ -521,7 +521,7 @@ def _compact_cos_match(value: str, separators: str) -> str:
 
 
 def _cos_item_series(item: Mapping[str, Any]) -> str:
-    explicit = str(item.get("series") or "").strip()
+    explicit = str(item.get("cos_type") or item.get("series") or "").strip()
     if explicit in COS_LOOK_SERIES_ALIASES:
         return explicit
     prompt = str(item.get("prompt") or "")
@@ -530,6 +530,16 @@ def _cos_item_series(item: Mapping[str, Any]) -> str:
         if f"《{series}》" in prompt or series in title:
             return series
     return ""
+
+
+def _populate_cos_type_fields() -> None:
+    """Materialize the type field for legacy entries in the single catalog."""
+    for item in COS_LOOK_SETS:
+        if str(item.get("cos_type") or "").strip():
+            continue
+        cos_type = _cos_item_series(item)
+        if cos_type:
+            item["cos_type"] = cos_type
 
 
 COS_LOOK_CATEGORY_ORDER = (
@@ -602,6 +612,7 @@ def _sort_cos_look_sets() -> None:
     COS_LOOK_SETS[:] = [item for _, item in original_items]
 
 
+_populate_cos_type_fields()
 _sort_cos_look_sets()
 
 
@@ -642,6 +653,11 @@ def _cos_item_terms(item: Mapping[str, Any]) -> List[str]:
         part = part.strip().lower()
         if len(part) >= 2 or (len(part) == 1 and "\u4e00" <= part <= "\u9fff"):
             terms.append(part)
+    # Explicit metadata is part of the same catalog matcher.  This also
+    # supports future types that are not in the built-in alias table.
+    cos_type = str(item.get("cos_type") or item.get("series") or "").strip().lower()
+    if cos_type:
+        terms.append(cos_type)
     for term in COS_LOOK_CATEGORY_TERMS:
         if term in title:
             terms.append(term.lower())
@@ -805,6 +821,7 @@ def list_cos_look_sets() -> List[Dict[str, Any]]:
             "id": str(item.get("id") or "").strip(),
             "title": str(item.get("title") or "").strip(),
             "prompt": str(item.get("prompt") or "").strip(),
+            "cos_type": str(item.get("cos_type") or _cos_item_series(item)).strip(),
             "series": _cos_item_series(item),
             "series_aliases": list(COS_LOOK_SERIES_ALIASES.get(_cos_item_series(item), ())),
             "compatibility": cos_look_compatibility(str(item.get("id") or "")),
