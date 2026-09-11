@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import logging
 import time
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional
@@ -18,6 +19,9 @@ from ..core.utils import (
 )
 from ..generation.generation_results import build_task_terminal_state
 from .task_views import task_source_label
+
+
+logger = logging.getLogger(__name__)
 
 
 class WebTaskMixin:
@@ -96,7 +100,7 @@ class WebTaskMixin:
             return {}
         raw_tasks = data.get("tasks") if isinstance(data.get("tasks"), dict) else {}
         tasks: Dict[str, Dict[str, Any]] = {}
-        expired_on_start = False
+        changed_on_start = False
         for task_id, raw in raw_tasks.items():
             if not isinstance(raw, dict):
                 continue
@@ -104,15 +108,38 @@ class WebTaskMixin:
             task["task_id"] = str(task.get("task_id") or task_id)
             for key, value in self._task_runtime_defaults().items():
                 task.setdefault(key, value)
+            try:
+                quota_reserved = max(0, int(task.get("quota_reserved") or 0))
+            except (TypeError, ValueError):
+                quota_reserved = 0
+                task["quota_reserved"] = 0
+                task["quota_released"] = True
+                task["quota_released_ts"] = time.time()
+                changed_on_start = True
             if task.get("status") in {"queued", "running"}:
                 task["status"] = "expired"
                 task["success"] = False
                 task["error"] = "插件重启后未恢复该任务，请重新提交"
                 task["finished_ts"] = time.time()
                 task["finished_at"] = self._web_task_timestamp()
-                expired_on_start = True
+                # A quota reservation lives only in the running process.  A
+                # restart cannot resume the worker, so release the persisted
+                # marker together with the expired task snapshot.
+                if quota_reserved > 0:
+                    task["quota_reserved"] = 0
+                task["quota_released"] = True
+                task["quota_released_ts"] = task["finished_ts"]
+                changed_on_start = True
+            elif quota_reserved > 0:
+                # Older versions could leave a reservation marker on a
+                # terminal task after a process crash.  It must not block a
+                # user's next request after restart.
+                task["quota_reserved"] = 0
+                task["quota_released"] = True
+                task["quota_released_ts"] = time.time()
+                changed_on_start = True
             tasks[task["task_id"]] = task
-        if expired_on_start:
+        if changed_on_start:
             save_json_file(self.tasks_path, {"tasks": tasks})
         return tasks
 
@@ -120,6 +147,107 @@ class WebTaskMixin:
         path = str(getattr(self, "tasks_path", "") or "").strip()
         if path:
             save_json_file(path, {"tasks": self._web_tasks})
+
+    def reconcile_expired_tasks_after_restart(self) -> int:
+        """Create one inspectable record for each task abandoned by a restart.
+
+        Queued workers cannot be resumed safely because provider requests and
+        outbound delivery receipts are not durable.  The task is therefore
+        marked ``expired`` on load; this method links that decision to the
+        generation record store exactly once so task history and record
+        history do not disagree about what happened.
+        """
+        records = getattr(self, "_records", None)
+        records_lock = getattr(self, "_records_lock", None)
+        record_task = getattr(self, "_record_task", None)
+        if not isinstance(records, list) or records_lock is None or not callable(record_task):
+            return 0
+        with records_lock:
+            existing_ids = {
+                str(row.get("task_id") or "").strip()
+                for row in records
+                if isinstance(row, Mapping) and str(row.get("task_id") or "").strip()
+            }
+        with self._web_task_lock:
+            candidates = [
+                copy.deepcopy(task)
+                for task in self._web_tasks.values()
+                if isinstance(task, dict)
+                and str(task.get("status") or "").strip().lower() == "expired"
+                and not bool(task.get("restart_reconciled"))
+            ]
+        reconciled = 0
+        for task in candidates:
+            task_id = str(task.get("task_id") or "").strip()
+            if not task_id:
+                continue
+            if task_id not in existing_ids:
+                request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
+                request = dict(request)
+                for key in ("images", "image", "_task_id", "api_key", "api_keys"):
+                    request.pop(key, None)
+                media_type = self._task_media_type(task)
+                source = str(task.get("source") or "restart-recovery").strip()
+                prompt = str(
+                    request.get("original_prompt")
+                    or request.get("prompt")
+                    or request.get("action")
+                    or ""
+                ).strip()
+                try:
+                    reference_images = max(0, int(request.get("raw_reference_image_count") or 0))
+                except (TypeError, ValueError):
+                    reference_images = 0
+                error = str(task.get("error") or "插件重启后未恢复该任务，请重新提交")
+                record = {
+                    "source": source,
+                    "source_label": task_source_label(task),
+                    "media_type": media_type,
+                    "success": False,
+                    "generation_success": False,
+                    "delivery_success": None,
+                    "status": "expired",
+                    "cancelled": False,
+                    "error": error,
+                    "prompt": prompt,
+                    "original_prompt": prompt,
+                    "request_prompt": prompt,
+                    "final_prompt": prompt,
+                    "used_model": str(request.get("model") or ""),
+                    "elapsed_seconds": 0,
+                    "reference_images": reference_images,
+                    "request_data": redact_sensitive_data({**request, "stage": "restart_recovery", "task_id": task_id}),
+                    "response_data": redact_sensitive_data(
+                        {
+                            "success": False,
+                            "status": "expired",
+                            "stage": "restart_recovery",
+                            "error": error,
+                            "notification_status": "not_sent",
+                        }
+                    ),
+                    "request_image_paths": [],
+                    "generated_image_paths": [],
+                    "generated_video_paths": [],
+                    "attempts": [],
+                    "retry_count": 0,
+                    "retry_exhausted": False,
+                    "task_id": task_id,
+                }
+                try:
+                    record_task(record)
+                    existing_ids.add(task_id)
+                except Exception as exc:
+                    logger.warning("[SelfieImage] 重启任务 %s 的过期记录落库失败: %s", task_id, exc)
+                    continue
+            self._set_web_image_task(
+                task_id,
+                restart_reconciled=True,
+                user_notification_status="not_sent",
+                user_notification_reason="插件重启时无法发送历史任务通知",
+            )
+            reconciled += 1
+        return reconciled
 
     def _request_fingerprint(
         self, payload: Mapping[str, Any], owner_session: str = ""
@@ -419,6 +547,12 @@ class WebTaskMixin:
             "delivery_unknown",
             "delivery_failed",
             "delivery_error",
+            "quota_reserved",
+            "quota_released",
+            "quota_released_ts",
+            "restart_reconciled",
+            "user_notification_status",
+            "user_notification_reason",
         )
         row = {key: task.get(key) for key in public_keys if key in task}
         row.update(

@@ -11,8 +11,6 @@ import os
 from pathlib import Path
 import re
 import threading
-import time
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 from ..core.utils import (
@@ -23,8 +21,17 @@ from ..core.utils import (
     redact_sensitive_text,
 )
 from ..generation.generation_records import metric_window_seconds
-from ..generation.generation_records import build_record_scope_stats
 from .contracts import TASK_CANCEL_ROUTE_ALIASES
+from .services import (
+    WebContractError,
+    build_health_payload,
+    filter_record_page,
+    normalize_task_ids,
+    parse_query_bool,
+    parse_task_query,
+    record_matches_query as shared_record_matches_query,
+    validate_task_id,
+)
 
 
 try:
@@ -223,91 +230,17 @@ class FlaskWebServer:
             return min(value, maximum), None
 
         def record_matches_query(record: Any, source: str, model: str, success: str, keyword: str, media_type: str = "") -> bool:
-            if not isinstance(record, dict):
-                return False
-            if media_type and str(record.get("media_type") or "image").strip().lower() != media_type:
-                return False
-            if source:
-                source_text = " ".join(
-                    str(record.get(key) or "")
-                    for key in ("source_label", "source", "group_id", "user_id")
-                ).lower()
-                if source not in source_text:
-                    return False
-            if model and model not in str(record.get("used_model") or "").lower():
-                return False
-            if success:
-                expected = success in {"1", "true", "yes", "ok", "success", "succeeded", "成功"}
-                if bool(record.get("success")) is not expected:
-                    return False
-            if keyword:
-                text = " ".join(
-                    str(record.get(key) or "")
-                    for key in (
-                        "source",
-                        "source_label",
-                        "used_model",
-                        "error",
-                        "failure_reason",
-                        "original_prompt",
-                        "request_prompt",
-                        "group_id",
-                        "user_id",
-                    )
-                ).lower()
-                if keyword not in text:
-                    return False
-            return True
+            return shared_record_matches_query(record, source, model, success, keyword, media_type)
 
         def query_bool(value: Any) -> Optional[bool]:
-            lowered = str(value or "").strip().lower()
-            if not lowered:
-                return None
-            if lowered in {"1", "true", "yes", "on", "是", "开启"}:
-                return True
-            if lowered in {"0", "false", "no", "off", "否", "关闭"}:
-                return False
-            return None
+            return parse_query_bool(value)
 
         def filtered_record_payload(records: list[Any]) -> Any:
-            source = str(request.args.get("source") or "").strip().lower()
-            model = str(request.args.get("model") or "").strip().lower()
-            media_type = str(request.args.get("media_type") or "").strip().lower()
-            if media_type not in {"", "image", "video"}:
-                return None, None, fail("media_type 必须是 image 或 video", 400)
-            success = str(request.args.get("success") or "").strip().lower()
-            favorite = query_bool(request.args.get("favorite"))
-            pinned = query_bool(request.args.get("pinned"))
-            tag = str(request.args.get("tag") or "").strip().lower()
-            keyword = str(request.args.get("q") or request.args.get("keyword") or "").strip().lower()
-            if success and success not in {"1", "0", "true", "false", "yes", "no", "ok", "success", "succeeded", "failed", "失败", "成功"}:
-                return None, None, fail("success 必须是 true 或 false", 400)
-
-            offset, error_response = int_query_arg("offset", 0, 0, 10000)
-            if error_response:
-                return None, None, error_response
-            default_limit = min(MAX_RECORD_PAGE_LIMIT, len(records))
-            limit, error_response = int_query_arg("limit", default_limit, 1, MAX_RECORD_PAGE_LIMIT)
-            if error_response:
-                return None, None, error_response
-
-            filtered = [
-                record
-                for record in records
-                if record_matches_query(record, source, model, success, keyword, media_type)
-                and (favorite is None or bool(record.get("favorite")) is favorite)
-                and (pinned is None or bool(record.get("pinned")) is pinned)
-                and (not tag or tag in {str(item).strip().lower() for item in (record.get("tags") or [])})
-            ]
-            page = filtered[offset : offset + limit]
-            meta = {
-                "total": len(records),
-                "filtered": len(filtered),
-                "offset": offset,
-                "limit": limit,
-                "scope_stats": build_record_scope_stats(filtered),
-            }
-            return page, meta, None
+            try:
+                page, meta = filter_record_page(records, request.args)
+                return page, meta, None
+            except WebContractError as exc:
+                return None, None, fail(str(exc), exc.status_code)
 
         def token_candidates_from_request() -> list[str]:
             tokens: list[str] = []
@@ -359,27 +292,7 @@ class FlaskWebServer:
         def health() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            stats = getattr(self.plugin, "_cache_stats", None)
-            cache_bytes, cache_count = stats() if callable(stats) else (self.plugin._cache_size_bytes(), 0)
-            get_health = getattr(self.plugin, "get_channel_health", None)
-            get_preview = getattr(self.plugin, "get_cache_cleanup_preview", None)
-            return ok(
-                {
-                    "status": "ok",
-                    "config_path": getattr(self.plugin, "config_path", ""),
-                    "records_path": getattr(self.plugin, "records_path", ""),
-                    "records_db_path": getattr(self.plugin, "records_db_path", ""),
-                    "media_sources_dir": getattr(self.plugin, "media_sources_dir", ""),
-                    "cache_dir": getattr(self.plugin, "generated_dir", ""),
-                    "cache_size_mb": round(float(cache_bytes) / 1024 / 1024, 2),
-                    "cache_file_count": cache_count,
-                    "cache_limit_mb": getattr(self.plugin.config, "image_cache_limit_mb", 200),
-                    "cache_limit_count": getattr(self.plugin.config, "image_cache_limit_count", 100),
-                    "channel_health": get_health() if callable(get_health) else {},
-                    "cache_cleanup_preview": get_preview() if callable(get_preview) else {},
-                    "dashboard_page": dashboard_page_source_status(),
-                }
-            )
+            return ok(build_health_payload(self.plugin, dashboard_page_source_status()))
 
         @app.route("/api/metrics", methods=["GET"])
         def metrics() -> Any:
@@ -402,82 +315,12 @@ class FlaskWebServer:
         def tasks() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            media_type = str(request.args.get("media_type") or "").strip().lower()
-            if media_type not in {"", "image", "video"}:
-                return fail("media_type 必须是 image 或 video", 400)
-            include_finished = str(request.args.get("include_finished") or "").strip().lower() in {"1", "true", "yes", "on"}
-            status_query = str(request.args.get("status") or "").strip().lower()
-            valid_statuses = {
-                "queued", "running", "succeeded", "partial_success", "failed",
-                "delivery_failed", "cancelled", "expired",
-            }
-            if status_query:
-                requested_statuses = {item.strip() for item in status_query.split(",") if item.strip()}
-                if requested_statuses - valid_statuses:
-                    return fail("status 包含不支持的任务状态", 400)
-            raw_limit = str(request.args.get("limit") or "50").strip()
             try:
-                limit = int(raw_limit)
-            except ValueError:
-                return fail("limit 必须是整数", 400)
-            if limit < 1:
-                return fail("limit 不能小于 1", 400)
-            if limit > MAX_TASK_PAGE_LIMIT:
-                return fail(f"limit 不能大于 {MAX_TASK_PAGE_LIMIT}", 400)
-            raw_offset = str(request.args.get("offset") or "0").strip()
-            try:
-                offset = int(raw_offset)
-            except ValueError:
-                return fail("offset 必须是整数", 400)
-            if offset < 0:
-                return fail("offset 不能小于 0", 400)
-            if offset > MAX_TASK_OFFSET:
-                return fail(f"offset 不能大于 {MAX_TASK_OFFSET}", 400)
-            def parse_timestamp(name: str, *, end_of_day: bool = False) -> tuple[Optional[float], Optional[Any]]:
-                raw = str(request.args.get(name) or "").strip()
-                if not raw:
-                    return None, None
-                try:
-                    if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
-                        parsed = datetime.strptime(raw, "%Y-%m-%d")
-                        if end_of_day:
-                            parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
-                        return time.mktime(parsed.timetuple()) + parsed.microsecond / 1_000_000, None
-                    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                    if parsed.tzinfo is None:
-                        return time.mktime(parsed.timetuple()) + parsed.microsecond / 1_000_000, None
-                    return parsed.astimezone(timezone.utc).timestamp(), None
-                except (TypeError, ValueError):
-                    return None, fail(f"{name} 必须是 YYYY-MM-DD 或 ISO 时间", 400)
-
-            start_ts, parse_error = parse_timestamp("start_date")
-            if parse_error:
-                return parse_error
-            end_ts, parse_error = parse_timestamp("end_date", end_of_day=True)
-            if parse_error:
-                return parse_error
-            task_kwargs = {
-                "include_finished": include_finished,
-                "limit": limit,
-                "offset": offset,
-                "media_type": media_type,
-            }
-            optional_filters = {
-                "source": str(request.args.get("source") or ""),
-                "status": str(request.args.get("status") or ""),
-                "model": str(request.args.get("model") or ""),
-                "keyword": str(request.args.get("q") or request.args.get("keyword") or ""),
-            }
-            for key, value in optional_filters.items():
-                if value.strip():
-                    task_kwargs[key] = value
-            if start_ts is not None:
-                task_kwargs["start_ts"] = start_ts
-            if end_ts is not None:
-                task_kwargs["end_ts"] = end_ts
-            try:
+                task_kwargs = parse_task_query(request.args)
                 data = self.plugin.list_web_tasks(**task_kwargs)
                 return ok(redact_sensitive_data(data))
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
             except Exception as exc:
                 return fail(str(exc), 400)
 
@@ -485,9 +328,10 @@ class FlaskWebServer:
         def task_detail(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            task_id_text = str(task_id or "").strip()
-            if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
-                return fail("非法任务 ID", 400)
+            try:
+                task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
             try:
                 getter = getattr(self.plugin, "get_web_task_detail", None)
                 data = getter(task_id_text) if callable(getter) else self.plugin.get_web_image_task(task_id_text)
@@ -496,17 +340,7 @@ class FlaskWebServer:
                 return fail(str(exc), 404)
 
         def task_ids_from_payload(payload: Any) -> tuple[Optional[list[str]], Optional[str]]:
-            raw = (payload or {}).get("ids", (payload or {}).get("task_ids")) if isinstance(payload, dict) else None
-            if not isinstance(raw, list):
-                return None, "ids 必须是数组"
-            ids = list(dict.fromkeys(str(item or "").strip() for item in raw if str(item or "").strip()))
-            if not ids:
-                return None, "至少选择一条任务"
-            if len(ids) > 200:
-                return None, "单次最多操作 200 条任务"
-            if any(len(task_id) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id) for task_id in ids):
-                return None, "包含非法任务 ID"
-            return ids, None
+            return normalize_task_ids(payload, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
 
         @app.route("/api/tasks/export", methods=["GET"])
         def tasks_export() -> Any:
@@ -514,11 +348,14 @@ class FlaskWebServer:
                 return fail("Unauthorized: Token 不正确", 401)
             raw_ids = str(request.args.get("ids") or "").strip()
             ids = [item.strip() for item in raw_ids.split(",") if item.strip()] if raw_ids else None
-            if ids is not None and (
-                len(ids) > 200
-                or any(len(task_id) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id) for task_id in ids)
-            ):
-                return fail("包含非法任务 ID", 400)
+            if ids is not None:
+                if len(ids) > 200:
+                    return fail("包含非法任务 ID", 400)
+                try:
+                    for task_id in ids:
+                        validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+                except WebContractError as exc:
+                    return fail("包含非法任务 ID", exc.status_code)
             exporter = getattr(self.plugin, "export_web_tasks", None)
             if not callable(exporter):
                 return fail("当前版本不支持任务导出", 501)
@@ -670,9 +507,10 @@ class FlaskWebServer:
         def test_image_channel_task_status(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            task_id_text = str(task_id or "").strip()
-            if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
-                return fail("非法任务 ID", 400)
+            try:
+                task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
             try:
                 return ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
             except Exception as exc:
@@ -681,9 +519,10 @@ class FlaskWebServer:
         def cancel_generation_task(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            task_id_text = str(task_id or "").strip()
-            if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
-                return fail("非法任务 ID", 400)
+            try:
+                task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
             try:
                 task = self.plugin.get_web_image_task(task_id_text)
                 if str(task.get("status") or "") not in {"queued", "running"}:
@@ -723,9 +562,10 @@ class FlaskWebServer:
         def test_video_channel_task_status(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            task_id_text = str(task_id or "").strip()
-            if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
-                return fail("非法任务 ID", 400)
+            try:
+                task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
             try:
                 return ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
             except Exception as exc:
@@ -1233,9 +1073,10 @@ class FlaskWebServer:
         def studio_task_status(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            task_id_text = str(task_id or "").strip()
-            if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
-                return fail("非法任务 ID", 400)
+            try:
+                task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
             try:
                 return ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
             except Exception as exc:

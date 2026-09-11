@@ -303,6 +303,11 @@ class SelfieImagePlugin(
         self._web_task_lock = threading.RLock()
         self._web_tasks: Dict[str, Dict[str, Any]] = self._load_web_tasks()
         self._web_task_seq = 0
+        # Reconcile tasks that were persisted as active before a process
+        # restart.  The queue cannot safely resume an in-flight provider
+        # request, so the task loader marks it expired and this pass links a
+        # single durable record for history/retry visibility.
+        self.reconcile_expired_tasks_after_restart()
         self._runtime_generation_tasks: Dict[str, asyncio.Task] = {}
         # 模型选择仅作用于当前会话。
         self._session_model_lock = threading.RLock()
@@ -499,10 +504,35 @@ class SelfieImagePlugin(
     def _release_quota_reservation(self, task_id: str) -> None:
         lock = getattr(self, "_quota_reservation_lock", None)
         reservations = getattr(self, "_quota_reservations", None)
-        if lock is None or reservations is None:
+        released = None
+        if lock is not None and reservations is not None:
+            with lock:
+                released = reservations.pop(str(task_id or ""), None)
+        # Keep the durable task snapshot explicit about quota ownership. This
+        # makes terminal state, restart reconciliation, and quota accounting
+        # observable without exposing the in-memory reservation map.
+        task_lock = getattr(self, "_web_task_lock", None)
+        tasks = getattr(self, "_web_tasks", None)
+        if task_lock is None or not isinstance(tasks, dict):
             return
-        with lock:
-            reservations.pop(str(task_id or ""), None)
+        tid = str(task_id or "").strip()
+        if not tid:
+            return
+        with task_lock:
+            task = tasks.get(tid)
+            if not isinstance(task, dict):
+                return
+            if released is None and not task.get("quota_reserved"):
+                # Already reconciled; avoid a needless write on duplicate
+                # callback execution.
+                if task.get("quota_released"):
+                    return
+            task["quota_reserved"] = 0
+            task["quota_released"] = True
+            task["quota_released_ts"] = time.time()
+            task["updated_ts"] = time.time()
+            task["updated_at"] = self._web_task_timestamp()
+            self._persist_web_tasks_locked()
 
     def _rate_limit_error_message(self, event: AstrMessageEvent) -> str:
         if self._is_whitelisted(event):
@@ -2615,6 +2645,8 @@ class SelfieImagePlugin(
                 "request_fingerprint": fingerprint,
                 "deduplicated": False,
                 "quota_reserved": reserved_count,
+                "quota_released": not bool(reserved_count),
+                "quota_released_ts": now if not reserved_count else None,
                 "quota_error": quota_error,
                 **self._task_runtime_defaults(),
                 **self._task_progress_defaults(requested_count),

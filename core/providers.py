@@ -74,6 +74,17 @@ class ImageGenerateResult:
 
 
 class BaseImageAdapter:
+    """Common transport helpers for image providers.
+
+    This class is intentionally a non-instantiable-by-contract adapter base:
+    it owns request/response plumbing, while ``generate`` is implemented by
+    each provider family (or inherited by a concrete compatibility adapter).
+    Keeping the explicit runtime error preserves helper usage in lightweight
+    integrations while making accidental production construction diagnosable.
+    """
+
+    is_adapter_contract = True
+
     def __init__(self, target: ImageModelTarget, session: aiohttp.ClientSession):
         self.target = target
         self.session = session
@@ -208,6 +219,7 @@ class BaseImageAdapter:
         return ImageGenerateResult(error=f"{prefix}未识别到可下载图片字段。返回预览: {preview}")
 
     async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        """Generate an image; concrete adapters must override this method."""
         raise NotImplementedError(
             "BaseImageAdapter.generate() is an adapter contract; use create_adapter() "
             "to obtain a concrete provider implementation"
@@ -956,23 +968,26 @@ class NovelAIImageAdapter(BaseImageAdapter):
             return ImageGenerateResult(error=str(exc) or "NovelAI 请求失败")
 
 
+IMAGE_ADAPTER_TYPES: Dict[str, type[BaseImageAdapter]] = {
+    "openai": OpenAIImageAdapter,
+    "openai_chat": OpenAIChatImageAdapter,
+    "gemini": GeminiImageAdapter,
+    "gemini_openai": GeminiOpenAIImageAdapter,
+    "z_image_gitee": ZImageAdapter,
+    "jimeng2api": JimengImageAdapter,
+    "grok": GrokImageAdapter,
+    "agnes": AgnesImageAdapter,
+    "novelai": NovelAIImageAdapter,
+}
+
+
 def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> BaseImageAdapter:
-    if target.provider_type == "openai":
-        return OpenAIImageAdapter(target, session)
-    if target.provider_type == "openai_chat":
-        return OpenAIChatImageAdapter(target, session)
-    if target.provider_type == "gemini":
-        return GeminiImageAdapter(target, session)
-    if target.provider_type == "gemini_openai":
-        return GeminiOpenAIImageAdapter(target, session)
-    if target.provider_type == "z_image_gitee":
-        return ZImageAdapter(target, session)
-    if target.provider_type == "jimeng2api":
-        return JimengImageAdapter(target, session)
-    if target.provider_type == "grok":
-        return GrokImageAdapter(target, session)
-    if target.provider_type == "agnes":
-        return AgnesImageAdapter(target, session)
-    if target.provider_type == "novelai":
-        return NovelAIImageAdapter(target, session)
-    raise ValueError(f"未知生图渠道类型: {target.provider_type}")
+    adapter_type = IMAGE_ADAPTER_TYPES.get(target.provider_type)
+    if adapter_type is None:
+        raise ValueError(f"未知生图渠道类型: {target.provider_type}")
+    adapter = adapter_type(target, session)
+    # Fail at the factory boundary if a provider was registered without a
+    # concrete generation implementation, rather than much later in a task.
+    if adapter.__class__.generate is BaseImageAdapter.generate:
+        raise TypeError(f"生图渠道 {target.provider_type} 未实现 generate()")
+    return adapter

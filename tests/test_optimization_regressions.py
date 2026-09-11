@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 import logging
+import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from astrbot_plugin_selfie_image.generation.generation_records import build_record_scope_stats
 from astrbot_plugin_selfie_image.generation.generation_results import (
     resolve_cancel_request,
     result_has_completion_evidence,
+)
+from astrbot_plugin_selfie_image.core.models import ImageModelTarget
+from astrbot_plugin_selfie_image.core.providers import (
+    BaseImageAdapter,
+    IMAGE_ADAPTER_TYPES,
+    create_adapter,
 )
 from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
 from astrbot_plugin_selfie_image.main import SelfieImagePlugin
@@ -18,6 +27,11 @@ from astrbot_plugin_selfie_image.webui.contracts import (
     DASHBOARD_ROUTE_PREFIXES,
     DASHBOARD_TASK_CANCEL_ROUTES,
     TASK_CANCEL_ROUTE_ALIASES,
+)
+from astrbot_plugin_selfie_image.webui.services import (
+    WebContractError,
+    filter_record_page,
+    parse_task_query,
 )
 
 
@@ -149,8 +163,11 @@ def test_web_route_alias_contract_is_shared_by_both_adapters() -> None:
 def test_web_contract_matrix_documents_shared_envelopes_and_host_auth_boundary() -> None:
     flask = (ROOT / "webui" / "web.py").read_text(encoding="utf-8")
     dashboard = (ROOT / "webui" / "dashboard_api.py").read_text(encoding="utf-8")
-    assert '"scope_stats": build_record_scope_stats(filtered)' in flask
-    assert '"scope_stats": build_record_scope_stats(filtered)' in dashboard
+    services = (ROOT / "webui" / "services.py").read_text(encoding="utf-8")
+    assert "filter_record_page" in flask
+    assert "filter_record_page" in dashboard
+    assert "def filter_record_page" in services
+    assert "def parse_task_query" in services
     assert "redact_sensitive_data(data)" in flask
     assert "redact_sensitive_data(data)" in dashboard
     assert 'return fail("当前版本不支持资产导出", 501)' in flask
@@ -163,8 +180,93 @@ def test_web_contract_matrix_documents_shared_envelopes_and_host_auth_boundary()
 
 
 def test_dashboard_query_bounds_match_flask_contract() -> None:
-    dashboard = (ROOT / "webui" / "dashboard_api.py").read_text(encoding="utf-8")
-    assert "不能大于 {maximum}" in dashboard
+    assert parse_task_query({"limit": "200"})["limit"] == 200
+    with pytest.raises(WebContractError, match="不能大于"):
+        parse_task_query({"limit": "201"})
+
+
+def test_shared_web_contract_keeps_flask_and_dashboard_record_scope_identical() -> None:
+    records = [
+        {"success": True, "source": "web", "media_type": "image", "tags": ["keep"]},
+        {"success": False, "source": "cmd", "media_type": "video", "tags": []},
+    ]
+    page, meta = filter_record_page(records, {"success": "true", "tag": "keep"})
+    assert len(page) == 1
+    assert meta["filtered"] == 1
+    assert meta["scope_stats"]["sample_count"] == 1
+
+
+def test_provider_factory_returns_concrete_generate_implementation_for_every_type() -> None:
+    for provider_type, adapter_type in IMAGE_ADAPTER_TYPES.items():
+        target = ImageModelTarget(
+            channel_name="test",
+            provider_type=provider_type,
+            base_url="https://example.test",
+            api_key="test-key",
+            model="test-model",
+            timeout=10,
+        )
+        adapter = create_adapter(target, object())
+        assert isinstance(adapter, adapter_type)
+        assert adapter.__class__.generate is not BaseImageAdapter.generate
+        assert adapter.is_adapter_contract is True
+
+
+def test_restart_reconciliation_links_expired_task_to_one_record() -> None:
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin._web_task_lock = __import__("threading").RLock()
+    plugin._records_lock = __import__("threading").RLock()
+    plugin._web_tasks = {
+        "web-12345678-1": {
+            "task_id": "web-12345678-1",
+            "status": "expired",
+            "error": "插件重启后未恢复该任务，请重新提交",
+            "source": "web-test",
+            "request_data": {"original_prompt": "restart me", "model": "vision-a"},
+        }
+    }
+    plugin._records = []
+    plugin._web_task_timestamp = lambda: "now"
+    plugin._persist_web_tasks_locked = lambda: None
+    plugin._record_task = lambda row: plugin._records.append({"id": "record-1", **row})
+
+    assert plugin.reconcile_expired_tasks_after_restart() == 1
+    assert len(plugin._records) == 1
+    assert plugin._records[0]["task_id"] == "web-12345678-1"
+    assert plugin._records[0]["status"] == "expired"
+    assert plugin._records[0]["response_data"]["notification_status"] == "not_sent"
+    task = plugin._web_tasks["web-12345678-1"]
+    assert task["restart_reconciled"] is True
+    assert task["user_notification_status"] == "not_sent"
+    assert plugin.reconcile_expired_tasks_after_restart() == 0
+
+
+def test_restart_load_releases_persisted_quota_marker() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "generation_tasks.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "tasks": {
+                        "web-12345678-1": {
+                            "task_id": "web-12345678-1",
+                            "status": "running",
+                            "quota_reserved": 3,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        plugin = object.__new__(SelfieImagePlugin)
+        plugin.tasks_path = str(path)
+        plugin._web_task_timestamp = lambda: "now"
+        tasks = plugin._load_web_tasks()
+        task = tasks["web-12345678-1"]
+        assert task["status"] == "expired"
+        assert task["quota_reserved"] == 0
+        assert task["quota_released"] is True
+        assert task["quota_released_ts"]
 
 
 def test_flask_registers_every_task_cancel_alias() -> None:

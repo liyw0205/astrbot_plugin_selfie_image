@@ -7,12 +7,10 @@ from __future__ import annotations
 
 import base64
 import json
-import time
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 from ..core.constants import PLUGIN_NAME
-from ..generation.generation_records import build_record_scope_stats, metric_window_seconds
+from ..generation.generation_records import metric_window_seconds
 from ..core.utils import (
     generation_record_media_sources,
     redact_generation_record,
@@ -32,6 +30,18 @@ from .web import (
     dashboard_page_source_status,
 )
 from .contracts import DASHBOARD_ROUTE_PREFIXES, DASHBOARD_TASK_CANCEL_ROUTES
+from .services import (
+    WebContractError,
+    build_health_payload,
+    filter_record_page,
+    normalize_task_ids,
+    parse_bounded_int,
+    parse_query_bool,
+    parse_task_query,
+    parse_timestamp_query,
+    record_matches_query as shared_record_matches_query,
+    validate_task_id,
+)
 
 try:
     from astrbot.api.web import error_response, file_response, json_response, request
@@ -185,171 +195,36 @@ class SelfieImageDashboardAPI:
         return default if value is None else str(value)
 
     def _int_query(self, name: str, default: int, minimum: int, maximum: int) -> tuple[Optional[int], Any]:
-        raw_value = self._query_value(name, "").strip()
-        if not raw_value:
-            return default, None
         try:
-            value = int(raw_value)
-        except ValueError:
-            return None, self._fail(f"{name} 必须是整数", 400)
-        if value < minimum:
-            return None, self._fail(f"{name} 不能小于 {minimum}", 400)
-        if value > maximum:
-            return None, self._fail(f"{name} 不能大于 {maximum}", 400)
-        return value, None
+            return parse_bounded_int(request.query, name, default, minimum, maximum), None
+        except WebContractError as exc:
+            return None, self._fail(str(exc), exc.status_code)
 
     def _timestamp_query(self, name: str, *, end_of_day: bool = False) -> tuple[Optional[float], Any]:
-        """Parse an ISO date/time filter into a Unix timestamp.
-
-        Date-only values are interpreted in the server's local timezone so a
-        dashboard date range includes the complete selected day.
-        """
-        raw = self._query_value(name, "").strip()
-        if not raw:
-            return None, None
         try:
-            if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
-                parsed = datetime.strptime(raw, "%Y-%m-%d")
-                if end_of_day:
-                    parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
-                return time.mktime(parsed.timetuple()) + parsed.microsecond / 1_000_000, None
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                return time.mktime(parsed.timetuple()) + parsed.microsecond / 1_000_000, None
-            return parsed.astimezone(timezone.utc).timestamp(), None
-        except (TypeError, ValueError):
-            return None, self._fail(f"{name} 必须是 YYYY-MM-DD 或 ISO 时间", 400)
+            return parse_timestamp_query(request.query, name, end_of_day=end_of_day), None
+        except WebContractError as exc:
+            return None, self._fail(str(exc), exc.status_code)
 
     def _record_matches(self, record: Any, source: str, model: str, success: str, keyword: str, media_type: str = "") -> bool:
-        if not isinstance(record, dict):
-            return False
-        if media_type:
-            record_type = str(record.get("media_type") or "image").strip().lower()
-            if record_type != media_type:
-                return False
-        if source:
-            source_text = " ".join(
-                str(record.get(key) or "") for key in ("source_label", "source", "group_id", "user_id")
-            ).lower()
-            if source not in source_text:
-                return False
-        if model and model not in str(record.get("used_model") or "").lower():
-            return False
-        if success:
-            expected = success in {"1", "true", "yes", "ok", "success", "succeeded", "成功"}
-            if bool(record.get("success")) is not expected:
-                return False
-        if keyword:
-            text = " ".join(
-                str(record.get(key) or "")
-                for key in (
-                    "source",
-                    "source_label",
-                    "used_model",
-                    "error",
-                    "failure_reason",
-                    "original_prompt",
-                    "request_prompt",
-                    "group_id",
-                    "user_id",
-                )
-            ).lower()
-            if keyword not in text:
-                return False
-        return True
+        return shared_record_matches_query(record, source, model, success, keyword, media_type)
 
     @staticmethod
     def _query_bool(value: str) -> Optional[bool]:
-        lowered = str(value or "").strip().lower()
-        if not lowered:
-            return None
-        if lowered in {"1", "true", "yes", "on", "是", "开启"}:
-            return True
-        if lowered in {"0", "false", "no", "off", "否", "关闭"}:
-            return False
-        return None
+        return parse_query_bool(value)
 
     def _filtered_records(self, records: list[Any]) -> tuple[Optional[list], Optional[dict], Any]:
-        source = self._query_value("source").strip().lower()
-        model = self._query_value("model").strip().lower()
-        media_type = self._query_value("media_type").strip().lower()
-        if media_type not in {"", "image", "video"}:
-            return None, None, self._fail("media_type 必须是 image 或 video", 400)
-        success = self._query_value("success").strip().lower()
-        favorite = self._query_bool(self._query_value("favorite"))
-        pinned = self._query_bool(self._query_value("pinned"))
-        tag = self._query_value("tag").strip().lower()
-        keyword = (self._query_value("q") or self._query_value("keyword")).strip().lower()
-        if success and success not in {
-            "1",
-            "0",
-            "true",
-            "false",
-            "yes",
-            "no",
-            "ok",
-            "success",
-            "succeeded",
-            "failed",
-            "失败",
-            "成功",
-        }:
-            return None, None, self._fail("success 必须是 true 或 false", 400)
-
-        offset_value, error = self._int_query("offset", 0, 0, 10000)
-        if error or offset_value is None:
-            return None, None, error
-        default_limit = min(MAX_RECORD_PAGE_LIMIT, max(1, len(records) or 1))
-        limit_value, error = self._int_query("limit", default_limit, 1, MAX_RECORD_PAGE_LIMIT)
-        if error or limit_value is None:
-            return None, None, error
-        offset = int(offset_value)
-        limit = int(limit_value)
-
-        filtered = [
-            record
-            for record in records
-            if self._record_matches(record, source, model, success, keyword, media_type)
-            and (favorite is None or bool(record.get("favorite")) is favorite)
-            and (pinned is None or bool(record.get("pinned")) is pinned)
-            and (not tag or tag in {str(item).strip().lower() for item in (record.get("tags") or [])})
-        ]
-        page = filtered[offset : offset + limit]
-        meta = {
-            "total": len(records),
-            "filtered": len(filtered),
-            "offset": offset,
-            "limit": limit,
-            "scope_stats": build_record_scope_stats(filtered),
-        }
-        return page, meta, None
+        try:
+            page, meta = filter_record_page(records, request.query)
+            return page, meta, None
+        except WebContractError as exc:
+            return None, None, self._fail(str(exc), exc.status_code)
 
     async def page_auth_check(self) -> Any:
         return self._ok({"authorized": True, "source": "dashboard"})
 
     async def page_health(self) -> Any:
-        plugin = self.plugin
-        stats = getattr(plugin, "_cache_stats", None)
-        cache_bytes, cache_count = stats() if callable(stats) else (plugin._cache_size_bytes(), 0)
-        get_health = getattr(plugin, "get_channel_health", None)
-        get_preview = getattr(plugin, "get_cache_cleanup_preview", None)
-        return self._ok(
-            {
-                "status": "ok",
-                "config_path": getattr(plugin, "config_path", ""),
-                "records_path": getattr(plugin, "records_path", ""),
-                "records_db_path": getattr(plugin, "records_db_path", ""),
-                "media_sources_dir": getattr(plugin, "media_sources_dir", ""),
-                "cache_dir": getattr(plugin, "generated_dir", ""),
-                "cache_size_mb": round(float(cache_bytes) / 1024 / 1024, 2),
-                "cache_file_count": cache_count,
-                "cache_limit_mb": getattr(plugin.config, "image_cache_limit_mb", 200),
-                "cache_limit_count": getattr(plugin.config, "image_cache_limit_count", 100),
-                "channel_health": get_health() if callable(get_health) else {},
-                "cache_cleanup_preview": get_preview() if callable(get_preview) else {},
-                "dashboard_page": dashboard_page_source_status(),
-            }
-        )
+        return self._ok(build_health_payload(self.plugin, dashboard_page_source_status()))
 
 
     async def page_proxies_list(self) -> Any:
@@ -500,18 +375,20 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
 
     async def page_test_image_task_status(self, task_id: str) -> Any:
-        task_id_text = str(task_id or "").strip()
-        if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
-            return self._fail("非法任务 ID", 400)
+        try:
+            task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         try:
             return self._ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
         except Exception as exc:
             return self._fail(str(exc), 404)
 
     async def page_task_cancel(self, task_id: str) -> Any:
-        task_id_text = str(task_id or "").strip()
-        if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
-            return self._fail("非法任务 ID", 400)
+        try:
+            task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         try:
             task = self.plugin.get_web_image_task(task_id_text)
             if str(task.get("status") or "") not in {"queued", "running"}:
@@ -576,63 +453,23 @@ class SelfieImageDashboardAPI:
 
     async def page_tasks(self) -> Any:
         try:
-            media_type = self._query_value("media_type").strip().lower()
-            if media_type not in {"", "image", "video"}:
-                return self._fail("media_type 必须是 image 或 video", 400)
-            include_finished = self._query_value("include_finished").strip().lower() in {"1", "true", "yes", "on"}
-            status_query = self._query_value("status").strip().lower()
-            valid_statuses = {
-                "queued", "running", "succeeded", "partial_success", "failed",
-                "delivery_failed", "cancelled", "expired",
-            }
-            if status_query:
-                requested_statuses = {item.strip() for item in status_query.split(",") if item.strip()}
-                if requested_statuses - valid_statuses:
-                    return self._fail("status 包含不支持的任务状态", 400)
-            limit, error = self._int_query("limit", 50, 1, MAX_TASK_PAGE_LIMIT)
-            if error or limit is None:
-                return error
-            offset, error = self._int_query("offset", 0, 0, MAX_TASK_OFFSET)
-            if error or offset is None:
-                return error
-            start_ts, error = self._timestamp_query("start_date")
-            if error:
-                return error
-            end_ts, error = self._timestamp_query("end_date", end_of_day=True)
-            if error:
-                return error
-            task_kwargs = {
-                "include_finished": include_finished,
-                "limit": limit,
-                "offset": offset,
-                "media_type": media_type,
-            }
-            optional_filters = {
-                "source": self._query_value("source"),
-                "status": self._query_value("status"),
-                "model": self._query_value("model"),
-                "keyword": self._query_value("q") or self._query_value("keyword"),
-            }
-            for key, value in optional_filters.items():
-                if str(value or "").strip():
-                    task_kwargs[key] = value
-            if start_ts is not None:
-                task_kwargs["start_ts"] = start_ts
-            if end_ts is not None:
-                task_kwargs["end_ts"] = end_ts
+            task_kwargs = parse_task_query(request.query)
             return self._ok(
                 redact_sensitive_data(
                     self.plugin.list_web_tasks(**task_kwargs)
                 )
             )
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
             return self._fail(str(exc), 400)
 
     async def page_task_detail(self, task_id: str) -> Any:
         """Return the redacted task detail used by the embedded dashboard."""
-        task_id_text = str(task_id or "").strip()
-        if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
-            return self._fail("非法任务 ID", 400)
+        try:
+            task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         try:
             getter = getattr(self.plugin, "get_web_task_detail", None)
             data = getter(task_id_text) if callable(getter) else self.plugin.get_web_image_task(task_id_text)
@@ -642,25 +479,19 @@ class SelfieImageDashboardAPI:
 
     @staticmethod
     def _task_ids_from_payload(payload: Any) -> tuple[Optional[list[str]], Any]:
-        raw = (payload or {}).get("ids", (payload or {}).get("task_ids")) if isinstance(payload, dict) else None
-        if not isinstance(raw, list):
-            return None, "ids 必须是数组"
-        ids = list(dict.fromkeys(str(item or "").strip() for item in raw if str(item or "").strip()))
-        if not ids:
-            return None, "至少选择一条任务"
-        if len(ids) > 200:
-            return None, "单次最多操作 200 条任务"
-        for task_id in ids:
-            if len(task_id) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id):
-                return None, "包含非法任务 ID"
-        return ids, None
+        return normalize_task_ids(payload, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
 
     async def page_tasks_export(self) -> Any:
         raw_ids = self._query_value("ids").strip()
         ids = [item.strip() for item in raw_ids.split(",") if item.strip()] if raw_ids else None
         if ids is not None:
-            if len(ids) > 200 or any(len(item) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(item) for item in ids):
+            if len(ids) > 200:
                 return self._fail("包含非法任务 ID", 400)
+            try:
+                for item in ids:
+                    validate_task_id(item, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+            except WebContractError as exc:
+                return self._fail("包含非法任务 ID", exc.status_code)
         try:
             exporter = getattr(self.plugin, "export_web_tasks", None)
             if not callable(exporter):
@@ -920,9 +751,7 @@ class SelfieImageDashboardAPI:
         token = str((payload or {}).get("plan_token") or "").strip()
         try:
             data = cleanup(confirm=confirm, plan_token=token)
-            if not confirm:
-                return self._ok(data)
-            return self._ok(data, message="缓存清理完成")
+            return self._ok(data, message="缓存清理完成" if confirm else "请确认缓存清理")
         except ValueError as exc:
             return self._fail(str(exc), 409)
         except Exception as exc:
@@ -1058,9 +887,10 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
 
     async def page_studio_task(self, task_id: str) -> Any:
-        task_id_text = str(task_id or "").strip()
-        if len(task_id_text) > MAX_WEB_TASK_ID_LENGTH or not WEB_TASK_ID_RE.fullmatch(task_id_text):
-            return self._fail("非法任务 ID", 400)
+        try:
+            task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         try:
             return self._ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
         except Exception as exc:
