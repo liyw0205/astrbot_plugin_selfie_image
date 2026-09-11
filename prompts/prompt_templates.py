@@ -24,6 +24,24 @@ def _join(*parts: str) -> str:
     return "\n".join(str(part).strip() for part in parts if str(part).strip())
 
 
+def append_daily_context_to_english_prompt(english_prompt: str, source_prompt: str) -> str:
+    """Keep daily lines selected by the Chinese builder during EN conversion."""
+    labels = {
+        "今日穿搭": "Today's outfit",
+        "当前时间段": "Current time period",
+        "当前状态": "Current state",
+        "当前心情": "Current mood",
+    }
+    lines = []
+    for source_label, english_label in labels.items():
+        match = re.search(rf"^{re.escape(source_label)}：(.+)$", str(source_prompt or ""), re.M)
+        if match:
+            lines.append(f"{english_label}: {match.group(1).strip()}")
+    if not lines:
+        return str(english_prompt or "").strip()
+    return _join(english_prompt, "Daily context (follow unless the user explicitly overrides it):", *lines)
+
+
 def extract_user_prompt(action: str) -> str:
     """Extract free-form user text from a wrapped selfie action."""
     text = str(action or "").strip()

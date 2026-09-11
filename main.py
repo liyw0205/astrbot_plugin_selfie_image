@@ -1978,7 +1978,11 @@ class SelfieImagePlugin(
         meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
         if not self._prompt_en_needed(action, media="image"):
             return prompt, refs, meta
-        from .prompts.prompt_templates import build_selfie_builtin_prompt, extract_user_prompt
+        from .prompts.prompt_templates import (
+            append_daily_context_to_english_prompt,
+            build_selfie_builtin_prompt,
+            extract_user_prompt,
+        )
 
         user_text = extract_user_prompt(action)
         if not user_text:
@@ -1989,6 +1993,7 @@ class SelfieImagePlugin(
                 extra_reference_count=len(extra_refs),
                 appearance_type=self.persona.get_appearance_type(),
             )
+            english = append_daily_context_to_english_prompt(english, prompt)
             meta.update({"enabled": True, "applied": True, "scope": "builtin_only"})
             return english, refs, meta
         translated, translation_meta = await self._translate_prompt_to_english(
@@ -2008,6 +2013,7 @@ class SelfieImagePlugin(
             appearance_type=self.persona.get_appearance_type(),
             user_text=translated,
         )
+        english = append_daily_context_to_english_prompt(english, prompt)
         return english, refs, meta
 
     def get_selfie_reference_payload(self) -> Dict[str, Any]:

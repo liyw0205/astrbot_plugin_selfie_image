@@ -766,7 +766,11 @@ class StudioMixin:
                 )
                 prompt_en_meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
                 if self._prompt_en_needed(action, media="image"):
-                    from ..prompts.prompt_templates import build_selfie_builtin_prompt, extract_user_prompt
+                    from ..prompts.prompt_templates import (
+                        append_daily_context_to_english_prompt,
+                        build_selfie_builtin_prompt,
+                        extract_user_prompt,
+                    )
 
                     user_text = extract_user_prompt(action)
                     translated_user = ""
@@ -779,6 +783,7 @@ class StudioMixin:
                     else:
                         prompt_en_meta.update({"enabled": True, "applied": True, "scope": "builtin_only"})
                     if prompt_en_meta.get("applied"):
+                        source_prompt = prompt
                         prompt = build_selfie_builtin_prompt(
                             action,
                             language="en",
@@ -787,6 +792,7 @@ class StudioMixin:
                             appearance_type=self.persona.get_appearance_type(),
                             user_text=translated_user,
                         )
+                        prompt = append_daily_context_to_english_prompt(prompt, source_prompt)
             else:
                 user_prompt = action
                 prompt_en_meta = {"enabled": False, "applied": False, "scope": "user_text_only"}

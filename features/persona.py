@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import random
@@ -209,6 +210,29 @@ def extract_user_extra_text(action: str) -> str:
     return re.sub(r"\s+", " ", value).strip(" 。")
 
 
+def extract_user_action_text(action: str) -> str:
+    """Return only user-authored text, excluding generated mode scaffolding."""
+    text = str(action or "").strip()
+    extra = extract_user_extra_text(text)
+    if extra:
+        return extra
+    generated_markers = (
+        "【自拍 / 看看模式】",
+        "【他拍 / 看看你模式】",
+        "【自拍 / 看看COS模式】",
+        "【他拍 / 看看COS模式】",
+        "【合影 / 同框模式】",
+        "【服装局部展示",
+        "【腿部自拍模式】",
+        "【legs:outfit】",
+        "【cos:",
+        "【姿势池·",
+    )
+    if any(marker in text for marker in generated_markers):
+        return ""
+    return text
+
+
 def extra_overrides_outfit(extra: str) -> bool:
     compact = normalize_intent_text(extra)
     return includes_any(
@@ -216,6 +240,7 @@ def extra_overrides_outfit(extra: str) -> bool:
         [
             "穿这",
             "穿那",
+            "身穿",
             "穿上",
             "穿着",
             "换装",
@@ -226,6 +251,13 @@ def extra_overrides_outfit(extra: str) -> bool:
             "黑裙",
             "短裙",
             "长裙",
+            "上衣",
+            "外套",
+            "裤子",
+            "鞋子",
+            "靴子",
+            "发饰",
+            "配饰",
             "旗袍",
             "制服",
             "outfit",
@@ -255,6 +287,20 @@ def extra_overrides_period(extra: str) -> bool:
             "夜晚",
             "深夜",
             "凌晨",
+            "白天",
+            "白昼",
+            "工作日",
+            "周末",
+        ],
+    )
+
+
+def extra_overrides_context(extra: str) -> bool:
+    """Detect an explicit scene or lighting context that replaces daily status."""
+    compact = normalize_intent_text(extra)
+    return includes_any(
+        compact,
+        [
             "霓虹",
             "夜色",
             "夜灯",
@@ -264,11 +310,78 @@ def extra_overrides_period(extra: str) -> bool:
             "夕阳",
             "日出",
             "日落",
+            "暖光",
+            "暖灯",
+            "冷光",
+            "白光",
+            "窗光",
+            "自然光",
+            "柔光",
             "咖啡馆",
+            "咖啡店",
             "街上",
             "街边",
             "室外",
             "户外",
+            "书店",
+            "教室",
+            "办公室",
+            "客厅",
+            "卧室",
+            "厨房",
+            "阳台",
+            "窗边",
+            "海边",
+            "公园",
+            "车站",
+            "地铁",
+            "影棚",
+            "摄影棚",
+            "室内",
+        ],
+    ) or extra_overrides_period(extra)
+
+
+def extra_overrides_mood(extra: str) -> bool:
+    compact = normalize_intent_text(extra)
+    return includes_any(
+        compact,
+        [
+            "心情",
+            "情绪",
+            "开心",
+            "快乐",
+            "高兴",
+            "难过",
+            "悲伤",
+            "忧郁",
+            "生气",
+            "愤怒",
+            "冷淡",
+            "冷酷",
+            "温柔",
+            "治愈",
+            "放松",
+            "安静",
+            "紧张",
+            "疲惫",
+            "困倦",
+            "慵懒",
+            "兴奋",
+            "元气",
+            "严肃",
+            "甜美",
+            "俏皮",
+            "忧伤",
+            "妩媚",
+            "性感",
+            "可爱",
+            "甜蜜",
+            "自信",
+            "调皮",
+            "清冷",
+            "优雅",
+            "魅惑",
         ],
     )
 
@@ -369,6 +482,7 @@ class PersonaManager:
             "updated_at": "",
             "daily_selfie_profile": None,
         }
+        self._daily_profile_lock = asyncio.Lock()
         self.load()
 
     def load(self) -> None:
@@ -571,9 +685,12 @@ class PersonaManager:
 
     def analyze_selfie_intent(self, action: str) -> SelfieIntent:
         raw = str(action or "").strip()
-        extra = extract_user_extra_text(raw)
+        extra = extract_user_action_text(raw)
         compact = normalize_intent_text(raw)
         extra_compact = normalize_intent_text(extra)
+        requests_daily_outfit = includes_any(
+            extra_compact, ["今日穿搭", "今天穿搭", "今天这身", "按今天的穿搭"]
+        )
         is_group_photo = includes_any(
             compact,
             [
@@ -612,13 +729,14 @@ class PersonaManager:
         is_multi = includes_any(compact, ["多人", "大合照", "集体照", "全员", "三人", "四人", "五人", "多人合照", "大家一起"]) or bool(
             re.search(r"[3-9三四五六七八九十]人", compact)
         )
-        change_clothes = includes_any(
+        change_clothes = (not requests_daily_outfit) and includes_any(
             extra_compact,
             [
                 "穿这个",
                 "穿这身",
                 "穿这套",
                 "穿这件",
+                "身穿",
                 "穿着",
                 "穿上",
                 "换装",
@@ -633,6 +751,13 @@ class PersonaManager:
                 "裙子",
                 "短裙",
                 "长裙",
+                "上衣",
+                "外套",
+                "裤子",
+                "鞋子",
+                "靴子",
+                "发饰",
+                "配饰",
                 "礼服",
                 "制服",
                 "女仆装",
@@ -783,8 +908,9 @@ class PersonaManager:
             use_today = False
         else:
             use_today = (
-                not compact
-                or includes_any(compact, ["看看你", "看下你", "你长什么样", "你的样子", "今日穿搭", "今天穿搭", "今天这身"])
+                not is_cos_look
+                and not is_legs_only
+                and not change_clothes
             )
         if is_cos_look:
             use_today = False
@@ -822,6 +948,19 @@ class PersonaManager:
         )
 
     async def ensure_daily_selfie_profile(
+        self,
+        action: str = "",
+        *,
+        llm_generate: Optional[Callable[[str], Awaitable[str]]] = None,
+    ) -> DailySelfieProfile:
+        # Batch shots may initialize the profile concurrently; serialize the
+        # read/generate/save sequence so every shot shares one daily snapshot.
+        async with self._daily_profile_lock:
+            return await self._ensure_daily_selfie_profile_unlocked(
+                action, llm_generate=llm_generate
+            )
+
+    async def _ensure_daily_selfie_profile_unlocked(
         self,
         action: str = "",
         *,
@@ -993,6 +1132,12 @@ class PersonaManager:
                     ]
                 )
 
+        user_text = extract_user_action_text(act)
+        explicit_context = (
+            extra_overrides_outfit(user_text)
+            or extra_overrides_context(user_text)
+            or extra_overrides_mood(user_text)
+        )
         mode_lines: list[str] = []
         if intent.is_cos_look:
             camera_is_third = bool(intent.is_third_person_photo)
@@ -1128,17 +1273,25 @@ class PersonaManager:
             if intent.change_clothes:
                 mode_lines.append("本次同时包含换装要求：优先使用用户指定的服装/穿搭。")
         elif intent.is_third_person_photo:
-            mode_lines.extend(
-                [
-                    "【他拍 / 日常照片模式】",
-                    "别人视角的单人成品照：镜头已经对准你拍下，画面里只有你一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍你。",
-                    "可以看向镜头、轻松回头；若画面是正面半身/近景，优先看向镜头，眼神自然有焦点，不要整段心不在焉。",
-                    "机位与场景可自然变化，例如：半身平视、三分之四侧回头、中远景环境人像、近景胸像、靠墙门框、轻微低机位、走路抓拍等。",
-                    "场景可在窗边沙发、书桌、咖啡馆、街边树荫、阳台、夜灯房间、书店角落等日常地点中自然选择。",
-                    "可带一点生活瞬间：端杯抬眼、托腮、整理发丝/袖口、翻书抬头、插兜靠站等，仍保持写实抓拍。",
-                    "画面带轻微抓拍感和生活感，同时脸部、穿搭、姿态、背景层次和光线清晰自然。",
-                ]
-            )
+            if explicit_context:
+                mode_lines.extend(
+                    [
+                        "【他拍 / 用户指定场景模式】",
+                        "别人视角的单人成品照：拍摄者完全在画面外，画面里只有主角；机位、景别、场景和光线以用户要求为准。",
+                    ]
+                )
+            else:
+                mode_lines.extend(
+                    [
+                        "【他拍 / 日常照片模式】",
+                        "别人视角的单人成品照：镜头已经对准你拍下，画面里只有你一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍你。",
+                        "可以看向镜头、轻松回头；若画面是正面半身/近景，优先看向镜头，眼神自然有焦点，不要整段心不在焉。",
+                        "机位与场景可自然变化，例如：半身平视、三分之四侧回头、中远景环境人像、近景胸像、靠墙门框、轻微低机位、走路抓拍等。",
+                        "场景可在窗边沙发、书桌、咖啡馆、街边树荫、阳台、夜灯房间、书店角落等日常地点中自然选择。",
+                        "可带一点生活瞬间：端杯抬眼、托腮、整理发丝/袖口、翻书抬头、插兜靠站等，仍保持写实抓拍。",
+                        "画面带轻微抓拍感和生活感，同时脸部、穿搭、姿态、背景层次和光线清晰自然。",
+                    ]
+                )
             if intent.change_clothes:
                 mode_lines.append("本次同时包含换装要求：在他拍视角下优先使用用户指定的服装/穿搭。")
             if intent.change_pose:
@@ -1179,6 +1332,13 @@ class PersonaManager:
                     "额外参考图里的遮挡面部物件不属于姿势目标，除非用户明确要求保留。",
                 ]
             )
+        elif explicit_context:
+            mode_lines.extend(
+                [
+                    "【用户指定场景模式】",
+                    "按用户指定的服装、场景、光线、动作和情绪生成；未指定的部分保持自然，不额外改写为普通居家自拍。",
+                ]
+            )
         else:
             mode_lines.extend(
                 [
@@ -1190,24 +1350,27 @@ class PersonaManager:
                 ]
             )
 
-        extra = extract_user_extra_text(act)
+        extra = user_text
         skip_outfit = extra_overrides_outfit(extra) or intent.change_clothes
         skip_period = extra_overrides_period(extra)
+        skip_status = extra_overrides_context(extra)
+        skip_mood = extra_overrides_mood(extra)
         use_daily_now = (not intent.is_legs_only) and (not intent.is_cos_look)
         today_lines: list[str] = []
-        if use_daily_now and daily and daily.outfit and not skip_outfit:
+        if use_daily_now and intent.use_today_outfit and daily and daily.outfit and not skip_outfit:
             today_lines.append(f"今日穿搭：{daily.outfit}")
         if use_daily_now and daily and not skip_period:
             period = current_period()
-            status = ""
-            if daily.status_by_period:
-                status = str(daily.status_by_period.get(period) or "")
-            status = status or str(daily.status or "")
-            if status:
-                today_lines.append(f"当前时间段：{period_label(period)}")
-                today_lines.append(f"当前状态：{status}")
-            if daily.mood:
-                today_lines.append(f"当前心情：{daily.mood}")
+            today_lines.append(f"当前时间段：{period_label(period)}")
+            if not skip_status:
+                status = ""
+                if daily.status_by_period:
+                    status = str(daily.status_by_period.get(period) or "")
+                status = status or str(daily.status or "")
+                if status:
+                    today_lines.append(f"当前状态：{status}")
+        if use_daily_now and daily and daily.mood and not skip_mood:
+            today_lines.append(f"当前心情：{daily.mood}")
 
         if intent.is_legs_only:
             extra_action = extract_user_extra_text(act)

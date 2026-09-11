@@ -650,7 +650,10 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(parse(fenced), "cat walk")
 
     def test_bilingual_prompt_only_replaces_user_text(self) -> None:
-        from astrbot_plugin_selfie_image.prompts.prompt_templates import BilingualPrompt
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import (
+            BilingualPrompt,
+            append_daily_context_to_english_prompt,
+        )
 
         prompt = BilingualPrompt(
             builtin_zh="内置中文约束",
@@ -664,6 +667,13 @@ class ConfigModelTests(unittest.TestCase):
         )
         self.assertEqual(prompt.render_en(), "Built-in English constraints.")
         self.assertNotIn("内置中文约束", prompt.render_en("turn back and smile by the sea"))
+        preserved = append_daily_context_to_english_prompt(
+            "Built-in English constraints.",
+            "今日穿搭：白裙\n当前时间段：早晨\n当前心情：清爽",
+        )
+        self.assertIn("Today's outfit: 白裙", preserved)
+        self.assertIn("Current time period: 早晨", preserved)
+        self.assertIn("Current mood: 清爽", preserved)
 
     def test_selfie_builtin_prompt_has_compact_english_version(self) -> None:
         from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
@@ -9392,6 +9402,39 @@ class LegFocusTests(unittest.TestCase):
             self.assertNotIn("当前时间段：", override)
             self.assertNotIn("当前状态：", override)
 
+            direct = manager.build_selfie_prompt(
+                "身穿一套精致典雅的改良旗袍，修身剪裁，全身照，温柔甜美，暖光室内场景。",
+                "小助",
+                "温柔",
+                True,
+                0,
+            )
+            self.assertNotIn("今日穿搭：", direct)
+            self.assertIn(f"当前时间段：{label}", direct)
+            self.assertNotIn("当前状态：", direct)
+            self.assertNotIn("当前心情：", direct)
+            self.assertIn("【换衣服 + 改姿势模式】", direct)
+
+            cafe = manager.build_selfie_prompt(
+                "在咖啡馆靠窗拍一张自然照片",
+                "小助",
+                "温柔",
+                True,
+                0,
+            )
+            self.assertIn("今日穿搭：浅蓝衬衫和白色长裙", cafe)
+            self.assertIn(f"当前时间段：{label}", cafe)
+            self.assertNotIn("当前状态：", cafe)
+
+            mood_override = manager.build_selfie_prompt(
+                "穿白裙，表情悲伤，在窗边拍摄",
+                "小助",
+                "温柔",
+                True,
+                0,
+            )
+            self.assertNotIn("当前心情：", mood_override)
+
             clothes_only = manager.build_selfie_prompt(
                 plugin_main.SelfieImagePlugin._build_third_person_look_action(_P(), "穿白裙", False),
                 "小助",
@@ -11592,6 +11635,26 @@ class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(profile.outfit)
             for token in ("清晨穿着", "午后是", "傍晚换成", "夜里是", "深夜会偏居家"):
                 self.assertNotIn(token, profile.outfit)
+
+    async def test_daily_profile_initialization_is_shared_across_concurrent_shots(self) -> None:
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+        calls = 0
+        periods = {key: f"{key} 的自然状态" for key in ("morning", "noon", "afternoon", "evening", "night", "late_night")}
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+
+            async def generate(_: str) -> str:
+                nonlocal calls
+                calls += 1
+                await asyncio.sleep(0.01)
+                return json.dumps({"outfit": "浅蓝衬衫", "mood": "清爽", "status_by_period": periods}, ensure_ascii=False)
+
+            profiles = await asyncio.gather(
+                *(manager.ensure_daily_selfie_profile("看看你", llm_generate=generate) for _ in range(4))
+            )
+            self.assertEqual(calls, 1)
+            self.assertEqual({profile.outfit for profile in profiles}, {"浅蓝衬衫"})
 
     def test_auxiliary_identity_references_are_limited_and_keep_primary(self) -> None:
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
