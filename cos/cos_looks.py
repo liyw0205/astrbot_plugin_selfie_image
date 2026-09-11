@@ -510,7 +510,9 @@ COS_LOOK_SERIES_ALIASES: Dict[str, tuple[str, ...]] = {
     "鸣潮": ("鸣潮", "wuthering", "wutheringwaves", "wuwa"),
 }
 COS_LOOK_SERIES_MARKERS = ("系列", "作品", "游戏")
-COS_LOOK_IGNORED_QUERY_TERMS = frozenset({"特殊预设", "列表", "全部", "查看", "list", "all", "view"})
+# ``COS`` can remain in adapter fallback arguments when the command prefix is
+# parsed separately. It is a mode marker, not an outfit/character term.
+COS_LOOK_IGNORED_QUERY_TERMS = frozenset({"cos", "特殊预设", "列表", "全部", "查看", "list", "all", "view"})
 
 
 def _compact_cos_match(value: str, separators: str) -> str:

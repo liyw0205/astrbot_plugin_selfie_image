@@ -208,7 +208,10 @@ class BaseImageAdapter:
         return ImageGenerateResult(error=f"{prefix}未识别到可下载图片字段。返回预览: {preview}")
 
     async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
-        raise NotImplementedError
+        raise NotImplementedError(
+            "BaseImageAdapter.generate() is an adapter contract; use create_adapter() "
+            "to obtain a concrete provider implementation"
+        )
 
 
 def image_sources_from_response(data: Any, base_url: str = "") -> List[Dict[str, str]]:

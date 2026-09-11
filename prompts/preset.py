@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import os
 import random
+import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from ..core.utils import load_json_file, save_json_file
+
+
+logger = logging.getLogger(__name__)
 
 
 # Upgrade only the exact old built-in value. User-customized presets remain untouched.
@@ -33,12 +37,24 @@ class ImagePreset:
 
 
 def _default_seed() -> Dict[str, Dict[str, str]]:
+    """Return image defaults while preserving a diagnostic for callers.
+
+    ImportError/AttributeError are compatibility cases for older plugin
+    layouts. Other exceptions indicate a broken built-in seed and are logged
+    with a traceback instead of looking like an empty preset installation.
+    """
     try:
         from ..studio.studio import default_image_preset_seed
 
-        return default_image_preset_seed()
-    except Exception:
+        seed = default_image_preset_seed()
+        if not isinstance(seed, dict):
+            raise TypeError("default image preset seed must be a mapping")
+        return seed
+    except (ImportError, AttributeError):
         return {}
+    except Exception:
+        logger.exception("[SelfieImage] failed to load built-in image presets")
+        raise
 
 
 class ImagePresetManager:
@@ -53,6 +69,11 @@ class ImagePresetManager:
         self.file_path = os.path.join(data_dir, self.PRESET_FILENAME)
         self.presets: Dict[str, ImagePreset] = {}
         self._deleted_builtin_names: set[str] = set()
+        self.load_status: Dict[str, object] = {
+            "ok": True,
+            "source": "builtin",
+            "error": "",
+        }
         self.load()
 
     def load(self) -> None:
@@ -85,8 +106,9 @@ class ImagePresetManager:
             )
 
         # Seed missing built-in defaults and upgrade only exact legacy defaults.
+        seed = self._load_builtin_seed()
         dirty = False
-        for name, value in self._builtin_seed().items():
+        for name, value in seed.items():
             key = str(name or "").strip()
             prompt = str((value or {}).get("prompt") or "").strip()
             if not key or not prompt:
@@ -108,6 +130,34 @@ class ImagePresetManager:
         self.presets = presets
         if dirty or (not raw and presets):
             self.save()
+
+    def _load_builtin_seed(self) -> Dict[str, Dict[str, str]]:
+        try:
+            seed = self._builtin_seed()
+            if not isinstance(seed, dict):
+                raise TypeError("built-in preset seed must be a mapping")
+            self.load_status = {"ok": True, "source": "builtin", "error": ""}
+            return seed
+        except (ImportError, AttributeError) as exc:
+            self.load_status = {
+                "ok": False,
+                "source": "builtin",
+                "error": f"兼容性缺少内置预设：{type(exc).__name__}",
+            }
+            logger.warning("[SelfieImage] built-in %s presets unavailable: %s", self.PRESET_FILENAME, exc)
+            return {}
+        except Exception as exc:
+            self.load_status = {
+                "ok": False,
+                "source": "builtin",
+                "error": f"内置预设加载失败：{type(exc).__name__}: {exc}",
+            }
+            logger.exception("[SelfieImage] built-in %s presets failed", self.PRESET_FILENAME)
+            return {}
+
+    def get_load_status(self) -> Dict[str, object]:
+        """Return a safe status object for management/health APIs."""
+        return dict(self.load_status)
 
     def save(self) -> None:
         payload = {
@@ -176,14 +226,14 @@ class ImagePresetManager:
             return False, f"预设不存在: {name}"
 
         self.presets.pop(key, None)
-        if key in self._builtin_seed():
+        if key in self._load_builtin_seed():
             self._deleted_builtin_names.add(key)
         self.save()
         return True, f"已删除预设 {name}"
 
     def list_management(self) -> List[Dict[str, str]]:
         """Return editable presets, including fields hidden by the picker."""
-        builtin_names = set(self._builtin_seed())
+        builtin_names = set(self._load_builtin_seed())
         rows: List[Dict[str, str]] = []
         for name, preset in self.list():
             rows.append(
@@ -211,7 +261,7 @@ class ImagePresetManager:
         previous_deleted = set(self._deleted_builtin_names)
         if original_name and original_name != name:
             self.presets.pop(original_name, None)
-            if original_name in self._builtin_seed():
+            if original_name in self._load_builtin_seed():
                 self._deleted_builtin_names.add(original_name)
         self.presets[name] = preset
         self._deleted_builtin_names.discard(name)
@@ -289,7 +339,7 @@ class ImagePresetManager:
         for name, original_name, preset in prepared_items:
             if original_name and original_name != name:
                 candidate_presets.pop(original_name, None)
-                if original_name in self._builtin_seed():
+                if original_name in self._load_builtin_seed():
                     candidate_deleted.add(original_name)
             candidate_presets[name] = preset
             candidate_deleted.discard(name)
@@ -422,6 +472,9 @@ class VideoPresetManager(ImagePresetManager):
         try:
             from ..studio.studio import default_video_preset_seed
 
-            return default_video_preset_seed()
-        except Exception:
+            seed = default_video_preset_seed()
+            if not isinstance(seed, dict):
+                raise TypeError("default video preset seed must be a mapping")
+            return seed
+        except (ImportError, AttributeError):
             return {}

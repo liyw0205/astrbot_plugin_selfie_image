@@ -16,6 +16,7 @@ from ..core.utils import (
     redact_sensitive_text,
     save_json_file,
 )
+from ..generation.generation_results import build_task_terminal_state
 from .task_views import task_source_label
 
 
@@ -340,6 +341,20 @@ class WebTaskMixin:
             )
         return rows
 
+    @classmethod
+    def task_operation_capabilities(cls, task: Mapping[str, Any]) -> Dict[str, bool]:
+        """Single state matrix shared by task list/detail and cancel guards."""
+        status = str(task.get("status") or "").strip().lower()
+        active = status in {"queued", "running"}
+        terminal = status in cls._TASK_TERMINAL_STATUSES
+        retry_id = str(task.get("retry_record_id") or task.get("record_id") or "").strip()
+        return {
+            "can_cancel": active and not bool(task.get("cancel_requested")),
+            "can_delete": terminal,
+            "can_retry": terminal and bool(retry_id or task.get("record_ids")),
+            "is_terminal": terminal,
+        }
+
     def _task_list_row(self, task: Mapping[str, Any]) -> Dict[str, Any]:
         """Create the small, poll-safe task shape used by the task center."""
         request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
@@ -420,7 +435,7 @@ class WebTaskMixin:
                 "record_id": retry_record_id[:128],
                 "retry_record_id": retry_record_id[:128],
                 "record_ids": linked_record_ids,
-                "can_retry": bool(retry_record_id),
+                **self.task_operation_capabilities({**task, "retry_record_id": retry_record_id, "record_ids": linked_record_ids}),
             }
         )
         return redact_sensitive_data(row)
@@ -937,9 +952,15 @@ class WebTaskMixin:
                 if media_type == "video"
                 else self.web_test_image(run_payload)
             )
-            result = self._normalize_generation_result(result, payload.get("count") or 1)
             result = redact_sensitive_data(result)
-            if self._task_cancel_requested(task_id):
+            terminal = build_task_terminal_state(
+                result,
+                requested_count=payload.get("count") or 1,
+                cancel_requested=self._task_cancel_requested(task_id),
+            )
+            result = terminal["result"]
+            cancelled_result = terminal["cancelled_result"]
+            if cancelled_result:
                 ensure_failure = getattr(self, "_ensure_task_failure_record", None)
                 if callable(ensure_failure):
                     await ensure_failure(
@@ -959,26 +980,22 @@ class WebTaskMixin:
                     generation_stage="cancelled",
                     generation_stage_label="已取消",
                     error="任务已取消",
-                    result={"success": False, "error": "任务已取消"},
+                    result=result,
                     finished_ts=time.time(),
                     finished_at=self._web_task_timestamp(),
                 )
                 return
+            # A completion result wins a racing cancel request; clear the
+            # request marker so the terminal snapshot remains self-consistent.
+            if self._task_cancel_requested(task_id):
+                self._set_web_image_task(task_id, cancel_requested=False)
             wait_commits = getattr(self, "_wait_for_record_commits", None)
             if callable(wait_commits):
                 await wait_commits(task_id)
-            success = bool(result.get("success"))
-            generation_success = bool(result.get("generation_success"))
-            delivery_unknown = bool(result.get("delivery_unknown"))
-            delivery_failed = (
-                bool(result.get("delivery_failed"))
-                or (
-                    generation_success
-                    and result.get("delivery_success") is False
-                    and not delivery_unknown
-                )
-                or str(result.get("status") or "") == "delivery_failed"
-            ) and not delivery_unknown
+            success = terminal["success"]
+            generation_success = terminal["generation_success"]
+            delivery_unknown = terminal["delivery_unknown"]
+            delivery_failed = terminal["delivery_failed"]
             requested_count = int(result.get("requested_count") or payload.get("count") or 1)
             succeeded_count = int(result.get("succeeded_count") or 0)
             failed_count = int(result.get("failed_count") or 0)
@@ -1005,13 +1022,9 @@ class WebTaskMixin:
                     error=error if delivery_failed else "",
                     paths=record_paths,
                 )
-            terminal_status = str(
-                result.get("status") or ("succeeded" if success else "failed")
-            )
-            partial_success = terminal_status == "partial_success" or (
-                not success and succeeded_count > 0
-            )
-            terminal_stage = "complete" if success or delivery_failed or partial_success else "failed"
+            terminal_status = terminal["terminal_status"]
+            partial_success = terminal["partial_success"]
+            terminal_stage = terminal["terminal_stage"]
             terminal_stage_label = (
                 "部分完成"
                 if partial_success

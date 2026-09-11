@@ -7,13 +7,18 @@ through Selfie's existing channel pipeline (no browser-held API keys).
 from __future__ import annotations
 
 import copy
+import json
+import logging
 import os
 import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..core.utils import load_json_file, save_json_file
+from ..core.utils import save_json_file
+
+
+logger = logging.getLogger(__name__)
 
 STUDIO_FILENAME = "studio_sessions.json"
 MAX_SESSIONS = 40
@@ -789,23 +794,43 @@ class StudioStore:
         self.path = os.path.join(data_dir, STUDIO_FILENAME)
         self._lock = threading.RLock()
         self._sessions: Dict[str, Dict[str, Any]] = {}
+        self._load_status: Dict[str, Any] = {"ok": True, "error": ""}
         self._load()
 
     def _load(self) -> None:
-        raw = load_json_file(self.path)
+        try:
+            with open(self.path, "r", encoding="utf-8-sig") as handle:
+                raw = json.load(handle)
+        except FileNotFoundError:
+            self._load_status = {"ok": True, "error": "", "source": "new"}
+            raw = {}
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            self._load_status = {"ok": False, "error": f"画布存储读取失败：{type(exc).__name__}: {exc}", "source": self.path}
+            logger.exception("[SelfieImage] studio storage read failed: %s", self.path)
+            self._sessions = {}
+            return
         items = raw.get("sessions") if isinstance(raw, dict) else None
         out: Dict[str, Dict[str, Any]] = {}
         if isinstance(items, list):
-            for item in items:
+            for index, item in enumerate(items, start=1):
                 if isinstance(item, dict) and item.get("id"):
                     out[str(item["id"])] = item
+                elif item not in (None, {}):
+                    logger.warning("[SelfieImage] skipped invalid studio session row %s", index)
         elif isinstance(items, dict):
             for key, item in items.items():
                 if isinstance(item, dict):
                     item = dict(item)
                     item.setdefault("id", key)
                     out[str(item["id"])] = item
+                else:
+                    logger.warning("[SelfieImage] skipped invalid studio session %s", key)
+        self._load_status = {"ok": True, "error": "", "source": self.path}
         self._sessions = out
+
+    def storage_status(self) -> Dict[str, Any]:
+        with self._lock:
+            return dict(self._load_status)
 
     def _persist(self) -> None:
         ordered = sorted(
@@ -1039,7 +1064,10 @@ class StudioStore:
                 }
             )
             session["last_run"] = last
-            if success and paths:
+            # Keep generated paths visible for partial or delivery-failed
+            # terminal states as well; ``success=False`` only describes the
+            # overall operation, not whether an artifact exists.
+            if paths and (success or status in {"partial_success", "delivery_failed"}):
                 results = list(session.get("results") or [])
                 asset_ids = [str(item).strip() for item in (source_asset_ids or []) if str(item).strip()][:24]
                 for path in paths:

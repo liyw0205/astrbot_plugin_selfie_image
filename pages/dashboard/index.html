@@ -1110,6 +1110,7 @@
           <button class="ok" id="studioRunBtn" type="button">开始生成</button>
           <button class="secondary" id="studioRerunBtn" type="button">再生成</button>
           <button class="danger" id="studioCancelBtn" type="button" style="display:none">取消任务</button>
+          <button class="secondary" id="studioRetryStatusBtn" type="button" style="display:none">重新查询</button>
         </div>
         <div id="studioStatus" class="status">画布已打开。</div>
         <h3>结果</h3>
@@ -1202,6 +1203,7 @@
         <button class="ok" id="testImageBtn">开始试画</button>
         <button class="ok" id="testVideoBtn" style="display:none">开始试视频</button>
         <button class="danger" id="testCancelBtn" type="button" style="display:none">取消任务</button>
+        <button class="secondary" id="testRetryStatusBtn" type="button" style="display:none">重新查询</button>
         <button class="secondary" onclick="showTestPanel('request')">看请求</button>
         <button class="secondary" onclick="showTestPanel('response')">看响应</button>
         <button class="secondary" onclick="showTestPanel('result')">看结果</button>
@@ -1637,7 +1639,7 @@
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, taskId: "", uploadSlotId: "", presetOpen: false, cosOpen: false, running: false, galleryTargetSlotId: "" };
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", uploadSlotId: "", presetOpen: false, cosOpen: false, running: false, galleryTargetSlotId: "" };
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -3931,7 +3933,10 @@ Source prompt:
           const id = escapeHtml(String(task.task_id || ''));
           const rawId = String(task.task_id || '');
           const type = task.media_type === 'video' ? '视频' : '图片';
-          const canCancel = task.status === 'queued' || task.status === 'running';
+          const canCancel = task.can_cancel === true || (
+            !Object.prototype.hasOwnProperty.call(task, 'can_cancel') &&
+            (task.status === 'queued' || task.status === 'running') && !task.cancel_requested
+          );
           const info = task.error || task.used_model || task.timeout_warning || '-';
           const stage = taskQueueStage(task);
           const progress = taskQueueProgress(task);
@@ -4043,7 +4048,8 @@ Source prompt:
           total: Number(res.total ?? rows.length),
           filtered: Number(res.filtered ?? rows.length),
           offset: Number(res.offset ?? 0),
-          limit: Number(res.limit ?? MONITOR_PAGE_SIZE)
+          limit: Number(res.limit ?? MONITOR_PAGE_SIZE),
+          scope_stats: res.scope_stats && typeof res.scope_stats === 'object' ? res.scope_stats : null
         }
       };
     }
@@ -4340,24 +4346,33 @@ Source prompt:
       const rows = RECORDS;
       const filteredCount = Number(RECORD_META.filtered ?? rows.length);
       const totalCount = Number(RECORD_META.total ?? rows.length);
-      // Prefer server-provided aggregate when available; otherwise use loaded rows as total scope.
+      const scopeStats = RECORD_META.scope_stats && typeof RECORD_META.scope_stats === 'object'
+        ? RECORD_META.scope_stats : null;
       const scopeRows = rows;
-      const ok = scopeRows.filter(r=>r.success).length;
-      const fail = scopeRows.length - ok;
-      const avg = scopeRows.length ? scopeRows.reduce((s,r)=>s+Number(r.elapsed_seconds||0),0)/scopeRows.length : 0;
+      const ok = scopeStats ? Number(scopeStats.success_count || 0) : scopeRows.filter(r=>r.success).length;
+      const fail = scopeStats ? Number(scopeStats.failure_count || 0) : scopeRows.length - ok;
+      const sampleCount = scopeStats ? Number(scopeStats.sample_count || 0) : scopeRows.length;
+      const avg = scopeStats && scopeStats.average_elapsed_seconds != null
+        ? Number(scopeStats.average_elapsed_seconds)
+        : (scopeRows.length ? scopeRows.reduce((s,r)=>s+Number(r.elapsed_seconds||0),0)/scopeRows.length : 0);
       const totalPages = Math.max(1, Math.ceil(filteredCount / MONITOR_PAGE_SIZE));
       MONITOR_PAGE = Math.min(Math.max(1, MONITOR_PAGE), totalPages);
       const start = Number(RECORD_META.offset ?? ((MONITOR_PAGE - 1) * MONITOR_PAGE_SIZE));
       const pageRows = rows;
-      const denom = Math.max(1, scopeRows.length);
-      const okPct = scopeRows.length ? Math.round((ok / denom) * 1000) / 10 : 0;
-      const failPct = scopeRows.length ? Math.round((fail / denom) * 1000) / 10 : 0;
+      const denom = Math.max(1, sampleCount);
+      const okPct = scopeStats && scopeStats.success_rate != null ? Number(scopeStats.success_rate) : (sampleCount ? Math.round((ok / denom) * 1000) / 10 : 0);
+      const failPct = scopeStats && scopeStats.failure_rate != null ? Number(scopeStats.failure_rate) : (sampleCount ? Math.round((fail / denom) * 1000) / 10 : 0);
+      const scopeLabel = scopeStats ? '筛选全集' : '当前页';
+      const successLabel = sampleCount ? `${ok}（${okPct}%）` : '暂无样本';
+      const failureLabel = sampleCount ? `${fail}（${failPct}%）` : '暂无样本';
+      const averageLabel = sampleCount ? `${avg.toFixed(2)}s` : '暂无样本';
       $('monitorStats').innerHTML = [
         ['筛选', String(filteredCount)],
         ['总计', String(totalCount)],
-        ['成功', `${ok}（${okPct}%）`],
-        ['失败', `${fail}（${failPct}%）`],
-        ['平均耗时', `${avg.toFixed(2)}s`],
+        ['统计范围', sampleCount ? `${scopeLabel}（${sampleCount} 条）` : '暂无样本'],
+        ['成功', successLabel],
+        ['失败', failureLabel],
+        ['平均耗时', averageLabel],
         ['页码', `${MONITOR_PAGE}/${totalPages}`],
       ].map(([k,v]) => `<div class="stat-card"><div class="k">${k}</div><div class="v">${escapeHtml(String(v))}</div></div>`).join('');
       $('recordTable').innerHTML = '<thead><tr><th></th><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型/失败原因</th></tr></thead><tbody>' +
@@ -4648,7 +4663,9 @@ Source prompt:
           option.label = `${tag} (${Number(item?.count || 0)})`;
           list.appendChild(option);
         });
-      } catch (_) {}
+      } catch (e) {
+        if ($('assetStatus')) $('assetStatus').textContent = e.message || '资产标签读取失败';
+      }
     }
     async function loadAssetStudioPresets() {
       const select = $('assetStudioPreset');
@@ -4665,7 +4682,9 @@ Source prompt:
           option.textContent = `加入画布 · ${name}`;
           select.appendChild(option);
         });
-      } catch (_) {}
+      } catch (e) {
+        if ($('assetStatus')) $('assetStatus').textContent = e.message || '画布预设读取失败';
+      }
     }
     async function addAssetToStudio(recordId) {
       const id = String(recordId || '').trim();
@@ -5755,8 +5774,34 @@ Source prompt:
         TEST_TASK_POLL_TIMER = null;
       }
     }
-    function switchTestMode(mode) {
-      TEST_MODE = mode === 'video' ? 'video' : 'image';
+    async function prepareActiveTestTask(actionLabel) {
+      const taskId = String(TEST_TASK_ID || '').trim();
+      if (!taskId) return true;
+      const cancel = await confirmAction(
+        `任务 ${taskId} 仍在后台运行。选择“取消并${actionLabel}”会停止它；取消则保留任务继续运行。`,
+        {title: '处理正在运行的任务', confirmText: `取消并${actionLabel}`}
+      );
+      if (cancel) {
+        await cancelTestTask();
+        return !TEST_TASK_ID;
+      }
+      const keep = await confirmAction(
+        `是否保留任务 ${taskId} 在后台运行并${actionLabel}？\n\n保留后可在任务历史中查看；当前面板将清空展示。`,
+        {title: '保留后台任务', confirmText: `保留并${actionLabel}`, danger: false}
+      );
+      if (!keep) return false;
+      clearTestTaskPoll();
+      TEST_TASK_ID = '';
+      safeStorageRemove('selfieImageLastTestTaskId');
+      safeStorageRemove('selfieImageLastTestMode');
+      clearTestData(true);
+      showToast(`已保留后台任务 ${taskId}`, 'ok');
+      return true;
+    }
+    async function switchTestMode(mode) {
+      const nextMode = mode === 'video' ? 'video' : 'image';
+      if (nextMode !== TEST_MODE && TEST_TASK_ID && !(await prepareActiveTestTask('切换模式'))) return;
+      TEST_MODE = nextMode;
       $('testModeImage').classList.toggle('active', TEST_MODE === 'image');
       $('testModeVideo').classList.toggle('active', TEST_MODE === 'video');
       $('testImageBtn').style.display = TEST_MODE === 'image' ? '' : 'none';
@@ -5790,6 +5835,7 @@ Source prompt:
       $('testImageBtn').disabled = !!busy;
       $('testVideoBtn').disabled = !!busy;
       $('testCancelBtn').style.display = busy && TEST_TASK_ID ? '' : 'none';
+      $('testRetryStatusBtn').style.display = 'none';
       $('testImageBtn').textContent = busy && TEST_MODE === 'image' ? '正在画…' : '开始试画';
       $('testVideoBtn').textContent = busy && TEST_MODE === 'video' ? '正在生成…' : '开始试视频';
     }
@@ -5812,10 +5858,17 @@ Source prompt:
       try {
         const res = await api('/api/tasks/' + encodeURIComponent(taskId) + '/cancel', {method:'POST', body: JSON.stringify({})});
         const task = res.data || {};
-        setTestBusy(false);
-        safeStorageRemove('selfieImageLastTestTaskId');
-        safeStorageRemove('selfieImageLastTestMode');
-        renderImageTestResult(testTaskResult(task));
+        const active = task.status === 'queued' || task.status === 'running' || task.cancel_requested;
+        setTestBusy(active);
+        if (active) {
+          $('testStatus').textContent = `已请求取消任务 ${taskId}，等待安全停止…`;
+          TEST_TASK_POLL_TIMER = setTimeout(() => pollImageTestTask(taskId, 0), 1000);
+        } else {
+          TEST_TASK_ID = '';
+          safeStorageRemove('selfieImageLastTestTaskId');
+          safeStorageRemove('selfieImageLastTestMode');
+          renderImageTestResult(testTaskResult(task));
+        }
       } catch (e) {
         $('testCancelBtn').disabled = false;
         $('testStatus').textContent = e.message || '取消失败';
@@ -5874,7 +5927,7 @@ Source prompt:
         if (task.request_data && !$('testRequestData').textContent.trim()) {
           $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
         }
-        if (task.status === 'queued' || task.status === 'running') {
+        if (task.status === 'queued' || task.status === 'running' || task.cancel_requested) {
           setTestBusy(true);
           const label = task.status === 'queued' ? '排队中' : '生成中';
           const seconds = Number(task.running_seconds || 0);
@@ -5896,6 +5949,25 @@ Source prompt:
         try { await loadRecords(false); } catch (_) {}
       } catch (e) {
         if (TEST_TASK_ID !== taskId) return;
+        const errorText = String(e.message || e);
+        if (/\b401\b/.test(errorText)) {
+          clearTestTaskPoll();
+          setTestBusy(false);
+          $('testStatus').textContent = '登录已失效，请重新登录后查询任务。';
+          $('testRetryStatusBtn').style.display = TEST_TASK_ID ? '' : 'none';
+          $('testResponseData').textContent = JSON.stringify({success:false, error:errorText}, null, 2);
+          return;
+        }
+        if (/\b404\b/.test(errorText)) {
+          clearTestTaskPoll();
+          setTestBusy(false);
+          TEST_TASK_ID = '';
+          safeStorageRemove('selfieImageLastTestTaskId');
+          safeStorageRemove('selfieImageLastTestMode');
+          $('testStatus').textContent = '任务不存在或已清理，请从任务历史查看。';
+          $('testResponseData').textContent = JSON.stringify({success:false, error:errorText}, null, 2);
+          return;
+        }
         // Ignore transient poll errors while task is still running.
         const nextFail = failStreak + 1;
         if (nextFail < 8) {
@@ -5905,8 +5977,9 @@ Source prompt:
           return;
         }
         setTestBusy(false);
-        $('testStatus').textContent = e.message;
-        $('testResponseData').textContent = JSON.stringify({success:false, error:e.message}, null, 2);
+        $('testStatus').textContent = errorText;
+        $('testRetryStatusBtn').style.display = TEST_TASK_ID ? '' : 'none';
+        $('testResponseData').textContent = JSON.stringify({success:false, error:errorText}, null, 2);
         showTestPanel('response');
       }
     }
@@ -5914,11 +5987,11 @@ Source prompt:
       const taskId = safeStorageGet('selfieImageLastTestTaskId') || '';
       if (!taskId) return;
       const savedMode = safeStorageGet('selfieImageLastTestMode') || 'image';
-      switchTestMode(savedMode);
+      await switchTestMode(savedMode);
       try {
         const res = await api(testTaskStatusPath(taskId));
         const task = res.data || {};
-        if (task.status === 'queued' || task.status === 'running') {
+        if (task.status === 'queued' || task.status === 'running' || task.cancel_requested) {
           TEST_TASK_ID = taskId;
           $('testResponseData').textContent = JSON.stringify(task, null, 2);
           if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
@@ -5940,6 +6013,7 @@ Source prompt:
     }
     async function runMediaTest(mode = 'image') {
       TEST_MODE = mode === 'video' ? 'video' : 'image';
+      if (TEST_TASK_ID && !(await prepareActiveTestTask('开始新任务'))) return;
       collectForms();
       clearTestData(false);
       setTestBusy(true);
@@ -5992,15 +6066,18 @@ Source prompt:
       ['request','response','result'].forEach(key => $('test' + key[0].toUpperCase() + key.slice(1) + 'Panel').classList.toggle('active', key === name));
     }
     function clearTestData(clearStatus = true) {
-      clearTestTaskPoll();
-      TEST_TASK_ID = '';
-      safeStorageRemove('selfieImageLastTestTaskId');
-      safeStorageRemove('selfieImageLastTestMode');
-      setTestBusy(false);
+      const active = !!String(TEST_TASK_ID || '').trim();
+      if (!active) {
+        clearTestTaskPoll();
+        TEST_TASK_ID = '';
+        safeStorageRemove('selfieImageLastTestTaskId');
+        safeStorageRemove('selfieImageLastTestMode');
+      }
+      setTestBusy(active);
       $('testImages').innerHTML = '';
       $('testRequestData').textContent = '';
       $('testResponseData').textContent = '';
-      if (clearStatus) $('testStatus').textContent = '';
+      if (clearStatus) $('testStatus').textContent = active ? `任务 ${TEST_TASK_ID} 仍在后台运行，展示已清空。` : '';
       showTestPanel('result');
     }
 
@@ -6260,11 +6337,20 @@ Source prompt:
       try {
         const res = await api('/api/prompt-presets?kind=' + encodeURIComponent(kind));
         if (res.success) {
-          STUDIO.promptPresetsByKind[kind] = mergePromptPresets(res.data || []);
+          const payload = res.data || {};
+          const rows = Array.isArray(payload) ? payload : payload.presets;
+          const loadStatus = Array.isArray(payload) ? res.load_status : payload.load_status;
+          if (loadStatus && loadStatus.ok === false) {
+            throw new Error(loadStatus.error || '预设加载失败');
+          }
+          STUDIO.promptPresetsByKind[kind] = mergePromptPresets(rows || []);
           STUDIO.promptPresets = STUDIO.promptPresetsByKind[kind];
           return STUDIO.promptPresets;
         }
-      } catch (_) {}
+      } catch (e) {
+        if ($('presetManagerStatus')) presetManagerStatus(e.message || '预设读取失败', true);
+        return STUDIO.promptPresetsByKind[kind] || [];
+      }
       return STUDIO.promptPresetsByKind[kind] || [];
     }
     function presetManagerStatus(text, bad = false) {
@@ -6282,6 +6368,10 @@ Source prompt:
         // A slower request from the previous tab must not overwrite the current list.
         if (loadSeq !== PRESET_LOAD_SEQ || requestedKind !== PRESET_KIND) return;
         const data = res.data;
+        const loadStatus = Array.isArray(data) ? res.load_status : data.load_status;
+        if (loadStatus && loadStatus.ok === false) {
+          throw new Error(loadStatus.error || '预设加载失败');
+        }
         PRESET_MANAGE_ROWS = Array.isArray(data) ? data : (data && Array.isArray(data.presets) ? data.presets : []);
         renderManagedPromptPresets();
         presetManagerStatus(`${PRESET_KIND === 'video' ? '视频' : '生图'}预设 · 共 ${PRESET_MANAGE_ROWS.length} 个`);
@@ -6404,7 +6494,9 @@ Source prompt:
       $('presetTransferCopyBtn').style.display = '';
       $('presetTransferStatus').textContent = '';
       $('presetTransferModal').classList.add('show');
-      try { await copyPresetTransfer(); } catch (_) {}
+      try { await copyPresetTransfer(); } catch (e) {
+        $('presetTransferStatus').textContent = e.message || '复制失败，请手动复制';
+      }
     }
     function openPresetImport() {
       $('presetTransferTitle').textContent = '导入预设文本';
@@ -6529,7 +6621,9 @@ Source prompt:
           const legacy = await api('/api/cos-look-sets');
           STUDIO.cosLooks = (Array.isArray(legacy.data) ? legacy.data : []).sort(cosPoolSort);
           return STUDIO.cosLooks;
-        } catch (_) {}
+        } catch (legacyError) {
+          showToast(legacyError.message || 'COS 预设读取失败', 'bad');
+        }
       }
       return STUDIO.cosLooks || [];
     }
@@ -6872,6 +6966,7 @@ Source prompt:
       if (again) again.disabled = !!running;
       if ($('studioPickRecordBtn')) $('studioPickRecordBtn').disabled = !!running;
       if ($('studioCancelBtn')) $('studioCancelBtn').style.display = running && STUDIO.taskId ? '' : 'none';
+      if ($('studioRetryStatusBtn') && (running || !STUDIO.taskId)) $('studioRetryStatusBtn').style.display = 'none';
     }
     async function cancelStudioTask() {
       const taskId = String(STUDIO.taskId || '').trim();
@@ -7008,9 +7103,18 @@ Source prompt:
     async function loadStudioList(selectId) {
       const res = await studioApi('/api/studio/sessions');
       if (!res.success) { showToast(res.message || '画布列表失败', 'bad'); return; }
+      const storageStatus = res.data && res.data.storage_status;
+      if (storageStatus && storageStatus.ok === false) {
+        showToast(storageStatus.error || '画布存储读取失败，请修复文件后重试', 'bad');
+        return;
+      }
       STUDIO.sessions = (res.data && res.data.sessions) || [];
       STUDIO.prompts = (res.data && res.data.builtin_prompts) || [];
       STUDIO.templates = (res.data && res.data.templates) || STUDIO.templates || [];
+      const presetStatus = res.data && res.data.prompt_preset_status;
+      if (presetStatus && presetStatus.ok === false) {
+        showToast(presetStatus.error || '预设加载失败', 'bad');
+      }
       if (res.data && res.data.prompt_presets) {
         STUDIO.promptPresetsByKind.image = mergePromptPresets(res.data.prompt_presets);
         STUDIO.promptPresets = STUDIO.promptPresetsByKind.image;
@@ -7064,7 +7168,7 @@ Source prompt:
       const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id), {
         method:'POST', body: JSON.stringify(body)
       });
-      if (!res.success) return showToast(res.message || '保存失败', 'bad');
+      if (!res.success) throw new Error(res.message || '保存失败');
       STUDIO.current = res.data;
       await loadStudioList(STUDIO.current.id);
       showToast('画布已保存', 'ok');
@@ -7084,13 +7188,28 @@ Source prompt:
     async function studioRun() {
       if (!STUDIO.current) return showToast('请先新建或选择画布', 'bad');
       if (STUDIO.running) return showToast('正在生成，请稍候', 'bad');
-      await studioSave();
+      try {
+        await studioSave();
+      } catch (e) {
+        setStudioRunningUI(false);
+        $('studioStatus').textContent = e.message || '画布保存失败，未启动生成';
+        showToast(e.message || '画布保存失败，未启动生成', 'bad');
+        return;
+      }
       if (!STUDIO.current) return;
       setStudioRunningUI(true);
       $('studioStatus').textContent = '已提交生成…';
-      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/run', {
-        method:'POST', body: JSON.stringify({})
-      });
+      let res;
+      try {
+        res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/run', {
+          method:'POST', body: JSON.stringify({})
+        });
+      } catch (e) {
+        setStudioRunningUI(false);
+        $('studioStatus').textContent = e.message || '启动失败，未提交生成';
+        showToast(e.message || '启动失败，未提交生成', 'bad');
+        return;
+      }
       if (!res.success) {
         setStudioRunningUI(false);
         $('studioStatus').textContent = res.message || '启动失败';
@@ -7098,19 +7217,22 @@ Source prompt:
       }
       const taskId = res.data && res.data.task_id;
       STUDIO.taskId = taskId || '';
+      STUDIO.pollFailures = 0;
       setStudioRunningUI(true);
       showToast('开始生成', 'ok');
       studioStopPoll();
-      STUDIO.pollTimer = setInterval(async () => {
+      const pollStudio = async () => {
+        STUDIO.pollTimer = null;
         try {
           const st = await studioApi('/api/studio/tasks/' + encodeURIComponent(taskId));
-          if (!st.success) return;
+          if (!st.success) throw new Error(st.message || '状态读取失败');
           const task = st.data || {};
           if (task.status === 'queued' || task.status === 'running') {
             const progress = taskProgressText(task);
             const stage = taskStageText(task);
             $('studioStatus').textContent = '生成中… ' + (stage ? stage + ' · ' : '') + (progress ? progress + ' · ' : '') + (task.running_seconds != null ? task.running_seconds + 's' : '');
             setStudioRunningUI(true);
+            STUDIO.pollTimer = setTimeout(pollStudio, 1500);
             return;
           }
           studioStopPoll();
@@ -7119,8 +7241,23 @@ Source prompt:
           await loadStudioList(STUDIO.current.id);
           if (task.success) showToast('画布生成完成', 'ok');
           else showToast(task.error || '生成失败', 'bad');
-        } catch (e) {}
-      }, 1500);
+        } catch (e) {
+          STUDIO.pollFailures = Number(STUDIO.pollFailures || 0) + 1;
+          if (STUDIO.pollFailures < 4) {
+            $('studioStatus').textContent = `状态读取失败（${STUDIO.pollFailures}/3），正在退避重试…`;
+            STUDIO.pollTimer = setTimeout(pollStudio, Math.min(12000, 1500 * (2 ** STUDIO.pollFailures)));
+            return;
+          }
+          studioStopPoll();
+          STUDIO.taskId = taskId || STUDIO.taskId;
+          setStudioRunningUI(false);
+          if ($('studioCancelBtn')) $('studioCancelBtn').style.display = STUDIO.taskId ? '' : 'none';
+          if ($('studioRetryStatusBtn')) $('studioRetryStatusBtn').style.display = STUDIO.taskId ? '' : 'none';
+          $('studioStatus').textContent = `${e.message || '状态读取失败'}；可重新点击生成或取消任务`;
+          showToast('画布状态读取失败，请重试', 'bad');
+        }
+      };
+      STUDIO.pollTimer = setTimeout(pollStudio, 1500);
     }
     async function studioUploadFile(file) {
       if (!STUDIO.current || !STUDIO.uploadSlotId || !file) return;
@@ -7239,6 +7376,9 @@ Source prompt:
     $('testImageBtn').onclick = runImageTest;
     $('testVideoBtn').onclick = runVideoTest;
     $('testCancelBtn').onclick = cancelTestTask;
+    $('testRetryStatusBtn').onclick = () => {
+      if (TEST_TASK_ID) pollImageTestTask(TEST_TASK_ID, 0);
+    };
     if ($('testTemplatePreviewBtn')) $('testTemplatePreviewBtn').onclick = previewTestTemplate;
     if ($('testStoryboardPreviewBtn')) $('testStoryboardPreviewBtn').onclick = previewTestStoryboard;
     if ($('testVariationEnabled')) $('testVariationEnabled').onchange = () => { $('testVariationFieldsWrap').style.display = $('testVariationEnabled').checked ? '' : 'none'; };
@@ -7258,6 +7398,13 @@ Source prompt:
     if ($('studioRunBtn')) $('studioRunBtn').onclick = studioRun;
     if ($('studioRerunBtn')) $('studioRerunBtn').onclick = studioRun;
     if ($('studioCancelBtn')) $('studioCancelBtn').onclick = cancelStudioTask;
+    if ($('studioRetryStatusBtn')) $('studioRetryStatusBtn').onclick = async () => {
+      if (!STUDIO.current?.id) return;
+      $('studioRetryStatusBtn').disabled = true;
+      try { await loadStudioList(STUDIO.current.id); }
+      catch (e) { $('studioStatus').textContent = e.message || '状态读取失败'; }
+      finally { $('studioRetryStatusBtn').disabled = false; }
+    };
     if ($('studioPickRecordBtn')) $('studioPickRecordBtn').onclick = () => openStudioGallery('');
     if ($('studioAddSlotBtn')) $('studioAddSlotBtn').onclick = async () => {
       if (!STUDIO.current) return showToast('请先新建画布', 'bad');

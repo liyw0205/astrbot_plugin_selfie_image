@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from ..core.constants import PLUGIN_NAME
-from ..generation.generation_records import metric_window_seconds
+from ..generation.generation_records import build_record_scope_stats, metric_window_seconds
 from ..core.utils import (
     generation_record_media_sources,
     redact_generation_record,
@@ -29,7 +29,9 @@ from .web import (
     MAX_WEB_RECORD_ID_LENGTH,
     MAX_WEB_TASK_ID_LENGTH,
     WEB_TASK_ID_RE,
+    dashboard_page_source_status,
 )
+from .contracts import DASHBOARD_ROUTE_PREFIXES, DASHBOARD_TASK_CANCEL_ROUTES
 
 try:
     from astrbot.api.web import error_response, file_response, json_response, request
@@ -76,8 +78,10 @@ class SelfieImageDashboardAPI:
                 ["GET"],
                 "Selfie Image channel test task status",
             ),
-            ("tasks/<task_id>/cancel", self.page_task_cancel, ["POST"], "Selfie Image cancel task"),
-            ("test-image-channel/tasks/<task_id>/cancel", self.page_task_cancel, ["POST"], "Selfie Image cancel image task"),
+            *[
+                (route, self.page_task_cancel, ["POST"], "Selfie Image cancel task")
+                for route in DASHBOARD_TASK_CANCEL_ROUTES
+            ],
             ("test-video-channel/tasks", self.page_test_video_task_start, ["POST"], "Selfie Image start video channel test"),
             (
                 "test-video-channel/tasks/<task_id>",
@@ -85,7 +89,6 @@ class SelfieImageDashboardAPI:
                 ["GET"],
                 "Selfie Image video channel test task status",
             ),
-            ("test-video-channel/tasks/<task_id>/cancel", self.page_task_cancel, ["POST"], "Selfie Image cancel video task"),
             ("refresh-image-models", self.page_refresh_image_models, ["POST"], "Selfie Image refresh models"),
             ("records", self.page_records, ["GET"], "Selfie Image generation records"),
             ("metrics", self.page_metrics, ["GET"], "Selfie Image generation metrics"),
@@ -125,7 +128,6 @@ class SelfieImageDashboardAPI:
             ("studio/sessions/<session_id>/promote", self.page_studio_promote, ["POST"], "Selfie Image studio promote"),
             ("studio/sessions/<session_id>/run", self.page_studio_run, ["POST"], "Selfie Image studio run"),
             ("studio/tasks/<task_id>", self.page_studio_task, ["GET"], "Selfie Image studio task"),
-            ("studio/tasks/<task_id>/cancel", self.page_task_cancel, ["POST"], "Selfie Image cancel studio task"),
             ("studio/gallery", self.page_studio_gallery, ["GET"], "Selfie Image studio gallery from records"),
             ("prompt-presets", self.page_prompt_presets, ["GET"], "Selfie Image prompt presets"),
             ("prompt-presets/manage", self.page_prompt_presets_manage, ["GET"], "Selfie Image managed prompt presets"),
@@ -148,8 +150,8 @@ class SelfieImageDashboardAPI:
         ]
         for route, handler, methods, desc in routes:
             # Register both bare and /page/ endpoints for Dashboard routing.
-            register_web_api(f"/{PLUGIN_NAME}/{route}", handler, methods, desc)
-            register_web_api(f"/{PLUGIN_NAME}/page/{route}", handler, methods, desc)
+            for prefix in DASHBOARD_ROUTE_PREFIXES:
+                register_web_api(f"/{PLUGIN_NAME}/{prefix}{route}", handler, methods, desc)
 
     @staticmethod
     def _ok(data: Any = None, **extra: Any) -> Any:
@@ -192,7 +194,9 @@ class SelfieImageDashboardAPI:
             return None, self._fail(f"{name} 必须是整数", 400)
         if value < minimum:
             return None, self._fail(f"{name} 不能小于 {minimum}", 400)
-        return min(value, maximum), None
+        if value > maximum:
+            return None, self._fail(f"{name} 不能大于 {maximum}", 400)
+        return value, None
 
     def _timestamp_query(self, name: str, *, end_of_day: bool = False) -> tuple[Optional[float], Any]:
         """Parse an ISO date/time filter into a Unix timestamp.
@@ -316,6 +320,7 @@ class SelfieImageDashboardAPI:
             "filtered": len(filtered),
             "offset": offset,
             "limit": limit,
+            "scope_stats": build_record_scope_stats(filtered),
         }
         return page, meta, None
 
@@ -342,6 +347,7 @@ class SelfieImageDashboardAPI:
                 "cache_limit_count": getattr(plugin.config, "image_cache_limit_count", 100),
                 "channel_health": get_health() if callable(get_health) else {},
                 "cache_cleanup_preview": get_preview() if callable(get_preview) else {},
+                "dashboard_page": dashboard_page_source_status(),
             }
         )
 
@@ -1074,14 +1080,19 @@ class SelfieImageDashboardAPI:
         try:
             kind = self._query_value("kind") or self._query_value("media_type") or "image"
             data = self.plugin.list_prompt_presets_for_web(kind)
-            return self._ok(data, count=len(data))
+            status_getter = getattr(self.plugin, "get_prompt_preset_status_for_web", None)
+            status = status_getter(kind) if callable(status_getter) else {"ok": True, "source": "legacy", "error": ""}
+            return self._ok(data, count=len(data), load_status=status)
         except Exception as exc:
             return self._fail(str(exc), 500)
 
     async def page_prompt_presets_manage(self) -> Any:
         try:
             kind = self._query_value("kind") or self._query_value("media_type") or "image"
-            return self._ok(self.plugin.list_managed_prompt_presets_for_web(kind))
+            data = self.plugin.list_managed_prompt_presets_for_web(kind)
+            status_getter = getattr(self.plugin, "get_prompt_preset_status_for_web", None)
+            status = status_getter(kind) if callable(status_getter) else {"ok": True, "source": "legacy", "error": ""}
+            return self._ok(data, load_status=status)
         except Exception as exc:
             return self._fail(str(exc), 500)
 

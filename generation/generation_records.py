@@ -303,6 +303,33 @@ def build_generation_metrics(
     }
 
 
+def build_record_scope_stats(records: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Aggregate the exact filtered record scope used by a paged list."""
+    items = [record for record in records if isinstance(record, Mapping)]
+    success_count = sum(1 for record in items if bool(record.get("success")))
+    failure_count = len(items) - success_count
+    elapsed_values: List[float] = []
+    for record in items:
+        try:
+            value = float(record.get("elapsed_seconds") or 0)
+        except (TypeError, ValueError):
+            continue
+        if value >= 0:
+            elapsed_values.append(value)
+    sample_count = len(items)
+    return {
+        "sample_count": sample_count,
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "success_rate": round(success_count / sample_count * 100, 2) if sample_count else None,
+        "failure_rate": round(failure_count / sample_count * 100, 2) if sample_count else None,
+        "average_elapsed_seconds": round(sum(elapsed_values) / len(elapsed_values), 3)
+        if elapsed_values
+        else None,
+        "scope": "filtered",
+    }
+
+
 def composition_metadata(
     prompt: str,
     source: str,

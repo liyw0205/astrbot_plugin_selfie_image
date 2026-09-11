@@ -7,6 +7,146 @@ import re
 from typing import Any, Dict, Tuple
 
 
+_COMPLETION_PATH_KEYS = (
+    "files",
+    "image_paths",
+    "generated_image_paths",
+    "video_path",
+    "generated_video_paths",
+)
+
+
+def result_has_completion_evidence(result: Any) -> bool:
+    """Return whether a result contains proof that generation reached an outcome.
+
+    Cancellation is cooperative, so a late request must not erase a generated
+    artifact or a transport outcome.  Keep this predicate deliberately small
+    and shared by every task runner instead of relying on one runner's status
+    naming conventions.
+    """
+    if not isinstance(result, dict):
+        return False
+    if bool(
+        result.get("success")
+        or result.get("generation_success")
+        or result.get("delivery_failed")
+        or result.get("delivery_unknown")
+    ):
+        return True
+    status = str(result.get("status") or "").strip().lower()
+    if status in {"succeeded", "partial_success", "delivery_failed"}:
+        return True
+    try:
+        if int(result.get("succeeded_count") or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    for key in _COMPLETION_PATH_KEYS:
+        value = result.get(key)
+        if isinstance(value, (list, tuple, set)) and any(str(item or "").strip() for item in value):
+            return True
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
+def resolve_cancel_request(result: Any, cancel_requested: bool) -> Tuple[Dict[str, Any], bool]:
+    """Apply a cooperative cancellation request without discarding evidence.
+
+    The boolean in the return value is true only when cancellation actually
+    replaced a result that had no completion evidence.
+    """
+    data = copy.deepcopy(result) if isinstance(result, dict) else {"success": False, "error": "无效结果"}
+    if not cancel_requested or result_has_completion_evidence(data):
+        return data, False
+    requested = data.get("requested_count") or data.get("batch_total") or 1
+    cancelled = {
+        **data,
+        "success": False,
+        "status": "cancelled",
+        "cancelled": True,
+        "generation_success": False,
+        "delivery_success": None,
+        "delivery_failed": False,
+        "delivery_unknown": False,
+        "error": "任务已取消",
+        "requested_count": requested,
+    }
+    return cancelled, True
+
+
+def build_task_terminal_state(
+    result: Any,
+    *,
+    requested_count: int = 1,
+    cancel_requested: bool = False,
+) -> Dict[str, Any]:
+    """Normalize and classify terminal state shared by all task runners."""
+    data = normalize_generation_result(result, requested_count)
+    data, cancelled_result = resolve_cancel_request(data, cancel_requested)
+    success = bool(data.get("success"))
+    cancelled = bool(data.get("cancelled")) or "取消" in str(data.get("error") or "")
+    # A late artifact or transport outcome is stronger evidence than a stale
+    # cancellation marker left by an upstream adapter.
+    if result_has_completion_evidence(data) and not cancelled_result:
+        cancelled = False
+    generation_success = bool(data.get("generation_success"))
+    delivery_unknown = bool(data.get("delivery_unknown"))
+    delivery_failed = (
+        bool(data.get("delivery_failed"))
+        or (
+            generation_success
+            and data.get("delivery_success") is False
+            and not delivery_unknown
+        )
+        or str(data.get("status") or "") == "delivery_failed"
+    ) and not delivery_unknown
+    if success and not generation_success:
+        generation_success = True
+    if delivery_failed:
+        data.update(
+            {
+                "generation_success": generation_success,
+                "delivery_success": False,
+                "delivery_failed": True,
+            }
+        )
+    try:
+        succeeded_count = int(data.get("succeeded_count") or 0)
+    except (TypeError, ValueError):
+        succeeded_count = 0
+    partial_success = str(data.get("status") or "") == "partial_success" or (
+        not success and succeeded_count > 0
+    )
+    terminal_stage = (
+        "cancelled"
+        if cancelled and not success
+        else "complete"
+        if success or delivery_failed or partial_success
+        else "failed"
+    )
+    terminal_status = (
+        "cancelled"
+        if cancelled and not success
+        else "delivery_failed"
+        if delivery_failed
+        else str(data.get("status") or ("succeeded" if success else "failed"))
+    )
+    return {
+        "result": data,
+        "cancelled_result": cancelled_result,
+        "success": success,
+        "cancelled": cancelled,
+        "generation_success": generation_success,
+        "delivery_unknown": delivery_unknown,
+        "delivery_failed": delivery_failed,
+        "partial_success": partial_success,
+        "terminal_stage": terminal_stage,
+        "terminal_status": terminal_status,
+        "error": "" if success else str(data.get("error") or ("任务已取消" if cancelled else "这次没顺好")),
+    }
+
+
 def batch_success_text(info: str, index: int, total: int) -> str:
     text = str(info or "").strip()
     if not text:

@@ -25,6 +25,7 @@ from ..core.utils import (
     redact_sensitive_data,
     redact_sensitive_text,
 )
+from ..generation.generation_results import build_task_terminal_state
 
 
 logger = logging.getLogger(__name__)
@@ -171,17 +172,28 @@ class StudioMixin:
     # --- Studio / 画布 ---
     def studio_list(self) -> Dict[str, Any]:
         # Ensure default presets are seeded for picker / QQ /预设
-        try:
-            self.presets.load()
-        except Exception:
-            pass
+        self.presets.load()
         return {
             "sessions": self.studio.list_sessions(),
+            "storage_status": self.studio.storage_status(),
             "builtin_prompts": BUILTIN_PROMPTS,
             "templates": list_studio_templates(),
             "prompt_presets": self.list_prompt_presets_for_web(),
+            "prompt_preset_status": self.get_prompt_preset_status_for_web("image"),
             "cos_look_sets": self.list_cos_look_sets_for_web(),
         }
+
+    def get_prompt_preset_status_for_web(self, kind: str = "image") -> Dict[str, Any]:
+        """Expose load failures separately from an intentionally empty list."""
+        manager = (
+            getattr(self, "video_presets", None)
+            if str(kind or "").strip().lower() == "video"
+            else getattr(self, "presets", None)
+        )
+        if manager is None:
+            return {"ok": False, "source": "manager", "error": "预设管理器不可用"}
+        getter = getattr(manager, "get_load_status", None)
+        return getter() if callable(getter) else {"ok": True, "source": "legacy", "error": ""}
 
     def list_prompt_presets_for_web(self, kind: str = "image") -> List[Dict[str, Any]]:
         """Return the picker presets for one media kind."""
@@ -200,8 +212,8 @@ class StudioMixin:
             try:
                 if self.presets.is_builtin_deleted(name):
                     continue
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[SelfieImage] failed to inspect deleted preset %s: %s", name, exc)
             merged[name] = dict(item)
             merged[name]["name"] = name
             merged[name]["title"] = name
@@ -217,8 +229,10 @@ class StudioMixin:
                 if name in merged and row.get("source") == "user":
                     row["source"] = "preset"
                 merged[name] = row
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception("[SelfieImage] failed to merge persisted image presets")
+            if not merged:
+                raise RuntimeError(f"预设列表读取失败：{type(exc).__name__}") from exc
         rows = list(merged.values())
         rows.sort(key=lambda r: str(r.get("name") or ""))
         return rows
@@ -800,6 +814,12 @@ class StudioMixin:
             )
             for index in range(max(1, count)):
                 if self._task_cancel_requested(task_id):
+                    # A completed shot is evidence even when cancellation was
+                    # requested before the next batch item started. Let the
+                    # terminal classifier publish a partial result instead of
+                    # throwing away the paths already produced.
+                    if all_paths:
+                        break
                     raise RuntimeError("任务已取消")
                 result = await self._run_image_generation(
                     prompt=prompt,
@@ -853,52 +873,44 @@ class StudioMixin:
                     current_index=index + 1,
                 )
 
-            # Cancellation may arrive after the final upstream response but before
-            # the task is committed. It must remain cancelled in that race.
-            if self._task_cancel_requested(task_id):
-                error = "任务已取消"
-                wait_commits = getattr(self, "_wait_for_record_commits", None)
-                if callable(wait_commits):
-                    await wait_commits(task_id)
-                self.studio.attach_run_finish(
-                    session_id,
-                    task_id,
-                    success=False,
-                    error=error,
-                    result_paths=all_paths,
-                    used_model=used_model,
-                    source_asset_ids=source_asset_ids,
-                    status="cancelled",
-                )
-                self._set_web_image_task(
-                    task_id,
-                    status="cancelled",
-                    success=False,
-                    generation_stage="cancelled",
-                    generation_stage_label="已取消",
-                    error=error,
-                    completed_count=completed_count,
-                    succeeded_count=succeeded_count,
-                    failed_count=failed_count,
-                    progress_percent=int(round(completed_count * 100 / max(1, count))),
-                    current_index=completed_count,
-                    result={
-                        "success": False,
-                        "error": error,
-                        "cancelled": True,
-                        "image_paths": all_paths,
-                        "generated_image_paths": all_paths,
-                        "session_id": session_id,
-                    },
-                    finished_ts=time.time(),
-                    finished_at=self._web_task_timestamp(),
-                )
-                return
-
-            success = bool(all_paths) and not last_error
-            error = "" if success else (last_error or "生成失败")
-            terminal_stage = "complete" if all_paths else "failed"
-            terminal_stage_label = "已完成" if success else "部分完成" if all_paths else "已失败"
+            cancel_requested = self._task_cancel_requested(task_id)
+            terminal = build_task_terminal_state(
+                {
+                    "success": bool(all_paths) and not last_error,
+                    "error": last_error,
+                    "status": (
+                        "partial_success"
+                        if failed_count and succeeded_count
+                        else "failed"
+                        if last_error
+                        else ""
+                    ),
+                    "files": all_paths,
+                    "image_paths": all_paths,
+                    "requested_count": count,
+                    "completed_count": completed_count,
+                    "succeeded_count": succeeded_count,
+                    "failed_count": failed_count,
+                },
+                requested_count=count,
+                cancel_requested=cancel_requested,
+            )
+            if cancel_requested and not terminal["cancelled_result"]:
+                # A late result won the race; cancellation is no longer an
+                # active request and must not remain on the terminal snapshot.
+                self._set_web_image_task(task_id, cancel_requested=False)
+            success = terminal["success"]
+            error = terminal["error"]
+            terminal_stage = terminal["terminal_stage"]
+            terminal_stage_label = (
+                "已取消"
+                if terminal_stage == "cancelled"
+                else "部分完成"
+                if terminal["partial_success"]
+                else "已完成"
+                if terminal_stage == "complete"
+                else "已失败"
+            )
             wait_commits = getattr(self, "_wait_for_record_commits", None)
             if callable(wait_commits):
                 await wait_commits(task_id)
@@ -910,7 +922,7 @@ class StudioMixin:
                 result_paths=all_paths,
                 used_model=used_model,
                 source_asset_ids=source_asset_ids,
-                status="partial_success" if failed_count and succeeded_count else ("succeeded" if success else "failed"),
+                status=terminal["terminal_status"],
             )
             request_data = dict(studio_request_data)
             if isinstance(last_result.get("request_data"), dict):
@@ -933,6 +945,11 @@ class StudioMixin:
             result_payload = {
                 "success": success,
                 "error": error,
+                "status": terminal["terminal_status"],
+                "cancelled": terminal["cancelled"],
+                "generation_success": terminal["generation_success"],
+                "delivery_failed": terminal["delivery_failed"],
+                "delivery_unknown": terminal["delivery_unknown"],
                 "image_paths": all_paths,
                 "generated_image_paths": all_paths,
                 "original_prompt": original_prompt,
@@ -950,7 +967,7 @@ class StudioMixin:
             }
             self._set_web_image_task(
                 task_id,
-                status="partial_success" if failed_count and succeeded_count else ("succeeded" if success else "failed"),
+                status=terminal["terminal_status"],
                 success=success,
                 generation_stage=terminal_stage,
                 generation_stage_label=terminal_stage_label,

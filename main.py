@@ -92,6 +92,7 @@ from .generation.generation_results import (
     batch_failure_policy,
     batch_failure_text,
     batch_success_text,
+    build_task_terminal_state,
     normalize_generation_result,
 )
 from .cos.leg_focus import (
@@ -2489,32 +2490,30 @@ class SelfieImagePlugin(
             # finished upstream and only the outbound send failed.  Treating
             # them as active here lets a later ``/生图取消`` overwrite useful
             # failure evidence with a misleading cancellation status.
-            if status in {
-                "succeeded",
-                "partial_success",
-                "failed",
-                "delivery_failed",
-                "cancelled",
-                "expired",
-            }:
+            capabilities = self.task_operation_capabilities(task)
+            if capabilities["is_terminal"]:
                 return f"这单已经结束了（{status}），不用再取消"
+            if not capabilities["can_cancel"] and task.get("cancel_requested"):
+                return f"已请求取消 {tid}，任务将在安全边界停止"
             task["cancel_requested"] = True
             now = time.time()
-            task["status"] = "cancelled"
-            task["success"] = False
-            task["error"] = "任务已取消"
+            runtime_task = getattr(self, "_runtime_generation_tasks", {}).get(tid)
+            # Keep active tasks queryable while their cooperative cancellation
+            # reaches the generation boundary. This prevents a late success or
+            # delivery failure from being overwritten by the cancel request.
+            if runtime_task is None:
+                task["status"] = "cancelled"
+                task["success"] = False
+                task["error"] = "任务已取消"
+                task["finished_ts"] = now
+                task["finished_at"] = self._web_task_timestamp()
             task["updated_ts"] = now
             task["updated_at"] = self._web_task_timestamp()
-            task["finished_ts"] = now
-            task["finished_at"] = self._web_task_timestamp()
             self._persist_web_tasks_locked()
-            runtime_task = getattr(self, "_runtime_generation_tasks", {}).get(tid)
             # Studio coroutines must get a chance to persist the session's
             # cancelled last_run state; their cancellation flag is checked at
             # each generation boundary and before the final commit.
-            if runtime_task is not None and not runtime_task.done() and not task.get("studio_session_id"):
-                runtime_task.cancel()
-            return f"已立即取消 {tid}"
+            return "已立即取消 " + tid if runtime_task is None else f"已请求取消 {tid}，任务将在安全边界停止"
 
     def _task_cancel_requested(self, task_id: str) -> bool:
         with self._web_task_lock:
@@ -3521,57 +3520,30 @@ class SelfieImagePlugin(
             if self._task_cancel_requested(task_id):
                 raise RuntimeError("任务已取消")
             result = await runner(task_id)
-            result = self._normalize_generation_result(result)
+            with self._web_task_lock:
+                requested_count = int((self._web_tasks.get(task_id) or {}).get("requested_count") or 1)
             result = redact_sensitive_data(result)
-            # A cancellation request wins the race with a late upstream response.
-            if self._task_cancel_requested(task_id):
-                with self._web_task_lock:
-                    previous = dict(self._web_tasks.get(task_id) or {})
-                result = {
-                    "success": False,
-                    "error": "任务已取消",
-                    "cancelled": True,
-                    "requested_count": int(previous.get("requested_count") or result.get("requested_count") or 1),
-                    "completed_count": int(previous.get("completed_count") or result.get("completed_count") or 0),
-                    "succeeded_count": int(previous.get("succeeded_count") or result.get("succeeded_count") or 0),
-                    "failed_count": int(previous.get("failed_count") or result.get("failed_count") or 0),
-                }
-            success = bool(result.get("success"))
-            cancelled = bool(result.get("cancelled")) or str(result.get("error") or "").find("取消") >= 0
-            generation_success = bool(result.get("generation_success"))
-            delivery_unknown = bool(result.get("delivery_unknown"))
-            delivery_failed = (
-                bool(result.get("delivery_failed"))
-                or (
-                    generation_success
-                    and result.get("delivery_success") is False
-                    and not delivery_unknown
-                )
-                or str(result.get("status") or "") == "delivery_failed"
-            ) and not delivery_unknown
-            if success and not generation_success:
-                generation_success = True
-            if delivery_failed:
-                result["generation_success"] = generation_success
-                result["delivery_success"] = False
-                result["delivery_failed"] = True
-            error = "" if success else redact_sensitive_text(str(result.get("error") or ("任务已取消" if cancelled else "这次没顺好")))
+            terminal = build_task_terminal_state(
+                result,
+                requested_count=requested_count,
+                cancel_requested=self._task_cancel_requested(task_id),
+            )
+            result = terminal["result"]
+            success = terminal["success"]
+            cancelled = terminal["cancelled"]
+            generation_success = terminal["generation_success"]
+            delivery_unknown = terminal["delivery_unknown"]
+            delivery_failed = terminal["delivery_failed"]
+            error = redact_sensitive_text(terminal["error"])
+            _cancelled_result = terminal["cancelled_result"]
             # Record writes run in a worker thread. Publish the terminal task
             # state only after those writes finish so record_ids are visible
             # immediately when a user opens task details.
             wait_commits = getattr(self, "_wait_for_record_commits", None)
             if callable(wait_commits):
                 await wait_commits(task_id)
-            partial_success = str(result.get("status") or "") == "partial_success" or (
-                not success and int(result.get("succeeded_count") or 0) > 0
-            )
-            terminal_stage = (
-                "cancelled"
-                if cancelled and not success
-                else "complete"
-                if success or delivery_failed or partial_success
-                else "failed"
-            )
+            partial_success = terminal["partial_success"]
+            terminal_stage = terminal["terminal_stage"]
             terminal_stage_label = (
                 "已取消"
                 if terminal_stage == "cancelled"
@@ -3583,7 +3555,7 @@ class SelfieImagePlugin(
             )
             self._set_web_image_task(
                 task_id,
-                status=("cancelled" if cancelled and not success else "delivery_failed" if delivery_failed else str(result.get("status") or ("succeeded" if success else "failed"))),
+                status=terminal["terminal_status"],
                 success=success,
                 generation_stage=terminal_stage,
                 generation_stage_label=terminal_stage_label,
@@ -3604,6 +3576,7 @@ class SelfieImagePlugin(
                 succeeded_count=result.get("succeeded_count", 0),
                 failed_count=result.get("failed_count", 0),
                 result=result,
+                cancel_requested=False if not _cancelled_result else True,
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
             )

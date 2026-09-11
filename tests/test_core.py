@@ -5930,7 +5930,7 @@ class SessionModelAndTaskTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
-    def test_command_task_cancellation_wins_late_success_result(self) -> None:
+    def test_command_task_late_success_result_wins_cancellation_race(self) -> None:
         plugin = self._plugin_stub()
         plugin._web_tasks["cmd-12345678-1"] = {
             "task_id": "cmd-12345678-1",
@@ -5947,7 +5947,11 @@ class SessionModelAndTaskTests(unittest.TestCase):
 
         async def runner(task_id):
             plugin._web_tasks[task_id]["cancel_requested"] = True
-            return {"success": True, "files": ["late.png"], "requested_count": 3}
+            return {
+                "success": True,
+                "files": ["late-1.png", "late-2.png", "late-3.png"],
+                "requested_count": 3,
+            }
 
         class Event:
             def plain_result(self, text):
@@ -5957,9 +5961,155 @@ class SessionModelAndTaskTests(unittest.TestCase):
                 return None
 
         asyncio.run(plugin._run_command_image_task("cmd-12345678-1", Event(), runner))
-        self.assertEqual(plugin._web_tasks["cmd-12345678-1"]["status"], "cancelled")
-        self.assertFalse(plugin._web_tasks["cmd-12345678-1"]["success"])
+        self.assertEqual(plugin._web_tasks["cmd-12345678-1"]["status"], "succeeded")
+        self.assertTrue(plugin._web_tasks["cmd-12345678-1"]["success"])
         self.assertEqual(plugin._web_tasks["cmd-12345678-1"]["requested_count"], 3)
+
+    def test_command_task_late_delivery_failure_wins_cancellation_race(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_tasks["cmd-delivery-race"] = {
+            "task_id": "cmd-delivery-race",
+            "status": "running",
+            "success": None,
+            "cancel_requested": False,
+            "requested_count": 1,
+        }
+        plugin._web_task_timestamp = lambda: "t"
+        plugin._release_quota_reservation = lambda _task_id: None
+
+        async def runner(task_id):
+            plugin._web_tasks[task_id]["cancel_requested"] = True
+            return {
+                "success": False,
+                "status": "delivery_failed",
+                "generation_success": True,
+                "delivery_success": False,
+                "delivery_failed": True,
+                "error": "发送失败",
+                "files": ["generated.png"],
+            }
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        asyncio.run(plugin._run_command_image_task("cmd-delivery-race", Event(), runner))
+        task = plugin._web_tasks["cmd-delivery-race"]
+        self.assertEqual(task["status"], "delivery_failed")
+        self.assertTrue(task["generation_success"])
+        self.assertTrue(task["delivery_failed"])
+        self.assertFalse(task.get("cancel_requested"))
+
+    def test_command_task_late_unknown_delivery_wins_cancellation_race(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_tasks["cmd-unknown-race"] = {
+            "task_id": "cmd-unknown-race",
+            "status": "running",
+            "success": None,
+            "cancel_requested": False,
+            "requested_count": 1,
+        }
+        plugin._web_task_timestamp = lambda: "t"
+        plugin._release_quota_reservation = lambda _task_id: None
+
+        async def runner(task_id):
+            plugin._web_tasks[task_id]["cancel_requested"] = True
+            return {
+                "success": True,
+                "generation_success": True,
+                "delivery_success": None,
+                "delivery_unknown": True,
+                "files": ["generated.png"],
+            }
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        asyncio.run(plugin._run_command_image_task("cmd-unknown-race", Event(), runner))
+        task = plugin._web_tasks["cmd-unknown-race"]
+        self.assertEqual(task["status"], "succeeded")
+        self.assertTrue(task["delivery_unknown"])
+        self.assertIsNone(task["delivery_success"])
+
+    def test_command_task_late_delivery_failure_wins_cancellation_race(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_tasks["cmd-delivery-race"] = {
+            "task_id": "cmd-delivery-race",
+            "status": "running",
+            "success": None,
+            "cancel_requested": False,
+            "requested_count": 1,
+        }
+        plugin._web_task_timestamp = lambda: "t"
+        plugin._release_quota_reservation = lambda _task_id: None
+
+        async def runner(task_id):
+            plugin._web_tasks[task_id]["cancel_requested"] = True
+            return {
+                "success": False,
+                "status": "delivery_failed",
+                "generation_success": True,
+                "delivery_success": False,
+                "delivery_failed": True,
+                "error": "发送失败",
+                "files": ["generated.png"],
+            }
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        asyncio.run(plugin._run_command_image_task("cmd-delivery-race", Event(), runner))
+        task = plugin._web_tasks["cmd-delivery-race"]
+        self.assertEqual(task["status"], "delivery_failed")
+        self.assertTrue(task["generation_success"])
+        self.assertTrue(task["delivery_failed"])
+        self.assertFalse(task.get("cancel_requested"))
+
+    def test_command_task_late_unknown_delivery_wins_cancellation_race(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._web_tasks["cmd-unknown-race"] = {
+            "task_id": "cmd-unknown-race",
+            "status": "running",
+            "success": None,
+            "cancel_requested": False,
+            "requested_count": 1,
+        }
+        plugin._web_task_timestamp = lambda: "t"
+        plugin._release_quota_reservation = lambda _task_id: None
+
+        async def runner(task_id):
+            plugin._web_tasks[task_id]["cancel_requested"] = True
+            return {
+                "success": True,
+                "generation_success": True,
+                "delivery_success": None,
+                "delivery_unknown": True,
+                "files": ["generated.png"],
+            }
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        asyncio.run(plugin._run_command_image_task("cmd-unknown-race", Event(), runner))
+        task = plugin._web_tasks["cmd-unknown-race"]
+        self.assertEqual(task["status"], "succeeded")
+        self.assertTrue(task["delivery_unknown"])
+        self.assertIsNone(task["delivery_success"])
 
     def test_command_task_cancelled_before_runner_writes_failure_record(self) -> None:
         plugin = self._plugin_stub()
@@ -8920,6 +9070,12 @@ class LegFocusTests(unittest.TestCase):
             {item["id"] for item in plugin_main.match_cos_look_sets("Genshin")},
             {item["id"] for item in plugin_main.match_cos_look_sets("原神")},
         )
+        # A command adapter may preserve the COS mode marker in its fallback
+        # text; it must not prevent the character term from selecting Nahida.
+        self.assertEqual(
+            {item["id"] for item in plugin_main.match_cos_look_sets("COS 10 纳西妲 特殊预设")},
+            {"nahida_floating_dream"},
+        )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("Honor of Kings")},
             series_ids,
@@ -9528,6 +9684,66 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual(records[0]["task_id"], task_id)
         self.assertEqual(records[0]["response_data"]["stage"], "preflight")
         self.assertTrue(any(item.get("generation_stage") == "failed" for item in updates))
+
+    def test_run_studio_task_late_success_wins_cancel_race(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio_adapter import StudioMixin
+
+        stub = object.__new__(StudioMixin)
+        task_id = "web-studio-12345678-race"
+        state = {
+            "task_id": task_id,
+            "status": "queued",
+            "request_data": {"kind": "studio", "prompt": "窗边人像"},
+            "result": None,
+            "record_ids": [],
+            "cancel_requested": False,
+        }
+        cancel = {"requested": False}
+        finishes = []
+        updates = []
+        session = {
+            "id": "studio-race",
+            "template": "t2i",
+            "graph": {
+                "mode": "t2i",
+                "prompt": "窗边人像",
+                "count": 1,
+                "use_persona_identity": False,
+            },
+            "slots": [],
+        }
+        stub.config = types.SimpleNamespace(
+            image_default_aspect_ratio="9:16",
+            image_default_resolution="1K",
+            image_enable_image_prompt_en=False,
+        )
+        stub.studio = types.SimpleNamespace(
+            get=lambda _session_id: session,
+            attach_run_finish=lambda *_args, **kwargs: finishes.append(kwargs),
+        )
+        stub.persona = types.SimpleNamespace(get_reference_image=lambda: None)
+        stub._task_cancel_requested = lambda _task_id: cancel["requested"]
+        stub._web_task_timestamp = lambda: "now"
+        stub._set_web_image_task = lambda _task_id, **fields: (updates.append(fields), state.update(fields))
+        stub.get_web_image_task = lambda _task_id: dict(state)
+        stub._wait_for_record_commits = lambda _task_id: asyncio.sleep(0)
+        stub._load_cache_image_bytes = lambda _path: None
+        stub._prompt_en_needed = lambda *_args, **_kwargs: False
+
+        async def fake_generate(**_kwargs):
+            cancel["requested"] = True
+            return {"success": True, "image_paths": ["generated.png"], "files": ["generated.png"]}
+
+        stub._run_image_generation = fake_generate
+
+        asyncio.run(stub._run_studio_task(task_id, session["id"]))
+
+        self.assertEqual(state["status"], "succeeded")
+        self.assertFalse(state.get("cancel_requested"))
+        self.assertEqual(finishes[-1]["status"], "succeeded")
+        self.assertEqual(finishes[-1]["result_paths"], ["generated.png"])
+        self.assertEqual(state["result"]["image_paths"], ["generated.png"])
+        self.assertTrue(any(item.get("generation_stage") == "complete" for item in updates))
 
     def test_selfie_template_mentions_look_legs_outfit_record(self) -> None:
         from astrbot_plugin_selfie_image.studio.studio import list_studio_templates
