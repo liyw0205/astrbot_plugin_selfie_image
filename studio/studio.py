@@ -895,6 +895,46 @@ class StudioStore:
             self._persist()
             return public_session(session)
 
+    def copy_session(
+        self,
+        session_id: str,
+        *,
+        title: str = "",
+        valid_slot_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Copy editable canvas state without carrying execution artifacts."""
+        with self._lock:
+            source = self._require(session_id)
+            copied = empty_session(
+                title or f"{str(source.get('title') or '未命名画布').strip()} · 副本",
+                template=str(source.get("template") or "duo"),
+            )
+            copied["graph"] = copy.deepcopy(source.get("graph") or {})
+            copied["graph"]["input_order"] = list(copied["graph"].get("input_order") or [])
+            keep = set(str(item) for item in valid_slot_ids) if valid_slot_ids is not None else None
+            slots: List[Dict[str, Any]] = []
+            id_map: Dict[str, str] = {}
+            for raw_slot in source.get("slots") or []:
+                if not isinstance(raw_slot, dict):
+                    continue
+                old_id = str(raw_slot.get("id") or "").strip()
+                if keep is not None and old_id not in keep:
+                    continue
+                new_slot = copy.deepcopy(raw_slot)
+                new_id = _new_id("slot")
+                id_map[old_id] = new_id
+                new_slot["id"] = new_id
+                new_slot.pop("source_record_id", None)
+                slots.append(new_slot)
+            copied["slots"] = slots[:MAX_SLOTS]
+            copied["graph"]["input_order"] = [id_map[item] for item in copied["graph"].get("input_order", []) if item in id_map]
+            copied["results"] = []
+            copied["last_run"] = None
+            copied["updated_at"] = _now()
+            self._sessions[copied["id"]] = copied
+            self._persist()
+            return public_session(copied)
+
     def delete(self, session_id: str) -> None:
         with self._lock:
             sid = str(session_id or "").strip()

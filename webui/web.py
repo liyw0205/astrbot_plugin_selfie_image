@@ -27,6 +27,7 @@ from .services import (
     build_health_payload,
     filter_record_page,
     normalize_task_ids,
+    parse_bounded_int,
     parse_query_bool,
     parse_task_query,
     record_matches_query as shared_record_matches_query,
@@ -294,6 +295,54 @@ class FlaskWebServer:
                 return fail("Unauthorized: Token 不正确", 401)
             return ok(build_health_payload(self.plugin, dashboard_page_source_status()))
 
+        @app.route("/api/health/history", methods=["GET"])
+        def health_history() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            getter = getattr(self.plugin, "get_channel_health_history", None)
+            if not callable(getter):
+                return fail("当前版本不支持渠道健康历史", 501)
+            try:
+                try:
+                    window = parse_bounded_int(request.args, "window", 86400, 0, 31 * 86400)
+                except WebContractError as exc:
+                    return fail(str(exc), exc.status_code)
+                export = str(request.args.get("export") or "").strip().lower() in {"1", "true", "yes", "on"}
+                try:
+                    data = getter(window_seconds=window, media_type=request.args.get("media_type") or "", export=export)
+                except TypeError:
+                    data = getter(window_seconds=window, media_type=request.args.get("media_type") or "")
+                return ok(redact_sensitive_data(data))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/context", methods=["GET"])
+        def context_get() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            getter = getattr(self.plugin, "get_conversation_context", None)
+            if not callable(getter):
+                return fail("当前版本不支持会话上下文", 501)
+            try:
+                return ok(redact_sensitive_data(getter(None)))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/context/clear", methods=["POST"])
+        def context_clear() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            clearer = getattr(self.plugin, "clear_conversation_context", None)
+            if not callable(clearer):
+                return fail("当前版本不支持会话上下文", 501)
+            try:
+                return ok(clearer(None), message="会话上下文已清除")
+            except Exception as exc:
+                return fail(str(exc), 500)
+
         @app.route("/api/metrics", methods=["GET"])
         def metrics() -> Any:
             if not check_auth():
@@ -310,6 +359,36 @@ class FlaskWebServer:
                 return ok(redact_sensitive_data(metrics_data))
             except Exception as exc:
                 return fail(str(exc), 500)
+
+        @app.route("/api/records/consistency", methods=["GET"])
+        def records_consistency() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            checker = getattr(self.plugin, "inspect_storage_consistency", None)
+            if not callable(checker):
+                return fail("当前版本不支持存储一致性检查", 501)
+            try:
+                return ok(redact_sensitive_data(checker()))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/records/consistency/repair", methods=["POST"])
+        def records_consistency_repair() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            repair = getattr(self.plugin, "repair_storage_consistency", None)
+            if not callable(repair):
+                return fail("当前版本不支持存储一致性修复", 501)
+            raw_confirm = (payload or {}).get("confirm", False)
+            confirm = raw_confirm if isinstance(raw_confirm, bool) else str(raw_confirm).strip().lower() in {"1", "true", "yes", "on"}
+            try:
+                result = repair(confirm=confirm, kinds=(payload or {}).get("kinds"))
+                return ok(redact_sensitive_data(result), message="一致性修复完成" if confirm else "已生成修复预览")
+            except Exception as exc:
+                return fail(str(exc), 409 if confirm else 400)
 
         @app.route("/api/tasks", methods=["GET"])
         def tasks() -> Any:
@@ -783,6 +862,95 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
 
+        @app.route("/api/assets/collections", methods=["GET", "POST"])
+        def asset_collections() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                if request.method == "POST":
+                    payload, error_response = json_object_payload()
+                    if error_response:
+                        return error_response
+                    return ok(self.plugin.create_asset_collection((payload or {}).get("name", ""), payload or {}), message="资产集合已创建")
+                return ok(self.plugin.list_asset_collections())
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/assets/collections/export", methods=["GET"])
+        def asset_collections_export() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                return ok(self.plugin.export_asset_collections())
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/assets/collections/import", methods=["POST"])
+        def asset_collections_import() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                preview = bool((payload or {}).get("preview")) or str((payload or {}).get("mode") or "").lower() == "preview"
+                return ok(self.plugin.import_asset_collections(payload or {}, preview=preview), message="导入预览完成" if preview else "资产集合已导入")
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/assets/collections/<collection_id>", methods=["GET", "POST"])
+        def asset_collection_update(collection_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            if request.method == "GET":
+                try:
+                    return ok(self.plugin.get_asset_collection(collection_id))
+                except Exception as exc:
+                    return fail(str(exc), 404)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.update_asset_collection(collection_id, payload or {}), message="资产集合已更新")
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/assets/collections/<collection_id>/delete", methods=["POST"])
+        def asset_collection_delete(collection_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                return ok(self.plugin.delete_asset_collection(collection_id), message="资产集合已删除")
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/assets/collections/<collection_id>/studio", methods=["POST"])
+        def asset_collection_studio(collection_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.asset_collection_studio(collection_id, payload or {}), message="集合已加入画布")
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/assets/collections/<collection_id>/<action>", methods=["POST"])
+        def asset_collection_records(collection_id: str, action: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            if action not in {"add", "remove"}:
+                return fail("不支持的集合操作", 404)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                data = self.plugin.update_asset_collection_records(collection_id, payload or {}, remove=action == "remove")
+                return ok(data, message="集合内容已更新")
+            except Exception as exc:
+                return fail(str(exc), 400)
+
         @app.route("/api/assets/tags", methods=["GET"])
         def assets_tags() -> Any:
             if not check_auth():
@@ -996,6 +1164,23 @@ class FlaskWebServer:
                 return ok(self.plugin.studio_update(session_id, payload or {}))
             except Exception as exc:
                 return fail(str(exc))
+
+        @app.route("/api/studio/sessions/<session_id>/copy", methods=["POST"])
+        def studio_session_copy(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            copier = getattr(self.plugin, "studio_copy", None)
+            if not callable(copier):
+                return fail("当前版本不支持复制画布会话", 501)
+            try:
+                return ok(copier(session_id, payload or {}), message="画布会话已复制")
+            except ValueError as exc:
+                return fail(str(exc), 409)
+            except Exception as exc:
+                return fail(str(exc), 500)
 
         @app.route("/api/studio/sessions/<session_id>/delete", methods=["POST"])
         def studio_session_delete(session_id: str) -> Any:

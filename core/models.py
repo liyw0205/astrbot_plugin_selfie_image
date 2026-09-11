@@ -70,6 +70,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # stop: 一张全失败整批停（旧行为）；skip: 跳过失败张继续凑满；skip_max: 最多跳过 N 张
         "batch_on_failure": "skip",
         "batch_skip_max": 2,
+        # Conversation context remains in memory unless explicitly enabled.
+        "persist_context": False,
         "blocked_words": [],
         "enable_prompt_audit": False,
         "enable_output_audit": False,
@@ -350,6 +352,10 @@ class AICatConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AICatConfig":
         migrated = migrate_config(data)
+        # Normalize legacy root/camelCase keys before merging defaults.  If the
+        # default tree adds an empty ``image_channels`` first, the legacy
+        # ``imageChannels`` value would otherwise be ignored as a duplicate.
+        migrated = normalize_legacy_keys(normalize_config_tree(migrated))
         raw = normalize_config_tree(deep_merge(DEFAULT_CONFIG, migrated))
         raw = normalize_legacy_keys(raw)
         raw = strip_channel_timeouts(raw)

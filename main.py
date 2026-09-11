@@ -256,6 +256,7 @@ class SelfieImagePlugin(
         os.makedirs(self.data_dir, exist_ok=True)
         self.config_path = os.path.join(self.data_dir, PLUGIN_CONFIG_FILENAME)
         self._migrate_legacy_config_file()
+        self._migrate_config_file_schema()
         self.usage_path = os.path.join(self.data_dir, "usage_stats.json")
         self.records_path = os.path.join(self.data_dir, "generation_records.json")
         self.records_db_path = os.path.join(self.data_dir, "generation_records.sqlite3")
@@ -325,13 +326,16 @@ class SelfieImagePlugin(
         self.key_config = self._extract_native_key_config(native_config)
         self.raw_config = self._load_initial_config()
         self.config = AICatConfig.from_dict(self.raw_config)
+        self._load_persisted_conversation_context()
         self.persona = PersonaManager(self.data_dir)
         self.presets = ImagePresetManager(self.data_dir)
         self.video_presets = VideoPresetManager(self.data_dir)
         from .cos.cos_pool import CosPoolStore
+        from .generation.asset_collections import AssetCollectionStore
 
         self.cos_pool = CosPoolStore(self.data_dir)
         self.studio = StudioStore(self.data_dir)
+        self.asset_collections = AssetCollectionStore(self.data_dir)
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self._video_semaphore = asyncio.Semaphore(max(1, int(getattr(self.config, "video_max_concurrent_tasks", 1) or 1)))
@@ -1418,6 +1422,7 @@ class SelfieImagePlugin(
         allow_compat_retry: bool = True,
         prompt_en_meta: Optional[Dict[str, Any]] = None,
         record_context: Optional[Mapping[str, Any]] = None,
+        reference_selection: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         # ``targets=[]`` is an intentional explicit selection (for example a
         # disabled channel test); do not silently replace it with all configured
@@ -1425,6 +1430,10 @@ class SelfieImagePlugin(
         candidate_targets = (
             self._resolve_generation_targets(event) if targets is None else list(targets)
         )
+        if reference_selection is None and event is not None:
+            consume_selection = getattr(self, "_consume_reference_selection", None)
+            if callable(consume_selection):
+                reference_selection = consume_selection(event)
         selected_targets, cooldown_attempts = self._select_healthy_generation_targets(
             candidate_targets
         )
@@ -1560,6 +1569,30 @@ class SelfieImagePlugin(
             "targets": [redact_sensitive_text(target.label) for target in selected_targets],
             "image_to_text": image_to_text_meta,
         }
+        if isinstance(reference_selection, Mapping):
+            selection_roles = reference_selection.get("roles") if isinstance(reference_selection.get("roles"), Mapping) else {}
+            normalized_selection_roles = {}
+            for key, value in selection_roles.items():
+                try:
+                    count = int(value or 0)
+                except (TypeError, ValueError):
+                    count = 0
+                normalized_selection_roles[str(key)] = max(0, count)
+            try:
+                selected_count = int(reference_selection.get("selected_count") or len(refs))
+            except (TypeError, ValueError):
+                selected_count = len(refs)
+            try:
+                failed_count = int(reference_selection.get("failed_count") or 0)
+            except (TypeError, ValueError):
+                failed_count = 0
+            request_data["reference_selection"] = {
+                "roles": normalized_selection_roles,
+                "selected_count": max(0, selected_count),
+                "failed_count": max(0, failed_count),
+                "used_persona": bool(reference_selection.get("used_persona")),
+                "used_context_fallback": bool(reference_selection.get("used_context_fallback")),
+            }
         if cooldown_attempts:
             request_data["cooldown_skipped_channels"] = cooldown_attempts
         if isinstance(record_context, Mapping):
@@ -2292,6 +2325,21 @@ class SelfieImagePlugin(
         payload = self.build_record_retry_payload(record_id, feedback, strategy)
         return self.start_web_image_task(payload)
 
+    def start_record_reuse_task(
+        self,
+        record_id: str,
+        *,
+        feedback: str = "",
+        strategy: str = "full",
+        owner_session: str = "web",
+    ) -> Dict[str, Any]:
+        """Start a deduplicated retry intended for a chat session."""
+        payload = self.build_record_retry_payload(record_id, feedback, strategy)
+        payload["force_regenerate"] = False
+        payload["owner_session"] = str(owner_session or "web").strip()[:200] or "web"
+        payload["source"] = "chat-record-reuse"
+        return self.start_web_image_task(payload)
+
     def _available_model_labels(self) -> List[str]:
         return available_model_labels(self.config.get_prioritized_targets())
 
@@ -2923,7 +2971,12 @@ class SelfieImagePlugin(
                 self._video_semaphore.release()
         if cooldown_attempts:
             result.attempts = [*cooldown_attempts, *(result.attempts or [])]
-        self._record_channel_health(result.attempts)
+        try:
+            self._record_channel_health(result.attempts, media_type="video")
+        except TypeError:
+            # Compatibility with older test/host shims exposing the original
+            # one-argument observability hook.
+            self._record_channel_health(result.attempts)
         if result.error or not result.video_path:
             return failure(
                 result.error or "视频没有生成出来",
@@ -4945,7 +4998,10 @@ class SelfieImagePlugin(
         finally:
             if acquired_video_slot or not task_id:
                 self._video_semaphore.release()
-        self._record_channel_health(result.attempts)
+        try:
+            self._record_channel_health(result.attempts, media_type="video")
+        except TypeError:
+            self._record_channel_health(result.attempts)
         elapsed = round(float(result.elapsed_seconds or (time.monotonic() - started)), 2)
         safe_result_error = video_error_user_message(result.error, "视频没有生成出来") if result.error else ""
         generated_video_rel = self._cache_relative_path(result.video_path) if result.video_path else ""
@@ -5713,6 +5769,77 @@ class SelfieImagePlugin(
             yield event.plain_result(f"已重发 {result['sent']} 张图片。")
         else:
             yield event.plain_result("没有可重发的图片。")
+
+    @filter.command("上下文")
+    async def cmd_context_view(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """查看当前会话的截断上下文摘要。"""
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        data = self.get_conversation_context(event, 12)
+        messages = data.get("messages") if isinstance(data, dict) else []
+        lines = [f"当前会话上下文：{len(messages)} 条（持久化{'已开启' if data.get('enabled') else '未开启'}）"]
+        for item in messages[-12:]:
+            if not isinstance(item, dict):
+                continue
+            content = " ".join(str(item.get("content") or "").split())[:100]
+            if content:
+                lines.append(f"{'我' if item.get('is_bot') else item.get('sender_name') or '用户'}：{content}")
+        yield event.plain_result("\n".join(lines))
+
+    @filter.command("上下文清除")
+    async def cmd_context_clear(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        result = self.clear_conversation_context(event)
+        yield event.plain_result(f"已清除当前会话上下文 {result.get('cleared', 0)} 条。")
+
+    @filter.command("记录复用", alias={"记录重生"})
+    async def cmd_record_reuse(
+        self,
+        event: AstrMessageEvent,
+        p1: str = "",
+        p2: str = "",
+        p3: str = "",
+        p4: str = "",
+        p5: str = "",
+        p6: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        """按记录 ID 创建一条独立的图片/视频重生成任务。"""
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6] if item).strip()
+        message = extract_command_message(event, "记录复用", fallback)
+        parts = message.split(maxsplit=1)
+        if not parts or not parts[0].strip():
+            yield event.plain_result("用法：记录复用 <记录编号> [修改要求]")
+            return
+        record_id = parts[0].strip()
+        feedback = parts[1].strip() if len(parts) > 1 else ""
+        try:
+            task = self.start_record_reuse_task(
+                record_id,
+                feedback=feedback,
+                owner_session=self._session_key(event),
+            )
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            return
+        except Exception as exc:
+            yield event.plain_result(f"记录复用失败：{redact_sensitive_text(str(exc))}")
+            return
+        yield event.plain_result(f"已提交记录复用任务：{task.get('task_id', '')}")
+        result = await self._await_command_image_task(task)
+        files = [str(item) for item in (result.get("files") or []) if str(item).strip()]
+        if files:
+            await self._send_generated_images(event, files)
+        if not result.get("success") and not files:
+            yield event.plain_result(f"记录复用失败：{result.get('error') or '生成失败'}")
 
     @filter.command("画", alias={"生图"})
     async def cmd_draw(

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import copy
+import json
+import os
 import re
 import time
+import tempfile
 from typing import Any, Dict, List, Optional
 
 try:
@@ -24,6 +27,128 @@ from ..core.utils import event_group_id, event_user_id, extract_event_text, extr
 
 
 class ConversationContextMixin:
+    def _context_persistence_enabled(self) -> bool:
+        raw = getattr(self, "raw_config", {})
+        image = raw.get("image") if isinstance(raw, dict) else {}
+        value = image.get("persist_context") if isinstance(image, dict) else False
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on", "是", "开启"}
+        return bool(value)
+
+    def _context_store_path(self) -> str:
+        data_dir = str(getattr(self, "data_dir", "") or "").strip()
+        return os.path.join(data_dir, "conversation_context.json") if data_dir else ""
+
+    def _load_persisted_conversation_context(self) -> None:
+        if not self._context_persistence_enabled():
+            return
+        path = self._context_store_path()
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            raw_sessions = payload.get("sessions") if isinstance(payload, dict) else {}
+            if not isinstance(raw_sessions, dict):
+                return
+            with self._context_lock:
+                self._conversation_context.clear()
+                for key, items in raw_sessions.items():
+                    if not isinstance(items, list):
+                        continue
+                    rows = [self._normalize_persisted_context_row(item) for item in items]
+                    rows = [item for item in rows if item]
+                    if rows:
+                        self._conversation_context[str(key)] = rows[-self._context_max_messages :]
+                while len(self._conversation_context) > self._context_max_sessions:
+                    self._conversation_context.popitem(last=False)
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+            # A corrupt optional store must not prevent plugin startup.
+            return
+
+    @staticmethod
+    def _normalize_persisted_context_row(item: Any) -> Dict[str, Any]:
+        if not isinstance(item, dict):
+            return {}
+        try:
+            image_count = int(item.get("image_count") or (1 if item.get("has_image") else 0))
+        except (TypeError, ValueError):
+            image_count = 1 if item.get("has_image") else 0
+        try:
+            timestamp = float(item.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            timestamp = 0.0
+        return {
+            "msg_id": str(item.get("msg_id") or "")[:160],
+            "sender_id": str(item.get("sender_id") or "")[:160],
+            "sender_name": str(item.get("sender_name") or "用户")[:80],
+            "content": str(item.get("content") or "")[:500],
+            "is_bot": bool(item.get("is_bot")),
+            "has_image": bool(item.get("has_image")),
+            "image_sources": [],
+            "image_count": max(0, min(8, image_count)),
+            "timestamp": timestamp,
+        }
+
+    def _persist_conversation_context(self) -> None:
+        if not self._context_persistence_enabled():
+            return
+        path = self._context_store_path()
+        if not path:
+            return
+        with self._context_lock:
+            sessions = {
+                key: [
+                    {
+                        "msg_id": str(row.get("msg_id") or "")[:160],
+                        "sender_id": str(row.get("sender_id") or "")[:160],
+                        "sender_name": str(row.get("sender_name") or "用户")[:80],
+                        "content": str(row.get("content") or "")[:500],
+                        "is_bot": bool(row.get("is_bot")),
+                        "has_image": bool(row.get("has_image")),
+                        "image_count": max(0, min(8, len(row.get("image_sources") or []) or (1 if row.get("has_image") else 0))),
+                        "timestamp": float(row.get("timestamp") or 0),
+                    }
+                    for row in rows[-self._context_max_messages :]
+                    if isinstance(row, dict)
+                ]
+                for key, rows in self._conversation_context.items()
+            }
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            fd, temp_path = tempfile.mkstemp(prefix="conversation_context.", suffix=".tmp", dir=os.path.dirname(path))
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump({"version": 1, "sessions": sessions}, handle, ensure_ascii=False, separators=(",", ":"))
+            os.replace(temp_path, path)
+        except OSError:
+            try:
+                if 'temp_path' in locals() and os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
+
+    def get_conversation_context(self, event: Optional[AstrMessageEvent] = None, count: int = 40) -> Dict[str, Any]:
+        key = self._context_session_key(event)
+        with self._context_lock:
+            rows = copy.deepcopy(self._conversation_context.get(key, []))[-max(1, min(40, int(count or 40))) :]
+        for row in rows:
+            row["image_sources"] = []
+            row["image_count"] = max(0, min(8, int(row.get("image_count") or (1 if row.get("has_image") else 0))))
+        return {"session_key": key, "enabled": self._context_persistence_enabled(), "count": len(rows), "messages": rows}
+
+    def clear_conversation_context(self, event: Optional[AstrMessageEvent] = None) -> Dict[str, Any]:
+        key = self._context_session_key(event)
+        with self._context_lock:
+            removed = len(self._conversation_context.pop(key, []) or [])
+        self._persist_conversation_context()
+        return {"session_key": key, "cleared": removed}
+
+    def get_context(self, event: Optional[AstrMessageEvent] = None, count: int = 40) -> Dict[str, Any]:
+        return self.get_conversation_context(event, count)
+
+    def clear_context(self, event: Optional[AstrMessageEvent] = None) -> Dict[str, Any]:
+        return self.clear_conversation_context(event)
+
     def _session_key(self, event: Optional[AstrMessageEvent] = None) -> str:
         if event is None:
             return "web"
@@ -113,6 +238,7 @@ class ConversationContextMixin:
             self._conversation_context.move_to_end(key)
             while len(self._conversation_context) > self._context_max_sessions:
                 self._conversation_context.popitem(last=False)
+        self._persist_conversation_context()
 
     def _recent_context_records(self, event: Optional[AstrMessageEvent], count: int = 12) -> List[Dict[str, Any]]:
         key = self._context_session_key(event)

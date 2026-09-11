@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import threading
 from typing import Any, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
@@ -68,6 +69,35 @@ def _image_delivery_is_ambiguous(error: BaseException) -> bool:
 
 
 class ReferenceMediaMixin:
+    def _reference_selection_queue(self) -> dict[str, list[dict[str, Any]]]:
+        queue = getattr(self, "_reference_selection_cache", None)
+        if not isinstance(queue, dict):
+            queue = {}
+            self._reference_selection_cache = queue
+            self._reference_selection_lock = threading.RLock()
+        return queue
+
+    def _remember_reference_selection(self, event: Any, summary: dict[str, Any]) -> None:
+        key = str(self._context_session_key(event) if callable(getattr(self, "_context_session_key", None)) else id(event))
+        lock = getattr(self, "_reference_selection_lock", threading.RLock())
+        with lock:
+            queue = self._reference_selection_queue()
+            queue.setdefault(key, []).append(dict(summary))
+            queue[key] = queue[key][-8:]
+
+    def _consume_reference_selection(self, event: Any) -> dict[str, Any]:
+        key = str(self._context_session_key(event) if callable(getattr(self, "_context_session_key", None)) else id(event))
+        lock = getattr(self, "_reference_selection_lock", threading.RLock())
+        with lock:
+            queue = self._reference_selection_queue()
+            rows = queue.get(key) or []
+            if not rows:
+                return {}
+            value = rows.pop(0)
+            if not rows:
+                queue.pop(key, None)
+            return dict(value)
+
     def _bot_account_ids(self, event: Optional[AstrMessageEvent] = None) -> List[str]:
         ids = set()
         # A global context user_id can describe the current user, not the bot.
@@ -215,6 +245,7 @@ class ReferenceMediaMixin:
                 f"[SelfieImage] 参考图读取失败或超时: "
                 f"{collected.failed_count}/{collected.source_count}"
             )
+        self._remember_reference_selection(event, collected.selection_summary(include_persona=include_persona))
         return refs, collected.source_count, collected.failed_count
 
     async def _collect_event_references(
@@ -238,7 +269,9 @@ class ReferenceMediaMixin:
             include_image_alternates=include_image_alternates,
         )
         async with aiohttp.ClientSession(trust_env=False) as session:
-            return await collector.collect(event, session)
+            collected = await collector.collect(event, session)
+        self._remember_reference_selection(event, collected.selection_summary(include_persona=include_persona))
+        return collected
 
     async def _event_reference_images(
         self,

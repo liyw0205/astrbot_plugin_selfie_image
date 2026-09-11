@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .generation_records import _record_timestamp, build_generation_metrics, composition_metadata
 from .record_database import RecordDatabase
+from .storage_consistency import inspect_storage_consistency
 from ..core.providers import ImageReference
 from ..core.utils import (
     collect_cache_cleanup_candidates,
@@ -47,9 +48,202 @@ CHANNEL_TRANSIENT_ERROR_CATEGORIES = {
     "timeout_create",
     "timeout_poll",
 }
+CHANNEL_HEALTH_HISTORY_LIMIT = 5000
 
 
 class GenerationStoreMixin:
+    def list_asset_collections(self) -> List[Dict[str, Any]]:
+        store = getattr(self, "asset_collections", None)
+        return store.list() if store is not None else []
+
+    def get_asset_collection(self, collection_id: str) -> Dict[str, Any]:
+        store = getattr(self, "asset_collections", None)
+        if store is None:
+            raise ValueError("资产集合存储不可用")
+        item = store.get(collection_id)
+        known = {
+            str(row.get("id") or "").strip()
+            for row in (self.get_recent_records(summary=True) if callable(getattr(self, "get_recent_records", None)) else [])
+            if isinstance(row, Mapping) and str(row.get("id") or "").strip()
+        }
+        ids = [str(value).strip() for value in (item.get("record_ids") or []) if str(value).strip()]
+        item["available_record_ids"] = [value for value in ids if value in known]
+        item["missing_record_ids"] = [value for value in ids if value not in known]
+        item["missing_count"] = len(item["missing_record_ids"])
+        return item
+
+    def create_asset_collection(self, name: str, payload: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        store = getattr(self, "asset_collections", None)
+        if store is None:
+            raise ValueError("资产集合存储不可用")
+        data = payload if isinstance(payload, Mapping) else {}
+        return store.create(name, note=data.get("note", ""), record_ids=data.get("record_ids", data.get("ids", [])))
+
+    def update_asset_collection(self, collection_id: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        store = getattr(self, "asset_collections", None)
+        if store is None:
+            raise ValueError("资产集合存储不可用")
+        return store.update(collection_id, name=payload.get("name") if "name" in payload else None, note=payload.get("note") if "note" in payload else None)
+
+    def delete_asset_collection(self, collection_id: str) -> Dict[str, Any]:
+        store = getattr(self, "asset_collections", None)
+        if store is None:
+            raise ValueError("资产集合存储不可用")
+        return store.delete(collection_id)
+
+    def update_asset_collection_records(self, collection_id: str, payload: Mapping[str, Any], *, remove: bool = False) -> Dict[str, Any]:
+        store = getattr(self, "asset_collections", None)
+        if store is None:
+            raise ValueError("资产集合存储不可用")
+        ids = payload.get("record_ids", payload.get("ids", [])) if isinstance(payload, Mapping) else []
+        return store.remove(collection_id, ids) if remove else store.add(collection_id, ids)
+
+    def asset_collection_studio(self, collection_id: str, payload: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        store = getattr(self, "asset_collections", None)
+        if store is None:
+            raise ValueError("资产集合存储不可用")
+        item = store.get(collection_id)
+        add_assets = getattr(self, "studio_add_assets", None)
+        if not callable(add_assets):
+            raise ValueError("画布功能不可用")
+        data = dict(payload or {})
+        return add_assets(item.get("record_ids") or [], data)
+
+    def export_asset_collections(self) -> Dict[str, Any]:
+        store = getattr(self, "asset_collections", None)
+        return store.export() if store is not None else {"format": "selfie-image-asset-collections", "version": 1, "collections": []}
+
+    def import_asset_collections(self, payload: Any, *, preview: bool = False) -> Dict[str, Any]:
+        store = getattr(self, "asset_collections", None)
+        if store is None:
+            raise ValueError("资产集合存储不可用")
+        return store.import_data(payload, preview=preview)
+
+    def _channel_health_history_path(self) -> str:
+        data_dir = str(getattr(self, "data_dir", "") or "").strip()
+        return os.path.join(data_dir, "channel_health_history.json") if data_dir else ""
+
+    def _load_channel_health_history(self) -> List[Dict[str, Any]]:
+        path = self._channel_health_history_path()
+        if not path:
+            return []
+        raw = load_json_file(path)
+        rows = raw.get("events") if isinstance(raw, Mapping) else []
+        if not isinstance(rows, list):
+            rows = []
+        return [dict(item) for item in rows if isinstance(item, Mapping)][-CHANNEL_HEALTH_HISTORY_LIMIT:]
+
+    def get_channel_health_history(
+        self,
+        *,
+        window_seconds: Optional[int] = 86400,
+        media_type: str = "",
+        export: bool = False,
+    ) -> Dict[str, Any]:
+        """Return sanitized channel aggregates for a bounded time window."""
+        try:
+            window = max(0, min(31 * 86400, int(window_seconds if window_seconds is not None else 0)))
+        except (TypeError, ValueError):
+            window = 86400
+        wanted_type = str(media_type or "").strip().lower()
+        if wanted_type not in {"", "image", "video", "audit", "auxiliary"}:
+            raise ValueError("media_type 必须是 image、video、audit 或 auxiliary")
+        now = time.time()
+        cutoff = now - window if window else 0
+        rows = []
+        for item in self._load_channel_health_history():
+            try:
+                timestamp = float(item.get("timestamp") or 0)
+            except (TypeError, ValueError):
+                continue
+            if timestamp >= cutoff:
+                rows.append(item)
+        if wanted_type:
+            rows = [item for item in rows if str(item.get("media_type") or "image") == wanted_type]
+        aggregates: Dict[str, Dict[str, Any]] = {}
+        category_counts: Dict[str, int] = {}
+        for item in rows:
+            channel = redact_sensitive_text(str(item.get("channel") or "未命名渠道"))[:160]
+            aggregate = aggregates.setdefault(channel, {"channel": channel, "attempts": 0, "successes": 0, "failures": 0, "elapsed_seconds": 0.0, "error_categories": {}})
+            aggregate["attempts"] += 1
+            if item.get("success"):
+                aggregate["successes"] += 1
+            else:
+                aggregate["failures"] += 1
+                category = str(item.get("error_category") or "unknown")[:64]
+                aggregate["error_categories"][category] = int(aggregate["error_categories"].get(category) or 0) + 1
+                category_counts[category] = category_counts.get(category, 0) + 1
+            try:
+                elapsed = max(0.0, float(item.get("elapsed_seconds") or 0))
+            except (TypeError, ValueError):
+                elapsed = 0.0
+            aggregate["elapsed_seconds"] = round(float(aggregate["elapsed_seconds"]) + elapsed, 2)
+        for aggregate in aggregates.values():
+            attempts = int(aggregate["attempts"])
+            aggregate["success_rate"] = round(int(aggregate["successes"]) / attempts, 4) if attempts else None
+            aggregate["average_elapsed_seconds"] = round(float(aggregate["elapsed_seconds"]) / attempts, 2) if attempts else 0.0
+        payload = {
+            "window_seconds": window,
+            "media_type": wanted_type or "all",
+            "sample_count": len(rows),
+            "channels": list(aggregates.values()),
+            "error_categories": category_counts,
+            "empty": not bool(rows),
+        }
+        if export:
+            payload["format"] = "json"
+        return payload
+
+    def inspect_storage_consistency(self) -> Dict[str, Any]:
+        """Return a read-only consistency report for records and media."""
+        with getattr(self, "_records_lock", threading.RLock()):
+            records = copy.deepcopy(getattr(self, "_records", []) or [])
+        return inspect_storage_consistency(
+            records,
+            cache_root=str(getattr(self, "generated_dir", "") or ""),
+            sidecar_root=str(getattr(self, "media_sources_dir", "") or ""),
+        )
+
+    # Explicit aliases keep the diagnostic API discoverable for integrations
+    # that use "check" terminology instead of "inspect".
+    def check_storage_consistency(self) -> Dict[str, Any]:
+        return self.inspect_storage_consistency()
+
+    def repair_media_consistency(self, *, confirm: bool = False, kinds: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+        return self.repair_storage_consistency(confirm=confirm, kinds=kinds)
+
+    def repair_storage_consistency(self, *, confirm: bool = False, kinds: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+        """Delete only explicitly confirmed orphan entries from a fresh report.
+
+        Missing media and malformed sidecars are never auto-repaired because
+        there is no lossless reconstruction available at this layer.
+        """
+        report = self.inspect_storage_consistency()
+        if isinstance(kinds, str):
+            requested_kinds: Iterable[Any] = (kinds,)
+        else:
+            requested_kinds = kinds or ("orphan_cache", "orphan_sidecar")
+        allowed = {str(item).strip() for item in requested_kinds if str(item).strip()}
+        candidates = [item for item in report.get("issues", []) if item.get("repairable") and item.get("kind") in allowed]
+        if not confirm:
+            return {"confirmed": False, "dry_run": True, "report": report, "candidates": candidates}
+        deleted: List[Dict[str, Any]] = []
+        cache_root = os.path.abspath(str(getattr(self, "generated_dir", "") or ""))
+        sidecar_root = os.path.abspath(str(getattr(self, "media_sources_dir", "") or ""))
+        for item in candidates:
+            root = cache_root if item.get("kind") == "orphan_cache" else sidecar_root
+            rel = str(item.get("path") or "")
+            if not root or not rel:
+                continue
+            path = os.path.abspath(os.path.join(root, rel))
+            if not path.startswith(root + os.sep) or not os.path.isfile(path):
+                continue
+            try:
+                os.remove(path)
+                deleted.append({"kind": item.get("kind"), "path": rel})
+            except OSError:
+                continue
+        return {"confirmed": True, "dry_run": False, "deleted": deleted, "report": self.inspect_storage_consistency()}
     @staticmethod
     def _coerce_optional_bool(value: Any) -> Optional[bool]:
         if value is None:
@@ -1591,8 +1785,9 @@ class GenerationStoreMixin:
             )
         return selected, skipped
 
-    def _record_channel_health(self, attempts: Iterable[Mapping[str, Any]]) -> None:
+    def _record_channel_health(self, attempts: Iterable[Mapping[str, Any]], *, media_type: str = "image") -> None:
         now = time.time()
+        history = self._load_channel_health_history()
         for attempt in attempts:
             channel = str(attempt.get("channel") or "").strip()
             if not channel:
@@ -1623,16 +1818,34 @@ class GenerationStoreMixin:
                     state["consecutive_failures"] = 0
                     state["last_success_ts"] = now
                     state.pop("cooldown_until", None)
-                    continue
-                state["failures"] = int(state.get("failures") or 0) + 1
-                state["last_error_category"] = category
-                state["last_error"] = redact_sensitive_text(
-                    str(attempt.get("error_user_message") or attempt.get("error") or "")
-                )[:240]
-                state["last_error_ts"] = now
-                if category not in CHANNEL_TRANSIENT_ERROR_CATEGORIES:
-                    state["consecutive_failures"] = 0
-                    continue
-                state["consecutive_failures"] = int(state.get("consecutive_failures") or 0) + 1
-                if state["consecutive_failures"] >= CHANNEL_COOLDOWN_FAILURE_THRESHOLD:
-                    state["cooldown_until"] = now + CHANNEL_COOLDOWN_SECONDS
+                else:
+                    state["failures"] = int(state.get("failures") or 0) + 1
+                    state["last_error_category"] = category
+                    state["last_error"] = redact_sensitive_text(
+                        str(attempt.get("error_user_message") or attempt.get("error") or "")
+                    )[:240]
+                    state["last_error_ts"] = now
+                    if category not in CHANNEL_TRANSIENT_ERROR_CATEGORIES:
+                        state["consecutive_failures"] = 0
+                    else:
+                        state["consecutive_failures"] = int(state.get("consecutive_failures") or 0) + 1
+                        if state["consecutive_failures"] >= CHANNEL_COOLDOWN_FAILURE_THRESHOLD:
+                            state["cooldown_until"] = now + CHANNEL_COOLDOWN_SECONDS
+            history.append(
+                {
+                    "timestamp": now,
+                    "channel": redact_sensitive_text(channel)[:160],
+                    "media_type": str(media_type or "image").strip().lower() or "image",
+                    "success": success,
+                    "elapsed_seconds": round(max(0.0, float(attempt.get("elapsed_seconds") or 0)), 2),
+                    "error_category": category[:64],
+                }
+            )
+        if len(history) > CHANNEL_HEALTH_HISTORY_LIMIT:
+            history = history[-CHANNEL_HEALTH_HISTORY_LIMIT:]
+        path = self._channel_health_history_path()
+        if path:
+            try:
+                save_json_file(path, {"version": 1, "events": history})
+            except Exception:
+                pass

@@ -54,6 +54,25 @@ class CollectedReferences:
     failed_count: int = 0
     roles: Dict[str, int] = field(default_factory=dict)
 
+    def selection_summary(self, *, include_persona: bool = False) -> Dict[str, Any]:
+        """Return a credential-free explanation of the selected references."""
+        roles = {}
+        for key, value in self.roles.items():
+            try:
+                count = int(value or 0)
+            except (TypeError, ValueError):
+                count = 0
+            roles[str(key)] = max(0, count)
+        selected_roles = {key: value for key, value in roles.items() if value}
+        return {
+            "roles": selected_roles,
+            "source_count": max(0, int(self.source_count or 0)),
+            "selected_count": sum(selected_roles.values()),
+            "failed_count": max(0, int(self.failed_count or 0)),
+            "used_persona": bool(include_persona and roles.get("persona")),
+            "used_context_fallback": bool(roles.get("context")),
+        }
+
     def all_object_refs(self) -> List[ImageReference]:
         """Non-persona references suitable as draw / group-photo objects."""
         return dedupe_image_references(

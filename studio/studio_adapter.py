@@ -314,6 +314,34 @@ class StudioMixin:
                     )
         return session
 
+    def studio_copy(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Copy a canvas session, validating referenced media one slot at a time."""
+        payload = payload if isinstance(payload, dict) else {}
+        source = self.studio.get(session_id)
+        last_run = source.get("last_run") if isinstance(source.get("last_run"), dict) else {}
+        if str(last_run.get("status") or "").strip().lower() in {"queued", "running"}:
+            raise ValueError("画布任务正在运行，暂时不能复制")
+        valid: List[str] = []
+        skipped: List[Dict[str, Any]] = []
+        for slot in source.get("slots") or []:
+            if not isinstance(slot, dict):
+                continue
+            sid = str(slot.get("id") or "").strip()
+            path = str(slot.get("image_path") or "").strip()
+            if not path:
+                valid.append(sid)
+                continue
+            info = self.get_cached_image_info(path)
+            if info.get("exists") and info.get("is_image") is not False:
+                valid.append(sid)
+            else:
+                skipped.append({"slot_id": sid, "label": str(slot.get("label") or ""), "path": path, "error": "媒体不存在或不可解析"})
+        title = str(payload.get("title") or "").strip()[:80]
+        result = self.studio.copy_session(session_id, title=title, valid_slot_ids=valid)
+        result["source_session_id"] = str(session_id)
+        result["skipped_slots"] = skipped
+        return result
+
     def studio_delete(self, session_id: str) -> Dict[str, Any]:
         self.studio.delete(session_id)
         return {"deleted": True, "id": session_id}

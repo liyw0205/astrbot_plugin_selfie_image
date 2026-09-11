@@ -90,6 +90,33 @@ def build_task_terminal_state(
     # cancellation marker left by an upstream adapter.
     if result_has_completion_evidence(data) and not cancelled_result:
         cancelled = False
+        data["cancelled"] = False
+        if str(data.get("status") or "").strip().lower() == "cancelled":
+            # Some runners set ``cancelled`` before a provider result arrives.
+            # Rebuild the status from the artifact/count evidence so a late
+            # success cannot be published as a cancelled task.
+            try:
+                succeeded_count = int(data.get("succeeded_count") or 0)
+            except (TypeError, ValueError):
+                succeeded_count = 0
+            try:
+                failed_count = int(data.get("failed_count") or 0)
+            except (TypeError, ValueError):
+                failed_count = 0
+            try:
+                requested_total = max(1, int(data.get("requested_count") or requested_count or 1))
+            except (TypeError, ValueError):
+                requested_total = max(1, int(requested_count or 1))
+            if data.get("delivery_failed"):
+                data["status"] = "delivery_failed"
+            elif bool(data.get("success")) or (
+                succeeded_count >= requested_total
+                and failed_count == 0
+            ):
+                data["status"] = "succeeded"
+                data["success"] = True
+            else:
+                data["status"] = "partial_success"
     generation_success = bool(data.get("generation_success"))
     delivery_unknown = bool(data.get("delivery_unknown"))
     delivery_failed = (

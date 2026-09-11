@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import os
 import secrets
 import shutil
@@ -165,6 +166,38 @@ def _restore_web_channel_credentials(
     return result
 
 
+def _restore_web_proxy_credentials(
+    patch: Dict[str, Any],
+    current: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Restore proxy passwords hidden by the dashboard export contract."""
+    result = copy.deepcopy(patch if isinstance(patch, dict) else {})
+    old_rows = current.get("proxies") if isinstance(current, dict) else []
+    rows = result.get("proxies")
+    if not isinstance(rows, list) or not isinstance(old_rows, list):
+        return result
+    old_by_id = {
+        str(row.get("id") or "").strip(): row
+        for row in old_rows
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    }
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        identity = str(row.get("id") or "").strip()
+        old = old_by_id.get(identity)
+        if old is None and index < len(old_rows) and isinstance(old_rows[index], dict):
+            old = old_rows[index]
+        if not isinstance(old, dict):
+            continue
+        incoming = row.get("password")
+        if _is_web_secret_placeholder(incoming):
+            previous = old.get("password")
+            if previous and not _is_web_secret_placeholder(previous):
+                row["password"] = copy.deepcopy(previous)
+    return result
+
+
 class ConfigurationMixin:
     def get_config_preflight_for_web(self) -> Dict[str, Any]:
         """Return a credential-free startup/configuration readiness summary."""
@@ -271,6 +304,82 @@ class ConfigurationMixin:
             logger.info(f"[SelfieImage] 已迁移旧配置文件: {legacy_path} -> {self.config_path}")
         except Exception as exc:
             logger.warning(f"[SelfieImage] 迁移旧配置文件失败: {exc}", exc_info=True)
+
+    def _migrate_config_file_schema(self) -> Dict[str, Any]:
+        """Upgrade a persisted config without risking the only good copy.
+
+        ``AICatConfig.from_dict`` already performs the in-memory legacy-key
+        conversion.  Startup additionally persists that conversion so a
+        schema-v1 file is not reinterpreted on every restart.  The original
+        file is copied to a stable ``.bak`` before the atomic write and is
+        restored if the write or read-back check fails.
+        """
+        path = str(getattr(self, "config_path", "") or "")
+        if not path or not os.path.exists(path):
+            return {"migrated": False, "reason": "absent"}
+        try:
+            with open(path, "r", encoding="utf-8-sig") as file:
+                source = json.load(file)
+        except Exception as exc:
+            # A malformed file must remain untouched; the normal loader will
+            # fall back to defaults and the user can recover the source file.
+            logger.warning(
+                "[SelfieImage] 配置迁移跳过：文件无法解析（%s）",
+                type(exc).__name__,
+            )
+            return {"migrated": False, "reason": "invalid"}
+        if not isinstance(source, dict) or not source:
+            return {"migrated": False, "reason": "empty"}
+        try:
+            version = int(source.get("schema_version") or 1)
+        except Exception:
+            version = 1
+        legacy_keys = any(
+            key in source
+            for key in (
+                "imageChannels",
+                "auditChannels",
+                "videoChannels",
+                "imageModelCallMode",
+                "randomImageModel",
+            )
+        )
+        if version >= 2 and not legacy_keys:
+            return {"migrated": False, "reason": "current", "schema_version": version}
+
+        backup_path = f"{path}.bak"
+        try:
+            migrated = AICatConfig.from_dict(source).raw
+            migrated = self._strip_web_startup_config(migrated)
+            migrated["schema_version"] = 2
+            # Keep a recoverable copy before replacing the live file.  The
+            # backup is intentionally deterministic for operator discovery.
+            shutil.copy2(path, backup_path)
+            save_json_file(path, migrated)
+            with open(path, "r", encoding="utf-8-sig") as file:
+                persisted = json.load(file)
+            if not isinstance(persisted, dict) or int(persisted.get("schema_version") or 0) < 2:
+                raise RuntimeError("迁移后回读 schema_version 无效")
+            return {
+                "migrated": True,
+                "schema_version": int(persisted.get("schema_version") or 2),
+                "backup_path": backup_path,
+            }
+        except Exception as exc:
+            # Do not leave a partially migrated file behind.  ``backup_path``
+            # may not exist when the copy itself failed, so only restore when
+            # it is known to contain the original bytes.
+            if os.path.exists(backup_path):
+                try:
+                    shutil.copy2(backup_path, path)
+                except Exception:
+                    logger.error("[SelfieImage] 配置迁移失败且无法恢复原文件", exc_info=True)
+            logger.warning(
+                "[SelfieImage] 配置 schema 迁移失败，已保留原文件（%s）",
+                type(exc).__name__,
+                exc_info=True,
+            )
+            return {"migrated": False, "reason": "failed"}
 
     def _config_object_to_dict(self, value: Any) -> Dict[str, Any]:
         if value is None:
@@ -443,10 +552,17 @@ class ConfigurationMixin:
         candidate = payload.get("config") if isinstance(payload.get("config"), dict) else payload
         if not isinstance(candidate, dict):
             raise ValueError("配置必须是 JSON 对象")
+        candidate = _restore_web_channel_credentials(candidate, self.raw_config)
+        candidate = _restore_web_proxy_credentials(candidate, self.raw_config)
         merged = deep_merge(self.raw_config, candidate)
         from ..core.models import preflight_config_channels
         report = preflight_config_channels(merged)
-        return {"ok": bool(report.get("ok")), "schema_version": 2, "errors": report.get("errors", []), "config": redact_sensitive_data(candidate)}
+        return {
+            "ok": bool(report.get("ok")),
+            "schema_version": 2,
+            "errors": report.get("errors", []),
+            "config": redact_sensitive_data(candidate),
+        }
 
     def import_config_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         candidate = payload.get("config") if isinstance(payload.get("config"), dict) else payload
@@ -510,26 +626,7 @@ class ConfigurationMixin:
         with self._config_lock:
             patch = self._strip_web_startup_config(patch)
             patch = _restore_web_channel_credentials(patch, self.raw_config)
-            if isinstance(patch, dict) and isinstance(patch.get("proxies"), list):
-                # Keep existing proxy passwords when UI sends blank / masked values.
-                old_by_id = {
-                    str(item.get("id") or ""): item
-                    for item in (self.raw_config.get("proxies") or [])
-                    if isinstance(item, dict) and item.get("id")
-                }
-                fixed = []
-                for item in patch["proxies"]:
-                    if not isinstance(item, dict):
-                        continue
-                    row = dict(item)
-                    pid = str(row.get("id") or "").strip()
-                    pwd = str(row.get("password") or "")
-                    if pid and old_by_id.get(pid) and pwd in {"", "******", "[REDACTED]", "«redacted»"}:
-                        old_pwd = str(old_by_id[pid].get("password") or "")
-                        if old_pwd and old_pwd not in {"******", "[REDACTED]"}:
-                            row["password"] = old_pwd
-                    fixed.append(row)
-                patch["proxies"] = fixed
+            patch = _restore_web_proxy_credentials(patch, self.raw_config)
             merged = deep_merge(self.raw_config, patch)
             from ..core.models import preflight_config_channels, sanitize_channels_for_save
 

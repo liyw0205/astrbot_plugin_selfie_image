@@ -69,7 +69,10 @@ class SelfieImageDashboardAPI:
 
         routes = [
             ("health", self.page_health, ["GET"], "Selfie Image health"),
+            ("health/history", self.page_health_history, ["GET"], "Selfie Image channel health history"),
             ("health/channels/clear", self.page_channel_health_clear, ["POST"], "Selfie Image clear channel health"),
+            ("context", self.page_context_get, ["GET"], "Selfie Image conversation context"),
+            ("context/clear", self.page_context_clear, ["POST"], "Selfie Image clear conversation context"),
             ("config", self.page_config_get, ["GET"], "Selfie Image get config"),
             ("config", self.page_config_post, ["POST"], "Selfie Image save config"),
             ("config/export", self.page_config_export, ["GET"], "Selfie Image export config"),
@@ -101,6 +104,8 @@ class SelfieImageDashboardAPI:
             ),
             ("refresh-image-models", self.page_refresh_image_models, ["POST"], "Selfie Image refresh models"),
             ("records", self.page_records, ["GET"], "Selfie Image generation records"),
+            ("records/consistency", self.page_storage_consistency, ["GET"], "Selfie Image storage consistency"),
+            ("records/consistency/repair", self.page_storage_consistency_repair, ["POST"], "Selfie Image repair storage consistency"),
             ("metrics", self.page_metrics, ["GET"], "Selfie Image generation metrics"),
             ("tasks", self.page_tasks, ["GET"], "Selfie Image task queue"),
             ("tasks/export", self.page_tasks_export, ["GET"], "Selfie Image export tasks"),
@@ -115,6 +120,15 @@ class SelfieImageDashboardAPI:
             ("records/<record_id>/retry", self.page_record_retry, ["POST"], "Selfie Image retry record generation"),
             ("records/compare", self.page_records_compare, ["POST"], "Selfie Image compare records"),
             ("assets", self.page_assets, ["GET"], "Selfie Image asset library"),
+            ("assets/collections", self.page_asset_collections, ["GET", "POST"], "Selfie Image asset collections"),
+            ("assets/collections/import", self.page_asset_collections_import, ["POST"], "Selfie Image import asset collections"),
+            ("assets/collections/export", self.page_asset_collections_export, ["GET"], "Selfie Image export asset collections"),
+            ("assets/collections/<collection_id>", self.page_asset_collection_detail, ["GET"], "Selfie Image asset collection detail"),
+            ("assets/collections/<collection_id>", self.page_asset_collection_update, ["POST"], "Selfie Image update asset collection"),
+            ("assets/collections/<collection_id>/delete", self.page_asset_collection_delete, ["POST"], "Selfie Image delete asset collection"),
+            ("assets/collections/<collection_id>/add", self.page_asset_collection_add, ["POST"], "Selfie Image add assets to collection"),
+            ("assets/collections/<collection_id>/remove", self.page_asset_collection_remove, ["POST"], "Selfie Image remove assets from collection"),
+            ("assets/collections/<collection_id>/studio", self.page_asset_collection_studio, ["POST"], "Selfie Image send collection to studio"),
             ("assets/tags", self.page_assets_tags, ["GET"], "Selfie Image asset tags"),
             ("assets/export", self.page_assets_export, ["GET"], "Selfie Image asset metadata export"),
             ("assets/import", self.page_assets_import, ["POST"], "Selfie Image asset metadata import"),
@@ -129,6 +143,7 @@ class SelfieImageDashboardAPI:
             ("auth/check", self.page_auth_check, ["POST", "GET"], "Selfie Image dashboard auth check"),
             ("studio/sessions", self.page_studio_list, ["GET"], "Selfie Image studio list"),
             ("studio/sessions", self.page_studio_create, ["POST"], "Selfie Image studio create"),
+            ("studio/sessions/<session_id>/copy", self.page_studio_copy, ["POST"], "Selfie Image copy studio session"),
             ("studio/sessions/<session_id>", self.page_studio_get, ["GET"], "Selfie Image studio get"),
             ("studio/sessions/<session_id>", self.page_studio_update, ["POST"], "Selfie Image studio update"),
             ("studio/sessions/<session_id>/delete", self.page_studio_delete, ["POST"], "Selfie Image studio delete"),
@@ -225,6 +240,66 @@ class SelfieImageDashboardAPI:
 
     async def page_health(self) -> Any:
         return self._ok(build_health_payload(self.plugin, dashboard_page_source_status()))
+
+    async def page_health_history(self) -> Any:
+        getter = getattr(self.plugin, "get_channel_health_history", None)
+        if not callable(getter):
+            return self._fail("当前版本不支持渠道健康历史", 501)
+        try:
+            try:
+                window = parse_bounded_int(request.query, "window", 86400, 0, 31 * 86400)
+            except WebContractError as exc:
+                return self._fail(str(exc), exc.status_code)
+            export = self._query_value("export").strip().lower() in {"1", "true", "yes", "on"}
+            try:
+                data = getter(window_seconds=window, media_type=self._query_value("media_type"), export=export)
+            except TypeError:
+                data = getter(window_seconds=window, media_type=self._query_value("media_type"))
+            return self._ok(redact_sensitive_data(data))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_context_get(self) -> Any:
+        getter = getattr(self.plugin, "get_conversation_context", None)
+        if not callable(getter):
+            return self._fail("当前版本不支持会话上下文", 501)
+        try:
+            return self._ok(redact_sensitive_data(getter(None)))
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_context_clear(self) -> Any:
+        clearer = getattr(self.plugin, "clear_conversation_context", None)
+        if not callable(clearer):
+            return self._fail("当前版本不支持会话上下文", 501)
+        try:
+            return self._ok(clearer(None), message="会话上下文已清除")
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_storage_consistency(self) -> Any:
+        checker = getattr(self.plugin, "inspect_storage_consistency", None)
+        if not callable(checker):
+            return self._fail("当前版本不支持存储一致性检查", 501)
+        try:
+            return self._ok(redact_sensitive_data(checker()))
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_storage_consistency_repair(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        repair = getattr(self.plugin, "repair_storage_consistency", None)
+        if not callable(repair):
+            return self._fail("当前版本不支持存储一致性修复", 501)
+        raw_confirm = (payload or {}).get("confirm", False)
+        confirm = raw_confirm if isinstance(raw_confirm, bool) else str(raw_confirm).strip().lower() in {"1", "true", "yes", "on"}
+        kinds = (payload or {}).get("kinds")
+        try:
+            return self._ok(redact_sensitive_data(repair(confirm=confirm, kinds=kinds)), message="一致性修复完成" if confirm else "已生成修复预览")
+        except Exception as exc:
+            return self._fail(str(exc), 409 if confirm else 400)
 
 
     async def page_proxies_list(self) -> Any:
@@ -654,6 +729,78 @@ class SelfieImageDashboardAPI:
         except Exception as exc:
             return self._fail(str(exc), 500)
 
+    async def page_asset_collections(self) -> Any:
+        try:
+            if getattr(request, "method", "GET") == "POST":
+                payload, error = await self._json_object_payload()
+                if error:
+                    return error
+                return self._ok(self.plugin.create_asset_collection((payload or {}).get("name", ""), payload or {}), message="资产集合已创建")
+            return self._ok(self.plugin.list_asset_collections())
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_asset_collections_export(self) -> Any:
+        try:
+            return self._ok(self.plugin.export_asset_collections())
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_asset_collections_import(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            preview = str((payload or {}).get("mode") or "").lower() == "preview" or bool((payload or {}).get("preview"))
+            return self._ok(self.plugin.import_asset_collections(payload or {}, preview=preview), message="导入预览完成" if preview else "资产集合已导入")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_asset_collection_update(self, collection_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.update_asset_collection(collection_id, payload or {}), message="资产集合已更新")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_asset_collection_detail(self, collection_id: str) -> Any:
+        try:
+            return self._ok(self.plugin.get_asset_collection(collection_id))
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    async def page_asset_collection_delete(self, collection_id: str) -> Any:
+        try:
+            return self._ok(self.plugin.delete_asset_collection(collection_id), message="资产集合已删除")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def _asset_collection_records(self, collection_id: str, *, remove: bool) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.update_asset_collection_records(collection_id, payload or {}, remove=remove), message="集合内容已更新")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_asset_collection_add(self, collection_id: str) -> Any:
+        return await self._asset_collection_records(collection_id, remove=False)
+
+    async def page_asset_collection_remove(self, collection_id: str) -> Any:
+        return await self._asset_collection_records(collection_id, remove=True)
+
+    async def page_asset_collection_studio(self, collection_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.asset_collection_studio(collection_id, payload or {}), message="集合已加入画布")
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
     async def page_assets_metadata(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
@@ -816,6 +963,20 @@ class SelfieImageDashboardAPI:
             return self._ok(self.plugin.studio_create(payload or {}))
         except Exception as exc:
             return self._fail(str(exc))
+
+    async def page_studio_copy(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        copier = getattr(self.plugin, "studio_copy", None)
+        if not callable(copier):
+            return self._fail("当前版本不支持复制画布会话", 501)
+        try:
+            return self._ok(copier(session_id, payload or {}), message="画布会话已复制")
+        except ValueError as exc:
+            return self._fail(str(exc), 409)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
 
     async def page_studio_get(self, session_id: str) -> Any:
         try:

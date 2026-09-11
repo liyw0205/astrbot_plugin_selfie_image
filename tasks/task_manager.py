@@ -1084,7 +1084,7 @@ class WebTaskMixin:
                     if media_type == "video"
                     else "web-test"
                 ),
-                "owner_session": "web",
+                "owner_session": str(payload_copy.get("owner_session") or "web").strip()[:200] or "web",
                 "cancel_requested": False,
                 "request_fingerprint": fingerprint,
                 "deduplicated": False,

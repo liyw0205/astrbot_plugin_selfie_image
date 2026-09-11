@@ -12,6 +12,7 @@ import mimetypes
 import os
 import re
 import time
+from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
@@ -812,6 +813,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "model",
             "prompt_enhance",
             "use_selfie_reference",
+            "reference_selection",
             # Keep the effective audit text available when a request was
             # normalized before the provider call.  It is still bounded and
             # passes through the normal redaction step above.
@@ -840,6 +842,34 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
                 slim_image_to_text["error"] = _truncate_text(image_to_text.get("error"), 300)
             if slim_image_to_text:
                 slim_rd["image_to_text"] = slim_image_to_text
+        reference_selection = rd.get("reference_selection")
+        if isinstance(reference_selection, Mapping):
+            roles = reference_selection.get("roles")
+            if isinstance(roles, Mapping):
+                normalized_roles = {}
+                for key, value in roles.items():
+                    if not str(key).strip():
+                        continue
+                    try:
+                        count = int(value or 0)
+                    except (TypeError, ValueError):
+                        count = 0
+                    normalized_roles[str(key)[:40]] = max(0, min(24, count))
+                try:
+                    selected_count = int(reference_selection.get("selected_count") or 0)
+                except (TypeError, ValueError):
+                    selected_count = 0
+                try:
+                    failed_count = int(reference_selection.get("failed_count") or 0)
+                except (TypeError, ValueError):
+                    failed_count = 0
+                slim_rd["reference_selection"] = {
+                    "roles": normalized_roles,
+                    "selected_count": max(0, min(24, selected_count)),
+                    "failed_count": max(0, min(24, failed_count)),
+                    "used_persona": bool(reference_selection.get("used_persona")),
+                    "used_context_fallback": bool(reference_selection.get("used_context_fallback")),
+                }
         cache_cleanup = rd.get("cache_cleanup") or rd.get("cache_cleanup_before_generation")
         if isinstance(cache_cleanup, dict):
             slim_cleanup: Dict[str, Any] = {}

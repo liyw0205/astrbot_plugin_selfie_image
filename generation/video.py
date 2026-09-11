@@ -1500,7 +1500,11 @@ async def generate_video_with_fallback(
         # duplicated on another provider.
         if result.attempts:
             cat = str((result.attempts[-1] or {}).get("error_category") or "")
-            if cat in {"auth", "safety", "param", "not_found", "fatal", "timeout"}:
+            # Authentication is channel-local: an invalid key on one relay
+            # should still allow a configured backup channel.  A timeout is
+            # different because the upstream may have accepted a billable
+            # create request, so never re-submit it through another target.
+            if cat in {"safety", "fatal", "timeout"}:
                 break
     return VideoGenerateResult(
         error=video_error_user_message(last_error),

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from io import BytesIO
 import re
+import time
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import aiohttp
@@ -15,6 +16,7 @@ except ImportError:
     from astrbot.api.event import AstrMessageEvent
 
 from ..core.models import DEFAULT_CONFIG, ImageModelTarget
+from ..core.error_classify import classify_generation_error
 from ..prompts.prompt_translation import parse_prompt_en_response
 from ..core.providers import normalize_image_base_url
 from ..core.utils import (
@@ -26,6 +28,59 @@ from ..core.utils import (
 
 
 class AuditMixin:
+    async def _call_audit_target_with_health(
+        self,
+        target: ImageModelTarget,
+        text: str,
+        *,
+        images: Optional[List[bytes]] = None,
+        media_type: str = "auxiliary",
+    ) -> str:
+        """Call an auxiliary target and feed a sanitized event to health history."""
+        started = time.monotonic()
+        try:
+            result = await self._audit_chat_via_target(target, text, images=images)
+            elapsed = time.monotonic() - started
+            attempt = {
+                "channel": str(getattr(target, "channel_name", "") or getattr(target, "label", "")),
+                "success": bool(str(result or "").strip()),
+                "elapsed_seconds": elapsed,
+                "error_category": "empty_response" if not str(result or "").strip() else "",
+                "error": "辅助模型没有返回有效内容" if not str(result or "").strip() else "",
+            }
+            self._record_auxiliary_health(attempt, media_type=media_type)
+            return str(result or "")
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            info = classify_generation_error(str(exc))
+            self._record_auxiliary_health(
+                {
+                    "channel": str(getattr(target, "channel_name", "") or getattr(target, "label", "")),
+                    "success": False,
+                    "elapsed_seconds": elapsed,
+                    "error_category": str(info.get("category") or "unknown"),
+                    "error": str(exc),
+                },
+                media_type=media_type,
+            )
+            raise
+
+    def _record_auxiliary_health(self, attempt: Mapping[str, Any], *, media_type: str) -> None:
+        recorder = getattr(self, "_record_channel_health", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder([attempt], media_type=media_type)
+        except TypeError:
+            # Older host shims expose the original one-argument hook.
+            try:
+                recorder([attempt])
+            except Exception:
+                return
+        except Exception:
+            # Health telemetry must never change an audit or translation result.
+            return
+
     def _parse_audit_response(self, text: str) -> Tuple[bool, str]:
         return parse_audit_response_text(text)
 
@@ -174,7 +229,9 @@ class AuditMixin:
         model = ""
         text = ""
         if target is not None:
-            text = await self._audit_chat_via_target(target, instruct, images=images)
+            text = await self._call_audit_target_with_health(
+                target, instruct, images=images, media_type="auxiliary"
+            )
             model = target.label
         elif event is not None or getattr(self, "context", None) is not None:
             text = await self._call_text_llm(event, instruct, timeout=30, images=images)
@@ -279,11 +336,13 @@ class AuditMixin:
         try:
             target = self._find_audit_target(self.config.image_prompt_audit_model)
             if target:
-                text = await self._audit_chat_via_target(target, audit_prompt)
+                text = await self._call_audit_target_with_health(target, audit_prompt, media_type="audit")
             else:
+                if event is None and not callable(getattr(self, "_call_text_llm", None)):
+                    return False, "审核已开启，但未配置可用审核模型"
                 text = await self._audit_prompt_via_astrbot(event, audit_prompt)
         except Exception as exc:
-            return False, str(exc)
+            return False, f"审核调用失败：{redact_sensitive_text(str(exc))[:240]}"
         return self._parse_audit_response(text)
 
     async def _audit_output_images(self, files: List[str], user_id: str = "", prompt: str = "", event: Optional[AstrMessageEvent] = None) -> Tuple[bool, str]:
@@ -297,16 +356,26 @@ class AuditMixin:
         target = self._find_audit_target(self.config.image_output_audit_model)
         images: List[bytes] = []
         for file_path in files:
-            with open(file_path, "rb") as handle:
-                images.append(handle.read())
+            try:
+                with open(file_path, "rb") as handle:
+                    data = handle.read()
+            except OSError:
+                return False, "待审核图片读取失败"
+            if not data:
+                return False, "待审核图片为空"
+            images.append(data)
         audit_prompt = self.config.image_output_audit_template.replace("{prompt}", str(prompt or ""))
         try:
             if target is not None:
-                text = await self._audit_chat_via_target(target, audit_prompt, images=images)
+                text = await self._call_audit_target_with_health(
+                    target, audit_prompt, images=images, media_type="audit"
+                )
             else:
+                if event is None and not callable(getattr(self, "_call_text_llm", None)):
+                    return False, "审核已开启，但未配置可用审核模型"
                 text = await self._audit_prompt_via_astrbot(event, audit_prompt, images=images)
         except Exception as exc:
-            return False, str(exc)
+            return False, f"审核调用失败：{redact_sensitive_text(str(exc))[:240]}"
         return self._parse_audit_response(text)
 
 
@@ -367,9 +436,13 @@ class AuditMixin:
                 target = targets[0] if targets else None
             text = ""
             if target:
-                text = await self._audit_chat_via_target(target, instruct)
+                text = await self._call_audit_target_with_health(target, instruct, media_type="auxiliary")
                 meta["model"] = target.label
             else:
+                if event is None and not callable(getattr(self, "_call_text_llm", None)):
+                    meta["skipped"] = "no_model"
+                    meta["error"] = "no_auxiliary_model"
+                    return raw, meta
                 text = await self._audit_prompt_via_astrbot(event, instruct)
                 meta["model"] = "astrbot"
             cleaned = parse_prompt_en_response(text)
