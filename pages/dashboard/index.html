@@ -757,6 +757,8 @@
     .bento-tile:nth-child(2) { background: #e6f8f0; }
     .bento-tile:nth-child(3) { background: #fff1df; }
     .bento-tile:nth-child(4) { background: var(--panel); }
+    .bento-tile:nth-child(5) { background: #f8edf0; }
+    .bento-tile:nth-child(6) { background: #eef2f7; }
     .bento-tile:nth-child(4):hover, .bento-tile:nth-child(4):focus-visible { background: var(--panel); }
     .bento-tile b { display: block; font-size: 13px; margin: 9px 0 4px; }
     .bento-tile span { color: var(--text-secondary); font-size: 10px; }
@@ -976,7 +978,9 @@
           <button type="button" data-nav-target="test">开始一次创作　→</button>
         </div>
         <div class="bento-quick">
+          <button class="bento-tile" type="button" data-nav-target="test"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>快速试画</b><span>快速验证一个想法</span></button>
           <button class="bento-tile" type="button" data-nav-target="studio"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>无限画布</b><span>打开画布，继续创作</span></button>
+          <button class="bento-tile" type="button" data-nav-target="presets"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5z"></path><path d="M8 8h8M8 12h8M8 16h5"></path></svg></div><b>预设管理</b><span>整理提示词和 COS 池</span></button>
           <button class="bento-tile" type="button" data-nav-target="selfie"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg></div><b>形象参考</b><span>管理固定形象</span></button>
           <button class="bento-tile" type="button" data-nav-target="channels"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg></div><b>模型渠道</b><span>检查运行状态</span></button>
           <button class="bento-tile" type="button" data-nav-target="monitor"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="3" cy="6" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="12" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="18" r=".7" fill="currentColor" stroke="none"></circle></svg></div><b>生成记录</b><span>查看最近任务</span></button>
@@ -1302,12 +1306,30 @@
       <div class="tabs-inline" style="margin-top:12px" role="tablist" aria-label="预设类型">
         <button id="presetKindImage" class="active" type="button" role="tab">生图预设</button>
         <button id="presetKindVideo" type="button" role="tab">视频预设</button>
+        <button id="presetKindCos" type="button" role="tab">COS 池</button>
       </div>
       <div class="between" style="margin-top:12px">
         <span id="presetManagerStatus" class="status">正在读取预设…</span>
         <button class="secondary" id="presetReloadBtn" type="button">刷新列表</button>
       </div>
       <div id="presetManagerList" class="preset-manager-list"></div>
+      <div id="presetCosManager" hidden>
+        <div class="card soft" style="margin-top:14px">
+          <div class="between">
+            <div>
+              <strong>COS 池</strong>
+              <div class="muted" style="margin-top:4px">管理内置和自定义服饰提示词，收藏项会优先显示。</div>
+            </div>
+            <div class="actions" style="margin-top:0">
+              <button class="secondary mini" id="presetCosMaintainBtn" type="button">维护 COS 池</button>
+              <button class="secondary mini" id="presetCosImportBtn" type="button">导入</button>
+              <button class="secondary mini" id="presetCosExportBtn" type="button">导出</button>
+            </div>
+          </div>
+          <div id="presetCosManagerStatus" class="status" style="margin-top:10px">正在读取 COS 池…</div>
+        </div>
+        <div id="presetCosManagerList" class="preset-manager-list"></div>
+      </div>
       <div class="floating-actions" aria-label="预设操作">
         <button class="ok" id="presetAddBtn" type="button" data-tooltip="新增预设" aria-label="新增预设" title="新增预设"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
       </div>
@@ -6888,7 +6910,67 @@ Source prompt:
       el.textContent = text || '';
       el.className = 'status' + (bad ? ' bad' : '');
     }
+    function presetCosManagerStatus(text, bad = false) {
+      const el = $('presetCosManagerStatus');
+      if (!el) return;
+      el.textContent = text || '';
+      el.className = 'status' + (bad ? ' bad' : '');
+    }
+    function renderManagedCosPool() {
+      const wrap = $('presetCosManagerList');
+      if (!wrap) return;
+      const rows = Array.isArray(STUDIO.cosLooks) ? STUDIO.cosLooks : [];
+      if (!rows.length) {
+        wrap.innerHTML = '<div class="status">暂无 COS 池项目，点击“维护 COS 池”添加自定义项目。</div>';
+        return;
+      }
+      wrap.innerHTML = rows.map((item, idx) => {
+        const title = escapeHtml(item.title || item.id || '未命名套装');
+        const prompt = escapeHtml(item.prompt || '');
+        const source = item.source === 'custom' ? '自定义' : '内置';
+        const tags = Array.isArray(item.tags) ? item.tags.filter(Boolean).join('、') : '';
+        return `<article class="preset-manager-row">
+          <div><div class="preset-manager-name">${title}</div><div class="preset-manager-meta"><span class="pill">${source}</span>${item.favorite ? '<span class="pill green">已收藏</span>' : ''}${tags ? `<span class="pill">${escapeHtml(tags)}</span>` : ''}</div></div>
+          <div class="preset-manager-prompt">${prompt}</div>
+          <div class="preset-manager-actions"><button class="secondary mini" type="button" data-cos-manager-favorite="${idx}">${item.favorite ? '取消收藏' : '收藏'}</button>${item.source === 'custom' ? `<button class="danger mini" type="button" data-cos-manager-delete="${idx}">删除</button>` : ''}</div>
+        </article>`;
+      }).join('');
+      wrap.querySelectorAll('[data-cos-manager-favorite]').forEach(button => button.onclick = async () => {
+        const item = rows[Number(button.dataset.cosManagerFavorite)];
+        if (!item?.id) return;
+        button.disabled = true;
+        try {
+          await api('/api/cos-pools/favorite', {method:'POST', body:JSON.stringify({id:item.id, enabled:!item.favorite})});
+          await loadManagedCosPool(true);
+        } catch (e) {
+          presetCosManagerStatus(e.message || '收藏失败', true);
+          button.disabled = false;
+        }
+      });
+      wrap.querySelectorAll('[data-cos-manager-delete]').forEach(button => button.onclick = async () => {
+        const item = rows[Number(button.dataset.cosManagerDelete)];
+        if (!item?.id || !await confirmAction(`确定删除自定义 COS「${item.title || item.id}」吗？`, {title:'删除自定义 COS', confirmText:'删除'})) return;
+        try {
+          await api('/api/cos-pools/custom/delete', {method:'POST', body:JSON.stringify({id:item.id})});
+          await loadManagedCosPool(true);
+          showToast('自定义 COS 已删除', 'ok');
+        } catch (e) { presetCosManagerStatus(e.message || '删除失败', true); }
+      });
+    }
+    async function loadManagedCosPool(force = false) {
+      PRESET_KIND = 'cos';
+      try {
+        await loadCosLooksCached(force);
+        const count = Array.isArray(STUDIO.cosLooks) ? STUDIO.cosLooks.length : 0;
+        renderManagedCosPool();
+        presetCosManagerStatus(`COS 池 · 共 ${count} 个`);
+      } catch (e) {
+        renderManagedCosPool();
+        presetCosManagerStatus(e.message || 'COS 池读取失败', true);
+      }
+    }
     async function loadManagedPromptPresets(kind = PRESET_KIND) {
+      if (kind === 'cos') return loadManagedCosPool();
       const requestedKind = kind === 'video' ? 'video' : 'image';
       PRESET_KIND = requestedKind;
       const loadSeq = ++PRESET_LOAD_SEQ;
@@ -6935,10 +7017,19 @@ Source prompt:
       wrap.querySelectorAll('[data-preset-delete]').forEach(btn => btn.onclick = () => deleteManagedPromptPreset(PRESET_MANAGE_ROWS[Number(btn.dataset.presetDelete)]));
     }
     async function switchPresetKind(kind) {
-      PRESET_KIND = kind === 'video' ? 'video' : 'image';
+      PRESET_KIND = kind === 'cos' ? 'cos' : (kind === 'video' ? 'video' : 'image');
       $('presetKindImage').classList.toggle('active', PRESET_KIND === 'image');
       $('presetKindVideo').classList.toggle('active', PRESET_KIND === 'video');
-      await loadManagedPromptPresets(PRESET_KIND);
+      $('presetKindCos').classList.toggle('active', PRESET_KIND === 'cos');
+      const isCos = PRESET_KIND === 'cos';
+      if ($('presetManagerList')) $('presetManagerList').hidden = isCos;
+      if ($('presetCosManager')) $('presetCosManager').hidden = !isCos;
+      if ($('presetAddBtn')) $('presetAddBtn').style.display = isCos ? 'none' : '';
+      if ($('presetImportBtn')) $('presetImportBtn').textContent = isCos ? '导入池' : '导入文本';
+      if ($('presetExportBtn')) $('presetExportBtn').textContent = isCos ? '导出池' : '导出并复制';
+      presetManagerStatus(isCos ? 'COS 池管理' : '正在读取预设…');
+      if (isCos) await loadManagedCosPool();
+      else await loadManagedPromptPresets(PRESET_KIND);
     }
     function openPresetEditor(row = null) {
       PRESET_EDIT_ORIGINAL = row ? String(row.name || '') : '';
@@ -7015,6 +7106,10 @@ Source prompt:
       };
     }
     async function openPresetExport() {
+      if (PRESET_KIND === 'cos') {
+        exportCosPool();
+        return;
+      }
       if (!PRESET_MANAGE_ROWS.length) await loadManagedPromptPresets(PRESET_KIND);
       $('presetTransferTitle').textContent = '导出预设文本';
       $('presetTransferHint').textContent = '已生成 JSON 文本。系统会尝试写入剪贴板，失败时请在下方文本框中手动全选复制。';
@@ -7028,6 +7123,10 @@ Source prompt:
       }
     }
     function openPresetImport() {
+      if (PRESET_KIND === 'cos') {
+        openCosPoolImport();
+        return;
+      }
       $('presetTransferTitle').textContent = '导入预设文本';
       $('presetTransferHint').textContent = '把导出的 JSON 粘贴到这里，导入会按名称合并，重名预设将被覆盖。';
       $('presetTransferText').value = '';
@@ -7158,9 +7257,11 @@ Source prompt:
         await api('/api/cos-pools/custom/save', {method:'POST', body: JSON.stringify({id, title, prompt, tags:String($('cosCustomTags')?.value || '').split(/[,，]/).map(v => v.trim()).filter(Boolean)})});
         await ensureCosLooksLoaded(true);
         closeCosPoolModal();
+        if (PRESET_KIND === 'cos') await loadManagedCosPool(false);
         renderCosPanel('studioCosPanel', 'studioPrompt', !!STUDIO.cosOpen, 'studioCosBtn');
         renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', !!STUDIO.nodeCosOpen, 'studioNodeCosBtn');
         renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
+        renderCosPanel('creativeCanvasCosPanel', 'creativeCanvasPrompt', !!CREATIVE_CANVAS.cosOpen, 'creativeCanvasCosBtn');
         showToast('自定义 COS 已保存', 'ok');
       } catch (e) { if (status) status.textContent = e.message || '保存失败'; }
     }
@@ -7180,9 +7281,11 @@ Source prompt:
           const payload = JSON.parse(await file.text());
           await api('/api/cos-pools/import', {method:'POST', body: JSON.stringify(payload)});
           await ensureCosLooksLoaded(true); closeCosPoolModal();
+          if (PRESET_KIND === 'cos') await loadManagedCosPool(false);
           renderCosPanel('studioCosPanel', 'studioPrompt', !!STUDIO.cosOpen, 'studioCosBtn');
           renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', !!STUDIO.nodeCosOpen, 'studioNodeCosBtn');
           renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
+          renderCosPanel('creativeCanvasCosPanel', 'creativeCanvasPrompt', !!CREATIVE_CANVAS.cosOpen, 'creativeCanvasCosBtn');
           showToast('COS 池已导入', 'ok');
         } catch (e) { if ($('cosPoolStatus')) $('cosPoolStatus').textContent = e.message || '导入失败'; }
       };
@@ -7387,6 +7490,7 @@ Source prompt:
         });
         wrap.appendChild(card);
       });
+      wrap.dataset.protectedMediaQueued = 'true';
       loadProtectedImages(wrap);
     }
     async function studioMoveSlot(index, delta) {
@@ -7469,6 +7573,7 @@ Source prompt:
         err.textContent = '上次失败：' + last.error;
         wrap.prepend(err);
       }
+      wrap.dataset.protectedMediaQueued = 'true';
       loadProtectedImages(wrap);
     }
     function setStudioRunningUI(running) {
@@ -7984,6 +8089,7 @@ Source prompt:
         card.querySelector('[data-node-action="delete"]').onclick = async event => { event.stopPropagation(); await studioDeleteNode(node.id); };
         wrap.appendChild(card);
       }
+      wrap.dataset.protectedMediaQueued = 'true';
       loadProtectedImages(wrap);
     }
     function studioRenderSidebar() {
@@ -8003,6 +8109,7 @@ Source prompt:
           <span class="node-list-copy"><strong>${escapeHtml(node.title || '画面')}</strong><span>${escapeHtml(studioNodeLabel(node))}</span></span></button>`;
       }).join('') || '<div class="studio-node-empty">没有匹配画面</div>';
       list.querySelectorAll('[data-sidebar-node]').forEach(button => button.onclick = () => studioSelectNode(button.dataset.sidebarNode));
+      list.dataset.protectedMediaQueued = 'true';
       loadProtectedImages(list);
     }
     function studioRenderPanel() {
@@ -8412,18 +8519,7 @@ Source prompt:
       });
     }
     function renderCreativeCanvasCosPanel() {
-      const panel = $('creativeCanvasCosPanel');
-      const button = $('creativeCanvasCosBtn');
-      if (!panel) return;
-      if (button) button.textContent = CREATIVE_CANVAS.cosOpen ? '收回' : 'COS池';
-      if (!CREATIVE_CANVAS.cosOpen) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
-      panel.classList.add('open');
-      const rows = CREATIVE_CANVAS.cosLooks || [];
-      panel.innerHTML = rows.length ? rows.map((item, index) => `<button type="button" class="preset-chip" data-creative-cos="${index}">${escapeHtml(item.title || item.name || item.id || '')}</button>`).join('') : '<div class="status">暂无 COS 预设</div>';
-      panel.querySelectorAll('[data-creative-cos]').forEach(button => button.onclick = () => {
-        const item = rows[Number(button.dataset.creativeCos)];
-        if (item) $('creativeCanvasPrompt').value = [String($('creativeCanvasPrompt').value || '').trim(), String(item.prompt || '').trim()].filter(Boolean).join('\n\n');
-      });
+      renderCosPanel('creativeCanvasCosPanel', 'creativeCanvasPrompt', !!CREATIVE_CANVAS.cosOpen, 'creativeCanvasCosBtn');
     }
     async function toggleCreativeCanvasPresets() {
       CREATIVE_CANVAS.presetOpen = !CREATIVE_CANVAS.presetOpen;
@@ -8435,7 +8531,7 @@ Source prompt:
       CREATIVE_CANVAS.cosOpen = !CREATIVE_CANVAS.cosOpen;
       CREATIVE_CANVAS.presetOpen = false;
       if (CREATIVE_CANVAS.cosOpen) await loadCosLooksCached();
-      renderCreativeCanvasPresetPanel(); renderCreativeCanvasCosPanel();
+      renderCreativeCanvasPresetPanel(); renderCosPanel('creativeCanvasCosPanel', 'creativeCanvasPrompt', CREATIVE_CANVAS.cosOpen, 'creativeCanvasCosBtn');
     }
     function renderCreativeCanvasSlots() {
       const wrap = $('creativeCanvasSlots');
@@ -8456,6 +8552,7 @@ Source prompt:
         card.querySelector('[data-slot-action="clear"]').onclick = () => setCreativeCanvasSlot(slot.id, {clear:true});
         wrap.appendChild(card);
       });
+      wrap.dataset.protectedMediaQueued = 'true';
       loadProtectedImages(wrap);
     }
     async function setCreativeCanvasSlot(slotId, payload) {
@@ -8575,6 +8672,7 @@ Source prompt:
         card.querySelectorAll('[data-result-role]').forEach(button => button.onclick = () => promoteCreativeCanvasResult(item.id, button.dataset.resultRole));
         wrap.appendChild(card);
       }
+      wrap.dataset.protectedMediaQueued = 'true';
       loadProtectedImages(wrap);
     }
     async function promoteCreativeCanvasResult(resultId, role) {
@@ -8825,8 +8923,12 @@ Source prompt:
     $('presetAddBtn').onclick = () => openPresetEditor();
     $('presetKindImage').onclick = () => switchPresetKind('image');
     $('presetKindVideo').onclick = () => switchPresetKind('video');
+    $('presetKindCos').onclick = () => switchPresetKind('cos');
     $('presetImportBtn').onclick = openPresetImport;
     $('presetExportBtn').onclick = openPresetExport;
+    $('presetCosMaintainBtn').onclick = openCosPoolModal;
+    $('presetCosImportBtn').onclick = openCosPoolImport;
+    $('presetCosExportBtn').onclick = exportCosPool;
     $('presetReloadBtn').onclick = async () => {
       clearPickerCache(PRESET_KIND);
       await loadManagedPromptPresets(PRESET_KIND);
