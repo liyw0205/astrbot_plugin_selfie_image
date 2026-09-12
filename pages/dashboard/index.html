@@ -349,6 +349,7 @@
     .studio-gallery.open { display:block; }
     .studio-gallery-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px; max-height:280px; overflow:auto; }
     .studio-gallery-item { border:1px solid var(--line); border-radius:8px; background:#fff; padding:4px; cursor:pointer; }
+    .studio-gallery-item.selected { border-color:var(--primary); box-shadow:0 0 0 2px var(--primary-weak); background:#f4fbfe; }
     .studio-gallery-thumb { position:relative; height:72px; display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:6px; background:#f1f4f7; }
     .studio-gallery-thumb img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; padding:2px; border-radius:6px; display:block; }
     .studio-gallery-thumb .status { width:100%; min-height:0; padding:6px; border:0; border-radius:0; background:transparent; text-align:center; font-size:10px; }
@@ -356,8 +357,15 @@
     .studio-gallery-item .cap { font-size:10px; color:var(--muted); margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .studio-slot .slot-actions button.mini { padding:3px 6px; font-size:11px; }
     .studio-slot.picking-record { grid-column:1 / -1; }
+    .creative-canvas-slot.picking-record { grid-column:auto; }
     .studio-slot-picker { width:100%; margin-top:2px; padding-top:8px; border-top:1px solid var(--line); }
     .studio-slot-picker .studio-gallery-grid { max-height:260px; }
+    .creative-canvas-slot-picker .studio-gallery-grid { max-height:220px; }
+    .creative-canvas-slot-picker .status { margin:0; }
+    .creative-canvas-slot-picker .between { align-items:center; }
+    .creative-canvas-slot-picker .between > .status { flex:1 1 auto; }
+    .creative-canvas-slot-picker .between > .actions { flex:0 0 auto; }
+    .creative-canvas-slot-picker .studio-gallery-item .cap { max-width:100%; }
     .studio-slot[draggable="true"] { cursor: grab; }
     .studio-slot.dragging { opacity: .55; }
     .studio-slot.drag-over { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-weak); }
@@ -1262,9 +1270,8 @@
         <div class="preset-panel" id="creativeCanvasCosPanel"></div>
         <div class="between" style="margin-top:8px">
           <h3>参考图</h3>
-          <div class="actions"><button class="secondary" id="creativeCanvasPickRecordBtn" type="button">从图库选图</button><button class="secondary" id="creativeCanvasAddSlotBtn" type="button">添加参考图</button></div>
+          <div class="actions"><button class="secondary" id="creativeCanvasAddSlotBtn" type="button">添加参考图</button></div>
         </div>
-        <div class="studio-gallery" id="creativeCanvasGallery"></div>
         <div class="studio-slots" id="creativeCanvasSlots"></div>
         <div class="actions">
           <button class="ok" id="creativeCanvasSaveBtn" type="button">保存</button>
@@ -1849,7 +1856,8 @@
     const CANVAS_SESSION_CACHE_TTL_MS = 15000;
     const PICKER_CACHE_TTL_MS = 30000;
     let CONFIG = {};    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
-    let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
+    let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", galleryRequestSeq: 0, galleryItems: [], galleryLoadedAt: 0, galleryRequest: null, presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
+    const CREATIVE_CANVAS_GALLERY_CACHE_TTL_MS = 30000;
     const PICKER_CACHE = {
       prompt: {
         image: {data: [], loadedAt: 0, request: null, version: 0},
@@ -8395,7 +8403,7 @@ Source prompt:
       (session.slots || []).forEach((slot, index, slots) => {
         const card = document.createElement('div');
         const has = !!slot.image_path;
-        card.className = 'studio-slot ' + (has ? 'has-image' : 'empty');
+        card.className = 'studio-slot creative-canvas-slot ' + (has ? 'has-image' : 'empty');
         card.dataset.slotId = slot.id || '';
         card.innerHTML = `<div class="slot-label">${escapeHtml(slot.label || slot.role || '参考图')}</div>${has ? `<img data-cache-path="${escapeHtml(slot.image_path)}" alt="">` : '<div class="status">暂无参考图</div>'}<div class="slot-actions"><button type="button" class="secondary mini" data-slot-action="upload">上传</button><button type="button" class="secondary mini" data-slot-action="record">图库</button><button type="button" class="secondary mini" data-slot-action="up" ${index === 0 ? 'disabled' : ''}>上移</button><button type="button" class="secondary mini" data-slot-action="down" ${index === slots.length - 1 ? 'disabled' : ''}>下移</button><button type="button" class="secondary mini" data-slot-action="clear" ${has ? '' : 'disabled'}>清空</button></div>`;
         card.querySelector('[data-slot-action="upload"]').onclick = () => { CREATIVE_CANVAS.uploadSlotId = slot.id; $('creativeCanvasFilePick')?.click(); };
@@ -8434,23 +8442,101 @@ Source prompt:
       await setCreativeCanvasSlot(CREATIVE_CANVAS.uploadSlotId, {image:dataUrl, source:'upload'});
       CREATIVE_CANVAS.uploadSlotId = '';
     }
-    function closeCreativeCanvasGallery() { const panel = $('creativeCanvasGallery'); if (panel) { panel.classList.remove('open'); panel.innerHTML = ''; } CREATIVE_CANVAS.galleryTargetSlotId = ''; }
+    function closeCreativeCanvasGallery() {
+      CREATIVE_CANVAS.galleryRequestSeq += 1;
+      document.querySelectorAll('#creativeCanvasSlots .creative-canvas-slot-picker').forEach(panel => {
+        const card = panel.closest('.studio-slot');
+        if (card) card.classList.remove('picking-record');
+        panel.remove();
+      });
+      CREATIVE_CANVAS.galleryTargetSlotId = '';
+    }
+    function creativeCanvasGalleryTargetSlot(slotId = '') {
+      const slots = CREATIVE_CANVAS.current?.slots || [];
+      const requested = String(slotId || '').trim();
+      if (requested) return slots.some(item => String(item.id || '') === requested) ? requested : '';
+      return String(slots.find(item => !item.image_path)?.id || '').trim();
+    }
+    function setCreativeCanvasGallerySelection(panel, cell, item) {
+      panel.querySelectorAll('.studio-gallery-item.selected').forEach(node => node.classList.remove('selected'));
+      cell.classList.add('selected');
+      panel.dataset.selectedPath = String(item.path || '');
+      panel.dataset.selectedRecordId = String(item.record_id || '');
+      const confirm = panel.querySelector('[data-creative-gallery-confirm]');
+      if (confirm) confirm.disabled = !panel.dataset.selectedPath;
+    }
+    async function loadCreativeCanvasGalleryItems() {
+      const fresh = CREATIVE_CANVAS.galleryLoadedAt > 0
+        && Date.now() - CREATIVE_CANVAS.galleryLoadedAt < CREATIVE_CANVAS_GALLERY_CACHE_TTL_MS;
+      if (fresh) return {success:true, data:{items:CREATIVE_CANVAS.galleryItems}};
+      if (CREATIVE_CANVAS.galleryRequest) return CREATIVE_CANVAS.galleryRequest;
+      const request = creativeCanvasApi('/gallery?limit=24').then(res => {
+        if (res.success) {
+          CREATIVE_CANVAS.galleryItems = Array.isArray(res.data?.items) ? res.data.items : [];
+          CREATIVE_CANVAS.galleryLoadedAt = Date.now();
+        }
+        return res;
+      }).finally(() => { CREATIVE_CANVAS.galleryRequest = null; });
+      CREATIVE_CANVAS.galleryRequest = request;
+      return request;
+    }
     async function openCreativeCanvasGallery(slotId = '') {
       if (!CREATIVE_CANVAS.current) return;
-      const panel = $('creativeCanvasGallery'); if (!panel) return;
-      closeCreativeCanvasGallery(); CREATIVE_CANVAS.galleryTargetSlotId = slotId; panel.classList.add('open'); panel.innerHTML = '<div class="status">加载记录图…</div>';
-      const res = await creativeCanvasApi('/gallery?limit=24');
-      if (!res.success) { panel.innerHTML = `<div class="status">${escapeHtml(res.message || '加载失败')}</div>`; return; }
+      const targetSlotId = creativeCanvasGalleryTargetSlot(slotId);
+      if (!targetSlotId) return showToast('请先添加一个空的参考图槽位', 'bad');
+      const card = [...document.querySelectorAll('#creativeCanvasSlots .studio-slot')].find(item => item.dataset.slotId === targetSlotId);
+      if (!card) return showToast('参考图槽位已刷新，请重试', 'bad');
+      closeCreativeCanvasGallery();
+      CREATIVE_CANVAS.galleryTargetSlotId = targetSlotId;
+      const requestSeq = CREATIVE_CANVAS.galleryRequestSeq;
+      card.classList.add('picking-record');
+      const panel = document.createElement('div');
+      panel.className = 'studio-slot-picker creative-canvas-slot-picker';
+      panel.innerHTML = '<div class="status">加载记录图…</div>';
+      card.appendChild(panel);
+      const res = await loadCreativeCanvasGalleryItems();
+      if (requestSeq !== CREATIVE_CANVAS.galleryRequestSeq || !panel.isConnected) return;
+      if (!res.success) {
+        panel.innerHTML = `<div class="between"><div class="status">${escapeHtml(res.message || '加载失败')}</div><button type="button" class="secondary mini" data-creative-gallery-close>收起</button></div>`;
+        panel.querySelector('[data-creative-gallery-close]').onclick = closeCreativeCanvasGallery;
+        return;
+      }
       const items = res.data?.items || [];
-      panel.innerHTML = items.length ? `<div class="muted">选择一张图片放入当前参考图位置</div><div class="studio-gallery-grid"></div>` : '<div class="status">暂无可用图片</div>';
+      if (!items.length) {
+        panel.innerHTML = '<div class="between"><div class="status">暂无可用图片</div><button type="button" class="secondary mini" data-creative-gallery-close>收起</button></div>';
+        panel.querySelector('[data-creative-gallery-close]').onclick = closeCreativeCanvasGallery;
+        return;
+      }
+      panel.innerHTML = `<div class="between"><div class="status">选择图片后点击确定</div><div class="actions" style="margin-top:0"><button type="button" class="secondary mini" data-creative-gallery-close>收起</button><button type="button" class="ok mini" data-creative-gallery-confirm disabled>确定</button></div></div><div class="studio-gallery-grid"></div>`;
+      panel.querySelector('[data-creative-gallery-close]').onclick = closeCreativeCanvasGallery;
+      panel.querySelector('[data-creative-gallery-confirm]').onclick = () => pickCreativeCanvasGallerySelection(panel);
       const grid = panel.querySelector('.studio-gallery-grid');
+      grid.dataset.protectedMediaQueued = 'true';
       for (const item of items) {
         const cell = document.createElement('div'); cell.className = 'studio-gallery-item';
         cell.innerHTML = `<div class="studio-gallery-thumb"><div class="status" data-media-placeholder>加载图片…</div><img data-cache-path="${escapeHtml(item.path || '')}" alt=""></div><div class="cap">${escapeHtml(item.prompt || item.model || item.path || '')}</div>`;
-        cell.onclick = () => setCreativeCanvasSlot(slotId || (CREATIVE_CANVAS.current.slots || []).find(item => !item.image_path)?.id || '', {image_path:item.path, source:'record', source_record_id:item.record_id || ''});
+        cell.onclick = () => setCreativeCanvasGallerySelection(panel, cell, item);
         grid?.appendChild(cell);
       }
-      loadProtectedImages(panel);
+      loadProtectedImages(grid);
+    }
+    async function pickCreativeCanvasGallerySelection(panel) {
+      const imagePath = String(panel?.dataset.selectedPath || '').trim();
+      const slotId = String(CREATIVE_CANVAS.galleryTargetSlotId || '').trim();
+      if (!imagePath || !slotId || !CREATIVE_CANVAS.current) return;
+      const confirm = panel.querySelector('[data-creative-gallery-confirm]');
+      if (confirm) { confirm.disabled = true; confirm.textContent = '保存中…'; }
+      const res = await creativeCanvasApi(`/sessions/${encodeURIComponent(CREATIVE_CANVAS.current.id)}/slots/${encodeURIComponent(slotId)}`, {
+        method:'POST', body:JSON.stringify({image_path:imagePath, source:'record', source_record_id:String(panel.dataset.selectedRecordId || '')})
+      });
+      if (!res.success) {
+        if (confirm) { confirm.disabled = false; confirm.textContent = '确定'; }
+        return showToast(res.message || '放入失败', 'bad');
+      }
+      CREATIVE_CANVAS.current = res.data;
+      closeCreativeCanvasGallery();
+      renderCreativeCanvas();
+      showToast('已从图库放入参考图', 'ok');
     }
     function renderCreativeCanvasResults() {
       const wrap = $('creativeCanvasResults'); if (!wrap) return;
@@ -8619,7 +8705,7 @@ Source prompt:
           if (!res.success) throw new Error(res.message || '状态读取失败');
           const task = res.data || {};
           if (task.status === 'queued' || task.status === 'running') { $('creativeCanvasStatus').textContent = '生成中… ' + (taskStageText(task) || taskProgressText(task) || ''); CREATIVE_CANVAS.pollTimer = setTimeout(poll, 1200); return; }
-          CREATIVE_CANVAS.running = false; CREATIVE_CANVAS.taskId = ''; $('creativeCanvasRunBtn').disabled = false; $('creativeCanvasRerunBtn').disabled = false;
+          CREATIVE_CANVAS.running = false; CREATIVE_CANVAS.taskId = ''; CREATIVE_CANVAS.galleryLoadedAt = 0; $('creativeCanvasRunBtn').disabled = false; $('creativeCanvasRerunBtn').disabled = false;
           if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').style.display = 'none';
           await loadCreativeCanvasList(CREATIVE_CANVAS.current?.id, {force:true}); showToast(task.success ? '图片生成完成' : (task.error || '生成失败'), task.success ? 'ok' : 'bad');
         } catch (error) { $('creativeCanvasStatus').textContent = error.message || '状态读取失败'; CREATIVE_CANVAS.pollTimer = setTimeout(poll, 2600); }
@@ -8822,7 +8908,6 @@ Source prompt:
     if ($('creativeCanvasRerunBtn')) $('creativeCanvasRerunBtn').onclick = runCreativeCanvas;
     if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').onclick = cancelCreativeCanvasTask;
     if ($('creativeCanvasAddSlotBtn')) $('creativeCanvasAddSlotBtn').onclick = addCreativeCanvasSlot;
-    if ($('creativeCanvasPickRecordBtn')) $('creativeCanvasPickRecordBtn').onclick = () => openCreativeCanvasGallery('');
     if ($('creativeCanvasPresetBtn')) $('creativeCanvasPresetBtn').onclick = toggleCreativeCanvasPresets;
     if ($('creativeCanvasCosBtn')) $('creativeCanvasCosBtn').onclick = toggleCreativeCanvasCos;
     if ($('creativeCanvasFilePick')) $('creativeCanvasFilePick').onchange = async event => {
