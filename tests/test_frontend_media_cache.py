@@ -29,6 +29,15 @@ def test_media_cache_has_auth_and_deletion_invalidation_paths():
     assert "images.concat(videos).forEach(invalidateProtectedMediaPath);" in PAGE
 
 
+def test_gallery_picker_uses_one_long_lived_shared_cache_for_both_canvases():
+    assert "const GALLERY_PICKER_CACHE_MAX_ENTRIES = 100;" in PAGE
+    assert "const GALLERY_PICKER_CACHE = {items: [], loaded: false, request: null, version: 0};" in PAGE
+    assert "async function loadGalleryPickerItems()" in PAGE
+    assert PAGE.count("studioApi('/api/studio/gallery?limit=' + GALLERY_PICKER_CACHE_MAX_ENTRIES)") == 1
+    assert "loadCreativeCanvasGalleryItems" not in PAGE
+    assert "CREATIVE_CANVAS_GALLERY_CACHE_TTL_MS" not in PAGE
+
+
 def test_asset_actions_are_delegated_and_media_loading_is_prioritized():
     assert "function setupAssetGridInteractions()" in PAGE
     assert 'data-asset-action="detail"' in PAGE

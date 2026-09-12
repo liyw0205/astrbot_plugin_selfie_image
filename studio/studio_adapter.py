@@ -549,7 +549,7 @@ class StudioMixin:
     def studio_gallery_images(self, limit: int = 24) -> Dict[str, Any]:
         """Recent successful generated images from records for 画布「从记录选图」."""
         try:
-            limit_n = max(1, min(48, int(limit or 24)))
+            limit_n = max(1, min(100, int(limit or 24)))
         except Exception:
             limit_n = 24
         items: List[Dict[str, Any]] = []

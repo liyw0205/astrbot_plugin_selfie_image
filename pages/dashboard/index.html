@@ -1854,10 +1854,10 @@
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
     const CANVAS_SESSION_CACHE_TTL_MS = 15000;
-    const PICKER_CACHE_TTL_MS = 30000;
+    // Prompt/COS/tag catalogs refresh periodically; the shared gallery cache has no TTL.
+    const PICKER_CATALOG_CACHE_TTL_MS = 30000;
     let CONFIG = {};    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
-    let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", galleryRequestSeq: 0, galleryItems: [], galleryLoadedAt: 0, galleryRequest: null, presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
-    const CREATIVE_CANVAS_GALLERY_CACHE_TTL_MS = 30000;
+    let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", galleryRequestSeq: 0, presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
     const PICKER_CACHE = {
       prompt: {
         image: {data: [], loadedAt: 0, request: null, version: 0},
@@ -1924,6 +1924,8 @@
     let PROTECTED_MEDIA_CACHE_BYTES = 0;
     let PROTECTED_MEDIA_CACHE_SCOPE = '';
     let PROTECTED_MEDIA_CACHE_VERSION = 0;
+    const GALLERY_PICKER_CACHE_MAX_ENTRIES = 100;
+    const GALLERY_PICKER_CACHE = {items: [], loaded: false, request: null, version: 0};
     let TEST_TASK_POLL_TIMER = null;
     let TEST_TASK_ID = '';
     let TEST_MODE = 'image';
@@ -4359,6 +4361,7 @@ Source prompt:
     }
 
     async function loadRecords(showRefreshToast = false) {
+      if (showRefreshToast) clearGalleryPickerCache();
       const requestSeq = ++RECORD_LOAD_SEQ;
       const cacheVersion = RECORD_PAGE_CACHE_VERSION;
       const requestPath = monitorQueryPath(MONITOR_PAGE);
@@ -4408,6 +4411,7 @@ Source prompt:
         await api('/api/records/clear', {method:'POST', body:'{}'});
         clearRecordPageCache();
         clearAssetPageCache();
+        clearGalleryPickerCache();
         MONITOR_PAGE = 1;
         RECORDS = [];
         RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -4912,7 +4916,7 @@ Source prompt:
     async function loadAssetTags(force = false) {
       const cache = PICKER_CACHE.tags;
       try {
-        const fresh = !force && cache.loadedAt > 0 && (Date.now() - cache.loadedAt) < PICKER_CACHE_TTL_MS;
+        const fresh = !force && cache.loadedAt > 0 && (Date.now() - cache.loadedAt) < PICKER_CATALOG_CACHE_TTL_MS;
         const rows = fresh ? cache.data : await loadAssetTagsCached(force);
         const list = $('assetTagList');
         if (!list) return;
@@ -5074,6 +5078,7 @@ Source prompt:
           images.concat(videos).forEach(invalidateProtectedMediaPath);
         });
         if (selected.length !== ids.length) clearProtectedMediaCache();
+        clearGalleryPickerCache();
         ASSET_SELECTION.clear();
         await loadAssets(false);
         showToast(res.message || `已删除 ${res.data?.deleted_count || 0} 项`, 'ok');
@@ -5112,6 +5117,40 @@ Source prompt:
       }
       PROTECTED_MEDIA_CACHE.clear();
       PROTECTED_MEDIA_CACHE_BYTES = 0;
+    }
+    function clearGalleryPickerCache() {
+      GALLERY_PICKER_CACHE.version += 1;
+      GALLERY_PICKER_CACHE.request = null;
+      GALLERY_PICKER_CACHE.items = [];
+      GALLERY_PICKER_CACHE.loaded = false;
+    }
+    function normalizeGalleryPickerItems(items) {
+      const seen = new Set();
+      const result = [];
+      for (const item of Array.isArray(items) ? items : []) {
+        const path = String(item?.path || '').trim();
+        if (!path || seen.has(path)) continue;
+        seen.add(path);
+        result.push(Object.assign({}, item, {path}));
+        if (result.length >= GALLERY_PICKER_CACHE_MAX_ENTRIES) break;
+      }
+      return result;
+    }
+    async function loadGalleryPickerItems() {
+      if (GALLERY_PICKER_CACHE.loaded) return {success:true, data:{items:GALLERY_PICKER_CACHE.items}};
+      if (GALLERY_PICKER_CACHE.request) return GALLERY_PICKER_CACHE.request;
+      const version = GALLERY_PICKER_CACHE.version;
+      const request = studioApi('/api/studio/gallery?limit=' + GALLERY_PICKER_CACHE_MAX_ENTRIES).then(res => {
+        if (res.success && version === GALLERY_PICKER_CACHE.version) {
+          GALLERY_PICKER_CACHE.items = normalizeGalleryPickerItems(res.data?.items);
+          GALLERY_PICKER_CACHE.loaded = true;
+        }
+        return res;
+      }).finally(() => {
+        if (GALLERY_PICKER_CACHE.request === request) GALLERY_PICKER_CACHE.request = null;
+      });
+      GALLERY_PICKER_CACHE.request = request;
+      return request;
     }
     function ensureProtectedMediaScope() {
       const scope = protectedMediaScope();
@@ -5990,6 +6029,7 @@ Source prompt:
         if (task.success) {
           clearRecordPageCache();
           clearAssetPageCache();
+          clearGalleryPickerCache();
           showToast('重试生成完成', 'ok');
           await Promise.all([loadRecords(false), loadAssets(false), loadAssetTags(), loadMetrics()]);
         } else {
@@ -6312,6 +6352,7 @@ Source prompt:
         renderImageTestResult(testTaskResult(task));
         clearRecordPageCache();
         clearAssetPageCache();
+        clearGalleryPickerCache();
         try { await loadRecords(false); } catch (_) {}
       } catch (e) {
         if (TEST_TASK_ID !== taskId) return;
@@ -6582,6 +6623,7 @@ Source prompt:
       }
       AUTH_TOKEN = '';
       clearProtectedMediaCache();
+      clearGalleryPickerCache();
       safeStorageRemove('selfieImageToken');
       safeStorageRemove('aicatToken');
       if ($('loginToken')) $('loginToken').value = '';
@@ -6653,7 +6695,7 @@ Source prompt:
       return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
     }
     function pickerCacheFresh(entry) {
-      return entry.loadedAt > 0 && (Date.now() - entry.loadedAt) < PICKER_CACHE_TTL_MS;
+      return entry.loadedAt > 0 && (Date.now() - entry.loadedAt) < PICKER_CATALOG_CACHE_TTL_MS;
     }
     function syncPromptPresetState(kind, rows) {
       const normalized = Array.isArray(rows) ? rows : [];
@@ -7489,7 +7531,7 @@ Source prompt:
       }
       if (!panel) return;
       panel.innerHTML = '<div class="status">加载记录图…</div>';
-      const res = await studioApi('/api/studio/gallery?limit=24');
+      const res = await loadGalleryPickerItems();
       if (!res.success) {
         panel.innerHTML = `<div class="between"><div class="status">${escapeHtml(res.message || '加载失败')}</div>
           <button type="button" class="secondary mini" data-studio-gallery-close>收起</button></div>`;
@@ -7712,6 +7754,7 @@ Source prompt:
           studioStopPoll();
           STUDIO.taskId = '';
           setStudioRunningUI(false);
+          clearGalleryPickerCache();
           await loadStudioList(STUDIO.current.id, {force:true});
           if (task.success) showToast('画布生成完成', 'ok');
           else showToast(task.error || '生成失败', 'bad');
@@ -8465,21 +8508,6 @@ Source prompt:
       const confirm = panel.querySelector('[data-creative-gallery-confirm]');
       if (confirm) confirm.disabled = !panel.dataset.selectedPath;
     }
-    async function loadCreativeCanvasGalleryItems() {
-      const fresh = CREATIVE_CANVAS.galleryLoadedAt > 0
-        && Date.now() - CREATIVE_CANVAS.galleryLoadedAt < CREATIVE_CANVAS_GALLERY_CACHE_TTL_MS;
-      if (fresh) return {success:true, data:{items:CREATIVE_CANVAS.galleryItems}};
-      if (CREATIVE_CANVAS.galleryRequest) return CREATIVE_CANVAS.galleryRequest;
-      const request = creativeCanvasApi('/gallery?limit=24').then(res => {
-        if (res.success) {
-          CREATIVE_CANVAS.galleryItems = Array.isArray(res.data?.items) ? res.data.items : [];
-          CREATIVE_CANVAS.galleryLoadedAt = Date.now();
-        }
-        return res;
-      }).finally(() => { CREATIVE_CANVAS.galleryRequest = null; });
-      CREATIVE_CANVAS.galleryRequest = request;
-      return request;
-    }
     async function openCreativeCanvasGallery(slotId = '') {
       if (!CREATIVE_CANVAS.current) return;
       const targetSlotId = creativeCanvasGalleryTargetSlot(slotId);
@@ -8494,7 +8522,7 @@ Source prompt:
       panel.className = 'studio-slot-picker creative-canvas-slot-picker';
       panel.innerHTML = '<div class="status">加载记录图…</div>';
       card.appendChild(panel);
-      const res = await loadCreativeCanvasGalleryItems();
+      const res = await loadGalleryPickerItems();
       if (requestSeq !== CREATIVE_CANVAS.galleryRequestSeq || !panel.isConnected) return;
       if (!res.success) {
         panel.innerHTML = `<div class="between"><div class="status">${escapeHtml(res.message || '加载失败')}</div><button type="button" class="secondary mini" data-creative-gallery-close>收起</button></div>`;
@@ -8705,7 +8733,7 @@ Source prompt:
           if (!res.success) throw new Error(res.message || '状态读取失败');
           const task = res.data || {};
           if (task.status === 'queued' || task.status === 'running') { $('creativeCanvasStatus').textContent = '生成中… ' + (taskStageText(task) || taskProgressText(task) || ''); CREATIVE_CANVAS.pollTimer = setTimeout(poll, 1200); return; }
-          CREATIVE_CANVAS.running = false; CREATIVE_CANVAS.taskId = ''; CREATIVE_CANVAS.galleryLoadedAt = 0; $('creativeCanvasRunBtn').disabled = false; $('creativeCanvasRerunBtn').disabled = false;
+          CREATIVE_CANVAS.running = false; CREATIVE_CANVAS.taskId = ''; clearGalleryPickerCache(); $('creativeCanvasRunBtn').disabled = false; $('creativeCanvasRerunBtn').disabled = false;
           if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').style.display = 'none';
           await loadCreativeCanvasList(CREATIVE_CANVAS.current?.id, {force:true}); showToast(task.success ? '图片生成完成' : (task.error || '生成失败'), task.success ? 'ok' : 'bad');
         } catch (error) { $('creativeCanvasStatus').textContent = error.message || '状态读取失败'; CREATIVE_CANVAS.pollTimer = setTimeout(poll, 2600); }
@@ -8806,7 +8834,7 @@ Source prompt:
     $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
     $('presetTransferCopyBtn').onclick = copyPresetTransfer;
     $('presetTransferImportBtn').onclick = importPresetTransfer;
-    $('reloadAll').onclick = async () => { clearPickerCache(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); };
+    $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); };
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;
