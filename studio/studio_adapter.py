@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -32,6 +33,41 @@ logger = logging.getLogger(__name__)
 
 
 class StudioMixin:
+    def _resolve_studio_refs(
+        self,
+        session: Dict[str, Any],
+        parent_node_id: str,
+        *,
+        persona_ref: Optional[Dict[str, Any]],
+    ) -> tuple[List[tuple[bytes, str]], List[str]]:
+        """Resolve the image input for one node generation.
+
+        The root node may use configured slots and the persona fallback. Every
+        child node must use its connected parent's generated image instead;
+        silently falling back to the persona would break the visual lineage.
+        """
+        parent_id = str(parent_node_id or "").strip()
+        if parent_id:
+            canvas = session.get("canvas") if isinstance(session.get("canvas"), dict) else {}
+            parent = next(
+                (node for node in canvas.get("nodes") or [] if isinstance(node, dict) and str(node.get("id") or "") == parent_id),
+                None,
+            )
+            result = parent.get("result") if isinstance(parent, dict) and isinstance(parent.get("result"), dict) else {}
+            path = str(result.get("media_path") or result.get("thumbnail_path") or "").strip()
+            if not path:
+                raise RuntimeError("上一节点还没有生成图片，无法继续生成")
+            loaded = self._load_cache_image_bytes(path)
+            if not loaded or not loaded[0]:
+                raise RuntimeError("上一节点图片已失效，请先重画上一节点")
+            data, mime = loaded
+            return [(data, mime or "image/png")], []
+        return resolve_slot_refs_for_run(
+            session,
+            persona_ref=persona_ref,
+            load_path_bytes=self._load_cache_image_bytes,
+        )
+
     async def _ensure_studio_failure_record(
         self,
         task_id: str,
@@ -93,6 +129,7 @@ class StudioMixin:
         request = current.get("request_data") if isinstance(current, dict) else {}
         request = dict(request) if isinstance(request, dict) else {}
         session = session if isinstance(session, dict) else {}
+        session_title = str(session.get("title") or "画布").strip() or "画布"
         graph = session.get("graph") if isinstance(session.get("graph"), dict) else {}
         template = str(session.get("template") or graph.get("template") or "").strip()
         action = str(action or request.get("original_prompt") or request.get("prompt") or "").strip()
@@ -113,6 +150,7 @@ class StudioMixin:
             "kind": "studio",
             "mode": str(mode or graph.get("mode") or "group").strip().lower() or "group",
             "studio_template": template,
+            "studio_session_title": session_title,
             "original_prompt": action,
             "prompt": action,
             "request_prompt": prompt,
@@ -133,7 +171,7 @@ class StudioMixin:
         }
         record = {
             "source": "studio-run",
-            "source_label": "Web",
+            "source_label": f"Web/{session_title}",
             "media_type": "image",
             "success": False,
             "generation_success": False,
@@ -159,6 +197,7 @@ class StudioMixin:
             "studio_session_id": session_id,
             "studio_task_id": task_id,
             "studio_template": template,
+            "studio_session_title": session_title,
             "studio_source_asset_ids": source_asset_ids,
         }
         try:
@@ -170,18 +209,34 @@ class StudioMixin:
             await wait_commits(task_id)
 
     # --- Studio / 画布 ---
-    def studio_list(self) -> Dict[str, Any]:
-        # Ensure default presets are seeded for picker / QQ /预设
-        self.presets.load()
-        return {
-            "sessions": self.studio.list_sessions(),
-            "storage_status": self.studio.storage_status(),
+    def _canvas_store(self, namespace: str = "studio"):
+        return self.creative_canvas if str(namespace or "").strip().lower() == "creative" else self.studio
+
+    def studio_list(self, store=None, *, include_metadata: bool = True) -> Dict[str, Any]:
+        """Return canvas summaries without forcing the large picker catalogs.
+
+        The embedded dashboard loads prompt presets and COS pools on demand.
+        Keeping those catalogs out of the session-list response avoids sending
+        hundreds of kilobytes every time a canvas tab is opened.
+        """
+        canvas_store = store or self.studio
+        result = {
+            "sessions": canvas_store.list_sessions(),
+            "storage_status": canvas_store.storage_status(),
             "builtin_prompts": BUILTIN_PROMPTS,
             "templates": list_studio_templates(),
+        }
+        if not include_metadata:
+            return result
+        # Keep the richer payload for direct/plugin callers that still request
+        # all picker data in one response.
+        self.presets.load()
+        result.update({
             "prompt_presets": self.list_prompt_presets_for_web(),
             "prompt_preset_status": self.get_prompt_preset_status_for_web("image"),
             "cos_look_sets": self.list_cos_look_sets_for_web(),
-        }
+        })
+        return result
 
     def get_prompt_preset_status_for_web(self, kind: str = "image") -> Dict[str, Any]:
         """Expose load failures separately from an intentionally empty list."""
@@ -278,18 +333,44 @@ class StudioMixin:
         """Expose the command COS pool to the canvas and quick-test pickers."""
         return list_cos_look_sets()
 
-    def studio_get(self, session_id: str) -> Dict[str, Any]:
-        return self.studio.get(session_id)
+    def studio_get(self, session_id: str, store=None) -> Dict[str, Any]:
+        return (store or self.studio).get(session_id)
 
-    def studio_create(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def studio_canvas(self, session_id: str) -> Dict[str, Any]:
+        """Return the drawable relationship graph for one Studio session."""
+        return self.studio.canvas_graph(session_id)
+
+    def studio_canvas_update(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("canvas 必须是 JSON 对象")
+        return self.studio.update_canvas(session_id, payload)
+
+    def studio_canvas_node_create(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("节点参数必须是 JSON 对象")
+        return self.studio.add_canvas_node(session_id, payload)
+
+    def studio_canvas_node_delete(self, session_id: str, node_id: str) -> Dict[str, Any]:
+        return self.studio.delete_canvas_node(session_id, node_id)
+
+    def studio_canvas_node_connect(self, session_id: str, node_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("连接参数必须是 JSON 对象")
+        parent_id = str(payload.get("parent_id") or "").strip()
+        if not parent_id:
+            raise ValueError("请选择要连接的前置节点")
+        return self.studio.connect_canvas_node(session_id, node_id, parent_id)
+
+    def studio_create(self, payload: Optional[Dict[str, Any]] = None, store=None) -> Dict[str, Any]:
         payload = payload if isinstance(payload, dict) else {}
+        canvas_store = store or self.studio
         title = str(payload.get("title") or "").strip()
         template = str(payload.get("template") or payload.get("template_id") or "").strip()
         use_group = payload.get("use_group_template", None)
         if isinstance(use_group, str):
             use_group = use_group.strip().lower() not in {"0", "false", "no", "off", "否"}
         tid = normalize_template_id(template, use_group_template=use_group if template == "" else None)
-        session = self.studio.create(title, template=tid, use_group_template=use_group if not template else None)
+        session = canvas_store.create(title, template=tid, use_group_template=use_group if not template else None)
         # Prefill identity/base from persona when template wants it
         graph = session.get("graph") or {}
         if graph.get("use_persona_identity") and self.persona.has_reference_image():
@@ -305,7 +386,7 @@ class StudioMixin:
                     None,
                 )
                 if identity:
-                    session = self.studio.set_slot_image(
+                    session = canvas_store.set_slot_image(
                         session["id"],
                         identity["id"],
                         image_path=rel,
@@ -314,10 +395,11 @@ class StudioMixin:
                     )
         return session
 
-    def studio_copy(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def studio_copy(self, session_id: str, payload: Optional[Dict[str, Any]] = None, store=None) -> Dict[str, Any]:
         """Copy a canvas session, validating referenced media one slot at a time."""
         payload = payload if isinstance(payload, dict) else {}
-        source = self.studio.get(session_id)
+        canvas_store = store or self.studio
+        source = canvas_store.get(session_id)
         last_run = source.get("last_run") if isinstance(source.get("last_run"), dict) else {}
         if str(last_run.get("status") or "").strip().lower() in {"queued", "running"}:
             raise ValueError("画布任务正在运行，暂时不能复制")
@@ -337,36 +419,37 @@ class StudioMixin:
             else:
                 skipped.append({"slot_id": sid, "label": str(slot.get("label") or ""), "path": path, "error": "媒体不存在或不可解析"})
         title = str(payload.get("title") or "").strip()[:80]
-        result = self.studio.copy_session(session_id, title=title, valid_slot_ids=valid)
+        result = canvas_store.copy_session(session_id, title=title, valid_slot_ids=valid)
         result["source_session_id"] = str(session_id)
         result["skipped_slots"] = skipped
         return result
 
-    def studio_delete(self, session_id: str) -> Dict[str, Any]:
-        self.studio.delete(session_id)
+    def studio_delete(self, session_id: str, store=None) -> Dict[str, Any]:
+        (store or self.studio).delete(session_id)
         return {"deleted": True, "id": session_id}
 
-    def studio_update(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def studio_update(self, session_id: str, payload: Dict[str, Any], store=None) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("请求体必须是 JSON 对象")
         patch = payload.get("graph") if isinstance(payload.get("graph"), dict) else payload
         if "title" in payload and "title" not in patch:
             patch = dict(patch)
             patch["title"] = payload.get("title")
-        return self.studio.update_graph(session_id, patch)
+        return (store or self.studio).update_graph(session_id, patch)
 
-    def studio_set_slot(self, session_id: str, slot_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def studio_set_slot(self, session_id: str, slot_id: str, payload: Dict[str, Any], store=None) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("请求体必须是 JSON 对象")
+        canvas_store = store or self.studio
         if payload.get("clear"):
-            return self.studio.clear_slot(session_id, slot_id)
+            return canvas_store.clear_slot(session_id, slot_id)
         # from existing cache path
         from_path = str(payload.get("image_path") or payload.get("path") or "").strip()
         if from_path:
             info = self.get_cached_image_info(from_path)
             if not info.get("exists") or info.get("is_image") is False:
                 raise ValueError("图片不存在或不是有效图片")
-            return self.studio.set_slot_image(
+            return canvas_store.set_slot_image(
                 session_id,
                 slot_id,
                 image_path=from_path,
@@ -384,7 +467,7 @@ class StudioMixin:
             raise ValueError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
         mime = normalize_image_mime(mime or detect_mime_by_bytes(data))
         rel = self._save_cache_image(data, "studio", mime)
-        return self.studio.set_slot_image(
+        return canvas_store.set_slot_image(
             session_id,
             slot_id,
             image_path=rel,
@@ -394,28 +477,28 @@ class StudioMixin:
             source_record_id=str(payload.get("source_record_id") or "").strip(),
         )
 
-    def studio_add_slot(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def studio_add_slot(self, session_id: str, payload: Optional[Dict[str, Any]] = None, store=None) -> Dict[str, Any]:
         payload = payload if isinstance(payload, dict) else {}
-        return self.studio.add_slot(
+        return (store or self.studio).add_slot(
             session_id,
             role=str(payload.get("role") or "extra"),
             label=str(payload.get("label") or ""),
         )
 
-    def studio_reorder(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def studio_reorder(self, session_id: str, payload: Dict[str, Any], store=None) -> Dict[str, Any]:
         order = payload.get("order") or payload.get("input_order") or []
         if not isinstance(order, list):
             raise ValueError("order 必须是数组")
-        return self.studio.reorder_slots(session_id, order)
+        return (store or self.studio).reorder_slots(session_id, order)
 
-    def studio_promote(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def studio_promote(self, session_id: str, payload: Dict[str, Any], store=None) -> Dict[str, Any]:
         result_id = str(payload.get("result_id") or "").strip()
         if not result_id:
             raise ValueError("需要 result_id")
         role = str(payload.get("role") or "").strip()
         slot_id = str(payload.get("slot_id") or "").strip()
         if role:
-            return self.studio.promote_result_to_role(
+            return (store or self.studio).promote_result_to_role(
                 session_id,
                 result_id,
                 role,
@@ -423,7 +506,45 @@ class StudioMixin:
             )
         if not slot_id:
             raise ValueError("需要 slot_id 或 role")
-        return self.studio.promote_result_to_slot(session_id, result_id, slot_id)
+        return (store or self.studio).promote_result_to_slot(session_id, result_id, slot_id)
+
+    # Legacy creation canvas API. These wrappers intentionally use a second
+    # store and namespace so its sessions cannot be opened by the infinite
+    # relationship canvas.
+    def creative_canvas_list(self, *, include_metadata: bool = True) -> Dict[str, Any]:
+        return self.studio_list(self.creative_canvas, include_metadata=include_metadata)
+
+    def creative_canvas_get(self, session_id: str) -> Dict[str, Any]:
+        return self.studio_get(session_id, self.creative_canvas)
+
+    def creative_canvas_create(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return self.studio_create(payload, self.creative_canvas)
+
+    def creative_canvas_update(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.studio_update(session_id, payload, self.creative_canvas)
+
+    def creative_canvas_delete(self, session_id: str) -> Dict[str, Any]:
+        return self.studio_delete(session_id, self.creative_canvas)
+
+    def creative_canvas_set_slot(self, session_id: str, slot_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.studio_set_slot(session_id, slot_id, payload, self.creative_canvas)
+
+    def creative_canvas_add_slot(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return self.studio_add_slot(session_id, payload, self.creative_canvas)
+
+    def creative_canvas_reorder(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.studio_reorder(session_id, payload, self.creative_canvas)
+
+    def creative_canvas_promote(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.studio_promote(session_id, payload, self.creative_canvas)
+
+    def start_creative_canvas_run(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return self.start_studio_run(
+            session_id,
+            payload,
+            store=self.creative_canvas,
+            canvas_namespace="creative",
+        )
 
     def studio_gallery_images(self, limit: int = 24) -> Dict[str, Any]:
         """Recent successful generated images from records for 画布「从记录选图」."""
@@ -591,10 +712,29 @@ class StudioMixin:
             "error_count": len(errors),
         }
 
-    def start_studio_run(self, session_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def start_studio_run(
+        self,
+        session_id: str,
+        payload: Optional[Dict[str, Any]] = None,
+        *,
+        store=None,
+        canvas_namespace: str = "studio",
+    ) -> Dict[str, Any]:
         """Queue a studio generation using current session slots + graph."""
         payload = payload if isinstance(payload, dict) else {}
-        session = self.studio.get(session_id)
+        canvas_store = store or self.studio
+        session = canvas_store.get(session_id)
+        parent_node_id = str(payload.get("parent_node_id") or "").strip()
+        target_node_id = str(payload.get("target_node_id") or "").strip()
+        canvas_snapshot = canvas_store.canvas_graph(session_id)
+        canvas_nodes = canvas_snapshot.get("nodes") or []
+        nodes_by_id = {str(node.get("id")): node for node in canvas_nodes if isinstance(node, dict)}
+        valid_node_ids = set(nodes_by_id)
+        if target_node_id and target_node_id not in valid_node_ids:
+            raise ValueError("目标节点不存在")
+        if parent_node_id:
+            if parent_node_id not in valid_node_ids:
+                raise ValueError("父节点不存在")
         # Prevent double-submit while last run still running
         last = session.get("last_run") if isinstance(session.get("last_run"), dict) else {}
         if str(last.get("status") or "") == "running":
@@ -610,13 +750,39 @@ class StudioMixin:
                 except RuntimeError:
                     raise
         if isinstance(payload.get("graph"), dict):
-            session = self.studio.update_graph(session_id, payload["graph"])
+            session = canvas_store.update_graph(session_id, payload["graph"])
+            canvas_snapshot = canvas_store.canvas_graph(session_id)
+            canvas_nodes = canvas_snapshot.get("nodes") or []
+            nodes_by_id = {str(node.get("id")): node for node in canvas_nodes if isinstance(node, dict)}
+
+        config_node = nodes_by_id.get(target_node_id or parent_node_id or str(canvas_snapshot.get("root_node_id") or "")) or {}
+        node_params = payload.get("node_params") if isinstance(payload.get("node_params"), dict) else config_node.get("params")
+        node_params = dict(node_params) if isinstance(node_params, dict) else {}
+        template_id = normalize_template_id(
+            str(payload.get("template_id") or config_node.get("template_id") or session.get("template") or "")
+        )
+        template_meta = next(
+            (item for item in list_studio_templates() if str(item.get("id") or "") == template_id),
+            {},
+        )
+        effective_session = deepcopy(session)
+        effective_graph = dict(effective_session.get("graph") or {})
+        effective_graph.update(node_params)
+        effective_graph["mode"] = str(template_meta.get("mode") or effective_graph.get("mode") or "group")
+        effective_graph["aspect_ratio"] = str(node_params.get("aspect_ratio") or effective_graph.get("aspect_ratio") or "自动")
+        effective_graph["resolution"] = str(node_params.get("resolution") or effective_graph.get("resolution") or "1K")
+        try:
+            effective_graph["count"] = max(1, min(4, int(node_params.get("count") or effective_graph.get("count") or 1)))
+        except (TypeError, ValueError):
+            effective_graph["count"] = 1
+        effective_session["template"] = template_id
+        effective_session["graph"] = effective_graph
         loop = getattr(self, "loop", None)
         if loop is None or not loop.is_running():
             raise RuntimeError("AstrBot 事件循环未就绪，无法启动画布生成")
 
-        graph = session.get("graph") or {}
-        action = build_studio_action(session)
+        graph = effective_session.get("graph") or {}
+        action = build_studio_action(effective_session)
         aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
         resolution = str(graph.get("resolution") or self.config.image_default_resolution or "1K")
         try:
@@ -624,17 +790,17 @@ class StudioMixin:
         except Exception:
             count = 1
         mode = str(graph.get("mode") or "group")
-        persona_ref = self.persona.get_reference_image() if graph.get("use_persona_identity", True) else None
-        raw_refs, used_slots = resolve_slot_refs_for_run(
-            session,
+        persona_ref = self.persona.get_reference_image() if not parent_node_id and graph.get("use_persona_identity", True) else None
+        raw_refs, used_slots = self._resolve_studio_refs(
+            effective_session,
+            parent_node_id,
             persona_ref=persona_ref,
-            load_path_bytes=self._load_cache_image_bytes,
         )
         if mode in {"group", "selfie", "i2i"} and not raw_refs:
             raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
         source_asset_ids = [
             str(slot.get("source_record_id") or "").strip()
-            for slot in (session.get("slots") or [])
+            for slot in (effective_session.get("slots") or [])
             if isinstance(slot, dict)
             and str(slot.get("id") or "") in set(used_slots)
             and str(slot.get("source_record_id") or "").strip()
@@ -642,6 +808,7 @@ class StudioMixin:
 
         summary = {
             "session_id": session_id,
+            "studio_session_title": str(session.get("title") or "画布").strip() or "画布",
             "mode": mode,
             "prompt": action,
             "aspect_ratio": aspect,
@@ -650,6 +817,20 @@ class StudioMixin:
             "used_slots": used_slots,
             "source_asset_ids": source_asset_ids,
             "kind": "studio",
+            "parent_node_id": parent_node_id or str((canvas_snapshot.get("root_node_id") or "")),
+            "target_node_id": target_node_id,
+            "reference_node_id": parent_node_id,
+            "canvas_namespace": str(canvas_namespace or "studio"),
+            "canvas_mode": "creative" if str(canvas_namespace or "").strip().lower() == "creative" else "relationship",
+            "template": template_id,
+            "graph_params": {
+                "prompt": str(graph.get("prompt") or ""),
+                "mode": mode,
+                "aspect_ratio": aspect,
+                "resolution": resolution,
+                "count": count,
+                "use_persona_identity": bool(graph.get("use_persona_identity", True)),
+            },
         }
         with self._web_task_lock:
             self._web_task_seq += 1
@@ -670,6 +851,7 @@ class StudioMixin:
                 "owner_session": "web",
                 "cancel_requested": False,
                 "studio_session_id": session_id,
+                "canvas_namespace": str(canvas_namespace or "studio"),
                 **self._task_runtime_defaults(),
                 **self._task_progress_defaults(count),
                 "generation_stage": "preflight",
@@ -678,8 +860,11 @@ class StudioMixin:
             self._prune_web_tasks_locked()
             self._persist_web_tasks_locked()
 
-        self.studio.attach_run_start(session_id, task_id, summary)
-        runtime_future = asyncio.run_coroutine_threadsafe(self._run_studio_task(task_id, session_id), loop)
+        canvas_store.attach_run_start(session_id, task_id, summary)
+        runtime_future = asyncio.run_coroutine_threadsafe(
+            self._run_studio_task(task_id, session_id, canvas_namespace=str(canvas_namespace or "studio")),
+            loop,
+        )
         runtime_tasks = getattr(self, "_runtime_generation_tasks", None)
         if runtime_tasks is None:
             runtime_tasks = {}
@@ -690,7 +875,8 @@ class StudioMixin:
         )
         return self.get_web_image_task(task_id)
 
-    async def _run_studio_task(self, task_id: str, session_id: str) -> None:
+    async def _run_studio_task(self, task_id: str, session_id: str, *, canvas_namespace: str = "studio") -> None:
+        canvas_store = self._canvas_store(canvas_namespace)
         self._set_web_image_task(
             task_id,
             status="running",
@@ -717,7 +903,30 @@ class StudioMixin:
         try:
             if self._task_cancel_requested(task_id):
                 raise RuntimeError("任务已取消")
-            session = self.studio.get(session_id)
+            session = canvas_store.get(session_id)
+            last_run = session.get("last_run") if isinstance(session.get("last_run"), dict) else {}
+            summary = last_run.get("summary") if isinstance(last_run.get("summary"), dict) else {}
+            target_node_id = str(summary.get("target_node_id") or "").strip()
+            canvas = session.get("canvas") if isinstance(session.get("canvas"), dict) else {}
+            target_node = next(
+                (node for node in canvas.get("nodes") or [] if str(node.get("id") or "") == target_node_id),
+                None,
+            )
+            template_id = normalize_template_id(
+                str(summary.get("template") or (target_node or {}).get("template_id") or session.get("template") or "")
+            )
+            template_meta = next(
+                (item for item in list_studio_templates() if str(item.get("id") or "") == template_id),
+                {},
+            )
+            node_params = summary.get("graph_params") if isinstance(summary.get("graph_params"), dict) else (target_node or {}).get("params")
+            node_params = dict(node_params) if isinstance(node_params, dict) else {}
+            session = deepcopy(session)
+            graph_override = dict(session.get("graph") or {})
+            graph_override.update(node_params)
+            graph_override["mode"] = str(template_meta.get("mode") or graph_override.get("mode") or "group")
+            session["template"] = template_id
+            session["graph"] = graph_override
             graph = session.get("graph") or {}
             action = build_studio_action(session)
             aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
@@ -727,11 +936,21 @@ class StudioMixin:
             except Exception:
                 count = 1
             mode = str(graph.get("mode") or "group").strip().lower() or "group"
-            persona_ref = self.persona.get_reference_image() if graph.get("use_persona_identity", True) else None
-            raw_refs, used_slots = resolve_slot_refs_for_run(
+            # ``parent_node_id`` describes graph insertion; the explicit
+            # reference id stays empty for the root even when it is rerun.
+            if "reference_node_id" in summary:
+                parent_node_id = str(summary.get("reference_node_id") or "").strip()
+            else:
+                # Compatibility with tasks persisted before reference_node_id
+                # was introduced. A root rerun stored itself as parent, while
+                # a child generation stored its actual preceding node.
+                legacy_parent = str(summary.get("parent_node_id") or "").strip()
+                parent_node_id = legacy_parent if legacy_parent and legacy_parent != target_node_id else ""
+            persona_ref = self.persona.get_reference_image() if not parent_node_id and graph.get("use_persona_identity", True) else None
+            raw_refs, used_slots = self._resolve_studio_refs(
                 session,
+                parent_node_id,
                 persona_ref=persona_ref,
-                load_path_bytes=self._load_cache_image_bytes,
             )
             refs = [ImageReference(data=data, mime_type=mime) for data, mime in raw_refs]
             source_asset_ids = [
@@ -816,6 +1035,7 @@ class StudioMixin:
             # of the prompt transformation before the first result arrives.
             studio_request_data = {
                 "session_id": session_id,
+                "studio_session_title": str(session.get("title") or "画布").strip() or "画布",
                 "kind": "studio",
                 "mode": mode,
                 "original_prompt": action,
@@ -867,8 +1087,9 @@ class StudioMixin:
                     record_context={
                         "task_id": task_id,
                         "studio_session_id": session_id,
+                        "studio_session_title": str(session.get("title") or "画布").strip() or "画布",
                         "studio_task_id": task_id,
-                        "studio_template": session.get("template") or "",
+                        "studio_template": template_id,
                         "studio_source_asset_ids": source_asset_ids,
                     },
                 )
@@ -948,7 +1169,7 @@ class StudioMixin:
             wait_commits = getattr(self, "_wait_for_record_commits", None)
             if callable(wait_commits):
                 await wait_commits(task_id)
-            self.studio.attach_run_finish(
+            canvas_store.attach_run_finish(
                 session_id,
                 task_id,
                 success=success,
@@ -1040,7 +1261,7 @@ class StudioMixin:
             if callable(wait_commits):
                 await wait_commits(task_id)
             try:
-                self.studio.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[], status="cancelled")
+                canvas_store.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[], status="cancelled")
             except Exception:
                 pass
             self._set_web_image_task(
@@ -1080,7 +1301,7 @@ class StudioMixin:
             if callable(wait_commits):
                 await wait_commits(task_id)
             try:
-                self.studio.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[], status="cancelled" if cancelled else "failed")
+                canvas_store.attach_run_finish(session_id, task_id, success=False, error=error, result_paths=[], status="cancelled" if cancelled else "failed")
             except Exception:
                 pass
             self._set_web_image_task(

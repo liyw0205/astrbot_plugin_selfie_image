@@ -1135,6 +1135,7 @@ def summarize_record_for_list(record: Dict[str, Any]) -> Dict[str, Any]:
         "time": record.get("time"),
         "source": record.get("source"),
         "source_label": record.get("source_label"),
+        "studio_session_title": record.get("studio_session_title") or request_data.get("studio_session_title") or "",
         "success": record.get("success"),
         "status": record.get("status") or ("succeeded" if record.get("success") else "failed"),
         "generation_success": record.get("generation_success"),

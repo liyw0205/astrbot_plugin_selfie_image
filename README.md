@@ -3,7 +3,7 @@
 AstrBot 的生图、图生图、AI 自拍、合影、短视频与管理面板插件。
 
 - 插件名：`astrbot_plugin_selfie_image`
-- 当前稳定版：`1.6.14`
+- 当前稳定版：`1.6.15`
 - AstrBot：`>=4.13.0,<5`
 - 仓库：<https://github.com/liyw0205/astrbot_plugin_selfie_image>
 

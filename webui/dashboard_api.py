@@ -146,6 +146,10 @@ class SelfieImageDashboardAPI:
             ("studio/sessions/<session_id>/copy", self.page_studio_copy, ["POST"], "Selfie Image copy studio session"),
             ("studio/sessions/<session_id>", self.page_studio_get, ["GET"], "Selfie Image studio get"),
             ("studio/sessions/<session_id>", self.page_studio_update, ["POST"], "Selfie Image studio update"),
+            ("studio/sessions/<session_id>/canvas", self.page_studio_canvas, ["GET", "POST"], "Selfie Image studio canvas"),
+            ("studio/sessions/<session_id>/canvas/nodes", self.page_studio_canvas_node_create, ["POST"], "Selfie Image studio canvas node create"),
+            ("studio/sessions/<session_id>/canvas/nodes/<node_id>", self.page_studio_canvas_node_delete, ["DELETE", "POST"], "Selfie Image studio canvas node delete"),
+            ("studio/sessions/<session_id>/canvas/nodes/<node_id>/connect", self.page_studio_canvas_node_connect, ["POST"], "Selfie Image studio canvas node connect"),
             ("studio/sessions/<session_id>/delete", self.page_studio_delete, ["POST"], "Selfie Image studio delete"),
             ("studio/sessions/<session_id>/slots/<slot_id>", self.page_studio_set_slot, ["POST"], "Selfie Image studio slot"),
             ("studio/sessions/<session_id>/slots", self.page_studio_add_slot, ["POST"], "Selfie Image studio add slot"),
@@ -154,6 +158,17 @@ class SelfieImageDashboardAPI:
             ("studio/sessions/<session_id>/run", self.page_studio_run, ["POST"], "Selfie Image studio run"),
             ("studio/tasks/<task_id>", self.page_studio_task, ["GET"], "Selfie Image studio task"),
             ("studio/gallery", self.page_studio_gallery, ["GET"], "Selfie Image studio gallery from records"),
+            ("creative-canvas/sessions", self.page_creative_canvas_list, ["GET"], "Selfie Image creation canvas list"),
+            ("creative-canvas/sessions", self.page_creative_canvas_create, ["POST"], "Selfie Image creation canvas create"),
+            ("creative-canvas/sessions/<session_id>", self.page_creative_canvas_get, ["GET"], "Selfie Image creation canvas get"),
+            ("creative-canvas/sessions/<session_id>", self.page_creative_canvas_update, ["POST"], "Selfie Image creation canvas update"),
+            ("creative-canvas/sessions/<session_id>/delete", self.page_creative_canvas_delete, ["POST"], "Selfie Image creation canvas delete"),
+            ("creative-canvas/sessions/<session_id>/slots/<slot_id>", self.page_creative_canvas_set_slot, ["POST"], "Selfie Image creation canvas slot"),
+            ("creative-canvas/sessions/<session_id>/slots", self.page_creative_canvas_add_slot, ["POST"], "Selfie Image creation canvas add slot"),
+            ("creative-canvas/sessions/<session_id>/reorder", self.page_creative_canvas_reorder, ["POST"], "Selfie Image creation canvas reorder"),
+            ("creative-canvas/sessions/<session_id>/promote", self.page_creative_canvas_promote, ["POST"], "Selfie Image creation canvas promote"),
+            ("creative-canvas/sessions/<session_id>/run", self.page_creative_canvas_run, ["POST"], "Selfie Image creation canvas run"),
+            ("creative-canvas/gallery", self.page_creative_canvas_gallery, ["GET"], "Selfie Image creation canvas gallery"),
             ("prompt-presets", self.page_prompt_presets, ["GET"], "Selfie Image prompt presets"),
             ("prompt-presets/manage", self.page_prompt_presets_manage, ["GET"], "Selfie Image managed prompt presets"),
             ("prompt-presets/manage/save", self.page_prompt_preset_save, ["POST"], "Selfie Image save prompt preset"),
@@ -953,7 +968,7 @@ class SelfieImageDashboardAPI:
         )
 
     async def page_studio_list(self) -> Any:
-        return self._ok(self.plugin.studio_list())
+        return self._ok(self.plugin.studio_list(include_metadata=False))
 
     async def page_studio_create(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -992,6 +1007,41 @@ class SelfieImageDashboardAPI:
             return self._ok(self.plugin.studio_update(session_id, payload or {}))
         except Exception as exc:
             return self._fail(str(exc))
+
+    async def page_studio_canvas(self, session_id: str) -> Any:
+        try:
+            if getattr(request, "method", "GET") == "GET":
+                return self._ok(self.plugin.studio_canvas(session_id))
+            payload, error = await self._json_object_payload()
+            if error:
+                return error
+            return self._ok(self.plugin.studio_canvas_update(session_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc), 404 if getattr(request, "method", "GET") == "GET" else 400)
+
+    async def page_studio_canvas_node_create(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.studio_canvas_node_create(session_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_studio_canvas_node_delete(self, session_id: str, node_id: str) -> Any:
+        try:
+            return self._ok(self.plugin.studio_canvas_node_delete(session_id, node_id))
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    async def page_studio_canvas_node_connect(self, session_id: str, node_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.studio_canvas_node_connect(session_id, node_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
 
     async def page_studio_delete(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
@@ -1058,6 +1108,100 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 404)
 
     async def page_studio_gallery(self) -> Any:
+        try:
+            limit = int(self._query_value("limit") or 24)
+        except Exception:
+            limit = 24
+        try:
+            return self._ok(self.plugin.studio_gallery_images(limit=limit))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+
+    async def page_creative_canvas_list(self) -> Any:
+        try:
+            return self._ok(self.plugin.creative_canvas_list(include_metadata=False))
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_creative_canvas_create(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.creative_canvas_create(payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_creative_canvas_get(self, session_id: str) -> Any:
+        try:
+            return self._ok(self.plugin.creative_canvas_get(session_id))
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    async def page_creative_canvas_update(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.creative_canvas_update(session_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_creative_canvas_delete(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.creative_canvas_delete(session_id))
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    async def page_creative_canvas_set_slot(self, session_id: str, slot_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.creative_canvas_set_slot(session_id, slot_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_creative_canvas_add_slot(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.creative_canvas_add_slot(session_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_creative_canvas_reorder(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.creative_canvas_reorder(session_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_creative_canvas_promote(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.creative_canvas_promote(session_id, payload or {}))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_creative_canvas_run(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(redact_sensitive_data(self.plugin.start_creative_canvas_run(session_id, payload or {})))
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+
+    async def page_creative_canvas_gallery(self) -> Any:
         try:
             limit = int(self._query_value("limit") or 24)
         except Exception:

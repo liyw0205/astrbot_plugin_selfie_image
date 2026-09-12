@@ -179,6 +179,7 @@
     .modal-mask { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(27,28,29,.42); padding: 14px; z-index: 50; }
     .modal-mask.show { display: flex; }
     #mediaSourceModal { z-index: 70; }
+    #mediaLightboxModal { z-index: 80; background: rgba(8, 12, 16, .88); }
     #confirmModal { z-index: 90; }
     .confirm-dialog { width: min(460px, 100%); }
     .confirm-dialog .modal-body { line-height: 1.55; }
@@ -194,6 +195,20 @@
     .media-source-modal-dialog .modal-footer { background: linear-gradient(180deg, rgba(17,17,17,0), #111 24px); }
     .media-source-preview { min-height: 220px; max-height: calc(92vh - 120px); overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px; padding: 4px; }
     .media-source-preview img, .media-source-preview video { display: block; max-width: 100%; max-height: calc(92vh - 150px); object-fit: contain; background: #000; }
+    .media-lightbox-dialog { width: min(1180px, 100%); height: min(94vh, 900px); display:flex; flex-direction:column; overflow:hidden; background:#0b1014; color:#fff; border:1px solid rgba(255,255,255,.16); border-radius:12px; box-shadow:0 22px 70px rgba(0,0,0,.45); }
+    .media-lightbox-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:52px; padding:10px 12px 10px 16px; border-bottom:1px solid rgba(255,255,255,.12); }
+    .media-lightbox-toolbar strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
+    .media-lightbox-toolbar > div { display:flex; gap:8px; flex:0 0 auto; }
+    .media-lightbox-toolbar .icon-button { color:#fff; border-color:rgba(255,255,255,.24); background:rgba(255,255,255,.08); }
+    .media-lightbox-toolbar .icon-button:hover { background:rgba(255,255,255,.18); border-color:rgba(255,255,255,.45); }
+    .media-lightbox-toolbar .icon-button svg { width:16px; height:16px; display:block; margin:auto; }
+    .media-lightbox-stage { position:relative; flex:1; min-height:0; display:flex; align-items:center; justify-content:center; overflow:auto; padding:16px; background:#080c10; }
+    .media-lightbox-stage img { display:block; max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain; background:#000; }
+    .media-lightbox-stage .muted { color:rgba(255,255,255,.68); }
+    @media (max-width:760px) {
+      .media-lightbox-dialog { width:100%; height:100%; border-radius:0; }
+      .media-lightbox-stage { padding:8px; }
+    }
     .toast-wrap { position: fixed; right: 16px; top: 16px; z-index: 100; display: grid; justify-items: end; gap: 8px; pointer-events: none; }
     .toast { width: max-content; min-width: 0; max-width: min(360px, calc(100vw - 32px)); padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--text); box-shadow: 0 10px 24px rgba(0,0,0,.12); white-space: nowrap; font-size: 12px; }
     .toast.ok { background: #fff; color: var(--text); border-color: #dfe3ea; }
@@ -349,6 +364,97 @@
     .studio-results .actions { flex-wrap:wrap; gap:4px; }
     .studio-empty { margin-top: 12px; padding: 22px 16px; text-align: center; border: 1px dashed var(--line-strong); border-radius: var(--radius-md); background: var(--panel-soft); }
     .studio-empty[hidden], .studio-editor[hidden] { display: none; }
+    .studio-workspace { min-height: 720px; overflow: hidden; }
+    .studio-topbar { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; flex-wrap:wrap; }
+    .studio-topbar h2 { margin:0; }
+    .studio-status-line { color:var(--muted); font-size:12px; margin-top:5px; min-height:18px; }
+    .studio-session-picker { display:flex; align-items:end; gap:8px; flex-wrap:wrap; }
+    .studio-session-picker label { display:grid; gap:4px; font-size:11px; color:var(--muted); }
+    .studio-session-picker select { min-width:210px; max-width:320px; }
+    .studio-session-picker > button.mini { width:auto; min-width:0; padding:5px 8px; font-size:12px; line-height:1.2; }
+    .studio-canvas-layout { display:grid; grid-template-columns:220px minmax(0,1fr) 300px; height:650px; margin-top:14px; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:#eef2f5; box-shadow:var(--shadow-soft); }
+    .studio-canvas-layout.sidebar-collapsed { grid-template-columns:0 minmax(0,1fr) 300px; }
+    .studio-canvas-layout.sidebar-collapsed .studio-graph-sidebar { overflow:hidden; opacity:0; pointer-events:none; }
+    .studio-graph-sidebar, .studio-node-panel { min-width:0; background:rgba(255,255,255,.94); display:flex; flex-direction:column; }
+    .studio-graph-sidebar { border-right:1px solid var(--line); }
+    .studio-node-panel { border-left:1px solid var(--line); }
+    .studio-sidebar-head, .studio-node-panel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:15px; border-bottom:1px solid var(--line); }
+    .studio-sidebar-head b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:160px; }
+    .studio-sidebar-head .muted { display:block; margin-top:3px; font-size:11px; }
+    .studio-node-search { margin:12px; width:calc(100% - 24px); padding:8px 10px; border:1px solid var(--line); border-radius:7px; font-size:12px; }
+    .studio-node-list { overflow:auto; padding:0 8px 12px; }
+    .studio-node-list-item { display:grid; grid-template-columns:42px minmax(0,1fr); gap:8px; align-items:center; padding:8px; border:1px solid transparent; border-radius:8px; cursor:pointer; }
+    .studio-node-list-item:hover { background:#f2f7fa; }
+    .studio-node-list-item.selected { background:#e8f3f8; border-color:#b8dce9; }
+    .studio-node-list-item img { width:42px; height:42px; object-fit:cover; border-radius:7px; background:#e8edf0; }
+    .studio-node-list-item .node-list-copy { min-width:0; }
+    .studio-node-list-item strong, .studio-node-list-item span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .studio-node-list-item strong { font-size:12px; }
+    .studio-node-list-item span { color:var(--muted); font-size:10px; margin-top:3px; }
+    .studio-canvas-viewport { position:relative; overflow:hidden; cursor:grab; background:#edf1f3; touch-action:none; }
+    .studio-canvas-viewport.is-panning { cursor:grabbing; }
+    .studio-canvas-grid { position:absolute; width:1px; height:1px; left:0; top:0; transform-origin:0 0; background-image:radial-gradient(#bec8cd 1px, transparent 1px); background-size:24px 24px; }
+    .studio-canvas-edges, .studio-canvas-nodes { position:absolute; left:0; top:0; width:1px; height:1px; overflow:visible; transform-origin:0 0; }
+    .studio-canvas-edges { pointer-events:none; }
+    .studio-canvas-edge { fill:none; stroke:#9caeb7; stroke-width:2.2; vector-effect:non-scaling-stroke; opacity:.78; transition:stroke .15s ease, opacity .15s ease; }
+    .studio-canvas-edge.active { stroke:#1d7897; stroke-width:3.2; opacity:1; }
+    .studio-canvas-node { position:absolute; width:204px; min-height:154px; transform:translate(-50%,-50%); border:1px solid #c9d4d9; border-radius:12px; background:#fff; box-shadow:0 10px 24px rgba(38,55,62,.12); overflow:hidden; cursor:pointer; user-select:none; transition:border-color .15s ease, box-shadow .15s ease; }
+    .studio-canvas-node:hover { border-color:#8bbbc9; box-shadow:0 14px 28px rgba(38,55,62,.18); }
+    .studio-canvas-node.selected { border-color:#197795; box-shadow:0 0 0 3px rgba(25,119,149,.18), 0 14px 28px rgba(38,55,62,.18); }
+    .studio-canvas-node .node-media { width:100%; height:108px; display:flex; align-items:center; justify-content:center; background:#e8edf0; overflow:hidden; }
+    .studio-canvas-node .node-media img { width:100%; height:100%; object-fit:cover; display:block; }
+    .studio-canvas-node .node-media .node-placeholder { color:#71818a; font-size:11px; }
+    .studio-canvas-node .node-copy { padding:9px 10px 10px; }
+    .studio-canvas-node .node-title { font-size:12px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .studio-canvas-node .node-meta { display:flex; align-items:center; justify-content:space-between; gap:6px; margin-top:5px; color:var(--muted); font-size:10px; }
+    .studio-canvas-node .node-actions { display:none; position:absolute; top:7px; right:7px; gap:4px; }
+    .studio-canvas-node:hover .node-actions, .studio-canvas-node.selected .node-actions { display:flex; }
+    .studio-canvas-node.dangling .node-actions { display:flex; }
+    .studio-canvas-node.dangling:not(:hover):not(.selected) .node-actions [data-node-action="focus"],
+    .studio-canvas-node.dangling:not(:hover):not(.selected) .node-actions [data-node-action="delete"] { display:none; }
+    .studio-node-action { width:26px; height:26px; border:1px solid rgba(255,255,255,.85); border-radius:6px; background:rgba(29,45,52,.78); color:#fff; cursor:pointer; }
+    .studio-node-action.connect { background:rgba(0,129,92,.88); font-size:17px; font-weight:700; }
+    .studio-connect-list { display:grid; gap:8px; margin-top:10px; }
+    .studio-connect-list button { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; text-align:left; }
+    .studio-canvas-hint { position:absolute; left:16px; bottom:14px; color:#6f7d84; background:rgba(255,255,255,.78); border:1px solid rgba(193,205,210,.9); border-radius:7px; padding:6px 9px; font-size:11px; pointer-events:none; }
+    .studio-canvas-controls { position:absolute; right:14px; bottom:14px; display:flex; align-items:center; gap:5px; padding:5px; border:1px solid rgba(191,204,210,.9); border-radius:8px; background:rgba(255,255,255,.9); box-shadow:0 4px 12px rgba(30,45,52,.1); }
+    .studio-canvas-controls span { min-width:42px; text-align:center; color:var(--muted); font-size:11px; }
+    .icon-button { width:28px; height:28px; padding:0; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--text); cursor:pointer; line-height:1; }
+    .icon-button:hover { border-color:#8bbbc9; background:#eef7fa; }
+    .studio-node-panel[hidden] { display:none; }
+    .studio-node-panel-head .eyebrow { display:block; color:var(--muted); font-size:10px; letter-spacing:.04em; }
+    .studio-node-panel-head h3 { margin:4px 0 0; font-size:15px; }
+    .studio-node-panel-body { overflow:auto; padding:14px; display:grid; gap:12px; }
+    .studio-node-result { width:100%; max-height:210px; object-fit:contain; border-radius:8px; background:#eef1f2; border:1px solid var(--line); }
+    .studio-node-field { display:grid; gap:5px; }
+    .studio-node-field label { font-size:11px; color:var(--muted); }
+    .studio-node-field textarea { min-height:92px; resize:vertical; }
+    .studio-node-field input, .studio-node-field select, .studio-node-field textarea { width:100%; font-size:12px; }
+    .studio-node-progress { display:grid; gap:5px; margin-top:8px; color:var(--primary-strong); font-size:11px; }
+    .studio-node-progress progress { width:100%; height:7px; accent-color:var(--primary); }
+    .studio-node-actions { display:flex; flex-wrap:wrap; gap:7px; }
+    .studio-node-actions button { flex:1 1 100px; }
+    .studio-node-picker-actions { display:flex; gap:7px; flex-wrap:wrap; }
+    .studio-node-picker-actions button { flex:1 1 120px; }
+    .studio-node-picker { width:100%; }
+    .studio-node-empty { padding:22px 8px; color:var(--muted); text-align:center; font-size:12px; }
+    @media (max-width: 980px) {
+      .studio-canvas-layout { grid-template-columns:190px minmax(0,1fr); }
+      .studio-node-panel { position:absolute; z-index:5; right:0; top:0; bottom:0; width:min(320px, 88%); box-shadow:-12px 0 28px rgba(30,45,52,.16); }
+      .studio-canvas-layout { position:relative; }
+    }
+    @media (max-width: 680px) {
+      .studio-workspace, .creative-canvas-workspace { padding:12px; }
+      .studio-session-picker { width:100%; align-items:center; }
+      .studio-session-picker label { flex:1 1 100%; }
+      .studio-session-picker select { min-width:0; flex:1 1 160px; }
+      .studio-canvas-layout { display:flex; flex-direction:column; grid-template-columns:none; height:auto; min-height:0; overflow:visible; }
+      .studio-graph-sidebar { display:none; }
+      .studio-canvas-viewport { flex:0 0 auto; width:100%; height:min(62vh, 560px); min-height:420px; }
+      .studio-node-panel { position:static; width:100%; max-height:none; border:0; border-top:1px solid var(--line); box-shadow:none; }
+      .studio-node-panel-body { max-height:none; }
+      .studio-canvas-hint { font-size:10px; }
+    }
     .preset-manager-list { display:grid; gap:10px; margin-top:14px; }
     .preset-manager-row { display:grid; grid-template-columns:minmax(150px,.35fr) minmax(0,1fr) auto; gap:12px; align-items:start; padding:13px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--panel); box-shadow:var(--shadow-soft); }
     .preset-manager-name { min-width:0; font-weight:700; overflow-wrap:anywhere; }
@@ -429,6 +535,23 @@
     .base64-copy svg { width:13px; height:13px; flex:0 0 auto; }
     .images .thumb-card { position:relative; }
     .images .thumb-dl { position:absolute; top:8px; right:8px; width:30px; height:30px; padding:0; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.92); }
+    .media-zoom-shell { position:relative; display:block; max-width:100%; min-width:0; }
+    .media-zoom-button { position:absolute; z-index:3; top:8px; right:8px; width:30px; height:30px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid rgba(27,28,29,.16); border-radius:8px; background:rgba(255,255,255,.92); color:#344054; box-shadow:0 2px 8px rgba(0,0,0,.12); }
+    .media-zoom-button:hover { background:#fff; border-color:var(--primary); color:var(--primary); }
+    .media-zoom-button svg { width:16px; height:16px; display:block; }
+    .images .media-zoom-shell { width:100%; }
+    .asset-thumb > .media-zoom-shell { width:100%; height:100%; }
+    .asset-thumb > .media-zoom-shell img { width:100%; height:100%; }
+    .studio-gallery-thumb > .media-zoom-shell { position:absolute; inset:0; width:100%; height:100%; }
+    .studio-gallery-thumb > .media-zoom-shell img { position:absolute; inset:0; width:100%; height:100%; }
+    .studio-canvas-node .node-media > .media-zoom-shell { width:100%; height:100%; }
+    .studio-canvas-node .node-media > .media-zoom-shell img { width:100%; height:100%; }
+    .studio-node-list-item > .media-zoom-shell { width:42px; height:42px; }
+    .studio-node-list-item > .media-zoom-shell img { width:42px; height:42px; object-fit:cover; border-radius:7px; }
+    .media-zoom-shell .media-zoom-button { top:6px; right:6px; }
+    .images .media-zoom-button { top:44px; right:8px; }
+    .asset-thumb .media-zoom-button { top:36px; right:6px; }
+    .studio-canvas-node .media-zoom-button { top:auto; right:6px; bottom:6px; }
     .video-card { position:relative; margin-top:8px; }
     .video-card .thumb-dl { position:absolute; top:8px; right:8px; z-index:2; width:30px; height:30px; padding:0; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.92); }
     .checkline { display: flex; align-items: center; gap: 8px; min-height: 38px; }
@@ -583,7 +706,8 @@
     nav.page-nav button[data-tab="monitor"]::before { content: "☷"; }
     nav.page-nav button[data-tab="assets"]::before { content: "▦"; }
     nav.page-nav button[data-tab="studio"]::before { content: "✦"; }
-    nav.page-nav button[data-tab="presets"]::before { content: "✎"; }
+    nav.page-nav button[data-tab="creativeCanvas"]::before { content: "✎"; }
+    nav.page-nav button[data-tab="presets"]::before { content: "▤"; }
     nav.page-nav button[data-tab="test"]::before { content: "◎"; }
     nav.page-nav button[data-tab="image"]::before { content: "▧"; }
     nav.page-nav button[data-tab="selfie"]::before { content: "◉"; }
@@ -733,6 +857,7 @@
       box-shadow: 0 3px 10px rgba(89, 100, 242, .12) !important;
     }
     html, body { max-width: 100%; overflow-x: hidden; }
+    html { scrollbar-gutter: stable; }
     body.authed main.app-shell, body.authed main.app-shell * { min-width: 0; }
     body.authed main.app-shell { width: 100%; max-width: none; padding-left: 38px; }
     body.authed main.app-shell img, body.authed main.app-shell video, body.authed main.app-shell iframe { max-width: 100%; }
@@ -813,7 +938,8 @@
       <button data-tab="proxies" type="button">代理设置</button>
       <button data-tab="monitor" type="button">生成记录</button>
       <button data-tab="assets" type="button">资产库</button>
-      <button data-tab="studio" type="button">创作画布</button>
+      <button data-tab="studio" type="button">无限画布</button>
+      <button data-tab="creativeCanvas" type="button">创作画布</button>
       <button data-tab="presets" type="button">预设管理</button>
       <button data-tab="test" type="button">快速试画</button>
       <button data-tab="image" type="button">出图设置</button>
@@ -842,7 +968,7 @@
           <button type="button" data-nav-target="test">开始一次创作　→</button>
         </div>
         <div class="bento-quick">
-          <button class="bento-tile" type="button" data-nav-target="studio"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>创作画布</b><span>编排参考并开始创作</span></button>
+          <button class="bento-tile" type="button" data-nav-target="studio"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>无限画布</b><span>打开画布，继续创作</span></button>
           <button class="bento-tile" type="button" data-nav-target="selfie"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg></div><b>形象参考</b><span>管理固定形象</span></button>
           <button class="bento-tile" type="button" data-nav-target="channels"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg></div><b>模型渠道</b><span>检查运行状态</span></button>
           <button class="bento-tile" type="button" data-nav-target="monitor"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="3" cy="6" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="12" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="18" r=".7" fill="currentColor" stroke="none"></circle></svg></div><b>生成记录</b><span>查看最近任务</span></button>
@@ -1012,9 +1138,9 @@
       <div class="grid4">
         <div><label>关键词</label><input id="assetKeyword" placeholder="提示词、备注、来源或模型"></div>
         <div><label>来源</label><input id="assetSource" placeholder="来源关键词"></div>
-        <div><label>模型</label><input id="assetModel" placeholder="模型关键词"></div>
-        <div><label>媒体类型</label><select id="assetMedia"><option value="">全部</option><option value="image">图片</option><option value="video">视频</option></select></div>
-        <div><label>状态</label><select id="assetSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
+        <div><label>模型筛选</label><select id="assetModel"><option value="">全部</option></select></div>
+        <div><label>媒体类型</label><select id="assetMedia"><option value="">全部</option><option value="image" selected>图片</option><option value="video">视频</option></select></div>
+        <div><label>状态</label><select id="assetSuccess"><option value="">全部</option><option value="true" selected>成功</option><option value="false">失败</option></select></div>
         <div><label>资产标记</label><select id="assetMark"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
         <div><label>标签</label><input id="assetTag" list="assetTagList" placeholder="精确匹配标签"><datalist id="assetTagList"></datalist></div>
         <div><label>排序</label><select id="assetSort"><option value="recent">最新生成</option><option value="oldest">最早生成</option><option value="priority">置顶/收藏优先</option></select></div>
@@ -1050,75 +1176,108 @@
     </section>
 
 
-    <section id="studio" class="floating-action-section">
-      <div class="between">
-        <h2>画布</h2>
-        <span class="status">多参考编排 · 多模板 · 仅图片</span>
-      </div>
-      <div class="grid">
+    <section id="studio" class="floating-action-section studio-workspace">
+      <div class="studio-topbar">
         <div>
-          <label>画布会话</label>
-          <select id="studioSessionSelect"></select>
+          <h2>无限画布</h2>
+          <div id="studioStatus" class="studio-status-line">选择画布后开始创作</div>
         </div>
-        <div class="actions" style="align-items:end">
-          <button class="secondary" id="studioReloadBtn" type="button">刷新会话</button>
-          <button class="danger" id="studioDeleteBtn" type="button" disabled>删除</button>
+        <div class="studio-session-picker">
+          <label for="studioSessionSelect">画布</label>
+          <select id="studioSessionSelect" aria-label="选择无限画布"></select>
+          <button class="secondary mini" id="studioReloadBtn" type="button" aria-label="刷新画布" title="刷新画布">刷新</button>
+          <button class="danger mini" id="studioDeleteBtn" type="button" disabled>删除画布</button>
         </div>
       </div>
       <div id="studioEmptyState" class="studio-empty">
-        <strong>还没有打开画布会话</strong>
-        <div class="muted" style="margin-top:6px">点击右下角加号，选择模板并新建一个会话。</div>
+        <strong>还没有无限画布</strong>
+        <div class="muted" style="margin-top:6px">点击右下角 + 开始新的创作。</div>
       </div>
-      <div id="studioEditor" class="studio-editor" hidden>
-        <div class="grid">
-          <div><label>标题</label><input id="studioTitle" placeholder="画布标题"></div>
-          <div><label>模式</label>
-            <select id="studioMode">
-              <option value="group">合影</option>
-              <option value="selfie">自拍</option>
-              <option value="i2i">图生图</option>
-              <option value="t2i">文生图</option>
-            </select>
+      <div id="studioEditor" class="studio-canvas-layout" hidden>
+        <aside class="studio-graph-sidebar" aria-label="画面列表">
+          <div class="studio-sidebar-head">
+            <div><b id="studioGraphTitle">未命名画布</b><span id="studioGraphMeta" class="muted">0 个画面</span></div>
+            <button class="icon-button" id="studioSidebarToggle" type="button" title="收起画面列表" aria-label="收起画面列表">‹</button>
           </div>
-          <div><label>画面比例</label><select id="studioAspect"></select></div>
-          <div><label>清晰度</label><select id="studioResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
-          <div><label>张数</label><input id="studioCount" type="number" min="1" max="4" value="1"></div>
-        </div>
-        <label class="checkline"><input id="studioUsePersona" type="checkbox" checked> 缺形象槽时用当前形象</label>
-        <div class="between">
-          <label>提示词</label>
-          <div class="actions">
-            <button class="secondary" id="studioPresetBtn" type="button">预设</button>
-            <button class="secondary" id="studioCosBtn" type="button">COS池</button>
+          <input id="studioNodeSearch" class="studio-node-search" type="search" placeholder="搜索画面" aria-label="搜索画面">
+          <div id="studioNodeList" class="studio-node-list"></div>
+        </aside>
+        <div class="studio-canvas-viewport" id="studioCanvasViewport" tabindex="0" aria-label="无限画布">
+          <div class="studio-canvas-grid" id="studioCanvasGrid">
+            <svg id="studioCanvasEdges" class="studio-canvas-edges" aria-hidden="true"></svg>
+            <div id="studioCanvasNodes" class="studio-canvas-nodes"></div>
           </div>
-        </div>
-        <textarea id="studioPrompt" rows="3" placeholder="自然并肩合影…"></textarea>
-        <div class="preset-panel" id="studioPresetPanel"></div>
-        <div class="preset-panel" id="studioCosPanel"></div>
-        <div class="studio-chiprow" id="studioPromptChips"></div>
-        <div class="between" style="margin-top:8px">
-          <h3>参考槽位</h3>
-          <div class="actions">
-            <button class="secondary" id="studioPickRecordBtn" type="button">从记录选图</button>
-            <button class="secondary" id="studioAddSlotBtn" type="button">加槽位</button>
+          <div id="studioCanvasHint" class="studio-canvas-hint">拖动空白区域平移，滚轮缩放</div>
+          <div class="studio-canvas-controls" aria-label="画布视图">
+            <button class="icon-button" id="studioZoomOut" type="button" title="缩小" aria-label="缩小">−</button>
+            <span id="studioZoomLabel">100%</span>
+            <button class="icon-button" id="studioZoomIn" type="button" title="放大" aria-label="放大">+</button>
+            <button class="icon-button" id="studioZoomReset" type="button" title="重置视图" aria-label="重置视图">⌂</button>
           </div>
         </div>
-        <div class="studio-gallery" id="studioGallery"></div>
-        <div class="studio-slots" id="studioSlots"></div>
-        <div class="actions">
-          <button class="ok" id="studioSaveBtn" type="button">保存设置</button>
-          <button class="ok" id="studioRunBtn" type="button">开始生成</button>
-          <button class="secondary" id="studioRerunBtn" type="button">再生成</button>
-          <button class="danger" id="studioCancelBtn" type="button" style="display:none">取消任务</button>
-          <button class="secondary" id="studioRetryStatusBtn" type="button" style="display:none">重新查询</button>
-        </div>
-        <div id="studioStatus" class="status">画布已打开。</div>
-        <h3>结果</h3>
-        <div class="studio-results" id="studioResults"></div>
-        <input id="studioFilePick" type="file" accept="image/*" style="display:none">
+        <aside id="studioNodePanel" class="studio-node-panel" aria-label="画面详情" hidden>
+          <div class="studio-node-panel-head">
+            <div><span class="eyebrow">画面详情</span><h3 id="studioNodePanelTitle">选择一个画面</h3></div>
+            <button class="icon-button" id="studioNodePanelClose" type="button" title="关闭画面详情" aria-label="关闭画面详情">×</button>
+          </div>
+          <div id="studioNodePanelBody" class="studio-node-panel-body"></div>
+        </aside>
       </div>
       <div class="floating-actions" aria-label="画布操作">
-        <button class="ok" id="studioCreateBtn" type="button" data-tooltip="按模板新建" aria-label="按模板新建" title="按模板新建"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
+        <button class="ok" id="studioCreateBtn" type="button" data-tooltip="开始新创作" aria-label="开始新创作" title="开始新创作"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
+      </div>
+      <input id="studioTitle" type="hidden"><input id="studioPrompt" type="hidden"><input id="studioMode" type="hidden"><input id="studioAspect" type="hidden"><input id="studioResolution" type="hidden"><input id="studioCount" type="hidden"><input id="studioUsePersona" type="checkbox" hidden>
+    </section>
+
+    <section id="creativeCanvas" class="floating-action-section creative-canvas-workspace">
+      <div class="studio-topbar">
+        <div>
+          <h2>创作画布</h2>
+          <div id="creativeCanvasStatus" class="studio-status-line">选择画布后开始创作</div>
+        </div>
+        <div class="studio-session-picker">
+          <label for="creativeCanvasSessionSelect">画布</label>
+          <select id="creativeCanvasSessionSelect" aria-label="选择创作画布"></select>
+          <button class="secondary mini" id="creativeCanvasReloadBtn" type="button" aria-label="刷新创作画布" title="刷新创作画布">刷新</button>
+          <button class="danger mini" id="creativeCanvasDeleteBtn" type="button" disabled>删除画布</button>
+        </div>
+      </div>
+      <div id="creativeCanvasEmptyState" class="studio-empty">
+        <strong>还没有创作画布</strong>
+        <div class="muted" style="margin-top:6px">点击右下角 + 选择模板，开始创作。</div>
+      </div>
+      <div id="creativeCanvasEditor" class="creative-canvas-editor" hidden>
+        <div class="grid">
+          <div><label>标题</label><input id="creativeCanvasTitle" placeholder="画布标题"></div>
+          <div><label>模式</label><select id="creativeCanvasMode"><option value="group">合影</option><option value="selfie">自拍</option><option value="i2i">图生图</option><option value="t2i">文生图</option></select></div>
+          <div><label>画面比例</label><select id="creativeCanvasAspect"></select></div>
+          <div><label>清晰度</label><select id="creativeCanvasResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+          <div><label>张数</label><input id="creativeCanvasCount" type="number" min="1" max="4" value="1"></div>
+        </div>
+        <label class="checkline"><input id="creativeCanvasUsePersona" type="checkbox" checked> 缺形象槽时使用当前形象</label>
+        <label>画面描述</label>
+        <textarea id="creativeCanvasPrompt" rows="3" placeholder="自然并肩合影…"></textarea>
+        <div class="actions" style="margin-top:8px"><button class="secondary" id="creativeCanvasPresetBtn" type="button">预设</button><button class="secondary" id="creativeCanvasCosBtn" type="button">COS池</button></div>
+        <div class="preset-panel" id="creativeCanvasPresetPanel"></div>
+        <div class="preset-panel" id="creativeCanvasCosPanel"></div>
+        <div class="between" style="margin-top:8px">
+          <h3>参考图</h3>
+          <div class="actions"><button class="secondary" id="creativeCanvasPickRecordBtn" type="button">从图库选图</button><button class="secondary" id="creativeCanvasAddSlotBtn" type="button">添加参考图</button></div>
+        </div>
+        <div class="studio-gallery" id="creativeCanvasGallery"></div>
+        <div class="studio-slots" id="creativeCanvasSlots"></div>
+        <div class="actions">
+          <button class="ok" id="creativeCanvasSaveBtn" type="button">保存</button>
+          <button class="ok" id="creativeCanvasRunBtn" type="button">生成图片</button>
+          <button class="secondary" id="creativeCanvasRerunBtn" type="button">再次生成</button>
+          <button class="danger" id="creativeCanvasCancelBtn" type="button" style="display:none">取消生成</button>
+        </div>
+        <h3>生成结果</h3>
+        <div class="studio-results" id="creativeCanvasResults"></div>
+        <input id="creativeCanvasFilePick" type="file" accept="image/*" style="display:none">
+      </div>
+      <div class="floating-actions" aria-label="创作操作">
+        <button class="ok" id="creativeCanvasCreateBtn" type="button" data-tooltip="选择模板开始创作" aria-label="选择模板开始创作" title="选择模板开始创作"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
       </div>
     </section>
 
@@ -1159,12 +1318,14 @@
       </div>
       <div class="between">
         <label id="testPromptLabel">想画什么</label>
-        <div class="actions">
-          <button class="secondary" id="testPresetBtn" type="button">预设</button>
-          <button class="secondary" id="testCosBtn" type="button">COS池</button>
-        </div>
       </div>
       <textarea id="testPrompt">一只可爱的白色猫咪，坐在樱花树下，柔和光线，精致插画风格</textarea>
+      <div class="actions" style="margin-top:8px">
+        <button class="secondary" id="testPresetBtn" type="button">预设</button>
+        <button class="secondary" id="testCosBtn" type="button">COS池</button>
+      </div>
+      <div class="preset-panel" id="testPresetPanel"></div>
+      <div class="preset-panel" id="testCosPanel"></div>
       <div class="detail-title"><h3>模板变量</h3><span class="muted">可直接写 {角色}、{场景} 等占位符</span></div>
       <div class="grid4 creative-template-grid">
         <div><label>角色</label><input id="testTemplateRole" placeholder="例如：宁红夜"></div>
@@ -1174,7 +1335,7 @@
         <div><label>镜头</label><input id="testTemplateShot" placeholder="例如：竖屏半身"></div>
         <div><label>视角</label><input id="testTemplateView" placeholder="例如：他拍视角"></div>
         <div><label>光线</label><input id="testTemplateLighting" placeholder="例如：窗光"></div>
-        <div class="actions" style="align-items:end;margin-top:0"><button class="secondary mini" id="testTemplatePreviewBtn" type="button">预览模板</button></div>
+        <div class="actions" style="align-items:end;margin-top:0"><button class="secondary mini" id="testTemplatePreviewBtn" type="button">预览模板</button><button class="secondary mini" id="testTemplateRandomBtn" type="button">随机模板</button></div>
       </div>
       <div class="grid" style="margin-top:4px">
         <label class="checkline"><input id="testTemplateRandomize" type="checkbox"> 未填写变量时随机补全</label>
@@ -1192,8 +1353,6 @@
         <div id="testStoryboardPreview" class="status" style="margin-top:6px"></div>
       </div>
       <div id="testTemplatePreview" class="status" style="display:none;margin-top:8px"></div>
-      <div class="preset-panel" id="testPresetPanel"></div>
-      <div class="preset-panel" id="testCosPanel"></div>
       <div class="grid">
         <label class="checkline" id="promptEnhanceWrap"><input id="promptEnhance" type="checkbox"> 润色提示词</label>
         <label class="checkline" id="useSelfieWrap"><input id="useSelfie" type="checkbox"> 带上当前形象参考<span id="useSelfieHint"></span></label>
@@ -1447,6 +1606,19 @@
     </div>
   </div>
 
+  <div id="mediaLightboxModal" class="modal-mask">
+    <div class="media-lightbox-dialog" role="dialog" aria-modal="true" aria-labelledby="mediaLightboxTitle">
+      <div class="media-lightbox-toolbar">
+        <strong id="mediaLightboxTitle">图片预览</strong>
+        <div>
+          <button id="mediaLightboxDownload" class="icon-button" type="button" title="下载" aria-label="下载"></button>
+          <button id="mediaLightboxClose" class="icon-button" type="button" title="关闭" aria-label="关闭">×</button>
+        </div>
+      </div>
+      <div class="media-lightbox-stage"><div id="mediaLightboxStatus" class="muted">正在加载图片…</div><img id="mediaLightboxImage" alt=""></div>
+    </div>
+  </div>
+
   <div id="presetEditorModal" class="modal-mask">
     <div class="modal">
       <div class="between">
@@ -1520,11 +1692,11 @@
   <div id="studioCreateModal" class="modal-mask">
     <div class="modal studio-create-dialog">
       <div class="between">
-        <h2>新建画布会话</h2>
+        <h2>开始新的无限画布</h2>
         <button class="secondary" type="button" onclick="closeStudioCreateModal()">关闭</button>
       </div>
       <div class="modal-body">
-        <p class="muted">先选择一个模板，创建后可以在画布中继续调整提示词、参考槽位和生成参数。</p>
+        <p class="muted">按模板新建画布后，就可以继续调整画面描述、参考图和生成参数。</p>
         <label>模板</label>
         <select id="studioTemplateSelect"></select>
         <label style="margin-top:12px">标题（可选）</label>
@@ -1534,9 +1706,44 @@
       <div class="modal-footer">
         <div class="actions" style="margin-top:0;justify-content:flex-end">
           <button class="secondary" type="button" onclick="closeStudioCreateModal()">取消</button>
-          <button class="ok" id="studioCreateConfirmBtn" type="button">创建会话</button>
+          <button class="ok" id="studioCreateConfirmBtn" type="button">开始创作</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="studioConnectModal" class="modal-mask">
+    <div class="modal studio-create-dialog">
+      <div class="between">
+        <h2>选择参考画面</h2>
+        <button class="secondary" type="button" onclick="closeStudioConnectModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div id="studioConnectHint" class="muted">选择一张已有画面，当前画面会沿用它的图片继续创作。</div>
+        <div id="studioConnectList" class="studio-connect-list"></div>
+        <div id="studioConnectStatus" class="status" style="margin-top:10px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="creativeCanvasCreateModal" class="modal-mask">
+    <div class="modal studio-create-dialog">
+      <div class="between">
+        <h2>开始创作</h2>
+        <button class="secondary" type="button" onclick="closeCreativeCanvasCreateModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted">选择一个模板开始创作。</p>
+        <label>模板</label>
+        <select id="creativeCanvasTemplateSelect"></select>
+        <label style="margin-top:12px">标题（可选）</label>
+        <input id="creativeCanvasCreateTitle" placeholder="例如：周末合影">
+        <div id="creativeCanvasCreateStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer"><div class="actions" style="margin-top:0;justify-content:flex-end">
+        <button class="secondary" type="button" onclick="closeCreativeCanvasCreateModal()">取消</button>
+        <button class="ok" id="creativeCanvasCreateConfirmBtn" type="button">创建画布</button>
+      </div></div>
     </div>
   </div>
 
@@ -1639,7 +1846,18 @@
     function safeStorageRemove(key) {
       try { window.localStorage?.removeItem(key); } catch (_) {}
     }
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", uploadSlotId: "", presetOpen: false, cosOpen: false, running: false, galleryTargetSlotId: "" };
+    const CANVAS_SESSION_CACHE_TTL_MS = 15000;
+    const PICKER_CACHE_TTL_MS = 30000;
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
+    let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
+    const PICKER_CACHE = {
+      prompt: {
+        image: {data: [], loadedAt: 0, request: null, version: 0},
+        video: {data: [], loadedAt: 0, request: null, version: 0},
+      },
+      cos: {data: [], loadedAt: 0, request: null, version: 0},
+      tags: {data: [], loadedAt: 0, request: null, version: 0},
+    };
 
     let RECORDS = [];
     let RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -1654,6 +1872,8 @@
     let ASSET_LOAD_TIMER = null;
     let RECORD_LOAD_SEQ = 0;
     let ASSET_LOAD_SEQ = 0;
+    const METRICS_REQUESTS = new Map();
+    const TASK_REQUESTS = new Map();
     let RECORD_LOADING = false;
     let ASSET_LOADING = false;
     const PAGE_CACHE_MAX_ENTRIES = 12;
@@ -1745,23 +1965,31 @@
       return noQuery.replace(/^\/+/, '');
     }
     function bridgePayload(payload) {
-      if (payload && typeof payload === 'object' && payload.ok === false) {
-        throw new Error(payload.message || payload.error || 'Dashboard Page API request failed.');
-      }
-      if (payload && typeof payload === 'object' && payload.status === 'error') {
-        throw new Error(payload.message || payload.error || '请求失败');
-      }
-      if (payload && typeof payload === 'object' && payload.success === false) {
-        throw new Error(payload.error || payload.message || '请求失败');
-      }
-      // Parent may unwrap once. Accept either full envelope or bare data.
-      if (payload && typeof payload === 'object' && payload.ok === true && 'data' in payload) {
-        return { success: true, data: payload.data || {}, message: payload.message || '' };
-      }
-      if (payload && typeof payload === 'object' && payload.success === true && 'data' in payload) {
-        return payload;
-      }
-      return { success: true, data: payload || {} };
+      const isObject = value => value && typeof value === 'object';
+      const isEnvelope = value => isObject(value) && (
+        ((('success' in value) || ('ok' in value) || ('status' in value)) && ('data' in value))
+        || (isObject(value.data) && ('success' in value.data || 'ok' in value.data || 'status' in value.data) && ('data' in value.data))
+      );
+      const normalize = value => {
+        if (!isObject(value)) return { success: true, data: value || {} };
+        if (value.ok === false || value.status === 'error' || value.success === false) {
+          throw new Error(value.message || value.error || '请求失败');
+        }
+        // Dashboard versions differ on whether the outer response.data wrapper
+        // is removed before postMessage. Normalize both forms here.
+        if (value.ok === true && 'data' in value) return normalize(value.data);
+        if (value.success === true && 'data' in value) {
+          if (isEnvelope(value.data)) {
+            const nested = normalize(value.data);
+            return Object.assign({}, nested, Object.fromEntries(Object.entries(value).filter(([key]) => !['success', 'data'].includes(key))));
+          }
+          return value;
+        }
+        if ('data' in value && isEnvelope(value.data)) return normalize(value.data);
+        if ('data' in value) return { success: true, data: value.data, message: value.message || '' };
+        return { success: true, data: value };
+      };
+      return normalize(payload);
     }
     if ($('loginToken')) $('loginToken').value = AUTH_TOKEN;
 
@@ -3696,7 +3924,7 @@ Source prompt:
       params.set('offset', String((Math.max(1, page) - 1) * MONITOR_PAGE_SIZE));
       return '/api/records?' + params.toString();
     }
-    async function loadMetrics() {
+    async function loadMetricsNow() {
       try {
         const windowKey = $('monitorMetricsWindow')?.value || 'all';
         const res = await api('/api/metrics?window=' + encodeURIComponent(windowKey));
@@ -3712,6 +3940,17 @@ Source prompt:
         const recommendationText = recommendations.map(item => `${escapeHtml(String(item.message || item.code || ''))}`).join('；') || '暂无';
         $('monitorMetrics').innerHTML = `<b>窗口：</b>${escapeHtml(String(d.retained_records ?? 0))}/${escapeHtml(String(d.total_retained_records ?? d.retained_records ?? 0))} 条记录 · <b>图片：</b>${escapeHtml(String(d.requested_images ?? 0))} 请求 / ${escapeHtml(String(d.succeeded_images ?? 0))} 成功 / ${escapeHtml(String(d.failed_images ?? 0))} 失败<br><b>质量：</b>记录成功率 ${escapeHtml((Number(quality.record_success_rate || 0) * 100).toFixed(1))}% · 图片成功率 ${escapeHtml((Number(quality.image_success_rate || 0) * 100).toFixed(1))}% · 重试率 ${escapeHtml((Number(quality.retry_rate || 0) * 100).toFixed(1))}% · 回退率 ${escapeHtml((Number(quality.fallback_rate || 0) * 100).toFixed(1))}%<br><b>状态：</b>${statuses}<br><b>错误类别：</b>${errors}<br><b>重试：</b>${escapeHtml(String(retries.total ?? 0))} 次，涉及 ${escapeHtml(String(retries.records_with_retries ?? 0))} 条记录<br><b>渠道：</b>${channels}<br><b>模型：</b>${models}<br><b>耗时：</b>P50 ${escapeHtml(String(e.p50 ?? 0))}s · P95 ${escapeHtml(String(e.p95 ?? 0))}s · 最大 ${escapeHtml(String(e.max ?? 0))}s<br><b>建议：</b>${recommendationText}`;
       } catch (e) { $('monitorMetrics').textContent = e.message; }
+    }
+    async function loadMetrics() {
+      const key = String($('monitorMetricsWindow')?.value || 'all');
+      const existing = METRICS_REQUESTS.get(key);
+      if (existing) return existing;
+      let request;
+      request = loadMetricsNow().finally(() => {
+        if (METRICS_REQUESTS.get(key) === request) METRICS_REQUESTS.delete(key);
+      });
+      METRICS_REQUESTS.set(key, request);
+      return request;
     }
     function taskQueueStatusLabel(status) {
       return ({queued:'排队', running:'进行中', succeeded:'完成', partial_success:'部分完成', failed:'失败', delivery_failed:'生成成功但发送失败', cancelled:'已取消', expired:'已过期'})[status] || status || '未知';
@@ -3894,7 +4133,7 @@ Source prompt:
           <div class="grid">
             <div><label>任务</label><div class="status mono">${escapeHtml(String(task.task_id || ''))}</div></div>
             <div><label>状态</label><div class="status">${escapeHtml(taskQueueStatusLabel(task.status))}</div></div>
-            <div><label>来源</label><div class="status">${escapeHtml(String(task.source_label || task.source || '未知'))}</div></div>
+            <div><label>来源</label><div class="status">${escapeHtml(displaySourceLabel(task))}</div></div>
             <div><label>媒体</label><div class="status">${task.media_type === 'video' ? '视频' : '图片'}</div></div>
             <div><label>模型</label><div class="status">${escapeHtml(String(task.used_model || '未记录'))}</div></div>
           <div><label>进度</label><div class="status">${escapeHtml([taskQueueProgress(task), taskQueueTiming(task)].filter(Boolean).join(' · ') || '-')}</div></div>
@@ -3914,7 +4153,7 @@ Source prompt:
         body.innerHTML = `<div class="status">${escapeHtml(e.message || '任务详情读取失败')}</div>`;
       }
     }
-    async function loadTasks(schedule = true) {
+    async function loadTasksNow(schedule = true) {
       try {
         const scope = taskQueueScope();
         const res = await api(taskQueueQueryPath());
@@ -3946,7 +4185,7 @@ Source prompt:
           const promptCell = prompt
             ? `<details><summary><span class="task-prompt-preview">${escapeHtml(promptPreview)}</span></summary><div class="task-prompt-full">${escapeHtml(prompt)}</div></details>`
             : '-';
-          return `<tr class="task-detail-row" data-task-id="${id}" style="cursor:pointer"><td><input type="checkbox" data-task-select="${id}" aria-label="选择任务 ${id}" ${TASK_SELECTION.has(rawId) ? 'checked' : ''}></td><td class="mono">${id}</td><td>${escapeHtml(String(task.source_label || task.source || '未知'))}</td><td>${type}</td><td>${taskQueueStatusLabel(task.status)}${statusMeta ? `<br><span class="muted">${escapeHtml(statusMeta)}</span>` : ''}</td><td class="task-prompt-cell">${promptCell}</td><td>${escapeHtml(String(info))}</td><td>${canCancel ? `<button class="danger mini task-cancel-btn" data-task-id="${id}" type="button">取消</button>` : '<button class="secondary mini task-detail-btn" data-task-id="' + id + '" type="button">详情</button>'}</td></tr>`;
+          return `<tr class="task-detail-row" data-task-id="${id}" style="cursor:pointer"><td><input type="checkbox" data-task-select="${id}" aria-label="选择任务 ${id}" ${TASK_SELECTION.has(rawId) ? 'checked' : ''}></td><td class="mono">${id}</td><td>${escapeHtml(displaySourceLabel(task))}</td><td>${type}</td><td>${taskQueueStatusLabel(task.status)}${statusMeta ? `<br><span class="muted">${escapeHtml(statusMeta)}</span>` : ''}</td><td class="task-prompt-cell">${promptCell}</td><td>${escapeHtml(String(info))}</td><td>${canCancel ? `<button class="danger mini task-cancel-btn" data-task-id="${id}" type="button">取消</button>` : '<button class="secondary mini task-detail-btn" data-task-id="' + id + '" type="button">详情</button>'}</td></tr>`;
         }).join('')}</tbody>` : `<tbody><tr><td colspan="8" class="muted">${scope === 'recent' ? '没有最近任务' : '当前没有活动任务'}</td></tr></tbody>`;
         const pager = $('taskQueuePager');
         if (pager) {
@@ -3978,6 +4217,17 @@ Source prompt:
           TASK_LOAD_TIMER = setTimeout(() => loadTasks(true), 4000);
         }
       }
+    }
+    async function loadTasks(schedule = true) {
+      const key = taskQueueQueryPath();
+      const existing = TASK_REQUESTS.get(key);
+      if (existing) return existing;
+      let request;
+      request = loadTasksNow(schedule).finally(() => {
+        if (TASK_REQUESTS.get(key) === request) TASK_REQUESTS.delete(key);
+      });
+      TASK_REQUESTS.set(key, request);
+      return request;
     }
     function setPagerLoading(id, loading) {
       const pager = $(id);
@@ -4169,7 +4419,7 @@ Source prompt:
     }
     function monitorSourceText(record) {
       return [
-        record.source_label || '',
+        displaySourceLabel(record),
         record.source || '',
         record.group_id || '',
         record.user_id || ''
@@ -4338,11 +4588,13 @@ Source prompt:
     }
     function renderRecords() {
       const model = $('monitorModel').value.trim();
-      const sourceOptions = uniq(RECORDS.map(r => String(r.source_label || r.source || '').trim()).filter(Boolean));
+      const sourceOptions = uniq(RECORDS.map(r => displaySourceLabel(r).trim()).filter(Boolean));
       const modelOptions = uniq(RECORDS.map(r => String(r.used_model || '').trim()).filter(Boolean));
       if (model && !modelOptions.includes(model)) modelOptions.unshift(model);
       setMonitorSourceOptions(sourceOptions);
       setSelectOptions('monitorModel', [''].concat(modelOptions), model);
+      const assetModel = String($('assetModel')?.value || '').trim();
+      setSelectOptions('assetModel', [''].concat(modelOptions), assetModel);
       const rows = RECORDS;
       const filteredCount = Number(RECORD_META.filtered ?? rows.length);
       const totalCount = Number(RECORD_META.total ?? rows.length);
@@ -4378,7 +4630,7 @@ Source prompt:
       $('recordTable').innerHTML = '<thead><tr><th></th><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型/失败原因</th></tr></thead><tbody>' +
         (pageRows.length ? pageRows.map(r => {
           const id = String(r.id || '');
-          return `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td>${escapeHtml(r.time||'')}</td><td>${r.media_type === 'video' ? '视频' : '图片'}</td><td>${escapeHtml(r.source_label || r.source || '')}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
+          return `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td>${escapeHtml(r.time||'')}</td><td>${r.media_type === 'video' ? '视频' : '图片'}</td><td>${escapeHtml(displaySourceLabel(r))}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
         }).join('') : '<tr><td colspan="7" class="muted">没有匹配的监控记录</td></tr>') +
         '</tbody>';
       $('recordTable').querySelectorAll('input[data-record-select]').forEach(input => input.onchange = event => {
@@ -4649,13 +4901,15 @@ Source prompt:
       clearTimeout(ASSET_LOAD_TIMER);
       ASSET_LOAD_TIMER = setTimeout(() => loadAssets(false), 260);
     }
-    async function loadAssetTags() {
+    async function loadAssetTags(force = false) {
+      const cache = PICKER_CACHE.tags;
       try {
-        const res = await api('/api/assets/tags');
+        const fresh = !force && cache.loadedAt > 0 && (Date.now() - cache.loadedAt) < PICKER_CACHE_TTL_MS;
+        const rows = fresh ? cache.data : await loadAssetTagsCached(force);
         const list = $('assetTagList');
         if (!list) return;
         list.replaceChildren();
-        (Array.isArray(res.data) ? res.data : []).forEach(item => {
+        rows.forEach(item => {
           const tag = String(item?.tag || '').trim();
           if (!tag) return;
           const option = document.createElement('option');
@@ -4671,8 +4925,7 @@ Source prompt:
       const select = $('assetStudioPreset');
       if (!select) return;
       try {
-        const res = await api('/api/prompt-presets?kind=image');
-        ASSET_STUDIO_PRESETS = Array.isArray(res.data) ? res.data : [];
+        ASSET_STUDIO_PRESETS = await loadPromptPresetsCached('image');
         select.innerHTML = '<option value="">加入画布（不套预设）</option>';
         ASSET_STUDIO_PRESETS.forEach(item => {
           const name = String(item?.name || item?.title || '').trim();
@@ -4791,6 +5044,7 @@ Source prompt:
         const res = await api('/api/assets/import', {method: 'POST', body: JSON.stringify(payload)});
         clearAssetPageCache();
         clearRecordPageCache();
+        clearPickerCache('tags');
         await Promise.all([loadAssets(false), loadAssetTags()]);
         const count = Number(res.data?.updated_count || 0);
         showToast(res.message || `已导入 ${count} 条资产元数据`, 'ok');
@@ -4805,6 +5059,7 @@ Source prompt:
         const res = await api('/api/assets/delete', {method: 'POST', body: JSON.stringify({ids})});
         clearAssetPageCache();
         clearRecordPageCache();
+        clearPickerCache('tags');
         selected.forEach(record => {
           const images = Array.isArray(record.generated_image_paths) ? record.generated_image_paths : [];
           const videos = Array.isArray(record.generated_video_paths) ? record.generated_video_paths : [];
@@ -5022,6 +5277,28 @@ Source prompt:
         if (!PROTECTED_MEDIA_LOAD_QUEUE[index]?.element?.isConnected) PROTECTED_MEDIA_LOAD_QUEUE.splice(index, 1);
       }
     }
+    function zoomIconSvg() {
+      return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path><path d="M11 8v6M8 11h6"></path></svg>';
+    }
+    function attachImageLightbox(img, path) {
+      if (!img || !path || img.closest('.media-zoom-shell')) return;
+      const shell = document.createElement('span');
+      shell.className = 'media-zoom-shell';
+      img.parentNode?.insertBefore(shell, img);
+      shell.appendChild(img);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'media-zoom-button';
+      button.title = '放大预览';
+      button.setAttribute('aria-label', '放大预览');
+      button.innerHTML = zoomIconSvg();
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openMediaLightbox(path, img.alt || '图片预览');
+      });
+      shell.appendChild(button);
+    }
     function enqueueProtectedMediaLoad(element, path, priority = 0) {
       PROTECTED_MEDIA_LOAD_QUEUE.push({element, path, priority, loader: () => element.tagName === 'VIDEO'
         ? loadProtectedVideo(element, path)
@@ -5035,6 +5312,7 @@ Source prompt:
         const path = img.getAttribute('data-cache-path') || '';
         img.removeAttribute('data-cache-path');
         if (!path) return;
+        attachImageLightbox(img, path);
         if (queued) observeProtectedMedia(img, path);
         else loadProtectedImage(img, path);
       });
@@ -5102,6 +5380,7 @@ Source prompt:
       img.alt = path;
       shell.innerHTML = '';
       shell.appendChild(img);
+      attachImageLightbox(img, path);
       loadProtectedImage(img, path);
     }
     function lazyMediaPreview(kind, path) {
@@ -5295,6 +5574,38 @@ Source prompt:
       const preview = $('mediaSourcePreview');
       if (preview) preview.replaceChildren();
       if (modal) modal.classList.remove('show');
+    }
+    let MEDIA_LIGHTBOX_PATH = '';
+    function openMediaLightbox(path, title = '图片预览') {
+      const modal = $('mediaLightboxModal');
+      const image = $('mediaLightboxImage');
+      const status = $('mediaLightboxStatus');
+      if (!modal || !image || !path) return false;
+      MEDIA_LIGHTBOX_PATH = String(path || '').trim();
+      if ($('mediaLightboxTitle')) $('mediaLightboxTitle').textContent = title || '图片预览';
+      if ($('mediaLightboxDownload')) $('mediaLightboxDownload').disabled = false;
+      image.removeAttribute('src');
+      image.alt = title || '图片预览';
+      image.hidden = true;
+      if (status) { status.hidden = false; status.textContent = '正在加载图片…'; }
+      modal.classList.add('show');
+      getProtectedMedia(MEDIA_LIGHTBOX_PATH).then(media => {
+        if (!MEDIA_LIGHTBOX_PATH || !modal.classList.contains('show')) return;
+        const url = protectedMediaUrl(media);
+        if (!url) throw new Error('图片已清理');
+        image.onload = () => { image.hidden = false; if (status) status.hidden = true; };
+        image.onerror = () => { image.hidden = true; if (status) { status.hidden = false; status.textContent = '图片加载失败'; } };
+        image.src = url;
+      }).catch(error => {
+        if (status) { status.hidden = false; status.textContent = error.message || '图片读取失败'; }
+      });
+      return true;
+    }
+    function closeMediaLightbox() {
+      MEDIA_LIGHTBOX_PATH = '';
+      const image = $('mediaLightboxImage');
+      if (image) { image.onload = null; image.onerror = null; image.removeAttribute('src'); image.hidden = true; }
+      $('mediaLightboxModal')?.classList.remove('show');
     }
     function mediaSourceMime(source, kind = 'image') {
       const value = String(source?.value || '').trim();
@@ -5549,7 +5860,7 @@ Source prompt:
       const progress = requested ? ` · ${completed}/${requested}` : '';
       const stage = String(summary.generation_stage_label || '').trim();
       const status = taskQueueStatusLabel(String(summary.status || ''));
-      return `<div class="detail-title" style="margin-top:12px"><h3>关联任务</h3><button class="secondary mini record-task-open" type="button" data-task-id="${escapeHtml(String(summary.task_id))}">查看任务</button></div><div class="status"><span class="mono">${escapeHtml(String(summary.task_id))}</span> · ${escapeHtml(String(summary.source_label || summary.source || '未知来源'))} · ${escapeHtml(status)}${progress}${stage ? ` · ${escapeHtml(stage)}` : ''}</div>`;
+      return `<div class="detail-title" style="margin-top:12px"><h3>关联任务</h3><button class="secondary mini record-task-open" type="button" data-task-id="${escapeHtml(String(summary.task_id))}">查看任务</button></div><div class="status"><span class="mono">${escapeHtml(String(summary.task_id))}</span> · ${escapeHtml(displaySourceLabel(summary))} · ${escapeHtml(status)}${progress}${stage ? ` · ${escapeHtml(stage)}` : ''}</div>`;
     }
     async function openRecordDetail(id) {
       closeMediaSourceModal();
@@ -5570,7 +5881,7 @@ Source prompt:
       $('recordDetailBody').innerHTML = `
         <div class="grid">
           <div><label>时间</label><div class="status">${escapeHtml(r.time || '')}</div></div>
-          <div><label>来源</label><div class="status">${escapeHtml(r.source_label || '')}</div></div>
+          <div><label>来源</label><div class="status">${escapeHtml(displaySourceLabel(r))}</div></div>
           <div><label>状态</label><div class="status">${r.success ? '成功' : '失败'}</div></div>
           <div><label>类型</label><div class="status">${r.media_type === 'video' ? '视频' : '图片'}</div></div>
           <div><label>MD5</label><div class="status" style="overflow-wrap:anywhere">${escapeHtml(String(r.md5 || '空'))}</div></div>
@@ -5728,6 +6039,38 @@ Source prompt:
       });
       return values;
     }
+    const TEST_TEMPLATE_RANDOM_POOLS = {
+      role: ['成年女性', '成年男性', '东方女性', '短发女孩', '年轻男生'],
+      outfit: ['白色衬衫与牛仔裤', '红色旗袍', '黑色西装', '浅色针织衫', '简洁的夏日连衣裙'],
+      scene: ['窗边客厅', '安静庭院', '城市街角', '简洁影棚', '黄昏海边'],
+      pose: ['自然站姿', '轻步转身', '侧身回看', '双手自然放在身侧', '坐姿看向镜头'],
+      shot: ['竖屏半身', '三分之四侧面', '环境人像', '近距离人像', '全身构图'],
+      view: ['自拍视角', '他拍视角', '平视视角', '轻微低机位'],
+      lighting: ['窗光', '柔和室内光', '阴天散射光', '暖色环境光', '夕阳轮廓光']
+    };
+    function randomTemplateValue(values, current = '') {
+      const options = Array.isArray(values) ? values.filter(Boolean) : [];
+      if (!options.length) return '';
+      const available = options.filter(value => value !== current);
+      return (available.length ? available : options)[Math.floor(Math.random() * (available.length || options.length))];
+    }
+    function randomizeTestTemplateValues() {
+      const fields = {
+        role: 'testTemplateRole', outfit: 'testTemplateOutfit', scene: 'testTemplateScene',
+        pose: 'testTemplatePose', shot: 'testTemplateShot', view: 'testTemplateView', lighting: 'testTemplateLighting'
+      };
+      Object.entries(fields).forEach(([key, id]) => {
+        const input = $(id);
+        if (!input) return;
+        input.value = randomTemplateValue(TEST_TEMPLATE_RANDOM_POOLS[key], String(input.value || '').trim());
+        input.dispatchEvent(new Event('input', {bubbles:true}));
+      });
+      const preview = $('testTemplatePreview');
+      if (preview) {
+        preview.style.display = '';
+        preview.textContent = '已填充一组随机模板变量，点击“预览模板”查看组合结果。';
+      }
+    }
     function testVariationFields() {
       return Array.from(document.querySelectorAll('[data-test-vary]:checked')).map(el => String(el.value || '').trim()).filter(Boolean);
     }
@@ -5848,6 +6191,21 @@ Source prompt:
     }
     function taskStageText(task) {
       return String(task?.generation_stage_label || '').trim();
+    }
+    function displaySourceLabel(item) {
+      const source = String(item?.source || '').trim().toLowerCase();
+      const request = item?.request_data && typeof item.request_data === 'object' ? item.request_data : {};
+      const title = String(
+        item?.studio_session_title ||
+        request.studio_session_title ||
+        item?.task_summary?.studio_session_title ||
+        item?.summary?.studio_session_title ||
+        ''
+      ).trim();
+      if (source === 'studio-run') return `Web/${title || '画布'}`;
+      if (source === 'web-test') return 'Web/快速试画';
+      if (source === 'web-video-test') return 'Web/快速试视频';
+      return String(item?.source_label || item?.source || '未知来源');
     }
     async function cancelTestTask() {
       const taskId = String(TEST_TASK_ID || '').trim();
@@ -6286,6 +6644,139 @@ Source prompt:
       }
       return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
     }
+    function pickerCacheFresh(entry) {
+      return entry.loadedAt > 0 && (Date.now() - entry.loadedAt) < PICKER_CACHE_TTL_MS;
+    }
+    function syncPromptPresetState(kind, rows) {
+      const normalized = Array.isArray(rows) ? rows : [];
+      STUDIO.promptPresetsByKind = STUDIO.promptPresetsByKind || {image: [], video: []};
+      STUDIO.promptPresetsByKind[kind] = normalized;
+      STUDIO.promptPresets = normalized;
+      if (kind === 'image') {
+        CREATIVE_CANVAS.promptPresets = normalized;
+        ASSET_STUDIO_PRESETS = normalized;
+      }
+      return normalized;
+    }
+    function syncCosState(rows, pools = null) {
+      const normalized = Array.isArray(rows) ? rows : [];
+      STUDIO.cosLooks = normalized;
+      if (pools) STUDIO.cosPools = pools;
+      CREATIVE_CANVAS.cosLooks = normalized;
+      return normalized;
+    }
+    async function loadAssetTagsCached(force = false) {
+      const entry = PICKER_CACHE.tags;
+      if (!force && pickerCacheFresh(entry)) return entry.data;
+      if (entry.request) return entry.request;
+      const version = entry.version;
+      let request;
+      request = (async () => {
+        const res = await api('/api/assets/tags');
+        const rows = Array.isArray(res.data) ? res.data : [];
+        if (entry.version === version) {
+          entry.data = rows;
+          entry.loadedAt = Date.now();
+        }
+        return rows;
+      })().finally(() => {
+        if (entry.request === request) entry.request = null;
+      });
+      entry.request = request;
+      return request;
+    }
+    async function loadPromptPresetsCached(kind = 'image', force = false) {
+      kind = kind === 'video' ? 'video' : 'image';
+      const entry = PICKER_CACHE.prompt[kind];
+      if (!force && pickerCacheFresh(entry)) return syncPromptPresetState(kind, entry.data);
+      if (entry.request) return entry.request;
+      const version = entry.version;
+      let request;
+      request = (async () => {
+        const res = await api('/api/prompt-presets?kind=' + encodeURIComponent(kind));
+        const payload = res.data || {};
+        const rows = Array.isArray(payload) ? payload : payload.presets;
+        const loadStatus = Array.isArray(payload) ? res.load_status : payload.load_status;
+        if (loadStatus && loadStatus.ok === false) throw new Error(loadStatus.error || '预设加载失败');
+        const normalized = mergePromptPresets(rows || []);
+        if (entry.version === version) {
+          entry.data = normalized;
+          entry.loadedAt = Date.now();
+          syncPromptPresetState(kind, normalized);
+        }
+        return normalized;
+      })().finally(() => {
+        if (entry.request === request) entry.request = null;
+      });
+      entry.request = request;
+      return request;
+    }
+    async function loadCosLooksCached(force = false) {
+      const entry = PICKER_CACHE.cos;
+      if (!force && pickerCacheFresh(entry)) return syncCosState(entry.data);
+      if (entry.request) return entry.request;
+      const version = entry.version;
+      let request;
+      request = (async () => {
+        let pools;
+        try {
+          const res = await api('/api/cos-pools');
+          pools = res.data || {};
+          const builtins = Array.isArray(pools.builtin) ? pools.builtin : [];
+          const custom = Array.isArray(pools.custom) ? pools.custom : [];
+          const builtinIds = new Set(builtins.map(item => String(item?.id || '').trim()).filter(Boolean));
+          const rows = [...builtins, ...custom.filter(item => !builtinIds.has(String(item?.id || '').trim()))]
+            .filter(item => item && item.id && item.prompt)
+            .sort(cosPoolSort);
+          if (entry.version === version) {
+            entry.data = rows;
+            entry.loadedAt = Date.now();
+            syncCosState(rows, pools);
+          }
+          return rows;
+        } catch (primaryError) {
+          // Older remote plugin versions expose only the immutable look-set endpoint.
+          const legacy = await api('/api/cos-look-sets');
+          const rows = (Array.isArray(legacy.data) ? legacy.data : []).sort(cosPoolSort);
+          if (entry.version === version) {
+            entry.data = rows;
+            entry.loadedAt = Date.now();
+            syncCosState(rows);
+          }
+          return rows;
+        }
+      })().finally(() => {
+        if (entry.request === request) entry.request = null;
+      });
+      entry.request = request;
+      return request;
+    }
+    function clearPickerCache(kind = '') {
+      const normalized = String(kind || '').trim().toLowerCase();
+      const clearEntry = entry => {
+        entry.data = [];
+        entry.loadedAt = 0;
+        entry.request = null;
+        entry.version += 1;
+      };
+      if (!normalized || normalized === 'image' || normalized === 'video') {
+        if (!normalized || normalized === 'image') clearEntry(PICKER_CACHE.prompt.image);
+        if (!normalized || normalized === 'video') clearEntry(PICKER_CACHE.prompt.video);
+      }
+      if (!normalized || normalized === 'cos') clearEntry(PICKER_CACHE.cos);
+      if (!normalized || normalized === 'tags') clearEntry(PICKER_CACHE.tags);
+      if (!normalized || normalized === 'image') {
+        STUDIO.promptPresetsByKind.image = [];
+        CREATIVE_CANVAS.promptPresets = [];
+        ASSET_STUDIO_PRESETS = [];
+      }
+      if (!normalized || normalized === 'video') STUDIO.promptPresetsByKind.video = [];
+      if (!normalized || normalized === 'cos') {
+        STUDIO.cosLooks = [];
+        STUDIO.cosPools = null;
+        CREATIVE_CANVAS.cosLooks = [];
+      }
+    }
     function syncPresetToggleButton(btnId, open) {
       const btn = $(btnId);
       if (!btn) return;
@@ -6317,7 +6808,10 @@ Source prompt:
           const item = rows[Number(btn.getAttribute('data-preset-idx'))];
           if (!item) return;
           const input = $(targetInputId);
-          if (input) input.value = item.prompt || '';
+          if (input) {
+            input.value = item.prompt || '';
+            input.dispatchEvent(new Event('input', {bubbles:true}));
+          }
           if (targetInputId === 'testPrompt' && TEST_MODE === 'video' && item.duration) {
             $('testDuration').value = item.duration;
           }
@@ -6330,23 +6824,8 @@ Source prompt:
     async function ensurePromptPresetsLoaded(kind = (TEST_MODE === 'video' ? 'video' : 'image')) {
       kind = kind === 'video' ? 'video' : 'image';
       STUDIO.promptPresetsByKind = STUDIO.promptPresetsByKind || {image: [], video: []};
-      if (STUDIO.promptPresetsByKind[kind] && STUDIO.promptPresetsByKind[kind].length) {
-        STUDIO.promptPresets = STUDIO.promptPresetsByKind[kind];
-        return STUDIO.promptPresets;
-      }
       try {
-        const res = await api('/api/prompt-presets?kind=' + encodeURIComponent(kind));
-        if (res.success) {
-          const payload = res.data || {};
-          const rows = Array.isArray(payload) ? payload : payload.presets;
-          const loadStatus = Array.isArray(payload) ? res.load_status : payload.load_status;
-          if (loadStatus && loadStatus.ok === false) {
-            throw new Error(loadStatus.error || '预设加载失败');
-          }
-          STUDIO.promptPresetsByKind[kind] = mergePromptPresets(rows || []);
-          STUDIO.promptPresets = STUDIO.promptPresetsByKind[kind];
-          return STUDIO.promptPresets;
-        }
+        return await loadPromptPresetsCached(kind);
       } catch (e) {
         if ($('presetManagerStatus')) presetManagerStatus(e.message || '预设读取失败', true);
         return STUDIO.promptPresetsByKind[kind] || [];
@@ -6454,8 +6933,8 @@ Source prompt:
         const res = await api('/api/prompt-presets/manage/save', {method:'POST', body:JSON.stringify(body)});
         closePresetEditor();
         await loadManagedPromptPresets();
-        STUDIO.promptPresetsByKind[PRESET_KIND] = [];
-        await ensurePromptPresetsLoaded(PRESET_KIND);
+        clearPickerCache(PRESET_KIND);
+        await loadPromptPresetsCached(PRESET_KIND, true);
         showToast((res.data && res.data.message) || '预设已保存', 'ok');
       } catch (e) {
         $('presetEditorStatus').textContent = e.message || '保存失败';
@@ -6467,8 +6946,8 @@ Source prompt:
       try {
         const res = await api('/api/prompt-presets/manage/delete', {method:'POST', body:JSON.stringify({name:row.name, kind:PRESET_KIND})});
         await loadManagedPromptPresets(PRESET_KIND);
-        STUDIO.promptPresetsByKind[PRESET_KIND] = [];
-        await ensurePromptPresetsLoaded(PRESET_KIND);
+        clearPickerCache(PRESET_KIND);
+        await loadPromptPresetsCached(PRESET_KIND, true);
         showToast((res.data && res.data.message) || '预设已删除', 'ok');
       } catch (e) {
         presetManagerStatus(e.message || '删除失败', true);
@@ -6536,8 +7015,8 @@ Source prompt:
         const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind:PRESET_KIND})});
         closePresetTransfer();
         await loadManagedPromptPresets(PRESET_KIND);
-        STUDIO.promptPresetsByKind[PRESET_KIND] = [];
-        await ensurePromptPresetsLoaded(PRESET_KIND);
+        clearPickerCache(PRESET_KIND);
+        await loadPromptPresetsCached(PRESET_KIND, true);
         showToast((res.data && res.data.message) || '预设已导入', 'ok');
       } catch (e) {
         $('presetTransferStatus').textContent = e.message || '导入失败';
@@ -6569,7 +7048,10 @@ Source prompt:
           const item = rows[Number(btn.getAttribute('data-cos-idx'))];
           if (!item) return;
           const input = $(targetInputId);
-          if (input) input.value = item.prompt || '';
+          if (input) {
+            input.value = item.prompt || '';
+            input.dispatchEvent(new Event('input', {bubbles:true}));
+          }
           panel.querySelectorAll('.preset-chip').forEach(el => el.classList.remove('active'));
           btn.classList.add('active');
         };
@@ -6580,8 +7062,7 @@ Source prompt:
         if (!item?.id) return;
         try {
           await api('/api/cos-pools/favorite', {method:'POST', body: JSON.stringify({id:item.id, enabled:!item.favorite})});
-          item.favorite = !item.favorite;
-          STUDIO.cosLooks = [...rows].sort(cosPoolSort);
+          await ensureCosLooksLoaded(true);
           renderCosPanel(panelId, targetInputId, true, btnId);
         } catch (e) { showToast(e.message || '收藏失败', 'bad'); }
       });
@@ -6603,30 +7084,10 @@ Source prompt:
       return String(a.title || a.id || '').localeCompare(String(b.title || b.id || ''), 'zh');
     }
     async function ensureCosLooksLoaded(force = false) {
-      if (!force && STUDIO.cosLooks && STUDIO.cosLooks.length) return STUDIO.cosLooks;
       try {
-        const res = await api('/api/cos-pools');
-        if (res.success) {
-          const data = res.data || {};
-          const builtins = Array.isArray(data.builtin) ? data.builtin : [];
-          const custom = Array.isArray(data.custom) ? data.custom : [];
-          STUDIO.cosPools = data;
-          const builtinIds = new Set(builtins.map(item => String(item?.id || '').trim()).filter(Boolean));
-          STUDIO.cosLooks = [...builtins, ...custom.filter(item => !builtinIds.has(String(item?.id || '').trim()))]
-            .filter(item => item && item.id && item.prompt)
-            .sort(cosPoolSort);
-          return STUDIO.cosLooks;
-        }
-      } catch (_) {
-        // Keep compatibility with older remote plugin instances that only
-        // expose the original immutable look-set endpoint.
-        try {
-          const legacy = await api('/api/cos-look-sets');
-          STUDIO.cosLooks = (Array.isArray(legacy.data) ? legacy.data : []).sort(cosPoolSort);
-          return STUDIO.cosLooks;
-        } catch (legacyError) {
-          showToast(legacyError.message || 'COS 预设读取失败', 'bad');
-        }
+        return await loadCosLooksCached(force);
+      } catch (error) {
+        showToast(error.message || 'COS 预设读取失败', 'bad');
       }
       return STUDIO.cosLooks || [];
     }
@@ -6648,6 +7109,7 @@ Source prompt:
         await ensureCosLooksLoaded(true);
         closeCosPoolModal();
         renderCosPanel('studioCosPanel', 'studioPrompt', !!STUDIO.cosOpen, 'studioCosBtn');
+        renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', !!STUDIO.nodeCosOpen, 'studioNodeCosBtn');
         renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
         showToast('自定义 COS 已保存', 'ok');
       } catch (e) { if (status) status.textContent = e.message || '保存失败'; }
@@ -6669,6 +7131,7 @@ Source prompt:
           await api('/api/cos-pools/import', {method:'POST', body: JSON.stringify(payload)});
           await ensureCosLooksLoaded(true); closeCosPoolModal();
           renderCosPanel('studioCosPanel', 'studioPrompt', !!STUDIO.cosOpen, 'studioCosBtn');
+          renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', !!STUDIO.nodeCosOpen, 'studioNodeCosBtn');
           renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
           showToast('COS 池已导入', 'ok');
         } catch (e) { if ($('cosPoolStatus')) $('cosPoolStatus').textContent = e.message || '导入失败'; }
@@ -6810,22 +7273,22 @@ Source prompt:
       if (!wrap) return;
       wrap.innerHTML = '';
       const session = STUDIO.current;
-      if (!session) { wrap.innerHTML = '<div class="status">还没有画布会话</div>'; return; }
+      if (!session) { wrap.innerHTML = '<div class="status">还没有无限画布</div>'; return; }
       const slots = session.slots || [];
       slots.forEach((slot, index) => {
         const card = document.createElement('div');
         const has = !!(slot.image_path);
         card.className = 'studio-slot ' + (has ? 'has-image' : 'empty');
         card.draggable = true;
-        card.title = '拖动调整槽位顺序';
+        card.title = '拖动调整参考图顺序';
         card.dataset.slotId = slot.id;
         // Must use data-cache-path + loadProtectedImage (auth/token); bare /api/cache-image src is broken.
         card.innerHTML = `
-          <div class="slot-label">${escapeHtml(slot.label || slot.role || '槽位')} · ${escapeHtml(slot.role || '')}</div>
+          <div class="slot-label">${escapeHtml(slot.label || slot.role || '参考图')}</div>
           ${has ? `<img data-cache-path="${escapeHtml(slot.image_path)}" alt="">` : '<div class="status" style="font-size:12px">空</div>'}
           <div class="slot-actions">
             <button type="button" class="secondary mini" data-act="upload">上传</button>
-            <button type="button" class="secondary mini" data-act="record">记录</button>
+            <button type="button" class="secondary mini" data-act="record">图库</button>
             <button type="button" class="secondary mini" data-act="up" ${index === 0 ? 'disabled' : ''}>上移</button>
             <button type="button" class="secondary mini" data-act="down" ${index >= slots.length - 1 ? 'disabled' : ''}>下移</button>
             <button type="button" class="secondary mini" data-act="clear" ${has ? '' : 'disabled'}>清空</button>
@@ -6837,9 +7300,9 @@ Source prompt:
         };
         card.querySelector('[data-act="record"]').onclick = () => openStudioGallery(slot.id);
         card.querySelector('[data-act="clear"]').onclick = async () => {
-          if (!await confirmAction(`确定清空槽位「${slot.label || slot.role || '当前槽位'}」吗？槽位引用会移除，原记录不会删除。`, {
-            title: '清空画布槽位',
-            confirmText: '清空槽位'
+          if (!await confirmAction(`确定清空参考图「${slot.label || slot.role || '当前参考图'}」吗？图片引用会移除，原图片不会删除。`, {
+            title: '清空参考图',
+            confirmText: '清空参考图'
           })) return;
           const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(session.id)}/slots/${encodeURIComponent(slot.id)}`, {
             method: 'POST', body: JSON.stringify({ clear: true })
@@ -6916,7 +7379,7 @@ Source prompt:
       if (!res.success) return showToast(res.message || '失败', 'bad');
       STUDIO.current = res.data;
       renderStudio();
-      showToast(okText || '已放入槽位', 'ok');
+      showToast(okText || '已放入参考图', 'ok');
     }
     function renderStudioResults() {
       const wrap = $('studioResults');
@@ -7007,7 +7470,7 @@ Source prompt:
       if (slotId) {
         const card = [...document.querySelectorAll('#studioSlots .studio-slot')]
           .find(item => item.dataset.slotId === String(slotId));
-        if (!card) return showToast('槽位已刷新，请重试', 'bad');
+        if (!card) return showToast('参考图已刷新，请重试', 'bad');
         card.classList.add('picking-record');
         card.draggable = false;
         panel = document.createElement('div');
@@ -7032,8 +7495,8 @@ Source prompt:
         return;
       }
       const targetHint = STUDIO.galleryTargetSlotId
-        ? '选择一张记录图片放入此槽位'
-        : '点图后将放入默认空槽或形象槽';
+        ? '选择一张图片放入此参考图位置'
+        : '点图后将放入默认参考图位置';
       panel.innerHTML = `<div class="between"><div class="status">${targetHint}</div>
         <button type="button" class="secondary mini" data-studio-gallery-close>收起</button></div>
         <div class="studio-gallery-grid"></div>`;
@@ -7057,7 +7520,7 @@ Source prompt:
         const identity = (STUDIO.current.slots || []).find(s => s.role === 'identity' || s.role === 'base');
         slotId = (empty && empty.id) || (identity && identity.id) || ((STUDIO.current.slots || [])[0] || {}).id;
       }
-      if (!slotId) return showToast('没有可用槽位', 'bad');
+      if (!slotId) return showToast('没有可用参考图位置', 'bad');
       const res = await studioApi(`/api/studio/sessions/${encodeURIComponent(STUDIO.current.id)}/slots/${encodeURIComponent(slotId)}`, {
         method: 'POST', body: JSON.stringify({ image_path: imagePath, source: 'record', source_record_id: recordId || '' })
       });
@@ -7065,7 +7528,7 @@ Source prompt:
       STUDIO.current = res.data;
       closeStudioGallery();
       renderStudio();
-      showToast('已从记录放入槽位', 'ok');
+      showToast('已从图库放入参考图', 'ok');
     }
     function renderStudio() {
       syncStudioEditorVisibility();
@@ -7077,7 +7540,7 @@ Source prompt:
       if (!s) {
         $('studioTitle').value = '';
         $('studioPrompt').value = '';
-        $('studioStatus').textContent = '选模板后点「按模板新建」，或打开已有会话。';
+        $('studioStatus').textContent = '选择模板开始创作，或打开已有画布。';
         renderStudioSlots();
         renderStudioResults();
         return;
@@ -7099,7 +7562,7 @@ Source prompt:
       else if (lr && lr.status === 'cancelled') $('studioStatus').textContent = '已取消';
       else if (lr && lr.status === 'partial_success') $('studioStatus').textContent = '部分完成 · ' + ((lr.result_paths||[]).length) + ' 张';
       else if (lr && lr.status === 'failed') $('studioStatus').textContent = '失败：' + (lr.error || '');
-      else $('studioStatus').textContent = '已加载：' + (s.title || s.id) + (s.template ? ' · 模板 ' + s.template : '');
+      else $('studioStatus').textContent = '已加载：' + (s.title || '当前画布');
       renderStudioSlots();
       renderStudioResults();
     }
@@ -7179,7 +7642,7 @@ Source prompt:
     async function studioDelete() {
       if (!STUDIO.current) return;
       const title = String(STUDIO.current.title || STUDIO.current.id || '当前画布');
-      if (!await confirmAction(`确定删除画布「${title}」吗？会话中的槽位和运行记录也会移除。`, {title:'删除画布会话', confirmText:'删除画布'})) return;
+      if (!await confirmAction(`确定删除画布「${title}」吗？画布中的参考图和生成记录也会移除。`, {title:'删除无限画布', confirmText:'删除画布'})) return;
       const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/delete', {
         method:'POST', body: JSON.stringify({})
       });
@@ -7241,7 +7704,7 @@ Source prompt:
           studioStopPoll();
           STUDIO.taskId = '';
           setStudioRunningUI(false);
-          await loadStudioList(STUDIO.current.id);
+          await loadStudioList(STUDIO.current.id, {force:true});
           if (task.success) showToast('画布生成完成', 'ok');
           else showToast(task.error || '生成失败', 'bad');
         } catch (e) {
@@ -7277,7 +7740,891 @@ Source prompt:
       if (!res.success) return showToast(res.message || '上传失败', 'bad');
       STUDIO.current = res.data;
       renderStudio();
-      showToast('参考图已放入槽位', 'ok');
+      showToast('参考图已更新', 'ok');
+    }
+
+    // Relationship graph view. The existing Studio task and record APIs stay
+    // in place; this layer only projects them into an infinite canvas.
+    function studioGraph() { return STUDIO.canvas && typeof STUDIO.canvas === 'object' ? STUDIO.canvas : {nodes: [], edges: [], viewport: {x: 120, y: 80, zoom: 1}}; }
+    function studioNode(id) { return (studioGraph().nodes || []).find(item => String(item.id || '') === String(id || '')) || null; }
+    function studioNodeHasMissingParent(node) {
+      return !!(node && node.parent_id && !studioNode(node.parent_id));
+    }
+    function studioNodeDescendants(nodeId) {
+      const children = new Map();
+      for (const node of studioGraph().nodes || []) {
+        const parentId = String(node.parent_id || '').trim();
+        const childId = String(node.id || '').trim();
+        if (parentId && childId) {
+          const list = children.get(parentId) || [];
+          list.push(childId);
+          children.set(parentId, list);
+        }
+      }
+      const descendants = new Set();
+      const pending = [...(children.get(String(nodeId || '').trim()) || [])];
+      while (pending.length) {
+        const current = pending.pop();
+        if (!current || descendants.has(current)) continue;
+        descendants.add(current);
+        pending.push(...(children.get(current) || []));
+      }
+      return descendants;
+    }
+    function studioConnectCandidates(nodeId) {
+      const target = studioNode(nodeId);
+      if (!target) return [];
+      const targetId = String(target.id || '');
+      const descendants = studioNodeDescendants(targetId);
+      const targetPosition = target.position || {x: 0, y: 0};
+      const nodes = (studioGraph().nodes || []).filter(node => {
+        const id = String(node.id || '');
+        return id && id !== targetId && !descendants.has(id);
+      });
+      const earlier = nodes.filter(node => Number(node.position?.x || 0) < Number(targetPosition.x || 0));
+      const pool = earlier.length ? earlier : nodes;
+      return pool.sort((a, b) => {
+        const ax = Number(a.position?.x || 0), bx = Number(b.position?.x || 0);
+        const ay = Number(a.position?.y || 0), by = Number(b.position?.y || 0);
+        return bx - ax || ay - by || String(a.title || a.id).localeCompare(String(b.title || b.id), 'zh');
+      });
+    }
+    function closeStudioConnectModal() {
+      STUDIO.connectNodeId = '';
+      $('studioConnectModal')?.classList.remove('show');
+    }
+    function openStudioConnectModal(nodeId) {
+      const node = studioNode(nodeId);
+      if (!node || !STUDIO.current) return;
+      const list = $('studioConnectList');
+      const hint = $('studioConnectHint');
+      const status = $('studioConnectStatus');
+      STUDIO.connectNodeId = String(node.id || '');
+      if (hint) hint.textContent = `为「${node.title || '当前画面'}」选择参考画面，生成时将使用所选画面的图片。`;
+      if (status) status.textContent = '';
+      const candidates = studioConnectCandidates(node.id);
+      if (list) {
+        list.innerHTML = '';
+        if (!candidates.length) {
+          list.innerHTML = '<div class="muted">没有可用的参考画面。</div>';
+        } else {
+          for (const candidate of candidates) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'secondary';
+            button.dataset.connectParent = String(candidate.id || '');
+            const position = candidate.position || {x: 0, y: 0};
+            button.innerHTML = `<span><strong>${escapeHtml(candidate.title || candidate.template_id || '画面')}</strong><span class="muted">${escapeHtml(studioNodeLabel(candidate))}</span></span><span class="muted">${Math.round(Number(position.x) || 0)}, ${Math.round(Number(position.y) || 0)}</span>`;
+            button.onclick = () => studioConnectNode(candidate.id);
+            list.appendChild(button);
+          }
+        }
+      }
+      $('studioConnectModal')?.classList.add('show');
+    }
+    async function studioConnectNode(parentId) {
+      const nodeId = String(STUDIO.connectNodeId || '');
+      if (!nodeId || !STUDIO.current || !parentId) return;
+      const status = $('studioConnectStatus');
+      const list = $('studioConnectList');
+      if (status) status.textContent = '正在连接…';
+      list?.querySelectorAll('button').forEach(button => { button.disabled = true; });
+      try {
+        const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/canvas/nodes/' + encodeURIComponent(nodeId) + '/connect', {
+          method: 'POST', body: JSON.stringify({parent_id: String(parentId)})
+        });
+        if (!res.success) throw new Error(res.message || '连接失败');
+        if (res.data?.canvas) STUDIO.canvas = res.data.canvas;
+        else if (res.data) STUDIO.canvas = res.data;
+        STUDIO.selectedNodeId = nodeId;
+        closeStudioConnectModal();
+        studioRenderCanvas();
+        showToast('参考画面已更新', 'ok');
+      } catch (error) {
+        if (status) status.textContent = error.message || '连接失败';
+        list?.querySelectorAll('button').forEach(button => { button.disabled = false; });
+      }
+    }
+    function studioNodeMedia(node) { return node && node.result && (node.result.thumbnail_path || node.result.media_path) || ''; }
+    function studioSetStatus(message, kind = '') {
+      const el = $('studioStatus');
+      if (el) { el.textContent = message || ''; el.className = 'studio-status-line' + (kind ? ' ' + kind : ''); }
+    }
+    function studioClampZoom(value) { return Math.max(.35, Math.min(1.8, Number(value) || 1)); }
+    function studioApplyViewport() {
+      const viewport = STUDIO.viewport || {x:120, y:80, zoom:1};
+      const grid = $('studioCanvasGrid');
+      if (grid) grid.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
+      const label = $('studioZoomLabel');
+      if (label) label.textContent = Math.round(viewport.zoom * 100) + '%';
+    }
+    function studioCanvasPoint(event) {
+      const area = $('studioCanvasViewport');
+      const rect = area.getBoundingClientRect();
+      return {x: event.clientX - rect.left, y: event.clientY - rect.top};
+    }
+    function studioPersistCanvas(delay = 260) {
+      clearTimeout(STUDIO.canvasSaveTimer);
+      STUDIO.canvasSaveTimer = setTimeout(async () => {
+        if (!STUDIO.current || !STUDIO.canvas) return;
+        const positions = {};
+        for (const node of STUDIO.canvas.nodes || []) positions[node.id] = node.position || {x:0, y:0};
+        try {
+          const nodes = (STUDIO.canvas.nodes || []).map(node => ({
+            id: node.id,
+            title: node.title || '画面',
+            template_id: node.template_id || '',
+            params: Object.assign({}, node.params || {}),
+          }));
+          const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/canvas', {
+            method:'POST', body: JSON.stringify({viewport: STUDIO.viewport, positions, nodes})
+          });
+          if (res.success && res.data) STUDIO.canvas = res.data;
+        } catch (error) { console.warn('[studio-canvas] save failed', error); }
+      }, delay);
+    }
+    function studioRenderEdges() {
+      const svg = $('studioCanvasEdges');
+      if (!svg) return;
+      const graph = studioGraph();
+      const byId = new Map((graph.nodes || []).map(node => [String(node.id), node]));
+      svg.innerHTML = (graph.edges || []).map(edge => {
+        const source = byId.get(String(edge.source));
+        const target = byId.get(String(edge.target));
+        if (!source || !target) return '';
+        const a = source.position || {x:0,y:0};
+        const b = target.position || {x:0,y:0};
+        const dx = Math.max(80, Math.abs(b.x - a.x) * .46);
+        const active = String(STUDIO.selectedNodeId || '') === String(source.id) || String(STUDIO.selectedNodeId || '') === String(target.id);
+        return `<path class="studio-canvas-edge${active ? ' active' : ''}" d="M ${a.x + 102} ${a.y} C ${a.x + 102 + dx} ${a.y}, ${b.x - 102 - dx} ${b.y}, ${b.x - 102} ${b.y}"></path>`;
+      }).join('');
+    }
+    function studioNodeLabel(node) {
+      if (node.status === 'draft') return '待生成';
+      if (node.status === 'running' || node.status === 'queued') return '生成中';
+      if (node.status === 'failed') return '失败';
+      if (node.status === 'cancelled') return '已取消';
+      return String(node.template_id || '生成结果');
+    }
+    function studioRenderNodes() {
+      const wrap = $('studioCanvasNodes');
+      if (!wrap) return;
+      const query = String(STUDIO.nodeSearch || '').trim().toLowerCase();
+      wrap.innerHTML = '';
+      for (const node of studioGraph().nodes || []) {
+      const title = String(node.title || node.template_id || '画面');
+        const prompt = String(node.params && node.params.prompt || '');
+        if (query && !(title + ' ' + prompt + ' ' + studioNodeLabel(node)).toLowerCase().includes(query)) continue;
+        const pos = node.position || {x:0,y:0};
+        const card = document.createElement('article');
+        card.className = 'studio-canvas-node' + (studioNodeHasMissingParent(node) ? ' dangling' : '') + (String(node.id) === String(STUDIO.selectedNodeId) ? ' selected' : '');
+        card.dataset.nodeId = node.id;
+        card.style.left = `${Number(pos.x) || 0}px`;
+        card.style.top = `${Number(pos.y) || 0}px`;
+        const media = studioNodeMedia(node);
+        card.innerHTML = `<div class="node-media">${media ? `<img data-cache-path="${escapeHtml(media)}" alt="">` : `<span class="node-placeholder">${escapeHtml(node.status === 'draft' ? '等待生成' : '暂无图片')}</span>`}</div>
+          <div class="node-copy"><div class="node-title">${escapeHtml(title)}</div><div class="node-meta"><span>${escapeHtml(studioNodeLabel(node))}</span><span>${escapeHtml(String(node.created_at || '').slice(0, 10))}</span></div></div>
+          <div class="node-actions">${studioNodeHasMissingParent(node) ? '<button class="studio-node-action connect" data-node-action="connect" title="选择参考画面" aria-label="选择参考画面">+</button>' : ''}<button class="studio-node-action" data-node-action="focus" title="定位" aria-label="定位">⌖</button><button class="studio-node-action" data-node-action="delete" title="删除画面" aria-label="删除画面">×</button></div>`;
+        card.addEventListener('click', event => { if (event.target.closest('.studio-node-action')) return; studioSelectNode(node.id); });
+        card.addEventListener('dblclick', event => { event.stopPropagation(); studioFocusNode(node.id); });
+        card.addEventListener('pointerdown', event => studioStartNodeDrag(event, node.id));
+        card.querySelector('[data-node-action="connect"]')?.addEventListener('click', event => { event.stopPropagation(); openStudioConnectModal(node.id); });
+        card.querySelector('[data-node-action="focus"]').onclick = event => { event.stopPropagation(); studioFocusNode(node.id); };
+        card.querySelector('[data-node-action="delete"]').onclick = async event => { event.stopPropagation(); await studioDeleteNode(node.id); };
+        wrap.appendChild(card);
+      }
+      loadProtectedImages(wrap);
+    }
+    function studioRenderSidebar() {
+      const graph = studioGraph();
+      const title = $('studioGraphTitle');
+      const meta = $('studioGraphMeta');
+      if (title) title.textContent = STUDIO.current?.title || '未命名画布';
+      if (meta) meta.textContent = `${(graph.nodes || []).length} 个画面 · ${(graph.edges || []).length} 条关联`;
+      const list = $('studioNodeList');
+      if (!list) return;
+      const query = String(STUDIO.nodeSearch || '').trim().toLowerCase();
+      const rows = (graph.nodes || []).filter(node => !query || `${node.title || ''} ${node.template_id || ''} ${(node.params || {}).prompt || ''}`.toLowerCase().includes(query));
+      list.innerHTML = rows.map(node => {
+        const media = studioNodeMedia(node);
+        return `<button type="button" class="studio-node-list-item${String(node.id) === String(STUDIO.selectedNodeId) ? ' selected' : ''}" data-sidebar-node="${escapeHtml(node.id)}">
+          ${media ? `<img data-cache-path="${escapeHtml(media)}" alt="">` : '<span style="width:42px;height:42px;border-radius:7px;background:#e8edf0"></span>'}
+          <span class="node-list-copy"><strong>${escapeHtml(node.title || '画面')}</strong><span>${escapeHtml(studioNodeLabel(node))}</span></span></button>`;
+      }).join('') || '<div class="studio-node-empty">没有匹配画面</div>';
+      list.querySelectorAll('[data-sidebar-node]').forEach(button => button.onclick = () => studioSelectNode(button.dataset.sidebarNode));
+      loadProtectedImages(list);
+    }
+    function studioRenderPanel() {
+      const panel = $('studioNodePanel');
+      const body = $('studioNodePanelBody');
+      const node = studioNode(STUDIO.selectedNodeId);
+      if (!panel || !body) return;
+      panel.hidden = !node;
+      const panelTitle = $('studioNodePanelTitle');
+      if (panelTitle) panelTitle.textContent = node ? String(node.title || node.template_id || '画面详情') : '选择一个画面';
+      if (!node) return;
+      const params = node.params && typeof node.params === 'object' ? node.params : {};
+      const media = studioNodeMedia(node);
+      const templates = STUDIO.templates || [];
+      body.innerHTML = `${media ? `<img class="studio-node-result" data-cache-path="${escapeHtml(media)}" alt="画面结果">` : ''}
+        <div class="studio-node-field"><label>模板</label><select id="studioNodeTemplate">${templates.map(item => `<option value="${escapeHtml(item.id || '')}"${String(item.id || '') === String(node.template_id || '') ? ' selected' : ''}>${escapeHtml(item.title || item.id || '')}</option>`).join('')}</select></div>
+        <div class="studio-node-field"><label>画面描述</label><textarea id="studioNodePrompt">${escapeHtml(params.prompt || '')}</textarea></div>
+        <div class="studio-node-picker-actions"><button class="secondary" type="button" id="studioNodePresetBtn" data-panel-action="presets">提示词预设</button><button class="secondary" type="button" id="studioNodeCosBtn" data-panel-action="cos">COS 池</button></div>
+        <div id="studioNodePresetPanel" class="preset-panel studio-node-picker"></div><div id="studioNodeCosPanel" class="preset-panel studio-node-picker"></div>
+        <div class="grid2"><div class="studio-node-field"><label>比例</label><select id="studioNodeAspect">${['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'].map(item => `<option${item === (params.aspect_ratio || '自动') ? ' selected' : ''}>${item}</option>`).join('')}</select></div><div class="studio-node-field"><label>清晰度</label><select id="studioNodeResolution">${['1K','2K','4K'].map(item => `<option${item === (params.resolution || '1K') ? ' selected' : ''}>${item}</option>`).join('')}</select></div></div>
+        <div class="studio-node-field"><label>状态</label><div class="status">${escapeHtml(studioNodeLabel(node))}${node.parent_id ? ' · 沿用上一张图' : ''}</div>${(() => {
+          const task = STUDIO.taskProgress || {};
+          const active = node.status === 'running' || (task.task_id && String(task.task_id) === String(STUDIO.taskId || '') && String(node.id) === String(STUDIO.taskNodeId || ''));
+          if (!active) return '';
+          const requested = Number(task.requested_count || 0);
+          const completed = Number(task.completed_count || 0);
+          const percent = Math.max(0, Math.min(100, Number(task.progress_percent || 0)));
+          const progress = requested ? `${completed}/${requested}（${percent}%）` : `${percent}%`;
+          const stage = taskStageText(task) || '排队中';
+          return `<div class="studio-node-progress"><div class="between"><span>${escapeHtml(stage)}</span><strong>${escapeHtml(progress)}</strong></div><progress max="100" value="${percent}"></progress></div>`;
+        })()}</div>
+        <div class="studio-node-actions"><button class="secondary" type="button" data-panel-action="new">继续创作</button><button class="ok" type="button" data-panel-action="run" ${node.status === 'running' ? 'disabled' : ''}>${node.status === 'draft' ? '生成图片' : '重新生成'}</button><button class="danger" type="button" data-panel-action="delete" ${!node.parent_id ? 'disabled' : ''}>删除画面</button></div>`;
+      body.querySelector('[data-panel-action="new"]').onclick = () => studioCreateChildNode(node);
+      body.querySelector('[data-panel-action="run"]').onclick = () => studioRunNode(node);
+      body.querySelector('[data-panel-action="delete"]').onclick = () => studioDeleteNode(node.id);
+      body.querySelector('[data-panel-action="presets"]').onclick = () => studioToggleNodePresets();
+      body.querySelector('[data-panel-action="cos"]').onclick = () => studioToggleNodeCos();
+      body.querySelector('#studioNodeTemplate').onchange = () => studioPanelChanged(node);
+      body.querySelector('#studioNodePrompt').oninput = () => studioPanelChanged(node);
+      body.querySelector('#studioNodeAspect').onchange = () => studioPanelChanged(node);
+      body.querySelector('#studioNodeResolution').onchange = () => studioPanelChanged(node);
+      renderPresetPanel('studioNodePresetPanel', 'studioNodePrompt', !!STUDIO.nodePresetOpen, 'studioNodePresetBtn');
+      renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', !!STUDIO.nodeCosOpen, 'studioNodeCosBtn');
+      loadProtectedImages(body);
+    }
+    async function studioToggleNodePresets() {
+      STUDIO.nodePresetOpen = !STUDIO.nodePresetOpen;
+      STUDIO.nodeCosOpen = false;
+      if (STUDIO.nodePresetOpen) await ensurePromptPresetsLoaded('image');
+      renderPresetPanel('studioNodePresetPanel', 'studioNodePrompt', STUDIO.nodePresetOpen, 'studioNodePresetBtn');
+      renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', false, 'studioNodeCosBtn');
+    }
+    async function studioToggleNodeCos() {
+      STUDIO.nodeCosOpen = !STUDIO.nodeCosOpen;
+      STUDIO.nodePresetOpen = false;
+      if (STUDIO.nodeCosOpen) await ensureCosLooksLoaded();
+      renderPresetPanel('studioNodePresetPanel', 'studioNodePrompt', false, 'studioNodePresetBtn');
+      renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', STUDIO.nodeCosOpen, 'studioNodeCosBtn');
+    }
+    function studioPanelChanged(node) {
+      if (!node) return;
+      node.template_id = $('studioNodeTemplate')?.value || node.template_id || '';
+      node.params = Object.assign({}, node.params || {}, {
+        prompt: $('studioNodePrompt')?.value || '',
+        aspect_ratio: $('studioNodeAspect')?.value || '自动',
+        resolution: $('studioNodeResolution')?.value || '1K',
+      });
+      studioPersistCanvas();
+    }
+    function studioRenderCanvas() {
+      studioApplyViewport();
+      studioRenderEdges();
+      studioRenderNodes();
+      studioRenderSidebar();
+      studioRenderPanel();
+    }
+    function studioSelectNode(nodeId, focus = false) {
+      if (!studioNode(nodeId)) return;
+      STUDIO.selectedNodeId = String(nodeId);
+      studioRenderCanvas();
+      if (focus) studioFocusNode(nodeId);
+    }
+    function studioFocusNode(nodeId) {
+      const node = studioNode(nodeId);
+      const area = $('studioCanvasViewport');
+      if (!node || !area) return;
+      const pos = node.position || {x:0,y:0};
+      STUDIO.viewport = {x: area.clientWidth / 2 - Number(pos.x || 0) * STUDIO.viewport.zoom, y: area.clientHeight / 2 - Number(pos.y || 0) * STUDIO.viewport.zoom, zoom: STUDIO.viewport.zoom};
+      studioRenderCanvas();
+      studioPersistCanvas();
+    }
+    function studioZoomAt(factor, event) {
+      const old = STUDIO.viewport.zoom;
+      const next = studioClampZoom(old * factor);
+      if (next === old) return;
+      const area = $('studioCanvasViewport');
+      const point = event ? studioCanvasPoint(event) : {x: area.clientWidth / 2, y: area.clientHeight / 2};
+      const world = {x: (point.x - STUDIO.viewport.x) / old, y: (point.y - STUDIO.viewport.y) / old};
+      STUDIO.viewport = {x: point.x - world.x * next, y: point.y - world.y * next, zoom: next};
+      studioRenderCanvas();
+      studioPersistCanvas();
+    }
+    function studioStartNodeDrag(event, nodeId) {
+      if (event.button !== 0 || event.target.closest('.studio-node-action')) return;
+      event.stopPropagation();
+      studioSelectNode(nodeId);
+      const node = studioNode(nodeId);
+      const point = studioCanvasPoint(event);
+      STUDIO.drag = {type:'node', nodeId, x:point.x, y:point.y, origin:Object.assign({}, node.position || {x:0,y:0})};
+      $('studioCanvasViewport')?.setPointerCapture?.(event.pointerId);
+    }
+    function studioBindCanvasInteractions() {
+      const area = $('studioCanvasViewport');
+      if (!area || area.dataset.bound === 'true') return;
+      area.dataset.bound = 'true';
+      const pointers = new Map();
+      let pinch = null;
+      const pointFor = event => {
+        const point = studioCanvasPoint(event);
+        return {x: point.x, y: point.y};
+      };
+      const pinchPoints = () => Array.from(pointers.values()).slice(0, 2);
+      const startPinch = () => {
+        const points = pinchPoints();
+        if (points.length < 2) return;
+        const a = points[0];
+        const b = points[1];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const distance = Math.max(1, Math.hypot(dx, dy));
+        const center = {x: (a.x + b.x) / 2, y: (a.y + b.y) / 2};
+        const viewport = Object.assign({}, STUDIO.viewport);
+        pinch = {
+          distance,
+          center,
+          viewport,
+          world: {x: (center.x - viewport.x) / viewport.zoom, y: (center.y - viewport.y) / viewport.zoom},
+        };
+        STUDIO.drag = null;
+        area.classList.remove('is-panning');
+      };
+      const updatePinch = () => {
+        if (!pinch || pointers.size < 2) return false;
+        const points = pinchPoints();
+        const a = points[0];
+        const b = points[1];
+        const distance = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y));
+        const center = {x: (a.x + b.x) / 2, y: (a.y + b.y) / 2};
+        const zoom = studioClampZoom(pinch.viewport.zoom * distance / pinch.distance);
+        STUDIO.viewport = {x: center.x - pinch.world.x * zoom, y: center.y - pinch.world.y * zoom, zoom};
+        studioApplyViewport();
+        studioRenderEdges();
+        studioRenderNodes();
+        return true;
+      };
+      area.addEventListener('pointerdown', event => {
+        if (event.pointerType === 'touch') {
+          pointers.set(event.pointerId, pointFor(event));
+          if (pointers.size === 2) startPinch();
+          if (pointers.size >= 2) {
+            event.preventDefault();
+            area.setPointerCapture?.(event.pointerId);
+            return;
+          }
+        }
+        if (event.button !== 0 || event.target.closest('.studio-canvas-node') || event.target.closest('.studio-canvas-controls')) return;
+        const point = studioCanvasPoint(event);
+        STUDIO.drag = {type:'pan', x:point.x, y:point.y, origin:Object.assign({}, STUDIO.viewport)};
+        area.classList.add('is-panning');
+        area.setPointerCapture?.(event.pointerId);
+      });
+      area.addEventListener('pointermove', event => {
+        if (event.pointerType === 'touch' && pointers.has(event.pointerId)) {
+          pointers.set(event.pointerId, pointFor(event));
+          if (updatePinch()) {
+            event.preventDefault();
+            return;
+          }
+        }
+        const drag = STUDIO.drag;
+        if (!drag) return;
+        const point = studioCanvasPoint(event);
+        if (drag.type === 'pan') {
+          STUDIO.viewport = {x:drag.origin.x + point.x - drag.x, y:drag.origin.y + point.y - drag.y, zoom:drag.origin.zoom};
+        } else {
+          const node = studioNode(drag.nodeId);
+          if (!node) return;
+          node.position = {x:drag.origin.x + (point.x - drag.x) / STUDIO.viewport.zoom, y:drag.origin.y + (point.y - drag.y) / STUDIO.viewport.zoom};
+        }
+        studioApplyViewport();
+        studioRenderEdges();
+        studioRenderNodes();
+      });
+      const end = event => {
+        if (event?.pointerType === 'touch') {
+          pointers.delete(event.pointerId);
+          if (pointers.size < 2) pinch = null;
+        }
+        if (STUDIO.drag) studioPersistCanvas(80);
+        STUDIO.drag = null;
+        area.classList.remove('is-panning');
+      };
+      area.addEventListener('pointerup', end); area.addEventListener('pointercancel', end); area.addEventListener('pointerleave', event => { if (event.buttons === 0) end(event); });
+      area.addEventListener('wheel', event => { event.preventDefault(); studioZoomAt(event.deltaY > 0 ? .9 : 1.1, event); }, {passive:false});
+    }
+    async function studioCreateChildNode(parent) {
+      if (!STUDIO.current || !parent) return;
+      if (String(STUDIO.selectedNodeId || '') === String(parent.id || '')) studioPanelChanged(parent);
+      const params = Object.assign({}, parent.params || {});
+      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/canvas/nodes', {method:'POST', body:JSON.stringify({parent_id:parent.id, template_id:parent.template_id, params, title:'新画面'})});
+      if (!res.success) return showToast(res.message || '创建画面失败', 'bad');
+      const graph = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/canvas');
+      if (graph.success) STUDIO.canvas = graph.data;
+      studioSelectNode(res.data.id, true); showToast('已开始新的创作，参数已继承', 'ok');
+    }
+    async function studioDeleteNode(nodeId) {
+      const node = studioNode(nodeId);
+      if (!node || !node.parent_id) return;
+      if (!await confirmAction(`确定删除「${node.title || '画面'}」吗？图片记录不会删除。`, {title:'删除画面', confirmText:'删除画面'})) return;
+      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/canvas/nodes/' + encodeURIComponent(nodeId), {method:'DELETE'});
+      if (!res.success) return showToast(res.message || '删除画面失败', 'bad');
+      STUDIO.canvas = res.data.canvas || STUDIO.canvas;
+      STUDIO.selectedNodeId = STUDIO.canvas.root_node_id || '';
+      studioRenderCanvas(); showToast('画面已删除', 'ok');
+    }
+    async function studioRunNode(node) {
+      if (!STUDIO.current || !node || STUDIO.running) return;
+      studioPanelChanged(node);
+      const params = Object.assign({}, node.params || {});
+      const isRoot = !node.parent_id;
+      const parentNodeId = isRoot ? '' : (node.status === 'draft' ? node.parent_id : node.id);
+      const targetNodeId = node.status === 'draft' || isRoot ? node.id : '';
+      const payload = {parent_node_id: parentNodeId, target_node_id: targetNodeId, template_id: node.template_id || STUDIO.current.template || '', node_params: Object.assign({}, params), graph: {prompt:params.prompt || '', mode:params.mode || STUDIO.current.graph?.mode || 'group', aspect_ratio:params.aspect_ratio || '自动', resolution:params.resolution || '1K', count:Number(params.count || 1), use_persona_identity:STUDIO.current.graph?.use_persona_identity !== false}};
+      const optimisticDraft = node.status === 'draft';
+      if (optimisticDraft) { node.status = 'running'; node.error = ''; }
+      STUDIO.running = true; STUDIO.taskNodeId = String(node.id || ''); STUDIO.taskProgress = null; studioSetStatus('正在提交生成…'); studioRenderCanvas();
+      try {
+        const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/run', {method:'POST', body:JSON.stringify(payload)});
+        if (!res.success) throw new Error(res.message || '生成提交失败');
+        STUDIO.taskId = res.data && res.data.task_id || '';
+        STUDIO.taskProgress = res.data || null;
+        studioPollTask(STUDIO.taskId);
+      } catch (error) {
+        if (optimisticDraft) node.status = 'draft';
+        STUDIO.running = false; STUDIO.taskId = ''; STUDIO.taskNodeId = ''; STUDIO.taskProgress = null; studioSetStatus(error.message || '生成提交失败', 'bad'); studioRenderCanvas();
+      }
+    }
+    async function studioPollTask(taskId) {
+      studioStopPoll();
+      const poll = async () => {
+        try {
+          const res = await studioApi('/api/studio/tasks/' + encodeURIComponent(taskId));
+          if (!res.success) throw new Error(res.message || '状态读取失败');
+          const task = res.data || {};
+          if (task.status === 'queued' || task.status === 'running') { STUDIO.taskProgress = task; studioSetStatus('生成中… ' + (taskStageText(task) || taskProgressText(task) || '')); studioRenderPanel(); STUDIO.pollTimer = setTimeout(poll, 1200); return; }
+          STUDIO.taskProgress = task;
+          STUDIO.running = false; STUDIO.taskId = ''; STUDIO.taskNodeId = '';
+          const sessionRes = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id));
+          if (sessionRes.success) STUDIO.current = sessionRes.data;
+          const graphRes = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/canvas');
+          if (graphRes.success) STUDIO.canvas = graphRes.data;
+          studioSetStatus(task.success ? '生成完成，画布已更新' : (task.error || '生成失败'), task.success ? 'ok' : 'bad');
+          studioRenderCanvas();
+        } catch (error) { studioSetStatus(error.message || '状态读取失败', 'bad'); STUDIO.pollTimer = setTimeout(poll, 2600); }
+      };
+      STUDIO.pollTimer = setTimeout(poll, 900);
+    }
+    function studioStopPoll() { if (STUDIO.pollTimer) { clearTimeout(STUDIO.pollTimer); STUDIO.pollTimer = null; } }
+    function renderStudioSessionSelect() {
+      const select = $('studioSessionSelect');
+      if (!select) return;
+      select.innerHTML = '<option value="">选择画布…</option>' + (STUDIO.sessions || []).map(item => `<option value="${escapeHtml(item.id || '')}">${escapeHtml(item.title || item.id || '未命名')} · ${Number(item.result_count || 0)} 图</option>`).join('');
+      if (STUDIO.current?.id) select.value = STUDIO.current.id;
+    }
+    function syncStudioEditorVisibility() {
+      const has = !!STUDIO.current?.id;
+      if ($('studioEditor')) $('studioEditor').hidden = !has;
+      if ($('studioEmptyState')) $('studioEmptyState').hidden = has;
+      if ($('studioDeleteBtn')) $('studioDeleteBtn').disabled = !has;
+    }
+    function renderStudio() { syncStudioEditorVisibility(); renderStudioSessionSelect(); studioBindCanvasInteractions(); if (!STUDIO.current) return; studioRenderCanvas(); }
+    function openStudioCreateModal() { renderStudioTemplateSelect(); $('studioCreateTitle').value = ''; $('studioCreateStatus').textContent = ''; if ($('studioCreateConfirmBtn')) $('studioCreateConfirmBtn').disabled = false; $('studioCreateModal').classList.add('show'); setTimeout(() => $('studioCreateTitle')?.focus(), 0); }
+    function closeStudioCreateModal() { $('studioCreateModal')?.classList.remove('show'); }
+    async function loadStudioSessionList(force = false) {
+      const fresh = !force && STUDIO.sessionsLoadedAt && (Date.now() - STUDIO.sessionsLoadedAt) < CANVAS_SESSION_CACHE_TTL_MS;
+      if (fresh) return {success:true, data:{sessions:STUDIO.sessions, templates:STUDIO.templates}};
+      if (STUDIO.sessionsRequest) return STUDIO.sessionsRequest;
+      const request = studioApi('/api/studio/sessions').then(res => {
+        if (!res.success) return res;
+        STUDIO.sessions = res.data?.sessions || [];
+        STUDIO.templates = res.data?.templates || STUDIO.templates || [];
+        STUDIO.sessionsLoadedAt = Date.now();
+        return res;
+      }).finally(() => { STUDIO.sessionsRequest = null; });
+      STUDIO.sessionsRequest = request;
+      return request;
+    }
+    async function loadStudioList(selectId, options = {}) {
+      const force = options === true || options?.force === true;
+      const id = String(selectId || STUDIO.current?.id || '').trim();
+      const loadSeq = ++STUDIO.loadSeq;
+      const needsDetail = Boolean(id) && (force || STUDIO.current?.id !== id || !STUDIO.canvas);
+      const detailRequest = needsDetail ? Promise.all([
+        studioApi('/api/studio/sessions/' + encodeURIComponent(id)),
+        studioApi('/api/studio/sessions/' + encodeURIComponent(id) + '/canvas')
+      ]) : Promise.resolve(null);
+      const [res, detailPair] = await Promise.all([loadStudioSessionList(force), detailRequest]);
+      if (!res.success) return showToast(res.message || '画布列表加载失败', 'bad');
+      if (id && needsDetail) {
+        // Detail and graph are independent endpoints; fetch them together so opening
+        // a session waits for the slower request only once.
+        const [detail, canvas] = detailPair;
+        if (loadSeq !== STUDIO.loadSeq) return;
+        if (detail.success) STUDIO.current = detail.data;
+        if (canvas.success) {
+          STUDIO.canvas = canvas.data;
+          STUDIO.viewport = Object.assign({x:120,y:80,zoom:1}, canvas.data.viewport || {});
+        }
+      } else if (!id) {
+        STUDIO.current = null;
+        STUDIO.canvas = null;
+      }
+      if (loadSeq !== STUDIO.loadSeq) return;
+      renderStudio();
+      const lastRun = STUDIO.current?.last_run;
+      if (lastRun?.status === 'running' && lastRun.task_id) {
+        STUDIO.taskId = String(lastRun.task_id);
+        STUDIO.taskNodeId = String(lastRun.summary?.target_node_id || lastRun.summary?.parent_node_id || '');
+        STUDIO.running = true;
+        studioPollTask(STUDIO.taskId);
+      }
+    }
+    async function studioCreate() {
+      const template = $('studioTemplateSelect')?.value || 'duo';
+      const title = $('studioCreateTitle')?.value?.trim() || '';
+      const confirm = $('studioCreateConfirmBtn');
+      const status = $('studioCreateStatus');
+      if (confirm) confirm.disabled = true;
+      if (status) status.textContent = '创建中…';
+      try {
+        const res = await studioApi('/api/studio/sessions', {method:'POST', body:JSON.stringify({title, template})});
+        if (!res.success) throw new Error(res.message || '创建失败');
+        STUDIO.current = res.data;
+        STUDIO.canvas = res.data?.canvas || null;
+        STUDIO.viewport = Object.assign({x:120, y:80, zoom:1}, STUDIO.canvas?.viewport || {});
+        upsertStudioSessionSummary(res.data);
+        STUDIO.sessionsLoadedAt = Date.now();
+        closeStudioCreateModal();
+        renderStudio();
+        studioSelectNode(STUDIO.canvas?.root_node_id, true);
+        showToast('已创建无限画布', 'ok');
+      } catch (error) {
+        if (status) status.textContent = error.message || '创建失败';
+        if (confirm) confirm.disabled = false;
+      }
+    }
+    async function studioSave() { if (STUDIO.current) studioPersistCanvas(0); }
+    async function studioDelete() {
+      if (!STUDIO.current || !await confirmAction(`确定删除画布「${STUDIO.current.title || '当前画布'}」吗？`, {title:'删除画布', confirmText:'删除画布'})) return;
+      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(STUDIO.current.id) + '/delete', {method:'POST', body:'{}'});
+      if (!res.success) return showToast(res.message || '删除失败', 'bad');
+      STUDIO.current = null; STUDIO.canvas = null; await loadStudioList('', {force:true}); showToast('画布已删除', 'ok');
+    }
+
+    function creativeCanvasApi(path, opts = {}) { return api('/api/creative-canvas' + path, opts); }
+    function creativeCanvasTemplateList() {
+      return CREATIVE_CANVAS.templates?.length ? CREATIVE_CANVAS.templates : [
+        {id:'duo', title:'双人合影'}, {id:'group', title:'多人合影'},
+        {id:'selfie', title:'自拍 / 看看 / 看看腿'}, {id:'clothes', title:'换装 / COS'},
+        {id:'i2i', title:'图生图精修'}, {id:'t2i', title:'文生图'}, {id:'blank', title:'空白'}
+      ];
+    }
+    function renderCreativeCanvasTemplateSelect() {
+      const el = $('creativeCanvasTemplateSelect');
+      if (!el) return;
+      const current = el.value || 'duo';
+      el.innerHTML = creativeCanvasTemplateList().map(item => `<option value="${escapeHtml(item.id || '')}">${escapeHtml(item.title || item.id || '')}${item.description ? ' · ' + escapeHtml(item.description) : ''}</option>`).join('');
+      if ([...el.options].some(item => item.value === current)) el.value = current;
+    }
+    function syncCreativeCanvasVisibility() {
+      const has = !!CREATIVE_CANVAS.current?.id;
+      if ($('creativeCanvasEditor')) $('creativeCanvasEditor').hidden = !has;
+      if ($('creativeCanvasEmptyState')) $('creativeCanvasEmptyState').hidden = has;
+      if ($('creativeCanvasDeleteBtn')) $('creativeCanvasDeleteBtn').disabled = !has;
+    }
+    function renderCreativeCanvasSessionSelect() {
+      const select = $('creativeCanvasSessionSelect');
+      if (!select) return;
+      select.innerHTML = '<option value="">选择画布…</option>' + (CREATIVE_CANVAS.sessions || []).map(item => `<option value="${escapeHtml(item.id || '')}">${escapeHtml(item.title || item.id || '未命名')} · ${Number(item.result_count || 0)} 图</option>`).join('');
+      if (CREATIVE_CANVAS.current?.id) select.value = CREATIVE_CANVAS.current.id;
+    }
+    function fillCreativeCanvasAspect(value = '自动') {
+      setSelectOptions('creativeCanvasAspect', ['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'], value || '自动');
+    }
+    function renderCreativeCanvasPresetPanel() {
+      const panel = $('creativeCanvasPresetPanel');
+      const button = $('creativeCanvasPresetBtn');
+      if (!panel) return;
+      if (button) button.textContent = CREATIVE_CANVAS.presetOpen ? '收回' : '预设';
+      if (!CREATIVE_CANVAS.presetOpen) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
+      panel.classList.add('open');
+      const rows = CREATIVE_CANVAS.promptPresets || [];
+      panel.innerHTML = rows.length ? rows.map((item, index) => `<button type="button" class="preset-chip" data-creative-preset="${index}">${escapeHtml(item.name || item.title || '')}</button>`).join('') : '<div class="status">暂无预设</div>';
+      panel.querySelectorAll('[data-creative-preset]').forEach(button => button.onclick = () => {
+        const item = rows[Number(button.dataset.creativePreset)];
+        if (item) $('creativeCanvasPrompt').value = item.prompt || '';
+      });
+    }
+    function renderCreativeCanvasCosPanel() {
+      const panel = $('creativeCanvasCosPanel');
+      const button = $('creativeCanvasCosBtn');
+      if (!panel) return;
+      if (button) button.textContent = CREATIVE_CANVAS.cosOpen ? '收回' : 'COS池';
+      if (!CREATIVE_CANVAS.cosOpen) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
+      panel.classList.add('open');
+      const rows = CREATIVE_CANVAS.cosLooks || [];
+      panel.innerHTML = rows.length ? rows.map((item, index) => `<button type="button" class="preset-chip" data-creative-cos="${index}">${escapeHtml(item.title || item.name || item.id || '')}</button>`).join('') : '<div class="status">暂无 COS 预设</div>';
+      panel.querySelectorAll('[data-creative-cos]').forEach(button => button.onclick = () => {
+        const item = rows[Number(button.dataset.creativeCos)];
+        if (item) $('creativeCanvasPrompt').value = [String($('creativeCanvasPrompt').value || '').trim(), String(item.prompt || '').trim()].filter(Boolean).join('\n\n');
+      });
+    }
+    async function toggleCreativeCanvasPresets() {
+      CREATIVE_CANVAS.presetOpen = !CREATIVE_CANVAS.presetOpen;
+      CREATIVE_CANVAS.cosOpen = false;
+      if (CREATIVE_CANVAS.presetOpen) await loadPromptPresetsCached('image');
+      renderCreativeCanvasPresetPanel(); renderCreativeCanvasCosPanel();
+    }
+    async function toggleCreativeCanvasCos() {
+      CREATIVE_CANVAS.cosOpen = !CREATIVE_CANVAS.cosOpen;
+      CREATIVE_CANVAS.presetOpen = false;
+      if (CREATIVE_CANVAS.cosOpen) await loadCosLooksCached();
+      renderCreativeCanvasPresetPanel(); renderCreativeCanvasCosPanel();
+    }
+    function renderCreativeCanvasSlots() {
+      const wrap = $('creativeCanvasSlots');
+      const session = CREATIVE_CANVAS.current;
+      if (!wrap) return;
+      if (!session) { wrap.innerHTML = '<div class="status">还没有创作画布</div>'; return; }
+      wrap.innerHTML = '';
+      (session.slots || []).forEach((slot, index, slots) => {
+        const card = document.createElement('div');
+        const has = !!slot.image_path;
+        card.className = 'studio-slot ' + (has ? 'has-image' : 'empty');
+        card.dataset.slotId = slot.id || '';
+        card.innerHTML = `<div class="slot-label">${escapeHtml(slot.label || slot.role || '参考图')}</div>${has ? `<img data-cache-path="${escapeHtml(slot.image_path)}" alt="">` : '<div class="status">暂无参考图</div>'}<div class="slot-actions"><button type="button" class="secondary mini" data-slot-action="upload">上传</button><button type="button" class="secondary mini" data-slot-action="record">图库</button><button type="button" class="secondary mini" data-slot-action="up" ${index === 0 ? 'disabled' : ''}>上移</button><button type="button" class="secondary mini" data-slot-action="down" ${index === slots.length - 1 ? 'disabled' : ''}>下移</button><button type="button" class="secondary mini" data-slot-action="clear" ${has ? '' : 'disabled'}>清空</button></div>`;
+        card.querySelector('[data-slot-action="upload"]').onclick = () => { CREATIVE_CANVAS.uploadSlotId = slot.id; $('creativeCanvasFilePick')?.click(); };
+        card.querySelector('[data-slot-action="record"]').onclick = () => openCreativeCanvasGallery(slot.id);
+        card.querySelector('[data-slot-action="up"]').onclick = () => moveCreativeCanvasSlot(index, -1);
+        card.querySelector('[data-slot-action="down"]').onclick = () => moveCreativeCanvasSlot(index, 1);
+        card.querySelector('[data-slot-action="clear"]').onclick = () => setCreativeCanvasSlot(slot.id, {clear:true});
+        wrap.appendChild(card);
+      });
+      loadProtectedImages(wrap);
+    }
+    async function setCreativeCanvasSlot(slotId, payload) {
+      if (!CREATIVE_CANVAS.current) return;
+      const res = await creativeCanvasApi(`/sessions/${encodeURIComponent(CREATIVE_CANVAS.current.id)}/slots/${encodeURIComponent(slotId)}`, {method:'POST', body:JSON.stringify(payload || {})});
+      if (!res.success) return showToast(res.message || '参考图操作失败', 'bad');
+      CREATIVE_CANVAS.current = res.data; renderCreativeCanvas();
+    }
+    async function moveCreativeCanvasSlot(index, delta) {
+      if (!CREATIVE_CANVAS.current) return;
+      const slots = [...(CREATIVE_CANVAS.current.slots || [])]; const next = index + delta;
+      if (next < 0 || next >= slots.length) return;
+      [slots[index], slots[next]] = [slots[next], slots[index]];
+      const res = await creativeCanvasApi(`/sessions/${encodeURIComponent(CREATIVE_CANVAS.current.id)}/reorder`, {method:'POST', body:JSON.stringify({order:slots.map(item => item.id)})});
+      if (!res.success) return showToast(res.message || '排序失败', 'bad');
+      CREATIVE_CANVAS.current = res.data; renderCreativeCanvas();
+    }
+    async function addCreativeCanvasSlot() {
+      if (!CREATIVE_CANVAS.current) return;
+      const res = await creativeCanvasApi(`/sessions/${encodeURIComponent(CREATIVE_CANVAS.current.id)}/slots`, {method:'POST', body:JSON.stringify({role:'extra',label:'额外参考'})});
+      if (!res.success) return showToast(res.message || '添加参考图失败', 'bad');
+      CREATIVE_CANVAS.current = res.data; renderCreativeCanvas();
+    }
+    async function uploadCreativeCanvasFile(file) {
+      if (!file || !CREATIVE_CANVAS.current || !CREATIVE_CANVAS.uploadSlotId) return;
+      const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); });
+      await setCreativeCanvasSlot(CREATIVE_CANVAS.uploadSlotId, {image:dataUrl, source:'upload'});
+      CREATIVE_CANVAS.uploadSlotId = '';
+    }
+    function closeCreativeCanvasGallery() { const panel = $('creativeCanvasGallery'); if (panel) { panel.classList.remove('open'); panel.innerHTML = ''; } CREATIVE_CANVAS.galleryTargetSlotId = ''; }
+    async function openCreativeCanvasGallery(slotId = '') {
+      if (!CREATIVE_CANVAS.current) return;
+      const panel = $('creativeCanvasGallery'); if (!panel) return;
+      closeCreativeCanvasGallery(); CREATIVE_CANVAS.galleryTargetSlotId = slotId; panel.classList.add('open'); panel.innerHTML = '<div class="status">加载记录图…</div>';
+      const res = await creativeCanvasApi('/gallery?limit=24');
+      if (!res.success) { panel.innerHTML = `<div class="status">${escapeHtml(res.message || '加载失败')}</div>`; return; }
+      const items = res.data?.items || [];
+      panel.innerHTML = items.length ? `<div class="muted">选择一张图片放入当前参考图位置</div><div class="studio-gallery-grid"></div>` : '<div class="status">暂无可用图片</div>';
+      const grid = panel.querySelector('.studio-gallery-grid');
+      for (const item of items) {
+        const cell = document.createElement('div'); cell.className = 'studio-gallery-item';
+        cell.innerHTML = `<div class="studio-gallery-thumb"><div class="status" data-media-placeholder>加载图片…</div><img data-cache-path="${escapeHtml(item.path || '')}" alt=""></div><div class="cap">${escapeHtml(item.prompt || item.model || item.path || '')}</div>`;
+        cell.onclick = () => setCreativeCanvasSlot(slotId || (CREATIVE_CANVAS.current.slots || []).find(item => !item.image_path)?.id || '', {image_path:item.path, source:'record', source_record_id:item.record_id || ''});
+        grid?.appendChild(cell);
+      }
+      loadProtectedImages(panel);
+    }
+    function renderCreativeCanvasResults() {
+      const wrap = $('creativeCanvasResults'); if (!wrap) return;
+      wrap.innerHTML = '';
+      for (const item of CREATIVE_CANVAS.current?.results || []) {
+        const card = document.createElement('div'); card.className = 'card';
+        card.innerHTML = `${item.image_path ? `<img data-cache-path="${escapeHtml(item.image_path)}" alt="">` : '<div class="status">无图</div>'}<div class="actions"><button type="button" class="secondary mini" data-result-role="base">作底图</button><button type="button" class="secondary mini" data-result-role="outfit">作服装</button><button type="button" class="secondary mini" data-result-role="peer">作同框</button><button type="button" class="secondary mini" data-result-role="identity">作形象</button></div><div class="status" style="font-size:11px">${escapeHtml(item.created_at || '')}${item.used_model ? ' · ' + escapeHtml(item.used_model) : ''}</div>`;
+        card.querySelectorAll('[data-result-role]').forEach(button => button.onclick = () => promoteCreativeCanvasResult(item.id, button.dataset.resultRole));
+        wrap.appendChild(card);
+      }
+      loadProtectedImages(wrap);
+    }
+    async function promoteCreativeCanvasResult(resultId, role) {
+      if (!CREATIVE_CANVAS.current) return;
+      const res = await creativeCanvasApi(`/sessions/${encodeURIComponent(CREATIVE_CANVAS.current.id)}/promote`, {method:'POST', body:JSON.stringify({result_id:resultId, role, create_if_missing:true})});
+      if (!res.success) return showToast(res.message || '放入参考图失败', 'bad');
+      CREATIVE_CANVAS.current = res.data; renderCreativeCanvas(); showToast('已放入参考图', 'ok');
+    }
+    function renderCreativeCanvas() {
+      syncCreativeCanvasVisibility(); renderCreativeCanvasSessionSelect(); renderCreativeCanvasTemplateSelect();
+      if (!CREATIVE_CANVAS.current) return;
+      const session = CREATIVE_CANVAS.current; const graph = session.graph || {};
+      $('creativeCanvasTitle').value = session.title || '';
+      $('creativeCanvasMode').value = graph.mode || 'group';
+      fillCreativeCanvasAspect(graph.aspect_ratio || '自动');
+      $('creativeCanvasResolution').value = graph.resolution || '1K';
+      $('creativeCanvasCount').value = graph.count || 1;
+      $('creativeCanvasUsePersona').checked = graph.use_persona_identity !== false;
+      $('creativeCanvasPrompt').value = graph.prompt || '';
+      const last = session.last_run || {};
+      $('creativeCanvasStatus').textContent = last.status === 'running' ? '生成中…' : last.status === 'succeeded' ? `完成 · ${(last.result_paths || []).length} 张` : last.status === 'failed' ? `失败：${last.error || ''}` : '已加载：' + (session.title || session.id);
+      renderCreativeCanvasPresetPanel(); renderCreativeCanvasCosPanel(); renderCreativeCanvasSlots(); renderCreativeCanvasResults();
+    }
+    async function loadCreativeCanvasSessionList(force = false) {
+      const fresh = !force && CREATIVE_CANVAS.sessionsLoadedAt && (Date.now() - CREATIVE_CANVAS.sessionsLoadedAt) < CANVAS_SESSION_CACHE_TTL_MS;
+      if (fresh) return {success:true, data:{sessions:CREATIVE_CANVAS.sessions, templates:CREATIVE_CANVAS.templates}};
+      if (CREATIVE_CANVAS.sessionsRequest) return CREATIVE_CANVAS.sessionsRequest;
+      const request = creativeCanvasApi('/sessions').then(res => {
+        if (!res.success) return res;
+        CREATIVE_CANVAS.sessions = res.data?.sessions || [];
+        CREATIVE_CANVAS.templates = res.data?.templates || CREATIVE_CANVAS.templates;
+        CREATIVE_CANVAS.sessionsLoadedAt = Date.now();
+        return res;
+      }).finally(() => { CREATIVE_CANVAS.sessionsRequest = null; });
+      CREATIVE_CANVAS.sessionsRequest = request;
+      return request;
+    }
+    async function loadCreativeCanvasList(selectId = '', options = {}) {
+      const force = options === true || options?.force === true;
+      const id = String(selectId || CREATIVE_CANVAS.current?.id || '').trim();
+      const loadSeq = ++CREATIVE_CANVAS.loadSeq;
+      const needsDetail = Boolean(id) && (force || CREATIVE_CANVAS.current?.id !== id);
+      const detailRequest = needsDetail
+        ? creativeCanvasApi('/sessions/' + encodeURIComponent(id))
+        : Promise.resolve(null);
+      const [res, detail] = await Promise.all([loadCreativeCanvasSessionList(force), detailRequest]);
+      if (!res.success) return showToast(res.message || '创作画布列表加载失败', 'bad');
+      if (id && needsDetail) {
+        if (loadSeq !== CREATIVE_CANVAS.loadSeq) return;
+        if (detail.success) CREATIVE_CANVAS.current = detail.data;
+      } else if (!id) {
+        CREATIVE_CANVAS.current = null;
+      }
+      if (loadSeq !== CREATIVE_CANVAS.loadSeq) return;
+      renderCreativeCanvas();
+      const last = CREATIVE_CANVAS.current?.last_run || {};
+      const activeTaskId = String(last.task_id || '').trim();
+      if (activeTaskId && ['queued','running'].includes(String(last.status || '').toLowerCase())) {
+        CREATIVE_CANVAS.taskId = activeTaskId;
+        CREATIVE_CANVAS.running = true;
+        if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').style.display = '';
+        creativeCanvasPollTask(activeTaskId);
+      }
+    }
+    function openCreativeCanvasCreateModal() { renderCreativeCanvasTemplateSelect(); $('creativeCanvasCreateTitle').value = ''; $('creativeCanvasCreateStatus').textContent = ''; if ($('creativeCanvasCreateConfirmBtn')) $('creativeCanvasCreateConfirmBtn').disabled = false; $('creativeCanvasCreateModal').classList.add('show'); }
+    function closeCreativeCanvasCreateModal() { $('creativeCanvasCreateModal')?.classList.remove('show'); }
+    async function createCreativeCanvas() {
+      const confirm = $('creativeCanvasCreateConfirmBtn');
+      const status = $('creativeCanvasCreateStatus');
+      if (confirm) confirm.disabled = true;
+      if (status) status.textContent = '创建中…';
+      try {
+        const title = $('creativeCanvasCreateTitle').value.trim();
+        const template = $('creativeCanvasTemplateSelect').value || 'duo';
+        const res = await creativeCanvasApi('/sessions', {method:'POST', body:JSON.stringify({title, template})});
+        if (!res.success) throw new Error(res.message || '创建失败');
+        CREATIVE_CANVAS.current = res.data;
+        const session = res.data || {};
+        CREATIVE_CANVAS.sessions = [{
+          id: session.id,
+          title: session.title || title,
+          updated_at: session.updated_at || session.created_at || '',
+          template: session.template || template,
+          result_count: (session.results || []).length,
+          last_status: session.last_run?.status || '',
+          last_run: session.last_run || null,
+        }, ...(CREATIVE_CANVAS.sessions || []).filter(item => item.id !== session.id)];
+        CREATIVE_CANVAS.sessionsLoadedAt = Date.now();
+        closeCreativeCanvasCreateModal();
+        renderCreativeCanvas();
+        showToast('已创建创作画布', 'ok');
+      } catch (error) {
+        if (status) status.textContent = error.message || '创建失败';
+        if (confirm) confirm.disabled = false;
+      }
+    }
+    async function saveCreativeCanvas() {
+      if (!CREATIVE_CANVAS.current) return;
+      const body = {title:$('creativeCanvasTitle').value.trim(), graph:{prompt:$('creativeCanvasPrompt').value, mode:$('creativeCanvasMode').value, aspect_ratio:$('creativeCanvasAspect').value, resolution:$('creativeCanvasResolution').value, count:Number($('creativeCanvasCount').value || 1), use_persona_identity:$('creativeCanvasUsePersona').checked}};
+      const res = await creativeCanvasApi('/sessions/' + encodeURIComponent(CREATIVE_CANVAS.current.id), {method:'POST', body:JSON.stringify(body)});
+      if (!res.success) return showToast(res.message || '保存失败', 'bad');
+      CREATIVE_CANVAS.current = res.data; renderCreativeCanvas(); showToast('创作画布已保存', 'ok');
+    }
+    async function deleteCreativeCanvas() {
+      if (!CREATIVE_CANVAS.current || !await confirmAction(`确定删除创作画布「${CREATIVE_CANVAS.current.title || '当前画布'}」吗？`, {title:'删除画布', confirmText:'删除画布'})) return;
+      const res = await creativeCanvasApi('/sessions/' + encodeURIComponent(CREATIVE_CANVAS.current.id) + '/delete', {method:'POST', body:'{}'});
+      if (!res.success) return showToast(res.message || '删除失败', 'bad');
+      CREATIVE_CANVAS.current = null; await loadCreativeCanvasList('', {force:true}); showToast('创作画布已删除', 'ok');
+    }
+    async function runCreativeCanvas() {
+      if (!CREATIVE_CANVAS.current || CREATIVE_CANVAS.running) return;
+      await saveCreativeCanvas();
+      CREATIVE_CANVAS.running = true;
+      $('creativeCanvasRunBtn').disabled = true;
+      $('creativeCanvasRerunBtn').disabled = true;
+      if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').style.display = '';
+      $('creativeCanvasStatus').textContent = '已提交生成…';
+      const res = await creativeCanvasApi('/sessions/' + encodeURIComponent(CREATIVE_CANVAS.current.id) + '/run', {method:'POST', body:'{}'});
+      if (!res.success) {
+        CREATIVE_CANVAS.running = false;
+        $('creativeCanvasRunBtn').disabled = false;
+        $('creativeCanvasRerunBtn').disabled = false;
+        if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').style.display = 'none';
+        $('creativeCanvasStatus').textContent = res.message || '启动失败';
+        return;
+      }
+      CREATIVE_CANVAS.taskId = res.data?.task_id || ''; creativeCanvasPollTask(CREATIVE_CANVAS.taskId);
+    }
+    async function cancelCreativeCanvasTask() {
+      const taskId = String(CREATIVE_CANVAS.taskId || '').trim();
+      if (!taskId) return;
+      stopCreativeCanvasPoll();
+      if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').disabled = true;
+      $('creativeCanvasStatus').textContent = '正在取消任务…';
+      try {
+        const res = await api('/api/tasks/' + encodeURIComponent(taskId) + '/cancel', {method:'POST', body:JSON.stringify({})});
+        const task = res.data || {};
+        CREATIVE_CANVAS.taskId = '';
+        CREATIVE_CANVAS.running = false;
+        $('creativeCanvasRunBtn').disabled = false;
+        $('creativeCanvasRerunBtn').disabled = false;
+        if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').style.display = 'none';
+        $('creativeCanvasStatus').textContent = task.error || '任务已取消';
+        if (CREATIVE_CANVAS.current?.id) await loadCreativeCanvasList(CREATIVE_CANVAS.current.id);
+      } catch (error) {
+        if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').disabled = false;
+        $('creativeCanvasStatus').textContent = error.message || '取消失败';
+      }
+    }
+    function stopCreativeCanvasPoll() { if (CREATIVE_CANVAS.pollTimer) { clearTimeout(CREATIVE_CANVAS.pollTimer); CREATIVE_CANVAS.pollTimer = null; } }
+    async function creativeCanvasPollTask(taskId) {
+      stopCreativeCanvasPoll();
+      const poll = async () => {
+        try {
+          const res = await api('/api/studio/tasks/' + encodeURIComponent(taskId));
+          if (!res.success) throw new Error(res.message || '状态读取失败');
+          const task = res.data || {};
+          if (task.status === 'queued' || task.status === 'running') { $('creativeCanvasStatus').textContent = '生成中… ' + (taskStageText(task) || taskProgressText(task) || ''); CREATIVE_CANVAS.pollTimer = setTimeout(poll, 1200); return; }
+          CREATIVE_CANVAS.running = false; CREATIVE_CANVAS.taskId = ''; $('creativeCanvasRunBtn').disabled = false; $('creativeCanvasRerunBtn').disabled = false;
+          if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').style.display = 'none';
+          await loadCreativeCanvasList(CREATIVE_CANVAS.current?.id, {force:true}); showToast(task.success ? '图片生成完成' : (task.error || '生成失败'), task.success ? 'ok' : 'bad');
+        } catch (error) { $('creativeCanvasStatus').textContent = error.message || '状态读取失败'; CREATIVE_CANVAS.pollTimer = setTimeout(poll, 2600); }
+      };
+      CREATIVE_CANVAS.pollTimer = setTimeout(poll, 900);
     }
 
     function navigateToTab(tab, options = {}) {
@@ -7292,6 +8639,7 @@ Source prompt:
       if (target === 'monitor') { loadRecords(false); loadMetrics(); loadTasks(); }
       if (target === 'assets') { loadAssets(); loadAssetTags(); loadAssetStudioPresets(); }
       if (target === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
+      if (target === 'creativeCanvas') loadCreativeCanvasList(CREATIVE_CANVAS.current && CREATIVE_CANVAS.current.id);
       if (target === 'presets') loadManagedPromptPresets(PRESET_KIND);
       if (target === 'selfie') refreshSelfie();
       if (target === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
@@ -7325,15 +8673,19 @@ Source prompt:
       else if (mask === $('compareModal')) closeCompareModal();
       else if (mask === $('taskModal')) closeTaskDetail();
       else if (mask === $('mediaSourceModal')) closeMediaSourceModal();
+      else if (mask === $('mediaLightboxModal')) closeMediaLightbox();
       else if (mask === $('presetEditorModal')) closePresetEditor();
       else if (mask === $('presetTransferModal')) closePresetTransfer();
       else if (mask === $('cosPoolModal')) closeCosPoolModal();
       else if (mask === $('studioCreateModal')) closeStudioCreateModal();
+      else if (mask === $('studioConnectModal')) closeStudioConnectModal();
+      else if (mask === $('creativeCanvasCreateModal')) closeCreativeCanvasCreateModal();
     }));
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
       if ($('confirmModal')?.classList.contains('show')) { closeConfirmAction(false); return; }
       if ($('mediaSourceModal')?.classList.contains('show')) { closeMediaSourceModal(); return; }
+      if ($('mediaLightboxModal')?.classList.contains('show')) { closeMediaLightbox(); return; }
       if ($('taskModal')?.classList.contains('show')) { closeTaskDetail(); return; }
       if ($('recordModal')?.classList.contains('show')) { closeRecordDetail(); return; }
       if ($('compareModal')?.classList.contains('show')) { closeCompareModal(); return; }
@@ -7342,19 +8694,33 @@ Source prompt:
       if ($('presetEditorModal')?.classList.contains('show')) { closePresetEditor(); return; }
       if ($('presetTransferModal')?.classList.contains('show')) { closePresetTransfer(); return; }
       if ($('cosPoolModal')?.classList.contains('show')) { closeCosPoolModal(); return; }
-      if ($('studioCreateModal')?.classList.contains('show')) closeStudioCreateModal();
+      if ($('studioCreateModal')?.classList.contains('show')) { closeStudioCreateModal(); return; }
+      if ($('studioConnectModal')?.classList.contains('show')) closeStudioConnectModal();
+      if ($('creativeCanvasCreateModal')?.classList.contains('show')) { closeCreativeCanvasCreateModal(); return; }
     });
     if ($('cleanupCacheBtn')) $('cleanupCacheBtn').onclick = cleanupCache;
+    if ($('mediaLightboxClose')) $('mediaLightboxClose').onclick = closeMediaLightbox;
+    if ($('mediaLightboxDownload')) {
+      $('mediaLightboxDownload').innerHTML = downloadIconSvg();
+      $('mediaLightboxDownload').onclick = () => {
+        if (!MEDIA_LIGHTBOX_PATH) return;
+        const filename = MEDIA_LIGHTBOX_PATH.split(/[\\/]/).pop() || 'image';
+        downloadCachePath(MEDIA_LIGHTBOX_PATH, filename);
+      };
+    }
     $('presetAddBtn').onclick = () => openPresetEditor();
     $('presetKindImage').onclick = () => switchPresetKind('image');
     $('presetKindVideo').onclick = () => switchPresetKind('video');
     $('presetImportBtn').onclick = openPresetImport;
     $('presetExportBtn').onclick = openPresetExport;
-    $('presetReloadBtn').onclick = loadManagedPromptPresets;
+    $('presetReloadBtn').onclick = async () => {
+      clearPickerCache(PRESET_KIND);
+      await loadManagedPromptPresets(PRESET_KIND);
+    };
     $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
     $('presetTransferCopyBtn').onclick = copyPresetTransfer;
     $('presetTransferImportBtn').onclick = importPresetTransfer;
-    $('reloadAll').onclick = async () => { await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(); await loadAssetStudioPresets(); };
+    $('reloadAll').onclick = async () => { clearPickerCache(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); };
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;
@@ -7383,6 +8749,7 @@ Source prompt:
       if (TEST_TASK_ID) pollImageTestTask(TEST_TASK_ID, 0);
     };
     if ($('testTemplatePreviewBtn')) $('testTemplatePreviewBtn').onclick = previewTestTemplate;
+    if ($('testTemplateRandomBtn')) $('testTemplateRandomBtn').onclick = randomizeTestTemplateValues;
     if ($('testStoryboardPreviewBtn')) $('testStoryboardPreviewBtn').onclick = previewTestStoryboard;
     if ($('testVariationEnabled')) $('testVariationEnabled').onchange = () => { $('testVariationFieldsWrap').style.display = $('testVariationEnabled').checked ? '' : 'none'; };
     if ($('studioCreateBtn')) $('studioCreateBtn').onclick = openStudioCreateModal;
@@ -7395,7 +8762,30 @@ Source prompt:
     if ($('testPresetBtn')) $('testPresetBtn').onclick = toggleTestPresets;
     if ($('testCosBtn')) $('testCosBtn').onclick = toggleTestCos;
     if ($('cosPoolModal')) $('cosPoolModal').addEventListener('click', event => { if (event.target === $('cosPoolModal')) closeCosPoolModal(); });
-    if ($('studioReloadBtn')) $('studioReloadBtn').onclick = () => loadStudioList(STUDIO.current && STUDIO.current.id);
+    if ($('studioReloadBtn')) $('studioReloadBtn').onclick = () => loadStudioList(STUDIO.current && STUDIO.current.id, {force:true});
+    if ($('studioNodeSearch')) $('studioNodeSearch').oninput = event => {
+      STUDIO.nodeSearch = event.target.value || '';
+      studioRenderCanvas();
+    };
+    if ($('studioZoomIn')) $('studioZoomIn').onclick = () => studioZoomAt(1.1);
+    if ($('studioZoomOut')) $('studioZoomOut').onclick = () => studioZoomAt(.9);
+    if ($('studioZoomReset')) $('studioZoomReset').onclick = () => {
+      STUDIO.viewport = {x: 120, y: 80, zoom: 1};
+      studioRenderCanvas();
+      studioPersistCanvas(0);
+    };
+    if ($('studioSidebarToggle')) $('studioSidebarToggle').onclick = () => {
+      const layout = $('studioEditor');
+      if (!layout) return;
+      const collapsed = layout.classList.toggle('sidebar-collapsed');
+      $('studioSidebarToggle').textContent = collapsed ? '›' : '‹';
+      $('studioSidebarToggle').title = collapsed ? '展开画面列表' : '收起画面列表';
+      $('studioSidebarToggle').setAttribute('aria-label', $('studioSidebarToggle').title);
+    };
+    if ($('studioNodePanelClose')) $('studioNodePanelClose').onclick = () => {
+      STUDIO.selectedNodeId = '';
+      studioRenderCanvas();
+    };
     if ($('studioDeleteBtn')) $('studioDeleteBtn').onclick = studioDelete;
     if ($('studioSaveBtn')) $('studioSaveBtn').onclick = studioSave;
     if ($('studioRunBtn')) $('studioRunBtn').onclick = studioRun;
@@ -7404,7 +8794,7 @@ Source prompt:
     if ($('studioRetryStatusBtn')) $('studioRetryStatusBtn').onclick = async () => {
       if (!STUDIO.current?.id) return;
       $('studioRetryStatusBtn').disabled = true;
-      try { await loadStudioList(STUDIO.current.id); }
+      try { await loadStudioList(STUDIO.current.id, {force:true}); }
       catch (e) { $('studioStatus').textContent = e.message || '状态读取失败'; }
       finally { $('studioRetryStatusBtn').disabled = false; }
     };
@@ -7418,9 +8808,27 @@ Source prompt:
     if ($('studioSessionSelect')) $('studioSessionSelect').onchange = async () => {
       const id = $('studioSessionSelect').value;
       if (!id) { STUDIO.current = null; renderStudio(); return; }
-      const res = await studioApi('/api/studio/sessions/' + encodeURIComponent(id));
-      if (!res.success) return showToast(res.message || '加载失败', 'bad');
-      STUDIO.current = res.data; renderStudio();
+      await loadStudioList(id);
+    };
+    if ($('creativeCanvasSessionSelect')) $('creativeCanvasSessionSelect').onchange = () =>
+      loadCreativeCanvasList($('creativeCanvasSessionSelect').value || '');
+    if ($('creativeCanvasReloadBtn')) $('creativeCanvasReloadBtn').onclick = () =>
+      loadCreativeCanvasList(CREATIVE_CANVAS.current && CREATIVE_CANVAS.current.id, {force:true});
+    if ($('creativeCanvasDeleteBtn')) $('creativeCanvasDeleteBtn').onclick = deleteCreativeCanvas;
+    if ($('creativeCanvasCreateBtn')) $('creativeCanvasCreateBtn').onclick = openCreativeCanvasCreateModal;
+    if ($('creativeCanvasCreateConfirmBtn')) $('creativeCanvasCreateConfirmBtn').onclick = createCreativeCanvas;
+    if ($('creativeCanvasSaveBtn')) $('creativeCanvasSaveBtn').onclick = saveCreativeCanvas;
+    if ($('creativeCanvasRunBtn')) $('creativeCanvasRunBtn').onclick = runCreativeCanvas;
+    if ($('creativeCanvasRerunBtn')) $('creativeCanvasRerunBtn').onclick = runCreativeCanvas;
+    if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').onclick = cancelCreativeCanvasTask;
+    if ($('creativeCanvasAddSlotBtn')) $('creativeCanvasAddSlotBtn').onclick = addCreativeCanvasSlot;
+    if ($('creativeCanvasPickRecordBtn')) $('creativeCanvasPickRecordBtn').onclick = () => openCreativeCanvasGallery('');
+    if ($('creativeCanvasPresetBtn')) $('creativeCanvasPresetBtn').onclick = toggleCreativeCanvasPresets;
+    if ($('creativeCanvasCosBtn')) $('creativeCanvasCosBtn').onclick = toggleCreativeCanvasCos;
+    if ($('creativeCanvasFilePick')) $('creativeCanvasFilePick').onchange = async event => {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = '';
+      if (file) await uploadCreativeCanvasFile(file);
     };
     if ($('studioFilePick')) $('studioFilePick').onchange = async (ev) => {
       const file = ev.target.files && ev.target.files[0];
@@ -7449,10 +8857,10 @@ Source prompt:
     });
     if ($('monitorMetricsWindow')) $('monitorMetricsWindow').onchange = () => loadMetrics();
     if ($('monitorTag')) $('monitorTag').oninput = monitorFilterChanged;
-    ['assetKeyword','assetSource','assetModel','assetTag'].forEach(id => {
+    ['assetKeyword','assetSource','assetTag'].forEach(id => {
       if ($(id)) $(id).oninput = assetFilterChanged;
     });
-    ['assetMedia','assetSuccess','assetMark','assetSort','assetStartTime','assetEndTime'].forEach(id => {
+    ['assetModel','assetMedia','assetSuccess','assetMark','assetSort','assetStartTime','assetEndTime'].forEach(id => {
       if ($(id)) $(id).onchange = assetFilterChanged;
     });
 

@@ -335,6 +335,12 @@ class SelfieImagePlugin(
 
         self.cos_pool = CosPoolStore(self.data_dir)
         self.studio = StudioStore(self.data_dir)
+        # The legacy creation canvas has its own session namespace and file;
+        # it must never appear in the relationship/infinite canvas list.
+        self.creative_canvas = StudioStore(
+            os.path.join(self.data_dir, "creative_canvas"),
+            canvas_mode="creative",
+        )
         self.asset_collections = AssetCollectionStore(self.data_dir)
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
@@ -1450,6 +1456,13 @@ class SelfieImagePlugin(
         audit_prompt_text = request_prompt if is_leg_focus_request else (original_prompt or request_prompt)
         source_meta = self._source_context(event, source, audit_user_id)
         is_studio_run = source == "studio-run"
+        if is_studio_run and isinstance(record_context, Mapping):
+            studio_title = str(record_context.get("studio_session_title") or "画布").strip() or "画布"
+            source_meta["source_label"] = f"Web/{studio_title}"
+        elif source == "web-test":
+            source_meta["source_label"] = "Web/快速试画"
+        elif source == "web-video-test":
+            source_meta["source_label"] = "Web/快速试视频"
         self._set_generation_stage(
             record_context,
             "preflight",
@@ -1462,6 +1475,7 @@ class SelfieImagePlugin(
             for key in (
                 "studio_session_id",
                 "studio_task_id",
+                "studio_session_title",
                 "studio_template",
                 "studio_source_asset_ids",
                 "retry_record_id",
@@ -1599,6 +1613,7 @@ class SelfieImagePlugin(
             for key in (
                 "studio_session_id",
                 "studio_task_id",
+                "studio_session_title",
                 "studio_template",
                 "studio_source_asset_ids",
                 "retry_record_id",
@@ -3561,7 +3576,13 @@ class SelfieImagePlugin(
             reference_images = 0
         record = {
             "source": source,
-            "source_label": "Web" if source.startswith("web") else source,
+            "source_label": (
+                f"Web/{str(request.get('studio_session_title') or '画布').strip() or '画布'}"
+                if source == "studio-run"
+                else "Web/快速试画" if source == "web-test"
+                else "Web/快速试视频" if source == "web-video-test"
+                else "Web" if source.startswith("web") else source
+            ),
             "media_type": kind,
             "success": False,
             "generation_success": False,
@@ -4834,6 +4855,7 @@ class SelfieImagePlugin(
             self._record_task(
                 {
                     **self._source_context(None, "web-test"),
+                    "source_label": "Web/快速试画",
                     "success": False,
                     "generation_success": False,
                     "delivery_success": None,
@@ -5016,6 +5038,7 @@ class SelfieImagePlugin(
         )
         record = {
             **self._source_context(None, "web-video-test"),
+            "source_label": "Web/快速试视频",
             "media_type": "video",
             "success": not bool(result.error) and bool(result.video_path),
             "generation_success": not bool(result.error) and bool(result.video_path),

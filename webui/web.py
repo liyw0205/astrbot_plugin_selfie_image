@@ -1139,7 +1139,8 @@ class FlaskWebServer:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             if request.method == "GET":
-                return ok(self.plugin.studio_list())
+                include_metadata = str(request.args.get("metadata") or "").strip().lower() in {"1", "true", "yes", "all"}
+                return ok(self.plugin.studio_list(include_metadata=include_metadata))
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
@@ -1164,6 +1165,56 @@ class FlaskWebServer:
                 return ok(self.plugin.studio_update(session_id, payload or {}))
             except Exception as exc:
                 return fail(str(exc))
+
+        @app.route("/api/studio/sessions/<session_id>/canvas", methods=["GET", "POST"])
+        def studio_session_canvas(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            if request.method == "GET":
+                try:
+                    return ok(self.plugin.studio_canvas(session_id))
+                except Exception as exc:
+                    return fail(str(exc), 404)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.studio_canvas_update(session_id, payload or {}))
+            except Exception as exc:
+                return fail(str(exc))
+
+        @app.route("/api/studio/sessions/<session_id>/canvas/nodes", methods=["POST"])
+        def studio_canvas_node_create(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.studio_canvas_node_create(session_id, payload or {}))
+            except Exception as exc:
+                return fail(str(exc))
+
+        @app.route("/api/studio/sessions/<session_id>/canvas/nodes/<node_id>", methods=["DELETE", "POST"])
+        def studio_canvas_node_delete(session_id: str, node_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                return ok(self.plugin.studio_canvas_node_delete(session_id, node_id))
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        @app.route("/api/studio/sessions/<session_id>/canvas/nodes/<node_id>/connect", methods=["POST"])
+        def studio_canvas_node_connect(session_id: str, node_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.studio_canvas_node_connect(session_id, node_id, payload or {}))
+            except Exception as exc:
+                return fail(str(exc), 400)
 
         @app.route("/api/studio/sessions/<session_id>/copy", methods=["POST"])
         def studio_session_copy(session_id: str) -> Any:
@@ -1277,6 +1328,123 @@ class FlaskWebServer:
                 limit = 24
             try:
                 return ok(self.plugin.studio_gallery_images(limit=limit))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
+        @app.route("/api/creative-canvas/sessions", methods=["GET", "POST"])
+        def creative_canvas_sessions() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            if request.method == "GET":
+                include_metadata = str(request.args.get("metadata") or "").strip().lower() in {"1", "true", "yes", "all"}
+                return ok(self.plugin.creative_canvas_list(include_metadata=include_metadata))
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.creative_canvas_create(payload or {}))
+            except Exception as exc:
+                return fail(str(exc))
+
+        @app.route("/api/creative-canvas/sessions/<session_id>", methods=["GET", "POST"])
+        def creative_canvas_session_detail(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            if request.method == "GET":
+                try:
+                    return ok(self.plugin.creative_canvas_get(session_id))
+                except Exception as exc:
+                    return fail(str(exc), 404)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.creative_canvas_update(session_id, payload or {}))
+            except Exception as exc:
+                return fail(str(exc))
+
+        @app.route("/api/creative-canvas/sessions/<session_id>/delete", methods=["POST"])
+        def creative_canvas_session_delete(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.creative_canvas_delete(session_id))
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        @app.route("/api/creative-canvas/sessions/<session_id>/slots/<slot_id>", methods=["POST"])
+        def creative_canvas_slot(session_id: str, slot_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.creative_canvas_set_slot(session_id, slot_id, payload or {}))
+            except Exception as exc:
+                return fail(str(exc))
+
+        @app.route("/api/creative-canvas/sessions/<session_id>/slots", methods=["POST"])
+        def creative_canvas_add_slot(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.creative_canvas_add_slot(session_id, payload or {}))
+            except Exception as exc:
+                return fail(str(exc))
+
+        @app.route("/api/creative-canvas/sessions/<session_id>/reorder", methods=["POST"])
+        def creative_canvas_reorder(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.creative_canvas_reorder(session_id, payload or {}))
+            except Exception as exc:
+                return fail(str(exc))
+
+        @app.route("/api/creative-canvas/sessions/<session_id>/promote", methods=["POST"])
+        def creative_canvas_promote(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.creative_canvas_promote(session_id, payload or {}))
+            except Exception as exc:
+                return fail(str(exc))
+
+        @app.route("/api/creative-canvas/sessions/<session_id>/run", methods=["POST"])
+        def creative_canvas_run(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(redact_sensitive_data(self.plugin.start_creative_canvas_run(session_id, payload or {})))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/creative-canvas/gallery", methods=["GET"])
+        def creative_canvas_gallery() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                limit = int(request.args.get("limit") or 24)
+            except (TypeError, ValueError):
+                limit = 24
+            try:
+                return ok(self.plugin.studio_gallery_images(limit))
             except Exception as exc:
                 return fail(str(exc), 400)
 

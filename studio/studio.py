@@ -24,6 +24,9 @@ STUDIO_FILENAME = "studio_sessions.json"
 MAX_SESSIONS = 40
 MAX_SLOTS = 12
 MAX_RESULTS_KEEP = 24
+CANVAS_MAX_NODES = 128
+CANVAS_NODE_GAP_X = 340
+CANVAS_NODE_GAP_Y = 220
 
 # Built-in prompt chips / shared presets (no external GitHub sync).
 # templates: only listed templates see the chip; empty = all templates.
@@ -763,8 +766,28 @@ def empty_session(
     if not input_order:
         input_order = [s["id"] for s in slots]
     default_title = str(meta.get("default_title") or meta.get("title") or "画布")
+    session_id = _new_id("studio")
+    root_id = f"node-root-{session_id}"
+    root_node = {
+        "id": root_id,
+        "parent_id": None,
+        "record_id": None,
+        "title": str(title or default_title).strip() or default_title,
+        "template_id": tid,
+        "params": {
+            "prompt": str(meta.get("prompt") or ""),
+            "mode": str(meta.get("mode") or "t2i"),
+            "aspect_ratio": str(meta.get("aspect_ratio") or "自动"),
+            "resolution": str(meta.get("resolution") or "1K"),
+            "count": 1,
+        },
+        "position": {"x": 0, "y": 0},
+        "status": "draft",
+        "result": {"media_path": "", "thumbnail_path": ""},
+        "created_at": _now(),
+    }
     return {
-        "id": _new_id("studio"),
+        "id": session_id,
         "title": str(title or default_title).strip() or default_title,
         "created_at": _now(),
         "updated_at": _now(),
@@ -781,6 +804,13 @@ def empty_session(
         },
         "results": [],
         "last_run": None,
+        "canvas": {
+            "version": 1,
+            "root_node_id": root_id,
+            "viewport": {"x": 120, "y": 80, "zoom": 1},
+            "nodes": [root_node],
+            "edges": [],
+        },
     }
 
 
@@ -790,8 +820,9 @@ def public_session(session: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class StudioStore:
-    def __init__(self, data_dir: str) -> None:
+    def __init__(self, data_dir: str, *, canvas_mode: str = "relationship") -> None:
         self.path = os.path.join(data_dir, STUDIO_FILENAME)
+        self.canvas_mode = "creative" if str(canvas_mode or "").strip().lower() == "creative" else "relationship"
         self._lock = threading.RLock()
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._load_status: Dict[str, Any] = {"ok": True, "error": ""}
@@ -814,6 +845,8 @@ class StudioStore:
         if isinstance(items, list):
             for index, item in enumerate(items, start=1):
                 if isinstance(item, dict) and item.get("id"):
+                    item.setdefault("canvas_mode", self.canvas_mode)
+                    self._ensure_canvas(item)
                     out[str(item["id"])] = item
                 elif item not in (None, {}):
                     logger.warning("[SelfieImage] skipped invalid studio session row %s", index)
@@ -822,11 +855,125 @@ class StudioStore:
                 if isinstance(item, dict):
                     item = dict(item)
                     item.setdefault("id", key)
+                    item.setdefault("canvas_mode", self.canvas_mode)
+                    self._ensure_canvas(item)
                     out[str(item["id"])] = item
                 else:
                     logger.warning("[SelfieImage] skipped invalid studio session %s", key)
         self._load_status = {"ok": True, "error": "", "source": self.path}
         self._sessions = out
+
+    @staticmethod
+    def _canvas_params(session: Dict[str, Any]) -> Dict[str, Any]:
+        graph = session.get("graph") if isinstance(session.get("graph"), dict) else {}
+        return {
+            "prompt": str(graph.get("prompt") or ""),
+            "mode": str(graph.get("mode") or "group"),
+            "aspect_ratio": str(graph.get("aspect_ratio") or "自动"),
+            "resolution": str(graph.get("resolution") or "1K"),
+            "count": max(1, min(4, int(graph.get("count") or 1))) if str(graph.get("count") or "").isdigit() else 1,
+        }
+
+    @classmethod
+    def _ensure_canvas(cls, session: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize new and legacy sessions into a drawable graph projection."""
+        if not isinstance(session, dict):
+            return {}
+        canvas = session.get("canvas") if isinstance(session.get("canvas"), dict) else {}
+        session_id = str(session.get("id") or "studio")
+        root_id = str(canvas.get("root_node_id") or f"node-root-{session_id}")
+        raw_nodes = canvas.get("nodes") if isinstance(canvas.get("nodes"), list) else []
+        nodes = [dict(node) for node in raw_nodes if isinstance(node, dict) and str(node.get("id") or "").strip()]
+        by_id = {str(node.get("id")): node for node in nodes}
+        if root_id not in by_id:
+            root = {
+                "id": root_id,
+                "parent_id": None,
+                "record_id": None,
+                "title": str(session.get("title") or "起始节点"),
+                "template_id": str(session.get("template") or ""),
+                "params": cls._canvas_params(session),
+                "position": {"x": 0, "y": 0},
+                "status": "draft",
+                "result": {"media_path": "", "thumbnail_path": ""},
+                "created_at": str(session.get("created_at") or _now()),
+            }
+            nodes.insert(0, root)
+            by_id[root_id] = root
+        else:
+            root = by_id[root_id]
+            root.setdefault("parent_id", None)
+            root.setdefault("params", cls._canvas_params(session))
+            root.setdefault("position", {"x": 0, "y": 0})
+            root.setdefault("status", "draft")
+            root.setdefault("result", {"media_path": "", "thumbnail_path": ""})
+
+        # The legacy creation canvas has no relationship graph. Keep only its
+        # root placeholder even when old result rows are present.
+        is_creative = str(session.get("canvas_mode") or "").strip().lower() == "creative"
+        if is_creative:
+            nodes = [by_id[root_id]]
+            by_id = {root_id: nodes[0]}
+
+        # Legacy sessions have result rows but no graph. Reconstruct a simple
+        # horizontal lineage in creation order; new branches can be appended
+        # later without changing the persisted generation records.
+        result_rows = [item for item in (session.get("results") or []) if isinstance(item, dict)]
+        known_paths = {
+            str((node.get("result") or {}).get("media_path") or "")
+            for node in nodes
+            if isinstance(node.get("result"), dict)
+        }
+        previous_id = root_id
+        for index, result in enumerate(reversed(result_rows) if not is_creative else []):
+            path = str(result.get("image_path") or "").strip()
+            if not path or path in known_paths:
+                continue
+            task_id = str(result.get("task_id") or f"result-{index}")
+            node_id = f"node-result-{task_id}-{index}"
+            while node_id in by_id:
+                node_id = f"{node_id}-x"
+            node = {
+                "id": node_id,
+                "parent_id": previous_id,
+                "record_id": result.get("record_id"),
+                "title": "生成结果",
+                "template_id": str(session.get("template") or ""),
+                "params": cls._canvas_params(session),
+                "position": {"x": (index + 1) * CANVAS_NODE_GAP_X, "y": 0},
+                "status": "succeeded",
+                "result": {"media_path": path, "thumbnail_path": path},
+                "created_at": str(result.get("created_at") or _now()),
+            }
+            nodes.append(node)
+            by_id[node_id] = node
+            known_paths.add(path)
+            previous_id = node_id
+
+        edges = []
+        for node in nodes:
+            parent_id = str(node.get("parent_id") or "").strip()
+            node_id = str(node.get("id") or "").strip()
+            if parent_id and parent_id in by_id and node_id != parent_id:
+                edges.append({"id": f"edge-{parent_id}-{node_id}", "source": parent_id, "target": node_id})
+        viewport = canvas.get("viewport") if isinstance(canvas.get("viewport"), dict) else {}
+        try:
+            zoom = max(0.35, min(1.8, float(viewport.get("zoom", 1))))
+        except (TypeError, ValueError):
+            zoom = 1
+        normalized = {
+            "version": 1,
+            "root_node_id": root_id,
+            "viewport": {
+                "x": float(viewport.get("x", 120) or 0),
+                "y": float(viewport.get("y", 80) or 0),
+                "zoom": zoom,
+            },
+            "nodes": nodes[-CANVAS_MAX_NODES:],
+            "edges": edges[-CANVAS_MAX_NODES:],
+        }
+        session["canvas"] = normalized
+        return normalized
 
     def storage_status(self) -> Dict[str, Any]:
         with self._lock:
@@ -880,7 +1027,175 @@ class StudioStore:
             session = self._sessions.get(sid)
             if not session:
                 raise ValueError("画布会话不存在")
+            self._ensure_canvas(session)
             return public_session(session)
+
+    def canvas_graph(self, session_id: str) -> Dict[str, Any]:
+        with self._lock:
+            session = self._require(session_id)
+            return public_session(self._ensure_canvas(session))
+
+    def update_canvas(self, session_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            session = self._require(session_id)
+            canvas = self._ensure_canvas(session)
+            if not isinstance(patch, dict):
+                raise ValueError("canvas 必须是对象")
+            viewport = patch.get("viewport")
+            if isinstance(viewport, dict):
+                try:
+                    canvas["viewport"] = {
+                        "x": max(-100000, min(100000, float(viewport.get("x", 0)))),
+                        "y": max(-100000, min(100000, float(viewport.get("y", 0)))),
+                        "zoom": max(0.35, min(1.8, float(viewport.get("zoom", 1)))),
+                    }
+                except (TypeError, ValueError):
+                    raise ValueError("viewport 参数无效") from None
+            positions = patch.get("positions")
+            if isinstance(positions, dict):
+                by_id = {str(node.get("id")): node for node in canvas["nodes"]}
+                for node_id, position in positions.items():
+                    node = by_id.get(str(node_id))
+                    if not node or not isinstance(position, dict):
+                        continue
+                    try:
+                        node["position"] = {
+                            "x": max(-100000, min(100000, float(position.get("x", 0)))),
+                            "y": max(-100000, min(100000, float(position.get("y", 0)))),
+                        }
+                    except (TypeError, ValueError):
+                        continue
+            node_updates = patch.get("nodes")
+            if isinstance(node_updates, list):
+                by_id = {str(node.get("id")): node for node in canvas["nodes"]}
+                for raw in node_updates:
+                    if not isinstance(raw, dict):
+                        continue
+                    node = by_id.get(str(raw.get("id") or "").strip())
+                    if not node:
+                        continue
+                    if "title" in raw:
+                        node["title"] = str(raw.get("title") or "节点").strip()[:80] or "节点"
+                    if "template_id" in raw:
+                        node["template_id"] = normalize_template_id(str(raw.get("template_id") or ""))
+                    params = raw.get("params")
+                    if isinstance(params, dict):
+                        current = dict(node.get("params") or {})
+                        for key in ("prompt", "mode", "aspect_ratio", "resolution", "count", "use_persona_identity"):
+                            if key in params:
+                                current[key] = params[key]
+                        current["prompt"] = str(current.get("prompt") or "").strip()
+                        current["mode"] = str(current.get("mode") or "group").strip() or "group"
+                        current["aspect_ratio"] = str(current.get("aspect_ratio") or "自动").strip() or "自动"
+                        current["resolution"] = str(current.get("resolution") or "1K").strip() or "1K"
+                        try:
+                            current["count"] = max(1, min(4, int(current.get("count") or 1)))
+                        except (TypeError, ValueError):
+                            current["count"] = 1
+                        node["params"] = current
+            session["canvas"] = canvas
+            session["updated_at"] = _now()
+            self._persist()
+            return public_session(canvas)
+
+    def add_canvas_node(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            session = self._require(session_id)
+            canvas = self._ensure_canvas(session)
+            if len(canvas["nodes"]) >= CANVAS_MAX_NODES:
+                raise ValueError(f"关系网最多 {CANVAS_MAX_NODES} 个节点")
+            parent_id = str(payload.get("parent_id") or canvas.get("root_node_id") or "").strip()
+            by_id = {str(node.get("id")): node for node in canvas["nodes"]}
+            if parent_id not in by_id:
+                raise ValueError("父节点不存在")
+            node_id = _new_id("node")
+            parent = by_id[parent_id]
+            position = payload.get("position") if isinstance(payload.get("position"), dict) else {}
+            node = {
+                "id": node_id,
+                "parent_id": parent_id,
+                "record_id": None,
+                "title": str(payload.get("title") or "新节点").strip()[:80] or "新节点",
+                "template_id": str(payload.get("template_id") or session.get("template") or ""),
+                "params": dict(payload.get("params") or self._canvas_params(session)) if isinstance(payload.get("params") or {}, dict) else self._canvas_params(session),
+                "position": {
+                    "x": float(position.get("x", float((parent.get("position") or {}).get("x", 0)) + CANVAS_NODE_GAP_X)),
+                    "y": float(position.get("y", float((parent.get("position") or {}).get("y", 0)) + (CANVAS_NODE_GAP_Y if len(canvas["nodes"]) % 2 else -CANVAS_NODE_GAP_Y))),
+                },
+                "status": "draft",
+                "result": {"media_path": "", "thumbnail_path": ""},
+                "created_at": _now(),
+            }
+            canvas["nodes"].append(node)
+            canvas["edges"].append({"id": f"edge-{parent_id}-{node_id}", "source": parent_id, "target": node_id})
+            session["canvas"] = canvas
+            session["updated_at"] = _now()
+            self._persist()
+            return public_session(node)
+
+    def delete_canvas_node(self, session_id: str, node_id: str) -> Dict[str, Any]:
+        with self._lock:
+            session = self._require(session_id)
+            canvas = self._ensure_canvas(session)
+            node_id = str(node_id or "").strip()
+            if node_id == str(canvas.get("root_node_id") or ""):
+                raise ValueError("起始节点不能删除")
+            before = len(canvas["nodes"])
+            canvas["nodes"] = [node for node in canvas["nodes"] if str(node.get("id")) != node_id]
+            if len(canvas["nodes"]) == before:
+                raise ValueError("节点不存在")
+            canvas["edges"] = [edge for edge in canvas["edges"] if edge.get("source") != node_id and edge.get("target") != node_id]
+            session["canvas"] = canvas
+            session["updated_at"] = _now()
+            self._persist()
+            return {"deleted": True, "node_id": node_id, "canvas": public_session(canvas)}
+
+    def connect_canvas_node(self, session_id: str, node_id: str, parent_id: str) -> Dict[str, Any]:
+        """Reconnect a dangling node to an earlier node in the canvas."""
+        with self._lock:
+            session = self._require(session_id)
+            canvas = self._ensure_canvas(session)
+            node_id = str(node_id or "").strip()
+            parent_id = str(parent_id or "").strip()
+            root_id = str(canvas.get("root_node_id") or "").strip()
+            if node_id == root_id:
+                raise ValueError("起始节点不能重连")
+            by_id = {str(node.get("id")): node for node in canvas.get("nodes") or []}
+            target = by_id.get(node_id)
+            parent = by_id.get(parent_id)
+            if not target or not parent:
+                raise ValueError("节点不存在")
+            if node_id == parent_id:
+                raise ValueError("不能连接到节点自身")
+
+            # Reject descendants as parents so the graph remains acyclic.
+            children: Dict[str, List[str]] = {}
+            for item in canvas.get("nodes") or []:
+                child_parent = str(item.get("parent_id") or "").strip()
+                child_id = str(item.get("id") or "").strip()
+                if child_parent and child_id:
+                    children.setdefault(child_parent, []).append(child_id)
+            pending = list(children.get(node_id) or [])
+            descendants = set()
+            while pending:
+                current = pending.pop()
+                if current in descendants:
+                    continue
+                descendants.add(current)
+                pending.extend(children.get(current) or [])
+            if parent_id in descendants:
+                raise ValueError("不能连接到当前节点的后续节点")
+
+            target["parent_id"] = parent_id
+            canvas["edges"] = [
+                edge for edge in canvas.get("edges") or []
+                if str(edge.get("target") or "") != node_id
+            ]
+            canvas["edges"].append({"id": f"edge-{parent_id}-{node_id}", "source": parent_id, "target": node_id})
+            session["canvas"] = canvas
+            session["updated_at"] = _now()
+            self._persist()
+            return {"connected": True, "node_id": node_id, "parent_id": parent_id, "canvas": public_session(canvas)}
 
     def create(
         self,
@@ -891,6 +1206,7 @@ class StudioStore:
     ) -> Dict[str, Any]:
         with self._lock:
             session = empty_session(title, template=template, use_group_template=use_group_template)
+            session["canvas_mode"] = self.canvas_mode
             self._sessions[session["id"]] = session
             self._persist()
             return public_session(session)
@@ -1073,6 +1389,19 @@ class StudioStore:
                 "error": "",
                 "result_paths": [],
             }
+            canvas = self._ensure_canvas(session)
+            target_id = str((summary or {}).get("target_node_id") or "").strip()
+            by_id = {str(node.get("id")): node for node in canvas.get("nodes") or []}
+            target = by_id.get(target_id)
+            if target:
+                target["status"] = "running"
+                target["error"] = ""
+                if str((summary or {}).get("template") or "").strip():
+                    target["template_id"] = normalize_template_id(str(summary.get("template")))
+                if isinstance((summary or {}).get("graph_params"), dict):
+                    target["params"] = dict(summary["graph_params"])
+                target["task_id"] = task_id
+            session["canvas"] = canvas
             session["updated_at"] = _now()
             self._persist()
             return public_session(session)
@@ -1108,8 +1437,12 @@ class StudioStore:
             # terminal states as well; ``success=False`` only describes the
             # overall operation, not whether an artifact exists.
             if paths and (success or status in {"partial_success", "delivery_failed"}):
+                # Normalize before adding result rows so legacy reconstruction
+                # cannot create a duplicate node for the current task.
+                canvas = self._ensure_canvas(session)
                 results = list(session.get("results") or [])
                 asset_ids = [str(item).strip() for item in (source_asset_ids or []) if str(item).strip()][:24]
+                created_results: List[Dict[str, Any]] = []
                 for path in paths:
                     result = {
                         "id": _new_id("res"),
@@ -1125,7 +1458,81 @@ class StudioStore:
                         0,
                         result,
                     )
+                    created_results.append(result)
                 session["results"] = results[:MAX_RESULTS_KEEP]
+                by_id = {str(node.get("id")): node for node in canvas["nodes"]}
+                summary = last.get("summary") if isinstance(last.get("summary"), dict) else {}
+                if str(summary.get("canvas_mode") or "").strip().lower() == "creative":
+                    # The legacy creation canvas keeps a flat result list. Its
+                    # sessions deliberately do not receive relationship edges
+                    # or generated nodes from the infinite canvas namespace.
+                    session["canvas"] = canvas
+                    session["updated_at"] = _now()
+                    self._persist()
+                    return public_session(session)
+                parent_id = str(summary.get("parent_node_id") or canvas.get("root_node_id") or "").strip()
+                if parent_id not in by_id:
+                    parent_id = str(canvas.get("root_node_id") or "")
+                params = summary.get("graph_params") if isinstance(summary.get("graph_params"), dict) else self._canvas_params(session)
+                sibling_count = sum(1 for node in canvas["nodes"] if str(node.get("parent_id") or "") == parent_id)
+                target_id = str(summary.get("target_node_id") or "").strip()
+                target = by_id.get(target_id)
+                if target and str(target.get("status") or "") in {"draft", "queued", "running"} and created_results:
+                    first = created_results.pop(0)
+                    target.update(
+                        {
+                            "record_id": first.get("id"),
+                            "title": "生成结果",
+                            "template_id": str(summary.get("template") or session.get("template") or ""),
+                            "params": dict(params),
+                            "status": "succeeded",
+                            "error": "",
+                            "task_id": task_id,
+                            "result": {"media_path": first.get("image_path") or "", "thumbnail_path": first.get("image_path") or ""},
+                        }
+                    )
+                    parent_id = target_id
+                for index, result in enumerate(created_results):
+                    node_id = f"node-task-{task_id}-{index}"
+                    if node_id in by_id:
+                        continue
+                    parent = by_id.get(parent_id) or {}
+                    parent_pos = parent.get("position") if isinstance(parent.get("position"), dict) else {}
+                    node = {
+                        "id": node_id,
+                        "parent_id": parent_id or None,
+                        "record_id": result.get("id"),
+                        "title": "生成结果" if len(created_results) == 1 else f"生成结果 {index + 1}",
+                        "template_id": str(summary.get("template") or session.get("template") or ""),
+                        "params": dict(params),
+                        "position": {
+                            "x": float(parent_pos.get("x", 0) or 0) + CANVAS_NODE_GAP_X,
+                            "y": float(parent_pos.get("y", 0) or 0) + (sibling_count + index - 0.5) * CANVAS_NODE_GAP_Y,
+                        },
+                        "status": "succeeded",
+                        "result": {"media_path": result.get("image_path") or "", "thumbnail_path": result.get("image_path") or ""},
+                        "created_at": result.get("created_at") or _now(),
+                    }
+                    canvas["nodes"].append(node)
+                    by_id[node_id] = node
+                    if parent_id:
+                        canvas["edges"].append({"id": f"edge-{parent_id}-{node_id}", "source": parent_id, "target": node_id})
+                canvas["nodes"] = canvas["nodes"][-CANVAS_MAX_NODES:]
+                canvas["edges"] = canvas["edges"][-CANVAS_MAX_NODES:]
+                session["canvas"] = canvas
+            else:
+                canvas = self._ensure_canvas(session)
+            summary = last.get("summary") if isinstance(last.get("summary"), dict) else {}
+            target_id = str(summary.get("target_node_id") or "").strip()
+            target = next(
+                (node for node in canvas.get("nodes") or [] if str(node.get("id") or "") == target_id),
+                None,
+            )
+            if target and str(target.get("status") or "") in {"draft", "queued", "running"}:
+                target["status"] = "cancelled" if status == "cancelled" else "failed"
+                target["error"] = str(error or ("任务已取消" if status == "cancelled" else "生成失败"))
+                target["task_id"] = task_id
+            session["canvas"] = canvas
             session["updated_at"] = _now()
             self._persist()
             return public_session(session)
