@@ -98,6 +98,12 @@ def build_selfie_builtin_prompt(
         lines = [opening]
         if is_legs:
             lines.append("Use the main reference only to keep the everyday outfit and natural proportions consistent; the complete person is outside the crop.")
+        elif is_cos:
+            lines.extend([
+                "Use the main reference only for the same person's identity, facial structure, gender, skin tone, and body proportions; do not copy its original action, gestures, head angle, or fixed expression.",
+                "Keep the head naturally upright and connected to the torso; unless the COS request explicitly asks otherwise, do not inherit a tilted, raised, lowered, closed-eye, or strongly expressive face from the reference.",
+                "Recreate the pose, head direction, expression, eye focus, and action from the COS outfit and scene request.",
+            ])
         else:
             lines.extend([
                 "Keep the main subject's identity, gender, face, hair, body proportions, and overall appearance stable; change expression naturally with the scene.",
@@ -226,6 +232,8 @@ def build_selfie_builtin_prompt(
     identity_line = (
         "参考图只用于保持服装比例与自然体态，完整人物位于画面之外。"
         if is_legs
+        else "参考图只锁定主角身份、脸型五官、性别、肤色和身体比例；COS 的动作、头部角度与表情按本次要求重新生成。"
+        if is_cos
         else "固定主角身份：脸型五官、发型发色、性别、体态与整体长相保持稳定；表情按本次场景自然变化。"
     )
     eye_line = "" if is_legs else "正对镜头时自然看向镜头，眼神有焦点。"
@@ -260,6 +268,8 @@ def build_selfie_builtin_prompt(
         (
             "参考图一只用于服装比例和构图，额外参考图只用于服装、姿势、光线或场景，不得扩大服装取景。"
             if is_legs
+            else "参考图一只锁定主角身份和身体比例；COS 的动作、手势、头部角度和表情按用户要求重新生成，额外参考图只用于服装、姿势、构图、光线或场景。"
+            if is_cos
             else "参考图一只作为主角身份锚点，额外参考图只用于服装、姿势、构图、光线或场景。"
         ) if has_reference_image else "按角色设定保持主角身份稳定，未说明性别时默认成年女性。",
         "" if is_legs else ("合影对象必须落实为独立完整人物，站位自然，边界清晰。" if is_group else ""),

@@ -7119,10 +7119,22 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertNotIn("Use the provided", ref_zh)
         self.assertNotIn("一只左手", ref_zh)
         self.assertNotIn("来源不清", ref_zh)
+        ordinary_outfit_ref = plugin_main.build_prompt_with_reference_instruction("换装为蓝色裙子", [ref])
+        self.assertIn("保持相关人物身份、服装、姿势、场景与构图一致", ordinary_outfit_ref)
+        self.assertNotIn("COS 换装时", ordinary_outfit_ref)
         ref_en = plugin_main.build_prompt_with_reference_instruction("change the outfit to blue", [ref], language="en")
         self.assertIn("Use the provided", ref_en)
         self.assertIn("User request:", ref_en)
         self.assertNotIn("one left hand", ref_en)
+        cos_ref_zh = plugin_main.build_prompt_with_reference_instruction(
+            "【cos:test】 COS 换装，按套装要求正面站立", [ref]
+        )
+        self.assertIn("不要复制参考图原有动作、手势、头部角度或固定表情", cos_ref_zh)
+        self.assertIn("姿势、头部朝向和表情按 COS 要求重新生成", cos_ref_zh)
+        self.assertNotIn("保持相关人物身份、服装、姿势、场景与构图一致", cos_ref_zh)
+        web_cos = plugin_main.build_cos_third_person_prompt("COS 换装：正面站立，展示指定服装")
+        self.assertIn("不复制参考图原有的动作、手势、头部角度或固定表情", web_cos)
+        self.assertIn("头部自然正直", web_cos)
         enhanced = plugin_main.build_prompt_with_reference_instruction("女孩站立", [], enhance=True)
         self.assertIn("构图与画面质量", enhanced)
         self.assertIn("左右手/脚各一", enhanced)
@@ -7146,6 +7158,20 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("勒进大腿肉", prompt)
             self.assertNotIn("微胖软肉", prompt)
             self.assertNotIn("不要大象腿猪腿", prompt)
+
+            cos_prompt = manager.build_selfie_prompt(
+                "【自拍 / 看看COS模式】 COS 换装，原图人物歪头、仰头并做夸张表情，按套装正面站立 【cos:test】",
+                "小助",
+                "温柔",
+                True,
+                0,
+            )
+            self.assertIn("不复制参考图原有的动作、手势、头部角度或固定表情", cos_prompt)
+            self.assertIn("头部自然正直", cos_prompt)
+            self.assertIn("不要歪头、仰头、低头、闭眼", cos_prompt)
+            self.assertIn("动作、表情、眼神和视线按本次 COS 套装", cos_prompt)
+            self.assertIn("身体比例来自参考图一", cos_prompt)
+            self.assertNotIn("体态来自参考图一", cos_prompt)
             self.assertNotIn("【合影 / 同框模式】", prompt)
             self.assertIn("画面只有主角一人", prompt)
 
@@ -8155,6 +8181,23 @@ class LegFocusTests(unittest.TestCase):
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
         self.assertGreaterEqual(len(plugin_main.COS_LOOK_SETS), 200)
+        self.assertTrue(
+            all(
+                set(item) == {"id", "title", "cos_type", "prompt"}
+                and str(item["cos_type"]).strip()
+                for item in plugin_main.COS_LOOK_SETS
+            )
+        )
+        expected_cos_types = {
+            "xiaowu_pink_rabbit": "斗罗大陆",
+            "rem_blue_lolita": "从零开始的异世界生活",
+            "hanfu_peach": "古风",
+            "white_hair_black_bow_apron": "围裙",
+            "xiao_qiao_white_bear": "王者荣耀",
+        }
+        for look_id, cos_type in expected_cos_types.items():
+            look = next(item for item in plugin_main.COS_LOOK_SETS if item["id"] == look_id)
+            self.assertEqual(look["cos_type"], cos_type)
         from astrbot_plugin_selfie_image.cos.cos_looks import _cos_item_category_rank
 
         category_ranks = [
@@ -9114,6 +9157,9 @@ class LegFocusTests(unittest.TestCase):
             "qingyi_blue_white_uniform", "jane_doe_crimson_infiltration",
             "hoshimi_miyabi_special_ops", "burnice_white_flame_biker",
             "tsukishiro_yanagi_neps_uniform", "evelyn_guard_dress",
+            "zzz_anby_demara", "zzz_soldier_11", "zzz_koleda_belobog",
+            "zzz_lucy_red_royal", "zzz_piper_wheel", "zzz_soukaku_oni",
+            "zzz_caesar_king", "zzz_vivian_fallen", "zzz_astra_yao_stage",
         }
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("绝区零")},
@@ -9134,6 +9180,11 @@ class LegFocusTests(unittest.TestCase):
             "carlotta_frost_portrait", "encore_black_white_sheep",
             "taoqi_border_guard", "danjin_crimson_blade",
             "baizhi_research_white_blue", "sanhua_ice_guard",
+            "wuthering_jianxin_clear_mind", "wuthering_chixia_blazing",
+            "wuthering_rover_female", "wuthering_youhu_antique",
+            "wuthering_cantarella_deep_blue", "wuthering_zhezhi_ink",
+            "wuthering_lumi_polar", "wuthering_roccia_stage",
+            "wuthering_verina_emerald",
         }
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("鸣潮")},
@@ -10266,16 +10317,26 @@ class StudioStoreTests(unittest.TestCase):
         )
         self.assertTrue(fixed["fixed_reason"])
 
-        # The non-永劫 review is intentionally conservative: only the two
-        # outfit-only hanfu entries use the shared random pool; every other
-        # non-永劫 entry retains an explicit fixed-composition reason.
+        # The non-永劫 review is intentionally conservative: outfit-only
+        # hanfu entries and the four new series use the shared random pool;
+        # every other non-永劫 entry retains a fixed-composition reason.
         from astrbot_plugin_selfie_image.cos.cos_looks import COS_LOOK_SETS
         reviewed_generic = {
             item["id"] for item in COS_LOOK_SETS
             if cos_look_compatibility(item["id"])["variation_enabled"]
             and "《永劫无间》" not in item["prompt"]
         }
-        self.assertEqual(reviewed_generic, {"hanfu_peach", "mint_sheer_hanfu"})
+        new_series_ids = {
+            item["id"]
+            for item in COS_LOOK_SETS
+            if item["id"].startswith(
+                ("azur_lane_", "blue_archive_", "princess_connect_", "mushoku_tensei_")
+            )
+        }
+        self.assertEqual(
+            reviewed_generic,
+            {"hanfu_peach", "mint_sheer_hanfu"} | new_series_ids,
+        )
         for item in COS_LOOK_SETS:
             profile = cos_look_compatibility(item["id"])
             if item["id"] not in reviewed_generic and "《永劫无间》" not in item["prompt"]:
@@ -10298,6 +10359,52 @@ class StudioStoreTests(unittest.TestCase):
         }
         for item in list_cos_look_sets():
             self.assertTrue(required.issubset(item["compatibility"].keys()), item["id"])
+
+    def test_azur_lane_and_blue_archive_cos_are_casual_and_weapon_free(self) -> None:
+        """New naval/school cosplay prompts must stay suitable for daily photos."""
+        from astrbot_plugin_selfie_image.cos.cos_looks import COS_LOOK_SETS
+
+        azur_lane = [
+            item for item in COS_LOOK_SETS if item["id"].startswith("azur_lane_")
+        ]
+        blue_archive = [
+            item for item in COS_LOOK_SETS if item["id"].startswith("blue_archive_")
+        ]
+        self.assertGreaterEqual(len(azur_lane), 10)
+        self.assertGreaterEqual(len(blue_archive), 10)
+
+        # Check the authored portion before its negative clause.  Negative
+        # guidance may name the thing it excludes, but must not be mistaken
+        # for a positive prop or action.
+        for item in azur_lane + blue_archive:
+            authored = item["prompt"].split("禁止", 1)[0]
+            authored = re.sub(r"(?:不要|不出现)[^。]*", "", authored)
+            for forbidden in (
+                "手持冲锋枪",
+                "手持狙击步枪",
+                "手持重型机枪",
+                "手持小型黑色手枪",
+                "枪套",
+                "架枪",
+                "握枪",
+                "举枪",
+                "准备攻击",
+                "战斗姿势",
+                "手持大型圆形白蓝机械盾牌",
+                "佩戴两把短刀",
+                "炮塔",
+                "舰载机",
+                "鱼雷管",
+                "机械甲板",
+            ):
+                self.assertNotIn(forbidden, authored, item["id"])
+
+        for item in azur_lane:
+            self.assertIn("不手持枪械、舰炮、炮管或其他战斗武器", item["prompt"])
+            self.assertIn("动作采用整理帽檐、肩章、领带、腰带或裙摆等日常摆拍", item["prompt"])
+        for item in blue_archive:
+            self.assertIn("不携带枪械、盾牌、刀剑、冲锋枪、步枪、机枪或其他战斗装备", item["prompt"])
+            self.assertIn("动作采用日常站立、整理衣服、扶发饰、轻扶腰带、抱书或自然垂手", item["prompt"])
 
     def test_selfie_command_expands_preset_before_action_wrap(self) -> None:
         """/自拍 捧脸 must expand preset on raw user text, not after long action wrap."""
