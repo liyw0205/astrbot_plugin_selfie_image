@@ -231,6 +231,8 @@
       color: var(--primary-strong);
       box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset;
     }
+    .preset-manager-views { margin-top: 0; }
+    .preset-manager-view[hidden] { display: none !important; }
     .channel-pane { display: none; }
     .channel-pane.active { display: block; }
     .model-panel { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; background: #fff; min-height: 120px; }
@@ -1316,23 +1318,27 @@
         <span id="presetManagerStatus" class="status">正在读取预设…</span>
         <button class="secondary" id="presetReloadBtn" type="button">刷新列表</button>
       </div>
-      <div id="presetManagerList" class="preset-manager-list"></div>
-      <div id="presetCosManager" hidden>
-        <div class="card soft" style="margin-top:14px">
-          <div class="between">
-            <div>
-              <strong>COS 池</strong>
-              <div class="muted" style="margin-top:4px">管理内置和自定义服饰提示词，收藏项会优先显示。</div>
-            </div>
-            <div class="actions" style="margin-top:0">
-              <button class="secondary mini" id="presetCosMaintainBtn" type="button">维护 COS 池</button>
-              <button class="secondary mini" id="presetCosImportBtn" type="button">导入</button>
-              <button class="secondary mini" id="presetCosExportBtn" type="button">导出</button>
-            </div>
-          </div>
-          <div id="presetCosManagerStatus" class="status" style="margin-top:10px">正在读取 COS 池…</div>
+      <div id="presetManagerViews" class="preset-manager-views">
+        <div id="presetPromptManager" class="preset-manager-view">
+          <div id="presetManagerList" class="preset-manager-list"></div>
         </div>
-        <div id="presetCosManagerList" class="preset-manager-list"></div>
+        <div id="presetCosManager" class="preset-manager-view" hidden>
+          <div class="card soft" style="margin-top:14px">
+            <div class="between">
+              <div>
+                <strong>COS 池</strong>
+                <div class="muted" style="margin-top:4px">管理内置和自定义服饰提示词，收藏项会优先显示。</div>
+              </div>
+              <div class="actions" style="margin-top:0">
+                <button class="secondary mini" id="presetCosMaintainBtn" type="button">维护 COS 池</button>
+                <button class="secondary mini" id="presetCosImportBtn" type="button">导入</button>
+                <button class="secondary mini" id="presetCosExportBtn" type="button">导出</button>
+              </div>
+            </div>
+            <div id="presetCosManagerStatus" class="status" style="margin-top:10px">正在读取 COS 池…</div>
+          </div>
+          <div id="presetCosManagerList" class="preset-manager-list"></div>
+        </div>
       </div>
       <div class="floating-actions" aria-label="预设操作">
         <button class="ok" id="presetAddBtn" type="button" data-tooltip="新增预设" aria-label="新增预设" title="新增预设"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
@@ -7142,8 +7148,16 @@ Source prompt:
       $('presetKindVideo').classList.toggle('active', PRESET_KIND === 'video');
       $('presetKindCos').classList.toggle('active', PRESET_KIND === 'cos');
       const isCos = PRESET_KIND === 'cos';
-      if ($('presetManagerList')) $('presetManagerList').hidden = isCos;
-      if ($('presetCosManager')) $('presetCosManager').hidden = !isCos;
+      const promptManager = $('presetPromptManager');
+      const cosManager = $('presetCosManager');
+      if (promptManager) {
+        promptManager.hidden = isCos;
+        promptManager.style.display = isCos ? 'none' : '';
+      }
+      if (cosManager) {
+        cosManager.hidden = !isCos;
+        cosManager.style.display = isCos ? '' : 'none';
+      }
       if ($('presetAddBtn')) $('presetAddBtn').style.display = isCos ? 'none' : '';
       if ($('presetImportBtn')) $('presetImportBtn').textContent = isCos ? '导入池' : '导入文本';
       if ($('presetExportBtn')) $('presetExportBtn').textContent = isCos ? '导出池' : '导出并复制';

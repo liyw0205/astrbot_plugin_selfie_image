@@ -46,3 +46,16 @@ def test_priority_picker_filters_already_selected_models():
     assert "!selected.some(item => priorityEntryMatchesLabel(item, label))" in page
     assert "暂无可加入模型" in page
     assert "refreshPriorityPicker(kind);" in page
+
+
+def test_preset_manager_lists_are_switchable_sibling_views():
+    page = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'id="presetManagerViews"' in page
+    assert 'id="presetPromptManager"' in page
+    assert 'id="presetCosManager" class="preset-manager-view" hidden' in page
+    assert ".preset-manager-view[hidden] { display: none !important; }" in page
+    assert "promptManager.style.display = isCos ? 'none' : '';" in page
+    assert "cosManager.style.display = isCos ? '' : 'none';" in page
+    assert 'id="presetKindCos"' in page
