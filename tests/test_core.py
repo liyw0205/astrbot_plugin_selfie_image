@@ -8741,6 +8741,13 @@ class LegFocusTests(unittest.TestCase):
             "clorinde_shadow_hunter": ("《原神》克洛琳德逐影猎人 COS", "红色窄领带"),
             "mualani_surfing_wave": ("《原神》玛拉妮巡浪之歌风格 COS", "海岛风房间"),
             "xilonen_blazing_gold": ("《原神》希诺宁焮金摇曳风格 COS", "机能外套"),
+            "diona_cats_tail_bartender": ("《原神》迪奥娜猫尾酒馆制服 COS", "蓝灰色短款背心"),
+            "sayu_mujina_hood": ("《原神》早柚风车菊忍者斗篷 COS", "灰褐色大号狸猫耳兜帽"),
+            "yaoyao_yuegui_green": ("《原神》瑶瑶月桂主题青绿服装 COS", "青绿色短马甲"),
+            "dori_sangemah_bazaar": ("《原神》多莉桑歌玛哈巴依商会风格 COS", "紫色与金色相间的圆顶帽"),
+            "sigewinne_meropide_nurse": ("《原神》希格雯梅洛彼得堡护理服 COS", "浅蓝色短披肩"),
+            "kachina_rites_of_flame": ("《原神》卡齐娜纳塔风格矿岩祭礼装 COS", "橙棕色短款披肩"),
+            "iansan_natlan_vitality": ("《原神》伊安珊纳塔风格活力 COS", "橙红色几何发饰"),
         }
         for look_id, (identity, detail) in genshin_additions.items():
             self.assertIn(identity, prompts[look_id])
@@ -8759,6 +8766,12 @@ class LegFocusTests(unittest.TestCase):
             "burnice_white_flame_biker": ("《绝区零》柏妮思·怀特炽焰机车风 COS", "橙色与黑色拼接的短款机车夹克"),
             "tsukishiro_yanagi_neps_uniform": ("《绝区零》月城柳对空六课制服 COS", "细框眼镜"),
             "evelyn_guard_dress": ("《绝区零》伊芙琳护卫礼服风格 COS", "酒红色与黑色拼接的修身护卫礼服"),
+            "zzz_nekomata_street": ("《绝区零》猫又红黑街头装COS", "黑红色机能夹克"),
+            "zzz_trigger_blue_gray_ops": ("《绝区零》扳机蓝灰特勤装COS", "蓝灰色高领衬衣"),
+            "zzz_pulchra_biker": ("《绝区零》普莱什黑金机车风COS", "黑色短款皮革夹克"),
+            "zzz_ju_fufu_red_gold": ("《绝区零》橘福福红金和风装COS", "金色宽腰带"),
+            "zzz_alice_thymefield": ("《绝区零》爱丽丝·泰姆菲尔德学院装COS", "蓝白格纹百褶短裙"),
+            "zzz_orphie_stage": ("《绝区零》奥菲丝蓝白舞台装COS", "蓝色束腰外套"),
         }
         for look_id, (identity, detail) in zenless_additions.items():
             self.assertIn(identity, prompts[look_id])
@@ -9035,6 +9048,40 @@ class LegFocusTests(unittest.TestCase):
             {item["id"] for item in plugin_main.match_cos_look_sets("可莉")},
             {"klee_red_clover"},
         )
+        for query, expected_id in (
+            ("迪奥娜", "diona_cats_tail_bartender"),
+            ("早柚", "sayu_mujina_hood"),
+            ("瑶瑶", "yaoyao_yuegui_green"),
+            ("多莉", "dori_sangemah_bazaar"),
+            ("希格雯", "sigewinne_meropide_nurse"),
+            ("卡齐娜", "kachina_rites_of_flame"),
+            ("伊安珊", "iansan_natlan_vitality"),
+            ("Iansan", "iansan_natlan_vitality"),
+        ):
+            self.assertEqual(
+                [item["id"] for item in plugin_main.match_cos_look_sets(query)],
+                [expected_id],
+            )
+        for query, expected_id in (
+            ("猫又", "zzz_nekomata_street"),
+            ("扳机", "zzz_trigger_blue_gray_ops"),
+            ("普莱什", "zzz_pulchra_biker"),
+            ("橘福福", "zzz_ju_fufu_red_gold"),
+            ("爱丽丝·泰姆菲尔德", "zzz_alice_thymefield"),
+            ("奥菲丝", "zzz_orphie_stage"),
+            ("千夏", "blue_archive_chinatsu"),
+            ("芹香", "blue_archive_serika"),
+            ("伊织", "blue_archive_iori"),
+            ("白洲梓", "blue_archive_azusa"),
+            ("天童爱丽丝", "blue_archive_alice"),
+            ("真纪", "blue_archive_maki"),
+            ("风香", "blue_archive_fuuka"),
+            ("纺希", "blue_archive_toki"),
+        ):
+            self.assertEqual(
+                [item["id"] for item in plugin_main.match_cos_look_sets(query)],
+                [expected_id],
+            )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("满穗")},
             {"mansui_gray_wafu"},
@@ -9160,6 +9207,9 @@ class LegFocusTests(unittest.TestCase):
             "zzz_anby_demara", "zzz_soldier_11", "zzz_koleda_belobog",
             "zzz_lucy_red_royal", "zzz_piper_wheel", "zzz_soukaku_oni",
             "zzz_caesar_king", "zzz_vivian_fallen", "zzz_astra_yao_stage",
+            "zzz_nekomata_street", "zzz_trigger_blue_gray_ops",
+            "zzz_pulchra_biker", "zzz_ju_fufu_red_gold",
+            "zzz_alice_thymefield", "zzz_orphie_stage",
         }
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("绝区零")},
