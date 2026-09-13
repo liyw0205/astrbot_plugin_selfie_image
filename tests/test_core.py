@@ -8422,6 +8422,18 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("分叉燕尾式深色后摆", rem["prompt"])
         self.assertIn("不要拉姆粉色女仆服", rem["prompt"])
         prompts = {x["id"]: x["prompt"] for x in plugin_main.COS_LOOK_SETS}
+        from astrbot_plugin_selfie_image.cos.cos_looks import _BLUE_ARCHIVE_COSTUMES
+
+        blue_archive_ids = {
+            item["id"]
+            for item in plugin_main.COS_LOOK_SETS
+            if item.get("cos_type") == "蔚蓝档案"
+        }
+        self.assertEqual(set(_BLUE_ARCHIVE_COSTUMES), blue_archive_ids)
+        for blue_archive_id in blue_archive_ids:
+            self.assertNotIn("官方游戏立绘服装还原", prompts[blue_archive_id])
+            self.assertNotIn("按官方服装比例制作", prompts[blue_archive_id])
+            self.assertIn("人物", prompts[blue_archive_id])
         self.assertEqual(
             [item["id"] for item in plugin_main.match_cos_look_sets("宁红夜 赤皓新囍")],
             ["ninghongye_red_hao_new_joy"],

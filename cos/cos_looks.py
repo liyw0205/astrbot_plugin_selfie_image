@@ -933,6 +933,64 @@ COS_LOOK_SETS.extend([
     },
 ])
 
+# Replace generic schoolwear shorthand with concrete, camera-readable costume
+# construction while retaining each entry's reviewed scene and pose guidance.
+_BLUE_ARCHIVE_COSTUMES = {
+    "blue_archive_haruka": "便利屋68黑白女仆制服，黑色立领连衣裙、白色长袖衬衣、白色围裙和红色领结，黑色袖口、白色长袜与黑色圆头鞋，紫色长发配黑色发饰",
+    "blue_archive_toki": "C&C黑白女仆制服，黑色无袖连衣裙、白色衬衣领、白色围裙、红色领结、黑色腰封、白色长袜与黑色圆头鞋，银灰色长发配黑色发箍",
+    "blue_archive_chise": "百鬼夜行忍术研究部和风制服，白色立领内衫、蓝色短羽织、红色宽腰带和白色腰绳、蓝色褶裙或袴、白色分趾袜与深色木屐，蓝色长发配红白发饰",
+    "blue_archive_wakamo": "狐坂若藻白红和风礼装，白色长袖短羽织、红色内襟、黑红层叠裙片、红色腰带、金色扣饰、黑色长袜与红色短靴，白色长发配红白狐面和红色发饰",
+    "blue_archive_karin": "C&C黑色兔女郎制服，黑色兔女郎连体衣、白色硬领衬衣领、黑色领结、白色袖口、黑色腰封、黑色过膝袜与黑色高跟鞋，黑色长发配黑色兔耳发饰",
+    "blue_archive_mika": "茶会粉白礼服，白色高领内衫、粉色短披肩、粉白多层蓬裙、金色胸针、粉色腰带、白色过膝袜与白色圆头鞋，粉色长发配小型白色翅膀发饰",
+    "blue_archive_mari": "三一修女会制服，白色头巾发饰、白色高领长袖长裙、蓝色短披肩、蓝色腰带、胸前十字形徽章、白色长袜与浅色圆头鞋，浅棕色长发",
+    "shiroko_black_white_tracksuit": "阿拜多斯黑白运动服，黑色拉链运动外套、白色肩袖、亮青绿色滚边、黑色运动短裤、白色不透明过膝长袜与黑色运动鞋，银白短发配灰白狼耳发饰",
+    "ibuki_red_white_sportswear": "丹花伊吹红白运动服，白色短袖紧身运动T恤、鲜红色领口袖口滚边、红色高腰运动短裤、黑色小恶魔角发饰、红色项圈、黑色腿环与运动鞋，金色侧高马尾",
+    "blue_archive_hoshino": "阿拜多斯学生制服，白色宽松外套、浅蓝色滚边和袖口、蓝色内搭短上衣、深蓝色短裙或短裤、白色过膝袜与棕色短靴，粉色短发配白色小翅膀发饰",
+    "blue_archive_yuuka": "千年研讨会制服，白色衬衣、蓝色领带、蓝灰色短款西装外套、深蓝色百褶短裙、黑色不透明过膝袜与黑色低跟鞋，白色兔耳发饰、学生会身份牌和白色计算器",
+    "blue_archive_neru": "C&C黑红机能制服，黑色短夹克、红色内衬和滚边、黑色高领内搭、黑色短裙或短裤、黑色长袜与黑色短靴，粉色短发配黑色猫耳发饰和红色腰包",
+    "blue_archive_asuna": "C&C白色兔女郎制服，白色兔女郎连体衣、黑色领结、黑色腰封、白色袖口、黑色不透明过膝袜与黑色高跟鞋，金色长发配白色兔耳发饰，银色托盘为轻量摄影道具",
+    "blue_archive_hina": "风纪委员会黑紫制服，黑色长外套、紫色内衬和滚边、白色衬衣、红色领带、黑色百褶短裙、黑色不透明长袜与黑色高筒靴，深紫长发配黑色恶魔角发饰",
+    "blue_archive_aru": "便利屋68制服，黑色西装短外套、白色衬衣、红色领带、黑色短裙、黑色不透明长袜与黑色短靴，黑色长发配红色发饰和窄檐帽",
+    "blue_archive_izuna": "百鬼夜行忍术研究部忍装，黑红短款上衣、红色围巾、黑色短裙、黑色护腕、黑色短靴、狐狸耳发饰与腰侧布带，黑色长发配黑红白三色忍者配色",
+    "blue_archive_kayoko": "便利屋68黑红制服，黑色长外套、白色衬衣、红色领带、黑色百褶短裙、黑色长袜与黑色短靴，深紫长发配黑色猫耳发饰和黑色腰包",
+    "blue_archive_hifumi": "三一补习部制服，白色衬衣、蓝色短款外套、蓝色领结、蓝色百褶短裙、白色长袜与棕色短靴，棕色中长发配白色发饰和小型Peroro主题书包",
+    "blue_archive_miyu": "SRT兔子小队灰蓝制服，灰蓝色连帽外套、白色内搭、深灰色短裙或短裤、白色长袜、黑色短靴、灰色兔耳帽饰与腰部小包，浅蓝色长发",
+    "blue_archive_koharu": "三一正义委员会制服，白色衬衣、红色领带、蓝色短外套、蓝色百褶短裙、白色过膝袜与棕色短靴，粉色短发配白色发饰",
+    "blue_archive_mutsuki": "便利屋68黑红制服，黑色短外套、白色衬衣、红色领带、黑色百褶短裙、黑色长袜与黑色短靴，粉色双马尾配黑色发饰和腰部小包",
+    "blue_archive_junko": "美食研究部制服，白色衬衣、红色领巾、深色百褶短裙、白色长袜、棕色短靴和白色围裙，深蓝色长发配红色发饰",
+    "blue_archive_serina": "三一救护团护士制服，白色高领护士上衣、浅蓝色短外套、蓝色短裙、白色长袜与白色圆头鞋，粉色长发配白色护士发饰，浅蓝色医疗包为轻量摄影道具",
+    "blue_archive_tsubaki": "百鬼夜行忍术研究部睡眠忍装，深紫色宽松短外套、绿色腰封、白色内衫、深紫色短裙、黑色长袜与黑色短靴，紫色长发配绿色发饰",
+    "blue_archive_momoi": "游戏开发部制服，白色衬衣、绿色领带、绿色与白色短款外套、深色百褶短裙、白色长袜与棕色短靴，绿色双马尾配白色发饰",
+    "blue_archive_chinatsu": "格黑娜风纪委员会救护制服，白色高领护理上衣、红色领带和红色滚边、深蓝色短外套、深蓝色百褶短裙、白色长袜与棕色短靴，深蓝长发配红色发饰，胸前保留小型医疗十字符号",
+    "blue_archive_serika": "阿拜多斯学生制服，白色短上衣、黑色短外套、橙色领带和橙色滚边、黑色百褶短裙、白色长袜与棕色短靴，黑色短发配橙色蝴蝶结和猫耳发饰",
+    "blue_archive_iori": "格黑娜风纪委员会制服，黑色长外套、紫黑色内搭、白色衬衣、红色领带、黑红色短裙、黑色长袜与黑色短靴，紫黑长发配黑色角形发饰",
+    "blue_archive_azusa": "阿里乌斯分校制服，白色高领上衣、浅蓝色短披肩、蓝色缎带、深蓝色百褶短裙、白色长袜与棕色短靴，白色长发配淡蓝色发饰",
+    "blue_archive_alice": "游戏开发部白蓝制服，白色短外套、浅蓝色滚边、蓝色领结、深色百褶短裙、白色长袜与黑色短靴，蓝紫色短发配白色发箍和浅蓝色缎带",
+    "blue_archive_maki": "千年Veritas美术社制服，白色衬衣、红色领结、深灰色百褶短裙、白色长袜与棕色短靴，黑色贝雷帽、橙红色双马尾和小型画具袋",
+    "blue_archive_fuuka": "格黑娜厨房社制服，白色厨师帽、白色高领厨师上衣、浅蓝色短外套、黄色领巾、白色围裙、蓝色百褶短裙、白色长袜与棕色短靴，蓝绿色长发配浅黄色发饰",
+}
+
+
+def _apply_blue_archive_costumes() -> None:
+    for item in COS_LOOK_SETS:
+        if str(item.get("cos_type") or "") != "蔚蓝档案":
+            continue
+        costume = _BLUE_ARCHIVE_COSTUMES.get(str(item.get("id") or ""))
+        if not costume:
+            continue
+        prompt = str(item.get("prompt") or "")
+        updated = re.sub(
+            r"。(?:穿|上身是)[\s\S]*?。人物",
+            "。" + costume + "。人物",
+            prompt,
+            count=1,
+        )
+        if updated != prompt:
+            item["prompt"] = updated
+
+
+_apply_blue_archive_costumes()
+
 # The newer series entries describe the source character well, but their
 # original-world staging can pull an image model toward an anime key visual or
 # a game screenshot.  Keep the character-specific outfit text and add a
