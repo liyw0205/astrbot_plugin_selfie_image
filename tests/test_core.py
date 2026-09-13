@@ -8119,7 +8119,7 @@ class LegFocusTests(unittest.TestCase):
             cam = re.search(r"【cam:(selfie|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertEqual(len(plugin_main.COS_LOOK_SETS), 160)
+        self.assertGreaterEqual(len(plugin_main.COS_LOOK_SETS), 200)
         from astrbot_plugin_selfie_image.cos.cos_looks import _cos_item_category_rank
 
         category_ranks = [
@@ -8139,14 +8139,27 @@ class LegFocusTests(unittest.TestCase):
             ):
                 self.assertNotIn(forbidden, item["prompt"], item["id"])
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), 160)
+        self.assertEqual(len(web_pool), len(plugin_main.COS_LOOK_SETS))
+        series_expected = {
+            "碧蓝航线": 10,
+            "蔚蓝档案": 11,
+            "公主连结": 11,
+            "无职转生": 12,
+        }
+        for series, minimum in series_expected.items():
+            series_items = [
+                item for item in plugin_main.COS_LOOK_SETS
+                if item.get("cos_type") == series
+            ]
+            self.assertGreaterEqual(len(series_items), minimum)
+            self.assertTrue(all(item.get("title") for item in series_items))
+            self.assertTrue(all(series not in item["title"] for item in series_items))
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
         )
         titles = {x["title"] for x in plugin_main.COS_LOOK_SETS}
-        self.assertEqual(
-            titles,
+        self.assertTrue(
             {
                 "洛琪希·奶油睡衣",
                 "古风·齐胸汉服·桃粉",
@@ -8308,7 +8321,7 @@ class LegFocusTests(unittest.TestCase):
                 "古风·白蓝露背仙纱",
                 "C.C.（CC）·皇后装·白虎粉金礼服",
                 "辉夜·巫女红白神乐服",
-            },
+            }.issubset(titles),
         )
         for item in plugin_main.COS_LOOK_SETS:
             blob = item["title"] + item["prompt"]
@@ -9268,7 +9281,10 @@ class LegFocusTests(unittest.TestCase):
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
-            self.assertIn("看看COS 随机池（160套）：", response[0])
+            self.assertIn(
+                f"看看COS 随机池（{len(plugin_main.COS_LOOK_SETS)}套）：",
+                response[0],
+            )
             for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
                 self.assertIn(title, response[0])
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
