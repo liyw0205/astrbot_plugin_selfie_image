@@ -5184,6 +5184,9 @@ Source prompt:
     function cacheImageUrl(path) {
       return `/api/cache-image?path=${encodeURIComponent(path)}`;
     }
+    function cacheImagePreviewUrl(path) {
+      return `/api/cache-image-preview?path=${encodeURIComponent(path)}`;
+    }
     function protectedMediaScope() {
       return isDashboardPage() ? 'dashboard' : `token:${AUTH_TOKEN || 'anonymous'}`;
     }
@@ -5324,15 +5327,20 @@ Source prompt:
             size: Number(data.size || 0),
           };
         } else {
-          const res = await fetch(cacheImageUrl(key), {headers: headers()});
-          if (!res.ok) throw new Error(res.status === 404 ? '媒体已清理' : `媒体读取失败 HTTP ${res.status}`);
-          const blob = await res.blob();
-          if (!blob || !blob.size) throw new Error('媒体内容为空');
+          const res = await fetch(cacheImagePreviewUrl(key), {headers: headers()});
+          let data;
+          try { data = await res.json(); } catch (_) { data = null; }
+          if (!res.ok) {
+            const error = new Error(res.status === 404 ? '媒体已清理' : `媒体读取失败 HTTP ${res.status}`);
+            error.status = res.status;
+            throw error;
+          }
+          const preview = data?.data || {};
+          if (preview.available === false || !preview.data_url) throw new Error(preview.message || '媒体已清理');
           entry = {
-            blob,
-            objectUrl: URL.createObjectURL(blob),
-            mimeType: blob.type || '',
-            size: blob.size,
+            dataUrl: String(preview.data_url),
+            mimeType: String(preview.mime_type || ''),
+            size: Number(preview.size || 0),
           };
         }
         if (version !== PROTECTED_MEDIA_CACHE_VERSION || scope !== protectedMediaScope()) {
@@ -5598,6 +5606,18 @@ Source prompt:
       a.remove();
       return true;
     }
+    async function downloadStandaloneCacheFile(path, name) {
+      const res = await fetch(cacheImageUrl(path), {headers: headers()});
+      if (!res.ok) throw new Error(res.status === 404 ? '媒体已清理' : `媒体读取失败 HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (!blob || !blob.size) throw new Error('下载内容为空');
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        triggerProtectedDownload({objectUrl}, name);
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      }
+    }
     async function downloadCachePath(path, filename) {
       const name = String(filename || path || 'download').split('/').pop() || 'download';
       const rel = String(path || '').trim();
@@ -5617,6 +5637,11 @@ Source prompt:
           }
           throw new Error('下载内容为空');
         } catch (previewError) {
+          if (!isDashboardPage() && previewError?.status === 413) {
+            await downloadStandaloneCacheFile(rel, name);
+            showToast('已开始下载', 'ok');
+            return;
+          }
           if (!isDashboardPage()) throw previewError;
           // The dashboard bridge remains a fallback for large files that the
           // preview endpoint intentionally does not inline.

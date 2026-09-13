@@ -8,7 +8,8 @@ def test_protected_media_uses_shared_cache_and_request_deduplication():
     assert "const PROTECTED_MEDIA_CACHE = new Map();" in PAGE
     assert "const PROTECTED_MEDIA_REQUESTS = new Map();" in PAGE
     assert "async function getProtectedMedia(path)" in PAGE
-    assert PAGE.count("fetch(cacheImageUrl(key)") == 1
+    assert PAGE.count("fetch(cacheImagePreviewUrl(key)") == 1
+    assert "preview.available === false" in PAGE
     assert "const pending = PROTECTED_MEDIA_REQUESTS.get(key);" in PAGE
     assert "return rememberProtectedMedia(key, entry);" in PAGE
 
@@ -18,6 +19,7 @@ def test_media_consumers_reuse_cached_response_for_detail_and_download():
     assert "const media = await getProtectedMedia(rel);" in PAGE
     assert "if (triggerProtectedDownload(media, name))" in PAGE
     assert "bridge.download('cache-image', { path: rel }, name)" in PAGE
+    assert "async function downloadStandaloneCacheFile(path, name)" in PAGE
     download_start = PAGE.index("async function downloadCachePath")
     download_body = PAGE[download_start:PAGE.index("    function copyIconSvg", download_start)]
     assert download_body.index("await getProtectedMedia(rel)") < download_body.index("bridge.download('cache-image'")

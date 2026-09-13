@@ -5319,6 +5319,19 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("图片路径过长", response.get_json()["error"])
 
+    def test_cache_image_preview_route_returns_clean_missing_media_envelope(self) -> None:
+        client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
+        response = client.get(
+            "/api/cache-image-preview?path=generated-cleaned.png",
+            headers={"X-Selfie-Image-Token": "secret"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["data"]["path"], "generated-cleaned.png")
+        self.assertFalse(payload["data"]["available"])
+        self.assertIn("已清理", payload["message"])
+
     def test_cache_image_route_rejects_non_image_cache_files(self) -> None:
         plugin = FakeWebPlugin("secret")
         text_path = os.path.join(plugin.generated_dir, "not-image.txt")
@@ -6812,6 +6825,25 @@ class DashboardEmbedContractTests(unittest.TestCase):
             self.assertEqual(invalid["status"], 400)
         finally:
             dashboard_api.request, dashboard_api.json_response, dashboard_api.error_response = old_request, old_json_response, old_error_response
+
+    def test_dashboard_cache_preview_returns_clean_missing_media_envelope(self) -> None:
+        import astrbot_plugin_selfie_image.webui.dashboard_api as dashboard_api
+        from astrbot_plugin_selfie_image.webui.dashboard_api import SelfieImageDashboardAPI
+
+        plugin = FakeWebPlugin("secret")
+        api = SelfieImageDashboardAPI(plugin)
+        old_request, old_json_response = dashboard_api.request, dashboard_api.json_response
+        dashboard_api.request = types.SimpleNamespace(query={"path": "generated-cleaned.png"})
+        dashboard_api.json_response = lambda payload, **_: payload
+        try:
+            result = asyncio.run(api.page_cache_image_preview())
+        finally:
+            dashboard_api.request, dashboard_api.json_response = old_request, old_json_response
+
+        envelope = result["data"]
+        self.assertTrue(envelope["success"])
+        self.assertFalse(envelope["data"]["available"])
+        self.assertIn("已清理", envelope["message"])
 
     def test_openai_fast_path_and_trust_env_false_still_present(self) -> None:
         providers = Path(__file__).resolve().parents[1] / "core/providers.py"

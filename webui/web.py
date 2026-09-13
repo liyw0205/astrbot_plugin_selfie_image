@@ -1115,7 +1115,11 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 400)
             if not info.get("exists"):
-                return fail("缓存文件已清理", 404)
+                return ok({
+                    "path": rel_path,
+                    "available": False,
+                    "message": "缓存文件已清理",
+                }, message="缓存文件已清理")
             if not info.get("is_image") and not info.get("is_video"):
                 return fail("缓存文件不是有效图片或视频", 400)
             path = str(info.get("absolute_path") or "")
