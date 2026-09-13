@@ -9295,7 +9295,9 @@ Source prompt:
         await enterApp(true);
         return;
       }
-      await enterApp(!AUTH_TOKEN);
+      // Do not probe protected endpoints before the user supplies a token.
+      // Stored tokens still restore the standalone page automatically.
+      if (AUTH_TOKEN) await enterApp(true);
     })();
   </script>
   <script>

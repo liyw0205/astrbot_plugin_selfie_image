@@ -4725,7 +4725,8 @@ class WebApiTests(unittest.TestCase):
     def test_frontend_does_not_display_startup_web_settings(self) -> None:
         self.assertNotIn("<b>监听", INDEX_HTML)
         self.assertNotIn("<b>Token", INDEX_HTML)
-        self.assertIn("await enterApp(!AUTH_TOKEN)", INDEX_HTML)
+        self.assertIn("if (AUTH_TOKEN) await enterApp(true);", INDEX_HTML)
+        self.assertNotIn("await enterApp(!AUTH_TOKEN)", INDEX_HTML)
 
     def test_frontend_api_helper_handles_network_invalid_json_and_auth_errors(self) -> None:
         self.assertIn("网络请求失败，请检查 Web 服务连接", INDEX_HTML)
