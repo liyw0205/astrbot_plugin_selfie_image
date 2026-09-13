@@ -8,21 +8,10 @@ from typing import Any, List, Tuple
 
 
 FULLWIDTH_DIGIT_TRANS = str.maketrans("０１２３４５６７８９", "0123456789")
-CHINESE_DIGITS = {
-    "一": 1,
-    "二": 2,
-    "两": 2,
-    "俩": 2,
-    "三": 3,
-    "四": 4,
-    "五": 5,
-    "六": 6,
-    "七": 7,
-    "八": 8,
-    "九": 9,
-    "十": 10,
-}
-COUNT_PATTERN = r"(?:\d{1,2}|[一二两俩三四五六七八九十]{1,3})"
+# Counts intentionally use Arabic numerals only.  Chinese number words are
+# common in character names and prompt text (for example, 七七) and must not
+# be mistaken for a batch count.
+COUNT_PATTERN = r"[0-9]{1,2}"
 COUNT_SUFFIX_PATTERN = r"(?:张|次|幅)?"
 PROMPT_SEPARATOR_PATTERN = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+"
 NON_COUNT_FOLLOWING_UNITS = {
@@ -225,24 +214,10 @@ def parse_count_token(token: str) -> int:
     text = str(token or "").strip().translate(FULLWIDTH_DIGIT_TRANS)
     if not text:
         return 0
-    match = re.fullmatch(r"(\d{1,2})(?:张|次|幅)?", text)
+    match = re.fullmatch(r"([0-9]{1,2})(?:张|次|幅)?", text)
     if match:
         value = int(match.group(1))
         return value if value > 0 else 0
-
-    chinese = re.fullmatch(r"([一二两俩三四五六七八九十]{1,3})(?:张|次|幅)?", text)
-    if not chinese:
-        return 0
-    value_text = chinese.group(1)
-    if value_text == "十":
-        return 10
-    if "十" in value_text:
-        before, _, after = value_text.partition("十")
-        tens = CHINESE_DIGITS.get(before, 1) if before else 1
-        ones = CHINESE_DIGITS.get(after, 0) if after else 0
-        value = tens * 10 + ones
-        return value if value > 0 else 0
-    return CHINESE_DIGITS.get(value_text, 0)
 
 
 def split_attached_count_token(token: str) -> Tuple[str, int]:

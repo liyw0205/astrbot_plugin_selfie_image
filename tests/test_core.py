@@ -9287,12 +9287,12 @@ class LegFocusTests(unittest.TestCase):
             ("3 西施", "西施", 3),
             ("西施 3", "西施", 3),
             ("3旗袍", "旗袍", 3),
-            ("三旗袍", "旗袍", 3),
+            ("三旗袍", "三旗袍", 1),
             ("旗袍3", "旗袍", 3),
             ("3张西施", "西施", 3),
             ("洛琪希 夜景 3", "洛琪希 夜景", 3),
             ("洛琪希 夜景 3张", "洛琪希 夜景", 3),
-            ("洛琪希 夜景三", "洛琪希 夜景", 3),
+            ("洛琪希 夜景三", "洛琪希 夜景三", 1),
         ):
             extra, count = plugin._extract_command_count(text, allow_attached=True)
             self.assertEqual((extra, count), (expected_extra, expected_count))
@@ -10536,7 +10536,9 @@ class StudioStoreTests(unittest.TestCase):
             ("/看看COS 洛琪希 夜景 男友视角 3", 3, "洛琪希 夜景 男友视角", "洛琪希 夜景 男友视角", "男友视角"),
             ("/看看COS 3张西施", 3, "西施", "西施", ""),
             ("/看看COS 西施3", 3, "西施", "西施", ""),
-            ("/看看COS 西施 夜景三", 3, "西施 夜景", "西施 夜景", ""),
+            ("/看看COS 西施 夜景三", 1, "西施 夜景三", "西施 夜景三", ""),
+            ("/看看COS 七七 特殊预设 3", 3, "七七 特殊预设", "七七 特殊预设", "特殊预设"),
+            ("/看看COS 七七 特殊预设 -c 3", 3, "七七 特殊预设", "七七 特殊预设", "特殊预设"),
             ("/看看COS 洛琪希xxx 3", 3, "洛琪希xxx", "洛琪希xxx", ""),
         )
 
@@ -10568,7 +10570,13 @@ class StudioStoreTests(unittest.TestCase):
                         "捧脸": "捧住她的脸颊",
                         "男友视角": "Girlfriend is drunk",
                     }
-                    self.assertIn(preset_markers[expected_preset], captured["rebuild_extra_request"], message)
+                    marker = preset_markers.get(expected_preset)
+                    if marker:
+                        self.assertIn(marker, captured["rebuild_extra_request"], message)
+                    else:
+                        # Special presets expand to a random prompt body, so
+                        # assert that the original COS query survives instead.
+                        self.assertIn(expected_extra.split()[0], captured["rebuild_extra_request"], message)
                 else:
                     self.assertIn(expected_extra.split()[0], captured["rebuild_extra_request"], message)
                 if message == "/看看COS 洛琪希 夜景 男友视角 3":
@@ -10650,7 +10658,7 @@ class StudioStoreTests(unittest.TestCase):
             ("一位约 20 岁的角色 -c 3 夜景", "一位约 20 岁的角色 夜景", 3),
             ("一位约 20 岁的角色 -c=3", "一位约 20 岁的角色", 3),
             ("一位约 20 岁的角色 -c3", "一位约 20 岁的角色", 3),
-            ("一位约 20 岁的角色 -c 三张", "一位约 20 岁的角色", 3),
+            ("一位约 20 岁的角色 -c 三张", "一位约 20 岁的角色 -c 三张", 1),
         ):
             self.assertEqual(
                 stub._extract_command_count(text, allow_trailing=True),
@@ -10744,7 +10752,7 @@ class StudioStoreTests(unittest.TestCase):
             ("cmd_draw", "@心酱 画 捧脸 10", False, "捧住她的脸颊", 10),
             ("cmd_raw_text_to_image", "/文生图 3 一只猫", False, "一只猫", 3),
             ("cmd_raw_text_to_image", "/文生图 一只猫 3", False, "一只猫", 3),
-            ("cmd_raw_text_to_image", "/文生图 一只猫 三张", False, "一只猫", 3),
+            ("cmd_raw_text_to_image", "/文生图 一只猫 三张", False, "一只猫 三张", 1),
             ("cmd_raw_text_to_image", "/文生图 一位美女 捧脸 2", False, "一位美女", 2),
             ("cmd_raw_text_to_image", "/文生图 2 捧脸 一位美女", False, "一位美女", 2),
             ("cmd_raw_text_to_image", "/文生图 捧脸 2 一位美女", False, "一位美女", 2),
