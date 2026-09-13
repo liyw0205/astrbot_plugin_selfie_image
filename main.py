@@ -4613,6 +4613,19 @@ class SelfieImagePlugin(
             },
         )
         original_prompt = str(template_result.get("prompt") or raw_prompt).strip()
+        configured_aspect = str(
+            payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16"
+        ).strip() or "9:16"
+        configured_resolution = str(
+            payload.get("resolution") or self.config.image_default_resolution or "1K"
+        ).strip() or "1K"
+        # Apply prompt-level framing after template expansion so COS/templates
+        # and user supplements can override the Web setting consistently.
+        original_prompt, aspect, resolution = self._parse_prompt_options(
+            original_prompt,
+            configured_aspect,
+            configured_resolution,
+        )
         original_prompt, parsed_variation_enabled, parsed_variation_field = parse_variation_request(original_prompt)
         raw_variation_enabled = payload.get("variation_enabled")
         variation_enabled = (
@@ -4644,8 +4657,6 @@ class SelfieImagePlugin(
                 requested_count,
                 {"variation_fields": fields},
             )
-        aspect = str(payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
-        resolution = str(payload.get("resolution") or self.config.image_default_resolution or "1K")
         prompt_enhance_raw = payload.get("prompt_enhance", True)
         prompt_enhance = not (
             prompt_enhance_raw is False
@@ -5325,11 +5336,13 @@ class SelfieImagePlugin(
 
         # Prefer aspect/resolution resolved from raw user text (before action wrappers).
         if str(preset_name or "").strip():
-            action = message
             default_aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
             default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
-            aspect = str(preset_aspect or "").strip() or default_aspect
-            resolution = str(preset_resolution or "").strip() or default_resolution
+            action, aspect, resolution = self._parse_prompt_options(
+                message,
+                str(preset_aspect or "").strip() or default_aspect,
+                str(preset_resolution or "").strip() or default_resolution,
+            )
         else:
             action, aspect, resolution, _, _ = self._resolve_image_preset(message)
         extra_refs = await self._event_reference_images(

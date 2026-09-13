@@ -16,7 +16,11 @@ from astrbot_plugin_selfie_image.features.creative_features import (
     parse_video_storyboard,
     render_prompt_template,
 )
-from astrbot_plugin_selfie_image.prompts.command_parser import extract_template_options
+from astrbot_plugin_selfie_image.prompts.command_parser import (
+    extract_prompt_aspect_ratio,
+    extract_template_options,
+    parse_prompt_options,
+)
 
 
 def test_template_variables_support_chinese_aliases_and_explicit_values() -> None:
@@ -78,6 +82,28 @@ def test_unknown_command_options_are_preserved() -> None:
     assert cleaned == "猫 --ar 9:16 --unknown value"
     assert values == {}
     assert randomize is False
+
+
+def test_prompt_aspect_ratio_prefers_user_supplement_over_cos_template() -> None:
+    text = "严格真人COS，竖屏9:16全身。用户补充要求优先：改为横屏16:9构图。"
+    assert extract_prompt_aspect_ratio(text) == "16:9"
+    cleaned, aspect, _ = parse_prompt_options(text, default_aspect_ratio="1:1")
+    assert aspect == "16:9"
+    assert "竖屏9:16" in cleaned
+
+
+def test_prompt_aspect_ratio_supports_orientation_and_pixel_dimensions() -> None:
+    assert extract_prompt_aspect_ratio("方图正面构图") == "1:1"
+    assert extract_prompt_aspect_ratio("尺寸 1024x1536") == "2:3"
+    assert extract_prompt_aspect_ratio("不要横屏，使用竖屏") == "9:16"
+
+
+def test_explicit_ar_option_beats_natural_prompt_ratio() -> None:
+    _, aspect, _ = parse_prompt_options(
+        "猫 --ar 1:1 横屏16:9",
+        default_aspect_ratio="9:16",
+    )
+    assert aspect == "1:1"
 
 
 def test_retry_strategies_are_bounded_and_preserve_prompt() -> None:

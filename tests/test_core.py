@@ -5868,7 +5868,8 @@ class SessionModelAndTaskTests(unittest.TestCase):
                     "_task_id": "web-12345678-1",
                     "channel": "test-channel",
                     "model": "agnes-image-2.1-flash",
-                    "prompt": "测试批量",
+                    "prompt": "测试批量，横屏16:9",
+                    "aspect_ratio": "9:16",
                     "count": 3,
                 }
             )
@@ -5880,6 +5881,7 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual(result["completed_count"], 3)
         self.assertEqual(result["succeeded_count"], 3)
         self.assertEqual(len(result["generated_image_paths"]), 3)
+        self.assertEqual({call["aspect_ratio"] for call in calls}, {"16:9"})
         self.assertEqual(progress[-1]["progress_percent"], 100)
 
     def test_llm_tool_tasks_are_visible_while_running(self) -> None:

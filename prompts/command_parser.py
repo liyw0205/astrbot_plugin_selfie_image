@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, List, Tuple
 
@@ -65,6 +66,103 @@ TEMPLATE_OPTION_ALIASES = {
     "时长": "duration",
     "duration": "duration",
 }
+
+# Natural-language prompts often carry their own framing hint.  This is
+# deliberately separate from ``--ar`` parsing so templates such as COS looks
+# can provide a ratio without requiring a command option.
+_NUMERIC_ASPECT_RATIO_RE = re.compile(
+    r"(?<![\dA-Za-z])(?P<width>\d{1,2})\s*[:：/]\s*(?P<height>\d{1,2})(?![\dA-Za-z])"
+)
+_DIMENSION_ASPECT_RATIO_RE = re.compile(
+    r"(?<![\dA-Za-z])(?P<width>\d{2,5})\s*[x×✕Ｘ]\s*(?P<height>\d{2,5})(?![\dA-Za-z])",
+    re.IGNORECASE,
+)
+_ORIENTATION_ASPECT_RE = re.compile(
+    r"(?P<orientation>竖屏|竖图|纵向|人像构图|portrait|vertical|横屏|横图|横向|landscape|horizontal|方图|方形|正方形|square)",
+    re.IGNORECASE,
+)
+_ASPECT_OVERRIDE_MARKER_RE = re.compile(
+    r"(?:用户补充要求优先|额外要求|用户要求|用户提示|用户输入)\s*[:：]",
+    re.IGNORECASE,
+)
+_NEGATED_ASPECT_PREFIX_RE = re.compile(r"(?:不要|禁止|避免|不使用|不是|非)[^。；;，,。!?！？]{0,10}$")
+
+
+def normalize_aspect_ratio_value(value: str) -> str:
+    """Normalize a ratio or pixel dimension into a canonical ``width:height``."""
+    raw = str(value or "").strip().replace("：", ":").replace("／", "/")
+    match = re.fullmatch(r"(\d{1,5})\s*[:/]\s*(\d{1,5})", raw)
+    if not match:
+        match = re.fullmatch(r"(\d{2,5})\s*[x×✕Ｘ]\s*(\d{2,5})", raw, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    width, height = int(match.group(1)), int(match.group(2))
+    if width <= 0 or height <= 0:
+        return ""
+    divisor = math.gcd(width, height)
+    return f"{width // divisor}:{height // divisor}"
+
+
+def _orientation_aspect_ratio(value: str) -> str:
+    lowered = str(value or "").strip().lower()
+    if lowered in {"竖屏", "竖图", "纵向", "人像构图", "portrait", "vertical"}:
+        return "9:16"
+    if lowered in {"横屏", "横图", "横向", "landscape", "horizontal"}:
+        return "16:9"
+    if lowered in {"方图", "方形", "正方形", "square"}:
+        return "1:1"
+    return ""
+
+
+def _aspect_search_scope(text: str) -> str:
+    """Prefer the user-supplement section appended by action builders."""
+    raw = str(text or "")
+    markers = list(_ASPECT_OVERRIDE_MARKER_RE.finditer(raw))
+    if not markers:
+        return raw
+    return raw[markers[-1].end() :]
+
+
+def _is_negated_aspect(text: str, start: int) -> bool:
+    prefix = str(text or "")[max(0, int(start) - 14) : int(start)]
+    return bool(_NEGATED_ASPECT_PREFIX_RE.search(prefix))
+
+
+def extract_prompt_aspect_ratio(text: str) -> str:
+    """Extract a prompt-provided aspect ratio, preferring explicit supplements.
+
+    Numeric forms (``9:16``, ``9/16``, ``1024x1536``) win over orientation
+    words.  A negated hint such as ``不要横屏`` is ignored.  When an action
+    contains a ``用户补充要求优先：`` section, only that section is considered
+    first so the user's extra request can override a template's framing.
+    """
+    raw = str(text or "")
+    if not raw.strip():
+        return ""
+
+    def find_in(scope: str) -> str:
+        numeric_matches = [
+            match
+            for pattern in (_DIMENSION_ASPECT_RATIO_RE, _NUMERIC_ASPECT_RATIO_RE)
+            for match in pattern.finditer(scope)
+            if not _is_negated_aspect(scope, match.start())
+        ]
+        if numeric_matches:
+            match = max(numeric_matches, key=lambda item: item.start())
+            ratio = normalize_aspect_ratio_value(match.group(0))
+            if ratio:
+                return ratio
+        orientation_matches = [
+            match
+            for match in _ORIENTATION_ASPECT_RE.finditer(scope)
+            if not _is_negated_aspect(scope, match.start())
+        ]
+        if orientation_matches:
+            return _orientation_aspect_ratio(max(orientation_matches, key=lambda item: item.start()).group("orientation"))
+        return ""
+
+    scoped = _aspect_search_scope(raw)
+    return find_in(scoped) or (find_in(raw) if scoped != raw else "")
 
 
 def extract_template_options(text: str) -> Tuple[str, dict[str, str], bool]:
@@ -276,12 +374,14 @@ def parse_prompt_options(
     prompt = str(text or "").strip()
     aspect = str(aspect_ratio or default_aspect_ratio or "9:16").strip() or "9:16"
     resol = str(resolution or default_resolution or "1K").strip() or "1K"
+    option_aspect = ""
     matches = list(re.finditer(r"--([a-zA-Z0-9_\-]+)(?:[=\s]+([^\s]+))?", prompt))
     for match in reversed(matches):
         key = match.group(1).lower().replace("-", "_")
         value = str(match.group(2) or "").strip()
         if key in {"ar", "aspect", "aspect_ratio", "ratio"} and value:
-            aspect = value
+            option_aspect = normalize_aspect_ratio_value(value) or value
+            aspect = option_aspect
             prompt = prompt[: match.start()] + prompt[match.end() :]
         elif key in {"resolution", "res", "quality"} and value:
             resol = value
@@ -292,6 +392,12 @@ def parse_prompt_options(
             elif "4096" in value or value.upper() == "4K":
                 resol = "4K"
             prompt = prompt[: match.start()] + prompt[match.end() :]
+    # Template and natural-language framing is more specific than the global
+    # setting (or a preset fallback). An explicit ``--ar`` remains strongest.
+    if not option_aspect:
+        detected_aspect = extract_prompt_aspect_ratio(prompt)
+        if detected_aspect:
+            aspect = detected_aspect
     return re.sub(r"\s+", " ", prompt).strip(), aspect, resol
 
 
@@ -317,7 +423,10 @@ def resolve_image_preset(
         cleaned_prompt = str(resolved.get("prompt") or cleaned_prompt).strip()
         preset_aspect = str(resolved.get("aspect_ratio") or "").strip()
         preset_resolution = str(resolved.get("resolution") or "").strip()
-        if preset_aspect and aspect == default_aspect_ratio:
+        detected_aspect = extract_prompt_aspect_ratio(cleaned_prompt)
+        if detected_aspect:
+            aspect = detected_aspect
+        elif preset_aspect and aspect == default_aspect_ratio:
             aspect = preset_aspect
         if preset_resolution and resol == default_resolution:
             resol = preset_resolution
@@ -378,7 +487,10 @@ def expand_user_text_with_preset(
             found_name = part_name
             part_aspect = str(resolved.get("aspect_ratio") or "").strip()
             part_resolution = str(resolved.get("resolution") or "").strip()
-            if part_aspect and aspect == default_aspect_ratio:
+            detected_part_aspect = extract_prompt_aspect_ratio(output[-1])
+            if detected_part_aspect:
+                aspect = detected_part_aspect
+            elif part_aspect and aspect == default_aspect_ratio:
                 aspect = part_aspect
             if part_resolution and resolution == default_resolution:
                 resolution = part_resolution
