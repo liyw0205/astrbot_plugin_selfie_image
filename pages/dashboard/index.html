@@ -452,17 +452,20 @@
       .studio-canvas-layout { position:relative; }
     }
     @media (max-width: 680px) {
+      .mobile-only { display:inline-flex !important; }
       .studio-workspace, .creative-canvas-workspace { padding:12px; }
       .studio-session-picker { width:100%; align-items:center; }
       .studio-session-picker label { flex:1 1 100%; }
       .studio-session-picker select { min-width:0; flex:1 1 160px; }
       .studio-canvas-layout { display:flex; flex-direction:column; grid-template-columns:none; height:auto; min-height:0; overflow:visible; }
       .studio-graph-sidebar { display:none; }
+      .studio-canvas-layout.mobile-node-list-open .studio-graph-sidebar { display:flex; position:absolute; z-index:7; inset:0 auto 0 0; width:min(300px, 86vw); box-shadow:12px 0 28px rgba(30,45,52,.18); }
       .studio-canvas-viewport { flex:0 0 auto; width:100%; height:min(62vh, 560px); min-height:420px; }
       .studio-node-panel { position:static; width:100%; max-height:none; border:0; border-top:1px solid var(--line); box-shadow:none; }
       .studio-node-panel-body { max-height:none; }
       .studio-canvas-hint { font-size:10px; }
     }
+    @media (min-width: 681px) { .mobile-only { display:none !important; } }
     .preset-manager-list { display:grid; gap:10px; margin-top:14px; }
     .preset-manager-row { display:grid; grid-template-columns:minmax(150px,.35fr) minmax(0,1fr) auto; gap:12px; align-items:start; padding:13px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--panel); box-shadow:var(--shadow-soft); }
     .preset-manager-name { min-width:0; font-weight:700; overflow-wrap:anywhere; }
@@ -1221,6 +1224,7 @@
           </div>
           <div id="studioCanvasHint" class="studio-canvas-hint">拖动空白区域平移，滚轮缩放</div>
           <div class="studio-canvas-controls" aria-label="画布视图">
+            <button class="icon-button mobile-only" id="studioMobileNodes" type="button" title="打开画面列表" aria-label="打开画面列表">☷</button>
             <button class="icon-button" id="studioZoomOut" type="button" title="缩小" aria-label="缩小">−</button>
             <span id="studioZoomLabel">100%</span>
             <button class="icon-button" id="studioZoomIn" type="button" title="放大" aria-label="放大">+</button>
@@ -1878,7 +1882,22 @@
     const CANVAS_SESSION_CACHE_TTL_MS = 15000;
     // Prompt/COS/tag catalogs refresh periodically; the shared gallery cache has no TTL.
     const PICKER_CATALOG_CACHE_TTL_MS = 30000;
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
+    const PICKER_PAGE_SIZE = 30;
+    const COS_PICKER_QUERY = new Map();
+    const PROMPT_PICKER_QUERY = new Map();
+    const PICKER_LOADING = new Set();
+    // Redacted client-side request trace for page diagnostics.
+    const REQUEST_TRACE = [];
+    const REQUEST_TRACE_LIMIT = 80;
+    function traceRequest(entry) {
+      const item = Object.assign({startedAt: Date.now()}, entry || {});
+      delete item.token; delete item.cookie; delete item.prompt; delete item.body;
+      REQUEST_TRACE.push(item);
+      if (REQUEST_TRACE.length > REQUEST_TRACE_LIMIT) REQUEST_TRACE.splice(0, REQUEST_TRACE.length - REQUEST_TRACE_LIMIT);
+      return item;
+    }
+    function requestTraceSnapshot() { return REQUEST_TRACE.map(item => Object.assign({}, item)); }
+    let CONFIG = {};    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0, viewportFittedForSession: false };
     let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", galleryRequestSeq: 0, presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
     const PICKER_CACHE = {
       prompt: {
@@ -2034,48 +2053,62 @@
       return String(data?.error || ("HTTP " + status));
     }
     async function api(path, options = {}) {
-      if (isDashboardPage()) {
-        const bridge = await waitForDashboardBridge();
-        if (typeof bridge.ready === 'function') await bridge.ready();
-        const method = String(options.method || 'GET').toUpperCase();
-        const endpoint = bridgeEndpoint(path);
-        let body = null;
-        if (options.body) {
-          try { body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body; }
-          catch (_) { body = {}; }
-        } else if (method === 'GET' && path.includes('?')) {
-          body = Object.fromEntries(new URLSearchParams(path.split('?', 2)[1]));
-        }
-        try {
+      const method = String(options.method || 'GET').toUpperCase();
+      const endpoint = bridgeEndpoint(path);
+      const trace = traceRequest({
+        page: document.querySelector('nav.page-nav button.active')?.dataset.tab || 'base',
+        requestKey: `${method} ${endpoint}`,
+        sessionId: STUDIO?.current?.id || CREATIVE_CANVAS?.current?.id || '',
+        startedAt: Date.now(), status: 'pending'
+      });
+      const finish = status => { trace.finishedAt = Date.now(); trace.status = status; };
+      try {
+        if (isDashboardPage()) {
+          const bridge = await waitForDashboardBridge();
+          if (typeof bridge.ready === 'function') await bridge.ready();
+          let body = null;
+          if (options.body) {
+            try { body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body; }
+            catch (_) { body = {}; }
+          } else if (method === 'GET' && path.includes('?')) {
+            body = Object.fromEntries(new URLSearchParams(path.split('?', 2)[1]));
+          }
           const raw = method === 'GET'
             ? await bridge.apiGet(endpoint, body || {})
             : await bridge.apiPost(endpoint, body || {});
-          return bridgePayload(raw);
-        } catch (err) {
-          throw new Error(err?.message || '管理页请求失败');
+          const result = bridgePayload(raw);
+          finish('success');
+          return result;
         }
-      }
-      const opts = Object.assign({}, options, {headers: Object.assign({}, headers(), options.headers || {})});
-      let res;
-      try {
-        res = await fetch(path, opts);
-      } catch (_) {
-        throw new Error("网络请求失败，请检查 Web 服务连接");
-      }
-      let data;
-      try {
-        data = await res.json();
-      } catch (_) {
-        throw new Error("接口返回了无效响应（HTTP " + res.status + "）");
-      }
-      if (!res.ok || data.success === false) {
-        if (res.status === 401) {
-          clearProtectedMediaCache();
-          document.body.classList.remove("authed");
+        const opts = Object.assign({}, options, {headers: Object.assign({}, headers(), options.headers || {})});
+        let res;
+        try {
+          res = await fetch(path, opts);
+        } catch (_) {
+          finish('network_error');
+          throw new Error("网络请求失败，请检查 Web 服务连接");
         }
-        throw new Error(apiErrorMessage(res.status, data));
+        let data;
+        try {
+          data = await res.json();
+        } catch (_) {
+          finish(`http_${res.status}`);
+          throw new Error("接口返回了无效响应（HTTP " + res.status + "）");
+        }
+        if (!res.ok || data.success === false) {
+          if (res.status === 401) {
+            clearProtectedMediaCache();
+            document.body.classList.remove("authed");
+          }
+          finish(`http_${res.status}`);
+          throw new Error(apiErrorMessage(res.status, data));
+        }
+        finish(`http_${res.status}`);
+        return data;
+      } catch (error) {
+        if (trace.status === 'pending') finish('error');
+        throw error;
       }
-      return data;
     }
     function textList(id) { return ($(id).value || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean); }
     function setTextList(id, value) { $(id).value = Array.isArray(value) ? value.join('\n') : String(value || ''); }
@@ -3346,6 +3379,31 @@ Source prompt:
     function priorityLabels(kind) {
       return kind === 'audit' ? auditModelLabels() : kind === 'video' ? videoModelLabels() : allModelLabels();
     }
+    function priorityEntryMatchesLabel(entry, label) {
+      const item = String(entry || '').trim();
+      const value = String(label || '').trim();
+      if (!item || !value) return false;
+      const [channel, ...rest] = value.split('/');
+      const model = rest.join('/');
+      return item === value || item === `${channel}:${model}` || item === model;
+    }
+    function refreshPriorityPicker(kind = 'image') {
+      const ui = priorityUi(kind), picker = $(ui.picker);
+      if (!picker) return;
+      const selected = textList(ui.list);
+      const available = uniq(priorityLabels(kind)).filter(label =>
+        !selected.some(item => priorityEntryMatchesLabel(item, label))
+      );
+      setSelectOptions(ui.picker, available, available[0] || '');
+      if (!available.length) {
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = '暂无可加入模型';
+        empty.disabled = true;
+        empty.selected = true;
+        picker.appendChild(empty);
+      }
+    }
     function addPriority(kind = 'image') {
       const ui = priorityUi(kind), value = $(ui.picker).value;
       if (!value) return;
@@ -3353,18 +3411,21 @@ Source prompt:
       if (!current.includes(value)) current.push(value);
       $(ui.list).value = current.join('\n');
       renderPriorityRows(kind);
+      refreshPriorityPicker(kind);
       scheduleChannelListAutoSave();
     }
     function clearPriority(kind = 'image') {
       const ui = priorityUi(kind);
       $(ui.list).value = '';
       renderPriorityRows(kind);
+      refreshPriorityPicker(kind);
       scheduleChannelListAutoSave();
     }
     function setPriorityItems(kind, items) {
       const ui = priorityUi(kind);
       $(ui.list).value = uniq(items).join('\n');
       renderPriorityRows(kind);
+      refreshPriorityPicker(kind);
       scheduleChannelListAutoSave();
     }
     function prunePriorityList(kind = 'image') {
@@ -3377,6 +3438,7 @@ Source prompt:
         $(ui.list).value = next.join('\n');
         renderPriorityRows(kind);
       }
+      refreshPriorityPicker(kind);
       return next;
     }
     function movePriority(kind, index, delta) {
@@ -5174,6 +5236,29 @@ Source prompt:
       GALLERY_PICKER_CACHE.request = request;
       return request;
     }
+    function renderGalleryPage(panel, items, onPick) {
+      const grid = panel?.querySelector('.studio-gallery-grid');
+      if (!grid) return;
+      const offset = Number(panel.dataset.galleryOffset || 0);
+      const page = (items || []).slice(offset, offset + PICKER_PAGE_SIZE);
+      page.forEach(item => {
+        const cell = document.createElement('div');
+        cell.className = 'studio-gallery-item';
+        cell.innerHTML = `<div class="studio-gallery-thumb"><div class="status" data-media-placeholder>加载图片…</div><img data-cache-path="${escapeHtml(item.path || '')}" alt=""></div><div class="cap">${escapeHtml(item.prompt || item.model || item.path || '')}</div>`;
+        cell.onclick = () => onPick(item, cell);
+        grid.appendChild(cell);
+      });
+      panel.dataset.galleryOffset = String(offset + page.length);
+      panel.querySelector('[data-gallery-more]')?.remove();
+      if (offset + page.length < (items || []).length) {
+        const more = document.createElement('button');
+        more.type = 'button'; more.className = 'secondary mini'; more.dataset.galleryMore = 'true';
+        more.textContent = `加载更多（${offset + page.length}/${items.length}）`;
+        more.onclick = () => { more.remove(); renderGalleryPage(panel, items, onPick); loadProtectedImages(grid); };
+        panel.appendChild(more);
+      }
+      loadProtectedImages(grid);
+    }
     function ensureProtectedMediaScope() {
       const scope = protectedMediaScope();
       if (PROTECTED_MEDIA_CACHE_SCOPE && PROTECTED_MEDIA_CACHE_SCOPE !== scope) clearProtectedMediaCache();
@@ -6865,19 +6950,24 @@ Source prompt:
       if (btnId) syncPresetToggleButton(btnId, open);
       if (!open) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
       panel.classList.add('open');
+      if (PICKER_LOADING.has(panelId)) { panel.innerHTML = '<div class="status">正在加载预设…</div>'; return; }
       const rows = STUDIO.promptPresets || [];
       if (!rows.length) {
         panel.innerHTML = '<div class="status">暂无预设</div>';
         return;
       }
-      // Name-only chips, same interaction as template prompt recommendations: click to use, stay open.
-      panel.innerHTML = rows.map((item, idx) => {
+      // Name-only chips, with a bounded first page so a large catalog cannot
+      // push the form out of view.
+      const query = String(PROMPT_PICKER_QUERY.get(panelId) || '').trim().toLowerCase();
+      const filteredRows = query ? rows.filter(item => `${item.name || ''} ${item.title || ''} ${item.prompt || ''}`.toLowerCase().includes(query)) : rows;
+      const visibleRows = filteredRows.slice(0, PICKER_PAGE_SIZE);
+      panel.innerHTML = `<div class="cos-panel-toolbar"><span class="muted">${query ? `${filteredRows.length}/${rows.length}` : `${rows.length}`} 项 · 首屏 ${Math.min(PICKER_PAGE_SIZE, filteredRows.length)}</span></div><input class="studio-node-search" data-prompt-search type="search" placeholder="搜索预设" aria-label="搜索预设" value="${escapeHtml(query)}">` + visibleRows.map((item, idx) => {
         const name = escapeHtml(item.name || item.title || '');
         return `<button type="button" class="preset-chip" data-preset-idx="${idx}" title="${name}">${name}</button>`;
       }).join('');
       panel.querySelectorAll('[data-preset-idx]').forEach(btn => {
         btn.onclick = () => {
-          const item = rows[Number(btn.getAttribute('data-preset-idx'))];
+          const item = filteredRows[Number(btn.getAttribute('data-preset-idx'))];
           if (!item) return;
           const input = $(targetInputId);
           if (input) {
@@ -6891,6 +6981,11 @@ Source prompt:
           btn.classList.add('active');
           // Do not auto-collapse; user closes via 收回.
         };
+      });
+      panel.querySelector('[data-prompt-search]')?.addEventListener('input', event => {
+        PROMPT_PICKER_QUERY.set(panelId, String(event.target.value || ''));
+        renderPresetPanel(panelId, targetInputId, true, btnId);
+        panel.querySelector('[data-prompt-search]')?.focus();
       });
     }
     async function ensurePromptPresetsLoaded(kind = (TEST_MODE === 'video' ? 'video' : 'image')) {
@@ -7177,13 +7272,17 @@ Source prompt:
       if (btnId) syncCosToggleButton(btnId, open);
       if (!open) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
       panel.classList.add('open');
+      if (PICKER_LOADING.has(panelId)) { panel.innerHTML = '<div class="status">正在加载 COS 池…</div>'; return; }
       const rows = STUDIO.cosLooks || [];
       if (!rows.length) {
         panel.innerHTML = '<div class="status">COS池为空<button class="secondary mini" type="button" data-cos-maintain>维护 COS 池</button></div>';
         panel.querySelector('[data-cos-maintain]')?.addEventListener('click', openCosPoolModal);
         return;
       }
-      panel.innerHTML = `<div class="cos-panel-toolbar"><button class="secondary mini" type="button" data-cos-maintain>维护 COS 池</button><span class="muted">收藏项已置顶</span></div>` + rows.map((item, idx) => {
+      const query = String(COS_PICKER_QUERY.get(panelId) || '').trim().toLowerCase();
+      const filteredRows = query ? rows.filter(item => `${item.title || ''} ${item.id || ''} ${item.prompt || ''} ${(item.tags || []).join(' ')}`.toLowerCase().includes(query)) : rows;
+      const visibleRows = filteredRows.slice(0, PICKER_PAGE_SIZE);
+      panel.innerHTML = `<div class="cos-panel-toolbar"><button class="secondary mini" type="button" data-cos-maintain>维护 COS 池</button><span class="muted">${query ? `${filteredRows.length}/${rows.length}` : `${rows.length}`} 项 · 首屏 ${Math.min(PICKER_PAGE_SIZE, filteredRows.length)}</span></div><input class="studio-node-search" data-cos-search type="search" placeholder="搜索 COS" aria-label="搜索 COS" value="${escapeHtml(query)}">` + visibleRows.map((item, idx) => {
         const title = escapeHtml(item.title || item.id || '未命名套装');
         const compatibility = item.compatibility && item.compatibility.variation_enabled
           ? '可随机姿势/场景'
@@ -7192,9 +7291,14 @@ Source prompt:
         return `<div class="cos-pool-row"><button type="button" class="preset-chip" data-cos-idx="${idx}" title="${title} · ${compatibility}">${title}<small>${escapeHtml(source)}</small></button><button type="button" class="secondary mini cos-favorite-btn" data-cos-favorite="${idx}" title="${item.favorite ? '取消收藏' : '收藏'}" aria-label="${item.favorite ? '取消收藏' : '收藏'}">${item.favorite ? '★' : '☆'}</button>${item.source === 'custom' ? `<button type="button" class="danger mini cos-delete-btn" data-cos-delete="${idx}" title="删除自定义 COS" aria-label="删除自定义 COS">×</button>` : ''}</div>`;
       }).join('');
       panel.querySelector('[data-cos-maintain]')?.addEventListener('click', openCosPoolModal);
+      panel.querySelector('[data-cos-search]')?.addEventListener('input', event => {
+        COS_PICKER_QUERY.set(panelId, String(event.target.value || ''));
+        renderCosPanel(panelId, targetInputId, true, btnId);
+        panel.querySelector('[data-cos-search]')?.focus();
+      });
       panel.querySelectorAll('[data-cos-idx]').forEach(btn => {
         btn.onclick = () => {
-          const item = rows[Number(btn.getAttribute('data-cos-idx'))];
+          const item = filteredRows[Number(btn.getAttribute('data-cos-idx'))];
           if (!item) return;
           const input = $(targetInputId);
           if (input) {
@@ -7207,7 +7311,7 @@ Source prompt:
       });
       panel.querySelectorAll('[data-cos-favorite]').forEach(btn => btn.onclick = async event => {
         event.stopPropagation();
-        const item = rows[Number(btn.dataset.cosFavorite)];
+        const item = filteredRows[Number(btn.dataset.cosFavorite)];
         if (!item?.id) return;
         try {
           await api('/api/cos-pools/favorite', {method:'POST', body: JSON.stringify({id:item.id, enabled:!item.favorite})});
@@ -7217,7 +7321,7 @@ Source prompt:
       });
       panel.querySelectorAll('[data-cos-delete]').forEach(btn => btn.onclick = async event => {
         event.stopPropagation();
-        const item = rows[Number(btn.dataset.cosDelete)];
+        const item = filteredRows[Number(btn.dataset.cosDelete)];
         if (!item?.id || !await confirmAction(`确定删除自定义 COS「${item.title || item.id}」吗？`, {title:'删除自定义 COS', confirmText:'删除'})) return;
         try {
           await api('/api/cos-pools/custom/delete', {method:'POST', body: JSON.stringify({id:item.id})});
@@ -7296,7 +7400,8 @@ Source prompt:
       STUDIO.cosOpen = false;
       renderCosPanel('studioCosPanel', 'studioPrompt', false, 'studioCosBtn');
       if (STUDIO.presetOpen) {
-        await ensurePromptPresetsLoaded();
+        PICKER_LOADING.add('studioPresetPanel'); renderPresetPanel('studioPresetPanel', 'studioPrompt', true, 'studioPresetBtn');
+        await ensurePromptPresetsLoaded(); PICKER_LOADING.delete('studioPresetPanel');
         window.__TEST_PRESET_OPEN = false;
         window.__TEST_COS_OPEN = false;
         renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
@@ -7309,7 +7414,8 @@ Source prompt:
       STUDIO.presetOpen = false;
       renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
       if (STUDIO.cosOpen) {
-        await ensureCosLooksLoaded();
+        PICKER_LOADING.add('studioCosPanel'); renderCosPanel('studioCosPanel', 'studioPrompt', true, 'studioCosBtn');
+        await ensureCosLooksLoaded(); PICKER_LOADING.delete('studioCosPanel');
         window.__TEST_PRESET_OPEN = false;
         window.__TEST_COS_OPEN = false;
         renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
@@ -7322,7 +7428,8 @@ Source prompt:
       window.__TEST_COS_OPEN = false;
       renderCosPanel('testCosPanel', 'testPrompt', false, 'testCosBtn');
       if (window.__TEST_PRESET_OPEN) {
-        await ensurePromptPresetsLoaded();
+        PICKER_LOADING.add('testPresetPanel'); renderPresetPanel('testPresetPanel', 'testPrompt', true, 'testPresetBtn');
+        await ensurePromptPresetsLoaded(); PICKER_LOADING.delete('testPresetPanel');
         STUDIO.presetOpen = false;
         STUDIO.cosOpen = false;
         renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
@@ -7335,7 +7442,8 @@ Source prompt:
       window.__TEST_PRESET_OPEN = false;
       renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
       if (window.__TEST_COS_OPEN) {
-        await ensureCosLooksLoaded();
+        PICKER_LOADING.add('testCosPanel'); renderCosPanel('testCosPanel', 'testPrompt', true, 'testCosBtn');
+        await ensureCosLooksLoaded(); PICKER_LOADING.delete('testCosPanel');
         STUDIO.presetOpen = false;
         STUDIO.cosOpen = false;
         renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
@@ -7657,15 +7765,8 @@ Source prompt:
         <div class="studio-gallery-grid"></div>`;
       panel.querySelector('[data-studio-gallery-close]').onclick = closeStudioGallery;
       const grid = panel.querySelector('.studio-gallery-grid');
-      grid.dataset.protectedMediaQueued = 'true';
-      for (const item of items) {
-        const cell = document.createElement('div');
-        cell.className = 'studio-gallery-item';
-        cell.innerHTML = `<div class="studio-gallery-thumb"><div class="status" data-media-placeholder>加载图片…</div><img data-cache-path="${escapeHtml(item.path || '')}" alt=""></div><div class="cap">${escapeHtml(item.prompt || item.model || item.path || '')}</div>`;
-        cell.onclick = () => studioPickGalleryPath(item.path, item.record_id);
-        grid.appendChild(cell);
-      }
-      loadProtectedImages(grid);
+      panel.dataset.galleryOffset = '0';
+      renderGalleryPage(panel, items, item => studioPickGalleryPath(item.path, item.record_id));
     }
     async function studioPickGalleryPath(imagePath, recordId = '') {
       if (!STUDIO.current || !imagePath) return;
@@ -8007,6 +8108,27 @@ Source prompt:
       if (el) { el.textContent = message || ''; el.className = 'studio-status-line' + (kind ? ' ' + kind : ''); }
     }
     function studioClampZoom(value) { return Math.max(.35, Math.min(1.8, Number(value) || 1)); }
+    function studioFitViewport(force = false) {
+      const area = $('studioCanvasViewport');
+      const graph = studioGraph();
+      const nodes = (graph.nodes || []).filter(node => node && node.position);
+      if (!area || !nodes.length || (!force && STUDIO.viewportFittedForSession)) return;
+      const width = Math.max(240, area.clientWidth || 640);
+      const height = Math.max(240, area.clientHeight || 520);
+      const xs = nodes.map(node => Number(node.position.x) || 0);
+      const ys = nodes.map(node => Number(node.position.y) || 0);
+      const minX = Math.min(...xs) - 120, maxX = Math.max(...xs) + 120;
+      const minY = Math.min(...ys) - 95, maxY = Math.max(...ys) + 95;
+      const spanX = Math.max(240, maxX - minX), spanY = Math.max(190, maxY - minY);
+      const mobile = window.matchMedia?.('(max-width: 680px)').matches;
+      const readableMin = mobile ? 0.72 : 0.5;
+      const savedZoom = Number(STUDIO.viewport?.zoom || 1);
+      const fitZoom = Math.min(width * 0.86 / spanX, height * 0.82 / spanY, 1.15);
+      const zoom = Math.max(readableMin, Math.min(1.8, Math.max(fitZoom, savedZoom < readableMin ? readableMin : savedZoom)));
+      const centerX = (minX + maxX) / 2, centerY = (minY + maxY) / 2;
+      STUDIO.viewport = {x: width / 2 - centerX * zoom, y: height / 2 - centerY * zoom, zoom};
+      STUDIO.viewportFittedForSession = true;
+    }
     function studioApplyViewport() {
       const viewport = STUDIO.viewport || {x:120, y:80, zoom:1};
       const grid = $('studioCanvasGrid');
@@ -8062,13 +8184,20 @@ Source prompt:
       if (node.status === 'cancelled') return '已取消';
       return String(node.template_id || '生成结果');
     }
+    function studioNodeTitle(node) {
+      const explicit = String(node?.title || '').trim();
+      if (explicit && !['生成结果', '新画面', '画面'].includes(explicit)) return explicit;
+      const template = (STUDIO.templates || []).find(item => String(item.id || '') === String(node?.template_id || ''));
+      const index = Math.max(1, (studioGraph().nodes || []).findIndex(item => String(item.id) === String(node?.id)) + 1);
+      return `${template?.title || node?.template_id || '画面'} ${index}`;
+    }
     function studioRenderNodes() {
       const wrap = $('studioCanvasNodes');
       if (!wrap) return;
       const query = String(STUDIO.nodeSearch || '').trim().toLowerCase();
       wrap.innerHTML = '';
       for (const node of studioGraph().nodes || []) {
-      const title = String(node.title || node.template_id || '画面');
+      const title = studioNodeTitle(node);
         const prompt = String(node.params && node.params.prompt || '');
         if (query && !(title + ' ' + prompt + ' ' + studioNodeLabel(node)).toLowerCase().includes(query)) continue;
         const pos = node.position || {x:0,y:0};
@@ -8101,12 +8230,16 @@ Source prompt:
       const list = $('studioNodeList');
       if (!list) return;
       const query = String(STUDIO.nodeSearch || '').trim().toLowerCase();
-      const rows = (graph.nodes || []).filter(node => !query || `${node.title || ''} ${node.template_id || ''} ${(node.params || {}).prompt || ''}`.toLowerCase().includes(query));
+      const rows = (graph.nodes || []).filter(node => {
+        if (!query) return true;
+        const searchable = `${studioNodeTitle(node)} ${node.title || ''} ${node.template_id || ''} ${(node.params || {}).prompt || ''} ${studioNodeLabel(node)}`;
+        return searchable.toLowerCase().includes(query);
+      });
       list.innerHTML = rows.map(node => {
         const media = studioNodeMedia(node);
         return `<button type="button" class="studio-node-list-item${String(node.id) === String(STUDIO.selectedNodeId) ? ' selected' : ''}" data-sidebar-node="${escapeHtml(node.id)}">
           ${media ? `<img data-cache-path="${escapeHtml(media)}" alt="">` : '<span style="width:42px;height:42px;border-radius:7px;background:#e8edf0"></span>'}
-          <span class="node-list-copy"><strong>${escapeHtml(node.title || '画面')}</strong><span>${escapeHtml(studioNodeLabel(node))}</span></span></button>`;
+          <span class="node-list-copy"><strong>${escapeHtml(studioNodeTitle(node))}</strong><span>${escapeHtml(studioNodeLabel(node))}</span></span></button>`;
       }).join('') || '<div class="studio-node-empty">没有匹配画面</div>';
       list.querySelectorAll('[data-sidebar-node]').forEach(button => button.onclick = () => studioSelectNode(button.dataset.sidebarNode));
       list.dataset.protectedMediaQueued = 'true';
@@ -8119,7 +8252,7 @@ Source prompt:
       if (!panel || !body) return;
       panel.hidden = !node;
       const panelTitle = $('studioNodePanelTitle');
-      if (panelTitle) panelTitle.textContent = node ? String(node.title || node.template_id || '画面详情') : '选择一个画面';
+      if (panelTitle) panelTitle.textContent = node ? studioNodeTitle(node) : '选择一个画面';
       if (!node) return;
       const params = node.params && typeof node.params === 'object' ? node.params : {};
       const media = studioNodeMedia(node);
@@ -8180,6 +8313,7 @@ Source prompt:
       studioPersistCanvas();
     }
     function studioRenderCanvas() {
+      studioFitViewport();
       studioApplyViewport();
       studioRenderEdges();
       studioRenderNodes();
@@ -8189,6 +8323,8 @@ Source prompt:
     function studioSelectNode(nodeId, focus = false) {
       if (!studioNode(nodeId)) return;
       STUDIO.selectedNodeId = String(nodeId);
+      if (STUDIO.current?.id) safeStorageSet(`selfieStudioSelected:${STUDIO.current.id}`, STUDIO.selectedNodeId);
+      $('studioEditor')?.classList.remove('mobile-node-list-open');
       studioRenderCanvas();
       if (focus) studioFocusNode(nodeId);
     }
@@ -8209,6 +8345,7 @@ Source prompt:
       const point = event ? studioCanvasPoint(event) : {x: area.clientWidth / 2, y: area.clientHeight / 2};
       const world = {x: (point.x - STUDIO.viewport.x) / old, y: (point.y - STUDIO.viewport.y) / old};
       STUDIO.viewport = {x: point.x - world.x * next, y: point.y - world.y * next, zoom: next};
+      STUDIO.viewportFittedForSession = true;
       studioRenderCanvas();
       studioPersistCanvas();
     }
@@ -8294,6 +8431,7 @@ Source prompt:
         const point = studioCanvasPoint(event);
         if (drag.type === 'pan') {
           STUDIO.viewport = {x:drag.origin.x + point.x - drag.x, y:drag.origin.y + point.y - drag.y, zoom:drag.origin.zoom};
+          STUDIO.viewportFittedForSession = true;
         } else {
           const node = studioNode(drag.nodeId);
           if (!node) return;
@@ -8381,7 +8519,14 @@ Source prompt:
     function renderStudioSessionSelect() {
       const select = $('studioSessionSelect');
       if (!select) return;
-      select.innerHTML = '<option value="">选择画布…</option>' + (STUDIO.sessions || []).map(item => `<option value="${escapeHtml(item.id || '')}">${escapeHtml(item.title || item.id || '未命名')} · ${Number(item.result_count || 0)} 图</option>`).join('');
+      select.innerHTML = '<option value="">选择画布…</option>' + (STUDIO.sessions || []).map(item => {
+        const id = String(item.id || '');
+        const suffix = id.slice(-4).toUpperCase();
+        const template = item.template || item.template_id || '';
+        const status = item.last_status || '';
+        const detail = [template, Number(item.result_count || 0) ? `${Number(item.result_count)} 图` : '', status, suffix ? `#${suffix}` : ''].filter(Boolean).join(' · ');
+        return `<option value="${escapeHtml(id)}">${escapeHtml(item.title || '未命名')} · ${escapeHtml(detail)}</option>`;
+      }).join('');
       if (STUDIO.current?.id) select.value = STUDIO.current.id;
     }
     function syncStudioEditorVisibility() {
@@ -8410,6 +8555,13 @@ Source prompt:
     async function loadStudioList(selectId, options = {}) {
       const force = options === true || options?.force === true;
       const id = String(selectId || STUDIO.current?.id || '').trim();
+      if (id && STUDIO.current?.id && id !== String(STUDIO.current.id)) {
+        studioStopPoll();
+        STUDIO.running = false;
+        STUDIO.taskId = '';
+        STUDIO.taskNodeId = '';
+        STUDIO.taskProgress = null;
+      }
       const loadSeq = ++STUDIO.loadSeq;
       const needsDetail = Boolean(id) && (force || STUDIO.current?.id !== id || !STUDIO.canvas);
       const detailRequest = needsDetail ? Promise.all([
@@ -8428,9 +8580,16 @@ Source prompt:
           STUDIO.canvas = canvas.data;
           STUDIO.viewport = Object.assign({x:120,y:80,zoom:1}, canvas.data.viewport || {});
         }
+        STUDIO.viewportFittedForSession = false;
+        const rememberedNode = safeStorageGet(`selfieStudioSelected:${id}`);
+        STUDIO.selectedNodeId = (rememberedNode && studioNode(rememberedNode))
+          ? rememberedNode
+          : String(canvas?.data?.root_node_id || '');
       } else if (!id) {
         STUDIO.current = null;
         STUDIO.canvas = null;
+        STUDIO.selectedNodeId = '';
+        STUDIO.viewportFittedForSession = false;
       }
       if (loadSeq !== STUDIO.loadSeq) return;
       renderStudio();
@@ -8455,6 +8614,8 @@ Source prompt:
         STUDIO.current = res.data;
         STUDIO.canvas = res.data?.canvas || null;
         STUDIO.viewport = Object.assign({x:120, y:80, zoom:1}, STUDIO.canvas?.viewport || {});
+        STUDIO.viewportFittedForSession = false;
+        STUDIO.selectedNodeId = String(STUDIO.canvas?.root_node_id || '');
         upsertStudioSessionSummary(res.data);
         STUDIO.sessionsLoadedAt = Date.now();
         closeStudioCreateModal();
@@ -8494,11 +8655,25 @@ Source prompt:
       if ($('creativeCanvasEditor')) $('creativeCanvasEditor').hidden = !has;
       if ($('creativeCanvasEmptyState')) $('creativeCanvasEmptyState').hidden = has;
       if ($('creativeCanvasDeleteBtn')) $('creativeCanvasDeleteBtn').disabled = !has;
+      const last = CREATIVE_CANVAS.current?.last_run || {};
+      const hasSuccess = String(last.status || '').toLowerCase() === 'succeeded' || (CREATIVE_CANVAS.current?.results || []).length > 0;
+      if ($('creativeCanvasRunBtn')) $('creativeCanvasRunBtn').textContent = hasSuccess ? '生成图片' : '保存后生成';
+      if ($('creativeCanvasRerunBtn')) {
+        $('creativeCanvasRerunBtn').disabled = !hasSuccess || CREATIVE_CANVAS.running;
+        $('creativeCanvasRerunBtn').hidden = !hasSuccess;
+      }
     }
     function renderCreativeCanvasSessionSelect() {
       const select = $('creativeCanvasSessionSelect');
       if (!select) return;
-      select.innerHTML = '<option value="">选择画布…</option>' + (CREATIVE_CANVAS.sessions || []).map(item => `<option value="${escapeHtml(item.id || '')}">${escapeHtml(item.title || item.id || '未命名')} · ${Number(item.result_count || 0)} 图</option>`).join('');
+      select.innerHTML = '<option value="">选择画布…</option>' + (CREATIVE_CANVAS.sessions || []).map(item => {
+        const id = String(item.id || '');
+        const suffix = id.slice(-4).toUpperCase();
+        const template = item.template || item.template_id || '';
+        const status = item.last_status || '';
+        const detail = [template, Number(item.result_count || 0) ? `${Number(item.result_count)} 图` : '', status, suffix ? `#${suffix}` : ''].filter(Boolean).join(' · ');
+        return `<option value="${escapeHtml(id)}">${escapeHtml(item.title || '未命名')} · ${escapeHtml(detail)}</option>`;
+      }).join('');
       if (CREATIVE_CANVAS.current?.id) select.value = CREATIVE_CANVAS.current.id;
     }
     function fillCreativeCanvasAspect(value = '自动') {
@@ -8511,6 +8686,7 @@ Source prompt:
       if (button) button.textContent = CREATIVE_CANVAS.presetOpen ? '收回' : '预设';
       if (!CREATIVE_CANVAS.presetOpen) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
       panel.classList.add('open');
+      if (PICKER_LOADING.has('creativeCanvasPresetPanel')) { panel.innerHTML = '<div class="status">正在加载预设…</div>'; return; }
       const rows = CREATIVE_CANVAS.promptPresets || [];
       panel.innerHTML = rows.length ? rows.map((item, index) => `<button type="button" class="preset-chip" data-creative-preset="${index}">${escapeHtml(item.name || item.title || '')}</button>`).join('') : '<div class="status">暂无预设</div>';
       panel.querySelectorAll('[data-creative-preset]').forEach(button => button.onclick = () => {
@@ -8519,18 +8695,23 @@ Source prompt:
       });
     }
     function renderCreativeCanvasCosPanel() {
+      if (PICKER_LOADING.has('creativeCanvasCosPanel')) {
+        const panel = $('creativeCanvasCosPanel');
+        if (panel) { panel.classList.add('open'); panel.innerHTML = '<div class="status">正在加载 COS 池…</div>'; }
+        return;
+      }
       renderCosPanel('creativeCanvasCosPanel', 'creativeCanvasPrompt', !!CREATIVE_CANVAS.cosOpen, 'creativeCanvasCosBtn');
     }
     async function toggleCreativeCanvasPresets() {
       CREATIVE_CANVAS.presetOpen = !CREATIVE_CANVAS.presetOpen;
       CREATIVE_CANVAS.cosOpen = false;
-      if (CREATIVE_CANVAS.presetOpen) await loadPromptPresetsCached('image');
+      if (CREATIVE_CANVAS.presetOpen) { PICKER_LOADING.add('creativeCanvasPresetPanel'); renderCreativeCanvasPresetPanel(); await loadPromptPresetsCached('image'); PICKER_LOADING.delete('creativeCanvasPresetPanel'); }
       renderCreativeCanvasPresetPanel(); renderCreativeCanvasCosPanel();
     }
     async function toggleCreativeCanvasCos() {
       CREATIVE_CANVAS.cosOpen = !CREATIVE_CANVAS.cosOpen;
       CREATIVE_CANVAS.presetOpen = false;
-      if (CREATIVE_CANVAS.cosOpen) await loadCosLooksCached();
+      if (CREATIVE_CANVAS.cosOpen) { PICKER_LOADING.add('creativeCanvasCosPanel'); renderCreativeCanvasCosPanel(); await loadCosLooksCached(); PICKER_LOADING.delete('creativeCanvasCosPanel'); }
       renderCreativeCanvasPresetPanel(); renderCosPanel('creativeCanvasCosPanel', 'creativeCanvasPrompt', CREATIVE_CANVAS.cosOpen, 'creativeCanvasCosBtn');
     }
     function renderCreativeCanvasSlots() {
@@ -8636,14 +8817,8 @@ Source prompt:
       panel.querySelector('[data-creative-gallery-close]').onclick = closeCreativeCanvasGallery;
       panel.querySelector('[data-creative-gallery-confirm]').onclick = () => pickCreativeCanvasGallerySelection(panel);
       const grid = panel.querySelector('.studio-gallery-grid');
-      grid.dataset.protectedMediaQueued = 'true';
-      for (const item of items) {
-        const cell = document.createElement('div'); cell.className = 'studio-gallery-item';
-        cell.innerHTML = `<div class="studio-gallery-thumb"><div class="status" data-media-placeholder>加载图片…</div><img data-cache-path="${escapeHtml(item.path || '')}" alt=""></div><div class="cap">${escapeHtml(item.prompt || item.model || item.path || '')}</div>`;
-        cell.onclick = () => setCreativeCanvasGallerySelection(panel, cell, item);
-        grid?.appendChild(cell);
-      }
-      loadProtectedImages(grid);
+      panel.dataset.galleryOffset = '0';
+      renderGalleryPage(panel, items, (item, cell) => setCreativeCanvasGallerySelection(panel, cell, item));
     }
     async function pickCreativeCanvasGallerySelection(panel) {
       const imagePath = String(panel?.dataset.selectedPath || '').trim();
@@ -8713,6 +8888,11 @@ Source prompt:
     async function loadCreativeCanvasList(selectId = '', options = {}) {
       const force = options === true || options?.force === true;
       const id = String(selectId || CREATIVE_CANVAS.current?.id || '').trim();
+      if (id && CREATIVE_CANVAS.current?.id && id !== String(CREATIVE_CANVAS.current.id)) {
+        stopCreativeCanvasPoll();
+        CREATIVE_CANVAS.running = false;
+        CREATIVE_CANVAS.taskId = '';
+      }
       const loadSeq = ++CREATIVE_CANVAS.loadSeq;
       const needsDetail = Boolean(id) && (force || CREATIVE_CANVAS.current?.id !== id);
       const detailRequest = needsDetail
@@ -8770,11 +8950,12 @@ Source prompt:
       }
     }
     async function saveCreativeCanvas() {
-      if (!CREATIVE_CANVAS.current) return;
+      if (!CREATIVE_CANVAS.current) return false;
       const body = {title:$('creativeCanvasTitle').value.trim(), graph:{prompt:$('creativeCanvasPrompt').value, mode:$('creativeCanvasMode').value, aspect_ratio:$('creativeCanvasAspect').value, resolution:$('creativeCanvasResolution').value, count:Number($('creativeCanvasCount').value || 1), use_persona_identity:$('creativeCanvasUsePersona').checked}};
       const res = await creativeCanvasApi('/sessions/' + encodeURIComponent(CREATIVE_CANVAS.current.id), {method:'POST', body:JSON.stringify(body)});
-      if (!res.success) return showToast(res.message || '保存失败', 'bad');
+      if (!res.success) { showToast(res.message || '保存失败', 'bad'); return false; }
       CREATIVE_CANVAS.current = res.data; renderCreativeCanvas(); showToast('创作画布已保存', 'ok');
+      return true;
     }
     async function deleteCreativeCanvas() {
       if (!CREATIVE_CANVAS.current || !await confirmAction(`确定删除创作画布「${CREATIVE_CANVAS.current.title || '当前画布'}」吗？`, {title:'删除画布', confirmText:'删除画布'})) return;
@@ -8784,22 +8965,27 @@ Source prompt:
     }
     async function runCreativeCanvas() {
       if (!CREATIVE_CANVAS.current || CREATIVE_CANVAS.running) return;
-      await saveCreativeCanvas();
       CREATIVE_CANVAS.running = true;
-      $('creativeCanvasRunBtn').disabled = true;
-      $('creativeCanvasRerunBtn').disabled = true;
+      if ($('creativeCanvasRunBtn')) { $('creativeCanvasRunBtn').disabled = true; $('creativeCanvasRunBtn').textContent = '保存中…'; }
+      if ($('creativeCanvasRerunBtn')) $('creativeCanvasRerunBtn').disabled = true;
       if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').style.display = '';
-      $('creativeCanvasStatus').textContent = '已提交生成…';
-      const res = await creativeCanvasApi('/sessions/' + encodeURIComponent(CREATIVE_CANVAS.current.id) + '/run', {method:'POST', body:'{}'});
-      if (!res.success) {
-        CREATIVE_CANVAS.running = false;
-        $('creativeCanvasRunBtn').disabled = false;
-        $('creativeCanvasRerunBtn').disabled = false;
-        if ($('creativeCanvasCancelBtn')) $('creativeCanvasCancelBtn').style.display = 'none';
-        $('creativeCanvasStatus').textContent = res.message || '启动失败';
-        return;
+      $('creativeCanvasStatus').textContent = '正在保存并提交…';
+      try {
+        if (!await saveCreativeCanvas()) throw new Error('保存失败，未启动生成');
+        const res = await creativeCanvasApi('/sessions/' + encodeURIComponent(CREATIVE_CANVAS.current.id) + '/run', {method:'POST', body:'{}'});
+        if (!res.success) throw new Error(res.message || '启动失败');
+        CREATIVE_CANVAS.taskId = res.data?.task_id || '';
+        if (!CREATIVE_CANVAS.taskId) throw new Error('后台未返回任务 ID');
+        $('creativeCanvasStatus').textContent = '已提交生成…';
+        creativeCanvasPollTask(CREATIVE_CANVAS.taskId);
+      } catch (error) {
+        CREATIVE_CANVAS.running = false; CREATIVE_CANVAS.taskId = '';
+        if ($('creativeCanvasRunBtn')) { $('creativeCanvasRunBtn').disabled = false; $('creativeCanvasRunBtn').textContent = '保存后生成'; }
+        if ($('creativeCanvasRerunBtn')) $('creativeCanvasRerunBtn').disabled = true;
+        if ($('creativeCanvasCancelBtn')) { $('creativeCanvasCancelBtn').style.display = 'none'; $('creativeCanvasCancelBtn').disabled = false; }
+        $('creativeCanvasStatus').textContent = error.message || '启动失败';
+        showToast(error.message || '启动失败', 'bad');
       }
-      CREATIVE_CANVAS.taskId = res.data?.task_id || ''; creativeCanvasPollTask(CREATIVE_CANVAS.taskId);
     }
     async function cancelCreativeCanvasTask() {
       const taskId = String(CREATIVE_CANVAS.taskId || '').trim();
@@ -8997,6 +9183,9 @@ Source prompt:
       $('studioSidebarToggle').textContent = collapsed ? '›' : '‹';
       $('studioSidebarToggle').title = collapsed ? '展开画面列表' : '收起画面列表';
       $('studioSidebarToggle').setAttribute('aria-label', $('studioSidebarToggle').title);
+    };
+    if ($('studioMobileNodes')) $('studioMobileNodes').onclick = () => {
+      $('studioEditor')?.classList.toggle('mobile-node-list-open');
     };
     if ($('studioNodePanelClose')) $('studioNodePanelClose').onclick = () => {
       STUDIO.selectedNodeId = '';

@@ -1113,7 +1113,11 @@ class SelfieImageDashboardAPI:
         except Exception:
             limit = 24
         try:
-            return self._ok(self.plugin.studio_gallery_images(limit=limit))
+            offset = max(0, int(self._query_value("offset") or 0))
+        except Exception:
+            offset = 0
+        try:
+            return self._ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
         except Exception as exc:
             return self._fail(str(exc), 400)
 
@@ -1207,7 +1211,11 @@ class SelfieImageDashboardAPI:
         except Exception:
             limit = 24
         try:
-            return self._ok(self.plugin.studio_gallery_images(limit=limit))
+            offset = max(0, int(self._query_value("offset") or 0))
+        except Exception:
+            offset = 0
+        try:
+            return self._ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
         except Exception as exc:
             return self._fail(str(exc), 400)
 

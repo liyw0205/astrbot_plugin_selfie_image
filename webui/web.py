@@ -1327,7 +1327,11 @@ class FlaskWebServer:
             except Exception:
                 limit = 24
             try:
-                return ok(self.plugin.studio_gallery_images(limit=limit))
+                offset = max(0, int(request.args.get("offset") or 0))
+            except Exception:
+                offset = 0
+            try:
+                return ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
             except Exception as exc:
                 return fail(str(exc), 400)
 
@@ -1444,7 +1448,11 @@ class FlaskWebServer:
             except (TypeError, ValueError):
                 limit = 24
             try:
-                return ok(self.plugin.studio_gallery_images(limit))
+                offset = max(0, int(request.args.get("offset") or 0))
+            except (TypeError, ValueError):
+                offset = 0
+            try:
+                return ok(self.plugin.studio_gallery_images(limit, offset))
             except Exception as exc:
                 return fail(str(exc), 400)
 

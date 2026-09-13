@@ -546,13 +546,18 @@ class StudioMixin:
             canvas_namespace="creative",
         )
 
-    def studio_gallery_images(self, limit: int = 24) -> Dict[str, Any]:
+    def studio_gallery_images(self, limit: int = 24, offset: int = 0) -> Dict[str, Any]:
         """Recent successful generated images from records for 画布「从记录选图」."""
         try:
             limit_n = max(1, min(100, int(limit or 24)))
         except Exception:
             limit_n = 24
         items: List[Dict[str, Any]] = []
+        try:
+            offset_n = max(0, min(10000, int(offset or 0)))
+        except Exception:
+            offset_n = 0
+        skipped = 0
         seen = set()
         for record in self.get_recent_records():
             if not record.get("success"):
@@ -571,6 +576,9 @@ class StudioMixin:
                 info = self.get_cached_image_info(text)
                 if not info.get("exists"):
                     continue
+                if skipped < offset_n:
+                    skipped += 1
+                    continue
                 items.append(
                     {
                         "path": text,
@@ -581,9 +589,11 @@ class StudioMixin:
                         "source": record.get("source") or "",
                     }
                 )
-                if len(items) >= limit_n:
-                    return {"items": items, "count": len(items)}
-        return {"items": items, "count": len(items)}
+                if len(items) > limit_n:
+                    break
+        has_more = len(items) > limit_n
+        page = items[:limit_n]
+        return {"items": page, "count": len(page), "offset": offset_n, "has_more": has_more}
 
     def studio_add_asset(self, record_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Put a generated image asset into a canvas, optionally appending a preset."""

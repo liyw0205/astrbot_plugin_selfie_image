@@ -76,11 +76,13 @@ from .cos.cos_looks import (
     COS_LOOK_SETS,
     _cos_item_terms,
     adapt_cos_outfit_for_camera,
+    build_cos_third_person_prompt,
     build_cos_look_action,
     cos_query_has_series_constraint,
     format_cos_look_list,
     keep_cos_outfit_requested,
     list_cos_look_sets,
+    looks_like_cos_prompt,
     match_cos_look_sets,
     parse_requested_cos_camera,
     pick_cos_camera,
@@ -4626,6 +4628,8 @@ class SelfieImagePlugin(
             configured_aspect,
             configured_resolution,
         )
+        if looks_like_cos_prompt(original_prompt):
+            original_prompt = build_cos_third_person_prompt(original_prompt)
         original_prompt, parsed_variation_enabled, parsed_variation_field = parse_variation_request(original_prompt)
         raw_variation_enabled = payload.get("variation_enabled")
         variation_enabled = (
@@ -5430,7 +5434,7 @@ class SelfieImagePlugin(
                 "· /看看腿　腰部以下的日常下装穿搭近景，上半身不入镜；腿部穿搭仅随机光腿神器、白丝或黑丝，可直接指定；随机手机记录或朋友协助拍摄视角",
                 "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
                 "· /查看生图提示词　引用或附带图片后，始终由当前聊天 LLM 反推生图提示词，不查询生图记录",
-                "· /看看COS　随机一套内置 COS 换装；可用 -c 指定数量，预设、随机池角色/类别和额外提示词可任意顺序，未匹配文本保留为额外提示；可发「看看COS 列表/全部/查看」浏览标题；默认随机自拍或他拍，也可写「自拍」「他拍」",
+                "· /看看COS　随机一套内置 COS 换装；默认使用画面外摄影师的第三人称视角，避免自拍手机和额外手臂干扰；可用 -c 指定数量，预设、随机池角色/类别和额外提示词可任意顺序，未匹配文本保留为额外提示；可发「看看COS 列表/全部/查看」浏览标题；明确写「自拍」时才启用自拍视角",
                 "· /看看你　像别人随手拍你",
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象",
                 "",

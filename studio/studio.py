@@ -15,6 +15,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..cos.cos_looks import build_cos_third_person_prompt, looks_like_cos_prompt
 from ..core.utils import save_json_file
 
 
@@ -1726,6 +1727,11 @@ def build_studio_action(session: Dict[str, Any]) -> str:
         )
         return f"{base} 用户补充要求：{prompt}。" if prompt else base
     if mode == "selfie" or template in {"selfie", "clothes"}:
+        if looks_like_cos_prompt(prompt):
+            # COS pool entries may contain legacy mirror/selfie wording.  The
+            # canvas must emit the same third-person contract as /看看COS,
+            # otherwise the clothes template adds a phone-selfie instruction.
+            return build_cos_third_person_prompt(prompt)
         if template == "clothes" or "换装" in prompt or "COS" in prompt.upper() or "cos" in prompt:
             base = "换装/穿搭自拍：服装来自参考，身份保持，表情眼神按本次场景自然重画，看向镜头。"
         else:

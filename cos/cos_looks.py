@@ -1094,10 +1094,12 @@ def pick_cos_camera(*, extra_request: str = "", avoid: str = "", camera: str = "
     forced = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
     if forced in {"selfie", "third"}:
         return forced
-    pool = ["selfie", "third"]
-    if avoid in pool:
-        pool = [item for item in pool if item != avoid] or pool
-    return random.choice(pool)
+    # COS outfits are authored around clothing, pose, and silhouette.  A
+    # first-person phone composition adds an implied phone-holding arm and
+    # frequently conflicts with those authored hands, so the safe default is
+    # always a photographer/third-person view.  Explicit ``自拍`` remains an
+    # opt-in compatibility path for callers that intentionally request it.
+    return "third"
 
 
 def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
@@ -1113,7 +1115,51 @@ def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
     )
     for old, new in replacements:
         text = text.replace(old, new)
-    return text.replace("对镜", "")
+    # Built-in looks predate the camera marker and some still contain
+    # "自拍/镜前" wording.  Strip those capture semantics before the action
+    # reaches the selfie prompt builder; otherwise the two prompt families
+    # compete and models may invent a phone or an extra arm.
+    text = re.sub(r"在([^。；，,]{0,24})(?:全身)?镜(?:中|前)?自拍", r"在\1环境中由摄影师拍摄", text)
+    text = text.replace("不出现镜子中的倒影或额外人物", "背景保持干净，不出现额外人物")
+    text = text.replace("近距离自拍", "近距离摄影")
+    text = text.replace("自拍成片", "摄影成片")
+    text = text.replace("自拍照片", "摄影照片")
+    text = text.replace("自拍", "摄影")
+    text = text.replace("镜子前", "室内环境")
+    text = text.replace("全身镜前", "室内环境")
+    text = text.replace("全身镜", "室内背景")
+    text = text.replace("镜子", "室内背景")
+    text = text.replace("镜前", "室内环境")
+    text = text.replace("对镜", "面向镜头")
+    return text
+
+
+def looks_like_cos_prompt(text: str) -> bool:
+    """Detect a COS-pool/outfit prompt before generic selfie composition runs."""
+    raw = str(text or "")
+    upper = raw.upper()
+    return bool(
+        "【COS:" in upper
+        or re.search(r"(?<![A-Z0-9])COS(?:PLAY)?(?![A-Z0-9])", upper)
+        or any(marker in raw for marker in ("换装", "角色扮演"))
+    )
+
+
+def build_cos_third_person_prompt(text: str) -> str:
+    """Wrap a raw COS-pool prompt in the shared third-person camera contract."""
+    raw = str(text or "").strip()
+    if not looks_like_cos_prompt(raw):
+        return raw
+    adapted = adapt_cos_outfit_for_camera(raw, "third")
+    adapted = re.sub(r"【cam:(?:selfie|third)】", "", adapted, flags=re.I)
+    return (
+        "【cos:web】 【cam:third】 【他拍 / 看看COS模式】"
+        "COS 换装他拍：摄影师在画面外，以正面或三分之四机位拍摄；"
+        "视角优先选择正面半身、三分之二身、三分之四侧前方或环境人像；"
+        "画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然；"
+        "完整展示套装层次和腰线，保持面部、发型、服装与配饰清晰。"
+        f" 用户补充要求：{adapted}。"
+    )
 
 
 def build_cos_look_action(
@@ -1157,12 +1203,12 @@ def build_cos_look_action(
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或第二台拍摄设备；"
             "若套装姿势已明确占用双手或不宜举手机，保留原姿势和道具，不额外添加手机，也不强行遮脸。"
             if phone_face_cover
-            else "不要对镜、不要镜子；主角双手自然做动作，未明确要求遮脸时不要用物件遮脸挡衣服。"
+            else "摄影师在画面外，以正面或三分之四机位拍摄；主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然，摄影师不入画；未明确要求遮脸时保持面部和服装清晰可见。"
         )
         framing = (
             "【他拍 / 看看COS模式】"
             "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
-            "别人视角的单人成品照：具体画幅、景别和机位遵循本套套装描述，未指定时采用竖屏近景半身或环境人像；画面里只有主角一个人；"
+            "别人视角的单人成品照：具体画幅、景别和机位遵循本套套装描述；未指定时优先采用正面半身、三分之二身、三分之四侧前方或环境人像；画面里只有主角一个人；"
             "拍摄者完全在画面外，不要第二个人，不要拍到"
             + ("拍摄过程或其它拍摄设备；" if phone_face_cover else "拍摄设备或拍摄过程；")
             + hand_rule
@@ -1192,7 +1238,7 @@ def build_cos_look_action(
         + "构图要求以本套套装描述为准；本套未指定构图时，完整带上腰线并采用竖屏近景半身；不要简化成普通常服；画面干净得体。"
     )
     if variation["prompt"]:
-        base += variation["prompt"]
+        base += adapt_cos_outfit_for_camera(variation["prompt"], camera_kind)
     if has_refs:
         base = "参考用户附图的氛围或构图，" + base
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")

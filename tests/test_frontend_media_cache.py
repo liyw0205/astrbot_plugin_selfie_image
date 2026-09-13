@@ -38,6 +38,31 @@ def test_gallery_picker_uses_one_long_lived_shared_cache_for_both_canvases():
     assert "CREATIVE_CANVAS_GALLERY_CACHE_TTL_MS" not in PAGE
 
 
+def test_gallery_and_catalog_pickers_bound_first_render_and_support_search():
+    assert "const PICKER_PAGE_SIZE = 30;" in PAGE
+    assert "function renderGalleryPage(panel, items, onPick)" in PAGE
+    assert "data-gallery-more" in PAGE
+    assert "data-prompt-search" in PAGE
+    assert "data-cos-search" in PAGE
+    assert "filteredRows.slice(0, PICKER_PAGE_SIZE)" in PAGE
+
+
+def test_canvas_state_has_request_trace_viewport_fit_and_mobile_node_drawer():
+    assert "const REQUEST_TRACE = [];" in PAGE
+    assert "function requestTraceSnapshot()" in PAGE
+    assert "function studioFitViewport(force = false)" in PAGE
+    assert "selfieStudioSelected:" in PAGE
+    assert "const searchable = `${studioNodeTitle(node)}" in PAGE
+    assert "mobile-node-list-open" in PAGE
+    assert "studioStopPoll();" in PAGE
+
+
+def test_creative_canvas_hides_rerun_until_a_successful_result():
+    assert "const hasSuccess = String(last.status || '').toLowerCase() === 'succeeded'" in PAGE
+    assert "$('creativeCanvasRerunBtn').hidden = !hasSuccess;" in PAGE
+    assert "保存后生成" in PAGE
+
+
 def test_asset_actions_are_delegated_and_media_loading_is_prioritized():
     assert "function setupAssetGridInteractions()" in PAGE
     assert 'data-asset-action="detail"' in PAGE
