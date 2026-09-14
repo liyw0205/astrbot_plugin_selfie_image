@@ -93,14 +93,22 @@ def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None
     assert "第5个八拍" in sequence["prompt"]
     assert "必须输出可听见的BGM" in sequence["prompt"]
 
+    revenge = seed["复仇摇"]
+    assert revenge["duration"] == 16
+    assert "镜头随律动轻微晃动" in revenge["prompt"]
+    assert "短促人声采样片段" in revenge["prompt"]
+    assert "不要生成琵琶、古筝或其他古风乐器音效" in revenge["prompt"]
+
     with tempfile.TemporaryDirectory() as directory:
         manager = VideoPresetManager(directory)
         assert manager.has_preset("小半")
         assert manager.has_preset("嘉桐摇")
         assert manager.has_preset("兰花指卡点舞")
+        assert manager.has_preset("复仇摇")
         assert manager.resolve("小半")["duration"] == 12
         assert manager.resolve("嘉桐摇")["duration"] == 10
         assert manager.resolve("兰花指卡点舞")["duration"] == 20
+        assert manager.resolve("复仇摇")["duration"] == 16
 
 
 def test_command_template_options_can_be_mixed_with_prompt() -> None:
