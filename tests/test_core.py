@@ -9114,7 +9114,7 @@ class LegFocusTests(unittest.TestCase):
             ("橘福福", "zzz_ju_fufu_red_gold"),
             ("爱丽丝·泰姆菲尔德", "zzz_alice_thymefield"),
             ("奥菲丝", "zzz_orphie_stage"),
-            ("千夏", "blue_archive_chinatsu"),
+            ("火宫千夏", "blue_archive_chinatsu"),
             ("芹香", "blue_archive_serika"),
             ("伊织", "blue_archive_iori"),
             ("白洲梓", "blue_archive_azusa"),
@@ -9255,6 +9255,7 @@ class LegFocusTests(unittest.TestCase):
             "zzz_nekomata_street", "zzz_trigger_blue_gray_ops",
             "zzz_pulchra_biker", "zzz_ju_fufu_red_gold",
             "zzz_alice_thymefield", "zzz_orphie_stage",
+            "zzz_sunna_private_sportswear",
         }
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("绝区零")},

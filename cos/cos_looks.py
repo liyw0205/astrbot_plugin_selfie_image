@@ -390,6 +390,12 @@ COS_LOOK_SETS.extend([
         "prompt": "严格换装为《蔚蓝档案》小鸟游星野真人COS：真人 COSER，粉色短发，粉色眼睛，头顶白色小翅膀发饰，慵懒表情。穿白色宽松外套，外套袖口和下摆有浅蓝色滚边；内穿蓝色学生制服和白色衬衫，胸前蓝色领带；下身蓝色百褶短裙，白色长袜，棕色短靴。人物在简洁的真人COS摄影棚中自然站立，双手轻轻抱住外套或整理衣领，身体微微侧转，慵懒看向镜头。柔和室内光线，真实真人COS摄影，竖屏全身。禁止普通休闲服、盾牌、武器、额外人物、文字和水印。",
     },
     {
+        "id": "blue_archive_hoshino_private_gym",
+        "title": "小鸟游星野·私设体操服",
+        "cos_type": "蔚蓝档案",
+        "prompt": "严格换装为《蔚蓝档案》小鸟游星野私设体操服真人COS：成年真人 COSER，粉色及腰长发，厚刘海，橙蓝异色瞳，神态慵懒可爱。穿白色宽松短袖运动T恤，青绿色圆领和袖口细边；外搭黑色、白色、亮青绿色拼接的宽松运动夹克，夹克自然滑落到肩臂；下穿黑色贴身运动短裤，裤腿两侧各有白色竖条，搭配白色不透明过膝袜。人物站在浅色室内房门前，一手轻拉衣摆，另一手扶住滑落的夹克，身体正面自然站立。柔和暖白室内光，真实真人COS摄影，竖屏9:16全身构图，清楚呈现假发纤维、运动面料和自然布料褶皱。禁止百褶裙、领带、武器、盾牌、光环、额外人物、文字和水印。",
+    },
+    {
         "id": "blue_archive_yuuka",
         "title": "早濑优香",
         "cos_type": "蔚蓝档案",
@@ -880,6 +886,12 @@ COS_LOOK_SETS.extend([
         "cos_type": "绝区零",
         "prompt": "严格换装为《绝区零》奥菲丝蓝白舞台装COS：真人 COSER，银白色长发，发侧佩戴浅蓝色蝴蝶结。穿白色与蓝色拼接的短款舞台礼服，高领内衫与蓝色束腰外套层次清晰，胸前有银色装饰；下装为白蓝渐变短裙，白色长袜与浅蓝色短靴，手戴白色短手套。人物站在简洁室内摄影棚，一手轻提裙摆，另一手自然垂下，身体微微侧转，面向镜头保持温和表情。真实真人COS摄影，竖屏9:16全身构图，柔和白色现场光配浅蓝色边缘光，突出礼服层次、银色装饰、手套、假发纤维和鞋面细节，背景略微虚化。不要大型舞台布景、麦克风、聚光特效、枪械、战斗动作、额外人物、字幕或水印。画面使用真实相机拍摄，人物皮肤、假发和布料均保留自然质感，避免动漫插画与塑料渲染。",
     },
+    {
+        "id": "zzz_sunna_private_sportswear",
+        "title": "千夏·私设运动装",
+        "cos_type": "绝区零",
+        "prompt": "严格换装为《绝区零》妄想天使千夏（Sunna）私设日常运动装真人COS：成年真人 COSER，浅薄荷绿色蓬松短发与侧马尾，黄绿异色瞳；佩戴黑粉猫耳女仆发箍，发箍带白色荷叶边，刘海点缀绿色和白色卡通发夹。穿浅粉色修身无袖背心，正面纵向排列三组小型可爱卡通图案；下穿黑色宽松运动短裤，裤脚有白色滚边，侧面带白色猫爪和猫脸图案；搭配白色蕾丝口不透明过膝袜，膝部带小型黑色猫脸装饰，肩上露出红色双肩包肩带。人物站在明亮简洁的白色室内墙前，双手轻扶肩带或整理猫耳发箍，身体正面自然站立。柔和高亮室内光，真实真人COS摄影，竖屏9:16全身构图，清楚呈现假发纤维、针织背心和运动短裤质感。不要黑白女仆裙、围裙、金色铃铛、天使翅膀、武器、额外人物、文字和水印。",
+    },
 ])
 
 COS_LOOK_SETS.extend([
@@ -946,6 +958,7 @@ _BLUE_ARCHIVE_COSTUMES = {
     "shiroko_black_white_tracksuit": "阿拜多斯黑白运动服，黑色拉链运动外套、白色肩袖、亮青绿色滚边、黑色运动短裤、白色不透明过膝长袜与黑色运动鞋，银白短发配灰白狼耳发饰",
     "ibuki_red_white_sportswear": "丹花伊吹红白运动服，白色短袖紧身运动T恤、鲜红色领口袖口滚边、红色高腰运动短裤、黑色小恶魔角发饰、红色项圈、黑色腿环与运动鞋，金色侧高马尾",
     "blue_archive_hoshino": "阿拜多斯学生制服，白色宽松外套、浅蓝色滚边和袖口、蓝色内搭短上衣、深蓝色短裙或短裤、白色过膝袜与棕色短靴，粉色短发配白色小翅膀发饰",
+    "blue_archive_hoshino_private_gym": "小鸟游星野私设体操服，白色宽松短袖运动T恤、青绿色圆领和袖口细边、黑白亮青绿拼色宽松运动夹克、黑色贴身运动短裤和裤腿两侧白色竖条、白色不透明过膝袜，夹克自然滑落到肩臂，粉色及腰长发配厚刘海和橙蓝异色瞳",
     "blue_archive_yuuka": "千年研讨会制服，白色衬衣、蓝色领带、蓝灰色短款西装外套、深蓝色百褶短裙、黑色不透明过膝袜与黑色低跟鞋，白色兔耳发饰、学生会身份牌和白色计算器",
     "blue_archive_neru": "C&C黑红机能制服，黑色短夹克、红色内衬和滚边、黑色高领内搭、黑色短裙或短裤、黑色长袜与黑色短靴，粉色短发配黑色猫耳发饰和红色腰包",
     "blue_archive_asuna": "C&C白色兔女郎制服，白色兔女郎连体衣、黑色领结、黑色腰封、白色袖口、黑色不透明过膝袜与黑色高跟鞋，金色长发配白色兔耳发饰，银色托盘为轻量摄影道具",
@@ -1499,19 +1512,22 @@ def keep_cos_outfit_requested(text: str) -> bool:
 
 
 COS_LOOK_CATEGORY_TERMS = (
-    "旗袍", "汉服", "女仆", "睡衣", "长裙", "短裙", "短装", "运动服", "礼服", "泳装", "古装", "古风", "巫女", "肚兜", "挂脖",
+    "旗袍", "汉服", "女仆", "睡衣", "长裙", "短裙", "短装", "运动服", "体操服", "礼服", "泳装", "古装", "古风", "巫女", "肚兜", "挂脖",
     "洛丽塔", "花嫁", "围裙", "白熊", "和风", "荷叶裙", "兜兜", "袴裙",
 )
 
 # Common short names keep command matching practical without adding fields to
 # the stable four-key catalog schema.
 _COS_LOOK_NAME_ALIASES = {
+    "blue_archive_hoshino": ("星野",),
+    "blue_archive_hoshino_private_gym": ("星野", "星野体操服", "星野运动服"),
     "blue_archive_chinatsu": ("千夏",),
     "blue_archive_serika": ("芹香",),
     "blue_archive_iori": ("伊织",),
     "blue_archive_maki": ("真纪",),
     "blue_archive_fuuka": ("风香",),
     "blue_archive_toki": ("纺希",),
+    "zzz_sunna_private_sportswear": ("千夏", "Sunna", "妄想天使千夏", "绝区零千夏"),
 }
 
 # Every outfit is stored in one catalog. ``cos_type`` identifies the source
@@ -1633,7 +1649,7 @@ def _cos_item_category(item: Mapping[str, Any]) -> str:
         return "sleepwear"
     if "围裙" in title:
         return "maid"
-    if "运动服" in title or "运动装" in title:
+    if "运动服" in title or "运动装" in title or "体操服" in title:
         return "uniform"
     # Keep positive clauses while dropping negative examples such as
     # ``不要普通旗袍`` or ``不是普通旗袍`` from the category signal.

@@ -6,6 +6,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     build_cos_look_action,
     build_cos_third_person_prompt,
     cos_prompt_has_framing,
+    match_cos_look_sets,
     pick_cos_framing,
 )
 from astrbot_plugin_selfie_image.studio.studio import build_studio_action, empty_session
@@ -71,6 +72,36 @@ def test_cos_action_replaces_outfit_view_alternatives():
     assert "本次从已有视角选项中随机确定为" in action
     assert "正面或三分之四侧身" not in action
     assert "近景至全身" not in action
+
+
+def test_private_hoshino_and_sunna_cos_outfits_are_registered():
+    looks = {item["id"]: item for item in COS_LOOK_SETS}
+    hoshino = looks["blue_archive_hoshino_private_gym"]
+    sunna = looks["zzz_sunna_private_sportswear"]
+
+    assert hoshino["cos_type"] == "蔚蓝档案"
+    assert "私设体操服" in hoshino["title"]
+    assert "黑白亮青绿拼色宽松运动夹克" in hoshino["prompt"]
+    assert "黑色贴身运动短裤" in hoshino["prompt"]
+    assert sunna["cos_type"] == "绝区零"
+    assert "妄想天使千夏（Sunna）" in sunna["prompt"]
+    assert "浅粉色修身无袖背心" in sunna["prompt"]
+    assert "黑色宽松运动短裤" in sunna["prompt"]
+
+    assert {item["id"] for item in match_cos_look_sets("星野")} == {
+        "blue_archive_hoshino",
+        "blue_archive_hoshino_private_gym",
+    }
+    assert {item["id"] for item in match_cos_look_sets("千夏")} == {
+        "blue_archive_chinatsu",
+        "zzz_sunna_private_sportswear",
+    }
+    assert [item["id"] for item in match_cos_look_sets("蔚蓝档案 千夏")] == [
+        "blue_archive_chinatsu"
+    ]
+    assert [item["id"] for item in match_cos_look_sets("绝区零 千夏")] == [
+        "zzz_sunna_private_sportswear"
+    ]
 
 
 def test_priority_picker_filters_already_selected_models():
