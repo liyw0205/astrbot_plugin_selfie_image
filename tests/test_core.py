@@ -712,7 +712,17 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("smartphone outfit record", en)
         self.assertIn("plastic skin", en)
         self.assertIn("mid-calf socks", en)
-        self.assertIn("skin-tone leg-cover styling", en)
+        self.assertTrue(
+            any(
+                phrase in en
+                for phrase in (
+                    "skin-tone leg-cover styling",
+                    "opaque white thigh-high stockings",
+                    "opaque black thigh-high stockings",
+                    "opaque white pantyhose",
+                )
+            )
+        )
         self.assertIn("vertical", en.lower())
         self.assertNotRegex(en, r"[\u3400-\u9fff]")
         self.assertNotIn("User request:", en)
@@ -7039,7 +7049,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("自然的下半身服装局部", legs)
             self.assertIn("成年人物", legs)
             self.assertIn("服装的颜色、材质、层次", legs)
-            self.assertIn("自然坐姿、跪坐、侧躺、抱膝、交叠坐姿、窗边坐或席地屈膝", legs)
+            self.assertIn("本张使用看看腿随机姿势池条目", legs)
+            self.assertNotIn("自然坐姿、跪坐、侧躺、抱膝、交叠坐姿、窗边坐或席地屈膝", legs)
             self.assertNotIn("晒腿", legs)
             self.assertNotIn("主要看腿形", legs)
             self.assertNotIn("不露脸", legs)
@@ -7425,7 +7436,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("不露脸", text)
             for forbidden in ("过膝袜", "长筒袜", "肉色丝袜", "丝袜", "勒进大腿肉", "半透明", "赤足", "碰脚", "脚趾自然清晰", "完整包住脚部"):
                 self.assertNotIn(forbidden, text)
-            self.assertIn("腿部穿搭只允许光腿神器、白丝或黑丝三选一", text)
+            self.assertRegex(text, r"腿部穿搭固定为(?:自然肤色光腿神器|白色不透白丝|黑色不透黑丝|白色不透连裤袜)")
+            self.assertNotRegex(text, r"光腿神器、白丝、黑丝(?:或连裤袜)?(?:三|四)选一")
             self.assertIn("禁止中筒袜、短袜", text)
             self.assertNotIn("微胖软肉", text)
             self.assertNotIn("不要大象腿猪腿", text)
@@ -8037,7 +8049,7 @@ class LegFocusTests(unittest.TestCase):
         expected_poses = {
             "sofa_front_crop", "chair_side_crop", "sofa_cross_crop",
             "floor_knees_crop", "sofa_occlusion_crop", "stool_edge_crop",
-            "floor_side_kneel_crop", "seat_knees_cross_crop",
+            "floor_side_kneel_crop", "seat_knees_cross_crop", "floor_topdown_cross_crop",
         }
         for _ in range(360):
             t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
@@ -8059,6 +8071,18 @@ class LegFocusTests(unittest.TestCase):
         for key in expected_poses:
             self.assertTrue(any(p == key for p in found), f"missing pose family {key} in {found}")
         self.assertNotIn("stand_topdown", found)
+        with patch(
+            "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_pose",
+            return_value={
+                "id": "floor_topdown_cross_crop",
+                "title": "俯拍交叉坐姿",
+                "prompt": "镜头从正上方近距离俯拍，双腿自然交叉。",
+            },
+        ):
+            topdown = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
+        self.assertIn("【pose:floor_topdown_cross_crop】", topdown)
+        self.assertIn("镜头从正上方近距离俯拍", topdown)
+        self.assertIn("双腿自然交叉", topdown)
         forced_crop = None
         with patch(
             "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_pose",
@@ -8152,7 +8176,7 @@ class LegFocusTests(unittest.TestCase):
         for risky in ("掀衣摆", "不露脸", "主要看腿形", "短裙"):
             self.assertNotIn(risky, neutralized)
 
-        self.assertEqual(set(plugin_main.LEGWEAR_PROMPTS), {"光腿神器", "白丝", "黑丝"})
+        self.assertEqual(set(plugin_main.LEGWEAR_PROMPTS), {"光腿神器", "白丝", "黑丝", "连裤袜"})
         bare_leg = plugin_main.LEGWEAR_PROMPTS["光腿神器"]
         self.assertIn("自然肤色光腿神器", bare_leg)
         self.assertNotIn("主要看腿形", bare_leg)
@@ -8172,6 +8196,9 @@ class LegFocusTests(unittest.TestCase):
             self.assertNotIn("大象腿", text)
             self.assertNotIn("细杆腿", text)
             self.assertNotIn("连裤丝袜：", text)
+        pantyhose = plugin_main.LEGWEAR_PROMPTS["连裤袜"]
+        self.assertIn("白色不透连裤袜", pantyhose)
+        self.assertIn("从腰部沿可见腿部连续覆盖到脚趾", pantyhose)
 
         # /看看COS random outfit pool
         ids = set()
@@ -9754,6 +9781,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertEqual(plugin_main.parse_requested_legwear("看看腿 白丝"), "白丝")
         self.assertEqual(plugin_main.parse_requested_legwear("黑丝 3"), "黑丝")
         self.assertEqual(plugin_main.parse_requested_legwear("光腿"), "光腿神器")
+        self.assertEqual(plugin_main.parse_requested_legwear("白色连裤袜"), "连裤袜")
         boilerplate = "若本次是白丝/黑丝：丝袜必须包住整只脚到脚趾。本次腿部穿搭：光腿神器。"
         self.assertEqual(plugin_main.parse_requested_legwear(boilerplate), "光腿神器")
 
@@ -9769,12 +9797,87 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("本次服装搭配已锁定为：自然肤色光腿神器", bare)
         forced = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False, force_legwear="白丝")
         self.assertIn("本次服装搭配已锁定为：白色不透白丝", forced)
+        pantyhose = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "连裤袜", False)
+        self.assertIn("本次服装搭配已锁定为：白色不透连裤袜", pantyhose)
+        self.assertIn("【wear:pantyhose】", pantyhose)
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
+
+        sample = (
+            "第一人称视角，俯拍，一位女性穿着浅蓝色格纹百褶短裙，"
+            "搭配白色连裤袜和深棕色平底鞋。坐姿，双腿交叉。"
+            "背景是户外深色的木质地板露台，自然光下有柔和的阴影，"
+            "写实摄影风格，画面比例9:16。"
+        )
+        sample_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
+            _P(), sample, False
+        )
+        self.assertIn("【cam:selfie】", sample_action)
+        self.assertIn("【pose:floor_topdown_cross_crop】", sample_action)
+        self.assertIn("【wear:pantyhose】", sample_action)
+        self.assertIn("【outfit:custom】", sample_action)
+        self.assertEqual(sample_action.count("浅蓝色格纹百褶裙"), 1)
+        self.assertEqual(sample_action.count("深棕色平底鞋"), 1)
+        self.assertEqual(plugin_main.ensure_leg_focus_action(sample_action), sample_action)
+        with tempfile.TemporaryDirectory() as tmp:
+            sample_zh = PersonaManager(tmp).build_selfie_prompt(
+                sample_action, "小助", "温柔", True, 0
+            )
+        self.assertNotIn("【outfit:custom】", sample_zh)
+        sample_en = build_selfie_builtin_prompt(
+            sample_action,
+            language="en",
+            has_reference_image=True,
+            appearance_type="real",
+        )
+        self.assertNotIn("indoor", sample_en.lower())
+        self.assertNotIn("room light", sample_en.lower())
+
+        batch_plugin = object.__new__(plugin_main.SelfieImagePlugin)
+        batch_plugin.config = type("Config", (), {"image_max_batch_count": 10})()
+        rebuilt_actions = []
+
+        async def fake_build_prompt(event, action, extra_refs):
+            rebuilt_actions.append(action)
+            return action, [], {}
+
+        async def fake_generate(prompt, aspect, resolution, refs, **kwargs):
+            return {"success": True, "files": ["generated.png"]}
+
+        async def fake_counted(*, task_id, event, total, fail_label, run_one, log_prefix):
+            for index in range(total):
+                await run_one(index)
+            return {"success": True, "files": []}
+
+        batch_plugin._build_selfie_prompt_and_refs_for_event = fake_build_prompt
+        batch_plugin._run_image_generation = fake_generate
+        batch_plugin._run_counted_generation_shots = fake_counted
+        asyncio.run(
+            batch_plugin._run_selfie_batches_unlocked(
+                "test-leg-batch",
+                object(),
+                sample_action,
+                [],
+                "command-look-legs",
+                3,
+                "9:16",
+                "1K",
+                "生成失败",
+                rebuild_extra_request=sample,
+            )
+        )
+        self.assertEqual(len(rebuilt_actions), 3)
+        for rebuilt in rebuilt_actions:
+            self.assertIn("【cam:selfie】", rebuilt)
+            self.assertIn("【pose:floor_topdown_cross_crop】", rebuilt)
+            self.assertIn("【wear:pantyhose】", rebuilt)
+            self.assertIn("【outfit:custom】", rebuilt)
 
         for legwear, expected in (
             ("光腿神器", "自然肤色光腿神器（沿可见腿部连续覆盖）"),
             ("白丝", "白色不透白丝（从大腿上部沿可见腿部连续向下覆盖，袜口在大腿上部）"),
             ("黑丝", "黑色不透黑丝（从大腿上部沿可见腿部连续向下覆盖，袜口在大腿上部）"),
+            ("连裤袜", "白色不透连裤袜（从腰部沿可见腿部连续覆盖到脚趾，袜身平整自然）"),
         ):
             action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
                 _P(), "", False, force_legwear=legwear
@@ -9788,11 +9891,11 @@ class LegFocusTests(unittest.TestCase):
 
         self.assertEqual(
             LEGWEAR_BY_POSE["side_lie"],
-            (("光腿神器", 6), ("白丝", 3), ("黑丝", 1)),
+            (("光腿神器", 6), ("白丝", 3), ("黑丝", 1), ("连裤袜", 2)),
         )
         self.assertEqual(
             LEGWEAR_BY_POSE["cross_leg"],
-            (("光腿神器", 2), ("白丝", 4), ("黑丝", 4)),
+            (("光腿神器", 2), ("白丝", 4), ("黑丝", 4), ("连裤袜", 2)),
         )
         self.assertNotIn("stand_topdown", LEGWEAR_BY_POSE)
 

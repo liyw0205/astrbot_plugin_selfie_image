@@ -100,6 +100,8 @@ from .generation.generation_results import (
 from .cos.leg_focus import (
     CALF_CROP_POSES,
     LEGFOCUS_CAMERA_WEIGHTS,
+    LEGFOCUS_OUTFIT_POOL,
+    LEGFOCUS_POSE_ALIASES,
     LEGFOCUS_RISKY_EXTRA_REPLACEMENTS,
     LEGWEAR_BY_POSE,
     LEGWEAR_PROMPTS,
@@ -107,8 +109,12 @@ from .cos.leg_focus import (
     SAFE_LEGWEAR_LABELS,
     STOCKING_FINISH_CHOICES,
     build_leg_focus_action,
+    ensure_leg_focus_action,
+    parse_requested_leg_camera,
+    parse_requested_leg_pose,
     is_leg_calf_crop_action,
     parse_requested_legwear,
+    pick_leg_focus_outfit,
     pick_stocking_finish,
 )
 from .features.model_selection import (
@@ -1189,12 +1195,16 @@ class SelfieImagePlugin(
         *,
         avoid_pose: str = "",
         force_legwear: str = "",
+        force_pose: str = "",
+        force_camera: str = "",
     ) -> str:
         return build_leg_focus_action(
             extra_request,
             has_refs,
             avoid_pose=avoid_pose,
             force_legwear=force_legwear,
+            force_pose=force_pose,
+            force_camera=force_camera,
         )
 
     def _normalize_selfie_action(self, action: str, has_refs: bool) -> str:
@@ -1204,9 +1214,9 @@ class SelfieImagePlugin(
         removed_pose = "stand_" + "topdown"
         if pose_match and pose_match.group(1) == removed_pose:
             return self._build_leg_focus_action(raw, has_refs, avoid_pose=removed_pose)
-        if pose_match or not self.persona.analyze_selfie_intent(raw).is_legs_only:
+        if not self.persona.analyze_selfie_intent(raw).is_legs_only:
             return raw
-        return self._build_leg_focus_action(raw, has_refs)
+        return ensure_leg_focus_action(raw, has_refs)
 
 
     @staticmethod
@@ -1332,6 +1342,12 @@ class SelfieImagePlugin(
             return self._tool_soft_fail(error)
 
         action = str(action or "").strip() or "看着镜头自然自拍"
+        leg_rebuild_extra = (
+            action
+            if self.persona.analyze_selfie_intent(action).is_legs_only
+            and "【legs:outfit】" not in action
+            else ""
+        )
         await self._send_progress_text(
             event,
             await self._build_contextual_progress_text(event, "selfie", action, requested_count, ack_message),
@@ -1354,6 +1370,7 @@ class SelfieImagePlugin(
                 aspect,
                 resolution,
                 self._natural_fail_fallback("selfie"),
+                rebuild_extra_request=leg_rebuild_extra,
             )
 
         task = self.start_command_image_task(
@@ -4416,13 +4433,15 @@ class SelfieImagePlugin(
         last_cos_scene = ""
         extra_keep = ""
         force_legwear = ""
+        force_leg_pose = ""
+        force_leg_camera = ""
         keep_cos_outfit = False
         if rebuild_each:
             # Extra may contain full preset text with many periods — take rest of line, then strip pose/shot tags.
             m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
-                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_pose|cos_scene|cos_view|legs|wear):[a-z0-9_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_pose|cos_scene|cos_view|legs|wear|outfit):[a-z0-9_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
             # Keep the original command query even when it is already present
             # in the selected outfit title/prompt and therefore has no user
@@ -4431,6 +4450,10 @@ class SelfieImagePlugin(
                 extra_keep = str(rebuild_extra_request).strip()
             # Keep user/locked legwear across rebuild rounds (extra text alone may have stripped 白丝).
             force_legwear = parse_requested_legwear(str(action or "")) or parse_requested_legwear(extra_keep)
+            # Preserve only explicitly requested leg framing. Random choices in
+            # the first built action must remain free to vary between shots.
+            force_leg_pose = parse_requested_leg_pose(rebuild_extra_request)
+            force_leg_camera = parse_requested_leg_camera(rebuild_extra_request)
             m_pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
             if m_pose:
                 last_pose = str(m_pose.group(1) or "")
@@ -4460,6 +4483,8 @@ class SelfieImagePlugin(
                         bool(extra_refs),
                         avoid_pose=last_pose,
                         force_legwear=force_legwear,
+                        force_pose=force_leg_pose,
+                        force_camera=force_leg_camera,
                     )
                     m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
                     if m_pose:
@@ -5433,7 +5458,7 @@ class SelfieImagePlugin(
                 "· /文生图　只用文字按原文出图，不走自拍人设，也不用形象图",
                 "· /图生图　必须附图或引用图，按原文改图；不自动使用形象图",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
-                "· /看看腿　腰部以下的日常下装穿搭近景，上半身不入镜；腿部穿搭仅随机光腿神器、白丝或黑丝，可直接指定；随机手机记录或朋友协助拍摄视角",
+                "· /看看腿　腰部以下的日常下装穿搭近景，上半身不入镜；腿部穿搭随机光腿神器、白丝、黑丝或连裤袜，可直接指定；随机手机记录、俯拍或朋友协助拍摄视角",
                 "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
                 "· /查看生图提示词　引用或附带图片后，始终由当前聊天 LLM 反推生图提示词，不查询生图记录",
                 "· /看看COS　随机一套内置 COS 换装；默认使用画面外摄影师的第三人称视角，避免自拍手机和额外手臂干扰；可用 -c 指定数量，预设、随机池角色/类别和额外提示词可任意顺序，未匹配文本保留为额外提示；可发「看看COS 列表/全部/查看」浏览标题；明确写「自拍」时才启用自拍视角",
@@ -6186,6 +6211,7 @@ class SelfieImagePlugin(
             preset_aspect=preset_aspect,
             preset_resolution=preset_resolution,
             preset_name=preset_name,
+            rebuild_extra_request=expanded_extra,
         ):
             yield item
 

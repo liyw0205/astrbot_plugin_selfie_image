@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from ..cos.leg_focus import ensure_leg_focus_action, get_leg_focus_outfit, has_leg_focus_contract
 from ..core.utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
 
 
@@ -206,7 +207,7 @@ def extract_user_extra_text(action: str) -> str:
     if not match:
         return ""
     value = match.group(1)
-    value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear):[a-z0-9_]+】\s*", " ", value)
+    value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear|outfit):[a-z0-9_]+】\s*", " ", value)
     return re.sub(r"\s+", " ", value).strip(" 。")
 
 
@@ -765,6 +766,7 @@ class PersonaManager:
                 "丝袜",
                 "黑丝",
                 "白丝",
+                "连裤袜",
                 "光腿",
                 "jk",
                 "cos",
@@ -845,6 +847,7 @@ class PersonaManager:
                     "丝袜",
                     "黑丝",
                     "白丝",
+                    "连裤袜",
                     "肉丝",
                     "光腿",
                     "美腿",
@@ -903,7 +906,7 @@ class PersonaManager:
         elif is_legs_only:
             is_group_photo = False
             is_multi = False
-            # 光腿/白丝/黑丝 are legwear, not outfit-change; 换装 line confuses gpt-image.
+            # Legwear terms are lower-body styling, not outfit-change; the change-clothes line confuses gpt-image.
             change_clothes = False
             use_today = False
         else:
@@ -1074,6 +1077,9 @@ class PersonaManager:
     ) -> str:
         act = str(action or "").strip()
         intent = self.analyze_selfie_intent(act)
+        if intent.is_legs_only and not has_leg_focus_contract(act):
+            act = ensure_leg_focus_action(act, has_reference_image)
+            intent = self.analyze_selfie_intent(act)
         cos_contract = bool(
             intent.is_cos_look and re.search(r"【cam:(?:selfie|third)】", act, re.I)
         )
@@ -1132,11 +1138,8 @@ class PersonaManager:
             if intent.is_group_photo:
                 reference_lines.extend(group_style_lines(appearance_type))
             elif intent.is_legs_only:
-                reference_lines.extend(
-                    [
-                        "额外参考图只参考坐靠姿势、构图、室内环境和光线；腿部穿搭完全以本次锁定选项为准，不参考或复制参考图中的袜子、下装或鞋袜搭配。",
-                        "所有参考图都服从近距离服装取景，保持单人、得体、日常的记录效果。",
-                    ]
+                reference_lines.append(
+                    "额外参考图只参考氛围和构图，不改变已锁定的单一视角、姿势或腿部穿搭。"
                 )
             else:
                 reference_lines.extend(
@@ -1204,47 +1207,49 @@ class PersonaManager:
             camera_kind = str(camera_match.group(1) if camera_match else "selfie")
             pose_match = re.search(r"【pose:([a-z_]+)】", act)
             pool_pose_match = re.search(
-                r"【姿势池·[^】]+】(.*?)(?=本次服装搭配已锁定为：|用户提供的图片只参考|【cam:|$)",
+                r"【姿势池·[^】]+】(.*?)(?=本次服装搭配已锁定为：|完整下装服饰组合已由代码锁定：|用户提供的图片只参考|【cam:|$)",
                 act,
                 re.S,
             )
             pool_pose_text = re.sub(
                 r"\s+", " ", str(pool_pose_match.group(1) if pool_pose_match else "")
             ).strip(" 。；")
-            camera_line = (
-                "第一人称手机自拍：手机镜头从腰线向下记录下装局部，手机、手臂和上半身都在画面外。"
-                if camera_kind == "selfie"
-                else "第三人称摄影照片：拍摄者完全在画面外，镜头只记录腰部以下的下装局部。"
-            )
             wear_match = re.search(r"本次服装搭配(?:已锁定为)?[:：]\s*([^。]+)", act)
             selected = ""
             if wear_match:
                 selected_source = str(wear_match.group(1)).strip().split("；", 1)[0]
-                selected = next((name for name in ("光腿神器", "白丝", "黑丝") if name in selected_source), "")
+                selected = next((name for name in ("光腿神器", "白丝", "黑丝", "连裤袜") if name in selected_source), "")
             selected_text = {
                 "光腿神器": "自然肤色光腿神器（沿可见腿部连续覆盖）",
                 "白丝": "白色不透白丝（从大腿上部沿可见腿部连续向下覆盖，袜口在大腿上部）",
                 "黑丝": "黑色不透黑丝（从大腿上部沿可见腿部连续向下覆盖，袜口在大腿上部）",
+                "连裤袜": "白色不透连裤袜（从腰部沿可见腿部连续覆盖到脚趾，袜身平整自然）",
             }.get(selected)
-            legwear_line = (
-                f"腿部穿搭已锁定为{selected_text}；只生成该选项，不参考参考图中的袜子或其他腿部穿搭；"
-                "禁止中筒袜、短袜等停在小腿中段的普通袜型。"
-                if selected_text
-                else "腿部穿搭只允许光腿神器、白丝或黑丝三选一；不参考参考图中的袜子或其他腿部穿搭；禁止中筒袜、短袜等停在小腿中段的普通袜型。"
-            )
+            outfit_match = re.search(r"【outfit:([a-z_]+)】", act)
+            outfit = get_leg_focus_outfit(outfit_match.group(1) if outfit_match else "")
             mode_lines.extend(
                 [
                     f"【服装局部展示 / {'第一人称手机自拍' if camera_kind == 'selfie' else '第三人称摄影'}】",
-                    camera_line,
-                    "严格近距离取景：画面只有主角一人，保持自然的下半身服装局部构图，不扩展为半身或全身，不把膝关节或小腿作为固定裁切线。",
-                    "画面主体为成年人物的得体日常服装展示，重点展示服装的颜色、材质、层次和自然版型；衣物穿着完整且不透明，保持室内柔和光线。",
-                    legwear_line,
-                    "腿部必须连续、自然并符合真实人体结构。画面边缘可以自然裁出腿部，衣物、家具或前景也可以按明确的前后关系合理遮挡；若小腿或脚不展示，必须自然延伸到画面外，或被边界清楚的实体物体完整遮挡。禁止在膝关节、小腿中段或脚踝附近突然终止；跪坐时脚踝应自然过渡到脚背或脚底，再由身体、衣摆或真实接触关系遮挡，不能把袜筒下缘直接当作小腿终点。地毯、床面或沙发面只有在真实接触和清晰前后关系下才可遮挡肢体，不能无缘无故吞没可见腿部。",
-                    "按动作描述保持自然姿势，重心稳定，画面不出现多余人物或杂乱肢体。"
-                    if pose_match
-                    else "按动作描述保持自然坐姿、跪坐、侧躺、抱膝、交叠坐姿、窗边坐或席地屈膝，重心稳定，服装纹理清楚。",
+                    (
+                        "第一人称手机自拍：手机镜头从腰线向下记录下装局部，手机、手臂和上半身都在画面外。"
+                        if camera_kind == "selfie"
+                        else "第三人称摄影照片：拍摄者完全在画面外，镜头只记录腰部以下的下装局部。"
+                    ),
+                    "严格近距离取景：画面只有主角一人（成年人物），保持自然的下半身服装局部构图，不扩展为半身或全身。",
+                    f"腿部穿搭固定为{selected_text}；只生成该选项，不参考参考图中的袜子、下装或鞋袜搭配；禁止中筒袜、短袜或袜子停在小腿中段。"
+                    if selected_text
+                    else "腿部穿搭已由代码固定为一个具体选项；不参考参考图中的袜子、下装或鞋袜搭配；禁止中筒袜、短袜或袜子停在小腿中段。",
+                    "服装穿着完整且不透明，重点记录服装的颜色、材质、层次。",
+                    "腿部保持髋、膝、踝连续自然；小腿或脚若不入镜，必须自然延伸到画面外或被有清晰边界的实体物体合理遮挡；禁止在膝关节、小腿中段或脚踝附近突然终止，不能把袜筒下缘直接当作小腿终点。",
+                    "严格按已锁定的单一视角、姿势和腿部穿搭生成，不在选项之间切换，不自行补充其他方案。",
                 ]
             )
+            if outfit:
+                mode_lines.append(
+                    f"代码锁定下装服饰组合：{outfit.get('skirt', '')}、{outfit.get('shoes', '')}；袜装严格使用上方唯一腿部穿搭。"
+                )
+            elif outfit_match:
+                mode_lines.append("裙装或鞋履按用户明确指定内容执行，不自行替换。")
             if pose_match:
                 pose_descriptions = {
                     "sit": "椅上或沙发自然坐姿，服装自然垂落",
@@ -1267,9 +1272,10 @@ class PersonaManager:
                     "reclined_knees_crop": "沙发或座椅上的轻松靠坐姿势",
                     "desk_sit_crop": "桌前椅上的自然坐姿，桌沿可入镜",
                     "bed_supine_crop": "床上由枕头支撑的舒适靠坐，衣摆和床品自然铺开",
+                    "floor_topdown_cross_crop": "地面或木地板上的俯拍交叉坐姿，腿部与地面接触自然",
                 }
                 pose_text = pose_descriptions.get(pose_match.group(1))
-                if pose_text:
+                if pose_text and not pool_pose_text:
                     mode_lines.append(f"本张构图固定为：{pose_text}；不要改成其他姿势。")
             if pool_pose_text:
                 mode_lines.append(f"本张使用看看腿随机姿势池条目：{pool_pose_text}。")

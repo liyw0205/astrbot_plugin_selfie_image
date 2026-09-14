@@ -5,6 +5,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..cos.leg_focus import (
+    ensure_leg_focus_action,
+    get_leg_focus_outfit,
+    has_leg_focus_contract,
+)
+
 
 @dataclass(frozen=True)
 class BilingualPrompt:
@@ -48,7 +54,7 @@ def extract_user_prompt(action: str) -> str:
     match = re.search(r"(?:用户补充要求优先|用户补充要求|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
     if match:
         value = match.group(1)
-        value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear):[a-z0-9_]+】\s*", " ", value)
+        value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear|outfit):[a-z0-9_]+】\s*", " ", value)
         return re.sub(r"\s+", " ", value).strip(" 。")
     if any(marker in text for marker in ("【自拍 / 看看模式】", "【他拍 / 看看你模式】", "【自拍 / 看看COS模式】", "【他拍 / 看看COS模式】", "【合影 / 合照模式】", "看看腿。", "【legs:outfit】", "成年人物日常下半身穿搭展示", "【唯一姿势·不可混用】")):
         return ""
@@ -65,6 +71,14 @@ def build_selfie_builtin_prompt(
     user_text: str = "",
 ) -> str:
     """Build a compact central built-in prompt; user text is appended separately."""
+    raw_action = str(action or "").strip()
+    raw_is_cos = "看看COS" in raw_action or "看看cos" in raw_action.lower() or "【cos:" in raw_action
+    raw_is_legs = (not raw_is_cos) and any(
+        marker in raw_action
+        for marker in ("看看腿", "腿部", "下半身穿搭", "穿搭展示", "【legs:outfit】", "【pose:")
+    )
+    if raw_is_legs and not has_leg_focus_contract(raw_action):
+        action = ensure_leg_focus_action(raw_action, has_reference_image)
     translated_user = str(user_text or "").strip()
     is_cos = "看看COS" in str(action) or "看看cos" in str(action).lower() or "【cos:" in str(action)
     is_legs = (not is_cos) and (
@@ -126,17 +140,27 @@ def build_selfie_builtin_prompt(
             selected = ""
             if wear_match:
                 selected_source = str(wear_match.group(1)).strip().split("；", 1)[0]
-                selected = next((name for name in ("光腿神器", "白丝", "黑丝") if name in selected_source), "")
+                selected = next((name for name in ("光腿神器", "白丝", "黑丝", "连裤袜") if name in selected_source), "")
             selected_text = {
                 "光腿神器": "skin-tone leg-cover styling, continuous along every visible part of the legs",
                 "白丝": "opaque white thigh-high stockings, continuous down every visible part of the legs",
                 "黑丝": "opaque black thigh-high stockings, continuous down every visible part of the legs",
+                "连裤袜": "opaque white pantyhose, continuous from the waist through the toes",
             }.get(selected)
             legwear_line = (
                 f"Use only {selected_text}; ignore all legwear, socks, and shoes in the references; avoid ordinary short, crew, or mid-calf socks."
                 if selected_text
-                else "Use exactly one selected legwear option: skin-tone leg-cover styling, opaque white thigh-high stockings, or opaque black thigh-high stockings; ignore all legwear, socks, and shoes in the references; avoid ordinary short, crew, or mid-calf socks."
+                else "Use the single legwear option selected by the code; ignore all legwear, socks, and shoes in the references; avoid ordinary short, crew, or mid-calf socks."
             )
+            outfit_match = re.search(r"【outfit:([a-z_]+)】", str(action))
+            outfit = get_leg_focus_outfit(outfit_match.group(1) if outfit_match else "")
+            if outfit:
+                outfit_line = (
+                    "Use the code-locked lower outfit exactly: "
+                    f"{outfit.get('prompt_en', '')}. Do not replace the skirt or shoes."
+                )
+            else:
+                outfit_line = "Follow the user's explicitly specified skirt or shoes exactly."
             lines.append(
                 "First-person phone selfie framing: the camera points down from the waist and records a natural close lower-body outfit detail; the phone, arms, and upper body stay outside the frame."
                 if camera_kind == "selfie"
@@ -144,19 +168,20 @@ def build_selfie_builtin_prompt(
             )
             if feet_cropped:
                 lines.extend([
-                    "Casual indoor vertical smartphone outfit record: use a close lower-body everyday clothing composition for one subject; never widen to a half-body or full-body photo, and do not use a knee or calf as a fixed crop line.",
+                    "Casual vertical smartphone outfit record: use a close lower-body everyday clothing composition for one subject; never widen to a half-body or full-body photo, and do not use a knee or calf as a fixed crop line.",
                     legwear_line,
+                    outfit_line,
                     "Keep both legs anatomically continuous and natural. A leg may continue naturally beyond the image edge or be coherently occluded by clothing, furniture, or a foreground object with clear depth and boundaries.",
                     "If a calf or foot is not shown, it must continue beyond the frame or be fully hidden by a solid object. Never let a leg abruptly end at a knee, mid-calf, or ankle; when kneeling, the ankle should transition naturally into the instep or sole before the body, clothing, or real contact hides it, never treat a stocking hem as the end of the calf. Rugs, floors, beds, or sofa surfaces may occlude a limb only with real contact and clear depth, never as an unexplained cutoff.",
                     "Follow the selected seated composition exactly, with stable proportions and a close camera distance.",
-                    "Use ordinary room light, natural exposure, realistic fabric and an unretouched everyday smartphone feel; avoid studio polish, plastic skin, or 3D-rendered surfaces.",
+                    "Match the lighting to the requested scene; otherwise use soft available light, natural exposure, realistic fabric, and an unretouched everyday smartphone feel. Avoid studio polish, plastic skin, or 3D-rendered surfaces.",
                 ])
             else:
                 lines.extend([
                     "Single subject only: a natural everyday clothing composition with no second person or background people.",
                     legwear_line,
                     "Keep a close lower-body outfit composition with natural clothing folds, proportions, perspective, and continuous visible limbs.",
-                    "Use ordinary smartphone perspective, ambient room light, realistic fabric texture, and an unretouched everyday feel; avoid studio polish, plastic skin, or 3D-rendered surfaces.",
+                    "Use ordinary smartphone perspective, scene-appropriate ambient light, realistic fabric texture, and an unretouched everyday feel; avoid studio polish, plastic skin, or 3D-rendered surfaces.",
                 ])
         elif is_group:
             lines.extend([
@@ -180,6 +205,7 @@ def build_selfie_builtin_prompt(
                 "stool_edge_crop": "Sit on a low stool with both knees forward; let one leg continue naturally beyond the lower image edge while the other drops vertically, without a joint-level crop.",
                 "floor_side_kneel_crop": "Use a stable side-kneeling seated pose on the floor with both knees gathered to one side; fold one lower leg forward with the foot grounded and the other naturally behind, keeping continuous limbs and coherent clothing or floor occlusion.",
                 "seat_knees_cross_crop": "Recline on a wide seat with both knees raised toward the camera; extend both lower legs forward and let the ankles overlap lightly in the foreground while keeping the seat support and leg anatomy natural.",
+                "floor_topdown_cross_crop": "Sit on the floor or a wood floor with both legs naturally crossed and knees and ankles aligned; use a close top-down view that keeps the clothing folds, crossed legs, and ground contact coherent.",
                 "sit": "Sit naturally on a chair or sofa; let the everyday outfit drape naturally in the close lower-body composition.",
                 "sit_crop": "Sit naturally on a chair or sofa; let the everyday outfit drape naturally in the close lower-body composition.",
                 "kneel": "Use a natural kneeling pose on a rug or cushion; fold both lower legs naturally behind the body.",
@@ -248,9 +274,18 @@ def build_selfie_builtin_prompt(
         if is_legs
         else ""
     )
+    outfit_match = re.search(r"【outfit:([a-z_]+)】", str(action))
+    outfit = get_leg_focus_outfit(outfit_match.group(1) if outfit_match else "")
+    leg_outfit_line = (
+        f"代码已锁定下装服饰组合：{outfit.get('skirt', '')}、{outfit.get('shoes', '')}；袜装严格使用本次唯一腿部穿搭。"
+        if outfit
+        else "裙装或鞋履按用户明确指定内容执行。"
+        if is_legs and outfit_match
+        else ""
+    )
     if is_legs:
         photo_style_line = (
-            "真人摄影质感：像普通手机竖屏近距离记录服装；使用窗光或房间环境光，"
+            "真人摄影质感：像普通手机竖屏近距离记录服装；光线服从用户指定场景，未指定时使用柔和自然光或环境光，"
             "保留真实布料厚度、细小褶皱和自然曝光变化；避免棚拍精修、塑料材质、插画感、3D渲染感和过度虚化。"
         )
     elif is_cos:
@@ -278,6 +313,7 @@ def build_selfie_builtin_prompt(
         ) if has_reference_image else "按角色设定保持主角身份稳定，未说明性别时默认成年女性。",
         "" if is_legs else ("合影对象必须落实为独立完整人物，站位自然，边界清晰。" if is_group else ""),
         legs_line,
+        leg_outfit_line,
         leg_crop_line,
         photo_style_line,
         "竖屏近景半身，光线、色调、景深和相机透视统一。" if not is_legs else "",
