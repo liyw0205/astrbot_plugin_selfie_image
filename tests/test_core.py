@@ -7482,6 +7482,145 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
 
 class VideoV1Tests(unittest.TestCase):
+    def test_video_count_only_accepts_explicit_c_option(self) -> None:
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+
+        cases = (
+            ("-c 3 嘉桐摇", "嘉桐摇", 3),
+            ("嘉桐摇 -c=2", "嘉桐摇", 2),
+            ("-c3 动作第4拍、115 BPM", "动作第4拍、115 BPM", 3),
+            ("动作第4拍，连续5次，115 BPM", "动作第4拍，连续5次，115 BPM", 1),
+            ("视频 3 女孩跳舞", "视频 3 女孩跳舞", 1),
+        )
+        for raw, expected_prompt, expected_count in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(plugin._extract_video_count(raw), (expected_prompt, expected_count))
+
+    def test_video_command_puts_explicit_count_in_task_summary(self) -> None:
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        plugin._permission_denied_message = lambda _event: ""
+        plugin._render_command_template = lambda text: (text, {}, False, [])
+        plugin.render_creative_prompt = lambda text, _context: {"prompt": text, "unresolved": []}
+        plugin._expand_video_prompt_with_preset = lambda text, duration=None: (text, duration, "")
+        plugin._event_reference_images = lambda *_args, **_kwargs: asyncio.sleep(0, result=[])
+        captured = {}
+        plugin.start_command_image_task = lambda *_args, **kwargs: captured.update(kwargs.get("summary", {})) or {"task_id": "task"}
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+        async def invoke():
+            with patch.object(
+                plugin_main,
+                "extract_command_message",
+                return_value="-c 3 动作第4拍 115 BPM",
+            ):
+                return [
+                    item
+                    async for item in plugin._handle_video_command(
+                        Event(), "视频", "", mode="t2v"
+                    )
+                ]
+
+        output = asyncio.run(invoke())
+        self.assertEqual(captured["prompt"], "动作第4拍 115 BPM")
+        self.assertEqual(captured["requested_count"], 3)
+        self.assertEqual(captured["kind"], "video")
+        self.assertIn("共 3 个视频", output[0])
+
+    def test_counted_video_generation_sends_each_video_and_tracks_progress(self) -> None:
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        plugin.config.image_max_batch_count = 3
+        plugin.config.video_max_concurrent_tasks = 2
+        plugin._web_tasks = {"task": {"cancel_requested": False}}
+        plugin._task_cancel_requested = lambda _task_id: False
+        plugin._wait_for_record_commits = lambda _task_id: asyncio.sleep(0)
+        plugin._set_task_notification_status = lambda *_args, **_kwargs: None
+        plugin._friendly_user_error_message = lambda error, fallback: error or fallback
+        progress = []
+        sent = []
+        delivery_events = []
+        calls = []
+        plugin._set_web_image_task = lambda _task_id, **fields: progress.append(dict(fields))
+
+        async def generate(_event, _prompt, _refs, **_kwargs):
+            index = len(calls) + 1
+            calls.append(index)
+            return {
+                "success": True,
+                "video_path": f"video-{index}.mp4",
+                "elapsed_seconds": 0.1,
+                "used_model": "video/test",
+                "attempts": [{"label": "video/test", "success": True}],
+            }
+
+        async def send(_event, path, **_kwargs):
+            sent.append(path)
+
+        async def mark(task_id, *, delivered, error="", paths=None):
+            delivery_events.append((task_id, delivered, error, list(paths or [])))
+
+        plugin._run_video_generation = generate
+        plugin._send_generated_video = send
+        plugin._mark_task_records_delivery = mark
+
+        result = asyncio.run(
+            plugin._run_counted_video_generation(
+                "task", object(), "嘉桐摇", [], "command-视频", 3, duration=8
+            )
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(calls, [1, 2, 3])
+        self.assertEqual(sent, ["video-1.mp4", "video-2.mp4", "video-3.mp4"])
+        self.assertEqual(result["requested_count"], 3)
+        self.assertEqual(result["completed_count"], 3)
+        self.assertEqual(result["succeeded_count"], 3)
+        self.assertEqual(result["failed_count"], 0)
+        self.assertEqual(result["generated_video_paths"], sent)
+        self.assertEqual(len(delivery_events), 3)
+        self.assertEqual(progress[-1]["progress_percent"], 100)
+
+    def test_counted_video_generation_keeps_partial_success_after_one_failure(self) -> None:
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        plugin.config.image_max_batch_count = 3
+        plugin.config.video_max_concurrent_tasks = 1
+        plugin.config.image_batch_on_failure = "skip"
+        plugin._web_tasks = {"task": {"cancel_requested": False}}
+        plugin._task_cancel_requested = lambda _task_id: False
+        plugin._wait_for_record_commits = lambda _task_id: asyncio.sleep(0)
+        plugin._set_task_notification_status = lambda *_args, **_kwargs: None
+        plugin._friendly_user_error_message = lambda error, fallback: error or fallback
+        plugin._set_web_image_task = lambda *_args, **_kwargs: None
+        plugin._send_generated_video = lambda *_args, **_kwargs: asyncio.sleep(0)
+        plugin._mark_task_records_delivery = lambda *_args, **_kwargs: asyncio.sleep(0)
+        plugin._send_task_notification = lambda *_args, **_kwargs: asyncio.sleep(0)
+        calls = []
+
+        async def generate(_event, _prompt, _refs, **_kwargs):
+            index = len(calls)
+            calls.append(index)
+            if index == 0:
+                return {"success": False, "error": "upstream failure"}
+            return {"success": True, "video_path": f"video-{index}.mp4"}
+
+        plugin._run_video_generation = generate
+        result = asyncio.run(
+            plugin._run_counted_video_generation(
+                "task", object(), "复仇摇", [], "command-视频", 3
+            )
+        )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["requested_count"], 3)
+        self.assertEqual(result["completed_count"], 3)
+        self.assertEqual(result["succeeded_count"], 2)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertEqual(result["status"], "partial_success")
+
     def test_video_preflight_failure_is_recorded_as_video(self) -> None:
         factory = SessionModelAndTaskTests()
         plugin = factory._plugin_stub()

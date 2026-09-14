@@ -60,6 +60,7 @@ from .prompts.command_parser import (
     command_tokens_for_count,
     expand_cos_user_text_with_preset,
     expand_user_text_with_preset,
+    extract_explicit_count_option,
     extract_template_options,
     extract_command_count,
     normalize_count,
@@ -2822,9 +2823,14 @@ class SelfieImagePlugin(
         *,
         source: str = "command-video",
         duration: Optional[int] = None,
+        requested_count: int = 1,
         task_id: str = "",
     ) -> Dict[str, Any]:
         started = time.monotonic()
+        try:
+            batch_count = max(1, int(requested_count or 1))
+        except (TypeError, ValueError):
+            batch_count = 1
         if task_id:
             self._set_web_image_task(
                 task_id,
@@ -2868,6 +2874,7 @@ class SelfieImagePlugin(
                 response_data=response_data,
                 request_image_paths=request_image_paths,
                 elapsed_seconds=time.monotonic() - started,
+                requested_count=batch_count,
                 task_id=task_id,
             )
 
@@ -2957,7 +2964,7 @@ class SelfieImagePlugin(
             return failure("请写一下想生成的视频内容", stage="validate", request_prompt="")
 
         request_data = {
-            "requested_count": 1,
+            "requested_count": batch_count,
             "requested_duration": requested_duration,
             "duration": req.duration,
             "timeout_seconds": int(getattr(self.config, "video_global_timeout", 300) or 300),
@@ -3072,6 +3079,7 @@ class SelfieImagePlugin(
         )
         return {
             "success": True,
+            "requested_count": batch_count,
             "original_prompt": prompt,
             "final_prompt": req.prompt,
             "video_path": result.video_path,
@@ -3104,16 +3112,21 @@ class SelfieImagePlugin(
         response_data: Optional[Dict[str, Any]] = None,
         request_image_paths: Optional[List[str]] = None,
         elapsed_seconds: float = 0.0,
+        requested_count: int = 1,
         task_id: str = "",
     ) -> Dict[str, Any]:
         safe_error = video_error_user_message(error, "视频没有生成出来")
         attempt_rows = list(attempts or [])
+        try:
+            safe_requested_count = max(1, int(requested_count or 1))
+        except (TypeError, ValueError):
+            safe_requested_count = 1
         request_info = {
             "duration": int(duration or 5),
             "size": "",
             "reference_images": len(refs),
             "raw_reference_image_count": len(refs),
-            "requested_count": 1,
+            "requested_count": safe_requested_count,
         }
         if isinstance(request_data, dict):
             request_info.update(request_data)
@@ -3158,6 +3171,7 @@ class SelfieImagePlugin(
         )
         return {
             "success": False,
+            "requested_count": safe_requested_count,
             "error": safe_error,
             "original_prompt": str(prompt or "").strip(),
             "final_prompt": request_prompt or str(prompt or "").strip(),
@@ -3169,6 +3183,230 @@ class SelfieImagePlugin(
             "request_image_paths": list(request_image_paths or []),
         }
 
+    async def _run_counted_video_generation(
+        self,
+        task_id: str,
+        event: AstrMessageEvent,
+        prompt: str,
+        refs: List[ImageReference],
+        source: str,
+        requested_count: int,
+        *,
+        duration: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Generate and deliver a video batch without applying image count rules."""
+        total = self._normalize_count(requested_count)
+        inflight = min(self._video_inflight_limit(), total)
+        sem = asyncio.Semaphore(inflight)
+        send_lock = asyncio.Lock()
+        stop = False
+        cancelled = False
+        cancelled_shots = 0
+        failed_shots = 0
+        succeeded_shots = 0
+        failed_at = 0
+        delivery_failed_count = 0
+        delivery_error = ""
+        all_files: List[str] = []
+        all_attempts: List[Dict[str, Any]] = []
+        last_failure_error = ""
+        original_prompt = ""
+        final_prompt = ""
+        used_model = ""
+        last_elapsed = 0.0
+        last_request_data: Dict[str, Any] = {}
+
+        def persist_progress(index: int = 0) -> None:
+            completed = min(total, succeeded_shots + failed_shots + cancelled_shots)
+            self._set_web_image_task(
+                task_id,
+                requested_count=total,
+                completed_count=completed,
+                succeeded_count=succeeded_shots,
+                failed_count=failed_shots,
+                progress_percent=int(round(completed * 100 / max(1, total))),
+                current_index=max(0, int(index or 0)),
+            )
+
+        async def mark_delivery(path: str, delivered: bool, error: str = "") -> None:
+            marker = getattr(self, "_mark_task_records_delivery", None)
+            if callable(marker):
+                await marker(
+                    task_id,
+                    delivered=delivered,
+                    error=error,
+                    paths=[path],
+                )
+
+        async def one(index: int) -> None:
+            nonlocal stop, cancelled, cancelled_shots, failed_shots, succeeded_shots
+            nonlocal failed_at, delivery_failed_count, delivery_error, last_failure_error
+            nonlocal original_prompt, final_prompt, used_model, last_elapsed, last_request_data
+            async with sem:
+                if stop or self._task_cancel_requested(task_id):
+                    if self._task_cancel_requested(task_id):
+                        async with send_lock:
+                            cancelled = True
+                            cancelled_shots += 1
+                            persist_progress(index + 1)
+                    return
+                self._set_web_image_task(
+                    task_id,
+                    generation_stage="queue",
+                    generation_stage_label="等待视频并发槽位",
+                    requested_count=total,
+                )
+                try:
+                    result = await self._run_video_generation(
+                        event,
+                        prompt,
+                        refs,
+                        source=source,
+                        duration=duration,
+                        requested_count=total,
+                        task_id=task_id,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    result = {
+                        "success": False,
+                        "error": f"视频生成异常：{redact_sensitive_text(str(exc))}",
+                    }
+            wait_commits = getattr(self, "_wait_for_record_commits", None)
+            if callable(wait_commits):
+                await wait_commits(task_id)
+            if not isinstance(result, dict):
+                result = {"success": False, "error": "视频没有返回结果"}
+            original_prompt = str(result.get("original_prompt") or original_prompt)
+            final_prompt = str(result.get("final_prompt") or final_prompt)
+            used_model = str(result.get("used_model") or used_model)
+            last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
+            if isinstance(result.get("request_data"), dict):
+                last_request_data = dict(result["request_data"])
+
+            async with send_lock:
+                raw_attempts = result.get("attempts")
+                if isinstance(raw_attempts, list):
+                    all_attempts.extend(item for item in raw_attempts if isinstance(item, dict))
+                if stop:
+                    if self._task_cancel_requested(task_id):
+                        cancelled = True
+                        cancelled_shots += 1
+                        persist_progress(index + 1)
+                    return
+                if self._task_cancel_requested(task_id):
+                    cancelled = True
+                    stop = True
+                    cancelled_shots += 1
+                    persist_progress(index + 1)
+                    return
+                if not result.get("success"):
+                    raw_error = str(result.get("failure_reason") or result.get("error") or "")
+                    error = self._friendly_user_error_message(raw_error, "视频没有完成")
+                    last_failure_error = raw_error or error
+                    failed_shots += 1
+                    persist_progress(index + 1)
+                    mode, skip_max = self._batch_failure_policy()
+                    has_remaining = index + 1 < total
+                    will_continue = has_remaining and (
+                        mode == "skip" or (mode == "skip_max" and failed_shots <= skip_max)
+                    )
+                    if total <= 1:
+                        message = f"视频没生成成功：{error}" if error else "视频没生成成功"
+                    else:
+                        message = f"第 {index + 1}/{total} 个视频没生成成功"
+                        if error:
+                            message += f"：{error}"
+                        message += f"。已出 {len(all_files)} 个"
+                        if will_continue:
+                            message += "，继续后面的"
+                        elif index + 1 < total:
+                            message += f"，后面 {total - index - 1} 个先不跑了"
+                    await self._send_task_notification(task_id, event, message)
+                    if not will_continue:
+                        stop = True
+                        failed_at = index + 1
+                    return
+
+                files = [str(item).strip() for item in (result.get("files") or []) if str(item).strip()]
+                if not files:
+                    path = str(result.get("video_path") or "").strip()
+                    if path:
+                        files = [path]
+                if not files:
+                    error = "视频没有返回文件"
+                    last_failure_error = error
+                    failed_shots += 1
+                    persist_progress(index + 1)
+                    await self._send_task_notification(task_id, event, error)
+                    stop = True
+                    failed_at = index + 1
+                    return
+
+                elapsed = result.get("elapsed_seconds") or 0
+                bits = [f"第 {index + 1}/{total} 个视频好了。" if total > 1 else "视频好了。"]
+                if self.config.image_show_generation_info and elapsed:
+                    bits.append(f"用时 {elapsed}s")
+                if self.config.image_show_model_info and used_model:
+                    bits.append(f"模型 {used_model}")
+                caption = " ".join(bits)
+                for path in files:
+                    try:
+                        await self._send_generated_video(event, path, caption=caption)
+                    except Exception as exc:
+                        delivery_failed_count += 1
+                        delivery_error = f"视频已生成但发送失败：{exc}"
+                        logger.warning(f"[SelfieImage] 发送视频失败，尝试仅回路径: {exc}")
+                        await self._send_task_notification(task_id, event, f"{caption}\n文件：{path}")
+                        self._set_task_notification_status(task_id, "failed", delivery_error)
+                        await mark_delivery(path, False, delivery_error)
+                    else:
+                        self._set_task_notification_status(task_id, "sent")
+                        await mark_delivery(path, True)
+                all_files.extend(files)
+                succeeded_shots += 1
+                persist_progress(index + 1)
+
+        await asyncio.gather(*(one(index) for index in range(total)))
+        completed = min(total, succeeded_shots + failed_shots + cancelled_shots)
+        base = {
+            "files": all_files,
+            "generated_video_paths": list(all_files),
+            "video_path": all_files[0] if len(all_files) == 1 else "",
+            "original_prompt": original_prompt,
+            "final_prompt": final_prompt,
+            "request_data": last_request_data,
+            "used_model": used_model,
+            "elapsed_seconds": last_elapsed,
+            "batch_total": total,
+            "requested_count": total,
+            "completed_count": completed,
+            "succeeded_count": succeeded_shots,
+            "failed_count": failed_shots,
+            "attempts": all_attempts,
+        }
+        if cancelled:
+            base.update({"success": False, "error": "任务已取消", "cancelled": True})
+        elif failed_at:
+            base.update({"success": False, "error": last_failure_error or "视频没有完成", "batch_failed_at": failed_at})
+        else:
+            base["success"] = failed_shots == 0 and delivery_failed_count == 0
+        if delivery_failed_count:
+            base.update(
+                {
+                    "generation_success": succeeded_shots > 0,
+                    "delivery_success": False,
+                    "delivery_failed": True,
+                    "delivery_failed_count": delivery_failed_count,
+                    "error": delivery_error or "生成成功但发送失败",
+                    "status": "delivery_failed",
+                }
+            )
+        elif succeeded_shots:
+            base.update({"generation_success": True, "delivery_success": True})
+        return self._normalize_generation_result(base, total)
+
     async def _background_video_job(
         self,
         task_id: str,
@@ -3177,52 +3415,18 @@ class SelfieImagePlugin(
         refs: List[ImageReference],
         source: str,
         mode: str,
+        requested_count: int = 1,
+        duration: Optional[int] = None,
     ) -> Dict[str, Any]:
-        if self._task_cancel_requested(task_id):
-            return {"success": False, "error": "任务已取消", "cancelled": True}
-        result = await self._run_video_generation(event, prompt, refs, source=source, task_id=task_id)
-        if self._task_cancel_requested(task_id) and not result.get("success"):
-            return {"success": False, "error": "任务已取消", "cancelled": True}
-        if not result.get("success"):
-            error = self._friendly_user_error_message(str(result.get("error") or ""), "视频没有完成")
-            await self._send_task_notification(task_id, event, error)
-            return result
-        path = str(result.get("video_path") or "")
-        used = str(result.get("used_model") or "")
-        elapsed = result.get("elapsed_seconds") or 0
-        bits = ["视频好了。"]
-        if self.config.image_show_generation_info and elapsed:
-            bits.append(f"用时 {elapsed}s")
-        if self.config.image_show_model_info and used:
-            bits.append(f"模型 {used}")
-        caption = " ".join(bits)
-        try:
-            await self._send_generated_video(event, path, caption=caption)
-            self._set_task_notification_status(task_id, "sent")
-        except Exception as exc:
-            logger.warning(f"[SelfieImage] 发送视频失败，尝试仅回路径: {exc}")
-            await self._send_task_notification(task_id, event, f"{caption}\n文件：{path}")
-            mark_delivery = getattr(self, "_mark_task_records_delivery", None)
-            if callable(mark_delivery):
-                await mark_delivery(
-                    task_id,
-                    delivered=False,
-                    error=f"视频已生成但发送失败：{exc}",
-                    paths=[path],
-                )
-            return {
-                "success": False,
-                "error": f"视频已生成但发送失败：{exc}",
-                "video_path": path,
-                "generation_success": True,
-                "delivery_success": False,
-                "delivery_failed": True,
-                "status": "delivery_failed",
-            }
-        mark_delivery = getattr(self, "_mark_task_records_delivery", None)
-        if callable(mark_delivery):
-            await mark_delivery(task_id, delivered=True, paths=[path])
-        return result
+        return await self._run_counted_video_generation(
+            task_id,
+            event,
+            prompt,
+            refs,
+            source,
+            requested_count,
+            duration=duration,
+        )
 
     def _parse_video_duration(self, text: str) -> Tuple[str, Optional[int]]:
         raw = str(text or "")
@@ -3242,6 +3446,17 @@ class SelfieImagePlugin(
                 duration = max(1, min(60, int(bare.group(1))))
                 raw = (raw[: bare.start()] + raw[bare.end() :]).strip()
         return raw, duration
+
+    def _extract_video_count(self, text: str) -> Tuple[str, int]:
+        """Extract only an explicit ``-c`` option from a video prompt.
+
+        Video prompts commonly contain beat numbers, BPM, shot counts, and
+        durations.  Unlike image commands, no bare number is ever treated as
+        a batch count here.
+        """
+        tokens = self._command_tokens_for_count(text)
+        remaining, count = extract_explicit_count_option(tokens)
+        return " ".join(remaining).strip(), self._normalize_count(count or 1)
 
     @staticmethod
     def _video_prompt_requests_persona(text: str) -> bool:
@@ -3336,7 +3551,8 @@ class SelfieImagePlugin(
             yield event.plain_result(denied)
             return
         raw_message = extract_command_message(event, command_name, fallback).strip()
-        prompt, duration = self._parse_video_duration(raw_message)
+        prompt, requested_count = self._extract_video_count(raw_message)
+        prompt, duration = self._parse_video_duration(prompt)
         prompt, template_values, template_randomize, _ = self._render_command_template(prompt)
         prompt, duration, _ = self._expand_video_prompt_with_preset(prompt, duration)
         rendered = self.render_creative_prompt(
@@ -3393,58 +3609,29 @@ class SelfieImagePlugin(
             refs = []
 
         progress = f"收到，开始{mode_label}（通常比出图慢，请稍等）。"
+        if requested_count > 1:
+            progress += f" 共 {requested_count} 个视频。"
         if duration:
             progress += f" 时长约 {duration}s。"
 
         async def runner_with_duration(task_id: str) -> Dict[str, Any]:
             if self._task_cancel_requested(task_id):
-                return {"success": False, "error": "任务已取消", "cancelled": True}
-            result = await self._run_video_generation(
+                return {
+                    "success": False,
+                    "error": "任务已取消",
+                    "cancelled": True,
+                    "requested_count": requested_count,
+                    "batch_total": requested_count,
+                }
+            return await self._run_counted_video_generation(
+                task_id,
                 event,
                 prompt,
                 refs,
                 source=f"command-{mode_label}",
+                requested_count=requested_count,
                 duration=duration,
-                task_id=task_id,
             )
-            if not result.get("success"):
-                error = self._friendly_user_error_message(str(result.get("error") or ""), "视频没有完成")
-                await self._send_task_notification(task_id, event, error)
-                return result
-            path = str(result.get("video_path") or "")
-            used = str(result.get("used_model") or "")
-            elapsed = result.get("elapsed_seconds") or 0
-            bits = ["视频好了。"]
-            if self.config.image_show_generation_info and elapsed:
-                bits.append(f"用时 {elapsed}s")
-            if self.config.image_show_model_info and used:
-                bits.append(f"模型 {used}")
-            try:
-                await self._send_generated_video(event, path, caption=" ".join(bits))
-                self._set_task_notification_status(task_id, "sent")
-            except Exception as exc:
-                await self._send_task_notification(task_id, event, f"{' '.join(bits)}\n文件：{path}")
-                mark_delivery = getattr(self, "_mark_task_records_delivery", None)
-                if callable(mark_delivery):
-                    await mark_delivery(
-                        task_id,
-                        delivered=False,
-                        error=f"视频已生成但发送失败：{exc}",
-                        paths=[path],
-                    )
-                return {
-                    "success": False,
-                    "error": f"视频已生成但发送失败：{exc}",
-                    "video_path": path,
-                    "generation_success": True,
-                    "delivery_success": False,
-                    "delivery_failed": True,
-                    "status": "delivery_failed",
-                }
-            mark_delivery = getattr(self, "_mark_task_records_delivery", None)
-            if callable(mark_delivery):
-                await mark_delivery(task_id, delivered=True, paths=[path])
-            return result
 
         task = self.start_command_image_task(
             event,
@@ -3455,6 +3642,7 @@ class SelfieImagePlugin(
                 "duration": duration or getattr(self.config, "video_default_duration", 5),
                 "has_image": bool(refs),
                 "kind": "video",
+                "requested_count": requested_count,
                 "template_values": template_values,
                 "template_randomize": template_randomize,
                 "template_unresolved": rendered.get("unresolved") or [],
@@ -5467,13 +5655,14 @@ class SelfieImagePlugin(
                 "",
                 "视频：",
                 "· /视频　写想要的动态；有附图/引用图就图生视频，没图默认按文字生成；明确我出镜时才用当前形象图",
+                "· 视频数量　用 -c 3、-c=3 或 -c3 指定数量；只认显式 -c，提示词里的拍数、BPM、年龄等裸数字会原样保留",
                 "· /文生视频　只用文字出视频，不带图、不用形象图",
                 "· /图生视频　必须附图或引用图作首帧，不会自动使用当前形象图",
                 "· /形象视频　使用当前形象图作首帧；需先设置形象图",
                 "· /看看视频　使用当前形象图主动出视频；需先设置形象图",
                 "· /视频任务　查看进行中的视频任务，包含 LLM 调用；可跟任务号或列表编号",
                 "· /视频取消　取消视频任务；可跟任务号或列表编号",
-                "· /视频预设　查看、使用和管理视频预设；时长可写 --duration 8 或 时长8秒",
+                "· /视频预设　查看、使用和管理视频预设；时长可写 --duration 8 或 时长8秒；视频数量用 -c 3（只认显式 -c，不会误解析提示词裸数字）",
                 "",
                 "自动判断：",
                 "· /画：有图=图生图，没图=文生图；不会自动塞形象图",
