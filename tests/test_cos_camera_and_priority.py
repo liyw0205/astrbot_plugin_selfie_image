@@ -1,9 +1,12 @@
 from pathlib import Path
 
 from astrbot_plugin_selfie_image.cos.cos_looks import (
+    COS_FRAMING_CLASSES,
     COS_LOOK_SETS,
     build_cos_look_action,
     build_cos_third_person_prompt,
+    cos_prompt_has_framing,
+    pick_cos_framing,
 )
 from astrbot_plugin_selfie_image.studio.studio import build_studio_action, empty_session
 
@@ -36,6 +39,38 @@ def test_raw_web_cos_prompt_can_be_wrapped_without_selfie_semantics():
     assert "【cam:third】" in action
     assert "自拍" not in action
     assert "全身镜" not in action
+
+
+def test_unspecified_cos_framing_picks_one_concrete_view():
+    selected = pick_cos_framing(extra_request="COS 换装：自然站立")
+    assert selected["view_id"]
+    assert selected["prompt"] in {item["prompt"] for item in COS_FRAMING_CLASSES.values()}
+    assert not cos_prompt_has_framing("COS 换装：自然站立")
+    assert cos_prompt_has_framing("COS 换装：竖屏三分之四侧身全身构图")
+    assert pick_cos_framing(extra_request="COS 换装：竖屏三分之四侧身全身构图")["prompt"] == ""
+
+
+def test_cos_framing_alternatives_are_resolved_before_prompt_generation():
+    selected = pick_cos_framing(
+        extra_request="COS 换装：正面或三分之四侧身站立，近景至全身构图"
+    )
+    assert selected["randomized_from_options"] is True
+    assert selected["prompt"] in {"正面", "三分之四侧身", "近景", "全身"}
+    resolved = selected["extra_request_text"]
+    assert "正面或三分之四侧身" not in resolved
+    assert "近景至全身" not in resolved
+
+
+def test_cos_action_replaces_outfit_view_alternatives():
+    item = {
+        "id": "framing_test",
+        "title": "视角测试",
+        "prompt": "严格换装为测试COS：人物正面或三分之四侧身站立，采用近景至全身构图。",
+    }
+    action = build_cos_look_action("", picker=lambda **_: item)
+    assert "本次从已有视角选项中随机确定为" in action
+    assert "正面或三分之四侧身" not in action
+    assert "近景至全身" not in action
 
 
 def test_priority_picker_filters_already_selected_models():

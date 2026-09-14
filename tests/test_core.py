@@ -7129,12 +7129,19 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         cos_ref_zh = plugin_main.build_prompt_with_reference_instruction(
             "【cos:test】 COS 换装，按套装要求正面站立", [ref]
         )
-        self.assertIn("不要复制参考图原有动作、手势、头部角度或固定表情", cos_ref_zh)
-        self.assertIn("姿势、头部朝向和表情按 COS 要求重新生成", cos_ref_zh)
+        self.assertIn("姿势、头部动作、视线和表情按本次 COS 套装或用户要求执行", cos_ref_zh)
+        self.assertIn("优先保留脸型轮廓和五官比例", cos_ref_zh)
         self.assertNotIn("保持相关人物身份、服装、姿势、场景与构图一致", cos_ref_zh)
-        web_cos = plugin_main.build_cos_third_person_prompt("COS 换装：正面站立，展示指定服装")
-        self.assertIn("不复制参考图原有的动作、手势、头部角度或固定表情", web_cos)
-        self.assertIn("头部自然正直", web_cos)
+        web_cos = plugin_main.build_cos_third_person_prompt("COS 换装：自然站立，展示指定服装")
+        self.assertIn("本次未指定视角，随机采用", web_cos)
+        self.assertEqual(
+            sum(
+                marker in web_cos
+                for marker in ("正面半身机位", "三分之四侧前方机位", "正面三分之二身机位", "环境人像机位")
+            ),
+            1,
+        )
+        self.assertIn("明确要求的歪头、仰头、低头、闭眼或夸张表情应保留", web_cos)
         enhanced = plugin_main.build_prompt_with_reference_instruction("女孩站立", [], enhance=True)
         self.assertIn("构图与画面质量", enhanced)
         self.assertIn("左右手/脚各一", enhanced)
@@ -7166,10 +7173,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 True,
                 0,
             )
-            self.assertIn("不复制参考图原有的动作、手势、头部角度或固定表情", cos_prompt)
-            self.assertIn("头部自然正直", cos_prompt)
-            self.assertIn("不要歪头、仰头、低头、闭眼", cos_prompt)
-            self.assertIn("动作、表情、眼神和视线按本次 COS 套装", cos_prompt)
+            self.assertIn("明确要求的歪头、仰头、低头、闭眼或夸张表情应保留", cos_prompt)
+            self.assertIn("面部边缘清晰、肤色自然，不用白色薄膜或雾化遮住五官", cos_prompt)
+            self.assertNotIn("头部自然正直", cos_prompt)
             self.assertIn("身体比例来自参考图一", cos_prompt)
             self.assertNotIn("体态来自参考图一", cos_prompt)
             self.assertNotIn("【合影 / 同框模式】", prompt)
@@ -8903,7 +8909,7 @@ class LegFocusTests(unittest.TestCase):
                 if item["id"] == "shuilaner_horned_brocade_qipao"
             ),
         )
-        self.assertIn("具体画幅、景别和机位遵循本套套装描述", shuilaner_action)
+        self.assertIn("视角按本套 COS 套装描述执行", shuilaner_action)
         self.assertIn("平视机位和正常拍摄距离", shuilaner_action)
         self.assertIn("竖屏全身构图", shuilaner_action)
         for title in (
@@ -10336,7 +10342,7 @@ class StudioStoreTests(unittest.TestCase):
             picker=lambda **_kwargs: pipe_cos,
         )
         self.assertIn("唯一一部普通手机", action)
-        self.assertIn("手机替代该动作或道具，原道具不入镜", action)
+        self.assertIn("手机替代它原本的动作或道具，原道具不入镜", action)
         self.assertIn("恰好两条手臂、两只手", action)
         self.assertIn("第二台拍摄设备", action)
         self.assertNotIn("不要用物件遮脸挡衣服", action)
@@ -10346,7 +10352,7 @@ class StudioStoreTests(unittest.TestCase):
                 action, "小助", "温柔", True, 0
             )
         self.assertIn("画面只允许主角既有的一只手握持唯一一部普通手机", prompt)
-        self.assertIn("替代它原本的动作或道具，原道具不入镜", prompt)
+        self.assertIn("手机替代它原本的动作或道具，原道具不入镜", prompt)
         self.assertIn("恰好两条手臂、两只手", prompt)
         self.assertNotIn("不要用物件遮脸挡衣服", prompt)
 

@@ -1233,6 +1233,108 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, str]] = {
     },
 }
 
+# When neither the user nor the selected outfit fixes a crop or camera angle,
+# choose one concrete framing.  Keeping the choice in the action prevents a
+# model from having to pick between several alternatives in the prompt.
+COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
+    "front_half": {
+        "title": "正面半身",
+        "prompt": "正面半身机位，画面从头部拍到腰线，面部和服装主体清晰",
+    },
+    "three_quarter_front": {
+        "title": "三分之四侧前方",
+        "prompt": "三分之四侧前方机位，带到腰线或大腿上部，突出服装层次",
+    },
+    "two_thirds": {
+        "title": "三分之二身",
+        "prompt": "正面三分之二身机位，完整展示上身、腰线和部分下装",
+    },
+    "environmental": {
+        "title": "环境人像",
+        "prompt": "环境人像机位，人物保持画面主体并保留少量干净背景",
+    },
+}
+
+COS_FRAMING_TERMS = (
+    "横屏", "竖屏", "方形", "正方形", "全身", "半身", "胸像", "肖像",
+    "近景", "中景", "远景", "环境人像", "三分之四", "三分之三", "三分之二",
+    "正面机位", "正面拍摄", "正面站立", "正面构图", "正对镜头", "侧前方", "侧身",
+    "低机位", "高机位", "腰线", "膝盖附近",
+    "头部位于画面", "头部在画面", "画面从头", "画面只拍",
+)
+
+COS_FRAMING_OPTION_RE = re.compile(
+    r"(?P<first>横屏|竖屏|方形|正方形|正面近景|正面半身|正面|正对镜头|"
+    r"三分之四侧前方|三分之四侧身|三分之四|侧前方|侧身|环境人像|"
+    r"近景|中景|远景|全身|半身|胸像|肖像|三分之二身|大腿上部|大腿|膝上|"
+    r"平视|俯拍|仰拍|低机位|高机位)"
+    r"\s*(?P<join>或|/|至|到)\s*"
+    r"(?P<second>横屏|竖屏|方形|正方形|正面近景|正面半身|正面|正对镜头|"
+    r"三分之四侧前方|三分之四侧身|三分之四|侧前方|侧身|环境人像|"
+    r"近景|中景|远景|全身|半身|胸像|肖像|三分之二身|大腿上部|大腿|膝上|"
+    r"平视|俯拍|仰拍|低机位|高机位)"
+    r"(?P<suffix>机位|视角|构图|摄影|拍摄|站立)?"
+)
+
+
+def resolve_cos_framing_options(text: str) -> tuple[str, List[str]]:
+    """Collapse wording such as ``正面或三分之四`` to one random option."""
+    resolved = str(text or "")
+    selected: List[str] = []
+    # Iterate so a three-way expression (``正面或侧身或环境人像``) is also
+    # reduced to one option instead of leaving a second choice for the model.
+    for _ in range(4):
+        match = COS_FRAMING_OPTION_RE.search(resolved)
+        if not match:
+            break
+        first = match.group("first")
+        second = match.group("second")
+        choice = random.choice((first, second))
+        suffix = match.group("suffix") or ""
+        replacement = choice if choice.endswith(suffix) else choice + suffix
+        resolved = resolved[: match.start()] + replacement + resolved[match.end() :]
+        selected.append(choice)
+    return resolved, selected
+
+
+def cos_prompt_has_framing(text: str) -> bool:
+    """Return whether text already fixes a crop, camera angle, or framing."""
+    compact = re.sub(r"\s+", "", str(text or ""))
+    return any(term in compact for term in COS_FRAMING_TERMS)
+
+
+def pick_cos_framing(*, outfit: str = "", extra_request: str = "") -> Dict[str, Any]:
+    """Pick one generic framing only when no framing is already specified."""
+    resolved_outfit, outfit_options = resolve_cos_framing_options(outfit)
+    resolved_extra, extra_options = resolve_cos_framing_options(extra_request)
+    options = extra_options or outfit_options
+    if options:
+        choice = options[-1]
+        return {
+            "view_id": "option",
+            "title": choice,
+            "prompt": choice,
+            "outfit_text": resolved_outfit,
+            "extra_request_text": resolved_extra,
+            "randomized_from_options": True,
+        }
+    if cos_prompt_has_framing(outfit) or cos_prompt_has_framing(extra_request):
+        return {
+            "view_id": "",
+            "title": "",
+            "prompt": "",
+            "outfit_text": resolved_outfit,
+            "extra_request_text": resolved_extra,
+            "randomized_from_options": False,
+        }
+    view_id = random.choice(list(COS_FRAMING_CLASSES))
+    selected = dict(COS_FRAMING_CLASSES[view_id])
+    selected["view_id"] = view_id
+    selected["outfit_text"] = resolved_outfit
+    selected["extra_request_text"] = resolved_extra
+    selected["randomized_from_options"] = False
+    return selected
+
 YONGJIE_RANDOM_COS_IDS = frozenset(
     {
         "hutao_dragon_path_zhichun",
@@ -1888,15 +1990,24 @@ def build_cos_third_person_prompt(text: str) -> str:
         return raw
     adapted = adapt_cos_outfit_for_camera(raw, "third")
     adapted = re.sub(r"【cam:(?:selfie|third)】", "", adapted, flags=re.I)
+    framing = pick_cos_framing(extra_request=adapted)
+    adapted = framing.get("extra_request_text", adapted)
+    if framing.get("randomized_from_options"):
+        framing_line = f"本次从已有视角选项中随机确定为{framing['prompt']}；"
+    else:
+        framing_line = (
+            f"本次未指定视角，随机采用{framing['prompt']}；"
+            if framing["prompt"]
+            else "视角按用户要求或套装描述执行；"
+        )
     return (
         "【cos:web】 【cam:third】 【他拍 / 看看COS模式】"
-        "COS 换装他拍：摄影师在画面外，以正面或三分之四机位拍摄；"
-        "视角优先选择正面半身、三分之二身、三分之四侧前方或环境人像；"
-        "画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然；"
+        "COS 换装他拍：摄影师在画面外；"
+        + framing_line
+        + "画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然；"
         "完整展示套装层次和腰线，保持面部、发型、服装与配饰清晰；"
-        "参考图只锁定同一人的脸型、五官、性别、肤色和身体比例，不复制参考图原有的动作、手势、头部角度或固定表情；"
-        "头部自然正直、颈部与躯干连接自然，除非本次 COS 套装或用户明确要求，否则不要歪头、仰头、低头、闭眼或夸张嘴型；"
-        "表情、眼神和动作按本次 COS 套装与拍摄场景重新自然生成。"
+        "参考图用于保持同一人的脸型、五官、性别、肤色和身体比例；优先保留脸型轮廓、五官比例、眼睛和嘴唇轮廓，不因妆容或表情重塑成另一张脸；"
+        "发型、服装、姿势和表情按本次 COS 套装或用户要求执行；明确要求的歪头、仰头、低头、闭眼或夸张表情应保留，未指定时自然参考形象图，头部、视线和表情保持连贯，优先保留角色辨识度；面部边缘清晰、肤色自然，不用白色薄膜或雾化遮住五官。"
         f" 用户补充要求：{adapted}。"
     )
 
@@ -1935,27 +2046,46 @@ def build_cos_look_action(
     )
     cos_id = str(chosen.get("id") or "cos")
     variation = pick_cos_variation(cos_id, avoid_pose=avoid_pose, avoid_scene=avoid_scene)
+    framing_choice = pick_cos_framing(
+        # The compatibility pose is already randomized independently.  Its
+        # wording may contain "侧身" or "三分之二", which must not suppress
+        # the separate framing randomizer.
+        outfit=outfit,
+        extra_request=extra_request,
+    )
+    outfit = framing_choice.get("outfit_text", outfit)
+    extra_request = framing_choice.get("extra_request_text", extra_request)
+    if framing_choice.get("randomized_from_options"):
+        framing_line = f"本次从已有视角选项中随机确定为{framing_choice['prompt']}；"
+    else:
+        framing_line = (
+            f"本次未指定视角，随机采用{framing_choice['prompt']}；"
+            if framing_choice["prompt"]
+            else "视角按本套 COS 套装描述执行；"
+        )
     if camera_kind == "third":
         hand_rule = (
-            "不要对镜、不要镜子；允许画面内唯一一部普通手机从脸侧或下方自然遮住半张脸，"
-            "但手机只能由主角既有的一只手握持并占用该手；若该手原本做动作或持道具，手机替代该动作或道具，原道具不入镜；"
+            "不要对镜、不要镜子；画面只允许主角既有的一只手握持唯一一部普通手机，从脸侧或下方自然遮住半张脸；"
+            "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或第二台拍摄设备；"
             "若套装姿势已明确占用双手或不宜举手机，保留原姿势和道具，不额外添加手机，也不强行遮脸。"
             if phone_face_cover
-            else "摄影师在画面外，以正面或三分之四机位拍摄；主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然，摄影师不入画；未明确要求遮脸时保持面部和服装清晰可见。"
+            else "摄影师在画面外；主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然，摄影师不入画；未明确要求遮脸时保持面部和服装清晰可见。"
         )
         framing = (
             "【他拍 / 看看COS模式】"
             "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
-            "别人视角的单人成品照：具体画幅、景别和机位遵循本套套装描述；未指定时优先采用正面半身、三分之二身、三分之四侧前方或环境人像；画面里只有主角一个人；"
+            "别人视角的单人成品照："
+            + framing_line
+            + "画面里只有主角一个人；"
             "拍摄者完全在画面外，不要第二个人，不要拍到"
             + ("拍摄过程或其它拍摄设备；" if phone_face_cover else "拍摄设备或拍摄过程；")
             + hand_rule
         )
     else:
         hand_rule = (
-            "可对镜取景；画面内仅允许一部普通手机从脸侧或下方自然遮住半张脸，"
-            "手机只能由主角既有的一只手握持并占用该手；若该手原本做动作或持道具，手机替代该动作或道具，原道具不入镜；"
+            "可对镜取景；画面只允许主角既有的一只手握持唯一一部普通手机，从脸侧或下方自然遮住半张脸；"
+            "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或其它拍摄设备；"
             "若套装姿势已明确占用双手或不宜举手机，保留原姿势和道具，不额外添加手机，也不强行遮脸。"
             if phone_face_cover
@@ -1964,15 +2094,14 @@ def build_cos_look_action(
         framing = (
             "【自拍 / 看看COS模式】"
             "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
-            "单人自拍成片：具体画幅、景别和机位遵循本套套装描述，未指定时采用竖屏近景半身；"
+            "单人自拍成片："
+            + framing_line
             + hand_rule
         )
     base = (
         framing
-        + "脸型五官必须保持形象参考，不要换成别人的脸；参考图只锁定同一人的身份、性别、肤色、脸型五官和身体比例，不复制参考图原有的动作、手势、头部角度或固定表情；"
-        + "头部自然正直、颈部与躯干连接自然；除非本次 COS 套装或用户明确要求，否则不要继承参考图的歪头、仰头、低头、闭眼、夸张嘴型或强烈表情；"
-        + "表情、眼神、嘴角和动作按本次 COS 套装、姿势变体与拍摄场景重新自然生成；"
-        + "假发颜色/发型/发饰可按本套 COS 完整替换。"
+        + "保持参考图中同一人的脸型、五官、性别、肤色和身体比例；不要换成别人的脸；优先保留脸型轮廓、五官比例、眼睛和嘴唇轮廓，不因妆容或表情重塑成另一张脸；发型、服装和造型按本套 COS 替换。"
+        + "姿势、头部动作、视线和表情以本次 COS 套装或用户要求为准；明确要求的歪头、仰头、低头、闭眼或夸张表情应保留，未指定时自然参考形象图，保持连贯并避免无依据过度变形；面部边缘清晰、肤色自然，不用白色薄膜或雾化遮住五官。"
         + f"本次套装：{title}。"
         + outfit
         + "服装颜色、层数、配饰、开叉、荷叶边、鞋履等结构要尽量齐全高还原；"

@@ -826,7 +826,7 @@ class PersonaManager:
             ],
         )
         is_cos_look = (
-            includes_any(compact, ["看看cos", "看看cos模式", "cos换装自拍"])
+            includes_any(compact, ["看看cos", "看看cos模式", "cos换装", "角色扮演"])
             or "【cos:" in raw.lower()
             or "【cos：" in raw
         )
@@ -1074,6 +1074,9 @@ class PersonaManager:
     ) -> str:
         act = str(action or "").strip()
         intent = self.analyze_selfie_intent(act)
+        cos_contract = bool(
+            intent.is_cos_look and re.search(r"【cam:(?:selfie|third)】", act, re.I)
+        )
         feet_cropped = is_leg_calf_crop_action(act)
         daily = self.get_daily_selfie_profile()
         appearance_type = self.get_appearance_type()
@@ -1092,14 +1095,22 @@ class PersonaManager:
                 "正对镜头时自然看向镜头，表情有焦点。",
             ]
         )
-        if intent.is_cos_look and has_reference_image:
-            identity_lines[1] = (
-                "主角的脸型、五官结构、性别、肤色、身体比例与整体身份来自参考图一；"
-                "不要把参考图的动作、手势、头部角度或固定表情当作身份特征。"
-            )
-            identity_lines[3] = (
-                "COS 时表情、眼神、嘴角和微表情按本次套装与拍摄场景重新自然生成；"
-                "不要原样复制参考图一的固定表情或僵硬眼神。"
+        if intent.is_cos_look and cos_contract:
+            # A generated COS action already carries its camera, outfit, pose,
+            # head, and expression contract. Keep Persona responsible only for
+            # global style; raw COS text gets a compact identity fallback below.
+            identity_lines = []
+        elif intent.is_cos_look:
+            identity_lines = (
+                [
+                    "固定形象参考：参考图一是主角身份锚点。",
+                    "主角的脸型、五官结构、性别、肤色和身体比例来自参考图一；优先保留脸型轮廓、五官比例、眼睛和嘴唇轮廓，不因妆容或表情重塑成另一张脸；发型发色和造型按本套 COS 替换。",
+                    "参考图一是女性则主角必须是女性，是男性则主角必须是男性。",
+                ]
+                if has_reference_image
+                else [
+                    "形象参考以角色名称、人设和本次 COS 套装为准；未说明性别默认成年女性。",
+                ]
             )
         if intent.is_legs_only and feet_cropped:
             identity_lines = (
@@ -1150,41 +1161,21 @@ class PersonaManager:
         mode_lines: list[str] = []
         if intent.is_cos_look:
             camera_is_third = bool(intent.is_third_person_photo)
-            phone_face_cover = requests_phone_face_cover(act)
-            if phone_face_cover:
-                camera_line = (
-                    "别人视角的单人成品照：竖屏近景半身，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，"
-                    "不要拍到拍摄过程或其它拍摄设备，不要对镜；画面只允许主角既有的一只手握持唯一一部普通手机，"
-                    "手机从脸侧或下方自然遮住半张脸。手机占用这只既有手，替代它原本的动作或道具，原道具不入镜；"
-                    "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机。"
-                    "若双手都被套装姿势明确占用或不宜举手机，保持原姿势和道具，不额外添加手机，也不强行遮脸。"
+            mode_lines.append("【COS换装他拍模式】" if camera_is_third else "【COS换装自拍模式】")
+            # Built COS actions already contain the complete camera and outfit
+            # contract. Raw COS actions still get one compact camera fallback.
+            if not cos_contract:
+                mode_lines.append(
+                    "别人视角的单人成品照：摄影师在画面外，机位、景别、姿势和表情按用户要求或套装描述执行；"
+                    "未指定时保持单人、面部清晰、动作自然。"
                     if camera_is_third
-                    else "竖屏近景半身自拍成片：可对镜取景；画面只允许主角既有的一只手握持唯一一部普通手机，"
-                    "手机从脸侧或下方自然遮住半张脸。手机占用这只既有手，替代它原本的动作或道具，原道具不入镜；"
-                    "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或其它拍摄设备。"
-                    "若双手都被套装姿势明确占用或不宜举手机，保持原姿势和道具，不额外添加手机，也不强行遮脸。"
+                    else "单人自拍成片：机位、景别、姿势和表情按用户要求或套装描述执行；"
+                    "未指定时保持面部清晰、动作自然。"
                 )
-            else:
-                camera_line = (
-                    "别人视角的单人成品照：竖屏近景半身，画面里只有主角一个人；摄影师在画面外，以正面或三分之四机位拍摄；主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然，摄影师不入画；保持面部和服装清晰可见。"
-                    if camera_is_third
-                    else "竖屏近景半身自拍成片：可对镜取景，但拍摄设备完全在画面外；拍胸像到腰线，不要展会式全身棚拍；主角双手自然入镜或放在身侧，不要用物件遮脸挡衣服。"
+                mode_lines.append(
+                    "套装或用户明确要求的歪头、仰头、低头、闭眼或夸张表情应保留；"
+                    "未指定时自然参考形象图，头部、视线和表情保持连贯，避免无依据过度变形；面部边缘清晰、肤色自然，不用白色薄膜或雾化遮住五官。"
                 )
-            mode_lines.extend(
-                [
-                    "【COS换装他拍模式】" if camera_is_third else "【COS换装自拍模式】",
-                    "这是 COS 换装"
-                    + ("他拍" if camera_is_third else "自拍")
-                    + "，不是晒腿、不是合影。",
-                    camera_line,
-                    "保持形象参考的脸型五官、性别、肤色与身体比例；假发颜色、发型、发饰按本套 COS 完整替换。",
-                    "参考图只锁定身份、脸型五官、性别、肤色和身体比例；不复制参考图原有的动作、手势、头部角度或固定表情。",
-                    "头部自然正直、颈部与躯干连接自然；除非本次 COS 套装或用户明确要求，否则不要歪头、仰头、低头、闭眼或保留夸张嘴型。",
-                    "动作、表情、眼神和视线按本次 COS 套装、姿势变体与拍摄场景重新自然生成。",
-                    "完整展示套装层次和腰线；竖屏近景半身即可，不要裁成只拍腿或只拍脸。",
-                    "构图以展示 COS 服装为主；表情按新造型自然重画。",
-                ]
-            )
         elif intent.is_group_photo:
             mode_lines.append("【合影 / 同框模式】")
             if appearance_type == "anime":
@@ -1394,20 +1385,16 @@ class PersonaManager:
         else:
             subject_photo_label = "日常他拍照片" if intent.is_third_person_photo and not intent.is_group_photo else "自拍照片"
         if intent.is_cos_look:
-            camera_is_third = bool(intent.is_third_person_photo)
-            output_lines = [
-                "【生成要求】",
-                "1. 主角身份稳定：脸型五官、性别、肤色和身体比例来自参考图一；假发/发饰按 COS 套装。",
-                "   参考图只锁定脸型五官、性别、肤色和身体比例，不复制参考图原有动作、手势、头部角度或固定表情。",
-                "2. 这是 COS 换装"
-                + ("他拍" if camera_is_third else "自拍")
-                + "：完整展示指定套装层次，竖屏近景半身，不要改成晒腿近景或合影。",
-                "3. 面部清晰可见；除非本次 COS 套装或用户明确要求，正面机位自然看向镜头，不要继承参考图的视线方向。",
-                "4. 头部自然正直、颈部与躯干连接自然；除非 COS 套装或用户明确要求，不要继承参考图的歪头、仰头、低头、闭眼或夸张表情。",
-                "5. 表情、眼神和动作按本次 COS 套装与拍摄场景重新生成。",
-                "6. 画面像随手拍的竖屏 COS 封面，主体清晰，服装还原优先，不要棚拍全身。",
-                "7. 人体结构自然完整：左右手/脚各一只，手与胳膊连续连接；第三人称摄影画面只出现主角自身的两条手臂和两只手。",
-            ]
+            output_lines = ["【生成要求】"]
+            output_lines.append(
+                "按以上完整 COS 规则生成一张自然成片；未明确的部分保持连贯，不额外改写。"
+                if cos_contract
+                else "按以上 COS 套装、构图、姿势和表情生成一张完整自然的成片。"
+            )
+            if not cos_contract:
+                output_lines.append(
+                    "人体结构自然完整：左右手/脚各一只，手与胳膊连续连接；第三人称摄影画面只出现主角自身的两条手臂和两只手。"
+                )
         elif intent.is_group_photo:
             output_lines = [
                 "【生成要求】保持所有人物独立、边界清晰，统一场景与画风。",
