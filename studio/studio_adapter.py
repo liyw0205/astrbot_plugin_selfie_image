@@ -17,6 +17,7 @@ from .studio import (
     global_prompt_presets,
     list_studio_templates,
     normalize_template_id,
+    prompt_preset_group,
     resolve_slot_refs_for_run,
 )
 from ..core.utils import (
@@ -223,7 +224,10 @@ class StudioMixin:
         result = {
             "sessions": canvas_store.list_sessions(),
             "storage_status": canvas_store.storage_status(),
-            "builtin_prompts": BUILTIN_PROMPTS,
+            "builtin_prompts": [
+                dict(item, preset_group=prompt_preset_group(item))
+                for item in BUILTIN_PROMPTS
+            ],
             "templates": list_studio_templates(),
         }
         if not include_metadata:
@@ -289,7 +293,12 @@ class StudioMixin:
             if not merged:
                 raise RuntimeError(f"预设列表读取失败：{type(exc).__name__}") from exc
         rows = list(merged.values())
-        rows.sort(key=lambda r: str(r.get("name") or ""))
+        rows.sort(
+            key=lambda r: (
+                1 if (r.get("preset_group") or prompt_preset_group(r)) else 0,
+                str(r.get("name") or ""),
+            )
+        )
         return rows
 
     def list_managed_prompt_presets_for_web(self, kind: str = "image") -> List[Dict[str, str]]:

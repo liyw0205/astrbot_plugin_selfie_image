@@ -447,13 +447,125 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
         "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
         "global": True,
     },
+    {
+        "id": "preset_high_hip_cutout",
+        "title": "高腰侧胯开窗",
+        "prompt": (
+            "成年女性。保持腰部以上所有服装、发型、脸部、表情、姿势、镜头和场景不变，只调整腰部以下服装。"
+            "将下装改为高腰设计，左右髋部加入大面积侧向开窗，从腰侧延伸至大腿根部；前后主体布料保持完整，"
+            "仅由腰带、细带或金属环连接。侧胯皮肤清晰可见，不使用肤色网纱、内衬或额外遮挡，保持原服装的主色和材质。"
+        ),
+        "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_front_crotch_opening",
+        "title": "前裆竖向开口",
+        "prompt": (
+            "成年女性。只调整腰部以下服装，保留原上衣、人物身份、原表情和原动作。将下装前方改为从下腹部向下延伸的纵向开放结构，"
+            "左右裤片或裙片沿开口两侧分离，仅由细窄腰带、装饰扣或少量绑带固定。开口边缘清晰整齐，"
+            "不自动补入内裤、短裤、打底裤或肤色布料，保持原服装配色和面料质感。"
+        ),
+        "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_back_waist_cutout",
+        "title": "高腰后腰开窗",
+        "prompt": (
+            "成年女性。保持腰部以上所有服装与姿势不变，只改变下装结构。将下装后腰改为大面积横向开窗，从左右腰侧延伸至臀部上方；"
+            "后片仅保留窄幅腰带和两侧连接带，形成清晰的后腰与臀上线条。不要增加内衬、安全裤、连体衣或其他遮挡，"
+            "开窗边缘自然贴合身体，服装受力和缝线合理。"
+        ),
+        "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_single_hip_cutout",
+        "title": "单侧臀部镂空",
+        "prompt": (
+            "成年女性。只调整腰部以下的裙装或短裤。将一侧髋部至臀侧改为连续镂空结构，开放区域从腰侧延伸到大腿上部，"
+            "另一侧保持原有布料和装饰，形成明显不对称设计。镂空处不添加透明网纱、肤色打底或额外侧片，"
+            "保留原上衣、发型、面部、表情、动作、镜头和背景不变。"
+        ),
+        "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_split_crotch_skirt",
+        "title": "前后分片开裆裙",
+        "prompt": (
+            "成年女性。保持原服装颜色、图案和材质，只替换腰部以下结构。将下装改为前后分离的开裆裙，前片与后片分别从腰部垂落，"
+            "中央和两侧形成连续开放区域；裙片仅由腰带、细链、窄绑带或装饰扣固定。不要补入安全裤、内衬、短裤或普通完整裙片，"
+            "不把结构改成普通短裙，保持原姿势自然呈现服装层次。"
+        ),
+        "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_side_slit_bondage_shorts",
+        "title": "侧开衩绑带短裤",
+        "prompt": (
+            "成年女性。只改变下身服饰，保留上衣、脸部、发型、原表情和原动作。将下装改为高腰短裤，左右裤腿外侧从腰线至大腿根部设置连续高开衩，"
+            "并用数条平行细绑带连接；裤片边缘整齐，绑带数量适中，皮肤和腿部轮廓清晰可见。"
+            "不要添加裙片、丝袜、内衬或多余布料，保持原配色与面料。"
+        ),
+        "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_sheer_lower_layers",
+        "title": "高腰透明薄纱下装",
+        "prompt": (
+            "成年女性。保持腰部以上服装和人物姿势不变，只调整下装。改为高腰半透明薄纱短裙或薄纱裤裙，外层纱料轻薄透光，"
+            "腰部、臀部和腿部轮廓清晰可见；仅保留与原配色一致的极简必要遮挡结构，薄纱边缘、褶皱和叠层真实自然。"
+            "不要厚重衬里、普通长裙、内搭安全裤或塑料质感。"
+        ),
+        "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_low_waist_chainwear",
+        "title": "低腰链带下装",
+        "prompt": (
+            "成年女性。只替换腰部以下服饰。将下装改为低腰窄版短裙或低腰短裤，腰线落在胯骨附近，前后主体布料由细金属链、窄皮带和少量装饰扣连接，"
+            "腰侧与髋部保持开放。链条数量清晰可数，连接关系合理，不自动补高腰布料、内裤、打底裤或侧片。"
+            "上衣、脸部、表情、动作和场景全部保持不变。"
+        ),
+        "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_back_hip_cutout_skirt",
+        "title": "臀后镂空短裙",
+        "prompt": (
+            "成年女性。保持原上衣、人物身份、头部角度、表情、姿势、镜头和场景不变，只修改下装。将短裙后片调整为中央大面积镂空，"
+            "露出后腰至臀部上方轮廓，左右裙片通过窄腰带、细链或小型金属扣连接。镂空边缘平整，裙摆仍保持原长度，"
+            "不添加内衬、短裤或完整后片遮挡。"
+        ),
+        "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_double_high_slit_skirt",
+        "title": "双侧高开衩长裙",
+        "prompt": (
+            "成年女性。只调整腰部以下服装，保留原上衣和原动作。将原裙装改为双侧高开衩结构，两侧裙缝从腰部或髋部一直开放至大腿根部附近，"
+            "前后裙片自然垂落，仅由腰头和少量装饰带固定。两侧腿部线条清晰可见，不增加安全裤、内衬或额外侧片，"
+            "不把长裙缩短成普通迷你裙。"
+        ),
+        "templates": ["selfie", "clothes", "i2i", "t2i", "blank"],
+        "global": True,
+    },
 ]
 
-# These clothing-structure presets can also be requested through the dynamic
-# "特殊预设" alias. Keep the alias itself out of the fixed preset seed so it
-# always expands to one concrete prompt before image generation.
+# These clothing-structure presets can also be requested through dynamic aliases.
+# Keep the aliases themselves out of the fixed preset seed so each one expands
+# to one concrete prompt before image generation.
 SPECIAL_PRESET_ALIAS = "特殊预设"
-SPECIAL_PROMPT_PRESET_IDS = frozenset(
+UPPER_PRESET_ALIAS = "上身预设"
+LOWER_PRESET_ALIAS = "下身预设"
+UPPER_PROMPT_PRESET_IDS = frozenset(
     {
         "preset_deep_open_front",
         "preset_underbust_cutout",
@@ -473,17 +585,92 @@ SPECIAL_PROMPT_PRESET_IDS = frozenset(
         "preset_split_panel_wrap",
     }
 )
+LOWER_PROMPT_PRESET_IDS = frozenset(
+    {
+        "preset_high_hip_cutout",
+        "preset_front_crotch_opening",
+        "preset_back_waist_cutout",
+        "preset_single_hip_cutout",
+        "preset_split_crotch_skirt",
+        "preset_side_slit_bondage_shorts",
+        "preset_sheer_lower_layers",
+        "preset_low_waist_chainwear",
+        "preset_back_hip_cutout_skirt",
+        "preset_double_high_slit_skirt",
+    }
+)
+# "特殊预设" is the combined pool; the dedicated aliases below retain
+# independent upper- and lower-body selection.
+SPECIAL_PROMPT_PRESET_IDS = UPPER_PROMPT_PRESET_IDS | LOWER_PROMPT_PRESET_IDS
+ALL_SPECIAL_PROMPT_PRESET_IDS = SPECIAL_PROMPT_PRESET_IDS
+
+
+def _prompt_presets_by_ids(ids: frozenset[str]) -> List[Dict[str, Any]]:
+    return [
+        item
+        for item in BUILTIN_PROMPTS
+        if str(item.get("id") or "").strip() in ids
+        and str(item.get("title") or "").strip()
+        and str(item.get("prompt") or "").strip()
+    ]
 
 
 def special_prompt_presets() -> List[Dict[str, Any]]:
     """Concrete built-in prompts eligible for the dynamic special-preset alias."""
+    return _prompt_presets_by_ids(SPECIAL_PROMPT_PRESET_IDS)
+
+
+def upper_prompt_presets() -> List[Dict[str, Any]]:
+    """Concrete upper-body clothing-structure prompts."""
+    return _prompt_presets_by_ids(UPPER_PROMPT_PRESET_IDS)
+
+
+def lower_prompt_presets() -> List[Dict[str, Any]]:
+    """Concrete lower-body clothing-structure prompts."""
+    return _prompt_presets_by_ids(LOWER_PROMPT_PRESET_IDS)
+
+
+def prompt_preset_group(value: Any) -> str:
+    """Return ``upper``/``lower`` for structure presets, otherwise empty."""
+    if isinstance(value, dict):
+        preset_id = str(value.get("id") or "").strip()
+        name = str(value.get("name") or value.get("title") or "").strip()
+    else:
+        preset_id = ""
+        name = str(value or "").strip()
+    if preset_id in UPPER_PROMPT_PRESET_IDS:
+        return "upper"
+    if preset_id in LOWER_PROMPT_PRESET_IDS:
+        return "lower"
+    if name:
+        for item in BUILTIN_PROMPTS:
+            if str(item.get("title") or "").strip() != name:
+                continue
+            item_id = str(item.get("id") or "").strip()
+            if item_id in UPPER_PROMPT_PRESET_IDS:
+                return "upper"
+            if item_id in LOWER_PROMPT_PRESET_IDS:
+                return "lower"
+    return ""
+
+
+def dynamic_prompt_preset_groups() -> List[Tuple[str, List[Dict[str, Any]]]]:
+    """Aliases and their random prompt pools, longest aliases first at call sites."""
     return [
-        item
-        for item in BUILTIN_PROMPTS
-        if str(item.get("id") or "").strip() in SPECIAL_PROMPT_PRESET_IDS
-        and str(item.get("title") or "").strip()
-        and str(item.get("prompt") or "").strip()
+        (SPECIAL_PRESET_ALIAS, special_prompt_presets()),
+        (UPPER_PRESET_ALIAS, upper_prompt_presets()),
+        (LOWER_PRESET_ALIAS, lower_prompt_presets()),
     ]
+
+
+def special_prompt_preset_titles() -> frozenset[str]:
+    """Titles belonging to either upper- or lower-body structure pools."""
+    return frozenset(
+        str(item.get("title") or "").strip()
+        for _alias, items in dynamic_prompt_preset_groups()
+        for item in items
+        if str(item.get("title") or "").strip()
+    )
 
 # P0 templates: id -> layout defaults
 STUDIO_TEMPLATES: Dict[str, Dict[str, Any]] = {
@@ -655,8 +842,10 @@ def prompts_for_template(template_id: str) -> List[Dict[str, Any]]:
                 "prompt": item.get("prompt"),
                 "templates": tags,
                 "global": bool(item.get("global")),
+                "preset_group": prompt_preset_group(item),
             }
         )
+    out.sort(key=lambda item: (1 if item.get("preset_group") else 0, str(item.get("title") or "")))
     return out
 
 
@@ -684,8 +873,10 @@ def global_prompt_presets() -> List[Dict[str, Any]]:
                 "prompt": prompt,
                 "source": "builtin",
                 "templates": list(item.get("templates") or []),
+                "preset_group": prompt_preset_group(item),
             }
         )
+    out.sort(key=lambda item: (1 if item.get("preset_group") else 0, str(item.get("name") or "")))
     return out
 
 

@@ -117,7 +117,7 @@ from .features.model_selection import (
     match_model_label,
     prioritize_model_target,
 )
-from .prompts.preset import ImagePresetManager, VideoPresetManager
+from .prompts.preset import ImagePresetManager, VideoPresetManager, preset_display_sort_key
 from .core.models import (
     AICatConfig,
     DEFAULT_CONFIG,
@@ -761,16 +761,24 @@ class SelfieImagePlugin(
         text = str(raw_text or "").strip()
         if not text or count <= 0:
             return [], "", "", ""
-        from .studio.studio import SPECIAL_PRESET_ALIAS, special_prompt_presets
+        from .studio.studio import dynamic_prompt_preset_groups
 
-        alias = str(SPECIAL_PRESET_ALIAS or "特殊预设").strip()
-        if not alias or not re.search(re.escape(alias), text, flags=re.IGNORECASE):
-            return [], "", "", ""
-        choices = [
-            dict(item)
-            for item in special_prompt_presets()
-            if str(item.get("prompt") or "").strip()
+        groups = [
+            (str(alias or "").strip(), list(items or []))
+            for alias, items in dynamic_prompt_preset_groups()
+            if str(alias or "").strip()
         ]
+        if not groups:
+            return [], "", "", ""
+        groups.sort(key=lambda item: len(item[0]), reverse=True)
+        pattern = "|".join(re.escape(alias) for alias, _items in groups)
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            return [], "", "", ""
+        matched_alias = match.group(0)
+        alias_map = {alias.lower(): (alias, choices) for alias, choices in groups}
+        alias, choices = alias_map.get(matched_alias.lower(), (matched_alias, []))
+        choices = [dict(item) for item in choices if str(item.get("prompt") or "").strip()]
         if not choices:
             return [], "", "", ""
 
@@ -780,13 +788,7 @@ class SelfieImagePlugin(
         for index in range(max(1, int(count))):
             selected = random.choice(choices)
             selected_prompt = str(selected.get("prompt") or "").strip()
-            expanded_source = re.sub(
-                re.escape(alias),
-                lambda _match: selected_prompt,
-                text,
-                count=1,
-                flags=re.IGNORECASE,
-            )
+            expanded_source = text[: match.start()] + selected_prompt + text[match.end() :]
             expanded, aspect, resolution, _ = self._expand_cos_user_text_with_preset(expanded_source)
             variants.append(expanded)
             if index == 0:
@@ -978,7 +980,7 @@ class SelfieImagePlugin(
         return sender_role in {"admin", "owner"}
 
     def _preset_list_text(self, page: int = 1, page_size: int = 20) -> Tuple[str, int, int]:
-        presets = self.presets.list()
+        presets = sorted(self.presets.list(), key=lambda item: preset_display_sort_key(item[0]))
         total = len(presets)
         total_pages = max(1, (total + page_size - 1) // page_size)
         current_page = min(total_pages, max(1, page))
@@ -1032,7 +1034,7 @@ class SelfieImagePlugin(
         ]
 
     def _preset_detail_text(self, page: int = 1, page_size: int = 20) -> Tuple[str, int, int]:
-        presets = self.presets.list()
+        presets = sorted(self.presets.list(), key=lambda item: preset_display_sort_key(item[0]))
         total = len(presets)
         total_pages = max(1, (total + page_size - 1) // page_size)
         current_page = min(total_pages, max(1, page))
@@ -5466,7 +5468,7 @@ class SelfieImagePlugin(
                 "· /形象清除　去掉参考图",
                 "· /形象刷新　刷新今日穿搭状态",
                 "",
-                "预设：/预设　列表；可在任意生图指令中写「变真人」「变动漫」「变猫娘」「变Q版」「变像素」等图像转换预设，或写「特殊预设」随机选择服装结构；管理员可 /预设添加 名称:内容、/预设删除 名称",
+                "预设：/预设　列表；可在任意生图指令中写「变真人」「变动漫」「变猫娘」「变Q版」「变像素」等图像转换预设；「特殊预设」随机选择上下身结构，「上身预设」随机选择上身结构，「下身预设」随机选择下身结构；管理员可 /预设添加 名称:内容、/预设删除 名称",
                 "",
                 "说明：一次可写数量表示本条指令要生成的总张数；同时最多进行几张由「同时画几张上限」决定，不锁在单条指令里，新任务自动排队，超过同时上限才等待。图好了会直接发过来。",
                 "· /生图帮助　只看图卡",

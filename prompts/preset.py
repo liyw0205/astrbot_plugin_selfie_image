@@ -14,6 +14,22 @@ from ..core.utils import load_json_file, save_json_file
 logger = logging.getLogger(__name__)
 
 
+def _preset_group_for_name(name: object) -> str:
+    try:
+        from ..studio.studio import prompt_preset_group
+
+        return str(prompt_preset_group(str(name or "")) or "")
+    except Exception:
+        return ""
+
+
+def preset_display_sort_key(name: object) -> tuple[int, str]:
+    """Keep clothing-structure presets after ordinary presets in displays."""
+    value = str(name or "").strip()
+    is_structure = bool(_preset_group_for_name(value))
+    return (1 if is_structure else 0, value)
+
+
 # Upgrade only the exact old built-in value. User-customized presets remain untouched.
 LEGACY_BUILTIN_PROMPT_REPLACEMENTS = {
     "遮脸": (
@@ -196,9 +212,10 @@ class ImagePresetManager:
                     "extra_prompt": preset.extra_prompt or "",
                     "duration": preset.duration,
                     "source": "user",
+                    "preset_group": _preset_group_for_name(name),
                 }
             )
-        rows.sort(key=lambda item: str(item.get("name") or ""))
+        rows.sort(key=lambda item: preset_display_sort_key(item.get("name")))
         return rows
 
     def add(self, name: str, raw_value: str) -> Tuple[bool, str]:
@@ -247,9 +264,10 @@ class ImagePresetManager:
                     "extra_prompt": preset.extra_prompt or "",
                     "duration": preset.duration,
                     "source": "builtin" if name in builtin_names else "user",
+                    "preset_group": _preset_group_for_name(name),
                 }
             )
-        rows.sort(key=lambda item: str(item.get("name") or ""))
+        rows.sort(key=lambda item: preset_display_sort_key(item.get("name")))
         return rows
 
     def save_management(self, payload: Dict[str, object]) -> Tuple[bool, str]:
@@ -415,14 +433,20 @@ class ImagePresetManager:
 
     def _match_preset(self, text: str) -> Tuple[str, Optional[ImagePreset], str]:
         lowered = text.lower()
-        # "特殊预设" expands to one concrete built-in structure preset at run time.
+        # Structure aliases expand to one concrete built-in prompt at run time.
         try:
-            from ..studio.studio import SPECIAL_PRESET_ALIAS, special_prompt_presets
+            from ..studio.studio import dynamic_prompt_preset_groups
 
-            alias = str(SPECIAL_PRESET_ALIAS or "特殊预设").strip()
-            alias_lower = alias.lower()
-            if alias and (lowered == alias_lower or lowered.startswith(alias_lower + " ")):
-                choices = special_prompt_presets()
+            groups = sorted(
+                dynamic_prompt_preset_groups(),
+                key=lambda item: len(str(item[0] or "")),
+                reverse=True,
+            )
+            for alias, choices in groups:
+                alias = str(alias or "").strip()
+                alias_lower = alias.lower()
+                if not alias or not (lowered == alias_lower or lowered.startswith(alias_lower + " ")):
+                    continue
                 if choices:
                     selected = random.choice(choices)
                     title = str(selected.get("title") or "").strip()

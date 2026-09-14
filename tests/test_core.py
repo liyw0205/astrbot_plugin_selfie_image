@@ -457,7 +457,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.15")
+        self.assertEqual(PLUGIN_VERSION, "1.6.16")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -10089,6 +10089,9 @@ class StudioStoreTests(unittest.TestCase):
             "侧腰双开窗", "极高侧开衩", "薄纱叠层", "开放侧身", "敞怀外套",
             "前襟分离系带", "单肩斜向开胸", "胸腹竖向开口", "下胸弧形开窗",
             "单侧全开裙摆", "前后分片围裹",
+            "高腰侧胯开窗", "前裆竖向开口", "高腰后腰开窗", "单侧臀部镂空",
+            "前后分片开裆裙", "侧开衩绑带短裤", "高腰透明薄纱下装", "低腰链带下装",
+            "臀后镂空短裙", "双侧高开衩长裙",
         )
         for need in (
             "捧脸", "遮脸", "变真人", "变动漫", "变猫娘", "变Q版", "变像素",
@@ -10135,6 +10138,47 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("宽幅弧形开窗", seed["下胸弧形开窗"]["prompt"])
         self.assertIn("完整开放结构", seed["单侧全开裙摆"]["prompt"])
         self.assertIn("前后分片的围裹式结构", seed["前后分片围裹"]["prompt"])
+
+    def test_upper_lower_structure_aliases_and_display_order(self) -> None:
+        import tempfile
+
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.studio.studio import (
+            LOWER_PRESET_ALIAS,
+            UPPER_PRESET_ALIAS,
+            lower_prompt_presets,
+            special_prompt_presets,
+            upper_prompt_presets,
+        )
+
+        self.assertEqual(UPPER_PRESET_ALIAS, "上身预设")
+        self.assertEqual(LOWER_PRESET_ALIAS, "下身预设")
+        self.assertEqual(len(upper_prompt_presets()), 16)
+        self.assertEqual(len(lower_prompt_presets()), 10)
+        self.assertEqual(len(special_prompt_presets()), 26)
+        self.assertEqual(
+            {item["id"] for item in special_prompt_presets()},
+            {item["id"] for item in upper_prompt_presets()} | {item["id"] for item in lower_prompt_presets()},
+        )
+        self.assertTrue(all("只调整" in item["prompt"] or "保持" in item["prompt"] for item in lower_prompt_presets()))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = ImagePresetManager(tmp)
+            for alias in (UPPER_PRESET_ALIAS, LOWER_PRESET_ALIAS):
+                resolved = manager.resolve(alias)
+                self.assertEqual(resolved.get("preset_name"), alias)
+                self.assertTrue(resolved.get("prompt"))
+            lower_selected = lower_prompt_presets()[0]
+            with patch("astrbot_plugin_selfie_image.prompts.preset.random.choice", return_value=lower_selected):
+                combined = manager.resolve("特殊预设")
+            self.assertEqual(combined.get("preset_name"), "特殊预设")
+            self.assertIn(lower_selected["prompt"], combined.get("prompt") or "")
+            rows = manager.list_public()
+            groups = [str(row.get("preset_group") or "") for row in rows]
+            first_structure = next(index for index, group in enumerate(groups) if group)
+            self.assertTrue(all(not group for group in groups[:first_structure]))
+            self.assertTrue(all(group in {"upper", "lower"} for group in groups[first_structure:]))
+
     def test_default_presets_seed(self) -> None:
         import tempfile
         from astrbot_plugin_selfie_image.prompts.preset import (

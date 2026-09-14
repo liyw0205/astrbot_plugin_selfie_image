@@ -6822,6 +6822,16 @@ Source prompt:
       return ($('studioTemplateSelect') && $('studioTemplateSelect').value) || 'duo';
     }
 
+    function promptPresetSortKey(item) {
+      const name = String(item?.name || item?.title || '').trim();
+      const group = String(item?.preset_group || item?.special_group || '').trim();
+      return [group ? 1 : 0, name];
+    }
+    function promptPresetCompare(a, b) {
+      const ka = promptPresetSortKey(a);
+      const kb = promptPresetSortKey(b);
+      return ka[0] - kb[0] || ka[1].localeCompare(kb[1], 'zh');
+    }
     function mergePromptPresets(rows) {
       const map = new Map();
       for (const item of rows || []) {
@@ -6830,7 +6840,7 @@ Source prompt:
         if (!name || !prompt) continue;
         map.set(name, Object.assign({}, item, { name, title: name, prompt }));
       }
-      return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+      return [...map.values()].sort(promptPresetCompare);
     }
     function pickerCacheFresh(entry) {
       return entry.loadedAt > 0 && (Date.now() - entry.loadedAt) < PICKER_CATALOG_CACHE_TTL_MS;
@@ -7109,7 +7119,8 @@ Source prompt:
         if (loadStatus && loadStatus.ok === false) {
           throw new Error(loadStatus.error || '预设加载失败');
         }
-        PRESET_MANAGE_ROWS = Array.isArray(data) ? data : (data && Array.isArray(data.presets) ? data.presets : []);
+        PRESET_MANAGE_ROWS = (Array.isArray(data) ? data : (data && Array.isArray(data.presets) ? data.presets : []))
+          .slice().sort(promptPresetCompare);
         renderManagedPromptPresets();
         presetManagerStatus(`${PRESET_KIND === 'video' ? '视频' : '生图'}预设 · 共 ${PRESET_MANAGE_ROWS.length} 个`);
       } catch (e) {
@@ -7500,7 +7511,7 @@ Source prompt:
         const tags = item.templates;
         if (!tags || !tags.length) return true; // empty tags = all templates
         return tags.includes(tid);
-      });
+      }).sort(promptPresetCompare);
       for (const item of items) {
         const btn = document.createElement('button');
         btn.type = 'button';
