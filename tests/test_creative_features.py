@@ -21,6 +21,8 @@ from astrbot_plugin_selfie_image.prompts.command_parser import (
     extract_template_options,
     parse_prompt_options,
 )
+from astrbot_plugin_selfie_image.prompts.preset import VideoPresetManager
+from astrbot_plugin_selfie_image.studio.studio import default_video_preset_seed
 
 
 def test_template_variables_support_chinese_aliases_and_explicit_values() -> None:
@@ -66,6 +68,39 @@ def test_storyboard_normalizes_edited_dashboard_rows() -> None:
     assert parsed["shots"][0]["duration"] == 2
     assert parsed["shots"][1]["index"] == 2
     assert "镜头2" in parsed["prompt"]
+
+
+def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None:
+    seed = default_video_preset_seed()
+
+    xiaoban = seed["小半"]
+    assert xiaoban["duration"] == 12
+    assert "左右点胯2次" in xiaoban["prompt"]
+    assert "baby, i am worth it" in xiaoban["prompt"]
+    assert "必须输出可听见的BGM" in xiaoban["prompt"]
+
+    jiatong = seed["嘉桐摇"]
+    assert jiatong["duration"] == 10
+    assert "BPM为115" in jiatong["prompt"]
+    assert "双手做可爱的猫爪姿势" in jiatong["prompt"]
+    assert "必须输出可听见的BGM" in jiatong["prompt"]
+
+    sequence = seed["兰花指卡点舞"]
+    assert sequence["duration"] == 20
+    assert "严格按1至19的原顺序逐拍完成" in sequence["prompt"]
+    assert "连续完成3次波浪手" in sequence["prompt"]
+    assert "双手向左右交替推送5次" in sequence["prompt"]
+    assert "第5个八拍" in sequence["prompt"]
+    assert "必须输出可听见的BGM" in sequence["prompt"]
+
+    with tempfile.TemporaryDirectory() as directory:
+        manager = VideoPresetManager(directory)
+        assert manager.has_preset("小半")
+        assert manager.has_preset("嘉桐摇")
+        assert manager.has_preset("兰花指卡点舞")
+        assert manager.resolve("小半")["duration"] == 12
+        assert manager.resolve("嘉桐摇")["duration"] == 10
+        assert manager.resolve("兰花指卡点舞")["duration"] == 20
 
 
 def test_command_template_options_can_be_mixed_with_prompt() -> None:
