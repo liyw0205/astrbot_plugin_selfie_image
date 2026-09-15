@@ -105,6 +105,19 @@ def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None
     assert "发丝具有真实惯性但全程不遮脸" in revenge_two["prompt"]
     assert "必须输出可听见的BGM" in revenge_two["prompt"]
 
+    fish = seed["鱼块摇"]
+    assert fish["duration"] == 13
+    assert "生成13.6秒9:16竖屏高清真人舞蹈视频" in fish["prompt"]
+    assert "整体是魔性、带感、卡点精准的鱼块摇风格" in fish["prompt"]
+    assert "《Blow (鱼块摇)》DJ电子鼓点版" in fish["prompt"]
+    assert "动作必须按以下顺序完整执行，不循环、不跳过" in fish["prompt"]
+    assert "1，右手放胯部，坐胯" in fish["prompt"]
+    assert "2，双手交替点点点，同时双手绕腕扭胯" in fish["prompt"]
+    assert "7，左手锤右肩3次" in fish["prompt"]
+    assert "14，双手举起卖萌，收尾定格" in fish["prompt"]
+    assert "禁止古风乐器独奏和古风乐器音效" in fish["prompt"]
+    assert "必须输出可听见的BGM" in fish["prompt"]
+
     transition = seed["动作转场"]
     assert transition["duration"] == 8
     assert "动作1：人物保持跪姿" in transition["prompt"]
@@ -129,6 +142,7 @@ def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None
         assert manager.has_preset("兰花指卡点舞")
         assert manager.has_preset("复仇摇")
         assert manager.has_preset("复仇摇2")
+        assert manager.has_preset("鱼块摇")
         assert manager.has_preset("动作转场")
         assert manager.has_preset("动作转场2")
         assert manager.resolve("小半")["duration"] == 12
@@ -136,6 +150,7 @@ def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None
         assert manager.resolve("兰花指卡点舞")["duration"] == 20
         assert manager.resolve("复仇摇")["duration"] == 16
         assert manager.resolve("复仇摇2")["duration"] == 16
+        assert manager.resolve("鱼块摇")["duration"] == 13
         assert manager.resolve("动作转场")["duration"] == 8
         assert manager.resolve("动作转场2")["duration"] == 6
 
