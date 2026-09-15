@@ -128,7 +128,9 @@ def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None
 
     skirt = seed["提裙摇"]
     assert skirt["duration"] == 10
-    assert "双手轻提裙摆两侧" in skirt["prompt"]
+    assert "单手从长裙前片底部正中抓起" in skirt["prompt"]
+    assert "不是抓侧边，不是捏边缘" in skirt["prompt"]
+    assert "前裙被提起的部分呈扇形铺开" in skirt["prompt"]
     assert "提裙摇风格" in skirt["prompt"]
 
     chair = seed["椅子摇"]
