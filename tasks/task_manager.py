@@ -17,6 +17,7 @@ from ..core.utils import (
     redact_sensitive_text,
     save_json_file,
 )
+from ..core.constants import VIDEO_MAX_CONCURRENT_TASKS
 from ..generation.generation_results import build_task_terminal_state
 from .task_views import task_source_label
 
@@ -849,7 +850,17 @@ class WebTaskMixin:
         image_gate = getattr(self, "_image_batch_gate", None)
         video_gate = getattr(self, "_video_semaphore", None)
         image_max = max(1, int(getattr(getattr(self, "config", None), "image_max_concurrent_tasks", 1) or 1))
-        video_max = max(1, int(getattr(getattr(self, "config", None), "video_max_concurrent_tasks", 1) or 1))
+        video_max = max(
+            1,
+            int(
+                getattr(
+                    getattr(self, "config", None),
+                    "video_max_concurrent_tasks",
+                    VIDEO_MAX_CONCURRENT_TASKS,
+                )
+                or VIDEO_MAX_CONCURRENT_TASKS
+            ),
+        )
         image_value = getattr(image_gate, "_value", image_max) if image_gate is not None else image_max
         video_value = getattr(video_gate, "_value", video_max) if video_gate is not None else video_max
         image_active = max(0, min(image_max, image_max - int(image_value)))

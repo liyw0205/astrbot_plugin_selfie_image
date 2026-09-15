@@ -1586,6 +1586,49 @@ class StudioStore:
                 for s in ordered
             ]
 
+    def referenced_cache_paths(self) -> List[str]:
+        """Return cache media paths referenced by every live canvas session."""
+        with self._lock:
+            paths: List[str] = []
+            seen: set[str] = set()
+
+            def add(value: Any) -> None:
+                if isinstance(value, str):
+                    values = [value]
+                elif isinstance(value, (list, tuple, set)):
+                    values = list(value)
+                else:
+                    return
+                for item in values:
+                    path = str(item or "").strip()
+                    if path and path not in seen:
+                        seen.add(path)
+                        paths.append(path)
+
+            for session in self._sessions.values():
+                if not isinstance(session, dict):
+                    continue
+                for slot in session.get("slots") or []:
+                    if isinstance(slot, dict):
+                        add(slot.get("image_path"))
+                for result in session.get("results") or []:
+                    if isinstance(result, dict):
+                        add(result.get("image_path"))
+                last_run = session.get("last_run")
+                if isinstance(last_run, dict):
+                    add(last_run.get("result_paths"))
+                canvas = session.get("canvas")
+                if not isinstance(canvas, dict):
+                    continue
+                for node in canvas.get("nodes") or []:
+                    if not isinstance(node, dict):
+                        continue
+                    result = node.get("result")
+                    if isinstance(result, dict):
+                        add(result.get("media_path"))
+                        add(result.get("thumbnail_path"))
+            return paths
+
     def get(self, session_id: str) -> Dict[str, Any]:
         with self._lock:
             sid = str(session_id or "").strip()

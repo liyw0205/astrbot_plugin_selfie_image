@@ -16,7 +16,7 @@ try:
 except ImportError:
     from astrbot.api.utils import logger
 
-from ..core.constants import LEGACY_CONFIG_FILENAME, LEGACY_PLUGIN_NAME
+from ..core.constants import LEGACY_CONFIG_FILENAME, LEGACY_PLUGIN_NAME, VIDEO_MAX_CONCURRENT_TASKS
 from ..core.models import (
     AICatConfig,
     DEFAULT_CONFIG,
@@ -522,6 +522,9 @@ class ConfigurationMixin:
         self.raw_config = next_config
         self.config = AICatConfig.from_dict(self.raw_config)
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
+        self._video_semaphore = asyncio.Semaphore(
+            max(1, int(getattr(self.config, "video_max_concurrent_tasks", VIDEO_MAX_CONCURRENT_TASKS) or VIDEO_MAX_CONCURRENT_TASKS))
+        )
         self._image_batch_gate = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self._selfie_batch_gate = self._image_batch_gate
         self._persist_config()

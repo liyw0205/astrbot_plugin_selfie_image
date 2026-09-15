@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
-from .constants import PROVIDER_TYPES, VIDEO_PROVIDER_TYPES
+from .constants import PROVIDER_TYPES, VIDEO_MAX_CONCURRENT_TASKS, VIDEO_PROVIDER_TYPES
 from .proxy import LOCAL_IMAGE_WAIT_SECONDS
 
 
@@ -143,7 +143,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "video": {
         "enable": True,
         "default_duration": 5,
-        "max_concurrent_tasks": 1,
+        "max_concurrent_tasks": VIDEO_MAX_CONCURRENT_TASKS,
         "global_timeout": 300,
     },
 }
@@ -505,7 +505,7 @@ class AICatConfig:
             image_model_call_mode=image_model_call_mode,
             video_enable=to_bool(video.get("enable"), True),
             video_default_duration=to_int(video.get("default_duration"), 5, minimum=1, maximum=60),
-            video_max_concurrent_tasks=to_int(video.get("max_concurrent_tasks"), 1, minimum=1, maximum=5),
+            video_max_concurrent_tasks=to_int(video.get("max_concurrent_tasks"), VIDEO_MAX_CONCURRENT_TASKS, minimum=1, maximum=5),
             video_global_timeout=to_int(video.get("global_timeout"), 300, minimum=30, maximum=1800),
         )
 

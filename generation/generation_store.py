@@ -1522,14 +1522,26 @@ class GenerationStoreMixin:
         return total, count
 
     def _asset_protected_cache_paths(self) -> List[str]:
-        """Keep media referenced by pinned/favorite assets during cache GC."""
+        """Keep pinned assets and live canvas media during cache GC."""
         with self._records_lock:
             protected_records = [
                 item
                 for item in self._records
                 if isinstance(item, Mapping) and (item.get("favorite") or item.get("pinned"))
             ]
-        return collect_record_cache_paths(protected_records)
+        protected = collect_record_cache_paths(protected_records)
+        # Both the relationship canvas and the legacy creation canvas keep
+        # their own session catalogs, so include paths from each live store.
+        for store_name in ("studio", "creative_canvas"):
+            store = getattr(self, store_name, None)
+            getter = getattr(store, "referenced_cache_paths", None)
+            if not callable(getter):
+                continue
+            try:
+                protected.extend(getter())
+            except Exception:
+                continue
+        return list(dict.fromkeys(str(path).strip() for path in protected if str(path).strip()))
 
     def _cache_cleanup_plan(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
         """Build the shared count-and-size cleanup plan without deleting files."""

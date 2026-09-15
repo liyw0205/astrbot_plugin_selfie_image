@@ -35,3 +35,7 @@ VIDEO_PROVIDER_TYPES = [
     "video_chat",
     "video_sync",
 ]
+
+# Default number of video generations allowed to run at once.  Video jobs
+# still enter the shared task queue when all slots are occupied.
+VIDEO_MAX_CONCURRENT_TASKS = 3

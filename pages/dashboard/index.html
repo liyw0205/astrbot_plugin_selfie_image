@@ -997,12 +997,12 @@
       </div>
       <label>连接状态</label><div id="health" class="status">还没连上</div>
       <div class="actions" style="margin-top:8px">
-        <button id="cleanupCacheBtn" class="danger" type="button" title="仅清理未被记录、收藏或置顶资产引用的超限缓存">清理可回收缓存</button>
+        <button id="cleanupCacheBtn" class="danger" type="button" title="仅清理未被记录、收藏、置顶或画布会话引用的超限缓存">清理可回收缓存</button>
       </div>
       <div class="grid">
         <div><label>图片缓存上限（MB）</label><input id="cacheLimitMB" type="number" min="10" max="102400"></div>
         <div><label>图片缓存上限（张）</label><input id="cacheLimitCount" type="number" min="10" max="10000"></div>
-        <div><label>说明</label><div class="status">默认 100 张 / 200 MB；请求图和生成图共用缓存。自动清理只移除未被生成记录引用的旧文件。</div></div>
+        <div><label>说明</label><div class="status">默认 100 张 / 200 MB；请求图和生成图共用缓存。自动清理只移除未被生成记录、收藏、置顶或存活画布会话引用的旧文件。</div></div>
       </div>
       <h3>谁能用</h3>
       <div class="grid">
@@ -2274,7 +2274,7 @@ Source prompt:
       const vid = CONFIG.video;
       vid.enable ??= true;
       vid.default_duration ??= 5;
-      vid.max_concurrent_tasks ??= 1;
+      vid.max_concurrent_tasks ??= 3;
       vid.global_timeout ??= 300;
     }
 
@@ -3986,7 +3986,7 @@ Source prompt:
         }
         const mb = (bytes / 1024 / 1024).toFixed(1);
         const accepted = await confirmAction(
-          `将清理 ${count} 个超出缓存上限的旧缓存文件（约 ${mb} MB）。\n仍被生成记录引用的请求图和响应图不会被清理。`,
+          `将清理 ${count} 个超出缓存上限的旧缓存文件（约 ${mb} MB）。\n仍被生成记录、收藏、置顶或存活画布会话引用的媒体不会被清理。`,
           {title:'清理可回收缓存', confirmText:'确认清理'}
         );
         if (!accepted) return;

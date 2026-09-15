@@ -41,6 +41,7 @@ from .core.constants import (
     PLUGIN_DISPLAY_NAME,
     PLUGIN_NAME,
     PLUGIN_VERSION,
+    VIDEO_MAX_CONCURRENT_TASKS,
 )
 from .features.access_policy import (
     access_status,
@@ -353,7 +354,7 @@ class SelfieImagePlugin(
         self.asset_collections = AssetCollectionStore(self.data_dir)
         self._usage_stats = self._load_usage_stats()
         self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
-        self._video_semaphore = asyncio.Semaphore(max(1, int(getattr(self.config, "video_max_concurrent_tasks", 1) or 1)))
+        self._video_semaphore = asyncio.Semaphore(max(1, int(getattr(self.config, "video_max_concurrent_tasks", VIDEO_MAX_CONCURRENT_TASKS) or VIDEO_MAX_CONCURRENT_TASKS)))
         # Reserve image slots per requested shot, not per whole command batch.
         self._image_batch_gate = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
         self._selfie_batch_gate = self._image_batch_gate
@@ -4142,7 +4143,7 @@ class SelfieImagePlugin(
                 continue
 
     def _video_inflight_limit(self) -> int:
-        return max(1, min(5, int(getattr(self.config, "video_max_concurrent_tasks", 1) or 1)))
+        return max(1, min(5, int(getattr(self.config, "video_max_concurrent_tasks", VIDEO_MAX_CONCURRENT_TASKS) or VIDEO_MAX_CONCURRENT_TASKS)))
 
     def _ensure_image_batch_cooldown_lock(self) -> asyncio.Lock:
         lock = getattr(self, "_image_batch_cooldown_lock", None)

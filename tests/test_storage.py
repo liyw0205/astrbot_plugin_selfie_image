@@ -286,6 +286,34 @@ class TestStorage:
             preview = plugin.get_cache_cleanup_preview()
             assert all(item["path"] != "favorite.png" for item in preview["would_delete"])
 
+    def test_live_canvas_media_is_protected_until_session_deleted(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio import StudioStore
+
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            relationship_store = StudioStore(os.path.join(root, "studio"))
+            creative_store = StudioStore(os.path.join(root, "creative"), canvas_mode="creative")
+            relationship = relationship_store.create("关系网")
+            creative = creative_store.create("创作画布")
+            (Path(plugin.generated_dir) / "relationship.png").write_bytes(b"r")
+            (Path(plugin.generated_dir) / "creative.png").write_bytes(b"c")
+            relationship_store.attach_run_finish(
+                relationship["id"], "task-relationship", success=True, result_paths=["relationship.png"]
+            )
+            creative_store.attach_run_finish(
+                creative["id"], "task-creative", success=True, result_paths=["creative.png"]
+            )
+            plugin.studio = relationship_store
+            plugin.creative_canvas = creative_store
+
+            protected = set(plugin._asset_protected_cache_paths())
+            assert {"relationship.png", "creative.png"}.issubset(protected)
+
+            relationship_store.delete(relationship["id"])
+            protected = set(plugin._asset_protected_cache_paths())
+            assert "relationship.png" not in protected
+            assert "creative.png" in protected
+
     def test_cache_cleanup_enforces_count_without_deleting_record_media(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             plugin = self._plugin(root)
