@@ -1961,7 +1961,7 @@ def pick_cos_camera(*, extra_request: str = "", avoid: str = "", camera: str = "
 
 def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
     text = str(outfit or "")
-    if camera == "selfie":
+    if camera not in {"first", "third"}:
         return text
     capture_phrase = "由摄影师拍摄" if camera == "third" else "由主观镜头记录"
     replacements = (
