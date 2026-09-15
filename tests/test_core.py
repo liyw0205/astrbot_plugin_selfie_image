@@ -7218,7 +7218,10 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertTrue(forced_intent.is_cos_look)
             cos_prompt = manager.build_selfie_prompt(forced, "小助", "温柔", True, 0)
             self.assertNotIn("晒腿模式", cos_prompt)
-            self.assertTrue("COS换装自拍模式" in cos_prompt or "COS换装他拍模式" in cos_prompt, cos_prompt)
+            self.assertTrue(
+                any(label in cos_prompt for label in ("COS换装自拍模式", "COS换装第一视角模式", "COS换装他拍模式")),
+                cos_prompt,
+            )
             self.assertIn("看看COS", cos_prompt)
             self.assertIn("换装", cos_prompt)
             selfie_action = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "自拍", False, camera="selfie")
@@ -8362,7 +8365,7 @@ class LegFocusTests(unittest.TestCase):
             m = re.search(r"【cos:([a-z0-9_]+)】", t)
             self.assertTrue(m, t)
             ids.add(m.group(1))
-            cam = re.search(r"【cam:(selfie|third)】", t)
+            cam = re.search(r"【cam:(selfie|first|third)】", t)
             self.assertTrue(cam, t)
         self.assertGreaterEqual(len(ids), 3, ids)
         self.assertGreaterEqual(len(plugin_main.COS_LOOK_SETS), 200)
@@ -9638,9 +9641,10 @@ class LegFocusTests(unittest.TestCase):
         for item in plugin_main.COS_LOOK_SETS:
             self.assertNotIn("手机", item["prompt"], item["id"])
         wrap = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
-        self.assertTrue("对镜" in wrap or "他拍" in wrap, wrap)
+        self.assertTrue(any(marker in wrap for marker in ("对镜", "他拍", "第一视角")), wrap)
         self.assertNotIn("第一人称自拍或居家随手拍", wrap)
         self.assertEqual(plugin_main.parse_requested_cos_camera("他拍"), "third")
+        self.assertEqual(plugin_main.parse_requested_cos_camera("第一视角"), "first")
         self.assertEqual(plugin_main.parse_requested_cos_camera("自拍"), "selfie")
         self.assertEqual(plugin_main.parse_requested_cos_camera(""), "")
         forced_selfie = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "对镜自拍", False)
@@ -9657,6 +9661,10 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("不要第二个人", forced_third)
         self.assertIn("不要拍到拍摄设备或拍摄过程", forced_third)
         self.assertNotIn("手机", forced_third)
+        forced_first = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "第一视角", False)
+        self.assertIn("【cam:first】", forced_first)
+        self.assertIn("【第一视角 / 看看COS模式】", forced_first)
+        self.assertNotIn("自拍", forced_first)
         look_you = plugin_main.SelfieImagePlugin._build_third_person_look_action(_P(), "", False)
         self.assertIn("别人视角的单人成品照", look_you)
         self.assertNotIn("朋友在对面用手机拍", look_you)

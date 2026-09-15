@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from astrbot_plugin_selfie_image.cos.cos_looks import (
@@ -12,16 +13,34 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
 from astrbot_plugin_selfie_image.studio.studio import build_studio_action, empty_session
 
 
-def test_default_cos_pool_actions_are_third_person_and_camera_clean():
+def test_default_cos_pool_actions_randomize_camera_and_keep_contracts_clean():
     for item in COS_LOOK_SETS:
         action = build_cos_look_action("", picker=lambda item=item, **_: item)
-        assert "【cam:third】" in action
-        assert "【cam:selfie】" not in action
-        assert "自拍" not in action
-        assert "镜前" not in action
-        assert "镜子" not in action
-        assert "对镜" not in action
-        assert "两条手臂和两只手" in action
+        camera = re.search(r"【cam:(selfie|first|third)】", action).group(1)
+        assert camera in {"selfie", "first", "third"}
+        if camera == "third":
+            assert "【他拍 / 看看COS模式】" in action
+            assert "自拍" not in action
+            assert "镜前" not in action
+            assert "镜子" not in action
+            assert "对镜" not in action
+            assert "两条手臂和两只手" in action
+        elif camera == "first":
+            assert "【第一视角 / 看看COS模式】" in action
+            assert "手持设备" in action
+            assert "自拍" not in action
+        else:
+            assert "【自拍 / 看看COS模式】" in action
+
+
+def test_cos_camera_parser_and_avoid_support_first_person():
+    from astrbot_plugin_selfie_image.cos.cos_looks import parse_requested_cos_camera, pick_cos_camera
+
+    assert parse_requested_cos_camera("第一视角") == "first"
+    assert parse_requested_cos_camera("第一人称视角") == "first"
+    assert parse_requested_cos_camera("自拍视角") == "selfie"
+    assert pick_cos_camera(camera="first") == "first"
+    assert pick_cos_camera(avoid="third") in {"first", "selfie"}
 
 
 def test_studio_cos_prompt_uses_the_same_third_person_contract():

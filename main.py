@@ -4658,7 +4658,7 @@ class SelfieImagePlugin(
             m_cos = re.search(r"【cos:([a-z0-9_]+)】", str(action or ""))
             if m_cos:
                 last_cos = str(m_cos.group(1) or "")
-            m_cam = re.search(r"【cam:(selfie|third)】", str(action or ""))
+            m_cam = re.search(r"【cam:(selfie|first|third)】", str(action or ""))
             if m_cam:
                 last_cam = str(m_cam.group(1) or "")
             m_cos_pose = re.search(r"【cos_pose:([a-z_]+)】", str(action or ""))
@@ -4703,7 +4703,7 @@ class SelfieImagePlugin(
                     m_cos = re.search(r"【cos:([a-z0-9_]+)】", round_action)
                     if m_cos:
                         last_cos = str(m_cos.group(1) or last_cos)
-                    m_cam = re.search(r"【cam:(selfie|third)】", round_action)
+                    m_cam = re.search(r"【cam:(selfie|first|third)】", round_action)
                     if m_cam:
                         last_cam = str(m_cam.group(1) or last_cam)
                     m_cos_pose = re.search(r"【cos_pose:([a-z_]+)】", round_action)
@@ -5656,7 +5656,7 @@ class SelfieImagePlugin(
                 "· /看看腿　腰部以下的日常下装穿搭近景，上半身不入镜；腿部穿搭随机光腿神器、白丝、黑丝或连裤袜，可直接指定；随机手机记录、俯拍或朋友协助拍摄视角",
                 "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
                 "· /查看生图提示词　引用或附带图片后，始终由当前聊天 LLM 反推生图提示词，不查询生图记录",
-                "· /看看COS　随机一套内置 COS 换装；默认使用画面外摄影师的第三人称视角，避免自拍手机和额外手臂干扰；可用 -c 指定数量，预设、随机池角色/类别和额外提示词可任意顺序，未匹配文本保留为额外提示；可发「看看COS 列表/全部/查看」浏览标题；明确写「自拍」时才启用自拍视角",
+                "· /看看COS　随机一套内置 COS 换装；未指定时每次随机使用他拍、第一视角或自拍视角，可明确写「他拍」「第一视角」或「自拍」固定视角；可用 -c 指定数量，预设、随机池角色/类别和额外提示词可任意顺序，未匹配文本保留为额外提示；可发「看看COS 列表/全部/查看」浏览标题",
                 "· /看看你　像别人随手拍你",
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象",
                 "",

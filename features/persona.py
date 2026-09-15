@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from ..cos.cos_looks import parse_requested_cos_camera
 from ..cos.leg_focus import ensure_leg_focus_action, get_leg_focus_outfit, has_leg_focus_contract
 from ..core.utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
 
@@ -183,6 +184,7 @@ class SelfieIntent:
     has_reference_style_hint: bool
     is_legs_only: bool = False
     is_third_person_photo: bool = False
+    camera_kind: str = ""
     is_cos_look: bool = False
 
 
@@ -886,6 +888,7 @@ class PersonaManager:
                 "shotbyanotherperson",
             ],
         )
+        camera_kind = ""
         if not is_cos_look:
             if "【cam:third】" in raw:
                 is_third_person_photo = True
@@ -899,10 +902,20 @@ class PersonaManager:
             is_multi = False
             change_clothes = True
             use_today = False
-            if "【cam:third】" in raw or "【他拍 / 看看cos模式】" in compact or "【他拍 / 看看COS模式】" in raw:
-                is_third_person_photo = True
-            elif "【cam:selfie】" in raw or "【自拍 / 看看cos模式】" in compact or "【自拍 / 看看COS模式】" in raw:
-                is_third_person_photo = False
+            camera_match = re.search(r"【cam:(selfie|first|third)】", raw, re.I)
+            camera_kind = str(camera_match.group(1)).lower() if camera_match else ""
+            if not camera_kind:
+                camera_kind = parse_requested_cos_camera(raw)
+            if not camera_kind:
+                if "【他拍 / 看看cos模式】" in compact or "【他拍 / 看看COS模式】" in raw:
+                    camera_kind = "third"
+                elif "【自拍 / 看看cos模式】" in compact or "【自拍 / 看看COS模式】" in raw:
+                    camera_kind = "selfie"
+                else:
+                    # Raw COS prompts historically used the selfie fallback;
+                    # generated COS-pool actions carry an explicit camera tag.
+                    camera_kind = "selfie"
+            is_third_person_photo = camera_kind == "third"
         elif is_legs_only:
             is_group_photo = False
             is_multi = False
@@ -947,6 +960,7 @@ class PersonaManager:
             has_reference_style_hint=has_ref_hint,
             is_legs_only=is_legs_only,
             is_third_person_photo=is_third_person_photo,
+            camera_kind=camera_kind,
             is_cos_look=is_cos_look,
         )
 
@@ -1163,18 +1177,32 @@ class PersonaManager:
         )
         mode_lines: list[str] = []
         if intent.is_cos_look:
-            camera_is_third = bool(intent.is_third_person_photo)
-            mode_lines.append("【COS换装他拍模式】" if camera_is_third else "【COS换装自拍模式】")
+            camera_kind = intent.camera_kind or ("third" if intent.is_third_person_photo else "selfie")
+            camera_is_third = camera_kind == "third"
+            camera_labels = {
+                "third": "【COS换装他拍模式】",
+                "first": "【COS换装第一视角模式】",
+                "selfie": "【COS换装自拍模式】",
+            }
+            mode_lines.append(camera_labels.get(camera_kind, "【COS换装自拍模式】"))
             # Built COS actions already contain the complete camera and outfit
             # contract. Raw COS actions still get one compact camera fallback.
             if not cos_contract:
-                mode_lines.append(
-                    "别人视角的单人成品照：摄影师在画面外，机位、景别、姿势和表情按用户要求或套装描述执行；"
-                    "未指定时保持单人、面部清晰、动作自然。"
-                    if camera_is_third
-                    else "单人自拍成片：机位、景别、姿势和表情按用户要求或套装描述执行；"
-                    "未指定时保持面部清晰、动作自然。"
-                )
+                if camera_is_third:
+                    mode_lines.append(
+                        "别人视角的单人成品照：摄影师在画面外，机位、景别、姿势和表情按用户要求或套装描述执行；"
+                        "未指定时保持单人、面部清晰、动作自然。"
+                    )
+                elif camera_kind == "first":
+                    mode_lines.append(
+                        "第一视角主观单人成品照：镜头位于观察者自然视线的位置，像观察者亲眼看到主角；"
+                        "不出现手持设备、镜面反射、拍摄者、记录设备、观察者身体或第二人物；未指定时保持单人、面部清晰、动作自然。"
+                    )
+                else:
+                    mode_lines.append(
+                        "单人自拍成片：机位、景别、姿势和表情按用户要求或套装描述执行；"
+                        "未指定时保持面部清晰、动作自然。"
+                    )
                 mode_lines.append(
                     "套装或用户明确要求的歪头、仰头、低头、闭眼或夸张表情应保留；"
                     "未指定时自然参考形象图，头部、视线和表情保持连贯，避免无依据过度变形；面部边缘清晰、肤色自然，不用白色薄膜或雾化遮住五官。"
@@ -1388,6 +1416,15 @@ class PersonaManager:
             action_line = f"用户要求：{act}" if act else "用户要求：看着镜头自然自拍，展示你现在的样子。"
         if intent.is_legs_only:
             subject_photo_label = "第三人称摄影服装记录" if intent.is_third_person_photo else "第一人称自拍服装记录"
+        elif intent.is_cos_look:
+            subject_photo_label = {
+                "third": "日常他拍照片",
+                "first": "第一视角照片",
+                "selfie": "自拍照片",
+            }.get(
+                intent.camera_kind or ("third" if intent.is_third_person_photo else "selfie"),
+                "自拍照片",
+            )
         else:
             subject_photo_label = "日常他拍照片" if intent.is_third_person_photo and not intent.is_group_photo else "自拍照片"
         if intent.is_cos_look:

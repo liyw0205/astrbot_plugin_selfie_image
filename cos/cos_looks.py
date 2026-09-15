@@ -1923,9 +1923,15 @@ def parse_requested_cos_camera(text: str) -> str:
         "不要对镜", "不拿手机", "不要拿手机", "不要手持手机", "candid",
         "thirdperson", "notselfie",
     )
+    first_keys = (
+        "第一视角", "第一人称视角", "第一人称", "主观视角", "主观镜头",
+        "pov", "firstperson", "first-person", "first person",
+    )
     selfie_keys = ("自拍", "对镜", "镜前", "镜子前", "自己拍", "selfie", "mirror")
     if any(key in blob for key in third_keys):
         return "third"
+    if any(key in blob for key in first_keys):
+        return "first"
     if any(key in blob for key in selfie_keys):
         return "selfie"
     return ""
@@ -1946,20 +1952,18 @@ def requests_phone_face_cover(text: str) -> bool:
 
 def pick_cos_camera(*, extra_request: str = "", avoid: str = "", camera: str = "") -> str:
     forced = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
-    if forced in {"selfie", "third"}:
+    if forced in {"selfie", "first", "third"}:
         return forced
-    # COS outfits are authored around clothing, pose, and silhouette.  A
-    # first-person phone composition adds an implied phone-holding arm and
-    # frequently conflicts with those authored hands, so the safe default is
-    # always a photographer/third-person view.  Explicit ``自拍`` remains an
-    # opt-in compatibility path for callers that intentionally request it.
-    return "third"
+    choices = ("third", "first", "selfie")
+    available = tuple(kind for kind in choices if kind != str(avoid or "").strip())
+    return random.choice(available or choices)
 
 
 def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
     text = str(outfit or "")
-    if camera != "third":
+    if camera == "selfie":
         return text
+    capture_phrase = "由摄影师拍摄" if camera == "third" else "由主观镜头记录"
     replacements = (
         ("对镜坐在木地板地毯上", "坐在木地板地毯上"),
         ("室内柔光对镜全身", "室内柔光半身"),
@@ -1971,9 +1975,13 @@ def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
         text = text.replace(old, new)
     # Built-in looks predate the camera marker and some still contain
     # "自拍/镜前" wording.  Strip those capture semantics before the action
-    # reaches the selfie prompt builder; otherwise the two prompt families
+    # reaches the camera prompt builder; otherwise the two prompt families
     # compete and models may invent a phone or an extra arm.
-    text = re.sub(r"在([^。；，,]{0,24})(?:全身)?镜(?:中|前)?自拍", r"在\1环境中由摄影师拍摄", text)
+    text = re.sub(
+        r"在([^。；，,]{0,24})(?:全身)?镜(?:中|前)?自拍",
+        f"在\\1环境中{capture_phrase}",
+        text,
+    )
     text = text.replace("不出现镜子中的倒影或额外人物", "背景保持干净，不出现额外人物")
     text = text.replace("近距离自拍", "近距离摄影")
     text = text.replace("自拍成片", "摄影成片")
@@ -2005,7 +2013,7 @@ def build_cos_third_person_prompt(text: str) -> str:
     if not looks_like_cos_prompt(raw):
         return raw
     adapted = adapt_cos_outfit_for_camera(raw, "third")
-    adapted = re.sub(r"【cam:(?:selfie|third)】", "", adapted, flags=re.I)
+    adapted = re.sub(r"【cam:(?:selfie|first|third)】", "", adapted, flags=re.I)
     framing = pick_cos_framing(extra_request=adapted)
     adapted = framing.get("extra_request_text", adapted)
     if framing.get("randomized_from_options"):
@@ -2098,7 +2106,7 @@ def build_cos_look_action(
             + ("拍摄过程或其它拍摄设备；" if phone_face_cover else "拍摄设备或拍摄过程；")
             + hand_rule
         )
-    else:
+    elif camera_kind == "selfie":
         hand_rule = (
             "可对镜取景；画面只允许主角既有的一只手握持唯一一部普通手机，从脸侧或下方自然遮住半张脸；"
             "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
@@ -2111,6 +2119,20 @@ def build_cos_look_action(
             "【自拍 / 看看COS模式】"
             "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
             "单人自拍成片："
+            + framing_line
+            + hand_rule
+        )
+    else:
+        hand_rule = (
+            "第一视角主观镜头：镜头位于观察者自然视线的位置，像观察者亲眼看到主角；"
+            "画面只出现主角一个人，主角自身两条手臂和两只手自然连接；"
+            "不自动出现手持设备、镜面反射、拍摄者、记录设备、观察者身体、观察者手臂或第二人物；"
+            "保持面部、发型、服装和配饰清晰可见。"
+        )
+        framing = (
+            "【第一视角 / 看看COS模式】"
+            "展示 AI 现在的样子，但本次强制换装为指定 COS 套装。"
+            "第一视角主观单人成片："
             + framing_line
             + hand_rule
         )

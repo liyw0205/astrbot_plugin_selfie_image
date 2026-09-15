@@ -53,7 +53,7 @@ def build_prompt_with_reference_instruction(
         or "cos换装" in raw.lower()
         or "角色扮演" in raw
     )
-    has_cos_contract = bool(is_cos and re.search(r"【cam:(?:selfie|third)】", raw, re.I))
+    has_cos_contract = bool(is_cos and re.search(r"【cam:(?:selfie|first|third)】", raw, re.I))
     if language != "en":
         lines = ["使用提供的参考图作为视觉参考。"]
         if not has_cos_contract:
