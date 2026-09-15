@@ -4,7 +4,7 @@
 
 ## 1. 当前基线
 
-- 本地 `main` 与 `origin/main` 均指向 `5547185`；工作区的 `.tmp_douyin/`、`dy1.html`、`dy2.html` 是未跟踪临时文件，不属于本计划。
+- 本计划针对的功能代码基线为 `5547185`；工作区的 `.tmp_douyin/`、`dy1.html`、`dy2.html` 是未跟踪临时文件，不属于本计划。
 - `PYTHONPATH=.. pytest -q`：`488 passed, 12 subtests passed`。
 - `python -m compileall -q core features generation tasks webui prompts studio cos main.py` 已通过。
 - 生成记录优先使用 `generation_records.sqlite3`，`generation/generation_store.py:261-268, 604-654` 仍保留旧 `generation_records.json` 迁移和无数据库回退。
