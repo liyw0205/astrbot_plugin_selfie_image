@@ -1408,6 +1408,17 @@ class SelfieImagePlugin(
             lines.append(f"模型：{used_model}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _build_video_success_caption(prefix: str, elapsed_seconds: Any = 0, used_model: str = "") -> str:
+        """Video completion captions always include available timing/model details."""
+        bits = [str(prefix or "视频好了。")]
+        if elapsed_seconds:
+            bits.append(f"用时 {elapsed_seconds}s")
+        model = str(used_model or "").strip()
+        if model:
+            bits.append(f"模型 {model}")
+        return " ".join(bits)
+
     def _batch_success_text(self, info: str, index: int, total: int) -> str:
         return batch_success_text(info, index, total)
 
@@ -3345,12 +3356,8 @@ class SelfieImagePlugin(
                     return
 
                 elapsed = result.get("elapsed_seconds") or 0
-                bits = [f"第 {index + 1}/{total} 个视频好了。" if total > 1 else "视频好了。"]
-                if self.config.image_show_generation_info and elapsed:
-                    bits.append(f"用时 {elapsed}s")
-                if self.config.image_show_model_info and used_model:
-                    bits.append(f"模型 {used_model}")
-                caption = " ".join(bits)
+                prefix = f"第 {index + 1}/{total} 个视频好了。" if total > 1 else "视频好了。"
+                caption = self._build_video_success_caption(prefix, elapsed, used_model)
                 for path in files:
                     try:
                         await self._send_generated_video(event, path, caption=caption)
@@ -7091,8 +7098,13 @@ class SelfieImagePlugin(
             return self._tool_soft_fail(str(result.get("error") or ""), self._natural_fail_fallback("video"))
         path = str(result.get("video_path") or "")
         if path:
+            caption = self._build_video_success_caption(
+                "视频好了。",
+                result.get("elapsed_seconds") or 0,
+                result.get("used_model") or "",
+            )
             try:
-                await self._send_generated_video(event, path, caption="视频好了。")
+                await self._send_generated_video(event, path, caption=caption)
             except Exception as exc:
                 mark_delivery = getattr(self, "_mark_task_records_delivery", None)
                 if callable(mark_delivery):

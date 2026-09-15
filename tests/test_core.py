@@ -5969,15 +5969,22 @@ class SessionModelAndTaskTests(unittest.TestCase):
             video_started = asyncio.Event()
             video_release = asyncio.Event()
             sent_videos = []
+            video_captions = []
 
             async def run_video(_event, _prompt, _refs, *, task_id="", **_kwargs):
                 self.assertTrue(task_id.startswith("cmd-"))
                 video_started.set()
                 await video_release.wait()
-                return {"success": True, "video_path": "clip.mp4"}
+                return {
+                    "success": True,
+                    "video_path": "clip.mp4",
+                    "elapsed_seconds": 1.25,
+                    "used_model": "video/test",
+                }
 
             async def send_video(_event, path, **_kwargs):
                 sent_videos.append(path)
+                video_captions.append(_kwargs.get("caption", ""))
 
             plugin._video_prompt_requests_persona = lambda _prompt: False
             plugin._run_video_generation = run_video
@@ -5998,6 +6005,7 @@ class SessionModelAndTaskTests(unittest.TestCase):
             video_release.set()
             self.assertEqual(await video_call, "video:1")
             self.assertEqual(sent_videos, ["clip.mp4"])
+            self.assertEqual(video_captions, ["视频好了。 用时 1.25s 模型 video/test"])
 
         asyncio.run(scenario())
 
@@ -7542,6 +7550,7 @@ class VideoV1Tests(unittest.TestCase):
         plugin._friendly_user_error_message = lambda error, fallback: error or fallback
         progress = []
         sent = []
+        captions = []
         delivery_events = []
         calls = []
         plugin._set_web_image_task = lambda _task_id, **fields: progress.append(dict(fields))
@@ -7559,6 +7568,7 @@ class VideoV1Tests(unittest.TestCase):
 
         async def send(_event, path, **_kwargs):
             sent.append(path)
+            captions.append(_kwargs.get("caption", ""))
 
         async def mark(task_id, *, delivered, error="", paths=None):
             delivery_events.append((task_id, delivered, error, list(paths or [])))
@@ -7583,6 +7593,9 @@ class VideoV1Tests(unittest.TestCase):
         self.assertEqual(result["generated_video_paths"], sent)
         self.assertEqual(len(delivery_events), 3)
         self.assertEqual(progress[-1]["progress_percent"], 100)
+        self.assertEqual(len(captions), 3)
+        self.assertTrue(all("用时 0.1s" in caption for caption in captions))
+        self.assertTrue(all("模型 video/test" in caption for caption in captions))
 
     def test_counted_video_generation_keeps_partial_success_after_one_failure(self) -> None:
         plugin = SessionModelAndTaskTests()._plugin_stub()
