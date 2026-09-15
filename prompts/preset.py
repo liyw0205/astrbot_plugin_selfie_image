@@ -490,6 +490,17 @@ class VideoPresetManager(ImagePresetManager):
     """独立保存视频提示词预设，沿用管理页的增删改导入导出格式。"""
 
     PRESET_FILENAME = "video_presets.json"
+    _REMOVED_BUILTIN_NAMES = frozenset({"Whiplash完整舞蹈", "镜头推进", "转身定格"})
+
+    def load(self) -> None:
+        super().load()
+        stale_names = [name for name in self._REMOVED_BUILTIN_NAMES if name in self.presets]
+        if not stale_names:
+            return
+        for name in stale_names:
+            self.presets.pop(name, None)
+            self._deleted_builtin_names.add(name)
+        self.save()
 
     @staticmethod
     def _builtin_seed() -> Dict[str, Dict[str, str]]:
