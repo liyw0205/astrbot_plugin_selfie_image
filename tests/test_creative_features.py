@@ -117,7 +117,8 @@ def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None
     assert "14，双手举起卖萌，收尾定格" in fish["prompt"]
     assert "所有动作必须卡在《Blow (鱼块摇)》DJ电子鼓点的重拍上" in fish["prompt"]
     assert "弹琵琶仅表现手部拨弦手势" in fish["prompt"]
-    assert "禁止古风乐器独奏和古风乐器音效" in fish["prompt"]
+    assert "禁止古风乐器独奏" in fish["prompt"]
+    assert "禁止古风乐器音效" in fish["prompt"]
     assert "必须输出可听见的BGM" in fish["prompt"]
 
     transition = seed["动作转场"]
