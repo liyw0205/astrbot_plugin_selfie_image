@@ -113,6 +113,15 @@ def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None
     assert "不能跳帧、残影、动作叠加" in transition["prompt"]
     assert "必须输出可听见的BGM" in transition["prompt"]
 
+    transition_two = seed["动作转场2"]
+    assert transition_two["duration"] == 6
+    assert "三个动作按顺序呈现" in transition_two["prompt"]
+    assert "短暂黑屏切镜" in transition_two["prompt"]
+    assert "人物侧身面对镜头" in transition_two["prompt"]
+    assert "人物正面面对镜头" in transition_two["prompt"]
+    assert "人物背对镜头" in transition_two["prompt"]
+    assert "必须输出可听见的BGM" in transition_two["prompt"]
+
     with tempfile.TemporaryDirectory() as directory:
         manager = VideoPresetManager(directory)
         assert manager.has_preset("小半")
@@ -121,12 +130,14 @@ def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None
         assert manager.has_preset("复仇摇")
         assert manager.has_preset("复仇摇2")
         assert manager.has_preset("动作转场")
+        assert manager.has_preset("动作转场2")
         assert manager.resolve("小半")["duration"] == 12
         assert manager.resolve("嘉桐摇")["duration"] == 10
         assert manager.resolve("兰花指卡点舞")["duration"] == 20
         assert manager.resolve("复仇摇")["duration"] == 16
         assert manager.resolve("复仇摇2")["duration"] == 16
         assert manager.resolve("动作转场")["duration"] == 8
+        assert manager.resolve("动作转场2")["duration"] == 6
 
 
 def test_command_template_options_can_be_mixed_with_prompt() -> None:
