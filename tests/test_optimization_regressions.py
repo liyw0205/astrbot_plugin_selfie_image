@@ -216,6 +216,16 @@ def test_non_timeout_video_delivery_failure_returns_redacted_upstream_reason() -
     assert "sk-test-secret" not in message
 
 
+def test_dashboard_config_json_transfer_controls_are_present() -> None:
+    page = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+    assert "exportJsonConfig()" in page
+    assert "importJsonConfigFile(file)" in page
+    assert "id=\"configImportFile\"" in page
+    assert "selfie_image_config.json" in page
+    assert "请点击保存 JSON" in page
+
+
 def test_config_preflight_health_summary_distinguishes_unconfigured_and_ready() -> None:
     probe = object.__new__(ConfigurationMixin)
     probe.raw_config = {}

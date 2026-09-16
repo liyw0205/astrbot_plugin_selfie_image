@@ -1508,6 +1508,9 @@
       <textarea id="configText" style="min-height:360px"></textarea>
       <div class="actions">
         <button onclick="loadConfig()">读取 JSON</button>
+        <button class="secondary" type="button" onclick="exportJsonConfig()">导出 JSON</button>
+        <button class="secondary" type="button" onclick="document.getElementById('configImportFile').click()">导入 JSON</button>
+        <input id="configImportFile" type="file" accept="application/json,.json" style="display:none">
       </div>
       <div id="configStatus" class="status"></div>
       <div class="floating-actions" aria-label="配置操作">
@@ -3500,6 +3503,42 @@ Source prompt:
         setStatus('configStatus', e.message);
       }
     }
+    function exportJsonConfig() {
+      try {
+        const raw = $('configText').value || JSON.stringify(CONFIG || {}, null, 2);
+        const parsed = JSON.parse(raw);
+        const blob = new Blob([JSON.stringify(parsed, null, 2) + '\n'], {type: 'application/json;charset=utf-8'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'selfie_image_config.json';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        setStatus('configStatus', '配置 JSON 已导出');
+      } catch (e) {
+        setStatus('configStatus', `配置 JSON 格式错误：${e.message}`);
+      }
+    }
+    async function importJsonConfigFile(file) {
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('配置必须是 JSON 对象');
+        }
+        $('configText').value = JSON.stringify(parsed, null, 2);
+        setStatus('configStatus', '配置 JSON 已导入编辑区，请点击保存 JSON');
+      } catch (e) {
+        setStatus('configStatus', `配置 JSON 导入失败：${e.message}`);
+      }
+    }
+    document.getElementById('configImportFile')?.addEventListener('change', (event) => {
+      const file = event.target.files && event.target.files[0];
+      if (file) importJsonConfigFile(file);
+      event.target.value = '';
+    });
     let PERSIST_TAIL = Promise.resolve(true);
     async function persistConfig(renderAfterSave = false, okText = '配置已保存', options = {}) {
       const run = () => persistConfigNow(renderAfterSave, okText, options);
