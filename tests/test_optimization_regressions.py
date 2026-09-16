@@ -311,6 +311,24 @@ def test_masked_config_export_can_be_previewed_and_imported_without_losing_secre
     assert applied[0]["compatibility_field"] == {"keep": True}
 
 
+def test_config_export_supports_raw_and_masked_modes() -> None:
+    plugin = object.__new__(ConfigurationMixin)
+    plugin.raw_config = {
+        "web": {"token": "web-secret"},
+        "image_channels": [{"api_key": "key-one", "model": "model-a"}],
+        "proxies": [{"password": "proxy-secret"}],
+    }
+
+    masked = plugin.export_config_for_web()
+    raw = plugin.export_config_for_web(raw=True)
+
+    assert masked["image_channels"][0]["api_key"] == "[REDACTED]"
+    assert masked["proxies"][0]["password"] == "[REDACTED]"
+    assert raw["image_channels"][0]["api_key"] == "key-one"
+    assert raw["proxies"][0]["password"] == "proxy-secret"
+    assert "web" not in raw
+
+
 def test_invalid_config_import_rolls_back_without_overwriting_current_config() -> None:
     import threading
 

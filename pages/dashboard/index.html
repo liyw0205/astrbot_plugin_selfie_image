@@ -385,7 +385,7 @@
     .studio-canvas-layout { display:grid; grid-template-columns:220px minmax(0,1fr) 300px; height:650px; margin-top:14px; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:#eef2f5; box-shadow:var(--shadow-soft); }
     .studio-canvas-layout.sidebar-collapsed { grid-template-columns:0 minmax(0,1fr) 300px; }
     .studio-canvas-layout.sidebar-collapsed .studio-graph-sidebar { overflow:hidden; opacity:0; pointer-events:none; }
-    .studio-graph-sidebar, .studio-node-panel { min-width:0; background:rgba(255,255,255,.94); display:flex; flex-direction:column; }
+    .studio-graph-sidebar, .studio-node-panel { min-width:0; min-height:0; background:rgba(255,255,255,.94); display:flex; flex-direction:column; }
     .studio-graph-sidebar { border-right:1px solid var(--line); }
     .studio-node-panel { border-left:1px solid var(--line); }
     .studio-sidebar-head, .studio-node-panel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:15px; border-bottom:1px solid var(--line); }
@@ -434,7 +434,7 @@
     .studio-node-panel[hidden] { display:none; }
     .studio-node-panel-head .eyebrow { display:block; color:var(--muted); font-size:10px; letter-spacing:.04em; }
     .studio-node-panel-head h3 { margin:4px 0 0; font-size:15px; }
-    .studio-node-panel-body { overflow:auto; padding:14px; display:grid; gap:12px; }
+    .studio-node-panel-body { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; padding:14px; display:grid; align-content:start; gap:12px; overscroll-behavior:contain; }
     .studio-node-result { width:100%; max-height:210px; object-fit:contain; border-radius:8px; background:#eef1f2; border:1px solid var(--line); }
     .studio-node-field { display:grid; gap:5px; }
     .studio-node-field label { font-size:11px; color:var(--muted); }
@@ -464,7 +464,7 @@
       .studio-canvas-layout.mobile-node-list-open .studio-graph-sidebar { display:flex; position:absolute; z-index:7; inset:0 auto 0 0; width:min(300px, 86vw); box-shadow:12px 0 28px rgba(30,45,52,.18); }
       .studio-canvas-viewport { flex:0 0 auto; width:100%; height:min(62vh, 560px); min-height:420px; }
       .studio-node-panel { position:static; width:100%; max-height:none; border:0; border-top:1px solid var(--line); box-shadow:none; }
-      .studio-node-panel-body { max-height:none; }
+      .studio-node-panel-body { flex:0 1 auto; min-height:0; max-height:none; overflow-y:visible; overflow-x:hidden; }
       .studio-canvas-hint { font-size:10px; }
     }
     @media (min-width: 681px) { .mobile-only { display:none !important; } }
@@ -1802,6 +1802,25 @@
         <div class="actions" style="margin-top:0;justify-content:flex-end">
           <button class="secondary" type="button" id="confirmCancelBtn">取消</button>
           <button class="danger" type="button" id="confirmProceedBtn">确认</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="configExportModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="configExportTitle">
+    <div class="modal confirm-dialog">
+      <div class="between">
+        <h2 id="configExportTitle">导出配置 JSON</h2>
+        <button class="secondary" type="button" id="configExportCloseBtn">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p class="confirm-message">选择导出内容：原文包含 API Key、Token 和代理密码，请妥善保管。</p>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" type="button" id="configExportCancelBtn">取消</button>
+          <button class="secondary" type="button" id="configExportMaskedBtn">脱敏</button>
+          <button class="danger" type="button" id="configExportRawBtn">原文</button>
         </div>
       </div>
     </div>
@@ -3503,10 +3522,25 @@ Source prompt:
         setStatus('configStatus', e.message);
       }
     }
-    function exportJsonConfig() {
+    async function exportJsonConfig() {
+      const modal = $('configExportModal');
+      if (!modal) return;
+      modal.classList.add('show');
+      const mode = await new Promise(resolve => {
+        const close = value => {
+          modal.classList.remove('show');
+          resolve(value);
+        };
+        $('configExportMaskedBtn').onclick = () => close('masked');
+        $('configExportRawBtn').onclick = () => close('raw');
+        $('configExportCancelBtn').onclick = () => close('');
+        $('configExportCloseBtn').onclick = () => close('');
+        modal.onclick = event => { if (event.target === modal) close(''); };
+      });
+      if (!mode) return;
       try {
-        const raw = $('configText').value || JSON.stringify(CONFIG || {}, null, 2);
-        const parsed = JSON.parse(raw);
+        const res = await api(`/api/config/export?mode=${encodeURIComponent(mode)}`);
+        const parsed = res.data || {};
         const blob = new Blob([JSON.stringify(parsed, null, 2) + '\n'], {type: 'application/json;charset=utf-8'});
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -3516,9 +3550,9 @@ Source prompt:
         link.click();
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 2000);
-        setStatus('configStatus', '配置 JSON 已导出');
+        setStatus('configStatus', mode === 'raw' ? '原文配置 JSON 已导出，请妥善保管' : '脱敏配置 JSON 已导出');
       } catch (e) {
-        setStatus('configStatus', `配置 JSON 格式错误：${e.message}`);
+        setStatus('configStatus', `配置 JSON 导出失败：${e.message}`);
       }
     }
     async function importJsonConfigFile(file) {

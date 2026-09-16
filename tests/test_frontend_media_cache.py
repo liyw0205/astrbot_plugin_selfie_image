@@ -59,6 +59,12 @@ def test_canvas_state_has_request_trace_viewport_fit_and_mobile_node_drawer():
     assert "studioStopPoll();" in PAGE
 
 
+def test_desktop_node_panel_has_an_independent_vertical_scroll_region():
+    assert ".studio-graph-sidebar, .studio-node-panel { min-width:0; min-height:0;" in PAGE
+    assert ".studio-node-panel-body { flex:1 1 auto; min-height:0; overflow-y:auto;" in PAGE
+    assert "overscroll-behavior:contain;" in PAGE
+
+
 def test_creative_canvas_hides_rerun_until_a_successful_result():
     assert "const hasSuccess = String(last.status || '').toLowerCase() === 'succeeded'" in PAGE
     assert "$('creativeCanvasRerunBtn').hidden = !hasSuccess;" in PAGE

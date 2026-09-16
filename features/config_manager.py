@@ -544,11 +544,17 @@ class ConfigurationMixin:
         # exfiltration vector; save requests restore masked values below.
         return _mask_web_channel_credentials(self._strip_web_startup_config(self.raw_config))
 
-    def export_config_for_web(self) -> Dict[str, Any]:
-        exported = redact_sensitive_data(self.get_config_for_web())
+    def export_config_for_web(self, *, raw: bool = False) -> Dict[str, Any]:
+        if raw:
+            # Raw export is explicit and operator-triggered. Never expose it
+            # through the normal config GET response or browser state.
+            exported = copy.deepcopy(self._strip_web_startup_config(self.raw_config))
+        else:
+            exported = redact_sensitive_data(self.get_config_for_web())
         if isinstance(exported, dict):
             exported["schema_version"] = int(exported.get("schema_version") or 2)
-            exported["_export_note"] = "API key、Token、代理密码已脱敏；导入前请补回凭据。"
+            if not raw:
+                exported["_export_note"] = "API key、Token、代理密码已脱敏；导入前请补回凭据。"
         return exported
 
     def preview_config_import(self, payload: Dict[str, Any]) -> Dict[str, Any]:

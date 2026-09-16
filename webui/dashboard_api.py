@@ -396,7 +396,8 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
 
     async def page_config_export(self) -> Any:
-        return self._ok(self.plugin.export_config_for_web())
+        raw = self._query_value("mode").strip().lower() in {"raw", "plain", "original"}
+        return self._ok(self.plugin.export_config_for_web(raw=raw))
 
     async def page_config_import_preview(self) -> Any:
         payload, error = await self._json_object_payload()

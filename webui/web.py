@@ -532,6 +532,16 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
 
+        @app.route("/api/config/export", methods=["GET"])
+        def config_export() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            raw = str(request.args.get("mode") or "").strip().lower() in {"raw", "plain", "original"}
+            try:
+                return ok(self.plugin.export_config_for_web(raw=raw))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
         @app.route("/api/selfie-reference", methods=["GET", "POST"])
         def selfie_reference() -> Any:
             if not check_auth():
