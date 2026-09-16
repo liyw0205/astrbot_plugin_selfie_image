@@ -334,7 +334,12 @@ class ReferenceMediaMixin:
         components.append(self._create_video_component(file_path))
         try:
             await event.send(event.chain_result(components))
-        except Exception:
+        except Exception as exc:
+            # A timeout or retcode=1200 means the adapter may already have
+            # accepted the message. Retrying would duplicate both caption and
+            # video, so leave the delivery state unknown to the caller.
+            if _image_delivery_is_ambiguous(exc):
+                raise
             if caption:
                 try:
                     await event.send(event.plain_result(caption))

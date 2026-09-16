@@ -177,6 +177,45 @@ def test_legacy_douyin_script_delegates_media_processing() -> None:
     assert "video_prompt_frames" in source
 
 
+def test_video_delivery_unknown_does_not_retry_or_expose_local_path() -> None:
+    import asyncio
+    from astrbot_plugin_selfie_image.features.reference_media import ReferenceMediaMixin
+
+    class Event:
+        def __init__(self):
+            self.sent = []
+
+        def chain_result(self, value):
+            return ("chain", value)
+
+        def plain_result(self, value):
+            return ("plain", value)
+
+        async def send(self, value):
+            self.sent.append(value)
+            raise RuntimeError("ActionFailed retcode=1200 Timeout sendMsg")
+
+    event = Event()
+    sender = object.__new__(ReferenceMediaMixin)
+
+    with pytest.raises(RuntimeError, match="retcode=1200"):
+        asyncio.run(sender._send_generated_video(event, "/tmp/private-video.mp4", caption="视频好了。"))
+
+    assert len(event.sent) == 1
+    assert event.sent[0][0] == "chain"
+    assert all(item[0] != "plain" for item in event.sent)
+
+
+def test_non_timeout_video_delivery_failure_returns_redacted_upstream_reason() -> None:
+    from astrbot_plugin_selfie_image.core.utils import redact_sensitive_text
+
+    reason = "ActionFailed: invalid token sk-test-secret"
+    message = f"视频已生成，但发送失败：{redact_sensitive_text(reason)}"
+
+    assert "视频已生成，但发送失败：" in message
+    assert "sk-test-secret" not in message
+
+
 def test_config_preflight_health_summary_distinguishes_unconfigured_and_ready() -> None:
     probe = object.__new__(ConfigurationMixin)
     probe.raw_config = {}

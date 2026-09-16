@@ -175,6 +175,7 @@ from .features.creative_features import (
 )
 from .features.reference_collector import extract_structured_image_sources
 from .features.reference_media import ReferenceMediaMixin
+from .features.reference_media import _image_delivery_is_ambiguous
 from .prompts.response_text import (
     ack_repeats_request,
     clean_ack_message,
@@ -3355,9 +3356,18 @@ class SelfieImagePlugin(
                     except Exception as exc:
                         delivery_failed_count += 1
                         delivery_error = f"视频已生成但发送失败：{exc}"
-                        logger.warning(f"[SelfieImage] 发送视频失败，尝试仅回路径: {exc}")
-                        await self._send_task_notification(task_id, event, f"{caption}\n文件：{path}")
-                        self._set_task_notification_status(task_id, "failed", delivery_error)
+                        if _image_delivery_is_ambiguous(exc):
+                            logger.warning(f"[SelfieImage] 视频发送回执未知，不自动重发: {exc}")
+                            self._set_task_notification_status(task_id, "unknown", delivery_error)
+                        else:
+                            safe_delivery_error = redact_sensitive_text(str(exc))[:320]
+                            logger.warning(f"[SelfieImage] 发送视频失败，发送失败提示: {exc}")
+                            await self._send_task_notification(
+                                task_id,
+                                event,
+                                f"视频已生成，但发送失败：{safe_delivery_error}",
+                            )
+                            self._set_task_notification_status(task_id, "failed", delivery_error)
                         await mark_delivery(path, False, delivery_error)
                     else:
                         self._set_task_notification_status(task_id, "sent")
