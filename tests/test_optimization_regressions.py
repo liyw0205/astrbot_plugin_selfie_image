@@ -39,7 +39,9 @@ from astrbot_plugin_selfie_image.webui.services import (
     WebContractError,
     build_health_payload,
     filter_record_page,
+    gallery_pagination,
     parse_task_query,
+    task_status_payload,
 )
 from astrbot_plugin_selfie_image.features.config_manager import ConfigurationMixin
 from astrbot_plugin_selfie_image.features.conversation_context import ConversationContextMixin
@@ -52,6 +54,127 @@ from astrbot_plugin_selfie_image.features.audit_pipeline import AuditMixin
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_production_python_has_no_unapproved_noop_functions(tmp_path) -> None:
+    from astrbot_plugin_selfie_image.core.noop_check import find_unapproved_noop_functions
+
+    assert find_unapproved_noop_functions(ROOT) == []
+
+    source = tmp_path / "empty_module.py"
+    source.write_text("def unfinished():\n    pass\n", encoding="utf-8")
+    findings = find_unapproved_noop_functions(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].path == "empty_module.py"
+    assert findings[0].line == 1
+    assert findings[0].function == "unfinished"
+
+
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [
+        ({"media_type": "video"}, "video"),
+        ({"request_data": {"media_type": "image"}}, "image"),
+        ({"request_data": {"kind": "video"}}, "video"),
+        ({"request_data": {"kind": "生成视频"}}, "video"),
+        ({"source": "record-video-retry"}, "video"),
+        ({"request_data": []}, "image"),
+        ({}, "image"),
+    ],
+)
+def test_task_media_type_has_one_shared_public_rule(task, expected) -> None:
+    from astrbot_plugin_selfie_image.tasks.task_views import task_media_type
+
+    assert task_media_type(task) == expected
+    assert WebTaskMixin._task_media_type(task) == expected
+    assert "_task_media_type" not in SelfieImagePlugin.__dict__
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("【pose:sofa_front_crop】", True),
+        ("【pose:custom_crop】", True),
+        ("【legs:outfit】", True),
+        ("【crop:calves】", True),
+        ("看看腿", True),
+        ("下半身穿搭", True),
+        ("请不展示脚部", True),
+        ("普通半身自拍", False),
+    ],
+)
+def test_leg_calf_crop_action_has_one_shared_rule(text, expected) -> None:
+    import astrbot_plugin_selfie_image.features.persona as persona_module
+    from astrbot_plugin_selfie_image.cos.leg_focus import is_leg_calf_crop_action
+
+    assert is_leg_calf_crop_action(text) is expected
+    assert persona_module.is_leg_calf_crop_action is is_leg_calf_crop_action
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("手机遮脸自拍", True),
+        ("iPhone挡住半张脸", True),
+        ("phone cover face", False),
+        ("拿手机自拍", False),
+        ("手遮脸", False),
+        ("普通自拍", False),
+    ],
+)
+def test_phone_face_cover_has_one_shared_rule(text, expected) -> None:
+    import astrbot_plugin_selfie_image.features.persona as persona_module
+    from astrbot_plugin_selfie_image.cos.cos_looks import requests_phone_face_cover
+
+    assert requests_phone_face_cover(text) is expected
+    assert persona_module.requests_phone_face_cover is requests_phone_face_cover
+
+
+def test_web_task_status_service_validates_fetches_and_redacts() -> None:
+    calls = []
+
+    class Plugin:
+        def get_web_image_task(self, task_id):
+            calls.append(task_id)
+            return {"task_id": task_id, "api_key": "secret", "status": "succeeded"}
+
+    payload = task_status_payload(Plugin(), "web-12345678-1")
+    assert payload == {"task_id": "web-12345678-1", "api_key": "[REDACTED]", "status": "succeeded"}
+    assert calls == ["web-12345678-1"]
+    with pytest.raises(WebContractError):
+        task_status_payload(Plugin(), "not-a-task")
+
+
+@pytest.mark.parametrize(
+    ("limit", "offset", "expected"),
+    [("", "", (24, 0)), ("12", "3", (12, 3)), ("bad", "-2", (24, 0))],
+)
+def test_gallery_pagination_preserves_lenient_adapter_defaults(limit, offset, expected) -> None:
+    assert gallery_pagination(limit, offset) == expected
+
+
+def test_ordered_unique_helper_is_shared_by_models_and_utils() -> None:
+    from astrbot_plugin_selfie_image.core.models import unique_values
+    from astrbot_plugin_selfie_image.core.utils import unique
+
+    values = [" a ", "", None, "a", 3, "3", "b"]
+    assert unique(values) == ["a", "3", "b"]
+    assert unique_values is unique
+
+
+def test_legacy_douyin_script_delegates_media_processing() -> None:
+    import ast
+
+    source = (ROOT / "scripts" / "douyin_frames.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function_names = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert "_download" not in function_names
+    assert "_extract_frames" not in function_names
+    assert "video_prompt_frames" in source
 
 
 def test_config_preflight_health_summary_distinguishes_unconfigured_and_ready() -> None:
@@ -328,6 +451,310 @@ def test_video_auth_failure_falls_back_to_next_channel_but_timeout_does_not(monk
     assert timeout_result.attempts[-1]["error_category"] == "timeout"
 
 
+def test_video_poll_queries_immediately_before_waiting_between_retries(monkeypatch) -> None:
+    from astrbot_plugin_selfie_image.generation import video as video_module
+
+    sleep_calls = []
+    get_calls = []
+    events = []
+
+    async def fake_sleep(delay):
+        sleep_calls.append(delay)
+        events.append(("sleep", delay))
+
+    class Response:
+        status = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def json(self, content_type=None):
+            return self.payload
+
+    class Session:
+        def get(self, url, **kwargs):
+            get_calls.append((url, kwargs))
+            events.append("get")
+            if len(get_calls) == 1:
+                return Response({"status": "in_progress"})
+            return Response({"status": "completed", "video_url": "https://cdn.test/video.mp4"})
+
+    monkeypatch.setattr(video_module.asyncio, "sleep", fake_sleep)
+    result = asyncio.run(
+        video_module._poll_task(
+            Session(),
+            poll_url="https://api.test/tasks/task-1",
+            headers={"Authorization": "Bearer test"},
+            timeout_seconds=30,
+        )
+    )
+
+    assert result == "https://cdn.test/video.mp4"
+    assert len(get_calls) == 2
+    assert events == ["get", ("sleep", 10), "get"]
+    assert sleep_calls == [10]
+
+
+def test_video_file_download_streams_chunks_without_reading_response(monkeypatch, tmp_path) -> None:
+    from astrbot_plugin_selfie_image.generation import video as video_module
+
+    class Content:
+        async def iter_chunked(self, _size):
+            yield b"ftyp"
+            yield b"-video-data"
+
+    class Response:
+        status = 200
+        headers = {"Content-Type": "video/mp4"}
+        content = Content()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def read(self):
+            raise AssertionError("streaming download must not read the whole response")
+
+    class Session:
+        def get(self, _url, **_kwargs):
+            return Response()
+
+    result = asyncio.run(
+        video_module._download_video_file(
+            Session(),
+            "https://cdn.test/video.mp4",
+            timeout=30,
+            save_dir=str(tmp_path),
+        )
+    )
+
+    path = Path(result)
+    assert path.read_bytes() == b"ftyp-video-data"
+    path.unlink()
+
+
+def test_video_file_download_keeps_urllib_json_http_url_fallback(monkeypatch, tmp_path) -> None:
+    from astrbot_plugin_selfie_image.generation import video as video_module
+
+    class Response:
+        def __init__(self, data, content_type):
+            self.data = data
+            self.headers = {"Content-Type": content_type}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, size=-1):
+            chunk, self.data = self.data[:size], self.data[size:]
+            return chunk
+
+    responses = [
+        Response(b'{"video_url":"https://cdn.test/final.mp4"}', "application/json"),
+        Response(b"ftyp-final-video", "video/mp4"),
+    ]
+
+    class Opener:
+        def open(self, _request, timeout=None):
+            return responses.pop(0)
+
+    monkeypatch.setattr(video_module.aiohttp, "ClientTimeout", lambda **_kwargs: None)
+    monkeypatch.setattr(video_module.urllib.request, "build_opener", lambda *_args, **_kwargs: Opener())
+
+    class Session:
+        def get(self, *_args, **_kwargs):
+            raise RuntimeError("force urllib fallback")
+
+    result = asyncio.run(
+        video_module._download_video_file(
+            Session(),
+            "https://cdn.test/envelope",
+            timeout=30,
+            save_dir=str(tmp_path),
+        )
+    )
+
+    assert Path(result).read_bytes() == b"ftyp-final-video"
+
+
+def test_video_output_paths_are_unique_within_one_millisecond(monkeypatch, tmp_path) -> None:
+    from astrbot_plugin_selfie_image.generation import video as video_module
+
+    monkeypatch.setattr(video_module.time, "time", lambda: 1000.0)
+    first = video_module._video_output_path(str(tmp_path))
+    second = video_module._video_output_path(str(tmp_path))
+
+    assert first != second
+    assert first.endswith(".mp4") and second.endswith(".mp4")
+
+
+def test_video_file_download_cleans_part_file_after_stream_failure(tmp_path) -> None:
+    from astrbot_plugin_selfie_image.generation import video as video_module
+
+    class Content:
+        async def iter_chunked(self, _size):
+            yield b"partial"
+            raise RuntimeError("connection dropped")
+
+    class Response:
+        status = 200
+        headers = {"Content-Type": "video/mp4"}
+        content = Content()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class Session:
+        def get(self, *_args, **_kwargs):
+            return Response()
+
+    with pytest.raises(RuntimeError, match="视频下载失败"):
+        asyncio.run(
+            video_module._download_video_file(
+                Session(), "https://cdn.test/fail.mp4", timeout=30, save_dir=str(tmp_path)
+            )
+        )
+
+    assert not list(tmp_path.glob("*.part"))
+    assert not list(tmp_path.glob("*.mp4"))
+
+
+def test_video_file_download_rejects_html_without_publishing_file(tmp_path) -> None:
+    from astrbot_plugin_selfie_image.generation import video as video_module
+
+    class Content:
+        async def iter_chunked(self, _size):
+            yield b"<html>bad gateway</html>"
+
+    class Response:
+        status = 200
+        headers = {"Content-Type": "text/html"}
+        content = Content()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class Session:
+        def get(self, *_args, **_kwargs):
+            return Response()
+
+    with pytest.raises(RuntimeError, match="JSON/HTML"):
+        asyncio.run(
+            video_module._download_video_file(
+                Session(), "https://cdn.test/error", timeout=30, save_dir=str(tmp_path)
+            )
+        )
+
+    assert not list(tmp_path.glob("*.part"))
+    assert not list(tmp_path.glob("*.mp4"))
+
+
+def test_high_frequency_json_snapshots_keep_atomicity_and_reduce_whitespace(tmp_path) -> None:
+    from astrbot_plugin_selfie_image.core.utils import save_json_file, save_json_file_compact
+
+    payload = {"tasks": {"task-1": {"status": "running", "prompt": "snapshot"}}}
+    pretty_path = tmp_path / "pretty.json"
+    compact_path = tmp_path / "compact.json"
+    save_json_file(str(pretty_path), payload)
+    save_json_file_compact(str(compact_path), payload)
+
+    assert json.loads(compact_path.read_text(encoding="utf-8")) == payload
+    assert compact_path.stat().st_size < pretty_path.stat().st_size
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_compact_json_write_cleans_temp_file_when_serialization_fails(monkeypatch, tmp_path) -> None:
+    from astrbot_plugin_selfie_image.core import utils as utils_module
+
+    def fail_dump(*_args, **_kwargs):
+        raise ValueError("simulated serialization failure")
+
+    monkeypatch.setattr(utils_module.json, "dump", fail_dump)
+    with pytest.raises(ValueError, match="simulated serialization failure"):
+        utils_module.save_json_file_compact(str(tmp_path / "snapshot.json"), {"value": 1})
+
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_pretty_json_write_cleans_temp_file_when_serialization_fails(monkeypatch, tmp_path) -> None:
+    from astrbot_plugin_selfie_image.core import utils as utils_module
+
+    def fail_dump(*_args, **_kwargs):
+        raise ValueError("simulated pretty serialization failure")
+
+    monkeypatch.setattr(utils_module.json, "dump", fail_dump)
+    with pytest.raises(ValueError, match="simulated pretty serialization failure"):
+        utils_module.save_json_file(str(tmp_path / "snapshot.json"), {"value": 1})
+
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_proxy_quality_checks_targets_concurrently_but_preserves_result_order(monkeypatch) -> None:
+    from astrbot_plugin_selfie_image.core import proxy as proxy_module
+
+    class Proxy:
+        url = "http://proxy.test:8080"
+
+    monkeypatch.setattr(proxy_module, "parse_channel_proxy", lambda _value: Proxy())
+    monkeypatch.setattr(proxy_module, "_lookup_exit_ip_geo", lambda *_args, **_kwargs: asyncio.sleep(0, result={}))
+    active = 0
+    max_active = 0
+
+    async def fake_request(_proxy, _method, url, **_kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0)
+        active -= 1
+        if url.endswith(("openai.com/", "googleapis.com/")):
+            return 200, "", b""
+        raise RuntimeError("probe failed")
+
+    monkeypatch.setattr(proxy_module, "_request_via_proxy", fake_request)
+    result = asyncio.run(proxy_module.probe_proxy_quality("http://proxy.test:8080"))
+
+    assert max_active == len(proxy_module.PROXY_QUALITY_TARGETS)
+    assert [item["id"] for item in result["results"]] == [item["id"] for item in proxy_module.PROXY_QUALITY_TARGETS]
+    assert result["ok_count"] == 2
+
+
+def test_canvas_noop_update_does_not_rewrite_session_snapshot(monkeypatch, tmp_path) -> None:
+    from astrbot_plugin_selfie_image.studio import studio as studio_module
+
+    writes = []
+    real_save = studio_module.save_json_file_compact
+    monkeypatch.setattr(
+        studio_module,
+        "save_json_file_compact",
+        lambda path, data: (writes.append((path, data)), real_save(path, data))[1],
+    )
+
+    store = studio_module.StudioStore(str(tmp_path))
+    session = store.create("noop")
+    viewport = dict(session["canvas"]["viewport"])
+    updated = store.update_canvas(session["id"], {"viewport": viewport})
+
+    assert updated["viewport"] == viewport
+    # Baseline before the optimization: create + identical update both wrote.
+    assert len(writes) == 1
+
+
 @pytest.mark.parametrize(
     ("message", "category", "retryable"),
     [
@@ -492,6 +919,25 @@ def test_storage_consistency_is_read_only_and_reports_orphans_and_missing_media(
         done = plugin.repair_storage_consistency(confirm=True)
         assert done["deleted"] == [{"kind": "orphan_cache", "path": "orphan.png"}]
         assert not (cache / "orphan.png").exists()
+
+
+def test_storage_consistency_reports_non_sensitive_scan_metrics() -> None:
+    from astrbot_plugin_selfie_image.generation.storage_consistency import inspect_storage_consistency
+
+    with tempfile.TemporaryDirectory() as directory:
+        cache = Path(directory) / "image_cache"
+        sidecars = Path(directory) / "media_sources"
+        cache.mkdir()
+        sidecars.mkdir()
+        for index in range(3):
+            (cache / f"orphan-{index}.png").write_bytes(b"x")
+
+        report = inspect_storage_consistency([], cache_root=str(cache), sidecar_root=str(sidecars))
+
+        assert report["scan_file_count"] == 3
+        assert report["scan_skipped_count"] == 0
+        assert isinstance(report["scan_elapsed_ms"], int)
+        assert report["read_only"] is True
 
 
 def test_storage_consistency_repair_accepts_one_kind_string() -> None:
@@ -838,6 +1284,19 @@ def test_dashboard_page_has_single_external_source_status_and_p0_controls() -> N
     assert "function prepareActiveTestTask" in page
     assert "画布保存失败，未启动生成" in page
     assert "scope_stats" in page
+
+
+def test_dashboard_fallback_generation_and_check_scripts_share_canonical_source() -> None:
+    source = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
+    fallback_source = (ROOT / "webui" / "index_fallback.py").read_text(encoding="utf-8")
+    generator = (ROOT / "scripts" / "generate_dashboard_fallback.py").read_text(encoding="utf-8")
+    checker = (ROOT / "scripts" / "check_dashboard_fallback.py").read_text(encoding="utf-8")
+
+    assert "SOURCE = ROOT / \"pages\" / \"dashboard\" / \"index.html\"" in generator
+    assert "FALLBACK = ROOT / \"webui\" / \"index_fallback.py\"" in checker
+    assert "Generated by scripts/generate_dashboard_fallback.py" in fallback_source
+    assert "source_hash = hashlib.sha256(source.encode(\"utf-8\")).hexdigest()" in checker
+    assert len(source) > 500000
 
 
 def test_web_route_alias_contract_is_shared_by_both_adapters() -> None:

@@ -57,9 +57,32 @@ def load_json_file(path: str) -> Dict[str, Any]:
 def save_json_file(path: str, data: Dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp_path = f"{path}.{time.time_ns()}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, path)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def save_json_file_compact(path: str, data: Dict[str, Any]) -> None:
+    """Atomically save JSON without indentation for high-frequency snapshots."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.{time.time_ns()}.tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 def detect_mime_by_bytes(data: bytes) -> str:
@@ -302,6 +325,7 @@ def collect_cache_cleanup_candidates(
     protected_paths: Optional[Iterable[Any]] = None,
     referenced_paths: Optional[Iterable[Any]] = None,
     record_timestamps: Optional[Dict[Any, Any]] = None,
+    file_entries: Optional[Iterable[Tuple[str, int, float]]] = None,
 ) -> List[str]:
     raw_base = str(base_dir or "").strip()
     if not raw_base:
@@ -332,22 +356,29 @@ def collect_cache_cleanup_candidates(
         if timestamp > 0:
             timestamps[path] = max(timestamp, timestamps.get(path, 0.0))
     candidates: List[Tuple[int, float, float, str]] = []
-    for root, _, files in os.walk(base):
-        for name in files:
-            path = os.path.abspath(os.path.join(root, name))
-            if path in protected or not inside_cache(path):
-                continue
-            try:
-                mtime = os.path.getmtime(path)
-            except OSError:
-                continue
-            priority = 1 if path in referenced else 0
-            # Referenced media follows its generation record's timestamp;
-            # request files often have an older mtime than their response.
-            sort_time = timestamps.get(path, 0.0) if path in referenced else 0.0
-            if sort_time <= 0:
-                sort_time = mtime
-            candidates.append((priority, sort_time, mtime, path))
+    if file_entries is None:
+        entries = (
+            (os.path.abspath(os.path.join(root, name)), None, None)
+            for root, _, files in os.walk(base)
+            for name in files
+        )
+    else:
+        entries = file_entries
+    for raw_path, raw_size, raw_mtime in entries:
+        path = os.path.abspath(str(raw_path))
+        if path in protected or not inside_cache(path):
+            continue
+        try:
+            mtime = float(raw_mtime) if raw_mtime is not None else os.path.getmtime(path)
+        except OSError:
+            continue
+        priority = 1 if path in referenced else 0
+        # Referenced media follows its generation record's timestamp;
+        # request files often have an older mtime than their response.
+        sort_time = timestamps.get(path, 0.0) if path in referenced else 0.0
+        if sort_time <= 0:
+            sort_time = mtime
+        candidates.append((priority, sort_time, mtime, path))
     candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
     return [path for _, _, _, path in candidates]
 

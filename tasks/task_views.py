@@ -34,8 +34,9 @@ SOURCE_LABELS = {
 }
 
 
-def _task_media_type(task: Mapping[str, Any]) -> str:
-    request = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
+def task_media_type(task: Mapping[str, Any]) -> str:
+    """Return the persisted task's normalized image/video classification."""
+    request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
     value = str(task.get("media_type") or request.get("media_type") or "").strip().lower()
     if value in {"image", "video"}:
         return value
@@ -83,7 +84,7 @@ def filter_image_tasks(
             continue
         wanted_media = str(media_type or "").strip().lower()
         if wanted_media:
-            if _task_media_type(task) != wanted_media:
+            if task_media_type(task) != wanted_media:
                 continue
         source = str(task.get("source") or "")
         if session_key and source.startswith("web") and owner != session_key:
@@ -104,7 +105,7 @@ def format_task_list_text(
     if not items:
         return "最近没有任务记录。" if include_finished else "现在没有进行中的出图/视频任务。"
     wanted_media = str(media_type or "").strip().lower()
-    video_only = wanted_media == "video" or all(_task_media_type(item) == "video" for item in items)
+    video_only = wanted_media == "video" or all(task_media_type(item) == "video" for item in items)
     lines = [
         ("最近的视频任务：" if video_only else "最近的任务：")
         if include_finished
@@ -115,7 +116,7 @@ def format_task_list_text(
         status = str(task.get("status") or "")
         status_cn = STATUS_LABELS.get(status, status)
         request = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
-        media_type = _task_media_type(task)
+        media_type = task_media_type(task)
         kind = MEDIA_LABELS.get(media_type, media_type)
         prompt = str(
             request.get("original_prompt")
@@ -150,7 +151,7 @@ def format_task_list_text(
 def format_task_detail_text(task: Mapping[str, Any]) -> str:
     request = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
     result = task.get("result") if isinstance(task.get("result"), dict) else {}
-    media_type = _task_media_type(task)
+    media_type = task_media_type(task)
     status = str(task.get("status") or "")
     detail_labels = {**STATUS_LABELS, "running": "绘制中"}
     original_prompt = str(

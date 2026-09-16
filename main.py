@@ -2487,16 +2487,6 @@ class SelfieImagePlugin(
     def _format_task_detail_text(self, task: Dict[str, Any]) -> str:
         return format_task_detail_text(task)
 
-    @staticmethod
-    def _task_media_type(task: Mapping[str, Any]) -> str:
-        request = task.get("request_data") if isinstance(task.get("request_data"), dict) else {}
-        value = str(task.get("media_type") or request.get("media_type") or "").strip().lower()
-        if value in {"image", "video"}:
-            return value
-        kind = str(request.get("kind") or "").strip().lower()
-        source = str(task.get("source") or "").strip().lower()
-        return "video" if kind == "video" or "视频" in kind or "video" in source else "image"
-
     async def _command_task_list(
         self,
         event: AstrMessageEvent,

@@ -26,11 +26,13 @@ from .services import (
     WebContractError,
     build_health_payload,
     filter_record_page,
+    gallery_pagination,
     normalize_task_ids,
     parse_bounded_int,
     parse_query_bool,
     parse_task_query,
     record_matches_query as shared_record_matches_query,
+    task_status_payload,
     validate_task_id,
 )
 
@@ -232,6 +234,30 @@ class FlaskWebServer:
 
         def record_matches_query(record: Any, source: str, model: str, success: str, keyword: str, media_type: str = "") -> bool:
             return shared_record_matches_query(record, source, model, success, keyword, media_type)
+
+        def generation_task_status(task_id: str) -> Any:
+            try:
+                return ok(
+                    task_status_payload(
+                        self.plugin,
+                        task_id,
+                        WEB_TASK_ID_RE,
+                        max_length=MAX_WEB_TASK_ID_LENGTH,
+                    )
+                )
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        def gallery_payload() -> Any:
+            limit, offset = gallery_pagination(
+                request.args.get("limit"), request.args.get("offset")
+            )
+            try:
+                return ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
+            except Exception as exc:
+                return fail(str(exc), 400)
 
         def query_bool(value: Any) -> Optional[bool]:
             return parse_query_bool(value)
@@ -586,14 +612,7 @@ class FlaskWebServer:
         def test_image_channel_task_status(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            try:
-                return ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
-            except Exception as exc:
-                return fail(str(exc), 404)
+            return generation_task_status(task_id)
 
         def cancel_generation_task(task_id: str) -> Any:
             if not check_auth():
@@ -641,14 +660,7 @@ class FlaskWebServer:
         def test_video_channel_task_status(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            try:
-                return ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
-            except Exception as exc:
-                return fail(str(exc), 404)
+            return generation_task_status(task_id)
 
 
         @app.route("/api/proxies", methods=["GET"])
@@ -1313,31 +1325,13 @@ class FlaskWebServer:
         def studio_task_status(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            try:
-                return ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
-            except Exception as exc:
-                return fail(str(exc), 404)
+            return generation_task_status(task_id)
 
         @app.route("/api/studio/gallery", methods=["GET"])
         def studio_gallery() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                limit = int(request.args.get("limit") or 24)
-            except Exception:
-                limit = 24
-            try:
-                offset = max(0, int(request.args.get("offset") or 0))
-            except Exception:
-                offset = 0
-            try:
-                return ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return gallery_payload()
 
         @app.route("/api/creative-canvas/sessions", methods=["GET", "POST"])
         def creative_canvas_sessions() -> Any:
@@ -1447,18 +1441,7 @@ class FlaskWebServer:
         def creative_canvas_gallery() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                limit = int(request.args.get("limit") or 24)
-            except (TypeError, ValueError):
-                limit = 24
-            try:
-                offset = max(0, int(request.args.get("offset") or 0))
-            except (TypeError, ValueError):
-                offset = 0
-            try:
-                return ok(self.plugin.studio_gallery_images(limit, offset))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return gallery_payload()
 
         @app.route("/api/prompt-presets", methods=["GET"])
         def prompt_presets() -> Any:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Iterable, Mapping
 from typing import Any, Dict, List
 
@@ -60,6 +61,9 @@ def inspect_storage_consistency(
     sidecar_root = os.path.abspath(str(sidecar_root or "")) if sidecar_root else ""
     rows = [row for row in records or () if isinstance(row, Mapping)]
     issues: List[Dict[str, Any]] = []
+    scan_started = time.monotonic()
+    scan_file_count = 0
+    scan_skipped_count = 0
     referenced: set[str] = set()
     referenced_sidecars: set[str] = set()
     seen_paths: Dict[str, str] = {}
@@ -115,6 +119,7 @@ def inspect_storage_consistency(
     if cache_root and os.path.isdir(cache_root):
         for root, _, files in os.walk(cache_root):
             for filename in files:
+                scan_file_count += 1
                 absolute = os.path.abspath(os.path.join(root, filename))
                 rel = _safe_rel(absolute, cache_root)
                 if rel not in referenced:
@@ -122,6 +127,7 @@ def inspect_storage_consistency(
     if sidecar_root and os.path.isdir(sidecar_root):
         for filename in os.listdir(sidecar_root):
             if not filename.endswith(".json"):
+                scan_skipped_count += 1
                 continue
             if filename not in referenced_sidecars:
                 issues.append({"kind": "orphan_sidecar", "path": filename, "repairable": True})
@@ -141,4 +147,7 @@ def inspect_storage_consistency(
         "counts": counts,
         "issues": issues[:1000],
         "read_only": True,
+        "scan_file_count": scan_file_count,
+        "scan_skipped_count": scan_skipped_count,
+        "scan_elapsed_ms": round((time.monotonic() - scan_started) * 1000),
     }

@@ -16,7 +16,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..cos.cos_looks import build_cos_third_person_prompt, looks_like_cos_prompt
-from ..core.utils import save_json_file
+from ..core.utils import save_json_file, save_json_file_compact
 
 
 logger = logging.getLogger(__name__)
@@ -1554,7 +1554,7 @@ class StudioStore:
             for drop in ordered[MAX_SESSIONS:]:
                 self._sessions.pop(str(drop.get("id") or ""), None)
             ordered = ordered[:MAX_SESSIONS]
-        save_json_file(self.path, {"sessions": ordered, "updated_at": _now()})
+        save_json_file_compact(self.path, {"sessions": ordered, "updated_at": _now()})
 
     def list_sessions(self) -> List[Dict[str, Any]]:
         with self._lock:
@@ -1649,6 +1649,7 @@ class StudioStore:
             canvas = self._ensure_canvas(session)
             if not isinstance(patch, dict):
                 raise ValueError("canvas 必须是对象")
+            before_canvas = copy.deepcopy(canvas)
             viewport = patch.get("viewport")
             if isinstance(viewport, dict):
                 try:
@@ -1702,8 +1703,9 @@ class StudioStore:
                             current["count"] = 1
                         node["params"] = current
             session["canvas"] = canvas
-            session["updated_at"] = _now()
-            self._persist()
+            if canvas != before_canvas:
+                session["updated_at"] = _now()
+                self._persist()
             return public_session(canvas)
 
     def add_canvas_node(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:

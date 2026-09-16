@@ -298,11 +298,11 @@ SAFE_LEGWEAR_LABELS = {
 def is_leg_calf_crop_action(text: str) -> bool:
     raw = str(text or "")
     match = re.search(r"【pose:([a-z_]+)】", raw)
-    if match and match.group(1) in CALF_CROP_POSES:
+    if match and (match.group(1) in CALF_CROP_POSES or match.group(1).endswith("_crop")):
         return True
-    if "【legs:outfit】" in raw or "下半身穿搭" in raw or "穿搭展示" in raw:
+    if "【legs:outfit】" in raw or "下半身穿搭" in raw or "穿搭展示" in raw or "看看腿" in raw:
         return True
-    if "【crop:calves】" in raw or "双脚完整裁出画外" in raw:
+    if "【crop:calves】" in raw or "双脚完整裁出画外" in raw or "不展示脚部" in raw:
         return True
     return "大腿" in raw and "小腿" in raw and "画外" in raw
 

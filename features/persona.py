@@ -11,8 +11,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
-from ..cos.cos_looks import parse_requested_cos_camera
-from ..cos.leg_focus import ensure_leg_focus_action, get_leg_focus_outfit, has_leg_focus_contract
+from ..cos.cos_looks import parse_requested_cos_camera, requests_phone_face_cover
+from ..cos.leg_focus import (
+    ensure_leg_focus_action,
+    get_leg_focus_outfit,
+    has_leg_focus_contract,
+    is_leg_calf_crop_action,
+)
 from ..core.utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
 
 
@@ -22,32 +27,6 @@ APPEARANCE_TYPE_LABELS = {
     "real": "真人",
     "anime": "动漫",
 }
-
-
-def is_leg_calf_crop_action(text: str) -> bool:
-    """Detect the compact lower-outfit framing used by the look-legs command."""
-    raw = str(text or "")
-    if "【legs:outfit】" in raw or "【crop:calves】" in raw or "双脚完整裁出画外" in raw or "不展示脚部" in raw:
-        return True
-    m = re.search(r"【pose:([a-z_]+)】", raw)
-    if m and str(m.group(1)).endswith("_crop"):
-        return True
-    # Default look-legs path always hides feet now.
-    return "看看腿" in raw or "下半身穿搭" in raw or "穿搭展示" in raw
-
-
-def requests_phone_face_cover(text: str) -> bool:
-    """Detect the explicit phone-face-cover preset without changing normal COS output."""
-    compact = re.sub(r"\s+", "", str(text or "")).lower()
-    phone_words = ("手机", "iphone", "phone")
-    face_cover_words = (
-        "遮脸", "遮住脸", "挡脸", "挡住脸", "遮面", "挡面",
-        "遮住半张脸", "半张脸", "遮挡脸部", "遮住部分脸",
-    )
-    return any(word in compact for word in phone_words) and any(
-        word in compact for word in face_cover_words
-    )
-
 
 
 def normalize_appearance_type(value: Any) -> str:

@@ -15,9 +15,11 @@ import copy
 import json
 import os
 import re
+import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import quote, urlparse
@@ -39,6 +41,10 @@ class VideoGenerationError(RuntimeError):
     def __init__(self, message: str, *, stage: str = "create") -> None:
         super().__init__(message)
         self.stage = stage
+
+
+def _video_output_path(save_dir: str) -> str:
+    return os.path.join(save_dir, f"video_{int(time.time() * 1000)}_{uuid.uuid4().hex[:12]}.mp4")
 
 
 @dataclass
@@ -458,6 +464,170 @@ async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeou
             ) from ur_exc
 
 
+async def _download_video_file(
+    session: aiohttp.ClientSession,
+    url: str,
+    timeout: int,
+    save_dir: str,
+    proxy: str = "",
+) -> str:
+    """Download a video to a temporary file, then atomically publish it."""
+    os.makedirs(save_dir, exist_ok=True)
+    if url.startswith("data:"):
+        data = await _download_video_bytes(session, url, timeout, proxy)
+        fd, temp_path = tempfile.mkstemp(prefix=".video_", suffix=".part", dir=save_dir)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            path = _video_output_path(save_dir)
+            os.replace(temp_path, path)
+            return path
+        except Exception:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
+
+    async def _via_aiohttp() -> str:
+        temp_path = ""
+        try:
+            async with session.get(
+                url,
+                headers={"User-Agent": "SelfieImage-Video/1.0"},
+                timeout=aiohttp.ClientTimeout(total=max(30, timeout)),
+                proxy=proxy or None,
+            ) as response:
+                if response.status >= 400:
+                    raise RuntimeError(await _read_error(response))
+                content_type = str(response.headers.get("Content-Type") or "").lower()
+                fd, temp_path = tempfile.mkstemp(prefix=".video_", suffix=".part", dir=save_dir)
+                first_chunk = b""
+                total = 0
+                with os.fdopen(fd, "wb") as handle:
+                    async for chunk in response.content.iter_chunked(256 * 1024):
+                        if not chunk:
+                            continue
+                        if not first_chunk:
+                            first_chunk = chunk
+                        total += len(chunk)
+                        handle.write(chunk)
+                if not total:
+                    raise RuntimeError("视频下载结果为空")
+                stripped = first_chunk.lstrip()
+                if "json" in content_type or "html" in content_type or stripped.startswith((b"{", b"[", b"<")):
+                    with open(temp_path, "rb") as handle:
+                        data = handle.read()
+                    try:
+                        parsed = json.loads(data.decode("utf-8", "replace"))
+                    except Exception:
+                        parsed = None
+                    nested = _extract_video_url(parsed) if parsed is not None else ""
+                    if nested and nested != url:
+                        return await _download_video_file(session, nested, timeout, save_dir, proxy)
+                    raise RuntimeError("视频下载接口返回了 JSON/HTML，而不是视频文件")
+            path = _video_output_path(save_dir)
+            os.replace(temp_path, path)
+            temp_path = ""
+            return path
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+    def _via_urllib() -> str:
+        temp_path = ""
+        try:
+            req = urllib.request.Request(url, method="GET", headers={"User-Agent": "SelfieImage-Video/1.0"})
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy})) if proxy else urllib.request.build_opener()
+            with opener.open(req, timeout=max(30, int(timeout or 60))) as resp:
+                content_type = str(resp.headers.get("Content-Type") or "").lower()
+                fd, temp_path = tempfile.mkstemp(prefix=".video_", suffix=".part", dir=save_dir)
+                first_chunk = b""
+                total = 0
+                with os.fdopen(fd, "wb") as handle:
+                    while True:
+                        chunk = resp.read(256 * 1024)
+                        if not chunk:
+                            break
+                        if not first_chunk:
+                            first_chunk = chunk
+                        total += len(chunk)
+                        handle.write(chunk)
+            if not total:
+                raise RuntimeError("视频下载结果为空")
+            stripped = first_chunk.lstrip()
+            if "json" in content_type or "html" in content_type or stripped.startswith((b"{", b"[", b"<")):
+                with open(temp_path, "rb") as handle:
+                    data = handle.read()
+                try:
+                    parsed = json.loads(data.decode("utf-8", "replace"))
+                except Exception:
+                    parsed = None
+                nested = _extract_video_url(parsed) if parsed is not None else ""
+                if nested and nested != url and nested.startswith("data:"):
+                    _, encoded = nested.split(",", 1)
+                    data = base64.b64decode(encoded)
+                    if not data:
+                        raise RuntimeError("视频下载结果为空")
+                    with open(temp_path, "wb") as handle:
+                        handle.write(data)
+                    path = _video_output_path(save_dir)
+                    os.replace(temp_path, path)
+                    temp_path = ""
+                    return path
+                if nested and nested != url and nested.startswith(("http://", "https://")):
+                    nested_req = urllib.request.Request(
+                        nested,
+                        method="GET",
+                        headers={"User-Agent": "SelfieImage-Video/1.0"},
+                    )
+                    with opener.open(nested_req, timeout=max(30, int(timeout or 60))) as nested_resp:
+                        fd, nested_temp = tempfile.mkstemp(prefix=".video_", suffix=".part", dir=save_dir)
+                        try:
+                            total_nested = 0
+                            with os.fdopen(fd, "wb") as nested_handle:
+                                while True:
+                                    chunk = nested_resp.read(256 * 1024)
+                                    if not chunk:
+                                        break
+                                    total_nested += len(chunk)
+                                    nested_handle.write(chunk)
+                            if not total_nested:
+                                raise RuntimeError("视频下载结果为空")
+                            path = _video_output_path(save_dir)
+                            os.replace(nested_temp, path)
+                            nested_temp = ""
+                            return path
+                        finally:
+                            if nested_temp:
+                                try:
+                                    os.unlink(nested_temp)
+                                except OSError:
+                                    pass
+                raise RuntimeError("视频下载接口返回了 JSON/HTML，而不是视频文件")
+            path = _video_output_path(save_dir)
+            os.replace(temp_path, path)
+            temp_path = ""
+            return path
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+    try:
+        return await _via_aiohttp()
+    except Exception as aio_exc:
+        try:
+            return await asyncio.to_thread(_via_urllib)
+        except Exception as ur_exc:
+            raise RuntimeError(redact_sensitive_text(f"视频下载失败: aiohttp={aio_exc}; urllib={ur_exc}")) from ur_exc
+
+
 def _task_poll_url(endpoint: str, task_id: str, submission: Dict[str, Any]) -> str:
     # OmniDraw: list-shaped data often means /api/tasks/{id}
     if isinstance(submission.get("data"), list):
@@ -479,7 +649,8 @@ async def _poll_task(
     last_error = ""
     attempt = 0
     while time.monotonic() < deadline:
-        await asyncio.sleep(min(10, max(0.0, deadline - time.monotonic())))
+        if attempt:
+            await asyncio.sleep(min(10, max(0.0, deadline - time.monotonic())))
         attempt += 1
         try:
             async with session.get(
@@ -625,11 +796,14 @@ async def generate_video_openai_compatible(
 
             video_source = str(video_url or "")
             stage = "download"
-            raw = await _download_video_bytes(session, video_url, timeout=timeout, proxy=str((target.extra or {}).get("download_proxy") or target.proxy or ""))
+            path = await _download_video_file(
+                session,
+                video_url,
+                timeout=timeout,
+                save_dir=save_dir,
+                proxy=str((target.extra or {}).get("download_proxy") or target.proxy or ""),
+            )
             os.makedirs(save_dir, exist_ok=True)
-            path = os.path.join(save_dir, f"video_{int(time.time() * 1000)}.mp4")
-            with open(path, "wb") as handle:
-                handle.write(raw)
             key_attempt["success"] = True
             key_attempt["retryable"] = False
             key_attempt["elapsed_seconds"] = round(time.monotonic() - key_started, 2)

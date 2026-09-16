@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
 from .constants import PROVIDER_TYPES, VIDEO_MAX_CONCURRENT_TASKS, VIDEO_PROVIDER_TYPES
 from .proxy import LOCAL_IMAGE_WAIT_SECONDS
+from .utils import unique as unique_values
 
 
 MASKED_SECRET_VALUES = frozenset(
@@ -348,6 +350,24 @@ class AICatConfig:
     video_default_duration: int
     video_max_concurrent_tasks: int
     video_global_timeout: int
+    _target_cache: Dict[str, List[ImageModelTarget]] = field(default_factory=dict, init=False, repr=False)
+
+    def _target_cache_key(self, kind: str) -> str:
+        return json.dumps(
+            {"kind": kind, "raw": self.raw},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+            separators=(",", ":"),
+        )
+
+    def _cached_targets(self, key: str) -> Optional[List[ImageModelTarget]]:
+        cached = self._target_cache.get(key)
+        return copy.deepcopy(cached) if cached is not None else None
+
+    def _store_targets(self, key: str, targets: List[ImageModelTarget]) -> List[ImageModelTarget]:
+        self._target_cache[key] = copy.deepcopy(targets)
+        return targets
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AICatConfig":
@@ -568,6 +588,10 @@ class AICatConfig:
         return out
 
     def get_prioritized_targets(self) -> List[ImageModelTarget]:
+        key = self._target_cache_key("image")
+        cached = self._cached_targets(key) if self.image_model_call_mode != "random" else None
+        if cached is not None:
+            return cached
         all_targets: List[ImageModelTarget] = []
         for channel in self.image_channels:
             all_targets.extend(
@@ -591,19 +615,29 @@ class AICatConfig:
             selected = [random.choice(selected)]
         elif mode == "fixed":
             selected = selected[:1]
-        return self._bind_download_proxies(selected)
+        result = self._bind_download_proxies(selected)
+        return self._store_targets(key, result) if self.image_model_call_mode != "random" else result
 
     def get_audit_targets(self) -> List[ImageModelTarget]:
+        key = self._target_cache_key("audit")
+        cached = self._cached_targets(key)
+        if cached is not None:
+            return cached
         targets: List[ImageModelTarget] = []
         for channel in self.audit_channels:
             targets.extend(
                 channel.targets(self.image_global_timeout, request_timeout=LOCAL_IMAGE_WAIT_SECONDS)
             )
-        return self._bind_download_proxies(self._prioritize_targets(targets, self.enabled_audit_model_priority))
+        result = self._bind_download_proxies(self._prioritize_targets(targets, self.enabled_audit_model_priority))
+        return self._store_targets(key, result)
 
     def get_prioritized_video_targets(self) -> List[ImageModelTarget]:
         if not self.video_enable:
             return []
+        key = self._target_cache_key("video")
+        cached = self._cached_targets(key)
+        if cached is not None:
+            return cached
         targets: List[ImageModelTarget] = []
         for channel in self.video_channels:
             video_timeout = self.video_global_timeout or self.image_global_timeout
@@ -632,7 +666,7 @@ class AICatConfig:
                     seen.add(target.label)
         else:
             selected = targets
-        return self._bind_download_proxies(selected)
+        return self._store_targets(key, self._bind_download_proxies(selected))
 
 
 def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -1420,17 +1454,6 @@ def split_values(value: Any) -> List[str]:
     else:
         items = re.split(r"[\s,]+", str(value or "").replace("\r", "\n"))
     return unique_values(str(item).strip() for item in items if str(item).strip())
-
-
-def unique_values(values: Iterable[str]) -> List[str]:
-    result: List[str] = []
-    seen = set()
-    for value in values:
-        text = str(value or "").strip()
-        if text and text not in seen:
-            result.append(text)
-            seen.add(text)
-    return result
 
 
 def to_bool(value: Any, default: bool = False) -> bool:

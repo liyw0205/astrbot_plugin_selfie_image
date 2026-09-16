@@ -254,6 +254,32 @@ def validate_task_id(task_id: Any, task_id_pattern: re.Pattern[str], *, max_leng
     return value
 
 
+def task_status_payload(
+    plugin: Any,
+    task_id: Any,
+    task_id_pattern: Optional[re.Pattern[str]] = None,
+    *,
+    max_length: int = 64,
+) -> Any:
+    """Validate, fetch, and redact one generation task for either Web adapter."""
+    pattern = task_id_pattern or re.compile(r"^(?:web|web-studio|cmd)-\d{8,}-\d+$")
+    validated = validate_task_id(task_id, pattern, max_length=max_length)
+    return redact_sensitive_data(plugin.get_web_image_task(validated))
+
+
+def gallery_pagination(limit: Any, offset: Any, *, default_limit: int = 24) -> tuple[int, int]:
+    """Preserve the gallery endpoints' legacy lenient query handling."""
+    try:
+        parsed_limit = int(limit or default_limit)
+    except (TypeError, ValueError):
+        parsed_limit = default_limit
+    try:
+        parsed_offset = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        parsed_offset = 0
+    return parsed_limit, parsed_offset
+
+
 def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """Build the non-transport health payload used by both API adapters."""
     stats = getattr(plugin, "_cache_stats", None)

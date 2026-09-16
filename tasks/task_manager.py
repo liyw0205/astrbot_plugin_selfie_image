@@ -16,10 +16,11 @@ from ..core.utils import (
     redact_sensitive_data,
     redact_sensitive_text,
     save_json_file,
+    save_json_file_compact,
 )
 from ..core.constants import VIDEO_MAX_CONCURRENT_TASKS
 from ..generation.generation_results import build_task_terminal_state
-from .task_views import task_source_label
+from .task_views import task_media_type, task_source_label
 
 
 logger = logging.getLogger(__name__)
@@ -79,15 +80,7 @@ class WebTaskMixin:
             "current_index": 0,
         }
 
-    @staticmethod
-    def _task_media_type(task: Mapping[str, Any]) -> str:
-        request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
-        value = str(task.get("media_type") or request.get("media_type") or "").strip().lower()
-        if value in {"image", "video"}:
-            return value
-        kind = str(request.get("kind") or "").strip().lower()
-        source = str(task.get("source") or "").strip().lower()
-        return "video" if kind == "video" or "视频" in kind or "video" in source else "image"
+    _task_media_type = staticmethod(task_media_type)
 
     def _task_runtime_defaults(self) -> Dict[str, Any]:
         return {
@@ -149,13 +142,13 @@ class WebTaskMixin:
                 changed_on_start = True
             tasks[task["task_id"]] = task
         if changed_on_start:
-            save_json_file(self.tasks_path, {"tasks": tasks})
+            save_json_file_compact(self.tasks_path, {"tasks": tasks})
         return tasks
 
     def _persist_web_tasks_locked(self) -> None:
         path = str(getattr(self, "tasks_path", "") or "").strip()
         if path:
-            save_json_file(path, {"tasks": self._web_tasks})
+            save_json_file_compact(path, {"tasks": self._web_tasks})
 
     def reconcile_expired_tasks_after_restart(self) -> int:
         """Create one inspectable record for each task abandoned by a restart.

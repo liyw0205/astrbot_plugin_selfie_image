@@ -34,12 +34,14 @@ from .services import (
     WebContractError,
     build_health_payload,
     filter_record_page,
+    gallery_pagination,
     normalize_task_ids,
     parse_bounded_int,
     parse_query_bool,
     parse_task_query,
     parse_timestamp_query,
     record_matches_query as shared_record_matches_query,
+    task_status_payload,
     validate_task_id,
 )
 
@@ -249,6 +251,30 @@ class SelfieImageDashboardAPI:
             return page, meta, None
         except WebContractError as exc:
             return None, None, self._fail(str(exc), exc.status_code)
+
+    def _task_status(self, task_id: str) -> Any:
+        try:
+            return self._ok(
+                task_status_payload(
+                    self.plugin,
+                    task_id,
+                    WEB_TASK_ID_RE,
+                    max_length=MAX_WEB_TASK_ID_LENGTH,
+                )
+            )
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 404)
+
+    def _gallery(self) -> Any:
+        limit, offset = gallery_pagination(
+            self._query_value("limit"), self._query_value("offset")
+        )
+        try:
+            return self._ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
+        except Exception as exc:
+            return self._fail(str(exc), 400)
 
     async def page_auth_check(self) -> Any:
         return self._ok({"authorized": True, "source": "dashboard"})
@@ -465,14 +491,7 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
 
     async def page_test_image_task_status(self, task_id: str) -> Any:
-        try:
-            task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        try:
-            return self._ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._task_status(task_id)
 
     async def page_task_cancel(self, task_id: str) -> Any:
         try:
@@ -1105,28 +1124,10 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
 
     async def page_studio_task(self, task_id: str) -> Any:
-        try:
-            task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        try:
-            return self._ok(redact_sensitive_data(self.plugin.get_web_image_task(task_id_text)))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._task_status(task_id)
 
     async def page_studio_gallery(self) -> Any:
-        try:
-            limit = int(self._query_value("limit") or 24)
-        except Exception:
-            limit = 24
-        try:
-            offset = max(0, int(self._query_value("offset") or 0))
-        except Exception:
-            offset = 0
-        try:
-            return self._ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._gallery()
 
     async def page_creative_canvas_list(self) -> Any:
         try:
@@ -1213,18 +1214,7 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
 
     async def page_creative_canvas_gallery(self) -> Any:
-        try:
-            limit = int(self._query_value("limit") or 24)
-        except Exception:
-            limit = 24
-        try:
-            offset = max(0, int(self._query_value("offset") or 0))
-        except Exception:
-            offset = 0
-        try:
-            return self._ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._gallery()
 
     async def page_prompt_presets(self) -> Any:
         try:

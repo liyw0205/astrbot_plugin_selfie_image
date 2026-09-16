@@ -421,8 +421,12 @@ class GenerationStoreMixin:
         path = self._sidecar_path(record_id)
         if not path:
             return ""
+        payload = {"record_id": str(record_id), **sources}
+        existing = load_json_file(path)
+        if isinstance(existing, Mapping) and dict(existing) == payload:
+            return os.path.relpath(path, self._media_sources_root())
         try:
-            save_json_file(path, {"record_id": str(record_id), **sources})
+            save_json_file(path, payload)
         except Exception:
             return ""
         return os.path.relpath(path, self._media_sources_root())
@@ -1507,19 +1511,21 @@ class GenerationStoreMixin:
         total, _ = self._cache_stats()
         return total
 
-    def _cache_stats(self) -> Tuple[int, int]:
-        """Return total bytes and regular-file count for the unified media cache."""
-        total = 0
-        count = 0
+    def _cache_file_entries(self) -> List[Tuple[str, int, float]]:
+        entries: List[Tuple[str, int, float]] = []
         for root, _, files in os.walk(self.generated_dir):
             for name in files:
                 path = os.path.join(root, name)
                 try:
-                    total += os.path.getsize(path)
-                    count += 1
+                    entries.append((path, os.path.getsize(path), os.path.getmtime(path)))
                 except OSError:
-                    pass
-        return total, count
+                    continue
+        return entries
+
+    def _cache_stats(self, file_entries: Optional[Iterable[Tuple[str, int, float]]] = None) -> Tuple[int, int]:
+        """Return total bytes and regular-file count for the unified media cache."""
+        entries = file_entries if file_entries is not None else self._cache_file_entries()
+        return sum(size for _, size, _ in entries), len(entries)
 
     def _asset_protected_cache_paths(self) -> List[str]:
         """Keep pinned assets and live canvas media during cache GC."""
@@ -1547,7 +1553,8 @@ class GenerationStoreMixin:
         """Build the shared count-and-size cleanup plan without deleting files."""
         limit_bytes = max(10, int(getattr(self.config, "image_cache_limit_mb", 200) or 200)) * 1024 * 1024
         limit_count = max(10, int(getattr(self.config, "image_cache_limit_count", 100) or 100))
-        total_bytes, total_count = self._cache_stats()
+        file_entries = self._cache_file_entries()
+        total_bytes, total_count = self._cache_stats(file_entries)
         with self._records_lock:
             records = [dict(item) for item in self._records if isinstance(item, Mapping)]
         referenced_paths = collect_record_cache_paths(records)
@@ -1570,6 +1577,7 @@ class GenerationStoreMixin:
             protected,
             referenced_paths,
             record_timestamps,
+            file_entries=file_entries,
         )
         planned: List[Dict[str, Any]] = []
         remaining_bytes = total_bytes

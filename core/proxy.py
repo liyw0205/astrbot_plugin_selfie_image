@@ -381,9 +381,7 @@ async def probe_proxy_quality(proxy_value: str, timeout_each: float = 10.0) -> d
     except Exception:
         exit_info = {}
 
-    results = []
-    ok_count = 0
-    for item in PROXY_QUALITY_TARGETS:
+    async def check_target(item: Dict[str, str]) -> Dict[str, Any]:
         target_url = str(item["url"]).rstrip("/") + "/"
         started = time.monotonic()
         entry: Dict[str, Any] = {
@@ -411,8 +409,7 @@ async def probe_proxy_quality(proxy_value: str, timeout_each: float = 10.0) -> d
             # 401/403/404 still count as reachable; 5xx counts but marked weaker.
             entry["success"] = 100 <= int(status) < 600
             entry["message"] = f"HTTP {status}"
-            if entry["success"]:
-                ok_count += 1
+            return entry
         except asyncio.TimeoutError:
             entry["latency_ms"] = round((time.monotonic() - started) * 1000)
             entry["message"] = "超时"
@@ -421,7 +418,10 @@ async def probe_proxy_quality(proxy_value: str, timeout_each: float = 10.0) -> d
             entry["latency_ms"] = round((time.monotonic() - started) * 1000)
             entry["message"] = str(exc)[:120]
             entry["http_status"] = None
-        results.append(entry)
+        return entry
+
+    results = list(await asyncio.gather(*(check_target(item) for item in PROXY_QUALITY_TARGETS)))
+    ok_count = sum(1 for entry in results if entry.get("success"))
 
     total = len(results) or 1
     score = round(ok_count * 100 / total)

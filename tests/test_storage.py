@@ -127,6 +127,30 @@ class TestStorage:
             assert detail["generated_image_sources"][0]["type"] == "base64"
             assert detail["generated_image_sources"][0]["value"] == inline
 
+    def test_identical_media_sidecar_payload_skips_second_write(self, monkeypatch) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            record = {
+                "id": "sidecar-repeat",
+                "success": True,
+                "generated_image_paths": ["generated.png"],
+                "generated_image_sources": [{"type": "url", "value": "https://example.test/image.png"}],
+            }
+            writes = []
+            import astrbot_plugin_selfie_image.generation.generation_store as store_module
+
+            real_save = store_module.save_json_file
+            monkeypatch.setattr(
+                store_module,
+                "save_json_file",
+                lambda path, data: (writes.append((path, data)), real_save(path, data))[1],
+            )
+            first = plugin._write_media_sidecar(record["id"], record)
+            second = plugin._write_media_sidecar(record["id"], record)
+
+            assert first == second == "sidecar-repeat.json"
+            assert len(writes) == 1
+
     def test_asset_metadata_round_trips_through_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             plugin = self._plugin(root)
@@ -431,6 +455,29 @@ class TestStorage:
             replacement.write_bytes(b"new")
             with pytest.raises(ValueError, match="重新预览"):
                 plugin.cleanup_image_cache_from_web(confirm=True, plan_token=plan["plan_token"])
+
+    def test_cache_cleanup_plan_scans_cache_directory_once(self, monkeypatch) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            for index in range(11):
+                (Path(plugin.generated_dir) / f"orphan-{index:02}.png").write_bytes(bytes([index]))
+
+            import astrbot_plugin_selfie_image.generation.generation_store as store_module
+
+            real_walk = store_module.os.walk
+            walk_calls = []
+
+            def counting_walk(path):
+                walk_calls.append(path)
+                yield from real_walk(path)
+
+            monkeypatch.setattr(store_module.os, "walk", counting_walk)
+            plan = plugin.get_cache_cleanup_preview()
+
+            assert plan["total_count"] == 11
+            # Baseline before the optimization: stats and candidate planning
+            # each walked the complete cache directory.
+            assert len(walk_calls) == 1
 
     def test_manual_cleanup_rejects_preview_when_protection_changes(self) -> None:
         with tempfile.TemporaryDirectory() as root:

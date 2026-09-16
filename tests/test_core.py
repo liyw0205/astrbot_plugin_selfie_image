@@ -457,7 +457,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.17")
+        self.assertEqual(PLUGIN_VERSION, "1.6.18")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -598,6 +598,44 @@ class ConfigModelTests(unittest.TestCase):
             self.assertIn("white-space: normal", doc)
             self.assertNotIn(".model-provider { min-width: 150px;", doc)
             self.assertNotIn(".model-download-proxy { min-width: 120px;", doc)
+
+    def test_target_cache_reuses_stable_targets_and_invalidates_on_config_change(self) -> None:
+        from astrbot_plugin_selfie_image.core.models import AICatConfig
+
+        cfg = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "main",
+                        "provider_type": "openai",
+                        "base_url": "https://example.test/v1",
+                        "api_key": "key",
+                        "model": "model-a",
+                    }
+                ]
+            }
+        )
+        first = cfg.get_prioritized_targets()
+        second = cfg.get_prioritized_targets()
+        self.assertEqual([target.label for target in first], [target.label for target in second])
+        self.assertEqual(len(cfg._target_cache), 1)
+
+        changed_cfg = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "main",
+                        "provider_type": "openai",
+                        "base_url": "https://example.test/v1",
+                        "api_key": "key",
+                        "model": "model-b",
+                    }
+                ]
+            }
+        )
+        changed = changed_cfg.get_prioritized_targets()
+        self.assertEqual([target.model for target in changed], ["model-b"])
+        self.assertEqual(len(changed_cfg._target_cache), 1)
 
 
     

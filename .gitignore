@@ -13,4 +13,5 @@ image-persona/
 # Local COS reverse-engineering leftovers (do not commit).
 .tmp_douyin_*/
 scripts/douyin_frames.py
-scripts/__pycache__/
+
+.venv/
