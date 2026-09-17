@@ -663,6 +663,8 @@ class WebTaskMixin:
                         "prompt_enhance",
                         "reference_image_count",
                         "raw_reference_image_count",
+                        "deduplicated_reference_image_count",
+                        "duplicate_reference_image_count",
                         "used_slots",
                         "source_asset_ids",
                         "studio_source_asset_ids",

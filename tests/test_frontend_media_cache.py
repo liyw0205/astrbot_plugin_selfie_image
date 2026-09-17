@@ -65,6 +65,16 @@ def test_desktop_node_panel_has_an_independent_vertical_scroll_region():
     assert "overscroll-behavior:contain;" in PAGE
 
 
+def test_preset_manager_supports_fuzzy_name_and_prompt_search_for_all_kinds():
+    assert 'id="presetManagerSearch"' in PAGE
+    assert 'id="presetCosManagerSearch"' in PAGE
+    assert "const PRESET_MANAGER_QUERIES = {image: '', video: '', cos: ''};" in PAGE
+    assert "item.name || item.title || ''}\\n${item.prompt || ''}" in PAGE
+    assert "item.title || item.id || ''}\\n${item.prompt || ''}" in PAGE
+    assert "renderManagedPromptPresets();" in PAGE
+    assert "renderManagedCosPool();" in PAGE
+
+
 def test_creative_canvas_hides_rerun_until_a_successful_result():
     assert "const hasSuccess = String(last.status || '').toLowerCase() === 'succeeded'" in PAGE
     assert "$('creativeCanvasRerunBtn').hidden = !hasSuccess;" in PAGE

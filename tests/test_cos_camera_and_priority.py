@@ -1,4 +1,6 @@
 import re
+import tempfile
+from unittest.mock import patch
 from pathlib import Path
 
 from astrbot_plugin_selfie_image.cos.cos_looks import (
@@ -75,10 +77,182 @@ def test_cos_framing_alternatives_are_resolved_before_prompt_generation():
         extra_request="COS 换装：正面或三分之四侧身站立，近景至全身构图"
     )
     assert selected["randomized_from_options"] is True
-    assert selected["prompt"] in {"正面", "三分之四侧身", "近景", "全身"}
+    assert "正面" in selected["prompt"] or "三分之四侧身" in selected["prompt"]
+    assert "近景" in selected["prompt"] or "全身" in selected["prompt"]
     resolved = selected["extra_request_text"]
     assert "正面或三分之四侧身" not in resolved
     assert "近景至全身" not in resolved
+
+
+def test_cos_framing_alternatives_return_one_complete_framing_contract():
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
+        selected = pick_cos_framing(
+            extra_request="人物正面或三分之四侧身站立，近景至全身构图"
+        )
+
+    assert selected["randomized_from_options"] is True
+    assert selected["prompt"] == "正面站立；近景构图"
+    assert "或" not in selected["extra_request_text"]
+    assert "至" not in selected["extra_request_text"]
+    assert "三分之四" not in selected["prompt"]
+    assert "全身" not in selected["prompt"]
+    assert selected["extra_request_text"]
+
+
+def test_cos_english_builtin_keeps_the_complete_action_once():
+    item = {
+        "id": "english_cos_details",
+        "title": "英文套装细节测试",
+        "prompt": "严格换装为测试 COS：银白色长发，白色蓬袖短装，人物站在暖色室内，一手轻扶腰间配饰。",
+    }
+    action = build_cos_look_action(
+        "",
+        picker=lambda **_: item,
+        camera="first",
+    )
+    from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
+
+    prompt = build_selfie_builtin_prompt(
+        action,
+        language="en",
+        has_reference_image=True,
+        appearance_type="real",
+    )
+
+    assert prompt.count(action) == 1
+    assert "银白色长发" in prompt
+    assert "白色蓬袖短装" in prompt
+    assert "【cam:first】" in prompt
+
+
+def test_cos_english_builtin_uses_translated_action_contract_once():
+    action = "【第一视角 / 看看COS模式】严格换装为测试 COS：银白色长发。 【cos:translated】 【cam:first】"
+    translated_action = "Create the locked test COS outfit: silver-white long hair. [cos:translated] [cam:first]"
+    from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
+
+    prompt = build_selfie_builtin_prompt(
+        action,
+        language="en",
+        action_content=translated_action,
+        has_reference_image=True,
+        appearance_type="real",
+    )
+
+    assert prompt.count(translated_action) == 1
+    assert translated_action in prompt
+    assert "银白色长发" not in prompt
+
+
+def test_cos_english_builtin_does_not_repeat_user_supplement():
+    action = (
+        "【自拍 / 看看COS模式】严格换装为测试 COS：银白色长发。"
+        " 用户补充要求优先：站在窗边。 【cos:translated】 【cam:selfie】"
+    )
+    translated_action = (
+        "Create the locked test COS outfit: silver-white long hair."
+        " User supplement: stand by a window. [cos:translated] [cam:selfie]"
+    )
+    from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
+
+    prompt = build_selfie_builtin_prompt(
+        action,
+        language="en",
+        action_content=translated_action,
+        user_text="stand by a window",
+        has_reference_image=True,
+        appearance_type="real",
+    )
+
+    assert prompt.count("stand by a window") == 1
+
+
+def test_studio_cos_english_path_keeps_translated_action_contract():
+    source = Path(__file__).resolve().parents[1] / "studio" / "studio_adapter.py"
+    text = source.read_text(encoding="utf-8")
+    block = text.split("if mode in {\"group\", \"selfie\"}:", 1)[1].split(
+        'failure_stage = "generating"', 1
+    )[0]
+
+    assert "extract_generated_action_contract" in block
+    assert "translated_action" in block
+    assert "action_content=translated_action" in block
+
+
+def test_compact_record_derives_legacy_cos_view_from_cam():
+    from astrbot_plugin_selfie_image.core.utils import compact_generation_record
+
+    compact = compact_generation_record(
+        {
+            "success": True,
+            "original_prompt": "【cos:test】 【cam:first】",
+            "request_data": {"request_prompt": "【cos:test】 【cam:first】"},
+        }
+    )
+
+    assert compact["cos_view"] == "first"
+    assert compact["request_data"]["cos_view"] == "first"
+
+
+def test_generated_cos_action_is_not_appended_again_as_user_request():
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+    item = {
+        "id": "repro_duplicate_prompt",
+        "title": "重复拼接测试",
+        "prompt": "严格换装为测试 COS：人物自然站立，正面或三分之四侧身，近景至全身构图。",
+    }
+    action = build_cos_look_action(
+        "",
+        picker=lambda **_: item,
+        camera="first",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        prompt = PersonaManager(tmp).build_selfie_prompt(action, "小助", "温柔", True, 0)
+
+    assert prompt.count(action) == 1
+    assert prompt.count("【COS换装第一视角模式】") == 1
+    assert "用户要求：按以上已锁定的 COS 套装、相机、构图、姿势和场景规则生成。" in prompt
+    assert "第三人称摄影画面" not in prompt
+    assert "摄影师在画面外" not in prompt
+
+
+def test_generated_cos_action_exposes_one_camera_tag_and_one_concrete_framing():
+    item = {
+        "id": "repro_single_view",
+        "title": "单一视角测试",
+        "prompt": "严格换装为测试 COS：人物自然站立。",
+    }
+    action = build_cos_look_action(
+        "",
+        picker=lambda **_: item,
+        camera="first",
+    )
+
+    assert re.findall(r"【(?:cam|cos_view):[^】]+】", action) == ["【cam:first】"]
+    assert action.count("本次未指定视角，随机采用") == 1
+    assert "视角按本套 COS 套装描述执行" not in action
+
+
+def test_first_person_cos_action_is_not_treated_as_freeform_user_text():
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager, extract_user_action_text
+    from astrbot_plugin_selfie_image.prompts.prompt_templates import extract_user_prompt
+
+    item = {
+        "id": "repro_first_person_marker",
+        "title": "第一视角标记测试",
+        "prompt": "严格换装为测试 COS：人物自然站立。",
+    }
+    action = build_cos_look_action(
+        "",
+        picker=lambda **_: item,
+        camera="first",
+    )
+
+    assert extract_user_action_text(action) == ""
+    assert extract_user_prompt(action) == ""
 
 
 def test_cos_action_replaces_outfit_view_alternatives():
@@ -91,6 +265,22 @@ def test_cos_action_replaces_outfit_view_alternatives():
     assert "本次从已有视角选项中随机确定为" in action
     assert "正面或三分之四侧身" not in action
     assert "近景至全身" not in action
+
+
+def test_selfie_command_cos_request_uses_cos_builder_once():
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    plugin = object.__new__(SelfieImagePlugin)
+    action = plugin._build_selfie_request_action(
+        "严格换装为测试角色 COS，人物站在花园中。",
+        False,
+    )
+
+    assert "【COS换装" not in action
+    assert "【cos:" in action
+    assert len(re.findall(r"【cam:(?:selfie|first|third)】", action)) == 1
+    assert "【自拍 / 看看模式】" not in action
+    assert action.count("用户补充要求优先：") == 1
 
 
 def test_private_hoshino_and_sunna_cos_outfits_are_registered():

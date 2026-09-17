@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import random
 import logging
+import hashlib
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -39,6 +40,18 @@ LEGACY_BUILTIN_PROMPT_REPLACEMENTS = {
         "透视、光影和遮挡关系正确，手指数量正常，不要手掌变形、手臂穿过脸部、整张脸完全被盖住、"
         "道具贴脸或僵硬摆拍。保持人物身份、服装、姿势和场景不变，像自然随手拍。"
     ),
+}
+
+
+# Upgrade only the shipped hip presets that still contain the old shared
+# action skeleton. Hash matching keeps same-name user presets untouched.
+VIDEO_LEGACY_BUILTIN_PROMPT_HASHES = {
+    "正太扭腰": "cdebddfc59f5330f1289622d568298596ab2e012a95390869b30972c9fc9c7aa",
+    "左右顶胯": "cc758f2272bbe061d054982325cefc53b671e21ccdbe9daf16ea4285d7debf7c",
+    "八字胯": "c3586d1301deb68bd7e46a017dcb5a4d3461a776d6cb622ce6b8f952ffeff0cd",
+    "点胯坐胯": "ab367e54175710cbb3c72cad03028488260ef7f5027dfa534d5400cc11289a04",
+    "坐胯": "a3da828ca1834652774d3866c99b6ea5c7470afbb1d2a84392b9aee112c49cef",
+    "绕胯": "6c390da3638a98e8f29eb825a646be07f052009054b3542c64caea1b6417cae9",
 }
 
 
@@ -494,13 +507,28 @@ class VideoPresetManager(ImagePresetManager):
 
     def load(self) -> None:
         super().load()
+        seed = self._load_builtin_seed()
+        dirty = False
+        for name, legacy_hash in VIDEO_LEGACY_BUILTIN_PROMPT_HASHES.items():
+            existing = self.presets.get(name)
+            replacement = seed.get(name) if isinstance(seed, dict) else None
+            if not existing or not isinstance(replacement, dict):
+                continue
+            current_hash = hashlib.sha256(existing.prompt.encode("utf-8")).hexdigest()
+            if current_hash != legacy_hash:
+                continue
+            existing.prompt = str(replacement.get("prompt") or existing.prompt).strip()
+            existing.description = str(replacement.get("description") or existing.description).strip()
+            existing.duration = self._parse_duration(replacement.get("duration")) or existing.duration
+            dirty = True
         stale_names = [name for name in self._REMOVED_BUILTIN_NAMES if name in self.presets]
-        if not stale_names:
+        if not stale_names and not dirty:
             return
         for name in stale_names:
             self.presets.pop(name, None)
             self._deleted_builtin_names.add(name)
-        self.save()
+        if stale_names or dirty:
+            self.save()
 
     @staticmethod
     def _builtin_seed() -> Dict[str, Dict[str, str]]:

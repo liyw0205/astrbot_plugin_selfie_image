@@ -1320,6 +1320,7 @@
       </div>
       <div id="presetManagerViews" class="preset-manager-views">
         <div id="presetPromptManager" class="preset-manager-view">
+          <input id="presetManagerSearch" type="search" placeholder="搜索预设名或提示词" aria-label="搜索预设名或提示词">
           <div id="presetManagerList" class="preset-manager-list"></div>
         </div>
         <div id="presetCosManager" class="preset-manager-view" hidden>
@@ -1336,6 +1337,7 @@
               </div>
             </div>
             <div id="presetCosManagerStatus" class="status" style="margin-top:10px">正在读取 COS 池…</div>
+            <input id="presetCosManagerSearch" type="search" placeholder="搜索套装名或提示词" aria-label="搜索 COS 套装名或提示词" style="margin-top:10px">
           </div>
           <div id="presetCosManagerList" class="preset-manager-list"></div>
         </div>
@@ -2003,6 +2005,7 @@
     let PRESET_EDIT_ORIGINAL = '';
     let PRESET_KIND = 'image';
     let PRESET_LOAD_SEQ = 0;
+    const PRESET_MANAGER_QUERIES = {image: '', video: '', cos: ''};
     let CURRENT_COMPARE = null;
 
     function isEmbeddedFrame() {
@@ -7129,11 +7132,20 @@ Source prompt:
       const wrap = $('presetCosManagerList');
       if (!wrap) return;
       const rows = Array.isArray(STUDIO.cosLooks) ? STUDIO.cosLooks : [];
+      const query = String(PRESET_MANAGER_QUERIES.cos || '').trim().toLowerCase();
+      const filteredRows = query
+        ? rows.filter(item => `${item.title || item.id || ''}\n${item.prompt || ''}`.toLowerCase().includes(query))
+        : rows;
+      if (!filteredRows.length) {
+        wrap.innerHTML = `<div class="status">${rows.length ? '没有匹配的 COS 池项目。' : '暂无 COS 池项目，点击“维护 COS 池”添加自定义项目。'}</div>`;
+        return;
+      }
       if (!rows.length) {
         wrap.innerHTML = '<div class="status">暂无 COS 池项目，点击“维护 COS 池”添加自定义项目。</div>';
         return;
       }
-      wrap.innerHTML = rows.map((item, idx) => {
+      wrap.innerHTML = filteredRows.map(item => {
+        const idx = rows.indexOf(item);
         const title = escapeHtml(item.title || item.id || '未命名套装');
         const prompt = escapeHtml(item.prompt || '');
         const source = item.source === 'custom' ? '自定义' : '内置';
@@ -7206,11 +7218,20 @@ Source prompt:
     function renderManagedPromptPresets() {
       const wrap = $('presetManagerList');
       if (!wrap) return;
+      const query = String(PRESET_MANAGER_QUERIES[PRESET_KIND] || '').trim().toLowerCase();
+      const filteredRows = query
+        ? PRESET_MANAGE_ROWS.filter(item => `${item.name || item.title || ''}\n${item.prompt || ''}`.toLowerCase().includes(query))
+        : PRESET_MANAGE_ROWS;
+      if (!filteredRows.length) {
+        wrap.innerHTML = `<div class="status">${PRESET_MANAGE_ROWS.length ? '没有匹配的预设。' : '暂无预设，先新增一个。'}</div>`;
+        return;
+      }
       if (!PRESET_MANAGE_ROWS.length) {
         wrap.innerHTML = '<div class="status">暂无预设，先新增一个。</div>';
         return;
       }
-      wrap.innerHTML = PRESET_MANAGE_ROWS.map((item, idx) => {
+      wrap.innerHTML = filteredRows.map(item => {
+        const idx = PRESET_MANAGE_ROWS.indexOf(item);
         const name = escapeHtml(item.name || item.title || '未命名');
         const prompt = escapeHtml(item.prompt || '');
         const desc = escapeHtml(item.description || '');
@@ -9233,6 +9254,14 @@ Source prompt:
     $('presetKindImage').onclick = () => switchPresetKind('image');
     $('presetKindVideo').onclick = () => switchPresetKind('video');
     $('presetKindCos').onclick = () => switchPresetKind('cos');
+    $('presetManagerSearch').oninput = event => {
+      PRESET_MANAGER_QUERIES[PRESET_KIND === 'video' ? 'video' : 'image'] = String(event.target.value || '');
+      renderManagedPromptPresets();
+    };
+    $('presetCosManagerSearch').oninput = event => {
+      PRESET_MANAGER_QUERIES.cos = String(event.target.value || '');
+      renderManagedCosPool();
+    };
     $('presetImportBtn').onclick = openPresetImport;
     $('presetExportBtn').onclick = openPresetExport;
     $('presetCosMaintainBtn').onclick = openCosPoolModal;

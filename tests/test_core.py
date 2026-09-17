@@ -9129,7 +9129,13 @@ class LegFocusTests(unittest.TestCase):
                 if item["id"] == "shuilaner_horned_brocade_qipao"
             ),
         )
-        self.assertIn("视角按本套 COS 套装描述执行", shuilaner_action)
+        self.assertNotIn("视角按本套 COS 套装描述执行", shuilaner_action)
+        self.assertEqual(len(re.findall(r"本次(?:从已有视角选项中随机确定为|未指定视角，随机采用)", shuilaner_action)), 0)
+        self.assertIn("本次按套装中已明确的单一构图执行", shuilaner_action)
+        self.assertNotRegex(
+            shuilaner_action.split("本次套装：", 1)[0],
+            r"(?:正面|侧身|近景|全身|半身)或(?:正面|侧身|近景|全身|半身)",
+        )
         self.assertIn("平视机位和正常拍摄距离", shuilaner_action)
         self.assertIn("竖屏全身构图", shuilaner_action)
         for title in (
@@ -9724,11 +9730,11 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("半身", group_cover)
         self.assertIn("窗光", group_cover)
         self.assertIn("不要美颜滤镜", group_cover)
-        self.assertIn("竖屏", forced_selfie)
-        self.assertIn("半身", forced_selfie)
+        self.assertIn("保持上方已确定的单一构图", forced_selfie)
+        self.assertNotRegex(forced_selfie, r"(?:全身|半身|三分之二身)或(?:全身|半身|三分之二身)")
         self.assertNotIn("对镜全身或大半身自拍", forced_selfie)
-        self.assertIn("竖屏", forced_third)
-        self.assertIn("半身", forced_third)
+        self.assertIn("保持上方已确定的单一构图", forced_third)
+        self.assertNotRegex(forced_third, r"(?:全身|半身|三分之二身)或(?:全身|半身|三分之二身)")
         self.assertNotIn("全身或大半身", forced_third)
         self.assertIn("室内柔光半身", adapted)
         self.assertNotIn("室内柔光全身", adapted)
@@ -9872,7 +9878,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertNotIn("短袜", normalized_extra)
         self.assertEqual(plugin._normalize_selfie_action(normalized, False), normalized)
 
-    def test_selfie_batch_cos_text_does_not_switch_to_cos_pool(self) -> None:
+    def test_selfie_batch_cos_text_switches_to_cos_pool(self) -> None:
         """Only /看看COS may rebuild an action from the random COS pool."""
         stub_factory = SessionModelAndTaskTests()
         batch_plugin = stub_factory._plugin_stub()
@@ -9881,6 +9887,7 @@ class LegFocusTests(unittest.TestCase):
         batch_plugin.config = type("Config", (), {"image_max_batch_count": 10})()
         rebuilt_actions = []
         selfie_requests = []
+        cos_requests = []
 
         async def fake_build_prompt(event, action, extra_refs):
             rebuilt_actions.append(action)
@@ -9898,14 +9905,15 @@ class LegFocusTests(unittest.TestCase):
             selfie_requests.append(extra_request)
             return f"普通自拍重建 {len(selfie_requests)} 【shot:arm_half】"
 
-        def fail_build_cos_action(*args, **kwargs):
-            raise AssertionError("普通 /自拍 不应进入 COS 随机池")
+        def fake_build_cos_action(extra_request="", has_refs=False, **kwargs):
+            cos_requests.append(extra_request)
+            return f"COS 重建 {len(cos_requests)} 【cos:phoebe_white_gold_sanctuary】 【cam:first】"
 
         batch_plugin._build_selfie_prompt_and_refs_for_event = fake_build_prompt
         batch_plugin._run_image_generation = fake_generate
         batch_plugin._run_counted_generation_shots = fake_counted
         batch_plugin._build_selfie_look_action = fake_build_selfie_action
-        batch_plugin._build_cos_look_action = fail_build_cos_action
+        batch_plugin._build_cos_look_action = fake_build_cos_action
 
         for initial_action in (
             "【自拍 / 看看模式】用户补充要求优先：COS 菲比",
@@ -9927,7 +9935,8 @@ class LegFocusTests(unittest.TestCase):
             )
 
         self.assertEqual(len(rebuilt_actions), 6)
-        self.assertEqual(len(selfie_requests), 6)
+        self.assertEqual(len(selfie_requests), 0)
+        self.assertEqual(len(cos_requests), 6)
 
     def test_user_requested_legwear_is_honored(self) -> None:
         import sys
@@ -10675,7 +10684,8 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("本次随机兼容组合优先于套装正文中的非服装陈列描述", action)
         self.assertRegex(action, r"【cos_pose:(?:standing_detail|half_turn|seated_composed|walking_turn)】")
         self.assertRegex(action, r"【cos_scene:(?:studio|elegant_room|courtyard)】")
-        self.assertIn("【cos_view:third】", action)
+        self.assertNotIn("【cos_view:", action)
+        self.assertEqual(action.count("【cam:third】"), 1)
 
         fixed_look = next(item for item in COS_LOOK_SETS if item["id"] == "lanmeng_dragon_path")
         fixed_action = build_cos_look_action(

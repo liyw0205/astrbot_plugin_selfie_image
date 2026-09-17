@@ -8,7 +8,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from ..cos.cos_looks import list_cos_look_sets
+from ..cos.cos_looks import list_cos_look_sets, looks_like_cos_prompt
 from ..prompts.prompt_composition import build_prompt_with_reference_instruction
 from ..core.providers import ImageReference
 from .studio import (
@@ -1007,10 +1007,20 @@ class StudioMixin:
                     from ..prompts.prompt_templates import (
                         append_daily_context_to_english_prompt,
                         build_selfie_builtin_prompt,
+                        extract_generated_action_contract,
                         extract_user_prompt,
                     )
 
                     user_text = extract_user_prompt(action)
+                    action_source = extract_generated_action_contract(action) if looks_like_cos_prompt(action) else action
+                    translated_action = action_source
+                    action_translation_meta: Dict[str, Any] = {}
+                    if looks_like_cos_prompt(action):
+                        translated_action, action_translation_meta = await self._translate_prompt_to_english(
+                            action_source, media="image", event=None
+                        )
+                        if not action_translation_meta.get("applied"):
+                            translated_action = action_source
                     translated_user = ""
                     if user_text:
                         translated_user, prompt_en_meta = await self._translate_prompt_to_english(
@@ -1029,6 +1039,7 @@ class StudioMixin:
                             extra_reference_count=extra_count,
                             appearance_type=self.persona.get_appearance_type(),
                             user_text=translated_user,
+                            action_content=translated_action,
                         )
                         prompt = append_daily_context_to_english_prompt(prompt, source_prompt)
             else:

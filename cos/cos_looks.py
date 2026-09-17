@@ -1207,7 +1207,7 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, str]] = {
     },
     "half_turn": {
         "title": "侧身回看",
-        "prompt": "三分之二侧身回看镜头，一手自然停在腰侧或裙摆旁，另一只手不遮挡服装主体；衣料和饰品受重力自然垂落。",
+        "prompt": "自然转身回看镜头，一手自然停在腰侧或裙摆旁，另一只手不遮挡服装主体；衣料和饰品受重力自然垂落。",
     },
     "seated_composed": {
         "title": "端正坐姿",
@@ -1256,7 +1256,7 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
     },
     "three_quarter_front": {
         "title": "三分之四侧前方",
-        "prompt": "三分之四侧前方机位，带到腰线或大腿上部，突出服装层次",
+        "prompt": "三分之四侧前方机位，带到大腿上部，突出服装层次",
     },
     "two_thirds": {
         "title": "三分之二身",
@@ -1276,37 +1276,36 @@ COS_FRAMING_TERMS = (
     "头部位于画面", "头部在画面", "画面从头", "画面只拍",
 )
 
+COS_FRAMING_TOKEN = (
+    r"横屏|竖屏|方形|正方形|正面近景|正面半身|正面|正对镜头|"
+    r"三分之四侧前方|三分之四侧身|三分之四|侧前方|侧身|环境人像|"
+    r"近景|中景|远景|全身|半身|胸像|肖像|三分之二身|大腿上部|大腿|膝上|"
+    r"平视|俯拍|仰拍|低机位|高机位"
+)
 COS_FRAMING_OPTION_RE = re.compile(
-    r"(?P<first>横屏|竖屏|方形|正方形|正面近景|正面半身|正面|正对镜头|"
-    r"三分之四侧前方|三分之四侧身|三分之四|侧前方|侧身|环境人像|"
-    r"近景|中景|远景|全身|半身|胸像|肖像|三分之二身|大腿上部|大腿|膝上|"
-    r"平视|俯拍|仰拍|低机位|高机位)"
-    r"\s*(?P<join>或|/|至|到)\s*"
-    r"(?P<second>横屏|竖屏|方形|正方形|正面近景|正面半身|正面|正对镜头|"
-    r"三分之四侧前方|三分之四侧身|三分之四|侧前方|侧身|环境人像|"
-    r"近景|中景|远景|全身|半身|胸像|肖像|三分之二身|大腿上部|大腿|膝上|"
-    r"平视|俯拍|仰拍|低机位|高机位)"
+    rf"(?P<first>{COS_FRAMING_TOKEN})"
+    rf"\s*(?P<join>或|/|至|到)\s*"
+    rf"(?P<rest>{COS_FRAMING_TOKEN}(?:\s*(?:或|/|至|到)\s*{COS_FRAMING_TOKEN})*)"
     r"(?P<suffix>机位|视角|构图|摄影|拍摄|站立)?"
 )
 
 
 def resolve_cos_framing_options(text: str) -> tuple[str, List[str]]:
-    """Collapse wording such as ``正面或三分之四`` to one random option."""
+    """Resolve each ambiguous framing chain into one concrete candidate."""
     resolved = str(text or "")
     selected: List[str] = []
-    # Iterate so a three-way expression (``正面或侧身或环境人像``) is also
-    # reduced to one option instead of leaving a second choice for the model.
+    # A request may contain independent chains, for example one angle and one
+    # crop. Resolve each chain once, then combine those choices as one framing
+    # contract instead of replacing the whole request with an unrelated view.
     for _ in range(4):
         match = COS_FRAMING_OPTION_RE.search(resolved)
         if not match:
             break
-        first = match.group("first")
-        second = match.group("second")
-        choice = random.choice((first, second))
+        candidates = [match.group("first"), *re.findall(COS_FRAMING_TOKEN, match.group("rest"))]
         suffix = match.group("suffix") or ""
-        replacement = choice if choice.endswith(suffix) else choice + suffix
-        resolved = resolved[: match.start()] + replacement + resolved[match.end() :]
-        selected.append(choice)
+        choice = random.choice(candidates)
+        selected.append(f"{choice}{suffix}")
+        resolved = resolved[: match.start()] + suffix + resolved[match.end() :]
     return resolved, selected
 
 
@@ -1320,13 +1319,13 @@ def pick_cos_framing(*, outfit: str = "", extra_request: str = "") -> Dict[str, 
     """Pick one generic framing only when no framing is already specified."""
     resolved_outfit, outfit_options = resolve_cos_framing_options(outfit)
     resolved_extra, extra_options = resolve_cos_framing_options(extra_request)
-    options = extra_options or outfit_options
+    options = [*outfit_options, *extra_options]
     if options:
-        choice = options[-1]
+        prompt = "；".join(dict.fromkeys(options))
         return {
             "view_id": "option",
-            "title": choice,
-            "prompt": choice,
+            "title": prompt,
+            "prompt": prompt,
             "outfit_text": resolved_outfit,
             "extra_request_text": resolved_extra,
             "randomized_from_options": True,
@@ -2022,7 +2021,7 @@ def build_cos_third_person_prompt(text: str) -> str:
         framing_line = (
             f"本次未指定视角，随机采用{framing['prompt']}；"
             if framing["prompt"]
-            else "视角按用户要求或套装描述执行；"
+            else "本次按已确定的单一构图执行；"
         )
     return (
         "【cos:web】 【cam:third】 【他拍 / 看看COS模式】"
@@ -2081,11 +2080,11 @@ def build_cos_look_action(
     extra_request = framing_choice.get("extra_request_text", extra_request)
     if framing_choice.get("randomized_from_options"):
         framing_line = f"本次从已有视角选项中随机确定为{framing_choice['prompt']}；"
+    elif framing_choice["view_id"]:
+        framing_line = f"本次未指定视角，随机采用{framing_choice['prompt']}；"
     else:
         framing_line = (
-            f"本次未指定视角，随机采用{framing_choice['prompt']}；"
-            if framing_choice["prompt"]
-            else "视角按本套 COS 套装描述执行；"
+            "本次按套装中已明确的单一构图执行；"
         )
     if camera_kind == "third":
         hand_rule = (
@@ -2143,7 +2142,7 @@ def build_cos_look_action(
         + f"本次套装：{title}。"
         + outfit
         + "服装颜色、层数、配饰、开叉、荷叶边、鞋履等结构要尽量齐全高还原；"
-        + "构图要求以本套套装描述为准；本套未指定构图时，完整带上腰线并采用竖屏近景半身；不要简化成普通常服；画面干净得体。"
+        + "保持上方已确定的单一构图，不在多个景别或视角之间切换；不要简化成普通常服；画面干净得体。"
     )
     if variation["prompt"]:
         base += adapt_cos_outfit_for_camera(variation["prompt"], camera_kind)
@@ -2157,5 +2156,4 @@ def build_cos_look_action(
         + f" 【cos:{cos_id}】 【cam:{camera_kind}】"
         + (f" 【cos_pose:{variation['pose_id']}】" if variation["pose_id"] else "")
         + (f" 【cos_scene:{variation['scene_id']}】" if variation["scene_id"] else "")
-        + f" 【cos_view:{camera_kind}】"
     )

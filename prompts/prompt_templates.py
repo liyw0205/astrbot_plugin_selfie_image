@@ -56,8 +56,17 @@ def extract_user_prompt(action: str) -> str:
         value = match.group(1)
         value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear|outfit):[a-z0-9_]+】\s*", " ", value)
         return re.sub(r"\s+", " ", value).strip(" 。")
-    if any(marker in text for marker in ("【自拍 / 看看模式】", "【他拍 / 看看你模式】", "【自拍 / 看看COS模式】", "【他拍 / 看看COS模式】", "【合影 / 合照模式】", "看看腿。", "【legs:outfit】", "成年人物日常下半身穿搭展示", "【唯一姿势·不可混用】")):
+    if any(marker in text for marker in ("【自拍 / 看看模式】", "【他拍 / 看看你模式】", "【自拍 / 看看COS模式】", "【他拍 / 看看COS模式】", "【第一视角 / 看看COS模式】", "【合影 / 合照模式】", "看看腿。", "【legs:outfit】", "成年人物日常下半身穿搭展示", "【唯一姿势·不可混用】")):
         return ""
+    return text
+
+
+def extract_generated_action_contract(action: str) -> str:
+    """Keep the generated action body separate from its user supplement."""
+    text = str(action or "").strip()
+    match = re.search(r"\s*用户补充要求优先[:：]", text)
+    if match:
+        return text[: match.start()].rstrip(" 。")
     return text
 
 
@@ -69,6 +78,7 @@ def build_selfie_builtin_prompt(
     extra_reference_count: int = 0,
     appearance_type: str = "auto",
     user_text: str = "",
+    action_content: str = "",
 ) -> str:
     """Build a compact central built-in prompt; user text is appended separately."""
     raw_action = str(action or "").strip()
@@ -80,6 +90,7 @@ def build_selfie_builtin_prompt(
     if raw_is_legs and not has_leg_focus_contract(raw_action):
         action = ensure_leg_focus_action(raw_action, has_reference_image)
     translated_user = str(user_text or "").strip()
+    rendered_action = str(action_content or action or "").strip()
     is_cos = "看看COS" in str(action) or "看看cos" in str(action).lower() or "【cos:" in str(action)
     is_legs = (not is_cos) and (
         "看看腿" in str(action)
@@ -106,7 +117,7 @@ def build_selfie_builtin_prompt(
         if is_legs:
             opening = f"Create one natural {style} vertical smartphone outfit record."
         elif is_cos:
-            opening = f"Create one natural {style} vertical COS cover photo."
+            opening = f"Create one natural {style} COS cover photo."
         else:
             opening = f"Create one natural {style} vertical smartphone cover photo."
         lines = [opening]
@@ -116,6 +127,8 @@ def build_selfie_builtin_prompt(
             lines.extend([
                 "Use the main reference for the same person's identity, facial structure, gender, skin tone, and body proportions; follow the COS outfit or user request for pose, head movement, gaze, and expression.",
                 "Preserve the reference face outline, feature proportions, eye shape, and lip contour without reshaping it into another face; keep explicit tilted, raised, lowered, closed-eye, or exaggerated expressions when requested, and otherwise stay natural and coherent. Keep facial edges clear and skin tone natural, without a white film or haze over the features.",
+                "Follow the complete COS action contract below exactly once. Preserve its selected outfit, pose, scene, camera, and single framing without adding another camera or crop choice.",
+                rendered_action,
             ])
         else:
             lines.extend([
@@ -134,7 +147,7 @@ def build_selfie_builtin_prompt(
             lines.append("Use extra references for clothing, pose, composition, lighting, or scene only.")
         # Legs first: action text may contain "不要合影" which must not flip into group mode.
         if is_legs:
-            camera_match = re.search(r"【cam:(selfie|third)】", str(action))
+            camera_match = re.search(r"【cam:(selfie|first|third)】", str(action))
             camera_kind = str(camera_match.group(1) if camera_match else "selfie")
             wear_match = re.search(r"本次服装搭配(?:已锁定为)?[:：]\s*([^。]+)", str(action))
             selected = ""
@@ -228,7 +241,10 @@ def build_selfie_builtin_prompt(
                 "bed_supine_crop": "Rest comfortably on a bed with the outfit falling naturally; keep the close lower-body composition calm and everyday.",
             }
             lines.append(pose_descriptions.get(pose_id, f"Keep the selected composition tag: {pose_id}."))
-        return _join(*lines, f"User request: {translated_user}" if translated_user else "")
+        user_line = ""
+        if translated_user and translated_user not in rendered_action:
+            user_line = f"User request: {translated_user}"
+        return _join(*lines, user_line)
 
     user = translated_user or extract_user_prompt(action)
     camera_match = re.search(r"【cam:(selfie|third)】", str(action))
@@ -251,7 +267,7 @@ def build_selfie_builtin_prompt(
             else "这是第三人称摄影照片。"
         )
     elif is_cos:
-        photo_type_line = "这是竖屏 COS 换装成片。"
+        photo_type_line = "这是 COS 换装成片，构图以动作中的单一相机和构图约束为准。"
     else:
         photo_type_line = "这是自拍/日常照片。"
     identity_line = (
@@ -290,7 +306,7 @@ def build_selfie_builtin_prompt(
         )
     elif is_cos:
         photo_style_line = (
-            "真人摄影质感：像竖屏近景随手拍到的 COS 成片；使用窗光或房间环境光，"
+            "真人摄影质感：像自然拍到的 COS 成片；使用窗光或房间环境光，"
             "保留自然曝光变化、真实布料厚度与细小褶皱、轻微皮肤纹理和接触阴影；避免棚拍精修、塑料皮肤、插画感、3D渲染感和过度虚化。"
             if str(appearance_type) == "real" else ""
         )

@@ -203,6 +203,7 @@ def extract_user_action_text(action: str) -> str:
         "【他拍 / 看看你模式】",
         "【自拍 / 看看COS模式】",
         "【他拍 / 看看COS模式】",
+        "【第一视角 / 看看COS模式】",
         "【合影 / 同框模式】",
         "【服装局部展示",
         "【腿部自拍模式】",
@@ -1074,7 +1075,7 @@ class PersonaManager:
             act = ensure_leg_focus_action(act, has_reference_image)
             intent = self.analyze_selfie_intent(act)
         cos_contract = bool(
-            intent.is_cos_look and re.search(r"【cam:(?:selfie|third)】", act, re.I)
+            intent.is_cos_look and re.search(r"【cam:(?:selfie|first|third)】", act, re.I)
         )
         feet_cropped = is_leg_calf_crop_action(act)
         daily = self.get_daily_selfie_profile()
@@ -1166,7 +1167,9 @@ class PersonaManager:
             mode_lines.append(camera_labels.get(camera_kind, "【COS换装自拍模式】"))
             # Built COS actions already contain the complete camera and outfit
             # contract. Raw COS actions still get one compact camera fallback.
-            if not cos_contract:
+            if cos_contract:
+                mode_lines.append(act)
+            else:
                 if camera_is_third:
                     mode_lines.append(
                         "别人视角的单人成品照：摄影师在画面外，机位、景别、姿势和表情按用户要求或套装描述执行；"
@@ -1391,6 +1394,8 @@ class PersonaManager:
         if intent.is_legs_only:
             extra_action = extract_user_extra_text(act)
             action_line = f"用户要求：{extra_action}" if extra_action else "用户要求：按服装局部展示模式生成。"
+        elif intent.is_cos_look and cos_contract:
+            action_line = "用户要求：按以上已锁定的 COS 套装、相机、构图、姿势和场景规则生成。"
         else:
             action_line = f"用户要求：{act}" if act else "用户要求：看着镜头自然自拍，展示你现在的样子。"
         if intent.is_legs_only:

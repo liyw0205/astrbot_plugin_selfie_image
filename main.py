@@ -1241,6 +1241,13 @@ class SelfieImagePlugin(
             scene_light_provider=scene_provider,
         )
 
+    def _build_selfie_request_action(self, extra_request: str = "", has_refs: bool = False) -> str:
+        """Build one action contract for /自拍, including explicit COS requests."""
+        text = str(extra_request or "").strip()
+        if looks_like_cos_prompt(text):
+            return self._build_cos_look_action(text, has_refs, match_query=text)
+        return self._build_selfie_look_action(text, has_refs)
+
     @staticmethod
     def _looks_like_crop_waist_request(text: str) -> bool:
         return looks_like_crop_waist_request(text)
@@ -2031,10 +2038,23 @@ class SelfieImagePlugin(
         from .prompts.prompt_templates import (
             append_daily_context_to_english_prompt,
             build_selfie_builtin_prompt,
+            extract_generated_action_contract,
             extract_user_prompt,
         )
 
         user_text = extract_user_prompt(action)
+        action_source = extract_generated_action_contract(action) if looks_like_cos_prompt(action) else action
+        translated_action = action_source
+        action_translation_meta: Dict[str, Any] = {}
+        if looks_like_cos_prompt(action):
+            translated_action, action_translation_meta = await self._translate_prompt_to_english(
+                action_source,
+                media="image",
+                event=event,
+            )
+            if not action_translation_meta.get("applied"):
+                translated_action = action_source
+            meta["action_contract"] = action_translation_meta
         if not user_text:
             english = build_selfie_builtin_prompt(
                 action,
@@ -2042,6 +2062,7 @@ class SelfieImagePlugin(
                 has_reference_image=has_identity_reference,
                 extra_reference_count=len(extra_refs),
                 appearance_type=self.persona.get_appearance_type(),
+                action_content=translated_action,
             )
             english = append_daily_context_to_english_prompt(english, prompt)
             meta.update({"enabled": True, "applied": True, "scope": "builtin_only"})
@@ -2062,6 +2083,7 @@ class SelfieImagePlugin(
             extra_reference_count=len(extra_refs),
             appearance_type=self.persona.get_appearance_type(),
             user_text=translated,
+            action_content=translated_action,
         )
         english = append_daily_context_to_english_prompt(english, prompt)
         return english, refs, meta
@@ -2830,6 +2852,11 @@ class SelfieImagePlugin(
         task_id: str = "",
     ) -> Dict[str, Any]:
         started = time.monotonic()
+        reference_selection: Dict[str, Any] = {}
+        consume_selection = getattr(self, "_consume_reference_selection", None)
+        if callable(consume_selection):
+            reference_selection = consume_selection(event)
+        reference_stats = self._video_reference_stats(refs, reference_selection)
         try:
             batch_count = max(1, int(requested_count or 1))
         except (TypeError, ValueError):
@@ -2873,7 +2900,10 @@ class SelfieImagePlugin(
                 used_model=used_model,
                 attempts=attempts,
                 request_prompt=request_prompt or str(prompt or "").strip(),
-                request_data=request_data,
+                request_data={
+                    **reference_stats,
+                    **(dict(request_data) if isinstance(request_data, Mapping) else {}),
+                },
                 response_data=response_data,
                 request_image_paths=request_image_paths,
                 elapsed_seconds=time.monotonic() - started,
@@ -2972,8 +3002,7 @@ class SelfieImagePlugin(
             "duration": req.duration,
             "timeout_seconds": int(getattr(self.config, "video_global_timeout", 300) or 300),
             "size": req.size,
-            "reference_images": len(refs),
-            "raw_reference_image_count": len(refs),
+            **reference_stats,
             "targets": [redact_sensitive_text(target.label) for target in targets],
             "prompt_en": prompt_en_meta,
             "request_prompt_en": req.prompt if prompt_en_meta.get("applied") else "",
@@ -3127,8 +3156,10 @@ class SelfieImagePlugin(
         request_info = {
             "duration": int(duration or 5),
             "size": "",
-            "reference_images": len(refs),
-            "raw_reference_image_count": len(refs),
+            "reference_images": min(1, len(refs or [])),
+            "raw_reference_image_count": len(refs or []),
+            "deduplicated_reference_image_count": len(refs or []),
+            "duplicate_reference_image_count": 0,
             "requested_count": safe_requested_count,
         }
         if isinstance(request_data, dict):
@@ -3529,6 +3560,31 @@ class SelfieImagePlugin(
         if not self.persona.has_reference_image():
             return None
         return self._video_persona_reference()
+
+    @staticmethod
+    def _video_reference_stats(
+        refs: List[ImageReference],
+        reference_selection: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, int]:
+        """Describe collected references without confusing them with I2V input."""
+        raw_count = len(refs or [])
+        deduplicated_count = raw_count
+        if isinstance(reference_selection, Mapping):
+            try:
+                raw_count = max(0, int(reference_selection.get("raw_selected_count")))
+            except (TypeError, ValueError):
+                pass
+            try:
+                deduplicated_count = max(0, int(reference_selection.get("selected_count")))
+            except (TypeError, ValueError):
+                pass
+        deduplicated_count = min(deduplicated_count, raw_count) if raw_count else 0
+        return {
+            "reference_images": min(1, len(refs or [])),
+            "raw_reference_image_count": raw_count,
+            "deduplicated_reference_image_count": deduplicated_count,
+            "duplicate_reference_image_count": max(0, raw_count - deduplicated_count),
+        }
 
     def _expand_video_prompt_with_preset(
         self, raw_prompt: str, duration: Optional[int] = None
@@ -4685,7 +4741,9 @@ class SelfieImagePlugin(
                     m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
                     if m_pose:
                         last_pose = str(m_pose.group(1) or last_pose)
-                elif source == "command-look-cos":
+                elif source == "command-look-cos" or (
+                    source == "command-selfie" and looks_like_cos_prompt(action)
+                ):
                     special_extra = (
                         rebuild_special_preset_variants[index]
                         if rebuild_special_preset_variants and index < len(rebuild_special_preset_variants)
@@ -6352,16 +6410,13 @@ class SelfieImagePlugin(
         # Resolve presets on raw user words first (e.g. /自拍 捧脸), then wrap action.
         expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         has_refs = bool(extract_image_sources_from_event(event))
-        if expanded_extra.strip():
-            base_action = self._build_selfie_look_action(expanded_extra, has_refs)
-        else:
-            base_action = self._build_selfie_look_action("", has_refs)
+        base_action = self._build_selfie_request_action(expanded_extra, has_refs)
         async for item in self._handle_selfie_command(
             event=event,
             command_name=("自拍", "看看"),
             fallback=base_action,
-            default_action=self._build_selfie_look_action("", False),
-            default_action_with_refs=self._build_selfie_look_action("", True),
+            default_action=self._build_selfie_request_action("", False),
+            default_action_with_refs=self._build_selfie_request_action("", True),
             progress_label="自拍",
             source="command-selfie",
             fail_label=self._natural_fail_fallback("selfie"),

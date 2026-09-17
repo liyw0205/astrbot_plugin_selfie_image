@@ -64,10 +64,33 @@ class CollectedReferences:
                 count = 0
             roles[str(key)] = max(0, count)
         selected_roles = {key: value for key, value in roles.items() if value}
+        raw_refs = [
+            ref
+            for ref in (
+                *self.message,
+                *self.quote,
+                *self.forward,
+                *self.at_avatar,
+                *self.context,
+                *self.extra,
+                *(self.persona if include_persona else []),
+            )
+            if ref and getattr(ref, "data", None)
+        ]
+        if raw_refs:
+            raw_selected_count = len(raw_refs)
+            selected_count = len(dedupe_image_references(raw_refs))
+        else:
+            # Keep summaries produced by older callers meaningful when only
+            # role counters were available and no image objects were retained.
+            raw_selected_count = sum(selected_roles.values())
+            selected_count = raw_selected_count
         return {
             "roles": selected_roles,
             "source_count": max(0, int(self.source_count or 0)),
-            "selected_count": sum(selected_roles.values()),
+            "raw_selected_count": raw_selected_count,
+            "selected_count": selected_count,
+            "duplicate_count": max(0, raw_selected_count - selected_count),
             "failed_count": max(0, int(self.failed_count or 0)),
             "used_persona": bool(include_persona and roles.get("persona")),
             "used_context_fallback": bool(roles.get("context")),

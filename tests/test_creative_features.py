@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from astrbot_plugin_selfie_image.cos.cos_pool import CosPoolStore
+from astrbot_plugin_selfie_image.core.providers import ImageReference
 from astrbot_plugin_selfie_image.features.creative_features import (
     CreativeFeaturesMixin,
     apply_retry_strategy,
@@ -22,6 +23,7 @@ from astrbot_plugin_selfie_image.prompts.command_parser import (
     parse_prompt_options,
 )
 from astrbot_plugin_selfie_image.prompts.preset import VideoPresetManager
+from astrbot_plugin_selfie_image.features.reference_collector import CollectedReferences
 from astrbot_plugin_selfie_image.studio.studio import default_video_preset_seed
 
 
@@ -148,12 +150,12 @@ def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None
     assert "双手交叠放于身前，配合左右顶胯，收尾定格" in houyi["prompt"]
 
     hip_presets = {
-        "正太扭腰": "左右小幅度扭腰",
-        "左右顶胯": "同时左右顶胯",
-        "八字胯": "胯部画‘8’字",
-        "点胯坐胯": "胯部先点后坐",
-        "坐胯": "胯部向下坐",
-        "绕胯": "胯部顺时针绕圈",
+        "正太扭腰": "腰部向右再向左各扭一次",
+        "左右顶胯": "右脚向侧点地",
+        "八字胯": "髋部画‘8’字",
+        "点胯坐胯": "先向右点胯两次，再向下坐胯一次",
+        "坐胯": "膝盖弯曲下坐",
+        "绕胯": "顺时针绕髋一整圈",
     }
     for name, marker in hip_presets.items():
         assert seed[name]["duration"] == 10
@@ -220,6 +222,38 @@ def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None
         assert manager.resolve("动作转场2")["duration"] == 6
 
 
+def test_builtin_hip_video_presets_have_distinct_action_plans_and_reference_contract() -> None:
+    seed = default_video_preset_seed()
+    names = ["正太扭腰", "左右顶胯", "八字胯", "点胯坐胯", "坐胯", "绕胯"]
+    action_sections = []
+    for name in names:
+        prompt = seed[name]["prompt"]
+        assert "严格继承输入生图/首帧中的人物身份、脸部、发型、体型、服饰和场景，不换装" in prompt
+        start = prompt.index("动作必须按以下顺序完整执行")
+        end = prompt.index("所有动作必须卡在DJ电子鼓点", start)
+        action_sections.append(prompt[start:end])
+
+    assert len(set(action_sections)) == len(names)
+    assert "胸前做连续左右摆臂" in seed["正太扭腰"]["prompt"]
+    assert "右脚向侧点地" in seed["左右顶胯"]["prompt"]
+    assert "髋部画‘8’字" in seed["八字胯"]["prompt"]
+    assert "先向右点胯两次，再向下坐胯一次" in seed["点胯坐胯"]["prompt"]
+    assert "膝盖弯曲下坐" in seed["坐胯"]["prompt"]
+    assert "顺时针绕髋一整圈" in seed["绕胯"]["prompt"]
+
+
+def test_reference_selection_reports_cross_source_duplicates_after_deduplication() -> None:
+    repeated = ImageReference(data=b"same-image", mime_type="image/png")
+    unique = ImageReference(data=b"unique-image", mime_type="image/png")
+    collected = CollectedReferences(message=[repeated], quote=[repeated], forward=[unique])
+
+    assert len(collected.for_draw()) == 2
+    summary = collected.selection_summary()
+    assert summary["raw_selected_count"] == 3
+    assert summary["selected_count"] == 2
+    assert summary["duplicate_count"] == 1
+
+
 def test_video_preset_manager_migrates_removed_builtins() -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "video_presets.json"
@@ -243,6 +277,26 @@ def test_video_preset_manager_migrates_removed_builtins() -> None:
         saved = json.loads(path.read_text(encoding="utf-8"))
         assert "Whiplash完整舞蹈" not in saved
         assert "自定义视频" in saved
+
+
+def test_video_preset_manager_upgrades_only_legacy_hip_builtins() -> None:
+    seed = default_video_preset_seed()
+    legacy = "生成10秒9:16竖屏高清真人舞蹈视频，带原生同步音轨；人物从第0秒开始跟拍舞动，始终居中，镜头随律动轻微晃动但保持稳定，不突然推拉、不切镜；长发随肢体惯性自然飘动，始终不遮挡脸部。整体是活泼、卡点精准的八字胯风格，动作俏皮有力。动作必须按以下顺序完整执行，不循环、不跳过：1，双手轻搭腰侧，身体随节奏做八字胯动作，胯部画‘8’字；2，双手向上抬起至胸前，手腕轻转，同时做八字胯动作；3，双手向两侧打开，手腕轻转，配合八字胯动作；4，双手交叠放于身前，配合八字胯动作，身体轻微前后晃动；5，双手向上抬起至头顶，手腕轻转，同时做八字胯动作；6，双手向两侧打开，手腕轻转，配合八字胯动作；7，双手交叠放于身前，配合八字胯动作，身体轻微前后晃动；8，双手向上抬起至胸前，手腕轻转，同时做八字胯动作；9，双手自然垂放于身体两侧，配合八字胯动作；10，双手轻搭腰侧，身体随节奏做八字胯动作，收尾定格。所有动作必须卡在DJ电子鼓点的重拍上，卡点精准，节奏明快。音轨必须从第0秒开始并与动作同步：BGM使用DJ电子鼓点版，加入短促人声采样片段但不得出现对白；禁止古风乐器音效，不要生成琵琶、古筝或其他古风乐器音效。必须输出可听见的BGM，禁止静音、禁止口型说话。自然光影、真实肤质、动态流畅；避免动作延迟、机械循环、手指粘连、手腕反折、肢体穿模、额外手臂、手指畸形、头发遮脸、服装漂移、背景闪烁和镜头剧烈抖动。"
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "video_presets.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "八字胯": {"prompt": legacy, "duration": 10},
+                    "自定义视频": {"prompt": legacy.replace("八字胯", "我的自定义动作")},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        manager = VideoPresetManager(directory)
+        assert manager.presets["八字胯"].prompt == seed["八字胯"]["prompt"]
+        assert manager.presets["自定义视频"].prompt != seed["八字胯"]["prompt"]
 
 
 def test_command_template_options_can_be_mixed_with_prompt() -> None:

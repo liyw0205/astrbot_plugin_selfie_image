@@ -275,12 +275,20 @@ def _video_duration(video: Path) -> float:
     return duration
 
 
-def _extract_frames(video: Path, output: Path) -> tuple[float, list[dict[str, Any]]]:
+def _extract_frames(
+    video: Path,
+    output: Path,
+    *,
+    frame_interval: float = 1.0,
+    max_duration: float = 15.0,
+) -> tuple[float, list[dict[str, Any]]]:
     duration = _video_duration(video)
     output.mkdir(parents=True, exist_ok=True)
     frames: list[dict[str, Any]] = []
-    for index, fraction in enumerate((0.15, 0.50, 0.85), start=1):
-        timestamp = max(0.0, min(duration, duration * fraction))
+    interval = max(0.1, float(frame_interval))
+    limit = min(duration, max(0.1, float(max_duration)))
+    timestamps = [min(index * interval, max(0.0, duration - 0.001)) for index in range(int((limit - 0.001) / interval) + 1)]
+    for index, timestamp in enumerate(timestamps, start=1):
         frame = output / f"frame_{index:02d}_{timestamp:.2f}s.jpg"
         _run_checked([
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -382,7 +390,7 @@ def _format_manual_prompt(prompt: str, *, media_type: str, prompt_format: str) -
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="解析媒体链接，下载视频抽取 3 帧或直接使用图片反推提示词")
+    parser = argparse.ArgumentParser(description="解析媒体链接，下载视频按时间间隔抽帧或直接使用图片反推提示词")
     parser.add_argument("text", help="媒体分享链接、直链，或包含链接的文本")
     parser.add_argument("--output", "--out", default=str(DEFAULT_OUTPUT), help="输出目录")
     parser.add_argument("--xiuxian-root", default=os.getenv("XIUXIAN_ROOT", str(DEFAULT_XIUXIAN_ROOT)))
@@ -390,6 +398,8 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=90, help="解析/下载/视觉请求超时秒数")
     parser.add_argument("--max-mb", type=int, default=512, help="允许下载的最大媒体大小")
     parser.add_argument("--max-images", type=int, default=6, help="最多下载并发送给视觉模型的图片数")
+    parser.add_argument("--frame-interval", type=float, default=1.0, help="视频抽帧间隔秒数，默认每秒一帧")
+    parser.add_argument("--max-duration", type=float, default=15.0, help="最多抽取视频前多少秒，默认 15 秒")
     parser.add_argument("--use-ytdlp", action="store_true", help="无直链或下载失败时使用 yt-dlp")
     parser.add_argument("--vision-base-url", default=os.getenv("VISION_API_URL", ""), help="OpenAI 兼容 API 根地址")
     parser.add_argument("--vision-api-key", default=os.getenv("VISION_API_KEY", ""), help="视觉模型 API Key")
@@ -461,7 +471,12 @@ def main() -> int:
     media_type = "video"
     if video.is_file():
         try:
-            duration, frames = _extract_frames(video, output)
+            duration, frames = _extract_frames(
+                video,
+                output,
+                frame_interval=args.frame_interval,
+                max_duration=args.max_duration,
+            )
             result["media_type"] = "video"
             result["duration_seconds"] = round(duration, 3)
             result["frames"] = frames

@@ -1003,7 +1003,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
         ("cos", r"【cos:([a-z0-9_]+)】"),
         ("cos_pose", r"【cos_pose:([a-z0-9_]+)】"),
         ("cos_scene", r"【cos_scene:([a-z0-9_]+)】"),
-        ("cos_view", r"【cos_view:([a-z0-9_]+)】"),
+        ("cos_view", r"【(?:cos_view|cam):([a-z0-9_]+)】"),
     ):
         value = out.get(key)
         if not isinstance(value, str) or not value.strip():
