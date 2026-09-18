@@ -11,7 +11,9 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     build_cos_third_person_prompt,
     cos_prompt_has_framing,
     match_cos_look_sets,
+    normalize_cos_prompt_negatives,
     pick_cos_framing,
+    pick_cos_variation,
 )
 from astrbot_plugin_selfie_image.core.providers import ImageReference
 from astrbot_plugin_selfie_image.features.reference_collector import (
@@ -65,6 +67,53 @@ def test_cos_catalog_audit_allows_costume_features_and_rejects_identity_locks():
         "skin_tone",
         "character_face",
     }
+
+
+def test_cos_negative_normalization_deduplicates_shared_semantics():
+    prompt = (
+        "严格换装为测试COS：真实布料。"
+        "不要额外人物、文字、字幕和水印。"
+        "禁止动漫插画、游戏立绘、3D渲染、塑料皮肤、超现实发光和水印。"
+        "不要第二个人、可读文字、视频字幕或品牌水印。"
+    )
+    normalized = normalize_cos_prompt_negatives(prompt)
+
+    assert normalized.count("额外人物") == 1
+    assert normalized.count("文字") == 1
+    assert normalized.count("字幕") == 1
+    assert normalized.count("水印") == 1
+    assert normalized.count("动漫插画") == 1
+    assert normalized.count("游戏立绘") == 1
+    assert normalized.count("3D渲染") == 1
+    assert normalized.count("塑料皮肤") == 1
+    assert normalized.count("超现实发光") == 1
+
+
+def test_corrected_cos_identity_details_are_present_in_final_catalog():
+    prompts = {item["id"]: item["prompt"] for item in COS_LOOK_SETS}
+    assert "紫色眼睛" in prompts["azur_lane_enterprise"]
+    assert "银白色长发" in prompts["azur_lane_belfast"]
+    assert "紫色眼睛" in prompts["azur_lane_belfast"]
+    assert "飞鸟马时" in prompts["blue_archive_toki"]
+    assert "金色长发" in prompts["blue_archive_toki"]
+    assert "黑色长发" not in prompts["blue_archive_toki"]
+    assert "蔚蓝档案" in prompts["shiroko_black_white_tracksuit"]
+    assert "蔚蓝档案" in prompts["ibuki_red_white_sportswear"]
+    assert "白色长发" in prompts["blue_archive_hina"]
+    assert "紫色眼睛" in prompts["blue_archive_hina"]
+    assert "粉色长发" in prompts["blue_archive_aru"]
+    assert "红色短发" in prompts["blue_archive_junko"]
+    assert "黑色短发" in prompts["blue_archive_tsubaki"]
+    assert "金色齐肩双马尾" in prompts["blue_archive_chinatsu"]
+    assert "深棕色短发" in prompts["blue_archive_izuna"]
+    assert "黑色及膝长发" in prompts["baizhi_research_white_blue"]
+    assert "白色长发" in prompts["camellya_red_rose"]
+    assert "银白色长卷发" in prompts["carlotta_frost_portrait"]
+    assert "深棕色长发" in prompts["wuthering_zhezhi_ink"]
+    assert "深红色长发" in prompts["mushoku_tensei_aisha"]
+    assert "绿色眼睛" in prompts["mushoku_tensei_aisha"]
+    assert "洛可可" in prompts["wuthering_roccia_stage"]
+    assert "釉瑚" in prompts["wuthering_youhu_antique"]
 
 
 def test_cos_reference_selection_keeps_persona_first_without_identity_intent():
@@ -221,12 +270,43 @@ def test_raw_web_cos_prompt_can_be_wrapped_without_selfie_semantics():
 
 
 def test_unspecified_cos_framing_picks_one_concrete_view():
-    selected = pick_cos_framing(extra_request="COS 换装：自然站立")
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
+        selected = pick_cos_framing(extra_request="COS 换装：自然站立")
     assert selected["view_id"]
     assert selected["prompt"] in {item["prompt"] for item in COS_FRAMING_CLASSES.values()}
     assert not cos_prompt_has_framing("COS 换装：自然站立")
     assert cos_prompt_has_framing("COS 换装：竖屏三分之四侧身全身构图")
     assert pick_cos_framing(extra_request="COS 换装：竖屏三分之四侧身全身构图")["prompt"] == ""
+
+
+def test_random_cos_pose_is_optional_and_scene_is_never_injected():
+    from unittest.mock import patch
+
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
+        selected = pick_cos_variation("blue_archive_haruka")
+    assert selected["pose_id"]
+    assert selected["scene_id"] == ""
+    assert "随机姿势" in selected["prompt"]
+
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.75):
+        selected = pick_cos_variation("blue_archive_haruka")
+    assert selected == {"pose_id": "", "scene_id": "", "prompt": ""}
+
+
+def test_random_cos_framing_is_optional_when_prompt_has_no_view():
+    from unittest.mock import patch
+
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
+        selected = pick_cos_framing(extra_request="COS 换装：自然站立")
+    assert selected["view_id"]
+
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.75):
+        selected = pick_cos_framing(extra_request="COS 换装：自然站立")
+    assert selected["view_id"] == ""
+    assert selected["prompt"] == ""
 
 
 def test_cos_framing_alternatives_are_resolved_before_prompt_generation():
@@ -425,11 +505,12 @@ def test_generated_cos_action_exposes_one_camera_tag_and_one_concrete_framing():
         "title": "单一视角测试",
         "prompt": "严格换装为测试 COS：人物自然站立。",
     }
-    action = build_cos_look_action(
-        "",
-        picker=lambda **_: item,
-        camera="first",
-    )
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
+        action = build_cos_look_action(
+            "",
+            picker=lambda **_: item,
+            camera="first",
+        )
 
     assert re.findall(r"【(?:cam|cos_view):[^】]+】", action) == ["【cam:first】"]
     assert action.count("本次未指定视角，随机采用") == 1

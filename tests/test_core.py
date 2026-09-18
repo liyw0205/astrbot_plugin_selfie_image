@@ -457,7 +457,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.22")
+        self.assertEqual(PLUGIN_VERSION, "1.6.23")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -7263,13 +7263,12 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("姿势、头部动作、视线和表情按本次 COS 套装或用户要求执行", cos_ref_zh)
         self.assertIn("优先保留脸型轮廓和五官比例", cos_ref_zh)
         self.assertNotIn("保持相关人物身份、服装、姿势、场景与构图一致", cos_ref_zh)
-        web_cos = plugin_main.build_cos_third_person_prompt("COS 换装：自然站立，展示指定服装")
+        with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
+            web_cos = plugin_main.build_cos_third_person_prompt("COS 换装：自然站立，展示指定服装")
         self.assertIn("本次未指定视角，随机采用", web_cos)
+        from astrbot_plugin_selfie_image.cos.cos_looks import COS_FRAMING_CLASSES
         self.assertEqual(
-            sum(
-                marker in web_cos
-                for marker in ("正面半身机位", "三分之四侧前方机位", "正面三分之二身机位", "环境人像机位")
-            ),
+            sum(item["prompt"] in web_cos for item in COS_FRAMING_CLASSES.values()),
             1,
         )
         self.assertIn("明确要求的歪头、仰头、低头、闭眼或夸张表情应保留", web_cos)
@@ -7350,7 +7349,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             third_prompt = manager.build_selfie_prompt(third_action, "小助", "温柔", True, 0)
             self.assertIn("COS换装他拍模式", third_prompt)
             self.assertIn("别人视角的单人成品照", third_prompt)
-            self.assertIn("不要第二个人", third_prompt)
+            self.assertIn("画面只保留主角", third_prompt)
             self.assertIn("不要拍到拍摄设备或拍摄过程", third_prompt)
             self.assertNotIn("手机", third_prompt)
             self.assertNotIn("站在穿衣镜前", third_prompt)
@@ -8721,14 +8720,11 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("分叉燕尾式深色后摆", rem["prompt"])
         self.assertIn("不要拉姆粉色女仆服", rem["prompt"])
         prompts = {x["id"]: x["prompt"] for x in plugin_main.COS_LOOK_SETS}
-        from astrbot_plugin_selfie_image.cos.cos_looks import _BLUE_ARCHIVE_COSTUMES
-
         blue_archive_ids = {
             item["id"]
             for item in plugin_main.COS_LOOK_SETS
             if item.get("cos_type") == "蔚蓝档案"
         }
-        self.assertEqual(set(_BLUE_ARCHIVE_COSTUMES), blue_archive_ids)
         for blue_archive_id in blue_archive_ids:
             self.assertNotIn("官方游戏立绘服装还原", prompts[blue_archive_id])
             self.assertNotIn("按官方服装比例制作", prompts[blue_archive_id])
@@ -9150,7 +9146,7 @@ class LegFocusTests(unittest.TestCase):
             "roxy_off_shoulder_sleep_dress": ("《无职转生》洛琪希", "奶油白色露肩短睡裙"),
             "cartethyia_white_black_blue_short": ("《鸣潮》卡提希娅", "画面中只有一名人物"),
             "shuilaner_horned_brocade_qipao": ("水兰儿AS109风格", "平视机位和正常拍摄距离"),
-            "shiroko_black_white_tracksuit": ("《碧蓝档案》砂狼白子", "黑色拉链运动外套"),
+            "shiroko_black_white_tracksuit": ("《蔚蓝档案》砂狼白子", "黑色拉链运动外套"),
             "phoebe_white_gold_sanctuary": ("《鸣潮》菲比", "白色与浅金色多层短裙"),
         }
         for cos_id, (source, composition) in new_cos_looks.items():
@@ -9176,7 +9172,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("亮蓝色细滚边", white_gold_red)
         self.assertIn("正红色长丝带", white_gold_red)
         ibuki = prompts["ibuki_red_white_sportswear"]
-        self.assertIn("《碧蓝档案》丹花伊吹", ibuki)
+        self.assertIn("《蔚蓝档案》丹花伊吹", ibuki)
         self.assertIn("红色高腰运动短裤", ibuki)
         self.assertIn("白色短袖紧身运动T恤", ibuki)
         lace_shorts = prompts["white_lace_waist_shorts"]
@@ -9775,7 +9771,7 @@ class LegFocusTests(unittest.TestCase):
         adapted = plugin_main.adapt_cos_outfit_for_camera("室内柔光对镜全身。不是婚纱。", "third")
         self.assertIn("室内柔光半身", adapted)
         self.assertNotIn("对镜", adapted)
-        self.assertIn("不要第二个人", forced_third)
+        self.assertIn("画面只保留主角", forced_third)
         self.assertIn("不要拍到拍摄设备或拍摄过程", forced_third)
         self.assertNotIn("手机", forced_third)
         forced_first = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "第一视角", False)
@@ -10801,14 +10797,15 @@ class StudioStoreTests(unittest.TestCase):
         )
 
         random_look = next(item for item in COS_LOOK_SETS if item["id"] == "hutao_dragon_path_zhichun")
-        action = build_cos_look_action(
-            "",
-            camera="third",
-            picker=lambda **_kwargs: random_look,
-        )
-        self.assertIn("本次随机兼容组合优先于套装正文中的非服装陈列描述", action)
+        with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
+            action = build_cos_look_action(
+                "",
+                camera="third",
+                picker=lambda **_kwargs: random_look,
+            )
+        self.assertIn("本次随机姿势优先于套装正文中的非服装陈列描述", action)
         self.assertRegex(action, r"【cos_pose:(?:standing_detail|half_turn|seated_composed|walking_turn)】")
-        self.assertRegex(action, r"【cos_scene:(?:studio|elegant_room|courtyard)】")
+        self.assertNotIn("【cos_scene:", action)
         self.assertNotIn("【cos_view:", action)
         self.assertEqual(action.count("【cam:third】"), 1)
 
@@ -10837,17 +10834,17 @@ class StudioStoreTests(unittest.TestCase):
         flexible = cos_look_compatibility("hanfu_peach")
         self.assertTrue(flexible["variation_enabled"])
         self.assertIn("standing_detail", flexible["pose_ids"])
-        self.assertIn("courtyard", flexible["scene_ids"])
+        self.assertEqual(flexible["scene_ids"], [])
         self.assertEqual(flexible["recommended_pose_ids"], flexible["pose_ids"])
-        self.assertEqual(flexible["recommended_scene_ids"], flexible["scene_ids"])
+        self.assertEqual(flexible["recommended_scene_ids"], [])
         self.assertEqual(flexible["recommended_view_ids"], ["selfie", "third"])
         self.assertEqual(flexible["incompatible_pose_ids"], [])
         self.assertEqual(flexible["incompatible_scene_ids"], [])
         self.assertEqual(flexible["fixed_reason"], "")
 
         swimsuit = cos_look_compatibility("hutao_high_school_swimsuit")
-        self.assertEqual(swimsuit["scene_ids"], ["studio", "elegant_room"])
-        self.assertEqual(swimsuit["incompatible_scene_ids"], ["courtyard"])
+        self.assertEqual(swimsuit["scene_ids"], [])
+        self.assertEqual(swimsuit["incompatible_scene_ids"], [])
 
         # Outfits with hand-authored staging remain fixed until reviewed.
         fixed = cos_look_compatibility("roxy_cream")
@@ -10860,10 +10857,7 @@ class StudioStoreTests(unittest.TestCase):
             fixed["incompatible_pose_ids"],
             ["standing_detail", "half_turn", "seated_composed", "walking_turn"],
         )
-        self.assertEqual(
-            fixed["incompatible_scene_ids"],
-            ["studio", "elegant_room", "courtyard"],
-        )
+        self.assertEqual(fixed["incompatible_scene_ids"], [])
         self.assertTrue(fixed["fixed_reason"])
 
         # The non-永劫 review is intentionally conservative: outfit-only

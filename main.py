@@ -1300,7 +1300,6 @@ class SelfieImagePlugin(
         avoid_id: str = "",
         avoid_camera: str = "",
         avoid_pose: str = "",
-        avoid_scene: str = "",
         camera: str = "",
         match_query: str = "",
         force_id: str = "",
@@ -1319,7 +1318,6 @@ class SelfieImagePlugin(
                 avoid_id=avoid_id,
                 avoid_camera=avoid_camera,
                 avoid_pose=avoid_pose,
-                avoid_scene=avoid_scene,
                 camera=camera,
                 match_query="",
                 force_id="",
@@ -1331,7 +1329,6 @@ class SelfieImagePlugin(
             avoid_id=avoid_id,
             avoid_camera=avoid_camera,
             avoid_pose=avoid_pose,
-            avoid_scene=avoid_scene,
             camera=camera,
             match_query=match_query,
             force_id=chosen_force,
@@ -4770,7 +4767,7 @@ class SelfieImagePlugin(
         last_cos = ""
         last_cam = ""
         last_cos_pose = ""
-        last_cos_scene = ""
+
         extra_keep = ""
         force_legwear = ""
         force_leg_pose = ""
@@ -4809,9 +4806,6 @@ class SelfieImagePlugin(
             m_cos_pose = re.search(r"【cos_pose:([a-z_]+)】", str(action or ""))
             if m_cos_pose:
                 last_cos_pose = str(m_cos_pose.group(1) or "")
-            m_cos_scene = re.search(r"【cos_scene:([a-z_]+)】", str(action or ""))
-            if m_cos_scene:
-                last_cos_scene = str(m_cos_scene.group(1) or "")
             keep_cos_outfit = source == "command-look-cos" and keep_cos_outfit_requested(extra_keep)
         round_actions: List[str] = []
         for index in range(total):
@@ -4841,7 +4835,6 @@ class SelfieImagePlugin(
                         avoid_id=last_cos,
                         avoid_camera=last_cam,
                         avoid_pose=last_cos_pose,
-                        avoid_scene=last_cos_scene,
                         match_query=rebuild_match_query or extra_keep,
                         force_id=last_cos if keep_cos_outfit else "",
                     )
@@ -4854,9 +4847,7 @@ class SelfieImagePlugin(
                     m_cos_pose = re.search(r"【cos_pose:([a-z_]+)】", round_action)
                     if m_cos_pose:
                         last_cos_pose = str(m_cos_pose.group(1) or last_cos_pose)
-                    m_cos_scene = re.search(r"【cos_scene:([a-z_]+)】", round_action)
-                    if m_cos_scene:
-                        last_cos_scene = str(m_cos_scene.group(1) or last_cos_scene)
+
                 elif source == "command-look-you" or "看看你模式" in str(action or ""):
                     round_action = self._build_third_person_look_action(
                         extra_keep,
