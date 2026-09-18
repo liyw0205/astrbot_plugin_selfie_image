@@ -6297,13 +6297,16 @@ class SelfieImagePlugin(
         # a clear "use the previous image" follow-up, but must not silently
         # borrow the bot persona image.  Persona references belong to the
         # dedicated generate_selfie path.
-        refs = await self._event_reference_images(
+        refs, source_count, failed_count = await self._event_reference_images_with_stats(
             event,
             include_at_avatar=True,
             context_hint=prompt,
             allow_context_fallback=True,
             include_persona=False,
         )
+        if not refs and source_count and failed_count:
+            yield event.plain_result("参考图读取失败或超时，请重新发送原图后再试。")
+            return
         if not prompt and refs:
             prompt = "根据参考图生成一张自然、清晰、符合原图语义的图片。"
         if not prompt:

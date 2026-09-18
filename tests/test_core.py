@@ -457,7 +457,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.20")
+        self.assertEqual(PLUGIN_VERSION, "1.6.21")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -11347,6 +11347,46 @@ class StudioStoreTests(unittest.TestCase):
             self.assertEqual(output, [])
             self.assertEqual(captured["requested_count_override"], 2, message)
             self.assertIn(expected_marker, captured.get("message_override", "") or captured.get("fallback", ""), message)
+
+    def test_draw_rejects_reference_download_failure_instead_of_falling_back_to_text(self) -> None:
+        import tempfile
+
+        factory = SessionModelAndTaskTests()
+        stub = factory._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+
+        stub.presets = ImagePresetManager(tempfile.mkdtemp())
+
+        class Event:
+            message_str = "/画 变真人"
+
+            def plain_result(self, text: str) -> str:
+                return text
+
+        started = []
+        stub._quota_error_message = lambda *args, **kwargs: ""
+        stub._rate_limit_error_message = lambda *args, **kwargs: ""
+
+        async def progress(*args, **kwargs):
+            return "progress"
+
+        stub._build_contextual_progress_text = progress
+        stub._record_bot_text_context = lambda *args, **kwargs: None
+
+        async def failed_references(*args, **kwargs):
+            return [], 1, 1
+
+        stub._event_reference_images_with_stats = failed_references
+        stub.start_command_image_task = lambda *args, **kwargs: started.append(True)
+
+        async def invoke():
+            return [item async for item in plugin_main.SelfieImagePlugin.cmd_draw(stub, Event())]
+
+        output = asyncio.run(invoke())
+
+        assert output == ["参考图读取失败或超时，请重新发送原图后再试。"]
+        assert started == []
 
     def test_clothes_followup_prefers_user_context_images(self) -> None:
         stub = SessionModelAndTaskTests()._plugin_stub()
