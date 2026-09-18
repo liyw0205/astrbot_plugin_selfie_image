@@ -6,11 +6,16 @@ from pathlib import Path
 from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_FRAMING_CLASSES,
     COS_LOOK_SETS,
+    audit_cos_look_catalog,
     build_cos_look_action,
     build_cos_third_person_prompt,
     cos_prompt_has_framing,
     match_cos_look_sets,
     pick_cos_framing,
+)
+from astrbot_plugin_selfie_image.core.providers import ImageReference
+from astrbot_plugin_selfie_image.features.reference_collector import (
+    select_cos_references,
 )
 from astrbot_plugin_selfie_image.studio.studio import build_studio_action, empty_session
 
@@ -33,6 +38,158 @@ def test_default_cos_pool_actions_randomize_camera_and_keep_contracts_clean():
             assert "自拍" not in action
         else:
             assert "【自拍 / 看看COS模式】" in action
+
+
+def test_cos_catalog_audit_allows_costume_features_and_rejects_identity_locks():
+    assert audit_cos_look_catalog(COS_LOOK_SETS) == []
+
+    safe = [
+        {
+            "id": "safe-costume",
+            "prompt": "银白色假发、蓝色瞳色、黑色眼罩和轻度角色妆容，服装细节清晰。",
+        }
+    ]
+    assert audit_cos_look_catalog(safe) == []
+
+    risky = [
+        {
+            "id": "risky-identity",
+            "prompt": "固定脸型为瓜子脸，固定五官比例和固定肤色，严格按角色原画的脸生成。",
+        }
+    ]
+    findings = audit_cos_look_catalog(risky)
+    assert {finding["id"] for finding in findings} == {"risky-identity"}
+    assert {finding["risk"] for finding in findings} == {
+        "face_shape",
+        "facial_proportions",
+        "skin_tone",
+        "character_face",
+    }
+
+
+def test_cos_reference_selection_keeps_persona_first_without_identity_intent():
+    persona = ImageReference(data=b"persona", mime_type="image/png")
+    attached = ImageReference(data=b"attached", mime_type="image/png")
+
+    selected = select_cos_references(persona, [attached], action="换成这套服装")
+
+    assert selected.identity_source == "persona"
+    assert selected.identity_ref is persona
+    assert selected.refs == [persona, attached]
+    assert selected.identity_reference_count == 1
+    assert selected.extra_reference_image_count == 1
+
+
+def test_cos_reference_selection_promotes_attached_face_when_explicitly_requested():
+    persona = ImageReference(data=b"persona", mime_type="image/png")
+    attached = ImageReference(data=b"attached", mime_type="image/png")
+
+    selected = select_cos_references(
+        persona,
+        [attached],
+        action="以附图人物脸为准，按这套服装生成",
+    )
+
+    assert selected.identity_source == "message"
+    assert selected.identity_ref is attached
+    assert selected.refs == [attached]
+    assert selected.extra_reference_image_count == 0
+
+
+def test_cos_reference_selection_uses_first_message_image_without_persona():
+    first = ImageReference(data=b"first", mime_type="image/png")
+    second = ImageReference(data=b"second", mime_type="image/png")
+
+    selected = select_cos_references(None, [first, second], action="看看COS")
+
+    assert selected.identity_source == "message"
+    assert selected.identity_ref is first
+    assert selected.refs == [first, second]
+    assert selected.identity_reference_count == 1
+    assert selected.extra_reference_image_count == 1
+
+
+def test_cos_reference_selection_dry_run_matrix_has_stable_identity_and_prompt_contract():
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.prompts.prompt_templates import (
+        COS_IDENTITY_CONTRACT_ZH,
+        build_selfie_builtin_prompt,
+    )
+
+    persona = ImageReference(data=b"persona", mime_type="image/png")
+    attached = ImageReference(data=b"attached", mime_type="image/png")
+    duplicate = ImageReference(data=b"attached", mime_type="image/jpeg")
+    action = build_cos_look_action(
+        "",
+        picker=lambda **_: {
+            "id": "dry_run_cos",
+            "title": "dry-run 测试套装",
+            "prompt": "严格换装为测试 COS：银白色假发、蓝色眼妆、黑色眼罩，人物自然站立。",
+        },
+        camera="first",
+    )
+
+    cases = [
+        ("persona", persona, [], [persona]),
+        ("persona", persona, [attached], [persona, attached]),
+        ("message", persona, [attached], [attached]),
+        ("message", None, [attached, duplicate], [attached]),
+        ("none", None, [], []),
+    ]
+    for source, persona_ref, message_refs, expected_refs in cases:
+        selected = select_cos_references(
+            persona_ref,
+            message_refs,
+            action="以附图人物脸为准" if source == "message" and persona_ref else action,
+        )
+        assert selected.identity_source == source
+        assert selected.refs == expected_refs
+        assert selected.summary()["identity_reference_source"] == source
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = PersonaManager(tmp).build_selfie_prompt(
+                action,
+                "小助",
+                "温柔",
+                bool(selected.identity_ref),
+                selected.extra_reference_image_count,
+            )
+        if source == "none":
+            assert COS_IDENTITY_CONTRACT_ZH not in prompt
+        else:
+            assert prompt.count(COS_IDENTITY_CONTRACT_ZH) == 1
+        english = build_selfie_builtin_prompt(
+            action,
+            language="en",
+            has_reference_image=bool(selected.identity_ref),
+            extra_reference_count=selected.extra_reference_image_count,
+            appearance_type="real",
+        )
+        assert english.count(action) == 1
+
+
+def test_cos_reference_selection_does_not_use_logo_or_other_fallback_when_empty():
+    selected = select_cos_references(None, [], action="看看COS")
+
+    assert selected.identity_source == "none"
+    assert selected.identity_ref is None
+    assert selected.refs == []
+    assert selected.identity_reference_count == 0
+    assert selected.raw_total_count == 0
+
+
+def test_cos_reference_selection_deduplicates_without_replacing_identity_first():
+    attached = ImageReference(data=b"attached", mime_type="image/png")
+    duplicate = ImageReference(data=b"attached", mime_type="image/jpeg")
+    extra = ImageReference(data=b"extra", mime_type="image/png")
+
+    selected = select_cos_references(None, [attached, duplicate, extra], action="看看COS")
+
+    assert selected.identity_ref is attached
+    assert selected.refs == [attached, extra]
+    assert selected.raw_total_count == 3
+    assert selected.deduplicated_total_count == 2
+    assert selected.duplicate_count == 1
 
 
 def test_cos_camera_parser_and_avoid_support_first_person():
@@ -126,6 +283,49 @@ def test_cos_english_builtin_keeps_the_complete_action_once():
     assert "银白色长发" in prompt
     assert "白色蓬袖短装" in prompt
     assert "【cam:first】" in prompt
+
+
+def test_cos_identity_contract_is_emitted_once_in_chinese_prompt():
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.prompts.prompt_templates import COS_IDENTITY_CONTRACT_ZH
+
+    item = {
+        "id": "canonical_identity_zh",
+        "title": "身份合同中文测试",
+        "prompt": "严格换装为测试 COS：银白色假发、白色短装、人物自然站立。",
+    }
+    action = build_cos_look_action("", picker=lambda **_: item, camera="first")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        prompt = PersonaManager(tmp).build_selfie_prompt(action, "小助", "温柔", True, 0)
+
+    assert prompt.count(COS_IDENTITY_CONTRACT_ZH) == 1
+    assert "保持参考图中同一人的脸型" not in action
+    assert "本次套装：身份合同中文测试。" in prompt
+
+
+def test_cos_identity_contract_is_emitted_once_in_english_prompt():
+    from astrbot_plugin_selfie_image.prompts.prompt_templates import (
+        COS_IDENTITY_CONTRACT_EN,
+        build_selfie_builtin_prompt,
+    )
+
+    item = {
+        "id": "canonical_identity_en",
+        "title": "身份合同英文测试",
+        "prompt": "严格换装为测试 COS：银白色假发、白色短装、人物自然站立。",
+    }
+    action = build_cos_look_action("", picker=lambda **_: item, camera="first")
+    prompt = build_selfie_builtin_prompt(
+        action,
+        language="en",
+        has_reference_image=True,
+        appearance_type="real",
+    )
+
+    assert prompt.count(COS_IDENTITY_CONTRACT_EN) == 1
+    assert prompt.count(action) == 1
+    assert "Preserve the reference face outline" not in action
 
 
 def test_cos_english_builtin_uses_translated_action_contract_once():

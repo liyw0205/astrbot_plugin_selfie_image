@@ -12,6 +12,21 @@ from ..cos.leg_focus import (
 )
 
 
+COS_IDENTITY_CONTRACT_ZH = (
+    "以身份参考图为本人身份来源：保留本人脸型轮廓、五官比例、眼睛与嘴唇轮廓、性别、年龄感和肤色。\n"
+    "COS 只改变服装、配饰、角色假发/发型和妆容，不把角色原画的脸当作新身份。\n"
+    "除非用户明确要求，不固定角色瞳色、脸型或五官比例。"
+)
+
+COS_IDENTITY_CONTRACT_EN = (
+    "Use the identity reference image as the same person's identity anchor: preserve the person's face outline, "
+    "facial feature proportions, eye and lip contours, gender, apparent age, and skin tone.\n"
+    "COS changes only clothing, accessories, the character wig or hairstyle, and makeup; do not replace the person "
+    "with the face of the original character.\n"
+    "Unless the user explicitly requests it, do not lock the character's eye color, face shape, or facial feature proportions."
+)
+
+
 @dataclass(frozen=True)
 class BilingualPrompt:
     builtin_zh: str
@@ -125,8 +140,7 @@ def build_selfie_builtin_prompt(
             lines.append("Use the main reference only to keep the everyday outfit and natural proportions consistent; the complete person is outside the crop.")
         elif is_cos:
             lines.extend([
-                "Use the main reference for the same person's identity, facial structure, gender, skin tone, and body proportions; follow the COS outfit or user request for pose, head movement, gaze, and expression.",
-                "Preserve the reference face outline, feature proportions, eye shape, and lip contour without reshaping it into another face; keep explicit tilted, raised, lowered, closed-eye, or exaggerated expressions when requested, and otherwise stay natural and coherent. Keep facial edges clear and skin tone natural, without a white film or haze over the features.",
+                COS_IDENTITY_CONTRACT_EN if has_reference_image else "Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.",
                 "Follow the complete COS action contract below exactly once. Preserve its selected outfit, pose, scene, camera, and single framing without adding another camera or crop choice.",
                 rendered_action,
             ])

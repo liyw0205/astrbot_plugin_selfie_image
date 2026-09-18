@@ -116,6 +116,50 @@ class CollectedReferences:
         return self.all_object_refs()
 
 
+@dataclass
+class CosReferenceSelection:
+    """Deterministic COS reference roles and the final request order."""
+
+    identity_ref: Optional[ImageReference] = None
+    extra_refs: List[ImageReference] = field(default_factory=list)
+    identity_source: str = "none"
+    raw_total_count: int = 0
+    deduplicated_total_count: int = 0
+    duplicate_count: int = 0
+    roles: Dict[str, int] = field(default_factory=dict)
+    failed_count: int = 0
+
+    @property
+    def refs(self) -> List[ImageReference]:
+        return ([self.identity_ref] if self.identity_ref else []) + list(self.extra_refs)
+
+    @property
+    def identity_reference_count(self) -> int:
+        return 1 if self.identity_ref else 0
+
+    @property
+    def extra_reference_image_count(self) -> int:
+        return len(self.extra_refs)
+
+    def summary(self) -> Dict[str, Any]:
+        """Return the non-sensitive fields persisted with a generation."""
+        return {
+            "identity_reference_source": self.identity_source,
+            "identity_reference_count": self.identity_reference_count,
+            "extra_reference_image_count": self.extra_reference_image_count,
+            "raw_reference_image_count_total": self.raw_total_count,
+            "deduplicated_reference_image_count_total": self.deduplicated_total_count,
+            "duplicate_reference_image_count_total": self.duplicate_count,
+            "raw_selected_count": self.raw_total_count,
+            "selected_count": self.deduplicated_total_count,
+            "duplicate_count": self.duplicate_count,
+            "roles": dict(self.roles),
+            "failed_count": max(0, int(self.failed_count or 0)),
+            "used_persona": self.identity_source == "persona",
+            "used_context_fallback": False,
+        }
+
+
 def content_digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -132,6 +176,86 @@ def dedupe_image_references(refs: Sequence[ImageReference]) -> List[ImageReferen
         seen.add(digest)
         result.append(ref)
     return result
+
+
+def _cos_identity_intent(action: str) -> Tuple[bool, bool]:
+    compact = re.sub(r"\s+", "", str(action or "")).lower()
+    message_intent = any(
+        phrase in compact
+        for phrase in (
+            "以附图人物脸为准",
+            "按这张图本人生成",
+            "附图作为本人参考",
+        )
+    )
+    persona_intent = any(
+        phrase in compact
+        for phrase in (
+            "保持当前形象脸",
+            "按形象设置的人脸",
+        )
+    )
+    return message_intent, persona_intent
+
+
+def select_cos_references(
+    persona_ref: Optional[ImageReference],
+    message_refs: Sequence[ImageReference],
+    *,
+    action: str = "",
+    persona_extra_refs: Optional[Sequence[ImageReference]] = None,
+    failed_count: int = 0,
+) -> CosReferenceSelection:
+    """Choose the COS identity image and preserve a stable request order.
+
+    This function only assigns roles and removes byte-identical duplicates. It
+    deliberately does not infer identity from filenames, URLs, or image data.
+    """
+    message = [ref for ref in message_refs if ref and getattr(ref, "data", None)]
+    persona_extras = [
+        ref for ref in (persona_extra_refs or []) if ref and getattr(ref, "data", None)
+    ]
+    use_message_identity, keep_persona_identity = _cos_identity_intent(action)
+    identity: Optional[ImageReference]
+    source: str
+    if persona_ref and message and use_message_identity and not keep_persona_identity:
+        identity, source = message[0], "message"
+        raw_extras = [*persona_extras, *message[1:]]
+    elif persona_ref:
+        identity, source = persona_ref, "persona"
+        raw_extras = [*persona_extras, *message]
+    elif message:
+        identity, source = message[0], "message"
+        raw_extras = message[1:]
+    else:
+        identity, source = None, "none"
+        raw_extras = persona_extras
+
+    raw_refs = ([identity] if identity else []) + raw_extras
+    ordered = dedupe_image_references(raw_refs)
+    if identity is not None:
+        # The identity object is always retained as the first item, even when
+        # an equivalent image appeared earlier in an auxiliary source.
+        ordered = [identity] + [ref for ref in ordered if content_digest(ref.data) != content_digest(identity.data)]
+    selected_identity = ordered[0] if identity is not None and ordered else None
+    extras = ordered[1:] if selected_identity is not None else ordered
+    role_counts: Dict[str, int] = {}
+    if source != "none":
+        role_counts[source] = 1
+    if persona_extras:
+        role_counts["persona_extra"] = len(persona_extras)
+    if message:
+        role_counts["message"] = len(message)
+    return CosReferenceSelection(
+        identity_ref=selected_identity,
+        extra_refs=extras,
+        identity_source=source,
+        raw_total_count=len(raw_refs),
+        deduplicated_total_count=len(ordered),
+        duplicate_count=max(0, len(raw_refs) - len(ordered)),
+        roles=role_counts,
+        failed_count=max(0, int(failed_count or 0)),
+    )
 
 
 def normalize_source_items(raw: Any) -> List[str]:

@@ -19,6 +19,7 @@ from ..cos.leg_focus import (
     is_leg_calf_crop_action,
 )
 from ..core.utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
+from ..prompts.prompt_templates import COS_IDENTITY_CONTRACT_ZH
 
 
 APPEARANCE_TYPES = ("auto", "real", "anime")
@@ -1097,9 +1098,13 @@ class PersonaManager:
         )
         if intent.is_cos_look and cos_contract:
             # A generated COS action already carries its camera, outfit, pose,
-            # head, and expression contract. Keep Persona responsible only for
-            # global style; raw COS text gets a compact identity fallback below.
-            identity_lines = []
+            # head, and expression contract. The shared identity contract is
+            # emitted here exactly once for every referenced COS identity.
+            identity_lines = [
+                COS_IDENTITY_CONTRACT_ZH
+                if has_reference_image
+                else "形象参考以角色名称、人设和本次 COS 套装为准；未说明性别默认成年女性。"
+            ]
         elif intent.is_cos_look:
             identity_lines = (
                 [

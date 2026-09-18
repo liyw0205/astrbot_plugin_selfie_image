@@ -844,6 +844,12 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "model",
             "prompt_enhance",
             "use_selfie_reference",
+            "identity_reference_source",
+            "identity_reference_count",
+            "extra_reference_image_count",
+            "raw_reference_image_count_total",
+            "deduplicated_reference_image_count_total",
+            "duplicate_reference_image_count_total",
             "reference_selection",
             # Keep the effective audit text available when a request was
             # normalized before the provider call.  It is still bounded and
@@ -873,6 +879,17 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
                 slim_image_to_text["error"] = _truncate_text(image_to_text.get("error"), 300)
             if slim_image_to_text:
                 slim_rd["image_to_text"] = slim_image_to_text
+        for key in (
+            "identity_reference_source",
+            "identity_reference_count",
+            "extra_reference_image_count",
+            "raw_reference_image_count_total",
+            "deduplicated_reference_image_count_total",
+            "duplicate_reference_image_count_total",
+        ):
+            value = rd.get(key)
+            if isinstance(value, (str, int, float, bool)):
+                slim_rd[key] = value
         reference_selection = rd.get("reference_selection")
         if isinstance(reference_selection, Mapping):
             roles = reference_selection.get("roles")

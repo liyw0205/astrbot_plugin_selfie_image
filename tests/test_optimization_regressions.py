@@ -1134,6 +1134,68 @@ def test_reference_selection_summary_is_credential_free() -> None:
     assert summary["used_context_fallback"] is True
 
 
+def test_cos_reference_selection_summary_exposes_identity_and_deduplication_fields() -> None:
+    from astrbot_plugin_selfie_image.features.reference_collector import select_cos_references
+    from astrbot_plugin_selfie_image.core.providers import ImageReference
+
+    persona = ImageReference(data=b"persona", mime_type="image/png")
+    attached = ImageReference(data=b"attached", mime_type="image/png")
+    duplicate = ImageReference(data=b"attached", mime_type="image/jpeg")
+
+    summary = select_cos_references(
+        persona,
+        [attached, duplicate],
+        action="看看COS",
+    ).summary()
+
+    assert summary["identity_reference_source"] == "persona"
+    assert summary["identity_reference_count"] == 1
+    assert summary["extra_reference_image_count"] == 1
+    assert summary["raw_reference_image_count_total"] == 3
+    assert summary["deduplicated_reference_image_count_total"] == 2
+    assert summary["duplicate_reference_image_count_total"] == 1
+    assert "data" not in str(summary)
+
+
+def test_compact_cos_reference_summary_survives_record_detail_allowlist() -> None:
+    from astrbot_plugin_selfie_image.core.utils import compact_generation_record
+
+    compact = compact_generation_record(
+        {
+            "success": True,
+            "request_data": {
+                "reference_image_count": 2,
+                "identity_reference_source": "message",
+                "identity_reference_count": 1,
+                "extra_reference_image_count": 1,
+                "raw_reference_image_count_total": 3,
+                "deduplicated_reference_image_count_total": 2,
+                "duplicate_reference_image_count_total": 1,
+                "reference_selection": {
+                    "roles": {"message": 2},
+                    "selected_count": 2,
+                    "failed_count": 0,
+                    "used_persona": False,
+                    "used_context_fallback": False,
+                    "data": "must not survive",
+                },
+                "data": "must not survive",
+            },
+        }
+    )
+
+    request = compact["request_data"]
+    assert request["identity_reference_source"] == "message"
+    assert request["identity_reference_count"] == 1
+    assert request["extra_reference_image_count"] == 1
+    assert request["raw_reference_image_count_total"] == 3
+    assert request["deduplicated_reference_image_count_total"] == 2
+    assert request["duplicate_reference_image_count_total"] == 1
+    assert request["reference_selection"]["roles"] == {"message": 2}
+    assert "data" not in request
+    assert "data" not in request["reference_selection"]
+
+
 def test_record_scope_stats_uses_filtered_full_set_and_explains_empty_scope() -> None:
     stats = build_record_scope_stats(
         [

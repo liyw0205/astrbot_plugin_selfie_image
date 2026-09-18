@@ -347,14 +347,14 @@ class ReferenceMediaMixin:
                     pass
             await event.send(event.chain_result([self._create_video_component(file_path)]))
 
-    def _persona_identity_reference(self) -> Optional[ImageReference]:
-        """Prefer the configured persona image, with the bundled logo fallback."""
+    def _persona_identity_reference(self, *, allow_logo: bool = True) -> Optional[ImageReference]:
+        """Return the configured persona image, optionally with logo fallback."""
         persona_ref = self.persona.get_reference_image()
         if persona_ref:
             return ImageReference(
                 data=persona_ref["data"], mime_type=persona_ref["mime_type"]
             )
-        if not bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
+        if not allow_logo or not bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
             return None
         logo = str(getattr(self, "_bundled_logo_path", "") or "")
         if not logo or not os.path.isfile(logo):

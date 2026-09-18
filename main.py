@@ -173,7 +173,11 @@ from .features.creative_features import (
     parse_video_storyboard,
     parse_variation_request,
 )
-from .features.reference_collector import extract_structured_image_sources
+from .features.reference_collector import (
+    CosReferenceSelection,
+    extract_structured_image_sources,
+    select_cos_references,
+)
 from .features.reference_media import ReferenceMediaMixin
 from .features.reference_media import _image_delivery_is_ambiguous
 from .prompts.response_text import (
@@ -1368,6 +1372,7 @@ class SelfieImagePlugin(
             context_hint=action,
             allow_context_fallback=True,
         )
+        cos_selection = self._select_cos_references(action, extra_refs) if self._is_cos_action(action) else None
         action = self._normalize_selfie_action(action, bool(extra_refs))
         async def runner(task_id: str) -> Dict[str, Any]:
             return await self._background_selfie_batches(
@@ -1381,6 +1386,7 @@ class SelfieImagePlugin(
                 resolution,
                 self._natural_fail_fallback("selfie"),
                 rebuild_extra_request=leg_rebuild_extra,
+                cos_selection=cos_selection,
             )
 
         task = self.start_command_image_task(
@@ -1505,6 +1511,57 @@ class SelfieImagePlugin(
             source_meta["source_label"] = "Web/快速试画"
         elif source == "web-video-test":
             source_meta["source_label"] = "Web/快速试视频"
+        selection_metadata: Dict[str, Any] = {}
+        if isinstance(reference_selection, Mapping):
+            selection_roles = reference_selection.get("roles") if isinstance(reference_selection.get("roles"), Mapping) else {}
+            normalized_selection_roles = {}
+            for key, value in selection_roles.items():
+                try:
+                    count = int(value or 0)
+                except (TypeError, ValueError):
+                    count = 0
+                normalized_selection_roles[str(key)] = max(0, count)
+            try:
+                selected_count = max(0, int(reference_selection.get("selected_count") or len(refs)))
+            except (TypeError, ValueError):
+                selected_count = len(refs)
+            try:
+                failed_count = max(0, int(reference_selection.get("failed_count") or 0))
+            except (TypeError, ValueError):
+                failed_count = 0
+            try:
+                raw_count = max(0, int(reference_selection.get("raw_reference_image_count_total") or reference_selection.get("raw_selected_count") or selected_count))
+            except (TypeError, ValueError):
+                raw_count = selected_count
+            try:
+                deduplicated_count = max(0, int(reference_selection.get("deduplicated_reference_image_count_total") or selected_count))
+            except (TypeError, ValueError):
+                deduplicated_count = selected_count
+            deduplicated_count = min(deduplicated_count, raw_count) if raw_count else 0
+            selection_metadata = {
+                "identity_reference_source": str(reference_selection.get("identity_reference_source") or "none"),
+                "identity_reference_count": max(0, int(reference_selection.get("identity_reference_count") or 0)),
+                "extra_reference_image_count": max(0, int(reference_selection.get("extra_reference_image_count") or max(0, selected_count - 1))),
+                "raw_reference_image_count_total": raw_count,
+                "deduplicated_reference_image_count_total": deduplicated_count,
+                "duplicate_reference_image_count_total": max(0, raw_count - deduplicated_count),
+                "roles": dict(normalized_selection_roles),
+            }
+            source_meta.update(selection_metadata)
+
+        def add_selection_metadata(request: Dict[str, Any]) -> Dict[str, Any]:
+            if not selection_metadata or not isinstance(reference_selection, Mapping):
+                return request
+            request.update(selection_metadata)
+            request["reference_selection"] = {
+                "roles": dict(selection_metadata.get("roles") or {}),
+                "selected_count": selection_metadata["deduplicated_reference_image_count_total"],
+                "failed_count": max(0, int(reference_selection.get("failed_count") or 0)),
+                "used_persona": bool(reference_selection.get("used_persona")),
+                "used_context_fallback": bool(reference_selection.get("used_context_fallback")),
+            }
+            return request
+
         self._set_generation_stage(
             record_context,
             "preflight",
@@ -1586,6 +1643,7 @@ class SelfieImagePlugin(
                         "targets": [redact_sensitive_text(target.label) for target in selected_targets],
                         "image_to_text": image_to_text_meta,
                     }
+                    add_selection_metadata(request_data)
                     self._record_task(
                         {
                             **source_meta,
@@ -1625,30 +1683,7 @@ class SelfieImagePlugin(
             "targets": [redact_sensitive_text(target.label) for target in selected_targets],
             "image_to_text": image_to_text_meta,
         }
-        if isinstance(reference_selection, Mapping):
-            selection_roles = reference_selection.get("roles") if isinstance(reference_selection.get("roles"), Mapping) else {}
-            normalized_selection_roles = {}
-            for key, value in selection_roles.items():
-                try:
-                    count = int(value or 0)
-                except (TypeError, ValueError):
-                    count = 0
-                normalized_selection_roles[str(key)] = max(0, count)
-            try:
-                selected_count = int(reference_selection.get("selected_count") or len(refs))
-            except (TypeError, ValueError):
-                selected_count = len(refs)
-            try:
-                failed_count = int(reference_selection.get("failed_count") or 0)
-            except (TypeError, ValueError):
-                failed_count = 0
-            request_data["reference_selection"] = {
-                "roles": normalized_selection_roles,
-                "selected_count": max(0, selected_count),
-                "failed_count": max(0, failed_count),
-                "used_persona": bool(reference_selection.get("used_persona")),
-                "used_context_fallback": bool(reference_selection.get("used_context_fallback")),
-            }
+        add_selection_metadata(request_data)
         if cooldown_attempts:
             request_data["cooldown_skipped_channels"] = cooldown_attempts
         if isinstance(record_context, Mapping):
@@ -2005,21 +2040,48 @@ class SelfieImagePlugin(
             "generated_image_sources": result.source_media,
         }
 
-    async def _build_selfie_prompt_and_refs(self, action: str, extra_refs: List[ImageReference], event: Optional[AstrMessageEvent] = None) -> Tuple[str, List[ImageReference]]:
+    def _is_cos_action(self, action: str) -> bool:
+        return self.persona.analyze_selfie_intent(str(action or "")).is_cos_look
+
+    def _select_cos_references(
+        self, action: str, message_refs: List[ImageReference]
+    ) -> CosReferenceSelection:
+        persona_ref = self._persona_identity_reference(allow_logo=False)
+        return select_cos_references(
+            persona_ref,
+            message_refs,
+            action=action,
+            persona_extra_refs=self._persona_auxiliary_references(action),
+        )
+
+    async def _build_selfie_prompt_and_refs(
+        self,
+        action: str,
+        extra_refs: List[ImageReference],
+        event: Optional[AstrMessageEvent] = None,
+        cos_selection: Optional[CosReferenceSelection] = None,
+    ) -> Tuple[str, List[ImageReference]]:
         llm_generate = (lambda prompt: self._call_text_llm(event, prompt, timeout=6)) if event is not None else None
         await self.persona.ensure_daily_selfie_profile(action, llm_generate=llm_generate)
-        persona_ref = self._persona_identity_reference()
-        refs: List[ImageReference] = []
-        if persona_ref:
-            refs.append(persona_ref)
-        refs.extend(self._persona_auxiliary_references(action))
-        refs.extend(extra_refs)
+        persona_ref = self._persona_identity_reference(allow_logo=not self._is_cos_action(action))
+        if cos_selection is None and self._is_cos_action(action):
+            cos_selection = self._select_cos_references(action, extra_refs)
+        if cos_selection is not None:
+            refs = list(cos_selection.refs)
+            identity_ref = cos_selection.identity_ref
+        else:
+            refs = []
+            if persona_ref:
+                refs.append(persona_ref)
+            refs.extend(self._persona_auxiliary_references(action))
+            refs.extend(extra_refs)
+            identity_ref = persona_ref
         prompt = self.persona.build_selfie_prompt(
             action=action or "看着镜头自然自拍，展示你现在的样子",
             bot_name=self.config.bot_name,
             personality=self.config.personality,
-            has_reference_image=bool(persona_ref),
-            extra_reference_count=len(extra_refs),
+            has_reference_image=bool(identity_ref),
+            extra_reference_count=(cos_selection.extra_reference_image_count if cos_selection else len(extra_refs)),
         )
         return prompt, refs
 
@@ -2028,10 +2090,25 @@ class SelfieImagePlugin(
         event: Optional[AstrMessageEvent],
         action: str,
         extra_refs: List[ImageReference],
+        cos_selection: Optional[CosReferenceSelection] = None,
     ) -> Tuple[str, List[ImageReference], Dict[str, Any]]:
         """Use the central English built-ins and translate only free-form user text."""
-        prompt, refs = await self._build_selfie_prompt_and_refs(action, extra_refs, event=event)
-        has_identity_reference = bool(self._persona_identity_reference())
+        if cos_selection is None and self._is_cos_action(action):
+            cos_selection = self._select_cos_references(action, extra_refs)
+        prompt, refs = await self._build_selfie_prompt_and_refs(
+            action,
+            extra_refs,
+            event=event,
+            cos_selection=cos_selection,
+        )
+        has_identity_reference = bool(cos_selection.identity_ref) if cos_selection else bool(
+            self._persona_identity_reference(allow_logo=not self._is_cos_action(action))
+        )
+        extra_reference_count = (
+            cos_selection.extra_reference_image_count
+            if cos_selection is not None
+            else len(extra_refs)
+        )
         meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
         if not self._prompt_en_needed(action, media="image"):
             return prompt, refs, meta
@@ -2060,7 +2137,7 @@ class SelfieImagePlugin(
                 action,
                 language="en",
                 has_reference_image=has_identity_reference,
-                extra_reference_count=len(extra_refs),
+                extra_reference_count=extra_reference_count,
                 appearance_type=self.persona.get_appearance_type(),
                 action_content=translated_action,
             )
@@ -2080,7 +2157,7 @@ class SelfieImagePlugin(
             action,
             language="en",
             has_reference_image=has_identity_reference,
-            extra_reference_count=len(extra_refs),
+            extra_reference_count=extra_reference_count,
             appearance_type=self.persona.get_appearance_type(),
             user_text=translated,
             action_content=translated_action,
@@ -4629,6 +4706,7 @@ class SelfieImagePlugin(
         rebuild_extra_request: str = "",
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
+        cos_selection: Optional[CosReferenceSelection] = None,
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         self._ensure_image_batch_gate()
@@ -4645,6 +4723,7 @@ class SelfieImagePlugin(
             rebuild_extra_request,
             rebuild_match_query,
             rebuild_special_preset_variants,
+            cos_selection,
         )
 
     async def _run_selfie_batches_unlocked(
@@ -4661,6 +4740,7 @@ class SelfieImagePlugin(
         rebuild_extra_request: str = "",
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
+        cos_selection: Optional[CosReferenceSelection] = None,
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         # 多张拍摄时逐张更换机位或姿势。
@@ -4793,7 +4873,21 @@ class SelfieImagePlugin(
 
         async def run_one(index: int) -> Dict[str, Any]:
             round_action = round_actions[index]
-            prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(event, round_action, extra_refs)
+            if cos_selection is None:
+                # Preserve the small legacy call contract used by older host
+                # integrations and test doubles when no COS selection exists.
+                prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(
+                    event,
+                    round_action,
+                    extra_refs,
+                )
+            else:
+                prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(
+                    event,
+                    round_action,
+                    extra_refs,
+                    cos_selection=cos_selection,
+                )
             return await self._run_image_generation(
                 prompt,
                 aspect,
@@ -4809,6 +4903,7 @@ class SelfieImagePlugin(
                     "requested_count": total,
                     "raw_reference_image_count": len(extra_refs),
                 },
+                reference_selection=cos_selection.summary() if cos_selection else None,
             )
 
         return await self._run_counted_generation_shots(
@@ -5638,6 +5733,7 @@ class SelfieImagePlugin(
         )
         if not action:
             action = default_action_with_refs if extra_refs else default_action
+        cos_selection = self._select_cos_references(action, extra_refs) if self._is_cos_action(action) else None
         hints: List[str] = []
         if not self.persona.has_reference_image():
             if bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
@@ -5669,6 +5765,7 @@ class SelfieImagePlugin(
                 rebuild_extra_request=rebuild_extra_request,
                 rebuild_match_query=rebuild_match_query,
                 rebuild_special_preset_variants=rebuild_special_preset_variants,
+                cos_selection=cos_selection,
             )
 
         task = self.start_command_image_task(

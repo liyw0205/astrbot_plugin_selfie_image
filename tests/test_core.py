@@ -457,7 +457,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.18")
+        self.assertEqual(PLUGIN_VERSION, "1.6.19")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -1665,6 +1665,12 @@ class ConfigModelTests(unittest.TestCase):
                 "resolution": "1K",
                 "reference_image_count": 1,
                 "raw_reference_image_count": 2,
+                "identity_reference_source": "persona",
+                "identity_reference_count": 1,
+                "extra_reference_image_count": 1,
+                "raw_reference_image_count_total": 3,
+                "deduplicated_reference_image_count_total": 2,
+                "duplicate_reference_image_count_total": 1,
                 "requested_count": 4,
                 "duration": 7,
                 "timeout_seconds": 300,
@@ -1715,6 +1721,12 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(slim["requested_count"], 4)
         self.assertEqual(slim["duration"], 7)
         self.assertEqual(slim["raw_reference_image_count"], 2)
+        self.assertEqual(slim["request_data"]["identity_reference_source"], "persona")
+        self.assertEqual(slim["request_data"]["identity_reference_count"], 1)
+        self.assertEqual(slim["request_data"]["extra_reference_image_count"], 1)
+        self.assertEqual(slim["request_data"]["raw_reference_image_count_total"], 3)
+        self.assertEqual(slim["request_data"]["deduplicated_reference_image_count_total"], 2)
+        self.assertEqual(slim["request_data"]["duplicate_reference_image_count_total"], 1)
         self.assertEqual(slim["request_data"]["request_prompt_en"], "translated prompt")
         self.assertEqual(slim["request_data"]["audit_prompt"], "effective prompt for audit")
         self.assertEqual(
@@ -5758,6 +5770,68 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual(plugin.audit_record["retry_count"], 0)
         self.assertFalse(plugin.audit_record["generation_success"])
 
+    def test_cos_generation_records_reference_selection_summary_on_provider_failure(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._save_reference_images_to_cache = lambda _refs: ["request/identity.png", "request/outfit.png"]
+        plugin._source_context = lambda *_args, **_kwargs: {}
+        plugin._cleanup_image_cache_if_needed = lambda _paths: {}
+        plugin._composition_metadata = lambda *_args, **_kwargs: {}
+        plugin._record_task = lambda record: setattr(plugin, "cos_record", record)
+        plugin._semaphore = asyncio.Semaphore(1)
+        plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+
+        async def audit(*_args, **_kwargs):
+            return True, ""
+
+        async def fake_generate(*_args, **_kwargs):
+            return ImageGenerateResult(error="provider unavailable", attempts=[])
+
+        plugin._audit_prompt = audit
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        selection = {
+            "identity_reference_source": "persona",
+            "identity_reference_count": 1,
+            "extra_reference_image_count": 1,
+            "raw_reference_image_count_total": 3,
+            "deduplicated_reference_image_count_total": 2,
+            "duplicate_reference_image_count_total": 1,
+            "roles": {"persona": 1, "message": 2},
+            "selected_count": 2,
+            "raw_selected_count": 3,
+            "failed_count": 0,
+            "used_persona": True,
+            "used_context_fallback": False,
+        }
+        with patch.object(plugin_main, "generate_image_with_fallback", side_effect=fake_generate):
+            result = asyncio.run(
+                plugin._run_image_generation(
+                    "COS dry run",
+                    "9:16",
+                    "1K",
+                    [
+                        ImageReference(data=b"identity", mime_type="image/png"),
+                        ImageReference(data=b"outfit", mime_type="image/png"),
+                    ],
+                    targets=[make_target()],
+                    source="command-look-cos",
+                    event=object(),
+                    original_prompt="COS dry run",
+                    reference_selection=selection,
+                )
+            )
+
+        assert result["success"] is False
+        request = plugin.cos_record["request_data"]
+        assert request["identity_reference_source"] == "persona"
+        assert request["identity_reference_count"] == 1
+        assert request["extra_reference_image_count"] == 1
+        assert request["raw_reference_image_count_total"] == 3
+        assert request["deduplicated_reference_image_count_total"] == 2
+        assert request["duplicate_reference_image_count_total"] == 1
+        assert request["reference_selection"]["roles"] == {"persona": 1, "message": 2}
+        assert request["reference_image_count"] == 2
+
     def test_image_generation_publishes_intermediate_stages(self) -> None:
         plugin = self._plugin_stub()
         plugin._save_reference_images_to_cache = lambda _refs: []
@@ -8399,7 +8473,6 @@ class LegFocusTests(unittest.TestCase):
             t = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
             self.assertIn("看看COS模式", t)
             self.assertIn("换装", t)
-            self.assertIn("不要换成别人的脸", t)
             m = re.search(r"【cos:([a-z0-9_]+)】", t)
             self.assertTrue(m, t)
             ids.add(m.group(1))
