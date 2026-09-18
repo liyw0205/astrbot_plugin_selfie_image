@@ -1246,10 +1246,8 @@ class SelfieImagePlugin(
         )
 
     def _build_selfie_request_action(self, extra_request: str = "", has_refs: bool = False) -> str:
-        """Build one action contract for /自拍, including explicit COS requests."""
+        """Build one ordinary selfie action; COS pool matching belongs to /看看COS."""
         text = str(extra_request or "").strip()
-        if looks_like_cos_prompt(text):
-            return self._build_cos_look_action(text, has_refs, match_query=text)
         return self._build_selfie_look_action(text, has_refs)
 
     @staticmethod
@@ -4821,9 +4819,7 @@ class SelfieImagePlugin(
                     m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
                     if m_pose:
                         last_pose = str(m_pose.group(1) or last_pose)
-                elif source == "command-look-cos" or (
-                    source == "command-selfie" and looks_like_cos_prompt(action)
-                ):
+                elif source == "command-look-cos":
                     special_extra = (
                         rebuild_special_preset_variants[index]
                         if rebuild_special_preset_variants and index < len(rebuild_special_preset_variants)

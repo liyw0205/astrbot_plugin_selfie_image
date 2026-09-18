@@ -467,7 +467,7 @@ def test_cos_action_replaces_outfit_view_alternatives():
     assert "近景至全身" not in action
 
 
-def test_selfie_command_cos_request_uses_cos_builder_once():
+def test_selfie_command_cos_request_does_not_use_cos_pool():
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 
     plugin = object.__new__(SelfieImagePlugin)
@@ -477,9 +477,9 @@ def test_selfie_command_cos_request_uses_cos_builder_once():
     )
 
     assert "【COS换装" not in action
-    assert "【cos:" in action
-    assert len(re.findall(r"【cam:(?:selfie|first|third)】", action)) == 1
-    assert "【自拍 / 看看模式】" not in action
+    assert "【cos:" not in action
+    assert "【自拍 / 看看模式】" in action
+    assert len(re.findall(r"【shot:[a-z_]+】", action)) == 1
     assert action.count("用户补充要求优先：") == 1
 
 

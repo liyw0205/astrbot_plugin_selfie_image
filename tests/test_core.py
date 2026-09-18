@@ -457,7 +457,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.19")
+        self.assertEqual(PLUGIN_VERSION, "1.6.20")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -9951,7 +9951,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertNotIn("短袜", normalized_extra)
         self.assertEqual(plugin._normalize_selfie_action(normalized, False), normalized)
 
-    def test_selfie_batch_cos_text_switches_to_cos_pool(self) -> None:
+    def test_cos_command_batch_text_switches_to_cos_pool(self) -> None:
         """Only /看看COS may rebuild an action from the random COS pool."""
         stub_factory = SessionModelAndTaskTests()
         batch_plugin = stub_factory._plugin_stub()
@@ -9999,7 +9999,7 @@ class LegFocusTests(unittest.TestCase):
                     object(),
                     initial_action,
                     [],
-                    "command-selfie",
+                    "command-look-cos",
                     2,
                     "9:16",
                     "1K",
@@ -10010,6 +10010,58 @@ class LegFocusTests(unittest.TestCase):
         self.assertEqual(len(rebuilt_actions), 6)
         self.assertEqual(len(selfie_requests), 0)
         self.assertEqual(len(cos_requests), 6)
+
+    def test_selfie_command_never_rebuilds_from_cos_pool(self) -> None:
+        """COS catalog matching is reserved for the explicit COS command."""
+        stub_factory = SessionModelAndTaskTests()
+        batch_plugin = stub_factory._plugin_stub()
+        rebuilt_actions = []
+        selfie_requests = []
+        cos_requests = []
+
+        async def fake_build_prompt(event, action, extra_refs):
+            rebuilt_actions.append(action)
+            return action, [], {}
+
+        async def fake_generate(prompt, aspect, resolution, refs, **kwargs):
+            return {"success": True, "files": ["generated.png"]}
+
+        async def fake_counted(*, task_id, event, total, fail_label, run_one, log_prefix):
+            for index in range(total):
+                await run_one(index)
+            return {"success": True, "files": []}
+
+        def fake_build_selfie_action(extra_request="", has_refs=False, **kwargs):
+            selfie_requests.append(extra_request)
+            return f"普通自拍重建 {len(selfie_requests)} 【shot:arm_half】"
+
+        def fake_build_cos_action(extra_request="", has_refs=False, **kwargs):
+            cos_requests.append(extra_request)
+            return f"COS 重建 {len(cos_requests)} 【cos:phoebe_white_gold_sanctuary】 【cam:first】"
+
+        batch_plugin._build_selfie_prompt_and_refs_for_event = fake_build_prompt
+        batch_plugin._run_image_generation = fake_generate
+        batch_plugin._run_counted_generation_shots = fake_counted
+        batch_plugin._build_selfie_look_action = fake_build_selfie_action
+        batch_plugin._build_cos_look_action = fake_build_cos_action
+
+        asyncio.run(
+            batch_plugin._run_selfie_batches_unlocked(
+                "test-selfie-cos-text",
+                object(),
+                "【自拍 / 看看模式】用户补充要求优先：COS 菲比",
+                [],
+                "command-selfie",
+                2,
+                "9:16",
+                "1K",
+                "生成失败",
+            )
+        )
+
+        assert len(rebuilt_actions) == 2
+        assert len(selfie_requests) == 2
+        assert len(cos_requests) == 0
 
     def test_user_requested_legwear_is_honored(self) -> None:
         import sys
