@@ -53,6 +53,7 @@ class CollectedReferences:
     source_count: int = 0
     failed_count: int = 0
     roles: Dict[str, int] = field(default_factory=dict)
+    failure_reasons: List[str] = field(default_factory=list)
 
     def selection_summary(self, *, include_persona: bool = False) -> Dict[str, Any]:
         """Return a credential-free explanation of the selected references."""
@@ -92,6 +93,7 @@ class CollectedReferences:
             "selected_count": selected_count,
             "duplicate_count": max(0, raw_selected_count - selected_count),
             "failed_count": max(0, int(self.failed_count or 0)),
+            "failure_reasons": list(self.failure_reasons),
             "used_persona": bool(include_persona and roles.get("persona")),
             "used_context_fallback": bool(roles.get("context")),
         }
@@ -536,12 +538,18 @@ async def download_sources_as_references(
     session: Any,
     *,
     max_bytes: int,
+    failure_reasons: Optional[List[str]] = None,
 ) -> Tuple[List[ImageReference], int]:
     refs: List[ImageReference] = []
     failed = 0
     seen: Set[str] = set()
     for source in sources:
-        fetched = await fetch_image_source(source, session, max_bytes=max_bytes)
+        fetched = await fetch_image_source(
+            source,
+            session,
+            max_bytes=max_bytes,
+            failure_reasons=failure_reasons,
+        )
         if not fetched:
             failed += 1
             continue
@@ -624,6 +632,7 @@ class ReferenceCollector:
     async def collect(self, event: Any, session: Any) -> CollectedReferences:
         buckets = self.collect_source_buckets(event)
         collected = CollectedReferences()
+        failure_reasons: List[str] = []
         role_order = ("message", "quote", "forward", "at_avatar", "context", "extra", "persona")
         for role in role_order:
             sources = list(buckets.get(role) or [])
@@ -634,7 +643,12 @@ class ReferenceCollector:
                     expanded.extend(await resolve_onebot_image_source(event, source))
                 sources = unique(expanded)
             collected.source_count += len(sources)
-            refs, failed = await download_sources_as_references(sources, session, max_bytes=self.max_bytes)
+            refs, failed = await download_sources_as_references(
+                sources,
+                session,
+                max_bytes=self.max_bytes,
+                failure_reasons=failure_reasons,
+            )
             collected.failed_count += failed
             setattr(collected, role if hasattr(collected, role) else "extra", refs)
             collected.roles[role] = len(refs)
@@ -646,4 +660,5 @@ class ReferenceCollector:
         collected.context = list(collected.context)
         collected.extra = list(collected.extra)
         collected.persona = list(collected.persona)
+        collected.failure_reasons = failure_reasons
         return collected

@@ -457,7 +457,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.21")
+        self.assertEqual(PLUGIN_VERSION, "1.6.22")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -11385,8 +11385,72 @@ class StudioStoreTests(unittest.TestCase):
 
         output = asyncio.run(invoke())
 
-        assert output == ["参考图读取失败或超时，请重新发送原图后再试。"]
+        assert output == ["参考图片无法读取，请重新发送原图后再试。"]
         assert started == []
+
+    def test_draw_explains_oversized_reference_image(self) -> None:
+        import tempfile
+
+        factory = SessionModelAndTaskTests()
+        stub = factory._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+
+        stub.presets = ImagePresetManager(tempfile.mkdtemp())
+        stub._quota_error_message = lambda *args, **kwargs: ""
+        stub._rate_limit_error_message = lambda *args, **kwargs: ""
+        async def failed_references(*args, **kwargs):
+            return [], 1, 1
+
+        stub._event_reference_images_with_stats = failed_references
+        stub._reference_failure_reason = lambda *args, **kwargs: "too_large"
+        async def progress(*args, **kwargs):
+            return "progress"
+
+        stub._build_contextual_progress_text = progress
+
+        class Event:
+            message_str = "/画 变真人"
+
+            def plain_result(self, text: str) -> str:
+                return text
+
+        async def invoke():
+            return [item async for item in plugin_main.SelfieImagePlugin.cmd_draw(stub, Event())]
+
+        assert asyncio.run(invoke()) == ["参考图片过大，请压缩到 10MB 以内后重新发送。"]
+
+    def test_draw_explains_unreadable_reference_image(self) -> None:
+        import tempfile
+
+        factory = SessionModelAndTaskTests()
+        stub = factory._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+
+        stub.presets = ImagePresetManager(tempfile.mkdtemp())
+        stub._quota_error_message = lambda *args, **kwargs: ""
+        stub._rate_limit_error_message = lambda *args, **kwargs: ""
+        async def failed_references(*args, **kwargs):
+            return [], 1, 1
+
+        stub._event_reference_images_with_stats = failed_references
+        stub._reference_failure_reason = lambda *args, **kwargs: "invalid_or_unreadable"
+        async def progress(*args, **kwargs):
+            return "progress"
+
+        stub._build_contextual_progress_text = progress
+
+        class Event:
+            message_str = "/画 变真人"
+
+            def plain_result(self, text: str) -> str:
+                return text
+
+        async def invoke():
+            return [item async for item in plugin_main.SelfieImagePlugin.cmd_draw(stub, Event())]
+
+        assert asyncio.run(invoke()) == ["参考图片不够清晰或无法识别，请发送清晰的原图后重试。"]
 
     def test_clothes_followup_prefers_user_context_images(self) -> None:
         stub = SessionModelAndTaskTests()._plugin_stub()

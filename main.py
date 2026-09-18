@@ -2041,6 +2041,16 @@ class SelfieImagePlugin(
     def _is_cos_action(self, action: str) -> bool:
         return self.persona.analyze_selfie_intent(str(action or "")).is_cos_look
 
+    def _reference_failure_message(self, event: Any) -> str:
+        getter = getattr(self, "_reference_failure_reason", None)
+        reason = getter(event) if callable(getter) else ""
+        if reason == "too_large":
+            limit = int(getattr(self.config, "image_max_image_size_mb", 10) or 10)
+            return f"参考图片过大，请压缩到 {limit}MB 以内后重新发送。"
+        if reason == "invalid_or_unreadable":
+            return "参考图片不够清晰或无法识别，请发送清晰的原图后重试。"
+        return "参考图片无法读取，请重新发送原图后再试。"
+
     def _select_cos_references(
         self, action: str, message_refs: List[ImageReference]
     ) -> CosReferenceSelection:
@@ -6305,7 +6315,7 @@ class SelfieImagePlugin(
             include_persona=False,
         )
         if not refs and source_count and failed_count:
-            yield event.plain_result("参考图读取失败或超时，请重新发送原图后再试。")
+            yield event.plain_result(self._reference_failure_message(event))
             return
         if not prompt and refs:
             prompt = "根据参考图生成一张自然、清晰、符合原图语义的图片。"
@@ -6446,7 +6456,7 @@ class SelfieImagePlugin(
         )
         if not refs:
             if source_count and failed_count:
-                yield event.plain_result("参考图读取失败或超时，请重新发送原图后再试。")
+                yield event.plain_result(self._reference_failure_message(event))
                 return
             yield event.plain_result("请附带、引用图片，或艾特要作为参考的对象。")
             return

@@ -1348,10 +1348,16 @@ async def fetch_image_source(
     session: aiohttp.ClientSession,
     max_bytes: int,
     timeout: int = 30,
+    failure_reasons: Optional[List[str]] = None,
 ) -> Optional[Tuple[bytes, str]]:
+    def fail(reason: str) -> Optional[Tuple[bytes, str]]:
+        if failure_reasons is not None and reason not in failure_reasons:
+            failure_reasons.append(reason)
+        return None
+
     text = decode_html_entities(str(source or "").strip())
     if not text:
-        return None
+        return fail("unavailable")
 
     try:
         # AstrBot Image.file may be a file URI while Image.path is empty.
@@ -1360,28 +1366,30 @@ async def fetch_image_source(
         if text.lower().startswith("file://"):
             parsed = urlsplit(text)
             if parsed.netloc and parsed.netloc.lower() not in {"", "localhost"}:
-                return None
+                return fail("unavailable")
             text = unquote(parsed.path)
             if not text:
-                return None
+                return fail("unavailable")
         lowered = text.lower()
         if lowered.startswith(("data:image/", "base64://")):
             data, mime = data_url_to_bytes(text)
-            if data and len(data) <= max_bytes:
+            if data and len(data) > max_bytes:
+                return fail("too_large")
+            if data:
                 return data, mime
-            return None
+            return fail("invalid_or_unreadable")
 
         if os.path.exists(text) and os.path.isfile(text):
             if os.path.getsize(text) > max_bytes:
-                return None
+                return fail("too_large")
             with open(text, "rb") as file:
                 data = file.read()
             if not data or not looks_like_image_bytes(data):
-                return None
+                return fail("invalid_or_unreadable")
             return data, detect_mime_by_bytes(data)
 
         if not lowered.startswith(("http://", "https://")):
-            return None
+            return fail("unavailable")
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -1392,15 +1400,15 @@ async def fetch_image_source(
         request_timeout = aiohttp.ClientTimeout(total=max(1, int(timeout or 30)))
         async with session.get(text, headers=headers, timeout=request_timeout, allow_redirects=True) as response:
             if response.status >= 400:
-                return None
+                return fail("unavailable")
             content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
             binary_content_types = {"application/octet-stream", "binary/octet-stream", "application/binary", "application/x-binary"}
             if content_type and not content_type.startswith("image/") and content_type not in binary_content_types:
-                return None
+                return fail("invalid_or_unreadable")
             content_length = response.headers.get("content-length", "")
             try:
                 if content_length and int(content_length) > max_bytes:
-                    return None
+                    return fail("too_large")
             except (TypeError, ValueError):
                 pass
             chunks: List[bytes] = []
@@ -1408,16 +1416,16 @@ async def fetch_image_source(
             async for chunk in response.content.iter_chunked(64 * 1024):
                 total += len(chunk)
                 if total > max_bytes:
-                    return None
+                    return fail("too_large")
                 chunks.append(chunk)
             data = b"".join(chunks)
             if not data:
-                return None
+                return fail("invalid_or_unreadable")
             if not looks_like_image_bytes(data):
-                return None
+                return fail("invalid_or_unreadable")
             return data, detect_mime_by_bytes(data)
     except (asyncio.TimeoutError, aiohttp.ClientError, OSError, binascii.Error, ValueError):
-        return None
+        return fail("unavailable")
 
 
 def extract_event_text(event: Any) -> str:

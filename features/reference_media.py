@@ -69,6 +69,32 @@ def _image_delivery_is_ambiguous(error: BaseException) -> bool:
 
 
 class ReferenceMediaMixin:
+    def _remember_reference_failure_reason(self, event: Any, reasons: Iterable[str]) -> None:
+        key = str(self._context_session_key(event) if callable(getattr(self, "_context_session_key", None)) else id(event))
+        allowed = {"too_large", "invalid_or_unreadable", "unavailable"}
+        values = [str(reason) for reason in reasons if str(reason) in allowed]
+        lock = getattr(self, "_reference_selection_lock", threading.RLock())
+        with lock:
+            queue = getattr(self, "_reference_failure_reasons", None)
+            if not isinstance(queue, dict):
+                queue = {}
+                self._reference_failure_reasons = queue
+            queue[key] = values
+
+    def _reference_failure_reason(self, event: Any) -> str:
+        key = str(self._context_session_key(event) if callable(getattr(self, "_context_session_key", None)) else id(event))
+        lock = getattr(self, "_reference_selection_lock", threading.RLock())
+        with lock:
+            queue = getattr(self, "_reference_failure_reasons", {})
+            values = queue.pop(key, []) if isinstance(queue, dict) else []
+        if "too_large" in values:
+            return "too_large"
+        if "invalid_or_unreadable" in values:
+            return "invalid_or_unreadable"
+        if "unavailable" in values:
+            return "unavailable"
+        return ""
+
     def _reference_selection_queue(self) -> dict[str, list[dict[str, Any]]]:
         queue = getattr(self, "_reference_selection_cache", None)
         if not isinstance(queue, dict):
@@ -240,6 +266,7 @@ class ReferenceMediaMixin:
         async with aiohttp.ClientSession(trust_env=False) as session:
             collected = await collector.collect(event, session)
         refs = collected.for_draw(include_persona=include_persona)
+        self._remember_reference_failure_reason(event, getattr(collected, "failure_reasons", []))
         if collected.failed_count and not refs:
             logger.warning(
                 f"[SelfieImage] 参考图读取失败或超时: "
