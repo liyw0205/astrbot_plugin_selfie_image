@@ -226,7 +226,8 @@ def build_group_selfie_action(
     appearance_type: str = "auto",
 ) -> str:
     appearance_line = appearance_type_instruction(
-        appearance_type, has_reference_image=True
+        appearance_type,
+        has_reference_image=True,
     )
     style_blob = " ".join(group_style_lines(appearance_type))
     base = (

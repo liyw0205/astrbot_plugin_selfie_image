@@ -178,6 +178,7 @@ from .features.creative_features import (
 from .features.reference_collector import (
     CosReferenceSelection,
     extract_structured_image_sources,
+    select_group_references,
     select_cos_references,
 )
 from .features.reference_media import ReferenceMediaMixin
@@ -1374,6 +1375,12 @@ class SelfieImagePlugin(
             allow_context_fallback=True,
         )
         cos_selection = self._select_cos_references(action, extra_refs) if self._is_cos_action(action) else None
+        group_selection = (
+            self._select_group_references(extra_refs)
+            if self._looks_like_group_selfie_intent(action) and not self._is_cos_action(action)
+            else None
+        )
+        selection = group_selection or cos_selection
         action = self._normalize_selfie_action(action, bool(extra_refs))
         async def runner(task_id: str) -> Dict[str, Any]:
             return await self._background_selfie_batches(
@@ -1387,7 +1394,8 @@ class SelfieImagePlugin(
                 resolution,
                 self._natural_fail_fallback("selfie"),
                 rebuild_extra_request=leg_rebuild_extra,
-                cos_selection=cos_selection,
+                cos_selection=selection,
+                reference_selection=selection.summary() if selection else None,
             )
 
         task = self.start_command_image_task(
@@ -2104,6 +2112,14 @@ class SelfieImagePlugin(
         if reason == "invalid_or_unreadable":
             return "参考图片不够清晰或无法识别，请发送清晰的原图后重试。"
         return "参考图片无法读取，请重新发送原图后再试。"
+
+    def _select_group_references(
+        self, message_refs: List[ImageReference]
+    ) -> CosReferenceSelection:
+        return select_group_references(
+            self._persona_identity_reference(allow_logo=False),
+            message_refs,
+        )
 
     def _select_cos_references(
         self, action: str, message_refs: List[ImageReference]
@@ -4753,6 +4769,7 @@ class SelfieImagePlugin(
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
         cos_selection: Optional[CosReferenceSelection] = None,
+        reference_selection: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         return await self._run_selfie_batches_unlocked(
@@ -4769,6 +4786,7 @@ class SelfieImagePlugin(
             rebuild_match_query,
             rebuild_special_preset_variants,
             cos_selection,
+            reference_selection,
         )
 
     async def _run_selfie_batches_unlocked(
@@ -4786,6 +4804,7 @@ class SelfieImagePlugin(
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
         cos_selection: Optional[CosReferenceSelection] = None,
+        reference_selection: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         # 多张拍摄时逐张更换机位或姿势。
@@ -4940,7 +4959,7 @@ class SelfieImagePlugin(
                     "requested_count": total,
                     "raw_reference_image_count": len(extra_refs),
                 },
-                reference_selection=cos_selection.summary() if cos_selection else None,
+                reference_selection=reference_selection or (cos_selection.summary() if cos_selection else None),
             )
 
         return await self._run_counted_generation_shots(
@@ -5771,6 +5790,12 @@ class SelfieImagePlugin(
         if not action:
             action = default_action_with_refs if extra_refs else default_action
         cos_selection = self._select_cos_references(action, extra_refs) if self._is_cos_action(action) else None
+        group_selection = (
+            self._select_group_references(extra_refs)
+            if progress_label == "合影" and not self._is_cos_action(action)
+            else None
+        )
+        selection = group_selection or cos_selection
         hints: List[str] = []
         if not self.persona.has_reference_image():
             if bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
@@ -5802,7 +5827,8 @@ class SelfieImagePlugin(
                 rebuild_extra_request=rebuild_extra_request,
                 rebuild_match_query=rebuild_match_query,
                 rebuild_special_preset_variants=rebuild_special_preset_variants,
-                cos_selection=cos_selection,
+                cos_selection=selection,
+                reference_selection=selection.summary() if selection else None,
             )
 
         task = self.start_command_image_task(

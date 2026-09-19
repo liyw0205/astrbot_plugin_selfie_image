@@ -18,7 +18,13 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
 from astrbot_plugin_selfie_image.core.providers import ImageReference
 from astrbot_plugin_selfie_image.features.reference_collector import (
     select_cos_references,
+    select_group_references,
 )
+from astrbot_plugin_selfie_image.features.persona import (
+    appearance_type_instruction,
+    group_style_lines,
+)
+from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
 from astrbot_plugin_selfie_image.studio.studio import build_studio_action, empty_session
 
 
@@ -127,6 +133,56 @@ def test_cos_reference_selection_keeps_persona_first_without_identity_intent():
     assert selected.refs == [persona, attached]
     assert selected.identity_reference_count == 1
     assert selected.extra_reference_image_count == 1
+
+
+def test_group_reference_selection_keeps_persona_identity_and_attached_image_as_extra():
+    persona = ImageReference(data=b"persona", mime_type="image/jpeg")
+    anime = ImageReference(data=b"anime", mime_type="image/png")
+
+    selected = select_group_references(persona, [anime])
+
+    assert selected.identity_source == "persona"
+    assert selected.identity_ref is persona
+    assert selected.refs == [persona, anime]
+    assert selected.summary()["used_persona"] is True
+    assert selected.summary()["roles"] == {"persona": 1, "message": 1}
+
+
+def test_group_reference_selection_does_not_promote_attached_image_without_persona():
+    anime = ImageReference(data=b"anime", mime_type="image/png")
+
+    selected = select_group_references(None, [anime])
+
+    assert selected.identity_source == "none"
+    assert selected.identity_ref is None
+    assert selected.refs == [anime]
+    assert selected.identity_reference_count == 0
+
+
+
+def test_auto_group_media_policy_never_lets_extra_reference_choose_the_main_medium():
+    instruction = appearance_type_instruction("auto", has_reference_image=True)
+    style_lines = group_style_lines("auto")
+
+    assert "参考图一" in instruction
+    assert "不得改变主角媒介" in instruction
+    assert all("由模型根据主角形象与参考图自行判断" not in line for line in style_lines)
+    assert any("主形象参考图" in line for line in style_lines)
+    assert any("额外参考图" in line and "媒介" in line for line in style_lines)
+
+
+def test_auto_english_group_prompt_uses_primary_reference_as_media_authority():
+    prompt = build_selfie_builtin_prompt(
+        "合影 / 合照 / 同框",
+        language="en",
+        has_reference_image=True,
+        extra_reference_count=1,
+        appearance_type="auto",
+    )
+
+    assert "primary identity reference" in prompt
+    assert "must not override the primary subject's visual medium" in prompt
+    assert "visually consistent" not in prompt
 
 
 def test_cos_reference_selection_promotes_attached_face_when_explicitly_requested():

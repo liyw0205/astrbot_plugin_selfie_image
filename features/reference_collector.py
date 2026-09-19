@@ -260,6 +260,47 @@ def select_cos_references(
     )
 
 
+def select_group_references(
+    persona_ref: Optional[ImageReference],
+    message_refs: Sequence[ImageReference],
+    *,
+    failed_count: int = 0,
+) -> CosReferenceSelection:
+    """Keep the configured persona as AI identity for group selfies.
+
+    Unlike COS, an attached/quoted image in a group selfie is always a
+    companion object. It must never become the AI identity merely because no
+    persona image is configured.
+    """
+    message = [ref for ref in message_refs if ref and getattr(ref, "data", None)]
+    identity = persona_ref if persona_ref and getattr(persona_ref, "data", None) else None
+    raw_refs = ([identity] if identity else []) + message
+    ordered = dedupe_image_references(raw_refs)
+    if identity is not None:
+        identity_digest = content_digest(identity.data)
+        ordered = [identity] + [ref for ref in ordered if content_digest(ref.data) != identity_digest]
+        extras = ordered[1:]
+        source = "persona"
+    else:
+        extras = ordered
+        source = "none"
+    roles: Dict[str, int] = {}
+    if identity is not None:
+        roles["persona"] = 1
+    if message:
+        roles["message"] = len(message)
+    return CosReferenceSelection(
+        identity_ref=identity,
+        extra_refs=extras,
+        identity_source=source,
+        raw_total_count=len(raw_refs),
+        deduplicated_total_count=len(ordered),
+        duplicate_count=max(0, len(raw_refs) - len(ordered)),
+        roles=roles,
+        failed_count=max(0, int(failed_count or 0)),
+    )
+
+
 def normalize_source_items(raw: Any) -> List[str]:
     if raw is None:
         return []

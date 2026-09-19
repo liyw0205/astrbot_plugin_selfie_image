@@ -126,9 +126,10 @@ def build_selfie_builtin_prompt(
     )
     if language == "en":
         style = {
-            "real": "realistic",
+            "real": "realistic photographic",
             "anime": "soft Kyoto Animation-like anime with a finer face and ethereal atmosphere",
-        }.get(str(appearance_type), "visually consistent")
+            "auto": "the primary identity reference's visual medium",
+        }.get(str(appearance_type), "the primary reference's visual medium")
         if is_legs:
             opening = f"Create one natural {style} vertical smartphone outfit record."
         elif is_cos:
@@ -151,14 +152,16 @@ def build_selfie_builtin_prompt(
             ])
         if has_reference_image:
             lines.append(
-                "Use reference image 1 only for natural proportions and composition; ignore all legwear, socks, and shoes in every reference; later references must not widen the crop."
-                if is_legs
-                else "Use reference image 1 only as the main identity anchor; later references must not replace the main subject."
+                "Use reference image 1 as the primary identity and visual-medium anchor; extra references must not replace or override the primary subject's visual medium."
+                if not is_legs
+                else "Use reference image 1 only for natural proportions and composition; ignore all legwear, socks, and shoes in every reference; later references must not widen the crop."
             )
         else:
             lines.append("Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.")
         if extra_reference_count:
-            lines.append("Use extra references for clothing, pose, composition, lighting, or scene only.")
+            lines.append(
+                "Use extra references only for independent companions or explicitly requested clothing, pose, composition, lighting, or scene. Extra references must not override the primary subject's visual medium."
+            )
         # Legs first: action text may contain "不要合影" which must not flip into group mode.
         if is_legs:
             camera_match = re.search(r"【cam:(selfie|first|third)】", str(action))
