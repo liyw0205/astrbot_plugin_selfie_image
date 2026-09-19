@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import contextvars
 import hashlib
 from io import BytesIO
 import json
@@ -91,6 +92,7 @@ from .cos.cos_looks import (
     pick_cos_look_set,
 )
 from .generation.generator import generate_image_with_fallback
+from .generation.image_scheduler import ImageJobScheduler
 from .generation.generation_store import GenerationStoreMixin, RECORD_KEEP_LIMIT
 from .generation.generation_results import (
     batch_failure_policy,
@@ -237,6 +239,9 @@ from .webui.web import FlaskWebServer
 
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
 IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS = 2.0
+_IMAGE_JOB_ALREADY_SCHEDULED: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "image_job_already_scheduled", default=False
+)
 
 
 def optional_event_message_type(priority: int = 100):
@@ -358,11 +363,8 @@ class SelfieImagePlugin(
         )
         self.asset_collections = AssetCollectionStore(self.data_dir)
         self._usage_stats = self._load_usage_stats()
-        self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
+        self._image_scheduler = ImageJobScheduler(self.config.image_max_concurrent_tasks)
         self._video_semaphore = asyncio.Semaphore(max(1, int(getattr(self.config, "video_max_concurrent_tasks", VIDEO_MAX_CONCURRENT_TASKS) or VIDEO_MAX_CONCURRENT_TASKS)))
-        # Reserve image slots per requested shot, not per whole command batch.
-        self._image_batch_gate = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
-        self._selfie_batch_gate = self._image_batch_gate
         self._image_batch_cooldown_lock = asyncio.Lock()
         self.web_server = FlaskWebServer(self)
         self.dashboard_api = SelfieImageDashboardAPI(self)
@@ -389,6 +391,10 @@ class SelfieImagePlugin(
 
     async def terminate(self) -> None:
         self.web_server.stop()
+        scheduler = getattr(self, "_image_scheduler", None)
+        if scheduler is not None:
+            for task_id in list(getattr(self, "_runtime_generation_tasks", {})):
+                await scheduler.cancel_task(task_id)
 
     def _today_key(self) -> str:
         return time.strftime("%Y-%m-%d", time.localtime())
@@ -1473,6 +1479,60 @@ class SelfieImagePlugin(
         record_context: Optional[Mapping[str, Any]] = None,
         reference_selection: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """Run one image shot through the shared fair scheduler."""
+        scheduler = getattr(self, "_image_scheduler", None)
+        if scheduler is None or _IMAGE_JOB_ALREADY_SCHEDULED.get():
+            return await self._run_image_generation_unscheduled(
+                prompt, aspect_ratio, resolution, refs, targets, source, audit_user_id,
+                event, original_prompt, max_attempts, allow_compat_retry, prompt_en_meta,
+                record_context, reference_selection,
+            )
+        context = record_context if isinstance(record_context, Mapping) else {}
+        task_id = str(context.get("task_id") or "").strip()
+        if not task_id:
+            task_id = f"direct-{id(asyncio.current_task())}"
+
+        self._set_generation_stage(
+            record_context,
+            "queue",
+            "等待画布并发槽位" if source == "studio-run" else "等待图片并发槽位",
+        )
+
+        async def run() -> Dict[str, Any]:
+            slot_token = _IMAGE_JOB_ALREADY_SCHEDULED.set(True)
+            try:
+                self._set_generation_stage(
+                    record_context,
+                    "generating",
+                    "生成画布结果" if source == "studio-run" else "生成图片结果",
+                )
+                return await self._run_image_generation_unscheduled(
+                    prompt, aspect_ratio, resolution, refs, targets, source, audit_user_id,
+                    event, original_prompt, max_attempts, allow_compat_retry, prompt_en_meta,
+                    record_context, reference_selection,
+                )
+            finally:
+                _IMAGE_JOB_ALREADY_SCHEDULED.reset(slot_token)
+
+        return await scheduler.submit(task_id, run)
+
+    async def _run_image_generation_unscheduled(
+        self,
+        prompt: str,
+        aspect_ratio: str,
+        resolution: str,
+        refs: List[ImageReference],
+        targets: Optional[List[ImageModelTarget]] = None,
+        source: str = "command",
+        audit_user_id: str = "",
+        event: Optional[AstrMessageEvent] = None,
+        original_prompt: str = "",
+        max_attempts: Optional[int] = None,
+        allow_compat_retry: bool = True,
+        prompt_en_meta: Optional[Dict[str, Any]] = None,
+        record_context: Optional[Mapping[str, Any]] = None,
+        reference_selection: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
         # ``targets=[]`` is an intentional explicit selection (for example a
         # disabled channel test); do not silently replace it with all configured
         # channels via truthiness.
@@ -1821,22 +1881,19 @@ class SelfieImagePlugin(
             "queue",
             "等待画布并发槽位" if is_studio_run else "等待图片并发槽位",
         )
-        # trust_env=False: channel.proxy is explicit; do not inherit process HTTP(S)_PROXY
-        # (common on ops hosts) and silently stall NewAPI image downloads/posts.
-        async with self._semaphore:
-            self._set_generation_stage(
-                record_context,
-                "generating",
-                "生成画布结果" if is_studio_run else "生成图片结果",
-            )
-            result = await generate_image_with_fallback(
-                selected_targets,
-                request,
-                None,
-                max_attempts=max_attempts,
-                global_timeout=self.config.image_global_timeout,
-                request_factory=request_for_target if image_to_text_targets else None,
-            )
+        self._set_generation_stage(
+            record_context,
+            "generating",
+            "生成画布结果" if is_studio_run else "生成图片结果",
+        )
+        result = await generate_image_with_fallback(
+            selected_targets,
+            request,
+            None,
+            max_attempts=max_attempts,
+            global_timeout=self.config.image_global_timeout,
+            request_factory=request_for_target if image_to_text_targets else None,
+        )
         if cooldown_attempts:
             result.attempts = [*cooldown_attempts, *(result.attempts or [])]
         elapsed = time.monotonic() - started
@@ -2753,6 +2810,11 @@ class SelfieImagePlugin(
             if not capabilities["can_cancel"] and task.get("cancel_requested"):
                 return f"已请求取消 {tid}，任务将在安全边界停止"
             task["cancel_requested"] = True
+            scheduler = getattr(self, "_image_scheduler", None)
+            if scheduler is not None:
+                loop = getattr(self, "loop", None)
+                if loop is not None and loop.is_running():
+                    loop.create_task(scheduler.cancel_task(tid))
             now = time.time()
             runtime_task = getattr(self, "_runtime_generation_tasks", {}).get(tid)
             # Keep active tasks queryable while their cooperative cancellation
@@ -4153,79 +4215,53 @@ class SelfieImagePlugin(
 
 
     def _image_inflight_limit(self) -> int:
-        return max(1, min(10, int(getattr(self.config, "image_max_concurrent_tasks", 1) or 1)))
+        scheduler = getattr(self, "_image_scheduler", None)
+        if scheduler is None:
+            return max(1, min(10, int(getattr(self.config, "image_max_concurrent_tasks", 1) or 1)))
+        return int((scheduler._limit if hasattr(scheduler, "_limit") else 1) or 1)
+
+    def _image_scheduler_snapshot(self) -> Dict[str, int]:
+        scheduler = getattr(self, "_image_scheduler", None)
+        if scheduler is None:
+            return {"limit": self._image_inflight_limit(), "active": 0, "pending": 0, "queued_tasks": 0}
+        return {
+            "limit": int(getattr(scheduler, "_limit", self._image_inflight_limit()) or 1),
+            "active": int(getattr(scheduler, "_active", 0) or 0),
+            "pending": sum(len(queue) for queue in getattr(scheduler, "_pending", {}).values()),
+            "queued_tasks": len(getattr(scheduler, "_round_robin", ())),
+        }
+
+    def _image_batch_queue_expected(self, total: int = 1) -> bool:
+        """Whether the shared scheduler already has no physical image slot."""
+        scheduler = getattr(self, "_image_scheduler", None)
+        if scheduler is not None:
+            snapshot = self._image_scheduler_snapshot()
+            if snapshot["active"] >= snapshot["limit"]:
+                return True
+        gate = getattr(self, "_image_batch_gate", None)
+        if gate is not None:
+            return int(getattr(gate, "_value", 0)) <= 0
+        return False
 
     def _ensure_image_batch_gate(self) -> asyncio.Semaphore:
+        """Keep compatibility with older hosts that have no image scheduler."""
         gate = getattr(self, "_image_batch_gate", None)
         if gate is None or not isinstance(gate, asyncio.Semaphore):
-            self._image_batch_gate = asyncio.Semaphore(self._image_inflight_limit())
-            gate = self._image_batch_gate
+            gate = asyncio.Semaphore(self._image_inflight_limit())
+            self._image_batch_gate = gate
         self._selfie_batch_gate = gate
         return gate
 
-    def _image_batch_queue_expected(self, total: int = 1) -> bool:
-        """Whether the first shot must wait for a currently occupied slot.
-
-        ``total`` is intentionally not used here.  A batch of ten is valid
-        with concurrency three and must not be labelled queued merely because
-        ten is larger than the configured concurrency.
-        """
-        gate = self._ensure_image_batch_gate()
-        return int(getattr(gate, "_value", 0)) <= 0
-
     async def _acquire_image_slot(self, task_id: str) -> Optional[asyncio.Semaphore]:
-        """Acquire one slot; a batch may be larger than the global limit."""
+        """Acquire the legacy image slot when running without the scheduler."""
         gate = self._ensure_image_batch_gate()
-        queued_marked = False
-        while True:
-            if self._task_cancel_requested(task_id):
-                return None
-            available = int(getattr(gate, "_value", 0))
-            if available <= 0 and not queued_marked:
-                with self._web_task_lock:
-                    current_task = dict(self._web_tasks.get(task_id) or {})
-                    waiting = sum(
-                        1
-                        for item in self._web_tasks.values()
-                        if isinstance(item, dict)
-                        and item.get("status") in {"queued", "running"}
-                        and item.get("queue_waiting")
-                    )
-                if "requested_count" in current_task:
-                    self._set_web_image_task(
-                        task_id,
-                        queue_waiting=True,
-                        queue_wait_started_ts=time.time(),
-                        queue_position=waiting + 1,
-                        active_slots=max(0, self._image_inflight_limit() - available),
-                        max_concurrent_tasks=self._image_inflight_limit(),
-                    )
-                queued_marked = True
+        while not self._task_cancel_requested(task_id):
             try:
                 await asyncio.wait_for(gate.acquire(), timeout=1.0)
-                now = time.time()
-                with self._web_task_lock:
-                    current = dict(self._web_tasks.get(task_id) or {})
-                wait_started = current.get("queue_wait_started_ts")
-                queue_wait = 0.0
-                if wait_started:
-                    try:
-                        queue_wait = max(0.0, now - float(wait_started))
-                    except (TypeError, ValueError):
-                        queue_wait = 0.0
-                if "requested_count" in current:
-                    self._set_web_image_task(
-                        task_id,
-                        queue_waiting=False,
-                        queue_position=0,
-                        queue_wait_seconds=round(queue_wait, 2),
-                        generation_started_ts=now,
-                        active_slots=max(0, self._image_inflight_limit() - int(getattr(gate, "_value", 0))),
-                        max_concurrent_tasks=self._image_inflight_limit(),
-                    )
                 return gate
             except asyncio.TimeoutError:
                 continue
+        return None
 
     async def _acquire_video_slot(self, task_id: str) -> Optional[asyncio.Semaphore]:
         """Acquire the video semaphore while exposing queue wait to task clients."""
@@ -4365,23 +4401,28 @@ class SelfieImagePlugin(
                         requested_count=total,
                         completed_count=int(task_snapshot.get("completed_count") or 0),
                     )
-                slot_gate = await self._acquire_image_slot(task_id)
-                if slot_gate is None:
-                    async with send_lock:
-                        cancelled = True
-                        cancelled_shots += 1
-                        persist_progress(index + 1)
-                    return
-                try:
-                    if total > 1 and not await self._wait_for_image_batch_cooldown(task_id):
+                legacy_slot = None
+                scheduler = getattr(self, "_image_scheduler", None)
+                if scheduler is None:
+                    legacy_slot = await self._acquire_image_slot(task_id)
+                    if legacy_slot is None:
                         async with send_lock:
                             cancelled = True
                             cancelled_shots += 1
                             persist_progress(index + 1)
                         return
+                    if total > 1 and not await self._wait_for_image_batch_cooldown(task_id):
+                        legacy_slot.release()
+                        async with send_lock:
+                            cancelled = True
+                            cancelled_shots += 1
+                            persist_progress(index + 1)
+                        return
+                try:
                     result = await run_one(index)
                 finally:
-                    slot_gate.release()
+                    if legacy_slot is not None:
+                        legacy_slot.release()
             # Records are committed in a worker thread. Wait for this shot's
             # commit before publishing failure/success progress so a terminal
             # task snapshot cannot briefly expose an empty record_ids list.
@@ -4714,7 +4755,6 @@ class SelfieImagePlugin(
         cos_selection: Optional[CosReferenceSelection] = None,
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
-        self._ensure_image_batch_gate()
         return await self._run_selfie_batches_unlocked(
             task_id,
             event,

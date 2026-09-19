@@ -157,6 +157,72 @@ class RecordDatabase:
             )
             connection.commit()
 
+    def upsert_record(self, record: Mapping[str, Any], *, sequence: Optional[int] = None) -> None:
+        """Insert or update one retained record without rebuilding the table."""
+        payload = dict(record)
+        record_id = str(payload.get("id") or "").strip()
+        if not record_id:
+            raise ValueError("generation record id is required")
+        favorite, pinned, tags, note = self._metadata(payload)
+        payload.pop("favorite", None)
+        payload.pop("is_favorite", None)
+        payload.pop("pinned", None)
+        payload.pop("is_pinned", None)
+        payload.pop("tags", None)
+        payload.pop("note", None)
+        payload.pop("asset_note", None)
+        with self._lock, self._connect() as connection:
+            if sequence is None:
+                row = connection.execute(
+                    "SELECT seq FROM generation_records WHERE id = ?", (record_id,)
+                ).fetchone()
+                sequence_value = int(row["seq"]) if row is not None else 0
+            else:
+                sequence_value = int(sequence)
+            connection.execute(
+                """
+                INSERT INTO generation_records
+                    (id, seq, time, payload, favorite, pinned, tags, note, created_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    seq = excluded.seq,
+                    time = excluded.time,
+                    payload = excluded.payload,
+                    favorite = excluded.favorite,
+                    pinned = excluded.pinned,
+                    tags = excluded.tags,
+                    note = excluded.note,
+                    created_ts = excluded.created_ts
+                """,
+                (
+                    record_id,
+                    int(-sequence_value),
+                    str(payload.get("time") or ""),
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    favorite,
+                    pinned,
+                    tags,
+                    note,
+                    float(payload.get("created_ts") or time.time()),
+                ),
+            )
+
+    def prune_to_limit(self, limit: int) -> List[str]:
+        """Remove only records older than the retained record limit."""
+        keep = max(1, int(limit or 1))
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id FROM generation_records ORDER BY seq ASC LIMIT -1 OFFSET ?",
+                (keep,),
+            ).fetchall()
+            ids = [str(row["id"]) for row in rows]
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                connection.execute(
+                    f"DELETE FROM generation_records WHERE id IN ({placeholders})", ids
+                )
+        return ids
+
     def update_metadata(
         self,
         record_id: str,

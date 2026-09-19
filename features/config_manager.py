@@ -521,12 +521,16 @@ class ConfigurationMixin:
         next_config["web"] = copy.deepcopy(self.key_config["web"])
         self.raw_config = next_config
         self.config = AICatConfig.from_dict(self.raw_config)
-        self._semaphore = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
+        scheduler = getattr(self, "_image_scheduler", None)
+        if scheduler is None:
+            from ..generation.image_scheduler import ImageJobScheduler
+
+            self._image_scheduler = ImageJobScheduler(self.config.image_max_concurrent_tasks)
+        else:
+            scheduler.set_limit(self.config.image_max_concurrent_tasks)
         self._video_semaphore = asyncio.Semaphore(
             max(1, int(getattr(self.config, "video_max_concurrent_tasks", VIDEO_MAX_CONCURRENT_TASKS) or VIDEO_MAX_CONCURRENT_TASKS))
         )
-        self._image_batch_gate = asyncio.Semaphore(self.config.image_max_concurrent_tasks)
-        self._selfie_batch_gate = self._image_batch_gate
         self._persist_config()
 
     def _start_web_server(self) -> None:

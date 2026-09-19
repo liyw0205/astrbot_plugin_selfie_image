@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 from pathlib import Path
@@ -60,6 +61,35 @@ class TestStorage:
             detail = plugin.get_record_for_web("legacy-1")
             assert detail["generated_image_sources"][0]["value"] == inline
             assert list((Path(root) / "media_sources").glob("*.json"))
+
+    def test_incremental_commit_upserts_only_new_record_without_replacing_history(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            plugin._commit_generation_record({"id": "existing", "success": True, "generated_image_paths": []})
+            plugin._commit_generation_record({"id": "new", "success": True, "generated_image_paths": []})
+
+            with sqlite3.connect(plugin.records_db_path) as connection:
+                rows = connection.execute(
+                    "SELECT id FROM generation_records ORDER BY seq ASC"
+                ).fetchall()
+
+            assert rows == [("new",), ("existing",)]
+
+    def test_incremental_commit_does_not_call_full_record_replacement(self, monkeypatch) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            database = plugin._record_database()
+            assert database is not None
+            monkeypatch.setattr(
+                database,
+                "replace_records",
+                lambda _records: pytest.fail("a single generation record must not rewrite all history"),
+            )
+
+            plugin._commit_generation_record({"id": "one", "success": True, "generated_image_paths": []})
+            plugin._commit_generation_record({"id": "two", "success": True, "generated_image_paths": []})
+
+            assert [record["id"] for record in plugin._records] == ["two", "one"]
 
     def test_loading_records_prunes_orphan_media_sidecars(self) -> None:
         with tempfile.TemporaryDirectory() as root:

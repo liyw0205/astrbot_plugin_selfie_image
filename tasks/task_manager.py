@@ -849,7 +849,7 @@ class WebTaskMixin:
             if status in bucket:
                 bucket[status] += 1
 
-        image_gate = getattr(self, "_image_batch_gate", None)
+        image_scheduler = getattr(self, "_image_scheduler", None)
         video_gate = getattr(self, "_video_semaphore", None)
         image_max = max(1, int(getattr(getattr(self, "config", None), "image_max_concurrent_tasks", 1) or 1))
         video_max = max(
@@ -863,9 +863,8 @@ class WebTaskMixin:
                 or VIDEO_MAX_CONCURRENT_TASKS
             ),
         )
-        image_value = getattr(image_gate, "_value", image_max) if image_gate is not None else image_max
+        image_active = max(0, min(image_max, int(getattr(image_scheduler, "_active", 0) or 0)))
         video_value = getattr(video_gate, "_value", video_max) if video_gate is not None else video_max
-        image_active = max(0, min(image_max, image_max - int(image_value)))
         video_active = max(0, min(video_max, video_max - int(video_value)))
         return {
             "tasks": rows,

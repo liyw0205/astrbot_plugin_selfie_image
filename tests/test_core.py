@@ -457,7 +457,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.23")
+        self.assertEqual(PLUGIN_VERSION, "1.6.24")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -3872,7 +3872,29 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_unknown_response_parser_ignores_invalid_content_length_header(self) -> None:
+    async def test_response_limit(self) -> None:
+        target = make_target()
+        target.extra["max_response_bytes"] = 1024
+        adapter = BaseImageAdapter(target, FakeSession())
+        response = FakeResponse(status=200, raw=b"x" * 1025)
+        response.headers = {"content-length": "1025"}
+
+        data, error = await adapter.response_json_or_error(response)
+
+        self.assertIsNone(data)
+        self.assertIn("上游响应超过", error)
+
+    async def test_response_limit_without_content_length_streams_in_chunks(self) -> None:
+        target = make_target()
+        target.extra["max_response_bytes"] = 1024
+        adapter = BaseImageAdapter(target, FakeSession())
+        response = FakeResponse(status=200, raw=b"x" * 1025)
+        response.content = FakeContent(b"x" * 1025)
+
+        data, error = await adapter.response_json_or_error(response)
+
+        self.assertIsNone(data)
+        self.assertIn("上游响应超过", error)
         session = FakeSession(get_data=PNG_BYTES, get_headers={"content-type": "image/png", "content-length": "unknown"})
         payload = {"data": [{"url": "https://example.test/generated.png"}]}
 
@@ -7125,7 +7147,6 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("_background_draw_batches", llm_image)
         selfie_batch = main_src.split("async def _background_selfie_batches", 1)[1].split("def _validate_web_test_selection", 1)[0]
         self.assertIn("for index in range(total)", selfie_batch)
-        self.assertIn("_ensure_image_batch_gate", selfie_batch)
         self.assertIn("_run_counted_generation_shots", selfie_batch)
         self.assertIn("_run_selfie_batches_unlocked", selfie_batch)
         self.assertNotIn("_run_generation_jobs_parallel", main_src)

@@ -799,7 +799,12 @@ class GenerationStoreMixin:
             if evicted_records:
                 del self._records[RECORD_KEEP_LIMIT:]
                 stale_cache_paths = collect_unreferenced_record_cache_paths(evicted_records, self._records)
-            self._persist_records()
+            database = self._record_database()
+            if database is not None:
+                database.upsert_record(stored_record, sequence=self._record_seq)
+                database.prune_to_limit(RECORD_KEEP_LIMIT)
+            else:
+                self._persist_records()
             self._delete_media_sidecars(evicted_records)
             committed_record_id = str(record.get("id") or "").strip()
         if stale_cache_paths:
@@ -941,7 +946,12 @@ class GenerationStoreMixin:
                         response["error"] = ""
                     response["status"] = record.get("status")
                 changed += 1
-            self._persist_records()
+            database = self._record_database()
+            if database is not None:
+                for record in matches:
+                    database.upsert_record(record)
+            else:
+                self._persist_records()
         return changed
 
     def get_recent_records(self, *, summary: bool = False) -> List[Dict[str, Any]]:

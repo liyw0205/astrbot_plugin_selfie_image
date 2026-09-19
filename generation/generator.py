@@ -1,7 +1,9 @@
-"""Isolated one-pass generation: each model runs in its own thread+loop.
+"""Bounded, cancellable one-pass image generation.
 
-The main event loop never awaits aiohttp. Timeouts fire even if another
-shot is parsing a large body. Same label is never re-POSTed.
+Image transports run on the caller's asyncio loop.  A timeout therefore waits
+for aiohttp cancellation and session cleanup before the scheduler can reuse
+that image slot.  Do not move network transport into ``asyncio.to_thread``:
+cancelling its Future does not stop the underlying worker or HTTP request.
 """
 
 from __future__ import annotations
@@ -98,23 +100,20 @@ async def _try_model(
     budget: int,
     session: Optional[aiohttp.ClientSession],
 ) -> ImageGenerateResult:
-    if session is None:
-        work = asyncio.create_task(asyncio.to_thread(_sync_try_model, target, req, budget))
-        done, _ = await asyncio.wait({work}, timeout=max(1, int(budget)))
-        if work not in done:
-            work.cancel()
-            return ImageGenerateResult(error=format_timeout_user_message("local", budget))
-        try:
-            return work.result()
-        except Exception as exc:
-            return ImageGenerateResult(error=str(exc))
-    work = asyncio.create_task(_try_on_session(target, req, session, budget))
-    done, _ = await asyncio.wait({work}, timeout=max(1, int(budget)))
-    if work not in done:
-        work.cancel()
-        return ImageGenerateResult(error=format_timeout_user_message("local", budget))
+    """Run one cancellable model attempt and wait for cleanup on timeout."""
+
+    async def run() -> ImageGenerateResult:
+        if session is not None:
+            return await _try_on_session(target, req, session, budget)
+        timeout = image_client_timeout(budget)
+        async with aiohttp.ClientSession(trust_env=False, timeout=timeout) as base:
+            return await _try_on_session(target, req, base, budget)
+
     try:
-        return work.result()
+        async with asyncio.timeout(max(1, int(budget))):
+            return await run()
+    except TimeoutError:
+        return ImageGenerateResult(error=format_timeout_user_message("local", budget))
     except Exception as exc:
         return ImageGenerateResult(error=str(exc))
 

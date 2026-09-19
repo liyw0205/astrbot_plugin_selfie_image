@@ -118,6 +118,28 @@ class BaseImageAdapter:
             proxy=str(self.target.proxy or "").strip() or None,
         )
 
+    async def _read_response_bytes(self, response: aiohttp.ClientResponse, max_bytes: int) -> tuple[Optional[bytes], str]:
+        """Read a response in bounded chunks when aiohttp exposes a stream."""
+        content = getattr(response, "content", None)
+        iter_chunked = getattr(content, "iter_chunked", None)
+        if callable(iter_chunked):
+            chunks: List[bytes] = []
+            total = 0
+            async for chunk in iter_chunked(64 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    return None, f"上游响应超过 {max_bytes} bytes"
+                chunks.append(chunk)
+            return b"".join(chunks), ""
+        try:
+            raw = await response.read()
+        except Exception as exc:
+            msg = str(exc).strip() or type(exc).__name__
+            return None, f"上游响应未完整接收: {msg}"
+        if len(raw) > max_bytes:
+            return None, f"上游响应超过 {max_bytes} bytes"
+        return raw, ""
+
     async def response_json_or_error(
         self,
         response: aiohttp.ClientResponse,
@@ -125,12 +147,22 @@ class BaseImageAdapter:
         http_preview_limit: int = 500,
         invalid_json_preview_limit: int = 300,
     ) -> tuple[Optional[Any], str]:
-        # Prefer raw bytes then utf-8 decode: large b64_json bodies are common for image APIs.
+        max_response_bytes = max(1024, int(self.target.extra.get("max_response_bytes") or 32 * 1024 * 1024))
+        content_length = response.headers.get("content-length", "")
         try:
-            raw = await response.read()
+            if content_length and int(content_length) > max_response_bytes:
+                return None, f"上游响应超过 {max_response_bytes} bytes"
+        except (TypeError, ValueError):
+            pass
+        try:
+            raw, read_error = await self._read_response_bytes(response, max_response_bytes)
         except Exception as exc:
             msg = str(exc).strip() or type(exc).__name__
             return None, f"上游响应未完整接收: {msg}"
+        if read_error:
+            return None, read_error
+        if raw is None:
+            return None, "上游响应未完整接收"
         charset = response.charset or "utf-8"
         status = response.status
 
