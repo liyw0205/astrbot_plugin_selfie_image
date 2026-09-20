@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.29")
+        self.assertEqual(PLUGIN_VERSION, "1.6.30")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -10735,6 +10735,21 @@ class StudioStoreTests(unittest.TestCase):
             self.assertTrue(all(group in {"action", "upper", "lower"} for group in groups[first_structure:]))
             group_order = [group for group in groups if group]
             self.assertEqual(group_order, sorted(group_order, key={"action": 0, "upper": 1, "lower": 2}.get))
+
+    def test_action_presets_use_deep_affection_without_rewriting_reserved_items(self) -> None:
+        from astrbot_plugin_selfie_image.studio.studio import action_prompt_presets
+
+        prompts = {item["title"]: item["prompt"] for item in action_prompt_presets()}
+        changed_titles = {
+            "咬唇回眸", "轻拉衣领", "俯身靠近", "腰侧轻抚", "耳边靠近",
+            "牵手拉近", "侧躺抬眼", "背对回眸", "低头抬眼",
+        }
+        for title in changed_titles:
+            self.assertIn("深情", prompts[title])
+        for title in ("咬唇回眸", "俯身靠近", "牵手拉近", "侧躺抬眼"):
+            self.assertNotRegex(prompts[title], r"笑意|笑容|微笑|唇角微微上扬|嘴角带着")
+        self.assertIn("女孩眼神朦胧却饱含爱意", prompts["捧脸"])
+        self.assertIn("her eyes are hazy but full of love", prompts["男友视角"])
 
     def test_default_presets_seed(self) -> None:
         import tempfile
