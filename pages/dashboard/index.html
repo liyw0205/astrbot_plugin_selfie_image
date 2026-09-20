@@ -6648,8 +6648,9 @@ Source prompt:
           return;
         }
         setTestBusy(false);
+        TEST_TASK_ID = '';
         safeStorageRemove('selfieImageLastTestTaskId');
-      safeStorageRemove('selfieImageLastTestMode');
+        safeStorageRemove('selfieImageLastTestMode');
         renderImageTestResult(testTaskResult(task));
         clearRecordPageCache();
         clearAssetPageCache();
@@ -6705,8 +6706,9 @@ Source prompt:
           if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
           pollImageTestTask(taskId);
         } else {
+          TEST_TASK_ID = '';
           safeStorageRemove('selfieImageLastTestTaskId');
-      safeStorageRemove('selfieImageLastTestMode');
+          safeStorageRemove('selfieImageLastTestMode');
           $('testResponseData').textContent = JSON.stringify(task, null, 2);
           if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
           renderImageTestResult(testTaskResult(task));
