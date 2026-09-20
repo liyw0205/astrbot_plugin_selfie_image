@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.27")
+        self.assertEqual(PLUGIN_VERSION, "1.6.28")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -6881,6 +6881,9 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertTrue(("15–60" in self.html) or ("15-60" in self.html) or ("15–60秒" in self.html.replace(" ", "")))
         # 1:1 preference when auto
         self.assertTrue("1:1" in self.html)
+        self.assertIn("async function recoverTestTaskAfterCancelFailure", self.html)
+        self.assertIn("recoverTestTaskAfterCancelFailure(taskId)", self.html)
+        self.assertIn("setTestBusy(false)", self.html)
 
     def test_p0_visual_tokens_shared_by_index_and_dashboard_page(self) -> None:
         self.assertIn("#3c96ca", self.html)

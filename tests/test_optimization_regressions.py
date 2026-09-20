@@ -1263,6 +1263,60 @@ def test_task_operation_matrix_preserves_terminal_evidence() -> None:
     assert requested["can_cancel"] is False
 
 
+def test_running_task_with_completed_result_is_terminal_and_not_cancellable() -> None:
+    class TaskProbe(WebTaskMixin):
+        pass
+
+    probe = object.__new__(TaskProbe)
+    probe._web_task_lock = __import__("threading").RLock()
+    probe._web_tasks = {
+        "web-12345678-2": {
+            "task_id": "web-12345678-2",
+            "status": "running",
+            "success": False,
+            "cancel_requested": False,
+            "result": {
+                "success": True,
+                "status": "succeeded",
+                "generated_image_paths": ["generated.png"],
+                "succeeded_count": 1,
+            },
+        }
+    }
+    probe._task_media_type = lambda _task: "image"
+    probe._web_task_timestamp = lambda: "now"
+    task = probe.get_web_image_task("web-12345678-2")
+    assert task["status"] == "succeeded"
+    assert task["success"] is True
+    assert task["cancel_requested"] is False
+    capabilities = WebTaskMixin.task_operation_capabilities(task)
+    assert capabilities["can_cancel"] is False
+    assert capabilities["is_terminal"] is True
+
+
+def test_terminal_reconciliation_prevents_late_cancel_overwrite() -> None:
+    class TaskProbe(WebTaskMixin):
+        pass
+
+    probe = object.__new__(TaskProbe)
+    probe._web_task_lock = __import__("threading").RLock()
+    probe._persist_web_tasks_locked = lambda: None
+    probe._web_task_timestamp = lambda: "now"
+    probe._web_tasks = {
+        "web-12345678-3": {
+            "task_id": "web-12345678-3",
+            "status": "running",
+            "success": False,
+            "cancel_requested": False,
+            "result": {"success": True, "status": "succeeded", "generated_image_paths": ["generated.png"]},
+        }
+    }
+    task = probe.get_web_image_task("web-12345678-3")
+    assert task["status"] == "succeeded"
+    assert "不用再取消" in SelfieImagePlugin.cancel_image_task(probe, "web-12345678-3", is_admin=True)
+    assert probe._web_tasks["web-12345678-3"]["status"] == "succeeded"
+
+
 def test_task_operation_matrix_covers_unknown_delivery_and_partial_batch_states() -> None:
     unknown = WebTaskMixin.task_operation_capabilities({
         "status": "succeeded",

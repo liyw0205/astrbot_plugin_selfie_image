@@ -6526,6 +6526,35 @@ Source prompt:
       if (source === 'web-video-test') return 'Web/快速试视频';
       return String(item?.source_label || item?.source || '未知来源');
     }
+    async function recoverTestTaskAfterCancelFailure(taskId) {
+      const id = String(taskId || '').trim();
+      if (!id || TEST_TASK_ID !== id) return;
+      try {
+        const res = await api(testTaskStatusPath(id));
+        const task = res.data || {};
+        const active = task.status === 'queued' || task.status === 'running';
+        if (active) {
+          setTestBusy(true);
+          $('testStatus').textContent = `取消未完成，任务仍在${task.status === 'queued' ? '排队' : '生成'}，继续等待…`;
+          TEST_TASK_POLL_TIMER = setTimeout(() => pollImageTestTask(id, 0), 1000);
+          return;
+        }
+        clearTestTaskPoll();
+        TEST_TASK_ID = '';
+        safeStorageRemove('selfieImageLastTestTaskId');
+        safeStorageRemove('selfieImageLastTestMode');
+        setTestBusy(false);
+        renderImageTestResult(testTaskResult(task));
+      } catch (statusError) {
+        clearTestTaskPoll();
+        TEST_TASK_ID = '';
+        safeStorageRemove('selfieImageLastTestTaskId');
+        safeStorageRemove('selfieImageLastTestMode');
+        setTestBusy(false);
+        $('testStatus').textContent = statusError.message || '取消后任务状态读取失败，已解除试画锁定';
+        $('testResponseData').textContent = JSON.stringify({success:false, error:statusError.message || String(statusError)}, null, 2);
+      }
+    }
     async function cancelTestTask() {
       const taskId = String(TEST_TASK_ID || '').trim();
       if (!taskId) return;
@@ -6549,6 +6578,7 @@ Source prompt:
       } catch (e) {
         $('testCancelBtn').disabled = false;
         $('testStatus').textContent = e.message || '取消失败';
+        await recoverTestTaskAfterCancelFailure(taskId);
       }
     }
     function testTaskResult(task) {
@@ -6604,7 +6634,7 @@ Source prompt:
         if (task.request_data && !$('testRequestData').textContent.trim()) {
           $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);
         }
-        if (task.status === 'queued' || task.status === 'running' || task.cancel_requested) {
+        if (task.status === 'queued' || task.status === 'running') {
           setTestBusy(true);
           const label = task.status === 'queued' ? '排队中' : '生成中';
           const seconds = Number(task.running_seconds || 0);
@@ -6669,7 +6699,7 @@ Source prompt:
       try {
         const res = await api(testTaskStatusPath(taskId));
         const task = res.data || {};
-        if (task.status === 'queued' || task.status === 'running' || task.cancel_requested) {
+        if (task.status === 'queued' || task.status === 'running') {
           TEST_TASK_ID = taskId;
           $('testResponseData').textContent = JSON.stringify(task, null, 2);
           if (task.request_data) $('testRequestData').textContent = JSON.stringify(task.request_data, null, 2);

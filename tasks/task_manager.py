@@ -425,11 +425,61 @@ class WebTaskMixin:
             task = self._web_tasks.get(tid)
             return str(task.get("user_notification_status") or "").strip().lower() if isinstance(task, dict) else ""
 
+    def _reconcile_task_terminal_evidence_locked(self, task: Dict[str, Any]) -> bool:
+        """Promote a stale active snapshot when its result is already final.
+
+        The runner writes the result before publishing the outer task status.
+        A status poll or cancel request can therefore briefly observe
+        ``running`` together with a completed result. Treat that result as the
+        source of truth so the same task cannot be shown as active and then
+        cancelled after it has finished.
+        """
+        if str(task.get("status") or "").strip().lower() not in {"queued", "running"}:
+            return False
+        result = task.get("result") if isinstance(task.get("result"), Mapping) else None
+        if not isinstance(result, Mapping):
+            return False
+        requested_count = task.get("requested_count") or result.get("requested_count") or 1
+        terminal = build_task_terminal_state(
+            dict(result),
+            requested_count=requested_count,
+            cancel_requested=bool(task.get("cancel_requested")),
+        )
+        if not terminal["terminal_stage"] in {"complete"} and not terminal["delivery_failed"] and not terminal["partial_success"]:
+            return False
+        now = time.time()
+        task.update(
+            {
+                "status": terminal["terminal_status"],
+                "success": terminal["success"],
+                "generation_success": terminal["generation_success"],
+                "delivery_success": (
+                    False
+                    if terminal["delivery_failed"]
+                    else terminal["result"].get("delivery_success")
+                ),
+                "delivery_failed": terminal["delivery_failed"],
+                "delivery_unknown": terminal["delivery_unknown"],
+                "cancel_requested": False,
+                "error": terminal["error"],
+                "result": terminal["result"],
+                "generation_stage": terminal["terminal_stage"],
+                "generation_stage_label": "已完成" if terminal["terminal_stage"] == "complete" else "部分完成" if terminal["partial_success"] else "发送失败",
+                "finished_ts": task.get("finished_ts") or now,
+                "finished_at": task.get("finished_at") or self._web_task_timestamp(),
+                "updated_ts": now,
+                "updated_at": self._web_task_timestamp(),
+            }
+        )
+        self._persist_web_tasks_locked()
+        return True
+
     def get_web_image_task(self, task_id: str) -> Dict[str, Any]:
         with self._web_task_lock:
             task = self._web_tasks.get(str(task_id or "").strip())
             if not task:
                 raise ValueError("任务不存在或已清理")
+            self._reconcile_task_terminal_evidence_locked(task)
             data = copy.deepcopy(task)
         now = time.time()
         if data.get("status") in {"queued", "running"}:
@@ -771,6 +821,9 @@ class WebTaskMixin:
         if start_value is not None and end_value is not None and start_value > end_value:
             raise ValueError("开始时间不能晚于结束时间")
         with self._web_task_lock:
+            for task in self._web_tasks.values():
+                if isinstance(task, dict):
+                    self._reconcile_task_terminal_evidence_locked(task)
             raw_tasks = sorted(
                 (copy.deepcopy(item) for item in self._web_tasks.values() if isinstance(item, dict)),
                 key=lambda item: float(item.get("created_ts") or 0),

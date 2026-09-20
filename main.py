@@ -2862,6 +2862,9 @@ class SelfieImagePlugin(
             if not task:
                 # allow short numeric index against recent active? handled by caller
                 raise ValueError("任务不存在或已清理")
+            reconcile = getattr(self, "_reconcile_task_terminal_evidence_locked", None)
+            if callable(reconcile):
+                reconcile(task)
             owner = str(task.get("owner_session") or "")
             if owner and session_key and owner != session_key and not is_admin:
                 raise PermissionError("不能取消其他会话的生图任务")
