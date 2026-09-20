@@ -335,6 +335,20 @@ def test_unspecified_cos_framing_picks_one_concrete_view():
     assert pick_cos_framing(extra_request="COS 换装：竖屏三分之四侧身全身构图")["prompt"] == ""
 
 
+def test_outfit_framing_words_do_not_suppress_random_view():
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        return_value="low_angle_full_2",
+    ):
+        selected = pick_cos_framing(
+            outfit="竖屏9:16，半身到全身构图，人物对镜站立",
+            extra_request="COS 换装：自然站立",
+        )
+    assert selected["view_id"] == "low_angle_full_2"
+    assert selected["prompt"] == COS_FRAMING_CLASSES["low_angle_full_2"]["prompt"]
+    assert selected["outfit_text"] == "竖屏9:16，半身到全身构图，人物对镜站立"
+
+
 def test_random_cos_pose_is_optional_and_scene_is_never_injected():
     from unittest.mock import patch
 
@@ -598,10 +612,12 @@ def test_cos_action_replaces_outfit_view_alternatives():
         "title": "视角测试",
         "prompt": "严格换装为测试COS：人物正面或三分之四侧身站立，采用近景至全身构图。",
     }
-    action = build_cos_look_action("", picker=lambda **_: item)
-    assert "本次从已有视角选项中随机确定为" in action
-    assert "正面或三分之四侧身" not in action
-    assert "近景至全身" not in action
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
+        action = build_cos_look_action("", picker=lambda **_: item)
+    assert "本次未指定视角，随机采用" in action
+    assert "该随机机位优先于套装正文中的通用景别和机位描述" in action
+    assert "正面或三分之四侧身" in action
+    assert "近景至全身" in action
 
 
 def test_selfie_command_cos_request_does_not_use_cos_pool():

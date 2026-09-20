@@ -210,6 +210,12 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "prompt": "严格换装为粉蓝配色的改良古风COS：深色长发盘成低髻或发髻，发间佩戴精致古风发饰，发丝整洁自然。上身为粉色立领短袖上衣，衣身带清晰的淡色花卉图案，立领和袖口结构明确，短袖长度到上臂；腰间系一条淡蓝色丝带，打成简洁结并自然垂下。下装为淡蓝色高腰长裙，裙身轻薄垂坠，带自然褶皱和柔和层次，长度落到脚踝；手腕佩戴一串圆润珠串手链。人物侧身站立，身体略微转向镜头，一手自然垂落，另一手轻触腰间丝带或裙摆，完整展示服装比例和长裙垂感。室内温暖环境，暖色柔光照亮人物，真实人像摄影与细腻二次元妆面结合，竖屏9:16全身构图，高画质。不要西式连衣裙、现代短裙、裤装、厚重铠甲、夸张婚纱。不要额外人物、文字、字幕或水印；禁止动漫插画、赛璐璐、游戏立绘、3D渲染、塑料皮肤和超现实发光。"
     },
     {
+        "id": "oriental_fairy_silver_phoenix_crown",
+        "title": "东方仙子·银白凤冠",
+        "cos_type": "原创COS",
+        "prompt": "严格换装为东方仙子银白凤冠COS：真人 COSER，银白色长发，精致冷白皮五官，浅灰紫色眼影，眉心点缀一颗小巧珠钗，佩戴华丽银白色镶钻凤冠与流苏步摇，耳坠自然垂落。身穿白色挂脖式薄纱吊带长裙，胸前与裙身有精致银线刺绣花纹，腰间系浅蓝色丝绸腰带并垂坠大型银蓝色蝴蝶结，外搭双层白色轻纱披帛，轻盈通透。人物站姿优雅，双手微张，神情清冷端庄。背景为素雅的米色浮雕墙面，顶部有华丽水晶吊灯，柔和暖黄侧光，皮肤质感真实细腻，竖屏9:16，半身到全身构图，高清晰度，写实摄影质感。不要额外人物、文字、字幕或水印；禁止动漫插画、赛璐璐、游戏立绘、3D渲染、塑料皮肤和超现实发光。"
+    },
+    {
         "id": "silver_deepv_hanfu",
         "title": "古风·汉服·银紫深V广袖",
         "cos_type": "古风",
@@ -1741,9 +1747,9 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, str]] = {
     },
 }
 
-# When neither the user nor the selected outfit fixes a crop or camera angle,
-# 50% of actions choose one concrete framing. Keeping that choice in the action
-# prevents a model from having to pick between several alternatives in the prompt.
+# When the user has not explicitly fixed a crop or camera angle, 50% of actions
+# choose one concrete framing. Generic framing words in the outfit description
+# remain as costume context and do not disable this random choice.
 COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
     "front_half": {
         "title": "正面半身",
@@ -1772,6 +1778,10 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
     "low_angle_full": {
         "title": "低机位全身",
         "prompt": "轻微低机位全身构图，完整展示服装轮廓，透视自然不过度夸张",
+    },
+    "low_angle_full_2": {
+        "title": "低机位全身2",
+        "prompt": "低机位全身构图，从人物膝盖略低处向上拍摄，突出服装轮廓和人物气场，透视自然不过度夸张",
     },
     "side_profile": {
         "title": "侧前方人像",
@@ -1827,10 +1837,13 @@ def cos_prompt_has_framing(text: str) -> bool:
 
 
 def pick_cos_framing(*, outfit: str = "", extra_request: str = "") -> Dict[str, Any]:
-    """Pick one framing with a 50% chance when none is specified."""
-    resolved_outfit, outfit_options = resolve_cos_framing_options(outfit)
+    """Pick one framing unless the user's extra request already fixes it."""
+    # Framing text authored inside an outfit is descriptive context, not a lock.
+    # Keep it intact so the selected random view can take precedence in the
+    # action contract without rewriting costume details.
+    resolved_outfit = str(outfit or "")
     resolved_extra, extra_options = resolve_cos_framing_options(extra_request)
-    options = [*outfit_options, *extra_options]
+    options = extra_options
     if options:
         prompt = "；".join(dict.fromkeys(options))
         return {
@@ -1841,7 +1854,8 @@ def pick_cos_framing(*, outfit: str = "", extra_request: str = "") -> Dict[str, 
             "extra_request_text": resolved_extra,
             "randomized_from_options": True,
         }
-    if cos_prompt_has_framing(outfit) or cos_prompt_has_framing(extra_request):
+    # Explicit framing in the user's extra request remains authoritative.
+    if cos_prompt_has_framing(extra_request):
         return {
             "view_id": "",
             "title": "",
@@ -2529,7 +2543,7 @@ def build_cos_third_person_prompt(text: str) -> str:
         framing_line = f"本次从已有视角选项中随机确定为{framing['prompt']}；"
     else:
         framing_line = (
-            f"本次未指定视角，随机采用{framing['prompt']}；"
+            f"本次未指定视角，随机采用{framing['prompt']}；该随机机位优先于套装正文中的通用景别和机位描述；"
             if framing["prompt"]
             else "本次按已确定的单一构图执行；"
         )
@@ -2591,7 +2605,10 @@ def build_cos_look_action(
     if framing_choice.get("randomized_from_options"):
         framing_line = f"本次从已有视角选项中随机确定为{framing_choice['prompt']}；"
     elif framing_choice["view_id"]:
-        framing_line = f"本次未指定视角，随机采用{framing_choice['prompt']}；"
+        framing_line = (
+            f"本次未指定视角，随机采用{framing_choice['prompt']}；"
+            "该随机机位优先于套装正文中的通用景别和机位描述；"
+        )
     else:
         framing_line = (
             "本次按套装中已明确的单一构图执行；"

@@ -9211,17 +9211,26 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("中央固定一颗圆形金色球体", kaguya)
         self.assertIn("正红色缎面大蝴蝶结", kaguya)
         self.assertIn("白色半透明长纱片", kaguya)
-        shuilaner_action = plugin_main.build_cos_look_action(
-            camera="third",
-            picker=lambda **_: next(
-                item
-                for item in plugin_main.COS_LOOK_SETS
-                if item["id"] == "shuilaner_horned_brocade_qipao"
-            ),
-        )
+        def choose_framing_first(values):
+            if "low_angle_full_2" in values:
+                return "low_angle_full_2"
+            return values[0]
+
+        with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
+            "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+            side_effect=choose_framing_first,
+        ):
+            shuilaner_action = plugin_main.build_cos_look_action(
+                camera="third",
+                picker=lambda **_: next(
+                    item
+                    for item in plugin_main.COS_LOOK_SETS
+                    if item["id"] == "shuilaner_horned_brocade_qipao"
+                ),
+            )
         self.assertNotIn("视角按本套 COS 套装描述执行", shuilaner_action)
-        self.assertEqual(len(re.findall(r"本次(?:从已有视角选项中随机确定为|未指定视角，随机采用)", shuilaner_action)), 0)
-        self.assertIn("本次按套装中已明确的单一构图执行", shuilaner_action)
+        self.assertIn("本次未指定视角，随机采用", shuilaner_action)
+        self.assertIn("低机位全身构图，从人物膝盖略低处向上拍摄", shuilaner_action)
         self.assertNotRegex(
             shuilaner_action.split("本次套装：", 1)[0],
             r"(?:正面|侧身|近景|全身|半身)或(?:正面|侧身|近景|全身|半身)",
@@ -9484,6 +9493,14 @@ class LegFocusTests(unittest.TestCase):
             {item["id"] for item in plugin_main.match_cos_look_sets("肚兜")},
             {"ancient_hanfu_halter_dudou"},
         )
+        oriental_fairy = plugin_main.match_cos_look_sets("东方仙子")
+        self.assertEqual(
+            {item["id"] for item in oriental_fairy},
+            {"oriental_fairy_silver_phoenix_crown"},
+        )
+        self.assertEqual(oriental_fairy[0]["cos_type"], "原创COS")
+        self.assertIn("银白色镶钻凤冠", oriental_fairy[0]["prompt"])
+        self.assertIn("银蓝色蝴蝶结", oriental_fairy[0]["prompt"])
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("挂脖肚兜")},
             {"ancient_hanfu_halter_dudou"},
