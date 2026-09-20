@@ -24,11 +24,35 @@ def _preset_group_for_name(name: object) -> str:
         return ""
 
 
-def preset_display_sort_key(name: object) -> tuple[int, str]:
-    """Keep clothing-structure presets after ordinary presets in displays."""
+_PRESET_GROUP_ORDER = {"action": 0, "upper": 1, "lower": 2}
+_PRESET_GROUP_LABELS = {
+    "action": "动作预设",
+    "upper": "上身预设",
+    "lower": "下身预设",
+}
+
+
+def preset_group_label(name: object) -> str:
+    """Return the display label for a special preset group."""
+    return _PRESET_GROUP_LABELS.get(_preset_group_for_name(name), "")
+
+
+def preset_display_sort_key(name: object) -> tuple[int, int, str]:
+    """Keep ordinary presets first, then action/upper/lower special groups."""
     value = str(name or "").strip()
-    is_structure = bool(_preset_group_for_name(value))
-    return (1 if is_structure else 0, value)
+    group = _preset_group_for_name(value)
+    return (1 if group else 0, _PRESET_GROUP_ORDER.get(group, len(_PRESET_GROUP_ORDER)), value)
+
+
+def preset_row_display_sort_key(row: object) -> tuple[int, int, str]:
+    """Sort a public preset row while honoring its already-resolved group."""
+    if isinstance(row, dict):
+        name = str(row.get("name") or row.get("title") or "").strip()
+        group = str(row.get("preset_group") or row.get("special_group") or "").strip()
+        if group:
+            return (1, _PRESET_GROUP_ORDER.get(group, len(_PRESET_GROUP_ORDER)), name)
+        return (0, -1, name)
+    return preset_display_sort_key(row)
 
 
 # Upgrade only the exact old built-in value. User-customized presets remain untouched.
@@ -226,9 +250,10 @@ class ImagePresetManager:
                     "duration": preset.duration,
                     "source": "user",
                     "preset_group": _preset_group_for_name(name),
+                    "special_group": _preset_group_for_name(name),
                 }
             )
-        rows.sort(key=lambda item: preset_display_sort_key(item.get("name")))
+        rows.sort(key=preset_row_display_sort_key)
         return rows
 
     def add(self, name: str, raw_value: str) -> Tuple[bool, str]:
@@ -278,9 +303,10 @@ class ImagePresetManager:
                     "duration": preset.duration,
                     "source": "builtin" if name in builtin_names else "user",
                     "preset_group": _preset_group_for_name(name),
+                    "special_group": _preset_group_for_name(name),
                 }
             )
-        rows.sort(key=lambda item: preset_display_sort_key(item.get("name")))
+        rows.sort(key=preset_row_display_sort_key)
         return rows
 
     def save_management(self, payload: Dict[str, object]) -> Tuple[bool, str]:

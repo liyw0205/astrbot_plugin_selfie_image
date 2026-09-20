@@ -127,7 +127,12 @@ from .features.model_selection import (
     match_model_label,
     prioritize_model_target,
 )
-from .prompts.preset import ImagePresetManager, VideoPresetManager, preset_display_sort_key
+from .prompts.preset import (
+    ImagePresetManager,
+    VideoPresetManager,
+    preset_display_sort_key,
+    preset_group_label,
+)
 from .core.models import (
     AICatConfig,
     DEFAULT_CONFIG,
@@ -1030,7 +1035,12 @@ class SelfieImagePlugin(
             lines.append("暂无预设。")
         else:
             lines.append("预设名：")
+            last_group = None
             for idx, (name, _) in enumerate(items, start=start + 1):
+                group = preset_group_label(name) or "普通预设"
+                if group != last_group:
+                    lines.append(f"【{group}】")
+                    last_group = group
                 lines.append(f"{idx}. {name}")
 
         return "\n".join(line for line in lines if line is not None), current_page, total_pages
@@ -1077,7 +1087,12 @@ class SelfieImagePlugin(
         if not items:
             lines.append("暂无预设。")
         else:
+            last_group = None
             for idx, (name, preset) in enumerate(items, start=start + 1):
+                group = preset_group_label(name) or "普通预设"
+                if group != last_group:
+                    lines.append(f"【{group}】")
+                    last_group = group
                 lines.extend(self._preset_detail_lines(idx, name, preset))
 
         return "\n".join(line for line in lines if line is not None), current_page, total_pages
@@ -5908,7 +5923,7 @@ class SelfieImagePlugin(
                 "· /形象清除　去掉参考图",
                 "· /形象刷新　刷新今日穿搭状态",
                 "",
-                "预设：/预设　列表；可在任意生图指令中写「变真人」「变动漫」「变猫娘」「变Q版」「变像素」等图像转换预设；「特殊预设」随机选择上下身结构，「上身预设」随机选择上身结构，「下身预设」随机选择下身结构；管理员可 /预设添加 名称:内容、/预设删除 名称",
+                "预设：/预设　列表；可在任意生图指令中写「变真人」「变动漫」「变猫娘」「变Q版」「变像素」等图像转换预设；「特殊预设」随机选择上下身结构，「动作预设」随机选择动作，「上身预设」随机选择上身结构，「下身预设」随机选择下身结构；管理员可 /预设添加 名称:内容、/预设删除 名称",
                 "",
                 "说明：一次可写数量表示本条指令要生成的总张数；同时最多进行几张由「同时画几张上限」决定，不锁在单条指令里，新任务自动排队，超过同时上限才等待。图好了会直接发过来。",
                 "· /生图帮助　只看图卡",

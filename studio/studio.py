@@ -119,6 +119,106 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
     },
     # Shared style presets (画布芯片 + 默认 /预设 名)
     {
+        "id": "preset_bite_lip_glance",
+        "title": "咬唇回眸",
+        "prompt": (
+            "成年女性坐在沙发扶手上，身体侧向一边，轻轻咬住下唇后回头看向镜头，"
+            "一只手搭在膝上，另一只手拨开发丝，眼神带着试探和笑意，紫色氛围灯映出柔和侧脸，"
+            "真实人类女孩，竖屏近距离人像，暧昧生活感手机摄影"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_collar_touch",
+        "title": "轻拉衣领",
+        "prompt": (
+            "成年女性站在镜前，指尖轻轻触到颈侧与衣领边缘，身体微微前倾，"
+            "眼神透过镜面停留在镜头上，发丝垂落肩前，夜晚卧室灯光柔暗，"
+            "真实人类女孩，镜前半身自拍，iPhone原生暧昧氛围"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_lean_close",
+        "title": "俯身靠近",
+        "prompt": (
+            "成年女性坐在书桌前，身体微微俯身靠近手机镜头，一只手撑在桌面，"
+            "另一只手轻抚耳侧发丝，眼神从睫毛下方望向镜头，嘴角带着若有若无的笑意，"
+            "台灯照亮脸部和颈部轮廓，真实人类女孩，竖屏近景，带有呼吸感的生活化抓拍"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_waist_touch",
+        "title": "腰侧轻抚",
+        "prompt": (
+            "成年女性坐在床沿，一只手沿着腰侧轻轻抚过，身体向镜头方向侧转，"
+            "肩膀自然放松，眼神安静地看向镜头，暖黄色床头灯落在腰线和发丝上，"
+            "真实人类女孩，竖屏三分之四身构图，私密感手机摄影"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_ear_close",
+        "title": "耳边靠近",
+        "prompt": (
+            "成年女性坐在沙发上，成年伴侣只以靠近耳边的嘴角、下颌和一侧肩膀局部入镜，"
+            "她侧过脸看向镜头，眼神迷离而温柔，一只手轻轻抓住画面边缘伸来的衣袖，"
+            "昏暗客厅里只有落地灯和窗外城市灯光，真实人类女孩，竖屏半身构图，"
+            "iPhone随手拍出的亲密瞬间"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_hand_pull_close",
+        "title": "牵手拉近",
+        "prompt": (
+            "成年女性站在房间门边，成年伴侣只以从画面外伸入的一只手和前臂出现，轻轻牵住她的手腕，"
+            "她顺着力道向镜头靠近，另一只手扶住门框，眼神直视镜头，嘴角带着轻微笑意，暖色室内光线，"
+            "真实人类女孩，竖屏中近景，暧昧抓拍质感"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_side_lift_gaze",
+        "title": "侧躺抬眼",
+        "prompt": (
+            "成年女性侧躺在柔软沙发上，一只手支着脸颊，另一只手搭在腰侧，"
+            "膝盖自然弯曲，脸颊贴近抱枕边缘，眼神从下方抬起看向镜头，唇角微微上扬，"
+            "昏暗暖灯照亮凌乱发丝和柔软布料，真实人类女孩，竖屏近景，慵懒亲密的iPhone摄影"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_back_glance",
+        "title": "背对回眸",
+        "prompt": (
+            "成年女性站在窗边背对镜头，身体轻轻转向一侧，回眸望向镜头，"
+            "长发沿着背部自然垂落，手指轻搭在窗帘边缘，清晨柔光勾勒出肩背和衣料轮廓，"
+            "真实人类女孩，竖屏全身构图，安静自然的手机摄影质感"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_lowered_gaze",
+        "title": "低头抬眼",
+        "prompt": (
+            "成年女性坐在昏暗房间的椅子上，双手轻轻整理衣袖，先低头看向自己的手指，"
+            "随后抬眼望向镜头，眼神从克制变得柔软，发丝遮住一侧脸颊，"
+            "暖光勾勒出脸部和颈部轮廓，真实人类女孩，竖屏胸像构图，安静而暧昧的原生摄影质感"
+        ),
+        "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
         "id": "preset_hold_face",
         "title": "捧脸",
         "prompt": (
@@ -263,10 +363,11 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
         "id": "preset_crop_waist",
         "title": "漏腰",
         "prompt": (
-            "一张漂亮的真人女孩，居家休闲自拍，室内光线柔和偏暗，角度略高。"
-            "黑色短上衣，外面套着一件宽松 oversized 的深色长袖衬衫，敞开穿着，"
-            "外层宽松带有柔软褶皱，微微露出自然腰线。"
-            "放松地坐着或靠在深色沙发/床边，头发略显凌乱，像日常随意拍的照片。"
+            "成年女性。唯一调整是将原有上衣的下摆缩短至露出自然腰线的长度，"
+            "原有服装的款式、颜色、材质、领口、袖型、图案、配饰、层次和穿着方式全部保持不变；"
+            "保持下装、人物身份、发型、脸部、表情、姿势、镜头和场景不变。"
+            "居家休闲自拍，室内光线柔和偏暗，角度略高，放松地坐着或靠在深色沙发/床边，"
+            "头发略显凌乱，像日常随意拍的照片。"
         ),
         "templates": ["selfie", "t2i", "i2i", "blank"],
         "global": True,
@@ -559,14 +660,37 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
     },
 ]
 
-# These clothing-structure presets can also be requested through dynamic aliases.
+# These special presets can also be requested through dynamic aliases.
 # Keep the aliases themselves out of the fixed preset seed so each one expands
 # to one concrete prompt before image generation.
 SPECIAL_PRESET_ALIAS = "特殊预设"
+ACTION_PRESET_ALIAS = "动作预设"
 UPPER_PRESET_ALIAS = "上身预设"
 LOWER_PRESET_ALIAS = "下身预设"
+SPECIAL_PRESET_GROUP_LABELS = {
+    "action": "动作预设",
+    "upper": "上身预设",
+    "lower": "下身预设",
+}
+SPECIAL_PRESET_GROUP_ORDER = ("action", "upper", "lower")
+ACTION_PROMPT_PRESET_IDS = frozenset(
+    {
+        "preset_bite_lip_glance",
+        "preset_collar_touch",
+        "preset_lean_close",
+        "preset_waist_touch",
+        "preset_ear_close",
+        "preset_hand_pull_close",
+        "preset_side_lift_gaze",
+        "preset_back_glance",
+        "preset_lowered_gaze",
+        "preset_hold_face",
+        "preset_bf_view",
+    }
+)
 UPPER_PROMPT_PRESET_IDS = frozenset(
     {
+        "preset_crop_waist",
         "preset_deep_open_front",
         "preset_underbust_cutout",
         "preset_side_bust_cutout",
@@ -599,10 +723,10 @@ LOWER_PROMPT_PRESET_IDS = frozenset(
         "preset_double_high_slit_skirt",
     }
 )
-# "特殊预设" is the combined pool; the dedicated aliases below retain
-# independent upper- and lower-body selection.
+# "特殊预设" retains the legacy clothing-structure pool; the dedicated
+# aliases expose action, upper-body, and lower-body groups independently.
 SPECIAL_PROMPT_PRESET_IDS = UPPER_PROMPT_PRESET_IDS | LOWER_PROMPT_PRESET_IDS
-ALL_SPECIAL_PROMPT_PRESET_IDS = SPECIAL_PROMPT_PRESET_IDS
+ALL_SPECIAL_PROMPT_PRESET_IDS = SPECIAL_PROMPT_PRESET_IDS | ACTION_PROMPT_PRESET_IDS
 
 
 def _prompt_presets_by_ids(ids: frozenset[str]) -> List[Dict[str, Any]]:
@@ -620,6 +744,11 @@ def special_prompt_presets() -> List[Dict[str, Any]]:
     return _prompt_presets_by_ids(SPECIAL_PROMPT_PRESET_IDS)
 
 
+def action_prompt_presets() -> List[Dict[str, Any]]:
+    """Concrete built-in prompts for the action-preset alias and special group."""
+    return _prompt_presets_by_ids(ACTION_PROMPT_PRESET_IDS)
+
+
 def upper_prompt_presets() -> List[Dict[str, Any]]:
     """Concrete upper-body clothing-structure prompts."""
     return _prompt_presets_by_ids(UPPER_PROMPT_PRESET_IDS)
@@ -631,13 +760,15 @@ def lower_prompt_presets() -> List[Dict[str, Any]]:
 
 
 def prompt_preset_group(value: Any) -> str:
-    """Return ``upper``/``lower`` for structure presets, otherwise empty."""
+    """Return the special-preset group for a built-in or persisted preset."""
     if isinstance(value, dict):
         preset_id = str(value.get("id") or "").strip()
         name = str(value.get("name") or value.get("title") or "").strip()
     else:
         preset_id = ""
         name = str(value or "").strip()
+    if preset_id in ACTION_PROMPT_PRESET_IDS:
+        return "action"
     if preset_id in UPPER_PROMPT_PRESET_IDS:
         return "upper"
     if preset_id in LOWER_PROMPT_PRESET_IDS:
@@ -647,6 +778,8 @@ def prompt_preset_group(value: Any) -> str:
             if str(item.get("title") or "").strip() != name:
                 continue
             item_id = str(item.get("id") or "").strip()
+            if item_id in ACTION_PROMPT_PRESET_IDS:
+                return "action"
             if item_id in UPPER_PROMPT_PRESET_IDS:
                 return "upper"
             if item_id in LOWER_PROMPT_PRESET_IDS:
@@ -654,17 +787,41 @@ def prompt_preset_group(value: Any) -> str:
     return ""
 
 
+def prompt_preset_group_label(value: Any) -> str:
+    """Return the human-readable label for a special-preset group."""
+    group = prompt_preset_group(value)
+    return SPECIAL_PRESET_GROUP_LABELS.get(group, "")
+
+
+def prompt_preset_display_sort_key(value: Any) -> tuple[int, int, str]:
+    """Sort ordinary presets first, then special groups in a stable order."""
+    if isinstance(value, dict):
+        name = str(value.get("name") or value.get("title") or "").strip()
+        group = str(value.get("preset_group") or value.get("special_group") or "").strip()
+        if not group:
+            group = prompt_preset_group(value)
+    else:
+        name = str(value or "").strip()
+        group = prompt_preset_group(name)
+    try:
+        group_index = SPECIAL_PRESET_GROUP_ORDER.index(group)
+    except ValueError:
+        group_index = len(SPECIAL_PRESET_GROUP_ORDER)
+    return (1 if group else 0, group_index if group else -1, name)
+
+
 def dynamic_prompt_preset_groups() -> List[Tuple[str, List[Dict[str, Any]]]]:
     """Aliases and their random prompt pools, longest aliases first at call sites."""
     return [
         (SPECIAL_PRESET_ALIAS, special_prompt_presets()),
+        (ACTION_PRESET_ALIAS, action_prompt_presets()),
         (UPPER_PRESET_ALIAS, upper_prompt_presets()),
         (LOWER_PRESET_ALIAS, lower_prompt_presets()),
     ]
 
 
 def special_prompt_preset_titles() -> frozenset[str]:
-    """Titles belonging to either upper- or lower-body structure pools."""
+    """Titles belonging to the action and clothing-structure special pools."""
     return frozenset(
         str(item.get("title") or "").strip()
         for _alias, items in dynamic_prompt_preset_groups()
@@ -843,9 +1000,10 @@ def prompts_for_template(template_id: str) -> List[Dict[str, Any]]:
                 "templates": tags,
                 "global": bool(item.get("global")),
                 "preset_group": prompt_preset_group(item),
+                "special_group": prompt_preset_group(item),
             }
         )
-    out.sort(key=lambda item: (1 if item.get("preset_group") else 0, str(item.get("title") or "")))
+    out.sort(key=prompt_preset_display_sort_key)
     return out
 
 
@@ -874,9 +1032,10 @@ def global_prompt_presets() -> List[Dict[str, Any]]:
                 "source": "builtin",
                 "templates": list(item.get("templates") or []),
                 "preset_group": prompt_preset_group(item),
+                "special_group": prompt_preset_group(item),
             }
         )
-    out.sort(key=lambda item: (1 if item.get("preset_group") else 0, str(item.get("name") or "")))
+    out.sort(key=prompt_preset_display_sort_key)
     return out
 
 

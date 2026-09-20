@@ -330,6 +330,7 @@
     .preset-panel { display:none; margin-top:8px; border:1px solid var(--line); border-radius:var(--radius-md); background:#fff; max-height:260px; overflow:auto; padding:8px; }
     .preset-panel.open { display:flex; flex-wrap:wrap; gap:8px; }
     .preset-panel.open { display:flex; flex-wrap:wrap; gap:8px; }
+    .preset-group-heading { flex: 0 0 100%; width:100%; margin:5px 0 0; padding:5px 2px 2px; color:var(--muted); font-size:11px; font-weight:700; }
     .preset-chip {
       background:#fff; border:1px solid var(--line-strong); color:var(--text);
       box-shadow:none; padding:5px 10px; font-size:12px; border-radius:999px; cursor:pointer;
@@ -469,6 +470,7 @@
     }
     @media (min-width: 681px) { .mobile-only { display:none !important; } }
     .preset-manager-list { display:grid; gap:10px; margin-top:14px; }
+    .preset-manager-list .preset-group-heading { margin-top:8px; }
     .preset-manager-row { display:grid; grid-template-columns:minmax(150px,.35fr) minmax(0,1fr) auto; gap:12px; align-items:start; padding:13px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--panel); box-shadow:var(--shadow-soft); }
     .preset-manager-name { min-width:0; font-weight:700; overflow-wrap:anywhere; }
     .preset-manager-meta { display:flex; gap:6px; flex-wrap:wrap; margin-top:5px; }
@@ -6898,15 +6900,23 @@ Source prompt:
       return ($('studioTemplateSelect') && $('studioTemplateSelect').value) || 'duo';
     }
 
+    const SPECIAL_PRESET_GROUP_LABELS = {action:'动作预设', upper:'上身预设', lower:'下身预设'};
+    const SPECIAL_PRESET_GROUP_ORDER = {action:0, upper:1, lower:2};
+    function promptPresetGroup(item) {
+      return String(item?.preset_group || item?.special_group || '').trim();
+    }
+    function promptPresetGroupLabel(item) {
+      return SPECIAL_PRESET_GROUP_LABELS[promptPresetGroup(item)] || '';
+    }
     function promptPresetSortKey(item) {
       const name = String(item?.name || item?.title || '').trim();
-      const group = String(item?.preset_group || item?.special_group || '').trim();
-      return [group ? 1 : 0, name];
+      const group = promptPresetGroup(item);
+      return [group ? 1 : 0, SPECIAL_PRESET_GROUP_ORDER[group] ?? 99, name];
     }
     function promptPresetCompare(a, b) {
       const ka = promptPresetSortKey(a);
       const kb = promptPresetSortKey(b);
-      return ka[0] - kb[0] || ka[1].localeCompare(kb[1], 'zh');
+      return ka[0] - kb[0] || ka[1] - kb[1] || ka[2].localeCompare(kb[2], 'zh');
     }
     function mergePromptPresets(rows) {
       const map = new Map();
@@ -7078,10 +7088,15 @@ Source prompt:
       const query = String(PROMPT_PICKER_QUERY.get(panelId) || '').trim().toLowerCase();
       const filteredRows = query ? rows.filter(item => `${item.name || ''} ${item.title || ''} ${item.prompt || ''}`.toLowerCase().includes(query)) : rows;
       const visibleRows = filteredRows.slice(0, PICKER_PAGE_SIZE);
-      panel.innerHTML = `<div class="cos-panel-toolbar"><span class="muted">${query ? `${filteredRows.length}/${rows.length}` : `${rows.length}`} 项 · 首屏 ${Math.min(PICKER_PAGE_SIZE, filteredRows.length)}</span></div><input class="studio-node-search" data-prompt-search type="search" placeholder="搜索预设" aria-label="搜索预设" value="${escapeHtml(query)}">` + visibleRows.map((item, idx) => {
+      let lastGroup = '';
+      const presetButtons = visibleRows.map((item, idx) => {
         const name = escapeHtml(item.name || item.title || '');
-        return `<button type="button" class="preset-chip" data-preset-idx="${idx}" title="${name}">${name}</button>`;
+        const group = promptPresetGroup(item);
+        const heading = group && group !== lastGroup ? `<div class="preset-group-heading">${escapeHtml(promptPresetGroupLabel(item))}</div>` : '';
+        lastGroup = group;
+        return `${heading}<button type="button" class="preset-chip" data-preset-idx="${idx}" title="${name}">${name}</button>`;
       }).join('');
+      panel.innerHTML = `<div class="cos-panel-toolbar"><span class="muted">${query ? `${filteredRows.length}/${rows.length}` : `${rows.length}`} 项 · 首屏 ${Math.min(PICKER_PAGE_SIZE, filteredRows.length)}</span></div><input class="studio-node-search" data-prompt-search type="search" placeholder="搜索预设" aria-label="搜索预设" value="${escapeHtml(query)}">` + presetButtons;
       panel.querySelectorAll('[data-preset-idx]').forEach(btn => {
         btn.onclick = () => {
           const item = filteredRows[Number(btn.getAttribute('data-preset-idx'))];
@@ -7230,6 +7245,7 @@ Source prompt:
         wrap.innerHTML = '<div class="status">暂无预设，先新增一个。</div>';
         return;
       }
+      let lastGroup = '';
       wrap.innerHTML = filteredRows.map(item => {
         const idx = PRESET_MANAGE_ROWS.indexOf(item);
         const name = escapeHtml(item.name || item.title || '未命名');
@@ -7238,7 +7254,10 @@ Source prompt:
         const source = item.source === 'builtin' ? '内置' : '自定义';
         const meta = [item.aspect_ratio ? '比例 ' + escapeHtml(item.aspect_ratio) : '', item.resolution ? '清晰度 ' + escapeHtml(item.resolution) : '', item.duration ? '时长 ' + escapeHtml(String(item.duration)) + 's' : '', source]
           .filter(Boolean).map(v => `<span class="pill">${v}</span>`).join('');
-        return `<article class="preset-manager-row">
+        const group = promptPresetGroup(item);
+        const heading = group && group !== lastGroup ? `<div class="preset-group-heading">${escapeHtml(promptPresetGroupLabel(item))}</div>` : '';
+        lastGroup = group;
+        return `${heading}<article class="preset-manager-row">
           <div><div class="preset-manager-name">${name}</div><div class="preset-manager-meta">${meta}</div>${desc ? `<div class="muted" style="margin-top:6px">${desc}</div>` : ''}</div>
           <div class="preset-manager-prompt">${prompt}</div>
           <div class="preset-manager-actions"><button class="secondary mini" type="button" data-preset-edit="${idx}">编辑</button><button class="danger mini" type="button" data-preset-delete="${idx}">删除</button></div>
@@ -7606,7 +7625,16 @@ Source prompt:
         if (!tags || !tags.length) return true; // empty tags = all templates
         return tags.includes(tid);
       }).sort(promptPresetCompare);
+      let lastGroup = '';
       for (const item of items) {
+        const group = promptPresetGroup(item);
+        if (group && group !== lastGroup) {
+          const heading = document.createElement('div');
+          heading.className = 'preset-group-heading';
+          heading.textContent = promptPresetGroupLabel(item);
+          wrap.appendChild(heading);
+        }
+        lastGroup = group;
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'secondary';
@@ -8832,7 +8860,14 @@ Source prompt:
       panel.classList.add('open');
       if (PICKER_LOADING.has('creativeCanvasPresetPanel')) { panel.innerHTML = '<div class="status">正在加载预设…</div>'; return; }
       const rows = CREATIVE_CANVAS.promptPresets || [];
-      panel.innerHTML = rows.length ? rows.map((item, index) => `<button type="button" class="preset-chip" data-creative-preset="${index}">${escapeHtml(item.name || item.title || '')}</button>`).join('') : '<div class="status">暂无预设</div>';
+      let lastGroup = '';
+      const buttons = rows.map((item, index) => {
+        const group = promptPresetGroup(item);
+        const heading = group && group !== lastGroup ? `<div class="preset-group-heading">${escapeHtml(promptPresetGroupLabel(item))}</div>` : '';
+        lastGroup = group;
+        return `${heading}<button type="button" class="preset-chip" data-creative-preset="${index}">${escapeHtml(item.name || item.title || '')}</button>`;
+      }).join('');
+      panel.innerHTML = rows.length ? buttons : '<div class="status">暂无预设</div>';
       panel.querySelectorAll('[data-creative-preset]').forEach(button => button.onclick = () => {
         const item = rows[Number(button.dataset.creativePreset)];
         if (item) $('creativeCanvasPrompt').value = item.prompt || '';

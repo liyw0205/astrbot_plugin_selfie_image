@@ -9,6 +9,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ..cos.cos_looks import list_cos_look_sets, looks_like_cos_prompt
+from ..prompts.preset import preset_row_display_sort_key
 from ..prompts.prompt_composition import build_prompt_with_reference_instruction
 from ..core.providers import ImageReference
 from .studio import (
@@ -225,7 +226,11 @@ class StudioMixin:
             "sessions": canvas_store.list_sessions(),
             "storage_status": canvas_store.storage_status(),
             "builtin_prompts": [
-                dict(item, preset_group=prompt_preset_group(item))
+                dict(
+                    item,
+                    preset_group=prompt_preset_group(item),
+                    special_group=prompt_preset_group(item),
+                )
                 for item in BUILTIN_PROMPTS
             ],
             "templates": list_studio_templates(),
@@ -293,12 +298,11 @@ class StudioMixin:
             if not merged:
                 raise RuntimeError(f"预设列表读取失败：{type(exc).__name__}") from exc
         rows = list(merged.values())
-        rows.sort(
-            key=lambda r: (
-                1 if (r.get("preset_group") or prompt_preset_group(r)) else 0,
-                str(r.get("name") or ""),
-            )
-        )
+        for row in rows:
+            group = str(row.get("preset_group") or prompt_preset_group(row) or "").strip()
+            row["preset_group"] = group
+            row["special_group"] = group
+        rows.sort(key=preset_row_display_sort_key)
         return rows
 
     def list_managed_prompt_presets_for_web(self, kind: str = "image") -> List[Dict[str, str]]:

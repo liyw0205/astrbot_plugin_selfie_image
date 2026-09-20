@@ -10544,6 +10544,7 @@ class StudioStoreTests(unittest.TestCase):
         globals_ = global_prompt_presets()
         gnames = {str(x.get("name")) for x in globals_}
         structure_presets = (
+            "漏腰",
             "深开襟", "下胸开窗", "侧胸镂空", "交叉绑带", "挂脖露背",
             "侧腰双开窗", "极高侧开衩", "薄纱叠层", "开放侧身", "敞怀外套",
             "前襟分离系带", "单肩斜向开胸", "胸腹竖向开口", "下胸弧形开窗",
@@ -10555,7 +10556,7 @@ class StudioStoreTests(unittest.TestCase):
         for need in (
             "捧脸", "遮脸", "变真人", "变动漫", "变猫娘", "变Q版", "变像素",
             "果冻化", "真人化", "变COS",
-            "漫画封面", "证件照", "男友视角", "漏腰", *structure_presets,
+            "漫画封面", "证件照", "男友视角", *structure_presets,
         ):
             self.assertIn(need, gnames)
         special = special_prompt_presets()
@@ -10578,10 +10579,15 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("Q版动漫角色", seed["变Q版"]["prompt"])
         self.assertIn("像素画风", seed["变像素"]["prompt"])
         lou = seed["漏腰"]["prompt"]
-        self.assertIn("短上衣", lou)
-        self.assertIn("oversized", lou)
-        self.assertIn("腰线", lou)
+        self.assertIn("原有上衣", lou)
+        self.assertIn("下摆缩短", lou)
+        self.assertIn("露出自然腰线", lou)
+        self.assertIn("款式、颜色、材质、领口、袖型、图案、配饰", lou)
         self.assertIn("居家休闲自拍", lou)
+        self.assertIn("保持下装", lou)
+        self.assertNotIn("黑色短上衣", lou)
+        self.assertNotIn("oversized", lou)
+        self.assertNotIn("敞开穿着", lou)
         for bad in ("露脐", "肚脐", "胸部", "boyfriend-view", "参考男友", "midriff", "bra"):
             self.assertNotIn(bad, lou)
         for name in structure_presets:
@@ -10603,18 +10609,24 @@ class StudioStoreTests(unittest.TestCase):
 
         from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
         from astrbot_plugin_selfie_image.studio.studio import (
+            ACTION_PRESET_ALIAS,
             LOWER_PRESET_ALIAS,
             UPPER_PRESET_ALIAS,
+            action_prompt_presets,
             lower_prompt_presets,
             special_prompt_presets,
             upper_prompt_presets,
         )
 
+        self.assertEqual(ACTION_PRESET_ALIAS, "动作预设")
         self.assertEqual(UPPER_PRESET_ALIAS, "上身预设")
         self.assertEqual(LOWER_PRESET_ALIAS, "下身预设")
-        self.assertEqual(len(upper_prompt_presets()), 16)
+        self.assertEqual(len(action_prompt_presets()), 11)
+        action_titles = {item["title"] for item in action_prompt_presets()}
+        self.assertTrue({"捧脸", "男友视角", "咬唇回眸", "侧躺抬眼"}.issubset(action_titles))
+        self.assertEqual(len(upper_prompt_presets()), 17)
         self.assertEqual(len(lower_prompt_presets()), 10)
-        self.assertEqual(len(special_prompt_presets()), 26)
+        self.assertEqual(len(special_prompt_presets()), 27)
         self.assertEqual(
             {item["id"] for item in special_prompt_presets()},
             {item["id"] for item in upper_prompt_presets()} | {item["id"] for item in lower_prompt_presets()},
@@ -10632,11 +10644,18 @@ class StudioStoreTests(unittest.TestCase):
                 combined = manager.resolve("特殊预设")
             self.assertEqual(combined.get("preset_name"), "特殊预设")
             self.assertIn(lower_selected["prompt"], combined.get("prompt") or "")
+            action_selected = action_prompt_presets()[0]
+            with patch("astrbot_plugin_selfie_image.prompts.preset.random.choice", return_value=action_selected):
+                action = manager.resolve(ACTION_PRESET_ALIAS)
+            self.assertEqual(action.get("preset_name"), ACTION_PRESET_ALIAS)
+            self.assertIn(action_selected["prompt"], action.get("prompt") or "")
             rows = manager.list_public()
             groups = [str(row.get("preset_group") or "") for row in rows]
             first_structure = next(index for index, group in enumerate(groups) if group)
             self.assertTrue(all(not group for group in groups[:first_structure]))
-            self.assertTrue(all(group in {"upper", "lower"} for group in groups[first_structure:]))
+            self.assertTrue(all(group in {"action", "upper", "lower"} for group in groups[first_structure:]))
+            group_order = [group for group in groups if group]
+            self.assertEqual(group_order, sorted(group_order, key={"action": 0, "upper": 1, "lower": 2}.get))
 
     def test_default_presets_seed(self) -> None:
         import tempfile
@@ -10667,9 +10686,9 @@ class StudioStoreTests(unittest.TestCase):
             resolved = mgr.resolve("露腰")
             self.assertEqual(resolved.get("preset_name"), "漏腰")
             rp = resolved.get("prompt") or ""
-            self.assertIn("短上衣", rp)
-            self.assertIn("oversized", rp)
-            self.assertIn("腰线", rp)
+            self.assertIn("下摆缩短", rp)
+            self.assertIn("原有服装", rp)
+            self.assertIn("露出自然腰线", rp)
             self.assertNotIn("露脐", rp)
             self.assertNotIn("参考男友", rp)
             covered = mgr.resolve("遮脸")
@@ -11009,12 +11028,15 @@ class StudioStoreTests(unittest.TestCase):
             # 露腰 alias + dedicated crop-waist selfie framing
             expanded2, _, _, name2 = plugin_main.SelfieImagePlugin._expand_user_text_with_preset(stub, "露腰")
             self.assertEqual(name2, "漏腰")
-            self.assertIn("短上衣", expanded2)
+            self.assertIn("下摆缩短", expanded2)
             waist = plugin_main.SelfieImagePlugin._build_selfie_look_action(stub, expanded2, False)
             self.assertIn("【shot:crop_waist】", waist)
             self.assertIn("漏腰模式", waist)
-            self.assertIn("宽松", waist)
-            self.assertIn("腰线", waist)
+            self.assertIn("下摆缩短", waist)
+            self.assertIn("原有服装", waist)
+            self.assertIn("露出自然腰线", waist)
+            self.assertNotIn("黑色短上衣", waist)
+            self.assertNotIn("oversized", waist)
             self.assertNotIn("arm_half", waist)
             self.assertNotIn("今日穿搭与气质一致", waist)
             self.assertNotIn("露脐", waist)

@@ -103,7 +103,7 @@ def looks_like_crop_waist_request(text: str) -> bool:
         key in raw
         for key in (
             "漏腰", "露腰", "露脐短上衣", "小蛮腰", "crop_waist",
-            "crop top", "short top", "短上衣",
+            "crop top", "short top", "短上衣", "下摆缩短", "露出自然腰线", "露出腰线",
         )
     ):
         return True
@@ -111,6 +111,9 @@ def looks_like_crop_waist_request(text: str) -> bool:
     has_inner = (
         "露脐" in raw
         or "短上衣" in raw
+        or "下摆缩短" in raw
+        or "露出自然腰线" in raw
+        or "露出腰线" in raw
         or "crop top" in low
         or "short top" in low
     )
@@ -130,8 +133,9 @@ def build_crop_waist_selfie_action(
     base = (
         "【自拍 / 漏腰模式】"
         "一张漂亮的真人女孩，居家休闲自拍，室内光线柔和偏暗，角度略高。"
-        "本次换装优先：黑色短上衣，外面套宽松 oversized 深色长袖衬衫并敞开，"
-        "外层宽松带柔软褶皱，微微露出自然腰线；外衫不要整件贴肉。"
+        "唯一调整是将原有上衣的下摆缩短至露出自然腰线的长度，"
+        "原有服装的款式、颜色、材质、领口、袖型、图案、配饰、层次和穿着方式全部保持不变，"
+        "保持下装、人物身份、发型、脸部、表情、姿势、镜头和场景不变。"
         "放松地坐着或靠在深色沙发/床边，头发略显凌乱，像日常随意拍的照片。"
         "保持 AI 身份长相与发色一致，画面干净得体。"
     )
