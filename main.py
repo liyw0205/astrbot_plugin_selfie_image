@@ -1885,12 +1885,41 @@ class SelfieImagePlugin(
             max_image_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
         )
 
+        # A model-level translation opt-in is evaluated after target selection
+        # so it cannot affect unrelated fallback models. The global switch was
+        # handled above and remains authoritative for every image target.
+        model_prompt_overrides: Dict[str, str] = {}
+        model_prompt_meta: Dict[str, Dict[str, Any]] = {}
+        if not bool(getattr(self.config, "image_enable_image_prompt_en", False)):
+            for target in selected_targets:
+                if not self._prompt_en_needed(request_prompt, media="image", target=target):
+                    continue
+                translated, en_meta = await self._translate_prompt_to_english(
+                    request_prompt,
+                    media="image",
+                    event=event,
+                    target=target,
+                )
+                model_prompt_meta[target.label] = dict(en_meta)
+                if en_meta.get("applied") and translated:
+                    model_prompt_overrides[target.label] = translated
+        if model_prompt_meta:
+            request_data["prompt_en_by_model"] = {
+                label: dict(meta) for label, meta in model_prompt_meta.items()
+            }
+
         def request_for_target(target: ImageModelTarget) -> ImageGenerateRequest:
             use_text_description = bool(
                 (getattr(target, "extra", {}) or {}).get("image_to_text_enabled") and refs
             )
+            target_prompt = request_prompt if (
+                use_text_description
+                or bool(getattr(self.config, "image_enable_image_prompt_en", False))
+            ) else plain_request_prompt
+            if target.label in model_prompt_overrides:
+                target_prompt = model_prompt_overrides[target.label]
             return ImageGenerateRequest(
-                prompt=request_prompt if use_text_description else plain_request_prompt,
+                prompt=target_prompt,
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
                 images=[] if use_text_description else refs,
@@ -1915,7 +1944,7 @@ class SelfieImagePlugin(
             None,
             max_attempts=max_attempts,
             global_timeout=self.config.image_global_timeout,
-            request_factory=request_for_target if image_to_text_targets else None,
+            request_factory=request_for_target,
         )
         if cooldown_attempts:
             result.attempts = [*cooldown_attempts, *(result.attempts or [])]

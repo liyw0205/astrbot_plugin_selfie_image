@@ -379,13 +379,26 @@ class AuditMixin:
         return self._parse_audit_response(text)
 
 
-    def _prompt_en_needed(self, text: str, *, media: str = "image") -> bool:
+    def _prompt_en_needed(
+        self,
+        text: str,
+        *,
+        media: str = "image",
+        target: Optional[ImageModelTarget] = None,
+    ) -> bool:
         """Whether prompt EN translation is enabled and applicable for this text."""
         if media == "video":
             if not bool(getattr(self.config, "image_enable_video_prompt_en", False)):
                 return False
         else:
-            if not bool(getattr(self.config, "image_enable_image_prompt_en", False)):
+            global_enabled = bool(getattr(self.config, "image_enable_image_prompt_en", False))
+            model_enabled = bool(
+                target
+                and (getattr(target, "extra", {}) or {}).get("prompt_en_enabled")
+            )
+            # The global switch is authoritative. When it is off, the model
+            # checkbox is the independent opt-in for NAI-like models.
+            if not global_enabled and not model_enabled:
                 return False
         mode = str(getattr(self.config, "image_prompt_en_mode", "if_cjk") or "if_cjk").strip().lower()
         if mode == "always":
@@ -399,6 +412,7 @@ class AuditMixin:
         *,
         media: str = "image",
         event: Optional[AstrMessageEvent] = None,
+        target: Optional[ImageModelTarget] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Translate generation prompt to English via audit-channel chat model.
 
@@ -408,7 +422,7 @@ class AuditMixin:
         meta: Dict[str, Any] = {"enabled": True, "applied": False, "media": media}
         if not raw:
             return raw, meta
-        if not self._prompt_en_needed(raw, media=media):
+        if not self._prompt_en_needed(raw, media=media, target=target):
             meta["skipped"] = "not_needed"
             return raw, meta
         template = (

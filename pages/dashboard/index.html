@@ -1847,7 +1847,7 @@
       jimeng2api: 'jimeng2api',
       grok: 'grok',
       agnes: 'agnes',
-      novelai: 'novelai'
+      novelai: 'NAI'
     };
     const PROVIDER_DEFAULT_BASE_URLS = {
       openai: 'https://api.openai.com',
@@ -2608,6 +2608,34 @@ Source prompt:
       ch.image_to_text_models = uniq((ch.image_to_text_models || []).filter(model => enabledSet.has(model)));
       return ch;
     }
+    function collectModelPromptEnModels(ch, enabled) {
+      const enabledSet = new Set(enabled || []);
+      const out = new Set();
+      const sources = [ch.prompt_en_models, ch.promptEnModels, ch.translate_prompt_models, ch.translatePromptModels];
+      for (const source of sources) {
+        if (Array.isArray(source)) {
+          for (const item of source) {
+            const name = modelId(item);
+            if (name && enabledSet.has(name) && (typeof item !== 'object' || item.enabled !== false)) out.add(name);
+          }
+        } else if (source && typeof source === 'object') {
+          for (const [name, value] of Object.entries(source)) {
+            if (enabledSet.has(name) && !!value) out.add(name);
+          }
+        }
+      }
+      for (const item of ch.enabled_models || ch.enabledModels || []) {
+        if (!item || typeof item !== 'object') continue;
+        const name = modelId(item);
+        if (name && enabledSet.has(name) && !!(item.prompt_en ?? item.promptEn ?? item.translate_prompt)) out.add(name);
+      }
+      return Array.from(out);
+    }
+    function compactModelPromptEnModels(ch) {
+      const enabledSet = new Set(ch.enabled_models || []);
+      ch.prompt_en_models = uniq((ch.prompt_en_models || []).filter(model => enabledSet.has(model)));
+      return ch;
+    }
     function collectModelProviderTypes(ch, enabled) {
       const enabledSet = new Set(enabled || []);
       const out = {};
@@ -2657,6 +2685,7 @@ Source prompt:
         enabled: !(ch.enabled === false || ch.enabled === 'false' || ch.enabled === 0),
         enabled_models: enabled,
         image_to_text_models: collectModelImageToTextModels(ch, enabled),
+        prompt_en_models: collectModelPromptEnModels(ch, enabled),
         model_download_proxy_ids: collectModelDownloadProxyIds(ch, enabled),
         model_provider_types: collectModelProviderTypes(Object.assign({}, ch, {provider_type: providerType}), enabled),
         models_cache: cache,
@@ -2671,7 +2700,7 @@ Source prompt:
       if (videoType || String(providerType).startsWith('video_')) {
         return compactModelProviderTypes(normalized);
       }
-      return compactModelProviderTypes(applyProviderDefaults(normalized));
+      return compactModelPromptEnModels(compactModelProviderTypes(applyProviderDefaults(normalized)));
     }
     function normalizeChannels() {
       CONFIG.image_channels = (CONFIG.image_channels || []).map(normalizeChannel);
@@ -2950,6 +2979,7 @@ Source prompt:
         enabled: $('modalEnabled').checked,
         enabled_models: enabled,
         image_to_text_models: collectModalImageToTextModels(enabled),
+        prompt_en_models: collectModalPromptEnModels(enabled),
         model_provider_types: collectModalProviderTypes(enabled),
         model_download_proxy_ids: collectModalDownloadProxyIds(enabled),
         models_cache: source.models_cache || []
@@ -2978,6 +3008,16 @@ Source prompt:
       document.querySelectorAll('#enabledModels .model-row').forEach(row => {
         const model = String(row.querySelector('.name')?.textContent || '').trim();
         const checkbox = row.querySelector('.model-image-to-text');
+        if (model && enabledSet.has(model) && checkbox?.checked) out.push(model);
+      });
+      return out;
+    }
+    function collectModalPromptEnModels(enabled) {
+      const enabledSet = new Set(enabled || []);
+      const out = [];
+      document.querySelectorAll('#enabledModels .model-row').forEach(row => {
+        const model = String(row.querySelector('.name')?.textContent || '').trim();
+        const checkbox = row.querySelector('.model-prompt-en');
         if (model && enabledSet.has(model) && checkbox?.checked) out.push(model);
       });
       return out;
@@ -3147,7 +3187,7 @@ Source prompt:
         <div class="model-row with-provider with-provider-download">
           <div class="model-name-stack">
             <div class="name" title="${escapeHtml(item)}">${escapeHtml(item)}</div>
-            ${EDITING_CHANNEL_KIND === 'image' ? `<label class="model-feature"><input class="model-image-to-text" type="checkbox" ${((ch.image_to_text_models || []).includes(item)) ? 'checked' : ''} onchange="setModelImageToText(${i}, this.checked)">图转文</label>` : ''}
+            ${EDITING_CHANNEL_KIND === 'image' ? `<label class="model-feature"><input class="model-image-to-text" type="checkbox" ${((ch.image_to_text_models || []).includes(item)) ? 'checked' : ''} onchange="setModelImageToText(${i}, this.checked)">图转文</label><label class="model-feature"><input class="model-prompt-en" type="checkbox" ${((ch.prompt_en_models || []).includes(item)) ? 'checked' : ''} onchange="setModelPromptEn(${i}, this.checked)">词转英</label>` : ''}
           </div>
           <div class="model-controls">
             ${modelProviderSelectHtml(ch, item, i)}
@@ -3171,6 +3211,21 @@ Source prompt:
         ch.image_to_text_models = ch.image_to_text_models.filter(item => item !== model);
       }
       compactModelImageToTextModels(ch);
+      storeModalChannel(ch);
+      CHANNEL_MODAL_DIRTY = true;
+      renderModalModels(ch);
+    }
+    function setModelPromptEn(index, enabled) {
+      const ch = currentModalChannel();
+      const model = (ch.enabled_models || [])[index] || '';
+      if (!model) return;
+      ch.prompt_en_models ||= [];
+      if (enabled) {
+        if (!ch.prompt_en_models.includes(model)) ch.prompt_en_models.push(model);
+      } else {
+        ch.prompt_en_models = ch.prompt_en_models.filter(item => item !== model);
+      }
+      compactModelPromptEnModels(ch);
       storeModalChannel(ch);
       CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);

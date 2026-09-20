@@ -63,6 +63,7 @@ from astrbot_plugin_selfie_image.core.providers import (
     ImageGenerateRequest,
     ImageReference,
     NovelAIImageAdapter,
+    NAI_DEFAULT_NEGATIVE,
     OpenAIChatImageAdapter,
     OpenAIImageAdapter,
     build_model_list_urls,
@@ -82,6 +83,7 @@ from astrbot_plugin_selfie_image.core.providers import (
     normalize_image_base_url,
     provider_type_from_channel_payload,
     response_preview,
+    novelai_model_family,
 )
 from astrbot_plugin_selfie_image.core.utils import (
     bytes_to_data_url,
@@ -457,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.25")
+        self.assertEqual(PLUGIN_VERSION, "1.6.26")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -518,6 +520,33 @@ class ConfigModelTests(unittest.TestCase):
         targets = {target.model: target for target in channel.targets(180)}
         self.assertFalse(targets["plain"].extra["image_to_text_enabled"])
         self.assertTrue(targets["describe-first"].extra["image_to_text_enabled"])
+
+    def test_nai_prompt_to_english_models_are_normalized_and_mark_targets(self) -> None:
+        config = AICatConfig.from_dict(
+            {
+                "image_channels": [
+                    {
+                        "name": "nai",
+                        "provider_type": "openai",
+                        "base_url": "https://hcg.example",
+                        "api_key": "sk-test",
+                        "enabled_models": ["nai-diffusion-4-5-full", "plain"],
+                        "prompt_en_models": ["nai-diffusion-4-5-full", "disabled-model"],
+                    }
+                ]
+            }
+        )
+
+        channel = config.image_channels[0]
+        self.assertEqual(channel.prompt_en_models, ["nai-diffusion-4-5-full"])
+        targets = {target.model: target for target in channel.targets(180)}
+        self.assertTrue(targets["nai-diffusion-4-5-full"].extra["prompt_en_enabled"])
+        self.assertFalse(targets["plain"].extra["prompt_en_enabled"])
+
+    def test_nai_model_family_is_selected_from_model_name(self) -> None:
+        self.assertEqual(novelai_model_family("nai-diffusion-4-5-full"), "nai4.5")
+        self.assertEqual(novelai_model_family("nai-diffusion-5-full"), "nai5")
+        self.assertEqual(novelai_model_family("custom-nai"), "nai4.5")
 
     def test_dashboard_exposes_image_to_text_controls_and_auxiliary_labels(self) -> None:
         html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
@@ -4037,6 +4066,27 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         result = await adapter.generate(ImageGenerateRequest(prompt="1girl"))
         self.assertEqual(result.images, [PNG_BYTES])
         self.assertFalse(result.error)
+
+    async def test_novelai_relay_uses_chat_completions_with_full_payload(self) -> None:
+        image = {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
+        session = FakeSession(image)
+        target = make_target("novelai", "nai-diffusion-5-full")
+        target.base_url = "https://hcg.example"
+        target.api_key = "tok"
+
+        adapter = NovelAIImageAdapter(target, session)
+        result = await adapter.generate(ImageGenerateRequest(prompt="a red cat", aspect_ratio="1:1"))
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        request = session.requests[0]
+        self.assertEqual(request["url"], "https://hcg.example/v1/chat/completions")
+        payload = request["json"]
+        self.assertEqual(payload["model"], "nai-diffusion-5-full")
+        self.assertFalse(payload["stream"])
+        user = json.loads(payload["messages"][1]["content"])
+        self.assertEqual(user["width"], 1024)
+        self.assertEqual(user["height"], 1024)
+        self.assertEqual(user["negative_prompt"], NAI_DEFAULT_NEGATIVE)
 
     async def test_agnes_payload_keeps_reference_image_and_size(self) -> None:
         response = {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}

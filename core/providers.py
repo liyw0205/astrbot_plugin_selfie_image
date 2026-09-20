@@ -800,6 +800,18 @@ def map_aspect_ratio_to_nai_gateway_size(aspect: str, resolution: str = "1K") ->
     return orient
 
 
+def novelai_model_family(model: str) -> str:
+    """Resolve loose relay model names to the supported NAI model family."""
+    compact = re.sub(r"[^a-z0-9]+", "-", str(model or "").strip().lower()).strip("-")
+    if re.search(r"(?:^|-)diffusion-4-5(?:-|$)", compact):
+        return "nai4.5"
+    if re.search(r"(?:^|)(?:nai5|v5|diffusion-5)(?:-|$)", compact):
+        return "nai5"
+    # Unknown/custom NAI names follow the 4.5-compatible payload. This keeps
+    # relays that expose names such as Agnes-like aliases usable.
+    return "nai4.5"
+
+
 def _extract_image_bytes_from_nai_body(body: bytes) -> Optional[bytes]:
     """Official NAI returns zip; gateways may return raw image bytes."""
     if not body:
@@ -834,6 +846,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
     Modes (auto):
     - official: POST {base}/ai/generate-image  (default base https://api.novelai.net)
       Bearer token; response zip or raw image.
+    - relay: POST {base}/v1/chat/completions with the full NAI JSON dialect.
     - gateway: GET {base}/generate?...  (Nai2API / nai.sta1n.cn style)
       token query param; response raw image bytes.
 
@@ -850,10 +863,9 @@ class NovelAIImageAdapter(BaseImageAdapter):
         # Common gateway hosts / path hints
         if any(k in base for k in ("sta1n", "nai2api", "loliyc", "/generate")):
             return "gateway"
-        # If user points base_url at a host without novelai, prefer gateway GET /generate
-        if "novelai" not in base:
-            return "gateway"
-        return "official"
+        # OpenAI-compatible relays (including custom hosts) use chat first;
+        # this is the protocol used by bestnai_x for Tuercha-like services.
+        return "relay"
 
     def _endpoint(self, mode: str) -> str:
         raw = str(self.target.base_url or "").strip()
@@ -863,10 +875,72 @@ class NovelAIImageAdapter(BaseImageAdapter):
             if lower.endswith("/ai/generate-image") or lower.endswith("generate-image"):
                 return raw.rstrip("/")
             return f"{base.rstrip('/')}/ai/generate-image"
+        if mode == "relay":
+            return build_openai_chat_completions_endpoint(base)
         # gateway
         if lower.rstrip("/").endswith("/generate"):
             return raw.rstrip("/")
         return f"{base.rstrip('/')}/generate"
+
+    def build_relay_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
+        """Build the full NAI dialect expected inside a relay chat request."""
+        import random
+
+        width, height = map_aspect_ratio_to_nai_size(req.aspect_ratio, req.resolution)
+        prompt = str(req.prompt or "").strip()
+        model = self.target.model or self.default_model
+        family = novelai_model_family(model)
+        user_payload: Dict[str, Any] = {
+            "prompt": prompt,
+            "size": [width, height],
+            "width": width,
+            "height": height,
+            "steps": 28,
+            "scale": 5.0,
+            "sampler": "k_dpmpp_2m",
+            "noise_schedule": "karras",
+            "cfg_rescale": 0.0,
+            "image_format": "png",
+            "n_samples": 1,
+            "negative_prompt": NAI_DEFAULT_NEGATIVE,
+            "seed": random.randint(1, 2**31 - 1),
+        }
+        # Preserve the family decision in diagnostics without adding an
+        # unknown provider field to the upstream payload.
+        logger.debug("[SelfieImage/NAI] relay model=%s family=%s", model, family)
+        if req.images:
+            user_payload["image"] = [
+                bytes_to_data_url(item.data, item.mime_type or "image/png")
+                for item in req.images
+                if item.data
+            ]
+        return {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an image generation endpoint. The JSON object in the user "
+                        "message is the authoritative NovelAI generation request. Preserve "
+                        "all fields and return one generated image as URL, markdown image, "
+                        "data URL, or base64."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+            ],
+            "stream": False,
+        }
+
+    def build_relay_fallback_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
+        """Build the minimal images/generations fallback for old relays."""
+        width, height = map_aspect_ratio_to_nai_size(req.aspect_ratio, req.resolution)
+        return {
+            "model": self.target.model or self.default_model,
+            "prompt": str(req.prompt or "").strip(),
+            "size": f"{width}x{height}",
+            "n": 1,
+            "response_format": "b64_json",
+        }
 
     def build_official_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
         import random
@@ -970,6 +1044,38 @@ class NovelAIImageAdapter(BaseImageAdapter):
                         return ImageGenerateResult(images=[image])
                     ctype = response.headers.get("Content-Type", "")
                     return ImageGenerateResult(error=f"NovelAI 未返回可解析图片（Content-Type={ctype}）")
+            if mode == "relay":
+                data, error = await self.post_json_data_or_error(
+                    url,
+                    self.build_relay_payload(req),
+                    http_preview_limit=500,
+                )
+                if not error and data is not None:
+                    return await self.result_from_response(
+                        data,
+                        req,
+                        normalize_image_base_url(self.target.base_url) or "",
+                        provider_name="NovelAI",
+                        detailed_error=True,
+                    )
+                # Only route-not-supported responses may fall back. A 400
+                # parameter error must remain visible instead of duplicating a
+                # billable request through a second endpoint.
+                lowered = str(error or "").lower()
+                if any(token in lowered for token in ("http 404", "http 405", "http 501", "not found", "method not allowed", "not implemented")):
+                    base = normalize_image_base_url(self.target.base_url) or ""
+                    fallback_url = f"{base}/v1/images/generations"
+                    fallback_data, fallback_error = await self.post_json_data_or_error(
+                        fallback_url,
+                        self.build_relay_fallback_payload(req),
+                        http_preview_limit=500,
+                    )
+                    if not fallback_error and fallback_data is not None:
+                        return await self.result_from_response(
+                            fallback_data, req, base, provider_name="NovelAI", detailed_error=True
+                        )
+                    return ImageGenerateResult(error=fallback_error or error or "NovelAI 中继请求失败")
+                return ImageGenerateResult(error=error or "NovelAI 中继请求失败")
             # gateway GET
             params = self.build_gateway_params(req)
             # token in query — do not also send Authorization unless host wants both
