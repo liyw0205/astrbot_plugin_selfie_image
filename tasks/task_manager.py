@@ -56,10 +56,10 @@ class WebTaskMixin:
         except (TypeError, ValueError):
             requested = 1
         try:
-            limit = int(getattr(getattr(self, "config", None), "image_max_batch_count", 20) or 20)
+            limit = int(getattr(getattr(self, "config", None), "image_max_batch_count", 100) or 100)
         except (TypeError, ValueError):
-            limit = 20
-        return max(1, min(20, limit, requested))
+            limit = 100
+        return max(1, min(100, limit, requested))
 
     def _web_task_timestamp(self) -> str:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())

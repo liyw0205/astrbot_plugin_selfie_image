@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.30")
+        self.assertEqual(PLUGIN_VERSION, "1.6.31")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -560,7 +560,7 @@ class ConfigModelTests(unittest.TestCase):
 
     def test_numeric_config_is_clamped(self) -> None:
         config = AICatConfig.from_dict({"image": {"max_batch_count": 99, "max_concurrent_tasks": 0}})
-        self.assertEqual(config.image_max_batch_count, 20)
+        self.assertEqual(config.image_max_batch_count, 99)
         self.assertEqual(config.image_max_concurrent_tasks, 1)
 
     def test_astrbot_wrapped_values_are_unwrapped(self) -> None:
@@ -4852,7 +4852,7 @@ class WebApiTests(unittest.TestCase):
             self.assertNotIn(key, data)
         self.assertEqual(plugin.config.web_token, "secret")
         self.assertEqual(plugin.config.web_host, "127.0.0.1")
-        self.assertEqual(plugin.config.image_max_batch_count, 20)
+        self.assertEqual(plugin.config.image_max_batch_count, 99)
 
     def test_frontend_does_not_display_startup_web_settings(self) -> None:
         self.assertNotIn("<b>监听", INDEX_HTML)
@@ -6041,6 +6041,9 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual(plugin._normalize_web_image_count(0), 1)
         self.assertEqual(plugin._normalize_web_image_count(2), 2)
         self.assertEqual(plugin._normalize_web_image_count(99), 3)
+        plugin.config = AICatConfig.from_dict({"image": {"max_batch_count": 100}})
+        self.assertEqual(plugin._normalize_web_image_count(100), 100)
+        self.assertEqual(plugin._normalize_web_image_count(101), 100)
 
     def test_web_image_batch_runs_each_requested_shot_and_reports_progress(self) -> None:
         plugin = self._plugin_stub()
@@ -9755,6 +9758,13 @@ class LegFocusTests(unittest.TestCase):
             extra, count = plugin._extract_command_count(text, allow_attached=True)
             self.assertEqual((extra, count), (expected_extra, expected_count))
         self.assertEqual(plugin._extract_command_count("3旗袍"), ("3旗袍", 1))
+
+        plugin.config.image_max_batch_count = 100
+        self.assertEqual(plugin._extract_command_count("100", allow_attached=True), ("", 100))
+        self.assertEqual(
+            plugin._extract_command_count("原神 100", allow_attached=True),
+            ("原神", 100),
+        )
 
         # A batch rebuild must retain a matched COS query even when the query
         # is already present in the selected outfit title/prompt.

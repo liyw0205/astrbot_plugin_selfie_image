@@ -11,7 +11,7 @@ FULLWIDTH_DIGIT_TRANS = str.maketrans("０１２３４５６７８９", "0123456
 # Counts intentionally use Arabic numerals only.  Chinese number words are
 # common in character names and prompt text (for example, 七七) and must not
 # be mistaken for a batch count.
-COUNT_PATTERN = r"[0-9]{1,2}"
+COUNT_PATTERN = r"[0-9]{1,3}"
 COUNT_SUFFIX_PATTERN = r"(?:张|次|幅)?"
 PROMPT_SEPARATOR_PATTERN = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+"
 NON_COUNT_FOLLOWING_UNITS = {
@@ -214,7 +214,7 @@ def parse_count_token(token: str) -> int:
     text = str(token or "").strip().translate(FULLWIDTH_DIGIT_TRANS)
     if not text:
         return 0
-    match = re.fullmatch(r"([0-9]{1,2})(?:张|次|幅)?", text)
+    match = re.fullmatch(r"([0-9]{1,3})(?:张|次|幅)?", text)
     if match:
         value = int(match.group(1))
         return value if value > 0 else 0

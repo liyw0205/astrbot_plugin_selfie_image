@@ -5135,7 +5135,7 @@ class SelfieImagePlugin(
             requested_count = normalize_web_count(payload.get("count"))
         else:
             try:
-                requested_count = max(1, min(20, int(payload.get("count") or 1)))
+                requested_count = max(1, min(100, int(payload.get("count") or 1)))
             except (TypeError, ValueError):
                 requested_count = 1
         variation_rows = []

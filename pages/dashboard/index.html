@@ -1356,7 +1356,7 @@
         <div><label>模型</label><select id="testModel"></select></div>
         <div><label>画面比例</label><select id="testAspect"></select></div>
         <div id="testResolutionWrap"><label>清晰度</label><select id="testResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
-        <div id="testCountWrap"><label>生成数量</label><input id="testCount" type="number" min="1" max="20" value="1" title="单次试画最多生成几张"></div>
+        <div id="testCountWrap"><label>生成数量</label><input id="testCount" type="number" min="1" max="100" value="1" title="单次试画最多生成几张"></div>
         <div id="testDurationWrap" style="display:none"><label>视频时长（秒）</label><input id="testDuration" type="number" min="1" max="60" value="5"></div>
       </div>
       <div class="between">
@@ -1425,7 +1425,7 @@
         <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="10" title="同一时间最多几张图一起请求上游；批量 /看看COS 10 会按这个数并发"></div>
         <div><label title="全部模型依次请求到结束的最长等待">整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
         <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
-        <div><label>单条指令最多请求几张</label><input id="maxBatchCount" type="number" min="1" max="20" title="限制单条指令最多请求几张；不同指令之间不共用这个上限"></div>
+        <div><label>单条指令最多请求几张</label><input id="maxBatchCount" type="number" min="1" max="100" title="限制单条指令最多请求几张；不同指令之间不共用这个上限"></div>
         <div><label>连画失败时</label>
           <select id="batchOnFailure">
             <option value="skip">跳过失败张，继续后面</option>
@@ -2322,7 +2322,7 @@ Source prompt:
         $('defaultResolution').value = img.default_resolution || '1K';
         $('testResolution').value = img.default_resolution || '1K';
         if ($('testCount')) {
-          const testCountLimit = Math.max(1, Math.min(20, Number(img.max_batch_count || 10)));
+          const testCountLimit = Math.max(1, Math.min(100, Number(img.max_batch_count || 10)));
           $('testCount').max = String(testCountLimit);
           const currentTestCount = Number($('testCount').value || 1);
           $('testCount').value = String(Math.max(1, Math.min(testCountLimit, currentTestCount)));
