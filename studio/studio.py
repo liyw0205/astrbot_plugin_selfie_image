@@ -723,10 +723,10 @@ LOWER_PROMPT_PRESET_IDS = frozenset(
         "preset_double_high_slit_skirt",
     }
 )
-# "特殊预设" retains the legacy clothing-structure pool; the dedicated
-# aliases expose action, upper-body, and lower-body groups independently.
-SPECIAL_PROMPT_PRESET_IDS = UPPER_PROMPT_PRESET_IDS | LOWER_PROMPT_PRESET_IDS
-ALL_SPECIAL_PROMPT_PRESET_IDS = SPECIAL_PROMPT_PRESET_IDS | ACTION_PROMPT_PRESET_IDS
+# "特殊预设" is the combined pool; the dedicated aliases expose action,
+# upper-body, and lower-body groups independently.
+SPECIAL_PROMPT_PRESET_IDS = ACTION_PROMPT_PRESET_IDS | UPPER_PROMPT_PRESET_IDS | LOWER_PROMPT_PRESET_IDS
+ALL_SPECIAL_PROMPT_PRESET_IDS = SPECIAL_PROMPT_PRESET_IDS
 
 
 def _prompt_presets_by_ids(ids: frozenset[str]) -> List[Dict[str, Any]]:

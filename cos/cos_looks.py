@@ -2069,7 +2069,21 @@ COS_LOOK_SERIES_ALIASES = COS_LOOK_TYPE_ALIASES
 COS_LOOK_SERIES_MARKERS = ("系列", "作品", "游戏")
 # ``COS`` can remain in adapter fallback arguments when the command prefix is
 # parsed separately. It is a mode marker, not an outfit/character term.
-COS_LOOK_IGNORED_QUERY_TERMS = frozenset({"cos", "特殊预设", "列表", "全部", "查看", "list", "all", "view"})
+COS_LOOK_IGNORED_QUERY_TERMS = frozenset(
+    {
+        "cos",
+        "特殊预设",
+        "动作预设",
+        "上身预设",
+        "下身预设",
+        "列表",
+        "全部",
+        "查看",
+        "list",
+        "all",
+        "view",
+    }
+)
 
 
 def _compact_cos_match(value: str, separators: str) -> str:

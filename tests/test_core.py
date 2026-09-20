@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.26")
+        self.assertEqual(PLUGIN_VERSION, "1.6.27")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -6854,6 +6854,8 @@ class DashboardEmbedContractTests(unittest.TestCase):
         # No bare localStorage at boot for token (sandbox SecurityError risk)
         self.assertNotRegex(self.html, r"(?m)^\s*localStorage\.getItem\(")
         self.assertIn("safeStorageGet('selfieImageToken')", self.html)
+        self.assertIn("novelai: 'NovelAI'", self.html)
+        self.assertNotIn("novelai: 'NAI'", self.html)
 
     def test_bridge_endpoint_contract_examples(self) -> None:
         # Execute bridgeEndpoint pure logic copied from page contract.
@@ -10599,6 +10601,7 @@ class StudioStoreTests(unittest.TestCase):
             default_image_preset_seed,
             global_prompt_presets,
             prompts_for_template,
+            action_prompt_presets,
             special_prompt_presets,
         )
 
@@ -10628,7 +10631,10 @@ class StudioStoreTests(unittest.TestCase):
             self.assertIn(need, gnames)
         special = special_prompt_presets()
         self.assertEqual(SPECIAL_PRESET_ALIAS, "特殊预设")
-        self.assertEqual({str(item.get("title")) for item in special}, set(structure_presets))
+        self.assertEqual(
+            {str(item.get("title")) for item in special},
+            set(structure_presets) | {str(item.get("title")) for item in action_prompt_presets()},
+        )
         seed = default_image_preset_seed()
         self.assertIn("捧脸", seed)
         self.assertIn("遮脸", seed)
@@ -10693,10 +10699,12 @@ class StudioStoreTests(unittest.TestCase):
         self.assertTrue({"捧脸", "男友视角", "咬唇回眸", "侧躺抬眼"}.issubset(action_titles))
         self.assertEqual(len(upper_prompt_presets()), 17)
         self.assertEqual(len(lower_prompt_presets()), 10)
-        self.assertEqual(len(special_prompt_presets()), 27)
+        self.assertEqual(len(special_prompt_presets()), 38)
         self.assertEqual(
             {item["id"] for item in special_prompt_presets()},
-            {item["id"] for item in upper_prompt_presets()} | {item["id"] for item in lower_prompt_presets()},
+            {item["id"] for item in action_prompt_presets()}
+            | {item["id"] for item in upper_prompt_presets()}
+            | {item["id"] for item in lower_prompt_presets()},
         )
         self.assertTrue(all("只调整" in item["prompt"] or "保持" in item["prompt"] for item in lower_prompt_presets()))
 
@@ -11192,6 +11200,7 @@ class StudioStoreTests(unittest.TestCase):
             ("/看看COS 西施 夜景三", 1, "西施 夜景三", "西施 夜景三", ""),
             ("/看看COS 七七 特殊预设 3", 3, "七七 特殊预设", "七七 特殊预设", "特殊预设"),
             ("/看看COS 七七 特殊预设 -c 3", 3, "七七 特殊预设", "七七 特殊预设", "特殊预设"),
+            ("/看看COS 原神 5 动作预设", 5, "原神 动作预设", "原神 动作预设", "动作预设"),
             ("/看看COS 洛琪希xxx 3", 3, "洛琪希xxx", "洛琪希xxx", ""),
         )
 
@@ -11226,6 +11235,10 @@ class StudioStoreTests(unittest.TestCase):
                     marker = preset_markers.get(expected_preset)
                     if marker:
                         self.assertIn(marker, captured["rebuild_extra_request"], message)
+                    elif expected_preset == "动作预设":
+                        self.assertIn("原神", captured["rebuild_extra_request"], message)
+                        self.assertNotIn("动作预设", captured["rebuild_extra_request"], message)
+                        self.assertNotEqual(captured["rebuild_extra_request"].strip(), expected_query, message)
                     else:
                         # Special presets expand to a random prompt body, so
                         # assert that the original COS query survives instead.
@@ -11440,17 +11453,22 @@ class StudioStoreTests(unittest.TestCase):
         self.assertNotIn("特殊预设", captured["summary"]["original_prompt"])
 
         selfie_cases = (
-            ("cmd_selfie", "/看看 一位美女 捧脸 2", "一位美女"),
-            ("cmd_selfie", "/自拍 2 一位美女 捧脸", "一位美女"),
-            ("cmd_look_legs", "/看看腿 白丝 夜景 2", "白丝"),
-            ("cmd_look_you", "/看看你 夜景 2", "夜景"),
-            ("cmd_group_selfie", "/合影 一位美女 捧脸 2", "一位美女"),
+            ("cmd_selfie", "/看看 一位美女 捧脸 2", "一位美女", 2),
+            ("cmd_selfie", "/自拍 2 一位美女 捧脸", "一位美女", 2),
+            ("cmd_selfie", "/自拍 3 动作预设", "真实人类女孩", 3),
+            ("cmd_look_legs", "/看看腿 白丝 夜景 2", "白丝", 2),
+            ("cmd_look_you", "/看看你 夜景 2", "夜景", 2),
+            ("cmd_group_selfie", "/合影 一位美女 捧脸 2", "一位美女", 2),
         )
-        for command, message, expected_marker in selfie_cases:
+        for command, message, expected_marker, expected_count in selfie_cases:
             captured, output = asyncio.run(invoke_selfie(command, message))
             self.assertEqual(output, [])
-            self.assertEqual(captured["requested_count_override"], 2, message)
-            self.assertIn(expected_marker, captured.get("message_override", "") or captured.get("fallback", ""), message)
+            self.assertEqual(captured["requested_count_override"], expected_count, message)
+            captured_text = " ".join(
+                str(captured.get(key) or "")
+                for key in ("message_override", "fallback", "rebuild_extra_request")
+            )
+            self.assertIn(expected_marker, captured_text, message)
 
     def test_draw_rejects_reference_download_failure_instead_of_falling_back_to_text(self) -> None:
         import tempfile

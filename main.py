@@ -813,9 +813,15 @@ class SelfieImagePlugin(
         for index in range(max(1, int(count))):
             selected = random.choice(choices)
             selected_prompt = str(selected.get("prompt") or "").strip()
-            expanded_source = text[: match.start()] + selected_prompt + text[match.end() :]
-            expanded, aspect, resolution, _ = self._expand_cos_user_text_with_preset(expanded_source)
-            variants.append(expanded)
+            prefix = text[: match.start()].strip()
+            suffix = text[match.end() :].strip()
+            remaining = " ".join(part for part in (prefix, suffix) if part).strip()
+            if remaining:
+                remaining, aspect, resolution, _ = self._expand_cos_user_text_with_preset(remaining)
+            else:
+                aspect = ""
+                resolution = ""
+            variants.append(" ".join(part for part in (prefix, selected_prompt, suffix) if part).strip())
             if index == 0:
                 first_aspect = aspect
                 first_resolution = resolution
@@ -6632,6 +6638,7 @@ class SelfieImagePlugin(
             preset_aspect=preset_aspect,
             preset_resolution=preset_resolution,
             preset_name=preset_name,
+            rebuild_extra_request=expanded_extra,
         ):
             yield item
 
