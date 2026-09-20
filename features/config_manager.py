@@ -505,6 +505,7 @@ class ConfigurationMixin:
         source = strip_channel_timeouts(
             normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, persisted)))
         )
+        source.setdefault("image", {})["max_concurrent_tasks"] = AICatConfig.from_dict(source).image_max_concurrent_tasks
         source["web"] = copy.deepcopy(self.key_config["web"])
         return source
 
@@ -521,6 +522,7 @@ class ConfigurationMixin:
         next_config["web"] = copy.deepcopy(self.key_config["web"])
         self.raw_config = next_config
         self.config = AICatConfig.from_dict(self.raw_config)
+        self.raw_config.setdefault("image", {})["max_concurrent_tasks"] = self.config.image_max_concurrent_tasks
         scheduler = getattr(self, "_image_scheduler", None)
         if scheduler is None:
             from ..generation.image_scheduler import ImageJobScheduler

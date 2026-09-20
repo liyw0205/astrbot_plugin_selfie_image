@@ -56,7 +56,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "enable_llm_tool": True,
         "default_aspect_ratio": "9:16",
         "default_resolution": "1K",
-        "max_concurrent_tasks": 10,
+        "max_concurrent_tasks": 5,
         "global_timeout": 280,
         "max_image_size_mb": 10,
         "cache_limit_mb": 200,
@@ -488,7 +488,7 @@ class AICatConfig:
             image_enable_llm_tool=to_bool(image.get("enable_llm_tool"), True),
             image_default_aspect_ratio=str(image.get("default_aspect_ratio") or "9:16").strip() or "9:16",
             image_default_resolution=str(image.get("default_resolution") or "1K").strip() or "1K",
-            image_max_concurrent_tasks=to_int(image.get("max_concurrent_tasks"), 10, minimum=1, maximum=10),
+            image_max_concurrent_tasks=normalize_concurrent_count(image.get("max_concurrent_tasks")),
             image_global_timeout=to_int(image.get("global_timeout"), 180, minimum=10, maximum=900),
             image_max_image_size_mb=to_int(image.get("max_image_size_mb"), 10, minimum=1, maximum=100),
             image_cache_limit_mb=to_int(image.get("cache_limit_mb"), 200, minimum=10, maximum=102400),
@@ -1517,3 +1517,14 @@ def to_int(value: Any, default: int, minimum: Optional[int] = None, maximum: Opt
     if maximum is not None:
         result = min(maximum, result)
     return result
+
+
+def normalize_concurrent_count(value: Any) -> int:
+    """Normalize concurrent image requests to the safe 1..5 range."""
+    try:
+        text = str(value).strip()
+        if not re.fullmatch(r"[1-5]", text):
+            return 5
+        return int(text)
+    except Exception:
+        return 5

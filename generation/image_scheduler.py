@@ -27,7 +27,11 @@ class ImageJobScheduler:
     """
 
     def __init__(self, limit: int) -> None:
-        self._limit = max(1, int(limit or 1))
+        try:
+            configured = int(limit or 5)
+        except (TypeError, ValueError):
+            configured = 5
+        self._limit = max(1, min(5, configured))
         self._pending: Dict[str, Deque[_ImageJob]] = {}
         self._round_robin: Deque[str] = deque()
         self._running: Dict[str, set[asyncio.Task[Any]]] = {}
@@ -38,7 +42,11 @@ class ImageJobScheduler:
 
     def set_limit(self, limit: int) -> None:
         """Update capacity in place so existing jobs retain the same scheduler."""
-        self._limit = max(1, int(limit or 1))
+        try:
+            configured = int(limit or 5)
+        except (TypeError, ValueError):
+            configured = 5
+        self._limit = max(1, min(5, configured))
         self._wake.set()
 
     async def submit(self, task_id: str, run: Callable[[], Awaitable[Any]]) -> Any:

@@ -904,7 +904,11 @@ class WebTaskMixin:
 
         image_scheduler = getattr(self, "_image_scheduler", None)
         video_gate = getattr(self, "_video_semaphore", None)
-        image_max = max(1, int(getattr(getattr(self, "config", None), "image_max_concurrent_tasks", 1) or 1))
+        try:
+            image_max = int(getattr(getattr(self, "config", None), "image_max_concurrent_tasks", 5) or 5)
+        except (TypeError, ValueError):
+            image_max = 5
+        image_max = max(1, min(5, image_max))
         video_max = max(
             1,
             int(

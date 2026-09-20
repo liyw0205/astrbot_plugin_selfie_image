@@ -4286,8 +4286,12 @@ class SelfieImagePlugin(
     def _image_inflight_limit(self) -> int:
         scheduler = getattr(self, "_image_scheduler", None)
         if scheduler is None:
-            return max(1, min(10, int(getattr(self.config, "image_max_concurrent_tasks", 1) or 1)))
-        return int((scheduler._limit if hasattr(scheduler, "_limit") else 1) or 1)
+            try:
+                configured = int(getattr(self.config, "image_max_concurrent_tasks", 5) or 5)
+            except (TypeError, ValueError):
+                configured = 5
+            return max(1, min(5, configured))
+        return max(1, min(5, int((scheduler._limit if hasattr(scheduler, "_limit") else 1) or 1)))
 
     def _image_scheduler_snapshot(self) -> Dict[str, int]:
         scheduler = getattr(self, "_image_scheduler", None)

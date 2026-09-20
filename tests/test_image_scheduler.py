@@ -11,6 +11,15 @@ from astrbot_plugin_selfie_image.generation.image_scheduler import ImageJobSched
 
 
 class ImageJobSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    def test_scheduler_caps_image_concurrency_at_five(self) -> None:
+        from astrbot_plugin_selfie_image.generation.image_scheduler import ImageJobScheduler
+
+        for value in (6, 10, 99, "bad", None):
+            scheduler = ImageJobScheduler(value)
+            self.assertEqual(scheduler._limit, 5, value)
+            scheduler.set_limit(value)
+            self.assertEqual(scheduler._limit, 5, value)
+
     async def test_scheduler_round_robins_ready_tasks(self) -> None:
         """One large task cannot consume every slot before another queued task runs."""
 

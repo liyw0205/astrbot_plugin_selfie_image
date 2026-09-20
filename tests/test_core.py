@@ -459,12 +459,13 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.31")
+        self.assertEqual(PLUGIN_VERSION, "1.6.32")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
         self.assertEqual(config.web_host, "127.0.0.1")
         self.assertEqual(config.image_max_batch_count, 10)
+        self.assertEqual(config.image_max_concurrent_tasks, 5)
         self.assertEqual(config.image_default_aspect_ratio, "9:16")
         self.assertEqual(DEFAULT_CONFIG["image"]["default_aspect_ratio"], "9:16")
 
@@ -558,10 +559,26 @@ class ConfigModelTests(unittest.TestCase):
             self.assertIn("辅助功能", doc)
             self.assertIn("加辅助渠道", doc)
 
+    def test_dashboard_keeps_batch_and_concurrency_limits_separate(self) -> None:
+        html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
+        self.assertIn('id="maxConcurrent" type="number" min="1" max="5"', html)
+        self.assertIn('id="maxBatchCount" type="number" min="1" max="100"', html)
+        self.assertIn("configuredConcurrent >= 1 && configuredConcurrent <= 5", html)
+        self.assertIn("maxBatchCount >= 1 && maxBatchCount <= 100", html)
+
     def test_numeric_config_is_clamped(self) -> None:
-        config = AICatConfig.from_dict({"image": {"max_batch_count": 99, "max_concurrent_tasks": 0}})
-        self.assertEqual(config.image_max_batch_count, 99)
-        self.assertEqual(config.image_max_concurrent_tasks, 1)
+        for value, expected in ((None, 10), ("", 10), ("bad", 10), (0, 1), (-1, 1), (6, 6), (99, 99), (100, 100)):
+            config = AICatConfig.from_dict({"image": {"max_batch_count": value}})
+            self.assertEqual(config.image_max_batch_count, expected, value)
+        for value in (1, 2, 3, 4, 5, 99, 100):
+            config = AICatConfig.from_dict({"image": {"max_batch_count": value}})
+            self.assertEqual(config.image_max_batch_count, value)
+        for value in (None, "", "bad", 0, -1, 6, 99, 100):
+            config = AICatConfig.from_dict({"image": {"max_concurrent_tasks": value}})
+            self.assertEqual(config.image_max_concurrent_tasks, 5, value)
+        for value in (1, 2, 3, 4, 5):
+            config = AICatConfig.from_dict({"image": {"max_concurrent_tasks": value}})
+            self.assertEqual(config.image_max_concurrent_tasks, value)
 
     def test_astrbot_wrapped_values_are_unwrapped(self) -> None:
         raw = {"image": {"value": {"max_batch_count": {"value": 4}}, "type": "object"}}

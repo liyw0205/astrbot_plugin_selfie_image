@@ -1422,7 +1422,7 @@
       <div class="grid4">
         <div><label>默认比例</label><select id="defaultAspect"></select></div>
         <div><label>默认清晰度</label><select id="defaultResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
-        <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="10" title="同一时间最多几张图一起请求上游；批量 /看看COS 10 会按这个数并发"></div>
+        <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="5" title="同一时间最多几张图一起请求上游；批量 /看看COS 会按这个数并发"></div>
         <div><label title="全部模型依次请求到结束的最长等待">整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
         <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
         <div><label>单条指令最多请求几张</label><input id="maxBatchCount" type="number" min="1" max="100" title="限制单条指令最多请求几张；不同指令之间不共用这个上限"></div>
@@ -2268,7 +2268,9 @@ Source prompt:
       img.enable_llm_tool ??= true;
       img.default_aspect_ratio ??= '9:16';
       img.default_resolution ??= '1K';
-      img.max_concurrent_tasks ??= 3;
+      img.max_concurrent_tasks ??= 5;
+      const configuredConcurrent = Number(img.max_concurrent_tasks);
+      img.max_concurrent_tasks = Number.isInteger(configuredConcurrent) && configuredConcurrent >= 1 && configuredConcurrent <= 5 ? configuredConcurrent : 5;
       img.global_timeout ??= 280;
       img.max_image_size_mb ??= 10;
       img.cache_limit_mb ??= 200;
@@ -2387,12 +2389,14 @@ Source prompt:
       };
       CONFIG.image.default_aspect_ratio = $('defaultAspect').value || $('selfieAspect').value || '9:16';
       CONFIG.image.default_resolution = $('defaultResolution').value || '1K';
-      CONFIG.image.max_concurrent_tasks = Number($('maxConcurrent').value || 3);
+      const maxConcurrent = Number($('maxConcurrent').value || 5);
+      CONFIG.image.max_concurrent_tasks = Number.isInteger(maxConcurrent) && maxConcurrent >= 1 && maxConcurrent <= 5 ? maxConcurrent : 5;
       CONFIG.image.global_timeout = Number($('globalTimeout').value || 280);
       CONFIG.image.max_image_size_mb = Number($('maxImageSize').value || 10);
       CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 200);
       CONFIG.image.cache_limit_count = Number($('cacheLimitCount').value || 100);
-      CONFIG.image.max_batch_count = Number($('maxBatchCount').value || 10);
+      const maxBatchCount = Number($('maxBatchCount').value || 10);
+      CONFIG.image.max_batch_count = Number.isInteger(maxBatchCount) && maxBatchCount >= 1 && maxBatchCount <= 100 ? maxBatchCount : 100;
        CONFIG.image.batch_on_failure = ($('batchOnFailure') && $('batchOnFailure').value) || 'skip';
        if (!['stop','skip','skip_max'].includes(CONFIG.image.batch_on_failure)) CONFIG.image.batch_on_failure = 'skip';
        CONFIG.image.batch_skip_max = Number(($('batchSkipMax') && $('batchSkipMax').value) || 2);
