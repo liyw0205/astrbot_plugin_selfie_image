@@ -639,12 +639,18 @@ def test_selfie_command_cos_request_does_not_use_cos_pool():
 def test_private_hoshino_and_sunna_cos_outfits_are_registered():
     looks = {item["id"]: item for item in COS_LOOK_SETS}
     hoshino = looks["blue_archive_hoshino_private_gym"]
+    hoshino_beach = looks["blue_archive_hoshino_private_beach"]
     sunna = looks["zzz_sunna_private_sportswear"]
 
     assert hoshino["cos_type"] == "蔚蓝档案"
     assert "私设体操服" in hoshino["title"]
     assert "黑白亮青绿拼色宽松运动夹克" in hoshino["prompt"]
     assert "黑色贴身运动短裤" in hoshino["prompt"]
+    assert hoshino_beach["cos_type"] == "蔚蓝档案"
+    assert "海边荷叶边泳装" in hoshino_beach["title"]
+    assert "白色高腰多层荷叶边短裙" in hoshino_beach["prompt"]
+    assert "安全裤" not in hoshino_beach["prompt"]
+    assert "内衬" not in hoshino_beach["prompt"]
     assert sunna["cos_type"] == "绝区零"
     assert "妄想天使千夏（Sunna）" in sunna["prompt"]
     assert "浅粉色修身无袖背心" in sunna["prompt"]
@@ -654,6 +660,12 @@ def test_private_hoshino_and_sunna_cos_outfits_are_registered():
         "blue_archive_hoshino",
         "blue_archive_hoshino_private_gym",
     }
+    assert [item["id"] for item in match_cos_look_sets("星野海边")] == [
+        "blue_archive_hoshino_private_beach"
+    ]
+    assert [item["id"] for item in match_cos_look_sets("星野泳装")] == [
+        "blue_archive_hoshino_private_beach"
+    ]
     assert {item["id"] for item in match_cos_look_sets("千夏")} == {
         "blue_archive_chinatsu",
         "zzz_sunna_private_sportswear",
