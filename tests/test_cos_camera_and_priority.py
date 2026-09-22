@@ -678,6 +678,19 @@ def test_private_hoshino_and_sunna_cos_outfits_are_registered():
     ]
 
 
+def test_original_blue_stage_cos_outfit_is_registered():
+    looks = {item["id"]: item for item in COS_LOOK_SETS}
+    stage = looks["original_blue_stage_opera"]
+    assert stage["title"] == "原创COS·蓝色戏曲舞台服"
+    assert stage["cos_type"] == "原创COS"
+    assert "原创国风戏曲舞台服" in stage["prompt"]
+    assert "蓝黑色古风帽冠" in stage["prompt"]
+    assert "红色长流苏" in stage["prompt"]
+    assert [item["id"] for item in match_cos_look_sets("蓝色戏曲舞台服")] == [
+        "original_blue_stage_opera"
+    ]
+
+
 def test_priority_picker_filters_already_selected_models():
     page = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(
         encoding="utf-8"
