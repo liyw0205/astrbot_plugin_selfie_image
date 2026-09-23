@@ -827,6 +827,79 @@ class SelfieImagePlugin(
                 first_resolution = resolution
         return variants, first_aspect, first_resolution, alias
 
+    def _expand_dynamic_preset_variants(
+        self,
+        raw_text: str,
+        count: int,
+    ) -> Tuple[List[str], str, str, str]:
+        """Expand a dynamic image preset once per requested shot.
+
+        ``ImagePresetManager.resolve`` intentionally chooses one dynamic
+        preset per resolve call. Counted commands used to resolve only once and
+        then reuse that prompt for every shot, so repeat the resolve here while
+        preserving the normal preset/options expansion contract.
+        """
+        text = str(raw_text or "").strip()
+        if not text or count <= 0:
+            return [], "", "", ""
+
+        from .studio.studio import dynamic_prompt_preset_groups
+
+        aliases = [
+            str(alias or "").strip()
+            for alias, _choices in dynamic_prompt_preset_groups()
+            if str(alias or "").strip()
+        ]
+        aliases.sort(key=len, reverse=True)
+        alias_boundary = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]"
+        matched_alias = next(
+            (
+                alias
+                for alias in aliases
+                if re.search(rf"(?<!\w){re.escape(alias)}(?={alias_boundary}|$)", text, flags=re.IGNORECASE)
+            ),
+            "",
+        )
+        if not matched_alias:
+            return [], "", "", ""
+
+        alias_match = re.search(
+            rf"(?<!\w){re.escape(matched_alias)}(?={alias_boundary}|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not alias_match:
+            return [], "", "", ""
+
+        prefix = text[: alias_match.start()].strip()
+        suffix = text[alias_match.end() :].strip()
+        variants: List[str] = []
+        first_aspect = ""
+        first_resolution = ""
+        for index in range(max(1, int(count))):
+            selected, selected_aspect, selected_resolution, _ = self._expand_user_text_with_preset(
+                matched_alias
+            )
+            if prefix:
+                prefix_expanded, prefix_aspect, prefix_resolution, _ = self._expand_user_text_with_preset(prefix)
+            else:
+                prefix_expanded, prefix_aspect, prefix_resolution = "", "", ""
+            if suffix:
+                suffix_expanded, suffix_aspect, suffix_resolution, _ = self._expand_user_text_with_preset(suffix)
+            else:
+                suffix_expanded, suffix_aspect, suffix_resolution = "", "", ""
+            variants.append(
+                " ".join(
+                    part
+                    for part in (prefix_expanded, selected, suffix_expanded)
+                    if str(part or "").strip()
+                ).strip()
+            )
+            if index == 0:
+                first_aspect = selected_aspect or prefix_aspect or suffix_aspect
+                first_resolution = selected_resolution or prefix_resolution or suffix_resolution
+        return variants, first_aspect, first_resolution, matched_alias
+
     def _normalize_preset_input(self, text: str) -> str:
         return normalize_preset_input(text)
 
@@ -4763,11 +4836,21 @@ class SelfieImagePlugin(
         *,
         passthrough: bool = False,
         fail_label: str = "",
+        special_preset_variants: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         base_prompt, variation_enabled, variation_field = parse_variation_request(prompt)
-        variation_prompts = [base_prompt]
-        if variation_enabled and total > 1:
+        if special_preset_variants:
+            variation_prompts = [
+                parse_variation_request(str(item or ""))[0].strip()
+                for item in special_preset_variants[:total]
+                if str(item or "").strip()
+            ]
+            if not variation_prompts:
+                variation_prompts = [base_prompt]
+            elif len(variation_prompts) < total:
+                variation_prompts.extend([variation_prompts[-1]] * (total - len(variation_prompts)))
+        elif variation_enabled and total > 1:
             fields = [variation_field] if variation_field else ["pose", "scene", "shot"]
             variation_prompts = [
                 str(item.get("prompt") or base_prompt).strip()
@@ -4871,6 +4954,8 @@ class SelfieImagePlugin(
             "command-look-you",
             "command-look-cos",
         } or (
+            source == "command-group-selfie" and bool(rebuild_special_preset_variants)
+        ) or (
             "看看腿" in str(action or "")
             or "【legs:outfit】" in str(action or "")
             or "看看COS" in str(action or "")
@@ -4927,9 +5012,19 @@ class SelfieImagePlugin(
         for index in range(total):
             round_action = action
             if rebuild_each and total > 1:
-                if source == "command-look-legs" or "看看腿" in str(action or "") or "【legs:outfit】" in str(action or "") or "【pose:" in str(action or ""):
+                variant_extra = (
+                    rebuild_special_preset_variants[index]
+                    if rebuild_special_preset_variants and index < len(rebuild_special_preset_variants)
+                    else extra_keep
+                )
+                if source == "command-group-selfie":
+                    round_action = self._build_group_selfie_action(
+                        variant_extra,
+                        bool(extra_refs),
+                    )
+                elif source == "command-look-legs" or "看看腿" in str(action or "") or "【legs:outfit】" in str(action or "") or "【pose:" in str(action or ""):
                     round_action = self._build_leg_focus_action(
-                        extra_keep,
+                        variant_extra,
                         bool(extra_refs),
                         avoid_pose=last_pose,
                         force_legwear=force_legwear,
@@ -4940,13 +5035,8 @@ class SelfieImagePlugin(
                     if m_pose:
                         last_pose = str(m_pose.group(1) or last_pose)
                 elif source == "command-look-cos":
-                    special_extra = (
-                        rebuild_special_preset_variants[index]
-                        if rebuild_special_preset_variants and index < len(rebuild_special_preset_variants)
-                        else extra_keep
-                    )
                     round_action = self._build_cos_look_action(
-                        special_extra,
+                        variant_extra,
                         bool(extra_refs),
                         avoid_id=last_cos,
                         avoid_camera=last_cam,
@@ -4966,7 +5056,7 @@ class SelfieImagePlugin(
 
                 elif source == "command-look-you" or "看看你模式" in str(action or ""):
                     round_action = self._build_third_person_look_action(
-                        extra_keep,
+                        variant_extra,
                         bool(extra_refs),
                         avoid_shot=last_shot,
                     )
@@ -4975,7 +5065,7 @@ class SelfieImagePlugin(
                         last_shot = str(m_shot.group(1) or last_shot)
                 else:
                     round_action = self._build_selfie_look_action(
-                        extra_keep,
+                        variant_extra,
                         bool(extra_refs),
                         avoid_shot=last_shot,
                     )
@@ -6411,12 +6501,26 @@ class SelfieImagePlugin(
             yield event.plain_result(error)
             return
 
-        prompt, aspect, resolution, _ = self._expand_user_text_with_preset(message)
-        rendered = self.render_creative_prompt(
-            prompt,
-            {"template_values": template_values, "template_randomize": template_randomize},
+        special_variants, preset_aspect, preset_resolution, preset_name = (
+            self._expand_dynamic_preset_variants(message, requested_count)
         )
+        if special_variants:
+            prompt = special_variants[0]
+            aspect = preset_aspect
+            resolution = preset_resolution
+        else:
+            prompt, aspect, resolution, preset_name = self._expand_user_text_with_preset(message)
+        render_payload = {"template_values": template_values, "template_randomize": template_randomize}
+        rendered = self.render_creative_prompt(prompt, render_payload)
         prompt = str(rendered.get("prompt") or prompt).strip()
+        rendered_special_variants: Optional[List[str]] = None
+        if special_variants:
+            rendered_special_variants = [prompt]
+            for variant in special_variants[1:]:
+                variant_rendered = self.render_creative_prompt(variant, render_payload)
+                rendered_special_variants.append(
+                    str(variant_rendered.get("prompt") or variant).strip()
+                )
         # Plain LLM image generation may use the explicitly attached image or
         # a clear "use the previous image" follow-up, but must not silently
         # borrow the bot persona image.  Persona references belong to the
@@ -6451,6 +6555,7 @@ class SelfieImagePlugin(
                 "command-draw",
                 requested_count,
                 passthrough=True,
+                special_preset_variants=rendered_special_variants,
             )
 
         task = self.start_command_image_task(
@@ -6465,6 +6570,7 @@ class SelfieImagePlugin(
                 "template_values": template_values,
                 "template_randomize": template_randomize,
                 "template_unresolved": rendered.get("unresolved") or [],
+                "preset_name": preset_name,
             },
             runner=runner,
         )
@@ -6495,12 +6601,26 @@ class SelfieImagePlugin(
             yield event.plain_result(error)
             return
 
-        prompt, aspect, resolution, _ = self._expand_user_text_with_preset(message)
-        rendered = self.render_creative_prompt(
-            prompt,
-            {"template_values": template_values, "template_randomize": template_randomize},
+        special_variants, preset_aspect, preset_resolution, preset_name = (
+            self._expand_dynamic_preset_variants(message, requested_count)
         )
+        if special_variants:
+            prompt = special_variants[0]
+            aspect = preset_aspect
+            resolution = preset_resolution
+        else:
+            prompt, aspect, resolution, preset_name = self._expand_user_text_with_preset(message)
+        render_payload = {"template_values": template_values, "template_randomize": template_randomize}
+        rendered = self.render_creative_prompt(prompt, render_payload)
         prompt = str(rendered.get("prompt") or prompt).strip()
+        rendered_special_variants: Optional[List[str]] = None
+        if special_variants:
+            rendered_special_variants = [prompt]
+            for variant in special_variants[1:]:
+                variant_rendered = self.render_creative_prompt(variant, render_payload)
+                rendered_special_variants.append(
+                    str(variant_rendered.get("prompt") or variant).strip()
+                )
         if not prompt:
             yield event.plain_result("请输入文生图提示词。")
             return
@@ -6519,6 +6639,7 @@ class SelfieImagePlugin(
                 "command-raw-text-to-image",
                 requested_count,
                 passthrough=True,
+                special_preset_variants=rendered_special_variants,
             )
 
         task = self.start_command_image_task(
@@ -6532,6 +6653,7 @@ class SelfieImagePlugin(
                 "template_values": template_values,
                 "template_randomize": template_randomize,
                 "template_unresolved": rendered.get("unresolved") or [],
+                "preset_name": preset_name,
             },
             runner=runner,
         )
@@ -6561,7 +6683,15 @@ class SelfieImagePlugin(
             yield event.plain_result(error)
             return
 
-        prompt, aspect, resolution, _ = self._expand_user_text_with_preset(message)
+        special_variants, preset_aspect, preset_resolution, preset_name = (
+            self._expand_dynamic_preset_variants(message, requested_count)
+        )
+        if special_variants:
+            prompt = special_variants[0]
+            aspect = preset_aspect
+            resolution = preset_resolution
+        else:
+            prompt, aspect, resolution, preset_name = self._expand_user_text_with_preset(message)
         refs, source_count, failed_count = await self._event_reference_images_with_stats(
             event,
             include_at_avatar=True,
@@ -6592,6 +6722,7 @@ class SelfieImagePlugin(
                 "command-raw-image-to-image",
                 requested_count,
                 passthrough=True,
+                special_preset_variants=special_variants,
             )
 
         task = self.start_command_image_task(
@@ -6603,6 +6734,7 @@ class SelfieImagePlugin(
                 "resolution": resolution,
                 "requested_count": requested_count,
                 "reference_image_count": len(refs),
+                "preset_name": preset_name,
             },
             runner=runner,
         )
@@ -6628,7 +6760,13 @@ class SelfieImagePlugin(
         raw_message = extract_command_message(event, ("自拍", "看看"), fallback_args)
         raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
         # Resolve presets on raw user words first (e.g. /自拍 捧脸), then wrap action.
-        expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
+        special_variants, preset_aspect, preset_resolution, preset_name = (
+            self._expand_dynamic_preset_variants(raw_extra, requested_count)
+        )
+        if special_variants:
+            expanded_extra = special_variants[0]
+        else:
+            expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         has_refs = bool(extract_image_sources_from_event(event))
         base_action = self._build_selfie_request_action(expanded_extra, has_refs)
         async for item in self._handle_selfie_command(
@@ -6646,6 +6784,7 @@ class SelfieImagePlugin(
             preset_resolution=preset_resolution,
             preset_name=preset_name,
             rebuild_extra_request=expanded_extra,
+            rebuild_special_preset_variants=special_variants,
         ):
             yield item
 
@@ -6668,7 +6807,13 @@ class SelfieImagePlugin(
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看腿", fallback_args)
         raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
-        expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
+        special_variants, preset_aspect, preset_resolution, preset_name = (
+            self._expand_dynamic_preset_variants(raw_extra, requested_count)
+        )
+        if special_variants:
+            expanded_extra = special_variants[0]
+        else:
+            expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         fallback = self._build_leg_focus_action(expanded_extra, bool(extract_image_sources_from_event(event)))
         async for item in self._handle_selfie_command(
             event=event,
@@ -6685,6 +6830,7 @@ class SelfieImagePlugin(
             preset_resolution=preset_resolution,
             preset_name=preset_name,
             rebuild_extra_request=expanded_extra,
+            rebuild_special_preset_variants=special_variants,
         ):
             yield item
 
@@ -6771,7 +6917,13 @@ class SelfieImagePlugin(
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看你", fallback_args)
         raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
-        expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
+        special_variants, preset_aspect, preset_resolution, preset_name = (
+            self._expand_dynamic_preset_variants(raw_extra, requested_count)
+        )
+        if special_variants:
+            expanded_extra = special_variants[0]
+        else:
+            expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         fallback = self._build_third_person_look_action(expanded_extra, bool(extract_image_sources_from_event(event)))
         async for item in self._handle_selfie_command(
             event=event,
@@ -6787,6 +6939,8 @@ class SelfieImagePlugin(
             preset_aspect=preset_aspect,
             preset_resolution=preset_resolution,
             preset_name=preset_name,
+            rebuild_extra_request=expanded_extra,
+            rebuild_special_preset_variants=special_variants,
         ):
             yield item
 
@@ -6809,7 +6963,13 @@ class SelfieImagePlugin(
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, ("合影", "合照"), fallback)
         raw_message, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
-        expanded_message, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_message)
+        special_variants, preset_aspect, preset_resolution, preset_name = (
+            self._expand_dynamic_preset_variants(raw_message, requested_count)
+        )
+        if special_variants:
+            expanded_message = special_variants[0]
+        else:
+            expanded_message, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_message)
         action = self._build_group_selfie_action(
             expanded_message,
             bool(extract_image_sources_from_event(event, include_at_avatar=True)),
@@ -6829,6 +6989,8 @@ class SelfieImagePlugin(
             preset_aspect=preset_aspect,
             preset_resolution=preset_resolution,
             preset_name=preset_name,
+            rebuild_extra_request=expanded_message,
+            rebuild_special_preset_variants=special_variants,
         ):
             yield item
 

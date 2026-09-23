@@ -11516,6 +11516,181 @@ class StudioStoreTests(unittest.TestCase):
             )
             self.assertIn(expected_marker, captured_text, message)
 
+    def test_draw_special_preset_is_expanded_for_each_shot(self) -> None:
+        import tempfile
+
+        from astrbot_plugin_selfie_image import main as plugin_main
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.studio.studio import special_prompt_presets
+
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        plugin.presets = ImagePresetManager(tempfile.mkdtemp())
+        choices = iter(special_prompt_presets()[:3])
+        with patch(
+            "astrbot_plugin_selfie_image.prompts.preset.random.choice",
+            side_effect=lambda _items: next(choices),
+        ) as choose:
+            variants, _, _, preset_name = plugin_main.SelfieImagePlugin._expand_dynamic_preset_variants(
+                plugin,
+                "特殊预设",
+                3,
+            )
+
+        self.assertEqual(preset_name, "特殊预设")
+        self.assertEqual(choose.call_count, 3)
+        self.assertEqual(len(variants), 3)
+        self.assertEqual(
+            [item["prompt"] for item in special_prompt_presets()[:3]],
+            variants,
+        )
+
+        prompts = []
+
+        async def draw_once(_event, prompt, *_args, **_kwargs):
+            prompts.append(prompt)
+            return {"success": True, "files": []}
+
+        async def run_shots(*, total, run_one, **_kwargs):
+            for index in range(total):
+                await run_one(index)
+            return {"success": True, "files": []}
+
+        plugin._normalize_count = lambda value: max(1, int(value or 1))
+        plugin._draw_passthrough_once = draw_once
+        plugin._run_counted_generation_shots = run_shots
+        asyncio.run(
+            plugin_main.SelfieImagePlugin._background_draw_batches(
+                plugin,
+                "task",
+                object(),
+                variants[0],
+                "9:16",
+                "1K",
+                [],
+                "command-draw",
+                3,
+                passthrough=True,
+                special_preset_variants=variants,
+            )
+        )
+        self.assertEqual(prompts, variants)
+
+    def test_selfie_commands_forward_dynamic_preset_variants(self) -> None:
+        import tempfile
+
+        from astrbot_plugin_selfie_image import main as plugin_main
+        from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+        from astrbot_plugin_selfie_image.studio.studio import special_prompt_presets
+
+        class Event:
+            def __init__(self, message: str) -> None:
+                self.message_str = message
+
+            def plain_result(self, text: str) -> str:
+                return text
+
+        selected = special_prompt_presets()[:4]
+        for command, message in (
+            ("cmd_selfie", "/自拍 特殊预设 4"),
+            ("cmd_look_legs", "/看看腿 动作预设 4"),
+            ("cmd_look_you", "/看看你 上身预设 4"),
+            ("cmd_group_selfie", "/合影 下身预设 4"),
+        ):
+            plugin = SessionModelAndTaskTests()._plugin_stub()
+            plugin.presets = ImagePresetManager(tempfile.mkdtemp())
+            captured = {}
+
+            async def handle(**kwargs):
+                captured.update(kwargs)
+                if False:
+                    yield None
+
+            plugin._handle_selfie_command = handle
+            choices = iter(selected)
+
+            def choose(items):
+                if items and isinstance(items[0], dict) and str(items[0].get("id") or "").startswith("preset_"):
+                    return next(choices)
+                return items[0]
+
+            with patch(
+                "astrbot_plugin_selfie_image.prompts.preset.random.choice",
+                side_effect=choose,
+            ):
+                async def invoke():
+                    return [
+                        item
+                        async for item in getattr(plugin_main.SelfieImagePlugin, command)(plugin, Event(message))
+                    ]
+
+                output = asyncio.run(invoke())
+            self.assertEqual(output, [], message)
+            variants = captured["rebuild_special_preset_variants"]
+            self.assertEqual(len(variants), 4, message)
+            for item, variant in zip(selected, variants):
+                self.assertIn(item["prompt"], variant, message)
+
+    def test_selfie_batch_uses_dynamic_preset_variant_for_each_shot(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        variants = ["variant one", "variant two", "variant three"]
+        built = []
+
+        def build(name):
+            def builder(extra="", *_args, **_kwargs):
+                value = f"{name}:{extra}"
+                built.append(value)
+                return value
+
+            return builder
+
+        plugin._build_selfie_look_action = build("selfie")
+        plugin._build_leg_focus_action = build("legs")
+        plugin._build_third_person_look_action = build("you")
+        plugin._build_group_selfie_action = build("group")
+        plugin._normalize_count = lambda value: max(1, int(value or 1))
+
+        async def build_prompt(_event, action, _refs, **_kwargs):
+            return action, [], {}
+
+        async def generate(*_args, **_kwargs):
+            return {"success": True, "files": []}
+
+        async def run_shots(*, total, run_one, **_kwargs):
+            for index in range(total):
+                await run_one(index)
+            return {"success": True, "files": []}
+
+        plugin._build_selfie_prompt_and_refs_for_event = build_prompt
+        plugin._run_image_generation = generate
+        plugin._run_counted_generation_shots = run_shots
+
+        for source, expected_prefix in (
+            ("command-selfie", "selfie"),
+            ("command-look-legs", "legs"),
+            ("command-look-you", "you"),
+            ("command-group-selfie", "group"),
+        ):
+            built.clear()
+            asyncio.run(
+                plugin_main.SelfieImagePlugin._run_selfie_batches_unlocked(
+                    plugin,
+                    "task",
+                    object(),
+                    "base",
+                    [],
+                    source,
+                    3,
+                    "9:16",
+                    "1K",
+                    "failed",
+                    rebuild_extra_request=variants[0],
+                    rebuild_special_preset_variants=variants,
+                )
+            )
+            self.assertEqual(built, [f"{expected_prefix}:{item}" for item in variants], source)
+
     def test_draw_rejects_reference_download_failure_instead_of_falling_back_to_text(self) -> None:
         import tempfile
 
