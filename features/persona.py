@@ -1292,6 +1292,7 @@ class PersonaManager:
                     "desk_sit_crop": "桌前椅上的自然坐姿，桌沿可入镜",
                     "bed_supine_crop": "床上由枕头支撑的舒适靠坐，衣摆和床品自然铺开",
                     "floor_topdown_cross_crop": "地面或木地板上的俯拍交叉坐姿，腿部与地面接触自然",
+                    "first_person_topdown_legs_crop": "坐姿第一人称向下看自己的双腿，双腿平行向前伸展，脚部完整入镜",
                 }
                 pose_text = pose_descriptions.get(pose_match.group(1))
                 if pose_text and not pool_pose_text:

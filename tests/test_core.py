@@ -8413,6 +8413,7 @@ class LegFocusTests(unittest.TestCase):
             "sofa_front_crop", "chair_side_crop", "sofa_cross_crop",
             "floor_knees_crop", "sofa_occlusion_crop", "stool_edge_crop",
             "floor_side_kneel_crop", "seat_knees_cross_crop", "floor_topdown_cross_crop",
+            "first_person_topdown_legs_crop",
         }
         for _ in range(360):
             t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
@@ -8446,6 +8447,18 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("【pose:floor_topdown_cross_crop】", topdown)
         self.assertIn("镜头从正上方近距离俯拍", topdown)
         self.assertIn("双腿自然交叉", topdown)
+        first_person_down = plugin_main.SelfieImagePlugin._build_leg_focus_action(
+            _P(), "第一人称俯视伸腿", False
+        )
+        self.assertIn("【cam:selfie】", first_person_down)
+        self.assertIn("【pose:first_person_topdown_legs_crop】", first_person_down)
+        self.assertIn("双腿左右并行", first_person_down)
+        self.assertIn("双脚完整自然可见", first_person_down)
+        self.assertEqual(plugin_main.parse_requested_leg_pose("俯拍"), "floor_topdown_cross_crop")
+        self.assertEqual(
+            plugin_main.parse_requested_leg_pose("第一人称俯拍双腿平行向前伸展"),
+            "first_person_topdown_legs_crop",
+        )
         forced_crop = None
         with patch(
             "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_pose",
@@ -8496,7 +8509,9 @@ class LegFocusTests(unittest.TestCase):
             "astrbot_plugin_selfie_image.main.random.choice",
             side_effect=lambda values: values[-1],
         ):
-            third_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
+            third_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
+                _P(), "", False, force_pose="floor_topdown_cross_crop"
+            )
         self.assertIn("【cam:selfie】", selfie_action)
         self.assertIn("【cam:third】", third_action)
         self.assertIn("第一人称手机自拍", selfie_action)
@@ -11574,6 +11589,23 @@ class StudioStoreTests(unittest.TestCase):
             )
         )
         self.assertEqual(prompts, variants)
+
+        prompts.clear()
+        asyncio.run(
+            plugin_main.SelfieImagePlugin._background_draw_batches(
+                plugin,
+                "task-plain",
+                object(),
+                "一只猫",
+                "1:1",
+                "1K",
+                [],
+                "command-raw-text-to-image",
+                3,
+                passthrough=True,
+            )
+        )
+        self.assertEqual(prompts, ["一只猫"] * 3)
 
     def test_selfie_commands_forward_dynamic_preset_variants(self) -> None:
         import tempfile

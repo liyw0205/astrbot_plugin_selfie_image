@@ -236,6 +236,7 @@ def build_selfie_builtin_prompt(
                 "floor_side_kneel_crop": "Use a stable side-kneeling seated pose on the floor with both knees gathered to one side; fold one lower leg forward with the foot grounded and the other naturally behind, keeping continuous limbs and coherent clothing or floor occlusion.",
                 "seat_knees_cross_crop": "Recline on a wide seat with both knees raised toward the camera; extend both lower legs forward and let the ankles overlap lightly in the foreground while keeping the seat support and leg anatomy natural.",
                 "floor_topdown_cross_crop": "Sit on the floor or a wood floor with both legs naturally crossed and knees and ankles aligned; use a close top-down view that keeps the clothing folds, crossed legs, and ground contact coherent.",
+                "first_person_topdown_legs_crop": "Sit comfortably and look down toward your own legs from a natural first-person viewpoint, not from an overhead photographer; extend both legs parallel toward the distance with knees and feet aligned, and keep both complete feet visible.",
                 "sit": "Sit naturally on a chair or sofa; let the everyday outfit drape naturally in the close lower-body composition.",
                 "sit_crop": "Sit naturally on a chair or sofa; let the everyday outfit drape naturally in the close lower-body composition.",
                 "kneel": "Use a natural kneeling pose on a rug or cushion; fold both lower legs naturally behind the body.",

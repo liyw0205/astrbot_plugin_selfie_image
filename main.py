@@ -4840,6 +4840,9 @@ class SelfieImagePlugin(
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         base_prompt, variation_enabled, variation_field = parse_variation_request(prompt)
+        # Every batch path, including ordinary non-variation prompts, feeds the
+        # same prompt list into the per-shot closure below.
+        variation_prompts = [base_prompt]
         if special_preset_variants:
             variation_prompts = [
                 parse_variation_request(str(item or ""))[0].strip()

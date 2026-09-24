@@ -95,6 +95,17 @@ LEGFOCUS_POSE_POOL: List[Dict[str, str]] = [
             "镜头从正上方近距离俯拍，突出下装褶皱、双腿交叉关系和地面接触，保持真实透视与稳定比例。"
         ),
     },
+    {
+        "id": "first_person_topdown_legs_crop",
+        "title": "第一人称俯视伸腿",
+        "prompt": (
+            "画面严格只拍腰部以下，上半身、头部和脸部完全不入镜。"
+            "人物坐靠在椅子、床沿或地面，镜头像本人坐着时的自然视线，从腰线附近向下看自己的双腿；"
+            "不是旁人从正上方拍摄。双腿左右并行、膝盖放松并朝向一致，自然向前延伸到远处，保持不交叉、不扭曲。"
+            "衣摆在画面下沿近处自然入镜，双腿形成由近及远的纵深，脚踝、鞋袜和双脚完整自然可见；"
+            "腿部与椅面、床面或地面保持真实接触，构图从近处衣摆连续延伸到远处脚部。"
+        ),
+    },
 ]
 
 _LEGFOCUS_POSE_IDS = frozenset(str(item["id"]) for item in LEGFOCUS_POSE_POOL)
@@ -198,6 +209,7 @@ LEGWEAR_BY_POSE = {
     "floor_side_kneel_crop": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3), ("连裤袜", 2)),
     "seat_knees_cross_crop": (("光腿神器", 3), ("白丝", 4), ("黑丝", 3), ("连裤袜", 2)),
     "floor_topdown_cross_crop": (("光腿神器", 2), ("白丝", 3), ("黑丝", 3), ("连裤袜", 2)),
+    "first_person_topdown_legs_crop": (("光腿神器", 2), ("白丝", 3), ("黑丝", 3), ("连裤袜", 2)),
     # Keep old keys readable for persisted actions and third-party callers.
     "sit": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3), ("连裤袜", 2)),
     "sit_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5), ("连裤袜", 2)),
@@ -236,6 +248,7 @@ LEGFOCUS_CAMERA_WEIGHTS = {
     "floor_side_kneel_crop": (("selfie", 2), ("third", 3)),
     "seat_knees_cross_crop": (("selfie", 4), ("third", 1)),
     "floor_topdown_cross_crop": (("selfie", 4), ("third", 1)),
+    "first_person_topdown_legs_crop": (("selfie", 1),),
     # Compatibility weights for actions generated before the pool migration.
     "sit": (("selfie", 3), ("third", 2)),
     "sit_crop": (("selfie", 4), ("third", 1)),
@@ -365,7 +378,7 @@ def parse_requested_leg_camera(text: str) -> str:
         "路人视角", "不要自拍", "非自拍", "notselfie", "thirdperson",
     )
     selfie_keys = (
-        "第一人称", "第一人称视角", "手机自拍", "自拍", "自己拍", "selfie",
+        "第一人称", "第一人称视角", "第一视角", "主观视角", "手机自拍", "自拍", "自己拍", "selfie",
     )
     if any(key in compact for key in third_keys):
         return "third"
@@ -375,8 +388,24 @@ def parse_requested_leg_camera(text: str) -> str:
 
 
 def parse_requested_leg_pose(text: str) -> str:
-    """Map an explicit top-down request to the matching complete pose."""
+    """Map explicit first-person or generic top-down wording to a complete pose."""
     compact = re.sub(r"\s+", "", str(text or "")).lower()
+    first_person_downward = (
+        any(key in compact for key in ("第一人称", "第一视角", "主观视角", "自己视线"))
+        and any(
+            key in compact
+            for key in ("俯视", "向下看", "往下看", "镜头朝下", "看向腿", "看腿")
+        )
+    )
+    extended_legs = any(
+        key in compact
+        for key in (
+            "向下看腿", "俯视双腿", "俯拍伸腿", "俯视伸腿",
+            "双腿平行伸展", "双腿平行向前伸展",
+        )
+    )
+    if first_person_downward or extended_legs:
+        return "first_person_topdown_legs_crop"
     if any(key in compact for key in ("俯拍", "正上方", "顶拍", "topdown", "top-down")):
         return "floor_topdown_cross_crop"
     return ""
