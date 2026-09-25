@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import types
+import logging
 
 
 def _install_astrbot_stub() -> None:
@@ -42,6 +43,7 @@ def _install_astrbot_stub() -> None:
         info=lambda *args, **kwargs: None,
         warning=lambda *args, **kwargs: None,
         error=lambda *args, **kwargs: None,
+        exception=lambda *args, **kwargs: logging.getLogger("astrbot").exception(*args, **kwargs),
     )
 
     class Image:

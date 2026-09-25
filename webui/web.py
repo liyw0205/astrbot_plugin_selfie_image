@@ -6,12 +6,12 @@ import asyncio
 import base64
 import hmac
 import json
-import logging
 import os
 from pathlib import Path
 import re
 import threading
 from typing import Any, Optional
+from astrbot.api import logger
 
 from ..core.utils import (
     generation_record_media_sources,
@@ -58,7 +58,6 @@ MAX_TASK_PAGE_LIMIT = 200
 MAX_TASK_OFFSET = 1_000_000
 PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 _LOGO_SRC_PLACEHOLDER = "__SELFIE_LOGO_SRC__"
-logger = logging.getLogger(__name__)
 _INDEX_SOURCE_STATUS: dict[str, str] = {
     "source": "embedded",
     "path": "",

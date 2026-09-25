@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import os
 import random
-import logging
 import hashlib
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+from astrbot.api import logger
+
 from ..core.utils import load_json_file, save_json_file
-
-
-logger = logging.getLogger(__name__)
-
 
 def _preset_group_for_name(name: object) -> str:
     try:

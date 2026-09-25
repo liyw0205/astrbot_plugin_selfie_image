@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import aiohttp
+from astrbot.api import logger
 
 from .models import ImageModelTarget
 from .provider_parser import (
@@ -40,9 +40,6 @@ from .provider_parser import (
 from .utils import bytes_to_data_url, normalize_image_mime
 from .proxy import image_client_timeout
 from .error_classify import format_timeout_user_message
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass

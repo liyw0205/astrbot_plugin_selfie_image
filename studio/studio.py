@@ -8,18 +8,16 @@ from __future__ import annotations
 
 import copy
 import json
-import logging
 import os
 import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
+from astrbot.api import logger
 
 from ..cos.cos_looks import build_cos_third_person_prompt, looks_like_cos_prompt
 from ..core.utils import save_json_file, save_json_file_compact
 
-
-logger = logging.getLogger(__name__)
 
 STUDIO_FILENAME = "studio_sessions.json"
 MAX_SESSIONS = 40
@@ -216,6 +214,31 @@ BUILTIN_PROMPTS: List[Dict[str, Any]] = [
             "暖光勾勒出脸部和颈部轮廓，真实人类女孩，竖屏胸像构图，安静而暧昧的原生摄影质感"
         ),
         "templates": ["selfie", "duo", "i2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_post_battle_exhaustion",
+        "title": "战后力竭",
+        "prompt": (
+            "成年人物战胜后力竭，如沉眠般仰卧在一处浅滩上，全身出镜；双眸微睁却失焦无神，像睡去般静止。"
+            "皮肤被浅水浸得苍白近乎透明，洁净完整，无伤口、无血迹；衣装湿透但覆盖得体，湿发与衣摆随水波轻散。"
+            "冷月光与薄雾笼罩，凄美、唯美、死亡般静谧的凋零氛围。人物占画面90%，全身近距离肖像，低机位镜头，"
+            "人物清晰突出，真实人体比例，长腿构图，主体靠近镜头，背景虚化，电影级人像摄影，9:16竖版。"
+        ),
+        "templates": ["selfie", "t2i", "blank"],
+        "global": True,
+    },
+    {
+        "id": "preset_submissive_shy_pose",
+        "title": "臣服怯态",
+        "prompt": (
+            "真实人类女孩，成年女性，第一人称上位者视角。她跪坐并俯身向前，身体微微前倾，脸靠近镜头，形成亲密的近距离透视；"
+            "双手自然扶在身体前方或膝边，不撑在镜头两侧，手臂不要伸入前景，手部略虚化、弱化处理，手指比例自然，避免过长、变形、多指或手掌畸形。"
+            "使用轻微广角并尽量让全身入镜，人物整体比例协调，肩颈、腰线和发丝自然。她有桃花眼，含羞带怯，眼眶微红、泪光盈盈，轻咬下唇，眉头微蹙；"
+            "眼神怯生生又欲拒还迎，发丝垂落并轻扫镜头边缘，锁骨与颈线若隐若现，腰肢纤细，神态楚楚可怜。氛围暧昧但克制，电影感近景，"
+            "柔和光线，浅景深，脸部清晰，手部弱化。"
+        ),
+        "templates": ["selfie", "t2i", "blank"],
         "global": True,
     },
     {
@@ -684,6 +707,8 @@ ACTION_PROMPT_PRESET_IDS = frozenset(
         "preset_side_lift_gaze",
         "preset_back_glance",
         "preset_lowered_gaze",
+        "preset_post_battle_exhaustion",
+        "preset_submissive_shy_pose",
         "preset_hold_face",
         "preset_bf_view",
     }

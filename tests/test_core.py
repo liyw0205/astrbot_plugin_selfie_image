@@ -10740,12 +10740,12 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual(ACTION_PRESET_ALIAS, "动作预设")
         self.assertEqual(UPPER_PRESET_ALIAS, "上身预设")
         self.assertEqual(LOWER_PRESET_ALIAS, "下身预设")
-        self.assertEqual(len(action_prompt_presets()), 11)
+        self.assertEqual(len(action_prompt_presets()), 13)
         action_titles = {item["title"] for item in action_prompt_presets()}
-        self.assertTrue({"捧脸", "男友视角", "咬唇回眸", "侧躺抬眼"}.issubset(action_titles))
+        self.assertTrue({"捧脸", "男友视角", "咬唇回眸", "侧躺抬眼", "战后力竭", "臣服怯态"}.issubset(action_titles))
         self.assertEqual(len(upper_prompt_presets()), 17)
         self.assertEqual(len(lower_prompt_presets()), 10)
-        self.assertEqual(len(special_prompt_presets()), 38)
+        self.assertEqual(len(special_prompt_presets()), 40)
         self.assertEqual(
             {item["id"] for item in special_prompt_presets()},
             {item["id"] for item in action_prompt_presets()}
@@ -10770,6 +10770,20 @@ class StudioStoreTests(unittest.TestCase):
                 action = manager.resolve(ACTION_PRESET_ALIAS)
             self.assertEqual(action.get("preset_name"), ACTION_PRESET_ALIAS)
             self.assertIn(action_selected["prompt"], action.get("prompt") or "")
+            exhausted = next(item for item in action_prompt_presets() if item["title"] == "战后力竭")
+            self.assertIn("战胜后力竭", exhausted["prompt"])
+            self.assertIn("无伤口、无血迹", exhausted["prompt"])
+            self.assertIn("9:16竖版", exhausted["prompt"])
+            self.assertIn(exhausted["prompt"], [item["prompt"] for item in special_prompt_presets()])
+            with patch("astrbot_plugin_selfie_image.prompts.preset.random.choice", return_value=exhausted):
+                named_action = manager.resolve("战后力竭")
+            self.assertEqual(named_action.get("preset_name"), "战后力竭")
+            self.assertIn("死亡般静谧", named_action.get("prompt") or "")
+            shy = next(item for item in action_prompt_presets() if item["title"] == "臣服怯态")
+            for phrase in ("成年女性", "第一人称上位者视角", "手臂不要伸入前景", "双手自然扶在身体前方或膝边", "脸部清晰", "暧昧但克制"):
+                self.assertIn(phrase, shy["prompt"])
+            self.assertIn(shy["prompt"], [item["prompt"] for item in special_prompt_presets()])
+            self.assertEqual(manager.resolve("臣服怯态").get("preset_name"), "臣服怯态")
             rows = manager.list_public()
             groups = [str(row.get("preset_group") or "") for row in rows]
             first_structure = next(index for index, group in enumerate(groups) if group)

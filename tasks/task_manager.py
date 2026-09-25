@@ -6,10 +6,10 @@ import asyncio
 import copy
 import hashlib
 import json
-import logging
 import time
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional
+from astrbot.api import logger
 
 from ..core.utils import (
     load_json_file,
@@ -21,9 +21,6 @@ from ..core.utils import (
 from ..core.constants import VIDEO_MAX_CONCURRENT_TASKS
 from ..generation.generation_results import build_task_terminal_state
 from .task_views import task_media_type, task_source_label
-
-
-logger = logging.getLogger(__name__)
 
 
 class WebTaskMixin:

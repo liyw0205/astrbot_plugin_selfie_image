@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-import logging
 import time
 from typing import Any, Dict, List, Optional
+from astrbot.api import logger
 
 from ..cos.cos_looks import list_cos_look_sets, looks_like_cos_prompt
 from ..prompts.preset import preset_row_display_sort_key
@@ -29,9 +29,6 @@ from ..core.utils import (
     redact_sensitive_text,
 )
 from ..generation.generation_results import build_task_terminal_state
-
-
-logger = logging.getLogger(__name__)
 
 
 class StudioMixin:
