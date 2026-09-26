@@ -122,6 +122,24 @@ def test_corrected_cos_identity_details_are_present_in_final_catalog():
     assert "釉瑚" in prompts["wuthering_youhu_antique"]
 
 
+def test_sun_shangxiang_view_is_a_random_framing_option_not_a_fixed_outfit_view():
+    sun = next(item for item in COS_LOOK_SETS if item["id"] == "sun_shangxiang_neon_green")
+    assert "横屏低机位构图" not in sun["prompt"]
+    assert "颈部以下拍到膝上" not in sun["prompt"]
+    assert "头部自然位于画面外" not in sun["prompt"]
+    framing = COS_FRAMING_CLASSES["low_angle_neck_to_knee"]
+    assert framing["title"] == "横屏低机位颈下至膝上"
+    assert "颈部以下拍到膝上" in framing["prompt"]
+    assert "头部自然位于画面外" in framing["prompt"]
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        return_value="low_angle_neck_to_knee",
+    ):
+        selected = pick_cos_framing(extra_request="COS 换装：自然站立")
+    assert selected["view_id"] == "low_angle_neck_to_knee"
+    assert selected["prompt"] == framing["prompt"]
+
+
 def test_cos_reference_selection_keeps_persona_first_without_identity_intent():
     persona = ImageReference(data=b"persona", mime_type="image/png")
     attached = ImageReference(data=b"attached", mime_type="image/png")
