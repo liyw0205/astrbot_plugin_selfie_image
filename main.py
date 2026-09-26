@@ -191,6 +191,7 @@ from .features.reference_media import _image_delivery_is_ambiguous
 from .prompts.response_text import (
     ack_repeats_request,
     clean_ack_message,
+    command_model_name,
     compact_for_repeat_check,
     friendly_user_error_message,
     looks_like_non_chinese_ack,
@@ -1522,8 +1523,9 @@ class SelfieImagePlugin(
                     user_id = status.get("user_id") or ""
                     used = int(self._current_usage_stats().get("users", {}).get(user_id, {}).get("count", 0))
                     lines.append(f"今日用量：{used}/{self.config.image_daily_limit_count}。")
-        if self.config.image_show_model_info and used_model:
-            lines.append(f"模型：{used_model}")
+        model_name = command_model_name(used_model)
+        if self.config.image_show_model_info and model_name:
+            lines.append(f"模型：{model_name}")
         return "\n".join(lines)
 
     @staticmethod

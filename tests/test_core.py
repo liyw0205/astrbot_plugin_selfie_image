@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.34")
+        self.assertEqual(PLUGIN_VERSION, "1.6.35")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5632,6 +5632,25 @@ class SessionModelAndTaskTests(unittest.TestCase):
         plugin._set_session_model_override(Ev(), "")
         ordered2 = plugin._resolve_generation_targets(Ev())
         self.assertEqual(ordered2[0].label, "secondary/alt-model")
+
+    def test_command_model_output_hides_channel_but_keeps_display_toggle(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config.image_show_generation_info = False
+        plugin.config.image_show_model_info = True
+
+        caption = plugin._build_success_text(1.25, 1, "primary/gpt-image-2", object())
+        self.assertEqual(caption, "模型：gpt-image-2")
+        self.assertNotIn("primary", caption)
+
+        plugin.config.image_show_model_info = False
+        self.assertEqual(plugin._build_success_text(1.25, 1, "primary/gpt-image-2", object()), "")
+
+    def test_command_error_hides_leading_channel_model_route(self) -> None:
+        from astrbot_plugin_selfie_image.prompts.response_text import friendly_user_error_message
+
+        message = friendly_user_error_message("primary/gpt-image-2: 模型超时（30s）")
+        self.assertEqual(message, "模型超时（30s）")
+        self.assertNotIn("primary", message)
 
     def test_image_to_text_uses_configured_auxiliary_model(self) -> None:
         plugin = self._plugin_stub()

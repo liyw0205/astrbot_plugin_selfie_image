@@ -9,6 +9,22 @@ from collections.abc import Callable
 from ..core.utils import redact_sensitive_text
 
 
+def command_model_name(value: str) -> str:
+    """Return only the model portion for chat command captions."""
+    text = str(value or "").strip()
+    if "/" in text:
+        _, _, model = text.partition("/")
+        if model.strip():
+            return model.strip()
+    return text
+
+
+def strip_command_model_route(text: str) -> str:
+    """Hide a leading ``channel/model:`` route from command errors."""
+    value = str(text or "").strip()
+    return re.sub(r"^[^:\n]{1,160}/[^:\n]{1,240}\s*[:：]\s*", "", value, count=1)
+
+
 def compact_for_repeat_check(text: str) -> str:
     return re.sub(
         r"[\s`*_~\"'“”‘’「」『』《》()\[\]{}，。！？、；：,.!?;:\-_/\\|]+",
@@ -169,7 +185,7 @@ def friendly_user_error_message(
         return random.choice(["这会儿接口没接上，晚点再试。", "现在暂时出不了图，等配置恢复再来。"])
     if "缺少生图提示词" in text or "请输入提示词" in text:
         return "你想让我往什么感觉走？也可以直接丢张参考图给我。"
-    detail = redact_sensitive_text(text)
+    detail = strip_command_model_route(redact_sensitive_text(text))
     detail = re.sub(r"[\r\n\t]+", " ", detail)
     detail = re.sub(r"Traceback \(most recent call last\):.*", "", detail, flags=re.I)
     detail = re.sub(r"\s+", " ", detail).strip(" ：:;；")
