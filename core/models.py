@@ -82,8 +82,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "prompt_audit_model": "",
         "output_audit_model": "",
         "ocr_model": "",
-        "prompt_audit_template": "你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{\"allow\":true/false,\"percentage\":0-100,\"reason\":\"原因\"}",
-        "output_audit_template": "你是图像安全审核员。请评估以下图片不适合普通用户的风险。percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{\"allow\":true/false,\"percentage\":0-100,\"reason\":\"原因\"}",
+        "prompt_audit_template": "你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{\"allow\":true/false,\"type\":\"sex\",\"percentage\":0-100,\"reason\":\"原因\"}",
+        "output_audit_template": "你是图像安全审核员。请评估以下图片不适合普通用户的风险。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{\"allow\":true/false,\"type\":\"sex\",\"percentage\":0-100,\"reason\":\"原因\"}",
         # 无形象参考图时：true=回退 logo 图；false=仅用人设文案生成（不注图）
         "use_logo_when_no_persona": True,
         # Prompt EN for models weak on Chinese (uses audit-channel chat).

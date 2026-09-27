@@ -600,6 +600,8 @@ class ConfigModelTests(unittest.TestCase):
                 "output_audit_template": '你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{"allow":true/false,"reason":"原因"}',
             }
         })
+        self.assertIn('"type":"sex"', config.image_prompt_audit_template)
+        self.assertIn('"type":"sex"', config.image_output_audit_template)
         self.assertIn('"percentage":0-100', config.image_prompt_audit_template)
         self.assertIn('"percentage":0-100', config.image_output_audit_template)
 
@@ -2701,11 +2703,19 @@ class ImageUtilityTests(unittest.TestCase):
 
     def test_audit_percentage_threshold_has_inclusive_boundary_and_legacy_fallback(self) -> None:
         self.assertEqual(parse_audit_response_text('{"allow":false,"percentage":59,"reason":"below"}'), (True, "below"))
-        self.assertEqual(parse_audit_response_text('{"allow":true,"percentage":60,"reason":"at threshold"}'), (False, "at threshold"))
+        self.assertEqual(parse_audit_response_text('{"allow":true,"percentage":60,"reason":"at threshold"}'), (False, "risk 60%：at threshold"))
         self.assertEqual(parse_audit_response_text('{"allow":false,"percentage":72,"reason":"custom"}', 73), (True, "custom"))
-        self.assertEqual(parse_audit_response_text('{"allow":true,"percentage":72,"reason":"custom"}', 72), (False, "custom"))
+        self.assertEqual(parse_audit_response_text('{"allow":true,"percentage":72,"reason":"custom"}', 72), (False, "risk 72%：custom"))
         self.assertEqual(parse_audit_response_text('{"allow":false,"percentage":101,"reason":"legacy"}'), (False, "legacy"))
-        self.assertEqual(parse_audit_response_text('{"percentage":60}'), (False, "风险评分 60%"))
+        self.assertEqual(parse_audit_response_text('{"percentage":60}'), (False, "risk 60%"))
+        self.assertEqual(
+            parse_audit_response_text('{"allow":false,"type":"sex","percentage":65,"reason":"存在性暗示"}'),
+            (False, "sex 65%：存在性暗示"),
+        )
+        self.assertEqual(
+            parse_audit_response_text('{"allow":false,"category":"violence","percentage":65,"reason":"存在暴力风险"}'),
+            (False, "violence 65%：存在暴力风险"),
+        )
 
 
 class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
@@ -5799,7 +5809,7 @@ class SessionModelAndTaskTests(unittest.TestCase):
             )
 
         self.assertFalse(allowed)
-        self.assertEqual(reason, "risk reached threshold")
+        self.assertEqual(reason, "risk 55%：risk reached threshold")
         self.assertEqual(calls, [(None, 30, [PNG_BYTES])])
 
     def test_translation_without_model_uses_current_llm(self) -> None:

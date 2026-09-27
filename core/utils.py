@@ -1251,6 +1251,19 @@ def _audit_percentage_value(value: Any) -> Optional[float]:
     return percentage
 
 
+def _audit_type_value(obj: Mapping[str, Any]) -> str:
+    for key in ("type", "category", "risk_type", "risk_category", "classification"):
+        value = str(obj.get(key) or "").strip()
+        if value:
+            return value[:40]
+    return ""
+
+
+def _audit_reason_with_score(reason: str, audit_type: str, percentage: float) -> str:
+    prefix = " ".join((audit_type or "risk", f"{percentage:g}%"))
+    return f"{prefix}：{reason}" if reason else prefix
+
+
 def parse_audit_response_text(text: str, rejection_threshold: float = 60) -> Tuple[bool, str]:
     raw = str(text or "").strip()
     if not raw:
@@ -1271,11 +1284,14 @@ def parse_audit_response_text(text: str, rejection_threshold: float = 60) -> Tup
 
     if isinstance(obj, dict):
         reason = str(obj.get("reason") or obj.get("message") or obj.get("detail") or "").strip()
+        audit_type = _audit_type_value(obj)
         percentage = _audit_percentage_value(obj.get("percentage"))
         if percentage is not None:
             threshold = _audit_percentage_value(rejection_threshold)
             allowed = percentage < (threshold if threshold is not None else 60)
-            return allowed, reason or (f"风险评分 {percentage:g}%" if not allowed else "")
+            if not allowed:
+                return False, _audit_reason_with_score(reason, audit_type, percentage) or f"风险评分 {percentage:g}%"
+            return True, reason
         positive_keys = ("allow", "allowed", "pass", "passed", "safe", "is_safe", "approved")
         negative_keys = ("deny", "denied", "block", "blocked", "unsafe", "is_unsafe", "violation", "violated", "risk", "has_risk", "flagged")
         verdict_keys = ("result", "status", "decision", "verdict", "label")
