@@ -163,6 +163,9 @@ def friendly_user_error_message(
     text = str(error or "").strip()
     if not text:
         return fallback or "我刚刚没抓稳这个感觉，换个方向再试试好不好。"
+    audit_reason = re.search(r"(?:提示词审核未通过|图片内容审核未通过)[：:]\s*([\s\S]*)", text)
+    if audit_reason:
+        text = audit_reason.group(1).strip()
     if "可使用人员白名单" in text:
         return "这个功能现在还只对少数人开放。"
     if "用户黑名单" in text:
@@ -171,11 +174,7 @@ def friendly_user_error_message(
         return "我今天已经拍得有点多了，明天再来找我好不好。"
     if "请求太频繁" in text:
         return "先让我缓一小会儿，我等下就继续给你看。"
-    if (
-        "提示词审核未通过" in text
-        or "图片内容审核未通过" in text
-        or "提示词包含禁用词" in text
-    ):
+    if "提示词包含禁用词" in text:
         return "这次这个方向我不太方便照着来，换个说法或者换个感觉试试。"
     if (
         "当前没有可用的生图模型" in text

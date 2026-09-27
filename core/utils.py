@@ -1239,7 +1239,19 @@ def _audit_bool_value(value: Any) -> Optional[bool]:
     return None
 
 
-def parse_audit_response_text(text: str) -> Tuple[bool, str]:
+def _audit_percentage_value(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    try:
+        percentage = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= percentage <= 100:
+        return None
+    return percentage
+
+
+def parse_audit_response_text(text: str, rejection_threshold: float = 60) -> Tuple[bool, str]:
     raw = str(text or "").strip()
     if not raw:
         return False, "审核模型返回为空"
@@ -1259,6 +1271,11 @@ def parse_audit_response_text(text: str) -> Tuple[bool, str]:
 
     if isinstance(obj, dict):
         reason = str(obj.get("reason") or obj.get("message") or obj.get("detail") or "").strip()
+        percentage = _audit_percentage_value(obj.get("percentage"))
+        if percentage is not None:
+            threshold = _audit_percentage_value(rejection_threshold)
+            allowed = percentage < (threshold if threshold is not None else 60)
+            return allowed, reason or (f"风险评分 {percentage:g}%" if not allowed else "")
         positive_keys = ("allow", "allowed", "pass", "passed", "safe", "is_safe", "approved")
         negative_keys = ("deny", "denied", "block", "blocked", "unsafe", "is_unsafe", "violation", "violated", "risk", "has_risk", "flagged")
         verdict_keys = ("result", "status", "decision", "verdict", "label")

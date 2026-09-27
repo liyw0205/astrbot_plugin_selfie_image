@@ -1482,10 +1482,13 @@
         <label class="checkline"><input id="enablePromptAudit" type="checkbox"> 出图前审文字</label>
         <label class="checkline"><input id="enableOutputAudit" type="checkbox"> 出图后审成品</label>
         <div><label>文字审核模型</label><select id="promptAuditModel"></select></div>
+        <div><label>文字审核拒绝阈值 (%)</label><input id="promptAuditThreshold" type="number" min="0" max="100" step="1"></div>
         <div><label>成品审核模型</label><select id="outputAuditModel"></select></div>
+        <div><label>成品审核拒绝阈值 (%)</label><input id="outputAuditThreshold" type="number" min="0" max="100" step="1"></div>
         <div><label>图转文模型</label><select id="ocrModel"></select><div class="muted">留空时使用当前 LLM</div></div>
       </div>
       <label>文字屏蔽词</label><textarea id="blockedWords"></textarea>
+      <div class="muted">每行一个词，也可用逗号分隔；按不区分大小写的字面包含匹配，不支持正则。</div>
       <label>文字审核说明</label><textarea id="promptAuditTemplate"></textarea>
       <label>成品审核说明</label><textarea id="outputAuditTemplate"></textarea>
       <h3 style="margin-top:18px">提示词转英文</h3>
@@ -2287,11 +2290,15 @@ Source prompt:
       img.blocked_words ??= [];
       img.enable_prompt_audit ??= false;
       img.enable_output_audit ??= false;
+      img.prompt_audit_threshold ??= 60;
+      img.output_audit_threshold ??= 60;
       img.prompt_audit_model ??= '';
       img.output_audit_model ??= '';
       img.ocr_model ??= '';
-      img.prompt_audit_template ??= '你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{"allow":true/false,"reason":"原因"}';
-      img.output_audit_template ??= '你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{"allow":true/false,"reason":"原因"}';
+      img.prompt_audit_template ??= '你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"percentage":0-100,"reason":"原因"}';
+      img.output_audit_template ??= '你是图像安全审核员。请评估以下图片不适合普通用户的风险。percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"percentage":0-100,"reason":"原因"}';
+      if (img.prompt_audit_template === '你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{"allow":true/false,"reason":"原因"}') img.prompt_audit_template = '你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"percentage":0-100,"reason":"原因"}';
+      if (img.output_audit_template === '你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{"allow":true/false,"reason":"原因"}') img.output_audit_template = '你是图像安全审核员。请评估以下图片不适合普通用户的风险。percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"percentage":0-100,"reason":"原因"}';
       img.enable_image_prompt_en ??= false;
       img.enable_video_prompt_en ??= false;
       img.prompt_en_mode ??= 'if_cjk';
@@ -2354,6 +2361,8 @@ Source prompt:
 
         $('enablePromptAudit').checked = !!img.enable_prompt_audit;
         $('enableOutputAudit').checked = !!img.enable_output_audit;
+        $('promptAuditThreshold').value = img.prompt_audit_threshold ?? 60;
+        $('outputAuditThreshold').value = img.output_audit_threshold ?? 60;
         setTextList('blockedWords', img.blocked_words);
         $('promptAuditTemplate').value = img.prompt_audit_template || '';
         $('outputAuditTemplate').value = img.output_audit_template || '';
@@ -2409,6 +2418,10 @@ Source prompt:
       CONFIG.image.enable_daily_limit = $('enableDailyLimit').checked;
       CONFIG.image.enable_prompt_audit = $('enablePromptAudit').checked;
       CONFIG.image.enable_output_audit = $('enableOutputAudit').checked;
+      const promptAuditThreshold = Number($('promptAuditThreshold').value);
+      const outputAuditThreshold = Number($('outputAuditThreshold').value);
+      CONFIG.image.prompt_audit_threshold = String($('promptAuditThreshold').value).trim() && Number.isFinite(promptAuditThreshold) ? Math.min(100, Math.max(0, Math.round(promptAuditThreshold))) : 60;
+      CONFIG.image.output_audit_threshold = String($('outputAuditThreshold').value).trim() && Number.isFinite(outputAuditThreshold) ? Math.min(100, Math.max(0, Math.round(outputAuditThreshold))) : 60;
       CONFIG.image.prompt_audit_model = $('promptAuditModel').value || '';
       CONFIG.image.output_audit_model = $('outputAuditModel').value || '';
       CONFIG.image.ocr_model = $('ocrModel').value || '';

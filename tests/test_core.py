@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.35")
+        self.assertEqual(PLUGIN_VERSION, "1.6.36")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -579,6 +579,29 @@ class ConfigModelTests(unittest.TestCase):
         for value in (1, 2, 3, 4, 5):
             config = AICatConfig.from_dict({"image": {"max_concurrent_tasks": value}})
             self.assertEqual(config.image_max_concurrent_tasks, value)
+        default_config = AICatConfig.from_dict({})
+        self.assertEqual(default_config.image_prompt_audit_threshold, 60)
+        self.assertEqual(default_config.image_output_audit_threshold, 60)
+        thresholds = AICatConfig.from_dict({
+            "image": {"prompt_audit_threshold": 35, "output_audit_threshold": 100}
+        })
+        self.assertEqual(thresholds.image_prompt_audit_threshold, 35)
+        self.assertEqual(thresholds.image_output_audit_threshold, 100)
+        clamped = AICatConfig.from_dict({
+            "image": {"prompt_audit_threshold": -5, "output_audit_threshold": 120}
+        })
+        self.assertEqual(clamped.image_prompt_audit_threshold, 0)
+        self.assertEqual(clamped.image_output_audit_threshold, 100)
+
+    def test_legacy_default_audit_templates_are_upgraded(self) -> None:
+        config = AICatConfig.from_dict({
+            "image": {
+                "prompt_audit_template": '你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{"allow":true/false,"reason":"原因"}',
+                "output_audit_template": '你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{"allow":true/false,"reason":"原因"}',
+            }
+        })
+        self.assertIn('"percentage":0-100', config.image_prompt_audit_template)
+        self.assertIn('"percentage":0-100', config.image_output_audit_template)
 
     def test_astrbot_wrapped_values_are_unwrapped(self) -> None:
         raw = {"image": {"value": {"max_batch_count": {"value": 4}}, "type": "object"}}
@@ -2675,6 +2698,14 @@ class ImageUtilityTests(unittest.TestCase):
         self.assertEqual(parse_audit_response_text("safe: true"), (True, "safe: true"))
         self.assertEqual(parse_audit_response_text("risk: false"), (True, "risk: false"))
         self.assertFalse(parse_audit_response_text("不安全，拒绝")[0])
+
+    def test_audit_percentage_threshold_has_inclusive_boundary_and_legacy_fallback(self) -> None:
+        self.assertEqual(parse_audit_response_text('{"allow":false,"percentage":59,"reason":"below"}'), (True, "below"))
+        self.assertEqual(parse_audit_response_text('{"allow":true,"percentage":60,"reason":"at threshold"}'), (False, "at threshold"))
+        self.assertEqual(parse_audit_response_text('{"allow":false,"percentage":72,"reason":"custom"}', 73), (True, "custom"))
+        self.assertEqual(parse_audit_response_text('{"allow":true,"percentage":72,"reason":"custom"}', 72), (False, "custom"))
+        self.assertEqual(parse_audit_response_text('{"allow":false,"percentage":101,"reason":"legacy"}'), (False, "legacy"))
+        self.assertEqual(parse_audit_response_text('{"percentage":60}'), (False, "风险评分 60%"))
 
 
 class AsyncUtilityTests(unittest.IsolatedAsyncioTestCase):
@@ -5652,6 +5683,13 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual(message, "模型超时（30s）")
         self.assertNotIn("primary", message)
 
+    def test_audit_user_error_shows_model_reason(self) -> None:
+        from astrbot_plugin_selfie_image.prompts.response_text import friendly_user_error_message
+
+        message = friendly_user_error_message("提示词审核未通过：图片中存在明显的违规风险")
+        self.assertEqual(message, "图片中存在明显的违规风险")
+        self.assertNotIn("换个说法", message)
+
     def test_image_to_text_uses_configured_auxiliary_model(self) -> None:
         plugin = self._plugin_stub()
         plugin.config = AICatConfig.from_dict(
@@ -5709,7 +5747,14 @@ class SessionModelAndTaskTests(unittest.TestCase):
     def test_prompt_audit_without_model_uses_current_llm(self) -> None:
         plugin = self._plugin_stub()
         plugin.config = AICatConfig.from_dict(
-            {"image": {"enable_prompt_audit": True, "prompt_audit_model": ""}}
+            {
+                "image": {
+                    "enable_prompt_audit": True,
+                    "prompt_audit_model": "",
+                    "prompt_audit_threshold": 70,
+                    "prompt_audit_template": "limit={threshold}; prompt={prompt}",
+                }
+            }
         )
         plugin._validate_prompt = lambda *_args: ""
         plugin._is_audit_exempt = lambda *_args: False
@@ -5717,19 +5762,26 @@ class SessionModelAndTaskTests(unittest.TestCase):
 
         async def current_llm(event, prompt, timeout=8, images=None):
             calls.append((event, timeout, images))
-            return '{"allow":true,"reason":""}'
+            self.assertEqual(prompt, "limit=70; prompt=cat")
+            return '{"allow":false,"percentage":69,"reason":"below configured threshold"}'
 
         plugin._call_text_llm = current_llm
         allowed, reason = asyncio.run(plugin._audit_prompt("cat", event=None))
 
         self.assertTrue(allowed)
-        self.assertEqual(reason, "")
+        self.assertEqual(reason, "below configured threshold")
         self.assertEqual(calls, [(None, 30, None)])
 
     def test_output_audit_without_model_uses_current_llm_with_images(self) -> None:
         plugin = self._plugin_stub()
         plugin.config = AICatConfig.from_dict(
-            {"image": {"enable_output_audit": True, "output_audit_model": ""}}
+            {
+                "image": {
+                    "enable_output_audit": True,
+                    "output_audit_model": "",
+                    "output_audit_threshold": 55,
+                }
+            }
         )
         plugin._is_audit_exempt = lambda *_args: False
         calls = []
@@ -5739,15 +5791,15 @@ class SessionModelAndTaskTests(unittest.TestCase):
 
             async def current_llm(event, prompt, timeout=8, images=None):
                 calls.append((event, timeout, images))
-                return '{"allow":true,"reason":""}'
+                return '{"allow":true,"percentage":55,"reason":"risk reached threshold"}'
 
             plugin._call_text_llm = current_llm
             allowed, reason = asyncio.run(
                 plugin._audit_output_images([handle.name], event=None)
             )
 
-        self.assertTrue(allowed)
-        self.assertEqual(reason, "")
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "risk reached threshold")
         self.assertEqual(calls, [(None, 30, [PNG_BYTES])])
 
     def test_translation_without_model_uses_current_llm(self) -> None:

@@ -77,11 +77,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "blocked_words": [],
         "enable_prompt_audit": False,
         "enable_output_audit": False,
+        "prompt_audit_threshold": 60,
+        "output_audit_threshold": 60,
         "prompt_audit_model": "",
         "output_audit_model": "",
         "ocr_model": "",
-        "prompt_audit_template": "你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{\"allow\":true/false,\"reason\":\"原因\"}",
-        "output_audit_template": "你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{\"allow\":true/false,\"reason\":\"原因\"}",
+        "prompt_audit_template": "你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{\"allow\":true/false,\"percentage\":0-100,\"reason\":\"原因\"}",
+        "output_audit_template": "你是图像安全审核员。请评估以下图片不适合普通用户的风险。percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{\"allow\":true/false,\"percentage\":0-100,\"reason\":\"原因\"}",
         # 无形象参考图时：true=回退 logo 图；false=仅用人设文案生成（不注图）
         "use_logo_when_no_persona": True,
         # Prompt EN for models weak on Chinese (uses audit-channel chat).
@@ -326,6 +328,8 @@ class AICatConfig:
     image_blocked_words: List[str]
     image_enable_prompt_audit: bool
     image_enable_output_audit: bool
+    image_prompt_audit_threshold: int
+    image_output_audit_threshold: int
     image_prompt_audit_model: str
     image_output_audit_model: str
     image_ocr_model: str
@@ -504,6 +508,8 @@ class AICatConfig:
             image_blocked_words=split_values(image.get("blocked_words")),
             image_enable_prompt_audit=to_bool(image.get("enable_prompt_audit"), False),
             image_enable_output_audit=to_bool(image.get("enable_output_audit"), False),
+            image_prompt_audit_threshold=to_int(image.get("prompt_audit_threshold"), 60, minimum=0, maximum=100),
+            image_output_audit_threshold=to_int(image.get("output_audit_threshold"), 60, minimum=0, maximum=100),
             image_prompt_audit_model=str(image.get("prompt_audit_model") or "").strip(),
             image_output_audit_model=str(image.get("output_audit_model") or "").strip(),
             image_ocr_model=str(image.get("ocr_model") or "").strip(),
@@ -694,6 +700,13 @@ def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     image = ensure_dict(raw, "image")
     image.pop("audit_whitelist", None)
+    legacy_audit_templates = {
+        "prompt_audit_template": "你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{\"allow\":true/false,\"reason\":\"原因\"}",
+        "output_audit_template": "你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{\"allow\":true/false,\"reason\":\"原因\"}",
+    }
+    for key, legacy_value in legacy_audit_templates.items():
+        if image.get(key) == legacy_value:
+            image[key] = DEFAULT_CONFIG["image"][key]
     legacy_image_keys = {
         "imageEnableLLMTool": "enable_llm_tool",
         "imageDefaultAspectRatio": "default_aspect_ratio",

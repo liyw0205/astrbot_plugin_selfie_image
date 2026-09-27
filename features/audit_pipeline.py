@@ -81,8 +81,8 @@ class AuditMixin:
             # Health telemetry must never change an audit or translation result.
             return
 
-    def _parse_audit_response(self, text: str) -> Tuple[bool, str]:
-        return parse_audit_response_text(text)
+    def _parse_audit_response(self, text: str, rejection_threshold: int = 60) -> Tuple[bool, str]:
+        return parse_audit_response_text(text, rejection_threshold)
 
     def _find_audit_target(self, label: str) -> Optional[ImageModelTarget]:
         value = str(label or "").strip()
@@ -333,6 +333,7 @@ class AuditMixin:
             return True, ""
 
         audit_prompt = self.config.image_prompt_audit_template.replace("{prompt}", str(prompt or ""))
+        audit_prompt = audit_prompt.replace("{threshold}", str(self.config.image_prompt_audit_threshold))
         try:
             target = self._find_audit_target(self.config.image_prompt_audit_model)
             if target:
@@ -343,7 +344,7 @@ class AuditMixin:
                 text = await self._audit_prompt_via_astrbot(event, audit_prompt)
         except Exception as exc:
             return False, f"审核调用失败：{redact_sensitive_text(str(exc))[:240]}"
-        return self._parse_audit_response(text)
+        return self._parse_audit_response(text, self.config.image_prompt_audit_threshold)
 
     async def _audit_output_images(self, files: List[str], user_id: str = "", prompt: str = "", event: Optional[AstrMessageEvent] = None) -> Tuple[bool, str]:
         if self._is_audit_exempt(event, user_id):
@@ -365,6 +366,7 @@ class AuditMixin:
                 return False, "待审核图片为空"
             images.append(data)
         audit_prompt = self.config.image_output_audit_template.replace("{prompt}", str(prompt or ""))
+        audit_prompt = audit_prompt.replace("{threshold}", str(self.config.image_output_audit_threshold))
         try:
             if target is not None:
                 text = await self._call_audit_target_with_health(
@@ -376,7 +378,7 @@ class AuditMixin:
                 text = await self._audit_prompt_via_astrbot(event, audit_prompt, images=images)
         except Exception as exc:
             return False, f"审核调用失败：{redact_sensitive_text(str(exc))[:240]}"
-        return self._parse_audit_response(text)
+        return self._parse_audit_response(text, self.config.image_output_audit_threshold)
 
 
     def _prompt_en_needed(
