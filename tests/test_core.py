@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.36")
+        self.assertEqual(PLUGIN_VERSION, "1.6.37")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5685,6 +5685,45 @@ class SessionModelAndTaskTests(unittest.TestCase):
 
         plugin.config.image_show_model_info = False
         self.assertEqual(plugin._build_success_text(1.25, 1, "primary/gpt-image-2", object()), "")
+
+    def test_admin_automatically_bypasses_audit_quota_and_rate_limit(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config = AICatConfig.from_dict(
+            {
+                "image": {
+                    "enable_prompt_audit": True,
+                    "enable_output_audit": True,
+                    "enable_daily_limit": True,
+                    "daily_limit_count": 1,
+                    "rate_limit_seconds": 60,
+                },
+                "permission": {"whitelist_users": [], "whitelist_groups": []},
+            }
+        )
+        plugin._usage_lock = threading.RLock()
+        plugin._usage_stats = {"date": plugin._today_key(), "users": {"admin-1": {"count": 99}}}
+        plugin._quota_reservation_lock = threading.RLock()
+        plugin._quota_reservations = {}
+        plugin._last_request_at = {"admin-1": time.time()}
+        event = types.SimpleNamespace(role="admin", user_id="admin-1")
+
+        self.assertTrue(plugin._is_admin_event(event))
+        self.assertTrue(plugin._is_audit_exempt(event))
+        self.assertTrue(plugin._access_status(event).get("unlimited"))
+        self.assertEqual(plugin._quota_error_message(event, 5), "")
+        self.assertEqual(plugin._rate_limit_error_message(event), "")
+        self.assertEqual(plugin._reserve_quota_for_task("admin-task", event, 5), "")
+        self.assertEqual(plugin._quota_reservations, {})
+
+    def test_admin_blacklist_still_blocks_generation(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.config = AICatConfig.from_dict(
+            {"permission": {"blocked_users": ["admin-1"], "whitelist_users": []}}
+        )
+        event = types.SimpleNamespace(role="owner", user_id="admin-1")
+        self.assertTrue(plugin._is_admin_event(event))
+        self.assertFalse(plugin._is_audit_exempt(event))
+        self.assertIn("黑名单", plugin._permission_denied_message(event))
 
     def test_command_error_hides_leading_channel_model_route(self) -> None:
         from astrbot_plugin_selfie_image.prompts.response_text import friendly_user_error_message

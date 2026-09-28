@@ -459,7 +459,7 @@ class SelfieImagePlugin(
     def _access_status(self, event: AstrMessageEvent) -> Dict[str, Any]:
         user_id = event_user_id(event)
         group_id = event_group_id(event)
-        return access_status(
+        status = access_status(
             user_id=user_id,
             group_id=group_id,
             blocked_users=self.config.blocked_users,
@@ -467,6 +467,12 @@ class SelfieImagePlugin(
             whitelist_users=self.config.whitelist_users,
             whitelist_groups=self.config.whitelist_groups,
         )
+        # Administrators get the same audit/quota exemptions as configured
+        # unlimited users, while explicit access denials still take priority.
+        if status.get("allowed") and self._is_admin_event(event):
+            status["unlimited"] = True
+            status["admin"] = True
+        return status
 
     def _permission_denied_message(self, event: AstrMessageEvent) -> str:
         return permission_denied_message(self._access_status(event))
@@ -601,7 +607,11 @@ class SelfieImagePlugin(
         if event is None:
             return True
         status = self._access_status(event)
-        return bool(status.get("whitelist") or (user_id and user_id in self.config.whitelist_users))
+        return bool(
+            status.get("whitelist")
+            or status.get("admin")
+            or (user_id and user_id in self.config.whitelist_users)
+        )
 
     def _is_audit_exempt(self, event: Optional[AstrMessageEvent] = None, user_id: str = "") -> bool:
         return bool(event is not None and self._is_whitelisted(event, user_id))
@@ -1518,7 +1528,7 @@ class SelfieImagePlugin(
             if self.config.image_enable_daily_limit:
                 status = self._access_status(event)
                 if status.get("unlimited"):
-                    lines.append("今日用量：白名单用户/群组不限制。")
+                    lines.append("今日用量：白名单用户/群组和管理员不限制。")
                 else:
                     user_id = status.get("user_id") or ""
                     used = int(self._current_usage_stats().get("users", {}).get(user_id, {}).get("count", 0))
