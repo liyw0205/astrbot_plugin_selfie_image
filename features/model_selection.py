@@ -80,3 +80,43 @@ def prioritize_model_target(
     if preferred is None:
         return items
     return [preferred] + [target for target in items if target.label != preferred.label]
+
+
+def match_model_request(
+    raw: str,
+    targets: Iterable[ImageModelTarget],
+) -> Optional[ImageModelTarget]:
+    """Fuzzy-match a free-text model request to one enabled target.
+
+    LLM tool calls pass whatever the user said ("用gpt画一只猫"), so the text
+    may be a bare model id, a channel name, or a full ``channel/model`` label.
+    The request must only *prefer* a model: anything that cannot be matched
+    with confidence keeps the default routing instead of failing the request.
+    """
+    text = str(raw or "").strip().strip("\"'“”")
+    items = list(targets)
+    if not text or not items:
+        return None
+    lowered = text.lower()
+    # Exact label / channel/model / bare model id first.
+    for target in items:
+        if lowered in {
+            target.label.lower(),
+            f"{target.channel_name}/{target.model}".lower(),
+            f"{target.channel_name}:{target.model}".lower(),
+            target.model.lower(),
+        }:
+            return target
+    # Unique substring hits on the model id, then on the channel name.  A
+    # request like "gpt" must not pick arbitrarily between gpt-image-2 and
+    # gpt-image-1, so ambiguous hits fall back to default routing.
+    for attribute in ("model", "channel_name"):
+        hits = [
+            target
+            for target in items
+            if lowered in str(getattr(target, attribute) or "").lower()
+        ]
+        unique_models = {target.model for target in hits}
+        if len(hits) == 1 or (attribute == "model" and len(unique_models) == 1):
+            return hits[0]
+    return None

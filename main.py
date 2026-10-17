@@ -125,6 +125,7 @@ from .features.model_selection import (
     available_model_labels,
     find_model_target,
     match_model_label,
+    match_model_request,
     prioritize_model_target,
 )
 from .prompts.preset import (
@@ -1455,6 +1456,7 @@ class SelfieImagePlugin(
         aspect: str,
         resolution: str,
         ack_message: str = "",
+        model_request: str = "",
     ) -> Optional[str]:
         if not self.config.image_enable_llm_tool:
             return self._tool_unavailable("我这会儿还没法给你拍这种。")
@@ -1501,6 +1503,7 @@ class SelfieImagePlugin(
                 rebuild_extra_request=leg_rebuild_extra,
                 cos_selection=selection,
                 reference_selection=selection.summary() if selection else None,
+                model_request=model_request,
             )
 
         task = self.start_command_image_task(
@@ -2746,6 +2749,23 @@ class SelfieImagePlugin(
             all_targets, self._get_session_model_override(event)
         )
 
+    def _prioritize_targets_by_model_request(
+        self,
+        targets: List[ImageModelTarget],
+        model_request: str = "",
+    ) -> List[ImageModelTarget]:
+        """Put the requested model first while keeping the fallback chain.
+
+        LLM tool calls may carry a free-text model hint ("gpt").  A confident
+        match moves that target to the front of the retry chain; anything else
+        keeps the default routing untouched.
+        """
+        items = list(targets or [])
+        preferred = match_model_request(model_request, items)
+        if preferred is None:
+            return items
+        return [preferred] + [target for target in items if target.label != preferred.label]
+
     def _list_image_tasks_for_session(
         self,
         session_key: str = "",
@@ -3148,6 +3168,7 @@ class SelfieImagePlugin(
         duration: Optional[int] = None,
         requested_count: int = 1,
         task_id: str = "",
+        model_request: str = "",
     ) -> Dict[str, Any]:
         started = time.monotonic()
         reference_selection: Dict[str, Any] = {}
@@ -3210,6 +3231,8 @@ class SelfieImagePlugin(
             )
 
         targets = list(self.config.get_prioritized_video_targets())
+        if str(model_request or "").strip():
+            targets = self._prioritize_targets_by_model_request(targets, model_request)
         if not getattr(self.config, "video_enable", True):
             return failure(
                 "视频功能已关闭，请在配置里打开 video.enable",
@@ -4849,6 +4872,7 @@ class SelfieImagePlugin(
         passthrough: bool = False,
         fail_label: str = "",
         special_preset_variants: Optional[List[str]] = None,
+        model_request: str = "",
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         base_prompt, variation_enabled, variation_field = parse_variation_request(prompt)
@@ -4886,6 +4910,7 @@ class SelfieImagePlugin(
                     source,
                     task_id=task_id,
                     requested_count=total,
+                    model_request=model_request,
                 )
             return await self._draw_once(
                 event,
@@ -4896,6 +4921,7 @@ class SelfieImagePlugin(
                 source,
                 task_id=task_id,
                 requested_count=total,
+                model_request=model_request,
             )
 
         return await self._run_counted_generation_shots(
@@ -4960,6 +4986,7 @@ class SelfieImagePlugin(
         rebuild_special_preset_variants: Optional[List[str]] = None,
         cos_selection: Optional[CosReferenceSelection] = None,
         reference_selection: Optional[Mapping[str, Any]] = None,
+        model_request: str = "",
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         # 多张拍摄时逐张更换机位或姿势。
@@ -5111,6 +5138,13 @@ class SelfieImagePlugin(
                 aspect,
                 resolution,
                 refs,
+                targets=(
+                    self._prioritize_targets_by_model_request(
+                        self._resolve_generation_targets(event), model_request
+                    )
+                    if str(model_request or "").strip()
+                    else None
+                ),
                 source=source,
                 audit_user_id=event_user_id(event),
                 event=event,
@@ -5833,6 +5867,7 @@ class SelfieImagePlugin(
         *,
         task_id: str = "",
         requested_count: int = 1,
+        model_request: str = "",
     ) -> Dict[str, Any]:
         user_prompt = str(prompt or "").strip()
         prompt_en_meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
@@ -5852,6 +5887,13 @@ class SelfieImagePlugin(
             aspect,
             resolution,
             refs,
+            targets=(
+                self._prioritize_targets_by_model_request(
+                    self._resolve_generation_targets(event), model_request
+                )
+                if str(model_request or "").strip()
+                else None
+            ),
             source=source,
             audit_user_id=event_user_id(event),
             event=event,
@@ -5876,6 +5918,7 @@ class SelfieImagePlugin(
         *,
         task_id: str = "",
         requested_count: int = 1,
+        model_request: str = "",
     ) -> Dict[str, Any]:
         user_prompt = str(prompt or "").strip()
         prompt_en_meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
@@ -5890,6 +5933,13 @@ class SelfieImagePlugin(
             aspect,
             resolution,
             refs,
+            targets=(
+                self._prioritize_targets_by_model_request(
+                    self._resolve_generation_targets(event), model_request
+                )
+                if str(model_request or "").strip()
+                else None
+            ),
             source=source,
             audit_user_id=event_user_id(event),
             event=event,
@@ -7358,12 +7408,14 @@ class SelfieImagePlugin(
         aspect_ratio: str = "",
         resolution: str = "",
         size: str = "",
+        model: str = "",
         ack_message: str = "",
     ) -> Optional[str]:
         """
         使用生图模型生成普通图片，支持文生图和参考图图生图。
         自拍、AI 自己、合影、合照、同框、与用户一起拍照等请求使用 generate_selfie。
         prompt 保持简洁，保留主体、场景、动作/风格、构图和参考图关系即可。
+        用户点名要用某个模型时（例如“用gpt画一只猫”“用即梦生成”），把提到的模型关键词填入 model；没有点名就留空，自动按启用顺序路由。
         闲聊中顺势画图时，ack_message 用当前人格自然短句接话，简体中文 10-40 字。
         Args:
             prompt(string): 简洁生图提示词，描述主体、场景、动作/风格、构图和参考图使用方式。
@@ -7371,6 +7423,7 @@ class SelfieImagePlugin(
             aspect_ratio(string): 宽高比，例如 1:1、3:4、9:16、16:9；留空使用默认值。
             resolution(string): 分辨率，例如 1K、2K、4K；留空使用默认值。
             size(string): 兼容参数，可传 1024x1024、2048x2048 或 4096x4096。
+            model(string): 可选。用户点名使用的模型关键词，如 "gpt-image-2"、"gpt"、"即梦"；留空表示不指定，自动使用启用的模型顺序。指定的模型不存在时自动回退到启用模型。
             ack_message(string): 可选。根据当前对话和机器人人格生成的简体中文短进度回复。
         """
         if not self.config.image_enable_llm_tool:
@@ -7384,6 +7437,7 @@ class SelfieImagePlugin(
                 "aspect_ratio": aspect_ratio,
                 "resolution": resolution,
                 "size": size,
+                "model": model,
             },
         )
         requested_count = self._normalize_count(count)
@@ -7394,7 +7448,7 @@ class SelfieImagePlugin(
         if not prompt:
             return self._tool_soft_fail("缺少生图提示词", "你想让我往什么感觉走？")
         if self._looks_like_selfie_intent(prompt):
-            return await self._run_llm_selfie_flow(event, prompt, requested_count, aspect, resol, ack_message)
+            return await self._run_llm_selfie_flow(event, prompt, requested_count, aspect, resol, ack_message, model_request=model)
 
         await self._send_progress_text(
             event,
@@ -7423,6 +7477,7 @@ class SelfieImagePlugin(
                 requested_count,
                 passthrough=True,
                 fail_label=self._natural_fail_fallback("image"),
+                model_request=model,
             )
 
         task = self.start_command_image_task(
@@ -7434,6 +7489,7 @@ class SelfieImagePlugin(
                 "resolution": resol,
                 "requested_count": requested_count,
                 "reference_image_count": len(refs),
+                "requested_model": str(model or "").strip(),
                 "kind": "LLM 生图",
             },
             runner=runner,
@@ -7452,6 +7508,7 @@ class SelfieImagePlugin(
         aspect_ratio: str = "",
         resolution: str = "",
         size: str = "",
+        model: str = "",
         ack_message: str = "",
     ) -> Optional[str]:
         """
@@ -7462,6 +7519,7 @@ class SelfieImagePlugin(
         非合影换装或换姿势时，附带图片默认只作为服装、姿势、构图或风格参考，AI 的脸和身份仍来自当前形象参考图。
         如果附带图片里的人用手机、手、道具、口罩、面具或其他东西挡脸，默认不要把挡脸物迁移到 AI 身上，除非用户明确要求遮脸。
         action 保持简洁，整理出动作/场景/情绪/服装/镜头语言；合影时写清同框关系和参考图对象。
+        用户点名要用某个模型时，把提到的模型关键词填入 model；没有点名就留空，自动按启用顺序路由。
         ack_message 使用简体中文，以当前人格自然回应，10-40 字。
         Args:
             action(string): 简洁自拍/合影要求，包含动作、表情、服装、环境、镜头或同框关系。
@@ -7469,6 +7527,7 @@ class SelfieImagePlugin(
             aspect_ratio(string): 宽高比，例如 1:1、3:4、9:16、16:9；留空使用默认值。
             resolution(string): 分辨率，例如 1K、2K、4K；留空使用默认值。
             size(string): 兼容参数，可传 1024x1024、2048x2048 或 4096x4096。
+            model(string): 可选。用户点名使用的模型关键词，如 "gpt-image-2"、"gpt"；留空表示不指定，自动使用启用的模型顺序。指定的模型不存在时自动回退到启用模型。
             ack_message(string): 可选。根据当前对话和机器人人格生成的简体中文短进度回复。
         """
         if not self.config.image_enable_llm_tool:
@@ -7482,11 +7541,12 @@ class SelfieImagePlugin(
                 "aspect_ratio": aspect_ratio,
                 "resolution": resolution,
                 "size": size,
+                "model": model,
             },
         )
         requested_count = self._normalize_count(count)
         action, aspect, resol, _, _ = self._resolve_image_preset(action or "看着镜头自然自拍", aspect_ratio, resolution or size)
-        return await self._run_llm_selfie_flow(event, action, requested_count, aspect, resol, ack_message)
+        return await self._run_llm_selfie_flow(event, action, requested_count, aspect, resol, ack_message, model_request=model)
 
     @LLM_TOOL(name="generate_video")
     async def tool_generate_video(
@@ -7494,19 +7554,22 @@ class SelfieImagePlugin(
         event: AstrMessageEvent,
         prompt: str,
         duration: int = 5,
+        model: str = "",
         ack_message: str = "",
     ) -> Optional[str]:
         """
         生成短视频。用户附图或引用图时使用该图片作为首帧；明确要求 AI 自己出镜时使用当前形象图，普通视频请求不自动带入形象图。
         用户要求 AI 自己动态、自拍视频、让 AI 出镜动作时使用本工具；普通场景视频直接按文字生成。
+        用户点名要用某个视频模型时，把提到的模型关键词填入 model；没有点名就留空，自动按启用顺序路由。
         Args:
             prompt(string): 视频内容，描述动作、镜头、场景和光线。
             duration(number): 视频时长，1-60 秒；留空使用 5 秒。
+            model(string): 可选。用户点名使用的视频模型关键词，如 "sora"、"kling"；留空表示不指定，自动使用启用的模型顺序。指定的模型不存在时自动回退到启用模型。
             ack_message(string): 可选。根据当前对话和机器人人格生成的简体中文短进度回复。
         """
         if not self.config.video_enable:
             return self._tool_unavailable("我这会儿还没法录这个给你看。")
-        self._remember_llm_generation(event, "video", {"prompt": prompt, "duration": duration})
+        self._remember_llm_generation(event, "video", {"prompt": prompt, "duration": duration, "model": model})
         action = str(prompt or "").strip()
         if not action:
             return self._tool_soft_fail("缺少视频内容", "你想让我怎么动？")
@@ -7537,6 +7600,7 @@ class SelfieImagePlugin(
                 source="llm-generate-video",
                 duration=seconds,
                 task_id=task_id,
+                model_request=model,
             )
 
         task = self.start_command_image_task(
@@ -7546,6 +7610,7 @@ class SelfieImagePlugin(
                 "original_prompt": action,
                 "duration": seconds,
                 "reference_image_count": len(refs),
+                "requested_model": str(model or "").strip(),
                 "kind": "video",
             },
             runner=runner,
