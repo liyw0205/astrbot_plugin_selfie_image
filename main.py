@@ -4172,7 +4172,7 @@ class SelfieImagePlugin(
             "response_data": redact_sensitive_data(
                 {"success": False, "stage": str(stage or "task_exception"), "error": safe_error, "cancelled": bool(cancelled)}
             ),
-            "request_image_paths": [],
+            "request_image_paths": list(request.get("request_image_paths") or []),
             "generated_image_paths": [],
             "attempts": [],
             "retry_count": 0,
@@ -5285,6 +5285,9 @@ class SelfieImagePlugin(
         if retry_record_id:
             request_summary["retry_record_id"] = retry_record_id[:128]
         prompt_en_meta: Optional[Dict[str, Any]] = None
+        # Declared before the try so the exception path can still report which
+        # request images were already written for this attempt.
+        all_request_paths: List[str] = []
 
         try:
             self._validate_web_test_selection(payload)
@@ -5338,7 +5341,7 @@ class SelfieImagePlugin(
                 )
 
             all_paths: List[str] = []
-            all_request_paths: List[str] = []
+            all_request_paths.clear()
             all_attempts: List[Dict[str, Any]] = []
             last_result: Dict[str, Any] = {}
             last_error = ""
@@ -5478,7 +5481,7 @@ class SelfieImagePlugin(
                     "reference_images": len(raw_images),
                     "request_data": request_summary,
                     "response_data": response_data,
-                    "request_image_paths": [],
+                    "request_image_paths": all_request_paths,
                     "generated_image_paths": [],
                     "retry_record_id": retry_record_id,
                     "task_id": task_id,

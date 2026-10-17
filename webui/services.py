@@ -306,6 +306,14 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
     overall_status = "ok"
     if isinstance(config_preflight, Mapping) and str(config_preflight.get("status") or "ok") != "ok":
         overall_status = "degraded"
+    cache_limit_count = int(getattr(plugin.config, "image_cache_limit_count", 1000) or 1000)
+    record_keep_limit = int(getattr(plugin.config, "image_record_keep_limit", 1000) or 1000)
+    cache_limit_warning = ""
+    if cache_limit_count < record_keep_limit:
+        cache_limit_warning = (
+            f"图片缓存上限（{cache_limit_count} 张）小于记录保留量（{record_keep_limit} 条），"
+            "旧记录的图片会陆续显示为已清理；建议把缓存上限调到不小于记录保留量。"
+        )
     return {
         "status": overall_status,
         "config_path": getattr(plugin, "config_path", ""),
@@ -315,8 +323,10 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
         "cache_dir": getattr(plugin, "generated_dir", ""),
         "cache_size_mb": round(float(cache_bytes) / 1024 / 1024, 2),
         "cache_file_count": cache_count,
-        "cache_limit_mb": getattr(plugin.config, "image_cache_limit_mb", 200),
-        "cache_limit_count": getattr(plugin.config, "image_cache_limit_count", 100),
+        "cache_limit_mb": getattr(plugin.config, "image_cache_limit_mb", 2048),
+        "cache_limit_count": cache_limit_count,
+        "record_keep_limit": record_keep_limit,
+        "cache_limit_warning": cache_limit_warning,
         "channel_health": get_health() if callable(get_health) else {},
         "config_preflight": config_preflight,
         "cache_cleanup_preview": get_preview() if callable(get_preview) else {},

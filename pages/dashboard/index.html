@@ -1004,7 +1004,8 @@
       <div class="grid">
         <div><label>图片缓存上限（MB）</label><input id="cacheLimitMB" type="number" min="10" max="102400"></div>
         <div><label>图片缓存上限（张）</label><input id="cacheLimitCount" type="number" min="10" max="10000"></div>
-        <div><label>说明</label><div class="status">默认 100 张 / 200 MB；请求图和生成图共用缓存。自动清理只移除未被生成记录、收藏、置顶或存活画布会话引用的旧文件。</div></div>
+        <div><label>记录保留量（条）</label><input id="recordKeepLimit" type="number" min="10" max="10000"></div>
+        <div><label>说明</label><div class="status">缓存上限建议不小于记录保留量；请求图和生成图共用缓存。自动清理按记录整组移除最旧的媒体，未被记录、收藏、置顶或画布会话引用的文件优先清理。</div></div>
       </div>
       <h3>谁能用</h3>
       <div class="grid">
@@ -2341,6 +2342,7 @@ Source prompt:
         $('maxImageSize').value = img.max_image_size_mb;
         $('cacheLimitMB').value = img.cache_limit_mb;
         $('cacheLimitCount').value = img.cache_limit_count;
+        if ($('recordKeepLimit')) $('recordKeepLimit').value = img.record_keep_limit ?? 1000;
         $('maxBatchCount').value = img.max_batch_count;
          if ($('batchOnFailure')) {
            const m = String(img.batch_on_failure || 'skip');
@@ -2402,8 +2404,9 @@ Source prompt:
       CONFIG.image.max_concurrent_tasks = Number.isInteger(maxConcurrent) && maxConcurrent >= 1 && maxConcurrent <= 5 ? maxConcurrent : 5;
       CONFIG.image.global_timeout = Number($('globalTimeout').value || 280);
       CONFIG.image.max_image_size_mb = Number($('maxImageSize').value || 10);
-      CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 200);
-      CONFIG.image.cache_limit_count = Number($('cacheLimitCount').value || 100);
+      CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 2048);
+      CONFIG.image.cache_limit_count = Number($('cacheLimitCount').value || 1000);
+      if ($('recordKeepLimit')) CONFIG.image.record_keep_limit = Number($('recordKeepLimit').value || 1000);
       const maxBatchCount = Number($('maxBatchCount').value || 10);
       CONFIG.image.max_batch_count = Number.isInteger(maxBatchCount) && maxBatchCount >= 1 && maxBatchCount <= 100 ? maxBatchCount : 100;
        CONFIG.image.batch_on_failure = ($('batchOnFailure') && $('batchOnFailure').value) || 'skip';
@@ -4109,7 +4112,8 @@ Source prompt:
         const d = res.data || {};
         $('health').innerHTML = `
           <div><b>状态：</b>${escapeHtml(d.status || 'ok')}</div>
-          <div><b>图片缓存：</b>${escapeHtml(String(d.cache_file_count ?? 0))} / ${escapeHtml(String(d.cache_limit_count ?? 100))} 张，${escapeHtml(String(d.cache_size_mb ?? 0))} / ${escapeHtml(String(d.cache_limit_mb ?? 200))} MB</div>
+          <div><b>图片缓存：</b>${escapeHtml(String(d.cache_file_count ?? 0))} / ${escapeHtml(String(d.cache_limit_count ?? 1000))} 张，${escapeHtml(String(d.cache_size_mb ?? 0))} / ${escapeHtml(String(d.cache_limit_mb ?? 2048))} MB</div>
+          ${d.cache_limit_warning ? `<div style="color:#b3261e"><b>注意：</b>${escapeHtml(d.cache_limit_warning)}</div>` : ''}
           <div><b>缓存预览：</b>预计清理 ${escapeHtml(String(d.cache_cleanup_preview?.would_delete_count ?? 0))} 张，${escapeHtml(String(Math.round(Number(d.cache_cleanup_preview?.would_delete_bytes || 0) / 1024 / 1024)))} MB</div>
           <div><b>缓存目录：</b>${escapeHtml(d.cache_dir || '')}</div>
           <div><b>监控记录：</b>${escapeHtml(d.records_path || '')}</div>

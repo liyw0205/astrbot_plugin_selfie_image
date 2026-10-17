@@ -15,7 +15,10 @@ def test_record_retention_and_web_page_limits_are_1000():
 
 def test_asset_query_scan_limit_is_explicit_and_matches_record_retention():
     store = (ROOT / "generation" / "generation_store.py").read_text(encoding="utf-8")
-    assert "ASSET_QUERY_SCAN_LIMIT = RECORD_KEEP_LIMIT" in store
+    # The asset query must clamp its scan window to the configured record
+    # retention instead of a second hard-coded constant.
+    assert "[: self._record_keep_limit()]" in store
+    assert "ASSET_QUERY_SCAN_LIMIT" not in store
 
 
 def test_asset_query_does_not_scan_beyond_retained_record_window():
@@ -36,6 +39,9 @@ def test_asset_query_does_not_scan_beyond_retained_record_window():
     ]
     store = object.__new__(GenerationStoreMixin)
     store.get_recent_records = lambda summary=False: rows
+    from types import SimpleNamespace
+
+    store.config = SimpleNamespace(image_record_keep_limit=1000)
 
     page, meta = store.query_asset_records(limit=2000)
     assert len(page) == 1000

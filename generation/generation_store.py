@@ -24,6 +24,7 @@ from ..core.utils import (
     collect_unreferenced_record_cache_paths,
     compact_generation_record,
     detect_mime_by_bytes,
+    group_cache_cleanup_candidates,
     load_json_file,
     looks_like_image_bytes,
     redact_generation_record,
@@ -38,7 +39,13 @@ from ..core.utils import (
 )
 
 RECORD_KEEP_LIMIT = 1000
-ASSET_QUERY_SCAN_LIMIT = RECORD_KEEP_LIMIT
+# A request image is written to the shared cache before its generation record
+# exists, so it is an unreferenced orphan until that record is committed.  The
+# reservation journal keeps those files protected across concurrent cleanups
+# and restarts; entries older than this are dropped so a crashed request cannot
+# pin cache files forever.
+INFLIGHT_MEDIA_TTL_SECONDS = 24 * 3600
+INFLIGHT_MEDIA_JOURNAL_FILENAME = "pending_request_media.json"
 CHANNEL_COOLDOWN_FAILURE_THRESHOLD = 3
 CHANNEL_COOLDOWN_SECONDS = 60
 CHANNEL_TRANSIENT_ERROR_CATEGORIES = {
@@ -608,11 +615,12 @@ class GenerationStoreMixin:
         data = load_json_file(self.records_path)
         items = data.get("records") if isinstance(data.get("records"), list) else []
         records = [item for item in items if isinstance(item, dict)]
-        retained = records[:RECORD_KEEP_LIMIT]
-        evicted = records[RECORD_KEEP_LIMIT:]
+        keep_limit = self._record_keep_limit()
+        retained = records[:keep_limit]
+        evicted = records[keep_limit:]
         database = self._record_database()
         if database is not None and database.has_records():
-            loaded = database.load_records(RECORD_KEEP_LIMIT)
+            loaded = database.load_records(keep_limit)
             self._prune_orphan_media_sidecars(loaded)
             return loaded
 
@@ -643,11 +651,12 @@ class GenerationStoreMixin:
         return compacted
 
     def _persist_records(self) -> None:
+        keep_limit = self._record_keep_limit()
         with self._records_lock:
-            evicted_records = self._records[RECORD_KEEP_LIMIT:]
+            evicted_records = self._records[keep_limit:]
             self._records = [
                 compact_generation_record(redact_generation_record(item))
-                for item in self._records[:RECORD_KEEP_LIMIT]
+                for item in self._records[:keep_limit]
                 if isinstance(item, dict)
             ]
             retained_records = list(self._records)
@@ -794,19 +803,23 @@ class GenerationStoreMixin:
             if sidecar:
                 stored_record["media_sources_file"] = sidecar
             stored_record = compact_generation_record(redact_generation_record(stored_record))
+            keep_limit = self._record_keep_limit()
             self._records.insert(0, stored_record)
-            evicted_records = self._records[RECORD_KEEP_LIMIT:]
+            evicted_records = self._records[keep_limit:]
             if evicted_records:
-                del self._records[RECORD_KEEP_LIMIT:]
+                del self._records[keep_limit:]
                 stale_cache_paths = collect_unreferenced_record_cache_paths(evicted_records, self._records)
             database = self._record_database()
             if database is not None:
                 database.upsert_record(stored_record, sequence=self._record_seq)
-                database.prune_to_limit(RECORD_KEEP_LIMIT)
+                database.prune_to_limit(keep_limit)
             else:
                 self._persist_records()
             self._delete_media_sidecars(evicted_records)
             committed_record_id = str(record.get("id") or "").strip()
+        # The committed record now references this media, so the in-flight
+        # reservation is no longer what keeps those files alive.
+        self._release_inflight_media(collect_record_cache_paths([stored_record]))
         if stale_cache_paths:
             safe_delete_relative_files(self.generated_dir, stale_cache_paths)
         if task_id and committed_record_id:
@@ -957,7 +970,7 @@ class GenerationStoreMixin:
     def get_recent_records(self, *, summary: bool = False) -> List[Dict[str, Any]]:
         with self._records_lock:
             # Avoid deepcopy of fat nested blobs on every list poll.
-            records = [dict(item) if isinstance(item, dict) else item for item in self._records[:RECORD_KEEP_LIMIT]]
+            records = [dict(item) if isinstance(item, dict) else item for item in self._records[: self._record_keep_limit()]]
         if summary:
             return [
                 redact_generation_record(summarize_record_for_list(self._enrich_record_for_web(item)))
@@ -1135,7 +1148,9 @@ class GenerationStoreMixin:
             self._records.clear()
             self._persist_records()
             self._delete_media_sidecars(records)
-        safe_delete_relative_files(self.generated_dir, collect_record_cache_paths(records))
+        cleared_paths = collect_record_cache_paths(records)
+        safe_delete_relative_files(self.generated_dir, cleared_paths)
+        self._release_inflight_media(cleared_paths)
         return count
 
     def update_record_asset_metadata(self, record_id: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -1220,9 +1235,9 @@ class GenerationStoreMixin:
         sort: str = "recent",
     ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
         """Filter the lightweight record index for the asset library."""
-        # The durable record index currently retains at most 1000 rows; keep
-        # the query contract explicit instead of implying an unbounded scan.
-        records = self.get_recent_records(summary=True)[:ASSET_QUERY_SCAN_LIMIT]
+        # The durable record index retains a bounded number of rows; keep the
+        # query contract explicit instead of implying an unbounded scan.
+        records = self.get_recent_records(summary=True)[: self._record_keep_limit()]
         source_text = str(source or "").strip().lower()
         model_text = str(model or "").strip().lower()
         tag_text = str(tag or "").strip().lower()
@@ -1292,7 +1307,7 @@ class GenerationStoreMixin:
         total = len(records)
         filtered_count = len(filtered)
         safe_offset = max(0, int(offset or 0))
-        safe_limit = max(1, min(int(limit or RECORD_KEEP_LIMIT), RECORD_KEEP_LIMIT))
+        safe_limit = max(1, min(int(limit or self._record_keep_limit()), self._record_keep_limit()))
         return filtered[safe_offset : safe_offset + safe_limit], {
             "total": total,
             "filtered": filtered_count,
@@ -1311,7 +1326,7 @@ class GenerationStoreMixin:
             favorite=favorite,
             pinned=pinned,
             tag=tag,
-            limit=RECORD_KEEP_LIMIT,
+            limit=self._record_keep_limit(),
         )
         return records
 
@@ -1330,7 +1345,7 @@ class GenerationStoreMixin:
 
     def export_asset_metadata(self, record_ids: Optional[Iterable[Any]] = None) -> Dict[str, Any]:
         """Export redacted asset rows; media origins and secrets stay excluded."""
-        rows, _ = self.query_asset_records(limit=RECORD_KEEP_LIMIT, sort="recent")
+        rows, _ = self.query_asset_records(limit=self._record_keep_limit(), sort="recent")
         ids = self._normalize_record_ids(record_ids) if record_ids is not None else []
         if ids:
             by_id = {str(row.get("id") or ""): row for row in rows}
@@ -1446,6 +1461,7 @@ class GenerationStoreMixin:
             self._delete_media_sidecars(selected)
             stale_paths = collect_unreferenced_record_cache_paths(selected, self._records)
         safe_delete_relative_files(self.generated_dir, stale_paths)
+        self._release_inflight_media(stale_paths)
         return {"deleted": [str(item.get("id") or "") for item in selected], "missing": missing, "deleted_count": len(selected)}
 
     def _cache_relative_path(self, path: str) -> str:
@@ -1491,7 +1507,12 @@ class GenerationStoreMixin:
 
     def _save_cache_image(self, data: bytes, prefix: str, mime: str = "") -> str:
         path = save_image_bytes(data, self.generated_dir, prefix=prefix, mime=mime or detect_mime_by_bytes(data))
-        return self._cache_relative_path(path)
+        rel_path = self._cache_relative_path(path)
+        # Reserve the fresh file until the record that references it is
+        # committed, so a concurrent cleanup or a restart cannot delete a
+        # request image that has no record yet.
+        self._register_inflight_media([rel_path])
+        return rel_path
 
     def _load_cache_image_bytes(self, rel_path: str) -> Optional[Tuple[bytes, str]]:
         try:
@@ -1537,6 +1558,125 @@ class GenerationStoreMixin:
         entries = file_entries if file_entries is not None else self._cache_file_entries()
         return sum(size for _, size, _ in entries), len(entries)
 
+    def _inflight_media_journal_path(self) -> str:
+        data_dir = str(getattr(self, "data_dir", "") or "").strip()
+        if not data_dir:
+            return ""
+        return os.path.join(data_dir, INFLIGHT_MEDIA_JOURNAL_FILENAME)
+
+    def _inflight_media_mutex(self) -> threading.RLock:
+        lock = getattr(self, "_inflight_media_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._inflight_media_lock = lock
+        return lock
+
+    def _inflight_media_state(self) -> Dict[str, float]:
+        state = getattr(self, "_inflight_media", None)
+        if not isinstance(state, dict):
+            state = {}
+            self._inflight_media = state
+        return state
+
+    def _ensure_inflight_media_loaded(self) -> None:
+        """Load the reservation journal once, dropping expired entries."""
+        if getattr(self, "_inflight_media_loaded", False):
+            return
+        self._inflight_media_loaded = True
+        path = self._inflight_media_journal_path()
+        if not path or not os.path.isfile(path):
+            return
+        data = load_json_file(path)
+        entries = data.get("paths") if isinstance(data, Mapping) else None
+        if not isinstance(entries, Mapping):
+            return
+        state = self._inflight_media_state()
+        now = time.time()
+        for raw_key, raw_ts in entries.items():
+            key = str(raw_key or "").strip()
+            if not key:
+                continue
+            try:
+                timestamp = float(raw_ts or 0)
+            except (TypeError, ValueError):
+                timestamp = 0.0
+            if timestamp <= 0 or now - timestamp > INFLIGHT_MEDIA_TTL_SECONDS:
+                continue
+            state[key] = max(timestamp, state.get(key, 0.0))
+
+    def _persist_inflight_media_locked(self) -> None:
+        path = self._inflight_media_journal_path()
+        if not path:
+            return
+        try:
+            save_json_file(
+                path,
+                {"paths": dict(self._inflight_media_state()), "updated_ts": time.time()},
+            )
+        except OSError:
+            pass
+
+    def _inflight_media_absolute_path(self, rel_path: str) -> str:
+        base = os.path.abspath(str(getattr(self, "generated_dir", "") or ""))
+        raw = str(rel_path or "").strip()
+        if not base or not raw:
+            return ""
+        path = os.path.abspath(raw if os.path.isabs(raw) else os.path.join(base, raw))
+        if path == base or not path.startswith(base + os.sep):
+            return ""
+        return path
+
+    def _inflight_media_paths(self) -> List[str]:
+        """Return cache paths reserved by a request that has no record yet."""
+        with self._inflight_media_mutex():
+            self._ensure_inflight_media_loaded()
+            state = self._inflight_media_state()
+            now = time.time()
+            alive: List[str] = []
+            dirty = False
+            for key, timestamp in list(state.items()):
+                absolute = self._inflight_media_absolute_path(key)
+                expired = now - float(timestamp or 0.0) > INFLIGHT_MEDIA_TTL_SECONDS
+                if not absolute or expired or not os.path.isfile(absolute):
+                    state.pop(key, None)
+                    dirty = True
+                    continue
+                alive.append(key)
+            if dirty:
+                self._persist_inflight_media_locked()
+            return alive
+
+    def _register_inflight_media(self, paths: Iterable[Any]) -> List[str]:
+        """Reserve freshly written cache media until its record is committed."""
+        items = [str(item or "").strip() for item in (paths or [])]
+        items = [item for item in items if item]
+        if not items:
+            return []
+        with self._inflight_media_mutex():
+            self._ensure_inflight_media_loaded()
+            state = self._inflight_media_state()
+            now = time.time()
+            for item in items:
+                state[item] = now
+            self._persist_inflight_media_locked()
+        return items
+
+    def _release_inflight_media(self, paths: Iterable[Any]) -> None:
+        """Drop reservations once a record references the media."""
+        items = [str(item or "").strip() for item in (paths or [])]
+        items = [item for item in items if item]
+        if not items:
+            return
+        with self._inflight_media_mutex():
+            self._ensure_inflight_media_loaded()
+            state = self._inflight_media_state()
+            removed = False
+            for item in items:
+                if state.pop(item, None) is not None:
+                    removed = True
+            if removed:
+                self._persist_inflight_media_locked()
+
     def _asset_protected_cache_paths(self) -> List[str]:
         """Keep pinned assets and live canvas media during cache GC."""
         with self._records_lock:
@@ -1559,6 +1699,35 @@ class GenerationStoreMixin:
                 continue
         return list(dict.fromkeys(str(path).strip() for path in protected if str(path).strip()))
 
+    def _record_keep_limit(self) -> int:
+        """Number of retained record rows.
+
+        The media cache limit is meant to be at least this large; otherwise the
+        cache must evict files that retained records still point at.
+        """
+        try:
+            configured = int(getattr(self.config, "image_record_keep_limit", RECORD_KEEP_LIMIT) or RECORD_KEEP_LIMIT)
+        except (AttributeError, TypeError, ValueError):
+            return RECORD_KEEP_LIMIT
+        return max(1, configured)
+
+    def _cache_group_keys(self, raw_groups: Mapping[str, Any]) -> Dict[str, str]:
+        """Map absolute cache paths to the record group that owns them."""
+        base = os.path.abspath(str(getattr(self, "generated_dir", "") or ""))
+        result: Dict[str, str] = {}
+        if not base:
+            return result
+        for raw_path, raw_group in (raw_groups or {}).items():
+            text = str(raw_path or "").strip()
+            group = str(raw_group or "").strip()
+            if not text or not group:
+                continue
+            absolute = os.path.abspath(text if os.path.isabs(text) else os.path.join(base, text))
+            if absolute == base or not absolute.startswith(base + os.sep):
+                continue
+            result[absolute] = group
+        return result
+
     def _cache_cleanup_plan(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
         """Build the shared count-and-size cleanup plan without deleting files."""
         limit_bytes = max(10, int(getattr(self.config, "image_cache_limit_mb", 200) or 200)) * 1024 * 1024
@@ -1569,18 +1738,32 @@ class GenerationStoreMixin:
             records = [dict(item) for item in self._records if isinstance(item, Mapping)]
         referenced_paths = collect_record_cache_paths(records)
         record_timestamps: Dict[str, float] = {}
+        # Each record's media shares one group id so the plan evicts the request
+        # image and the generated image together.  Deleting only the request
+        # file used to leave a record that still showed a result while its
+        # source image was already gone.
+        raw_groups: Dict[str, str] = {}
+        group_times: Dict[str, float] = {}
         for record in records:
             timestamp = _record_timestamp(record)
-            if timestamp <= 0:
-                continue
+            group_id = str(record.get("id") or "").strip()
             for path in collect_record_cache_paths([record]):
-                record_timestamps[path] = max(timestamp, record_timestamps.get(path, 0.0))
+                if timestamp > 0:
+                    record_timestamps[path] = max(timestamp, record_timestamps.get(path, 0.0))
+                if not group_id:
+                    continue
+                if timestamp >= group_times.get(path, float("-inf")):
+                    group_times[path] = timestamp
+                    raw_groups[path] = group_id
         # Orphans are still reclaimed first. Referenced media is ordered by
         # its record time, not file mtime, so an old request file cannot jump
         # ahead of newer records merely because it was written earlier.
         protected = [
             *list(protected_paths or []),
             *self._asset_protected_cache_paths(),
+            # Media written for a request that has no committed record yet must
+            # survive concurrent cleanups and restarts.
+            *self._inflight_media_paths(),
         ]
         candidates = collect_cache_cleanup_candidates(
             self.generated_dir,
@@ -1589,19 +1772,27 @@ class GenerationStoreMixin:
             record_timestamps,
             file_entries=file_entries,
         )
+        groups = group_cache_cleanup_candidates(candidates, self._cache_group_keys(raw_groups))
         planned: List[Dict[str, Any]] = []
         remaining_bytes = total_bytes
         remaining_count = total_count
-        for path in candidates:
+        for group in groups:
             if remaining_bytes <= limit_bytes and remaining_count <= limit_count:
                 break
-            try:
-                size = os.path.getsize(path)
-            except OSError:
+            sizes: List[Tuple[str, int]] = []
+            for path in group:
+                try:
+                    sizes.append((path, os.path.getsize(path)))
+                except OSError:
+                    continue
+            if not sizes:
                 continue
-            planned.append({"path": self._cache_relative_path(path), "size_bytes": size})
-            remaining_bytes = max(0, remaining_bytes - size)
-            remaining_count = max(0, remaining_count - 1)
+            # A group is deleted whole: a record either keeps all of its media
+            # or loses all of it, so the monitor never shows a half-evicted row.
+            for path, size in sizes:
+                planned.append({"path": self._cache_relative_path(path), "size_bytes": size})
+                remaining_bytes = max(0, remaining_bytes - size)
+                remaining_count = max(0, remaining_count - 1)
         # The preview token lets the UI confirm the exact plan it showed to
         # the user.  It contains only relative paths, sizes and limits; no
         # prompt or other sensitive record data is exposed.

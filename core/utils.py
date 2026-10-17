@@ -383,6 +383,36 @@ def collect_cache_cleanup_candidates(
     return [path for _, _, _, path in candidates]
 
 
+def group_cache_cleanup_candidates(
+    candidates: Any,
+    group_keys: Optional[Mapping[Any, Any]] = None,
+) -> List[List[str]]:
+    """Group cleanup candidates so one owner's media is removed as a unit.
+
+    A generation record keeps its request image and its generated image in the
+    same cache directory.  Evicting only one of them leaves a record that still
+    looks available while its request image is gone, so the plan deletes every
+    file belonging to the same owner together.  Files without an owner keep
+    their own single-file group, which preserves the orphan-first order.
+    """
+    groups: List[List[str]] = []
+    positions: Dict[str, int] = {}
+    keys = group_keys if isinstance(group_keys, Mapping) else {}
+    for item in candidates or ():
+        path = str(item or "").strip()
+        if not path:
+            continue
+        raw_key = keys.get(path)
+        key = str(raw_key).strip() if isinstance(raw_key, str) and raw_key.strip() else path
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(groups)
+            groups.append([path])
+        else:
+            groups[position].append(path)
+    return groups
+
+
 def looks_like_image_url(text: str) -> bool:
     value = str(text or "").strip()
     if not value:

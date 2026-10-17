@@ -429,15 +429,70 @@ class TestStorage:
 
             preview = plugin.get_cache_cleanup_preview()
             assert preview["total_count"] == 12
-            assert preview["would_delete_count"] == 2
-            assert {item["path"] for item in preview["would_delete"]} == {"request-old.png", "generated-old.png"}
+            # Records are evicted as a whole group: the old record's request
+            # image and generated images leave together, never split.
+            assert preview["would_delete_count"] == 6
+            assert {item["path"] for item in preview["would_delete"]} == set(old_paths)
 
             cleaned = plugin._cleanup_image_cache_if_needed()
-            assert set(cleaned["deleted"]) == {"request-old.png", "generated-old.png"}
-            assert not (Path(plugin.generated_dir) / "request-old.png").exists()
-            assert not (Path(plugin.generated_dir) / "generated-old.png").exists()
-            assert (Path(plugin.generated_dir) / "request-new.png").exists()
-            assert (Path(plugin.generated_dir) / "generated-new.png").exists()
+            assert set(cleaned["deleted"]) == set(old_paths)
+            for path_name in old_paths:
+                assert not (Path(plugin.generated_dir) / path_name).exists()
+            for path_name in new_paths:
+                assert (Path(plugin.generated_dir) / path_name).exists()
+
+    def test_inflight_request_media_survives_cleanup_and_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            # A request image written for a request whose record is not
+            # committed yet must be protected like referenced media.
+            rel_path = plugin._save_cache_image(b"pending", "request", "image/png")
+            pending = Path(plugin.generated_dir) / rel_path
+            assert pending.exists()
+
+            # Over-limit orphans would normally be deleted; the reservation
+            # keeps the pending request file alive.
+            for index in range(12):
+                path = Path(plugin.generated_dir) / f"orphan-{index:02}.png"
+                path.write_bytes(bytes([index]))
+                os.utime(path, (1000 + index, 1000 + index))
+            plugin._cleanup_image_cache_if_needed()
+            assert pending.exists()
+
+            # The reservation survives a fresh instance (restart) via the
+            # journal file in the data directory.
+            revived = GenerationStoreMixin()
+            revived.data_dir = root
+            revived.generated_dir = plugin.generated_dir
+            assert rel_path in revived._inflight_media_paths()
+
+            # Once a record references the media the reservation is dropped.
+            plugin._commit_generation_record(
+                {"id": "committed", "success": True, "request_image_paths": [rel_path]}
+            )
+            assert rel_path not in plugin._inflight_media_paths()
+            assert pending.exists()
+
+    def test_cache_limit_below_record_retention_is_reported(self) -> None:
+        from astrbot_plugin_selfie_image.webui.services import build_health_payload
+
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            plugin.config.image_cache_limit_count = 10
+            plugin.config.image_record_keep_limit = 50
+            plugin.config_path = os.path.join(root, "selfie_image_config.json")
+            plugin.records_path = os.path.join(root, "generation_records.json")
+            plugin.records_db_path = os.path.join(root, "generation_records.sqlite3")
+            plugin.media_sources_dir = os.path.join(root, "media_sources")
+            plugin._channel_health_lock = threading.RLock()
+            plugin._channel_health = {}
+            payload = build_health_payload(plugin)
+            assert payload["record_keep_limit"] == 50
+            assert "小于记录保留量" in payload["cache_limit_warning"]
+
+            plugin.config.image_cache_limit_count = 100
+            payload = build_health_payload(plugin)
+            assert payload["cache_limit_warning"] == ""
 
     def test_manual_cache_cleanup_requires_matching_preview_token(self) -> None:
         with tempfile.TemporaryDirectory() as root:

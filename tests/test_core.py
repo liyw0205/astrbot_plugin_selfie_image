@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.37")
+        self.assertEqual(PLUGIN_VERSION, "1.6.38")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -4600,7 +4600,7 @@ class WebApiTests(unittest.TestCase):
         data = response.get_json()["data"]
         self.assertEqual(data["status"], "ok")
         self.assertEqual(data["cache_file_count"], 0)
-        self.assertEqual(data["cache_limit_count"], 100)
+        self.assertEqual(data["cache_limit_count"], 1000)
         self.assertEqual(data["cache_cleanup_preview"], {})
         for key in ("auth", "host", "port", "token"):
             self.assertNotIn(key, data)
