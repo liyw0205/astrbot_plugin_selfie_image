@@ -4951,6 +4951,7 @@ class SelfieImagePlugin(
         rebuild_special_preset_variants: Optional[List[str]] = None,
         cos_selection: Optional[CosReferenceSelection] = None,
         reference_selection: Optional[Mapping[str, Any]] = None,
+        model_request: str = "",
     ) -> Dict[str, Any]:
         total = self._normalize_count(requested_count)
         return await self._run_selfie_batches_unlocked(
@@ -4968,6 +4969,7 @@ class SelfieImagePlugin(
             rebuild_special_preset_variants,
             cos_selection,
             reference_selection,
+            model_request,
         )
 
     async def _run_selfie_batches_unlocked(
