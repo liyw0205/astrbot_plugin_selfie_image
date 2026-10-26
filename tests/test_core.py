@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.40")
+        self.assertEqual(PLUGIN_VERSION, "1.6.41")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -9560,7 +9560,7 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("芙宁娜")},
-            {"furina_cream_blue_ruffle", "furina_classic_blue_white"},
+            {"furina_cream_blue_ruffle", "furina_classic_blue_white", "furina_white_summer_dress"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("甘雨")},
@@ -9572,7 +9572,7 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("卡提希娅")},
-            {"cartethyia_black_bird", "cartethyia_white_black_blue_short"},
+            {"cartethyia_black_bird", "cartethyia_white_black_blue_short", "cartethyia_white_lace_swim"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("宵宫")},
@@ -9805,6 +9805,7 @@ class LegFocusTests(unittest.TestCase):
                 "yangyang_blue_floral_swim", "cartethyia_black_bird",
                 "yuno_gold_pink_armor", "aimisi_black_white_blue_seated",
                 "cartethyia_white_black_blue_short", "phoebe_white_gold_sanctuary",
+                "changli_summer_swim", "cartethyia_white_lace_swim",
             },
         )
         self.assertEqual(
@@ -9831,10 +9832,14 @@ class LegFocusTests(unittest.TestCase):
         # text; it must not prevent the character term from selecting Nahida.
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("COS 10 纳西妲 特殊预设")},
-            {"nahida_floating_dream"},
+            {"nahida_floating_dream", "nahida_green_strappy_dress"},
         )
         nahida = next(item for item in plugin_main.COS_LOOK_SETS if item["id"] == "nahida_floating_dream")
         self.assertEqual(nahida["cos_type"], "原神")
+        nahida_ids = {
+            item["id"] for item in plugin_main.match_cos_look_sets("纳西妲")
+        }
+        self.assertIn("nahida_floating_dream", nahida_ids)
         last_id = ""
         for _ in range(10):
             action = plugin_main.build_cos_look_action(
@@ -9845,7 +9850,9 @@ class LegFocusTests(unittest.TestCase):
             )
             marker = re.search(r"【cos:([a-z0-9_]+)】", action)
             self.assertIsNotNone(marker, action)
-            self.assertEqual(marker.group(1), "nahida_floating_dream", action)
+            # Rotation must stay inside the Nahida candidate set instead of
+            # drifting into another series.
+            self.assertIn(marker.group(1), nahida_ids, action)
             last_id = marker.group(1)
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("Honor of Kings")},
@@ -11252,12 +11259,11 @@ class StudioStoreTests(unittest.TestCase):
             ):
                 self.assertNotIn(forbidden, authored, item["id"])
 
-        for item in azur_lane:
-            self.assertIn("不手持枪械、舰炮、炮管或其他战斗武器", item["prompt"])
-            self.assertIn("动作采用整理帽檐、肩章、领带、腰带或裙摆等日常摆拍", item["prompt"])
-        for item in blue_archive:
-            self.assertIn("不携带枪械、盾牌、刀剑、冲锋枪、步枪、机枪或其他战斗装备", item["prompt"])
-            self.assertIn("动作采用日常站立、整理衣服、扶发饰、轻扶腰带、抱书或自然垂手", item["prompt"])
+        # The pool no longer carries per-series post-hoc spec sentences:
+        # the shared negative contract alone covers weapon/prop exclusions,
+        # and each record describes only its own outfit.
+        for item in azur_lane + blue_archive:
+            self.assertNotIn("真人COS摄影执行规范", item["prompt"], item["id"])
 
     def test_selfie_command_expands_preset_before_action_wrap(self) -> None:
         """/自拍 捧脸 must expand preset on raw user text, not after long action wrap."""

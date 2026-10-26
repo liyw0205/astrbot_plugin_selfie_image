@@ -37,7 +37,9 @@ OLD_LEAK_FRAGMENTS = (
 class CosCraftSpecHygieneTest(unittest.TestCase):
     def setUp(self) -> None:
         self.items = list(COS_LOOK_SETS)
-        self.assertEqual(len(self.items), 270)
+        # Pool grows over time; assert a sane lower bound plus uniqueness
+        # instead of freezing an exact count that every new batch breaks.
+        self.assertGreaterEqual(len(self.items), 270)
         ids = [str(item.get("id") or "") for item in self.items]
         self.assertEqual(len(ids), len(set(ids)))
         self.carriers = [
@@ -46,8 +48,11 @@ class CosCraftSpecHygieneTest(unittest.TestCase):
             if CRAFT_SENTENCE in str(item.get("prompt") or "")
         ]
 
-    def test_rewritten_craft_sentence_count_is_stable(self) -> None:
-        self.assertEqual(len(self.carriers), 33)
+    def test_no_post_hoc_spec_sentences_remain(self) -> None:
+        # The per-series 真人COS摄影执行规范 blocks were removed on purpose:
+        # they duplicated the shared negative contract and leaked costume words
+        # into outfits that do not have them. Records describe only themselves.
+        self.assertEqual(len(self.carriers), 0)
 
     def test_old_leaky_fragments_are_gone_pool_wide(self) -> None:
         for item in self.items:

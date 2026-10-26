@@ -677,6 +677,7 @@ def test_private_hoshino_and_sunna_cos_outfits_are_registered():
     assert {item["id"] for item in match_cos_look_sets("星野")} == {
         "blue_archive_hoshino",
         "blue_archive_hoshino_private_gym",
+        "blue_archive_hoshino_white_shirt_dress",
     }
     assert [item["id"] for item in match_cos_look_sets("星野海边")] == [
         "blue_archive_hoshino_private_beach"
