@@ -1505,10 +1505,37 @@ def extract_event_text(event: Any) -> str:
     return str(getattr(event, "message_obj", "") or "").strip()
 
 
-def extract_command_message(event: Any, command: Any, fallback: str = "") -> str:
+def extract_command_message(
+    event: Any,
+    command: Any,
+    fallback: str = "",
+    *,
+    include_quote_text: bool = False,
+) -> str:
+    """Return the argument part of a command.
+
+    ``include_quote_text`` lets a quoted *text* message supply the argument,
+    mirroring how a quoted image already acts as a reference: quoting an outfit
+    description and sending a bare ``/画`` should work like typing it.  The
+    user's own inline text always wins, so quoting only widens what is usable
+    and never overrides explicit typing.  Generation commands opt in; task,
+    model, and preset management commands leave it off so a quoted message can
+    never be mistaken for a task id or a model name.
+    """
+    inline = _command_inline_text(event, command, fallback)
+    if inline:
+        return inline
+    if not include_quote_text:
+        return fallback.strip()
+    quoted = extract_quote_text(event)
+    return quoted or fallback.strip()
+
+
+def _command_inline_text(event: Any, command: Any, fallback: str = "") -> str:
+    """Command arguments that the user typed in this message."""
     text = extract_event_text(event)
     if not text:
-        return fallback.strip()
+        return ""
     commands = [command] if isinstance(command, str) else [str(item) for item in command if str(item).strip()]
     for item in commands:
         # Some adapters retain the bot @mention in message_str even though the
@@ -1517,7 +1544,123 @@ def extract_command_message(event: Any, command: Any, fallback: str = "") -> str
         match = re.match(pattern, text)
         if match:
             return (match.group(1) or "").strip()
-    return fallback.strip()
+    return ""
+
+
+QUOTE_TEXT_MAX_CHARS = 6000
+
+# Quoted bodies frequently carry protocol noise instead of prompt material.
+# Only whole-token placeholders are dropped, so a real sentence that merely
+# starts with 图片 ("图片里的女孩穿白色连衣裙") survives.
+_CQ_CODE_RE = re.compile(r"\[CQ:[^\]]*\]")
+_MEDIA_PLACEHOLDERS = frozenset(
+    {"图片", "视频", "语音", "文件", "表情", "动画表情", "图片消息", "视频消息"}
+)
+
+
+def _clean_quote_text(raw: str, limit: int = QUOTE_TEXT_MAX_CHARS) -> str:
+    """Flatten one quoted fragment into a single usable prompt line."""
+    text = _CQ_CODE_RE.sub(" ", str(raw or ""))
+    kept: List[str] = []
+    for line in text.replace("\r", "\n").split("\n"):
+        line = " ".join(line.split())
+        if not line or line.strip("[]【】 ") in _MEDIA_PLACEHOLDERS:
+            continue
+        kept.append(line)
+    merged = " ".join(kept).strip()
+    if limit and len(merged) > limit:
+        merged = merged[:limit].rstrip()
+    return merged
+
+
+def extract_quote_text(event: Any, limit: int = QUOTE_TEXT_MAX_CHARS) -> str:
+    """Return plain text carried by a Reply/Quote component.
+
+    Images in a quoted message are collected separately; this covers the case
+    where the user quotes a *text* message and expects it to act as prompt
+    material (e.g. quoting a long outfit description then sending ``/画``).
+    Nested replies keep only the innermost body so a reply chain does not
+    concatenate several unrelated messages.
+    """
+    if event is None:
+        return ""
+    found: List[str] = []
+    seen: Set[int] = set()
+
+    def add(value: Any) -> None:
+        cleaned = _clean_quote_text(value)
+        if cleaned and cleaned not in found:
+            found.append(cleaned)
+
+    def collect_from(obj: Any, depth: int = 0) -> None:
+        if obj is None or depth > 12 or id(obj) in seen:
+            return
+        seen.add(id(obj))
+        obj_type = type(obj).__name__
+        if isinstance(obj, str):
+            add(obj)
+            return
+        if isinstance(obj, Mapping):
+            raw_data = obj.get("data")
+            data: Mapping = raw_data if isinstance(raw_data, Mapping) else obj
+            node_type = str(obj.get("type") or data.get("type") or "").lower()
+            if node_type == "text":
+                add(data.get("text"))
+                return
+            if node_type in {"image", "face", "mface", "at", "forward"}:
+                return
+            # A ``reply`` node carries the quoted body next to ``data`` (which
+            # only holds the message id), so read the wrapper, not ``data``.
+            if node_type == "reply":
+                collect_from(obj.get("message"), depth + 1)
+                collect_from(obj.get("content"), depth + 1)
+                return
+            collect_from(data.get("content"), depth + 1)
+            collect_from(data.get("message"), depth + 1)
+            return
+        if obj_type == "Plain":
+            add(getattr(obj, "text", ""))
+            return
+        lowered_type = obj_type.lower()
+        if obj_type in {"Reply", "Quote"} or "quote" in lowered_type or "reply" in lowered_type:
+            # AstrBot's Reply carries the parsed body in ``message_str``; the
+            # deprecated ``text`` field must not shadow it.
+            body = getattr(obj, "message_str", "") or ""
+            if body.strip():
+                add(body)
+            for attr in ("chain", "message", "content", "origin", "source"):
+                child = getattr(obj, attr, None)
+                if child:
+                    collect_from(child, depth + 1)
+            return
+        # Adapters subclass Plain and image components under their own names,
+        # so fall back to duck typing before walking attributes.
+        text_attr = getattr(obj, "text", None)
+        if isinstance(text_attr, str) and text_attr.strip():
+            add(text_attr)
+            return
+        if isinstance(obj, (list, tuple)):
+            for item in obj:
+                if type(item).__name__ in {"Image", "Face", "At"}:
+                    continue
+                collect_from(item, depth + 1)
+            return
+
+    message_obj = getattr(event, "message_obj", None)
+    candidates = [
+        getattr(message_obj, "quote", None),
+        getattr(message_obj, "reply", None),
+    ]
+    raw_message = getattr(message_obj, "raw_message", None)
+    for source in (raw_message, getattr(event, "raw_message", None)):
+        if isinstance(source, Mapping):
+            candidates.append(source.get("quote") or source.get("reply"))
+    for candidate in candidates:
+        if candidate:
+            collect_from(candidate)
+            if found:
+                break
+    return _clean_quote_text(" ".join(found), limit=limit)
 
 
 def extract_image_sources_from_event(event: Any, include_at_avatar: bool = False) -> List[str]:

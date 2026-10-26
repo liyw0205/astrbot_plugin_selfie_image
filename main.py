@@ -3935,7 +3935,9 @@ class SelfieImagePlugin(
         if denied:
             yield event.plain_result(denied)
             return
-        raw_message = extract_command_message(event, command_name, fallback).strip()
+        raw_message = extract_command_message(
+            event, command_name, fallback, include_quote_text=True
+        ).strip()
         prompt, requested_count = self._extract_video_count(raw_message)
         prompt, duration = self._parse_video_duration(prompt)
         prompt, template_values, template_randomize, _ = self._render_command_template(prompt)
@@ -5976,7 +5978,11 @@ class SelfieImagePlugin(
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
     ) -> AsyncGenerator[Any, None]:
-        message = message_override.strip() if message_override else extract_command_message(event, command_name, fallback)
+        message = (
+            message_override.strip()
+            if message_override
+            else extract_command_message(event, command_name, fallback, include_quote_text=True)
+        )
         if requested_count_override > 0:
             requested_count = self._normalize_count(requested_count_override)
         else:
@@ -6086,6 +6092,7 @@ class SelfieImagePlugin(
                 "常用：",
                 "· 生图数量　用 -c 指定张数，可放在提示词任意位置，如 /画 一位约 20 岁的角色 -c 3 夜景；旧的 /画 3 仍可用",
                 "· /画 或 /生图　写想要的画面；有附图/引用图就按图改，没图就按文字出；不自动带入形象图",
+                "· 引用即提示词　引用一条文字消息后直接发 /画、/自拍、/视频 等，会把被引用文字当作提示词；自己写的正文优先",
                 "· /文生图　只用文字按原文出图，不走自拍人设，也不用形象图",
                 "· /图生图　必须附图或引用图，按原文改图；不自动使用形象图",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
@@ -6111,6 +6118,7 @@ class SelfieImagePlugin(
                 "· /画：有图=图生图，没图=文生图；不会自动塞形象图",
                 "· /视频：有图=图生视频，没图=文生视频；明确要求本人/当前形象出镜时才使用形象图",
                 "· 自拍/合影/看看：会用当前形象；形象类型可设自动、真人、动漫",
+                "· 引用：引用图=参考图，引用文字=提示词；两者可同时用，自己写的正文优先",
                 "",
                 "模型与进度：",
                 "· /生图模型　看列表；跟序号或 渠道/模型 切换（只影响当前群/私聊）；发「清除」恢复默认",
@@ -6563,7 +6571,7 @@ class SelfieImagePlugin(
     ) -> AsyncGenerator[Any, None]:
         """写想要的画面出图。有附图/引用图时按图改；没图时按文字出。不会自动带入形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        message = extract_command_message(event, ("画", "生图"), fallback)
+        message = extract_command_message(event, ("画", "生图"), fallback, include_quote_text=True)
         message, requested_count = self._extract_command_count(message, allow_trailing=True)
         message, template_values, template_randomize, _ = self._render_command_template(message)
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
@@ -6663,7 +6671,7 @@ class SelfieImagePlugin(
     ) -> AsyncGenerator[Any, None]:
         """按你写的原文出图，不走自拍人设包装，也不使用形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        message = extract_command_message(event, "文生图", fallback)
+        message = extract_command_message(event, "文生图", fallback, include_quote_text=True)
         message, requested_count = self._extract_command_count(message, allow_trailing=True)
         message, template_values, template_randomize, _ = self._render_command_template(message)
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
@@ -6746,7 +6754,7 @@ class SelfieImagePlugin(
     ) -> AsyncGenerator[Any, None]:
         """带图或引用图，按原文改图。需要附图，不会自动使用形象图。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        message = extract_command_message(event, "图生图", fallback)
+        message = extract_command_message(event, "图生图", fallback, include_quote_text=True)
         message, requested_count = self._extract_command_count(message, allow_trailing=True)
         error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
         if error:
@@ -6827,7 +6835,9 @@ class SelfieImagePlugin(
     ) -> AsyncGenerator[Any, None]:
         """用当前形象自拍。可写动作、场景、换装；有附图时作服装/场景参考。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        raw_message = extract_command_message(event, ("自拍", "看看"), fallback_args)
+        raw_message = extract_command_message(
+            event, ("自拍", "看看"), fallback_args, include_quote_text=True
+        )
         raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
         # Resolve presets on raw user words first (e.g. /自拍 捧脸), then wrap action.
         special_variants, preset_aspect, preset_resolution, preset_name = (
@@ -6875,7 +6885,7 @@ class SelfieImagePlugin(
     ) -> AsyncGenerator[Any, None]:
         """腰部以下的日常下装穿搭近景；上半身不入镜；可写数量。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        raw_message = extract_command_message(event, "看看腿", fallback_args)
+        raw_message = extract_command_message(event, "看看腿", fallback_args, include_quote_text=True)
         raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
         special_variants, preset_aspect, preset_resolution, preset_name = (
             self._expand_dynamic_preset_variants(raw_extra, requested_count)
@@ -6921,10 +6931,10 @@ class SelfieImagePlugin(
     ) -> AsyncGenerator[Any, None]:
         """随机一套内置 COS 换装；可用列表/全部/查看浏览标题，或按标题分段指定套装并附加数量。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        raw_message = extract_command_message(event, "看看COS", fallback_args)
+        raw_message = extract_command_message(event, "看看COS", fallback_args, include_quote_text=True)
         # Also accept lowercase command text extraction fallbacks.
         if not raw_message:
-            raw_message = extract_command_message(event, "看看cos", fallback_args)
+            raw_message = extract_command_message(event, "看看cos", fallback_args, include_quote_text=True)
         list_request = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(raw_message or "")).lower()
         if list_request in {"列表", "全部", "查看", "list", "all", "view"}:
             yield event.plain_result(format_cos_look_list())
@@ -6985,7 +6995,7 @@ class SelfieImagePlugin(
     ) -> AsyncGenerator[Any, None]:
         """像别人随手拍你，带一点日常他拍感。使用当前形象。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        raw_message = extract_command_message(event, "看看你", fallback_args)
+        raw_message = extract_command_message(event, "看看你", fallback_args, include_quote_text=True)
         raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
         special_variants, preset_aspect, preset_resolution, preset_name = (
             self._expand_dynamic_preset_variants(raw_extra, requested_count)
@@ -7031,7 +7041,9 @@ class SelfieImagePlugin(
     ) -> AsyncGenerator[Any, None]:
         """和对象同框合影。可附图或@对方；自己使用当前形象。"""
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        raw_message = extract_command_message(event, ("合影", "合照"), fallback)
+        raw_message = extract_command_message(
+            event, ("合影", "合照"), fallback, include_quote_text=True
+        )
         raw_message, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
         special_variants, preset_aspect, preset_resolution, preset_name = (
             self._expand_dynamic_preset_variants(raw_message, requested_count)
