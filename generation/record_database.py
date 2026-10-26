@@ -92,7 +92,7 @@ class RecordDatabase:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
                 "SELECT id, seq, time, payload, favorite, pinned, tags, note, created_ts "
-                "FROM generation_records ORDER BY seq ASC LIMIT ?",
+                "FROM generation_records ORDER BY seq DESC LIMIT ?",
                 (safe_limit,),
             ).fetchall()
         records: List[Dict[str, Any]] = []
@@ -116,9 +116,13 @@ class RecordDatabase:
         return records
 
     def replace_records(self, records: Iterable[Mapping[str, Any]]) -> None:
+        incoming = [item for item in records if isinstance(item, Mapping)]
         rows = []
         now = time.time()
-        for seq, record in enumerate(records):
+        # records are newest-first; give the newest the largest seq so
+        # ORDER BY seq DESC keeps matching insertion order.
+        total = len(incoming)
+        for seq, record in enumerate(incoming):
             if not isinstance(record, Mapping):
                 continue
             record_id = str(record.get("id") or "").strip()
@@ -136,7 +140,7 @@ class RecordDatabase:
             rows.append(
                 (
                     record_id,
-                    len(rows),
+                    total - len(rows),
                     str(record.get("time") or ""),
                     json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                     favorite,
@@ -196,7 +200,7 @@ class RecordDatabase:
                 """,
                 (
                     record_id,
-                    int(-sequence_value),
+                    int(sequence_value),
                     str(payload.get("time") or ""),
                     json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                     favorite,
@@ -208,11 +212,24 @@ class RecordDatabase:
             )
 
     def prune_to_limit(self, limit: int) -> List[str]:
-        """Remove only records older than the retained record limit."""
+        """Drop the oldest unpinned records beyond ``limit``.
+
+        Pinned and favorite records are never evicted: they are excluded from
+        the retention allowance entirely, so a pinned entry cannot push a
+        normal record out of the pool and then be deleted itself.
+
+        Ordering uses ``seq DESC`` (newest first). ``seq`` is a monotonic
+        positive counter; older builds stored ``-seq`` for upserts while
+        table rebuilds stored positive ``enumerate()`` values, which made
+        ``seq ASC`` interleave new and migrated rows and delete records from
+        the middle of the history instead of the tail.
+        """
         keep = max(1, int(limit or 1))
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                "SELECT id FROM generation_records ORDER BY seq ASC LIMIT -1 OFFSET ?",
+                "SELECT id FROM generation_records "
+                "WHERE COALESCE(pinned, 0) = 0 AND COALESCE(favorite, 0) = 0 "
+                "ORDER BY seq DESC, id DESC LIMIT -1 OFFSET ?",
                 (keep,),
             ).fetchall()
             ids = [str(row["id"]) for row in rows]

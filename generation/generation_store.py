@@ -616,8 +616,7 @@ class GenerationStoreMixin:
         items = data.get("records") if isinstance(data.get("records"), list) else []
         records = [item for item in items if isinstance(item, dict)]
         keep_limit = self._record_keep_limit()
-        retained = records[:keep_limit]
-        evicted = records[keep_limit:]
+        retained, evicted = self._trim_records_keeping_pinned(records, keep_limit)
         database = self._record_database()
         if database is not None and database.has_records():
             loaded = database.load_records(keep_limit)
@@ -653,10 +652,12 @@ class GenerationStoreMixin:
     def _persist_records(self) -> None:
         keep_limit = self._record_keep_limit()
         with self._records_lock:
-            evicted_records = self._records[keep_limit:]
+            retained, evicted_records = self._trim_records_keeping_pinned(
+                self._records, keep_limit
+            )
             self._records = [
                 compact_generation_record(redact_generation_record(item))
-                for item in self._records[:keep_limit]
+                for item in retained
                 if isinstance(item, dict)
             ]
             retained_records = list(self._records)
@@ -805,9 +806,11 @@ class GenerationStoreMixin:
             stored_record = compact_generation_record(redact_generation_record(stored_record))
             keep_limit = self._record_keep_limit()
             self._records.insert(0, stored_record)
-            evicted_records = self._records[keep_limit:]
+            kept_records, evicted_records = self._trim_records_keeping_pinned(
+                self._records, keep_limit
+            )
+            self._records = kept_records
             if evicted_records:
-                del self._records[keep_limit:]
                 stale_cache_paths = collect_unreferenced_record_cache_paths(evicted_records, self._records)
             database = self._record_database()
             if database is not None:
@@ -1698,6 +1701,45 @@ class GenerationStoreMixin:
             except Exception:
                 continue
         return list(dict.fromkeys(str(path).strip() for path in protected if str(path).strip()))
+
+    @staticmethod
+    def _record_is_protected(record: Any) -> bool:
+        """Pinned or favourited records survive history trimming."""
+        if not isinstance(record, dict):
+            return False
+
+        def as_bool(value: Any) -> bool:
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on", "是", "开启"}
+            return bool(value)
+
+        return as_bool(record.get("pinned", record.get("is_pinned"))) or as_bool(
+            record.get("favorite", record.get("is_favorite"))
+        )
+
+    def _trim_records_keeping_pinned(
+        self, records: List[Dict[str, Any]], keep_limit: int
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Drop the oldest unprotected records once the limit is exceeded.
+
+        Protected (pinned / favourite) records never count against the limit,
+        so trimming always removes the oldest unprotected rows instead of
+        whatever happens to sit at the tail of the list.
+        """
+        keep = max(1, int(keep_limit or 1))
+        kept: List[Dict[str, Any]] = []
+        evicted: List[Dict[str, Any]] = []
+        unprotected = 0
+        for record in records:
+            if self._record_is_protected(record):
+                kept.append(record)
+                continue
+            unprotected += 1
+            if unprotected <= keep:
+                kept.append(record)
+            else:
+                evicted.append(record)
+        return kept, evicted
 
     def _record_keep_limit(self) -> int:
         """Number of retained record rows.

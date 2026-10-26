@@ -70,9 +70,14 @@ class TestStorage:
 
             with sqlite3.connect(plugin.records_db_path) as connection:
                 rows = connection.execute(
-                    "SELECT id FROM generation_records ORDER BY seq ASC"
+                    "SELECT id FROM generation_records ORDER BY seq DESC"
                 ).fetchall()
 
+            # seq is a positive monotonic counter: the newest record has the
+            # largest seq. Older builds stored a negative seq for upserts while
+            # table rebuilds stored positive enumerate() values, so "ORDER BY
+            # seq ASC" interleaved two different ranges and pruning deleted
+            # records from the middle of the history.
             assert rows == [("new",), ("existing",)]
 
     def test_incremental_commit_does_not_call_full_record_replacement(self, monkeypatch) -> None:
