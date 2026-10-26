@@ -47,11 +47,32 @@ NEW_IDS = (
     "original_satin_slip_dress",
     "original_swim_with_shirt",
     "original_lace_slip_nightie",
+    # Batch 2: 崩坏星穹铁道 8 / 碧蓝航线 4 / 古风 3 / 原创 3 / 公主连结 2
+    "firefly_white_gauze_dress",
+    "robin_backless_satin_gown",
+    "kafka_black_purple_coat",
+    "march7th_pink_white_offshoulder",
+    "himeko_burgundy_gown",
+    "acheron_black_red_wa_coat",
+    "herta_white_doll_dress",
+    "silver_wolf_tech_vest",
+    "enterprise_white_blue_offshoulder",
+    "unicorn_white_lace_slip",
+    "akagi_red_white_short_wa",
+    "laffey_white_blue_sailor",
+    "ancient_moonwhite_gauze_ruqun",
+    "ancient_lotus_short_qipao",
+    "ancient_waterblue_chest_ruqun",
+    "original_gray_knit_camisole",
+    "original_oversized_white_shirt",
+    "original_wa_yukata_loose",
+    "karyl_black_purple_cat_dress",
+    "kokkoro_white_green_offshoulder",
 )
 
 
 class NewBatchTest(unittest.TestCase):
-    def test_all_twenty_are_registered(self) -> None:
+    def test_all_batch_entries_are_registered(self) -> None:
         for look_id in NEW_IDS:
             self.assertIsNotNone(get_cos_look_by_id(look_id), look_id)
 

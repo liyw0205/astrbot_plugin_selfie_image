@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.41")
+        self.assertEqual(PLUGIN_VERSION, "1.6.42")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -9551,6 +9551,7 @@ class LegFocusTests(unittest.TestCase):
             {
                 "xishi_fan_qipao", "yinzi_white_qipao", "xishi_cyan_qipao",
                 "xishi_crop_qipao", "shuilaner_horned_brocade_qipao",
+                "ancient_lotus_short_qipao",
             },
         )
         xishi_qipao_ids = {item["id"] for item in plugin_main.match_cos_look_sets("西施旗袍")}
@@ -9694,6 +9695,8 @@ class LegFocusTests(unittest.TestCase):
                 "ancient_pink_moon_sheer",
                 "ancient_teal_red_pipe", "ancient_pink_blue_floral_collar",
                 "ancient_white_gold_red_sleeves", "ancient_white_blue_backless_gauze",
+                "ancient_moonwhite_gauze_ruqun", "ancient_lotus_short_qipao",
+                "ancient_waterblue_chest_ruqun",
             },
         )
         self.assertEqual(
