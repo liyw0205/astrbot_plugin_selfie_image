@@ -649,6 +649,31 @@ class GenerationStoreMixin:
         self._prune_orphan_media_sidecars(compacted)
         return compacted
 
+    def _restore_record_sequence(self) -> int:
+        """Restore the record counter above every ``seq`` still stored.
+
+        The counter used to be rebuilt as ``len(records)``.  Deleting any
+        record breaks that: ``max(seq)`` stays high while the count drops, so
+        the next record reused an existing ``seq``, sorted as the oldest row
+        and got pruned immediately after being written.  Seeding from the
+        stored maximum keeps the counter strictly increasing for the lifetime
+        of the database.
+        """
+        lock = getattr(self, "_records_lock", None)
+        if lock is None:
+            count = len(getattr(self, "_records", []) or [])
+        else:
+            with lock:
+                count = len(getattr(self, "_records", []) or [])
+        database = self._record_database()
+        highest = 0
+        if database is not None:
+            try:
+                highest = int(database.max_sequence())
+            except Exception:
+                highest = 0
+        return max(count, highest)
+
     def _persist_records(self) -> None:
         keep_limit = self._record_keep_limit()
         with self._records_lock:

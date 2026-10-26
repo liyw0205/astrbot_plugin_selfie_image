@@ -328,7 +328,7 @@ class SelfieImagePlugin(
         self._llm_generation_lock = threading.RLock()
         self._last_llm_generations: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
         self._records: List[Dict[str, Any]] = self._load_records()
-        self._record_seq = len(self._records)
+        self._record_seq = self._restore_record_sequence()
         self._web_task_lock = threading.RLock()
         self._web_tasks: Dict[str, Dict[str, Any]] = self._load_web_tasks()
         self._web_task_seq = 0

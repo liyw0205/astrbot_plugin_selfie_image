@@ -51,6 +51,8 @@ class RecordDatabase:
                     ON generation_records(seq DESC);
                 CREATE INDEX IF NOT EXISTS idx_generation_records_asset
                     ON generation_records(pinned DESC, favorite DESC, seq DESC);
+                CREATE INDEX IF NOT EXISTS idx_generation_records_created
+                    ON generation_records(time DESC, seq DESC);
                 """
             )
 
@@ -87,12 +89,30 @@ class RecordDatabase:
             row = connection.execute("SELECT 1 FROM generation_records LIMIT 1").fetchone()
         return row is not None
 
+    def max_sequence(self) -> int:
+        """Highest ``seq`` currently stored, 0 when the table is empty.
+
+        Callers must restore their counter above this value: deriving it from
+        the row count instead reuses numbers as soon as any record is deleted
+        (``max(seq)`` stays high while the count drops), which makes a fresh
+        record tie with an existing row and lets pruning delete the new one.
+        """
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT MAX(seq) AS highest FROM generation_records"
+            ).fetchone()
+        try:
+            return max(0, int(row["highest"] or 0))
+        except (TypeError, ValueError):
+            return 0
+
     def load_records(self, limit: int = 1000) -> List[Dict[str, Any]]:
         safe_limit = max(1, min(int(limit or 1000), 10000))
         with self._lock, self._connect() as connection:
             rows = connection.execute(
                 "SELECT id, seq, time, payload, favorite, pinned, tags, note, created_ts "
-                "FROM generation_records ORDER BY seq DESC LIMIT ?",
+                "FROM generation_records "
+                "ORDER BY time DESC, seq DESC, id DESC LIMIT ?",
                 (safe_limit,),
             ).fetchall()
         records: List[Dict[str, Any]] = []
@@ -218,18 +238,20 @@ class RecordDatabase:
         the retention allowance entirely, so a pinned entry cannot push a
         normal record out of the pool and then be deleted itself.
 
-        Ordering uses ``seq DESC`` (newest first). ``seq`` is a monotonic
-        positive counter; older builds stored ``-seq`` for upserts while
-        table rebuilds stored positive ``enumerate()`` values, which made
-        ``seq ASC`` interleave new and migrated rows and delete records from
-        the middle of the history instead of the tail.
+        Ordering uses the durable ``time`` string (newest first) with ``seq``
+        and ``id`` as deterministic tie-breakers. Ordering by ``seq`` alone was
+        wrong as soon as the counter and the stored rows disagreed: a record
+        added after any deletion reused an existing ``seq``, sorted as the
+        oldest row, and was therefore the one this method deleted.
+        ``created_ts`` is not usable here because a bulk rewrite stamps many
+        rows with the same value.
         """
         keep = max(1, int(limit or 1))
         with self._lock, self._connect() as connection:
             rows = connection.execute(
                 "SELECT id FROM generation_records "
                 "WHERE COALESCE(pinned, 0) = 0 AND COALESCE(favorite, 0) = 0 "
-                "ORDER BY seq DESC, id DESC LIMIT -1 OFFSET ?",
+                "ORDER BY time DESC, seq DESC, id DESC LIMIT -1 OFFSET ?",
                 (keep,),
             ).fetchall()
             ids = [str(row["id"]) for row in rows]
