@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.44")
+        self.assertEqual(PLUGIN_VERSION, "1.6.45")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -9586,13 +9586,35 @@ class LegFocusTests(unittest.TestCase):
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("胡桃")},
             {
-                "hutao_wansheng",
+                "hutao_chengyun_lanshou",
+                "hutao_chunri_xuqu",
+                "hutao_chunxiaoxiao_v2",
+                "hutao_diemeng",
+                "hutao_diji",
                 "hutao_dragon_path_zhichun",
-                "hutao_koi_dream_glow",
-                "hutao_spring_morning_breeze",
-                "hutao_warm_sweet_dream",
+                "hutao_guizhou_shaonv",
                 "hutao_high_school_swimsuit",
+                "hutao_huiye_shaonv",
+                "hutao_koi_dream_glow",
+                "hutao_longzhidao_zhichun_gao",
+                "hutao_pengran_xindong",
+                "hutao_qiantangshi",
+                "hutao_qingdeng",
+                "hutao_qingya_shaonv",
+                "hutao_quanhuang_athena",
+                "hutao_rijin_shenzi",
+                "hutao_shanchui_cha",
+                "hutao_spring_morning_breeze",
                 "hutao_spring_peach_smile",
+                "hutao_tianju_nvming",
+                "hutao_wansheng",
+                "hutao_warm_sweet_dream",
+                "hutao_xiaowu",
+                "hutao_yingyun_tiannv",
+                "hutao_yinyang_ji",
+                "hutao_yuzhai_huazhi",
+                "hutao_yuzhai_luomeng",
+                "hutao_zhujizhe",
             },
         )
         self.assertEqual(
@@ -9647,7 +9669,7 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("小舞")},
-            {"xiaowu_pink_rabbit"},
+            {"xiaowu_pink_rabbit", "hutao_xiaowu"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("王昭君")},
