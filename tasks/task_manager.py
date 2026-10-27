@@ -562,6 +562,40 @@ class WebTaskMixin:
             )
         return rows
 
+    @staticmethod
+    def _task_request_image_paths(task: Mapping[str, Any]) -> list[str]:
+        """Expose only bounded, relative cache paths for image-to-image previews."""
+        paths: list[str] = []
+        seen: set[str] = set()
+        containers = [
+            task.get("result") if isinstance(task.get("result"), Mapping) else {},
+            task,
+            task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {},
+        ]
+        for container in containers:
+            raw_paths = container.get("request_image_paths")
+            if not isinstance(raw_paths, (list, tuple)):
+                continue
+            for raw_path in raw_paths:
+                path = str(raw_path or "").strip()
+                normalized = path.replace("\\", "/")
+                if (
+                    not normalized
+                    or len(normalized) > 512
+                    or normalized.startswith("/")
+                    or normalized.startswith("../")
+                    or "/../" in normalized
+                    or normalized == ".."
+                    or (len(normalized) > 1 and normalized[1] == ":")
+                    or normalized in seen
+                ):
+                    continue
+                seen.add(normalized)
+                paths.append(normalized)
+                if len(paths) >= 12:
+                    return paths
+        return paths
+
     @classmethod
     def task_operation_capabilities(cls, task: Mapping[str, Any]) -> Dict[str, bool]:
         """Single state matrix shared by task list/detail and cancel guards."""
@@ -662,6 +696,7 @@ class WebTaskMixin:
                 "record_id": retry_record_id[:128],
                 "retry_record_id": retry_record_id[:128],
                 "record_ids": linked_record_ids,
+                "request_image_paths": self._task_request_image_paths(task),
                 **self.task_operation_capabilities({**task, "retry_record_id": retry_record_id, "record_ids": linked_record_ids}),
             }
         )

@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.50")
+        self.assertEqual(PLUGIN_VERSION, "1.6.51")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -6050,8 +6050,10 @@ class SessionModelAndTaskTests(unittest.TestCase):
         plugin._record_task = lambda _record: None
         plugin._semaphore = asyncio.Semaphore(1)
         stages = []
-        plugin._set_web_image_task = lambda _task_id, **fields: stages.append(
-            (fields.get("generation_stage"), fields.get("generation_stage_label"))
+        plugin._set_web_image_task = lambda _task_id, **fields: (
+            stages.append((fields.get("generation_stage"), fields.get("generation_stage_label")))
+            if fields.get("generation_stage")
+            else None
         )
 
         async def audit(*_args, **_kwargs):
@@ -12386,8 +12388,16 @@ class StudioStoreTests(unittest.TestCase):
                 "success": True,
                 "created_ts": 1,
                 "updated_ts": 2,
-                "request_data": {"media_type": "video", "prompt": "private"},
-                "result": {"video_path": "/private/video.mp4"},
+                "request_data": {
+                    "media_type": "video",
+                    "prompt": "private",
+                    "request_image_paths": ["request/fallback.png", "../outside.png"],
+                },
+                "request_image_paths": ["request/live.png"],
+                "result": {
+                    "video_path": "/private/video.mp4",
+                    "request_image_paths": ["request/result.png", "request/result.png", "/private.png"],
+                },
                 "request_fingerprint": "private-fingerprint",
                 "owner_session": "private-session",
             }
@@ -12396,6 +12406,10 @@ class StudioStoreTests(unittest.TestCase):
         row = listed["tasks"][0]
         self.assertEqual(row["media_type"], "video")
         self.assertEqual(row["prompt"], "private")
+        self.assertEqual(
+            row["request_image_paths"],
+            ["request/result.png", "request/live.png", "request/fallback.png"],
+        )
         for key in ("request_data", "result", "request_fingerprint", "owner_session"):
             self.assertNotIn(key, row)
 

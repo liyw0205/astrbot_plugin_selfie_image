@@ -1812,6 +1812,11 @@ class SelfieImagePlugin(
                 elif isinstance(value, list):
                     source_meta[key] = [str(item).strip() for item in value if str(item).strip()][:24]
         request_image_paths = self._save_reference_images_to_cache(refs)
+        task_id = str(record_context.get("task_id") or "").strip() if isinstance(record_context, Mapping) else ""
+        if task_id:
+            task_setter = getattr(self, "_set_web_image_task", None)
+            if callable(task_setter):
+                task_setter(task_id, request_image_paths=list(request_image_paths))
         self._set_generation_stage(
             record_context,
             "prompt_translation",
