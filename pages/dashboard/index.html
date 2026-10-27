@@ -263,20 +263,36 @@
     .table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .table th, .table td { text-align: left; border-bottom: 1px solid var(--line); padding: 8px; vertical-align: top; }
     .table th { background: #f8fafc; font-weight: 650; }
-    .group-segments { display: flex; flex-wrap: wrap; gap: 3px; min-width: max-content; }
-    .group-segments button { min-height: 30px; padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 4px; background: #fff; color: var(--text-secondary); font-size: 12px; }
-    .group-segments button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-weak); color: var(--primary-strong); }
-    .group-model-priority { display: grid; gap: 6px; min-width: 260px; }
-    .group-model-add { display: grid; grid-template-columns: minmax(140px, 1fr) auto; gap: 5px; }
-    .group-model-add select, .group-fixed-model { min-width: 0; padding: 6px 8px; font-size: 12px; }
-    .group-priority-list { display: grid; gap: 4px; }
-    .group-priority-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
-    .group-priority-row > span { min-width: 0; overflow-wrap: anywhere; }
-    .group-priority-row .actions { gap: 3px; }
-    .group-priority-row button { min-width: 28px; padding: 3px 6px; }
-    .group-fixed-model-wrap { min-width: 180px; }
-    .group-fixed-display { display: flex; align-items: center; gap: 6px; min-height: 30px; }
-    .group-fixed-value { min-width: 0; overflow-wrap: anywhere; }
+    .group-config-list { display: grid; min-width: 0; }
+    .group-config-head, .group-config-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(70px, .65fr) minmax(86px, .8fr) minmax(120px, 1.1fr); align-items: center; gap: 10px; }
+    .group-config-head { min-height: 36px; padding: 0 10px; background: #f4f6fa; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
+    .group-config-row { min-height: 58px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+    .group-config-identity { display: grid; gap: 2px; min-width: 0; }
+    .group-config-identity strong, .group-config-identity span, .group-config-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .group-config-identity strong { font-size: 12px; font-weight: 700; }
+    .group-config-identity span { color: var(--muted); font-size: 12px; }
+    .group-config-trigger { display: flex; align-items: center; justify-content: space-between; gap: 5px; width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: #fff; color: var(--text); font-size: 12px; font-weight: 600; text-align: left; }
+    .group-config-trigger:hover { background: var(--panel-soft); border-color: var(--primary); color: var(--text); }
+    .group-config-trigger::after { content: ""; flex: 0 0 auto; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg) translateY(-2px); opacity: .55; }
+    .group-config-trigger[disabled] { cursor: default; color: var(--muted); background: #f7f8fa; }
+    .group-config-trigger[disabled]::after { display: none; }
+    .group-config-dialog { width: min(500px, 100%); max-height: min(76vh, 640px); }
+    .group-config-dialog h2 { margin: 0; }
+    .group-config-dialog .modal-body { min-height: 0; }
+    .group-config-options { display: grid; gap: 7px; }
+    .group-config-option { display: grid; gap: 3px; width: 100%; min-height: 50px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--text); text-align: left; }
+    .group-config-option:hover, .group-config-option[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-weak); color: var(--text); }
+    .group-config-option strong { font-size: 13px; }
+    .group-config-option span { color: var(--muted); font-size: 12px; font-weight: 400; }
+    .group-config-search { position: sticky; top: 0; padding-bottom: 8px; background: #fff; }
+    .group-config-model-list { display: grid; gap: 4px; max-height: min(48vh, 420px); overflow: auto; }
+    .group-config-model-list .group-config-option { display: flex; align-items: center; justify-content: space-between; min-height: 40px; }
+    .group-config-model-list .group-config-option strong { min-width: 0; overflow-wrap: anywhere; }
+    .group-config-empty { padding: 14px 4px; color: var(--muted); font-size: 13px; }
+    .group-access-panel { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fbfcfd; }
+    .group-access-panel h3 { margin: 0; }
+    .group-access-panel .between { align-items: baseline; gap: 10px; }
+    .group-access-panel textarea { min-height: 68px; }
     #taskQueueTable { table-layout: fixed; }
     #taskQueueTable th:nth-child(1), #taskQueueTable td:nth-child(1) { width: 38px; }
     #taskQueueTable th:nth-child(2), #taskQueueTable td:nth-child(2) { width: 170px; }
@@ -938,6 +954,15 @@
       .modal { width: calc(100vw - 20px); padding: 12px; }
       .table { min-width: 620px; }
     }
+    @media (max-width: 760px) {
+      .group-config-head, .group-config-row { grid-template-columns: minmax(0, 1fr) 66px 74px 92px; gap: 6px; }
+      .group-config-head, .group-config-row { padding-left: 6px; padding-right: 6px; }
+    }
+    @media (max-width: 420px) {
+      .group-config-head, .group-config-row { grid-template-columns: minmax(0, 1fr) 48px 54px 74px; gap: 4px; }
+      .group-config-head { font-size: 10px; }
+      .group-config-trigger { padding: 6px 5px; font-size: 11px; }
+    }
   </style>
 </head>
 <body>
@@ -1023,12 +1048,6 @@
         <div><label>记录保留量（条）</label><input id="recordKeepLimit" type="number" min="10" max="10000"></div>
         <div><label>说明</label><div class="status">缓存上限建议不小于记录保留量；请求图和生成图共用缓存。自动清理按记录整组移除最旧的媒体，未被记录、收藏、置顶或画布会话引用的文件优先清理。</div></div>
       </div>
-      <h3>谁能用</h3>
-      <div class="grid">
-        <div><label>可用名单</label><textarea id="usableUsers" placeholder="空着=所有人都能用"></textarea></div>
-        <div><label>黑名单</label><textarea id="blockedUsers"></textarea></div>
-        <div><label>白名单用户</label><textarea id="whitelistUsers"></textarea></div>
-      </div>
       <div id="baseStatus" class="status" style="margin-top:12px"></div>
     </section>
 
@@ -1093,11 +1112,19 @@
         </div>
       </div>
       <div id="groupsStatus" class="status">尚未读取群列表</div>
-      <div class="table-wrap" style="margin-top:12px;overflow:auto">
-        <table class="table" id="groupConfigTable">
-          <thead><tr><th>群号</th><th>群名</th><th>群聊类型</th><th>模型模式</th><th>模型优先级</th><th>固定模型</th></tr></thead>
-          <tbody id="groupConfigRows"><tr><td colspan="6" class="muted">点击“刷新群列表”读取 QQ 群。</td></tr></tbody>
-        </table>
+      <div class="group-access-panel">
+        <div class="between">
+          <h3>用户访问名单</h3>
+          <span class="muted">多个 QQ 号可用 | 或英文逗号分隔</span>
+        </div>
+        <div class="grid">
+          <div><label>用户黑名单</label><textarea id="groupBlockedUsers" placeholder="例如：10001|10002"></textarea></div>
+          <div><label>用户白名单</label><textarea id="groupWhitelistUsers" placeholder="例如：20001,20002"></textarea></div>
+        </div>
+      </div>
+      <div class="group-config-list" id="groupConfigTable" style="margin-top:12px">
+        <div class="group-config-head" role="row"><span>群聊</span><span>类型</span><span>模型模式</span><span>固定模型</span></div>
+        <div id="groupConfigRows"><div class="muted">点击“刷新群列表”读取 QQ 群。</div></div>
       </div>
     </section>
 
@@ -1866,6 +1893,19 @@
     </div>
   </div>
 
+  <div id="groupConfigModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="groupConfigModalTitle">
+    <div class="modal group-config-dialog">
+      <div class="between">
+        <div><h2 id="groupConfigModalTitle">群聊配置</h2><p id="groupConfigModalHint" class="muted" style="margin:4px 0 0"></p></div>
+        <button class="secondary mini" type="button" onclick="closeGroupConfigModal()" aria-label="关闭窗口">关闭</button>
+      </div>
+      <div class="modal-body" style="margin-top:14px">
+        <div id="groupConfigSearchWrap" class="group-config-search" style="display:none"><input id="groupConfigSearch" type="search" placeholder="搜索已启用模型" aria-label="搜索模型"></div>
+        <div id="groupConfigModalBody"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="toastWrap" class="toast-wrap"></div>
 
   <!-- AstrBot rewrites this URL with its short-lived page token when embedded. -->
@@ -2179,7 +2219,7 @@
         throw error;
       }
     }
-    function textList(id) { return ($(id).value || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean); }
+    function textList(id) { return ($(id).value || '').split(/[\n,|]+/).map(s => s.trim()).filter(Boolean); }
     function setTextList(id, value) { $(id).value = Array.isArray(value) ? value.join('\n') : String(value || ''); }
     function setSelectOptions(id, values, selected = '') {
       const el = $(id);
@@ -2355,9 +2395,8 @@ Source prompt:
         normalizeAuditChannels();
         normalizeVideoChannels();
         const p = CONFIG.permission, img = CONFIG.image;
-        setTextList('usableUsers', p.usable_users);
-        setTextList('blockedUsers', p.blocked_users);
-        setTextList('whitelistUsers', p.whitelist_users);
+        setTextList('groupBlockedUsers', p.blocked_users);
+        setTextList('groupWhitelistUsers', p.whitelist_users);
 
         for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, img.default_aspect_ratio || '9:16');
         $('defaultResolution').value = img.default_resolution || '1K';
@@ -2423,12 +2462,7 @@ Source prompt:
       ensureConfig();
       CONFIG.bot_name = $('selfieBotName').value.trim() || '啊呜';
       CONFIG.personality = $('selfiePersonality').value || '';
-      CONFIG.permission = {
-        ...(CONFIG.permission || {}),
-        usable_users: textList('usableUsers'),
-        blocked_users: textList('blockedUsers'),
-        whitelist_users: textList('whitelistUsers')
-      };
+      CONFIG.permission = {...(CONFIG.permission || {})};
       CONFIG.image.default_aspect_ratio = $('defaultAspect').value || $('selfieAspect').value || '9:16';
       CONFIG.image.default_resolution = $('defaultResolution').value || '1K';
       const maxConcurrent = Number($('maxConcurrent').value || 5);
@@ -3624,94 +3658,75 @@ Source prompt:
 
     let QQ_GROUP_ROWS = [];
     let QQ_GROUP_MODELS = [];
-    function groupChoiceButtons(index, field, value, choices) {
-      return `<div class="group-segments" role="group" aria-label="${field === 'chat_type' ? '群聊类型' : '模型模式'}">${choices.map(([option, label]) =>
-        `<button type="button" aria-pressed="${value === option}" onclick="setQQGroupField(${index}, '${field}', '${option}')">${label}</button>`
-      ).join('')}</div>`;
+    let QQ_GROUP_MODAL = null;
+    const QQ_GROUP_CHAT_TYPES = [['none', '无', '不额外限制群聊'], ['black', '黑', '禁止此群使用生图'], ['white', '白', '允许此群使用生图']];
+    const QQ_GROUP_MODEL_MODES = [['default', '默认', '跟随全局默认调用模式'], ['sequence', '顺序', '按全局模型优先级顺序尝试'], ['random', '随机', '按全局模型优先级随机选择'], ['fixed', '固定', '固定使用指定模型']];
+    function groupConfigValue(index, field) {
+      return String(QQ_GROUP_ROWS[index]?.config?.[field] || (field === 'chat_type' ? 'none' : field === 'model_priority_mode' ? 'default' : ''));
     }
-    function groupModelOptions(index, includeCurrent = false) {
-      const selected = QQ_GROUP_ROWS[index]?.config?.model_priority || [];
-      const values = QQ_GROUP_MODELS.filter(model => !selected.includes(model));
-      if (includeCurrent) {
-        const fixed = String(QQ_GROUP_ROWS[index]?.config?.fixed_model || '');
-        if (fixed && !values.includes(fixed)) values.unshift(fixed);
-      }
-      return values;
+    function groupConfigLabel(field, value) {
+      const choices = field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : QQ_GROUP_MODEL_MODES;
+      return choices.find(item => item[0] === value)?.[1] || '未设置';
     }
-    function populateQQGroupModelPicker(index, select, fixed = false) {
-      if (!select || select.dataset.loaded === '1') return;
-      const current = fixed ? String(QQ_GROUP_ROWS[index]?.config?.fixed_model || '') : '';
-      select.innerHTML = `<option value="">${fixed ? '选择固定模型' : '选择要加入的模型'}</option>` +
-        (fixed ? QQ_GROUP_MODELS.slice() : groupModelOptions(index)).map(model =>
-          `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`
-        ).join('');
-      if (fixed && current && !QQ_GROUP_MODELS.includes(current)) {
-        select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(current)}">${escapeHtml(current)}（当前不可用）</option>`);
+    function closeGroupConfigModal() {
+      $('groupConfigModal')?.classList.remove('show');
+      QQ_GROUP_MODAL = null;
+    }
+    function openGroupConfigModal(index, field) {
+      const row = QQ_GROUP_ROWS[index];
+      if (!row) return;
+      QQ_GROUP_MODAL = {index, field};
+      const modal = $('groupConfigModal');
+      const title = field === 'chat_type' ? '群聊类型' : field === 'model_priority_mode' ? '模型模式' : '固定模型';
+      $('groupConfigModalTitle').textContent = title;
+      $('groupConfigModalHint').textContent = `${row.group_id}${row.group_name ? ` · ${row.group_name}` : ''}`;
+      $('groupConfigSearchWrap').style.display = field === 'fixed_model' ? '' : 'none';
+      $('groupConfigSearch').value = '';
+      renderGroupConfigModalOptions();
+      modal?.classList.add('show');
+      modal?.querySelector('.group-config-option')?.focus();
+    }
+    function renderGroupConfigModalOptions() {
+      const state = QQ_GROUP_MODAL;
+      const body = $('groupConfigModalBody');
+      if (!state || !body) return;
+      const current = groupConfigValue(state.index, state.field);
+      if (state.field === 'fixed_model') {
+        const query = String($('groupConfigSearch')?.value || '').trim().toLowerCase();
+        const models = QQ_GROUP_MODELS.filter(model => !query || model.toLowerCase().includes(query));
+        body.innerHTML = models.length ? `<div class="group-config-model-list">${models.map(model => `<button class="group-config-option" type="button" aria-pressed="${model === current}" onclick="selectGroupConfigValue('${escapeJs(model)}')"><strong>${escapeHtml(model)}</strong><span>${model === current ? '当前使用' : '点击设为固定模型'}</span></button>`).join('')}</div>` : '<div class="group-config-empty">暂无匹配的已启用模型。</div>';
+        return;
       }
-      select.value = current;
-      select.dataset.loaded = '1';
+      const choices = state.field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : QQ_GROUP_MODEL_MODES;
+      body.innerHTML = `<div class="group-config-options">${choices.map(([value, label, hint]) => `<button class="group-config-option" type="button" aria-pressed="${value === current}" onclick="selectGroupConfigValue('${value}')"><strong>${label}</strong><span>${hint}</span></button>`).join('')}</div>`;
+    }
+    function selectGroupConfigValue(value) {
+      const state = QQ_GROUP_MODAL;
+      const config = state && QQ_GROUP_ROWS[state.index]?.config;
+      if (!state || !config) return;
+      config[state.field] = value;
+      if (state.field === 'model_priority_mode' && value !== 'fixed') config.fixed_model = '';
+      closeGroupConfigModal();
+      renderQQGroups();
     }
     function renderQQGroups() {
       const body = $('groupConfigRows');
       if (!body) return;
       if (!QQ_GROUP_ROWS.length) {
-        body.innerHTML = '<tr><td colspan="6" class="muted">没有读取到 QQ 群，或当前没有可用 QQ 平台。</td></tr>';
+        body.innerHTML = '<div class="group-config-empty">没有读取到 QQ 群，或当前没有可用 QQ 平台。</div>';
         return;
       }
       body.innerHTML = QQ_GROUP_ROWS.map((row, index) => {
         const config = row.config || {};
-        const modelPriority = Array.isArray(config.model_priority) ? config.model_priority : [];
-        const source = ({live: '在线', cached: '缓存', configured: '已配置'})[row.source] || '';
-        return `<tr data-group-index="${index}">
-          <td><b>${escapeHtml(row.group_id)}</b></td>
-          <td>${escapeHtml(row.group_name || '')}<div class="muted">${escapeHtml(source)}</div></td>
-          <td>${groupChoiceButtons(index, 'chat_type', config.chat_type || 'none', [['none', '无'], ['black', '黑'], ['white', '白']])}</td>
-          <td>${groupChoiceButtons(index, 'model_priority_mode', config.model_priority_mode || 'default', [['default', '默认'], ['sequence', '顺序'], ['random', '随机'], ['fixed', '固定']])}</td>
-          <td><div class="group-model-priority">
-            <div class="group-model-add"><select data-group-model-picker="${index}" onfocus="populateQQGroupModelPicker(${index}, this)"><option value="">选择要加入的模型</option></select><button class="secondary mini" type="button" onclick="addQQGroupModel(${index})">加入</button></div>
-            <div class="group-priority-list">${modelPriority.map((model, modelIndex) => `<div class="group-priority-row"><span title="${escapeHtml(model)}">${escapeHtml(model)}</span><div class="actions"><button class="secondary mini" type="button" title="上移" aria-label="上移 ${escapeHtml(model)}" onclick="moveQQGroupModel(${index}, ${modelIndex}, -1)" ${modelIndex === 0 ? 'disabled' : ''}>↑</button><button class="secondary mini" type="button" title="下移" aria-label="下移 ${escapeHtml(model)}" onclick="moveQQGroupModel(${index}, ${modelIndex}, 1)" ${modelIndex === modelPriority.length - 1 ? 'disabled' : ''}>↓</button><button class="danger mini" type="button" title="移除" aria-label="移除 ${escapeHtml(model)}" onclick="removeQQGroupModel(${index}, ${modelIndex})">×</button></div></div>`).join('') || '<span class="muted">未设置时使用全部启用模型</span>'}</div>
-          </div></td>
-          <td><div class="group-fixed-model-wrap">${config.model_priority_mode === 'fixed' ? `<div class="group-fixed-display"><span class="group-fixed-value" title="${escapeHtml(config.fixed_model || '未选择模型')}">${escapeHtml(config.fixed_model || '未选择模型')}</span><button class="secondary mini" type="button" onclick="editQQGroupFixedModel(${index})">更改</button></div>` : '<span class="muted">不使用固定模型</span>'}</div></td>
-        </tr>`;
+        const mode = config.model_priority_mode || 'default';
+        const fixed = mode === 'fixed' ? (config.fixed_model || '未选择') : '不适用';
+        return `<div class="group-config-row" data-group-index="${index}" role="row">
+          <div class="group-config-identity"><strong>${escapeHtml(row.group_id)}</strong><span title="${escapeHtml(row.group_name || '')}">${escapeHtml(row.group_name || '未命名群')}</span></div>
+          <button class="group-config-trigger" type="button" onclick="openGroupConfigModal(${index}, 'chat_type')"><span>${escapeHtml(groupConfigLabel('chat_type', config.chat_type || 'none'))}</span></button>
+          <button class="group-config-trigger" type="button" onclick="openGroupConfigModal(${index}, 'model_priority_mode')"><span>${escapeHtml(groupConfigLabel('model_priority_mode', mode))}</span></button>
+          <button class="group-config-trigger" type="button" ${mode === 'fixed' ? `onclick="openGroupConfigModal(${index}, 'fixed_model')"` : 'disabled'}><span>${escapeHtml(fixed)}</span></button>
+        </div>`;
       }).join('');
-    }
-    function setQQGroupField(index, field, value) {
-      const config = QQ_GROUP_ROWS[index]?.config;
-      if (!config || !['chat_type', 'model_priority_mode', 'fixed_model'].includes(field)) return;
-      config[field] = value;
-      if (field === 'model_priority_mode' && value === 'fixed' && !config.fixed_model) {
-        config.fixed_model = (config.model_priority || []).find(model => QQ_GROUP_MODELS.includes(model)) || QQ_GROUP_MODELS[0] || '';
-      }
-      renderQQGroups();
-    }
-    function editQQGroupFixedModel(index) {
-      const wrap = document.querySelector(`tr[data-group-index="${index}"] .group-fixed-model-wrap`);
-      if (!wrap) return;
-      wrap.innerHTML = `<div class="group-model-add"><select class="group-fixed-model" aria-label="选择固定模型" onchange="setQQGroupField(${index}, 'fixed_model', this.value)"><option value="">选择固定模型</option></select><button class="secondary mini" type="button" title="取消更改" aria-label="取消更改" onclick="renderQQGroups()">取消</button></div>`;
-      const select = wrap.querySelector('select');
-      populateQQGroupModelPicker(index, select, true);
-      select.focus();
-    }
-    function addQQGroupModel(index) {
-      const row = QQ_GROUP_ROWS[index];
-      const select = document.querySelector(`[data-group-model-picker="${index}"]`);
-      const value = String(select?.value || '').trim();
-      if (!row || !value) return;
-      row.config.model_priority = uniq([...(row.config.model_priority || []), value]);
-      renderQQGroups();
-    }
-    function moveQQGroupModel(index, modelIndex, delta) {
-      const items = QQ_GROUP_ROWS[index]?.config?.model_priority || [];
-      const next = modelIndex + delta;
-      if (next < 0 || next >= items.length) return;
-      const [item] = items.splice(modelIndex, 1);
-      items.splice(next, 0, item);
-      renderQQGroups();
-    }
-    function removeQQGroupModel(index, modelIndex) {
-      const items = QQ_GROUP_ROWS[index]?.config?.model_priority || [];
-      items.splice(modelIndex, 1);
-      renderQQGroups();
     }
     async function loadQQGroups(force = false) {
       try {
@@ -3723,21 +3738,25 @@ Source prompt:
           chat_type: row.config?.chat_type || 'none',
           model_priority_mode: row.config?.model_priority_mode || 'default',
           fixed_model: row.config?.fixed_model || '',
-          model_priority: Array.isArray(row.config?.model_priority) ? uniq(row.config.model_priority) : [],
         }}));
-        $('saveGroupsBtn').disabled = QQ_GROUP_ROWS.length === 0;
+        $('saveGroupsBtn').disabled = false;
         setStatus('groupsStatus', data.available ? `已读取 ${QQ_GROUP_ROWS.length} 个群` : (data.message || 'QQ 平台不可用'));
         renderQQGroups();
       } catch (error) { setStatus('groupsStatus', error.message || '读取群列表失败'); }
     }
     async function saveQQGroups() {
-      if (!QQ_GROUP_ROWS.length) return;
       try {
         const rows = QQ_GROUP_ROWS.map(row => ({group_id: row.group_id, config: row.config}));
-        await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify({groups: rows})});
-        CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
-        setStatus('groupsStatus', '群聊配置已保存');
-        showToast('群聊配置已保存', 'ok');
+        const permission = {
+          blocked_users: textList('groupBlockedUsers'),
+          whitelist_users: textList('groupWhitelistUsers'),
+        };
+        const result = await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify({groups: rows, permission})});
+        if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
+        CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
+        if (result.data?.permission) CONFIG.permission = {...CONFIG.permission, ...result.data.permission};
+        setStatus('groupsStatus', '群聊配置和用户名单已保存');
+        showToast('群聊配置和用户名单已保存', 'ok');
       } catch (error) { setStatus('groupsStatus', error.message || '保存群聊配置失败'); showToast(error.message || '保存失败', 'bad'); }
     }
 
@@ -9495,6 +9514,7 @@ Source prompt:
     $('loginBtn').onclick = enterApp;
     $('refreshGroupsBtn')?.addEventListener('click', () => loadQQGroups(true));
     $('saveGroupsBtn')?.addEventListener('click', saveQQGroups);
+    $('groupConfigSearch')?.addEventListener('input', renderGroupConfigModalOptions);
     $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };
     $('logoutBtn').onclick = logout;
     if ($('confirmProceedBtn')) $('confirmProceedBtn').onclick = () => closeConfirmAction(true);
@@ -9518,6 +9538,7 @@ Source prompt:
       else if (mask === $('studioCreateModal')) closeStudioCreateModal();
       else if (mask === $('studioConnectModal')) closeStudioConnectModal();
       else if (mask === $('creativeCanvasCreateModal')) closeCreativeCanvasCreateModal();
+      else if (mask === $('groupConfigModal')) closeGroupConfigModal();
     }));
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
@@ -9535,6 +9556,7 @@ Source prompt:
       if ($('studioCreateModal')?.classList.contains('show')) { closeStudioCreateModal(); return; }
       if ($('studioConnectModal')?.classList.contains('show')) closeStudioConnectModal();
       if ($('creativeCanvasCreateModal')?.classList.contains('show')) { closeCreativeCanvasCreateModal(); return; }
+      if ($('groupConfigModal')?.classList.contains('show')) { closeGroupConfigModal(); return; }
     });
     if ($('cleanupCacheBtn')) $('cleanupCacheBtn').onclick = cleanupCache;
     if ($('mediaLightboxClose')) $('mediaLightboxClose').onclick = closeMediaLightbox;

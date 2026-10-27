@@ -490,7 +490,6 @@ class SelfieImagePlugin(
                 "chat_type": "white" if group_id in legacy_whitelist else "none",
                 "model_priority_mode": "default",
                 "fixed_model": "",
-                "model_priority": [],
             }))
         payload["models"] = [target.label for target in self.config.get_enabled_image_targets()]
         return payload
@@ -511,10 +510,22 @@ class SelfieImagePlugin(
                 "chat_type": str(config.get("chat_type") or "none"),
                 "model_priority_mode": str(config.get("model_priority_mode") or "default"),
                 "fixed_model": str(config.get("fixed_model") or "").strip(),
-                "model_priority": config.get("model_priority") if isinstance(config.get("model_priority"), list) else [],
             }
-        self.update_config_from_web({"group_chat_configs": configs})
-        return {"group_chat_configs": self.config.group_chat_configs}
+        patch: Dict[str, Any] = {}
+        if configs:
+            patch["group_chat_configs"] = configs
+        if isinstance(payload, dict) and isinstance(payload.get("permission"), dict):
+            permission = payload["permission"]
+            patch["permission"] = {
+                key: permission[key]
+                for key in ("blocked_users", "whitelist_users")
+                if key in permission
+            }
+        updated = self.update_config_from_web(patch) if patch else self.get_config_for_web()
+        return {
+            "group_chat_configs": self.config.group_chat_configs,
+            "permission": updated.get("permission", {}),
+        }
 
     def _permission_denied_message(self, event: AstrMessageEvent) -> str:
         return permission_denied_message(self._access_status(event))
@@ -2791,7 +2802,6 @@ class SelfieImagePlugin(
         all_targets = self.config.get_group_image_targets(
             mode,
             str(group_config.get("fixed_model") or ""),
-            group_config.get("model_priority") if isinstance(group_config.get("model_priority"), list) else [],
         )
         return prioritize_model_target(all_targets, self._get_session_model_override(event))
 

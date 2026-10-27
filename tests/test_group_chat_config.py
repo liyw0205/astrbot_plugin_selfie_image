@@ -28,9 +28,8 @@ def test_group_chat_config_normalizes_supported_values():
     assert config.group_chat_configs == {
         "123": {
             "chat_type": "white", "model_priority_mode": "fixed", "fixed_model": "paint/m1",
-            "model_priority": ["paint/m2", "paint/m1"],
         },
-        "456": {"chat_type": "none", "model_priority_mode": "default", "fixed_model": "", "model_priority": []},
+        "456": {"chat_type": "none", "model_priority_mode": "default", "fixed_model": ""},
     }
 
 
@@ -62,6 +61,19 @@ def test_group_chat_access_modes_blacklist_and_whitelist():
     assert not explicit_none["unlimited"]
 
 
+def test_permission_lists_accept_pipe_separators_without_usable_list():
+    config = AICatConfig.from_dict({
+        "permission": {
+            "blocked_users": "10001|10002,10003",
+            "whitelist_users": "20001 | 20002",
+            "usable_users": "legacy-user",
+        }
+    })
+    assert config.blocked_users == ["10001", "10002", "10003"]
+    assert config.whitelist_users == ["20001", "20002"]
+    assert config.usable_users == ["legacy-user"]
+
+
 def test_group_model_modes_use_enabled_models_and_fixed_selection():
     config = AICatConfig.from_dict({
         "image_channels": [{
@@ -77,7 +89,7 @@ def test_group_model_modes_use_enabled_models_and_fixed_selection():
         assert [target.label for target in config.get_image_targets_for_mode("random", respect_global_priority=False)] == ["paint/m2"]
 
 
-def test_group_model_routing_uses_group_priority_and_keeps_default_global():
+def test_group_model_routing_uses_global_rules_and_fixed_selection():
     config = AICatConfig.from_dict({
         "image_channels": [{
             "name": "paint", "provider_type": "openai", "base_url": "https://image.example",
@@ -87,20 +99,11 @@ def test_group_model_routing_uses_group_priority_and_keeps_default_global():
     })
 
     assert [target.label for target in config.get_group_image_targets("default")] == ["paint/m3", "paint/m1"]
-    assert [target.label for target in config.get_group_image_targets(
-        "sequence", model_priority=["paint/m2", "paint/m1"]
-    )] == ["paint/m2", "paint/m1"]
-    assert [target.label for target in config.get_group_image_targets(
-        "sequence", model_priority=[]
-    )] == ["paint/m1", "paint/m2", "paint/m3"]
-    assert [target.label for target in config.get_group_image_targets(
-        "fixed", fixed_model="paint/m2", model_priority=["paint/m1"]
-    )] == ["paint/m2"]
+    assert [target.label for target in config.get_group_image_targets("sequence")] == ["paint/m3", "paint/m1"]
+    assert [target.label for target in config.get_group_image_targets("fixed", fixed_model="paint/m2")] == ["paint/m2"]
     assert config.get_group_image_targets("fixed", fixed_model="missing") == []
     with patch("random.choice", side_effect=lambda values: values[-1]):
-        assert [target.label for target in config.get_group_image_targets(
-            "random", model_priority=["paint/m3", "paint/m1"]
-        )] == ["paint/m1"]
+        assert [target.label for target in config.get_group_image_targets("random")] == ["paint/m1"]
 
 
 def test_qq_group_cache_uses_onebot_action_and_merges_saved_groups():
@@ -139,19 +142,27 @@ def test_flask_group_api_reads_and_saves_group_config():
         "group_id": "12",
         "config": {
             "chat_type": "black", "model_priority_mode": "fixed", "fixed_model": "paint/m1",
-            "model_priority": ["paint/m2", "paint/m1"],
         },
     }]})
     assert response.status_code == 200
     assert response.get_json()["data"]["group_chat_configs"]["12"]["chat_type"] == "black"
-    assert plugin.saved["groups"][0]["config"]["model_priority"] == ["paint/m2", "paint/m1"]
+    assert "model_priority" not in plugin.saved["groups"][0]["config"]
 
 
 def test_dashboard_keeps_group_allowlist_out_of_workbench_without_dropping_legacy_config():
     page = (Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
     assert 'id="whitelistGroups"' not in page
+    assert 'id="usableUsers"' not in page
+    assert 'id="blockedUsers"' not in page
+    assert 'id="whitelistUsers"' not in page
+    assert 'id="groupBlockedUsers"' in page
+    assert 'id="groupWhitelistUsers"' in page
+    assert "split(/[\\n,|]+/)" in page
+    assert "允许此群使用生图" in page
     assert "...(CONFIG.permission || {})" in page
-    assert "function groupChoiceButtons" in page
-    assert "function editQQGroupFixedModel" in page
-    assert "group-fixed-value" in page
-    assert "data-group-model-picker" in page
+    assert "function openGroupConfigModal" in page
+    assert "group-config-dialog" in page
+    group_ui = page[page.index("let QQ_GROUP_ROWS"):page.index("async function loadQQGroups")]
+    assert "config.model_priority ||" not in group_ui
+    assert "model_priority:" not in group_ui
+    assert "在线" not in group_ui
