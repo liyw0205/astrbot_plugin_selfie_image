@@ -352,7 +352,7 @@ class AICatConfig:
     blocked_users: List[str]
     whitelist_users: List[str]
     whitelist_groups: List[str]
-    group_chat_configs: Dict[str, Dict[str, str]]
+    group_chat_configs: Dict[str, Dict[str, Any]]
     proxies: List[Dict[str, Any]]
     image_channels: List[ImageChannelConfig]
     audit_channels: List[ImageChannelConfig]
@@ -611,6 +611,56 @@ class AICatConfig:
 
     def get_prioritized_targets(self) -> List[ImageModelTarget]:
         return self.get_image_targets_for_mode(self.image_model_call_mode)
+
+    def get_group_image_targets(
+        self,
+        mode: str = "default",
+        fixed_model: str = "",
+        model_priority: Optional[List[str]] = None,
+    ) -> List[ImageModelTarget]:
+        """Resolve a group's model mode against its optional ordered model list."""
+        mode = str(mode or "default").strip().lower()
+        if mode == "default":
+            return self.get_prioritized_targets()
+        if mode not in {"sequence", "random", "fixed"}:
+            mode = "default"
+            return self.get_prioritized_targets()
+
+        targets = self.get_image_targets_for_mode("sequence", respect_global_priority=False)
+        all_targets = targets
+        priority = [str(item or "").strip() for item in (model_priority or []) if str(item or "").strip()]
+        if priority:
+            by_key: Dict[str, ImageModelTarget] = {}
+            for target in targets:
+                by_key[target.label] = target
+                by_key[f"{target.channel_name}:{target.model}"] = target
+                by_key[target.model] = target
+            ordered: List[ImageModelTarget] = []
+            seen = set()
+            for key in priority:
+                target = by_key.get(key)
+                if target and target.label not in seen:
+                    ordered.append(target)
+                    seen.add(target.label)
+            targets = ordered
+
+        if mode == "fixed":
+            requested = str(fixed_model or "").strip()
+            if not requested:
+                return all_targets[:1]
+            return [
+                target for target in all_targets
+                if target.label == requested
+                or target.model == requested
+                or f"{target.channel_name}:{target.model}" == requested
+            ][:1]
+        if mode == "random":
+            if not targets:
+                return []
+            import random
+
+            return [random.choice(targets)]
+        return targets
 
     def get_image_targets_for_mode(
         self,
@@ -1556,11 +1606,11 @@ def split_values(value: Any) -> List[str]:
     return unique_values(str(item).strip() for item in items if str(item).strip())
 
 
-def normalize_group_chat_configs(value: Any) -> Dict[str, Dict[str, str]]:
+def normalize_group_chat_configs(value: Any) -> Dict[str, Dict[str, Any]]:
     """Keep only supported per-group access and image-routing settings."""
     if not isinstance(value, dict):
         return {}
-    result: Dict[str, Dict[str, str]] = {}
+    result: Dict[str, Dict[str, Any]] = {}
     for raw_group_id, raw_config in value.items():
         group_id = str(raw_group_id or "").strip()
         if not group_id.isdigit() or not isinstance(raw_config, dict):
@@ -1575,6 +1625,11 @@ def normalize_group_chat_configs(value: Any) -> Dict[str, Dict[str, str]]:
             "chat_type": chat_type,
             "model_priority_mode": model_priority_mode,
             "fixed_model": str(raw_config.get("fixed_model") or "").strip()[:240],
+            "model_priority": unique_values(
+                str(item or "").strip()[:240]
+                for item in raw_config.get("model_priority", [])
+                if str(item or "").strip()
+            )[:100] if isinstance(raw_config.get("model_priority", []), (list, tuple)) else [],
         }
     return result
 

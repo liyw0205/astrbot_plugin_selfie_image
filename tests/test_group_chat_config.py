@@ -17,14 +17,20 @@ from astrbot_plugin_selfie_image.webui.web import FlaskWebServer
 def test_group_chat_config_normalizes_supported_values():
     config = AICatConfig.from_dict({
         "group_chat_configs": {
-            "123": {"chat_type": "white", "model_priority_mode": "fixed", "fixed_model": "paint/m1"},
+            "123": {
+                "chat_type": "white", "model_priority_mode": "fixed", "fixed_model": "paint/m1",
+                "model_priority": ["paint/m2", "paint/m1", "paint/m2", ""],
+            },
             "not-a-group": {"chat_type": "black"},
             "456": {"chat_type": "invalid", "model_priority_mode": "invalid"},
         }
     })
     assert config.group_chat_configs == {
-        "123": {"chat_type": "white", "model_priority_mode": "fixed", "fixed_model": "paint/m1"},
-        "456": {"chat_type": "none", "model_priority_mode": "default", "fixed_model": ""},
+        "123": {
+            "chat_type": "white", "model_priority_mode": "fixed", "fixed_model": "paint/m1",
+            "model_priority": ["paint/m2", "paint/m1"],
+        },
+        "456": {"chat_type": "none", "model_priority_mode": "default", "fixed_model": "", "model_priority": []},
     }
 
 
@@ -71,6 +77,32 @@ def test_group_model_modes_use_enabled_models_and_fixed_selection():
         assert [target.label for target in config.get_image_targets_for_mode("random", respect_global_priority=False)] == ["paint/m2"]
 
 
+def test_group_model_routing_uses_group_priority_and_keeps_default_global():
+    config = AICatConfig.from_dict({
+        "image_channels": [{
+            "name": "paint", "provider_type": "openai", "base_url": "https://image.example",
+            "enabled_models": ["m1", "m2", "m3"], "enabled": True,
+        }],
+        "enabled_image_model_priority": ["paint/m3", "paint/m1"],
+    })
+
+    assert [target.label for target in config.get_group_image_targets("default")] == ["paint/m3", "paint/m1"]
+    assert [target.label for target in config.get_group_image_targets(
+        "sequence", model_priority=["paint/m2", "paint/m1"]
+    )] == ["paint/m2", "paint/m1"]
+    assert [target.label for target in config.get_group_image_targets(
+        "sequence", model_priority=[]
+    )] == ["paint/m1", "paint/m2", "paint/m3"]
+    assert [target.label for target in config.get_group_image_targets(
+        "fixed", fixed_model="paint/m2", model_priority=["paint/m1"]
+    )] == ["paint/m2"]
+    assert config.get_group_image_targets("fixed", fixed_model="missing") == []
+    with patch("random.choice", side_effect=lambda values: values[-1]):
+        assert [target.label for target in config.get_group_image_targets(
+            "random", model_priority=["paint/m3", "paint/m1"]
+        )] == ["paint/m1"]
+
+
 def test_qq_group_cache_uses_onebot_action_and_merges_saved_groups():
     class Client:
         async def call_action(self, action):
@@ -98,13 +130,28 @@ def test_flask_group_api_reads_and_saves_group_config():
             self.saved = payload
             return {"group_chat_configs": {"12": payload["groups"][0]["config"]}}
 
-    client = FlaskWebServer(Plugin())._create_app().test_client()
+    plugin = Plugin()
+    client = FlaskWebServer(plugin)._create_app().test_client()
     response = client.get("/api/qq-groups")
     assert response.status_code == 200
     assert response.get_json()["data"]["models"] == ["paint/m1"]
     response = client.post("/api/qq-groups/config", json={"groups": [{
         "group_id": "12",
-        "config": {"chat_type": "black", "model_priority_mode": "fixed", "fixed_model": "paint/m1"},
+        "config": {
+            "chat_type": "black", "model_priority_mode": "fixed", "fixed_model": "paint/m1",
+            "model_priority": ["paint/m2", "paint/m1"],
+        },
     }]})
     assert response.status_code == 200
     assert response.get_json()["data"]["group_chat_configs"]["12"]["chat_type"] == "black"
+    assert plugin.saved["groups"][0]["config"]["model_priority"] == ["paint/m2", "paint/m1"]
+
+
+def test_dashboard_keeps_group_allowlist_out_of_workbench_without_dropping_legacy_config():
+    page = (Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
+    assert 'id="whitelistGroups"' not in page
+    assert "...(CONFIG.permission || {})" in page
+    assert "function groupChoiceButtons" in page
+    assert "function editQQGroupFixedModel" in page
+    assert "group-fixed-value" in page
+    assert "data-group-model-picker" in page
