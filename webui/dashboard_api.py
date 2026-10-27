@@ -80,6 +80,8 @@ class SelfieImageDashboardAPI:
             ("config/export", self.page_config_export, ["GET"], "Selfie Image export config"),
             ("config/import/preview", self.page_config_import_preview, ["POST"], "Selfie Image preview config import"),
             ("config/import", self.page_config_import, ["POST"], "Selfie Image import config"),
+            ("qq-groups", self.page_qq_groups, ["GET"], "Selfie Image QQ groups"),
+            ("qq-groups/config", self.page_qq_groups_config, ["POST"], "Selfie Image QQ group config"),
             ("selfie-reference", self.page_selfie_reference_get, ["GET"], "Selfie Image get reference"),
             ("selfie-reference", self.page_selfie_reference_post, ["POST"], "Selfie Image save reference"),
             ("selfie-reference/clear", self.page_selfie_reference_clear, ["POST"], "Selfie Image clear reference"),
@@ -416,6 +418,22 @@ class SelfieImageDashboardAPI:
             return self._ok(self.plugin.import_config_from_web(payload or {}), message="配置导入成功")
         except Exception as exc:
             return self._fail(str(exc), 400)
+
+    async def page_qq_groups(self) -> Any:
+        try:
+            refresh = str(self._query_value("refresh") or "").strip().lower() in {"1", "true", "yes", "on"}
+            return self._ok(await self.plugin.list_qq_groups_for_web(force=refresh))
+        except Exception as exc:
+            return self._fail(str(exc))
+
+    async def page_qq_groups_config(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            return self._ok(self.plugin.update_group_chat_configs_from_web(payload))
+        except Exception as exc:
+            return self._fail(str(exc))
 
     async def page_selfie_reference_get(self) -> Any:
         return self._ok(self.plugin.get_selfie_reference_payload())

@@ -717,6 +717,7 @@
     nav.page-nav button.active, nav.page-nav button.active:hover { background: var(--primary-weak); color: var(--primary); border: 0; box-shadow: inset 2px 0 var(--primary); font-weight: 700; }
     nav.page-nav button[data-tab="base"]::before { content: "⌂"; }
     nav.page-nav button[data-tab="channels"]::before { content: "◫"; }
+    nav.page-nav button[data-tab="groups"]::before { content: "♧"; }
     nav.page-nav button[data-tab="proxies"]::before { content: "◌"; }
     nav.page-nav button[data-tab="monitor"]::before { content: "☷"; }
     nav.page-nav button[data-tab="assets"]::before { content: "▦"; }
@@ -952,6 +953,7 @@
     <nav id="pageNav" class="page-nav" aria-label="功能分区">
       <button data-tab="base" class="active" type="button">工作台</button>
       <button data-tab="channels" type="button">模型渠道</button>
+      <button data-tab="groups" type="button">群聊配置</button>
       <button data-tab="proxies" type="button">代理设置</button>
       <button data-tab="monitor" type="button">生成记录</button>
       <button data-tab="assets" type="button">资产库</button>
@@ -1066,6 +1068,23 @@
         <button class="secondary has-label" type="button" data-channel-add="image" onclick="addChannel()" data-tooltip="添加生图渠道" aria-label="添加生图渠道" title="添加生图渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">图</span></button>
         <button class="secondary has-label" type="button" data-channel-add="audit" onclick="addAuditChannel()" data-tooltip="添加辅助渠道" aria-label="添加辅助渠道" title="添加辅助渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">辅</span></button>
         <button class="secondary has-label" type="button" data-channel-add="video" onclick="addVideoChannel()" data-tooltip="添加视频渠道" aria-label="添加视频渠道" title="添加视频渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">视</span></button>
+      </div>
+    </section>
+
+    <section id="groups" class="floating-action-section">
+      <div class="between">
+        <h2>群聊配置</h2>
+        <div class="actions" style="margin-top:0">
+          <button id="refreshGroupsBtn" class="secondary" type="button">刷新群列表</button>
+          <button id="saveGroupsBtn" class="ok" type="button" disabled>保存群配置</button>
+        </div>
+      </div>
+      <div id="groupsStatus" class="status">尚未读取群列表</div>
+      <div class="table-wrap" style="margin-top:12px;overflow:auto">
+        <table class="table" id="groupConfigTable">
+          <thead><tr><th>群号</th><th>群名</th><th>群聊类型</th><th>模型优先级</th><th>已启用模型</th><th>固定模型</th></tr></thead>
+          <tbody id="groupConfigRows"><tr><td colspan="6" class="muted">点击“刷新群列表”读取 QQ 群。</td></tr></tbody>
+        </table>
       </div>
     </section>
 
@@ -3589,6 +3608,66 @@ Source prompt:
         prunePriorityList(kind);
         renderPriorityRows(kind);
       }
+    }
+
+    let QQ_GROUP_ROWS = [];
+    function renderQQGroups() {
+      const body = $('groupConfigRows');
+      if (!body) return;
+      if (!QQ_GROUP_ROWS.length) {
+        body.innerHTML = '<tr><td colspan="6" class="muted">没有读取到 QQ 群，或当前没有可用 QQ 平台。</td></tr>';
+        return;
+      }
+      const models = QQ_GROUP_ROWS[0]?._models || [];
+      body.innerHTML = QQ_GROUP_ROWS.map((row, index) => {
+        const config = row.config || {};
+        const source = ({live: '在线', cached: '缓存', configured: '已配置'})[row.source] || '';
+        const options = models.map(model => `<option value="${escapeHtml(model)}" ${model === config.fixed_model ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('');
+        return `<tr data-group-index="${index}">
+          <td><b>${escapeHtml(row.group_id)}</b></td>
+          <td>${escapeHtml(row.group_name || '')}<div class="muted">${escapeHtml(source)}</div></td>
+          <td><select data-group-field="chat_type"><option value="none" ${config.chat_type === 'none' ? 'selected' : ''}>无</option><option value="black" ${config.chat_type === 'black' ? 'selected' : ''}>黑名单</option><option value="white" ${config.chat_type === 'white' ? 'selected' : ''}>白名单</option></select></td>
+          <td><select data-group-field="model_priority_mode"><option value="default" ${config.model_priority_mode === 'default' ? 'selected' : ''}>默认（全局）</option><option value="sequence" ${config.model_priority_mode === 'sequence' ? 'selected' : ''}>顺序</option><option value="random" ${config.model_priority_mode === 'random' ? 'selected' : ''}>随机</option><option value="fixed" ${config.model_priority_mode === 'fixed' ? 'selected' : ''}>固定</option></select></td>
+          <td>${models.length ? models.map(model => `<span class="pill" style="margin:2px;display:inline-flex">${escapeHtml(model)}</span>`).join('') : '<span class="muted">暂无启用模型</span>'}</td>
+          <td><select data-group-field="fixed_model"><option value="">请选择模型</option>${options}</select></td>
+        </tr>`;
+      }).join('');
+      body.querySelectorAll('select').forEach(select => select.addEventListener('change', () => {
+        const tr = select.closest('tr');
+        const index = Number(tr?.dataset.groupIndex || -1);
+        const field = select.dataset.groupField;
+        if (QQ_GROUP_ROWS[index] && field) QQ_GROUP_ROWS[index].config[field] = select.value;
+        if (field === 'model_priority_mode') {
+          const fixed = tr?.querySelector('[data-group-field="fixed_model"]');
+          if (fixed) fixed.disabled = select.value !== 'fixed';
+        }
+      }));
+      body.querySelectorAll('[data-group-field="fixed_model"]').forEach(select => {
+        const mode = select.closest('tr')?.querySelector('[data-group-field="model_priority_mode"]')?.value;
+        select.disabled = mode !== 'fixed';
+      });
+    }
+    async function loadQQGroups(force = false) {
+      try {
+        setStatus('groupsStatus', '正在读取 QQ 群列表…');
+        const res = await api('/api/qq-groups' + (force ? '?refresh=1' : ''));
+        const data = res.data || {};
+        const models = Array.isArray(data.models) ? data.models : [];
+        QQ_GROUP_ROWS = (Array.isArray(data.groups) ? data.groups : []).map(row => ({...row, config: {...(row.config || {})}, _models: models}));
+        $('saveGroupsBtn').disabled = QQ_GROUP_ROWS.length === 0;
+        setStatus('groupsStatus', data.available ? `已读取 ${QQ_GROUP_ROWS.length} 个群` : (data.message || 'QQ 平台不可用'));
+        renderQQGroups();
+      } catch (error) { setStatus('groupsStatus', error.message || '读取群列表失败'); }
+    }
+    async function saveQQGroups() {
+      if (!QQ_GROUP_ROWS.length) return;
+      try {
+        const rows = QQ_GROUP_ROWS.map(row => ({group_id: row.group_id, config: row.config}));
+        await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify({groups: rows})});
+        CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
+        setStatus('groupsStatus', '群聊配置已保存');
+        showToast('群聊配置已保存', 'ok');
+      } catch (error) { setStatus('groupsStatus', error.message || '保存群聊配置失败'); showToast(error.message || '保存失败', 'bad'); }
     }
 
     async function loadConfig() {
@@ -9328,6 +9407,7 @@ Source prompt:
       if (target === 'presets') loadManagedPromptPresets(PRESET_KIND);
       if (target === 'selfie') refreshSelfie();
       if (target === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
+      if (target === 'groups') { loadQQGroups(); }
       if (options.focus === true) button.focus();
       return true;
     }
@@ -9342,6 +9422,8 @@ Source prompt:
       card.addEventListener('click', () => navigateToTab(card.dataset.navTarget));
     });
     $('loginBtn').onclick = enterApp;
+    $('refreshGroupsBtn')?.addEventListener('click', () => loadQQGroups(true));
+    $('saveGroupsBtn')?.addEventListener('click', saveQQGroups);
     $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };
     $('logoutBtn').onclick = logout;
     if ($('confirmProceedBtn')) $('confirmProceedBtn').onclick = () => closeConfirmAction(true);

@@ -146,6 +146,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "enabled_image_model_priority": [],
     "enabled_audit_model_priority": [],
     "enabled_video_model_priority": [],
+    "group_chat_configs": {},
     # sequence: priority list only, or enabled order when empty; random: one from priority; fixed: priority 1 or enabled 1.
     "image_model_call_mode": "sequence",
     "video": {
@@ -351,6 +352,7 @@ class AICatConfig:
     blocked_users: List[str]
     whitelist_users: List[str]
     whitelist_groups: List[str]
+    group_chat_configs: Dict[str, Dict[str, str]]
     proxies: List[Dict[str, Any]]
     image_channels: List[ImageChannelConfig]
     audit_channels: List[ImageChannelConfig]
@@ -397,6 +399,8 @@ class AICatConfig:
         image = ensure_dict(raw, "image")
         video = ensure_dict(raw, "video")
         permission = ensure_dict(raw, "permission")
+        group_chat_configs = normalize_group_chat_configs(raw.get("group_chat_configs"))
+        raw["group_chat_configs"] = group_chat_configs
 
         proxies = normalize_proxies_list(raw.get("proxies") or raw.get("proxy_list") or [])
         # Migrate legacy per-channel proxy URL strings into shared proxies list once.
@@ -532,6 +536,7 @@ class AICatConfig:
             blocked_users=split_values(permission.get("blocked_users")),
             whitelist_users=split_values(permission.get("whitelist_users")),
             whitelist_groups=split_values(permission.get("whitelist_groups")),
+            group_chat_configs=group_chat_configs,
             proxies=proxies,
             image_channels=channels,
             audit_channels=audit_channels,
@@ -605,8 +610,20 @@ class AICatConfig:
         return out
 
     def get_prioritized_targets(self) -> List[ImageModelTarget]:
-        key = self._target_cache_key("image")
-        cached = self._cached_targets(key) if self.image_model_call_mode != "random" else None
+        return self.get_image_targets_for_mode(self.image_model_call_mode)
+
+    def get_image_targets_for_mode(
+        self,
+        mode: str = "sequence",
+        fixed_model: str = "",
+        *,
+        respect_global_priority: bool = True,
+    ) -> List[ImageModelTarget]:
+        mode = str(mode or "sequence").strip().lower()
+        if mode not in {"sequence", "random", "fixed"}:
+            mode = "sequence"
+        key = self._target_cache_key(f"image:{mode}:{fixed_model}:{respect_global_priority}")
+        cached = self._cached_targets(key) if mode != "random" else None
         if cached is not None:
             return cached
         all_targets: List[ImageModelTarget] = []
@@ -615,7 +632,7 @@ class AICatConfig:
                 channel.targets(self.image_global_timeout, request_timeout=LOCAL_IMAGE_WAIT_SECONDS)
             )
 
-        priority = self.enabled_image_model_priority
+        priority = self.enabled_image_model_priority if respect_global_priority else []
         selected = self._prioritize_targets(all_targets, priority)
         if priority:
             allowed = set(priority)
@@ -623,7 +640,6 @@ class AICatConfig:
                 target for target in selected
                 if target.label in allowed or f"{target.channel_name}:{target.model}" in allowed or target.model in allowed
             ]
-        mode = self.image_model_call_mode
         if mode == "random":
             if not selected:
                 return []
@@ -631,9 +647,35 @@ class AICatConfig:
 
             selected = [random.choice(selected)]
         elif mode == "fixed":
-            selected = selected[:1]
+            requested = str(fixed_model or "").strip()
+            if requested:
+                preferred = next(
+                    (
+                        target for target in selected
+                        if target.label == requested
+                        or target.model == requested
+                        or f"{target.channel_name}:{target.model}" == requested
+                    ),
+                    None,
+                )
+                selected = [preferred] if preferred is not None else []
+            else:
+                selected = selected[:1]
         result = self._bind_download_proxies(selected)
-        return self._store_targets(key, result) if self.image_model_call_mode != "random" else result
+        return self._store_targets(key, result) if mode != "random" else result
+
+    def get_enabled_image_targets(self) -> List[ImageModelTarget]:
+        """Return every enabled image model, before global priority/mode filtering."""
+        key = self._target_cache_key("image-enabled")
+        cached = self._cached_targets(key)
+        if cached is not None:
+            return cached
+        targets: List[ImageModelTarget] = []
+        for channel in self.image_channels:
+            targets.extend(
+                channel.targets(self.image_global_timeout, request_timeout=LOCAL_IMAGE_WAIT_SECONDS)
+            )
+        return self._store_targets(key, self._bind_download_proxies(targets))
 
     def get_audit_targets(self) -> List[ImageModelTarget]:
         key = self._target_cache_key("audit")
@@ -1512,6 +1554,29 @@ def split_values(value: Any) -> List[str]:
     else:
         items = re.split(r"[\s,]+", str(value or "").replace("\r", "\n"))
     return unique_values(str(item).strip() for item in items if str(item).strip())
+
+
+def normalize_group_chat_configs(value: Any) -> Dict[str, Dict[str, str]]:
+    """Keep only supported per-group access and image-routing settings."""
+    if not isinstance(value, dict):
+        return {}
+    result: Dict[str, Dict[str, str]] = {}
+    for raw_group_id, raw_config in value.items():
+        group_id = str(raw_group_id or "").strip()
+        if not group_id.isdigit() or not isinstance(raw_config, dict):
+            continue
+        chat_type = str(raw_config.get("chat_type") or "none").strip().lower()
+        if chat_type not in {"none", "black", "white"}:
+            chat_type = "none"
+        model_priority_mode = str(raw_config.get("model_priority_mode") or "default").strip().lower()
+        if model_priority_mode not in {"default", "sequence", "random", "fixed"}:
+            model_priority_mode = "default"
+        result[group_id] = {
+            "chat_type": chat_type,
+            "model_priority_mode": model_priority_mode,
+            "fixed_model": str(raw_config.get("fixed_model") or "").strip()[:240],
+        }
+    return result
 
 
 def to_bool(value: Any, default: bool = False) -> bool:

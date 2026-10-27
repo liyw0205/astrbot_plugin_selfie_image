@@ -541,6 +541,28 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
 
+        @app.route("/api/qq-groups", methods=["GET"])
+        def qq_groups() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            force = str(request.args.get("refresh") or "").strip().lower() in {"1", "true", "yes", "on"}
+            try:
+                return ok(self._run_async(self.plugin.list_qq_groups_for_web(force=force), timeout=20))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/qq-groups/config", methods=["POST"])
+        def qq_groups_config() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                return ok(self.plugin.update_group_chat_configs_from_web(payload))
+            except Exception as exc:
+                return fail(str(exc), 400)
+
         @app.route("/api/selfie-reference", methods=["GET", "POST"])
         def selfie_reference() -> Any:
             if not check_auth():

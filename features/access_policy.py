@@ -14,6 +14,7 @@ def access_status(
     usable_users: Iterable[str],
     whitelist_users: Iterable[str],
     whitelist_groups: Iterable[str],
+    group_chat_configs: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     blocked = set(blocked_users or [])
     usable = set(usable_users or [])
@@ -27,13 +28,23 @@ def access_status(
         "whitelist": False,
         "reason": "",
     }
+    group_chat_configs = group_chat_configs or {}
+    group_key = str(group_id or "")
+    has_group_config = group_key in group_chat_configs
+    group_config = group_chat_configs.get(group_key, {})
+    group_type = str(group_config.get("chat_type") or "none").strip().lower()
+    if group_id and group_type == "black":
+        status.update({"allowed": False, "reason": "群聊黑名单"})
+        return status
     if user_id and user_id in blocked:
         status.update({"allowed": False, "reason": "用户黑名单"})
         return status
     if usable and user_id not in usable:
         status.update({"allowed": False, "reason": "可使用人员白名单"})
         return status
-    if user_id in user_whitelist or (group_id and group_id in group_whitelist):
+    if user_id in user_whitelist or (
+        group_id and (group_type == "white" or (group_id in group_whitelist and not has_group_config))
+    ):
         status["unlimited"] = True
         status["whitelist"] = True
     return status
@@ -42,6 +53,8 @@ def access_status(
 def permission_denied_message(status: Mapping[str, Any]) -> str:
     if status.get("allowed"):
         return ""
+    if status.get("reason") == "群聊黑名单":
+        return "当前群聊已被加入黑名单，无法使用生图功能。"
     if status.get("reason") == "可使用人员白名单":
         return "当前仅允许可使用人员白名单内用户使用生图功能。"
     return "你已被加入用户黑名单，无法使用生图功能。"

@@ -1646,15 +1646,30 @@ def extract_quote_text(event: Any, limit: int = QUOTE_TEXT_MAX_CHARS) -> str:
                 collect_from(item, depth + 1)
             return
 
+    def is_reply_component(obj: Any) -> bool:
+        if isinstance(obj, Mapping):
+            raw_data = obj.get("data")
+            data = raw_data if isinstance(raw_data, Mapping) else obj
+            node_type = str(obj.get("type") or data.get("type") or "").lower()
+        else:
+            node_type = type(obj).__name__.lower()
+        return "reply" in node_type or "quote" in node_type
+
     message_obj = getattr(event, "message_obj", None)
     candidates = [
         getattr(message_obj, "quote", None),
         getattr(message_obj, "reply", None),
     ]
+    message_chain = getattr(message_obj, "message", None)
+    if isinstance(message_chain, (list, tuple)):
+        candidates.extend(item for item in message_chain if is_reply_component(item))
     raw_message = getattr(message_obj, "raw_message", None)
     for source in (raw_message, getattr(event, "raw_message", None)):
         if isinstance(source, Mapping):
             candidates.append(source.get("quote") or source.get("reply"))
+            raw_chain = source.get("message")
+            if isinstance(raw_chain, (list, tuple)):
+                candidates.extend(item for item in raw_chain if is_reply_component(item))
     for candidate in candidates:
         if candidate:
             collect_from(candidate)

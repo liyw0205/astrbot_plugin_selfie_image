@@ -50,6 +50,7 @@ from .features.access_policy import (
     permission_denied_message,
     quota_error_message,
 )
+from .features.qq_group_cache import QQGroupCache
 from .features.context_routing import (
     compact_followup_text,
     format_context_for_llm,
@@ -354,6 +355,7 @@ class SelfieImagePlugin(
         self.key_config = self._extract_native_key_config(native_config)
         self.raw_config = self._load_initial_config()
         self.config = AICatConfig.from_dict(self.raw_config)
+        self.qq_group_cache = QQGroupCache(self)
         self._load_persisted_conversation_context()
         self.persona = PersonaManager(self.data_dir)
         self.presets = ImagePresetManager(self.data_dir)
@@ -467,6 +469,7 @@ class SelfieImagePlugin(
             usable_users=self.config.usable_users,
             whitelist_users=self.config.whitelist_users,
             whitelist_groups=self.config.whitelist_groups,
+            group_chat_configs=self.config.group_chat_configs,
         )
         # Administrators get the same audit/quota exemptions as configured
         # unlimited users, while explicit access denials still take priority.
@@ -474,6 +477,42 @@ class SelfieImagePlugin(
             status["unlimited"] = True
             status["admin"] = True
         return status
+
+    async def list_qq_groups_for_web(self, *, force: bool = False) -> Dict[str, Any]:
+        configured_groups = dict(self.config.group_chat_configs)
+        configured_groups.update({group_id: {} for group_id in self.config.whitelist_groups})
+        payload = await self.qq_group_cache.list_groups(configured_groups, force=force)
+        configs = self.config.group_chat_configs
+        legacy_whitelist = set(self.config.whitelist_groups)
+        for row in payload.get("groups", []):
+            group_id = str(row.get("group_id") or "")
+            row["config"] = copy.deepcopy(configs.get(group_id, {
+                "chat_type": "white" if group_id in legacy_whitelist else "none",
+                "model_priority_mode": "default",
+                "fixed_model": "",
+            }))
+        payload["models"] = [target.label for target in self.config.get_enabled_image_targets()]
+        return payload
+
+    def update_group_chat_configs_from_web(self, payload: Any) -> Dict[str, Any]:
+        rows = payload.get("groups") if isinstance(payload, dict) else payload
+        if not isinstance(rows, list):
+            raise ValueError("groups 必须是数组")
+        configs: Dict[str, Dict[str, str]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            group_id = str(row.get("group_id") or "").strip()
+            if not group_id.isdigit():
+                continue
+            config = row.get("config") if isinstance(row.get("config"), dict) else row
+            configs[group_id] = {
+                "chat_type": str(config.get("chat_type") or "none"),
+                "model_priority_mode": str(config.get("model_priority_mode") or "default"),
+                "fixed_model": str(config.get("fixed_model") or "").strip(),
+            }
+        self.update_config_from_web({"group_chat_configs": configs})
+        return {"group_chat_configs": self.config.group_chat_configs}
 
     def _permission_denied_message(self, event: AstrMessageEvent) -> str:
         return permission_denied_message(self._access_status(event))
@@ -2744,7 +2783,17 @@ class SelfieImagePlugin(
     ) -> List[ImageModelTarget]:
         if targets is not None:
             return list(targets)
-        all_targets = self.config.get_prioritized_targets()
+        group_id = event_group_id(event) if event is not None else ""
+        group_config = self.config.group_chat_configs.get(group_id, {}) if group_id else {}
+        mode = str(group_config.get("model_priority_mode") or "default").strip().lower()
+        if mode == "default":
+            all_targets = self.config.get_prioritized_targets()
+        else:
+            all_targets = self.config.get_image_targets_for_mode(
+                mode,
+                str(group_config.get("fixed_model") or ""),
+                respect_global_priority=False,
+            )
         return prioritize_model_target(
             all_targets, self._get_session_model_override(event)
         )

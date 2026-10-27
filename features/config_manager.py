@@ -522,6 +522,7 @@ class ConfigurationMixin:
         next_config["web"] = copy.deepcopy(self.key_config["web"])
         self.raw_config = next_config
         self.config = AICatConfig.from_dict(self.raw_config)
+        self.raw_config["group_chat_configs"] = copy.deepcopy(self.config.group_chat_configs)
         self.raw_config.setdefault("image", {})["max_concurrent_tasks"] = self.config.image_max_concurrent_tasks
         scheduler = getattr(self, "_image_scheduler", None)
         if scheduler is None:

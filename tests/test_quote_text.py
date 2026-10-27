@@ -55,6 +55,24 @@ class QuoteTextExtractionTest(unittest.TestCase):
         event = _event("/画", quote=_Reply([_Plain("白色长袖衬衫配藏蓝百褶裙")]))
         self.assertEqual(extract_quote_text(event), "白色长袖衬衫配藏蓝百褶裙")
 
+    def test_reads_reply_component_from_astrbot_message_chain(self) -> None:
+        """OneBot puts the resolved Reply component in message_obj.message."""
+        event = _event(
+            "/画",
+            message=[_Reply([_Plain("窗边自然光下的白色连衣裙")]), _Plain("/画")],
+        )
+        self.assertEqual(extract_quote_text(event), "窗边自然光下的白色连衣裙")
+
+    def test_command_uses_reply_component_from_astrbot_message_chain(self) -> None:
+        event = _event(
+            "/画",
+            message=[_Reply([_Plain("海边黄昏的白色长裙")]), _Plain("/画")],
+        )
+        self.assertEqual(
+            extract_command_message(event, ("画", "生图"), include_quote_text=True),
+            "海边黄昏的白色长裙",
+        )
+
     def test_reads_astrbot_reply_message_str(self) -> None:
         """AstrBot's Reply exposes the parsed body in ``message_str``."""
         event = _event("/画", quote=_Reply([], message_str="坐在窗边看雨"))
