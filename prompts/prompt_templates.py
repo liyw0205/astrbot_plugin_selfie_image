@@ -9,6 +9,7 @@ from ..cos.leg_focus import (
     ensure_leg_focus_action,
     get_leg_focus_outfit,
     has_leg_focus_contract,
+    is_leg_calf_crop_action,
 )
 
 
@@ -150,7 +151,7 @@ def extract_user_prompt(action: str) -> str:
     match = re.search(r"(?:用户补充要求优先|用户补充要求|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
     if match:
         value = match.group(1)
-        value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear|outfit):[a-z0-9_]+】\s*", " ", value)
+        value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
         return re.sub(r"\s+", " ", value).strip(" 。")
     if any(marker in text for marker in ("【自拍 / 看看模式】", "【他拍 / 看看你模式】", "【自拍 / 看看COS模式】", "【他拍 / 看看COS模式】", "【第一视角 / 看看COS模式】", "【合影 / 合照模式】", "看看腿。", "【legs:outfit】", "成年人物日常下半身穿搭展示", "【唯一姿势·不可混用】")):
         return ""
@@ -203,15 +204,7 @@ def build_selfie_builtin_prompt(
         or "【pose:" in str(action)
     )
     is_group = (not is_cos) and ("合影" in str(action) or "合照" in str(action) or "同框" in str(action))
-    # Look-legs uses a close lower-body composition by default; feet may remain visible when natural.
-    feet_cropped = (
-        is_legs
-        or "【pose:reclined_knees_crop】" in str(action)
-        or "【crop:calves】" in str(action)
-        or bool(re.search(r"【pose:\w+_crop】", str(action)))
-        or "双脚完整裁出画外" in str(action)
-        or "不展示脚部" in str(action)
-    )
+    feet_cropped = is_legs and is_leg_calf_crop_action(str(action))
     if language == "en":
         style = {
             "real": "realistic photographic",
@@ -220,21 +213,27 @@ def build_selfie_builtin_prompt(
         }.get(effective_appearance_type, "the primary reference's visual medium")
         if effective_appearance_type == "anime":
             opening = (
-                "Create one cohesive soft Kyoto Animation-like anime illustration with a close vertical lower-body outfit composition."
+                "Create one cohesive soft Kyoto Animation-like anime illustration with a natural vertical legwear-focused outfit composition."
+                if is_legs and feet_cropped
+                else "Create one cohesive soft Kyoto Animation-like anime illustration with a complete vertical outfit composition."
                 if is_legs
                 else "Create one cohesive soft Kyoto Animation-like anime cosplay illustration."
                 if is_cos
                 else "Create one cohesive soft Kyoto Animation-like anime illustration in vertical smartphone selfie composition."
             )
         elif is_legs:
-            opening = f"Create one natural {style} vertical smartphone outfit record."
+            opening = (
+                f"Create one natural {style} vertical legwear-focused outfit photograph."
+                if feet_cropped
+                else f"Create one natural {style} vertical full-length outfit photograph."
+            )
         elif is_cos:
             opening = f"Create one natural {style} COS cover photo."
         else:
             opening = f"Create one natural {style} vertical smartphone cover photo."
         lines = [opening]
         if is_legs:
-            lines.append("Use the main reference only to keep the everyday outfit and natural proportions consistent; the complete person is outside the crop.")
+            lines.append("Use the main reference to preserve the subject's identity and visual medium; follow the selected outfit and framing below.")
         elif is_cos:
             lines.extend([
                 COS_IDENTITY_CONTRACT_EN if has_reference_image else "Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.",
@@ -253,8 +252,8 @@ def build_selfie_builtin_prompt(
                     if effective_appearance_type != "auto"
                     else "Use reference image 1 as the primary identity and visual-medium anchor; extra references must not replace or override the primary subject's visual medium."
                 )
-                if not is_legs
-                else "Use reference image 1 only for natural proportions and composition; ignore all legwear, socks, and shoes in every reference; later references must not widen the crop."
+                if not is_legs or not feet_cropped
+                else "Use reference image 1 for identity and natural proportions; follow the selected outfit and waist-to-shoes framing."
             )
             if viewpoint_change and not is_legs:
                 lines.append(
@@ -270,56 +269,57 @@ def build_selfie_builtin_prompt(
         if is_legs:
             camera_match = re.search(r"【cam:(selfie|first|third)】", str(action))
             camera_kind = str(camera_match.group(1) if camera_match else "selfie")
-            wear_match = re.search(r"本次服装搭配(?:已锁定为)?[:：]\s*([^。]+)", str(action))
-            selected = ""
-            if wear_match:
-                selected_source = str(wear_match.group(1)).strip().split("；", 1)[0]
-                selected = next((name for name in ("光腿神器", "白丝", "黑丝", "连裤袜") if name in selected_source), "")
+            wear_match = re.search(r"【wear:(daily|custom|white|black|bare|pantyhose)】", str(action))
+            selected = str(wear_match.group(1) if wear_match else "daily")
             selected_text = {
-                "光腿神器": "skin-tone leg-cover styling, continuous along every visible part of the legs",
-                "白丝": "opaque white thigh-high stockings, continuous down every visible part of the legs",
-                "黑丝": "opaque black thigh-high stockings, continuous down every visible part of the legs",
-                "连裤袜": "opaque white pantyhose, continuous from the waist through the toes",
-            }.get(selected)
+                "daily": "full-length everyday trousers and coordinated shoes",
+                "custom": "the user's explicitly specified complete outfit",
+                "white": "opaque white full-length tights",
+                "black": "opaque black full-length tights",
+                "bare": "opaque skin-tone full-length legwear",
+                "pantyhose": "opaque white full-length tights",
+            }[selected]
             legwear_line = (
-                f"Use only {selected_text}; ignore all legwear, socks, and shoes in the references; avoid ordinary short, crew, or mid-calf socks."
-                if selected_text
-                else "Use the single legwear option selected by the code; ignore all legwear, socks, and shoes in the references; avoid ordinary short, crew, or mid-calf socks."
+                f"Use the selected complete lower outfit: {selected_text}. Follow it consistently."
             )
             outfit_match = re.search(r"【outfit:([a-z_]+)】", str(action))
             outfit = get_leg_focus_outfit(outfit_match.group(1) if outfit_match else "")
             if outfit:
                 outfit_line = (
-                    "Use the code-locked lower outfit exactly: "
-                    f"{outfit.get('prompt_en', '')}. Do not replace the skirt or shoes."
+                    "Use the code-locked complete outfit exactly: "
+                    f"{outfit.get('prompt_en', '')}. Do not replace the selected bottoms or shoes."
                 )
             else:
-                outfit_line = "Follow the user's explicitly specified skirt or shoes exactly."
+                outfit_line = "Follow any explicitly specified clothing and shoes exactly."
             lines.append(
-                "First-person phone selfie framing: the camera points down from the waist and records a natural close lower-body outfit detail; the phone, arms, and upper body stay outside the frame."
+                "First-person natural outfit framing from waist to shoes; clearly show the skirt, hosiery, and shoes."
+                if feet_cropped and camera_kind == "selfie"
+                else "Full-length mirror selfie framing: show the subject from head to shoes; hold the phone naturally without hiding the outfit."
                 if camera_kind == "selfie"
-                else "Third-person candid outfit photo framing: the photographer stays outside the frame and records a natural close lower-body outfit detail."
+                else "Third-person legwear outfit photo from waist to shoes; keep the photographer outside the frame and retain a little environment."
+                if feet_cropped
+                else "Third-person full-length everyday photograph: keep the photographer outside the frame and show the subject from head to shoes."
             )
             if feet_cropped:
                 lines.extend([
                     (
-                        "Vertical anime outfit illustration: use a close lower-body everyday clothing composition for one subject; never widen to a half-body or full-body image, and do not use a knee or calf as a fixed crop line."
+                        "Vertical anime outfit illustration: use a natural waist-to-shoes outfit composition for one adult subject."
                         if effective_appearance_type == "anime"
-                        else "Casual vertical smartphone outfit record: use a close lower-body everyday clothing composition for one subject; never widen to a half-body or full-body photo, and do not use a knee or calf as a fixed crop line."
+                        else "Casual vertical outfit photograph: use a natural waist-to-shoes composition for one adult subject."
                     ),
                     legwear_line,
                     outfit_line,
-                    "Keep both legs anatomically continuous and natural. A leg may continue naturally beyond the image edge or be coherently occluded by clothing, furniture, or a foreground object with clear depth and boundaries.",
-                    "If a calf or foot is not shown, it must continue beyond the frame or be fully hidden by a solid object. Never let a leg abruptly end at a knee, mid-calf, or ankle; when kneeling, the ankle should transition naturally into the instep or sole before the body, clothing, or real contact hides it, never treat a stocking hem as the end of the calf. Rugs, floors, beds, or sofa surfaces may occlude a limb only with real contact and clear depth, never as an unexplained cutoff.",
-                    "Follow the selected seated composition exactly, with stable proportions and a close camera distance.",
+                    "Keep visible anatomy natural and continuous; show the hosiery and shoes clearly without furniture blocking them.",
+                    "Show the lower outfit, hosiery, and shoes clearly at a normal eye-level perspective; keep proportions natural.",
                     "Match the lighting to the requested scene; otherwise use soft available light, natural exposure, realistic fabric, and an unretouched everyday smartphone feel. Avoid studio polish, plastic skin, or 3D-rendered surfaces.",
                 ])
             else:
                 lines.extend([
-                    "Single subject only: a natural everyday clothing composition with no second person or background people.",
+                    "Single adult subject only: show the complete outfit from head to shoes at a natural camera distance.",
                     legwear_line,
-                    "Keep a close lower-body outfit composition with natural clothing folds, proportions, perspective, and continuous visible limbs.",
-                    "Use ordinary smartphone perspective, scene-appropriate ambient light, realistic fabric texture, and an unretouched everyday feel; avoid studio polish, plastic skin, or 3D-rendered surfaces.",
+                    outfit_line,
+                    "Keep the head, upper clothing, lower clothing, and shoes inside the frame; use natural proportions and a relaxed pose.",
+                    "Use ordinary camera perspective, scene-appropriate ambient light, realistic fabric texture, and an unretouched everyday feel; avoid studio polish, plastic skin, or 3D-rendered surfaces.",
                 ])
         elif is_group:
             lines.extend([
@@ -335,38 +335,45 @@ def build_selfie_builtin_prompt(
         if pose:
             pose_id = pose.group(1)
             pose_descriptions = {
-                "sofa_front_crop": "Sit at the front edge of a sofa with both knees naturally together, lower legs dropping straight down, and both feet resting fully on the floor; keep the waist-down framing stable.",
-                "chair_side_crop": "Sit on a wooden chair in a slight three-quarter side view; place one knee a little forward and the other slightly back, with both feet grounded and legs uncrossed.",
-                "sofa_cross_crop": "Sit on a sofa with both legs relaxed forward and ankles lightly overlapped while the knees stay aligned; keep the feet and sofa contact natural.",
-                "floor_knees_crop": "Sit on a rug with both knees gathered naturally and both lower legs folded behind the body; let the clothing and rug create coherent occlusion.",
-                "sofa_occlusion_crop": "Sit supported in the corner of a sofa with both knees bent forward; allow the sofa edge or cushion to hide the feet only with clear depth and continuous limbs.",
-                "stool_edge_crop": "Sit on a low stool with both knees forward; let one leg continue naturally beyond the lower image edge while the other drops vertically, without a joint-level crop.",
-                "floor_side_kneel_crop": "Use a stable side-kneeling seated pose on the floor with both knees gathered to one side; fold one lower leg forward with the foot grounded and the other naturally behind, keeping continuous limbs and coherent clothing or floor occlusion.",
-                "seat_knees_cross_crop": "Recline on a wide seat with both knees raised toward the camera; extend both lower legs forward and let the ankles overlap lightly in the foreground while keeping the seat support and leg anatomy natural.",
-                "floor_topdown_cross_crop": "Sit on the floor or a wood floor with both legs naturally crossed and knees and ankles aligned; use a close top-down view that keeps the clothing folds, crossed legs, and ground contact coherent.",
-                "first_person_topdown_legs_crop": "Sit comfortably and look down toward your own legs from a natural first-person viewpoint, not from an overhead photographer; extend both legs parallel toward the distance with knees and feet aligned, and keep both complete feet visible.",
-                "sit": "Sit naturally on a chair or sofa; let the everyday outfit drape naturally in the close lower-body composition.",
-                "sit_crop": "Sit naturally on a chair or sofa; let the everyday outfit drape naturally in the close lower-body composition.",
-                "kneel": "Use a natural kneeling pose on a rug or cushion; fold both lower legs naturally behind the body.",
-                "kneel_crop": "Use a natural kneeling pose on a rug or cushion; fold both lower legs naturally behind the body or hide them coherently behind the outfit.",
-                "side_lie": "Rest comfortably on one side on a bed or sofa; keep the outfit, visible legs, and bedding natural in the close composition.",
-                "side_lie_crop": "Rest comfortably on one side on a bed or sofa; keep the outfit, visible legs, and bedding natural in the close composition.",
-                "hug_knee": "Use a comfortable seated pose with the knees gathered naturally; keep the outfit and visible legs relaxed in the close composition.",
-                "hug_knee_crop": "Use a comfortable seated pose with the knees gathered naturally; keep the outfit and visible legs relaxed in the close composition.",
-                "cross_leg": "Use a relaxed seated pose with the clothing naturally crossed or staggered; keep the close lower-body composition stable.",
-                "cross_leg_crop": "Use a relaxed seated pose with the clothing naturally crossed or staggered; keep the close lower-body composition stable.",
-                "windowsill": "Sit naturally on a windowsill or low cabinet; keep the close lower-body outfit composition stable with soft window light.",
-                "windowsill_crop": "Sit naturally on a windowsill or low cabinet; keep the close lower-body outfit composition stable with soft window light.",
-                "kneel_up": "Use a slightly raised kneeling pose on a soft cushion; keep the outfit and folded lower legs natural in the close composition.",
-                "kneel_front": "Use a front-facing kneeling pose on a rug; keep both lower legs naturally folded behind the body.",
-                "floor_fold": "Use a relaxed bent-knee seated pose on a rug or wood floor; keep the close lower-body outfit composition stable.",
-                "one_knee_fix": "Use a natural one-knee clothing adjustment pose; keep the close lower-body outfit composition stable.",
-                "floor_knees_up_crop": "Use a relaxed seated pose on a rug or wood floor; keep the knees naturally bent and the close lower-body outfit composition stable.",
-                "reclined_knees_crop": "Use a relaxed seated pose leaning lightly against a sofa or chair; keep the close lower-body outfit composition natural and stable.",
-                "desk_sit_crop": "Sit naturally at a desk; keep the close lower-body outfit composition aligned with the desk edge and clothing details visible.",
-                "bed_supine_crop": "Rest comfortably on a bed with the outfit falling naturally; keep the close lower-body composition calm and everyday.",
+                "sofa_front_crop": "Sit naturally at the front edge of a sofa with both feet grounded.",
+                "chair_side_crop": "Sit naturally on a wooden chair in a slight three-quarter view with both feet grounded.",
+                "sofa_cross_crop": "Use a relaxed seated pose on a sofa without crossing the legs.",
+                "floor_knees_crop": "Stand naturally by a window with one foot half a step forward.",
+                "sofa_occlusion_crop": "Sit comfortably at the side of a sofa with both feet grounded and unobstructed.",
+                "stool_edge_crop": "Sit naturally on a stable low stool with both feet grounded.",
+                "floor_side_kneel_crop": "Walk at an easy pace on a flat path with balanced posture.",
+                "seat_knees_cross_crop": "Stand naturally with feet about shoulder-width apart and arms relaxed.",
+                "floor_topdown_cross_crop": "Follow the explicitly requested overhead angle with a stable seated pose.",
+                "first_person_topdown_legs_crop": "Use the explicitly requested first-person downward view with both legs naturally aligned.",
+                "staggered_stair_step_crop": "Stand on broad steps with one foot on a lower step and the other on the upper step; keep a stable balance and eye-level waist-to-shoes framing.",
+                "cross_step_snapshot_crop": "Capture a light walking step with the front foot crossing naturally ahead of the weight-bearing leg; keep ankles aligned and the waist-to-shoes view sharp.",
+                "turn_and_settle_crop": "Show a gentle half-turn ending in a stable stance, with one foot lightly touching down and the other bearing weight; keep the waist-to-shoes view natural.",
+                "bench_side_sit_crop": "Sit at one end of a bench in a relaxed side-facing pose, with one heel grounded and the other leg comfortably bent; keep hosiery and shoes unobstructed.",
+                "toe_touch_step_crop": "Stand beside a broad low step with one foot grounded and the other toe lightly touching the first step; keep a stable eye-level waist-to-shoes view.",
+                "back_staggered_step_crop": "Show the subject from behind with feet in a comfortable staggered stance; keep shoulders, hips, and head facing away without looking back.",
+                "sit": "Sit naturally on a chair or sofa with both feet grounded.",
+                "sit_crop": "Sit naturally on a chair or sofa with both feet grounded.",
+                "kneel": "Use a stable seated pose on a chair or sofa.",
+                "kneel_crop": "Use a stable seated pose on a chair or sofa.",
+                "side_lie": "Use a relaxed seated pose with balanced posture.",
+                "side_lie_crop": "Use a relaxed seated pose with balanced posture.",
+                "hug_knee": "Use a comfortable seated pose with feet resting naturally.",
+                "hug_knee_crop": "Use a comfortable seated pose with feet resting naturally.",
+                "cross_leg": "Use a relaxed seated pose with feet resting naturally.",
+                "cross_leg_crop": "Use a relaxed seated pose with feet resting naturally.",
+                "windowsill": "Sit on a stable chair beside a window.",
+                "windowsill_crop": "Sit on a stable chair beside a window.",
+                "kneel_up": "Use a relaxed seated pose on a stable chair.",
+                "kneel_front": "Use a relaxed seated pose on a stable chair.",
+                "floor_fold": "Use a relaxed seated pose with feet resting naturally.",
+                "one_knee_fix": "Stand naturally with one foot half a step forward.",
+                "floor_knees_up_crop": "Use a relaxed seated pose on a stable chair.",
+                "reclined_knees_crop": "Sit comfortably while keeping the torso upright.",
+                "desk_sit_crop": "Sit naturally on a chair beside a desk.",
+                "bed_supine_crop": "Use a relaxed seated pose on a stable chair.",
             }
-            lines.append(pose_descriptions.get(pose_id, f"Keep the selected composition tag: {pose_id}."))
+            pose_text = pose_descriptions.get(pose_id)
+            lines.append(pose_text or f"Keep the selected composition tag: {pose_id}.")
         user_line = ""
         if translated_user and translated_user not in rendered_action:
             user_line = f"User request: {translated_user}"
@@ -380,14 +387,18 @@ def build_selfie_builtin_prompt(
     camera_match = re.search(r"【cam:(selfie|third)】", str(action))
     camera_kind = str(camera_match.group(1) if camera_match else "selfie")
     camera_line_zh = (
-        "第一人称手机自拍：手机镜头从腰线向下记录下装局部，手机、手臂和上半身都在画面外。"
+        "第一人称自然视角服装照：腰线至鞋履入镜，清楚呈现下装、袜装与鞋履。"
+        if feet_cropped and camera_kind == "selfie"
+        else "全身镜前自拍：人物从头部到鞋履完整入镜，手机自然持握且不遮挡主要穿搭。"
         if camera_kind == "selfie"
-        else "第三人称摄影照片：拍摄者完全在画面外，镜头只记录腰部以下的下装局部。"
+        else "第三人称腿部穿搭照片：摄影者完全在画面外，平视拍摄腰线至鞋履，保留少量环境。"
+        if feet_cropped
+        else "第三人称全身日常照片：拍摄者完全在画面外，人物从头部到鞋履完整入镜。"
     )
     if is_legs and feet_cropped:
-        legs_line = camera_line_zh + "成年人物的得体日常穿搭记录，采用近距离下半身局部构图；展示服装颜色、材质和层次，不刻意强调身体细节。"
+        legs_line = camera_line_zh + "成年人物腿部穿搭展示：腰线至鞋履自然入镜，日常袜装与鞋履清楚可见，保持服装完整、比例自然。"
     elif is_legs:
-        legs_line = camera_line_zh + "成年人物的得体日常穿搭记录，采用近距离下半身局部构图；展示服装颜色、材质和层次，不刻意强调身体细节。"
+        legs_line = camera_line_zh + "成年人物全身穿搭照片，头部、上衣、下装与鞋履完整入镜，以正常拍摄距离自然呈现整体穿搭。"
     else:
         legs_line = ""
     if is_legs:
@@ -401,7 +412,7 @@ def build_selfie_builtin_prompt(
     else:
         photo_type_line = "这是自拍/日常照片。"
     identity_line = (
-        "参考图只用于保持服装比例与自然体态，完整人物位于画面之外。"
+        "参考图用于保持主角身份和自然体态，服装以本次锁定搭配为准。"
         if is_legs
         else "参考图只锁定主角身份、脸型五官、性别、肤色和身体比例。"
         if is_cos
@@ -414,16 +425,14 @@ def build_selfie_builtin_prompt(
         else "" if is_legs else "正对镜头时自然看向镜头，眼神有焦点。"
     )
     leg_crop_line = (
-        "严格近距离构图：保持自然的下半身服装局部，不扩展为半身或全身，不把膝关节或小腿作为固定裁切线。"
-        "腿部必须连续、自然并符合真实人体结构；画面边缘可以自然裁出腿部，衣物、家具或前景也可以按明确的前后关系合理遮挡。"
-        "若小腿或脚不展示，必须自然延伸到画面外，或被边界清楚的实体物体完整遮挡；禁止在膝关节、小腿中段或脚踝附近突然终止；跪坐时脚踝应自然过渡到脚背或脚底，再由身体、衣摆或真实接触关系遮挡，不能把袜筒下缘直接当作小腿终点；地毯、床面或沙发面只有在真实接触和清晰前后关系下才可遮挡肢体，不能无缘无故吞没可见腿部。"
-        if is_legs
+        "以腰线至鞋履的自然构图展示下装、袜装和鞋履，肢体比例自然连续，避免家具遮挡袜装或鞋履。"
+        if is_legs and feet_cropped
         else ""
     )
     outfit_match = re.search(r"【outfit:([a-z_]+)】", str(action))
     outfit = get_leg_focus_outfit(outfit_match.group(1) if outfit_match else "")
     leg_outfit_line = (
-        f"代码已锁定下装服饰组合：{outfit.get('skirt', '')}、{outfit.get('shoes', '')}；袜装严格使用本次唯一腿部穿搭。"
+        f"代码已锁定下装服饰组合：{outfit.get('bottoms') or outfit.get('skirt', '')}、{outfit.get('shoes', '')}。"
         if outfit
         else "裙装或鞋履按用户明确指定内容执行。"
         if is_legs and outfit_match
@@ -431,11 +440,15 @@ def build_selfie_builtin_prompt(
     )
     if is_legs and effective_appearance_type == "anime":
         photo_style_line = (
-            "动漫插画质感：保持统一的柔光京阿尼风格；用手机近距离取景的透视与构图记录服装，光线服从用户指定场景，未指定时使用柔和自然光或环境光。"
+            "动漫插画质感：保持统一的柔光京阿尼风格；"
+            + ("以自然腰线至鞋履构图清楚呈现袜装穿搭，" if feet_cropped else "以自然全身构图清楚呈现整体服装，")
+            + "光线服从用户指定场景，未指定时使用柔和自然光或环境光。"
         )
     elif is_legs and effective_appearance_type == "real":
         photo_style_line = (
-            "真人摄影质感：像普通手机竖屏近距离记录服装；光线服从用户指定场景，未指定时使用柔和自然光或环境光，"
+            "真人摄影质感：像普通相机拍摄的竖屏"
+            + ("腰线至鞋履的日常穿搭照片；" if feet_cropped else "全身日常照片；")
+            + "光线服从用户指定场景，未指定时使用柔和自然光或环境光，"
             "保留真实布料厚度、细小褶皱和自然曝光变化；避免棚拍精修、塑料材质、插画感、3D渲染感和过度虚化。"
         )
     elif is_cos:
@@ -455,7 +468,9 @@ def build_selfie_builtin_prompt(
         identity_line,
         eye_line,
         (
-            "参考图一只用于服装比例和构图，额外参考图只用于服装、姿势、光线或场景，不得扩大服装取景。"
+            "参考图用于保持主角身份和自然体态；额外参考图仅提供用户指定的服装、姿势、构图、光线或场景。"
+            if is_legs and not feet_cropped
+            else "参考图只用于自然体态和构图，按当前选定的腰线至鞋履构图呈现袜装穿搭。"
             if is_legs
             else "参考图一只锁定主角身份和身体比例；额外参考图只用于用户指定的服装、姿势、构图、光线或场景。"
             if is_cos

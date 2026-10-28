@@ -1455,10 +1455,17 @@ class SelfieImagePlugin(
             scene_light_provider=scene_provider,
         )
 
-    def _build_group_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
+    def _build_group_selfie_action(
+        self,
+        extra_request: str = "",
+        has_refs: bool = False,
+        *,
+        avoid_shot: str = "",
+    ) -> str:
         return build_group_selfie_action(
             extra_request,
             has_refs,
+            avoid_shot=avoid_shot,
             appearance_type=_appearance_type_for_request(getattr(self, "persona", None), extra_request),
         )
 
@@ -1588,7 +1595,7 @@ class SelfieImagePlugin(
             context_hint=action,
             allow_context_fallback=True,
         )
-        cos_selection = self._select_cos_references(action, extra_refs) if self._is_cos_action(action) else None
+        cos_selection = self._select_selfie_references(action, extra_refs)
         group_selection = (
             self._select_group_references(extra_refs)
             if self._looks_like_group_selfie_intent(action) and not self._is_cos_action(action)
@@ -2397,6 +2404,27 @@ class SelfieImagePlugin(
             persona_extra_refs=self._persona_auxiliary_references(action),
         )
 
+    def _select_selfie_references(
+        self, action: str, message_refs: List[ImageReference]
+    ) -> Optional[CosReferenceSelection]:
+        """Use user images as identity only for the two reference-driven look modes."""
+        intent = self.persona.analyze_selfie_intent(str(action or ""))
+        compact = re.sub(r"\s+", "", str(action or "")).lower()
+        look_cos = bool(intent.is_cos_look and "看看cos" in compact)
+        if not look_cos and not intent.is_legs_only:
+            if intent.is_cos_look:
+                return self._select_cos_references(action, message_refs)
+            return None
+
+        is_cos = bool(intent.is_cos_look)
+        return select_cos_references(
+            self._persona_identity_reference(allow_logo=not is_cos),
+            message_refs,
+            action=action,
+            persona_extra_refs=self._persona_auxiliary_references(action),
+            prefer_message_identity=True,
+        )
+
     async def _build_selfie_prompt_and_refs(
         self,
         action: str,
@@ -2407,8 +2435,8 @@ class SelfieImagePlugin(
         llm_generate = (lambda prompt: self._call_text_llm(event, prompt, timeout=6)) if event is not None else None
         await self.persona.ensure_daily_selfie_profile(action, llm_generate=llm_generate)
         persona_ref = self._persona_identity_reference(allow_logo=not self._is_cos_action(action))
-        if cos_selection is None and self._is_cos_action(action):
-            cos_selection = self._select_cos_references(action, extra_refs)
+        if cos_selection is None:
+            cos_selection = self._select_selfie_references(action, extra_refs)
         if cos_selection is not None:
             refs = list(cos_selection.refs)
             identity_ref = cos_selection.identity_ref
@@ -2436,8 +2464,8 @@ class SelfieImagePlugin(
         cos_selection: Optional[CosReferenceSelection] = None,
     ) -> Tuple[str, List[ImageReference], Dict[str, Any]]:
         """Use the central English built-ins and translate only free-form user text."""
-        if cos_selection is None and self._is_cos_action(action):
-            cos_selection = self._select_cos_references(action, extra_refs)
+        if cos_selection is None:
+            cos_selection = self._select_selfie_references(action, extra_refs)
         prompt, refs = await self._build_selfie_prompt_and_refs(
             action,
             extra_refs,
@@ -5160,7 +5188,7 @@ class SelfieImagePlugin(
             m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
-                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_pose|cos_scene|cos_framing|cos_view|legs|wear|outfit):[a-z0-9_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_pose|cos_scene|cos_framing|cos_view|legs|wear|outfit|frame):[a-z0-9_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
             # Keep the original command query even when it is already present
             # in the selected outfit title/prompt and therefore has no user
@@ -5205,7 +5233,11 @@ class SelfieImagePlugin(
                     round_action = self._build_group_selfie_action(
                         variant_extra,
                         bool(extra_refs),
+                        avoid_shot=last_shot,
                     )
+                    m_shot = re.search(r"【shot:([a-z_]+)】", round_action)
+                    if m_shot:
+                        last_shot = str(m_shot.group(1) or last_shot)
                 elif source == "command-look-legs" or "看看腿" in str(action or "") or "【legs:outfit】" in str(action or "") or "【pose:" in str(action or ""):
                     round_action = self._build_leg_focus_action(
                         variant_extra,
@@ -6171,7 +6203,7 @@ class SelfieImagePlugin(
         )
         if not action:
             action = default_action_with_refs if extra_refs else default_action
-        cos_selection = self._select_cos_references(action, extra_refs) if self._is_cos_action(action) else None
+        cos_selection = self._select_selfie_references(action, extra_refs)
         group_selection = (
             self._select_group_references(extra_refs)
             if progress_label == "合影" and not self._is_cos_action(action)
@@ -6255,7 +6287,7 @@ class SelfieImagePlugin(
                 "· /文生图　只用文字按原文出图，不走自拍人设，也不用形象图",
                 "· /图生图　必须附图或引用图，按原文改图；不自动使用形象图",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
-                "· /看看腿　腰部以下的日常下装穿搭近景，上半身不入镜；腿部穿搭随机光腿神器、白丝、黑丝或连裤袜，可直接指定；随机手机记录、俯拍或朋友协助拍摄视角",
+                "· /看看腿　随机展示黑丝、白丝等日常袜装穿搭，默认腰线至鞋履的第三人称平视构图；可指定长裤、全身、姿势或自拍",
                 "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
                 "· /查看生图提示词　引用或附带图片后，始终由当前聊天 LLM 反推生图提示词，不查询生图记录",
                 "· /看看COS　随机一套内置 COS 换装；未指定时每次随机使用他拍、第一视角或自拍视角，可明确写「他拍」「第一视角」或「自拍」固定视角；可用 -c 指定数量，预设、随机池角色/类别和额外提示词可任意顺序，未匹配文本保留为额外提示；可发「看看COS 列表/全部/查看」浏览标题",
@@ -7042,7 +7074,7 @@ class SelfieImagePlugin(
         p9: str = "",
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
-        """腰部以下的日常下装穿搭近景；上半身不入镜；可写数量。"""
+        """生成日常袜装穿搭展示；可指定服装、姿势、自拍或全身构图。"""
         fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         raw_message = extract_command_message(event, "看看腿", fallback_args, include_quote_text=True)
         raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)

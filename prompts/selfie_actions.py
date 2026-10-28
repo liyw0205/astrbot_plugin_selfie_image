@@ -143,11 +143,74 @@ def _has_explicit_staging_light(text: str) -> bool:
     return any(_has_positive_staging_term(compact, term) for term in SELFIE_LIGHT_TERMS)
 
 
-def _pick_staging_scene(scenes: List[str], orientation: str = "") -> str:
-    compatible = list(scenes)
+def _scene_contains(scene: str, *terms: str) -> bool:
+    compact = re.sub(r"\s+", "", str(scene or "")).lower()
+    return any(term.lower() in compact for term in terms)
+
+
+def _scene_supports_shot(scene: str, shot: str) -> bool:
+    """Keep a randomly selected shot grounded in the selected environment."""
+    if shot == "mirror_half":
+        return _scene_contains(scene, "镜", "mirror")
+    if shot == "window_side":
+        return _scene_contains(scene, "窗", "window", "阳台")
+    if shot == "desk_sit":
+        return _scene_contains(scene, "桌", "书桌", "table", "咖啡馆", "咖啡店")
+    if shot == "sofa_casual":
+        return _scene_contains(scene, "沙发", "床", "榻", "sofa", "bed")
+    if shot == "lean_wall":
+        return _scene_contains(scene, "墙", "门框", "窗框", "立柱", "wall", "door")
+    if shot == "walk_candid":
+        return _scene_contains(
+            scene,
+            "街", "树荫", "校园", "走廊", "车站", "海边", "沙滩", "河边",
+            "天台", "屋顶", "楼梯", "草地", "花丛", "竹林", "street", "park",
+        )
+    if shot in {"mirror_half", "window_side", "desk_sit", "sofa_casual", "lean_wall", "walk_candid"}:
+        return False
+    return True
+
+
+def _pick_staging_scene(scenes: List[str], orientation: str = "", shot: str = "") -> str:
+    compatible = [scene for scene in scenes if not shot or _scene_supports_shot(scene, shot)]
     if orientation == "back":
         compatible = [scene for scene in compatible if "镜" not in scene]
     return random.choice(compatible or scenes)
+
+
+def _shots_supported_by_scenes(
+    shot_pool: List[Tuple[str, int]],
+    scenes: List[str],
+    explicit_scene_text: str = "",
+) -> List[Tuple[str, int]]:
+    source = [explicit_scene_text] if explicit_scene_text else list(scenes)
+    compatible = [
+        item for item in shot_pool
+        if any(_scene_supports_shot(scene, item[0]) for scene in source)
+    ]
+    return compatible or shot_pool
+
+
+def _selfie_gestures_for_scene(scene: str, shot: str) -> List[str]:
+    gestures = list(SELFIE_GESTURES)
+    if not _scene_contains(scene, "杯", "咖啡馆", "咖啡店", "厨房", "cup", "cafe"):
+        gestures = [gesture for gesture in gestures if "捧杯" not in gesture]
+    if shot == "mirror_half":
+        gestures = [gesture for gesture in gestures if "捧杯" not in gesture]
+    return gestures or ["嘴角轻微笑意"]
+
+
+def _third_person_actions_for_scene(scene: str, shot: str) -> List[str]:
+    if shot == "lean_wall":
+        return ["靠墙或门框放松站立，手臂自然下垂", "整理袖口或发丝，肩背轻靠支撑面"]
+    if shot == "walk_candid":
+        return ["行走中自然停步，头部顺着行进方向", "拎袋子自然侧身停步，脚步刚好被捕捉"]
+    actions = list(THIRD_PERSON_SIDE_ACTIONS if shot == "side_profile" else THIRD_PERSON_ACTIONS)
+    if not _scene_contains(scene, "杯", "咖啡馆", "咖啡店", "厨房", "cup", "cafe"):
+        actions = [action for action in actions if "杯" not in action]
+    if not _scene_contains(scene, "书店", "书桌", "图书", "阅读", "book", "desk"):
+        actions = [action for action in actions if "翻书" not in action]
+    return actions or ["整理袖口或发丝"]
 
 
 def period_scene_light_pools(
@@ -250,9 +313,12 @@ def build_selfie_look_action(
             has_refs,
             appearance_type=appearance_type,
         )
+    scenes, lights = scene_light_provider("selfie")
+    explicit_scene = _has_explicit_staging_scene(extra)
     shot_pool = [item for item in SELFIE_SHOT_POOL if item[0] != avoid_shot]
     if not shot_pool:
         shot_pool = list(SELFIE_SHOT_POOL)
+    shot_pool = _shots_supported_by_scenes(shot_pool, scenes, extra if explicit_scene else "")
     orientation = _requested_staging_orientation(extra)
     shot = (
         "back_view" if orientation == "back"
@@ -263,16 +329,18 @@ def build_selfie_look_action(
             k=1,
         )[0]
     )
-    scenes, lights = scene_light_provider("selfie")
-    explicit_scene = _has_explicit_staging_scene(extra)
     explicit_light = _has_explicit_staging_light(extra)
     if shot == "back_view":
-        scene = "" if explicit_scene else _pick_staging_scene(scenes, "back")
+        scene = "" if explicit_scene else _pick_staging_scene(scenes, "back", shot)
         gesture = "双手自然垂放；场景中已有合适支撑物时可轻轻搭放"
         light = "" if explicit_light else random.choice(lights)
     else:
-        scene = "" if explicit_scene else _pick_staging_scene(scenes, orientation)
-        gesture = random.choice(SELFIE_GESTURES)
+        scene = "" if explicit_scene else _pick_staging_scene(scenes, orientation, shot)
+        gesture_scene = scene or next(
+            (item for item in scenes if _scene_supports_shot(item, shot)),
+            "",
+        )
+        gesture = random.choice(_selfie_gestures_for_scene(gesture_scene, shot))
         light = "" if explicit_light else random.choice(lights)
     rear_view = shot == "back_view"
     side_view = shot == "side_profile"
@@ -281,7 +349,7 @@ def build_selfie_look_action(
         + (
             "由主角自行启动手机定时拍摄，拍摄者不入画；这是自摄成片，不要求出现手机或自拍手臂。"
             "主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈，也不要求露出正脸；双手放松垂在身侧，不凭空增加栏杆、手机或其他道具。"
-            "保持竖屏半身中近景与自然透视，重点呈现背面发型和当前穿搭。"
+            "保持竖屏半身中近景与自然透视，重点呈现背面发型和当前穿搭；不要美颜滤镜、不要棚拍精修。"
             if rear_view
             else (
                 "身体侧向镜头的自拍构图：肩胯和头部朝向自然连贯，不回头硬露正脸；表情放松，保持面部自然可见。"
@@ -323,9 +391,16 @@ def build_third_person_look_action(
     appearance_type: str = "auto",
     scene_light_provider: Callable[[str], Tuple[List[str], List[str]]] = period_scene_light_pools,
 ) -> str:
+    scenes, lights = scene_light_provider("look_you")
+    explicit_scene = _has_explicit_staging_scene(extra_request)
     shot_pool = [item for item in THIRD_PERSON_SHOT_POOL if item[0] != avoid_shot]
     if not shot_pool:
         shot_pool = list(THIRD_PERSON_SHOT_POOL)
+    shot_pool = _shots_supported_by_scenes(
+        shot_pool,
+        scenes,
+        extra_request if explicit_scene else "",
+    )
     orientation = _requested_staging_orientation(extra_request)
     shot = (
         "back_view" if orientation == "back"
@@ -336,18 +411,18 @@ def build_third_person_look_action(
             k=1,
         )[0]
     )
-    scenes, lights = scene_light_provider("look_you")
-    explicit_scene = _has_explicit_staging_scene(extra_request)
     explicit_light = _has_explicit_staging_light(extra_request)
     if shot == "back_view":
-        scene = "" if explicit_scene else _pick_staging_scene(scenes, "back")
+        scene = "" if explicit_scene else _pick_staging_scene(scenes, "back", shot)
         action = "双手放松垂在身侧；场景中已有合适支撑物时可轻轻搭放"
         light = "" if explicit_light else random.choice(lights)
     else:
-        scene = "" if explicit_scene else _pick_staging_scene(scenes, orientation)
-        action = random.choice(
-            THIRD_PERSON_SIDE_ACTIONS if shot == "side_profile" else THIRD_PERSON_ACTIONS
+        scene = "" if explicit_scene else _pick_staging_scene(scenes, orientation, shot)
+        action_scene = scene or next(
+            (item for item in scenes if _scene_supports_shot(item, shot)),
+            "",
         )
+        action = random.choice(_third_person_actions_for_scene(action_scene, shot))
         light = "" if explicit_light else random.choice(lights)
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
     rear_view = shot == "back_view"
@@ -357,7 +432,7 @@ def build_third_person_look_action(
         "别人视角的单人成品照：镜头已经对准主角拍下，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角。"
         + (
             "本次明确采用背面构图：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手放松垂在身侧，不凭空增加支撑物，优先展示发型和服装后侧。"
-            "竖屏半身中近景，透视自然，拍摄者留在画面外。"
+            "竖屏半身中近景，透视自然，拍摄者留在画面外；不要美颜滤镜、不要影楼精修。"
             if rear_view
             else (
                 "本次采用纯侧身构图：身体、肩线和头部朝向一致，不回头或扭颈硬露正脸。"
@@ -394,6 +469,7 @@ def build_group_selfie_action(
     extra_request: str = "",
     has_refs: bool = False,
     *,
+    avoid_shot: str = "",
     appearance_type: str = "auto",
 ) -> str:
     orientation = _requested_staging_orientation(extra_request)
@@ -402,9 +478,17 @@ def build_group_selfie_action(
     elif orientation == "side":
         group_shot = "side_profile"
     else:
+        shot_options = [
+            ("group_portrait", 5),
+            ("group_environment", 3),
+            ("back_view", 1),
+        ]
+        available_options = [item for item in shot_options if item[0] != avoid_shot]
+        if not available_options:
+            available_options = shot_options
         group_shot = random.choices(
-            ["group_portrait", "group_environment"],
-            weights=[5, 3],
+            [name for name, _ in available_options],
+            weights=[weight for _, weight in available_options],
             k=1,
         )[0]
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
@@ -427,12 +511,13 @@ def build_group_selfie_action(
     if group_shot == "back_view":
         group_staging = (
             "本次合影采用背面构图：主角背对镜头，头部与肩胯朝向一致，不回头、不回眸、不扭颈；"
-            "双手放松垂在身侧，不凭空增加支撑物；其他同框对象按用户提供的实际人数和站位自然安排，不增删人物。"
+            "采用竖屏中远景，保证所有同框对象自然入镜；双手放松垂在身侧，不凭空增加支撑物；"
+            "其他同框对象按用户提供的实际人数和站位自然安排，不增删人物。"
         )
     elif group_shot == "side_profile":
         group_staging = (
             "本次主角采用自然侧身构图：身体、肩线和头部朝向一致，不回头硬露正脸；"
-            "其他同框对象按用户提供的实际人数和站位自然安排，不增删人物。"
+            "采用竖屏中景，保证所有同框对象自然入镜；其他同框对象按用户提供的实际人数和站位自然安排，不增删人物。"
         )
     elif group_shot == "group_environment":
         group_staging = "本次采用竖屏中远景环境合影构图，所有同框对象和周围场景都清楚，保持对象数量与身份不变。"

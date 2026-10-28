@@ -1769,7 +1769,7 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, Any]] = {
     },
     "seated_composed": {
         "title": "端正坐姿",
-        "prompt": "坐在椅子或矮凳前缘，上身舒展，双腿并拢后自然斜向一侧；手部动作遵循套装已有道具与配饰，衣摆自然落下。",
+        "prompt": "只使用当前场景中已经存在且合适的椅子、沙发、矮凳或榻榻米边缘坐下；若场景没有合适支撑面则改为自然站姿，不凭空增加家具。上身舒展，双腿并拢后自然斜向一侧；手部动作遵循套装已有道具与配饰，衣摆自然落下。",
     },
     "walking_turn": {
         "title": "轻步转身",
@@ -1790,7 +1790,7 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, Any]] = {
     },
     "leaning_rest": {
         "title": "倚靠停留",
-        "prompt": "身体一侧轻靠窗框、栏杆或墙面，肩部放松，一腿自然微屈；保持站姿稳定，手部动作遵循套装已有道具，不把背景物体变成新道具。",
+        "prompt": "仅轻靠当前场景中明确存在且位置合适的窗框、栏杆或墙面；若没有合适支撑物则保持自然站姿，不凭空增加墙、栏杆或道具。肩部放松，一腿自然微屈，身体重心稳定，手部动作遵循套装已有道具。",
     },
     "stair_sit": {
         "title": "台阶坐姿",
@@ -1798,11 +1798,11 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, Any]] = {
     },
     "reach_light": {
         "title": "伸手触景",
-        "prompt": "身体微微转向一侧，一只手自然抬起，像要轻触身旁的窗光、枝叶或栏杆；视线跟随手部方向，动作克制，不凭空增加道具。",
+        "prompt": "身体微微转向一侧；仅在当前场景确实有近处枝叶、窗框或栏杆时，一只手自然抬起轻触该物件，否则手自然停在身侧。视线顺着动作方向，动作克制，不凭空增加道具。",
     },
     "over_shoulder": {
         "title": "背身回眸",
-        "prompt": "仅在用户明确要求回眸时使用：身体朝远离镜头的方向，头部只做轻微、自然的侧向转动，不把头扭到肩后，不强求正脸或双眼同时可见；肩颈保持连贯，优先展示侧脸和服装背面。",
+        "prompt": "仅在用户明确要求回眸时使用：身体背向镜头并保持肩胯朝外，头部仅向镜头所在一侧微微转动，露出自然侧脸轮廓；下巴微收，目光低垂看向身侧或地面，不直视镜头、不转成正脸，远侧五官允许自然遮挡。颈部保持放松连贯，不把脸拧过肩线，优先展示侧脸与服装背面。",
         "orientation": "back",
         "explicit_only": True,
     },
@@ -1813,12 +1813,12 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, Any]] = {
     },
     "back_to_camera": {
         "title": "背对镜头",
-        "prompt": "人物背部朝向镜头，肩线、胯部和头部朝向一致，头部保持正向，不回头、不回眸、不扭转颈部；长发自然垂落背部，清楚展示服装后侧。若场景已有栏杆、窗台或矮墙，可双手自然搭放其上；没有合适支撑物时双手放松垂在身体两侧，不凭空增加道具。",
+        "prompt": "人物背部朝向镜头，肩线、胯部和头部朝向一致，头部保持正向，不回头、不回眸、不扭转颈部；身体面向场景的主要景物或纵深方向，例如窗外、道路、天际线、庭院深处、穹顶投影、舞台灯光、隧道尽头或室内长廊，不面朝近处空墙或封闭角落；长发自然垂落背部，清楚展示服装后侧。仅在当前场景已有栏杆、窗台或矮墙时双手自然搭放其上，否则双手放松垂在身体两侧，不凭空增加道具。",
         "orientation": "back",
     },
     "relaxed_recline": {
         "title": "沙发斜倚",
-        "prompt": "侧身倚靠在沙发或日间榻边，由一侧前臂稳定支撑上身，双腿自然收拢；呈放松休息状态，不完全躺倒，不遮挡或压乱服装。",
+        "prompt": "只倚靠当前场景中已经存在的沙发、床沿或日间榻边；若没有合适的柔软支撑面则改为端坐，不凭空增加家具。由一侧前臂稳定支撑上身，双腿自然收拢；呈放松休息状态，不完全躺倒，不遮挡或压乱服装。",
     },
     "overhead_stretch": {
         "title": "单臂舒展",
@@ -1829,8 +1829,8 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, Any]] = {
 COS_EXPLICIT_ONLY_POSE_IDS = {
     pose_id for pose_id, pose in COS_RANDOM_POSE_CLASSES.items() if pose.get("explicit_only")
 }
-COS_EXPLICIT_ONLY_FRAMING_IDS = {"rear_lookback"}
-COS_SCENE_GENERIC_POSE_IDS = ("side_profile", "back_to_camera")
+COS_EXPLICIT_ONLY_FRAMING_IDS = {"rear_lookback", "low_angle_neck_to_knee"}
+COS_SCENE_GENERIC_POSE_IDS = ("side_profile",)
 
 COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
     "bedroom_carpet": {
@@ -1866,49 +1866,49 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "aliases": ("庭院", "花园", "小径", "庭院小路", "树下"),
         "prompt": "安静整洁的庭院小径，少量绿植作为自然背景，人物仍是画面主体。",
         "style_prompt": "低饱和自然电影感，树叶透光形成零散光斑，浅绿与灰白过渡柔和，带轻微胶片褪色。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder", "overhead_stretch"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder", "back_to_camera", "overhead_stretch"),
     },
     "bamboo_garden": {
         "title": "竹林石径",
         "aliases": ("竹林", "竹林小径", "竹林石径", "竹林里"),
         "prompt": "清晨的竹林石径，疏朗竹影和自然绿意形成纵深，光线清透，背景不出现其他人物。",
         "style_prompt": "冷绿调旧电影静帧，竹影层次清楚、暗部有细颗粒，清冷但不过分压暗人物。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder", "back_to_camera"),
     },
     "cherry_blossom_path": {
         "title": "樱花步道",
         "aliases": ("樱花步道", "樱花树下", "樱花小径", "樱花林"),
         "prompt": "春日樱花步道，少量花瓣随风飘落，远处花树形成柔和纵深，画面清新自然。",
         "style_prompt": "淡粉与雾白的柔焦胶片色彩，逆光花瓣轻微泛白，低对比、细颗粒，不遮挡人物五官。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "overhead_stretch"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "back_to_camera", "overhead_stretch"),
     },
     "seaside_boardwalk": {
         "title": "海边栈道",
         "aliases": ("海边栈道", "海边", "海岸", "海滨", "沙滩"),
         "prompt": "开阔海边木栈道，远处海平线和轻柔浪花作为背景，带自然海风感，不出现游客或船只主体。",
         "style_prompt": "冷蓝DV录像静帧，海天略微过曝、颗粒明显，低灰度柔和配色，人物边缘保持清晰。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "reach_light", "over_shoulder", "overhead_stretch"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "reach_light", "over_shoulder", "back_to_camera", "overhead_stretch"),
     },
     "rooftop_sunset": {
         "title": "城市屋顶夕照",
         "aliases": ("屋顶夕阳", "天台", "城市屋顶", "屋顶夜景"),
         "prompt": "日落时分的城市屋顶露台，远处楼群被暖色夕光勾勒，栏杆和天际线保持简洁。",
         "style_prompt": "暖金色胶片快照，夕阳高光轻微泛白，低饱和、柔光晕和浅浅颗粒，避免橙色滤镜过重。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "reach_light", "over_shoulder", "overhead_stretch"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "reach_light", "over_shoulder", "back_to_camera", "overhead_stretch"),
     },
     "old_town_lane": {
         "title": "古街巷口",
         "aliases": ("古街", "老街", "石板路", "巷口", "古镇街道"),
         "prompt": "安静的古街石板巷口，木窗、灰瓦和浅色墙面构成有层次的环境人像背景，不出现招牌文字或路人。",
         "style_prompt": "褪色旅行胶片质感，灰蓝石板与旧木色形成冷暖对比，颗粒明显但人物和服饰纹理仍清楚。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "leaning_rest", "over_shoulder"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "leaning_rest", "over_shoulder", "back_to_camera"),
     },
     "rainy_neon_street": {
         "title": "雨夜霓虹街",
         "aliases": ("雨夜霓虹街", "霓虹街道", "雨夜街道", "霓虹雨夜"),
         "prompt": "雨后的夜间街巷，地面映出克制的青蓝与玫红霓虹反光，背景虚化且无可读文字、车辆或路人。",
         "style_prompt": "低照度VHS夜景质感，冷蓝与少量玫红色偏色、暗部录像颗粒和湿地反光，不叠加暖色日光效果。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "leaning_rest", "over_shoulder"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "over_shoulder", "back_to_camera"),
     },
     "library_wood": {
         "title": "木质阅览室",
@@ -1936,14 +1936,14 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "aliases": ("灯会", "灯笼长廊", "节庆灯笼", "红灯笼街"),
         "prompt": "夜色中的传统灯会长廊，暖色灯笼层层延伸形成纵深，灯面不含文字，背景不出现人群。",
         "style_prompt": "旧DV夜间录像感，灯笼高光微微泛白、暗部有明显颗粒，红金色克制且不把人物染成纯红。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "overhead_stretch"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "back_to_camera", "overhead_stretch"),
     },
     "stone_staircase": {
         "title": "石阶回廊",
         "aliases": ("石阶", "石阶回廊", "楼梯转角", "台阶"),
         "prompt": "宽阔整洁的石阶回廊，台阶线条形成明显纵深，侧面有柔和自然光，不出现栏杆杂物或其他人物。",
         "style_prompt": "低饱和黑白胶片风格，石阶明暗几何清晰，轻颗粒和柔和反差，保留服装层次。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "stair_sit", "leaning_rest", "over_shoulder"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "stair_sit", "leaning_rest", "over_shoulder", "back_to_camera"),
     },
     "greenhouse": {
         "title": "玻璃花房",
@@ -1957,7 +1957,7 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "aliases": ("雪后庭院", "雪地", "冬日庭院", "雪景"),
         "prompt": "雪后安静庭院，薄雪覆在石路和枝头，冷冽天光与少量暖色窗光形成清晰对比，背景无其他人物。",
         "style_prompt": "冷蓝DV静帧，低灰度柔和配色、明显细颗粒和雪面略微过曝，面部妆容与皮肤颜色自然保留。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "back_to_camera"),
     },
     "japanese_ink_room": {
         "title": "和风墨花室内",
@@ -1973,6 +1973,90 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "style_prompt": "强烈日光下的暖色低饱和胶片快照，高光轻微过曝，带柔光晕、明显胶片颗粒和边缘泛白；保留人物与服装细节。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_profile", "back_to_camera", "over_shoulder"),
     },
+    "aquarium_tunnel": {
+        "title": "深海水族馆隧道",
+        "aliases": ("水族馆隧道", "海底隧道", "水族馆", "海洋馆隧道"),
+        "prompt": "大型水族馆的弧形玻璃隧道，拱顶与两侧幽蓝水体形成清晰纵深，远处只有少量柔和鱼影；人物站在干燥通道中央，玻璃不映出人物或额外人影，不出现游客、标牌或可读文字。",
+        "style_prompt": "深海钴蓝与青绿色水纹光影落在建筑表面，辅以克制的暖色轮廓光；电影宽幅静帧、细颗粒和轻微高光晕，人物肤色与服装保持准确曝光。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "back_to_camera", "over_shoulder"),
+    },
+    "greenhouse_storm": {
+        "title": "暴雨玻璃穹顶温室",
+        "aliases": ("暴雨温室", "雨夜玻璃温室", "玻璃穹顶雨夜", "暴雨花房"),
+        "prompt": "夜雨中的巨大玻璃穹顶花房，成排植物沿中央步道向远处延伸，雨滴附着在玻璃顶面；入口旁有一张简洁木长椅，步道干燥整洁，不出现浓雾、积水倒影、游客或额外灯串。",
+        "style_prompt": "墨绿植影、玻璃上的冷青雨光与零星琥珀灯形成层次，采用清晰的夜间电影静帧质感和细颗粒；雨雾不遮脸，人物与服装边缘保持清楚。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "seated_composed", "reach_light", "back_to_camera", "over_shoulder"),
+    },
+    "skybridge_after_rain": {
+        "title": "雨后高空玻璃连廊",
+        "aliases": ("高空连廊", "空中连廊", "玻璃连廊", "雨后连廊"),
+        "prompt": "连接两栋高层建筑的封闭玻璃空中连廊，侧窗展现城市灯光与远端楼群纵深；地面仅有克制的潮湿反光，不形成镜面，不出现广告、可读文字、车辆或其他人物。",
+        "style_prompt": "钢灰与深青蓝夜色中点缀稀疏琥珀城市灯，雨后高光细窄清晰，带宽银幕电影静帧的层次和少量胶片颗粒；人物主体明亮且不被玻璃反射复制。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "back_to_camera", "over_shoulder"),
+    },
+    "last_train_platform": {
+        "title": "末班车后的站台",
+        "aliases": ("末班站台", "末班车站台", "深夜站台", "空旷站台"),
+        "prompt": "深夜末班车离站后的空旷站台，顶灯沿柱列向远处收束，远端隧道透出微弱暖光；靠墙设有一张简洁长椅，人物处于安全候车区，不出现列车、乘客、站名或可读文字。",
+        "style_prompt": "冷青色站灯与少量钠灯暖光交替铺开，暗部保留细节，采用直闪旅行快照的清晰人物质感和明显但克制的 35mm 颗粒。",
+        "pose_ids": ("standing_detail", "half_turn", "seated_composed", "walking_turn", "leaning_rest", "back_to_camera", "over_shoulder"),
+    },
+    "theater_stage_wing": {
+        "title": "老剧院舞台侧幕",
+        "aliases": ("剧院侧幕", "舞台侧幕", "老剧院舞台", "剧院后台"),
+        "prompt": "老剧院舞台侧幕位置，厚重暗红幕布从近处垂落，幕缝外可见空舞台与一道斜向追光；地面平整，不出现观众、演员或额外道具。",
+        "style_prompt": "暗酒红幕布、旧金色边光与单束冷白追光形成强烈明暗层次，空气中只有轻微可见的舞台尘埃；复古电影剧照质感，服装纹理和面部仍清晰。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "back_to_camera", "over_shoulder", "overhead_stretch"),
+    },
+    "planetarium_dome": {
+        "title": "星图天文馆穹顶",
+        "aliases": ("天文馆", "星空穹顶", "天文馆穹顶", "星图放映厅"),
+        "prompt": "大型天文馆内部，弧形穹顶铺展稀疏星图投影，周边是暗色空座席与宽阔圆形过道；投影集中在穹顶，不覆盖人物，不出现观众、文字或其他屏幕。",
+        "style_prompt": "午夜蓝穹顶、银白星点与过道边缘的微弱暖灯构成克制层次，采用清晰的宽幅电影静帧和细腻暗部颗粒，不做科幻发光人物效果。",
+        "pose_ids": ("standing_detail", "half_turn", "seated_composed", "back_to_camera", "over_shoulder"),
+    },
+    "sea_cliff_lighthouse": {
+        "title": "海崖灯塔观景道",
+        "aliases": ("海崖灯塔", "灯塔海岸", "灯塔观景道", "海崖步道"),
+        "prompt": "海崖灯塔旁宽阔的石质观景步道，远处灯塔与海平线形成纵深，步道内侧设有坚实低矮石墙作安全边界，人物远离崖沿；不出现游客、船只主体或建筑文字。",
+        "style_prompt": "风暴将歇时的铅灰海面、冷青阴影与云隙中的银金光束交织，风感自然；低饱和宽银幕电影质感，人物肤色不过冷，海面高光不过曝。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "back_to_camera", "over_shoulder"),
+    },
+    "spiral_archive": {
+        "title": "环形书架档案馆",
+        "aliases": ("螺旋档案馆", "环形书架", "螺旋书架", "旧档案馆"),
+        "prompt": "巨型旧档案馆内，环形书架与螺旋楼梯向上盘旋，中央高窗投下狭长光束；楼梯平台宽阔安全并带连续扶手，书脊无可辨文字，不出现其他人物。",
+        "style_prompt": "深松绿、旧黄铜与高窗暖白光形成复古冷暖对照，采用中画幅电影静帧质感，轻微颗粒和清晰建筑线条，不做油画笔触。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "stair_sit", "leaning_rest", "back_to_camera", "over_shoulder"),
+    },
+    "red_rock_canyon": {
+        "title": "红岩峡谷观景台",
+        "aliases": ("红岩峡谷", "峡谷观景台", "红岩观景台", "峡谷高台"),
+        "prompt": "红岩峡谷高处的宽阔观景台，层叠岩壁与蓝灰远山构成辽阔纵深；人物位于坚实平台内侧，不靠近崖边，不出现游客、标牌或帐篷。",
+        "style_prompt": "赤褐岩层与蓝灰山影形成冷暖撞色，斜向夕光勾勒岩壁纹理；旅行杂志胶片摄影质感，色彩有张力但不整体偏橙，人物肤色自然。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "back_to_camera", "over_shoulder"),
+    },
+    "cinema_projection_room": {
+        "title": "老电影院放映间",
+        "aliases": ("电影院放映间", "老电影院", "电影放映室", "放映间"),
+        "prompt": "老电影院的放映间内，狭长放映窗外可见空影院与远处银幕，投影光束穿过暗部落向银幕；不出现设备特写、观众、影片画面或可读文字。",
+        "style_prompt": "银幕冷白光束切过烟灰色暗部，少量旧铜色指示灯提供暖色点缀；复古 35mm 胶片静帧，轻微卤化和细颗粒，人物轮廓保持清楚。",
+        "pose_ids": ("standing_detail", "half_turn", "leaning_rest", "back_to_camera", "over_shoulder"),
+    },
+    "snow_observation_corridor": {
+        "title": "雪山玻璃观景廊",
+        "aliases": ("雪山观景廊", "雪山玻璃长廊", "雪山观景走廊", "雪山观景台室内"),
+        "prompt": "雪山观景建筑内的封闭玻璃长廊，窗外雪松与远山层层后退，窗边有一张简洁木长椅，室内地面干燥整洁；不出现浓雾、积雪入室、游客或文字。",
+        "style_prompt": "冷白雪光、墨绿松林和长椅旁的微弱琥珀灯形成冷暖对照，低饱和 DV 静帧与清晰细颗粒；保留自然肤色和服装颜色。",
+        "pose_ids": ("standing_detail", "half_turn", "seated_composed", "walking_turn", "leaning_rest", "back_to_camera", "over_shoulder"),
+    },
+    "modern_art_gallery": {
+        "title": "几何装置美术馆长廊",
+        "aliases": ("当代美术馆长廊", "几何装置展厅", "现代美术馆", "色块装置长廊"),
+        "prompt": "空旷的当代美术馆长廊，一组大型哑光几何色块装置位于侧墙，平行墙线与天窗光形成纵深；不使用镜面装置，不出现作品文字、观众或额外物件。",
+        "style_prompt": "干净硬朗的时装编辑摄影，石灰白空间搭配克制的钴蓝、朱红与芥黄装置色块，天窗侧光和细腻胶片颗粒并存；不改变人物原有媒介质感。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "back_to_camera", "over_shoulder"),
+    },
 }
 
 COS_POSE_REQUEST_ALIASES = {
@@ -1980,7 +2064,7 @@ COS_POSE_REQUEST_ALIASES = {
     "standing_detail": ("自然站姿", "站姿", "站立", "站着"),
     "half_turn": ("侧身姿势", "自然侧身", "身体侧向镜头"),
     "side_profile": ("纯侧身", "侧身", "侧面站姿", "侧面朝向", "侧身不回头", "侧身但不回头"),
-    "back_to_camera": ("背对镜头", "背向镜头", "背身站立", "背影姿势", "只拍背影", "面朝远处"),
+    "back_to_camera": ("背对镜头", "背向镜头", "背身站立", "背身", "背影", "背影姿势", "背面构图", "后背视角", "只拍背影", "面朝远处"),
     "seated_composed": ("端正坐姿", "坐姿", "坐着", "坐在"),
     "walking_turn": ("轻步转身", "迈步", "行走", "走路"),
     "floor_sit_side": ("侧坐地面", "坐在地毯上", "坐在地上", "地面坐姿"),
@@ -2131,7 +2215,7 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
     },
     "rear_lookback": {
         "title": "轻微侧后方回眸",
-        "prompt": "仅在用户明确要求回眸时使用：镜头从人物后方偏侧拍摄，头部只轻轻转向侧面，保留自然颈部角度；不强求正脸，不把头扭过肩线",
+        "prompt": "仅在用户明确要求回眸时使用：镜头从人物后方偏侧拍摄，身体和肩胯仍朝向远离镜头的一侧；头部只向镜头所在一侧轻轻转动，露出自然侧脸轮廓，下巴微收、目光低垂看向身侧或地面，不直视镜头、不转成正脸，保留自然颈部角度，不把脸扭过肩线",
     },
     "low_angle_neck_to_knee": {
         "title": "横屏低机位颈下至膝上",
@@ -2139,12 +2223,92 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
     },
 }
 
+COS_POSE_FRAMING_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
+    "standing_detail": (
+        "front_half", "three_quarter_front", "two_thirds", "environmental",
+        "eye_level_full", "high_angle_three_quarter", "low_angle_full",
+        "low_angle_full_2", "side_profile",
+    ),
+    "half_turn": (
+        "three_quarter_front", "environmental", "eye_level_full",
+        "high_angle_three_quarter", "low_angle_full", "side_profile",
+    ),
+    "seated_composed": (
+        "front_half", "three_quarter_front", "two_thirds", "environmental",
+        "eye_level_full", "high_angle_three_quarter", "side_profile",
+    ),
+    "walking_turn": (
+        "three_quarter_front", "environmental", "eye_level_full",
+        "side_profile", "low_angle_full",
+    ),
+    "kneeling_carpet": (
+        "environmental", "eye_level_full", "high_angle_three_quarter",
+        "side_profile",
+    ),
+    "floor_sit_side": (
+        "environmental", "eye_level_full", "high_angle_three_quarter",
+        "side_profile",
+    ),
+    "one_knee_crouch": (
+        "three_quarter_front", "environmental", "eye_level_full",
+        "high_angle_three_quarter", "side_profile",
+    ),
+    "leaning_rest": (
+        "three_quarter_front", "environmental", "eye_level_full",
+        "side_profile", "low_angle_full",
+    ),
+    "stair_sit": (
+        "environmental", "eye_level_full", "high_angle_three_quarter",
+        "side_profile",
+    ),
+    "reach_light": (
+        "front_half", "three_quarter_front", "two_thirds", "environmental",
+        "eye_level_full", "high_angle_three_quarter", "side_profile",
+    ),
+    "over_shoulder": ("rear_lookback",),
+    "side_profile": (
+        "side_profile", "environmental", "eye_level_full", "low_angle_full",
+    ),
+    "back_to_camera": (
+        "rear_three_quarter", "rear_low_medium", "environmental", "eye_level_full",
+    ),
+    "relaxed_recline": (
+        "environmental", "eye_level_full", "high_angle_three_quarter",
+        "side_profile",
+    ),
+    "overhead_stretch": (
+        "front_half", "three_quarter_front", "two_thirds", "environmental",
+        "eye_level_full", "high_angle_three_quarter",
+    ),
+}
+COS_POSE_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
+    "back_to_camera": ("third", "first"),
+    "over_shoulder": ("third",),
+}
+
+# Selfie is a valid explicit request for every pose, but some poses are poor
+# random defaults because the phone viewpoint cannot document the action
+# cleanly.  Keep the restriction in the random picker only.
+COS_RANDOM_SELFIE_POSE_IDS = frozenset(
+    {
+        "standing_detail",
+        "half_turn",
+        "seated_composed",
+        "kneeling_carpet",
+        "floor_sit_side",
+        "side_profile",
+        "relaxed_recline",
+        "overhead_stretch",
+    }
+)
+
 COS_FRAMING_TERMS = (
     "横屏", "竖屏", "方形", "正方形", "全身", "半身", "胸像", "肖像",
     "近景", "中景", "远景", "环境人像", "三分之四", "三分之三", "三分之二",
     "正面机位", "正面拍摄", "正面站立", "正面构图", "正对镜头", "侧前方", "侧身",
-    "背对镜头", "背向镜头", "背影", "背身", "背面构图", "后背视角", "从背后拍", "侧后方", "侧面机位",
+    "从背后拍", "侧后方", "侧面机位",
     "低机位", "高机位", "腰线", "膝盖附近",
+    "颈下", "膝上",
     "头部位于画面", "头部在画面", "画面从头", "画面只拍",
 )
 
@@ -2266,16 +2430,18 @@ def pick_cos_framing(
             "explicit": True,
         }
     avoided = _as_id_set(avoid_framings)
+    pose_framings = COS_POSE_FRAMING_COMPATIBILITY.get(pose_id)
     orientation = str(COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("orientation") or "")
-    compatible = {
+    compatible = set(pose_framings) if pose_framings else {
         "back": {"rear_three_quarter", "rear_low_medium", "environmental", "eye_level_full"},
         "side": {"side_profile", "environmental", "eye_level_full", "low_angle_full"},
     }.get(orientation)
-    if pose_id == "over_shoulder":
-        compatible = {"rear_three_quarter", "rear_lookback", "environmental"}
     candidates = [
         item for item in COS_FRAMING_CLASSES
-        if (item not in COS_EXPLICIT_ONLY_FRAMING_IDS or pose_id == "over_shoulder")
+        if (
+            item not in COS_EXPLICIT_ONLY_FRAMING_IDS
+            or (item == "rear_lookback" and pose_id == "over_shoulder")
+        )
         and (compatible is None or item in compatible)
     ]
     available = [item for item in candidates if item not in avoided]
@@ -2309,6 +2475,14 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
         "scene_pose_compatibility": {
             scene_id: _scene_pose_ids(scene)
             for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+        },
+        "pose_framing_compatibility": {
+            pose_id: list(framings)
+            for pose_id, framings in COS_POSE_FRAMING_COMPATIBILITY.items()
+        },
+        "pose_camera_compatibility": {
+            pose_id: list(cameras)
+            for pose_id, cameras in COS_POSE_CAMERA_COMPATIBILITY.items()
         },
         "fixed_reason": "",
     }
@@ -2427,10 +2601,14 @@ def pick_cos_variation(
         )
     if scene and scene.get("style_prompt") and not _requested_cos_style(extra_request):
         prompt_parts.append("本次场景影像风格：" + scene["style_prompt"])
-    if not requested_pose:
+    if not requested_pose or pose_id == "over_shoulder":
+        pose_prefix = (
+            "本次回眸姿势按以下细节执行："
+            if requested_pose and pose_id == "over_shoulder"
+            else "本次随机姿势优先于套装正文中残留的人物姿势描述："
+        )
         prompt_parts.append(
-            "本次随机姿势优先于套装正文中残留的人物姿势描述："
-            + COS_RANDOM_POSE_CLASSES[pose_id]["prompt"]
+            pose_prefix + COS_RANDOM_POSE_CLASSES[pose_id]["prompt"]
         )
     return {
         "pose_id": pose_id,
@@ -2920,11 +3098,17 @@ def pick_cos_camera(
     extra_request: str = "",
     avoid: Iterable[str] = (),
     camera: str = "",
+    pose_id: str = "",
 ) -> str:
     forced = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
     if forced in {"selfie", "first", "third"}:
         return forced
     choices = ("third", "first", "selfie")
+    compatible = COS_POSE_CAMERA_COMPATIBILITY.get(pose_id)
+    if compatible:
+        choices = tuple(kind for kind in choices if kind in compatible)
+    elif pose_id and pose_id not in COS_RANDOM_SELFIE_POSE_IDS:
+        choices = tuple(kind for kind in choices if kind != "selfie")
     avoided = _as_id_set(avoid)
     available = tuple(kind for kind in choices if kind not in avoided)
     return random.choice(available or choices)
@@ -3038,20 +3222,11 @@ def build_cos_look_action(
         return ""
     title = str(chosen.get("title") or "随机COS")
     cos_type = str(chosen.get("cos_type") or "").strip()
-    camera_kind = pick_cos_camera(
-        extra_request=extra_request,
-        avoid=_as_id_set(avoid_cameras) | _as_id_set(avoid_camera),
-        camera=camera,
-    )
+    requested_camera = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
     phone_face_cover = requests_phone_face_cover(extra_request)
-    outfit = adapt_cos_outfit_for_camera(
-        str(chosen.get("prompt") or "").strip(), camera_kind
-    )
-    outfit = adapt_cos_prompt_for_appearance(outfit, appearance_type)
-    outfit = normalize_cos_prompt_negatives(outfit, appearance_type=appearance_type)
     cos_id = str(chosen.get("id") or "cos")
     pose_avoidance = _as_id_set(avoid_poses)
-    if camera_kind == "selfie" and any(
+    if requested_camera == "selfie" and any(
         _has_positive_request(extra_request, term)
         for term in ("对镜自拍", "镜前自拍", "对着镜子自拍", "镜中自拍", "镜子自拍")
     ):
@@ -3064,6 +3239,17 @@ def build_cos_look_action(
         avoid_scenes=avoid_scenes,
         extra_request=extra_request,
     )
+    camera_kind = pick_cos_camera(
+        extra_request=extra_request,
+        avoid=_as_id_set(avoid_cameras) | _as_id_set(avoid_camera),
+        camera=requested_camera,
+        pose_id=variation["pose_id"],
+    )
+    outfit = adapt_cos_outfit_for_camera(
+        str(chosen.get("prompt") or "").strip(), camera_kind
+    )
+    outfit = adapt_cos_prompt_for_appearance(outfit, appearance_type)
+    outfit = normalize_cos_prompt_negatives(outfit, appearance_type=appearance_type)
     framing_choice = pick_cos_framing(
         outfit=outfit,
         extra_request=extra_request,

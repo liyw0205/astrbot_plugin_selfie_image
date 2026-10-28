@@ -7,9 +7,12 @@ from pathlib import Path
 
 from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_FRAMING_CLASSES,
+    COS_EXPLICIT_ONLY_FRAMING_IDS,
     COS_LOOK_SETS,
     COS_RANDOM_POSE_CLASSES,
     COS_RANDOM_SCENE_CLASSES,
+    COS_POSE_CAMERA_COMPATIBILITY,
+    COS_POSE_FRAMING_COMPATIBILITY,
     audit_cos_look_catalog,
     build_cos_look_action,
     build_cos_third_person_prompt,
@@ -18,6 +21,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     match_cos_look_sets,
     normalize_cos_prompt_negatives,
     pick_cos_framing,
+    pick_cos_camera,
     pick_cos_variation,
 )
 from astrbot_plugin_selfie_image.core.providers import ImageReference
@@ -168,6 +172,61 @@ def test_cos_reference_selection_keeps_persona_first_without_identity_intent():
     assert selected.refs == [persona, attached]
     assert selected.identity_reference_count == 1
     assert selected.extra_reference_image_count == 1
+
+
+def test_look_reference_selection_uses_only_user_images_when_present():
+    persona = ImageReference(data=b"persona", mime_type="image/png")
+    persona_extra = ImageReference(data=b"persona-extra", mime_type="image/png")
+    attached = ImageReference(data=b"attached", mime_type="image/png")
+    quoted = ImageReference(data=b"quoted", mime_type="image/jpeg")
+
+    selected = select_cos_references(
+        persona,
+        [attached, quoted],
+        action="看看COS",
+        persona_extra_refs=[persona_extra],
+        prefer_message_identity=True,
+    )
+    fallback = select_cos_references(
+        persona,
+        [],
+        action="看看COS",
+        persona_extra_refs=[persona_extra],
+        prefer_message_identity=True,
+    )
+
+    assert selected.identity_source == "message"
+    assert selected.identity_ref is attached
+    assert selected.refs == [attached, quoted]
+    assert selected.summary()["used_persona"] is False
+    assert selected.summary()["roles"] == {"message": 2}
+    assert fallback.identity_source == "persona"
+    assert fallback.refs == [persona, persona_extra]
+
+
+def test_look_commands_share_reference_preference_but_other_cos_keeps_legacy_order():
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    persona = ImageReference(data=b"persona", mime_type="image/png")
+    persona_extra = ImageReference(data=b"persona-extra", mime_type="image/png")
+    attached = ImageReference(data=b"attached", mime_type="image/png")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        plugin = object.__new__(SelfieImagePlugin)
+        plugin.persona = PersonaManager(tmp)
+        plugin._persona_identity_reference = lambda **_: persona
+        plugin._persona_auxiliary_references = lambda _action: [persona_extra]
+
+        legs = plugin._select_selfie_references("看看腿", [attached])
+        cos = plugin._select_selfie_references("看看COS 洛琪希", [attached])
+        legacy_cos = plugin._select_selfie_references("COS换装", [attached])
+        legs_without_image = plugin._select_selfie_references("看看腿", [])
+
+    assert legs is not None and legs.refs == [attached]
+    assert cos is not None and cos.refs == [attached]
+    assert legacy_cos is not None and legacy_cos.refs == [persona, persona_extra, attached]
+    assert legs_without_image is not None
+    assert legs_without_image.refs == [persona, persona_extra]
 
 
 def test_group_reference_selection_keeps_persona_identity_and_attached_image_as_extra():
@@ -390,7 +449,7 @@ def test_outfit_framing_words_do_not_suppress_random_view():
 def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
     assert COS_RANDOM_POSE_CLASSES.keys() >= {"kneeling_carpet"}
     assert len(COS_RANDOM_POSE_CLASSES) >= 12
-    assert len(COS_RANDOM_SCENE_CLASSES) >= 16
+    assert len(COS_RANDOM_SCENE_CLASSES) >= 32
     assert COS_RANDOM_SCENE_CLASSES["bedroom_carpet"]["pose_ids"]
     assert "kneeling_carpet" in COS_RANDOM_SCENE_CLASSES["bedroom_carpet"]["pose_ids"]
     kneeling_scenes = {
@@ -405,12 +464,68 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
         assert profile["scene_ids"] == list(COS_RANDOM_SCENE_CLASSES)
         assert profile["pose_ids"] == list(COS_RANDOM_POSE_CLASSES)
         assert profile["scene_pose_compatibility"] == {
-            scene_id: list(dict.fromkeys([*scene["pose_ids"], "side_profile", "back_to_camera"]))
+            scene_id: list(dict.fromkeys([*scene["pose_ids"], "side_profile"]))
             for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+        }
+        assert profile["pose_framing_compatibility"] == {
+            pose_id: list(framings)
+            for pose_id, framings in COS_POSE_FRAMING_COMPATIBILITY.items()
+        }
+        assert profile["pose_camera_compatibility"] == {
+            pose_id: list(cameras)
+            for pose_id, cameras in COS_POSE_CAMERA_COMPATIBILITY.items()
         }
     for scene in COS_RANDOM_SCENE_CLASSES.values():
         assert scene["pose_ids"]
         assert set(scene["pose_ids"]) <= COS_RANDOM_POSE_CLASSES.keys()
+
+    assert "one_knee_crouch" not in COS_RANDOM_SCENE_CLASSES["rainy_neon_street"]["pose_ids"]
+    assert "one_knee_crouch" not in COS_RANDOM_SCENE_CLASSES["snowy_courtyard"]["pose_ids"]
+    assert "low_angle_neck_to_knee" in COS_EXPLICIT_ONLY_FRAMING_IDS
+
+    expected_back_scenes = {
+        "garden_walkway", "bamboo_garden", "cherry_blossom_path",
+        "seaside_boardwalk", "rooftop_sunset", "old_town_lane",
+        "rainy_neon_street", "festival_lantern", "stone_staircase",
+        "snowy_courtyard", "old_city_rooftop", "aquarium_tunnel",
+        "greenhouse_storm", "skybridge_after_rain", "last_train_platform",
+        "theater_stage_wing", "planetarium_dome", "sea_cliff_lighthouse",
+        "spiral_archive", "red_rock_canyon", "cinema_projection_room",
+        "snow_observation_corridor", "modern_art_gallery",
+    }
+    actual_back_scenes = {
+        scene_id
+        for scene_id, compatible_poses in profile["scene_pose_compatibility"].items()
+        if "back_to_camera" in compatible_poses
+    }
+    assert actual_back_scenes == expected_back_scenes
+    assert set(COS_POSE_FRAMING_COMPATIBILITY) == set(COS_RANDOM_POSE_CLASSES)
+    for pose_id, framing_ids in COS_POSE_FRAMING_COMPATIBILITY.items():
+        assert framing_ids
+        assert set(framing_ids) <= COS_FRAMING_CLASSES.keys(), pose_id
+
+    new_scene_ids = {
+        "aquarium_tunnel", "greenhouse_storm", "skybridge_after_rain",
+        "last_train_platform", "theater_stage_wing", "planetarium_dome",
+        "sea_cliff_lighthouse", "spiral_archive", "red_rock_canyon",
+        "cinema_projection_room", "snow_observation_corridor",
+        "modern_art_gallery",
+    }
+    for scene_id in new_scene_ids:
+        scene = COS_RANDOM_SCENE_CLASSES[scene_id]
+        assert scene["style_prompt"]
+        assert scene["pose_ids"]
+        assert set(scene["pose_ids"]) <= COS_RANDOM_POSE_CLASSES.keys()
+
+    for _ in range(100):
+        variation = pick_cos_variation("roxy_cream")
+        assert variation["pose_id"] in profile["scene_pose_compatibility"][variation["scene_id"]]
+        framing = pick_cos_framing(pose_id=variation["pose_id"])
+        assert framing["view_id"] in profile["pose_framing_compatibility"][variation["pose_id"]]
+        camera = pick_cos_camera(pose_id=variation["pose_id"])
+        assert camera in profile["pose_camera_compatibility"].get(
+            variation["pose_id"], ("third", "first", "selfie")
+        )
 
     with patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
@@ -453,11 +568,29 @@ def test_pose_and_scene_detection_preserves_explicit_user_staging():
     assert negative_orientation["pose_id"] != "back_to_camera"
     assert negative_scene["scene_id"] != "old_city_rooftop"
 
+    requested_back = pick_cos_variation("roxy_cream", extra_request="背影")
+    assert requested_back["pose_id"] == "back_to_camera"
+    assert requested_back["scene_id"] in {
+        "garden_walkway", "bamboo_garden", "cherry_blossom_path",
+        "seaside_boardwalk", "rooftop_sunset", "old_town_lane",
+        "rainy_neon_street", "festival_lantern", "stone_staircase",
+        "snowy_courtyard", "old_city_rooftop", "aquarium_tunnel",
+        "greenhouse_storm", "skybridge_after_rain", "last_train_platform",
+        "theater_stage_wing", "planetarium_dome", "sea_cliff_lighthouse",
+        "spiral_archive", "red_rock_canyon", "cinema_projection_room",
+        "snow_observation_corridor", "modern_art_gallery",
+    }
+
 
 def test_random_scene_is_uniformly_selected_before_compatible_pose():
+    def choose_final_scene_and_back_pose(values):
+        if "back_to_camera" in values:
+            return "back_to_camera"
+        return values[-1]
+
     with patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        side_effect=lambda values: values[-1],
+        side_effect=choose_final_scene_and_back_pose,
     ):
         selected = pick_cos_variation("custom_cos_id")
     final_scene_id = list(COS_RANDOM_SCENE_CLASSES)[-1]
@@ -469,9 +602,14 @@ def test_random_scene_is_uniformly_selected_before_compatible_pose():
 def test_back_and_side_cos_staging_never_randomly_forces_a_lookback():
     assert COS_RANDOM_POSE_CLASSES["over_shoulder"]["explicit_only"] is True
     assert "over_shoulder" not in cos_look_compatibility("test")["recommended_pose_ids"]
+    def choose_back_pose(values):
+        if "back_to_camera" in values:
+            return "back_to_camera"
+        return values[-1]
+
     with patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        side_effect=lambda values: values[-1],
+        side_effect=choose_back_pose,
     ):
         selected = pick_cos_variation("test")
     assert selected["pose_id"] == "back_to_camera"
@@ -499,6 +637,41 @@ def test_back_and_side_cos_staging_never_randomly_forces_a_lookback():
         requested_lookback = pick_cos_framing(pose_id="over_shoulder")
     assert requested_lookback["view_id"] == "rear_lookback"
 
+    assert pick_cos_camera(pose_id="over_shoulder") == "third"
+    assert pick_cos_camera(camera="selfie", pose_id="over_shoulder") == "selfie"
+    assert pick_cos_camera(pose_id="back_to_camera") in {"third", "first"}
+    assert pick_cos_camera(camera="selfie", pose_id="back_to_camera") == "selfie"
+
+
+def test_face_cropping_framing_is_explicit_only():
+    random_framing = pick_cos_framing(pose_id="standing_detail")
+    assert random_framing["view_id"] != "low_angle_neck_to_knee"
+
+    explicit_framing = pick_cos_framing(
+        extra_request="颈下至膝上构图",
+        pose_id="standing_detail",
+    )
+    assert explicit_framing["explicit"]
+    assert explicit_framing["view_id"] == "user"
+
+
+def test_new_scene_uses_its_bound_style_unless_the_user_supplies_one():
+    scene = COS_RANDOM_SCENE_CLASSES["aquarium_tunnel"]
+    selected = pick_cos_variation(
+        "custom_cos_id",
+        extra_request="水族馆隧道",
+    )
+    assert selected["scene_id"] == "aquarium_tunnel"
+    assert scene["prompt"] in selected["prompt"]
+    assert scene["style_prompt"] in selected["prompt"]
+
+    explicit_style = pick_cos_variation(
+        "custom_cos_id",
+        extra_request="水族馆隧道，使用胶片质感",
+    )
+    assert explicit_style["scene_id"] == "aquarium_tunnel"
+    assert scene["style_prompt"] not in explicit_style["prompt"]
+
 
 def test_explicit_back_view_adapts_across_selfie_group_and_cos_routes():
     selfie = build_selfie_look_action("背对镜头，卧室")
@@ -523,7 +696,7 @@ def test_explicit_back_view_adapts_across_selfie_group_and_cos_routes():
     assert "天台背面构图" not in group_prompt
 
 
-def test_group_random_staging_uses_portrait_or_environment_not_back_view():
+def test_group_random_staging_uses_environment_when_selected():
     with patch(
         "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
         return_value=["group_environment"],
@@ -535,6 +708,19 @@ def test_group_random_staging_uses_portrait_or_environment_not_back_view():
     assert "所有人保持中远景可辨识" in action
     assert "背面构图" not in action
     assert "竖屏手机近景半身" not in action
+
+
+def test_group_random_staging_can_choose_a_back_view():
+    with patch(
+        "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
+        return_value=["back_view"],
+    ):
+        action = build_group_selfie_action("和我合影")
+
+    assert "【shot:back_view】" in action
+    assert "本次合影采用背面构图" in action
+    assert "竖屏中远景" in action
+    assert "不强迫回头" in action
 
 
 def test_selfie_scene_and_light_overrides_are_independent():
@@ -710,6 +896,31 @@ def test_explicit_cos_scene_and_pose_are_not_overridden():
     assert "【cos_pose:kneeling_carpet】" in action
     assert "按用户指定的镜头构图执行" not in action
     assert "用户补充要求优先：卧室地毯上跪坐" in action
+
+
+def test_back_look_pose_uses_a_downcast_profile_instead_of_a_full_turn():
+    item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
+    action = build_cos_look_action(
+        "背身回眸",
+        camera="third",
+        has_refs=True,
+        picker=lambda **_: item,
+    )
+    assert "【cos_pose:over_shoulder】" in action
+    assert "【cos_framing:rear_lookback】" in action
+    assert "低垂看向身侧或地面" in action
+    assert "不直视镜头、不转成正脸" in action
+
+    with tempfile.TemporaryDirectory() as tmp:
+        persona = PersonaManager(tmp)
+        prompt = persona.build_selfie_prompt(action, "小助", "温柔", True, 1)
+    assert "若当前构图允许面部入镜" in prompt
+    assert "除非用户要求遮脸，否则主角面部清晰自然" not in prompt
+
+
+def test_back_look_orientation_does_not_count_as_a_complete_framing_request():
+    selected = pick_cos_framing(extra_request="背身回眸", pose_id="over_shoulder")
+    assert selected["view_id"] == "rear_lookback"
 
 
 def test_random_cos_framing_is_always_selected_when_unspecified():

@@ -217,7 +217,7 @@ def extract_user_extra_text(action: str) -> str:
     if not match:
         return ""
     value = match.group(1)
-    value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear|outfit):[a-z0-9_]+】\s*", " ", value)
+    value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
     return re.sub(r"\s+", " ", value).strip(" 。")
 
 
@@ -1117,7 +1117,10 @@ class PersonaManager:
         shot_id = str(shot_match.group(1) if shot_match else "")
         cos_pose_match = re.search(r"【cos_pose:([a-z_]+)】", act, re.I)
         cos_pose_id = str(cos_pose_match.group(1) if cos_pose_match else "")
-        back_facing_shot = shot_id in {"back_view", "rear_rooftop"} or cos_pose_id == "back_to_camera"
+        back_facing_shot = shot_id in {"back_view", "rear_rooftop"} or cos_pose_id in {
+            "back_to_camera",
+            "over_shoulder",
+        }
         side_facing_shot = shot_id == "side_profile" or cos_pose_id == "side_profile"
         feet_cropped = is_leg_calf_crop_action(act)
         daily = self.get_daily_selfie_profile()
@@ -1160,11 +1163,11 @@ class PersonaManager:
         if intent.is_legs_only and feet_cropped:
             identity_lines = (
                 [
-                    "参考图一只用于自然体态和构图；腿部穿搭完全以本次锁定选项为准，忽略参考图中的袜子、下装和鞋袜搭配；完整人物在画外。",
+                    "参考图一只用于自然体态和构图；服装按本次锁定搭配执行，人物身份保持一致。",
                 ]
                 if has_reference_image
                 else [
-                    "本张按日常服装局部记录生成，不展示完整人物。",
+                    "本张按用户明确要求进行服装局部取景，服装保持完整、人物比例自然。",
                 ]
             )
         if has_reference_image and not intent.is_legs_only and has_viewpoint_change_request(act):
@@ -1186,7 +1189,7 @@ class PersonaManager:
                 reference_lines.extend(group_style_lines(appearance_type))
             elif intent.is_legs_only:
                 reference_lines.append(
-                    "额外参考图只参考氛围和构图，不改变已锁定的单一视角、姿势或腿部穿搭。"
+                    "额外参考图只参考氛围和构图，不改变已锁定的单一视角、姿势或完整服装搭配。"
                 )
             else:
                 reference_lines.extend(
@@ -1284,72 +1287,91 @@ class PersonaManager:
             pool_pose_text = re.sub(
                 r"\s+", " ", str(pool_pose_match.group(1) if pool_pose_match else "")
             ).strip(" 。；")
-            wear_match = re.search(r"本次服装搭配(?:已锁定为)?[:：]\s*([^。]+)", act)
-            selected = ""
-            if wear_match:
-                selected_source = str(wear_match.group(1)).strip().split("；", 1)[0]
-                selected = next((name for name in ("光腿神器", "白丝", "黑丝", "连裤袜") if name in selected_source), "")
+            wear_tag_match = re.search(r"【wear:(daily|custom|white|black|bare|pantyhose)】", act)
+            selected = {
+                "daily": "日常裤装",
+                "custom": "用户指定",
+                "white": "白丝",
+                "black": "黑丝",
+                "bare": "光腿神器",
+                "pantyhose": "连裤袜",
+            }.get(wear_tag_match.group(1) if wear_tag_match else "", "")
+            if not selected:
+                wear_match = re.search(r"本次服装搭配(?:已锁定为)?[:：]\s*([^。]+)", act)
+                if wear_match:
+                    selected_source = str(wear_match.group(1)).strip().split("；", 1)[0]
+                    selected = next((name for name in ("日常裤装", "用户指定", "光腿神器", "白丝", "黑丝", "连裤袜") if name in selected_source), "")
             selected_text = {
-                "光腿神器": "自然肤色光腿神器（沿可见腿部连续覆盖）",
-                "白丝": "白色不透白丝（从大腿上部沿可见腿部连续向下覆盖，袜口在大腿上部）",
-                "黑丝": "黑色不透黑丝（从大腿上部沿可见腿部连续向下覆盖，袜口在大腿上部）",
-                "连裤袜": "白色不透连裤袜（从腰部沿可见腿部连续覆盖到脚趾，袜身平整自然）",
+                "日常裤装": "完整的日常长裤搭配",
+                "用户指定": "用户指定的完整服装搭配",
+                "光腿神器": "自然肤色不透打底，完整日常穿搭",
+                "白丝": "白色不透连裤袜，完整日常穿搭",
+                "黑丝": "黑色不透连裤袜，完整日常穿搭",
+                "连裤袜": "白色不透连裤袜，完整日常穿搭",
             }.get(selected)
             outfit_match = re.search(r"【outfit:([a-z_]+)】", act)
             outfit = get_leg_focus_outfit(outfit_match.group(1) if outfit_match else "")
             mode_lines.extend(
                 [
-                    f"【服装局部展示 / {'第一人称手机自拍' if camera_kind == 'selfie' else '第三人称摄影'}】",
+                    f"【{'腿部穿搭展示' if feet_cropped else '全身穿搭展示'} / {'全身镜自拍' if camera_kind == 'selfie' and not feet_cropped else '第一人称腰线至鞋履构图' if camera_kind == 'selfie' else '第三人称摄影'}】",
                     (
-                        "第一人称手机自拍：手机镜头从腰线向下记录下装局部，手机、手臂和上半身都在画面外。"
+                        "第一人称自然视角服装照：腰线至鞋履入镜，清楚呈现下装、袜装与鞋履。"
+                        if camera_kind == "selfie" and feet_cropped
+                        else "全身镜前自拍：从头部到鞋履完整入镜，手机自然持握且不遮挡主要穿搭。"
                         if camera_kind == "selfie"
-                        else "第三人称摄影照片：拍摄者完全在画面外，镜头只记录腰部以下的下装局部。"
+                        else "第三人称腿部穿搭照片：摄影者完全在画面外，平视拍摄腰线至鞋履，保留少量环境。"
+                        if feet_cropped
+                        else "第三人称全身日常照片：摄影者完全在画面外，从头部到鞋履完整入镜。"
                     ),
-                    "严格近距离取景：画面只有主角一人（成年人物），保持自然的下半身服装局部构图，不扩展为半身或全身。",
-                    f"腿部穿搭固定为{selected_text}；只生成该选项，不参考参考图中的袜子、下装或鞋袜搭配；禁止中筒袜、短袜或袜子停在小腿中段。"
+                    "成年人物腿部穿搭构图：腰线至鞋履自然入镜，袜装与鞋履清晰可见，平视并保留少量环境。"
+                    if feet_cropped
+                    else "成年人物单人全身构图：头部、上衣、下装和鞋履都完整入镜，以正常拍摄距离呈现整体穿搭。",
+                    f"本次穿搭固定为{selected_text}；按这一套完整呈现。"
                     if selected_text
-                    else "腿部穿搭已由代码固定为一个具体选项；不参考参考图中的袜子、下装或鞋袜搭配；禁止中筒袜、短袜或袜子停在小腿中段。",
-                    "服装穿着完整且不透明，重点记录服装的颜色、材质、层次。",
-                    "腿部保持髋、膝、踝连续自然；小腿或脚若不入镜，必须自然延伸到画面外或被有清晰边界的实体物体合理遮挡；禁止在膝关节、小腿中段或脚踝附近突然终止，不能把袜筒下缘直接当作小腿终点。",
-                    "严格按已锁定的单一视角、姿势和腿部穿搭生成，不在选项之间切换，不自行补充其他方案。",
+                    else "本次下装和鞋履已由代码锁定；按同一套日常穿搭完成画面。",
+                    "服装穿着完整，颜色、材质和层次清楚自然。",
+                    "人物比例与肢体结构自然连续；袜装和鞋履保持完整可见，不被家具遮挡。"
+                    if feet_cropped
+                    else "人物比例、站坐姿态和鞋履完整自然，服装边缘清晰，不裁掉头部或脚部。",
+                    "严格按已锁定的单一视角、姿势和完整服装搭配生成，不在选项之间切换，不自行补充其他方案。",
                 ]
             )
             if outfit:
                 mode_lines.append(
-                    f"代码锁定下装服饰组合：{outfit.get('skirt', '')}、{outfit.get('shoes', '')}；袜装严格使用上方唯一腿部穿搭。"
+                    f"代码锁定下装服饰组合：{outfit.get('bottoms') or outfit.get('skirt', '')}、{outfit.get('shoes', '')}。"
                 )
             elif outfit_match:
                 mode_lines.append("裙装或鞋履按用户明确指定内容执行，不自行替换。")
             if pose_match:
                 pose_descriptions = {
-                    "sit": "椅上或沙发自然坐姿，服装自然垂落",
-                    "sit_crop": "椅上或沙发自然坐姿，服装自然垂落",
-                    "kneel": "地毯或软垫上的自然跪坐，衣摆平整落下",
-                    "kneel_crop": "地毯或软垫上的自然跪坐，衣摆平整落下",
-                    "side_lie": "床边或沙发上的侧躺曲腿姿势，靠背和衣料自然入镜",
-                    "side_lie_crop": "床边或沙发上的侧躺曲腿姿势，靠背和衣料自然入镜",
-                    "hug_knee": "床边或地毯上的收膝坐姿，衣摆自然落下",
-                    "hug_knee_crop": "床边或地毯上的收膝坐姿，衣摆自然落下",
-                    "cross_leg": "椅上或沙发上的自然交叠坐姿",
-                    "cross_leg_crop": "椅上或沙发上的自然交叠坐姿",
-                    "windowsill": "窗台或矮柜自然坐姿，窗光柔和",
-                    "windowsill_crop": "窗台或矮柜自然坐姿，窗光柔和",
-                    "kneel_up": "软垫上的较高跪姿，衣物自然垂落",
-                    "kneel_front": "地毯上的正面跪坐，衣摆整洁",
-                    "floor_fold": "地毯或木地板上的轻松屈膝坐姿",
-                    "one_knee_fix": "一侧单膝触地的自然整理衣摆动作",
-                    "floor_knees_up_crop": "地毯或木地板上的轻松席地坐姿",
-                    "reclined_knees_crop": "沙发或座椅上的轻松靠坐姿势",
-                    "desk_sit_crop": "桌前椅上的自然坐姿，桌沿可入镜",
-                    "bed_supine_crop": "床上由枕头支撑的舒适靠坐，衣摆和床品自然铺开",
-                    "floor_topdown_cross_crop": "地面或木地板上的俯拍交叉坐姿，腿部与地面接触自然",
-                    "first_person_topdown_legs_crop": "坐姿第一人称向下看自己的双腿，双腿平行向前伸展，脚部完整入镜",
+                    "sit": "椅上或沙发自然坐姿，全身与鞋履完整入镜",
+                    "sit_crop": "椅上或沙发自然坐姿，全身与鞋履完整入镜",
+                    "kneel": "自然稳定的跪坐姿势，人物与服装完整入镜",
+                    "kneel_crop": "自然稳定的跪坐姿势，人物与服装完整入镜",
+                    "side_lie": "靠坐或侧坐的放松姿势，完整呈现人物与穿搭",
+                    "side_lie_crop": "靠坐或侧坐的放松姿势，完整呈现人物与穿搭",
+                    "hug_knee": "自然舒适的坐姿，头部到鞋履完整入镜",
+                    "hug_knee_crop": "自然舒适的坐姿，头部到鞋履完整入镜",
+                    "cross_leg": "椅上或沙发上的自然坐姿，完整呈现人物与穿搭",
+                    "cross_leg_crop": "椅上或沙发上的自然坐姿，完整呈现人物与穿搭",
+                    "windowsill": "稳固座椅上的自然坐姿，头部到鞋履完整入镜",
+                    "windowsill_crop": "稳固座椅上的自然坐姿，头部到鞋履完整入镜",
+                    "kneel_up": "稳定自然的跪姿，人物与服装完整入镜",
+                    "kneel_front": "正面自然跪坐，人物与服装完整入镜",
+                    "floor_fold": "放松的席地坐姿，保持自然全身构图",
+                    "one_knee_fix": "一侧单膝触地的自然姿势，人物完整入镜",
+                    "floor_knees_up_crop": "地毯或木地板上的自然坐姿，人物完整入镜",
+                    "reclined_knees_crop": "沙发或座椅上的轻松靠坐姿势，人物完整入镜",
+                    "desk_sit_crop": "桌前椅上的自然坐姿，头部到鞋履完整入镜",
+                    "bed_supine_crop": "床边舒适坐姿，人物和整体穿搭完整入镜",
+                    "floor_topdown_cross_crop": "按用户指定的俯拍角度完整呈现人物与穿搭",
+                    "first_person_topdown_legs_crop": "按用户明确要求，从自然视线向下拍摄服装局部",
                 }
                 pose_text = pose_descriptions.get(pose_match.group(1))
                 if pose_text and not pool_pose_text:
                     mode_lines.append(f"本张构图固定为：{pose_text}；不要改成其他姿势。")
             if pool_pose_text:
-                mode_lines.append(f"本张使用看看腿随机姿势池条目：{pool_pose_text}。")
+                mode_lines.append(f"本张固定姿势与构图：{pool_pose_text}。")
             if intent.change_clothes:
                 mode_lines.append("本次同时包含换装要求：优先使用用户指定的服装/穿搭。")
         elif intent.is_third_person_photo:
@@ -1466,13 +1488,21 @@ class PersonaManager:
 
         if intent.is_legs_only:
             extra_action = extract_user_extra_text(act)
-            action_line = f"用户要求：{extra_action}" if extra_action else "用户要求：按服装局部展示模式生成。"
+            action_line = f"用户要求：{extra_action}" if extra_action else (
+                "用户要求：按腰线至鞋履的日常袜装穿搭构图生成。"
+                if feet_cropped
+                else "用户要求：按全身穿搭展示模式生成。"
+            )
         elif intent.is_cos_look and cos_contract:
             action_line = "用户要求：按以上已锁定的 COS 套装、相机、构图、姿势和场景规则生成。"
         else:
             action_line = f"用户要求：{act}" if act else "用户要求：看着镜头自然自拍，展示你现在的样子。"
         if intent.is_legs_only:
-            subject_photo_label = "第三人称摄影服装记录" if intent.is_third_person_photo else "第一人称自拍服装记录"
+            subject_photo_label = (
+                "第三人称腿部穿搭照片" if feet_cropped else "第三人称全身穿搭照片"
+            ) if camera_kind == "third" else (
+                "第一人称腰线至鞋履照片" if feet_cropped else "全身镜自拍照片"
+            )
         elif intent.is_cos_look:
             subject_photo_label = {
                 "third": "动漫风格他拍画面" if appearance_type == "anime" else "日常他拍照片",
@@ -1505,8 +1535,7 @@ class PersonaManager:
                 "正面合影时同框角色得体成年、互动自然并默认看向镜头；选定侧身或背面构图时保持身体与头部朝向连贯，不强迫回头。",
             ]
         elif intent.is_legs_only:
-            # The legs-only mode lines above already contain the complete crop,
-            # subject, clothing, and lighting constraints; do not repeat them.
+            # The mode lines above already define the requested framing and outfit.
             output_lines = []
         else:
             output_lines = [

@@ -207,6 +207,7 @@ def select_cos_references(
     action: str = "",
     persona_extra_refs: Optional[Sequence[ImageReference]] = None,
     failed_count: int = 0,
+    prefer_message_identity: bool = False,
 ) -> CosReferenceSelection:
     """Choose the COS identity image and preserve a stable request order.
 
@@ -220,7 +221,10 @@ def select_cos_references(
     use_message_identity, keep_persona_identity = _cos_identity_intent(action)
     identity: Optional[ImageReference]
     source: str
-    if persona_ref and message and use_message_identity and not keep_persona_identity:
+    if prefer_message_identity and message:
+        identity, source = message[0], "message"
+        raw_extras = message[1:]
+    elif persona_ref and message and use_message_identity and not keep_persona_identity:
         identity, source = message[0], "message"
         raw_extras = [*persona_extras, *message[1:]]
     elif persona_ref:
@@ -244,7 +248,7 @@ def select_cos_references(
     role_counts: Dict[str, int] = {}
     if source != "none":
         role_counts[source] = 1
-    if persona_extras:
+    if persona_extras and not (prefer_message_identity and message):
         role_counts["persona_extra"] = len(persona_extras)
     if message:
         role_counts["message"] = len(message)
