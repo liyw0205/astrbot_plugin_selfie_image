@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.56")
+        self.assertEqual(PLUGIN_VERSION, "1.6.57")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -8991,8 +8991,8 @@ class LegFocusTests(unittest.TestCase):
             self.assertTrue(profile["scene_ids"], item["id"])
             self.assertTrue(profile["pose_ids"], item["id"])
         def choose_framing_first(values):
-            if "low_angle_full_2" in values:
-                return "low_angle_full_2"
+            if "low_angle_hero" in values:
+                return "low_angle_hero"
             return values[0]
 
         with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
@@ -9009,7 +9009,8 @@ class LegFocusTests(unittest.TestCase):
             )
         self.assertNotIn("视角按本套 COS 套装描述执行", shuilaner_action)
         self.assertIn("本次未指定视角，随机采用", shuilaner_action)
-        self.assertIn("低机位全身构图，从人物膝盖略低处向上拍摄", shuilaner_action)
+        self.assertIn("镜头位于腰部附近略低位置", shuilaner_action)
+        self.assertNotIn("从人物膝盖略低处向上拍摄", shuilaner_action)
         self.assertNotRegex(
             shuilaner_action.split("本次套装：", 1)[0],
             r"(?:正面|侧身|近景|全身|半身)或(?:正面|侧身|近景|全身|半身)",

@@ -1829,7 +1829,11 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, Any]] = {
 COS_EXPLICIT_ONLY_POSE_IDS = {
     pose_id for pose_id, pose in COS_RANDOM_POSE_CLASSES.items() if pose.get("explicit_only")
 }
-COS_EXPLICIT_ONLY_FRAMING_IDS = {"rear_lookback", "low_angle_neck_to_knee"}
+COS_EXPLICIT_ONLY_FRAMING_IDS = {
+    "rear_lookback",
+    "low_angle_neck_to_knee",
+    "low_angle_full_2",
+}
 COS_SCENE_GENERIC_POSE_IDS = ("side_profile",)
 
 COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
@@ -2201,6 +2205,14 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
         "title": "低机位全身2",
         "prompt": "低机位全身构图，从人物膝盖略低处向上拍摄，突出服装轮廓和人物气场，透视自然不过度夸张",
     },
+    "low_angle_hero": {
+        "title": "轻仰角气场人像",
+        "prompt": "镜头位于腰部附近略低位置，以克制的轻仰角拍摄三分之二身或全身；保持正常焦段和自然人体比例，不贴近腿部、不使用超广角",
+    },
+    "high_angle_oblique": {
+        "title": "高位斜俯环境人像",
+        "prompt": "从人物斜前上方约三十度俯拍中景，人物面部、肩颈和四肢比例自然；地面纹理作为环境层次，不把画面变成正上方监控视角",
+    },
     "side_profile": {
         "title": "自然侧面人像",
         "prompt": "侧面或侧后三分之四机位，人物肩线、胯部和头部朝向连贯，不要求回头露出正脸",
@@ -2227,11 +2239,11 @@ COS_POSE_FRAMING_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     "standing_detail": (
         "front_half", "three_quarter_front", "two_thirds", "environmental",
         "eye_level_full", "high_angle_three_quarter", "low_angle_full",
-        "low_angle_full_2", "side_profile",
+        "low_angle_hero", "side_profile",
     ),
     "half_turn": (
         "three_quarter_front", "environmental", "eye_level_full",
-        "high_angle_three_quarter", "low_angle_full", "side_profile",
+        "high_angle_three_quarter", "low_angle_full", "low_angle_hero", "side_profile",
     ),
     "seated_composed": (
         "front_half", "three_quarter_front", "two_thirds", "environmental",
@@ -2239,7 +2251,7 @@ COS_POSE_FRAMING_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     ),
     "walking_turn": (
         "three_quarter_front", "environmental", "eye_level_full",
-        "side_profile", "low_angle_full",
+        "side_profile", "low_angle_full", "low_angle_hero",
     ),
     "kneeling_carpet": (
         "environmental", "eye_level_full", "high_angle_three_quarter",
@@ -2255,7 +2267,7 @@ COS_POSE_FRAMING_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     ),
     "leaning_rest": (
         "three_quarter_front", "environmental", "eye_level_full",
-        "side_profile", "low_angle_full",
+        "side_profile", "low_angle_full", "low_angle_hero",
     ),
     "stair_sit": (
         "environmental", "eye_level_full", "high_angle_three_quarter",
@@ -2267,7 +2279,7 @@ COS_POSE_FRAMING_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     ),
     "over_shoulder": ("rear_lookback",),
     "side_profile": (
-        "side_profile", "environmental", "eye_level_full", "low_angle_full",
+        "side_profile", "environmental", "eye_level_full", "low_angle_full", "low_angle_hero",
     ),
     "back_to_camera": (
         "rear_three_quarter", "rear_low_medium", "environmental", "eye_level_full",
@@ -2280,6 +2292,90 @@ COS_POSE_FRAMING_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
         "front_half", "three_quarter_front", "two_thirds", "environmental",
         "eye_level_full", "high_angle_three_quarter",
     ),
+}
+
+COS_POSE_FRAMING_COMPATIBILITY["seated_composed"] += ("high_angle_oblique",)
+COS_POSE_FRAMING_COMPATIBILITY["kneeling_carpet"] += ("high_angle_oblique",)
+COS_POSE_FRAMING_COMPATIBILITY["floor_sit_side"] += ("high_angle_oblique",)
+COS_POSE_FRAMING_COMPATIBILITY["one_knee_crouch"] += ("high_angle_oblique",)
+COS_POSE_FRAMING_COMPATIBILITY["stair_sit"] += ("high_angle_oblique",)
+COS_POSE_FRAMING_COMPATIBILITY["relaxed_recline"] += ("high_angle_oblique",)
+
+# Scene-dependent composition treatments are separate from the camera crop:
+# they add depth and visual direction without fighting the selected pose.
+COS_RANDOM_COMPOSITION_CLASSES: Dict[str, Dict[str, Any]] = {
+    "asymmetric_negative_space": {
+        "title": "非对称留白",
+        "prompt": "采用非对称构图，人物位于画面左侧或右侧三分之一处，另一侧留出有层次的场景空间；视线或身体方向自然引向留白，不裁断头部、手部或服装主体",
+    },
+    "telephoto_compression": {
+        "title": "长焦空间压缩",
+        "prompt": "摄影者退到较远距离使用中长焦视角压缩背景层次，人物比例和服装细节自然清楚；不使用广角，不把背景贴到人物身上",
+        "cameras": ("third",),
+    },
+    "architectural_frame": {
+        "title": "建筑框景纵深",
+        "prompt": "利用当前场景已经存在的门框、拱门、廊柱或窗格形成边缘框景，主体完整清晰；前景结构只贴画面边缘，不遮挡脸、手和服装，不凭空增加建筑",
+        "scenes": (
+            "old_town_lane", "museum_hall", "japanese_ink_room", "theater_stage_wing",
+            "cinema_projection_room", "spiral_archive", "modern_art_gallery", "greenhouse",
+        ),
+        "cameras": ("third",),
+        "poses": ("standing_detail", "half_turn", "seated_composed", "walking_turn", "leaning_rest", "side_profile", "back_to_camera"),
+    },
+    "architectural_leading_lines": {
+        "title": "建筑引导线",
+        "prompt": "借助当前场景已有的地面、台阶、廊柱或道路线条形成清楚的纵深引导，并把视线带向人物；不新增道路或栏杆，线条不穿过人物身体",
+        "scenes": (
+            "garden_walkway", "bamboo_garden", "cherry_blossom_path", "seaside_boardwalk",
+            "rooftop_sunset", "old_town_lane", "rainy_neon_street", "festival_lantern",
+            "stone_staircase", "museum_hall", "aquarium_tunnel", "greenhouse_storm",
+            "skybridge_after_rain", "last_train_platform", "planetarium_dome",
+            "sea_cliff_lighthouse", "spiral_archive", "red_rock_canyon",
+            "snow_observation_corridor", "modern_art_gallery",
+        ),
+        "cameras": ("third",),
+        "poses": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_profile", "back_to_camera", "stair_sit"),
+    },
+    "layered_foreground": {
+        "title": "前后景分层",
+        "prompt": "形成近处少量柔和虚化边缘、中景清晰人物、远处场景的三层空间；前景只占画面边缘，绝不遮挡脸、手、腿或服装关键结构，不额外生成物件",
+        "scenes": (
+            "garden_walkway", "bamboo_garden", "cherry_blossom_path", "old_town_lane",
+            "festival_lantern", "greenhouse", "greenhouse_storm", "theater_stage_wing",
+            "spiral_archive", "modern_art_gallery",
+        ),
+        "cameras": ("third",),
+        "poses": ("standing_detail", "half_turn", "seated_composed", "walking_turn", "leaning_rest", "reach_light", "side_profile", "back_to_camera"),
+    },
+    "dynamic_freeze": {
+        "title": "动态抓拍定格",
+        "prompt": "像摄影师抓拍动作刚开始或刚结束的一瞬间，人物和服装边缘保持清晰，只有衣摆或发梢有轻微真实动势；不使用运动模糊、不跳跃、不改变已选姿势",
+        "cameras": ("third",),
+        "poses": ("walking_turn", "half_turn", "reach_light", "overhead_stretch"),
+    },
+    "backlight_rim_detail": {
+        "title": "逆光轮廓层次",
+        "prompt": "只利用当前场景已有的窗光、天光或舞台光形成柔和边缘逆光，同时保留面部、发型和服装纹理细节；人物不可变成黑色剪影，不改变场景时段或主色",
+        "scenes": (
+            "bedroom_window", "garden_walkway", "cherry_blossom_path", "seaside_boardwalk",
+            "rooftop_sunset", "festival_lantern", "snowy_courtyard", "greenhouse",
+            "greenhouse_storm", "theater_stage_wing", "planetarium_dome",
+            "sea_cliff_lighthouse", "snow_observation_corridor",
+        ),
+        "poses": ("standing_detail", "half_turn", "walking_turn", "reach_light", "side_profile", "back_to_camera", "overhead_stretch"),
+    },
+}
+
+COS_FRAMING_SCENE_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
+    "high_angle_oblique": (
+        "bedroom_carpet", "photo_studio", "living_room_rug", "cafe_corner",
+        "stone_staircase", "japanese_ink_room", "spiral_archive",
+    ),
+}
+COS_FRAMING_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
+    "low_angle_hero": ("third",),
+    "high_angle_oblique": ("third",),
 }
 COS_POSE_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     "back_to_camera": ("third", "first"),
@@ -2309,6 +2405,9 @@ COS_FRAMING_TERMS = (
     "从背后拍", "侧后方", "侧面机位",
     "低机位", "高机位", "腰线", "膝盖附近",
     "颈下", "膝上",
+    "框景", "门框", "拱门", "非对称构图", "留白", "长焦", "压缩背景",
+    "引导线", "前景", "前后景", "动态抓拍", "动作定格", "逆光", "轮廓光",
+    "高位斜俯",
     "头部位于画面", "头部在画面", "画面从头", "画面只拍",
 )
 
@@ -2391,14 +2490,62 @@ def cos_prompt_has_framing(text: str) -> bool:
     return any(term in compact for term in COS_FRAMING_TERMS)
 
 
+def _pick_cos_composition(
+    *,
+    pose_id: str,
+    scene_id: str,
+    camera: str,
+    avoid: Iterable[str] = (),
+) -> Dict[str, str]:
+    if pose_id == "user" or pose_id in COS_EXPLICIT_ONLY_POSE_IDS or camera != "third":
+        return {}
+
+    candidates = _compatible_cos_composition_ids(
+        pose_id=pose_id,
+        scene_id=scene_id,
+        camera=camera,
+    )
+    available = [item for item in candidates if item not in _as_id_set(avoid)]
+    if not available:
+        available = candidates
+    if not available:
+        return {}
+    composition_id = random.choice(available)
+    selected = COS_RANDOM_COMPOSITION_CLASSES[composition_id]
+    return {
+        "composition_id": composition_id,
+        "title": str(selected.get("title") or ""),
+        "prompt": str(selected.get("prompt") or ""),
+    }
+
+
+def _compatible_cos_composition_ids(*, pose_id: str, scene_id: str, camera: str) -> List[str]:
+    if pose_id == "user" or pose_id in COS_EXPLICIT_ONLY_POSE_IDS or camera != "third":
+        return []
+    candidates = []
+    for composition_id, item in COS_RANDOM_COMPOSITION_CLASSES.items():
+        if item.get("poses") and pose_id not in item["poses"]:
+            continue
+        if item.get("scenes") and scene_id not in item["scenes"]:
+            continue
+        if item.get("cameras") and camera not in item["cameras"]:
+            continue
+        candidates.append(composition_id)
+    return candidates
+
+
 def pick_cos_framing(
     *,
     outfit: str = "",
     extra_request: str = "",
     avoid_framings: Iterable[str] = (),
+    avoid_compositions: Iterable[str] = (),
     pose_id: str = "",
+    scene_id: str = "",
+    camera: str = "third",
 ) -> Dict[str, Any]:
     """Pick a concrete framing unless the user's extra request already fixes it."""
+    camera = str(camera or "third")
     # Framing text authored inside an outfit is descriptive context, not a lock.
     # Keep it intact so the selected random view can take precedence in the
     # action contract without rewriting costume details.
@@ -2429,6 +2576,17 @@ def pick_cos_framing(
             "randomized_from_options": False,
             "explicit": True,
         }
+    if pose_id == "user":
+        return {
+            "view_id": "unspecified",
+            "title": "",
+            "prompt": "",
+            "outfit_text": resolved_outfit,
+            "extra_request_text": resolved_extra,
+            "randomized_from_options": False,
+            "explicit": False,
+            "composition": {},
+        }
     avoided = _as_id_set(avoid_framings)
     pose_framings = COS_POSE_FRAMING_COMPATIBILITY.get(pose_id)
     orientation = str(COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("orientation") or "")
@@ -2444,6 +2602,46 @@ def pick_cos_framing(
         )
         and (compatible is None or item in compatible)
     ]
+    if scene_id:
+        candidates = [
+            item for item in candidates
+            if item not in COS_FRAMING_SCENE_COMPATIBILITY
+            or scene_id in COS_FRAMING_SCENE_COMPATIBILITY[item]
+        ]
+    else:
+        candidates = [item for item in candidates if item not in COS_FRAMING_SCENE_COMPATIBILITY]
+    if camera:
+        candidates = [
+            item for item in candidates
+            if item not in COS_FRAMING_CAMERA_COMPATIBILITY
+            or camera in COS_FRAMING_CAMERA_COMPATIBILITY[item]
+        ]
+    if not candidates:
+        candidates = [
+            item for item in COS_FRAMING_CLASSES
+            if item not in COS_EXPLICIT_ONLY_FRAMING_IDS
+            and (compatible is None or item in compatible)
+            and (
+                item not in COS_FRAMING_CAMERA_COMPATIBILITY
+                or not camera
+                or camera in COS_FRAMING_CAMERA_COMPATIBILITY[item]
+            )
+            and (
+                item not in COS_FRAMING_SCENE_COMPATIBILITY
+                or (scene_id and scene_id in COS_FRAMING_SCENE_COMPATIBILITY[item])
+            )
+        ]
+    if not candidates:
+        return {
+            "view_id": "unspecified",
+            "title": "",
+            "prompt": "",
+            "outfit_text": resolved_outfit,
+            "extra_request_text": resolved_extra,
+            "randomized_from_options": False,
+            "explicit": False,
+            "composition": {},
+        }
     available = [item for item in candidates if item not in avoided]
     if not available:
         # Avoid lists may exhaust the pool, but must not bypass pose/framing safety.
@@ -2455,6 +2653,12 @@ def pick_cos_framing(
     selected["extra_request_text"] = resolved_extra
     selected["randomized_from_options"] = False
     selected["explicit"] = False
+    selected["composition"] = _pick_cos_composition(
+        pose_id=pose_id,
+        scene_id=scene_id,
+        camera=camera,
+        avoid=avoid_compositions,
+    )
     return selected
 
 def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
@@ -2479,6 +2683,25 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
         "pose_framing_compatibility": {
             pose_id: list(framings)
             for pose_id, framings in COS_POSE_FRAMING_COMPATIBILITY.items()
+        },
+        "framing_scene_compatibility": {
+            framing_id: list(scene_ids)
+            for framing_id, scene_ids in COS_FRAMING_SCENE_COMPATIBILITY.items()
+        },
+        "framing_camera_compatibility": {
+            framing_id: list(cameras)
+            for framing_id, cameras in COS_FRAMING_CAMERA_COMPATIBILITY.items()
+        },
+        "composition_constraints": {
+            composition_id: {
+                **{
+                    key: list(item[key])
+                    for key in ("poses", "scenes")
+                    if item.get(key)
+                },
+                "cameras": list(item.get("cameras") or ("third",)),
+            }
+            for composition_id, item in COS_RANDOM_COMPOSITION_CLASSES.items()
         },
         "pose_camera_compatibility": {
             pose_id: list(cameras)
@@ -2518,6 +2741,20 @@ def _poses_for_orientation(pose_ids: Iterable[str], orientation: str) -> List[st
     ]
 
 
+def _poses_for_camera(pose_ids: Iterable[str], camera: str) -> List[str]:
+    if not camera:
+        return list(pose_ids)
+    compatible = []
+    for pose_id in pose_ids:
+        allowed_cameras = COS_POSE_CAMERA_COMPATIBILITY.get(pose_id)
+        if allowed_cameras and camera not in allowed_cameras:
+            continue
+        if camera == "selfie" and pose_id not in COS_RANDOM_SELFIE_POSE_IDS:
+            continue
+        compatible.append(pose_id)
+    return compatible
+
+
 def pick_cos_variation(
     cos_id: str,
     *,
@@ -2526,6 +2763,7 @@ def pick_cos_variation(
     avoid_poses: Iterable[str] = (),
     avoid_scenes: Iterable[str] = (),
     extra_request: str = "",
+    camera: str = "",
 ) -> Dict[str, str]:
     """Pick a compatible scene and pose, honoring explicit user constraints."""
     profile = cos_look_compatibility(cos_id)
@@ -2546,9 +2784,10 @@ def pick_cos_variation(
         compatible_poses = _scene_pose_ids(scene) if scene else list(profile["recommended_pose_ids"])
         if not requested_pose:
             compatible_poses = _poses_for_orientation(compatible_poses, requested_orientation)
+            compatible_poses = _poses_for_camera(compatible_poses, camera)
         compatible_poses = [item for item in compatible_poses if item not in COS_EXPLICIT_ONLY_POSE_IDS]
         available_poses = [item for item in compatible_poses if item not in avoided_poses]
-        pose_id = random.choice(available_poses or compatible_poses)
+        pose_id = random.choice(available_poses or compatible_poses) if compatible_poses else "user"
     elif requested_pose:
         pose_id = requested_pose
         compatible_scenes = [
@@ -2564,6 +2803,7 @@ def pick_cos_variation(
             for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
             for pose_id in _scene_pose_ids(scene)
             if pose_id not in COS_EXPLICIT_ONLY_POSE_IDS
+            and pose_id in _poses_for_camera((pose_id,), camera)
         ]
         if requested_orientation:
             pairs = [
@@ -2582,10 +2822,15 @@ def pick_cos_variation(
             available_pairs = [pair for pair in pairs if pair[1] not in avoided_poses]
         if not available_pairs:
             available_pairs = pairs
-        candidate_scenes = list(dict.fromkeys(pair[0] for pair in available_pairs))
-        scene_id = random.choice(candidate_scenes)
-        candidate_poses = [pair[1] for pair in available_pairs if pair[0] == scene_id]
-        pose_id = random.choice(candidate_poses)
+        if available_pairs:
+            candidate_scenes = list(dict.fromkeys(pair[0] for pair in available_pairs))
+            scene_id = random.choice(candidate_scenes)
+            candidate_poses = [pair[1] for pair in available_pairs if pair[0] == scene_id]
+            pose_id = random.choice(candidate_poses)
+        else:
+            candidate_scenes = [scene_id for scene_id in COS_RANDOM_SCENE_CLASSES if scene_id not in avoided_scenes]
+            scene_id = random.choice(candidate_scenes or list(COS_RANDOM_SCENE_CLASSES))
+            pose_id = "user"
 
     scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
 
@@ -2601,7 +2846,7 @@ def pick_cos_variation(
         )
     if scene and scene.get("style_prompt") and not _requested_cos_style(extra_request):
         prompt_parts.append("本次场景影像风格：" + scene["style_prompt"])
-    if not requested_pose or pose_id == "over_shoulder":
+    if pose_id in COS_RANDOM_POSE_CLASSES and (not requested_pose or pose_id == "over_shoulder"):
         pose_prefix = (
             "本次回眸姿势按以下细节执行："
             if requested_pose and pose_id == "over_shoulder"
@@ -3169,7 +3414,17 @@ def build_cos_third_person_prompt(text: str) -> str:
         return raw
     adapted = adapt_cos_outfit_for_camera(raw, "third")
     adapted = re.sub(r"【cam:(?:selfie|first|third)】", "", adapted, flags=re.I)
-    framing = pick_cos_framing(extra_request=adapted)
+    variation = {}
+    for tag_name, key in (("cos_scene", "scene_id"), ("cos_pose", "pose_id")):
+        match = re.search(rf"【{tag_name}:([a-z0-9_]+)】", raw)
+        if match:
+            variation[key] = match.group(1)
+    framing = pick_cos_framing(
+        extra_request=adapted,
+        scene_id=str(variation.get("scene_id") or ""),
+        pose_id=str(variation.get("pose_id") or ""),
+        camera="third",
+    )
     adapted = framing.get("extra_request_text", adapted)
     if framing.get("randomized_from_options"):
         framing_line = f"本次从已有视角选项中随机确定为{framing['prompt']}；"
@@ -3179,6 +3434,9 @@ def build_cos_third_person_prompt(text: str) -> str:
             if framing["prompt"]
             else "本次按已确定的单一构图执行；"
         )
+    composition = framing.get("composition") or {}
+    if composition.get("prompt"):
+        framing_line += f"附加构图强化：{composition['prompt']}；"
     return (
         "【cos:web】 【cam:third】 【他拍 / 看看COS模式】"
         "COS 换装他拍：摄影师在画面外；"
@@ -3199,6 +3457,7 @@ def build_cos_look_action(
     avoid_pose: str = "",
     avoid_scene: str = "",
     avoid_framings: Iterable[str] = (),
+    avoid_compositions: Iterable[str] = (),
     avoid_poses: Iterable[str] = (),
     avoid_scenes: Iterable[str] = (),
     avoid_cameras: Iterable[str] = (),
@@ -3238,6 +3497,7 @@ def build_cos_look_action(
         avoid_poses=pose_avoidance,
         avoid_scenes=avoid_scenes,
         extra_request=extra_request,
+        camera=requested_camera,
     )
     camera_kind = pick_cos_camera(
         extra_request=extra_request,
@@ -3254,7 +3514,10 @@ def build_cos_look_action(
         outfit=outfit,
         extra_request=extra_request,
         avoid_framings=avoid_framings,
+        avoid_compositions=avoid_compositions,
         pose_id=variation["pose_id"],
+        scene_id=variation["scene_id"],
+        camera=camera_kind,
     )
     outfit = framing_choice.get("outfit_text", outfit)
     extra_request = framing_choice.get("extra_request_text", extra_request)
@@ -3276,6 +3539,9 @@ def build_cos_look_action(
         )
     else:
         framing_line = ""
+    composition = framing_choice.get("composition") or {}
+    if composition.get("prompt"):
+        framing_line += f"附加构图强化：{composition['prompt']}；"
     if camera_kind == "third":
         hand_rule = (
             "背面他拍：摄影师在画面外，人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；"
@@ -3356,4 +3622,5 @@ def build_cos_look_action(
         + (f" 【cos_pose:{variation['pose_id']}】" if variation["pose_id"] else "")
         + (f" 【cos_scene:{variation['scene_id']}】" if variation["scene_id"] else "")
         + (f" 【cos_framing:{framing_id}】" if framing_id else "")
+        + (f" 【cos_composition:{composition['composition_id']}】" if composition.get("composition_id") else "")
     )

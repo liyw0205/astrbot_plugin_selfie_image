@@ -11,8 +11,11 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_LOOK_SETS,
     COS_RANDOM_POSE_CLASSES,
     COS_RANDOM_SCENE_CLASSES,
+    COS_RANDOM_COMPOSITION_CLASSES,
     COS_POSE_CAMERA_COMPATIBILITY,
     COS_POSE_FRAMING_COMPATIBILITY,
+    COS_FRAMING_SCENE_COMPATIBILITY,
+    COS_FRAMING_CAMERA_COMPATIBILITY,
     audit_cos_look_catalog,
     build_cos_look_action,
     build_cos_third_person_prompt,
@@ -143,7 +146,7 @@ def test_corrected_cos_identity_details_are_present_in_final_catalog():
     assert "釉瑚" in prompts["wuthering_youhu_antique"]
 
 
-def test_sun_shangxiang_view_is_a_random_framing_option_not_a_fixed_outfit_view():
+def test_sun_shangxiang_view_is_explicit_only_not_a_random_framing_option():
     sun = next(item for item in COS_LOOK_SETS if item["id"] == "sun_shangxiang_neon_green")
     assert "横屏低机位构图" not in sun["prompt"]
     assert "颈部以下拍到膝上" not in sun["prompt"]
@@ -152,13 +155,16 @@ def test_sun_shangxiang_view_is_a_random_framing_option_not_a_fixed_outfit_view(
     assert framing["title"] == "横屏低机位颈下至膝上"
     assert "颈部以下拍到膝上" in framing["prompt"]
     assert "头部自然位于画面外" in framing["prompt"]
-    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
+    assert "low_angle_neck_to_knee" in COS_EXPLICIT_ONLY_FRAMING_IDS
+    with patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        return_value="low_angle_neck_to_knee",
+        side_effect=lambda values: values[0],
     ):
         selected = pick_cos_framing(extra_request="COS 换装：自然站立")
-    assert selected["view_id"] == "low_angle_neck_to_knee"
-    assert selected["prompt"] == framing["prompt"]
+    assert selected["view_id"] != "low_angle_neck_to_knee"
+    explicit = pick_cos_framing(extra_request="横屏低机位颈下至膝上构图")
+    assert explicit["explicit"]
+    assert explicit["view_id"] == "user"
 
 
 def test_cos_reference_selection_keeps_persona_first_without_identity_intent():
@@ -433,16 +439,19 @@ def test_unspecified_cos_framing_picks_one_concrete_view():
 
 
 def test_outfit_framing_words_do_not_suppress_random_view():
+    def choose_framing(values):
+        return "low_angle_hero" if "low_angle_hero" in values else values[0]
+
     with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        return_value="low_angle_full_2",
+        side_effect=choose_framing,
     ):
         selected = pick_cos_framing(
             outfit="竖屏9:16，半身到全身构图，人物对镜站立",
             extra_request="COS 换装：自然站立",
         )
-    assert selected["view_id"] == "low_angle_full_2"
-    assert selected["prompt"] == COS_FRAMING_CLASSES["low_angle_full_2"]["prompt"]
+    assert selected["view_id"] == "low_angle_hero"
+    assert selected["prompt"] == COS_FRAMING_CLASSES["low_angle_hero"]["prompt"]
     assert selected["outfit_text"] == "竖屏9:16，半身到全身构图，人物对镜站立"
 
 
@@ -475,6 +484,15 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
             pose_id: list(cameras)
             for pose_id, cameras in COS_POSE_CAMERA_COMPATIBILITY.items()
         }
+        assert profile["framing_scene_compatibility"] == {
+            framing_id: list(scenes)
+            for framing_id, scenes in COS_FRAMING_SCENE_COMPATIBILITY.items()
+        }
+        assert profile["framing_camera_compatibility"] == {
+            framing_id: list(cameras)
+            for framing_id, cameras in COS_FRAMING_CAMERA_COMPATIBILITY.items()
+        }
+        assert set(profile["composition_constraints"]) == set(COS_RANDOM_COMPOSITION_CLASSES)
     for scene in COS_RANDOM_SCENE_CLASSES.values():
         assert scene["pose_ids"]
         assert set(scene["pose_ids"]) <= COS_RANDOM_POSE_CLASSES.keys()
@@ -618,7 +636,7 @@ def test_back_and_side_cos_staging_never_randomly_forces_a_lookback():
     back_framing = pick_cos_framing(pose_id="back_to_camera")
     assert back_framing["view_id"] in {"rear_three_quarter", "rear_low_medium", "environmental", "eye_level_full"}
     side_framing = pick_cos_framing(pose_id="side_profile")
-    assert side_framing["view_id"] in {"side_profile", "environmental", "eye_level_full", "low_angle_full"}
+    assert side_framing["view_id"] in {"side_profile", "environmental", "eye_level_full", "low_angle_full", "low_angle_hero"}
 
     with patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
@@ -646,6 +664,7 @@ def test_back_and_side_cos_staging_never_randomly_forces_a_lookback():
 def test_face_cropping_framing_is_explicit_only():
     random_framing = pick_cos_framing(pose_id="standing_detail")
     assert random_framing["view_id"] != "low_angle_neck_to_knee"
+    assert random_framing["view_id"] != "low_angle_full_2"
 
     explicit_framing = pick_cos_framing(
         extra_request="颈下至膝上构图",
@@ -653,6 +672,116 @@ def test_face_cropping_framing_is_explicit_only():
     )
     assert explicit_framing["explicit"]
     assert explicit_framing["view_id"] == "user"
+
+
+def test_random_cos_composition_respects_pose_scene_and_camera_constraints():
+    profile = cos_look_compatibility("test")
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
+        for scene_id, pose_ids in profile["scene_pose_compatibility"].items():
+            for pose_id in pose_ids:
+                if COS_RANDOM_POSE_CLASSES[pose_id].get("explicit_only"):
+                    continue
+                for camera in ("third", "first", "selfie"):
+                    selected = pick_cos_framing(
+                        pose_id=pose_id,
+                        scene_id=scene_id,
+                        camera=camera,
+                    )
+                    view_id = selected["view_id"]
+                    if view_id not in {"unspecified", "user"}:
+                        assert view_id in COS_POSE_FRAMING_COMPATIBILITY[pose_id]
+                        assert scene_id in COS_FRAMING_SCENE_COMPATIBILITY.get(view_id, (scene_id,))
+                        assert camera in COS_FRAMING_CAMERA_COMPATIBILITY.get(view_id, (camera,))
+                    composition = selected.get("composition") or {}
+                    if composition:
+                        constraints = profile["composition_constraints"][composition["composition_id"]]
+                        assert camera in constraints["cameras"]
+                        assert not constraints.get("poses") or pose_id in constraints["poses"]
+                        assert not constraints.get("scenes") or scene_id in constraints["scenes"]
+
+    unknown_pose = pick_cos_framing(pose_id="user", scene_id="photo_studio", camera="third")
+    assert unknown_pose["view_id"] == "unspecified"
+    assert unknown_pose["composition"] == {}
+
+
+def test_explicit_cos_camera_filters_only_random_pose_choices():
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
+        selfie_variation = pick_cos_variation("roxy_cream", camera="selfie")
+        selfie_action = build_cos_look_action(
+            "自拍",
+            camera="selfie",
+            picker=lambda **_: next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream"),
+        )
+
+    assert selfie_variation["pose_id"] not in {"back_to_camera", "over_shoulder"}
+    assert selfie_variation["pose_id"] in cos_look_compatibility("test")["scene_pose_compatibility"][selfie_variation["scene_id"]]
+    assert "【cam:selfie】" in selfie_action
+    assert "【cos_pose:back_to_camera】" not in selfie_action
+
+    explicit_back = pick_cos_variation("roxy_cream", extra_request="背影", camera="selfie")
+    assert explicit_back["pose_id"] == "back_to_camera"
+
+
+def test_random_cos_action_appends_an_independent_compatible_composition():
+    item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
+        action = build_cos_look_action(
+            "自然站立",
+            camera="third",
+            picker=lambda **_: item,
+        )
+    match = re.search(r"【cos_composition:([a-z0-9_]+)】", action)
+    assert match
+    composition = COS_RANDOM_COMPOSITION_CLASSES[match.group(1)]
+    assert "附加构图强化：" + composition["prompt"] in action
+
+
+def test_composition_avoidance_keeps_only_compatible_candidates():
+    from astrbot_plugin_selfie_image.cos.cos_looks import _pick_cos_composition
+
+    first = _pick_cos_composition(
+        pose_id="standing_detail",
+        scene_id="old_town_lane",
+        camera="third",
+    )
+    second = _pick_cos_composition(
+        pose_id="standing_detail",
+        scene_id="old_town_lane",
+        camera="third",
+        avoid={first["composition_id"]},
+    )
+    assert second["composition_id"] != first["composition_id"]
+    constraints = cos_look_compatibility("test")["composition_constraints"][second["composition_id"]]
+    assert "third" in constraints["cameras"]
+    assert "old_town_lane" in constraints.get("scenes", ("old_town_lane",))
+    assert "standing_detail" in constraints.get("poses", ("standing_detail",))
+
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[-1],
+    ):
+        exhausted = _pick_cos_composition(
+            pose_id="standing_detail",
+            scene_id="old_town_lane",
+            camera="third",
+            avoid=COS_RANDOM_COMPOSITION_CLASSES,
+        )
+    assert exhausted["composition_id"] in {
+        "asymmetric_negative_space",
+        "telephoto_compression",
+        "architectural_frame",
+        "architectural_leading_lines",
+        "layered_foreground",
+    }
 
 
 def test_new_scene_uses_its_bound_style_unless_the_user_supplies_one():

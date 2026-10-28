@@ -890,6 +890,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "cos_pose",
             "cos_scene",
             "cos_framing",
+            "cos_composition",
             "cos_view",
         ):
             value = rd.get(key)
@@ -1052,6 +1053,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
         ("cos_pose", r"【cos_pose:([a-z0-9_]+)】"),
         ("cos_scene", r"【cos_scene:([a-z0-9_]+)】"),
         ("cos_framing", r"【cos_framing:([a-z0-9_]+)】"),
+        ("cos_composition", r"【cos_composition:([a-z0-9_]+)】"),
         ("cos_view", r"【(?:cos_view|cam):([a-z0-9_]+)】"),
     ):
         value = out.get(key)

@@ -762,6 +762,7 @@ class WebTaskMixin:
                         "cos_pose",
                         "cos_scene",
                         "cos_framing",
+                        "cos_composition",
                         "cos_view",
                         "request_prompt_en",
                     )

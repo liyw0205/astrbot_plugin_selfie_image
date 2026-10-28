@@ -1485,6 +1485,7 @@ class SelfieImagePlugin(
         avoid_pose: str = "",
         avoid_scene: str = "",
         avoid_framings: Iterable[str] = (),
+        avoid_compositions: Iterable[str] = (),
         avoid_poses: Iterable[str] = (),
         avoid_scenes: Iterable[str] = (),
         avoid_cameras: Iterable[str] = (),
@@ -1509,6 +1510,7 @@ class SelfieImagePlugin(
                 avoid_pose=avoid_pose,
                 avoid_scene=avoid_scene,
                 avoid_framings=avoid_framings,
+                avoid_compositions=avoid_compositions,
                 avoid_poses=avoid_poses,
                 avoid_scenes=avoid_scenes,
                 avoid_cameras=avoid_cameras,
@@ -1526,6 +1528,7 @@ class SelfieImagePlugin(
             avoid_pose=avoid_pose,
             avoid_scene=avoid_scene,
             avoid_framings=avoid_framings,
+            avoid_compositions=avoid_compositions,
             avoid_poses=avoid_poses,
             avoid_scenes=avoid_scenes,
             avoid_cameras=avoid_cameras,
@@ -5176,6 +5179,7 @@ class SelfieImagePlugin(
         used_cos_poses: set[str] = set()
         used_cos_scenes: set[str] = set()
         used_cos_framings: set[str] = set()
+        used_cos_compositions: set[str] = set()
         used_cos_cameras: set[str] = set()
 
         extra_keep = ""
@@ -5188,7 +5192,7 @@ class SelfieImagePlugin(
             m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
-                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_pose|cos_scene|cos_framing|cos_view|legs|wear|outfit|frame):[a-z0-9_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_pose|cos_scene|cos_framing|cos_composition|cos_view|legs|wear|outfit|frame):[a-z0-9_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
             # Keep the original command query even when it is already present
             # in the selected outfit title/prompt and therefore has no user
@@ -5262,6 +5266,7 @@ class SelfieImagePlugin(
                         avoid_poses=used_cos_poses,
                         avoid_scenes=used_cos_scenes,
                         avoid_framings=used_cos_framings,
+                        avoid_compositions=used_cos_compositions,
                         avoid_cameras=used_cos_cameras,
                         match_query=rebuild_match_query or extra_keep,
                         force_id=last_cos if keep_cos_outfit else "",
@@ -5283,6 +5288,9 @@ class SelfieImagePlugin(
                     m_cos_framing = re.search(r"【cos_framing:([a-z0-9_]+)】", round_action)
                     if m_cos_framing:
                         used_cos_framings.add(str(m_cos_framing.group(1) or ""))
+                    m_cos_composition = re.search(r"【cos_composition:([a-z0-9_]+)】", round_action)
+                    if m_cos_composition:
+                        used_cos_compositions.add(str(m_cos_composition.group(1) or ""))
 
                 elif source == "command-look-you" or "看看你模式" in str(action or ""):
                     round_action = self._build_third_person_look_action(
