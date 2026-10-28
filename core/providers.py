@@ -57,6 +57,7 @@ class ImageGenerateRequest:
     images: List[ImageReference] = field(default_factory=list)
     allow_compat_retry: bool = True
     max_image_bytes: int = 25 * 1024 * 1024
+    reference_fidelity: str = ""
 
 
 @dataclass
@@ -461,6 +462,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
         image_field_name: str,
         *,
         include_size: bool = True,
+        include_input_fidelity: bool = True,
     ) -> aiohttp.FormData:
         form = aiohttp.FormData()
         form.add_field("model", self.target.model or "gpt-image-1")
@@ -472,6 +474,8 @@ class OpenAIImageAdapter(BaseImageAdapter):
             size = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio, allow_omit_auto=False)
             if size:
                 form.add_field("size", size)
+        if include_input_fidelity and str(req.reference_fidelity or "").strip().lower() == "low":
+            form.add_field("input_fidelity", "low")
         # Official GPT Image / many NewAPI relays expect repeated image[] parts (img_gen).
         # Some older relays only accept bare "image". Caller tries preferred name first.
         for index, image in enumerate(req.images):
@@ -491,6 +495,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
         image_field_name: str,
         *,
         include_size: bool = True,
+        include_input_fidelity: bool = True,
     ) -> tuple[Optional[Any], str]:
         headers = {
             "Accept": "application/json",
@@ -501,7 +506,12 @@ class OpenAIImageAdapter(BaseImageAdapter):
             headers["Authorization"] = f"Bearer {self.target.api_key}"
         async with self.session.post(
             url,
-            data=self._build_edit_form(req, image_field_name, include_size=include_size),
+            data=self._build_edit_form(
+                req,
+                image_field_name,
+                include_size=include_size,
+                include_input_fidelity=include_input_fidelity,
+            ),
             headers=headers,
             timeout=image_client_timeout(self.target.timeout),
             proxy=str(self.target.proxy or "").strip() or None,
@@ -514,29 +524,38 @@ class OpenAIImageAdapter(BaseImageAdapter):
         # Profiles: field name + size omit. Cap attempts to avoid multi-bill spam.
         # Prefer sized image[] first: some relays (e.g. WisArt) often reset mid-body
         # on omit-size edits, while sized body completes more reliably.
-        if req.allow_compat_retry:
+        use_low_input_fidelity = str(req.reference_fidelity or "").strip().lower() == "low"
+        if use_low_input_fidelity:
+            profiles = (
+                [
+                    ("image[]", True, True),
+                    ("image[]", True, False),
+                    ("image", True, False),
+                    ("image[]", False, False),
+                ]
+                if req.allow_compat_retry
+                else [("image[]", True, True)]
+            )
+        elif req.allow_compat_retry:
             profiles = [
-                ("image[]", True),
-                ("image", True),
-                ("image[]", False),
+                ("image[]", True, False),
+                ("image", True, False),
+                ("image[]", False, False),
             ]
         else:
-            profiles = [("image[]", True)]
-        # If user fixed a non-auto ratio, keep sized body first (already default).
-        if req.aspect_ratio and req.aspect_ratio not in {"自动", "", "1:1"}:
-            profiles = [
-                ("image[]", True),
-                ("image", True),
-                ("image[]", False),
-            ] if req.allow_compat_retry else [("image[]", True)]
+            profiles = [("image[]", True, False)]
 
         last_error = ""
         try:
             from .error_classify import is_param_profile_switch_error, is_transport_profile_switch_error
 
-            for index, (field_name, include_size) in enumerate(profiles):
+            for index, (field_name, include_size, include_input_fidelity) in enumerate(profiles):
                 data, error = await self._post_edit_form(
-                    url, req, field_name, include_size=include_size
+                    url,
+                    req,
+                    field_name,
+                    include_size=include_size,
+                    include_input_fidelity=include_input_fidelity,
                 )
                 if not error and data is not None:
                     images = extract_openai_images_data(data, req.max_image_bytes)

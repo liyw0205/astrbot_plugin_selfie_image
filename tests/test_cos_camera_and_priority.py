@@ -6,10 +6,13 @@ from pathlib import Path
 from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_FRAMING_CLASSES,
     COS_LOOK_SETS,
+    COS_RANDOM_POSE_CLASSES,
+    COS_RANDOM_SCENE_CLASSES,
     audit_cos_look_catalog,
     build_cos_look_action,
     build_cos_third_person_prompt,
     cos_prompt_has_framing,
+    cos_look_compatibility,
     match_cos_look_sets,
     normalize_cos_prompt_negatives,
     pick_cos_framing,
@@ -33,6 +36,11 @@ def test_default_cos_pool_actions_randomize_camera_and_keep_contracts_clean():
         action = build_cos_look_action("", picker=lambda item=item, **_: item)
         camera = re.search(r"【cam:(selfie|first|third)】", action).group(1)
         assert camera in {"selfie", "first", "third"}
+        assert re.search(r"【cos_pose:[a-z0-9_]+】", action)
+        assert re.search(r"【cos_scene:[a-z0-9_]+】", action)
+        assert re.search(r"【cos_framing:[a-z0-9_]+】", action)
+        assert "本次随机场景优先于套装正文" in action
+        assert "本次随机姿势优先于套装正文" in action
         if camera == "third":
             assert "【他拍 / 看看COS模式】" in action
             assert "自拍" not in action
@@ -98,7 +106,7 @@ def test_cos_negative_normalization_deduplicates_shared_semantics():
 def test_corrected_cos_identity_details_are_present_in_final_catalog():
     prompts = {item["id"]: item["prompt"] for item in COS_LOOK_SETS}
     assert "紫色眼睛" in prompts["azur_lane_enterprise"]
-    assert "银白色长发" in prompts["azur_lane_belfast"]
+    assert "银白色长发假发" in prompts["azur_lane_belfast"]
     assert "紫色眼睛" in prompts["azur_lane_belfast"]
     assert "飞鸟马时" in prompts["blue_archive_toki"]
     assert "金色长发" in prompts["blue_archive_toki"]
@@ -112,10 +120,10 @@ def test_corrected_cos_identity_details_are_present_in_final_catalog():
     assert "黑色短发" in prompts["blue_archive_tsubaki"]
     assert "金色齐肩双马尾" in prompts["blue_archive_chinatsu"]
     assert "深棕色短发" in prompts["blue_archive_izuna"]
-    assert "黑色及膝长发" in prompts["baizhi_research_white_blue"]
-    assert "白色长发" in prompts["camellya_red_rose"]
+    assert "黑色及膝长假发" in prompts["baizhi_research_white_blue"]
+    assert "白色长假发" in prompts["camellya_red_rose"]
     assert "银白色长卷发" in prompts["carlotta_frost_portrait"]
-    assert "深棕色长发" in prompts["wuthering_zhezhi_ink"]
+    assert "深棕色长假发" in prompts["wuthering_zhezhi_ink"]
     assert "深红色长发" in prompts["mushoku_tensei_aisha"]
     assert "绿色眼睛" in prompts["mushoku_tensei_aisha"]
     assert "洛可可" in prompts["wuthering_roccia_stage"]
@@ -344,7 +352,10 @@ def test_raw_web_cos_prompt_can_be_wrapped_without_selfie_semantics():
 
 
 def test_unspecified_cos_framing_picks_one_concrete_view():
-    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
         selected = pick_cos_framing(extra_request="COS 换装：自然站立")
     assert selected["view_id"]
     assert selected["prompt"] in {item["prompt"] for item in COS_FRAMING_CLASSES.values()}
@@ -367,34 +378,98 @@ def test_outfit_framing_words_do_not_suppress_random_view():
     assert selected["outfit_text"] == "竖屏9:16，半身到全身构图，人物对镜站立"
 
 
-def test_random_cos_pose_is_optional_and_scene_is_never_injected():
-    from unittest.mock import patch
+def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
+    assert COS_RANDOM_POSE_CLASSES.keys() >= {"kneeling_carpet"}
+    assert len(COS_RANDOM_POSE_CLASSES) >= 12
+    assert len(COS_RANDOM_SCENE_CLASSES) >= 16
+    assert COS_RANDOM_SCENE_CLASSES["bedroom_carpet"]["pose_ids"]
+    assert "kneeling_carpet" in COS_RANDOM_SCENE_CLASSES["bedroom_carpet"]["pose_ids"]
+    kneeling_scenes = {
+        scene_id
+        for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+        if "kneeling_carpet" in scene["pose_ids"]
+    }
+    assert kneeling_scenes == {"bedroom_carpet", "living_room_rug"}
+    for item in COS_LOOK_SETS:
+        profile = cos_look_compatibility(item["id"])
+        assert profile["variation_enabled"], item["id"]
+        assert profile["scene_ids"] == list(COS_RANDOM_SCENE_CLASSES)
+        assert profile["pose_ids"] == list(COS_RANDOM_POSE_CLASSES)
+        assert profile["scene_pose_compatibility"] == {
+            scene_id: list(scene["pose_ids"])
+            for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+        }
+    for scene in COS_RANDOM_SCENE_CLASSES.values():
+        assert scene["pose_ids"]
+        assert set(scene["pose_ids"]) <= COS_RANDOM_POSE_CLASSES.keys()
 
-    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
-        selected = pick_cos_variation("blue_archive_haruka")
-    assert selected["pose_id"]
-    assert selected["scene_id"] == ""
-    assert "随机姿势" in selected["prompt"]
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
+        selected = pick_cos_variation("roxy_cream", extra_request="跪坐")
+    assert selected["pose_id"] == "kneeling_carpet"
+    assert selected["scene_id"] in {
+        "bedroom_carpet", "living_room_rug"
+    }
+    assert "随机场景" in selected["prompt"]
+    assert "随机姿势" not in selected["prompt"]
 
-    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.75):
-        selected = pick_cos_variation("blue_archive_haruka")
-    assert selected == {"pose_id": "", "scene_id": "", "prompt": ""}
+
+def test_pose_and_scene_detection_preserves_explicit_user_staging():
+    kneeling = pick_cos_variation("roxy_cream", extra_request="跪坐在地毯上")
+    assert kneeling["pose_id"] == "kneeling_carpet"
+    assert kneeling["scene_id"] == "user"
+    assert "随机场景" not in kneeling["prompt"]
+    assert "随机姿势" not in kneeling["prompt"]
+
+    ordinary = pick_cos_variation("roxy_cream", extra_request="在镜头前保持自然，服装细节清晰")
+    assert ordinary["scene_id"] != "user"
+    assert "随机场景" in ordinary["prompt"]
+
+    custom_scene = pick_cos_variation("roxy_cream", extra_request="夜景")
+    assert custom_scene["scene_id"] == "user"
+    assert "随机场景" not in custom_scene["prompt"]
+
+    custom_pose = pick_cos_variation("roxy_cream", extra_request="双手托脸")
+    assert custom_pose["pose_id"] == "user"
+    assert "随机姿势" not in custom_pose["prompt"]
 
 
-def test_random_cos_framing_is_optional_when_prompt_has_no_view():
-    from unittest.mock import patch
+def test_random_scene_is_uniformly_selected_before_compatible_pose():
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[-1],
+    ):
+        selected = pick_cos_variation("custom_cos_id")
+    final_scene_id = list(COS_RANDOM_SCENE_CLASSES)[-1]
+    assert selected["scene_id"] == final_scene_id
+    assert selected["pose_id"] == COS_RANDOM_SCENE_CLASSES[final_scene_id]["pose_ids"][-1]
 
-    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
+
+def test_explicit_cos_scene_and_pose_are_not_overridden():
+    item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
+    action = build_cos_look_action(
+        "卧室地毯上跪坐",
+        camera="third",
+        picker=lambda **_: item,
+    )
+    assert "【cos_scene:bedroom_carpet】" in action
+    assert "【cos_pose:kneeling_carpet】" in action
+    assert "按用户指定的镜头构图执行" not in action
+    assert "用户补充要求优先：卧室地毯上跪坐" in action
+
+
+def test_random_cos_framing_is_always_selected_when_unspecified():
+    with patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
         side_effect=lambda values: values[0],
     ):
         selected = pick_cos_framing(extra_request="COS 换装：自然站立")
     assert selected["view_id"]
-
-    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.75):
-        selected = pick_cos_framing(extra_request="COS 换装：自然站立")
-    assert selected["view_id"] == ""
-    assert selected["prompt"] == ""
+    explicit = pick_cos_framing(extra_request="COS 换装：竖屏全身构图")
+    assert explicit["explicit"] is True
+    assert explicit["view_id"] == "user"
 
 
 def test_cos_framing_alternatives_are_resolved_before_prompt_generation():
@@ -425,6 +500,53 @@ def test_cos_framing_alternatives_return_one_complete_framing_contract():
     assert "三分之四" not in selected["prompt"]
     assert "全身" not in selected["prompt"]
     assert selected["extra_request_text"]
+
+
+def test_framing_option_combinations_can_be_avoided_between_batch_shots():
+    request = "人物正面或三分之四侧身站立，近景至全身构图"
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
+        first = pick_cos_framing(extra_request=request)
+        second = pick_cos_framing(
+            extra_request=request,
+            avoid_framings={first["view_id"]},
+        )
+    assert first["view_id"] == "option_0_0"
+    assert second["view_id"] != first["view_id"]
+    assert second["prompt"] != first["prompt"]
+
+
+def test_cos_pool_batch_can_rotate_pose_scene_framing_and_camera():
+    used_poses = set()
+    used_scenes = set()
+    used_framings = set()
+    used_cameras = set()
+    actions = []
+    for _ in range(3):
+        action = build_cos_look_action(
+            "洛琪希",
+            avoid_poses=used_poses,
+            avoid_scenes=used_scenes,
+            avoid_framings=used_framings,
+            avoid_cameras=used_cameras,
+            match_query="洛琪希",
+        )
+        actions.append(action)
+        for tag, values in (
+            ("cos_pose", used_poses),
+            ("cos_scene", used_scenes),
+            ("cos_framing", used_framings),
+            ("cam", used_cameras),
+        ):
+            match = re.search(rf"【{tag}:([a-z0-9_]+)】", action)
+            assert match, (tag, action)
+            values.add(match.group(1))
+
+    for tag in ("cos_pose", "cos_scene", "cos_framing", "cam"):
+        values = [re.search(rf"【{tag}:([a-z0-9_]+)】", action).group(1) for action in actions]
+        assert len(set(values)) == 3, (tag, values)
 
 
 def test_cos_english_builtin_keeps_the_complete_action_once():

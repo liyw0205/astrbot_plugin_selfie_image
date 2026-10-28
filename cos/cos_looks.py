@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import random
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from itertools import product
 from typing import Any, Dict, List, Optional
 
 
@@ -57,7 +58,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "original_blue_stage_opera",
         "title": "原创COS·蓝色戏曲舞台服",
         "cos_type": "原创COS",
-        "prompt": "以形象图中的人为COS主体，换装为原创国风戏曲舞台服：深棕黑色短波波头与后侧较长发束，蓬松碎刘海；深蓝、蓝绿色和青绿色缎面上衣，中式立领、深色高领内层、红色滚边和盘扣结构，宽肩和宽大长袖；肩部、袖口和衣缘青蓝、白色、金色水波纹、云纹、卷草纹与流线刺绣；深蓝色宽腰封，红色腰绳、绳结和装饰性系带；蓝色不对称短裙与长摆，裙摆青色、红色、白色和金色纹样；蓝黑色古风帽冠或戏曲头饰，边缘白色珍珠或圆珠，右侧红色绳结、长流苏和穗饰；胸前多层白色、金色和深色珠链，金色几何挂饰、仿玉石装饰和黄色长流苏。避免现代休闲服、西式礼服、运动服、盔甲、武器、枪械、刀剑、盾牌和战斗装备。"
+        "prompt": "以形象图中的人为COS主体，换装为原创国风戏曲舞台服：深棕黑色短波波头与后侧较长发束，蓬松碎刘海；深蓝、蓝绿色和青绿色缎面上衣，中式立领、深色高领内层、红色滚边和盘扣结构，宽肩和宽大长袖；肩部、袖口和衣缘青蓝、白色、金色水波纹、云纹、卷草纹与流线刺绣；深蓝色宽腰封，红色腰绳、绳结和装饰性系带；蓝色不对称短裙与长摆，裙摆青色、红色、白色和金色纹样；蓝黑色古风帽冠或戏曲头饰，边缘白色珍珠或圆珠，右侧垂红色绳结、红色长流苏和穗饰；胸前多层白色、金色和深色珠链，金色几何挂饰、仿玉石装饰和黄色长流苏。避免现代休闲服、西式礼服、运动服、盔甲、武器、枪械、刀剑、盾牌和战斗装备。"
     },
     {
         "id": "xishi_fan_qipao",
@@ -123,7 +124,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "azur_lane_belfast",
         "title": "贝尔法斯特",
         "cos_type": "碧蓝航线",
-        "prompt": "以形象图中的人为COS主体，佩戴银白长假发与白色褶边女仆发箍；穿深蓝无袖束腰背心、白色长袖衬衣和皇家女仆长裙，袖口细蕾丝、胸前蓝蝴蝶结，腰部系白围裙，深蓝及膝蓬裙叠白蕾丝荷叶边；搭配白色不透明长袜和黑色圆头玛丽珍鞋。背部可保留小型皇家舰装轮廓与装饰机械支架，不出现炮塔或武器结构，也避免现代服务员制服。"
+        "prompt": "以形象图中的人为COS主体，换装为《碧蓝航线》贝尔法斯特造型：银白色长发假发、紫色眼睛、白色褶边女仆发箍；穿深蓝无袖束腰背心、白色长袖衬衣和皇家女仆长裙，袖口细蕾丝、胸前蓝蝴蝶结，腰部系白围裙，深蓝及膝蓬裙叠白蕾丝荷叶边；搭配白色不透明长袜和黑色圆头玛丽珍鞋。背部可保留小型皇家舰装轮廓与装饰机械支架，不出现炮塔或武器结构，也避免现代服务员制服。"
     },
     {
         "id": "blue_archive_haruka",
@@ -147,7 +148,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "mushoku_tensei_aisha",
         "title": "爱夏",
         "cos_type": "无职转生",
-        "prompt": "以形象图中的人为COS主体，换装为《无职转生》爱夏造型：深红色长发；黑白女仆制服，白色衬衣，黑色无袖背心，白色围裙，黑色短裙，白色长袜和棕色短靴；可配家务清单和小型托盘。避免现代职业装。"
+        "prompt": "以形象图中的人为COS主体，换装为《无职转生》爱夏造型：深红色长发、绿色眼睛；黑白女仆制服，白色衬衣，黑色无袖背心，白色围裙，黑色短裙，白色长袜和棕色短靴；可配家务清单和小型托盘。避免现代职业装。"
     },
     {
         "id": "rem_blue_lolita",
@@ -579,7 +580,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "wuthering_roccia_stage",
         "title": "洛可可·剧团舞台装",
         "cos_type": "鸣潮",
-        "prompt": "以形象图中的人为COS主体，佩戴粉红长假发和黑红蝴蝶结；穿黑红剧团风短礼服，白色蕾丝领口、红色缎面短外套、黑色束腰；下搭黑红不对称短裙，配黑色长袜、红黑短靴和短手套。避免大型舞台道具和武器。"
+        "prompt": "以形象图中的人为COS主体，换装为《鸣潮》洛可可剧团舞台造型：粉红长假发和黑红蝴蝶结；穿黑红剧团风短礼服，白色蕾丝领口、红色缎面短外套、黑色束腰；下搭黑红不对称短裙，配黑色长袜、红黑短靴和短手套。避免大型舞台道具和武器。"
     },
     {
         "id": "dolia_ocean_ruffle",
@@ -615,7 +616,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "azur_lane_enterprise",
         "title": "企业",
         "cos_type": "碧蓝航线",
-        "prompt": "以形象图中的人为COS主体，换装为《碧蓝航线》企业造型：银白色长发；白色长款海军军装外套至大腿中部，黑金军用肩章和金属纽扣；黑色高领制服上衣，黑色腰带；黑色短裙，黑色不透明长袜和黑色高筒军靴；背后可保留与真人比例相称的轻量灰色舰装轮廓、布料肩披和装饰支架，不出现炮塔、舰载机或其他武器结构。避免普通西装、现代军服、卡通舰装、枪械和舰炮。"
+        "prompt": "以形象图中的人为COS主体，换装为《碧蓝航线》企业造型：银白色长发、紫色眼睛；白色长款海军军装外套至大腿中部，黑金军用肩章和金属纽扣；黑色高领制服上衣，黑色腰带；黑色短裙，黑色不透明长袜和黑色高筒军靴；背后可保留与真人比例相称的轻量灰色舰装轮廓、布料肩披和装饰支架，不出现炮塔、舰载机或其他武器结构。避免普通西装、现代军服、卡通舰装、枪械和舰炮。"
     },
     {
         "id": "azur_lane_prinz_eugen",
@@ -645,7 +646,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "ibuki_red_white_sportswear",
         "title": "丹花伊吹·红白运动装",
         "cos_type": "蔚蓝档案",
-        "prompt": "以形象图中的人为COS主体，佩戴金色侧高马尾假发、黑色小恶魔角发饰，颈戴红色项圈；穿白色短袖紧身运动T恤，鲜红领口与袖口滚边，搭红色高腰运动短裤；配黑色腿环和运动鞋。避免长裙、校服、长袖外套及恶魔翅膀尾巴。"
+        "prompt": "以形象图中的人为COS主体，换装为《蔚蓝档案》丹花伊吹红白运动装：金色侧高马尾假发、黑色小恶魔角发饰，颈戴红色项圈；穿白色短袖紧身运动T恤，鲜红领口与袖口滚边，搭红色高腰运动短裤；配黑色腿环和运动鞋。避免长裙、校服、长袖外套及恶魔翅膀尾巴。"
     },
     {
         "id": "blue_archive_hoshino",
@@ -675,7 +676,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "blue_archive_hina",
         "title": "空崎日奈",
         "cos_type": "蔚蓝档案",
-        "prompt": "以形象图中的人为COS主体，换装为《蔚蓝档案》空崎日奈造型：白色长发，黑色恶魔角发饰；黑色与紫色学生制服，黑色长外套，白色衬衫，红色领带，黑色百褶短裙，黑色不透明长袜和黑色高筒靴。避免重型机枪和枪械。"
+        "prompt": "以形象图中的人为COS主体，换装为《蔚蓝档案》空崎日奈造型：白色长发、紫色眼睛，黑色恶魔角发饰；黑色与紫色学生制服，黑色长外套，白色衬衫，红色领带，黑色百褶短裙，黑色不透明长袜和黑色高筒靴。避免重型机枪和枪械。"
     },
     {
         "id": "blue_archive_aru",
@@ -705,7 +706,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "blue_archive_junko",
         "title": "赤司淳子",
         "cos_type": "蔚蓝档案",
-        "prompt": "以形象图中的人为COS主体，佩戴红色短假发、红色双马尾和黑色缎带；穿白红拼接料理社制服，白衬衣、红色领巾、深色短裙，腰系白围裙，配白色长袜和棕色短靴。避免大型厨具。"
+        "prompt": "以形象图中的人为COS主体，佩戴红色短发造型假发、红色双马尾和黑色缎带；穿白红拼接料理社制服，白衬衣、红色领巾、深色短裙，腰系白围裙，配白色长袜和棕色短靴。避免大型厨具。"
     },
     {
         "id": "blue_archive_serina",
@@ -861,7 +862,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "zzz_sunna_private_sportswear",
         "title": "千夏·私设运动装",
         "cos_type": "绝区零",
-        "prompt": "以形象图中的人为COS主体，佩戴浅薄荷绿蓬松短假发与侧马尾、黑粉猫耳发箍（带白色荷叶边），刘海点缀绿白小发夹；穿浅粉色修身无袖背心，饰小型卡通图案，下穿黑色宽松运动短裤，裤脚白色滚边、侧面有白色猫爪和猫脸图案；搭配白色蕾丝口不透明过膝袜（膝部有小型黑猫脸装饰），肩部可露红色双肩包肩带。避免女仆裙、围裙、金色铃铛、天使翅膀和武器。"
+        "prompt": "以形象图中的人为COS主体，换装为《绝区零》妄想天使千夏（Sunna）私设运动装：佩戴浅薄荷绿蓬松短假发与侧马尾、黑粉猫耳发箍（带白色荷叶边），刘海点缀绿白小发夹；穿浅粉色修身无袖背心，饰小型卡通图案，下穿黑色宽松运动短裤，裤脚白色滚边、侧面有白色猫爪和猫脸图案；搭配白色蕾丝口不透明过膝袜（膝部有小型黑猫脸装饰），肩部可露红色双肩包肩带。避免女仆裙、围裙、金色铃铛、天使翅膀和武器。"
     },
     {
         "id": "zani_golden_verdict",
@@ -1041,7 +1042,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "blue_archive_tsubaki",
         "title": "春日椿",
         "cos_type": "蔚蓝档案",
-        "prompt": "以形象图中的人为COS主体，佩戴黑色短假发和狸耳发饰；穿深紫绿拼接忍者风学院服，宽松短外套与白色内衫，腰系绿色腰封；下搭深紫色短裙，配黑色长袜和黑色短靴。避免苦无和战斗装备。"
+        "prompt": "以形象图中的人为COS主体，佩戴黑色短发造型假发和狸耳发饰；穿深紫绿拼接忍者风学院服，宽松短外套与白色内衫，腰系绿色腰封；下搭深紫色短裙，配黑色长袜和黑色短靴。避免苦无和战斗装备。"
     },
     {
         "id": "princess_connect_karyl",
@@ -1275,7 +1276,7 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
         "id": "wuthering_youhu_antique",
         "title": "釉瑚·古物鉴定装",
         "cos_type": "鸣潮",
-        "prompt": "以形象图中的人为COS主体，佩戴深蓝色短假发与浅蓝挑染，配红蓝小型发饰；穿红白蓝拼接短款中式外套、白色内衫和蓝色腰封，搭红色细带与金色小挂件；下搭深蓝短裙，配白色长袜和棕色短靴。可配小册子，避免武器和特效。"
+        "prompt": "以形象图中的人为COS主体，换装为《鸣潮》釉瑚古物鉴定造型：深蓝色短假发与浅蓝挑染，配红蓝小型发饰；穿红白蓝拼接短款中式外套、白色内衫和蓝色腰封，搭红色细带与金色小挂件；下搭深蓝短裙，配白色长袜和棕色短靴。可配小册子，避免武器和特效。"
     },
     {
         "id": "wuthering_zhezhi_ink",
@@ -1633,23 +1634,19 @@ COS_LOOK_SETS: List[Dict[str, str]] = [
     }
 ]
 
-# Classification only: eligible newer-series entries may use optional random
-# poses, but their authored scenes are never replaced or randomly injected.
-_NEW_SERIES_COS_PREFIXES = (
-    "azur_lane_",
-    "blue_archive_",
-    "princess_connect_",
-    "mushoku_tensei_",
-)
-
 _COS_COMMON_NEGATIVE_PROMPT = (
     "不要额外人物、文字、字幕或水印；禁止动漫插画、赛璐璐、游戏立绘、"
+    "3D渲染、塑料皮肤和超现实发光。"
+)
+_COS_ANIME_NEGATIVE_PROMPT = (
+    "不要额外人物、文字、字幕或水印；禁止真人照片质感、写实摄影、真人皮肤纹理、"
     "3D渲染、塑料皮肤和超现实发光。"
 )
 _COS_COMMON_NEGATIVE_VARIANTS = (
     "第二个人", "第二人物", "品牌水印", "视频字幕", "可读文字",
     "额外人物", "文字", "字幕", "水印", "动漫插画", "赛璐璐",
-    "游戏立绘", "3D渲染", "塑料皮肤", "超现实发光",
+    "游戏立绘", "真人照片质感", "写实摄影", "真人皮肤纹理",
+    "3D渲染", "塑料皮肤", "超现实发光",
 )
 _COS_NEGATIVE_MARKERS = (
     "不要", "禁止", "不出现", "不携带", "不添加", "不自动出现", "不应出现",
@@ -1675,11 +1672,13 @@ def _remove_common_negative_terms(clause: str) -> str:
     return updated
 
 
-def normalize_cos_prompt_negatives(prompt: str) -> str:
-    """Normalize shared COS exclusions and append them exactly once."""
+def normalize_cos_prompt_negatives(prompt: str, appearance_type: str = "auto") -> str:
+    """Normalize shared COS exclusions for the selected visual medium."""
+    kind = str(appearance_type or "").strip().lower()
+    anime_medium = kind in {"anime", "cartoon", "2d", "动漫", "动画", "二次元"}
     text = str(prompt or "").strip()
     if not text:
-        return _COS_COMMON_NEGATIVE_PROMPT
+        return _COS_ANIME_NEGATIVE_PROMPT if anime_medium else _COS_COMMON_NEGATIVE_PROMPT
     chunks = re.split(r"([。；])", text)
     normalized: List[str] = []
     for chunk in chunks:
@@ -1692,8 +1691,18 @@ def normalize_cos_prompt_negatives(prompt: str) -> str:
     text = re.sub(r"[；，,]\s*[。；]", "。", text)
     text = re.sub(r"[。；]\s*[。；]", "。", text)
     text = re.sub(r"\s{2,}", " ", text).strip()
-    if _COS_COMMON_NEGATIVE_PROMPT not in text:
-        text = text.rstrip("。； ") + "。" + _COS_COMMON_NEGATIVE_PROMPT
+    shared_negative = _COS_ANIME_NEGATIVE_PROMPT if anime_medium else _COS_COMMON_NEGATIVE_PROMPT
+    if shared_negative not in text:
+        text = text.rstrip("。； ") + "。" + shared_negative
+    return text
+
+
+def adapt_cos_prompt_for_appearance(prompt: str, appearance_type: str = "auto") -> str:
+    """Treat pool cosplayer wording as role semantics, not a forced medium."""
+    text = str(prompt or "")
+    anime_kinds = {"anime", "cartoon", "2d", "动漫", "动画", "二次元"}
+    if str(appearance_type or "").strip().lower() in anime_kinds:
+        text = re.sub(r"真人\s*COSER", "动漫风格 COS 人物", text, flags=re.I)
     return text
 
 
@@ -1746,30 +1755,246 @@ def audit_cos_look_catalog(items: Optional[List[Mapping[str, Any]]] = None) -> L
     return findings
 
 
-# A COS record describes the outfit. This matrix separately controls reusable
-# poses that are safe to apply without changing it.
+# Outfit prompts describe the costume. These reusable staging options are
+# selected independently for every built-in or custom COS look.
 COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, str]] = {
     "standing_detail": {
         "title": "自然站姿",
-        "prompt": "自然站立，身体微微侧转，一只手轻整理衣摆或配饰，完整展示服装层次；重心稳定，手脚数量正常。",
+        "prompt": "自然站立并将重心落在一侧腿上，肩线放松，手部动作遵循套装已有道具与配饰；姿态松弛但不倚靠，完整展示服装轮廓。",
     },
     "half_turn": {
         "title": "侧身回看",
-        "prompt": "自然转身回看镜头，一手自然停在腰侧或裙摆旁，另一只手不遮挡服装主体；衣料和饰品受重力自然垂落。",
+        "prompt": "身体转向侧前方约四十五度并回看镜头，肩胯方向自然错开；手部动作遵循套装已有道具与配饰，不遮挡服装主体。",
     },
     "seated_composed": {
         "title": "端正坐姿",
-        "prompt": "端正坐在低凳或椅子边缘，双腿自然并拢或斜向一侧，双手只做轻微整理衣袖或裙摆的动作，整体姿态稳定连贯。",
+        "prompt": "坐在椅子或矮凳前缘，上身舒展，双腿并拢后自然斜向一侧；手部动作遵循套装已有道具与配饰，衣摆自然落下。",
     },
     "walking_turn": {
         "title": "轻步转身",
-        "prompt": "刚完成一步轻缓转身的自然瞬间，衣摆、袖片或流苏只有轻微运动感；人物姿态稳定，避免奔跑、跳跃和战斗动作。",
+        "prompt": "行走中刚迈出一步并轻轻转向镜头的抓拍瞬间，步幅自然，衣摆只有轻微动态；避免奔跑、跳跃或战斗动作。",
+    },
+    "kneeling_carpet": {
+        "title": "地毯跪坐",
+        "prompt": "双膝并拢跪坐在柔软地毯上，双腿收拢压在身下，臀部自然坐在脚跟上，脚部不向两侧张开；上身自然挺直，手部动作遵循套装已有道具与配饰，不遮挡服装主体。",
+    },
+    "floor_sit_side": {
+        "title": "侧坐地面",
+        "prompt": "坐在干净柔软的地面或地毯上，双腿收拢并自然转向身体一侧，一只手轻撑身侧保持平衡；上身舒展，不盘腿、不大幅分腿，服装结构清晰。",
+    },
+    "one_knee_crouch": {
+        "title": "单膝低姿",
+        "prompt": "采用稳定的单膝低姿，一腿弯曲支撑、另一腿自然屈起，上身保持舒展；只有在套装下摆允许时执行，不拉扯或压住服装，避免夸张蹲姿。",
+    },
+    "leaning_rest": {
+        "title": "倚靠停留",
+        "prompt": "身体一侧轻靠窗框、栏杆或墙面，肩部放松，一腿自然微屈；保持站姿稳定，手部动作遵循套装已有道具，不把背景物体变成新道具。",
+    },
+    "stair_sit": {
+        "title": "台阶坐姿",
+        "prompt": "坐在宽阔平整的台阶边缘，一条腿自然屈起、另一条腿顺着台阶放低；身体重心稳定，衣摆顺着台阶铺开但不遮住服装细节。",
+    },
+    "reach_light": {
+        "title": "伸手触景",
+        "prompt": "身体微微转向一侧，一只手自然抬起，像要轻触身旁的窗光、枝叶或栏杆；视线跟随手部方向，动作克制，不凭空增加道具。",
+    },
+    "over_shoulder": {
+        "title": "背身回眸",
+        "prompt": "身体先转向远离镜头的方向，再从肩上回眸；只转动躯干和头部，不完全背对镜头，面部、发型和服装后侧细节都能看清。",
+    },
+    "relaxed_recline": {
+        "title": "沙发斜倚",
+        "prompt": "侧身倚靠在沙发或日间榻边，由一侧前臂稳定支撑上身，双腿自然收拢；呈放松休息状态，不完全躺倒，不遮挡或压乱服装。",
+    },
+    "overhead_stretch": {
+        "title": "单臂舒展",
+        "prompt": "身体轻微侧转，一只手臂向上舒展或轻触头侧发饰，另一只手遵循套装已有动作；肩颈放松，衣袖和上身结构完整可见。",
     },
 }
 
-# When the user has not explicitly fixed a crop or camera angle, 50% of actions
-# choose one concrete framing. Generic framing words in the outfit description
-# remain as costume context and do not disable this random choice.
+COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
+    "bedroom_carpet": {
+        "title": "卧室地毯",
+        "aliases": ("卧室地毯", "地毯卧室", "床边地毯", "卧室"),
+        "prompt": "温馨整洁的卧室，木地板上铺柔软浅色地毯，床、床头柜和一张简洁矮凳作为背景，不遮挡人物。",
+        "pose_ids": ("standing_detail", "half_turn", "seated_composed", "kneeling_carpet", "floor_sit_side", "leaning_rest", "relaxed_recline"),
+    },
+    "bedroom_window": {
+        "title": "明亮窗边",
+        "aliases": ("卧室窗边", "窗边", "窗前", "窗户旁"),
+        "prompt": "明亮整洁的室内窗边，柔和自然光进入房间，窗边有简洁坐凳，背景不出现杂乱家具或额外人物。",
+        "pose_ids": ("standing_detail", "half_turn", "seated_composed", "leaning_rest", "reach_light", "overhead_stretch"),
+    },
+    "photo_studio": {
+        "title": "简洁摄影棚",
+        "aliases": ("摄影棚", "摄影室", "影棚", "棚拍", "纯色背景"),
+        "prompt": "简洁的室内人像摄影棚，浅灰或柔白无缝背景、柔和补光和一张无装饰矮凳，不出现摄影设备或额外人物。",
+        "pose_ids": ("standing_detail", "half_turn", "seated_composed", "walking_turn", "floor_sit_side", "one_knee_crouch", "over_shoulder", "overhead_stretch"),
+    },
+    "living_room_rug": {
+        "title": "客厅地毯",
+        "aliases": ("客厅地毯", "客厅", "沙发旁", "客厅里"),
+        "prompt": "整洁温暖的客厅一角，浅色地毯和沙发作为简洁背景，不遮挡人物主体。",
+        "pose_ids": ("standing_detail", "half_turn", "seated_composed", "kneeling_carpet", "floor_sit_side", "leaning_rest", "relaxed_recline", "overhead_stretch"),
+    },
+    "garden_walkway": {
+        "title": "庭院小径",
+        "aliases": ("庭院", "花园", "小径", "庭院小路", "树下"),
+        "prompt": "安静整洁的庭院小径，少量绿植作为自然背景，人物仍是画面主体。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder", "overhead_stretch"),
+    },
+    "bamboo_garden": {
+        "title": "竹林石径",
+        "aliases": ("竹林", "竹林小径", "竹林石径", "竹林里"),
+        "prompt": "清晨的竹林石径，疏朗竹影和自然绿意形成纵深，光线清透，背景不出现其他人物。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder"),
+    },
+    "cherry_blossom_path": {
+        "title": "樱花步道",
+        "aliases": ("樱花步道", "樱花树下", "樱花小径", "樱花林"),
+        "prompt": "春日樱花步道，少量花瓣随风飘落，远处花树形成柔和纵深，画面清新自然。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "overhead_stretch"),
+    },
+    "seaside_boardwalk": {
+        "title": "海边栈道",
+        "aliases": ("海边栈道", "海边", "海岸", "海滨", "沙滩"),
+        "prompt": "开阔海边木栈道，远处海平线和轻柔浪花作为背景，带自然海风感，不出现游客或船只主体。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "reach_light", "over_shoulder", "overhead_stretch"),
+    },
+    "rooftop_sunset": {
+        "title": "城市屋顶夕照",
+        "aliases": ("屋顶夕阳", "天台", "城市屋顶", "屋顶夜景"),
+        "prompt": "日落时分的城市屋顶露台，远处楼群被暖色夕光勾勒，栏杆和天际线保持简洁。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "reach_light", "over_shoulder", "overhead_stretch"),
+    },
+    "old_town_lane": {
+        "title": "古街巷口",
+        "aliases": ("古街", "老街", "石板路", "巷口", "古镇街道"),
+        "prompt": "安静的古街石板巷口，木窗、灰瓦和浅色墙面构成有层次的环境人像背景，不出现招牌文字或路人。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "leaning_rest", "over_shoulder"),
+    },
+    "rainy_neon_street": {
+        "title": "雨夜霓虹街",
+        "aliases": ("雨夜霓虹街", "霓虹街道", "雨夜街道", "霓虹雨夜"),
+        "prompt": "雨后的夜间街巷，地面映出克制的青蓝与玫红霓虹反光，背景虚化且无可读文字、车辆或路人。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "leaning_rest", "over_shoulder"),
+    },
+    "library_wood": {
+        "title": "木质阅览室",
+        "aliases": ("图书馆", "阅览室", "书架旁", "木质书房"),
+        "prompt": "安静的木质阅览室，整齐书架、阅读桌和木椅形成温暖纵深，书本不出现可辨识文字或其他人物。",
+        "pose_ids": ("standing_detail", "half_turn", "seated_composed", "leaning_rest", "reach_light", "over_shoulder"),
+    },
+    "museum_hall": {
+        "title": "古典展廳",
+        "aliases": ("博物馆", "美术馆", "展厅", "古典大厅"),
+        "prompt": "挑高的古典展厅，石柱、拱门与柔和天光形成庄重空间感，展品简洁且不出现文字或其他参观者。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "leaning_rest", "over_shoulder"),
+    },
+    "cafe_corner": {
+        "title": "咖啡馆窗座",
+        "aliases": ("咖啡馆", "咖啡店", "咖啡厅", "餐厅窗边"),
+        "prompt": "有大窗和木质桌椅的安静咖啡馆角落，窗外光线柔和，桌面干净，不出现餐饮道具、文字或其他顾客。",
+        "pose_ids": ("standing_detail", "half_turn", "seated_composed", "leaning_rest", "reach_light"),
+    },
+    "festival_lantern": {
+        "title": "灯会长廊",
+        "aliases": ("灯会", "灯笼长廊", "节庆灯笼", "红灯笼街"),
+        "prompt": "夜色中的传统灯会长廊，暖色灯笼层层延伸形成纵深，灯面不含文字，背景不出现人群。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "overhead_stretch"),
+    },
+    "stone_staircase": {
+        "title": "石阶回廊",
+        "aliases": ("石阶", "石阶回廊", "楼梯转角", "台阶"),
+        "prompt": "宽阔整洁的石阶回廊，台阶线条形成明显纵深，侧面有柔和自然光，不出现栏杆杂物或其他人物。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "stair_sit", "leaning_rest", "over_shoulder"),
+    },
+    "greenhouse": {
+        "title": "玻璃花房",
+        "aliases": ("温室", "玻璃花房", "植物温室", "花房"),
+        "prompt": "通透的玻璃花房，层次分明的绿植、玻璃顶棚和一张简洁长椅引入自然光，植物只作背景，不遮挡人物。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "seated_composed", "one_knee_crouch", "reach_light", "over_shoulder"),
+    },
+    "snowy_courtyard": {
+        "title": "雪后庭院",
+        "aliases": ("雪后庭院", "雪地", "冬日庭院", "雪景"),
+        "prompt": "雪后安静庭院，薄雪覆在石路和枝头，冷冽天光与少量暖色窗光形成清晰对比，背景无其他人物。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder"),
+    },
+}
+
+COS_POSE_REQUEST_ALIASES = {
+    "kneeling_carpet": ("跪坐在柔软地毯上", "跪坐在地毯上", "跪坐在地毯", "地毯跪坐", "跪坐在", "跪坐", "跪姿", "跪着", "跪在"),
+    "standing_detail": ("自然站姿", "站姿", "站立", "站着"),
+    "half_turn": ("侧身回看", "转身回看", "回头看镜头", "侧身", "回眸"),
+    "seated_composed": ("端正坐姿", "坐姿", "坐着", "坐在"),
+    "walking_turn": ("轻步转身", "迈步", "行走", "走路"),
+    "floor_sit_side": ("侧坐地面", "坐在地毯上", "坐在地上", "地面坐姿"),
+    "one_knee_crouch": ("单膝低姿", "单膝蹲", "单膝跪地", "半蹲", "蹲姿", "蹲下"),
+    "leaning_rest": ("倚靠停留", "靠在", "倚在", "靠墙", "倚墙", "倚靠"),
+    "stair_sit": ("台阶坐姿", "坐在台阶", "坐在石阶"),
+    "reach_light": ("伸手触景", "伸手触碰", "触碰身旁", "伸手", "抬手"),
+    "over_shoulder": ("背身回眸", "回头望", "从肩上回眸"),
+    "relaxed_recline": ("沙发斜倚", "倚坐在沙发", "靠坐在沙发", "侧身倚靠"),
+    "overhead_stretch": ("单臂舒展", "举手伸展", "伸展姿势", "手臂向上"),
+}
+
+COS_SCENE_REQUEST_TERMS = (
+    "夜景", "夜晚", "雨夜", "霓虹", "白天", "黄昏", "夕照", "室内", "室外", "房间", "地毯",
+    "街道", "街边", "海边", "沙滩", "公园", "树林", "树下", "校园", "教室", "走廊", "车站",
+    "咖啡馆", "餐厅", "雨中", "雪地", "樱花", "河边", "屋顶", "楼梯", "浴室", "温泉", "舞台",
+    "草地", "花丛",
+)
+
+
+def _as_id_set(values: Any) -> set[str]:
+    if isinstance(values, str):
+        return {values} if values else set()
+    if not isinstance(values, Iterable):
+        return set()
+    return {str(value).strip() for value in values if str(value).strip()}
+
+
+def _requested_cos_pose(text: str) -> str:
+    raw = str(text or "")
+    matches = [
+        (len(alias), -index, pose_id)
+        for index, (pose_id, aliases) in enumerate(COS_POSE_REQUEST_ALIASES.items())
+        for alias in aliases
+        if alias in raw
+    ]
+    if matches:
+        return max(matches)[2]
+    if re.search(
+        r"(?:叉腰|插腰|抱胸|交叉双臂|交叉手臂|托腮|托脸|捧脸|撩发|倚靠|靠在|倚在|靠墙|倚墙|靠坐|躺在|蹲下|半蹲|弯腰|鞠躬|抬手|举手|伸手|手扶|手搭|手持)",
+        raw,
+    ):
+        return "user"
+    if re.search(r"(?:姿势|姿態|动作|動作)(?:是|为|改成|采用|保持|设为|设置为|：|:)", raw):
+        return "user"
+    return ""
+
+
+def _requested_cos_scene(text: str) -> str:
+    raw = str(text or "")
+    matches = [
+        (len(alias), scene_id)
+        for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+        for alias in scene["aliases"]
+        if alias in raw
+    ]
+    if matches:
+        return max(matches)[1]
+    if any(term in raw for term in COS_SCENE_REQUEST_TERMS):
+        return "user"
+    if re.search(r"(?:场景|背景)(?:是|为|改成|设置为|指定为|保持|不变|：|:)(?!随机)", raw):
+        return "user"
+    if re.search(r"(?:置身于|来到)(?!随机)[^，,。；;]{0,12}(?:房间|室内|室外|街|海边|沙滩|公园|树林|校园|教室|走廊|车站|咖啡馆|餐厅|屋顶|草地|花丛)", raw):
+        return "user"
+    return ""
+
+# When the user has not explicitly fixed a crop or camera angle, choose one
+# concrete framing. Generic framing words in the outfit remain costume context.
 COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
     "front_half": {
         "title": "正面半身",
@@ -1837,21 +2062,61 @@ COS_FRAMING_OPTION_RE = re.compile(
 
 def resolve_cos_framing_options(text: str) -> tuple[str, List[str]]:
     """Resolve each ambiguous framing chain into one concrete candidate."""
-    resolved = str(text or "")
-    selected: List[str] = []
-    # A request may contain independent chains, for example one angle and one
-    # crop. Resolve each chain once, then combine those choices as one framing
-    # contract instead of replacing the whole request with an unrelated view.
-    for _ in range(4):
-        match = COS_FRAMING_OPTION_RE.search(resolved)
-        if not match:
-            break
-        candidates = [match.group("first"), *re.findall(COS_FRAMING_TOKEN, match.group("rest"))]
-        suffix = match.group("suffix") or ""
-        choice = random.choice(candidates)
-        selected.append(f"{choice}{suffix}")
-        resolved = resolved[: match.start()] + suffix + resolved[match.end() :]
+    resolved, selected, _ = _resolve_cos_framing_options(text)
     return resolved, selected
+
+
+def _resolve_cos_framing_options(
+    text: str,
+    *,
+    avoid_framings: Iterable[str] = (),
+) -> tuple[str, List[str], str]:
+    resolved = str(text or "")
+    matches = list(COS_FRAMING_OPTION_RE.finditer(resolved))[:4]
+    if not matches:
+        return resolved, [], ""
+
+    chains: List[tuple[List[str], str]] = []
+    for match in matches:
+        candidates = [match.group("first"), *re.findall(COS_FRAMING_TOKEN, match.group("rest"))]
+        chains.append((candidates, match.group("suffix") or ""))
+
+    option_indexes = [range(len(candidates)) for candidates, _ in chains]
+    avoided = _as_id_set(avoid_framings)
+    indexes = tuple(random.choice(options) for options in option_indexes)
+    if _framing_option_id(indexes) in avoided:
+        for _ in range(8):
+            candidate = tuple(random.choice(options) for options in option_indexes)
+            if _framing_option_id(candidate) not in avoided:
+                indexes = candidate
+                break
+        else:
+            indexes = next(
+                (
+                    candidate
+                    for candidate in product(*option_indexes)
+                    if _framing_option_id(candidate) not in avoided
+                ),
+                indexes,
+            )
+    selected = [
+        f"{chains[index][0][choice]}{chains[index][1]}"
+        for index, choice in enumerate(indexes)
+    ]
+    option_id = _framing_option_id(indexes)
+
+    parts: List[str] = []
+    cursor = 0
+    for match, (_, suffix) in zip(matches, chains):
+        parts.append(resolved[cursor : match.start()])
+        parts.append(suffix)
+        cursor = match.end()
+    parts.append(resolved[cursor:])
+    return "".join(parts), selected, option_id
+
+
+def _framing_option_id(indexes: Iterable[int]) -> str:
+    return "option_" + "_".join(str(index) for index in indexes)
 
 
 def cos_prompt_has_framing(text: str) -> bool:
@@ -1860,18 +2125,26 @@ def cos_prompt_has_framing(text: str) -> bool:
     return any(term in compact for term in COS_FRAMING_TERMS)
 
 
-def pick_cos_framing(*, outfit: str = "", extra_request: str = "") -> Dict[str, Any]:
-    """Pick one framing unless the user's extra request already fixes it."""
+def pick_cos_framing(
+    *,
+    outfit: str = "",
+    extra_request: str = "",
+    avoid_framings: Iterable[str] = (),
+) -> Dict[str, Any]:
+    """Pick a concrete framing unless the user's extra request already fixes it."""
     # Framing text authored inside an outfit is descriptive context, not a lock.
     # Keep it intact so the selected random view can take precedence in the
     # action contract without rewriting costume details.
     resolved_outfit = str(outfit or "")
-    resolved_extra, extra_options = resolve_cos_framing_options(extra_request)
+    resolved_extra, extra_options, option_id = _resolve_cos_framing_options(
+        extra_request,
+        avoid_framings=avoid_framings,
+    )
     options = extra_options
     if options:
         prompt = "；".join(dict.fromkeys(options))
         return {
-            "view_id": "option",
+            "view_id": option_id,
             "title": prompt,
             "prompt": prompt,
             "outfit_text": resolved_outfit,
@@ -1881,151 +2154,45 @@ def pick_cos_framing(*, outfit: str = "", extra_request: str = "") -> Dict[str, 
     # Explicit framing in the user's extra request remains authoritative.
     if cos_prompt_has_framing(extra_request):
         return {
-            "view_id": "",
+            "view_id": "user",
             "title": "",
             "prompt": "",
             "outfit_text": resolved_outfit,
             "extra_request_text": resolved_extra,
             "randomized_from_options": False,
+            "explicit": True,
         }
-    if random.random() >= 0.5:
-        return {
-            "view_id": "",
-            "title": "",
-            "prompt": "",
-            "outfit_text": resolved_outfit,
-            "extra_request_text": resolved_extra,
-            "randomized_from_options": False,
-        }
-    view_id = random.choice(list(COS_FRAMING_CLASSES))
+    avoided = _as_id_set(avoid_framings)
+    available = [item for item in COS_FRAMING_CLASSES if item not in avoided]
+    view_id = random.choice(available or list(COS_FRAMING_CLASSES))
     selected = dict(COS_FRAMING_CLASSES[view_id])
     selected["view_id"] = view_id
     selected["outfit_text"] = resolved_outfit
     selected["extra_request_text"] = resolved_extra
     selected["randomized_from_options"] = False
+    selected["explicit"] = False
     return selected
 
-YONGJIE_RANDOM_COS_IDS = frozenset(
-    {
-        "hutao_dragon_path_zhichun",
-        "hutao_koi_dream_glow",
-        "hutao_spring_morning_breeze",
-        "hutao_warm_sweet_dream",
-        "hutao_high_school_swimsuit",
-        "hutao_spring_peach_smile",
-        "hutao_guizhou_shaonv",
-        "hutao_qingya_shaonv",
-        "hutao_yinyang_ji",
-        "hutao_zhujizhe",
-        "hutao_yuzhai_luomeng",
-        "hutao_yuzhai_huazhi",
-        "hutao_tianju_nvming",
-        "hutao_longzhidao_zhichun_gao",
-        "hutao_chunxiaoxiao_v2",
-        "hutao_chengyun_lanshou",
-        "hutao_huiye_shaonv",
-        "hutao_shanchui_cha",
-        "hutao_rijin_shenzi",
-        "hutao_chunri_xuqu",
-        "hutao_diji",
-        "hutao_qiantangshi",
-        "hutao_xiaowu",
-        "hutao_qingdeng",
-        "hutao_quanhuang_athena",
-        "hutao_diemeng",
-        "hutao_yingyun_tiannv",
-        "hutao_pengran_xindong",
-        "yinzi_spring_morning_glory",
-        "yinzi_crimson_jade_immortal",
-        "yinzi_orchid_courtyard_moon",
-        "yinzi_evernight_splendor",
-        "yinzi_2674_mecha_princess",
-        "yinzi_spring_oriole_plum",
-        "ninghongye_red_hao_new_joy",
-        "ninghongye_spider_demon",
-        "ninghongye_cloud_fairy",
-        "ninghongye_underworld_goddess",
-        "ninghongye_plain_white_snake",
-        "ninghongye_dragon_path_baizhi",
-        "jiyingying_extinguished_calamity_star",
-        "jiyingying_white_deer",
-        "jiyingying_sun_star_lord",
-        "jiyingying_nezha",
-    }
-)
-
-# These entries intentionally keep their hand-authored staging. They are not
-# put in the common random pool because their pose, crop, prop, or scenery is
-# part of the outfit reference itself.
-YONGJIE_FIXED_COS_IDS = frozenset(
-    {
-        "lanmeng_dragon_path",
-        "yinzi_white_qipao",
-        "yulinglong_gold_fox",
-        "yulinglong_red_thread",
-    }
-)
-
-# A small, conservative first batch of non-永劫套装 whose正文只描述服饰，
-# 没有锁定姿势。其余套装继续保持作者指定的姿势和构图。
-GENERIC_RANDOM_COS_IDS = frozenset(
-    {
-        "hanfu_peach",
-        "mint_sheer_hanfu",
-    }
-)
-
-
 def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
-    """Return a serializable compatibility profile for one COS look.
-
-    The ``recommended_*`` names are intentionally present for every outfit,
-    including fixed-composition outfits.  Consumers can therefore render the
-    same matrix without guessing whether an omitted field means "unknown" or
-    "not applicable". Scene fields remain empty for schema compatibility: COS
-    actions do not randomize or override authored scenes. The older
-    ``pose_ids``/``scene_ids``/``view_ids``
-    aliases remain for callers written before the matrix was exposed.
-    """
-    look_id = str(cos_id or "").strip()
-    if (
-        look_id.startswith(_NEW_SERIES_COS_PREFIXES)
-        or look_id in YONGJIE_RANDOM_COS_IDS
-        or look_id in GENERIC_RANDOM_COS_IDS
-    ):
-        poses = list(COS_RANDOM_POSE_CLASSES)
-        views = ["selfie", "third"]
-        return {
-            "variation_enabled": True,
-            "pose_ids": poses,
-            "scene_ids": [],
-            "view_ids": views,
-            "recommended_pose_ids": list(poses),
-            "recommended_scene_ids": [],
-            "recommended_view_ids": list(views),
-            "incompatible_pose_ids": [],
-            "incompatible_scene_ids": [],
-            "fixed_reason": "",
-        }
-
-    # Fixed outfits retain their authored crop, props, posture, or scenery.
-    # Empty recommendations are explicit: they do not mean that metadata is
-    # missing and prevent a UI from accidentally adding generic variation.
-    fixed_reason = "套装正文包含固定姿势、构图或环境，暂不启用通用随机池"
-    if look_id in YONGJIE_FIXED_COS_IDS:
-        fixed_reason = "永劫无间套装已定义专属姿势、构图或布景，保持原始描述"
-    views = ["selfie", "third"]
+    """Return the common staging pool used across built-in and custom looks."""
+    poses = list(COS_RANDOM_POSE_CLASSES)
+    scenes = list(COS_RANDOM_SCENE_CLASSES)
+    views = ["selfie", "first", "third"]
     return {
-        "variation_enabled": False,
-        "pose_ids": [],
-        "scene_ids": [],
+        "variation_enabled": True,
+        "pose_ids": poses,
+        "scene_ids": scenes,
         "view_ids": views,
-        "recommended_pose_ids": [],
-        "recommended_scene_ids": [],
+        "recommended_pose_ids": list(poses),
+        "recommended_scene_ids": list(scenes),
         "recommended_view_ids": list(views),
-        "incompatible_pose_ids": list(COS_RANDOM_POSE_CLASSES),
+        "incompatible_pose_ids": [],
         "incompatible_scene_ids": [],
-        "fixed_reason": fixed_reason,
+        "scene_pose_compatibility": {
+            scene_id: list(scene["pose_ids"])
+            for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+        },
+        "fixed_reason": "",
     }
 
 
@@ -2038,24 +2205,75 @@ def pick_cos_variation(
     cos_id: str,
     *,
     avoid_pose: str = "",
+    avoid_scene: str = "",
+    avoid_poses: Iterable[str] = (),
+    avoid_scenes: Iterable[str] = (),
+    extra_request: str = "",
 ) -> Dict[str, str]:
-    """Select a random pose 50% of the time; never inject a random scene."""
+    """Pick a compatible scene and pose, honoring explicit user constraints."""
     profile = cos_look_compatibility(cos_id)
     if not profile["variation_enabled"]:
         return {"pose_id": "", "scene_id": "", "prompt": ""}
-    if random.random() >= 0.5:
-        return {"pose_id": "", "scene_id": "", "prompt": ""}
-    pose_ids = [item for item in profile["pose_ids"] if item != avoid_pose] or list(profile["pose_ids"])
-    pose_id = random.choice(pose_ids)
-    scene_id = ""
+
+    avoided_poses = _as_id_set(avoid_poses) | _as_id_set(avoid_pose)
+    avoided_scenes = _as_id_set(avoid_scenes) | _as_id_set(avoid_scene)
+    requested_pose = _requested_cos_pose(extra_request)
+    requested_scene = _requested_cos_scene(extra_request)
+
+    if requested_scene and requested_pose:
+        scene_id, pose_id = requested_scene, requested_pose
+    elif requested_scene:
+        scene_id = requested_scene
+        scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
+        compatible_poses = list(scene["pose_ids"]) if scene else list(profile["pose_ids"])
+        available_poses = [item for item in compatible_poses if item not in avoided_poses]
+        pose_id = random.choice(available_poses or compatible_poses)
+    elif requested_pose:
+        pose_id = requested_pose
+        compatible_scenes = [
+            scene_id
+            for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+            if requested_pose == "user" or requested_pose in scene["pose_ids"]
+        ]
+        available_scenes = [item for item in compatible_scenes if item not in avoided_scenes]
+        scene_id = random.choice(available_scenes or compatible_scenes)
+    else:
+        pairs = [
+            (scene_id, pose_id)
+            for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+            for pose_id in scene["pose_ids"]
+        ]
+        available_pairs = [
+            pair for pair in pairs
+            if pair[0] not in avoided_scenes and pair[1] not in avoided_poses
+        ]
+        if not available_pairs:
+            available_pairs = [pair for pair in pairs if pair[0] not in avoided_scenes]
+        if not available_pairs:
+            available_pairs = [pair for pair in pairs if pair[1] not in avoided_poses]
+        if not available_pairs:
+            available_pairs = pairs
+        candidate_scenes = list(dict.fromkeys(pair[0] for pair in available_pairs))
+        scene_id = random.choice(candidate_scenes)
+        candidate_poses = [pair[1] for pair in available_pairs if pair[0] == scene_id]
+        pose_id = random.choice(candidate_poses)
+
+    scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
+
+    prompt_parts = []
+    if not requested_scene and scene:
+        prompt_parts.append(
+            "本次随机场景优先于套装正文中残留的背景或环境描述：" + scene["prompt"]
+        )
+    if not requested_pose:
+        prompt_parts.append(
+            "本次随机姿势优先于套装正文中残留的人物姿势描述："
+            + COS_RANDOM_POSE_CLASSES[pose_id]["prompt"]
+        )
     return {
         "pose_id": pose_id,
         "scene_id": scene_id,
-        "prompt": (
-            "本次随机姿势优先于套装正文中的非服装陈列描述，"
-            "也优先于其中的姿势；只保留套装的角色外观与服饰结构："
-            + COS_RANDOM_POSE_CLASSES[pose_id]["prompt"]
-        ),
+        "prompt": "".join(prompt_parts),
     }
 
 
@@ -2535,12 +2753,18 @@ def requests_phone_face_cover(text: str) -> bool:
     )
 
 
-def pick_cos_camera(*, extra_request: str = "", avoid: str = "", camera: str = "") -> str:
+def pick_cos_camera(
+    *,
+    extra_request: str = "",
+    avoid: Iterable[str] = (),
+    camera: str = "",
+) -> str:
     forced = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
     if forced in {"selfie", "first", "third"}:
         return forced
     choices = ("third", "first", "selfie")
-    available = tuple(kind for kind in choices if kind != str(avoid or "").strip())
+    avoided = _as_id_set(avoid)
+    available = tuple(kind for kind in choices if kind not in avoided)
     return random.choice(available or choices)
 
 
@@ -2625,10 +2849,16 @@ def build_cos_look_action(
     has_refs: bool = False,
     *,
     avoid_id: str = "",
-    avoid_camera: str = "",
+    avoid_camera: Iterable[str] = (),
     avoid_pose: str = "",
+    avoid_scene: str = "",
+    avoid_framings: Iterable[str] = (),
+    avoid_poses: Iterable[str] = (),
+    avoid_scenes: Iterable[str] = (),
+    avoid_cameras: Iterable[str] = (),
 
     camera: str = "",
+    appearance_type: str = "auto",
     match_query: str = "",
     force_id: str = "",
     picker: Optional[Callable[..., Mapping[str, Any]]] = None,
@@ -2645,36 +2875,52 @@ def build_cos_look_action(
         # accidentally generating from the full catalog.
         return ""
     title = str(chosen.get("title") or "随机COS")
+    cos_type = str(chosen.get("cos_type") or "").strip()
     camera_kind = pick_cos_camera(
-        extra_request=extra_request, avoid=avoid_camera, camera=camera
+        extra_request=extra_request,
+        avoid=_as_id_set(avoid_cameras) | _as_id_set(avoid_camera),
+        camera=camera,
     )
     phone_face_cover = requests_phone_face_cover(extra_request)
     outfit = adapt_cos_outfit_for_camera(
         str(chosen.get("prompt") or "").strip(), camera_kind
     )
-    outfit = normalize_cos_prompt_negatives(outfit)
+    outfit = adapt_cos_prompt_for_appearance(outfit, appearance_type)
+    outfit = normalize_cos_prompt_negatives(outfit, appearance_type=appearance_type)
     cos_id = str(chosen.get("id") or "cos")
-    variation = pick_cos_variation(cos_id, avoid_pose=avoid_pose)
+    variation = pick_cos_variation(
+        cos_id,
+        avoid_pose=avoid_pose,
+        avoid_scene=avoid_scene,
+        avoid_poses=avoid_poses,
+        avoid_scenes=avoid_scenes,
+        extra_request=extra_request,
+    )
     framing_choice = pick_cos_framing(
-        # The compatibility pose is already randomized independently.  Its
-        # wording may contain "侧身" or "三分之二", which must not suppress
-        # the separate framing randomizer.
         outfit=outfit,
         extra_request=extra_request,
+        avoid_framings=avoid_framings,
     )
     outfit = framing_choice.get("outfit_text", outfit)
     extra_request = framing_choice.get("extra_request_text", extra_request)
+    series_prefix = (
+        f"《{cos_type}》"
+        if cos_type in COS_LOOK_TYPE_ALIASES
+        and f"《{cos_type}》" not in title
+        and f"《{cos_type}》" not in outfit
+        else ""
+    )
     if framing_choice.get("randomized_from_options"):
         framing_line = f"本次从已有视角选项中随机确定为{framing_choice['prompt']}；"
+    elif framing_choice.get("explicit"):
+        framing_line = "按用户指定的镜头构图执行；"
     elif framing_choice["view_id"]:
         framing_line = (
             f"本次未指定视角，随机采用{framing_choice['prompt']}；"
             "该随机机位优先于套装正文中的通用景别和机位描述；"
         )
     else:
-        framing_line = (
-            "本次按套装中已明确的单一构图执行；"
-        )
+        framing_line = ""
     if camera_kind == "third":
         hand_rule = (
             "不要对镜、不要镜子；画面只允许主角既有的一只手握持唯一一部普通手机，从脸侧或下方自然遮住半张脸；"
@@ -2725,7 +2971,7 @@ def build_cos_look_action(
         )
     base = (
         framing
-        + f"本次套装：{title}。"
+        + f"本次套装：{series_prefix}{title}。"
         + outfit
         + "服装颜色、层数、配饰、开叉、荷叶边、鞋履等结构要尽量齐全高还原；"
         + "保持上方已确定的单一构图，不在多个景别或视角之间切换；不要简化成普通常服；画面干净得体。"
@@ -2737,6 +2983,11 @@ def build_cos_look_action(
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
     if extra and extra not in base:
         base += f" 用户补充要求优先：{extra}。"
-    return base + f" 【cos:{cos_id}】 【cam:{camera_kind}】" + (
-        f" 【cos_pose:{variation['pose_id']}】" if variation["pose_id"] else ""
+    framing_id = str(framing_choice.get("view_id") or "")
+    return (
+        base
+        + f" 【cos:{cos_id}】 【cam:{camera_kind}】"
+        + (f" 【cos_pose:{variation['pose_id']}】" if variation["pose_id"] else "")
+        + (f" 【cos_scene:{variation['scene_id']}】" if variation["scene_id"] else "")
+        + (f" 【cos_framing:{framing_id}】" if framing_id else "")
     )

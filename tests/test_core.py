@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.52")
+        self.assertEqual(PLUGIN_VERSION, "1.6.53")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -2838,6 +2838,57 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
             result = await adapter.generate(request)
 
         self.assertEqual(result.error, "模型超时（280s）")
+
+    def test_openai_edit_form_only_sets_requested_low_input_fidelity(self) -> None:
+        import astrbot_plugin_selfie_image.core.providers as providers
+
+        class RecordingForm:
+            def __init__(self):
+                self.fields = []
+
+            def add_field(self, name, value=None, **kwargs):
+                self.fields.append((name, value, kwargs))
+
+        adapter = OpenAIImageAdapter(make_target("openai", "gpt-image-2"), FakeSession())
+        request = ImageGenerateRequest(
+            prompt="portrait",
+            images=[ImageReference(data=PNG_BYTES, mime_type="image/png")],
+            reference_fidelity="low",
+        )
+        with patch.object(providers.aiohttp, "FormData", RecordingForm):
+            form = adapter._build_edit_form(request, "image[]")
+            ordinary_form = adapter._build_edit_form(
+                ImageGenerateRequest(prompt="portrait", images=request.images),
+                "image[]",
+            )
+
+        fields = {name: value for name, value, _ in form.fields}
+        ordinary_fields = {name: value for name, value, _ in ordinary_form.fields}
+        self.assertEqual(fields["input_fidelity"], "low")
+        self.assertNotIn("input_fidelity", ordinary_fields)
+
+    async def test_openai_edit_retries_without_unsupported_input_fidelity(self) -> None:
+        response = {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
+        adapter = OpenAIImageAdapter(make_target("openai", "gpt-image-2"), FakeSession())
+        calls = []
+
+        async def post_edit(_url, _request, image_field_name, *, include_size=True, include_input_fidelity=True):
+            calls.append((image_field_name, include_input_fidelity))
+            if include_input_fidelity:
+                return None, "HTTP 400: unsupported parameter input_fidelity"
+            return response, ""
+
+        with patch.object(adapter, "_post_edit_form", side_effect=post_edit):
+            result = await adapter.generate(
+                ImageGenerateRequest(
+                    prompt="side profile portrait",
+                    images=[ImageReference(data=PNG_BYTES, mime_type="image/png")],
+                    reference_fidelity="low",
+                )
+            )
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(calls, [("image[]", True), ("image[]", False)])
 
     async def test_openai_chat_generate_posts_prompt_body(self) -> None:
         response = {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
@@ -7647,6 +7698,68 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             reloaded = PersonaManager(tmp)
             self.assertEqual(reloaded.get_appearance_type(), "auto")
 
+    def test_viewpoint_change_instruction_covers_selfie_and_cos_without_false_positives(self) -> None:
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import has_viewpoint_change_request
+
+        self.assertTrue(has_viewpoint_change_request("自拍，正面转成侧脸近景"))
+        self.assertTrue(has_viewpoint_change_request("自拍，正面改成侧面近景"))
+        self.assertTrue(has_viewpoint_change_request("本次随机采用三分之四侧前方机位"))
+        self.assertTrue(has_viewpoint_change_request("LLM request: take the selfie from a side angle"))
+        self.assertFalse(has_viewpoint_change_request("衣服正面有白色花朵印花"))
+        self.assertFalse(has_viewpoint_change_request("自拍，不要侧脸"))
+        self.assertFalse(has_viewpoint_change_request("自拍，不要从侧面拍"))
+        self.assertFalse(has_viewpoint_change_request("selfie, avoid a side angle"))
+
+        from astrbot_plugin_selfie_image.prompts.selfie_actions import build_selfie_look_action
+
+        with patch("astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices", return_value=["desk_sit"]), patch(
+            "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choice",
+            side_effect=lambda items: items[0],
+        ):
+            random_selfie = build_selfie_look_action(
+                has_refs=True,
+                scene_light_provider=lambda _kind: (["书桌前"], ["窗光"]),
+            )
+        self.assertTrue(has_viewpoint_change_request(random_selfie))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            default_selfie = manager.build_selfie_prompt("自拍", "小助", "温柔", True, 0)
+            random_selfie_prompt = manager.build_selfie_prompt(
+                random_selfie, "小助", "温柔", True, 0
+            )
+            side_selfie = manager.build_selfie_prompt(
+                "【自拍 / 看看模式】从正面转成侧脸近景", "小助", "温柔", True, 0
+            )
+            llm_side_selfie = manager.build_selfie_prompt(
+                "【LLM 自拍】自拍，正面改成侧面近景", "小助", "温柔", True, 0
+            )
+            side_cos = manager.build_selfie_prompt(
+                "【自拍 / 看看COS模式】本次随机采用三分之四侧前方机位",
+                "小助",
+                "温柔",
+                True,
+                0,
+            )
+
+        instruction = "本次指定或随机选定的镜头视角优先于参考图投影"
+        self.assertNotIn(instruction, default_selfie)
+        self.assertIn(instruction, random_selfie_prompt)
+        self.assertIn(instruction, side_selfie)
+        self.assertIn(instruction, llm_side_selfie)
+        self.assertIn(instruction, side_cos)
+
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
+
+        english_selfie = build_selfie_builtin_prompt(
+            "【LLM 自拍】selfie from a side angle",
+            language="en",
+            has_reference_image=True,
+            action_content="selfie from a side angle",
+        )
+        self.assertIn("The requested camera view takes priority over the reference projection", english_selfie)
+
     def test_llm_image_character_name_does_not_trigger_selfie_pipeline(self) -> None:
         from astrbot_plugin_selfie_image.prompts.selfie_actions import looks_like_selfie_intent
 
@@ -8700,7 +8813,8 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("白色不透连裤袜", pantyhose)
         self.assertIn("从腰部沿可见腿部连续覆盖到脚趾", pantyhose)
 
-        # /看看COS random outfit pool
+        # /看看COS random outfit pool. The catalog body is intentionally
+        # outfit-only; series, scene, pose, and framing are separate fields.
         ids = set()
         for _ in range(40):
             t = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
@@ -8711,6 +8825,9 @@ class LegFocusTests(unittest.TestCase):
             ids.add(m.group(1))
             cam = re.search(r"【cam:(selfie|first|third)】", t)
             self.assertTrue(cam, t)
+            self.assertRegex(t, r"【cos_pose:[a-z0-9_]+】")
+            self.assertRegex(t, r"【cos_scene:[a-z0-9_]+】")
+            self.assertRegex(t, r"【cos_framing:[a-z0-9_]+】")
         self.assertGreaterEqual(len(ids), 3, ids)
         self.assertGreaterEqual(len(plugin_main.COS_LOOK_SETS), 200)
         self.assertTrue(
@@ -8746,684 +8863,45 @@ class LegFocusTests(unittest.TestCase):
                 "血迹", "血腥", "幼儿体型", "儿童体型", "未成年", "过度裸露",
                 "透明裸露", "裸露内衣", "成人化妆容", "成人化姿势", "儿童房",
                 "畸形手指", "畸形手脚", "多余肢体", "第三只手", "重复手臂", "肢体变形",
+                "抖音", "擦边", "反差",
             ):
                 self.assertNotIn(forbidden, item["prompt"], item["id"])
+        for item in plugin_main.COS_LOOK_SETS:
+            self.assertTrue(item["prompt"].startswith("以形象图中的人为COS主体") or item["prompt"].startswith("严格换装为"), item["id"])
+            self.assertNotRegex(item["prompt"], r"(?:室内柔光对镜全身|客厅电视柜前|白色皮革电竞椅)")
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(len(web_pool), len(plugin_main.COS_LOOK_SETS))
-        series_expected = {
-            "碧蓝航线": 10,
-            "蔚蓝档案": 11,
-            "公主连结": 11,
-            "无职转生": 12,
-        }
-        for series, minimum in series_expected.items():
-            series_items = [
-                item for item in plugin_main.COS_LOOK_SETS
-                if item.get("cos_type") == series
-            ]
-            self.assertGreaterEqual(len(series_items), minimum)
-            self.assertTrue(all(item.get("title") for item in series_items))
-            self.assertTrue(all(series not in item["title"] for item in series_items))
         self.assertEqual(
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
         )
-        titles = {x["title"] for x in plugin_main.COS_LOOK_SETS}
+        series_expected = {"碧蓝航线": 10, "蔚蓝档案": 11, "公主连结": 11, "无职转生": 12}
+        for series, minimum in series_expected.items():
+            series_items = [item for item in plugin_main.COS_LOOK_SETS if item["cos_type"] == series]
+            self.assertGreaterEqual(len(series_items), minimum)
+            self.assertTrue(all(item["title"] for item in series_items))
+            self.assertTrue(all(series not in item["title"] for item in series_items))
+        titles = {item["title"] for item in plugin_main.COS_LOOK_SETS}
         self.assertTrue(
             {
-                "洛琪希·奶油睡衣",
-                "古风·齐胸汉服·桃粉",
-                "古风·薄荷粉纱汉服",
-                "蕾姆·蓝白女仆洛丽塔",
-                "白细肩带迷你裙",
-                "海月·白蓝花瓣水母",
-                "西施·同人短旗袍",
-                "蓝梦·龙之道",
-                "朵莉亚·海洋荷叶裙",
-                "殷紫萍·银白短旗袍",
-                "甘雨·花嫁",
-                "玉玲珑·金狐",
-                "貂蝉·三国杀",
-                "铂金发白蕾丝长裙",
-                "西施·青绿渐变旗袍",
-                "黄结白围裙女仆",
-                "古风·汉服·银紫深V广袖",
-                "古风·露背蓝纱古装",
-                "姬小满·黑金橙短装",
-                "西施·诗语江南",
-                "公孙离·离恨烟",
-                "西施·露腰短旗袍",
-                "影·黑白红短装",
-                "露莎·白金短装",
-                "秧秧·蓝白碎花泳装",
-                "卡提希娅·黑裙飞鸟",
-                "古风·青绿双辫广袖长裙",
-                "尤诺·金粉轻甲",
-                "古风·汉服挂脖肚兜套装",
-                "满穗·灰白和风",
-                "小乔·白熊围巾",
-                "芙宁娜·奶油浅蓝荷叶裙",
-                "小舞·浅粉白兔",
-                "王昭君·旧版原皮蓝白",
-                "玉玲珑·喜缘红线",
-                "二次元少女·橙青半透",
-                "瑶·薄荷冰蓝短裙",
-                "露娜·紫霞仙子",
-                "古风·浅蓝花卉挂脖兜兜",
-                "神里绫华·白袖蓝袴",
-                "古风·青白水晶挂脖套装",
-                "杨玉环·银翎春语",
-                "少司缘·红金宽袖",
-                "古风·青绿花卉短襦裙",
-                "古风·淡粉月夜薄纱古装",
-                "白发·黑结挂脖围裙",
-                "古风·青红双丸子烟斗",
-                "古风·粉蓝花卉立领长裙",
-                "和泉纱雾·粉色家居服",
-                "小乔·丁香结",
-                "公孙离·玉兔公主",
-                "貂蝉·原皮",
-                "西施·乘鲤谣",
-                "西施·续相思",
-                "宵宫",
-                "小乔·线条小狗",
-                "雷电将军",
-                "芙宁娜·白蓝礼服",
-                "胡桃·往生堂黑红",
-                "刻晴·紫色短礼服",
-                "甘雨·冰蓝试衣",
-                "可莉·红白童趣",
-                "宵宫·烟花祭典",
-                "莫娜·星命定轨",
-                "菲谢尔·断罪皇女",
-                "优菈·浪花骑士",
-                "申鹤·孤辰茕怀",
-                "珊瑚宫心海·海祇巫女",
-                "八重神子·鸣神大社巫女",
-                "夜兰·若你困于无光",
-                "纳西妲·白草净华",
-                "妮露·睡莲之章",
-                "迪希雅·炽鬃之狮",
-                "娜维娅·玫瑰与铳",
-                "克洛琳德·逐影猎人",
-                "玛拉妮·巡浪之歌",
-                "希诺宁·焮金摇曳",
-                "妮可·德玛拉·狡兔屋街头装",
-                "艾莲·乔·维多利亚女仆装",
-                "可琳·威克斯·维多利亚女仆",
-                "丽娜·维多利亚管家",
-                "格莉丝·霍华德·机械师工装",
-                "朱鸢·治安巡查制服",
-                "青衣·青花制服",
-                "简·杜·绯红潜行",
-                "星见雅·新艾利都特勤装",
-                "柏妮思·怀特·炽焰机车装",
-                "柳·对空六课制服",
-                "伊芙琳·护卫礼服",
-                "长离·赤霞灼灼",
-                "今汐·岁主令尹",
-                "吟霖·红绡提线",
-                "守岸人·星海礼服",
-                "椿·绯红花冠",
-                "赞妮·金色裁决",
-                "卡洛塔·冰蓝肖像",
-                "安可·黑白羊绒装",
-                "桃祈·边庭守备",
-                "丹瑾·绯红剑影",
-                "白芷·白蓝研究服",
-                "散华·冰纹护卫",
-                "永雏塔菲·粉白黄宅舞服",
-                "古拉·小鲨鱼",
-                "小乔·少御粉色短装",
-                "瑶·小鹿主题",
-                "和泉纱雾·粉绿印花短装",
-                "芭芭拉·白色偶像礼服",
-                "姬小满·黄黑坐姿短装",
-                "Saber·青花瓷短装",
-                "银狼·蓝黑街头短装",
-                "甘雨·蓝白麒麟装",
-                "少司缘·红绿宅舞宽袖",
-                "穹·电竞房白色短裙",
-                "嫦娥·落星盏金月短装",
-                "露娜·霜月吟冰蓝宽袖",
-                "少萝·粉白兔系短装",
-                "海月·水母薄纱试衣",
-                "公孙离·离恨烟展袖",
-                "公孙离·玉兔公主花辫",
-                "孙尚香·荧光绿短装",
-                "云缨·红白黑短装",
-                "少司缘·三星堆青绿金饰",
-                "少司缘·红绿超大宽袖",
-                "小乔·战国袍",
-                "妲己·狐耳黑金短装",
-                "公孙离·白绿金宽袖",
-                "爱弥斯·黑白蓝坐姿",
-                "洛琪希·露肩短睡裙",
-                "卡提希娅·白黑蓝短装",
-                "水兰儿·羊角提花短旗袍",
-                "胡桃·龙之道·至纯",
-                "胡桃·鲤梦浮光",
-                "胡桃·春日序曲·晨风",
-                "胡桃·怦然心动·软暖甜梦",
-                "胡桃·夏日派对·高校水着",
-                "胡桃·春桃笑",
-                "殷紫萍·春日序曲·朝颜",
-                "殷紫萍·绛璇仙子",
-                "殷紫萍·兰庭月",
-                "殷紫萍·古岛异闻·永夜幽华",
-                "殷紫萍·2674·幻械姬",
-                "殷紫萍·诗画四友·春鸠梅",
-                "宁红夜·赤皓新囍",
-                "宁红夜·西行劫·蜘蛛精",
-                "宁红夜·封神录·云霄娘娘",
-                "宁红夜·冥神",
-                "宁红夜·梨园传奇·素贞",
-                "宁红夜·龙之道·白知",
-                "季莹莹·寂熄祸星",
-                "季莹莹·观山海·夫诸",
-                "季莹莹·琳琅·观山海·太阳星主",
-                "季莹莹·封神录·哪吒",
-                "砂狼白子·黑白运动服",
-                "菲比·白金圣洁礼服",
-                "古风·白金红绸宽袖",
-                "丹花伊吹·红白运动装",
-                "白色蕾丝·露腰短装",
-                "古风·白蓝露背仙纱",
-                "C.C.（CC）·皇后装·白虎粉金礼服",
-                "辉夜·巫女红白神乐服",
-            }.issubset(titles),
+                "洛琪希·奶油睡衣", "蕾姆·蓝白女仆洛丽塔", "白细肩带迷你裙",
+                "海月·白蓝花瓣水母", "蓝梦·龙之道", "西施·诗语江南",
+                "姬小满·黑金橙短装", "小乔·丁香结", "公孙离·玉兔公主",
+                "和泉纱雾·粉色家居服", "王昭君·旧版原皮蓝白", "瑶·小鹿主题",
+                "砂狼白子·黑白运动服", "菲比·白金圣洁礼服", "古风·淡粉月夜薄纱古装",
+            }.issubset(titles)
         )
-        for item in plugin_main.COS_LOOK_SETS:
-            blob = item["title"] + item["prompt"]
-            self.assertNotIn("抖音", blob)
-            self.assertNotIn("擦边", blob)
-            self.assertNotIn("反差", blob)
-        roxy = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "roxy_cream")
-        self.assertIn("《无职转生》洛琪希", roxy["prompt"])
-        self.assertIn("跪坐在地毯上", roxy["prompt"])
-        self.assertIn("双膝并拢", roxy["prompt"])
-        self.assertIn("双腿收拢并拢压在身下", roxy["prompt"])
-        self.assertIn("不要盘腿、分腿或站立", roxy["prompt"])
-        self.assertIn("禁止蓝色旅行法师外套", roxy["prompt"])
+        roxy = next(item for item in plugin_main.COS_LOOK_SETS if item["id"] == "roxy_cream")
+        self.assertIn("以形象图中的人为COS主体", roxy["prompt"])
         self.assertIn("双麻花辫", roxy["prompt"])
-        self.assertIn("睡衣", roxy["prompt"])
-        rem = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "rem_blue_lolita")
+        rem = next(item for item in plugin_main.COS_LOOK_SETS if item["id"] == "rem_blue_lolita")
         self.assertIn("蓝白女仆洛丽塔", rem["title"])
-        self.assertIn("罗兹瓦尔宅邸经典蓝白女仆服", rem["prompt"])
         self.assertIn("白色长袖蓬袖衬衣", rem["prompt"])
-        self.assertIn("分叉燕尾式深色后摆", rem["prompt"])
-        self.assertIn("不要拉姆粉色女仆服", rem["prompt"])
-        prompts = {x["id"]: x["prompt"] for x in plugin_main.COS_LOOK_SETS}
-        blue_archive_ids = {
-            item["id"]
-            for item in plugin_main.COS_LOOK_SETS
-            if item.get("cos_type") == "蔚蓝档案"
-        }
-        for blue_archive_id in blue_archive_ids:
-            self.assertNotIn("官方游戏立绘服装还原", prompts[blue_archive_id])
-            self.assertNotIn("按官方服装比例制作", prompts[blue_archive_id])
-            self.assertIn("人物", prompts[blue_archive_id])
-        self.assertEqual(
-            [item["id"] for item in plugin_main.match_cos_look_sets("宁红夜 赤皓新囍")],
-            ["ninghongye_red_hao_new_joy"],
-        )
-        self.assertEqual(
-            [item["id"] for item in plugin_main.match_cos_look_sets("季莹莹 封神录 哪吒")],
-            ["jiyingying_nezha"],
-        )
-        self.assertEqual(
-            [item["id"] for item in plugin_main.match_cos_look_sets("砂狼白子")],
-            ["shiroko_black_white_tracksuit"],
-        )
-        self.assertEqual(
-            [item["id"] for item in plugin_main.match_cos_look_sets("菲比")],
-            ["phoebe_white_gold_sanctuary"],
-        )
-        self.assertEqual(
-            [item["id"] for item in plugin_main.match_cos_look_sets("丹花伊吹")],
-            ["ibuki_red_white_sportswear"],
-        )
-        for query in ("C.C.", "CC", "C.C.皇后装", "CC皇后装"):
-            self.assertEqual(
-                [item["id"] for item in plugin_main.match_cos_look_sets(query)],
-                ["cc_white_tiger_pink_gold_dress"],
-            )
-        self.assertEqual(plugin_main.match_cos_look_sets("C"), [])
-        for query in ("辉夜", "巫女", "辉夜巫女"):
-            expected_ids = (
-                ["kaguya_miko_red_white_crown", "kokomi_divine_priestess", "yae_miko_shrine"]
-                if query == "巫女"
-                else ["kaguya_miko_red_white_crown"]
-            )
-            self.assertEqual(
-                [item["id"] for item in plugin_main.match_cos_look_sets(query)],
-                expected_ids,
-            )
-        for ninghongye_id in (
-            "ninghongye_red_hao_new_joy",
-            "ninghongye_spider_demon",
-            "ninghongye_cloud_fairy",
-            "ninghongye_underworld_goddess",
-            "ninghongye_plain_white_snake",
-            "ninghongye_dragon_path_baizhi",
-        ):
-            self.assertIn("横向红色绸缎仪式眼罩", prompts[ninghongye_id])
-            self.assertIn("绝不能露出眼睛", prompts[ninghongye_id])
-            self.assertIn("完全不透明", prompts[ninghongye_id])
-            self.assertIn("不得透光", prompts[ninghongye_id])
-            self.assertIn("眼睛、眼白和眼睑全部不可见", prompts[ninghongye_id])
-        sun_star_lord = prompts["jiyingying_sun_star_lord"]
-        self.assertIn("白色、浅金色的半透明纱裙片与珠网结构", sun_star_lord)
-        self.assertIn("透明长纱裙片", sun_star_lord)
-        self.assertIn("赤足", sun_star_lord)
-        self.assertNotIn("黑色三角底层", sun_star_lord)
-        self.assertNotIn("白色贴身短裤", sun_star_lord)
-        self.assertNotIn("脚穿细带凉鞋", sun_star_lord)
-        orchid = prompts["yinzi_orchid_courtyard_moon"]
-        self.assertIn("双腿裸露不穿袜", orchid)
-        self.assertNotIn("白色连裤袜", orchid)
-        spring_oriole = prompts["yinzi_spring_oriole_plum"]
-        self.assertIn("双腿裸露不穿袜", spring_oriole)
-        self.assertNotIn("白色丝袜", spring_oriole)
-        warm_dream = prompts["hutao_warm_sweet_dream"]
-        self.assertIn("后背大面积露出", warm_dream)
-        self.assertIn("细肩带固定", warm_dream)
-        cloud_fairy = prompts["ninghongye_cloud_fairy"]
-        self.assertIn("双臂大部裸露", cloud_fairy)
-        self.assertIn("不形成连贯长袖", cloud_fairy)
-        self.assertIn("齐胸抹胸高腰", prompts["hanfu_peach"])
-        self.assertIn("外层宽袖薄纱袍", prompts["mint_sheer_hanfu"])
-        white = prompts["white_slip_mini"]
-        self.assertIn("细肩带", white)
-        self.assertIn("裙摆只到大腿中段", white)
-        self.assertIn("白色厚底运动鞋", white)
-        self.assertNotIn("《", white)
-        self.assertNotIn("抖音", white)
-        self.assertNotIn("天宫", white)
-        haiyue = prompts["haiyue_petal_jelly"]
-        self.assertIn("《王者荣耀》海月", haiyue)
-        self.assertIn("深甜心领", haiyue)
-        self.assertIn("不是原皮宽袖长袍汉服", haiyue)
-        self.assertNotIn("抖音", haiyue)
-        xishi = prompts["xishi_fan_qipao"]
-        self.assertIn("《王者荣耀》西施同人短旗袍", xishi)
-        self.assertIn("薄荷白鹿角", xishi)
-        self.assertIn("不是原皮长裙水莲汉服", xishi)
-        self.assertNotIn("抖音", xishi)
-        lanmeng = prompts["lanmeng_dragon_path"]
-        self.assertIn("《永劫无间》蓝梦“龙之道”COS", lanmeng)
-        self.assertIn("黑金短款露腰服装", lanmeng)
-        self.assertIn("白色皮革电竞椅", lanmeng)
-        self.assertNotIn("抖音", lanmeng)
-        dolia = prompts["dolia_ocean_ruffle"]
-        self.assertIn("《王者荣耀》朵莉亚", dolia)
-        self.assertIn("白贝壳与红海星", dolia)
-        self.assertIn("不是原皮人鱼长尾", dolia)
-        self.assertNotIn("抖音", dolia)
-        yinzi = prompts["yinzi_white_qipao"]
-        self.assertIn("《永劫无间》殷紫萍", yinzi)
-        self.assertIn("钥匙孔开窗", yinzi)
-        self.assertIn("不是长袍旗袍", yinzi)
-        ganyu = prompts["ganyu_bride"]
-        self.assertIn("《原神》甘雨花嫁", ganyu)
-        self.assertIn("麒麟角", ganyu)
-        self.assertIn("不是原皮深蓝金边旗袍", ganyu)
-        fox = prompts["yulinglong_gold_fox"]
-        self.assertIn("《永劫无间》玉玲珑", fox)
-        self.assertIn("狐耳", fox)
-        self.assertIn("不是原皮覆盖更多的汉服长袍", fox)
-        diaochan = prompts["diaochan_sanguosha"]
-        self.assertIn("《三国杀》貂蝉", diaochan)
-        self.assertIn("螺旋黑发包", diaochan)
-        self.assertIn("薄荷缎裙", diaochan)
-        lace = prompts["platinum_lace_gown"]
-        self.assertIn("铂金长直发白蕾丝长裙", lace)
-        self.assertNotIn("《", lace)
-        self.assertNotIn("星穹", lace)
-        cyan = prompts["xishi_cyan_qipao"]
-        self.assertIn("《王者荣耀》西施这一版青绿渐变旗袍", cyan)
-        self.assertIn("白盘扣", cyan)
-        self.assertIn("不是鹿角同人短旗袍", cyan)
-        maid = prompts["yellow_bow_maid"]
-        self.assertIn("大黄蝴蝶结", maid)
-        self.assertIn("白围裙", maid)
-        self.assertNotIn("永劫", maid)
-        self.assertNotIn("宁红夜", maid)
-        self.assertNotIn("《", maid)
-        deepv = prompts["silver_deepv_hanfu"]
-        self.assertIn("交领极低开到胸口", deepv)
-        self.assertIn("金绣直襟", deepv)
-        self.assertNotIn("《", deepv)
-        backless = prompts["blue_backless_hanfu"]
-        self.assertIn("四分之三侧身", backless)
-        self.assertIn("从颈到腰的整片裸背", backless)
-        self.assertIn("双手自然摆放", backless)
-        self.assertNotIn("第三只手", backless)
-        self.assertIn("冰蓝渐变到青绿再到宝蓝", backless)
-        self.assertNotIn("《", backless)
-        jixiaoman = prompts["jixiaoman_black_gold"]
-        self.assertIn("《王者荣耀》姬小满", jixiaoman)
-        self.assertIn("黑金橙短装", jixiaoman)
-        self.assertIn("短款宽袖外套只到胸下", jixiaoman)
-        self.assertIn("整段腰腹露出", jixiaoman)
-        self.assertIn("宽袖外黑内亮橙金", jixiaoman)
-        self.assertIn("大金六角护甲板", jixiaoman)
-        self.assertIn("黑色短裤", jixiaoman)
-        self.assertIn("浅紫白辫状长尾饰", jixiaoman)
-        self.assertIn("不是黄睡衣家居", jixiaoman)
-        self.assertIn("不是黄短裙", jixiaoman)
-        shiyu = prompts["xishi_shiyu_jiangnan"]
-        self.assertIn("《王者荣耀》西施诗语江南", shiyu)
-        self.assertIn("青绿荷叶大结", shiyu)
-        self.assertIn("不是鹿角同人短旗袍", shiyu)
-        lihen = prompts["gongsunli_lihenyan"]
-        self.assertIn("《王者荣耀》公孙离离恨烟", lihen)
-        self.assertIn("尖角高发包", lihen)
-        self.assertIn("大金螺旋圆徽", lihen)
-        self.assertIn("不是大乔", lihen)
-        self.assertNotIn("大乔离恨烟", lihen)
-        crop = prompts["xishi_crop_qipao"]
-        self.assertIn("《王者荣耀》西施这一版露腰短旗袍两件套", crop)
-        self.assertIn("只到胸下", crop)
-        self.assertIn("不是诗语江南广袖短衣", crop)
-        ying = prompts["ying_black_red"]
-        self.assertIn("《王者荣耀》影", ying)
-        self.assertIn("大红圆宝石", ying)
-        self.assertIn("贴身亮黑短裤", ying)
-        lusha = prompts["lusha_gold_tiara"]
-        self.assertIn("铂金超长直发白金短装", lusha)
-        self.assertIn("金交叉胸带", lusha)
-        self.assertNotIn("《", lusha)
-        yangyang = prompts["yangyang_blue_floral_swim"]
-        self.assertIn("《鸣潮》秧秧", yangyang)
-        self.assertIn("白底蓝花比基尼", yangyang)
-        cart = prompts["cartethyia_black_bird"]
-        self.assertIn("《鸣潮》卡提希娅", cart)
-        self.assertIn("白绣飞鸟", cart)
-        self.assertIn("银枝状脚环", cart)
-        yuno = prompts["yuno_gold_pink_armor"]
-        self.assertIn("《鸣潮》尤诺", yuno)
-        self.assertIn("香槟金光泽胸甲", yuno)
-        self.assertIn("粉色沙发或软垫", yuno)
-        self.assertNotIn("抖音", yuno)
-        dudou = prompts["ancient_hanfu_halter_dudou"]
-        self.assertIn("国风汉服挂脖肚兜套装", dudou)
-        self.assertIn("花卉蕾丝刺绣", dudou)
-        self.assertIn("淡紫色薄纱披肩", dudou)
-        self.assertIn("保持自然遮挡", dudou)
-        xiaowu = prompts["xiaowu_pink_rabbit"]
-        self.assertIn("《斗罗大陆》小舞", xiaowu)
-        self.assertIn("浅粉白兔系 COS", xiaowu)
-        self.assertIn("银白镂空花纹饰片", xiaowu)
-        wangzhaojun = prompts["wangzhaojun_old_blue"]
-        self.assertIn("《王者荣耀》王昭君旧版原皮", wangzhaojun)
-        self.assertIn("白色毛绒披肩", wangzhaojun)
-        self.assertIn("亮蓝色缎面", wangzhaojun)
-        red_thread = prompts["yulinglong_red_thread"]
-        self.assertIn("《永劫无间》玉玲珑", red_thread)
-        self.assertIn("喜缘红线", red_thread)
-        self.assertIn("粉红色折扇", red_thread)
-        anime_girl = prompts["anime_girl_orange_mint"]
-        self.assertIn("橙金与薄荷青配色", anime_girl)
-        self.assertIn("粉色扶手椅", anime_girl)
-        yao = prompts["yao_mint_blue_dress"]
-        self.assertIn("《王者荣耀》瑶", yao)
-        self.assertIn("薄荷冰蓝梦幻短裙", yao)
-        self.assertIn("小狗毛绒挂件", yao)
-        luna = prompts["luna_zixia_fairy"]
-        self.assertIn("《王者荣耀》露娜", luna)
-        self.assertIn("紫霞仙子", luna)
-        self.assertIn("金色蝴蝶形护饰", luna)
-        twin = prompts["mint_twin_braid_hanfu"]
-        self.assertIn("深棕双麻花辫青绿广袖长裙", twin)
-        self.assertIn("粉红花囊", twin)
-        self.assertNotIn("《", twin)
-        mansui = prompts["mansui_gray_wafu"]
-        self.assertIn("满穗风格的灰白色和风 COS 造型", mansui)
-        self.assertIn("自然裸腿", mansui)
-        self.assertIn("不要中筒袜、短袜或厚重打底袜", mansui)
-        xiao_qiao = prompts["xiao_qiao_white_bear"]
-        self.assertIn("薄荷绿白熊主题", xiao_qiao)
-        self.assertIn("黄色长围巾", xiao_qiao)
-        self.assertIn("白色不透明过膝袜或连贯白色腿部服装", xiao_qiao)
-        self.assertIn("不要中筒袜、短袜或袜口截断", xiao_qiao)
-        self.assertNotIn("客厅电视柜前", xiao_qiao)
-        furina = prompts["furina_cream_blue_ruffle"]
-        self.assertIn("芙宁娜风格的奶油浅蓝荷叶裙 COS 造型", furina)
-        self.assertIn("灰蓝色大蝴蝶结", furina)
-        self.assertIn("多层蓝灰色布料和奶油白荷叶边", furina)
-        blue_doudou = prompts["ancient_blue_floral_halter_doudou"]
-        self.assertIn("轻国风浅蓝花卉挂脖兜兜套装", blue_doudou)
-        self.assertIn("圆形镂空和金色古典扣饰", blue_doudou)
-        self.assertIn("浅蓝色半透明薄纱短衫", blue_doudou)
-        ayaka = prompts["kamisato_ayaka_white_blue_hakama"]
-        self.assertIn("《原神》神里绫华", ayaka)
-        self.assertIn("粉色水引结蝴蝶结耳饰", ayaka)
-        self.assertIn("深海军蓝色褶裙或袴裙", ayaka)
-        crystal = prompts["ancient_mint_crystal_halter"]
-        self.assertIn("青白薄荷色轻国风挂脖套装", crystal)
-        self.assertIn("透明蓝绿色圆球水晶", crystal)
-        yangyuhuan = prompts["yangyuhuan_silver_feather"]
-        self.assertIn("《王者荣耀》杨玉环“银翎春语”COS", yangyuhuan)
-        self.assertIn("银色羽翎装饰", yangyuhuan)
-        shaosiyuan = prompts["shaosiyuan_red_gold_sleeves"]
-        self.assertIn("《王者荣耀》少司缘红金主题COS", shaosiyuan)
-        self.assertIn("极宽的红色长袖", shaosiyuan)
-        floral_short = prompts["ancient_mint_floral_short_ruqun"]
-        self.assertIn("青绿色花卉古风COS", floral_short)
-        self.assertIn("白色花朵发饰", floral_short)
-        moon_sheer = prompts["ancient_pink_moon_sheer"]
-        self.assertIn("淡粉色月夜薄纱古装", moon_sheer)
-        self.assertIn("白色长毛毯铺成的软榻", moon_sheer)
-        self.assertIn("一轮明月", moon_sheer)
-        sagiri = prompts["izumi_sagiri_pink_loungewear"]
-        self.assertIn("《埃罗芒阿老师》和泉纱雾风格", sagiri)
-        self.assertIn("面部清晰无遮挡", sagiri)
-        self.assertNotIn("手机", sagiri)
-        self.assertNotIn("不要裸露", sagiri)
-        xiaoqiao_clove = prompts["xiaoqiao_dingxiangjie"]
-        self.assertIn("《王者荣耀》小乔“丁香结”", xiaoqiao_clove)
-        self.assertIn("紫色大蝴蝶结发饰", xiaoqiao_clove)
-        gongsunli_rabbit = prompts["gongsunli_yutu_princess"]
-        self.assertIn("《王者荣耀》公孙离“玉兔公主”", gongsunli_rabbit)
-        self.assertIn("黄色宽腰封", gongsunli_rabbit)
-        diaochan_original = prompts["diaochan_original"]
-        self.assertIn("《王者荣耀》貂蝉原皮", diaochan_original)
-        self.assertIn("蓝色方形宝石", diaochan_original)
-        chengliyiao = prompts["xishi_chengliyiao"]
-        self.assertIn("《王者荣耀》西施“乘鲤谣”", chengliyiao)
-        self.assertIn("银色大型双螺旋", chengliyiao)
-        xuxiangsi = prompts["xishi_xuxiangsi"]
-        self.assertIn("《王者荣耀》西施“续相思”", xuxiangsi)
-        self.assertIn("复杂的银色、青绿色与粉金色莲花形花冠", xuxiangsi)
-        yoimiya = prompts["yoimiya_firework"]
-        self.assertIn("《原神》宵宫风格", yoimiya)
-        self.assertIn("黑色猫耳或兽耳发饰", yoimiya)
-        xiaoqiao_dog = prompts["xiaoqiao_line_dog"]
-        self.assertIn("小乔·线条小狗", xiaoqiao_dog)
-        self.assertIn("粉色爪印徽章", xiaoqiao_dog)
-        raiden = prompts["raiden_shogun_purple"]
-        self.assertIn("《原神》雷电将军风格 COS", raiden)
-        self.assertIn("紫色长发编织成麻花辫", raiden)
-        self.assertIn("雷元素印记", raiden)
-        furina_classic = prompts["furina_classic_blue_white"]
-        self.assertIn("《原神》芙宁娜经典白蓝礼服 COS", furina_classic)
-        self.assertIn("全身镜前", furina_classic)
-        hutao = prompts["hutao_wansheng"]
-        self.assertIn("《原神》胡桃经典黑红短装 COS", hutao)
-        self.assertIn("往生堂礼帽", hutao)
-        keqing = prompts["keqing_purple_dress"]
-        self.assertIn("《原神》刻晴经典紫色 COS", keqing)
-        self.assertIn("猫耳般轮廓", keqing)
-        ganyu_classic = prompts["ganyu_ice_blue"]
-        self.assertIn("《原神》甘雨经典 COS", ganyu_classic)
-        self.assertIn("麒麟角", ganyu_classic)
-        klee = prompts["klee_red_clover"]
-        self.assertIn("《原神》可莉经典 COS", klee)
-        self.assertIn("四叶草", klee)
-        self.assertNotIn("儿童角色必须完全穿衣", klee)
-        self.assertNotIn("不强调身体曲线", klee)
-        self.assertNotIn("不使用性感或成人化姿势", klee)
-        yoimiya_festival = prompts["yoimiya_firework_festival"]
-        self.assertIn("《原神》宵宫经典 COS", yoimiya_festival)
-        self.assertIn("烟花主题发饰", yoimiya_festival)
-        genshin_additions = {
-            "mona_astrologist_starry": ("《原神》莫娜经典占星术士 COS", "卧室全身镜"),
-            "fischl_immernachtreich": ("《原神》菲谢尔经典断罪皇女 COS", "黑紫色不对称短裙"),
-            "eula_spindrift_knight": ("《原神》优菈浪花骑士经典 COS", "骑士徽章"),
-            "shenhe_lonely_cloud": ("《原神》申鹤经典孤辰茕怀 COS", "红色绳结"),
-            "kokomi_divine_priestess": ("《原神》珊瑚宫心海经典海祇巫女 COS", "贝壳纹和小珍珠"),
-            "yae_miko_shrine": ("《原神》八重神子鸣神大社巫女 COS", "格栅窗"),
-            "yelan_midnight_blue": ("《原神》夜兰经典若你困于无光 COS", "白色毛绒短披肩"),
-            "nahida_floating_dream": ("《原神》纳西妲白草净华 COS", "成年女性体态"),
-            "nilou_lotus_dance": ("《原神》妮露睡莲之章 COS", "睡莲发饰"),
-            "dehya_flame_mane": ("《原神》迪希雅炽鬃之狮 COS", "金色结构护肩"),
-            "navia_rose_parasol": ("《原神》娜维娅玫瑰与铳经典 COS", "复古遮阳伞"),
-            "clorinde_shadow_hunter": ("《原神》克洛琳德逐影猎人 COS", "红色窄领带"),
-            "mualani_surfing_wave": ("《原神》玛拉妮巡浪之歌风格 COS", "海岛风房间"),
-            "xilonen_blazing_gold": ("《原神》希诺宁焮金摇曳风格 COS", "机能外套"),
-            "diona_cats_tail_bartender": ("《原神》迪奥娜猫尾酒馆制服 COS", "蓝灰色短款背心"),
-            "sayu_mujina_hood": ("《原神》早柚风车菊忍者斗篷 COS", "灰褐色大号狸猫耳兜帽"),
-            "yaoyao_yuegui_green": ("《原神》瑶瑶月桂主题青绿服装 COS", "青绿色短马甲"),
-            "dori_sangemah_bazaar": ("《原神》多莉桑歌玛哈巴依商会风格 COS", "紫色与金色相间的圆顶帽"),
-            "sigewinne_meropide_nurse": ("《原神》希格雯梅洛彼得堡护理服 COS", "浅蓝色短披肩"),
-            "kachina_rites_of_flame": ("《原神》卡齐娜纳塔风格矿岩祭礼装 COS", "橙棕色短款披肩"),
-            "iansan_natlan_vitality": ("《原神》伊安珊纳塔风格活力 COS", "橙红色几何发饰"),
-        }
-        for look_id, (identity, detail) in genshin_additions.items():
-            self.assertIn(identity, prompts[look_id])
-            self.assertIn(detail, prompts[look_id])
-            self.assertGreaterEqual(len(prompts[look_id]), 240)
-        zenless_additions = {
-            "nicole_demara_street": ("《绝区零》妮可·德玛拉狡兔屋经典街头 COS", "黑色短款机能夹克"),
-            "ellen_joe_victoria_maid": ("《绝区零》艾莲·乔维多利亚家政经典 COS", "白色蕾丝女仆发箍"),
-            "corin_wickes_victoria_maid": ("《绝区零》可琳·威克斯维多利亚家政女仆 COS", "厚实棉麻质感"),
-            "rina_victoria_butler": ("《绝区零》丽娜维多利亚家政管家 COS", "黑色高领贴身内衫"),
-            "grace_howard_mechanic": ("《绝区零》格莉丝·霍华德机械师 COS", "厚实帆布材质"),
-            "zhu_yuan_public_security": ("《绝区零》朱鸢新艾利都治安巡查制服 COS", "青绿色窄领带"),
-            "qingyi_blue_white_uniform": ("《绝区零》青衣青花制服风格 COS", "连续青花云纹"),
-            "jane_doe_crimson_infiltration": ("《绝区零》简·杜绯红潜行风格 COS", "哑光皮革与网眼拼接"),
-            "hoshimi_miyabi_special_ops": ("《绝区零》星见雅新艾利都特勤装 COS", "深紫色短款和风特勤外套"),
-            "burnice_white_flame_biker": ("《绝区零》柏妮思·怀特炽焰机车风 COS", "橙色与黑色拼接的短款机车夹克"),
-            "tsukishiro_yanagi_neps_uniform": ("《绝区零》月城柳对空六课制服 COS", "细框眼镜"),
-            "evelyn_guard_dress": ("《绝区零》伊芙琳护卫礼服风格 COS", "酒红色与黑色拼接的修身护卫礼服"),
-            "zzz_nekomata_street": ("《绝区零》猫又红黑街头装COS", "黑红色机能夹克"),
-            "zzz_trigger_blue_gray_ops": ("《绝区零》扳机蓝灰特勤装COS", "蓝灰色高领衬衣"),
-            "zzz_pulchra_biker": ("《绝区零》普莱什黑金机车风COS", "黑色短款皮革夹克"),
-            "zzz_ju_fufu_red_gold": ("《绝区零》橘福福红金和风装COS", "金色宽腰带"),
-            "zzz_alice_thymefield": ("《绝区零》爱丽丝·泰姆菲尔德学院装COS", "蓝白格纹百褶短裙"),
-            "zzz_orphie_stage": ("《绝区零》奥菲丝蓝白舞台装COS", "蓝色束腰外套"),
-        }
-        for look_id, (identity, detail) in zenless_additions.items():
-            self.assertIn(identity, prompts[look_id])
-            self.assertIn(detail, prompts[look_id])
-            self.assertGreaterEqual(len(prompts[look_id]), 280)
-        wuthering_additions = {
-            "changli_red_gold_flame": ("《鸣潮》长离经典赤霞灼灼COS", "红橙色长发"),
-            "jinhsi_dragon_lord": ("《鸣潮》今汐岁主令尹COS", "白蓝渐变多层长裙"),
-            "yinlin_puppet_master": ("《鸣潮》吟霖经典红黑提线木偶风COS", "黑色小礼帽"),
-            "shorekeeper_stellar": ("《鸣潮》守岸人星海主题COS", "半透明白蓝披纱"),
-            "camellya_red_rose": ("《鸣潮》椿绯红花冠COS", "花瓣状薄纱"),
-            "zani_golden_verdict": ("《鸣潮》赞妮金白都市制服COS", "细框眼镜"),
-            "carlotta_frost_portrait": ("《鸣潮》卡洛塔冰蓝贵族礼服COS", "冰蓝色缎面束腰礼服"),
-            "encore_black_white_sheep": ("《鸣潮》安可黑白羊绒主题COS", "白色羊绒短斗篷"),
-            "taoqi_border_guard": ("《鸣潮》桃祈边庭守备COS", "浅绿色玉石发饰"),
-            "danjin_crimson_blade": ("《鸣潮》丹瑾绯红短装COS", "红黑色短款披肩"),
-            "baizhi_research_white_blue": ("《鸣潮》白芷白蓝研究服COS", "白色长款研究外套"),
-            "sanhua_ice_guard": ("《鸣潮》散华冰纹护卫COS", "冰蓝色滚边"),
-        }
-        for look_id, (identity, detail) in wuthering_additions.items():
-            self.assertIn(identity, prompts[look_id])
-            self.assertIn(detail, prompts[look_id])
-            self.assertGreaterEqual(len(prompts[look_id]), 250)
-        taifei = prompts["yongchutafei_pink_yellow_dance"]
-        self.assertIn("永雏塔菲风格的粉白黄宅舞COS服", taifei)
-        self.assertIn("米白色室内墙面", taifei)
-        self.assertIn("巨大的淡粉色蝴蝶结", taifei)
-        self.assertNotIn("猫爪手套", taifei)
-        gura = prompts["gura_shark"]
-        self.assertIn("Hololive Gawr Gura", gura)
-        self.assertIn("红白色鲨鱼牙齿图案", gura)
-        xiaoqiao_shaoyu = prompts["xiaoqiao_shaoyu_pink"]
-        self.assertIn("小乔少御风格", xiaoqiao_shaoyu)
-        self.assertIn("白色大荷叶边", xiaoqiao_shaoyu)
-        self.assertNotIn("头部、脸部和发型完全不入镜", xiaoqiao_shaoyu)
-        yao_deer = prompts["yao_deer_theme"]
-        self.assertIn("小鹿主题COS", yao_deer)
-        self.assertIn("黑色枝状细角", yao_deer)
-        sagiri_print = prompts["izumi_sagiri_pink_green_print"]
-        self.assertIn("和泉纱雾风格的粉绿印花短装COS", sagiri_print)
-        self.assertIn("固定印有日文「エロマンガ先生」", sagiri_print)
-        self.assertNotIn("参考视频", sagiri_print)
-        new_cos_looks = {
-            "barbara_white_idol_dress": ("《原神》芭芭拉", "白色窗帘"),
-            "jixiaoman_yellow_black_seated": ("《王者荣耀》姬小满", "一条腿屈起并横向靠近镜头"),
-            "saber_blue_porcelain": ("《Fate》系列Saber", "正上方近距离俯拍"),
-            "silver_wolf_blue_black_street": ("《崩坏：星穹铁道》银狼", "彩色反光护目镜"),
-            "ganyu_blue_white_qilin_close": ("《原神》甘雨", "黑红渐变麒麟角"),
-            "shaosiyuan_red_green_dance": ("《王者荣耀》少司缘", "一只手食指竖起"),
-            "qiong_white_gaming_room": ("穹白色电竞房短裙造型", "黑色电竞椅"),
-            "change_luoxingzhan_close": ("《王者荣耀》嫦娥", "大型银金色弯月胸甲"),
-            "luna_frost_moon_mirror": ("《王者荣耀》露娜", "银色交叉绑带"),
-            "shaoluo_pink_white_rabbit": ("少萝粉白兔系短装", "白色兔耳发饰"),
-            "haiyue_jellyfish_midshot": ("《王者荣耀》海月", "水母触须状布带"),
-            "gongsunli_lihenyan_sleeves": ("《王者荣耀》公孙离“离恨烟”", "双臂水平向左右展开"),
-            "gongsunli_yutu_braid_shadow": ("《王者荣耀》公孙离“玉兔公主”", "粗长麻花辫"),
-            "sun_shangxiang_neon_green": ("《王者荣耀》孙尚香", "荧光绿色多层不规则荷叶短裙"),
-            "yunying_red_white_black": ("《王者荣耀》云缨", "交叉金色皮带"),
-            "shaosiyuan_sanxingdui": ("《王者荣耀》少司缘三星堆", "方形近距离肖像"),
-            "shaosiyuan_oversized_red_green_sleeves": ("《王者荣耀》少司缘", "宽袖从身体两侧铺满整个画面"),
-            "xiaoqiao_warring_states_robe": ("《王者荣耀》小乔“战国袍”", "紫色流苏发簪"),
-            "daji_fox_black_gold": ("《王者荣耀》妲己", "俏皮猫爪动作"),
-            "gongsunli_white_green_ruffle": ("《王者荣耀》公孙离", "横屏近距离俯拍"),
-            "aimisi_black_white_blue_seated": ("《鸣潮》爱弥斯", "胸口至膝部"),
-            "roxy_off_shoulder_sleep_dress": ("《无职转生》洛琪希", "奶油白色露肩短睡裙"),
-            "cartethyia_white_black_blue_short": ("《鸣潮》卡提希娅", "画面中只有一名人物"),
-            "shuilaner_horned_brocade_qipao": ("水兰儿AS109风格", "平视机位和正常拍摄距离"),
-            "shiroko_black_white_tracksuit": ("《蔚蓝档案》砂狼白子", "黑色拉链运动外套"),
-            "phoebe_white_gold_sanctuary": ("《鸣潮》菲比", "白色与浅金色多层短裙"),
-        }
-        for cos_id, (source, composition) in new_cos_looks.items():
-            self.assertIn(source, prompts[cos_id])
-            self.assertIn(composition, prompts[cos_id])
-            self.assertNotIn("参考视频", prompts[cos_id])
-            self.assertNotIn("手机", prompts[cos_id])
-        shaoluo = prompts["shaoluo_pink_white_rabbit"]
-        self.assertIn("脸部清晰可见", shaoluo)
-        self.assertNotIn("白色兔子卡通面具", shaoluo)
-        self.assertNotIn("面具完整覆盖脸部", shaoluo)
-        shiroko = prompts["shiroko_black_white_tracksuit"]
-        self.assertIn("亮青绿色滚边", shiroko)
-        self.assertIn("白色不透明过膝长袜", shiroko)
-        self.assertIn("住宅走廊或室内门厅", shiroko)
-        phoebe = prompts["phoebe_white_gold_sanctuary"]
-        self.assertIn("金黄色长卷发", phoebe)
-        self.assertIn("背景明亮、轮廓清楚", phoebe)
-        self.assertIn("不添加雾气、雾霾、烟雾或朦胧遮挡", phoebe)
-        self.assertNotIn("参考视频", phoebe)
-        white_gold_red = prompts["ancient_white_gold_red_sleeves"]
-        self.assertIn("浅金色织锦抹胸", white_gold_red)
-        self.assertIn("亮蓝色细滚边", white_gold_red)
-        self.assertIn("正红色长丝带", white_gold_red)
-        ibuki = prompts["ibuki_red_white_sportswear"]
-        self.assertIn("《蔚蓝档案》丹花伊吹", ibuki)
-        self.assertIn("红色高腰运动短裤", ibuki)
-        self.assertIn("白色短袖紧身运动T恤", ibuki)
-        lace_shorts = prompts["white_lace_waist_shorts"]
-        self.assertIn("白色蕾丝束腰短背心", lace_shorts)
-        self.assertIn("白色宽松高腰灯笼短裤", lace_shorts)
-        backless = prompts["ancient_white_blue_backless_gauze"]
-        self.assertIn("整片裸背", backless)
-        self.assertIn("浅冰蓝色宽袖", backless)
-        cc_dress = prompts["cc_white_tiger_pink_gold_dress"]
-        self.assertIn("《叛逆的鲁鲁修》（Code Geass）C.C.（CC）皇后装", cc_dress)
-        self.assertIn("极长橄榄绿色直发", cc_dress)
-        self.assertIn("粉色缎面高开叉长裙", cc_dress)
-        kaguya = prompts["kaguya_miko_red_white_crown"]
-        self.assertIn("巫女辉夜主题", kaguya)
-        self.assertIn("中央固定一颗圆形金色球体", kaguya)
-        self.assertIn("正红色缎面大蝴蝶结", kaguya)
-        self.assertIn("白色半透明长纱片", kaguya)
+        from astrbot_plugin_selfie_image.cos.cos_looks import cos_look_compatibility
+        for item in plugin_main.COS_LOOK_SETS:
+            profile = cos_look_compatibility(item["id"])
+            self.assertTrue(profile["variation_enabled"], item["id"])
+            self.assertTrue(profile["scene_ids"], item["id"])
+            self.assertTrue(profile["pose_ids"], item["id"])
         def choose_framing_first(values):
             if "low_angle_full_2" in values:
                 return "low_angle_full_2"
@@ -9448,8 +8926,7 @@ class LegFocusTests(unittest.TestCase):
             shuilaner_action.split("本次套装：", 1)[0],
             r"(?:正面|侧身|近景|全身|半身)或(?:正面|侧身|近景|全身|半身)",
         )
-        self.assertIn("平视机位和正常拍摄距离", shuilaner_action)
-        self.assertIn("竖屏全身构图", shuilaner_action)
+        self.assertNotIn("平视机位和正常拍摄距离", shuilaner_action)
         for title in (
             "满穗·灰白和风",
             "小乔·白熊围巾",
@@ -9767,13 +9244,21 @@ class LegFocusTests(unittest.TestCase):
         self.assertEqual(plugin_main.match_cos_look_sets("鹿角"), [])
         series_ids = {item["id"] for item in plugin_main.match_cos_look_sets("王者荣耀")}
         self.assertTrue(series_ids)
-        self.assertTrue(all("《王者荣耀》" in item["prompt"] for item in plugin_main.match_cos_look_sets("王者荣耀")))
+        series_items = plugin_main.match_cos_look_sets("王者荣耀")
+        self.assertTrue(all(item["cos_type"] == "王者荣耀" for item in series_items))
+        series_item = next(item for item in series_items if item["id"] == "xiao_qiao_white_bear")
+        series_action = plugin_main.build_cos_look_action(
+            "", picker=lambda **_: series_item
+        )
+        self.assertIn("本次套装：《王者荣耀》小乔·白熊围巾。", series_action)
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("王者荣耀 西施")},
             xishi_ids,
         )
         self.assertTrue(plugin_main.match_cos_look_sets("永劫无间 20 特殊预设"))
-        self.assertTrue(all("《永劫无间》" in item["prompt"] for item in plugin_main.match_cos_look_sets("永劫无间 20 特殊预设")))
+        naraka_items = plugin_main.match_cos_look_sets("永劫无间 20 特殊预设")
+        self.assertTrue(naraka_items)
+        self.assertTrue(all(item["cos_type"] == "永劫无间" for item in naraka_items))
         class _CosStub:
             pass
         cos_action = plugin_main.SelfieImagePlugin._build_cos_look_action(
@@ -9783,7 +9268,8 @@ class LegFocusTests(unittest.TestCase):
         cos_id = re.search(r"【cos:([a-z0-9_]+)】", cos_action)
         self.assertIsNotNone(cos_id, cos_action)
         selected = next(item for item in plugin_main.COS_LOOK_SETS if item["id"] == cos_id.group(1))
-        self.assertIn("《永劫无间》", selected["prompt"])
+        self.assertEqual(selected["cos_type"], "永劫无间")
+        self.assertIn("《永劫无间》", cos_action)
         self.assertIn("【cos:", cos_action)
         self.assertTrue(plugin_main.match_cos_look_sets("原神"))
         zenless_ids = {
@@ -10002,6 +9488,17 @@ class LegFocusTests(unittest.TestCase):
             {re.search(r"【cos:([a-z0-9_]+)】", action).group(1) for action in rebuilt_actions},
             {"roxy_cream", "roxy_off_shoulder_sleep_dress"},
         )
+        for tag, expected_count in (
+            ("cos_pose", 3),
+            ("cos_scene", 3),
+            ("cos_framing", 3),
+            ("cam", 3),
+        ):
+            selected = [
+                re.search(rf"【{tag}:([a-z0-9_]+)】", action).group(1)
+                for action in rebuilt_actions
+            ]
+            self.assertEqual(len(set(selected)), expected_count, tag)
 
         class Event:
             def __init__(self, message: str) -> None:
@@ -10075,13 +9572,15 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("竖屏", look_you)
         self.assertIn("半身", look_you)
         self.assertIn("窗光", look_you)
-        self.assertIn("真实皮肤", look_you)
+        self.assertNotIn("真实皮肤", look_you)
+        self.assertNotIn("真人摄影质感", look_you)
         self.assertIn("不要美颜滤镜", look_you)
         selfie_cover = plugin_main.SelfieImagePlugin._build_selfie_look_action(_P(), "", False)
         self.assertIn("竖屏", selfie_cover)
         self.assertIn("半身", selfie_cover)
         self.assertIn("窗光", selfie_cover)
-        self.assertIn("真实皮肤", selfie_cover)
+        self.assertNotIn("真实皮肤", selfie_cover)
+        self.assertNotIn("真人摄影质感", selfie_cover)
         self.assertIn("不要美颜滤镜", selfie_cover)
         self.assertNotIn("过度美颜磨皮", selfie_cover)
         group_cover = plugin_main.SelfieImagePlugin._build_group_selfie_action(_P(), "", False)
@@ -10098,7 +9597,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("室内柔光半身", adapted)
         self.assertNotIn("室内柔光全身", adapted)
         rem_prompt = next(x for x in plugin_main.COS_LOOK_SETS if x["id"] == "rem_blue_lolita")["prompt"]
-        self.assertIn("室内柔光对镜全身", rem_prompt)
+        self.assertNotIn("室内柔光对镜全身", rem_prompt)
         self.assertIn("白色长袖蓬袖衬衣", rem_prompt)
 
 
@@ -11141,94 +10640,49 @@ class StudioStoreTests(unittest.TestCase):
         )
 
         random_look = next(item for item in COS_LOOK_SETS if item["id"] == "hutao_dragon_path_zhichun")
-        with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
+        with patch(
+            "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+            side_effect=lambda values: values[0],
+        ):
             action = build_cos_look_action(
                 "",
                 camera="third",
                 picker=lambda **_kwargs: random_look,
             )
-        self.assertIn("本次随机姿势优先于套装正文中的非服装陈列描述", action)
-        self.assertRegex(action, r"【cos_pose:(?:standing_detail|half_turn|seated_composed|walking_turn)】")
-        self.assertNotIn("【cos_scene:", action)
-        self.assertNotIn("【cos_view:", action)
+        self.assertIn("本次随机姿势优先于套装正文", action)
+        self.assertRegex(action, r"【cos_pose:[a-z_]+】")
+        self.assertRegex(action, r"【cos_scene:[a-z_]+】")
+        self.assertRegex(action, r"【cos_framing:[a-z0-9_]+】")
         self.assertEqual(action.count("【cam:third】"), 1)
 
-        fixed_look = next(item for item in COS_LOOK_SETS if item["id"] == "lanmeng_dragon_path")
-        fixed_action = build_cos_look_action(
-            "",
-            camera="selfie",
-            picker=lambda **_kwargs: fixed_look,
+        all_look = next(item for item in COS_LOOK_SETS if item["id"] == "lanmeng_dragon_path")
+        all_action = build_cos_look_action(
+            "", camera="selfie", picker=lambda **_kwargs: all_look
         )
-        self.assertNotIn("本次随机兼容组合", fixed_action)
-        self.assertNotIn("【cos_pose:", fixed_action)
-        self.assertNotIn("【cos_scene:", fixed_action)
+        self.assertRegex(all_action, r"【cos_pose:[a-z_]+】")
+        self.assertRegex(all_action, r"【cos_scene:[a-z_]+】")
 
         catalog = {item["id"]: item for item in list_cos_look_sets()}
         self.assertTrue(catalog[random_look["id"]]["compatibility"]["variation_enabled"])
-        self.assertFalse(catalog[fixed_look["id"]]["compatibility"]["variation_enabled"])
+        self.assertTrue(catalog[all_look["id"]]["compatibility"]["variation_enabled"])
         self.assertTrue(keep_cos_outfit_requested("保持服饰，只换姿势和场景"))
         self.assertFalse(keep_cos_outfit_requested("夜景他拍"))
 
-    def test_non_yongjie_flexible_cos_gets_compatibility_pool(self) -> None:
+    def test_entire_cos_catalog_gets_compatible_random_staging(self) -> None:
         from astrbot_plugin_selfie_image.cos.cos_looks import (
             cos_look_compatibility,
             list_cos_look_sets,
+            COS_RANDOM_POSE_CLASSES,
+            COS_RANDOM_SCENE_CLASSES,
         )
 
-        flexible = cos_look_compatibility("hanfu_peach")
-        self.assertTrue(flexible["variation_enabled"])
-        self.assertIn("standing_detail", flexible["pose_ids"])
-        self.assertEqual(flexible["scene_ids"], [])
-        self.assertEqual(flexible["recommended_pose_ids"], flexible["pose_ids"])
-        self.assertEqual(flexible["recommended_scene_ids"], [])
-        self.assertEqual(flexible["recommended_view_ids"], ["selfie", "third"])
-        self.assertEqual(flexible["incompatible_pose_ids"], [])
-        self.assertEqual(flexible["incompatible_scene_ids"], [])
-        self.assertEqual(flexible["fixed_reason"], "")
-
-        swimsuit = cos_look_compatibility("hutao_high_school_swimsuit")
-        self.assertEqual(swimsuit["scene_ids"], [])
-        self.assertEqual(swimsuit["incompatible_scene_ids"], [])
-
-        # Outfits with hand-authored staging remain fixed until reviewed.
-        fixed = cos_look_compatibility("roxy_cream")
-        self.assertFalse(fixed["variation_enabled"])
-        self.assertEqual(fixed["pose_ids"], [])
-        self.assertEqual(fixed["recommended_pose_ids"], [])
-        self.assertEqual(fixed["recommended_scene_ids"], [])
-        self.assertEqual(fixed["recommended_view_ids"], ["selfie", "third"])
-        self.assertEqual(
-            fixed["incompatible_pose_ids"],
-            ["standing_detail", "half_turn", "seated_composed", "walking_turn"],
-        )
-        self.assertEqual(fixed["incompatible_scene_ids"], [])
-        self.assertTrue(fixed["fixed_reason"])
-
-        # The non-永劫 review is intentionally conservative: outfit-only
-        # hanfu entries and the four new series use the shared random pool;
-        # every other non-永劫 entry retains a fixed-composition reason.
         from astrbot_plugin_selfie_image.cos.cos_looks import COS_LOOK_SETS
-        reviewed_generic = {
-            item["id"] for item in COS_LOOK_SETS
-            if cos_look_compatibility(item["id"])["variation_enabled"]
-            and "《永劫无间》" not in item["prompt"]
-        }
-        new_series_ids = {
-            item["id"]
-            for item in COS_LOOK_SETS
-            if item["id"].startswith(
-                ("azur_lane_", "blue_archive_", "princess_connect_", "mushoku_tensei_")
-            )
-        }
-        self.assertEqual(
-            reviewed_generic,
-            {"hanfu_peach", "mint_sheer_hanfu"} | new_series_ids,
-        )
         for item in COS_LOOK_SETS:
             profile = cos_look_compatibility(item["id"])
-            if item["id"] not in reviewed_generic and "《永劫无间》" not in item["prompt"]:
-                self.assertFalse(profile["variation_enabled"], item["id"])
-                self.assertTrue(profile["fixed_reason"], item["id"])
+            self.assertTrue(profile["variation_enabled"], item["id"])
+            self.assertEqual(profile["pose_ids"], list(COS_RANDOM_POSE_CLASSES))
+            self.assertEqual(profile["scene_ids"], list(COS_RANDOM_SCENE_CLASSES))
+            self.assertFalse(profile["fixed_reason"], item["id"])
 
         # Every catalog entry exposes the same stable schema, so dashboard
         # clients never need outfit-specific key checks.
@@ -11242,6 +10696,7 @@ class StudioStoreTests(unittest.TestCase):
             "recommended_view_ids",
             "incompatible_pose_ids",
             "incompatible_scene_ids",
+            "scene_pose_compatibility",
             "fixed_reason",
         }
         for item in list_cos_look_sets():
@@ -11264,8 +10719,9 @@ class StudioStoreTests(unittest.TestCase):
         # guidance may name the thing it excludes, but must not be mistaken
         # for a positive prop or action.
         for item in azur_lane + blue_archive:
-            authored = item["prompt"].split("禁止", 1)[0]
-            authored = re.sub(r"(?:不要|不出现)[^。]*", "", authored)
+            authored = re.split(
+                r"(?:禁止|不要|不出现|避免|不得)[^。]*", item["prompt"], maxsplit=1
+            )[0]
             for forbidden in (
                 "手持冲锋枪",
                 "手持狙击步枪",
@@ -11683,7 +11139,7 @@ class StudioStoreTests(unittest.TestCase):
         selfie_cases = (
             ("cmd_selfie", "/看看 一位美女 捧脸 2", "一位美女", 2),
             ("cmd_selfie", "/自拍 2 一位美女 捧脸", "一位美女", 2),
-            ("cmd_selfie", "/自拍 3 动作预设", "真实人类女孩", 3),
+            ("cmd_selfie", "/自拍 3 动作预设", "", 3),
             ("cmd_look_legs", "/看看腿 白丝 夜景 2", "白丝", 2),
             ("cmd_look_you", "/看看你 夜景 2", "夜景", 2),
             ("cmd_group_selfie", "/合影 一位美女 捧脸 2", "一位美女", 2),
@@ -11696,7 +11152,15 @@ class StudioStoreTests(unittest.TestCase):
                 str(captured.get(key) or "")
                 for key in ("message_override", "fallback", "rebuild_extra_request")
             )
-            self.assertIn(expected_marker, captured_text, message)
+            if expected_marker:
+                self.assertIn(expected_marker, captured_text, message)
+            if command == "cmd_selfie" and "动作预设" in message:
+                from astrbot_plugin_selfie_image.studio.studio import action_prompt_presets
+
+                self.assertTrue(
+                    any(item["prompt"] in captured_text for item in action_prompt_presets()),
+                    message,
+                )
 
     def test_draw_special_preset_is_expanded_for_each_shot(self) -> None:
         import tempfile
@@ -12678,6 +12142,90 @@ class StudioStoreTests(unittest.TestCase):
 
 
 class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_background_selfie_batches_forwards_model_request(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin._normalize_count = lambda count: count
+        delegated = []
+
+        async def run_unlocked(*args):
+            delegated.extend(args)
+            return {"success": True}
+
+        plugin._run_selfie_batches_unlocked = run_unlocked
+        result = await plugin._background_selfie_batches(
+            "task-1",
+            object(),
+            "【自拍 / 看看模式】自拍",
+            [],
+            "llm-generate-selfie",
+            1,
+            "3:4",
+            "1K",
+            "failed",
+            model_request="gpt-image-2",
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(delegated[-1], "gpt-image-2")
+
+    async def test_selfie_batches_apply_low_fidelity_only_for_viewpoint_changes(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        async def fidelity_for(action, source, *, has_refs=True):
+            plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+            plugin._normalize_count = lambda count: count
+            captured = {}
+
+            async def build_prompt(*_args, **_kwargs):
+                refs = [ImageReference(data=PNG_BYTES)] if has_refs else []
+                return "prompt", refs, {}
+
+            async def run_generation(*_args, **kwargs):
+                captured.update(kwargs)
+                return {"success": True}
+
+            async def run_counted(**kwargs):
+                return await kwargs["run_one"](0)
+
+            plugin._build_selfie_prompt_and_refs_for_event = build_prompt
+            plugin._run_image_generation = run_generation
+            plugin._run_counted_generation_shots = run_counted
+            await plugin._run_selfie_batches_unlocked(
+                "task-1",
+                object(),
+                action,
+                [],
+                source,
+                1,
+                "3:4",
+                "1K",
+                "failed",
+            )
+            return captured["reference_fidelity"]
+
+        self.assertEqual(
+            await fidelity_for("自拍，正面改成侧面近景", "command-selfie"),
+            "low",
+        )
+        self.assertEqual(await fidelity_for("自拍", "command-selfie"), "")
+        self.assertEqual(
+            await fidelity_for("【LLM 自拍】正面改成侧面近景", "llm-generate-selfie"),
+            "low",
+        )
+        self.assertEqual(
+            await fidelity_for(
+                "【自拍 / 看看COS模式】本次随机采用三分之四侧前方机位",
+                "command-look-cos",
+            ),
+            "low",
+        )
+        self.assertEqual(
+            await fidelity_for("自拍，正面改成侧面近景", "command-selfie", has_refs=False),
+            "",
+        )
+
     async def test_large_batch_is_not_called_previous_task_queue_when_idle(self) -> None:
         from types import SimpleNamespace
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin

@@ -11,7 +11,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
-from ..cos.cos_looks import parse_requested_cos_camera, requests_phone_face_cover
+from ..cos.cos_looks import (
+    adapt_cos_prompt_for_appearance,
+    parse_requested_cos_camera,
+    requests_phone_face_cover,
+)
 from ..cos.leg_focus import (
     ensure_leg_focus_action,
     get_leg_focus_outfit,
@@ -19,7 +23,11 @@ from ..cos.leg_focus import (
     is_leg_calf_crop_action,
 )
 from ..core.utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
-from ..prompts.prompt_templates import COS_IDENTITY_CONTRACT_ZH
+from ..prompts.prompt_templates import (
+    COS_IDENTITY_CONTRACT_ZH,
+    has_viewpoint_change_request,
+    resolve_appearance_type,
+)
 
 
 APPEARANCE_TYPES = ("auto", "real", "anime")
@@ -55,7 +63,12 @@ def normalize_appearance_type(value: Any) -> str:
     return raw if raw in APPEARANCE_TYPES else "auto"
 
 
-def appearance_type_instruction(appearance_type: str, *, has_reference_image: bool = False) -> str:
+def appearance_type_instruction(
+    appearance_type: str,
+    *,
+    has_reference_image: bool = False,
+    is_cos: bool = False,
+) -> str:
     kind = normalize_appearance_type(appearance_type)
     gender_lock = (
         "性别、年龄感与同一人身份必须跟随参考图一：参考图是女性就保持女性，是男性就保持男性；"
@@ -65,14 +78,16 @@ def appearance_type_instruction(appearance_type: str, *, has_reference_image: bo
     )
     if kind == "real":
         return (
-            "形象类型：真人。主角形象是真人，输出保持写实真人照片质感与真人五官体态。"
+            "形象类型：真人。主角形象是真人；最终成像媒介保持写实真人摄影与真人五官体态；自拍和 COS 只决定镜头、动作、服装与场景，不改变成像媒介。"
+            + ("COS 池中的角色和服装描述照常执行。" if is_cos else "")
             + gender_lock
         )
     if kind == "anime":
         return (
-            "形象类型：动漫。主角形象是动漫人物，输出保持柔光京阿尼风格与动漫五官体态；"
+            "形象类型：动漫。主角形象是动漫人物；最终成像媒介保持统一的 2D 柔光京阿尼风格动漫插画与动漫五官体态；自拍、照片、摄影和 COS 只描述镜头构图、动作、服装与场景，不代表真人摄影；"
             "脸更细，气质更仙风；"
-            "即使参考图偏写实，也只把同一人改画成动漫版，不要换成另一个角色。"
+            "即使参考图偏写实，也只保留同一人的身份特征并改画成动漫版，不要换成另一个角色；不得混合真人照片与动漫画风。"
+            + ("COS 池中的真人 COSER 只表示角色扮演内容，按动漫人物绘制。" if is_cos else "")
             + gender_lock
         )
     if has_reference_image:
@@ -82,6 +97,15 @@ def appearance_type_instruction(appearance_type: str, *, has_reference_image: bo
             + gender_lock
         )
     return gender_lock if has_reference_image else ""
+
+
+def appearance_type_output_instruction(appearance_type: str) -> str:
+    kind = normalize_appearance_type(appearance_type)
+    if kind == "real":
+        return "最终画面统一为写实真人照片；如提示词提到动漫或游戏角色，只保留其服装、配色和造型，不生成插画或混合画风。"
+    if kind == "anime":
+        return "最终画面统一为 2D 柔光京阿尼风格动漫插画；自拍、手机、照片、摄影和 COS 仅控制构图与内容，不生成真人摄影或混合画风。"
+    return ""
 
 
 def group_style_lines(appearance_type: str) -> list[str]:
@@ -1079,12 +1103,18 @@ class PersonaManager:
         if intent.is_legs_only and not has_leg_focus_contract(act):
             act = ensure_leg_focus_action(act, has_reference_image)
             intent = self.analyze_selfie_intent(act)
+        user_text = extract_user_action_text(act)
+        appearance_type = resolve_appearance_type(
+            self.get_appearance_type(),
+            user_text,
+        )
+        if intent.is_cos_look:
+            act = adapt_cos_prompt_for_appearance(act, appearance_type)
         cos_contract = bool(
             intent.is_cos_look and re.search(r"【cam:(?:selfie|first|third)】", act, re.I)
         )
         feet_cropped = is_leg_calf_crop_action(act)
         daily = self.get_daily_selfie_profile()
-        appearance_type = self.get_appearance_type()
 
         identity_lines = (
             [
@@ -1131,7 +1161,15 @@ class PersonaManager:
                     "本张按日常服装局部记录生成，不展示完整人物。",
                 ]
             )
-        appearance_line = appearance_type_instruction(appearance_type, has_reference_image=has_reference_image)
+        if has_reference_image and not intent.is_legs_only and has_viewpoint_change_request(act):
+            identity_lines.append(
+                "本次指定或随机选定的镜头视角优先于参考图投影；保留同一人的身份线索，但不要复制参考图里的头部朝向、脸部透视、肩线和原姿势。按目标视角自然重建面部透视；侧脸或三分之四侧面时，远侧五官允许自然遮挡，不要为保留参考图而强行露出双眼或扭脸。"
+            )
+        appearance_line = appearance_type_instruction(
+            appearance_type,
+            has_reference_image=has_reference_image,
+            is_cos=intent.is_cos_look,
+        )
         if appearance_line and not (intent.is_legs_only and feet_cropped):
             identity_lines.insert(1 if has_reference_image else 0, appearance_line)
 
@@ -1158,7 +1196,6 @@ class PersonaManager:
                     ]
                 )
 
-        user_text = extract_user_action_text(act)
         explicit_context = (
             extra_overrides_outfit(user_text)
             or extra_overrides_context(user_text)
@@ -1412,15 +1449,18 @@ class PersonaManager:
             subject_photo_label = "第三人称摄影服装记录" if intent.is_third_person_photo else "第一人称自拍服装记录"
         elif intent.is_cos_look:
             subject_photo_label = {
-                "third": "日常他拍照片",
-                "first": "第一视角照片",
-                "selfie": "自拍照片",
+                "third": "动漫风格他拍画面" if appearance_type == "anime" else "日常他拍照片",
+                "first": "第一视角动漫画面" if appearance_type == "anime" else "第一视角照片",
+                "selfie": "自拍动漫画面" if appearance_type == "anime" else "自拍照片",
             }.get(
                 intent.camera_kind or ("third" if intent.is_third_person_photo else "selfie"),
-                "自拍照片",
+                "自拍动漫画面" if appearance_type == "anime" else "自拍照片",
             )
         else:
-            subject_photo_label = "日常他拍照片" if intent.is_third_person_photo and not intent.is_group_photo else "自拍照片"
+            if appearance_type == "anime":
+                subject_photo_label = "日常他拍动漫画面" if intent.is_third_person_photo and not intent.is_group_photo else "动漫自拍画面"
+            else:
+                subject_photo_label = "日常他拍照片" if intent.is_third_person_photo and not intent.is_group_photo else "自拍照片"
         if intent.is_cos_look:
             output_lines = ["【生成要求】"]
             output_lines.append(
@@ -1444,9 +1484,16 @@ class PersonaManager:
             output_lines = []
         else:
             output_lines = [
-                "【生成要求】按以上身份、场景和动作生成一张完整自然的竖屏照片。",
+                (
+                    "【生成要求】按以上身份、场景和动作生成一张完整自然的竖屏动漫插画。"
+                    if appearance_type == "anime"
+                    else "【生成要求】按以上身份、场景和动作生成一张完整自然的竖屏照片。"
+                ),
                 *anatomy_constraint_lines(style="general"),
             ]
+        final_style_instruction = appearance_type_output_instruction(appearance_type)
+        if final_style_instruction:
+            output_lines.append(final_style_instruction)
 
         return "\n".join(
             line

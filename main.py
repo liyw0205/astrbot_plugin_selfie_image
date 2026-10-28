@@ -174,6 +174,7 @@ from .prompts.prompt_composition import (
     append_anatomy_constraints,
     build_prompt_with_reference_instruction,
 )
+from .prompts.prompt_templates import has_viewpoint_change_request
 from .prompts.prompt_translation import parse_prompt_en_response
 from .features.audit_pipeline import AuditMixin
 from .features.creative_features import (
@@ -263,6 +264,15 @@ def optional_event_message_type(priority: int = 100):
         return func
 
     return passthrough
+
+
+def _appearance_type_for_request(persona: Any, text: str = "") -> str:
+    try:
+        from .prompts.prompt_templates import resolve_appearance_type
+
+        return resolve_appearance_type(persona.get_appearance_type(), text)
+    except Exception:
+        return "auto"
 
 
 @register(PLUGIN_NAME, PLUGIN_AUTHOR, f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}", PLUGIN_VERSION)
@@ -1407,6 +1417,7 @@ class SelfieImagePlugin(
             extra_request,
             has_refs,
             avoid_shot=avoid_shot,
+            appearance_type=_appearance_type_for_request(getattr(self, "persona", None), extra_request),
             scene_light_provider=scene_provider,
         )
 
@@ -1422,7 +1433,11 @@ class SelfieImagePlugin(
     def _build_crop_waist_selfie_action(
         self, extra_request: str = "", has_refs: bool = False
     ) -> str:
-        return build_crop_waist_selfie_action(extra_request, has_refs)
+        return build_crop_waist_selfie_action(
+            extra_request,
+            has_refs,
+            appearance_type=_appearance_type_for_request(getattr(self, "persona", None), extra_request),
+        )
 
     def _build_third_person_look_action(
         self,
@@ -1436,19 +1451,15 @@ class SelfieImagePlugin(
             extra_request,
             has_refs,
             avoid_shot=avoid_shot,
+            appearance_type=_appearance_type_for_request(getattr(self, "persona", None), extra_request),
             scene_light_provider=scene_provider,
         )
 
     def _build_group_selfie_action(self, extra_request: str = "", has_refs: bool = False) -> str:
-        appearance_type = "auto"
-        try:
-            appearance_type = self.persona.get_appearance_type()
-        except Exception:
-            pass
         return build_group_selfie_action(
             extra_request,
             has_refs,
-            appearance_type=appearance_type,
+            appearance_type=_appearance_type_for_request(getattr(self, "persona", None), extra_request),
         )
 
     def _looks_like_group_selfie_intent(self, text: str) -> bool:
@@ -1463,12 +1474,18 @@ class SelfieImagePlugin(
         has_refs: bool = False,
         *,
         avoid_id: str = "",
-        avoid_camera: str = "",
+        avoid_camera: Iterable[str] = (),
         avoid_pose: str = "",
+        avoid_scene: str = "",
+        avoid_framings: Iterable[str] = (),
+        avoid_poses: Iterable[str] = (),
+        avoid_scenes: Iterable[str] = (),
+        avoid_cameras: Iterable[str] = (),
         camera: str = "",
         match_query: str = "",
         force_id: str = "",
     ) -> str:
+        appearance_type = _appearance_type_for_request(getattr(self, "persona", None), extra_request)
         chosen_force = force_id
         if not chosen_force:
             favorites = getattr(getattr(self, "cos_pool", None), "list_favorites", lambda: [])()
@@ -1483,7 +1500,13 @@ class SelfieImagePlugin(
                 avoid_id=avoid_id,
                 avoid_camera=avoid_camera,
                 avoid_pose=avoid_pose,
+                avoid_scene=avoid_scene,
+                avoid_framings=avoid_framings,
+                avoid_poses=avoid_poses,
+                avoid_scenes=avoid_scenes,
+                avoid_cameras=avoid_cameras,
                 camera=camera,
+                appearance_type=appearance_type,
                 match_query="",
                 force_id="",
                 picker=lambda **_: dict(custom_item),
@@ -1494,7 +1517,13 @@ class SelfieImagePlugin(
             avoid_id=avoid_id,
             avoid_camera=avoid_camera,
             avoid_pose=avoid_pose,
+            avoid_scene=avoid_scene,
+            avoid_framings=avoid_framings,
+            avoid_poses=avoid_poses,
+            avoid_scenes=avoid_scenes,
+            avoid_cameras=avoid_cameras,
             camera=camera,
+            appearance_type=appearance_type,
             match_query=match_query,
             force_id=chosen_force,
             picker=pick_cos_look_set,
@@ -1647,6 +1676,7 @@ class SelfieImagePlugin(
         prompt_en_meta: Optional[Dict[str, Any]] = None,
         record_context: Optional[Mapping[str, Any]] = None,
         reference_selection: Optional[Mapping[str, Any]] = None,
+        reference_fidelity: str = "",
     ) -> Dict[str, Any]:
         """Run one image shot through the shared fair scheduler."""
         scheduler = getattr(self, "_image_scheduler", None)
@@ -1654,7 +1684,7 @@ class SelfieImagePlugin(
             return await self._run_image_generation_unscheduled(
                 prompt, aspect_ratio, resolution, refs, targets, source, audit_user_id,
                 event, original_prompt, max_attempts, allow_compat_retry, prompt_en_meta,
-                record_context, reference_selection,
+                record_context, reference_selection, reference_fidelity,
             )
         context = record_context if isinstance(record_context, Mapping) else {}
         task_id = str(context.get("task_id") or "").strip()
@@ -1678,7 +1708,7 @@ class SelfieImagePlugin(
                 return await self._run_image_generation_unscheduled(
                     prompt, aspect_ratio, resolution, refs, targets, source, audit_user_id,
                     event, original_prompt, max_attempts, allow_compat_retry, prompt_en_meta,
-                    record_context, reference_selection,
+                    record_context, reference_selection, reference_fidelity,
                 )
             finally:
                 _IMAGE_JOB_ALREADY_SCHEDULED.reset(slot_token)
@@ -1701,6 +1731,7 @@ class SelfieImagePlugin(
         prompt_en_meta: Optional[Dict[str, Any]] = None,
         record_context: Optional[Mapping[str, Any]] = None,
         reference_selection: Optional[Mapping[str, Any]] = None,
+        reference_fidelity: str = "",
     ) -> Dict[str, Any]:
         # ``targets=[]`` is an intentional explicit selection (for example a
         # disabled channel test); do not silently replace it with all configured
@@ -1718,6 +1749,11 @@ class SelfieImagePlugin(
         request_prompt = str(prompt or "")
         plain_request_prompt = request_prompt
         original_prompt = str(original_prompt or request_prompt)
+        reference_fidelity = (
+            "low"
+            if refs and str(reference_fidelity or "").strip().lower() == "low"
+            else ""
+        )
         # Leg-focus actions are normalized into a neutral outfit prompt before generation.
         # Audit that effective prompt so command labels do not create false positives.
         is_leg_focus_request = (
@@ -1912,6 +1948,8 @@ class SelfieImagePlugin(
             "targets": [redact_sensitive_text(target.label) for target in selected_targets],
             "image_to_text": image_to_text_meta,
         }
+        if reference_fidelity:
+            request_data["reference_fidelity"] = reference_fidelity
         add_selection_metadata(request_data)
         if cooldown_attempts:
             request_data["cooldown_skipped_channels"] = cooldown_attempts
@@ -2034,6 +2072,7 @@ class SelfieImagePlugin(
             images=refs,
             allow_compat_retry=allow_compat_retry,
             max_image_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
+            reference_fidelity=reference_fidelity,
         )
 
         # A model-level translation opt-in is evaluated after target selection
@@ -2076,6 +2115,7 @@ class SelfieImagePlugin(
                 images=[] if use_text_description else refs,
                 allow_compat_retry=allow_compat_retry,
                 max_image_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
+                reference_fidelity=reference_fidelity if not use_text_description else "",
             )
 
         started = time.monotonic()
@@ -5075,6 +5115,10 @@ class SelfieImagePlugin(
         last_cos = ""
         last_cam = ""
         last_cos_pose = ""
+        used_cos_poses: set[str] = set()
+        used_cos_scenes: set[str] = set()
+        used_cos_framings: set[str] = set()
+        used_cos_cameras: set[str] = set()
 
         extra_keep = ""
         force_legwear = ""
@@ -5086,7 +5130,7 @@ class SelfieImagePlugin(
             m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
-                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_pose|cos_scene|cos_view|legs|wear|outfit):[a-z0-9_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_pose|cos_scene|cos_framing|cos_view|legs|wear|outfit):[a-z0-9_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
             # Keep the original command query even when it is already present
             # in the selected outfit title/prompt and therefore has no user
@@ -5148,6 +5192,10 @@ class SelfieImagePlugin(
                         avoid_id=last_cos,
                         avoid_camera=last_cam,
                         avoid_pose=last_cos_pose,
+                        avoid_poses=used_cos_poses,
+                        avoid_scenes=used_cos_scenes,
+                        avoid_framings=used_cos_framings,
+                        avoid_cameras=used_cos_cameras,
                         match_query=rebuild_match_query or extra_keep,
                         force_id=last_cos if keep_cos_outfit else "",
                     )
@@ -5157,9 +5205,17 @@ class SelfieImagePlugin(
                     m_cam = re.search(r"【cam:(selfie|first|third)】", round_action)
                     if m_cam:
                         last_cam = str(m_cam.group(1) or last_cam)
+                        used_cos_cameras.add(last_cam)
                     m_cos_pose = re.search(r"【cos_pose:([a-z_]+)】", round_action)
                     if m_cos_pose:
                         last_cos_pose = str(m_cos_pose.group(1) or last_cos_pose)
+                        used_cos_poses.add(last_cos_pose)
+                    m_cos_scene = re.search(r"【cos_scene:([a-z_]+)】", round_action)
+                    if m_cos_scene:
+                        used_cos_scenes.add(str(m_cos_scene.group(1) or ""))
+                    m_cos_framing = re.search(r"【cos_framing:([a-z0-9_]+)】", round_action)
+                    if m_cos_framing:
+                        used_cos_framings.add(str(m_cos_framing.group(1) or ""))
 
                 elif source == "command-look-you" or "看看你模式" in str(action or ""):
                     round_action = self._build_third_person_look_action(
@@ -5198,6 +5254,11 @@ class SelfieImagePlugin(
                     extra_refs,
                     cos_selection=cos_selection,
                 )
+            reference_fidelity = (
+                "low"
+                if refs and has_viewpoint_change_request(round_action)
+                else ""
+            )
             return await self._run_image_generation(
                 prompt,
                 aspect,
@@ -5219,8 +5280,10 @@ class SelfieImagePlugin(
                     "task_id": task_id,
                     "requested_count": total,
                     "raw_reference_image_count": len(extra_refs),
+                    "reference_fidelity": reference_fidelity,
                 },
                 reference_selection=reference_selection or (cos_selection.summary() if cos_selection else None),
+                reference_fidelity=reference_fidelity,
             )
 
         return await self._run_counted_generation_shots(

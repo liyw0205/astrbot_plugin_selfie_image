@@ -4926,7 +4926,7 @@ Source prompt:
       }
       add('构图策略', composition.strategy);
       add('提示词指纹', composition.prompt_hash);
-      const cosLabels = {cos: 'COS 套装', cos_pose: 'COS 姿势', cos_scene: 'COS 场景', cos_view: 'COS 视角'};
+      const cosLabels = {cos: 'COS 套装', cos_pose: 'COS 姿势', cos_scene: 'COS 场景', cos_framing: 'COS 构图', cos_view: 'COS 视角'};
       Object.entries(cosLabels).forEach(([key, label]) => add(label, r[key] || rd[key]));
       if (!rows.length) return '';
       return `<div class="detail-title"><h3>请求参数与随机结果</h3></div><div class="grid">${rows.join('')}</div>`;

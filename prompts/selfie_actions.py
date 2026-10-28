@@ -7,7 +7,13 @@ import re
 from collections.abc import Callable
 from typing import List, Tuple
 
-from ..features.persona import appearance_type_instruction, current_period, group_style_lines
+from ..features.persona import (
+    appearance_type_instruction,
+    appearance_type_output_instruction,
+    current_period,
+    group_style_lines,
+)
+from .prompt_templates import resolve_appearance_type
 
 
 SELFIE_SHOT_POOL = (
@@ -128,17 +134,25 @@ def looks_like_crop_waist_request(text: str) -> bool:
 
 
 def build_crop_waist_selfie_action(
-    extra_request: str = "", has_refs: bool = False
+    extra_request: str = "",
+    has_refs: bool = False,
+    *,
+    appearance_type: str = "auto",
 ) -> str:
+    appearance_type = resolve_appearance_type(appearance_type, extra_request)
     base = (
         "【自拍 / 漏腰模式】"
-        "一张漂亮的真人女孩，居家休闲自拍，室内光线柔和偏暗，角度略高。"
+        "以当前 AI 形象为主角的居家休闲自拍成片，室内光线柔和偏暗，角度略高。"
         "唯一调整是将原有上衣的下摆缩短至露出自然腰线的长度，"
         "原有服装的款式、颜色、材质、领口、袖型、图案、配饰、层次和穿着方式全部保持不变，"
         "保持下装、人物身份、发型、脸部、表情、姿势、镜头和场景不变。"
         "放松地坐着或靠在深色沙发/床边，头发略显凌乱，像日常随意拍的照片。"
         "保持 AI 身份长相与发色一致，画面干净得体。"
     )
+    if appearance_type == "real":
+        base += "真人摄影质感，保留自然皮肤纹理、布料质感与接触阴影。"
+    elif appearance_type == "anime":
+        base += "统一为柔光京阿尼风格动漫插画，线条、上色、光影与动漫五官保持一致。"
     if has_refs:
         base = "参考用户附图的氛围或构图，" + base
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
@@ -152,11 +166,17 @@ def build_selfie_look_action(
     has_refs: bool = False,
     *,
     avoid_shot: str = "",
+    appearance_type: str = "auto",
     scene_light_provider: Callable[[str], Tuple[List[str], List[str]]] = period_scene_light_pools,
 ) -> str:
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
+    appearance_type = resolve_appearance_type(appearance_type, extra)
     if looks_like_crop_waist_request(extra):
-        return build_crop_waist_selfie_action(extra, has_refs)
+        return build_crop_waist_selfie_action(
+            extra,
+            has_refs,
+            appearance_type=appearance_type,
+        )
     shot_pool = [item for item in SELFIE_SHOT_POOL if item[0] != avoid_shot]
     if not shot_pool:
         shot_pool = list(SELFIE_SHOT_POOL)
@@ -174,11 +194,15 @@ def build_selfie_look_action(
         "第一人称自拍视角（自己举机或镜前自拍），不是别人代拍。"
         "必须看向镜头：眼睛对焦镜头方向，表情自然有神；不要眼神飘走或心不在焉。"
         "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
-        "竖屏手机近景半身：像短视频封面那样拍得近，但质感仍是真实皮肤、真实布料和接触阴影；窗光或暖灯，不要棚拍、不要美颜滤镜、不要塑料皮肤。"
+        "竖屏手机近景半身：像短视频封面那样拍得近；窗光或暖灯，不要美颜滤镜、不要棚拍精修。"
         f"本次机位：{SELFIE_SHOT_LINES.get(shot, SELFIE_SHOT_LINES['arm_half'])}"
         f"场景倾向：{scene}。小动作：{gesture}。光线：{light}。"
         "画面干净日常，不要夸张摆拍。"
     )
+    if appearance_type == "real":
+        base += "真人摄影质感：保留自然皮肤纹理、真实布料与接触阴影，避免塑料皮肤。"
+    elif appearance_type == "anime":
+        base += "柔光京阿尼风格动漫插画：线条、上色、光影与动漫五官统一，不生成真人皮肤纹理。"
     if has_refs:
         base = "参考用户提供的图片氛围、场景或构图，" + base + " 主角身份仍以 AI 形象为准。"
     if extra:
@@ -191,6 +215,7 @@ def build_third_person_look_action(
     has_refs: bool = False,
     *,
     avoid_shot: str = "",
+    appearance_type: str = "auto",
     scene_light_provider: Callable[[str], Tuple[List[str], List[str]]] = period_scene_light_pools,
 ) -> str:
     shot_pool = [item for item in THIRD_PERSON_SHOT_POOL if item[0] != avoid_shot]
@@ -205,16 +230,21 @@ def build_third_person_look_action(
     scene = random.choice(scenes)
     action = random.choice(THIRD_PERSON_ACTIONS)
     light = random.choice(lights)
+    appearance_type = resolve_appearance_type(appearance_type, extra_request)
     base = (
-        "【他拍 / 看看你模式】展示 AI 当前样子的自然日常照片。"
+        "【他拍 / 看看你模式】展示 AI 当前样子的自然日常成片。"
         "别人视角的单人成品照：镜头已经对准主角拍下，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角。"
         "正面半身或近景时优先看向镜头，眼神自然有焦点；可以轻松回头，但不要整段心不在焉。"
         "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
-        "竖屏手机近景半身：窗光或暖灯，真实皮肤和真实布料，不要美颜滤镜、不要棚拍精修。"
+        "竖屏手机近景半身：窗光或暖灯，构图干净自然，不要美颜滤镜、不要影楼精修。"
         f"本次机位：{THIRD_PERSON_SHOT_LINES.get(shot, THIRD_PERSON_SHOT_LINES['half_front'])}"
         f"场景倾向：{scene}。动作瞬间：{action}。光线：{light}。"
-        "写实手机拍照质感，不要影楼硬摆。"
+        "生活化随手记录感，不要影楼硬摆。"
     )
+    if appearance_type == "real":
+        base += "真人摄影质感：保留自然皮肤纹理、真实布料与接触阴影。"
+    elif appearance_type == "anime":
+        base += "柔光京阿尼风格动漫插画：线条、上色、光影与动漫五官统一，不生成真人皮肤纹理。"
     if has_refs:
         base = "参考用户提供的图片氛围、场景或构图，" + base
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
@@ -229,6 +259,7 @@ def build_group_selfie_action(
     *,
     appearance_type: str = "auto",
 ) -> str:
+    appearance_type = resolve_appearance_type(appearance_type, extra_request)
     appearance_line = appearance_type_instruction(
         appearance_type,
         has_reference_image=True,
@@ -243,11 +274,16 @@ def build_group_selfie_action(
     if appearance_line:
         base += appearance_line
     base += style_blob
+    skin_line = "真实皮肤，" if appearance_type == "auto" else ""
     base += (
         "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动统一。"
-        "合影默认多数人看向镜头；竖屏手机近景半身，窗光或暖灯，真实皮肤，不要美颜滤镜、不要证件照站排。"
+        f"合影默认多数人看向镜头；竖屏手机近景半身，窗光或暖灯，{skin_line}不要美颜滤镜、不要证件照站排。"
         "AI 若面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
     )
+    if appearance_type == "real":
+        base += "皮肤、光线与材质保持自然写实摄影质感。"
+    elif appearance_type == "anime":
+        base += "皮肤、线条、上色与光影都保持统一动漫插画质感，不生成真人皮肤纹理。"
     if has_refs:
         base += (
             " 用户提供或艾特对象的图片是合影角色来源，必须拟人/改画成与主角同一画风的独立完整人物；"
@@ -259,6 +295,9 @@ def build_group_selfie_action(
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
     if extra:
         base += f" 用户补充要求：{extra}。"
+    final_style_instruction = appearance_type_output_instruction(appearance_type)
+    if final_style_instruction:
+        base += final_style_instruction
     return base
 
 

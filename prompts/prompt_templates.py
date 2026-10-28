@@ -45,6 +45,87 @@ def _join(*parts: str) -> str:
     return "\n".join(str(part).strip() for part in parts if str(part).strip())
 
 
+_VIEWPOINT_CHANGE_RE = re.compile(
+    r"正面(?:机位|拍摄|构图|视角|半身|人像|镜头|图)|正对镜头|正脸(?:视角|镜头|近景|半身|朝向|照片|转)|"
+    r"(?:正面|正脸)(?:转|改|变)(?:为|成)?侧(?:面|脸)|侧(?:面|脸)(?:转|改|变)(?:为|成)?正(?:面|脸)|"
+    r"三分之四侧(?:前方|身|面)?|侧脸(?:视角|特写|近景|人像|朝向)?|侧身(?:回看|拍摄|机位|构图|人像)|"
+    r"侧前方(?:机位|拍摄|人像|构图)?|侧后方(?:机位|拍摄|视角|构图)?|从侧面拍(?:摄)?|"
+    r"侧面(?:机位|拍摄|视角|镜头|近景|人像|构图|照片|图|转|改|变)|侧拍|背影|背面(?:视角|机位|拍摄|构图)|"
+    r"从后方|后方(?:机位|视角)|俯拍|俯视|仰拍|仰视|高机位|低机位|顶视|鸟瞰|过肩|上方机位|"
+    r"低角度|高角度|换(?:个|一个)?角度|改变视角|变换视角|切换视角|"
+    r"face[- ]?on|front[- ]view|profile|side[- ](?:view|angle)|three[- ]quarter(?:[- ](?:view|angle))?|"
+    r"rear[- ]view|from[- ]behind|from (?:the )?(?:side|rear|above|below)|top[- ]down|overhead|bird['’]?s[- ]eye|high[- ]angle|low[- ]angle|"
+    r"change (?:the )?(?:camera )?angle|different angle|change viewpoint",
+    re.I,
+)
+_VIEWPOINT_NEGATION_RE = re.compile(
+    r"(?:不要|别|避免|禁止|不得|不需要|不想|"
+    r"do not|don't|avoid|never|no)\s*(?:过度|刻意|强行|use|render|make|show)?"
+    r"\s*(?:从|向|用|采用|使用|生成|拍成|画成|use|render|make|show|镜头|机位|视角|角度)?"
+    r"\s*(?:a|the)?"
+    r"\s*(?:过度|刻意|强行)?\s*$",
+    re.I,
+)
+
+
+def has_viewpoint_change_request(text: str) -> bool:
+    """Detect a concrete requested or selected camera view, not clothing details."""
+    value = str(text or "")
+    for match in _VIEWPOINT_CHANGE_RE.finditer(value):
+        clause_start = max(value.rfind(mark, 0, match.start()) for mark in "，,。；;\n") + 1
+        prefix = value[clause_start : match.start()]
+        if not _VIEWPOINT_NEGATION_RE.search(prefix):
+            return True
+    return False
+
+
+def resolve_appearance_type(appearance_type: str, user_text: str = "") -> str:
+    """Let an explicit per-request medium override the saved appearance setting."""
+    configured = str(appearance_type or "auto").strip().lower()
+    configured = {
+        "realistic": "real",
+        "photo": "real",
+        "photographic": "real",
+        "真人": "real",
+        "写实": "real",
+        "cartoon": "anime",
+        "2d": "anime",
+        "动漫": "anime",
+        "动画": "anime",
+        "二次元": "anime",
+    }.get(configured, configured)
+    if configured not in {"auto", "real", "anime"}:
+        configured = "auto"
+
+    text = str(user_text or "")
+    explicit_patterns = {
+        "real": (
+            r"真人(?:风格|照片|摄影|版|形象)|写实(?:风格|照片|摄影)|真实照片|照片写实",
+            r"\b(?:photorealistic|realistic\s+(?:photo|photography|image)|real[- ]life\s+photo)\b",
+        ),
+        "anime": (
+            r"动漫(?:风格|插画|画风|版|形象)|二次元(?:风格|插画|画风|版|形象)|"
+            r"动画(?:风格|插画|画风)|漫画风格|插画风格",
+            r"\b(?:anime\s+(?:style|illustration|art|look)|2d\s+anime|cartoon\s+illustration)\b",
+        ),
+    }
+    negation = re.compile(
+        r"(?:不要|不想要|避免|禁止|拒绝|不使用|不需要|别(?:用|画成|做成)?)"
+        r"(?:生成|绘制|画成|做成|采用|使用)?\s*$",
+        re.I,
+    )
+    matches = []
+    opposite = {"real": "anime", "anime": "real"}
+    for kind, patterns in explicit_patterns.items():
+        for pattern in patterns:
+            for match in re.finditer(pattern, text, re.I):
+                prefix = text[max(0, match.start() - 8) : match.start()]
+                matches.append(
+                    (match.start(), opposite[kind] if negation.search(prefix) else kind)
+                )
+    return max(matches)[1] if matches else configured
+
+
 def append_daily_context_to_english_prompt(english_prompt: str, source_prompt: str) -> str:
     """Keep daily lines selected by the Chinese builder during EN conversion."""
     labels = {
@@ -105,6 +186,13 @@ def build_selfie_builtin_prompt(
     if raw_is_legs and not has_leg_focus_contract(raw_action):
         action = ensure_leg_focus_action(raw_action, has_reference_image)
     translated_user = str(user_text or "").strip()
+    viewpoint_change = has_viewpoint_change_request(
+        _join(raw_action, str(action_content or ""), translated_user)
+    )
+    effective_appearance_type = resolve_appearance_type(
+        appearance_type,
+        _join(extract_user_prompt(raw_action), translated_user),
+    )
     rendered_action = str(action_content or action or "").strip()
     is_cos = "看看COS" in str(action) or "看看cos" in str(action).lower() or "【cos:" in str(action)
     is_legs = (not is_cos) and (
@@ -129,8 +217,16 @@ def build_selfie_builtin_prompt(
             "real": "realistic photographic",
             "anime": "soft Kyoto Animation-like anime with a finer face and ethereal atmosphere",
             "auto": "the primary identity reference's visual medium",
-        }.get(str(appearance_type), "the primary reference's visual medium")
-        if is_legs:
+        }.get(effective_appearance_type, "the primary reference's visual medium")
+        if effective_appearance_type == "anime":
+            opening = (
+                "Create one cohesive soft Kyoto Animation-like anime illustration with a close vertical lower-body outfit composition."
+                if is_legs
+                else "Create one cohesive soft Kyoto Animation-like anime cosplay illustration."
+                if is_cos
+                else "Create one cohesive soft Kyoto Animation-like anime illustration in vertical smartphone selfie composition."
+            )
+        elif is_legs:
             opening = f"Create one natural {style} vertical smartphone outfit record."
         elif is_cos:
             opening = f"Create one natural {style} COS cover photo."
@@ -152,10 +248,18 @@ def build_selfie_builtin_prompt(
             ])
         if has_reference_image:
             lines.append(
-                "Use reference image 1 as the primary identity and visual-medium anchor; extra references must not replace or override the primary subject's visual medium."
+                (
+                    "Use reference image 1 as the identity anchor. The selected appearance type controls the rendered visual medium; do not copy the reference's medium."
+                    if effective_appearance_type != "auto"
+                    else "Use reference image 1 as the primary identity and visual-medium anchor; extra references must not replace or override the primary subject's visual medium."
+                )
                 if not is_legs
                 else "Use reference image 1 only for natural proportions and composition; ignore all legwear, socks, and shoes in every reference; later references must not widen the crop."
             )
+            if viewpoint_change and not is_legs:
+                lines.append(
+                    "The requested camera view takes priority over the reference projection. Preserve identity cues, but do not copy the reference head orientation, facial projection, shoulder line, or pose. Reconstruct the face naturally for this view; in profile or three-quarter views, let far-side features be naturally occluded instead of forcing both eyes into view."
+                )
         else:
             lines.append("Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.")
         if extra_reference_count:
@@ -198,7 +302,11 @@ def build_selfie_builtin_prompt(
             )
             if feet_cropped:
                 lines.extend([
-                    "Casual vertical smartphone outfit record: use a close lower-body everyday clothing composition for one subject; never widen to a half-body or full-body photo, and do not use a knee or calf as a fixed crop line.",
+                    (
+                        "Vertical anime outfit illustration: use a close lower-body everyday clothing composition for one subject; never widen to a half-body or full-body image, and do not use a knee or calf as a fixed crop line."
+                        if effective_appearance_type == "anime"
+                        else "Casual vertical smartphone outfit record: use a close lower-body everyday clothing composition for one subject; never widen to a half-body or full-body photo, and do not use a knee or calf as a fixed crop line."
+                    ),
                     legwear_line,
                     outfit_line,
                     "Keep both legs anatomically continuous and natural. A leg may continue naturally beyond the image edge or be coherently occluded by clothing, furniture, or a foreground object with clear depth and boundaries.",
@@ -262,7 +370,11 @@ def build_selfie_builtin_prompt(
         user_line = ""
         if translated_user and translated_user not in rendered_action:
             user_line = f"User request: {translated_user}"
-        return _join(*lines, user_line)
+        final_style_contract = {
+            "real": "Final visual medium: a cohesive realistic human photograph. Selfie, phone, camera, and COS wording controls composition and content, not a different visual medium.",
+            "anime": "Final visual medium: a cohesive 2D anime illustration. Selfie, phone, camera, photo, and COS wording controls framing and content only; never render photorealistically or mix anime and live-action styles.",
+        }.get(effective_appearance_type, "")
+        return _join(*lines, user_line, final_style_contract)
 
     user = translated_user or extract_user_prompt(action)
     camera_match = re.search(r"【cam:(selfie|third)】", str(action))
@@ -317,7 +429,11 @@ def build_selfie_builtin_prompt(
         if is_legs and outfit_match
         else ""
     )
-    if is_legs:
+    if is_legs and effective_appearance_type == "anime":
+        photo_style_line = (
+            "动漫插画质感：保持统一的柔光京阿尼风格；用手机近距离取景的透视与构图记录服装，光线服从用户指定场景，未指定时使用柔和自然光或环境光。"
+        )
+    elif is_legs and effective_appearance_type == "real":
         photo_style_line = (
             "真人摄影质感：像普通手机竖屏近距离记录服装；光线服从用户指定场景，未指定时使用柔和自然光或环境光，"
             "保留真实布料厚度、细小褶皱和自然曝光变化；避免棚拍精修、塑料材质、插画感、3D渲染感和过度虚化。"
@@ -326,13 +442,13 @@ def build_selfie_builtin_prompt(
         photo_style_line = (
             "真人摄影质感：像自然拍到的 COS 成片；使用窗光或房间环境光，"
             "保留自然曝光变化、真实布料厚度与细小褶皱、轻微皮肤纹理和接触阴影；避免棚拍精修、塑料皮肤、插画感、3D渲染感和过度虚化。"
-            if str(appearance_type) == "real" else ""
+            if effective_appearance_type == "real" else ""
         )
     else:
         photo_style_line = (
             "真人摄影质感：像普通手机竖屏近景随手拍到的日常照片；使用窗光或房间环境光，"
             "保留自然曝光变化、真实布料厚度与细小褶皱、轻微皮肤纹理和接触阴影；避免棚拍精修、塑料皮肤、插画感、3D渲染感和过度虚化。"
-            if str(appearance_type) == "real" else ""
+            if effective_appearance_type == "real" else ""
         )
     return _join(
         photo_type_line,
