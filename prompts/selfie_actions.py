@@ -24,6 +24,8 @@ SELFIE_SHOT_POOL = (
     ("sofa_casual", 2),
     ("high_angle", 1),
     ("close_portrait", 1),
+    ("back_view", 1),
+    ("side_profile", 1),
 )
 
 SELFIE_SHOT_LINES = {
@@ -34,6 +36,8 @@ SELFIE_SHOT_LINES = {
     "sofa_casual": "沙发窝着随手自拍：半身或胸像，靠垫入镜一点，看镜头，轻松日常。",
     "high_angle": "稍高机位自拍：镜头略高于眼，脸自然抬一点看镜头，显精神，不要过度仰拍变形。",
     "close_portrait": "近景胸像自拍：脸与肩为主，眼神对焦镜头，五官清晰，浅景深。",
+    "back_view": "背面自拍构图：主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手自然垂放，只有场景内已有合适支撑物时才自然搭放。",
+    "side_profile": "侧身自拍：身体和头部自然朝向同一侧，肩胯约四十五度侧向镜头，不回头硬露正脸，颈部和肩线保持自然。",
 }
 
 SELFIE_GESTURES = (
@@ -53,16 +57,20 @@ THIRD_PERSON_SHOT_POOL = (
     ("close_smile", 2),
     ("low_over", 1),
     ("lean_wall", 2),
+    ("back_view", 1),
+    ("side_profile", 1),
 )
 
 THIRD_PERSON_SHOT_LINES = {
     "half_front": "半身平视他拍：别人视角的单人半身照，AI 正面或微侧看镜头，眼神有焦点。",
-    "three_quarter": "三分之四侧身他拍：身体略侧、头转向镜头，像被叫名字时回头。",
+    "three_quarter": "三分之四侧身他拍：身体略侧，头部顺着身体方向自然转向，不做突然回头动作。",
     "env_mid": "中远景环境人像：人物与场景都清楚，AI 仍是主体，自然看向镜头或刚抬头。",
     "walk_candid": "走路抓拍：侧前方跟随感，步伐自然，可看镜头一瞬，生活感强。",
     "close_smile": "近景胸像：脸与肩，浅景深，对镜头带一点笑意，五官清晰。",
-    "low_over": "轻微低机位过肩感：从略低处拍半身，仍看镜头，不要过度仰拍变形。",
+    "low_over": "轻微低机位侧前方拍摄半身：头颈保持自然，不做过肩回望，不要过度仰拍变形。",
     "lean_wall": "靠墙/门框他拍：肩背轻靠，双手自然，看镜头，竖构图友好。",
+    "back_view": "背面他拍构图：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手放松垂在身侧，只有场景内已有合适支撑物时才自然搭放。",
+    "side_profile": "纯侧身他拍：身体、肩线和面部朝向一致，以自然侧面或侧后三分之四角度呈现，不回头、不为露正脸扭转脖子。",
 }
 
 THIRD_PERSON_ACTIONS = (
@@ -71,10 +79,75 @@ THIRD_PERSON_ACTIONS = (
     "整理袖口或发丝",
     "翻书停顿抬头",
     "双手插兜靠站",
-    "拎袋子侧身回看",
+    "拎袋子自然侧身停步",
     "刚坐下整理衣角",
     "对镜头轻轻点头笑",
 )
+
+THIRD_PERSON_SIDE_ACTIONS = (
+    "端杯自然停留，视线顺着身体方向",
+    "整理袖口或发丝，不转头看镜头",
+    "翻书继续阅读，肩线保持侧向",
+    "靠墙放松站立，手臂自然下垂",
+    "行走中自然停步，头部顺着行进方向",
+)
+
+SELFIE_ENVIRONMENT_TERMS = (
+    "窗边", "窗前", "窗户旁", "书桌", "桌前", "阳台", "镜前", "沙发", "床边",
+    "咖啡馆", "咖啡店", "咖啡厅", "街边", "树荫", "书店", "夜灯房间", "厨房",
+    "卧室", "客厅", "室内", "室外", "街道", "雨夜", "霓虹", "海边", "沙滩",
+    "校园", "教室", "走廊", "车站", "雪地", "樱花", "河边", "天台", "屋顶",
+    "楼梯", "浴室", "温泉", "舞台", "草地", "花丛", "竹林", "和室", "地毯",
+    "场景不变", "背景不变", "保持场景", "保持背景",
+)
+
+SELFIE_LIGHT_TERMS = (
+    "光线", "灯光", "日光", "阳光", "窗光", "逆光", "侧光", "柔光", "暖光",
+    "冷光", "闪光灯", "过曝", "阴天", "昏暗", "霓虹",
+)
+
+
+def _requested_staging_orientation(text: str) -> str:
+    compact = re.sub(r"\s+", "", str(text or ""))
+    if any(_has_positive_staging_term(compact, term) for term in ("背对镜头", "背向镜头", "背影", "背身")):
+        return "back"
+    if any(_has_positive_staging_term(compact, term) for term in ("侧身", "侧面", "侧后方", "侧前方")):
+        return "side"
+    return ""
+
+
+def _has_positive_staging_term(text: str, term: str) -> bool:
+    start = 0
+    while True:
+        index = text.find(term, start)
+        if index < 0:
+            return False
+        prefix = text[max(0, index - 6) : index]
+        if not re.search(
+            r"(?:不要|不需要|不必|不想|不允许|不能|不会|不可|别|不|避免|禁止|拒绝)(?:再|去|在|用|选择|采用|进行)*$",
+            prefix,
+        ):
+            return True
+        start = index + len(term)
+
+
+def _has_explicit_staging_scene(text: str) -> bool:
+    compact = re.sub(r"\s+", "", str(text or ""))
+    if "场景随机" in compact or "背景随机" in compact:
+        return False
+    return any(_has_positive_staging_term(compact, term) for term in SELFIE_ENVIRONMENT_TERMS)
+
+
+def _has_explicit_staging_light(text: str) -> bool:
+    compact = re.sub(r"\s+", "", str(text or ""))
+    return any(_has_positive_staging_term(compact, term) for term in SELFIE_LIGHT_TERMS)
+
+
+def _pick_staging_scene(scenes: List[str], orientation: str = "") -> str:
+    compatible = list(scenes)
+    if orientation == "back":
+        compatible = [scene for scene in compatible if "镜" not in scene]
+    return random.choice(compatible or scenes)
 
 
 def period_scene_light_pools(
@@ -180,24 +253,56 @@ def build_selfie_look_action(
     shot_pool = [item for item in SELFIE_SHOT_POOL if item[0] != avoid_shot]
     if not shot_pool:
         shot_pool = list(SELFIE_SHOT_POOL)
-    shot = random.choices(
-        [name for name, _ in shot_pool],
-        weights=[weight for _, weight in shot_pool],
-        k=1,
-    )[0]
+    orientation = _requested_staging_orientation(extra)
+    shot = (
+        "back_view" if orientation == "back"
+        else "side_profile" if orientation == "side"
+        else random.choices(
+            [name for name, _ in shot_pool],
+            weights=[weight for _, weight in shot_pool],
+            k=1,
+        )[0]
+    )
     scenes, lights = scene_light_provider("selfie")
-    scene = random.choice(scenes)
-    gesture = random.choice(SELFIE_GESTURES)
-    light = random.choice(lights)
+    explicit_scene = _has_explicit_staging_scene(extra)
+    explicit_light = _has_explicit_staging_light(extra)
+    if shot == "back_view":
+        scene = "" if explicit_scene else _pick_staging_scene(scenes, "back")
+        gesture = "双手自然垂放；场景中已有合适支撑物时可轻轻搭放"
+        light = "" if explicit_light else random.choice(lights)
+    else:
+        scene = "" if explicit_scene else _pick_staging_scene(scenes, orientation)
+        gesture = random.choice(SELFIE_GESTURES)
+        light = "" if explicit_light else random.choice(lights)
+    rear_view = shot == "back_view"
+    side_view = shot == "side_profile"
     base = (
         "【自拍 / 看看模式】展示 AI 现在的样子。"
-        "第一人称自拍视角（自己举机或镜前自拍），不是别人代拍。"
-        "必须看向镜头：眼睛对焦镜头方向，表情自然有神；不要眼神飘走或心不在焉。"
-        "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
-        "竖屏手机近景半身：像短视频封面那样拍得近；窗光或暖灯，不要美颜滤镜、不要棚拍精修。"
-        f"本次机位：{SELFIE_SHOT_LINES.get(shot, SELFIE_SHOT_LINES['arm_half'])}"
-        f"场景倾向：{scene}。小动作：{gesture}。光线：{light}。"
-        "画面干净日常，不要夸张摆拍。"
+        + (
+            "由主角自行启动手机定时拍摄，拍摄者不入画；这是自摄成片，不要求出现手机或自拍手臂。"
+            "主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈，也不要求露出正脸；双手放松垂在身侧，不凭空增加栏杆、手机或其他道具。"
+            "保持竖屏半身中近景与自然透视，重点呈现背面发型和当前穿搭。"
+            if rear_view
+            else (
+                "身体侧向镜头的自拍构图：肩胯和头部朝向自然连贯，不回头硬露正脸；表情放松，保持面部自然可见。"
+                "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
+                "竖屏手机近景半身；"
+                + ("" if explicit_light else "窗光或暖灯；")
+                + "不要美颜滤镜、不要棚拍精修。"
+                if side_view
+                else "第一人称自拍视角（自己举机或镜前自拍），不是别人代拍。"
+                "必须看向镜头：眼睛对焦镜头方向，表情自然有神；不要眼神飘走或心不在焉。"
+                "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
+                "竖屏手机近景半身：像短视频封面那样拍得近；"
+                + ("" if explicit_light else "窗光或暖灯；")
+                + "不要美颜滤镜、不要棚拍精修。"
+            )
+        )
+        + f"本次机位：{SELFIE_SHOT_LINES.get(shot, SELFIE_SHOT_LINES['arm_half'])}"
+        + (f"场景倾向：{scene}。" if scene else "")
+        + f"小动作：{gesture}。"
+        + (f"光线：{light}。" if light else "")
+        + "画面干净日常，不要夸张摆拍。"
     )
     if appearance_type == "real":
         base += "真人摄影质感：保留自然皮肤纹理、真实布料与接触阴影，避免塑料皮肤。"
@@ -221,25 +326,57 @@ def build_third_person_look_action(
     shot_pool = [item for item in THIRD_PERSON_SHOT_POOL if item[0] != avoid_shot]
     if not shot_pool:
         shot_pool = list(THIRD_PERSON_SHOT_POOL)
-    shot = random.choices(
-        [name for name, _ in shot_pool],
-        weights=[weight for _, weight in shot_pool],
-        k=1,
-    )[0]
+    orientation = _requested_staging_orientation(extra_request)
+    shot = (
+        "back_view" if orientation == "back"
+        else "side_profile" if orientation == "side"
+        else random.choices(
+            [name for name, _ in shot_pool],
+            weights=[weight for _, weight in shot_pool],
+            k=1,
+        )[0]
+    )
     scenes, lights = scene_light_provider("look_you")
-    scene = random.choice(scenes)
-    action = random.choice(THIRD_PERSON_ACTIONS)
-    light = random.choice(lights)
+    explicit_scene = _has_explicit_staging_scene(extra_request)
+    explicit_light = _has_explicit_staging_light(extra_request)
+    if shot == "back_view":
+        scene = "" if explicit_scene else _pick_staging_scene(scenes, "back")
+        action = "双手放松垂在身侧；场景中已有合适支撑物时可轻轻搭放"
+        light = "" if explicit_light else random.choice(lights)
+    else:
+        scene = "" if explicit_scene else _pick_staging_scene(scenes, orientation)
+        action = random.choice(
+            THIRD_PERSON_SIDE_ACTIONS if shot == "side_profile" else THIRD_PERSON_ACTIONS
+        )
+        light = "" if explicit_light else random.choice(lights)
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
+    rear_view = shot == "back_view"
+    side_view = shot == "side_profile"
     base = (
         "【他拍 / 看看你模式】展示 AI 当前样子的自然日常成片。"
         "别人视角的单人成品照：镜头已经对准主角拍下，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角。"
-        "正面半身或近景时优先看向镜头，眼神自然有焦点；可以轻松回头，但不要整段心不在焉。"
-        "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
-        "竖屏手机近景半身：窗光或暖灯，构图干净自然，不要美颜滤镜、不要影楼精修。"
-        f"本次机位：{THIRD_PERSON_SHOT_LINES.get(shot, THIRD_PERSON_SHOT_LINES['half_front'])}"
-        f"场景倾向：{scene}。动作瞬间：{action}。光线：{light}。"
-        "生活化随手记录感，不要影楼硬摆。"
+        + (
+            "本次明确采用背面构图：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手放松垂在身侧，不凭空增加支撑物，优先展示发型和服装后侧。"
+            "竖屏半身中近景，透视自然，拍摄者留在画面外。"
+            if rear_view
+            else (
+                "本次采用纯侧身构图：身体、肩线和头部朝向一致，不回头或扭颈硬露正脸。"
+                "保持 AI 当前形象、今日穿搭和生活状态一致，采用竖屏半身中近景，姿态、背景层次和光线自然清楚。"
+                if side_view
+                else (
+                    "正面构图时可自然看向镜头；侧面构图时头部顺着身体方向，不强行回头露正脸。"
+                    "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
+                    "竖屏手机近景半身："
+                    + ("" if explicit_light else "窗光或暖灯，")
+                    + "构图干净自然，不要美颜滤镜、不要影楼精修。"
+                )
+            )
+        )
+        + f"本次机位：{THIRD_PERSON_SHOT_LINES.get(shot, THIRD_PERSON_SHOT_LINES['half_front'])}"
+        + (f"场景倾向：{scene}。" if scene else "")
+        + f"动作瞬间：{action}。"
+        + (f"光线：{light}。" if light else "")
+        + "生活化随手记录感，不要影楼硬摆。"
     )
     if appearance_type == "real":
         base += "真人摄影质感：保留自然皮肤纹理、真实布料与接触阴影。"
@@ -259,7 +396,19 @@ def build_group_selfie_action(
     *,
     appearance_type: str = "auto",
 ) -> str:
+    orientation = _requested_staging_orientation(extra_request)
+    if orientation == "back":
+        group_shot = "back_view"
+    elif orientation == "side":
+        group_shot = "side_profile"
+    else:
+        group_shot = random.choices(
+            ["group_portrait", "group_environment"],
+            weights=[5, 3],
+            k=1,
+        )[0]
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
+    explicit_light = _has_explicit_staging_light(extra_request)
     appearance_line = appearance_type_instruction(
         appearance_type,
         has_reference_image=True,
@@ -275,10 +424,38 @@ def build_group_selfie_action(
         base += appearance_line
     base += style_blob
     skin_line = "真实皮肤，" if appearance_type == "auto" else ""
+    if group_shot == "back_view":
+        group_staging = (
+            "本次合影采用背面构图：主角背对镜头，头部与肩胯朝向一致，不回头、不回眸、不扭颈；"
+            "双手放松垂在身侧，不凭空增加支撑物；其他同框对象按用户提供的实际人数和站位自然安排，不增删人物。"
+        )
+    elif group_shot == "side_profile":
+        group_staging = (
+            "本次主角采用自然侧身构图：身体、肩线和头部朝向一致，不回头硬露正脸；"
+            "其他同框对象按用户提供的实际人数和站位自然安排，不增删人物。"
+        )
+    elif group_shot == "group_environment":
+        group_staging = "本次采用竖屏中远景环境合影构图，所有同框对象和周围场景都清楚，保持对象数量与身份不变。"
+    else:
+        group_staging = "本次采用自然竖屏近景合影构图，保持所有同框对象数量与身份不变。"
     base += (
         "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动统一。"
-        f"合影默认多数人看向镜头；竖屏手机近景半身，窗光或暖灯，{skin_line}不要美颜滤镜、不要证件照站排。"
-        "AI 若面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
+        + (
+            "正面合影时可自然看向镜头；人物侧身或背对镜头时，头部顺着身体方向，不强迫回头或露出正脸。"
+            if group_shot in {"back_view", "side_profile"}
+            else (
+                f"合影默认多数人看向镜头；{skin_line}"
+                + ("" if explicit_light else "窗光或暖灯，")
+                + "不要美颜滤镜、不要证件照站排。"
+                + (
+                    "所有人保持中远景可辨识，留出足够环境空间。"
+                    if group_shot == "group_environment"
+                    else "竖屏手机近景半身。"
+                )
+            )
+        )
+        + "AI 若面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
+        + group_staging
     )
     if appearance_type == "real":
         base += "皮肤、光线与材质保持自然写实摄影质感。"
@@ -298,7 +475,7 @@ def build_group_selfie_action(
     final_style_instruction = appearance_type_output_instruction(appearance_type)
     if final_style_instruction:
         base += final_style_instruction
-    return base
+    return base + f" 【shot:{group_shot}】"
 
 
 def looks_like_group_selfie_intent(text: str) -> bool:
@@ -331,7 +508,8 @@ def looks_like_selfie_intent(text: str, *, bot_name: str = "") -> bool:
     keywords = [
         "自拍", "合影", "合照", "同框", "形象照", "和我", "跟我", "与我", "陪我",
         "和你", "跟你", "与你", "你和我", "我和你", "我们一起", "一起拍", "一起照",
-        "你自己", "你的照片",
+        "你自己", "你的照片", "看看cos", "看看腿", "看腿", "看看你", "看下你",
+        "看看现在的你", "看看你现在的样子",
     ]
     english_keywords = [
         "selfie", "group selfie", "group photo", "photo together", "take a photo together",
@@ -339,7 +517,7 @@ def looks_like_selfie_intent(text: str, *, bot_name: str = "") -> bool:
         "next to you", "standing next to", "side by side", "same frame", "in the same frame",
         "two of us", "us together", "your photo", "yourself", "ai assistant", "catgirl", "ahwu",
     ]
-    explicit = any(keyword and keyword in value for keyword in keywords) or any(
+    explicit = any(keyword and keyword.lower() in low for keyword in keywords) or any(
         keyword and keyword in low for keyword in english_keywords
     )
     if explicit:

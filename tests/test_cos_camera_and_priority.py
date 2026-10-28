@@ -1,5 +1,7 @@
+import asyncio
 import re
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
@@ -24,8 +26,15 @@ from astrbot_plugin_selfie_image.features.reference_collector import (
     select_group_references,
 )
 from astrbot_plugin_selfie_image.features.persona import (
+    PersonaManager,
     appearance_type_instruction,
     group_style_lines,
+)
+from astrbot_plugin_selfie_image.prompts.selfie_actions import (
+    build_group_selfie_action,
+    build_selfie_look_action,
+    build_third_person_look_action,
+    looks_like_selfie_intent,
 )
 from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
 from astrbot_plugin_selfie_image.studio.studio import build_studio_action, empty_session
@@ -46,7 +55,7 @@ def test_default_cos_pool_actions_randomize_camera_and_keep_contracts_clean():
             assert "自拍" not in action
             assert "镜前" not in action
             assert "镜子" not in action
-            assert "对镜" not in action
+            assert "对镜取景" not in action
             assert "两条手臂和两只手" in action
         elif camera == "first":
             assert "【第一视角 / 看看COS模式】" in action
@@ -396,7 +405,7 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
         assert profile["scene_ids"] == list(COS_RANDOM_SCENE_CLASSES)
         assert profile["pose_ids"] == list(COS_RANDOM_POSE_CLASSES)
         assert profile["scene_pose_compatibility"] == {
-            scene_id: list(scene["pose_ids"])
+            scene_id: list(dict.fromkeys([*scene["pose_ids"], "side_profile", "back_to_camera"]))
             for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
         }
     for scene in COS_RANDOM_SCENE_CLASSES.values():
@@ -435,6 +444,15 @@ def test_pose_and_scene_detection_preserves_explicit_user_staging():
     assert custom_pose["pose_id"] == "user"
     assert "随机姿势" not in custom_pose["prompt"]
 
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
+        negative_orientation = pick_cos_variation("roxy_cream", extra_request="不要背对镜头")
+        negative_scene = pick_cos_variation("roxy_cream", extra_request="不要在天台拍")
+    assert negative_orientation["pose_id"] != "back_to_camera"
+    assert negative_scene["scene_id"] != "old_city_rooftop"
+
 
 def test_random_scene_is_uniformly_selected_before_compatible_pose():
     with patch(
@@ -444,7 +462,241 @@ def test_random_scene_is_uniformly_selected_before_compatible_pose():
         selected = pick_cos_variation("custom_cos_id")
     final_scene_id = list(COS_RANDOM_SCENE_CLASSES)[-1]
     assert selected["scene_id"] == final_scene_id
-    assert selected["pose_id"] == COS_RANDOM_SCENE_CLASSES[final_scene_id]["pose_ids"][-1]
+    assert selected["pose_id"] == "back_to_camera"
+    assert selected["pose_id"] != "over_shoulder"
+
+
+def test_back_and_side_cos_staging_never_randomly_forces_a_lookback():
+    assert COS_RANDOM_POSE_CLASSES["over_shoulder"]["explicit_only"] is True
+    assert "over_shoulder" not in cos_look_compatibility("test")["recommended_pose_ids"]
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[-1],
+    ):
+        selected = pick_cos_variation("test")
+    assert selected["pose_id"] == "back_to_camera"
+    assert "不回头、不回眸、不扭转颈部" in selected["prompt"]
+
+    back_framing = pick_cos_framing(pose_id="back_to_camera")
+    assert back_framing["view_id"] in {"rear_three_quarter", "rear_low_medium", "environmental", "eye_level_full"}
+    side_framing = pick_cos_framing(pose_id="side_profile")
+    assert side_framing["view_id"] in {"side_profile", "environmental", "eye_level_full", "low_angle_full"}
+
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[-1],
+    ):
+        exhausted_back_framing = pick_cos_framing(
+            pose_id="back_to_camera",
+            avoid_framings=COS_FRAMING_CLASSES,
+        )
+    assert exhausted_back_framing["view_id"] != "rear_lookback"
+
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        return_value="rear_lookback",
+    ):
+        requested_lookback = pick_cos_framing(pose_id="over_shoulder")
+    assert requested_lookback["view_id"] == "rear_lookback"
+
+
+def test_explicit_back_view_adapts_across_selfie_group_and_cos_routes():
+    selfie = build_selfie_look_action("背对镜头，卧室")
+    third_person = build_third_person_look_action("背对镜头，卧室")
+    group = build_group_selfie_action("背对镜头合影")
+    assert "【shot:back_view】" in selfie
+    assert "定时拍摄" in selfie
+    assert "不回头、不回眸、不扭颈" in selfie
+    assert "【shot:back_view】" in third_person
+    assert "【shot:back_view】" in group
+    assert "天台" not in selfie + third_person + group
+    assert "场景倾向：" not in selfie
+    assert "不增删人物" in group
+
+    with tempfile.TemporaryDirectory() as tmp:
+        persona = PersonaManager(tmp)
+        selfie_prompt = persona.build_selfie_prompt(selfie, "小助", "温柔", False, 0)
+        group_prompt = persona.build_selfie_prompt(group, "小助", "温柔", False, 0)
+    assert "不要求露出正脸" in selfie_prompt
+    assert "不强迫回头" in group_prompt
+    assert "本次合影采用背面构图" in group_prompt
+    assert "天台背面构图" not in group_prompt
+
+
+def test_group_random_staging_uses_portrait_or_environment_not_back_view():
+    with patch(
+        "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
+        return_value=["group_environment"],
+    ):
+        action = build_group_selfie_action("和我合影")
+
+    assert "【shot:group_environment】" in action
+    assert "中远景环境合影构图" in action
+    assert "所有人保持中远景可辨识" in action
+    assert "背面构图" not in action
+    assert "竖屏手机近景半身" not in action
+
+
+def test_selfie_scene_and_light_overrides_are_independent():
+    provider = lambda _kind: (["随机咖啡馆"], ["随机暖灯"])
+    bedroom = build_selfie_look_action(
+        "在卧室拍摄",
+        scene_light_provider=provider,
+    )
+    cold_light = build_third_person_look_action(
+        "冷光",
+        scene_light_provider=provider,
+    )
+    group = build_group_selfie_action("冷光合影")
+
+    assert "场景倾向：" not in bedroom
+    assert "光线：随机暖灯" in bedroom
+    assert "场景倾向：随机咖啡馆" in cold_light
+    assert "光线：" not in cold_light
+    assert "窗光或暖灯" not in cold_light
+    assert "窗光或暖灯" not in group
+
+    with patch(
+        "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
+        return_value=["arm_half"],
+    ):
+        negative_scene = build_selfie_look_action(
+            "不要在卧室拍",
+            scene_light_provider=provider,
+        )
+    assert "场景倾向：随机咖啡馆" in negative_scene
+
+
+def test_llm_selfie_intents_route_to_their_mode_builders_and_cos_rebuilds():
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    with tempfile.TemporaryDirectory() as tmp:
+        plugin = object.__new__(SelfieImagePlugin)
+        plugin.persona = PersonaManager(tmp)
+        built = []
+
+        def marker(kind, tag):
+            def build(request, has_refs, **kwargs):
+                built.append((kind, request, has_refs, kwargs))
+                return f"{kind}:{request} {tag}"
+
+            return build
+
+        plugin._build_cos_look_action = marker("cos", "【cos:test】")
+        plugin._normalize_selfie_action = lambda request, _refs: f"legs:{request} 【legs:outfit】"
+        plugin._build_group_selfie_action = marker("group", "【shot:group_portrait】")
+        plugin._build_third_person_look_action = marker("third", "【shot:half_front】")
+        plugin._build_selfie_request_action = marker("selfie", "【shot:arm_half】")
+
+        cos_action, _, cos_query = plugin._prepare_llm_selfie_action("【LLM 自拍】看看COS：洛琪希", True)
+        legs_action, legs_extra, _ = plugin._prepare_llm_selfie_action("【LLM 自拍】看看腿 白丝", False)
+        group_action, _, _ = plugin._prepare_llm_selfie_action("【LLM 自拍】和我合影", False)
+        third_action, _, _ = plugin._prepare_llm_selfie_action("【LLM 自拍】看看你现在的样子", False)
+        selfie_action, _, _ = plugin._prepare_llm_selfie_action("【LLM 自拍】白裙自拍", False)
+
+        assert cos_action.startswith("cos:看看COS：洛琪希")
+        assert cos_query == "看看COS：洛琪希"
+        assert legs_action.startswith("legs:")
+        assert legs_extra == "【LLM 自拍】看看腿 白丝"
+        assert group_action.startswith("group:")
+        assert third_action.startswith("third:")
+        assert selfie_action.startswith("selfie:")
+        assert [entry[0] for entry in built] == ["cos", "group", "third", "selfie"]
+        assert built[0][3]["match_query"] == cos_query
+
+        rebuilt_cos_calls = []
+        plugin._build_cos_look_action = lambda request="", has_refs=False, **kwargs: (
+            rebuilt_cos_calls.append((request, has_refs, kwargs))
+            or f"COS rebuilt {request} 【cos:test】 【cam:selfie】"
+        )
+        plugin._normalize_count = lambda count: int(count or 1)
+        plugin._build_group_selfie_action = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("COS batch entered group builder")
+        )
+        plugin._build_leg_focus_action = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("COS batch entered legs builder")
+        )
+        plugin._build_third_person_look_action = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("COS batch entered third-person builder")
+        )
+        plugin._build_selfie_look_action = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("COS batch fell back to selfie builder")
+        )
+
+        async def build_prompt(_event, action, _refs, **_kwargs):
+            return action, [], {}
+
+        async def generate(*_args, **_kwargs):
+            return {"success": True, "files": []}
+
+        async def run_shots(*, total, run_one, **_kwargs):
+            for index in range(total):
+                await run_one(index)
+            return {"success": True, "files": []}
+
+        plugin._build_selfie_prompt_and_refs_for_event = build_prompt
+        plugin._run_image_generation = generate
+        plugin._run_counted_generation_shots = run_shots
+
+        async def run_cos_batch():
+            return await SelfieImagePlugin._run_selfie_batches_unlocked(
+                plugin,
+                "test-cos-llm",
+                SimpleNamespace(),
+                cos_action,
+                [],
+                "llm-generate-selfie",
+                2,
+                "9:16",
+                "1K",
+                "failed",
+                rebuild_match_query=cos_query,
+            )
+
+        result = asyncio.run(run_cos_batch())
+        assert result["success"]
+        assert len(rebuilt_cos_calls) == 2
+        assert all(call[2]["match_query"] == cos_query for call in rebuilt_cos_calls)
+
+
+def test_llm_image_detection_sends_explicit_look_modes_to_selfie_flow():
+    for prompt in ("看看COS洛琪希", "看看腿白丝", "看看你现在的样子", "帮我自拍"):
+        assert looks_like_selfie_intent(prompt), prompt
+    assert not looks_like_selfie_intent("看看这张城市夜景照片")
+
+
+def test_random_cos_scene_bundles_include_a_distinct_visual_treatment():
+    japanese_room = pick_cos_variation("test", extra_request="和风室内")
+    assert japanese_room["scene_id"] == "japanese_ink_room"
+    assert "古早DV录像静帧" in japanese_room["prompt"]
+    assert "冷蓝色偏" in japanese_room["prompt"]
+
+    rooftop = pick_cos_variation("test", extra_request="老旧楼群天台")
+    assert rooftop["scene_id"] == "old_city_rooftop"
+    assert "暖色低饱和胶片快照" in rooftop["prompt"]
+    assert "密密层叠的老旧楼群" in rooftop["prompt"]
+    assert "浅景深" not in rooftop["prompt"]
+    assert "近景至中景" not in rooftop["prompt"]
+    assert "低机位" not in rooftop["prompt"]
+
+
+def test_cos_back_view_does_not_require_a_visible_face_in_third_person_mode():
+    item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
+    action = build_cos_look_action(
+        "背对镜头",
+        camera="third",
+        picker=lambda **_: item,
+    )
+    assert "【cos_pose:back_to_camera】" in action
+    assert "背面他拍" in action
+    assert "不要求露出面部" in action
+    assert "未明确要求遮脸时保持面部和服装清晰可见" not in action
+
+    with tempfile.TemporaryDirectory() as tmp:
+        persona = PersonaManager(tmp)
+        prompt = persona.build_selfie_prompt(action, "小助", "温柔", True, 1)
+    assert "若当前构图允许面部入镜" in prompt
+    assert "除非用户要求遮脸，否则主角面部清晰自然" not in prompt
 
 
 def test_explicit_cos_scene_and_pose_are_not_overridden():

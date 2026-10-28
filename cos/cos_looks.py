@@ -1757,14 +1757,15 @@ def audit_cos_look_catalog(items: Optional[List[Mapping[str, Any]]] = None) -> L
 
 # Outfit prompts describe the costume. These reusable staging options are
 # selected independently for every built-in or custom COS look.
-COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, str]] = {
+COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, Any]] = {
     "standing_detail": {
         "title": "自然站姿",
         "prompt": "自然站立并将重心落在一侧腿上，肩线放松，手部动作遵循套装已有道具与配饰；姿态松弛但不倚靠，完整展示服装轮廓。",
     },
     "half_turn": {
-        "title": "侧身回看",
-        "prompt": "身体转向侧前方约四十五度并回看镜头，肩胯方向自然错开；手部动作遵循套装已有道具与配饰，不遮挡服装主体。",
+        "title": "自然侧身",
+        "prompt": "身体以约四十五度侧向镜头，肩胯自然错开，头部和视线顺着身体方向，不强行回头或扭转颈部；手部动作遵循套装已有道具与配饰，不遮挡服装主体。",
+        "orientation": "side",
     },
     "seated_composed": {
         "title": "端正坐姿",
@@ -1772,7 +1773,8 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, str]] = {
     },
     "walking_turn": {
         "title": "轻步转身",
-        "prompt": "行走中刚迈出一步并轻轻转向镜头的抓拍瞬间，步幅自然，衣摆只有轻微动态；避免奔跑、跳跃或战斗动作。",
+        "prompt": "行走中刚迈出一步的抓拍瞬间，身体自然侧向镜头，头部顺着行进方向，不突然回头；步幅自然，衣摆只有轻微动态，避免奔跑、跳跃或战斗动作。",
+        "orientation": "side",
     },
     "kneeling_carpet": {
         "title": "地毯跪坐",
@@ -1800,7 +1802,19 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, str]] = {
     },
     "over_shoulder": {
         "title": "背身回眸",
-        "prompt": "身体先转向远离镜头的方向，再从肩上回眸；只转动躯干和头部，不完全背对镜头，面部、发型和服装后侧细节都能看清。",
+        "prompt": "仅在用户明确要求回眸时使用：身体朝远离镜头的方向，头部只做轻微、自然的侧向转动，不把头扭到肩后，不强求正脸或双眼同时可见；肩颈保持连贯，优先展示侧脸和服装背面。",
+        "orientation": "back",
+        "explicit_only": True,
+    },
+    "side_profile": {
+        "title": "纯侧身",
+        "prompt": "肩线、胯部和面部朝向保持一致，人物以自然侧面或侧后三分之四角度面对镜头；不回头、不回眸、不为露出正脸扭转脖子，姿态稳定并自然展示服装轮廓。",
+        "orientation": "side",
+    },
+    "back_to_camera": {
+        "title": "背对镜头",
+        "prompt": "人物背部朝向镜头，肩线、胯部和头部朝向一致，头部保持正向，不回头、不回眸、不扭转颈部；长发自然垂落背部，清楚展示服装后侧。若场景已有栏杆、窗台或矮墙，可双手自然搭放其上；没有合适支撑物时双手放松垂在身体两侧，不凭空增加道具。",
+        "orientation": "back",
     },
     "relaxed_recline": {
         "title": "沙发斜倚",
@@ -1812,121 +1826,161 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, str]] = {
     },
 }
 
+COS_EXPLICIT_ONLY_POSE_IDS = {
+    pose_id for pose_id, pose in COS_RANDOM_POSE_CLASSES.items() if pose.get("explicit_only")
+}
+COS_EXPLICIT_ONLY_FRAMING_IDS = {"rear_lookback"}
+COS_SCENE_GENERIC_POSE_IDS = ("side_profile", "back_to_camera")
+
 COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
     "bedroom_carpet": {
         "title": "卧室地毯",
         "aliases": ("卧室地毯", "地毯卧室", "床边地毯", "卧室"),
         "prompt": "温馨整洁的卧室，木地板上铺柔软浅色地毯，床、床头柜和一张简洁矮凳作为背景，不遮挡人物。",
+        "style_prompt": "古早家用DV静帧质感，暖灰低饱和、明显胶片颗粒和轻微高光泛白；保留妆容与皮肤细节，不做塑料美颜。",
         "pose_ids": ("standing_detail", "half_turn", "seated_composed", "kneeling_carpet", "floor_sit_side", "leaning_rest", "relaxed_recline"),
     },
     "bedroom_window": {
         "title": "明亮窗边",
         "aliases": ("卧室窗边", "窗边", "窗前", "窗户旁"),
         "prompt": "明亮整洁的室内窗边，柔和自然光进入房间，窗边有简洁坐凳，背景不出现杂乱家具或额外人物。",
+        "style_prompt": "日系生活电影静帧，柔和奶白窗光、淡青灰阴影与细腻胶片颗粒，画面清透但不过度磨皮。",
         "pose_ids": ("standing_detail", "half_turn", "seated_composed", "leaning_rest", "reach_light", "overhead_stretch"),
     },
     "photo_studio": {
         "title": "简洁摄影棚",
         "aliases": ("摄影棚", "摄影室", "影棚", "棚拍", "纯色背景"),
         "prompt": "简洁的室内人像摄影棚，浅灰或柔白无缝背景、柔和补光和一张无装饰矮凳，不出现摄影设备或额外人物。",
+        "style_prompt": "克制的时装编辑影像，冷灰低饱和与柔硬交界的侧光，保留真实布料纹理和自然阴影，不出现摄影器材。",
         "pose_ids": ("standing_detail", "half_turn", "seated_composed", "walking_turn", "floor_sit_side", "one_knee_crouch", "over_shoulder", "overhead_stretch"),
     },
     "living_room_rug": {
         "title": "客厅地毯",
         "aliases": ("客厅地毯", "客厅", "沙发旁", "客厅里"),
         "prompt": "整洁温暖的客厅一角，浅色地毯和沙发作为简洁背景，不遮挡人物主体。",
+        "style_prompt": "暖色家用胶片快照，低饱和棕金色、柔和高光和可见颗粒，保留自然肤色，不做过度复古滤镜。",
         "pose_ids": ("standing_detail", "half_turn", "seated_composed", "kneeling_carpet", "floor_sit_side", "leaning_rest", "relaxed_recline", "overhead_stretch"),
     },
     "garden_walkway": {
         "title": "庭院小径",
         "aliases": ("庭院", "花园", "小径", "庭院小路", "树下"),
         "prompt": "安静整洁的庭院小径，少量绿植作为自然背景，人物仍是画面主体。",
+        "style_prompt": "低饱和自然电影感，树叶透光形成零散光斑，浅绿与灰白过渡柔和，带轻微胶片褪色。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder", "overhead_stretch"),
     },
     "bamboo_garden": {
         "title": "竹林石径",
         "aliases": ("竹林", "竹林小径", "竹林石径", "竹林里"),
         "prompt": "清晨的竹林石径，疏朗竹影和自然绿意形成纵深，光线清透，背景不出现其他人物。",
+        "style_prompt": "冷绿调旧电影静帧，竹影层次清楚、暗部有细颗粒，清冷但不过分压暗人物。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder"),
     },
     "cherry_blossom_path": {
         "title": "樱花步道",
         "aliases": ("樱花步道", "樱花树下", "樱花小径", "樱花林"),
         "prompt": "春日樱花步道，少量花瓣随风飘落，远处花树形成柔和纵深，画面清新自然。",
+        "style_prompt": "淡粉与雾白的柔焦胶片色彩，逆光花瓣轻微泛白，低对比、细颗粒，不遮挡人物五官。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "overhead_stretch"),
     },
     "seaside_boardwalk": {
         "title": "海边栈道",
         "aliases": ("海边栈道", "海边", "海岸", "海滨", "沙滩"),
         "prompt": "开阔海边木栈道，远处海平线和轻柔浪花作为背景，带自然海风感，不出现游客或船只主体。",
+        "style_prompt": "冷蓝DV录像静帧，海天略微过曝、颗粒明显，低灰度柔和配色，人物边缘保持清晰。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "reach_light", "over_shoulder", "overhead_stretch"),
     },
     "rooftop_sunset": {
         "title": "城市屋顶夕照",
         "aliases": ("屋顶夕阳", "天台", "城市屋顶", "屋顶夜景"),
         "prompt": "日落时分的城市屋顶露台，远处楼群被暖色夕光勾勒，栏杆和天际线保持简洁。",
+        "style_prompt": "暖金色胶片快照，夕阳高光轻微泛白，低饱和、柔光晕和浅浅颗粒，避免橙色滤镜过重。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "reach_light", "over_shoulder", "overhead_stretch"),
     },
     "old_town_lane": {
         "title": "古街巷口",
         "aliases": ("古街", "老街", "石板路", "巷口", "古镇街道"),
         "prompt": "安静的古街石板巷口，木窗、灰瓦和浅色墙面构成有层次的环境人像背景，不出现招牌文字或路人。",
+        "style_prompt": "褪色旅行胶片质感，灰蓝石板与旧木色形成冷暖对比，颗粒明显但人物和服饰纹理仍清楚。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "leaning_rest", "over_shoulder"),
     },
     "rainy_neon_street": {
         "title": "雨夜霓虹街",
         "aliases": ("雨夜霓虹街", "霓虹街道", "雨夜街道", "霓虹雨夜"),
         "prompt": "雨后的夜间街巷，地面映出克制的青蓝与玫红霓虹反光，背景虚化且无可读文字、车辆或路人。",
+        "style_prompt": "低照度VHS夜景质感，冷蓝与少量玫红色偏色、暗部录像颗粒和湿地反光，不叠加暖色日光效果。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "leaning_rest", "over_shoulder"),
     },
     "library_wood": {
         "title": "木质阅览室",
         "aliases": ("图书馆", "阅览室", "书架旁", "木质书房"),
         "prompt": "安静的木质阅览室，整齐书架、阅读桌和木椅形成温暖纵深，书本不出现可辨识文字或其他人物。",
+        "style_prompt": "低饱和旧电影色调，深木色、柔和窗光与轻微胶片噪点，书架细节清楚但不抢人物主体。",
         "pose_ids": ("standing_detail", "half_turn", "seated_composed", "leaning_rest", "reach_light", "over_shoulder"),
     },
     "museum_hall": {
         "title": "古典展廳",
         "aliases": ("博物馆", "美术馆", "展厅", "古典大厅"),
         "prompt": "挑高的古典展厅，石柱、拱门与柔和天光形成庄重空间感，展品简洁且不出现文字或其他参观者。",
+        "style_prompt": "古典电影静帧，石材灰白与柔和冷光，低饱和、细颗粒和清晰明暗层次，不模拟油画笔触。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "leaning_rest", "over_shoulder"),
     },
     "cafe_corner": {
         "title": "咖啡馆窗座",
         "aliases": ("咖啡馆", "咖啡店", "咖啡厅", "餐厅窗边"),
         "prompt": "有大窗和木质桌椅的安静咖啡馆角落，窗外光线柔和，桌面干净，不出现餐饮道具、文字或其他顾客。",
+        "style_prompt": "傻瓜相机胶片快照，暖窗光、轻微闪光灯高光和清晰颗粒，颜色自然不过度橙黄。",
         "pose_ids": ("standing_detail", "half_turn", "seated_composed", "leaning_rest", "reach_light"),
     },
     "festival_lantern": {
         "title": "灯会长廊",
         "aliases": ("灯会", "灯笼长廊", "节庆灯笼", "红灯笼街"),
         "prompt": "夜色中的传统灯会长廊，暖色灯笼层层延伸形成纵深，灯面不含文字，背景不出现人群。",
+        "style_prompt": "旧DV夜间录像感，灯笼高光微微泛白、暗部有明显颗粒，红金色克制且不把人物染成纯红。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "overhead_stretch"),
     },
     "stone_staircase": {
         "title": "石阶回廊",
         "aliases": ("石阶", "石阶回廊", "楼梯转角", "台阶"),
         "prompt": "宽阔整洁的石阶回廊，台阶线条形成明显纵深，侧面有柔和自然光，不出现栏杆杂物或其他人物。",
+        "style_prompt": "低饱和黑白胶片风格，石阶明暗几何清晰，轻颗粒和柔和反差，保留服装层次。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "stair_sit", "leaning_rest", "over_shoulder"),
     },
     "greenhouse": {
         "title": "玻璃花房",
         "aliases": ("温室", "玻璃花房", "植物温室", "花房"),
         "prompt": "通透的玻璃花房，层次分明的绿植、玻璃顶棚和一张简洁长椅引入自然光，植物只作背景，不遮挡人物。",
+        "style_prompt": "柔和绿调梦核胶片，玻璃自然反光、浅绿色散射光和细颗粒，不使用浓雾或光斑遮住人物。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "seated_composed", "one_knee_crouch", "reach_light", "over_shoulder"),
     },
     "snowy_courtyard": {
         "title": "雪后庭院",
         "aliases": ("雪后庭院", "雪地", "冬日庭院", "雪景"),
         "prompt": "雪后安静庭院，薄雪覆在石路和枝头，冷冽天光与少量暖色窗光形成清晰对比，背景无其他人物。",
+        "style_prompt": "冷蓝DV静帧，低灰度柔和配色、明显细颗粒和雪面略微过曝，面部妆容与皮肤颜色自然保留。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder"),
+    },
+    "japanese_ink_room": {
+        "title": "和风墨花室内",
+        "aliases": ("和风室内", "和室", "日式房间", "墨花", "墨花屏风"),
+        "prompt": "简洁的和风室内，木格门、榻榻米或素色屏风形成安静背景，点缀一幅水墨花枝装饰，不出现文字或额外人物。",
+        "style_prompt": "古早DV录像静帧，低灰度柔和配色、冷蓝色偏、明显胶片颗粒和梦核抓拍的朦胧感；面部和露出皮肤微微过曝，妆容饱和度保留，五官边缘仍清晰。",
+        "pose_ids": ("standing_detail", "half_turn", "seated_composed", "leaning_rest", "reach_light", "over_shoulder"),
+    },
+    "old_city_rooftop": {
+        "title": "旧楼群天台",
+        "aliases": ("老旧楼群天台", "密集旧楼天台", "水泥栏杆天台", "城市高处天台"),
+        "prompt": "城市高处的旧楼天台，远处密密层叠的老旧楼群清晰形成纵深，近处是朴素水泥栏杆，环境不出现路人或杂乱设备。",
+        "style_prompt": "强烈日光下的暖色低饱和胶片快照，高光轻微过曝，带柔光晕、明显胶片颗粒和边缘泛白；保留人物与服装细节。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_profile", "back_to_camera", "over_shoulder"),
     },
 }
 
 COS_POSE_REQUEST_ALIASES = {
     "kneeling_carpet": ("跪坐在柔软地毯上", "跪坐在地毯上", "跪坐在地毯", "地毯跪坐", "跪坐在", "跪坐", "跪姿", "跪着", "跪在"),
     "standing_detail": ("自然站姿", "站姿", "站立", "站着"),
-    "half_turn": ("侧身回看", "转身回看", "回头看镜头", "侧身", "回眸"),
+    "half_turn": ("侧身姿势", "自然侧身", "身体侧向镜头"),
+    "side_profile": ("纯侧身", "侧身", "侧面站姿", "侧面朝向", "侧身不回头", "侧身但不回头"),
+    "back_to_camera": ("背对镜头", "背向镜头", "背身站立", "背影姿势", "只拍背影", "面朝远处"),
     "seated_composed": ("端正坐姿", "坐姿", "坐着", "坐在"),
     "walking_turn": ("轻步转身", "迈步", "行走", "走路"),
     "floor_sit_side": ("侧坐地面", "坐在地毯上", "坐在地上", "地面坐姿"),
@@ -1934,7 +1988,7 @@ COS_POSE_REQUEST_ALIASES = {
     "leaning_rest": ("倚靠停留", "靠在", "倚在", "靠墙", "倚墙", "倚靠"),
     "stair_sit": ("台阶坐姿", "坐在台阶", "坐在石阶"),
     "reach_light": ("伸手触景", "伸手触碰", "触碰身旁", "伸手", "抬手"),
-    "over_shoulder": ("背身回眸", "回头望", "从肩上回眸"),
+    "over_shoulder": ("背身回眸", "侧身回看", "转身回看", "回头望", "回头看镜头", "从肩上回眸", "回眸"),
     "relaxed_recline": ("沙发斜倚", "倚坐在沙发", "靠坐在沙发", "侧身倚靠"),
     "overhead_stretch": ("单臂舒展", "举手伸展", "伸展姿势", "手臂向上"),
 }
@@ -1955,23 +2009,58 @@ def _as_id_set(values: Any) -> set[str]:
     return {str(value).strip() for value in values if str(value).strip()}
 
 
+def _has_positive_request(text: str, term: str) -> bool:
+    compact = re.sub(r"\s+", "", str(text or ""))
+    needle = re.sub(r"\s+", "", str(term or ""))
+    start = 0
+    while needle:
+        index = compact.find(needle, start)
+        if index < 0:
+            return False
+        prefix = compact[max(0, index - 6) : index]
+        if not any(prefix.endswith(marker) for marker in ("不要", "不需要", "不必", "不能", "不可", "别", "不", "避免", "禁止")):
+            return True
+        start = index + len(needle)
+    return False
+
+
 def _requested_cos_pose(text: str) -> str:
-    raw = str(text or "")
+    raw = re.sub(r"\s+", "", str(text or ""))
     matches = [
         (len(alias), -index, pose_id)
         for index, (pose_id, aliases) in enumerate(COS_POSE_REQUEST_ALIASES.items())
         for alias in aliases
-        if alias in raw
+        if _has_positive_request(raw, alias)
     ]
     if matches:
         return max(matches)[2]
-    if re.search(
-        r"(?:叉腰|插腰|抱胸|交叉双臂|交叉手臂|托腮|托脸|捧脸|撩发|倚靠|靠在|倚在|靠墙|倚墙|靠坐|躺在|蹲下|半蹲|弯腰|鞠躬|抬手|举手|伸手|手扶|手搭|手持)",
-        raw,
-    ):
+    custom_pose_terms = r"叉腰|插腰|抱胸|交叉双臂|交叉手臂|托腮|托脸|捧脸|撩发|倚靠|靠在|倚在|靠墙|倚墙|靠坐|躺在|蹲下|半蹲|弯腰|鞠躬|抬手|举手|伸手|手扶|手搭|手持"
+    if any(not _is_negated_request(raw, match.start()) for match in re.finditer(custom_pose_terms, raw)):
         return "user"
     if re.search(r"(?:姿势|姿態|动作|動作)(?:是|为|改成|采用|保持|设为|设置为|：|:)", raw):
         return "user"
+    return ""
+
+
+def _is_negated_request(text: str, index: int) -> bool:
+    prefix = str(text or "")[max(0, index - 6) : index]
+    return bool(
+        re.search(
+            r"(?:不要|不需要|不必|不想|不允许|不能|不会|不可|别|不|避免|禁止|拒绝)(?:再|去|在|用|选择|采用|进行)*$",
+            prefix,
+        )
+    )
+
+
+def _requested_cos_orientation(text: str) -> str:
+    if any(_has_positive_request(text, term) for term in (
+        "背对镜头", "背向镜头", "背影", "背身", "背面构图", "后背视角", "从背后拍",
+    )):
+        return "back"
+    if any(_has_positive_request(text, term) for term in ("侧身", "侧面", "侧后方", "侧前方")):
+        return "side"
+    if any(_has_positive_request(text, term) for term in ("正面", "正对镜头", "面向镜头")):
+        return "front"
     return ""
 
 
@@ -1981,11 +2070,11 @@ def _requested_cos_scene(text: str) -> str:
         (len(alias), scene_id)
         for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
         for alias in scene["aliases"]
-        if alias in raw
+        if _has_positive_request(raw, alias)
     ]
     if matches:
         return max(matches)[1]
-    if any(term in raw for term in COS_SCENE_REQUEST_TERMS):
+    if any(_has_positive_request(raw, term) for term in COS_SCENE_REQUEST_TERMS):
         return "user"
     if re.search(r"(?:场景|背景)(?:是|为|改成|设置为|指定为|保持|不变|：|:)(?!随机)", raw):
         return "user"
@@ -2029,8 +2118,20 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
         "prompt": "低机位全身构图，从人物膝盖略低处向上拍摄，突出服装轮廓和人物气场，透视自然不过度夸张",
     },
     "side_profile": {
-        "title": "侧前方人像",
-        "prompt": "侧前方人像机位，人物轻微转向镜头，保留面部与服装主体细节",
+        "title": "自然侧面人像",
+        "prompt": "侧面或侧后三分之四机位，人物肩线、胯部和头部朝向连贯，不要求回头露出正脸",
+    },
+    "rear_three_quarter": {
+        "title": "背后偏侧中景",
+        "prompt": "镜头位于人物背后偏一侧，取近景至中景；人物背部朝向镜头，肩胯和头部朝向一致，不回头、不扭颈，服装后侧清楚",
+    },
+    "rear_low_medium": {
+        "title": "背面轻低机位",
+        "prompt": "从人物背后略低处拍摄中景，人物背对镜头且头部保持朝前，不回眸或扭转颈部；透视自然，服装后侧和姿态清楚",
+    },
+    "rear_lookback": {
+        "title": "轻微侧后方回眸",
+        "prompt": "仅在用户明确要求回眸时使用：镜头从人物后方偏侧拍摄，头部只轻轻转向侧面，保留自然颈部角度；不强求正脸，不把头扭过肩线",
     },
     "low_angle_neck_to_knee": {
         "title": "横屏低机位颈下至膝上",
@@ -2042,6 +2143,7 @@ COS_FRAMING_TERMS = (
     "横屏", "竖屏", "方形", "正方形", "全身", "半身", "胸像", "肖像",
     "近景", "中景", "远景", "环境人像", "三分之四", "三分之三", "三分之二",
     "正面机位", "正面拍摄", "正面站立", "正面构图", "正对镜头", "侧前方", "侧身",
+    "背对镜头", "背向镜头", "背影", "背身", "背面构图", "后背视角", "从背后拍", "侧后方", "侧面机位",
     "低机位", "高机位", "腰线", "膝盖附近",
     "头部位于画面", "头部在画面", "画面从头", "画面只拍",
 )
@@ -2130,6 +2232,7 @@ def pick_cos_framing(
     outfit: str = "",
     extra_request: str = "",
     avoid_framings: Iterable[str] = (),
+    pose_id: str = "",
 ) -> Dict[str, Any]:
     """Pick a concrete framing unless the user's extra request already fixes it."""
     # Framing text authored inside an outfit is descriptive context, not a lock.
@@ -2163,8 +2266,23 @@ def pick_cos_framing(
             "explicit": True,
         }
     avoided = _as_id_set(avoid_framings)
-    available = [item for item in COS_FRAMING_CLASSES if item not in avoided]
-    view_id = random.choice(available or list(COS_FRAMING_CLASSES))
+    orientation = str(COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("orientation") or "")
+    compatible = {
+        "back": {"rear_three_quarter", "rear_low_medium", "environmental", "eye_level_full"},
+        "side": {"side_profile", "environmental", "eye_level_full", "low_angle_full"},
+    }.get(orientation)
+    if pose_id == "over_shoulder":
+        compatible = {"rear_three_quarter", "rear_lookback", "environmental"}
+    candidates = [
+        item for item in COS_FRAMING_CLASSES
+        if (item not in COS_EXPLICIT_ONLY_FRAMING_IDS or pose_id == "over_shoulder")
+        and (compatible is None or item in compatible)
+    ]
+    available = [item for item in candidates if item not in avoided]
+    if not available:
+        # Avoid lists may exhaust the pool, but must not bypass pose/framing safety.
+        available = candidates
+    view_id = random.choice(available)
     selected = dict(COS_FRAMING_CLASSES[view_id])
     selected["view_id"] = view_id
     selected["outfit_text"] = resolved_outfit
@@ -2183,13 +2301,13 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
         "pose_ids": poses,
         "scene_ids": scenes,
         "view_ids": views,
-        "recommended_pose_ids": list(poses),
+        "recommended_pose_ids": [item for item in poses if item not in COS_EXPLICIT_ONLY_POSE_IDS],
         "recommended_scene_ids": list(scenes),
         "recommended_view_ids": list(views),
         "incompatible_pose_ids": [],
         "incompatible_scene_ids": [],
         "scene_pose_compatibility": {
-            scene_id: list(scene["pose_ids"])
+            scene_id: _scene_pose_ids(scene)
             for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
         },
         "fixed_reason": "",
@@ -2199,6 +2317,31 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
 def get_cos_look_by_id(cos_id: str) -> Dict[str, Any]:
     look_id = str(cos_id or "").strip()
     return next((dict(item) for item in COS_LOOK_SETS if str(item.get("id") or "") == look_id), {})
+
+
+def _scene_pose_ids(scene: Mapping[str, Any]) -> List[str]:
+    return list(dict.fromkeys([*scene["pose_ids"], *COS_SCENE_GENERIC_POSE_IDS]))
+
+
+COS_STYLE_REQUEST_TERMS = (
+    "dv", "vhs", "ins风", "芭比质感", "梦核", "胶片", "颗粒", "低饱和", "低灰度",
+    "冷蓝", "暖色调", "过曝", "柔光晕", "朦胧感", "录像质感",
+)
+
+
+def _requested_cos_style(text: str) -> bool:
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    return any(term in compact for term in COS_STYLE_REQUEST_TERMS)
+
+
+def _poses_for_orientation(pose_ids: Iterable[str], orientation: str) -> List[str]:
+    if not orientation:
+        return list(pose_ids)
+    return [
+        pose_id for pose_id in pose_ids
+        if not COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("orientation")
+        or COS_RANDOM_POSE_CLASSES[pose_id]["orientation"] == orientation
+    ]
 
 
 def pick_cos_variation(
@@ -2219,13 +2362,17 @@ def pick_cos_variation(
     avoided_scenes = _as_id_set(avoid_scenes) | _as_id_set(avoid_scene)
     requested_pose = _requested_cos_pose(extra_request)
     requested_scene = _requested_cos_scene(extra_request)
+    requested_orientation = _requested_cos_orientation(extra_request)
 
     if requested_scene and requested_pose:
         scene_id, pose_id = requested_scene, requested_pose
     elif requested_scene:
         scene_id = requested_scene
         scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
-        compatible_poses = list(scene["pose_ids"]) if scene else list(profile["pose_ids"])
+        compatible_poses = _scene_pose_ids(scene) if scene else list(profile["recommended_pose_ids"])
+        if not requested_pose:
+            compatible_poses = _poses_for_orientation(compatible_poses, requested_orientation)
+        compatible_poses = [item for item in compatible_poses if item not in COS_EXPLICIT_ONLY_POSE_IDS]
         available_poses = [item for item in compatible_poses if item not in avoided_poses]
         pose_id = random.choice(available_poses or compatible_poses)
     elif requested_pose:
@@ -2233,7 +2380,7 @@ def pick_cos_variation(
         compatible_scenes = [
             scene_id
             for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
-            if requested_pose == "user" or requested_pose in scene["pose_ids"]
+            if requested_pose == "user" or requested_pose in _scene_pose_ids(scene)
         ]
         available_scenes = [item for item in compatible_scenes if item not in avoided_scenes]
         scene_id = random.choice(available_scenes or compatible_scenes)
@@ -2241,8 +2388,16 @@ def pick_cos_variation(
         pairs = [
             (scene_id, pose_id)
             for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
-            for pose_id in scene["pose_ids"]
+            for pose_id in _scene_pose_ids(scene)
+            if pose_id not in COS_EXPLICIT_ONLY_POSE_IDS
         ]
+        if requested_orientation:
+            pairs = [
+                pair for pair in pairs
+                if pair[1] not in COS_RANDOM_POSE_CLASSES
+                or not COS_RANDOM_POSE_CLASSES[pair[1]].get("orientation")
+                or COS_RANDOM_POSE_CLASSES[pair[1]]["orientation"] == requested_orientation
+            ]
         available_pairs = [
             pair for pair in pairs
             if pair[0] not in avoided_scenes and pair[1] not in avoided_poses
@@ -2261,10 +2416,17 @@ def pick_cos_variation(
     scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
 
     prompt_parts = []
-    if not requested_scene and scene:
+    if scene and requested_scene != "user":
         prompt_parts.append(
-            "本次随机场景优先于套装正文中残留的背景或环境描述：" + scene["prompt"]
+            (
+                "本次随机场景优先于套装正文中残留的背景或环境描述："
+                if not requested_scene
+                else "按用户指定场景补充环境细节："
+            )
+            + scene["prompt"]
         )
+    if scene and scene.get("style_prompt") and not _requested_cos_style(extra_request):
+        prompt_parts.append("本次场景影像风格：" + scene["style_prompt"])
     if not requested_pose:
         prompt_parts.append(
             "本次随机姿势优先于套装正文中残留的人物姿势描述："
@@ -2888,11 +3050,17 @@ def build_cos_look_action(
     outfit = adapt_cos_prompt_for_appearance(outfit, appearance_type)
     outfit = normalize_cos_prompt_negatives(outfit, appearance_type=appearance_type)
     cos_id = str(chosen.get("id") or "cos")
+    pose_avoidance = _as_id_set(avoid_poses)
+    if camera_kind == "selfie" and any(
+        _has_positive_request(extra_request, term)
+        for term in ("对镜自拍", "镜前自拍", "对着镜子自拍", "镜中自拍", "镜子自拍")
+    ):
+        pose_avoidance.add("back_to_camera")
     variation = pick_cos_variation(
         cos_id,
         avoid_pose=avoid_pose,
         avoid_scene=avoid_scene,
-        avoid_poses=avoid_poses,
+        avoid_poses=pose_avoidance,
         avoid_scenes=avoid_scenes,
         extra_request=extra_request,
     )
@@ -2900,6 +3068,7 @@ def build_cos_look_action(
         outfit=outfit,
         extra_request=extra_request,
         avoid_framings=avoid_framings,
+        pose_id=variation["pose_id"],
     )
     outfit = framing_choice.get("outfit_text", outfit)
     extra_request = framing_choice.get("extra_request_text", extra_request)
@@ -2923,6 +3092,10 @@ def build_cos_look_action(
         framing_line = ""
     if camera_kind == "third":
         hand_rule = (
+            "背面他拍：摄影师在画面外，人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；"
+            "双手按已选姿势自然摆放，人物恰好两条手臂和两只手，不额外添加拍摄设备，不要求露出面部。"
+            if variation["pose_id"] == "back_to_camera"
+            else
             "不要对镜、不要镜子；画面只允许主角既有的一只手握持唯一一部普通手机，从脸侧或下方自然遮住半张脸；"
             "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或第二台拍摄设备；"
@@ -2941,6 +3114,9 @@ def build_cos_look_action(
         )
     elif camera_kind == "selfie":
         hand_rule = (
+            "本次为背面定时自拍：主角自行启动手机定时拍摄，手机和支架留在画面外；主角背对镜头，双手按已选姿势自然摆放，不拿手机、不回头，也不额外生成拍摄者。"
+            if variation["pose_id"] == "back_to_camera"
+            else
             "可对镜取景；画面只允许主角既有的一只手握持唯一一部普通手机，从脸侧或下方自然遮住半张脸；"
             "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或其它拍摄设备；"
@@ -2960,7 +3136,11 @@ def build_cos_look_action(
             "第一视角主观镜头：镜头位于观察者自然视线的位置，像观察者亲眼看到主角；"
             "画面只出现主角一个人，主角自身两条手臂和两只手自然连接；"
             "不自动出现手持设备、镜面反射、拍摄者、记录设备、观察者身体、观察者手臂或第二人物；"
-            "保持面部、发型、服装和配饰清晰可见。"
+            + (
+                "按背面构图清楚展示头发和服装后侧，不要求主角回头露出面部。"
+                if variation["pose_id"] == "back_to_camera"
+                else "保持面部、发型、服装和配饰清晰可见。"
+            )
         )
         framing = (
             "【第一视角 / 看看COS模式】"

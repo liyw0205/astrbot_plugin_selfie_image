@@ -1529,6 +1529,38 @@ class SelfieImagePlugin(
             picker=pick_cos_look_set,
         )
 
+    def _prepare_llm_selfie_action(
+        self, action: str, has_refs: bool
+    ) -> Tuple[str, str, str]:
+        """Route an LLM selfie request through its mode-specific prompt builder."""
+        raw_action = str(action or "").strip() or "看着镜头自然自拍"
+        intent = self.persona.analyze_selfie_intent(raw_action)
+        leg_rebuild_extra = (
+            raw_action
+            if intent.is_legs_only and "【legs:outfit】" not in raw_action
+            else ""
+        )
+        request_text = re.sub(
+            r"^【LLM 自拍】\s*|^LLM\s*自拍[:：]?\s*", "", raw_action
+        ).strip()
+        cos_rebuild_query = ""
+        if intent.is_cos_look and not re.search(r"【cos:[a-z0-9_]+】", raw_action, re.I):
+            cos_rebuild_query = request_text
+            raw_action = self._build_cos_look_action(
+                request_text,
+                has_refs,
+                match_query=request_text,
+            )
+        elif intent.is_legs_only:
+            raw_action = self._normalize_selfie_action(raw_action, has_refs)
+        elif intent.is_group_photo and not re.search(r"【shot:group_", raw_action):
+            raw_action = self._build_group_selfie_action(request_text, has_refs)
+        elif intent.is_third_person_photo and not re.search(r"【shot:", raw_action):
+            raw_action = self._build_third_person_look_action(request_text, has_refs)
+        elif not re.search(r"【shot:", raw_action):
+            raw_action = self._build_selfie_request_action(request_text, has_refs)
+        return raw_action, leg_rebuild_extra, cos_rebuild_query
+
     async def _run_llm_selfie_flow(
         self,
         event: AstrMessageEvent,
@@ -1546,12 +1578,6 @@ class SelfieImagePlugin(
             return self._tool_soft_fail(error)
 
         action = str(action or "").strip() or "看着镜头自然自拍"
-        leg_rebuild_extra = (
-            action
-            if self.persona.analyze_selfie_intent(action).is_legs_only
-            and "【legs:outfit】" not in action
-            else ""
-        )
         await self._send_progress_text(
             event,
             await self._build_contextual_progress_text(event, "selfie", action, requested_count, ack_message),
@@ -1569,7 +1595,10 @@ class SelfieImagePlugin(
             else None
         )
         selection = group_selection or cos_selection
-        action = self._normalize_selfie_action(action, bool(extra_refs))
+        action, leg_rebuild_extra, cos_rebuild_query = self._prepare_llm_selfie_action(
+            action,
+            bool(extra_refs),
+        )
         async def runner(task_id: str) -> Dict[str, Any]:
             return await self._background_selfie_batches(
                 task_id,
@@ -1582,6 +1611,7 @@ class SelfieImagePlugin(
                 resolution,
                 self._natural_fail_fallback("selfie"),
                 rebuild_extra_request=leg_rebuild_extra,
+                rebuild_match_query=cos_rebuild_query,
                 cos_selection=selection,
                 reference_selection=selection.summary() if selection else None,
                 model_request=model_request,
@@ -5168,7 +5198,10 @@ class SelfieImagePlugin(
                     if rebuild_special_preset_variants and index < len(rebuild_special_preset_variants)
                     else extra_keep
                 )
-                if source == "command-group-selfie":
+                if source == "command-group-selfie" or (
+                    self._looks_like_group_selfie_intent(action)
+                    and not self._is_cos_action(action)
+                ):
                     round_action = self._build_group_selfie_action(
                         variant_extra,
                         bool(extra_refs),
@@ -5185,7 +5218,9 @@ class SelfieImagePlugin(
                     m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
                     if m_pose:
                         last_pose = str(m_pose.group(1) or last_pose)
-                elif source == "command-look-cos":
+                elif source == "command-look-cos" or (
+                    source == "llm-generate-selfie" and self._is_cos_action(action)
+                ):
                     round_action = self._build_cos_look_action(
                         variant_extra,
                         bool(extra_refs),
@@ -7551,7 +7586,7 @@ class SelfieImagePlugin(
     ) -> Optional[str]:
         """
         使用生图模型生成普通图片，支持文生图和参考图图生图。
-        自拍、AI 自己、合影、合照、同框、与用户一起拍照等请求使用 generate_selfie。
+        自拍、看看COS、看看腿、看看你、AI 自己、合影、合照、同框、与用户一起拍照等请求使用 generate_selfie。
         prompt 保持简洁，保留主体、场景、动作/风格、构图和参考图关系即可。
         用户点名要用某个模型时（例如“用gpt画一只猫”“用即梦生成”），把提到的模型关键词填入 model；没有点名就留空，自动按启用顺序路由。
         闲聊中顺势画图时，ack_message 用当前人格自然短句接话，简体中文 10-40 字。
@@ -7657,6 +7692,7 @@ class SelfieImagePlugin(
         非合影换装或换姿势时，附带图片默认只作为服装、姿势、构图或风格参考，AI 的脸和身份仍来自当前形象参考图。
         如果附带图片里的人用手机、手、道具、口罩、面具或其他东西挡脸，默认不要把挡脸物迁移到 AI 身上，除非用户明确要求遮脸。
         action 保持简洁，整理出动作/场景/情绪/服装/镜头语言；合影时写清同框关系和参考图对象。
+        对“看看COS / 看看腿 / 看看你 / 自拍”等模式请求，在 action 中保留对应模式词，不要改写成丢失模式的纯服装描述。
         用户点名要用某个模型时，把提到的模型关键词填入 model；没有点名就留空，自动按启用顺序路由。
         ack_message 使用简体中文，以当前人格自然回应，10-40 字。
         Args:

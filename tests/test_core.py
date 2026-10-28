@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.53")
+        self.assertEqual(PLUGIN_VERSION, "1.6.54")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -9585,7 +9585,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertNotIn("过度美颜磨皮", selfie_cover)
         group_cover = plugin_main.SelfieImagePlugin._build_group_selfie_action(_P(), "", False)
         self.assertIn("竖屏", group_cover)
-        self.assertIn("半身", group_cover)
+        self.assertTrue("半身" in group_cover or "中远景" in group_cover)
         self.assertIn("窗光", group_cover)
         self.assertIn("不要美颜滤镜", group_cover)
         self.assertIn("保持上方已确定的单一构图", forced_selfie)
