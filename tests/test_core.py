@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.54")
+        self.assertEqual(PLUGIN_VERSION, "1.6.56")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -1649,6 +1649,31 @@ class ConfigModelTests(unittest.TestCase):
         )
         self.assertEqual(zh_safety["category"], "safety")
         self.assertIn("安全", zh_safety["user_message"])
+        guardrail_safety = classify_generation_error(
+            "HTTP 400: We’re so sorry, but the prompt may violate our guardrails around nudity, sexuality, or erotic content."
+        )
+        self.assertEqual(guardrail_safety["category"], "safety")
+        self.assertIn("内容未通过上游安全策略", guardrail_safety["user_message"])
+        policy_safety = classify_generation_error(
+            "HTTP 400: 非常抱歉，该提示可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。"
+        )
+        self.assertEqual(policy_safety["category"], "safety")
+        self.assertIn("安全策略", policy_safety["user_message"])
+        forbidden_safety = classify_generation_error("HTTP 403: 账号已被限制：上游安全审核违规")
+        self.assertEqual(forbidden_safety["category"], "safety")
+        self.assertFalse(forbidden_safety["retryable"])
+        quota_error = classify_generation_error("HTTP 400: 积分余额不足：本次需要 100 积分")
+        self.assertEqual(quota_error["category"], "quota")
+        self.assertIn("额度不足", quota_error["user_message"])
+        self.assertEqual(
+            classify_generation_error("HTTP 400: unsupported size")["user_message"],
+            "上游拒绝了请求参数，可能是尺寸、比例、模型参数或参考图格式不兼容",
+        )
+        provider_failure = classify_generation_error(
+            "HTTP 400: Image request could not be completed. Do not automatically regenerate; check usage or contact support."
+        )
+        self.assertEqual(provider_failure["category"], "server")
+        self.assertIn("上游未能完成图片请求", provider_failure["user_message"])
         from astrbot_plugin_selfie_image.core.error_classify import summarize_generation_failures
 
         summary = summarize_generation_failures(
@@ -5785,6 +5810,17 @@ class SessionModelAndTaskTests(unittest.TestCase):
         message = friendly_user_error_message("提示词审核未通过：图片中存在明显的违规风险")
         self.assertEqual(message, "图片中存在明显的违规风险")
         self.assertNotIn("换个说法", message)
+
+    def test_upstream_error_user_message_keeps_specific_category(self) -> None:
+        from astrbot_plugin_selfie_image.prompts.response_text import friendly_user_error_message
+
+        safety = friendly_user_error_message(
+            "relay/gpt-image-2: 内容未通过上游安全策略，提示词或参考图可能触发了限制"
+        )
+        self.assertIn("安全策略", safety)
+        self.assertNotIn("请求参数不被上游接受", safety)
+        quota = friendly_user_error_message("relay/gpt-image-2: 渠道额度不足或已用尽，请检查余额和用量")
+        self.assertIn("额度不足", quota)
 
     def test_image_to_text_uses_configured_auxiliary_model(self) -> None:
         plugin = self._plugin_stub()

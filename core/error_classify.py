@@ -62,6 +62,40 @@ NON_RETRYABLE_PATTERNS = (
     r"不存在",
 )
 
+# Providers do not use one stable moderation error schema. Match the reason
+# before looking at the HTTP status so a 403 moderation response is not shown
+# as an API-key failure and a 400 policy response is not shown as a bad payload.
+SAFETY_ERROR_PATTERNS = (
+    r"\bguardrails?\b",
+    r"\bnudity\b",
+    r"\bsexual(?:ity)?\b",
+    r"\berotic\b",
+    r"\bcontent[\s_-]?policy\b",
+    r"\bcontent[\s_-]?moderation\b",
+    r"\b(?:prompt|request|image|generated image).{0,80}\b(?:violate|violates|violation|rejected|blocked)\b",
+    r"prompt\s+may\s+violate",
+    r"rejected\s+by\s+content",
+    r"内容政策",
+    r"安全政策|安全策略|安全审核",
+    r"内容审核|审核不通过|审核未通过|审核违规|审核被拒",
+    r"可能违反.{0,24}(?:内容政策|安全政策|安全策略|安全审核)",
+    r"不适合进行图像生成",
+)
+
+QUOTA_ERROR_PATTERNS = (
+    r"\bquota\b",
+    r"\b(?:credit|credits|balance)\b.{0,50}\b(?:insufficient|not enough|exceeded|depleted|low|empty)\b",
+    r"\binsufficient(?:\s+(?:funds|balance|credits|quota))?\b",
+    r"\bnot enough\s+(?:credits|quota|balance|points)\b",
+    r"积分(?:余额)?不足|余额不足|额度不足|配额不足|账户余额不足|用量不足",
+)
+
+UPSTREAM_FAILURE_PATTERNS = (
+    r"image request could not be completed",
+    r"do not automatically regenerate",
+    r"图片请求(?:无法|未能)完成",
+)
+
 # Parameter / schema issues: may switch payload profile once, but should not loop forever.
 PARAM_ERROR_PATTERNS = (
     r"\binvalid[_\s-]?(?:param|parameter|request|value|json|body|field|size|aspect)\b",
@@ -74,6 +108,22 @@ PARAM_ERROR_PATTERNS = (
     r"HTTP 400",
     r"HTTP 422",
 )
+
+
+def _matches_error_patterns(text: str, patterns: tuple[str, ...]) -> bool:
+    return any(re.search(pattern, text, flags=re.I | re.S) for pattern in patterns)
+
+
+def _safety_error_message() -> str:
+    return "内容未通过上游安全策略，提示词或参考图可能触发了限制"
+
+
+def _quota_error_message() -> str:
+    return "渠道额度不足或已用尽，请检查余额和用量"
+
+
+def _param_error_message() -> str:
+    return "上游拒绝了请求参数，可能是尺寸、比例、模型参数或参考图格式不兼容"
 
 
 def extract_http_status(error: str) -> int | None:
@@ -108,13 +158,42 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
     """Classify a provider/generation error for retry policy.
 
     Returns:
-        category: auth | not_found | safety | param | timeout | network | server | rate_limit | unknown
+        category: auth | not_found | safety | quota | param | timeout | network | server | rate_limit | unknown
         retryable: whether outer fallback should spend another attempt on *this* error class
         user_message: single-cause user-facing text (already expects redaction upstream)
     """
     text = str(error or "").strip() or "生成失败"
     lowered = text.lower()
     status = extract_http_status(text)
+
+    # The provider's reason is more useful than the status code. In
+    # particular, moderation commonly arrives as HTTP 400 or 403.
+    if _matches_error_patterns(text, SAFETY_ERROR_PATTERNS):
+        return {
+            "category": "safety",
+            "retryable": False,
+            "http_status": status,
+            "user_message": _safety_error_message(),
+            "raw": text,
+        }
+
+    if _matches_error_patterns(text, QUOTA_ERROR_PATTERNS):
+        return {
+            "category": "quota",
+            "retryable": False,
+            "http_status": status,
+            "user_message": _quota_error_message(),
+            "raw": text,
+        }
+
+    if _matches_error_patterns(text, UPSTREAM_FAILURE_PATTERNS):
+        return {
+            "category": "server",
+            "retryable": False,
+            "http_status": status,
+            "user_message": "上游未能完成图片请求，请检查渠道用量或服务状态",
+            "raw": text,
+        }
 
     if status in NON_RETRYABLE_HTTP_STATUSES:
         if status in {401, 403}:
@@ -123,16 +202,9 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
         elif status == 404 or re.search(r"model[_\s-]?not[_\s-]?found|no available channel", lowered):
             category = "not_found"
             user_message = "模型不存在或当前分组不可用"
-        elif re.search(
-            r"unsafe|safety|moderation|content[_\s-]?policy|审核|安全政策|安全策略|"
-            r"不适合进行图像生成|rejected by content|content moderation",
-            lowered,
-        ) or re.search(r"安全政策|安全策略|内容审核|不适合进行图像生成", text):
-            category = "safety"
-            user_message = "内容未通过上游安全策略"
         else:
             category = "param"
-            user_message = "请求参数不被上游接受"
+            user_message = _param_error_message()
         return {
             "category": category,
             "retryable": False,
@@ -202,7 +274,7 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
                 or "安全政策" in text
             ):
                 category = "safety"
-                user_message = "内容未通过安全策略"
+                user_message = _safety_error_message()
             elif re.search(r"auth|token|key|unauthorized|forbidden|鉴权", lowered):
                 category = "auth"
                 user_message = "渠道鉴权失败，请检查 API Key"
@@ -226,7 +298,7 @@ def classify_generation_error(error: Any) -> Dict[str, Any]:
                 "category": "param",
                 "retryable": False,
                 "http_status": status,
-                "user_message": "请求参数不被上游接受",
+                "user_message": _param_error_message(),
                 "raw": text,
                 "profile_switch_candidate": True,
             }
@@ -276,7 +348,7 @@ def retry_action(
     category = str(info.get("category") or "unknown")
     if has_next_key and category in {"auth", "rate_limit"}:
         return "next_key"
-    if has_next_target and (bool(info.get("retryable")) or category in {"auth", "param", "not_found", "safety", "fatal"}):
+    if has_next_target and (bool(info.get("retryable")) or category in {"auth", "param", "not_found", "quota", "safety", "fatal"}):
         return "next_model"
     return "stop"
 
