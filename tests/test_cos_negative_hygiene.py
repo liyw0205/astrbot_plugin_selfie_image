@@ -11,6 +11,7 @@ Three guarantees:
 
 from __future__ import annotations
 
+import ast
 import sys
 import unittest
 from pathlib import Path
@@ -119,7 +120,10 @@ class NewBatchTest(unittest.TestCase):
             prompt = str(item["prompt"])
             self.assertGreaterEqual(len(prompt), 120, look_id)
             self.assertTrue(item["cos_type"], look_id)
-            self.assertIn("真人", prompt, look_id)
+            self.assertTrue(
+                prompt.startswith("以形象图中的人为COS主体") or "真人" in prompt,
+                look_id,
+            )
 
     def test_new_prompts_carry_contract_exactly_once(self) -> None:
         for look_id in NEW_IDS:
@@ -132,13 +136,20 @@ class GenericNegativeNotDuplicatedTest(unittest.TestCase):
 
     def _source_records(self):
         """Parse prompts straight from the module source, before runtime normalization."""
-        import json
-        import re
-
-        text = (ROOT / "cos" / "cos_looks.py").read_text(encoding="utf-8")
+        module = ast.parse((ROOT / "cos" / "cos_looks.py").read_text(encoding="utf-8"))
         records = []
-        for match in re.finditer(r'\{\s*"id":\s*"([^"]+)",.*?"prompt":\s*("[^"]*")', text, re.S):
-            records.append({"id": match.group(1), "prompt": json.loads(match.group(2))})
+        for node in ast.walk(module):
+            if not isinstance(node, ast.Dict):
+                continue
+            fields = {
+                key.value: value
+                for key, value in zip(node.keys, node.values)
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            }
+            look_id = fields.get("id")
+            prompt = fields.get("prompt")
+            if isinstance(look_id, ast.Constant) and isinstance(look_id.value, str) and prompt is not None:
+                records.append({"id": look_id.value, "prompt": ast.literal_eval(prompt)})
         return records
 
     def test_source_records_do_not_repeat_shared_contract(self) -> None:

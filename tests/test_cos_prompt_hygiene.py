@@ -4,8 +4,8 @@ Covers two fixed problems:
 1. The shared craft sentence listed 制服/兔耳/领带 as guaranteed physical
    details, leaking bunny ears and neckties into outfits that have neither.
    It was rewritten to 服装、发饰和道具 / 纽扣、袜鞋.
-2. The C.C. 白虎礼服 prompt asked for a full-length mirror selfie while the
-   shared negative contract forbids a second person, producing unstable frames.
+2. The C.C. 白虎礼服 prompt used a fixed mirror-selfie template. It now keeps
+   the outfit details and reference-person anchor without camera or pose rules.
 
 Note: the Azur Lane rigging outfits carry a DIFFERENT craft sentence (ship-kit
 wording); it is intentionally out of scope for the rewritten sentence.
@@ -87,19 +87,19 @@ class CosCraftSpecHygieneTest(unittest.TestCase):
             self.assertEqual(prompt.count("不要额外人物"), 1, str(item.get("id")))
 
 
-class MirrorSelfieContradictionTest(unittest.TestCase):
-    def test_cc_white_tiger_prompt_uses_direct_selfie(self) -> None:
+class CcWhiteTigerPromptTest(unittest.TestCase):
+    def test_prompt_keeps_costume_details_without_a_camera_template(self) -> None:
         item = get_cos_look_by_id("cc_white_tiger_pink_gold_dress")
         self.assertTrue(item)
         prompt = str(item.get("prompt") or "")
+        self.assertTrue(prompt.startswith("以形象图中的人为COS主体"))
         self.assertNotIn("全身镜中自拍", prompt)
         self.assertNotIn("镜子", prompt)
         self.assertNotIn("镜中", prompt)
         self.assertNotIn("全身镜", prompt)
-        self.assertIn("自拍", prompt)
-        self.assertIn("手持自拍视角", prompt)
-        # Pose wording survives the rewrite.
-        self.assertIn("身体微侧", prompt)
+        self.assertNotIn("自拍", prompt)
+        self.assertIn("金色藤蔓花朵镂空", prompt)
+        self.assertIn("粉色缎面高开叉长裙", prompt)
 
 
 if __name__ == "__main__":
