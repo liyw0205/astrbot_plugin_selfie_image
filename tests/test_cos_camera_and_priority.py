@@ -882,6 +882,45 @@ def test_selfie_scene_and_light_overrides_are_independent():
     assert "场景倾向：随机咖啡馆" in negative_scene
 
 
+def test_default_selfies_get_one_candid_finish_and_full_mirror_shows_the_outfit():
+    with (
+        patch(
+            "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
+            return_value=["arm_half"],
+        ),
+        patch(
+            "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choice",
+            side_effect=lambda items: items[0],
+        ),
+    ):
+        default_selfie = build_selfie_look_action()
+        explicit_selfie = build_selfie_look_action("窗边自拍，轻微仰拍")
+
+    assert "手机随手拍质感：" in default_selfie
+    assert "场景和镜头不得改变、增添或删减今日穿搭" in default_selfie
+    assert "手机随手拍质感：" not in explicit_selfie
+
+    with (
+        patch(
+            "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
+            return_value=["mirror_full"],
+        ),
+        patch(
+            "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choice",
+            side_effect=lambda items: items[0],
+        ),
+    ):
+        mirror_selfie = build_selfie_look_action(
+            scene_light_provider=lambda _kind: (["镜前整洁台面"], ["室内白光"])
+        )
+
+    assert "【shot:mirror_full】" in mirror_selfie
+    assert "头部、上衣、下装和鞋履完整入镜" in mirror_selfie
+    assert "人物与倒影比例一致" in mirror_selfie
+    with tempfile.TemporaryDirectory() as tmp:
+        assert not PersonaManager(tmp).analyze_selfie_intent(mirror_selfie).is_legs_only
+
+
 def test_llm_selfie_intents_route_to_their_mode_builders_and_cos_rebuilds():
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 

@@ -2207,7 +2207,7 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
     },
     "low_angle_hero": {
         "title": "轻仰角气场人像",
-        "prompt": "镜头位于腰部附近略低位置，以克制的轻仰角拍摄三分之二身或全身；保持正常焦段和自然人体比例，不贴近腿部、不使用超广角",
+        "prompt": "镜头位于腰部附近略低位置，以克制的轻仰角拍摄三分之二身构图；保持正常焦段和自然人体比例，不贴近腿部、不使用超广角",
     },
     "high_angle_oblique": {
         "title": "高位斜俯环境人像",
@@ -3484,12 +3484,19 @@ def build_cos_look_action(
     requested_camera = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
     phone_face_cover = requests_phone_face_cover(extra_request)
     cos_id = str(chosen.get("id") or "cos")
+    requested_pose = _requested_cos_pose(extra_request)
     pose_avoidance = _as_id_set(avoid_poses)
     if requested_camera == "selfie" and any(
         _has_positive_request(extra_request, term)
         for term in ("对镜自拍", "镜前自拍", "对着镜子自拍", "镜中自拍", "镜子自拍")
     ):
         pose_avoidance.add("back_to_camera")
+    camera_kind = pick_cos_camera(
+        extra_request=extra_request,
+        avoid=_as_id_set(avoid_cameras) | _as_id_set(avoid_camera),
+        camera=requested_camera,
+        pose_id=requested_pose,
+    )
     variation = pick_cos_variation(
         cos_id,
         avoid_pose=avoid_pose,
@@ -3497,13 +3504,7 @@ def build_cos_look_action(
         avoid_poses=pose_avoidance,
         avoid_scenes=avoid_scenes,
         extra_request=extra_request,
-        camera=requested_camera,
-    )
-    camera_kind = pick_cos_camera(
-        extra_request=extra_request,
-        avoid=_as_id_set(avoid_cameras) | _as_id_set(avoid_camera),
-        camera=requested_camera,
-        pose_id=variation["pose_id"],
+        camera=requested_camera or camera_kind,
     )
     outfit = adapt_cos_outfit_for_camera(
         str(chosen.get("prompt") or "").strip(), camera_kind

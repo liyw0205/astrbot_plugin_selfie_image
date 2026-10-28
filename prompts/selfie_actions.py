@@ -19,6 +19,7 @@ from .prompt_templates import resolve_appearance_type
 SELFIE_SHOT_POOL = (
     ("arm_half", 3),
     ("mirror_half", 2),
+    ("mirror_full", 2),
     ("window_side", 2),
     ("desk_sit", 2),
     ("sofa_casual", 2),
@@ -29,12 +30,13 @@ SELFIE_SHOT_POOL = (
 )
 
 SELFIE_SHOT_LINES = {
-    "arm_half": "手机自拍臂半身：手臂微伸举机，胸口以上到头顶入镜，眼神看镜头，表情自然松弛。",
-    "mirror_half": "镜子半身自拍：镜中看镜头（看向手机镜头方向），构图干净，不要拍进乱糟糟背景堆。",
-    "window_side": "窗边侧光半身自拍：身体略侧、脸仍转向镜头，窗光柔和，轮廓清楚。",
-    "desk_sit": "书桌前坐下自拍：略俯视半身，手可托腮或扶桌沿，看镜头，居家学习/摸鱼感。",
-    "sofa_casual": "沙发窝着随手自拍：半身或胸像，靠垫入镜一点，看镜头，轻松日常。",
-    "high_angle": "稍高机位自拍：镜头略高于眼，脸自然抬一点看镜头，显精神，不要过度仰拍变形。",
+    "arm_half": "手机自拍臂中近景：手臂自然伸向镜头，头部到腰线入镜，上衣版型与搭配层次清楚，表情松弛。",
+    "mirror_half": "镜前中近景自拍：头部到胯部上方入镜，手机不挡住主要服装，镜中自然看向手机镜头，展示今日穿搭的上下层次。",
+    "mirror_full": "全身镜前穿搭自拍：头部、上衣、下装和鞋履完整入镜，手机自然持握且不遮挡衣服，人物与倒影比例一致。",
+    "window_side": "窗边侧光自拍：身体略侧，头部自然转向镜头，头部到腰线或胯部上方入镜，衣服层次清楚。",
+    "desk_sit": "书桌前坐姿自拍：略俯视中近景，头部到腰部入镜，可自然扶桌沿，今日上衣和配饰清晰。",
+    "sofa_casual": "沙发上随手自拍：靠垫只在背景边缘，头部到腰线入镜，穿搭不被抱枕遮挡，姿态放松。",
+    "high_angle": "稍高机位自拍：镜头略高于眼，轻微向下拍到腰线，脸自然抬一点看镜头，显精神，不要过度俯拍变形。",
     "close_portrait": "近景胸像自拍：脸与肩为主，眼神对焦镜头，五官清晰，浅景深。",
     "back_view": "背面自拍构图：主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手自然垂放，只有场景内已有合适支撑物时才自然搭放。",
     "side_profile": "侧身自拍：身体和头部自然朝向同一侧，肩胯约四十五度侧向镜头，不回头硬露正脸，颈部和肩线保持自然。",
@@ -47,6 +49,18 @@ SELFIE_GESTURES = (
     "比个很小的 OK 或比心（含蓄）",
     "双手捧杯刚抬眼",
     "刚坐好整理袖口",
+)
+
+SELFIE_CANDID_FINISHES = (
+    "手机自动曝光略偏亮，局部高光稍微发白，但脸和服装颜色仍清楚",
+    "取景没有完全居中，画框有一点点歪，保留普通人临时举手机的感觉",
+    "轻微手持抖动只落在画面边缘，眼睛、脸部和穿搭主体保持清晰",
+    "前置镜头白平衡稍偏冷，暗部有一点细颗粒，不加明显滤镜",
+)
+
+SELFIE_MIRROR_FINISHES = (
+    "镜中取景略偏一侧，留白不太均匀，但人物和衣服轮廓完整",
+    "手机直出色彩稍淡，室内光线不完全均匀，穿搭细节仍清楚可辨",
 )
 
 THIRD_PERSON_SHOT_POOL = (
@@ -150,7 +164,7 @@ def _scene_contains(scene: str, *terms: str) -> bool:
 
 def _scene_supports_shot(scene: str, shot: str) -> bool:
     """Keep a randomly selected shot grounded in the selected environment."""
-    if shot == "mirror_half":
+    if shot in {"mirror_half", "mirror_full"}:
         return _scene_contains(scene, "镜", "mirror")
     if shot == "window_side":
         return _scene_contains(scene, "窗", "window", "阳台")
@@ -166,7 +180,7 @@ def _scene_supports_shot(scene: str, shot: str) -> bool:
             "街", "树荫", "校园", "走廊", "车站", "海边", "沙滩", "河边",
             "天台", "屋顶", "楼梯", "草地", "花丛", "竹林", "street", "park",
         )
-    if shot in {"mirror_half", "window_side", "desk_sit", "sofa_casual", "lean_wall", "walk_candid"}:
+    if shot in {"mirror_half", "mirror_full", "window_side", "desk_sit", "sofa_casual", "lean_wall", "walk_candid"}:
         return False
     return True
 
@@ -195,7 +209,7 @@ def _selfie_gestures_for_scene(scene: str, shot: str) -> List[str]:
     gestures = list(SELFIE_GESTURES)
     if not _scene_contains(scene, "杯", "咖啡馆", "咖啡店", "厨房", "cup", "cafe"):
         gestures = [gesture for gesture in gestures if "捧杯" not in gesture]
-    if shot == "mirror_half":
+    if shot in {"mirror_half", "mirror_full"}:
         gestures = [gesture for gesture in gestures if "捧杯" not in gesture]
     return gestures or ["嘴角轻微笑意"]
 
@@ -231,9 +245,9 @@ def period_scene_light_pools(
     if period in {"morning", "noon"}:
         return ["浅色墙与窗边", "书桌与杯具", "阳台栏杆旁", "镜前整洁台面"], ["窗光柔和", "清晨清透光", "阴天漫射"]
     if period == "afternoon":
-        return ["浅色墙与窗边", "书桌与杯具", "沙发与抱枕", "阳台栏杆旁"], ["窗光柔和", "阴天漫射"]
+        return ["浅色墙与窗边", "书桌与杯具", "沙发与抱枕", "阳台栏杆旁", "镜前整洁台面"], ["窗光柔和", "阴天漫射"]
     if period == "evening":
-        return ["暖灯房间一角", "沙发与抱枕", "书桌与杯具", "床边靠坐"], ["暖黄台灯", "窗光柔和"]
+        return ["暖灯房间一角", "沙发与抱枕", "书桌与杯具", "床边靠坐", "镜前整洁台面"], ["暖黄台灯", "窗光柔和"]
     return ["暖灯房间一角", "沙发与抱枕", "床边靠坐", "镜前整洁台面"], ["暖黄台灯"]
 
 
@@ -344,6 +358,14 @@ def build_selfie_look_action(
         light = "" if explicit_light else random.choice(lights)
     rear_view = shot == "back_view"
     side_view = shot == "side_profile"
+    full_mirror_view = shot == "mirror_full"
+    capture_finishes = SELFIE_MIRROR_FINISHES if shot in {"mirror_half", "mirror_full"} else SELFIE_CANDID_FINISHES
+    capture_finish = random.choice(capture_finishes) if not extra else ""
+    selfie_framing = (
+        "竖屏全身镜面自拍：人物从头到鞋完整入镜，手机不遮挡今日穿搭；"
+        if full_mirror_view
+        else "竖屏手机中近景半身：画面至少到腰线，优先看清今日上衣和搭配层次；"
+    )
     base = (
         "【自拍 / 看看模式】展示 AI 现在的样子。"
         + (
@@ -354,14 +376,14 @@ def build_selfie_look_action(
             else (
                 "身体侧向镜头的自拍构图：肩胯和头部朝向自然连贯，不回头硬露正脸；表情放松，保持面部自然可见。"
                 "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
-                "竖屏手机近景半身；"
+                "竖屏手机侧身半身中近景；"
                 + ("" if explicit_light else "窗光或暖灯；")
                 + "不要美颜滤镜、不要棚拍精修。"
                 if side_view
                 else "第一人称自拍视角（自己举机或镜前自拍），不是别人代拍。"
                 "必须看向镜头：眼睛对焦镜头方向，表情自然有神；不要眼神飘走或心不在焉。"
                 "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
-                "竖屏手机近景半身：像短视频封面那样拍得近；"
+                + selfie_framing
                 + ("" if explicit_light else "窗光或暖灯；")
                 + "不要美颜滤镜、不要棚拍精修。"
             )
@@ -370,6 +392,8 @@ def build_selfie_look_action(
         + (f"场景倾向：{scene}。" if scene else "")
         + f"小动作：{gesture}。"
         + (f"光线：{light}。" if light else "")
+        + (f"手机随手拍质感：{capture_finish}。" if capture_finish else "")
+        + "场景和镜头不得改变、增添或删减今日穿搭；服装的廓形、颜色和层次保持清楚。"
         + "画面干净日常，不要夸张摆拍。"
     )
     if appearance_type == "real":

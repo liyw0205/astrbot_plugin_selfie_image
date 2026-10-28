@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import os
 import random
@@ -36,6 +37,15 @@ APPEARANCE_TYPE_LABELS = {
     "real": "真人",
     "anime": "动漫",
 }
+
+DAILY_PERIOD_KEYS = ("morning", "noon", "afternoon", "evening", "night", "late_night")
+SELFIE_SNAPSHOT_PRESETS = (
+    "公寓玄关的手机前置自拍，门框和鞋柜只作为普通背景；手臂自然伸向镜头，竖屏从头部拍到大腿上部，人物稍偏一侧，画框轻微歪斜。",
+    "家中窗边的手机前置自拍，保留一点窗光造成的局部偏亮；人物不完全居中，肩部自然靠近画面边缘，脸和当前穿搭仍清晰。",
+    "坐在客厅沙发上的手机前置自拍，靠垫和毯子留在背景；机位略高于坐姿眼平，头顶留白稍多，只有轻微手抖感，不模糊脸和衣服。",
+    "书桌旁的手机前置自拍，桌面只占少量画面下缘；室内白光让色温稍冷，构图不完全端正，保持头部到腰部以上的自然近景。",
+    "普通住宅穿衣镜前的全身镜面自拍，手机自然举起但不遮挡穿搭主体；镜中只有一个主角和一部手机，倒影结构一致，人物从头到鞋完整入镜，取景略偏而不倾斜变形。",
+)
 
 
 def normalize_appearance_type(value: Any) -> str:
@@ -178,6 +188,9 @@ class DailySelfieProfile:
     updated_at: str
     source: str = "fallback"
     status_by_period: Dict[str, str] = field(default_factory=dict)
+    outfit_by_period: Dict[str, str] = field(default_factory=dict)
+    occasion: str = ""
+    llm_attempted: bool = False
 
 
 @dataclass
@@ -430,6 +443,22 @@ def period_label(period: str) -> str:
     }.get(period, "当前")
 
 
+def daily_calendar_context(date: str) -> str:
+    try:
+        parsed = datetime.date.fromisoformat(date)
+    except (TypeError, ValueError):
+        return f"公历日期：{date}。"
+    weekday = ("一", "二", "三", "四", "五", "六", "日")[parsed.weekday()]
+    season = {
+        12: "冬季", 1: "冬季", 2: "冬季",
+        3: "春季", 4: "春季", 5: "春季",
+        6: "夏季", 7: "夏季", 8: "夏季",
+        9: "秋季", 10: "秋季", 11: "秋季",
+    }[parsed.month]
+    day_type = "周末" if parsed.weekday() >= 5 else "工作日"
+    return f"公历日期：{date}，星期{weekday}，{day_type}，中国大陆北半球{season}。"
+
+
 def random_pick(items: list[str]) -> str:
     return random.choice(items) if items else ""
 
@@ -450,33 +479,62 @@ def make_random_seed() -> str:
     )
 
 
-def fallback_daily_profile(date: str, seed: str) -> DailySelfieProfile:
-    outfits = [
-        "奶油白细针织上衣和浅杏短开衫，下身轻薄格纹短裙，腿部穿搭简洁。",
-        "浅粉宽松卫衣配奶白色短裙，发间夹一枚小珍珠发夹。",
-        "雾紫色针织连衣裙，外披奶白毛绒小披肩，布料柔软。",
-        "浅蓝灰宽松衬衫配白色高腰半身裙，袖口松松卷起。",
-        "月白宽松毛衣配浅灰百褶裙，整体温暖、松弛。",
-        "宽松薄针织或短款家居上衣配轻软短裙，重点是舒服自然。",
+def fallback_daily_profile(
+    date: str, seed: str, *, llm_attempted: bool = False
+) -> DailySelfieProfile:
+    try:
+        month = datetime.date.fromisoformat(date).month
+    except (TypeError, ValueError):
+        month = 4
+    outerwear = {
+        12: "莓红短款呢外套", 1: "莓红短款呢外套", 2: "莓红短款呢外套",
+        3: "浅卡其薄风衣", 4: "浅卡其薄风衣", 5: "浅卡其薄风衣",
+        6: "轻薄白色亚麻衬衫外搭", 7: "轻薄白色亚麻衬衫外搭", 8: "轻薄白色亚麻衬衫外搭",
+        9: "深橄榄短夹克", 10: "深橄榄短夹克", 11: "深橄榄短夹克",
+    }[month]
+    day_looks = [
+        ("莓果红方领针织上衣", "深蓝高腰直筒牛仔裤", "焦糖棕乐福鞋", "细金属耳饰"),
+        ("奶油黄翻领针织背心叠穿白衬衫", "墨绿色百褶长裙", "黑色短靴", "窄版深棕皮带"),
+        ("雾蓝细条纹衬衫", "炭灰色高腰阔腿裤", "银灰复古运动鞋", "小型银色耳圈"),
+        ("炭灰短款拉链针织上衣", "酒红色直筒半身裙", "黑色玛丽珍鞋", "一枚亮色发夹"),
     ]
+    top, bottoms, shoes, accent = random.choice(day_looks)
+    day_outfit = f"{outerwear}敞开穿着，内搭{top}，配{bottoms}和{shoes}，以{accent}作一个清晰点缀。"
+    home_looks = [
+        "雾蓝色柔软针织上衣配奶油白直筒长裤，剪裁宽松但有清楚层次。",
+        "深莓色薄款针织套头衫配炭灰色舒适长裤，配色沉稳有重点。",
+        "浅绿色棉质短袖上衣配深蓝色宽松长裤，简洁清爽且版型利落。",
+        "奶油黄罗纹针织上衣配烟灰色直筒长裤，柔软材质与清晰轮廓兼顾。",
+    ]
+    home_outfit = random.choice(home_looks)
+    outfit_by_period = {
+        "morning": day_outfit,
+        "noon": day_outfit,
+        "afternoon": day_outfit,
+        "evening": day_outfit,
+        "night": home_outfit,
+        "late_night": home_outfit,
+    }
     status_by_period = {
-        "morning": "刚整理好头发和衣服，窗边是偏白一点的晨光，整个人清爽、安静，还带点没完全醒透的松弛感。",
-        "noon": "白天光线更亮，像在家里或窗边短暂歇着，衣服和状态都偏轻松，不是刻意摆拍。",
-        "afternoon": "下午的光线开始变软，像刚在房间里磨蹭了一会儿，姿态自然，身上有一点慵懒的生活感。",
-        "evening": "傍晚开了暖灯，房间慢慢安静下来，适合更柔和、松弛、有氛围感的随手拍。",
-        "night": "夜里已经换到更舒服的状态，光线偏暖，动作自然收着，像准备窝着休息前拍一下。",
-        "late_night": "深夜只留柔和小灯，整个人更安静、更懒散一点，像睡前低头顺手拍到的私密日常。",
+        "morning": "刚开始一天，神情清爽安静，还带着一点没完全醒透的松弛感。",
+        "noon": "上午忙碌告一段落，精神明亮些，状态轻快但不刻意摆拍。",
+        "afternoon": "下午节奏稍缓，神情自然，带一点慵懒的生活感。",
+        "evening": "一天接近尾声，状态放松下来，心情柔和而安定。",
+        "night": "夜间进入舒适的居家节奏，动作放松，神情安静。",
+        "late_night": "深夜更安静松弛，像准备休息前顺手记录下此刻。",
     }
     period = current_period()
     return DailySelfieProfile(
         date=date,
-        outfit=random_pick(outfits),
+        outfit=outfit_by_period.get(period, day_outfit),
         status=status_by_period.get(period, "处于自然放松的日常状态，画面安静、统一、真实。"),
         status_by_period=status_by_period,
+        outfit_by_period=outfit_by_period,
         mood=random_pick(["放松、安静、柔和", "清爽、自然、轻松", "温柔、治愈、稳定", "元气、明亮、轻快"]),
         seed=seed,
         updated_at=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
         source="fallback",
+        llm_attempted=llm_attempted,
     )
 
 
@@ -996,74 +1054,116 @@ class PersonaManager:
         existed = self.data.get("daily_selfie_profile")
         if isinstance(existed, dict) and existed.get("date") == today and existed.get("outfit") and existed.get("status"):
             status_by_period = existed.get("status_by_period") if isinstance(existed.get("status_by_period"), dict) else {}
-            profile = DailySelfieProfile(
-                date=str(existed.get("date") or today),
-                outfit=str(existed.get("outfit") or ""),
-                status=str(status_by_period.get(current_period()) or existed.get("status") or ""),
-                mood=str(existed.get("mood") or ""),
-                seed=str(existed.get("seed") or ""),
-                updated_at=str(existed.get("updated_at") or ""),
-                source=str(existed.get("source") or "fallback"),
-                status_by_period={str(k): str(v) for k, v in status_by_period.items()},
-            )
-            return profile
+            outfit_by_period = existed.get("outfit_by_period") if isinstance(existed.get("outfit_by_period"), dict) else {}
+            clean_outfits = {str(k): str(v).strip() for k, v in outfit_by_period.items()}
+            source = str(existed.get("source") or "fallback")
+            llm_attempted = bool(existed.get("llm_attempted", source == "llm"))
+            has_period_outfits = all(clean_outfits.get(key) for key in DAILY_PERIOD_KEYS)
+            waiting_for_llm = source == "fallback" and llm_generate is not None and not llm_attempted
+            if has_period_outfits and not waiting_for_llm:
+                return DailySelfieProfile(
+                    date=str(existed.get("date") or today),
+                    outfit=clean_outfits.get(current_period()) or str(existed.get("outfit") or ""),
+                    status=str(status_by_period.get(current_period()) or existed.get("status") or ""),
+                    mood=str(existed.get("mood") or ""),
+                    seed=str(existed.get("seed") or ""),
+                    updated_at=str(existed.get("updated_at") or ""),
+                    source=source,
+                    status_by_period={str(k): str(v) for k, v in status_by_period.items()},
+                    outfit_by_period=clean_outfits,
+                    occasion=str(existed.get("occasion") or ""),
+                    llm_attempted=llm_attempted,
+                )
+            if llm_generate is None:
+                return DailySelfieProfile(
+                    date=str(existed.get("date") or today),
+                    outfit=clean_outfits.get(current_period()) or str(existed.get("outfit") or ""),
+                    status=str(status_by_period.get(current_period()) or existed.get("status") or ""),
+                    mood=str(existed.get("mood") or ""),
+                    seed=str(existed.get("seed") or ""),
+                    updated_at=str(existed.get("updated_at") or ""),
+                    source=source,
+                    status_by_period={str(k): str(v) for k, v in status_by_period.items()},
+                    outfit_by_period=clean_outfits,
+                    occasion=str(existed.get("occasion") or ""),
+                    llm_attempted=llm_attempted,
+                )
 
         profile: Optional[DailySelfieProfile] = None
         if llm_generate is not None:
             prompt = (
-                "请为 AI 自拍角色生成今天的日常拍照设定。只返回一个 JSON 对象，不要 Markdown："
-                '{"outfit":"...","mood":"...","status_by_period":{"morning":"...",'
-                '"noon":"...","afternoon":"...","evening":"...","night":"...",'
-                '"late_night":"..."}}。要求：角色是成年人物，穿搭得体日常，内容适合普通自拍；'
-                "不要写敏感、暴露或未成年人内容；outfit 只写衣服本身，不要写清晨、午后、夜里等时间词；时间氛围只放进 status_by_period；每个字段简短自然。"
+                "为 AI 自拍角色规划今天一整天的日常穿搭与状态。只返回一个 JSON 对象，不要 Markdown："
+                '{"outfit_by_period":{"morning":"...","noon":"...","afternoon":"...",'
+                '"evening":"...","night":"...","late_night":"..."},"occasion":"...",'
+                '"mood":"...","status_by_period":{"morning":"...","noon":"...",'
+                '"afternoon":"...","evening":"...","night":"...","late_night":"..."}}。'
+                f"{daily_calendar_context(today)}"
+                "角色始终是成年人物。穿搭适合日常自拍，但要有明确的风格方向和视觉重点：写清廓形、层次、材质、主色与一个点缀色，搭配完整具体，避免只写普通的上衣加裙子/裤子，也不要堆无关配饰或奢侈品牌。"
+                "六个时段分别给出完整可直接画出的服装搭配；早晨到下午保持同一套主搭配或做合理的小调整，傍晚可以因活动/回家自然增减外套或更换搭配，夜晚和深夜可换成协调、得体、舒适的居家服。变化要符合一天的连续性，不要每个时段像完全不同的人，也不要臆造出行或活动。"
+                "结合给出的公历日期、星期和季节选择适合的面料与层次。若日期确实对应你能确认的节日或节气，可在 occasion 中说明，并只用配色或一两处小细节呼应；不确定时留空，不编造节日、天气或活动，不把日常穿搭变成主题服/戏服。"
+                "outfit_by_period 的每个值只写当时实际穿着的衣服、鞋履和少量配饰，不写时间、地点、光线、心情或拍照动作。occasion 可为空；mood 描述全天基调；status_by_period 描述各时段的状态和时间感，不锁定具体地点、镜头或构图，留给自拍场景选择。"
+                "内容得体，不写暴露、色情或未成年人内容；每个穿搭字段不超过 220 字，occasion 不超过 100 字，mood 不超过 80 字，各状态不超过 160 字。"
             )
             try:
                 raw = str(await llm_generate(prompt) or "").strip()
                 match = re.search(r"\{[\s\S]*\}", raw)
                 data = json.loads(match.group(0)) if match else {}
                 periods = data.get("status_by_period") if isinstance(data, dict) and isinstance(data.get("status_by_period"), dict) else {}
-                outfit = str(data.get("outfit") or "").strip()
+                outfits = data.get("outfit_by_period") if isinstance(data, dict) and isinstance(data.get("outfit_by_period"), dict) else {}
+                clean_outfits = {
+                    key: str(outfits.get(key) or "").strip()
+                    for key in DAILY_PERIOD_KEYS
+                }
                 mood = str(data.get("mood") or "自然、放松、轻松").strip()
                 clean_periods = {
                     key: str(periods.get(key) or "").strip()
-                    for key in ("morning", "noon", "afternoon", "evening", "night", "late_night")
+                    for key in DAILY_PERIOD_KEYS
                 }
+                occasion = str(data.get("occasion") or "").strip()
                 forbidden = ("未成年", "裸", "裸体", "色情", "暴露", "内衣", "乳", "私密")
-                all_text = " ".join([outfit, mood, *clean_periods.values()])
+                all_text = " ".join([*clean_outfits.values(), occasion, mood, *clean_periods.values()])
                 time_locked = ("清晨", "早晨", "午后", "傍晚", "夜里", "夜晚", "深夜", "凌晨")
                 if (
-                    outfit
-                    and len(outfit) <= 180
+                    all(clean_outfits.values())
+                    and all(len(value) <= 220 for value in clean_outfits.values())
+                    and len(occasion) <= 100
                     and len(mood) <= 80
                     and all(clean_periods.values())
                     and all(len(value) <= 160 for value in clean_periods.values())
                     and not any(word in all_text for word in forbidden)
-                    and not any(word in outfit for word in time_locked)
+                    and not any(word in value for value in clean_outfits.values() for word in time_locked)
                 ):
-                    if all(clean_periods.values()):
-                        profile = DailySelfieProfile(
-                            date=today,
-                            outfit=str(data["outfit"]).strip(),
-                            status=clean_periods.get(current_period(), clean_periods["morning"]),
-                            status_by_period=clean_periods,
-                            mood=str(data.get("mood") or "自然、放松、轻松").strip(),
-                            seed=make_random_seed(),
-                            updated_at=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
-                            source="llm",
-                        )
+                    profile = DailySelfieProfile(
+                        date=today,
+                        outfit=clean_outfits.get(current_period(), clean_outfits["morning"]),
+                        status=clean_periods.get(current_period(), clean_periods["morning"]),
+                        status_by_period=clean_periods,
+                        outfit_by_period=clean_outfits,
+                        occasion=occasion,
+                        mood=mood,
+                        seed=make_random_seed(),
+                        updated_at=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
+                        source="llm",
+                        llm_attempted=True,
+                    )
             except Exception:
                 profile = None
         if profile is None:
-            profile = fallback_daily_profile(today, make_random_seed())
+            profile = fallback_daily_profile(
+                today, make_random_seed(), llm_attempted=llm_generate is not None
+            )
         self.data["daily_selfie_profile"] = {
             "date": profile.date,
             "outfit": profile.outfit,
+            "outfit_by_period": profile.outfit_by_period,
+            "occasion": profile.occasion,
             "status": profile.status,
             "status_by_period": profile.status_by_period,
             "mood": profile.mood,
             "seed": profile.seed,
             "updated_at": profile.updated_at,
             "source": profile.source,
+            "llm_attempted": profile.llm_attempted,
         }
         self.data["updated_at"] = profile.updated_at
         self.save()
@@ -1079,15 +1179,20 @@ class PersonaManager:
         if not isinstance(raw, dict):
             return None
         status_by_period = raw.get("status_by_period") if isinstance(raw.get("status_by_period"), dict) else {}
+        outfit_by_period = raw.get("outfit_by_period") if isinstance(raw.get("outfit_by_period"), dict) else {}
+        clean_outfits = {str(k): str(v) for k, v in outfit_by_period.items()}
         return DailySelfieProfile(
             date=str(raw.get("date") or ""),
-            outfit=str(raw.get("outfit") or ""),
+            outfit=str(clean_outfits.get(current_period()) or raw.get("outfit") or ""),
             status=str(status_by_period.get(current_period()) or raw.get("status") or ""),
             mood=str(raw.get("mood") or ""),
             seed=str(raw.get("seed") or ""),
             updated_at=str(raw.get("updated_at") or ""),
             source=str(raw.get("source") or "fallback"),
             status_by_period={str(k): str(v) for k, v in status_by_period.items()},
+            outfit_by_period=clean_outfits,
+            occasion=str(raw.get("occasion") or ""),
+            llm_attempted=bool(raw.get("llm_attempted", str(raw.get("source") or "") == "llm")),
         )
 
     def build_selfie_prompt(
@@ -1217,6 +1322,11 @@ class PersonaManager:
             extra_overrides_outfit(user_text)
             or extra_overrides_context(user_text)
             or extra_overrides_mood(user_text)
+        )
+        snapshot_prompt = (
+            random.choice(SELFIE_SNAPSHOT_PRESETS)
+            if not explicit_context and not back_facing_shot and not side_facing_shot
+            else ""
         )
         mode_lines: list[str] = []
         if intent.is_cos_look:
@@ -1450,16 +1560,17 @@ class PersonaManager:
                         if back_facing_shot
                         else "本次是普通自拍 / 看看你现在的样子（自己举机或镜前自拍，不是别人代拍）。"
                     ),
-                    "优先使用你今天的穿搭、状态和心情来生成一张自然照片。",
+                    "按当前时段的今日穿搭、状态和心情生成自然自拍；场景与镜头只改变拍摄氛围，不得替换、增添或删减穿搭。",
                     (
                         "保持竖屏中近景和自然透视；双手放松垂在身侧，只有场景内已有合适支撑物时才自然搭放。"
                         if back_facing_shot
-                        else "竖屏手机近景半身：自拍臂、镜前、窗边侧光、书桌坐拍、沙发随手、近景胸像，拍得近一些，不要次次同一构图。"
+                        else snapshot_prompt
+                        or "竖屏手机自拍，采用自然的侧身机位和中近景构图；保持当前穿搭清楚可辨，不强迫回头硬露正脸。"
                     ),
                     (
                         "身体可以自然侧向镜头，肩胯和头部方向连贯，不强迫回头硬露正脸。"
                         if side_facing_shot
-                        else "场景与小动作保持日常：窗边、暖灯房间、书桌杯具、沙发抱枕、阳台、镜前台面等；可轻微笑、整理发丝/衣领、托腮、捧杯抬眼。"
+                        else "生活场景不要求额外道具或特定活动；可有轻微笑意或自然整理发丝，避免摆拍感和过量画面瑕疵。"
                     ),
                 ]
             )
@@ -1471,11 +1582,16 @@ class PersonaManager:
         skip_mood = extra_overrides_mood(extra)
         use_daily_now = (not intent.is_legs_only) and (not intent.is_cos_look)
         today_lines: list[str] = []
-        if use_daily_now and intent.use_today_outfit and daily and daily.outfit and not skip_outfit:
-            today_lines.append(f"今日穿搭：{daily.outfit}")
         if use_daily_now and daily and not skip_period:
             period = current_period()
-            today_lines.append(f"当前时间段：{period_label(period)}")
+            label = period_label(period)
+            today_lines.append(f"当前时间段：{label}")
+            selected_outfit = str(daily.outfit_by_period.get(period) or daily.outfit or "").strip()
+            if intent.use_today_outfit and selected_outfit and not skip_outfit:
+                outfit_label = f"今日穿搭（{label}）" if daily.outfit_by_period else "今日穿搭"
+                today_lines.append(f"{outfit_label}：{selected_outfit}")
+            if daily.occasion:
+                today_lines.append(f"今日时令 / 节日氛围：{daily.occasion}")
             if not skip_status:
                 status = ""
                 if daily.status_by_period:
@@ -1575,9 +1691,18 @@ class PersonaManager:
                 [
                     f"今日自拍设定：{daily.date}",
                     f"来源：{'本地随机兜底' if daily.source == 'fallback' else daily.source}",
-                    f"今日穿搭：{daily.outfit}",
                     f"当前状态({period_label(current_period())})：{daily.status}",
                     f"当前心情：{daily.mood}",
                 ]
             )
+            if daily.occasion:
+                lines.append(f"今日时令 / 节日氛围：{daily.occasion}")
+            if daily.outfit_by_period:
+                lines.extend(
+                    f"{period_label(period)}穿搭：{daily.outfit_by_period[period]}"
+                    for period in DAILY_PERIOD_KEYS
+                    if daily.outfit_by_period.get(period)
+                )
+            else:
+                lines.append(f"今日穿搭：{daily.outfit}")
         return "\n".join(lines)

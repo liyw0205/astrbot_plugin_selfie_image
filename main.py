@@ -2588,7 +2588,10 @@ class SelfieImagePlugin(
 
     async def refresh_selfie_profile_from_web(self) -> Dict[str, Any]:
         self.persona.refresh_daily_selfie_profile_for_test()
-        await self.persona.ensure_daily_selfie_profile("手动刷新今日自拍设定")
+        await self.persona.ensure_daily_selfie_profile(
+            "手动刷新今日自拍设定",
+            llm_generate=lambda prompt: self._call_text_llm(None, prompt, timeout=8),
+        )
         return {
             "status": self.persona.status_text(),
             "updated_at": self.persona.get().get("updated_at") or "",
@@ -7423,7 +7426,10 @@ class SelfieImagePlugin(
     async def cmd_persona_refresh(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
         """刷新今日穿搭与状态。"""
         self.persona.refresh_daily_selfie_profile_for_test()
-        await self.persona.ensure_daily_selfie_profile("手动刷新今日自拍设定")
+        await self.persona.ensure_daily_selfie_profile(
+            "手动刷新今日自拍设定",
+            llm_generate=lambda prompt: self._call_text_llm(event, prompt, timeout=8),
+        )
         yield event.plain_result("今日自拍设定已刷新。\n" + self.persona.status_text())
 
     @filter.command("预设", prefix_optional=True)

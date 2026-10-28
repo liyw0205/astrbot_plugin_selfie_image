@@ -9666,7 +9666,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("不要美颜滤镜", look_you)
         selfie_cover = plugin_main.SelfieImagePlugin._build_selfie_look_action(_P(), "", False)
         self.assertIn("竖屏", selfie_cover)
-        self.assertIn("半身", selfie_cover)
+        self.assertTrue("半身" in selfie_cover or "全身" in selfie_cover)
         self.assertIn("光线：", selfie_cover)
         self.assertNotIn("真实皮肤", selfie_cover)
         self.assertNotIn("真人摄影质感", selfie_cover)
@@ -12671,21 +12671,41 @@ class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
 
 class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_daily_profile_prefers_valid_llm_json(self) -> None:
-        from astrbot_plugin_selfie_image.features.persona import PersonaManager
+        from astrbot_plugin_selfie_image.features.persona import (
+            DAILY_PERIOD_KEYS,
+            PersonaManager,
+            current_period,
+        )
 
-        periods = {key: f"{key} 的自然状态" for key in ("morning", "noon", "afternoon", "evening", "night", "late_night")}
+        periods = {key: f"{key} 的自然状态" for key in DAILY_PERIOD_KEYS}
+        outfits = {key: f"{key} 的完整搭配" for key in DAILY_PERIOD_KEYS}
+        captured_prompt = ""
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
 
-            async def generate(_: str) -> str:
-                return json.dumps({"outfit": "浅蓝衬衫和白色长裙", "mood": "清爽", "status_by_period": periods}, ensure_ascii=False)
+            async def generate(prompt: str) -> str:
+                nonlocal captured_prompt
+                captured_prompt = prompt
+                return json.dumps(
+                    {
+                        "outfit_by_period": outfits,
+                        "occasion": "",
+                        "mood": "清爽",
+                        "status_by_period": periods,
+                    },
+                    ensure_ascii=False,
+                )
 
             profile = await manager.ensure_daily_selfie_profile("看看你", llm_generate=generate)
             self.assertEqual(profile.source, "llm")
-            self.assertEqual(profile.outfit, "浅蓝衬衫和白色长裙")
+            self.assertEqual(profile.outfit, outfits[current_period()])
+            self.assertEqual(profile.outfit_by_period, outfits)
+            self.assertIn("六个时段分别给出完整可直接画出的服装搭配", captured_prompt)
+            self.assertIn("节日或节气", captured_prompt)
+            self.assertIn("公历日期：", captured_prompt)
 
     async def test_daily_profile_falls_back_when_llm_fails(self) -> None:
-        from astrbot_plugin_selfie_image.features.persona import PersonaManager
+        from astrbot_plugin_selfie_image.features.persona import DAILY_PERIOD_KEYS, PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
@@ -12696,14 +12716,40 @@ class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
             profile = await manager.ensure_daily_selfie_profile("看看你", llm_generate=generate)
             self.assertEqual(profile.source, "fallback")
             self.assertTrue(profile.outfit)
+            self.assertEqual(set(profile.outfit_by_period), set(DAILY_PERIOD_KEYS))
+            self.assertNotEqual(profile.outfit_by_period["afternoon"], profile.outfit_by_period["night"])
             for token in ("清晨穿着", "午后是", "傍晚换成", "夜里是", "深夜会偏居家"):
                 self.assertNotIn(token, profile.outfit)
 
-    async def test_daily_profile_initialization_is_shared_across_concurrent_shots(self) -> None:
+    async def test_legacy_single_outfit_llm_response_does_not_freeze_the_day(self) -> None:
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+
+            async def generate(_: str) -> str:
+                return json.dumps(
+                    {
+                        "outfit": "浅蓝衬衫和白色长裙",
+                        "mood": "清爽",
+                        "status_by_period": {
+                            key: f"{key}的自然状态"
+                            for key in ("morning", "noon", "afternoon", "evening", "night", "late_night")
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+
+            profile = await manager.ensure_daily_selfie_profile("自拍", llm_generate=generate)
+            self.assertEqual(profile.source, "fallback")
+            self.assertNotEqual(profile.outfit_by_period["afternoon"], profile.outfit_by_period["night"])
+
+    async def test_daily_profile_initialization_is_shared_across_concurrent_shots(self) -> None:
+        from astrbot_plugin_selfie_image.features.persona import DAILY_PERIOD_KEYS, PersonaManager
+
         calls = 0
-        periods = {key: f"{key} 的自然状态" for key in ("morning", "noon", "afternoon", "evening", "night", "late_night")}
+        periods = {key: f"{key} 的自然状态" for key in DAILY_PERIOD_KEYS}
+        outfits = {key: f"{key} 的搭配" for key in DAILY_PERIOD_KEYS}
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
 
@@ -12711,13 +12757,103 @@ class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
                 nonlocal calls
                 calls += 1
                 await asyncio.sleep(0.01)
-                return json.dumps({"outfit": "浅蓝衬衫", "mood": "清爽", "status_by_period": periods}, ensure_ascii=False)
+                return json.dumps(
+                    {"outfit_by_period": outfits, "mood": "清爽", "status_by_period": periods},
+                    ensure_ascii=False,
+                )
 
             profiles = await asyncio.gather(
                 *(manager.ensure_daily_selfie_profile("看看你", llm_generate=generate) for _ in range(4))
             )
             self.assertEqual(calls, 1)
-            self.assertEqual({profile.outfit for profile in profiles}, {"浅蓝衬衫"})
+            self.assertEqual({tuple(sorted(profile.outfit_by_period.items())) for profile in profiles}, {tuple(sorted(outfits.items()))})
+
+    async def test_legacy_daily_profile_is_upgraded_when_llm_becomes_available(self) -> None:
+        from astrbot_plugin_selfie_image.features.persona import (
+            DAILY_PERIOD_KEYS,
+            PersonaManager,
+            local_date_key,
+        )
+
+        outfits = {key: f"更新后的{key}搭配" for key in DAILY_PERIOD_KEYS}
+        periods = {key: f"更新后的{key}状态" for key in DAILY_PERIOD_KEYS}
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            manager.data["daily_selfie_profile"] = {
+                "date": local_date_key(),
+                "outfit": "旧版缓存穿搭",
+                "status": "旧版状态",
+                "status_by_period": periods,
+                "source": "fallback",
+            }
+
+            async def generate(_: str) -> str:
+                return json.dumps(
+                    {"outfit_by_period": outfits, "mood": "清爽", "status_by_period": periods},
+                    ensure_ascii=False,
+                )
+
+            profile = await manager.ensure_daily_selfie_profile("看看你", llm_generate=generate)
+            self.assertEqual(profile.source, "llm")
+            self.assertEqual(profile.outfit_by_period, outfits)
+            self.assertNotEqual(profile.outfit, "旧版缓存穿搭")
+
+    async def test_fallback_profile_is_upgraded_on_the_first_llm_generation(self) -> None:
+        from astrbot_plugin_selfie_image.features.persona import DAILY_PERIOD_KEYS, PersonaManager
+
+        outfits = {key: f"LLM 生成的{key}完整穿搭" for key in DAILY_PERIOD_KEYS}
+        periods = {key: f"{key}的时间状态" for key in DAILY_PERIOD_KEYS}
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            fallback = await manager.ensure_daily_selfie_profile("查看今日自拍设定")
+            self.assertEqual(fallback.source, "fallback")
+            self.assertFalse(fallback.llm_attempted)
+
+            async def generate(_: str) -> str:
+                return json.dumps(
+                    {"outfit_by_period": outfits, "mood": "清爽", "status_by_period": periods},
+                    ensure_ascii=False,
+                )
+
+            upgraded = await manager.ensure_daily_selfie_profile("自拍", llm_generate=generate)
+            self.assertEqual(upgraded.source, "llm")
+            self.assertEqual(upgraded.outfit_by_period, outfits)
+
+    def test_selfie_prompt_uses_period_outfit_and_one_compatible_snapshot(self) -> None:
+        from astrbot_plugin_selfie_image.features.persona import (
+            DAILY_PERIOD_KEYS,
+            SELFIE_SNAPSHOT_PRESETS,
+            PersonaManager,
+            current_period,
+            local_date_key,
+            period_label,
+        )
+
+        outfits = {key: f"{key}时段的设计感完整穿搭" for key in DAILY_PERIOD_KEYS}
+        periods = {key: f"{key}的自然状态" for key in DAILY_PERIOD_KEYS}
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            manager.data["daily_selfie_profile"] = {
+                "date": local_date_key(),
+                "outfit": outfits[current_period()],
+                "outfit_by_period": outfits,
+                "occasion": "秋日节气配色点缀",
+                "status": periods[current_period()],
+                "status_by_period": periods,
+                "mood": "自然轻松",
+                "source": "llm",
+                "llm_attempted": True,
+            }
+            with patch(
+                "astrbot_plugin_selfie_image.features.persona.random.choice",
+                return_value=SELFIE_SNAPSHOT_PRESETS[0],
+            ):
+                prompt = manager.build_selfie_prompt("自拍", "小助", "温柔", False, 0)
+
+        self.assertIn(f"今日穿搭（{period_label(current_period())}）：{outfits[current_period()]}", prompt)
+        self.assertIn("今日时令 / 节日氛围：秋日节气配色点缀", prompt)
+        self.assertIn("公寓玄关的手机前置自拍", prompt)
+        self.assertIn("场景与镜头只改变拍摄氛围，不得替换、增添或删减穿搭", prompt)
 
     def test_auxiliary_identity_references_are_limited_and_keep_primary(self) -> None:
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
