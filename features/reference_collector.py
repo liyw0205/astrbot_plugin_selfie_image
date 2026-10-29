@@ -606,7 +606,10 @@ async def download_sources_as_references(
         if digest in seen:
             continue
         seen.add(digest)
-        source_url = str(source or "").strip() if str(source or "").strip().lower().startswith(("http://", "https://")) else ""
+        # Keep the original source for local persona files as well as remote
+        # URLs.  The cache layer uses stable local sources to avoid copying a
+        # configured identity image into the generation cache.
+        source_url = str(source or "").strip()
         refs.append(
             ImageReference(
                 data=data,

@@ -1794,6 +1794,12 @@ class SelfieImagePlugin(
             if refs and str(reference_fidelity or "").strip().lower() == "low"
             else ""
         )
+        stable_reference_checker = getattr(self, "_is_stable_reference", None)
+        persona_reference_count = sum(
+            1
+            for ref in refs
+            if callable(stable_reference_checker) and stable_reference_checker(ref)
+        )
         # Leg-focus actions are normalized into a neutral outfit prompt before generation.
         # Audit that effective prompt so command labels do not create false positives.
         is_leg_focus_request = (
@@ -1848,6 +1854,26 @@ class SelfieImagePlugin(
                 "roles": dict(normalized_selection_roles),
             }
             source_meta.update(selection_metadata)
+
+        if persona_reference_count:
+            source_meta["persona_reference_count"] = persona_reference_count
+        selection_roles = (
+            reference_selection.get("roles")
+            if isinstance(reference_selection, Mapping)
+            and isinstance(reference_selection.get("roles"), Mapping)
+            else {}
+        )
+        uses_persona_reference = bool(
+            persona_reference_count
+            or (
+                isinstance(reference_selection, Mapping)
+                and (
+                    reference_selection.get("used_persona")
+                    or selection_roles.get("persona")
+                    or selection_roles.get("persona_extra")
+                )
+            )
+        )
 
         def add_selection_metadata(request: Dict[str, Any]) -> Dict[str, Any]:
             if not selection_metadata or not isinstance(reference_selection, Mapping):
@@ -1944,6 +1970,8 @@ class SelfieImagePlugin(
                         "aspect_ratio": aspect_ratio,
                         "resolution": resolution,
                         "reference_image_count": len(refs),
+                        "persona_reference_count": persona_reference_count,
+                        "use_selfie_reference": uses_persona_reference,
                         "request_image_paths": request_image_paths,
                         "targets": [redact_sensitive_text(target.label) for target in selected_targets],
                         "image_to_text": image_to_text_meta,
@@ -1984,6 +2012,8 @@ class SelfieImagePlugin(
             "aspect_ratio": aspect_ratio,
             "resolution": resolution,
             "reference_image_count": len(refs),
+            "persona_reference_count": persona_reference_count,
+            "use_selfie_reference": uses_persona_reference,
             "request_image_paths": request_image_paths,
             "targets": [redact_sensitive_text(target.label) for target in selected_targets],
             "image_to_text": image_to_text_meta,
@@ -2827,8 +2857,14 @@ class SelfieImagePlugin(
                 request_data.get("resolution") or getattr(self.config, "image_default_resolution", "1K")
             ).strip()
             payload["prompt_enhance"] = False
+            selection = request_data.get("reference_selection")
+            selection_roles = selection.get("roles") if isinstance(selection, Mapping) and isinstance(selection.get("roles"), Mapping) else {}
             payload["use_selfie_reference"] = bool(
-                request_data.get("use_selfie_reference") and not payload["images"]
+                request_data.get("use_selfie_reference")
+                or request_data.get("persona_reference_count")
+                or (isinstance(selection, Mapping) and selection.get("used_persona"))
+                or selection_roles.get("persona")
+                or selection_roles.get("persona_extra")
             )
         else:
             payload["duration"] = max(
@@ -2842,6 +2878,15 @@ class SelfieImagePlugin(
                         or 5
                     ),
                 ),
+            )
+            selection = request_data.get("reference_selection")
+            selection_roles = selection.get("roles") if isinstance(selection, Mapping) and isinstance(selection.get("roles"), Mapping) else {}
+            payload["use_selfie_reference"] = bool(
+                request_data.get("use_selfie_reference")
+                or request_data.get("persona_reference_count")
+                or (isinstance(selection, Mapping) and selection.get("used_persona"))
+                or selection_roles.get("persona")
+                or selection_roles.get("persona_extra")
             )
         response_data = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
         attempts = response_data.get("attempts") if isinstance(response_data.get("attempts"), list) else record.get("attempts")
@@ -3341,6 +3386,14 @@ class SelfieImagePlugin(
         if callable(consume_selection):
             reference_selection = consume_selection(event)
         reference_stats = self._video_reference_stats(refs, reference_selection)
+        stable_reference_checker = getattr(self, "_is_stable_reference", None)
+        persona_reference_count = sum(
+            1
+            for ref in refs
+            if callable(stable_reference_checker) and stable_reference_checker(ref)
+        )
+        reference_stats["persona_reference_count"] = persona_reference_count
+        reference_stats["use_selfie_reference"] = bool(persona_reference_count)
         try:
             batch_count = max(1, int(requested_count or 1))
         except (TypeError, ValueError):
@@ -5828,6 +5881,13 @@ class SelfieImagePlugin(
             if not persona_ref:
                 raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
             refs = [persona_ref]
+        elif payload.get("use_selfie_reference"):
+            persona_ref = self._video_persona_reference()
+            if not persona_ref:
+                raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
+            persona_digest = hashlib.sha256(persona_ref.data).digest()
+            if not any(hashlib.sha256(ref.data).digest() == persona_digest for ref in refs):
+                refs.insert(0, persona_ref)
 
         request_image_paths = self._save_reference_images_to_cache(refs)
 

@@ -378,8 +378,11 @@ class ReferenceMediaMixin:
         """Return the configured persona image, optionally with logo fallback."""
         persona_ref = self.persona.get_reference_image()
         if persona_ref:
+            source_path = str(self.persona.get_reference_path() or "")
             return ImageReference(
-                data=persona_ref["data"], mime_type=persona_ref["mime_type"]
+                data=persona_ref["data"],
+                mime_type=persona_ref["mime_type"],
+                source_url=source_path,
             )
         if not allow_logo or not bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
             return None
@@ -394,7 +397,9 @@ class ReferenceMediaMixin:
         if not data:
             return None
         return ImageReference(
-            data=data, mime_type=detect_mime_by_bytes(data) or "image/png"
+            data=data,
+            mime_type=detect_mime_by_bytes(data) or "image/png",
+            source_url=logo,
         )
 
     def _persona_auxiliary_references(self, action: str = "") -> List[ImageReference]:
@@ -402,7 +407,11 @@ class ReferenceMediaMixin:
         if self.persona.analyze_selfie_intent(action).is_group_photo:
             return []
         return [
-            ImageReference(data=item["data"], mime_type=item["mime_type"])
+            ImageReference(
+                data=item["data"],
+                mime_type=item["mime_type"],
+                source_url=str(item.get("path") or ""),
+            )
             for item in self.persona.get_auxiliary_reference_images()
             if item.get("data")
         ]

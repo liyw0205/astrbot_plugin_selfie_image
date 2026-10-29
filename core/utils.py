@@ -874,6 +874,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "model",
             "prompt_enhance",
             "use_selfie_reference",
+            "persona_reference_count",
             "identity_reference_source",
             "identity_reference_count",
             "extra_reference_image_count",

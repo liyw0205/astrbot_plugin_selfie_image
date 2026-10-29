@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.57")
+        self.assertEqual(PLUGIN_VERSION, "1.6.59")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -1282,6 +1282,59 @@ class ConfigModelTests(unittest.TestCase):
             self.assertEqual(preview["total_bytes"], 32)
             self.assertEqual(preview["would_delete"], [])
             self.assertTrue(cache_file.exists())
+
+    def test_reference_cache_reuses_content_and_skips_stable_persona(self) -> None:
+        from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_dir = Path(directory) / "image_cache"
+            persona_path = Path(directory) / "persona.png"
+            cache_dir.mkdir()
+            persona_path.write_bytes(PNG_BYTES)
+            plugin = object.__new__(GenerationStoreMixin)
+            plugin.generated_dir = str(cache_dir)
+            plugin._bundled_logo_path = ""
+            plugin.persona = types.SimpleNamespace(
+                get_reference_path=lambda: str(persona_path),
+                get_auxiliary_reference_entries=lambda: [],
+            )
+            plugin._cache_relative_path = lambda path: os.path.relpath(path, str(cache_dir))
+            plugin._register_inflight_media = lambda _paths: None
+
+            stable = ImageReference(data=PNG_BYTES, mime_type="image/png", source_url=str(persona_path))
+            self.assertEqual(plugin._save_reference_images_to_cache([stable]), [])
+
+            first = plugin._save_reference_images_to_cache(
+                [ImageReference(data=PNG_BYTES, mime_type="image/png", source_url="https://example.test/ref.png")]
+            )
+            second = plugin._save_reference_images_to_cache(
+                [ImageReference(data=PNG_BYTES, mime_type="image/jpeg", source_url="https://example.test/ref.png")]
+            )
+            self.assertEqual(first, second)
+            self.assertEqual(len(list(cache_dir.glob("request_*"))), 1)
+
+    def test_reference_cache_reuses_legacy_request_file(self) -> None:
+        from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_dir = Path(directory) / "image_cache"
+            cache_dir.mkdir()
+            data = PNG_BYTES + b"legacy"
+            legacy_path = cache_dir / "request_old_random.png"
+            legacy_path.write_bytes(data)
+            plugin = object.__new__(GenerationStoreMixin)
+            plugin.generated_dir = str(cache_dir)
+            plugin.persona = types.SimpleNamespace(
+                get_reference_path=lambda: "",
+                get_auxiliary_reference_entries=lambda: [],
+            )
+            plugin._bundled_logo_path = ""
+            plugin._cache_relative_path = lambda path: os.path.relpath(path, str(cache_dir))
+            plugin._register_inflight_media = lambda _paths: None
+
+            paths = plugin._save_reference_images_to_cache([ImageReference(data=data)])
+            self.assertEqual(paths, ["request_old_random.png"])
+            self.assertEqual(len(list(cache_dir.glob("request_*"))), 1)
 
     def test_persisted_running_task_is_marked_expired_after_restart(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin

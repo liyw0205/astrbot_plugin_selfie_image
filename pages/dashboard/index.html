@@ -5935,6 +5935,37 @@ Source prompt:
       }).join('')}</div>`;
       return `${mediaHead(title, normalizedSources, 'image')}${grid}`;
     }
+    function recordUsesPersonaReference(record) {
+      const request = record?.request_data && typeof record.request_data === 'object' ? record.request_data : {};
+      const selection = request.reference_selection && typeof request.reference_selection === 'object' ? request.reference_selection : {};
+      const roles = selection.roles && typeof selection.roles === 'object' ? selection.roles : {};
+      return Boolean(
+        request.use_selfie_reference
+        || Number(request.persona_reference_count || 0) > 0
+        || selection.used_persona
+        || Number(roles.persona || 0) > 0
+        || Number(roles.persona_extra || 0) > 0
+        || record?.identity_reference_source === 'persona'
+        || Number(record?.persona_reference_count || 0) > 0
+      );
+    }
+    function personaReferenceThumb() {
+      const src = String($('selfiePreview')?.src || '').trim();
+      if (!src || !src.startsWith('data:image/')) {
+        return '<div class="thumb-card"><div class="muted">形象图（当前预览未加载）</div></div>';
+      }
+      return `<div class="thumb-card"><img src="${escapeHtml(src)}" alt="形象图"><div class="muted">形象图</div></div>`;
+    }
+    function recordRequestReferences(record) {
+      const parts = [];
+      if (recordUsesPersonaReference(record)) {
+        parts.push(`<div class="detail-title"><h3>形象图</h3></div><div class="images">${personaReferenceThumb()}</div>`);
+      }
+      const paths = Array.isArray(record?.request_image_paths) ? record.request_image_paths : [];
+      if (paths.length) parts.push(imageThumbs(paths, '请求图'));
+      if (!parts.length) parts.push(imageThumbs([], '请求图'));
+      return parts.join('');
+    }
     function downloadIconSvg() {
       return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>';
     }
@@ -6438,7 +6469,7 @@ Source prompt:
         <div class="actions"><button class="ok mini" type="button" onclick="retryCurrentRecord()">重试生成</button><span id="recordRetryStatus" class="muted"></span></div>
         ${promptDetailBlock('请求数据', 'request_data', JSON.stringify(r.request_data || {}, null, 2))}
         ${responseDataDetailBlock(r.response_data || {})}
-        ${imageThumbs(r.request_image_paths || [], '请求图')}
+        ${recordRequestReferences(r)}
         ${generatedMediaDetailBlock(r)}
       `;
       $('recordModal').classList.add('show');

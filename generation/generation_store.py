@@ -24,6 +24,7 @@ from ..core.utils import (
     collect_unreferenced_record_cache_paths,
     compact_generation_record,
     detect_mime_by_bytes,
+    ext_from_mime,
     group_cache_cleanup_candidates,
     load_json_file,
     looks_like_image_bytes,
@@ -1559,11 +1560,114 @@ class GenerationStoreMixin:
         mime = str(info.get("mime_type") or detect_mime_by_bytes(data) or "image/png")
         return data, mime
 
+    def _stable_reference_paths(self) -> set[str]:
+        """Return configured identity files that must stay outside image_cache."""
+        paths: set[str] = set()
+        persona = getattr(self, "persona", None)
+        getter = getattr(persona, "get_reference_path", None)
+        if callable(getter):
+            try:
+                path = str(getter() or "").strip()
+            except Exception:
+                path = ""
+            if path:
+                paths.add(os.path.abspath(path))
+        entries_getter = getattr(persona, "get_auxiliary_reference_entries", None)
+        if callable(entries_getter):
+            try:
+                entries = entries_getter()
+            except Exception:
+                entries = []
+            for entry in entries or []:
+                if isinstance(entry, Mapping):
+                    path = str(entry.get("path") or "").strip()
+                    if path:
+                        paths.add(os.path.abspath(path))
+        logo = str(getattr(self, "_bundled_logo_path", "") or "").strip()
+        if logo and os.path.isfile(logo):
+            paths.add(os.path.abspath(logo))
+        return paths
+
+    def _is_stable_reference(self, ref: ImageReference) -> bool:
+        source = str(getattr(ref, "source_url", "") or "").strip()
+        if not source or source.lower().startswith(("http://", "https://", "data:", "base64:")):
+            return False
+        try:
+            source_path = os.path.abspath(source)
+        except (OSError, TypeError, ValueError):
+            return False
+        if source_path not in self._stable_reference_paths() or not os.path.isfile(source_path):
+            return False
+        try:
+            with open(source_path, "rb") as handle:
+                return handle.read() == bytes(ref.data or b"")
+        except OSError:
+            return False
+
+    def _save_or_reuse_reference_image(self, ref: ImageReference) -> str:
+        """Reuse a content-addressed request cache file when possible."""
+        data = bytes(ref.data or b"")
+        digest = hashlib.sha256(data).hexdigest()
+        mime = str(ref.mime_type or detect_mime_by_bytes(data) or "image/png")
+        ext = ext_from_mime(mime)
+        lock = getattr(self, "_reference_cache_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._reference_cache_lock = lock
+        with lock:
+            os.makedirs(self.generated_dir, exist_ok=True)
+            target = os.path.join(self.generated_dir, f"request_{digest}.{ext}")
+
+            def matches(path: str) -> bool:
+                try:
+                    with open(path, "rb") as handle:
+                        return handle.read() == data
+                except OSError:
+                    return False
+
+            if not os.path.isfile(target) or not matches(target):
+                # Reuse request files written by older plugin versions before
+                # deterministic names were introduced.
+                target = ""
+                for root, _, names in os.walk(self.generated_dir):
+                    for name in names:
+                        if not name.startswith("request_"):
+                            continue
+                        candidate = os.path.join(root, name)
+                        if matches(candidate):
+                            target = candidate
+                            break
+                    if target:
+                        break
+                if not target:
+                    target = os.path.join(self.generated_dir, f"request_{digest}.{ext}")
+                    temp = f"{target}.{time.time_ns()}.tmp"
+                    try:
+                        with open(temp, "wb") as handle:
+                            handle.write(data)
+                        os.replace(temp, target)
+                    finally:
+                        try:
+                            if os.path.exists(temp):
+                                os.unlink(temp)
+                        except OSError:
+                            pass
+            rel_path = self._cache_relative_path(target)
+            self._register_inflight_media([rel_path])
+            return rel_path
+
     def _save_reference_images_to_cache(self, refs: List[ImageReference]) -> List[str]:
         paths: List[str] = []
+        seen: set[str] = set()
         for ref in refs:
-            if ref.data:
-                paths.append(self._save_cache_image(ref.data, "request", ref.mime_type))
+            if not ref or not ref.data:
+                continue
+            if self._is_stable_reference(ref):
+                continue
+            path = self._save_or_reuse_reference_image(ref)
+            if path and path not in seen:
+                seen.add(path)
+                paths.append(path)
         return paths
 
     def _cache_size_bytes(self) -> int:

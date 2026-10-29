@@ -620,7 +620,13 @@ class PersonaManager:
             except OSError:
                 continue
             if data:
-                images.append({"id": entry["id"], "data": data, "mime_type": entry["mime_type"], "created_at": entry["created_at"]})
+                images.append({
+                    "id": entry["id"],
+                    "data": data,
+                    "mime_type": entry["mime_type"],
+                    "path": entry["path"],
+                    "created_at": entry["created_at"],
+                })
         return images
 
     def add_auxiliary_reference_image(self, data: bytes, mime_type: str = "") -> Dict[str, Any]:
