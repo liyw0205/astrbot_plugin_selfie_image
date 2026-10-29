@@ -164,16 +164,79 @@
       white-space: pre-wrap; background: #f8fafc; border: 1px solid var(--line); border-radius: var(--radius-sm);
       padding: 10px; min-height: 24px; max-width: 100%; overflow-wrap: anywhere; word-break: break-word;
     }
+    .health-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 4px 10px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .health-header-copy { display: grid; gap: 3px; min-width: 0; }
+    .health-header-copy strong { font-size: 13px; }
+    .health-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+    .health-item { display: grid; align-content: start; gap: 4px; min-width: 0; padding: 8px 10px; border-left: 2px solid var(--line-strong); border-radius: 4px; background: var(--panel-soft); }
+    .health-item-label { color: var(--muted); font-size: 11px; font-weight: 650; }
+    .health-item-value { color: var(--text); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; }
+    .health-alert, .health-message { grid-column: 1 / -1; padding: 9px 10px; border-radius: 4px; background: #fff6e5; color: #77520a; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+    .pill.warning { background: #fff6e5; border-color: #f0d99e; color: #77520a; }
+    .metrics-overview { margin-top: 12px; border-top: 1px solid var(--line); }
+    .metrics-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 12px 2px 7px; }
+    .metrics-header strong { font-size: 14px; }
+    .metrics-section { min-width: 0; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+    .metrics-section:last-child { border-bottom: 0; }
+    .metrics-section-title { margin: 0 0 8px; color: var(--text); font-size: 12px; font-weight: 700; }
+    .metrics-split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .metrics-split > .metrics-section { min-width: 0; }
+    .metrics-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .metrics-kpi { display: grid; gap: 4px; min-width: 0; padding: 8px 10px; border-left: 2px solid var(--line-strong); border-radius: 4px; background: var(--panel-soft); }
+    .metrics-kpi-label, .metrics-kpi-note { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .metrics-kpi-value { color: var(--text); font-size: 16px; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+    .metrics-chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .metrics-chip { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-soft); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+    .metrics-chip strong { color: var(--text); font-variant-numeric: tabular-nums; }
+    .metrics-empty { color: var(--muted); font-size: 12px; }
+    .metrics-breakdown { display: grid; gap: 6px; }
+    .metrics-breakdown-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 8px; align-items: start; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 11px; line-height: 1.4; }
+    .metrics-breakdown-row:last-child { padding-bottom: 0; border-bottom: 0; }
+    .metrics-breakdown-row strong { min-width: 0; overflow-wrap: anywhere; color: var(--text); }
+    .metrics-breakdown-row span { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); text-align: right; }
+    .metrics-recommendation { padding: 7px 9px; border-left: 2px solid var(--primary); border-radius: 3px; background: var(--panel-soft); color: var(--text-secondary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+    .metrics-error { margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--text-secondary); overflow-wrap: anywhere; }
+    .metrics-launcher-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin: 12px 0 8px; }
+    .metrics-launcher-header strong { font-size: 14px; }
+    .metrics-launcher-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+    .metrics-launcher { display: grid; align-content: center; justify-items: start; gap: 4px; min-width: 0; min-height: 62px; padding: 9px 11px; text-align: left; }
+    .metrics-launcher strong { font-size: 12px; line-height: 1.3; }
+    .metrics-launcher span { color: var(--muted); font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+    .metrics-dialog { width: min(820px, 100%); }
+    .metrics-dialog .modal-body { min-height: 120px; }
     .daily-schedule { margin-top: 12px; display: grid; gap: 8px; }
-    .daily-schedule-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .daily-schedule-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .daily-schedule-title { display: grid; gap: 3px; min-width: 0; }
     .daily-schedule-head strong { font-size: 14px; }
+    .daily-schedule-current { color: var(--primary-strong); font-size: 11px; font-weight: 650; }
+    .daily-schedule-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+    .daily-schedule-fact { display: grid; gap: 3px; min-width: 0; padding: 8px 10px; border-left: 2px solid var(--line-strong); border-radius: 4px; background: var(--panel-soft); }
+    .daily-schedule-fact-label { color: var(--muted); font-size: 10px; font-weight: 650; }
+    .daily-schedule-fact-value { color: var(--text-secondary); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+    .daily-current-event { display: grid; gap: 8px; min-width: 0; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line)); border-left: 3px solid var(--primary); border-radius: 5px; background: var(--primary-weak); }
+    .daily-current-event-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .daily-current-event-title { min-width: 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+    .daily-current-event-time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .daily-schedule-details { border-top: 1px solid var(--line); }
+    .daily-schedule-details summary { display: flex; justify-content: space-between; gap: 10px; padding: 10px 2px; color: var(--text-secondary); font-size: 12px; font-weight: 650; cursor: pointer; list-style-position: inside; }
+    .daily-schedule-details summary span:last-child { color: var(--muted); font-size: 11px; font-weight: 500; }
     .daily-schedule-list { display: grid; gap: 6px; }
-    .daily-event { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 9px 10px; border-left: 3px solid var(--line-strong); background: var(--panel-soft); border-radius: 4px; }
+    .daily-event { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; padding: 10px; border-left: 3px solid var(--line-strong); background: var(--panel-soft); border-radius: 4px; }
     .daily-event.current { border-left-color: var(--primary); background: var(--primary-weak); }
-    .daily-event-time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-    .daily-event-body { min-width: 0; display: grid; gap: 3px; }
-    .daily-event-title { font-size: 13px; font-weight: 650; }
-    .daily-event-detail { color: var(--text-secondary); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+    .daily-event-time { display: grid; align-content: start; gap: 5px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .daily-event-time strong { color: var(--text-secondary); font-size: 12px; }
+    .daily-event-body { min-width: 0; display: grid; gap: 8px; }
+    .daily-event-heading { display: grid; gap: 3px; min-width: 0; }
+    .daily-event-title { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+    .daily-event-status { color: var(--text-secondary); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+    .daily-event-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 14px; }
+    .daily-event-field { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 6px; min-width: 0; font-size: 11px; line-height: 1.45; }
+    .daily-event-field-label { color: var(--muted); }
+    .daily-event-field-value { min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+    .selfie-reference-actions { align-items: center; }
+    .selfie-reference-actions button { min-height: 38px; }
+    .selfie-reference-state { min-height: 0; margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .status:empty { display: none; }
     .muted { color: var(--muted); font-size: 13px; line-height: 1.45; }
     .card { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; background: #fff; margin-bottom: 12px; box-shadow: var(--shadow); }
     .soft { background: var(--panel-soft); }
@@ -220,7 +283,7 @@
       .media-lightbox-stage { padding:8px; }
     }
     .toast-wrap { position: fixed; right: 16px; top: 16px; z-index: 100; display: grid; justify-items: end; gap: 8px; pointer-events: none; }
-    .toast { width: max-content; min-width: 0; max-width: min(360px, calc(100vw - 32px)); padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--text); box-shadow: 0 10px 24px rgba(0,0,0,.12); white-space: nowrap; font-size: 12px; }
+    .toast { width: max-content; min-width: 0; max-width: min(360px, calc(100vw - 32px)); padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--text); box-shadow: 0 10px 24px rgba(0,0,0,.12); white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
     .toast.ok { background: #fff; color: var(--text); border-color: #dfe3ea; }
     .toast.bad { background: rgba(244,67,54,.94); }
     .detail-title { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
@@ -980,6 +1043,23 @@
       .group-config-head { font-size: 10px; }
       .group-config-trigger { padding: 6px 5px; font-size: 11px; }
     }
+    @media (max-width: 900px) {
+      .health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metrics-split { grid-template-columns: minmax(0, 1fr); gap: 0; }
+      .metrics-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metrics-launcher-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .health-grid { grid-template-columns: minmax(0, 1fr); }
+      .metrics-breakdown-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+      .metrics-breakdown-row span { text-align: left; }
+      .daily-event { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+      .daily-event-time { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .daily-event-fields { grid-template-columns: minmax(0, 1fr); }
+      .daily-schedule-facts { grid-template-columns: minmax(0, 1fr); }
+      .metrics-launcher-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metrics-launcher { min-height: 58px; }
+    }
   </style>
 </head>
 <body>
@@ -1053,9 +1133,12 @@
       </div>
       <div class="between">
         <h2>基础</h2>
-        <span id="healthPill" class="pill">未连接</span>
       </div>
-      <label>连接状态</label><div id="health" class="status">还没连上</div>
+      <div class="health-header">
+        <div class="health-header-copy"><strong>连接状态</strong><span class="muted">插件接口、缓存和数据文件</span></div>
+        <span id="healthPill" class="pill gray">未连接</span>
+      </div>
+      <div id="health" class="health-grid" aria-live="polite"><div class="health-message">还没连上</div></div>
       <div class="actions" style="margin-top:8px">
         <button id="cleanupCacheBtn" class="danger" type="button" title="仅清理未被记录、收藏、置顶或画布会话引用的超限缓存">清理可回收缓存</button>
       </div>
@@ -1065,7 +1148,6 @@
         <div><label>记录保留量（条）</label><input id="recordKeepLimit" type="number" min="10" max="10000"></div>
         <div><label>说明</label><div class="status">缓存上限建议不小于记录保留量；请求图和生成图共用缓存。自动清理按记录整组移除最旧的媒体，未被记录、收藏、置顶或画布会话引用的文件优先清理。</div></div>
       </div>
-      <div id="baseStatus" class="status" style="margin-top:12px"></div>
     </section>
 
     <section id="channels" class="floating-action-section">
@@ -1176,7 +1258,8 @@
         <div><label>标签</label><input id="monitorTag" placeholder="输入标签"></div>
       </div>
       <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
-      <div id="monitorMetrics" class="status" style="margin-top:12px"></div>
+      <div class="metrics-launcher-header"><strong>运行概览</strong><span id="monitorMetricsWindowLabel" class="muted">统计范围：全部保留记录</span></div>
+      <div id="monitorMetricButtons" class="metrics-launcher-grid" aria-label="运行概览分类"></div>
       <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button></div>
       <div class="grid" style="margin-top:8px">
         <div><label>显示范围</label><select id="taskQueueScope" onchange="taskQueueViewChanged()"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
@@ -1544,14 +1627,13 @@
       <h3>形象参考图</h3>
       <input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml">
       <img id="selfiePreview" class="preview" alt="selfie reference">
-      <div class="actions">
+      <div class="actions selfie-reference-actions">
         <button id="uploadSelfie">上传并保存</button>
-        <button class="secondary" onclick="refreshSelfie()">刷新预览</button>
+        <button class="secondary" onclick="refreshSelfie(true)">刷新预览</button>
         <button class="danger" onclick="clearSelfie()">清除参考图</button>
-        <span class="muted">今日穿搭</span>
         <button class="secondary" onclick="refreshDailySelfieLocal()">本地刷新</button>
       </div>
-      <div id="selfieStatus" class="status"></div>
+      <div id="selfieStatus" class="selfie-reference-state" aria-live="polite"></div>
       <div id="selfieDailySchedule" class="daily-schedule" hidden></div>
     </section>
 
@@ -1721,6 +1803,19 @@
         <button class="secondary" type="button" onclick="closeTaskDetail()">关闭</button>
       </div>
       <div class="modal-body"><div id="taskDetailBody"></div></div>
+    </div>
+  </div>
+
+  <div id="metricsModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="metricsModalTitle">
+    <div class="modal metrics-dialog">
+      <div class="between">
+        <div>
+          <h2 id="metricsModalTitle">运行概览</h2>
+          <div id="metricsModalScope" class="muted"></div>
+        </div>
+        <button class="secondary" type="button" onclick="closeMetricsModal()">关闭</button>
+      </div>
+      <div class="modal-body"><div id="metricsModalBody"></div></div>
     </div>
   </div>
 
@@ -2052,6 +2147,8 @@
     let RECORD_LOAD_SEQ = 0;
     let ASSET_LOAD_SEQ = 0;
     const METRICS_REQUESTS = new Map();
+    let METRICS_CONTENTS = {};
+    let ACTIVE_METRICS_CATEGORY = '';
     const TASK_REQUESTS = new Map();
     let RECORD_LOADING = false;
     let ASSET_LOADING = false;
@@ -3762,9 +3859,15 @@ Source prompt:
           fixed_model: row.config?.fixed_model || '',
         }}));
         $('saveGroupsBtn').disabled = false;
-        setStatus('groupsStatus', data.available ? `已读取 ${QQ_GROUP_ROWS.length} 个群` : (data.message || 'QQ 平台不可用'));
+        const resultText = data.available ? `已读取 ${QQ_GROUP_ROWS.length} 个群` : (data.message || 'QQ 平台不可用');
+        setStatus('groupsStatus', force ? '' : resultText);
+        if (force) showToast(resultText, data.available ? 'ok' : 'info');
         renderQQGroups();
-      } catch (error) { setStatus('groupsStatus', error.message || '读取群列表失败'); }
+      } catch (error) {
+        const message = error.message || '读取群列表失败';
+        setStatus('groupsStatus', force ? '' : message);
+        if (force) showToast(message, 'bad');
+      }
     }
     async function saveQQGroups() {
       try {
@@ -3777,9 +3880,8 @@ Source prompt:
         if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
         CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
         if (result.data?.permission) CONFIG.permission = {...CONFIG.permission, ...result.data.permission};
-        setStatus('groupsStatus', '群聊配置和用户名单已保存');
         showToast('群聊配置和用户名单已保存', 'ok');
-      } catch (error) { setStatus('groupsStatus', error.message || '保存群聊配置失败'); showToast(error.message || '保存失败', 'bad'); }
+      } catch (error) { showToast(error.message || '保存群聊配置失败', 'bad'); }
     }
 
     async function loadConfig() {
@@ -3788,9 +3890,8 @@ Source prompt:
         CONFIG = res.data || {};
         fillForms();
         renderProxyList();
-        setStatus('configStatus', '配置已读取');
       } catch (e) {
-        setStatus('configStatus', e.message);
+        showToast(e.message || '配置读取失败', 'bad');
       }
     }
     async function exportJsonConfig() {
@@ -3821,9 +3922,9 @@ Source prompt:
         link.click();
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 2000);
-        setStatus('configStatus', mode === 'raw' ? '原文配置 JSON 已导出，请妥善保管' : '脱敏配置 JSON 已导出');
+        showToast(mode === 'raw' ? '原文配置 JSON 已导出，请妥善保管' : '脱敏配置 JSON 已导出', 'ok');
       } catch (e) {
-        setStatus('configStatus', `配置 JSON 导出失败：${e.message}`);
+        showToast(`配置 JSON 导出失败：${e.message}`, 'bad');
       }
     }
     async function importJsonConfigFile(file) {
@@ -3834,9 +3935,9 @@ Source prompt:
           throw new Error('配置必须是 JSON 对象');
         }
         $('configText').value = JSON.stringify(parsed, null, 2);
-        setStatus('configStatus', '配置 JSON 已导入编辑区，请点击保存 JSON');
+        showToast('配置 JSON 已导入编辑区，请点击保存 JSON', 'ok');
       } catch (e) {
-        setStatus('configStatus', `配置 JSON 导入失败：${e.message}`);
+        showToast(`配置 JSON 导入失败：${e.message}`, 'bad');
       }
     }
     document.getElementById('configImportFile')?.addEventListener('change', (event) => {
@@ -3870,12 +3971,10 @@ Source prompt:
           // Keep selectors in sync without rebuilding cards.
           refreshModelSelectors();
         }
-        if (okText) setMultiStatus(okText);
-        if (toastOnOk && okText) showToast(okText, 'ok');
+        if (toastOnOk && okText) setMultiStatus(okText, 'ok');
         return true;
       } catch (e) {
-        setMultiStatus(e.message);
-        if (toastOnError) showToast(e.message, 'bad');
+        if (toastOnError) setMultiStatus(e.message, 'bad');
         return false;
       }
     }
@@ -3889,7 +3988,6 @@ Source prompt:
       clearTimeout(AUTO_SAVE_TIMER);
       const reason = options.reason || 'form';
       // 输入框自动保存不刷「正在保存…」，避免每敲一字全页状态抖动
-      if (!options.silentStatus) setMultiStatus('正在保存…');
       AUTO_SAVE_TIMER = setTimeout(() => {
         persistConfig(false, okText || '', {
           toast: false,
@@ -4273,8 +4371,7 @@ Source prompt:
         renderAllChannelLists();
         refreshModelSelectors();
         renderAllPriorityRows();
-        setMultiStatus(e.message);
-        showToast(e.message, 'bad');
+        setMultiStatus(e.message, 'bad');
         return false;
       }
     }
@@ -4293,27 +4390,38 @@ Source prompt:
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: CONFIG})});
         CONFIG = res.data || CONFIG;
         fillForms();
-        setStatus('configStatus', 'JSON 配置已保存');
-      } catch (e) { setStatus('configStatus', e.message); }
+        showToast('JSON 配置已保存', 'ok');
+      } catch (e) { showToast(e.message || 'JSON 配置保存失败', 'bad'); }
     }
 
     async function checkHealth() {
       try {
         const res = await api('/api/health');
         const d = res.data || {};
+        const cachePreview = d.cache_cleanup_preview || {};
+        const statusText = d.status === 'ok' ? '运行正常' : d.status === 'degraded' ? '配置需要检查' : String(d.status || '状态未知');
+        const healthItems = [
+          ['插件状态', statusText],
+          ['缓存占用', `${String(d.cache_file_count ?? 0)} / ${String(d.cache_limit_count ?? 1000)} 张 · ${String(d.cache_size_mb ?? 0)} / ${String(d.cache_limit_mb ?? 2048)} MB`],
+          ['可回收预览', `${String(cachePreview.would_delete_count ?? 0)} 张 · ${String(Math.round(Number(cachePreview.would_delete_bytes || 0) / 1024 / 1024))} MB`],
+          ['缓存目录', d.cache_dir || '-'],
+          ['记录文件', d.records_path || '-'],
+          ['配置文件', d.config_path || '-'],
+        ];
+        const healthWarnings = [
+          d.cache_limit_warning,
+          ...(Array.isArray(d.config_preflight?.errors) ? d.config_preflight.errors.map(item => item?.message) : []),
+        ].map(value => String(value || '').trim()).filter(Boolean);
         $('health').innerHTML = `
-          <div><b>状态：</b>${escapeHtml(d.status || 'ok')}</div>
-          <div><b>图片缓存：</b>${escapeHtml(String(d.cache_file_count ?? 0))} / ${escapeHtml(String(d.cache_limit_count ?? 1000))} 张，${escapeHtml(String(d.cache_size_mb ?? 0))} / ${escapeHtml(String(d.cache_limit_mb ?? 2048))} MB</div>
-          ${d.cache_limit_warning ? `<div style="color:#b3261e"><b>注意：</b>${escapeHtml(d.cache_limit_warning)}</div>` : ''}
-          <div><b>缓存预览：</b>预计清理 ${escapeHtml(String(d.cache_cleanup_preview?.would_delete_count ?? 0))} 张，${escapeHtml(String(Math.round(Number(d.cache_cleanup_preview?.would_delete_bytes || 0) / 1024 / 1024)))} MB</div>
-          <div><b>缓存目录：</b>${escapeHtml(d.cache_dir || '')}</div>
-          <div><b>监控记录：</b>${escapeHtml(d.records_path || '')}</div>
-          <div><b>配置文件：</b>${escapeHtml(d.config_path || '')}</div>
+          ${healthItems.map(([label, value]) => `<div class="health-item"><span class="health-item-label">${escapeHtml(label)}</span><span class="health-item-value">${escapeHtml(String(value))}</span></div>`).join('')}
+          ${healthWarnings.map(message => `<div class="health-alert">${escapeHtml(message)}</div>`).join('')}
         `;
-        $('healthPill').textContent = '已连接';
+        $('healthPill').textContent = d.status === 'ok' ? '已连接' : '已连接 · 需检查';
+        $('healthPill').className = `pill ${d.status === 'ok' ? 'green' : 'warning'}`;
       } catch (e) {
-        $('health').textContent = e.message;
+        $('health').innerHTML = `<div class="health-message">${escapeHtml(e.message || '连接失败')}</div>`;
         $('healthPill').textContent = '未连接';
+        $('healthPill').className = 'pill gray';
       }
     }
     async function cleanupCache() {
@@ -4370,21 +4478,104 @@ Source prompt:
       return '/api/records?' + params.toString();
     }
     async function loadMetricsNow() {
+      const root = $('monitorMetricButtons');
+      if (!root) return;
       try {
         const windowKey = $('monitorMetricsWindow')?.value || 'all';
         const res = await api('/api/metrics?window=' + encodeURIComponent(windowKey));
         const d = res.data || {};
-        const statuses = Object.entries(d.status_counts || {}).map(([k, v]) => `${escapeHtml(k)} ${escapeHtml(String(v))}`).join(' · ') || '暂无';
-        const errors = Object.entries(d.error_categories || {}).map(([k, v]) => `${escapeHtml(k)} ${escapeHtml(String(v))}`).join(' · ') || '暂无';
+        const windowLabel = $('monitorMetricsWindow')?.selectedOptions?.[0]?.textContent || '全部保留记录';
+        const statusLabels = {succeeded:'成功', failed:'失败', partial_success:'部分成功', cancelled:'已取消', delivery_failed:'发送失败', queued:'排队中', running:'进行中', expired:'已过期'};
+        const errorLabels = {auth:'鉴权失败', not_found:'接口或模型不存在', safety:'审核拦截', quota:'额度不足', param:'参数不兼容', timeout:'超时', network:'网络错误', server:'上游服务错误', rate_limit:'请求限流', unknown:'无法分类', fatal:'不可重试'};
+        const renderCountChips = (entries, labels = {}) => {
+          const rows = Object.entries(entries || {});
+          if (!rows.length) return '<span class="metrics-empty">暂无数据</span>';
+          return `<div class="metrics-chip-list">${rows.map(([key, value]) => `<span class="metrics-chip"><span>${escapeHtml(labels[key] || key)}</span><strong>${escapeHtml(String(value))}</strong></span>`).join('')}</div>`;
+        };
+        const renderBreakdown = (rows, formatter) => {
+          if (!rows.length) return '<span class="metrics-empty">暂无数据</span>';
+          return `<div class="metrics-breakdown">${rows.map(([name, value]) => `<div class="metrics-breakdown-row"><strong>${escapeHtml(name)}</strong><span>${formatter(value)}</span></div>`).join('')}</div>`;
+        };
         const e = d.elapsed_seconds || {};
-        const channels = Object.entries(d.channels || {}).map(([k, v]) => `${escapeHtml(k)} ${escapeHtml(String(v.success ?? 0))}/${escapeHtml(String(v.attempts ?? 0))} 成功 · 回退 ${escapeHtml(String(v.fallbacks ?? 0))}`).join('；') || '暂无';
-        const models = Object.entries(d.models || {}).map(([k, v]) => `${escapeHtml(k)} ${escapeHtml((Number(v.success_rate || 0) * 100).toFixed(1))}%`).join('；') || '暂无';
+        const channelRows = Object.entries(d.channels || {});
+        const modelRows = Object.entries(d.models || {});
         const retries = d.retries || {};
         const quality = d.quality || {};
         const recommendations = Array.isArray(d.recommendations) ? d.recommendations : [];
-        const recommendationText = recommendations.map(item => `${escapeHtml(String(item.message || item.code || ''))}`).join('；') || '暂无';
-        $('monitorMetrics').innerHTML = `<b>窗口：</b>${escapeHtml(String(d.retained_records ?? 0))}/${escapeHtml(String(d.total_retained_records ?? d.retained_records ?? 0))} 条记录 · <b>图片：</b>${escapeHtml(String(d.requested_images ?? 0))} 请求 / ${escapeHtml(String(d.succeeded_images ?? 0))} 成功 / ${escapeHtml(String(d.failed_images ?? 0))} 失败<br><b>质量：</b>记录成功率 ${escapeHtml((Number(quality.record_success_rate || 0) * 100).toFixed(1))}% · 图片成功率 ${escapeHtml((Number(quality.image_success_rate || 0) * 100).toFixed(1))}% · 重试率 ${escapeHtml((Number(quality.retry_rate || 0) * 100).toFixed(1))}% · 回退率 ${escapeHtml((Number(quality.fallback_rate || 0) * 100).toFixed(1))}%<br><b>状态：</b>${statuses}<br><b>错误类别：</b>${errors}<br><b>重试：</b>${escapeHtml(String(retries.total ?? 0))} 次，涉及 ${escapeHtml(String(retries.records_with_retries ?? 0))} 条记录<br><b>渠道：</b>${channels}<br><b>模型：</b>${models}<br><b>耗时：</b>P50 ${escapeHtml(String(e.p50 ?? 0))}s · P95 ${escapeHtml(String(e.p95 ?? 0))}s · 最大 ${escapeHtml(String(e.max ?? 0))}s<br><b>建议：</b>${recommendationText}`;
-      } catch (e) { $('monitorMetrics').textContent = e.message; }
+        const metric = (label, value, note = '') => `<div class="metrics-kpi"><span class="metrics-kpi-label">${label}</span><strong class="metrics-kpi-value">${value}</strong>${note ? `<span class="metrics-kpi-note">${note}</span>` : ''}</div>`;
+        const percent = value => `${(Number(value || 0) * 100).toFixed(1)}%`;
+        const recordCount = escapeHtml(String(d.retained_records ?? 0));
+        const totalRecordCount = escapeHtml(String(d.total_retained_records ?? d.retained_records ?? 0));
+        const categories = [
+          {
+            key: 'output', title: '产出统计', summary: `${escapeHtml(String(d.requested_images ?? 0))} 张请求`,
+            html: `<div class="metrics-section"><h3 class="metrics-section-title">窗口与产出</h3><div class="metrics-kpi-grid">
+              ${metric('纳入记录', `${recordCount} / ${totalRecordCount}`, '当前窗口 / 全部保留')}
+              ${metric('图片请求', escapeHtml(String(d.requested_images ?? 0)), '总请求数')}
+              ${metric('成功图片', escapeHtml(String(d.succeeded_images ?? 0)), '已生成')}
+              ${metric('失败图片', escapeHtml(String(d.failed_images ?? 0)), '未成功生成')}
+            </div></div>`,
+          },
+          {
+            key: 'quality', title: '质量与耗时', summary: `${escapeHtml(percent(quality.record_success_rate))} 记录成功率`,
+            html: `<div class="metrics-section"><h3 class="metrics-section-title">质量指标</h3><div class="metrics-kpi-grid">
+              ${metric('记录成功率', escapeHtml(percent(quality.record_success_rate)), '按生成记录统计')}
+              ${metric('图片成功率', escapeHtml(percent(quality.image_success_rate)), '按图片数量统计')}
+              ${metric('重试率', escapeHtml(percent(quality.retry_rate)), '发生过重试的记录')}
+              ${metric('回退率', escapeHtml(percent(quality.fallback_rate)), '切换到后备渠道')}
+            </div></div><div class="metrics-section"><h3 class="metrics-section-title">重试与耗时</h3><div class="metrics-kpi-grid">
+              ${metric('重试总数', escapeHtml(String(retries.total ?? 0)), `涉及 ${escapeHtml(String(retries.records_with_retries ?? 0))} 条记录`)}
+              ${metric('P50 耗时', `${escapeHtml(String(e.p50 ?? 0))}s`, '中位数')}
+              ${metric('P95 耗时', `${escapeHtml(String(e.p95 ?? 0))}s`, '长耗时参考')}
+              ${metric('最长耗时', `${escapeHtml(String(e.max ?? 0))}s`)}
+            </div></div>`,
+          },
+          {
+            key: 'errors', title: '状态与错误', summary: `${Object.keys(d.error_categories || {}).length} 类错误`,
+            html: `<div class="metrics-split"><div class="metrics-section"><h3 class="metrics-section-title">状态分布</h3>${renderCountChips(d.status_counts, statusLabels)}</div>
+              <div class="metrics-section"><h3 class="metrics-section-title">错误类型</h3>${renderCountChips(d.error_categories, errorLabels)}</div></div>`,
+          },
+          {
+            key: 'providers', title: '渠道与模型', summary: `${channelRows.length} 渠道 · ${modelRows.length} 模型`,
+            html: `<div class="metrics-split"><div class="metrics-section"><h3 class="metrics-section-title">渠道表现</h3>
+              ${renderBreakdown(channelRows, value => `${escapeHtml(String(value.success ?? 0))} / ${escapeHtml(String(value.attempts ?? 0))} 次成功 · 回退 ${escapeHtml(String(value.fallbacks ?? 0))} · 成功率 ${escapeHtml(percent(value.success_rate))}`)}
+              </div><div class="metrics-section"><h3 class="metrics-section-title">模型表现</h3>
+              ${renderBreakdown(modelRows, value => `成功率 ${escapeHtml(percent(value.success_rate))}`)}
+              </div></div>`,
+          },
+          {
+            key: 'recommendations', title: '运行建议', summary: `${recommendations.length} 条建议`,
+            html: recommendations.length
+              ? `<div class="metrics-breakdown">${recommendations.map(item => `<div class="metrics-recommendation">${escapeHtml(String(item.message || item.code || ''))}</div>`).join('')}</div>`
+              : '<span class="metrics-empty">暂无建议</span>',
+          },
+        ];
+        METRICS_CONTENTS = Object.fromEntries(categories.map(category => [category.key, category]));
+        $('monitorMetricsWindowLabel').textContent = `统计范围：${windowLabel}`;
+        root.classList.remove('metrics-error');
+        root.innerHTML = categories.map(category => `<button class="secondary metrics-launcher" type="button" data-metrics-category="${category.key}"><strong>${category.title}</strong><span>${category.summary}</span></button>`).join('');
+        if (ACTIVE_METRICS_CATEGORY && $('metricsModal')?.classList.contains('show')) renderMetricsCategory(ACTIVE_METRICS_CATEGORY);
+      } catch (e) {
+        METRICS_CONTENTS = {};
+        root.classList.add('metrics-error');
+        root.textContent = e.message || '统计读取失败';
+      }
+    }
+    function renderMetricsCategory(key) {
+      const category = METRICS_CONTENTS[key];
+      if (!category) return;
+      ACTIVE_METRICS_CATEGORY = key;
+      $('metricsModalTitle').textContent = category.title;
+      $('metricsModalScope').textContent = $('monitorMetricsWindowLabel').textContent;
+      $('metricsModalBody').innerHTML = category.html;
+    }
+    function openMetricsCategory(key) {
+      renderMetricsCategory(key);
+      if (METRICS_CONTENTS[key]) $('metricsModal').classList.add('show');
+    }
+    function closeMetricsModal() {
+      $('metricsModal')?.classList.remove('show');
+      ACTIVE_METRICS_CATEGORY = '';
     }
     async function loadMetrics() {
       const key = String($('monitorMetricsWindow')?.value || 'all');
@@ -7084,21 +7275,42 @@ Source prompt:
         return;
       }
       const currentId = payload.current_event && String(payload.current_event.id || '');
+      const renderField = (label, value) => value
+        ? `<div class="daily-event-field"><span class="daily-event-field-label">${escapeHtml(label)}</span><span class="daily-event-field-value">${escapeHtml(String(value))}</span></div>`
+        : '';
+      const outfitFor = event => schedule.outfits && schedule.outfits[event.outfit_ref]
+        ? schedule.outfits[event.outfit_ref] : '';
       const events = schedule.events.map(event => {
-        const outfit = schedule.outfits && schedule.outfits[event.outfit_ref]
-          ? `穿搭：${schedule.outfits[event.outfit_ref]}` : '';
-        const detail = [event.scene, event.action, outfit, event.outfit_change ? `变化：${event.outfit_change}` : '']
-          .filter(Boolean).map(escapeHtml).join('；');
+        const outfit = outfitFor(event);
         return `<div class="daily-event${String(event.id || '') === currentId ? ' current' : ''}">
-          <div class="daily-event-time">${escapeHtml(event.start || '')}-${escapeHtml(event.end || '')}</div>
-          <div class="daily-event-body"><div class="daily-event-title">${escapeHtml(event.title || '日程事件')}</div><div class="daily-event-detail">${detail}</div></div>
+          <div class="daily-event-time"><strong>${escapeHtml(event.start || '')} - ${escapeHtml(event.end || '')}</strong>${String(event.id || '') === currentId ? '<span class="daily-schedule-current">当前</span>' : ''}</div>
+          <div class="daily-event-body">
+            <div class="daily-event-heading"><div class="daily-event-title">${escapeHtml(event.title || '日程事件')}</div>${event.status ? `<div class="daily-event-status">${escapeHtml(event.status)}</div>` : ''}</div>
+            <div class="daily-event-fields">
+              ${renderField('场景', event.scene)}
+              ${renderField('动作', event.action)}
+              ${renderField('穿搭', outfit)}
+              ${renderField('变化', event.outfit_change)}
+            </div>
+          </div>
         </div>`;
       }).join('');
-      root.innerHTML = `<div class="daily-schedule-head"><strong>${escapeHtml(schedule.date || '今日')} · ${escapeHtml(schedule.theme || '今日安排')}</strong><span class="muted">${escapeHtml((payload.current_event && payload.current_event.title) || '当前无进行中事件')}</span></div><div class="daily-schedule-list">${events}</div>`;
+      const currentEvent = payload.current_event;
+      const sourceLabel = ({local:'本地日程', fallback:'本地兜底', llm:'LLM生成'})[String(schedule.source || '')] || String(schedule.source || '日程');
+      const facts = [
+        ['今日主题', schedule.theme],
+        ['当前心情', schedule.mood],
+        ['时令氛围', schedule.occasion],
+      ].filter(([, value]) => String(value || '').trim());
+      const factMarkup = facts.map(([label, value]) => `<div class="daily-schedule-fact"><span class="daily-schedule-fact-label">${escapeHtml(label)}</span><span class="daily-schedule-fact-value">${escapeHtml(value)}</span></div>`).join('');
+      const currentMarkup = currentEvent
+        ? `<div class="daily-current-event"><div class="daily-current-event-head"><strong class="daily-current-event-title">${escapeHtml(currentEvent.title || '当前安排')}</strong><span class="daily-current-event-time">${escapeHtml(currentEvent.start || '')} - ${escapeHtml(currentEvent.end || '')}</span></div><div class="daily-event-fields">${renderField('场景', currentEvent.scene)}${renderField('动作', currentEvent.action)}${renderField('穿搭', outfitFor(currentEvent))}${renderField('变化', currentEvent.outfit_change)}</div></div>`
+        : '<div class="daily-current-event"><span class="daily-event-status">当前没有匹配的日程事件</span></div>';
+      root.innerHTML = `<div class="daily-schedule-head"><div class="daily-schedule-title"><strong>今日穿搭与日程</strong><span class="muted">${escapeHtml(schedule.date || '今日')} · ${escapeHtml(sourceLabel)}</span></div><span class="daily-schedule-current">${schedule.events.length} 个安排</span></div>${factMarkup ? `<div class="daily-schedule-facts">${factMarkup}</div>` : ''}${currentMarkup}<details class="daily-schedule-details"><summary><span>全天安排</span><span>${schedule.events.length} 个时段</span></summary><div class="daily-schedule-list">${events}</div></details>`;
       root.hidden = false;
     }
 
-    async function refreshSelfie() {
+    async function refreshSelfie(notify = false) {
       try {
         const res = await api('/api/selfie-reference');
         const data = res.data || {};
@@ -7112,38 +7324,41 @@ Source prompt:
           $('selfiePreview').removeAttribute('src');
           $('selfiePreview').style.display = 'none';
         }
-        $('selfieStatus').textContent = data.status || (data.has_image ? '已设置形象参考图' : '还没有形象参考图');
+        const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || 'auto'] || '自动';
+        $('selfieStatus').textContent = `${data.has_image ? '形象参考图已设置' : '尚未设置形象参考图'} · 类型：${appearanceLabel}`;
         renderSelfieDailySchedule(data.daily_schedule);
         if ($('selfieAppearanceType')) {
           $('selfieAppearanceType').value = data.appearance_type || 'auto';
         }
-      } catch (e) { $('selfieStatus').textContent = e.message; }
+        if (notify) showToast('形象参考已刷新', 'ok');
+      } catch (e) {
+        $('selfieStatus').textContent = '形象信息暂不可用';
+        showToast(e.message || '形象信息读取失败', 'bad');
+      }
     }
     async function refreshDailySelfieLocal() {
       try {
         const res = await api('/api/selfie-profile/refresh-local', {method:'POST', body:'{}'});
-        $('selfieStatus').textContent = (res.data && res.data.status) || '本地今日穿搭已刷新';
         renderSelfieDailySchedule(res.data && res.data.daily_schedule);
         showToast('本地今日穿搭已刷新', 'ok');
       } catch (e) {
-        $('selfieStatus').textContent = e.message;
         showToast(e.message, 'bad');
       }
     }
     async function uploadSelfie() {
       const file = $('selfieFile').files[0];
-      if (!file) { $('selfieStatus').textContent = '请选择图片'; return; }
+      if (!file) { showToast('请选择图片', 'bad'); return; }
       try {
         const image = await readFileDataUrl(file);
         await api('/api/selfie-reference', {method:'POST', body: JSON.stringify({image, mime_type:file.type, filename:file.name})});
         await refreshSelfie();
         showToast('参考图已更新', 'ok');
-      } catch (e) { $('selfieStatus').textContent = e.message; }
+      } catch (e) { showToast(e.message || '参考图上传失败', 'bad'); }
     }
     async function clearSelfie() {
       if (!await confirmAction('确定清除当前自拍形象参考图吗？清除后后续生成将不再使用这张形象图。', {title:'清除形象参考图', confirmText:'清除参考图'})) return;
       try { await api('/api/selfie-reference/clear', {method:'POST', body:'{}'}); await refreshSelfie(); showToast('参考图已清除', 'ok'); }
-      catch (e) { $('selfieStatus').textContent = e.message; }
+      catch (e) { showToast(e.message || '参考图清除失败', 'bad'); }
     }
     async function saveAppearanceType() {
       try {
@@ -7151,10 +7366,10 @@ Source prompt:
         const res = await api('/api/selfie-appearance-type', {method:'POST', body: JSON.stringify({appearance_type})});
         const data = res.data || {};
         if ($('selfieAppearanceType')) $('selfieAppearanceType').value = data.appearance_type || appearance_type;
-        $('selfieStatus').textContent = data.status || '形象类型已保存';
+        const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || appearance_type] || '自动';
+        $('selfieStatus').textContent = `${data.has_image ? '形象参考图已设置' : '尚未设置形象参考图'} · 类型：${appearanceLabel}`;
         showToast('形象类型已保存', 'ok');
       } catch (e) {
-        $('selfieStatus').textContent = e.message;
         showToast(e.message, 'bad');
       }
     }
@@ -7174,8 +7389,8 @@ Source prompt:
         .replace(/\r/g, '');
     }
     function setStatus(id, text) { $(id).textContent = text; }
-    function setMultiStatus(text) {
-      for (const id of ['baseStatus','channelStatus','imageStatus','auditStatus','configStatus']) if ($(id)) $(id).textContent = text;
+    function setMultiStatus(text, type = 'info') {
+      if (text) showToast(text, type);
     }
     async function enterApp(silent = false) {
       if (!silent && $('loginStatus')) $('loginStatus').textContent = '登录中...';
@@ -9653,6 +9868,7 @@ Source prompt:
       else if (mask === $('recordModal')) closeRecordDetail();
       else if (mask === $('compareModal')) closeCompareModal();
       else if (mask === $('taskModal')) closeTaskDetail();
+      else if (mask === $('metricsModal')) closeMetricsModal();
       else if (mask === $('mediaSourceModal')) closeMediaSourceModal();
       else if (mask === $('mediaLightboxModal')) closeMediaLightbox();
       else if (mask === $('presetEditorModal')) closePresetEditor();
@@ -9669,6 +9885,7 @@ Source prompt:
       if ($('mediaSourceModal')?.classList.contains('show')) { closeMediaSourceModal(); return; }
       if ($('mediaLightboxModal')?.classList.contains('show')) { closeMediaLightbox(); return; }
       if ($('taskModal')?.classList.contains('show')) { closeTaskDetail(); return; }
+      if ($('metricsModal')?.classList.contains('show')) { closeMetricsModal(); return; }
       if ($('recordModal')?.classList.contains('show')) { closeRecordDetail(); return; }
       if ($('compareModal')?.classList.contains('show')) { closeCompareModal(); return; }
       if ($('channelModal')?.classList.contains('show')) { closeChannelModal(); return; }
@@ -9851,6 +10068,10 @@ Source prompt:
     $('monitorSource').oninput = monitorFilterChanged;
     ['monitorMedia','monitorModel','monitorSuccess','monitorAsset'].forEach(id => {
       $(id).onchange = monitorFilterChanged;
+    });
+    if ($('monitorMetricButtons')) $('monitorMetricButtons').addEventListener('click', event => {
+      const button = event.target.closest('[data-metrics-category]');
+      if (button) openMetricsCategory(button.dataset.metricsCategory);
     });
     if ($('monitorMetricsWindow')) $('monitorMetricsWindow').onchange = () => loadMetrics();
     if ($('monitorTag')) $('monitorTag').oninput = monitorFilterChanged;

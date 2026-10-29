@@ -137,13 +137,48 @@ def test_record_persona_reference_is_loaded_after_markup_without_inline_html_dat
 
 def test_selfie_controls_only_offer_local_daily_outfit_refresh():
     controls = PAGE[PAGE.index('<input id="selfieFile"'):PAGE.index('<div id="selfieStatus"', PAGE.index('<input id="selfieFile"'))]
-    assert controls.index('onclick="refreshSelfie()"') < controls.index('onclick="clearSelfie()"')
-    assert '今日穿搭' in controls
+    assert controls.index('onclick="refreshSelfie(true)"') < controls.index('onclick="clearSelfie()"')
+    assert '今日穿搭' not in controls
     assert 'onclick="refreshDailySelfieLocal()"' in controls
+    assert 'class="actions selfie-reference-actions"' in controls
     assert 'onclick="refreshDailySelfieLlm()"' not in PAGE
     assert "async function refreshDailySelfieLlm()" not in PAGE
     assert "async function refreshDailySelfieLocal()" in PAGE
     assert "'/api/selfie-profile/refresh-local'" in PAGE
+    assert '今日穿搭与日程' in PAGE
+
+
+def test_dashboard_health_and_metrics_are_grouped_for_scanning():
+    assert 'class="health-header"' in PAGE
+    assert 'id="health" class="health-grid"' in PAGE
+    assert 'class="health-item-label"' in PAGE
+    assert 'id="monitorMetricButtons" class="metrics-launcher-grid"' in PAGE
+    assert 'data-metrics-category="${category.key}"' in PAGE
+    assert 'id="metricsModal" class="modal-mask"' in PAGE
+    assert "function openMetricsCategory(key)" in PAGE
+    assert 'class="metrics-kpi-grid"' in PAGE
+    assert 'class="metrics-split"' in PAGE
+    assert '错误类型' in PAGE
+    assert '@media (max-width: 640px)' in PAGE
+    assert 'id="monitorMetrics"' not in PAGE
+
+
+def test_daily_schedule_details_use_labeled_wrapping_fields():
+    assert 'function renderSelfieDailySchedule(payload)' in PAGE
+    assert "renderField('场景', event.scene)" in PAGE
+    assert "renderField('动作', event.action)" in PAGE
+    assert "renderField('穿搭', outfit)" in PAGE
+    assert 'class="daily-event-fields"' in PAGE
+    assert 'class="daily-current-event"' in PAGE
+    assert '<details class="daily-schedule-details">' in PAGE
+
+
+def test_dashboard_action_feedback_uses_toasts_without_empty_bottom_status_bar():
+    assert 'id="baseStatus"' not in PAGE
+    assert '.status:empty { display: none; }' in PAGE
+    assert "function setMultiStatus(text, type = 'info')" in PAGE
+    assert 'if (text) showToast(text, type);' in PAGE
+    assert 'white-space: normal; overflow-wrap: anywhere; font-size: 12px;' in PAGE
 
 
 def test_dashboard_shortcuts_and_priority_pin_cover_all_model_kinds():
