@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import json
 import os
 import random
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from ..cos.cos_looks import (
     adapt_cos_prompt_for_appearance,
@@ -24,6 +23,16 @@ from ..cos.leg_focus import (
     is_leg_calf_crop_action,
 )
 from ..core.utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
+from .daily_schedule import (
+    DEFAULT_BUSINESS_DAY_START,
+    PERIOD_TIME_RANGES,
+    DailySchedule,
+    DailyScheduleStore,
+    legacy_profile_to_schedule,
+    project_schedule_to_period_maps,
+    resolve_business_date,
+    timeline_from_period_route,
+)
 from ..prompts.prompt_templates import (
     COS_IDENTITY_CONTRACT_ZH,
     has_viewpoint_change_request,
@@ -39,6 +48,7 @@ APPEARANCE_TYPE_LABELS = {
 }
 
 DAILY_PERIOD_KEYS = ("morning", "noon", "afternoon", "evening", "night", "late_night")
+DAILY_PROFILE_SCHEMA_VERSION = 4
 SELFIE_SNAPSHOT_PRESETS = (
     "公寓玄关的手机前置自拍，门框和鞋柜只作为普通背景；手臂自然伸向镜头，竖屏从头部拍到大腿上部，人物稍偏一侧，画框轻微歪斜。",
     "家中窗边的手机前置自拍，保留一点窗光造成的局部偏亮；人物不完全居中，肩部自然靠近画面边缘，脸和当前穿搭仍清晰。",
@@ -189,8 +199,14 @@ class DailySelfieProfile:
     source: str = "fallback"
     status_by_period: Dict[str, str] = field(default_factory=dict)
     outfit_by_period: Dict[str, str] = field(default_factory=dict)
+    outfit_pool: list[str] = field(default_factory=list)
+    scene_by_period: Dict[str, str] = field(default_factory=dict)
+    action_by_period: Dict[str, str] = field(default_factory=dict)
+    schedule_by_period: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    day_theme: str = ""
     occasion: str = ""
     llm_attempted: bool = False
+    timeline: Optional[DailySchedule] = None
 
 
 @dataclass
@@ -417,6 +433,10 @@ def local_date_key() -> str:
     return time.strftime("%Y-%m-%d", time.localtime())
 
 
+def daily_schedule_date_key(day_start: str = DEFAULT_BUSINESS_DAY_START) -> str:
+    return resolve_business_date(day_start=day_start)
+
+
 def current_period() -> str:
     hour = time.localtime().tm_hour
     if 5 <= hour < 10:
@@ -443,22 +463,6 @@ def period_label(period: str) -> str:
     }.get(period, "当前")
 
 
-def daily_calendar_context(date: str) -> str:
-    try:
-        parsed = datetime.date.fromisoformat(date)
-    except (TypeError, ValueError):
-        return f"公历日期：{date}。"
-    weekday = ("一", "二", "三", "四", "五", "六", "日")[parsed.weekday()]
-    season = {
-        12: "冬季", 1: "冬季", 2: "冬季",
-        3: "春季", 4: "春季", 5: "春季",
-        6: "夏季", 7: "夏季", 8: "夏季",
-        9: "秋季", 10: "秋季", 11: "秋季",
-    }[parsed.month]
-    day_type = "周末" if parsed.weekday() >= 5 else "工作日"
-    return f"公历日期：{date}，星期{weekday}，{day_type}，中国大陆北半球{season}。"
-
-
 def random_pick(items: list[str]) -> str:
     return random.choice(items) if items else ""
 
@@ -479,6 +483,767 @@ def make_random_seed() -> str:
     )
 
 
+DAILY_SCENE_VARIANTS: Dict[str, tuple[str, ...]] = {
+    "morning": (
+        "窗边早餐桌旁的清晨光线",
+        "住宅玄关镜前，刚整理好外出穿搭",
+        "阳台小桌旁的清透晨光",
+        "安静卧室窗边，床铺已经整理好",
+    ),
+    "noon": (
+        "明亮咖啡馆靠窗座位",
+        "书店入口的自然散射光",
+        "社区花园长椅旁的午间光线",
+        "干净厨房台边的白色日光",
+    ),
+    "afternoon": (
+        "书桌前的下午散射光",
+        "街边树荫下的短暂停留",
+        "画廊走廊的安静背景",
+        "车站玻璃窗旁的柔和反光",
+    ),
+    "evening": (
+        "暖灯咖啡馆靠墙座位",
+        "雨后街角的蓝调天光",
+        "家中落地灯旁的傍晚一角",
+        "天台内侧的城市晚霞背景",
+    ),
+    "night": (
+        "客厅落地灯旁的安静角落",
+        "书桌暖灯下的夜间记录",
+        "卧室窗边的低亮度灯光",
+        "沙发一角的舒适夜晚空间",
+    ),
+    "late_night": (
+        "睡前床边的小夜灯",
+        "浴室镜前的柔和顶灯",
+        "收拾好的书桌与一盏台灯旁",
+        "窗帘半掩的安静卧室一角",
+    ),
+}
+
+DAILY_ACTION_VARIANTS: Dict[str, tuple[str, ...]] = {
+    "morning": (
+        "一手整理发丝，一手拿着水杯刚抬眼",
+        "扣好袖口后自然看向镜头",
+        "刚穿好鞋，在玄关停步整理衣领",
+        "坐在窗边把围巾或薄外套理顺",
+    ),
+    "noon": (
+        "刚放下咖啡杯，转身自然看向镜头",
+        "翻过书页后抬眼，手指轻压住书角",
+        "从座位起身时短暂停步，肩背放松",
+        "把随身小包放到身侧，轻轻整理发尾",
+    ),
+    "afternoon": (
+        "翻资料停在一页，抬头露出短暂笑意",
+        "走过街角时放慢脚步，顺手整理袖口",
+        "手臂轻搭栏杆或窗台，身体自然侧向镜头",
+        "靠近车站玻璃窗，低头看完消息后抬眼",
+    ),
+    "evening": (
+        "刚坐下把包放到身旁，抬眼回应镜头",
+        "把外套搭在手臂上，侧身整理衣摆",
+        "手指轻碰耳饰，像刚结束一段聊天",
+        "站在晚霞里收拢发丝，姿态自然松弛",
+    ),
+    "night": (
+        "坐下收拢抱枕，轻轻抬眼看向镜头",
+        "整理桌面上的书和衣袖，动作刚好停住",
+        "把头发挽到肩后，安静地靠着窗边",
+        "端着温水靠在沙发边，表情放松",
+    ),
+    "late_night": (
+        "整理睡前发丝后靠在床头，神情柔和",
+        "拉好窗帘后回身停步，动作轻而自然",
+        "关掉一本书前抬眼留下轻松的一帧",
+        "把薄外套或家居披肩搭到椅背上",
+    ),
+}
+
+# A daily profile is a small route through a day, not six unrelated prompts.
+# Keep scene, action and status together so a fallback profile cannot combine
+# an indoor gesture with an outdoor location (or vice versa).
+DAILY_SCHEDULE_ROUTES: tuple[Dict[str, Any], ...] = (
+    {
+        "id": "rooftop_gallery_riverside",
+        "theme": "从城市高处的晨光、画廊白昼到河岸蓝调的一天",
+        "events": {
+            "morning": {
+                "status": "刚整理好出门状态，清醒而松弛，先在有植物和城市天际线的高处透气。",
+                "scene": "高层天台的玻璃花房入口，晨光穿过叶片，远处是刚亮起的城市天际线。",
+                "action": "推开玻璃门后停在门边，抬手收拢被风吹散的发丝，另一只手自然垂落。",
+            },
+            "noon": {
+                "status": "上午的事情告一段落，在有开阔视野的地方慢下来，状态明亮利落。",
+                "scene": "旧工业建筑改造的玻璃咖啡厅，钢梁、大片窗和桌面上的光影形成干净背景。",
+                "action": "端起桌边的饮品抿过一口，放下杯子后靠回椅背，眼神自然看向窗外。",
+            },
+            "afternoon": {
+                "status": "午后进入安静的观展节奏，神情专注但不紧绷，像偶然留下的一帧。",
+                "scene": "白色当代艺术馆的长廊，天窗光落在墙面装置上，空间开阔而安静。",
+                "action": "停在一件大型抽象装置前读完说明，身体微侧，手指轻轻压住随身小包的带子。",
+            },
+            "evening": {
+                "status": "天色转蓝，走出室内后心情变得轻快，保留一天中自然累积的松弛感。",
+                "scene": "河岸高架步道的蓝调时刻，水面倒映远处桥灯，风把衣摆轻轻带起。",
+                "action": "双手自然搭在低矮栏杆上看了一会儿水面，随后侧身回望镜头，站姿稳定。",
+            },
+            "night": {
+                "status": "回家后从外出的节奏收回来，保留一点夜景余韵，状态安静舒适。",
+                "scene": "家中落地窗前的低亮度角落，城市灯光成为窗外细碎的背景。",
+                "action": "把随身小包放在椅背上，手指碰了碰窗帘边缘，转身停在柔和灯影里。",
+            },
+            "late_night": {
+                "status": "准备休息前只保留柔和、整洁的生活感，动作轻而自然。",
+                "scene": "窗帘半掩的卧室，床边小夜灯和一张打开的书形成安静的暖色层次。",
+                "action": "合上书后坐到床沿，整理睡前发丝，肩背放松地抬眼留下最后一帧。",
+            },
+        },
+    },
+    {
+        "id": "seaside_lighthouse",
+        "theme": "沿海风、灯塔和暮色码头串起的轻旅行日",
+        "events": {
+            "morning": {
+                "status": "清晨带着轻旅行的期待，动作不急，先在海风里整理好状态。",
+                "scene": "临海民宿的白色露台，玻璃栏杆外是薄雾、海面和远处的灯塔。",
+                "action": "扶着露台栏杆看向海面，随后低头整理袖口，发丝被海风自然吹向一侧。",
+            },
+            "noon": {
+                "status": "午间在灯塔附近短暂停留，神情明亮，像刚发现一个值得记录的角度。",
+                "scene": "灯塔脚下的弧形海景咖啡馆，白墙、蓝色遮阳篷和开阔海面形成清爽背景。",
+                "action": "把地图或小册子折好放在桌边，抬头望向窗外的灯塔，肩膀自然放松。",
+            },
+            "afternoon": {
+                "status": "午后沿海边慢慢走，光线更通透，步调从容而有一点探险感。",
+                "scene": "临海悬崖的木栈道，低矮护栏、礁石和连续的蓝色海面构成远景。",
+                "action": "走到栈道转弯处停步，双手轻搭护栏，身体朝向海面，侧脸被风吹亮。",
+            },
+            "evening": {
+                "status": "日落后海风转凉，沿着码头收拢一天的情绪，神情柔和又有余兴。",
+                "scene": "渔港木码头的金蓝交界时刻，串灯沿着栏杆亮起，海面有细碎反光。",
+                "action": "拢住被风吹起的外层衣摆，靠着系船桩旁的栏杆看向远处，站姿自然稳定。",
+            },
+            "night": {
+                "status": "回到临海住处后安静下来，仍带着海边光线留下的清爽气息。",
+                "scene": "临海民宿的木质客厅，落地窗外是深蓝海面和很远的零星灯光。",
+                "action": "把外出鞋放到门边，端着温水走到窗前，靠在窗台边短暂停留。",
+            },
+            "late_night": {
+                "status": "深夜回到轻松的休息状态，保留干净、克制的生活感。",
+                "scene": "带圆窗的临海卧室，月光落在床沿，床头只亮一盏小灯。",
+                "action": "拉好薄窗帘后坐到床边，手掌轻压住被角，抬眼露出放松的神情。",
+            },
+        },
+    },
+    {
+        "id": "greenhouse_theatre",
+        "theme": "植物温室、老电影和剧院灯影组成的文艺路线",
+        "events": {
+            "morning": {
+                "status": "早晨从植物和水汽之间开始，心情清透，像为一天选定了柔和的节奏。",
+                "scene": "城市植物园的圆顶玻璃温室，叶片、水汽和斜射晨光组成层层绿色背景。",
+                "action": "站在小径边触碰一片高大的叶片，随后收回手整理发尾，身体保持自然侧向。",
+            },
+            "noon": {
+                "status": "午间在温室旁安静用餐，状态轻快，不急着离开这片明亮的绿色。",
+                "scene": "植物园外侧的半开放木质餐廊，藤蔓、白色桌布和玻璃顶投下细碎光斑。",
+                "action": "合上随手翻看的书，手指轻压住书角，抬眼看向斑驳光影中的镜头。",
+            },
+            "afternoon": {
+                "status": "下午转入室内观影，神情安静专注，动作带着生活中的小停顿。",
+                "scene": "老电影院的红色走廊和复古海报墙，暖光从门缝投出一小块光斑。",
+                "action": "站在放映厅门口看完海报上的片名，手臂轻搭门框，转身留下侧面轮廓。",
+            },
+            "evening": {
+                "status": "傍晚进入剧院前的等待时刻，情绪被灯光提亮，姿态从容而有期待。",
+                "scene": "剧院红绒门厅的高窗下，金色壁灯、深红地毯和镜面形成戏剧化但真实的层次。",
+                "action": "在检票口旁整理耳饰和衣领，动作停住后朝侧前方看去，肩线保持放松。",
+            },
+            "night": {
+                "status": "结束观影回到家，情绪沉静下来，仍保留一点剧院灯光的余韵。",
+                "scene": "家中书架旁的暖灯阅读角，椅背、书页和窗外暗色构成干净画面。",
+                "action": "把票根夹进书里放到桌面，随后靠在椅背上轻轻抬眼，神情柔和。",
+            },
+            "late_night": {
+                "status": "睡前恢复最舒服的节奏，画面安静、整洁，不刻意摆拍。",
+                "scene": "卧室床头的小夜灯照亮一角，窗外只剩模糊的城市光点。",
+                "action": "把当天翻过的书放回床头，整理好发丝后靠在枕边，动作轻而自然。",
+            },
+        },
+    },
+    {
+        "id": "old_city_lanterns",
+        "theme": "旧城坡道、庭院茶室和灯笼街巷的城市漫游日",
+        "events": {
+            "morning": {
+                "status": "早晨从旧城的高处出发，空气清爽，整个人还保留一点漫游前的期待。",
+                "scene": "旧城坡道尽头的砖墙露台，屋檐、晾晒植物和初升的光线勾出层次。",
+                "action": "一手扶住砖墙边缘看向远处屋顶，另一手整理衣领，身体轻轻侧向晨光。",
+            },
+            "noon": {
+                "status": "午间走进安静庭院，节奏放慢，状态明亮而从容。",
+                "scene": "老宅改造的庭院茶室，木格窗、青石地面和一小片竹影形成清雅背景。",
+                "action": "放下茶杯后把袖口向上理顺，靠在窗边看庭院，表情自然放松。",
+            },
+            "afternoon": {
+                "status": "午后在旧书店里避开人流，神情专注，动作带着翻找发现的兴致。",
+                "scene": "旧城书店的夹层木梯与高书墙，斜窗光照亮书脊，空间深而安静。",
+                "action": "从高层书架抽出一本书，站在木梯平台上翻开目录，肩背自然靠近栏杆。",
+            },
+            "evening": {
+                "status": "天色暗下来后继续沿街散步，灯笼和湿润石板路让情绪变得柔和。",
+                "scene": "旧城窄巷的连续灯笼和雨后石板路，拐角处有一小块暖色店铺灯光。",
+                "action": "走到巷口时放慢脚步，手指轻碰耳饰，侧身回望灯影而不刻意停摆。",
+            },
+            "night": {
+                "status": "回家后把旧城漫游的余韵收进安静的居家状态，心情满足而松弛。",
+                "scene": "家中靠窗的木桌和一盏琥珀色台灯旁，窗外还能看见远处的街灯。",
+                "action": "把买回的小书放到桌边，端起温水靠在桌沿，低头整理书签后抬眼。",
+            },
+            "late_night": {
+                "status": "深夜只剩柔和的灯光和放松的神情，准备把一天慢慢收尾。",
+                "scene": "带木质床头柜的卧室，薄窗帘透进一点城市光，空间安静完整。",
+                "action": "拉好窗帘后回到床边，轻轻把头发拢到肩后，动作自然地停住。",
+            },
+        },
+    },
+    {
+        "id": "rain_tram_neon",
+        "theme": "雨天电车、玻璃展馆和霓虹倒影的电影感日常",
+        "events": {
+            "morning": {
+                "status": "雨天早晨出门前很安静，衣着和头发整理得利落，心情没有被天气打乱。",
+                "scene": "公寓高层的雨窗和窄阳台，玻璃上有水痕，远处楼群被灰蓝晨光压低。",
+                "action": "站在窗边看了一眼雨势，手指收拢耳侧发丝，另一只手自然握住薄外套边缘。",
+            },
+            "noon": {
+                "status": "午间在电车站短暂停留，雨声和城市人流把状态衬得清醒。",
+                "scene": "有透明雨棚的城市电车站，湿亮地面反射站牌灯光，背景保持空旷。",
+                "action": "把伞尖收在身侧，低头看完一条消息后抬眼，站姿端正而不僵硬。",
+            },
+            "afternoon": {
+                "status": "下午在室内避雨，节奏慢下来，神情专注而有一点好奇。",
+                "scene": "玻璃穹顶的摄影与设计展馆，雨滴在顶棚上形成纹理，墙面作品保持简洁。",
+                "action": "站在一面半透明装置前观察光影，手臂轻搭身侧栏杆，身体自然侧向光源。",
+            },
+            "evening": {
+                "status": "傍晚乘电车穿过亮起的街区，城市倒影让心情变得轻盈。",
+                "scene": "夜色中的电车靠窗座位，雨水拖开霓虹倒影，车厢内只有柔和顶灯。",
+                "action": "额头轻靠车窗看了一会儿倒影，随后转向镜头整理袖口，动作克制自然。",
+            },
+            "night": {
+                "status": "回到家后换回舒适节奏，雨声还在窗外，整个人明显松弛下来。",
+                "scene": "家中玄关连着暖灯客厅，湿伞被收在门边，窗外雨线成为远景。",
+                "action": "把外套搭到玄关椅背上，走到客厅灯下停步，抬手整理刚被雨气打乱的发丝。",
+            },
+            "late_night": {
+                "status": "深夜的雨声变轻，准备休息前只留下柔和而完整的生活片段。",
+                "scene": "卧室窗边的小桌和暖色台灯，玻璃上的雨痕在背景中保持轻微存在感。",
+                "action": "关掉桌面上的灯前看向窗外，随后坐回床沿，双手自然放在膝上。",
+            },
+        },
+    },
+    {
+        "id": "mountain_lake_cabin",
+        "theme": "山间缆车、湖畔木栈道和小屋灯火的松弛旅程",
+        "events": {
+            "morning": {
+                "status": "清晨准备去山里走走，状态清爽，穿搭和随身物品都已整理妥当。",
+                "scene": "山间缆车站的开放平台，薄雾、松树和远处山谷被晨光拉开层次。",
+                "action": "站在站台边确认缆车方向，抬手压住被风吹起的发丝，肩背自然挺直。",
+            },
+            "noon": {
+                "status": "午间到达半山，空气清凉，像在风景里短暂放空。",
+                "scene": "半山木屋咖啡馆的宽窗边，窗外是层叠山脊和一小片明亮天空。",
+                "action": "把杯子放回木桌上，双手交叠搭在桌边，侧头看向窗外的山线。",
+            },
+            "afternoon": {
+                "status": "午后沿湖边慢走，状态安静又有活力，动作保持可以维持的自然重心。",
+                "scene": "高山湖泊的木栈道，清澈水面、低矮护栏和远处岩壁组成开阔背景。",
+                "action": "在栈道转角停下，把手掌轻放在护栏上，身体朝向湖面，头部保持自然侧转。",
+            },
+            "evening": {
+                "status": "日落前回到山口，风景从明亮变成金色，神情带着放松后的满足。",
+                "scene": "山口观景台的晚霞与薄雾，木质观景框把远处的山谷像画面一样框住。",
+                "action": "靠在观景框侧边看完最后一束光，随后把围巾或外层衣摆整理好，姿态松弛。",
+            },
+            "night": {
+                "status": "回到山间小屋后安静下来，身体放松，保留一点户外空气的清爽感。",
+                "scene": "山间小屋的壁炉与木桌一角，窗外是深色树林和零星雾气。",
+                "action": "把随身小包放到木椅上，靠近壁炉旁的桌沿，双手捧住温水短暂停留。",
+            },
+            "late_night": {
+                "status": "深夜在安静的山屋里准备休息，灯光低而温暖，动作慢下来。",
+                "scene": "小屋卧室的木质床头和圆窗，窗外只有深蓝夜色与一层薄雾。",
+                "action": "关好窗锁后坐到床边，整理发丝和袖口，肩膀自然下沉。",
+            },
+        },
+    },
+    {
+        "id": "observatory_bookstore",
+        "theme": "观景台、玻璃书店和夜色书桌之间的都会灵感日",
+        "events": {
+            "morning": {
+                "status": "早晨先到城市高处透气，神情清醒，像给自己留出一段安静的开场。",
+                "scene": "城市观景塔的环形平台，玻璃护栏外是日光刚铺开的楼群和远处河面。",
+                "action": "手掌轻搭玻璃护栏看向远处，随后回身整理发尾，保持自然侧身构图。",
+            },
+            "noon": {
+                "status": "午间进入书店咖啡区，状态明亮，像在熟悉的书页里补充能量。",
+                "scene": "通往夹层的玻璃书店，书墙、旋转楼梯和高窗光线形成清晰纵深。",
+                "action": "从书架抽出一本薄书夹在臂弯，另一只手轻压书脊，抬眼看向楼梯方向。",
+            },
+            "afternoon": {
+                "status": "午后在设计展厅里慢慢看展，神情专注，动作自然而有分寸。",
+                "scene": "旧仓库改造的设计展厅，天花吊灯、粗粝墙面和一张孤立展台形成对比。",
+                "action": "站在展台侧面读完卡片说明，手指轻碰下巴后放下，身体微侧向展品。",
+            },
+            "evening": {
+                "status": "傍晚站到屋顶观景平台，城市灯光逐渐亮起，情绪变得开阔。",
+                "scene": "高层屋顶的透明风挡和城市夜景，远处桥梁、车流和晚霞形成连续光带。",
+                "action": "双手搭在风挡边缘看向车流，随后转过肩线而不扭动身体，留下自然侧脸。",
+            },
+            "night": {
+                "status": "回家后把一天的灵感整理下来，状态安静但并不疲惫。",
+                "scene": "家中靠窗书桌和一盏窄幅台灯，桌面只放着书、笔和刚买的书签。",
+                "action": "把书签夹进笔记本，手肘轻靠桌面，停在写完一行字后的自然姿态。",
+            },
+            "late_night": {
+                "status": "睡前把桌面收拾干净，情绪柔和，留下简单而有画面感的一帧。",
+                "scene": "书桌旁连着卧室的低亮度灯影，窗帘留一条缝让城市光线进入。",
+                "action": "合上笔记本放到一旁，起身拉好窗帘后回到床边，动作轻而稳定。",
+            },
+        },
+    },
+    {
+        "id": "courtyard_night_market",
+        "theme": "庭院花影、旧唱片店和夜市灯火的轻快城市日",
+        "events": {
+            "morning": {
+                "status": "早晨从有花影的庭院开始，状态清爽，像刚把一天的心情调到喜欢的频道。",
+                "scene": "带拱门的城市庭院，爬藤、白色长椅和晨光在地面留下斑驳影子。",
+                "action": "坐在长椅边系好鞋带，起身后轻抚一片垂下的藤叶，动作自然不刻意。",
+            },
+            "noon": {
+                "status": "午间在街区小店之间短暂停留，神情轻快，保留一点发现新东西的兴致。",
+                "scene": "老街转角的唱片店门口，彩色玻璃橱窗和窄门廊形成有层次的背景。",
+                "action": "从橱窗前退开半步看完封面，手指轻碰耳饰，身体自然侧向店门。",
+            },
+            "afternoon": {
+                "status": "午后进入安静的室内空间，节奏放缓，神情专注而有一点满足。",
+                "scene": "唱片店二层的木质试听角，圆窗、唱片墙和一张复古扶手椅构成画面。",
+                "action": "把选中的唱片放到桌边，手掌轻扶椅背，站在窗光里听完一小段旋律。",
+            },
+            "evening": {
+                "status": "天黑后去夜市吃点简单的小食，灯光让状态变得鲜活，但动作仍然自然。",
+                "scene": "河边夜市的高处步道，串灯、彩色摊棚和远处水面形成丰富但不拥挤的背景。",
+                "action": "避开人流停在栏杆旁，手里只拿一杯饮品，抬眼看向灯串后轻轻整理发尾。",
+            },
+            "night": {
+                "status": "回家后把夜市的热闹收进舒适的室内，神情满足而放松。",
+                "scene": "家中厨房与客厅相连的一角，暖灯照着干净台面，窗外仍有一点城市亮光。",
+                "action": "把饮品杯放到台面，靠在厨房门边整理袖口，停住后看向镜头。",
+            },
+            "late_night": {
+                "status": "深夜回到柔软的休息状态，画面干净，动作像生活里随手的一帧。",
+                "scene": "卧室床边的低矮灯和一把放好外套的椅子，空间安静而有完整层次。",
+                "action": "把外套搭到椅背上，坐到床沿轻轻揉松肩颈，随后抬眼放松微笑。",
+            },
+        },
+    },
+)
+
+
+def _select_daily_schedule_route(
+    *,
+    avoid_scenes: Optional[set[str]] = None,
+    avoid_actions: Optional[set[str]] = None,
+    avoid_statuses: Optional[set[str]] = None,
+    avoid_route_ids: Optional[set[str]] = None,
+) -> Dict[str, Any]:
+    """Choose one coherent route, preferring a route not used by a refresh."""
+    blocked_scenes = {str(item).strip() for item in (avoid_scenes or set()) if str(item).strip()}
+    blocked_actions = {str(item).strip() for item in (avoid_actions or set()) if str(item).strip()}
+    blocked_statuses = {str(item).strip() for item in (avoid_statuses or set()) if str(item).strip()}
+    blocked_routes = {str(item).strip() for item in (avoid_route_ids or set()) if str(item).strip()}
+
+    def score(route: Dict[str, Any]) -> int:
+        events = route.get("events") or {}
+        score = sum(
+            (event.get("scene") in blocked_scenes)
+            + (event.get("action") in blocked_actions)
+            + (event.get("status") in blocked_statuses)
+            for event in events.values()
+            if isinstance(event, dict)
+        )
+        if str(route.get("id") or "") in blocked_routes:
+            score += 100
+        return score
+
+    best_score = min(score(route) for route in DAILY_SCHEDULE_ROUTES)
+    candidates = [route for route in DAILY_SCHEDULE_ROUTES if score(route) == best_score]
+    return random.choice(candidates) if candidates else DAILY_SCHEDULE_ROUTES[0]
+
+
+def _route_context_maps(route: Dict[str, Any]) -> tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
+    events = route.get("events") if isinstance(route, dict) else {}
+    statuses: Dict[str, str] = {}
+    scenes: Dict[str, str] = {}
+    actions: Dict[str, str] = {}
+    for period in DAILY_PERIOD_KEYS:
+        event = events.get(period) if isinstance(events, dict) else {}
+        event = event if isinstance(event, dict) else {}
+        statuses[period] = str(event.get("status") or "").strip()
+        scenes[period] = str(event.get("scene") or "").strip()
+        actions[period] = str(event.get("action") or "").strip()
+    return statuses, scenes, actions
+
+
+def _pick_daily_contexts(
+    pools: Dict[str, tuple[str, ...]],
+    *,
+    avoid: Optional[set[str]] = None,
+) -> Dict[str, str]:
+    blocked = {str(item).strip() for item in (avoid or set()) if str(item).strip()}
+    selected: set[str] = set()
+    result: Dict[str, str] = {}
+    for period in DAILY_PERIOD_KEYS:
+        options = list(pools.get(period, ()))
+        candidates = [item for item in options if item not in blocked and item not in selected]
+        if not candidates:
+            candidates = [item for item in options if item not in selected] or options
+        value = random.choice(candidates) if candidates else ""
+        result[period] = value
+        if value:
+            selected.add(value)
+    return result
+
+
+def _pick_daily_context_pairs(
+    scene_pools: Dict[str, tuple[str, ...]],
+    action_pools: Dict[str, tuple[str, ...]],
+    *,
+    avoid_scenes: Optional[set[str]] = None,
+    avoid_actions: Optional[set[str]] = None,
+) -> tuple[Dict[str, str], Dict[str, str]]:
+    blocked_scenes = {str(item).strip() for item in (avoid_scenes or set()) if str(item).strip()}
+    blocked_actions = {str(item).strip() for item in (avoid_actions or set()) if str(item).strip()}
+    used_scenes: set[str] = set()
+    used_actions: set[str] = set()
+    scenes: Dict[str, str] = {}
+    actions: Dict[str, str] = {}
+    for period in DAILY_PERIOD_KEYS:
+        pairs = list(zip(scene_pools.get(period, ()), action_pools.get(period, ())))
+        candidates = [
+            pair
+            for pair in pairs
+            if pair[0] not in blocked_scenes
+            and pair[1] not in blocked_actions
+            and pair[0] not in used_scenes
+            and pair[1] not in used_actions
+        ]
+        if not candidates:
+            candidates = [pair for pair in pairs if pair[0] not in used_scenes and pair[1] not in used_actions] or pairs
+        scene, action = random.choice(candidates) if candidates else ("", "")
+        scenes[period] = scene
+        actions[period] = action
+        if scene:
+            used_scenes.add(scene)
+        if action:
+            used_actions.add(action)
+    return scenes, actions
+
+
+def _complete_daily_contexts(
+    pools: Dict[str, tuple[str, ...]],
+    values: Optional[Dict[str, str]],
+) -> Dict[str, str]:
+    provided = {
+        str(key): str(value).strip()
+        for key, value in (values or {}).items()
+        if str(value).strip()
+    }
+    generated = _pick_daily_contexts(pools, avoid=set(provided.values()))
+    return {
+        period: provided.get(period) or generated.get(period, "")
+        for period in DAILY_PERIOD_KEYS
+    }
+
+
+DAILY_EXTRA_OUTFIT_POOL = (
+    "米白短款针织开衫叠穿浅蓝衬衫，配深灰直筒长裤、棕色便鞋和细金属耳饰。",
+    "烟灰短款西装外套搭配奶油白针织背心、墨绿半身裙和黑色乐福鞋，线条利落。",
+    "浅卡其工装夹克内搭白色T恤，配深蓝丹宁长裙、米白帆布鞋和窄版皮带。",
+    "雾蓝色薄风衣搭配奶油色细针织衫、炭灰阔腿裤和银灰运动鞋，层次轻盈。",
+    "酒红短款针织外套叠穿浅灰衬衫，配黑色高腰长裤、玛丽珍鞋和一枚小胸针。",
+    "浅杏色亚麻立领衬衫配深橄榄阔腿裤、棕色系带便鞋和简洁帆布腰带。",
+    "藏蓝细针织上衣配米白A字中长裙、红棕便鞋和小型珍珠耳钉，干净克制。",
+    "浅灰紫开衫叠穿白色背心，配雾粉直筒长裙、米白低跟鞋和珍珠发夹。",
+    "黑白细格纹马甲叠穿浅蓝衬衫，配黑色高腰长裤、黑色乐福鞋和银色窄戒指。",
+    "轻薄白色亚麻衬衫外搭浅色背心，配砖红A字裙、奶油白帆布鞋和丝巾发带。",
+    "米白连帽卫衣配深蓝运动长裙、灰白运动鞋和低调棒球帽，休闲但轮廓清楚。",
+    "奶油黄罗纹针织上衣配烟灰直筒长裤、深棕短靴和复古方形腕表。",
+)
+
+# These are intentionally component-based: only compatible palettes and style
+# families are combined. One-piece looks use an empty bottom field so they
+# cannot accidentally receive a second skirt or pair of trousers.
+DAILY_MIX_TOPS = (
+    ("轻法式复古风", "奶油白方领针织上衣", {"denim", "dark", "cream", "brown"}, {"french", "natural"}, "细金属耳饰"),
+    ("清爽学院风", "浅蓝翻领衬衫", {"denim", "navy", "gray", "dark", "cream"}, {"preppy", "minimal"}, "窄版深棕皮带"),
+    ("极简通勤风", "雾蓝细条纹衬衫", {"gray", "dark", "cream", "navy"}, {"minimal", "work"}, "小型银色耳圈"),
+    ("自然休闲风", "浅杏色薄针织上衣", {"denim", "olive", "dark", "cream"}, {"casual", "natural"}, "小巧丝巾发带"),
+    ("运动街头风", "米白短款连帽卫衣", {"navy", "gray", "denim", "dark"}, {"sport", "casual"}, "低调棒球帽"),
+    ("文艺亚麻风", "燕麦色亚麻立领衬衫", {"olive", "denim", "brown", "cream"}, {"natural", "casual"}, "窄边帆布腰带"),
+    ("复古甜酷风", "炭灰短款拉链针织上衣", {"dark", "denim", "wine", "gray"}, {"retro", "casual"}, "一枚哑光金属胸针"),
+    ("轻盈日系风", "浅青翻领短袖衬衫", {"cream", "denim", "gray", "dark"}, {"japanese", "preppy"}, "小型珍珠耳钉"),
+)
+
+DAILY_MIX_BOTTOMS = (
+    ("深蓝高腰直筒牛仔裤", "denim", {"casual", "french", "natural", "sport", "preppy"}, "白色低帮帆布鞋"),
+    ("炭灰色高腰阔腿裤", "gray", {"minimal", "work", "natural"}, "银灰复古运动鞋"),
+    ("墨绿色百褶长裙", "dark", {"preppy", "french", "natural"}, "黑色短靴"),
+    ("奶油白A字中长裙", "cream", {"french", "preppy", "natural", "japanese"}, "棕色便鞋"),
+    ("深橄榄色阔腿长裤", "olive", {"natural", "casual"}, "棕色系带便鞋"),
+    ("深蓝侧开衩运动长裙", "navy", {"sport", "casual"}, "灰白厚底运动鞋"),
+    ("墨黑色高腰直筒裙", "dark", {"french", "minimal", "work", "retro"}, "黑色玛丽珍鞋"),
+    ("焦糖色高腰伞裙", "brown", {"french", "natural", "retro"}, "深棕短靴"),
+    ("酒红色直筒半身裙", "wine", {"retro", "french"}, "酒红玛丽珍鞋"),
+)
+
+
+def _daily_mix_match_looks() -> list[tuple[str, str, str, str, str]]:
+    looks: list[tuple[str, str, str, str, str]] = []
+    for style, top, palettes, styles, accessory in DAILY_MIX_TOPS:
+        for bottom, palette, bottom_styles, shoes in DAILY_MIX_BOTTOMS:
+            if palette in palettes and styles.intersection(bottom_styles):
+                looks.append((style, top, bottom, shoes, accessory))
+    # Dresses are complete looks; they deliberately have no bottom component.
+    looks.extend([
+        ("轻盈日系风", "雾蓝色棉麻连衣裙", "", "棕色便鞋", "小型珍珠耳钉"),
+        ("温柔复古风", "奶油白方领针织连衣裙", "", "深棕短靴", "复古方形腕表"),
+    ])
+    random.shuffle(looks)
+    return looks
+
+
+def _complete_outfit_pool(
+    outfit_by_period: Optional[Dict[str, str]] = None,
+    provided: Any = None,
+    *,
+    minimum: int = 10,
+) -> list[str]:
+    values: list[str] = []
+    if isinstance(provided, str):
+        candidates = [provided]
+    elif isinstance(provided, (list, tuple)):
+        candidates = list(provided)
+    else:
+        candidates = []
+    period_map = outfit_by_period or {}
+    period_values = [period_map.get("morning"), *period_map.values()]
+    # The morning look is the stable `main` reference for a daily schedule.
+    for value in [*period_values, *candidates]:
+        text = str(value or "").strip()
+        if text and len(text) <= 220 and text not in values:
+            values.append(text)
+        if len(values) >= 24:
+            return values
+    for value in DAILY_EXTRA_OUTFIT_POOL:
+        text = str(value or "").strip()
+        if text and text not in values:
+            values.append(text)
+        if len(values) >= max(1, minimum) or len(values) >= 24:
+            break
+    return values
+
+
+def _clean_schedule_node(value: Any) -> Dict[str, str]:
+    """Normalize one daily event without letting arbitrary JSON leak through."""
+    if not isinstance(value, dict):
+        return {}
+    aliases = {
+        "status": ("status", "state"),
+        "scene": ("scene", "setting", "location"),
+        "action": ("action", "gesture", "pose"),
+        "outfit_ref": ("outfit_ref", "outfit", "clothes_ref"),
+        "outfit_change": ("outfit_change", "change", "clothing_change"),
+    }
+    result: Dict[str, str] = {}
+    for field_name, keys in aliases.items():
+        for key in keys:
+            raw = value.get(key)
+            if raw is not None and str(raw).strip():
+                result[field_name] = str(raw).strip()
+                break
+    return result
+
+
+def _normalize_schedule_by_period(value: Any) -> Dict[str, Dict[str, str]]:
+    if not isinstance(value, dict):
+        return {}
+    result: Dict[str, Dict[str, str]] = {}
+    for period in DAILY_PERIOD_KEYS:
+        node = _clean_schedule_node(value.get(period))
+        if node:
+            node.setdefault("outfit_ref", "main")
+            result[period] = node
+    return result
+
+
+def _remove_outer_layer(outfit: str) -> str:
+    """Describe a natural layer change while retaining the main outfit details."""
+    text = str(outfit or "").strip()
+    if not text:
+        return ""
+    # Local fallback looks use the compact form "外层敞开穿着，内搭...".
+    # Remove that first clause instead of leaking a literal "脱去外层" into
+    # the resolved outfit reference.
+    compact = re.sub(
+        r"^[^，。；]{1,28}(?:敞开穿着|披着|搭在肩上)[，。；]\s*",
+        "",
+        text,
+        count=1,
+    )
+    if compact != text:
+        return compact.strip(" ，。；")
+    without_outer = re.sub(
+        r"(?:外搭|外穿|搭配|配)[^，。；；]{0,18}(?:外套|风衣|开衫|夹克|大衣|西装外套)[，。；；]?",
+        "",
+        text,
+        count=1,
+    )
+    without_outer = re.sub(r"\s+", " ", without_outer).strip(" ，。；")
+    return without_outer or f"保留内搭与下装，脱去外层：{text}"
+
+
+def _find_outfit_ref(ref: str, outfit_pool: list[str], main_outfit: str) -> str:
+    token = re.sub(r"[\s\-]+", "_", str(ref or "").strip().lower())
+    if token in {"", "main", "same", "default", "main_outfit", "primary"}:
+        return main_outfit
+    if token in {"main_minus_outer", "minus_outer", "remove_outer", "no_outer"}:
+        return _remove_outer_layer(main_outfit)
+    if token in {"home", "homewear", "casual_home"}:
+        for item in outfit_pool:
+            if any(word in item for word in ("家居", "居家", "睡衣", "室内服")):
+                return item
+        return main_outfit
+    if token in {"sleep", "sleepwear", "nightwear"}:
+        for item in outfit_pool:
+            if any(word in item for word in ("睡衣", "睡前", "家居连衣裙")):
+                return item
+        return main_outfit
+    if token in {"previous", "continue", "last"}:
+        return main_outfit
+    # A schedule may reference an exact candidate by its full text.
+    for item in outfit_pool:
+        if token == re.sub(r"[\s\-]+", "_", item.lower()):
+            return item
+    return ""
+
+
+def _schedule_from_legacy_maps(
+    *,
+    status_by_period: Dict[str, str],
+    outfit_by_period: Dict[str, str],
+    scene_by_period: Dict[str, str],
+    action_by_period: Dict[str, str],
+    outfit_pool: Optional[list[str]] = None,
+) -> Dict[str, Dict[str, str]]:
+    """Build event nodes for profiles written before schedule support."""
+    main = str(
+        (outfit_pool or [None])[0]
+        or outfit_by_period.get("morning")
+        or next(iter(outfit_by_period.values()), "")
+    ).strip()
+    schedule: Dict[str, Dict[str, str]] = {}
+    previous_outfit = main
+    for period in DAILY_PERIOD_KEYS:
+        outfit = str(outfit_by_period.get(period) or previous_outfit or main).strip()
+        ref = "main" if outfit == main else "custom"
+        change = ""
+        if outfit != previous_outfit:
+            if outfit == _remove_outer_layer(main):
+                ref = "main_minus_outer"
+                change = "回到室内后脱下外层，保留内搭和下装。"
+            elif any(word in outfit for word in ("家居", "居家", "睡衣")):
+                ref = "sleep" if "睡衣" in outfit else "home"
+                change = "回家后换成舒适的居家状态。"
+            else:
+                # Keep the exact candidate as the reference so a reload can
+                # resolve the same look instead of losing a custom transition.
+                ref = outfit
+                change = f"自然换成：{outfit}"
+        schedule[period] = {
+            "status": str(status_by_period.get(period) or "").strip(),
+            "scene": str(scene_by_period.get(period) or "").strip(),
+            "action": str(action_by_period.get(period) or "").strip(),
+            "outfit_ref": ref,
+            "outfit_change": change,
+        }
+        previous_outfit = outfit
+    return schedule
+
+
+def _derive_period_maps_from_schedule(
+    schedule: Dict[str, Dict[str, str]],
+    outfit_pool: list[str],
+    legacy_outfits: Optional[Dict[str, str]] = None,
+    legacy_status: Optional[Dict[str, str]] = None,
+    legacy_scenes: Optional[Dict[str, str]] = None,
+    legacy_actions: Optional[Dict[str, str]] = None,
+) -> tuple[Dict[str, str], Dict[str, str], Dict[str, str], Dict[str, str]]:
+    """Resolve event nodes into the old per-period maps used by callers."""
+    legacy = legacy_outfits or {}
+    legacy_status = legacy_status or {}
+    legacy_scenes = legacy_scenes or {}
+    legacy_actions = legacy_actions or {}
+    main = str(outfit_pool[0] if outfit_pool else legacy.get("morning") or "").strip()
+    outfits: Dict[str, str] = {}
+    statuses: Dict[str, str] = {}
+    scenes: Dict[str, str] = {}
+    actions: Dict[str, str] = {}
+    previous = main
+    for period in DAILY_PERIOD_KEYS:
+        node = _clean_schedule_node(schedule.get(period))
+        ref = node.get("outfit_ref", "main")
+        resolved = _find_outfit_ref(ref, outfit_pool, main)
+        if ref.lower() in {"previous", "continue", "last"}:
+            resolved = previous
+        if not resolved:
+            resolved = str(legacy.get(period) or previous or main).strip()
+        outfits[period] = resolved
+        previous = resolved
+        statuses[period] = node.get("status") or str(legacy_status.get(period) or "").strip()
+        scenes[period] = node.get("scene") or str(legacy_scenes.get(period) or "").strip()
+        actions[period] = node.get("action") or str(legacy_actions.get(period) or "").strip()
+    return outfits, statuses, scenes, actions
+
+
+def _complete_schedule_from_maps(
+    schedule: Dict[str, Dict[str, str]],
+    *,
+    status_by_period: Dict[str, str],
+    outfit_by_period: Dict[str, str],
+    scene_by_period: Dict[str, str],
+    action_by_period: Dict[str, str],
+    outfit_pool: Optional[list[str]] = None,
+) -> Dict[str, Dict[str, str]]:
+    base = _schedule_from_legacy_maps(
+        status_by_period=status_by_period,
+        outfit_by_period=outfit_by_period,
+        scene_by_period=scene_by_period,
+        action_by_period=action_by_period,
+        outfit_pool=outfit_pool,
+    )
+    for period, node in (schedule or {}).items():
+        if period in base:
+            base[period].update(_clean_schedule_node(node))
+    return base
+
+
 def fallback_daily_profile(
     date: str,
     seed: str,
@@ -486,6 +1251,9 @@ def fallback_daily_profile(
     llm_attempted: bool = False,
     avoid_outfits: Optional[set[str]] = None,
     avoid_statuses: Optional[set[str]] = None,
+    avoid_scenes: Optional[set[str]] = None,
+    avoid_actions: Optional[set[str]] = None,
+    avoid_route_ids: Optional[set[str]] = None,
 ) -> DailySelfieProfile:
     try:
         month = datetime.date.fromisoformat(date).month
@@ -506,41 +1274,87 @@ def fallback_daily_profile(
         11: ["深橄榄短夹克", "烟灰薄风衣", "酒红短款针织外套"],
     }[month]
     day_looks = [
-        ("莓果红方领针织上衣", "深蓝高腰直筒牛仔裤", "焦糖棕乐福鞋", "细金属耳饰"),
-        ("奶油黄翻领针织背心叠穿白衬衫", "墨绿色百褶长裙", "黑色短靴", "窄版深棕皮带"),
-        ("雾蓝细条纹衬衫", "炭灰色高腰阔腿裤", "银灰复古运动鞋", "小型银色耳圈"),
-        ("炭灰短款拉链针织上衣", "酒红色直筒半身裙", "黑色玛丽珍鞋", "一枚亮色发夹"),
-        ("奶油白方领衬衫", "焦糖色高腰伞裙", "深棕短靴", "复古方形腕表"),
-        ("浅杏色薄针织上衣", "靛青色直筒牛仔裤", "白色低帮帆布鞋", "一只小巧丝巾发带"),
-        ("雾紫色短款开衫叠穿白色背心", "深灰高腰西装裤", "黑色尖头平底鞋", "银色细项链"),
-        ("浅青色翻领短袖衬衫", "奶油白A字中长裙", "棕色便鞋", "小型珍珠耳钉"),
-        ("深蓝细针织马甲叠穿条纹衬衫", "浅灰高腰工装长裤", "米白复古运动鞋", "窄版帆布腰带"),
-        ("砖红色圆领针织上衣", "墨黑色高腰直筒裙", "酒红玛丽珍鞋", "一枚哑光金属胸针"),
+        ("轻法式复古", "莓果红方领针织上衣", "深蓝高腰直筒牛仔裤", "焦糖棕乐福鞋", "细金属耳饰"),
+        ("清爽学院风", "奶油黄翻领针织背心叠穿白衬衫", "墨绿色百褶长裙", "黑色短靴", "窄版深棕皮带"),
+        ("极简通勤风", "雾蓝细条纹衬衫", "炭灰色高腰阔腿裤", "银灰复古运动鞋", "小型银色耳圈"),
+        ("复古甜酷风", "炭灰短款拉链针织上衣", "酒红色直筒半身裙", "黑色玛丽珍鞋", "一枚亮色发夹"),
+        ("温柔知性风", "奶油白方领衬衫", "焦糖色高腰伞裙", "深棕短靴", "复古方形腕表"),
+        ("自然休闲风", "浅杏色薄针织上衣", "靛青色直筒牛仔裤", "白色低帮帆布鞋", "一只小巧丝巾发带"),
+        ("都市利落风", "雾紫色短款开衫叠穿白色背心", "深灰高腰西装裤", "黑色尖头平底鞋", "银色细项链"),
+        ("轻盈日系风", "浅青色翻领短袖衬衫", "奶油白A字中长裙", "棕色便鞋", "小型珍珠耳钉"),
+        ("轻户外工装风", "深蓝细针织马甲叠穿条纹衬衫", "浅灰高腰工装长裤", "米白复古运动鞋", "窄版帆布腰带"),
+        ("暗色复古风", "砖红色圆领针织上衣", "墨黑色高腰直筒裙", "酒红玛丽珍鞋", "一枚哑光金属胸针"),
+        ("运动街头风", "米白短款连帽卫衣", "深蓝侧开衩运动长裙", "灰白厚底运动鞋", "低调棒球帽"),
+        ("文艺亚麻风", "燕麦色亚麻立领衬衫", "深橄榄色阔腿长裤", "棕色系带便鞋", "窄边草编腰带"),
+        ("干净海军风", "藏蓝针织短袖", "米白高腰直筒长裤", "红棕色便鞋", "一条细条纹发带"),
+        ("复古丹宁风", "浅蓝牛仔短外套叠穿白色T恤", "砖红色A字中长裙", "奶油白帆布鞋", "小巧帆布斜挎包"),
+        ("柔雾针织风", "浅灰紫薄针织套头衫", "雾粉色直筒长裙", "米白低跟鞋", "一枚珍珠发夹"),
+        ("结构感马甲风", "黑白细格纹西装马甲叠穿浅蓝衬衫", "黑色高腰长裤", "黑色乐福鞋", "银色窄戒指"),
     ]
+    day_looks.extend(_daily_mix_match_looks())
     avoid = {str(value).strip() for value in (avoid_outfits or set()) if str(value).strip()}
+    used_outfits: set[str] = set()
 
-    def choose_rendered(items: list[Any], render: Callable[[Any], str]) -> str:
+    def choose_rendered(
+        items: list[Any],
+        render: Callable[[Any], str],
+        *,
+        blocked: Optional[set[str]] = None,
+    ) -> str:
         rendered = [(item, render(item)) for item in items]
-        candidates = [value for value in rendered if value[1] not in avoid]
+        blocked_values = avoid | set(blocked or set())
+        candidates = [value for value in rendered if value[1] not in blocked_values]
         return random.choice(candidates or rendered)[1]
 
+    def render_day_look(item: tuple[str, str, str, str, str], layer: str) -> str:
+        style, top, bottom, shoes, accessory = item
+        if not bottom:
+            return f"{style}：{top}，配{shoes}和{accessory}。"
+        return (
+            f"{style}：{layer}敞开穿着，内搭{top}，"
+            f"配{bottom}和{shoes}，以{accessory}作一个清晰点缀。"
+        )
+
     day_candidates = [(layer, look) for layer in seasonal_layers for look in day_looks]
-    day_outfit = choose_rendered(
-        day_candidates,
-        lambda item: (
-            f"{item[0]}敞开穿着，内搭{item[1][0]}，配{item[1][1]}和{item[1][2]}，"
-            f"以{item[1][3]}作一个清晰点缀。"
-        ),
-    )
-    evening_looks = [
-        "换成墨绿色细针织连衣裙，外搭短款米白开衫，配棕色低跟便鞋和细金属耳饰。",
-        "换成雾蓝衬衫裙，腰间用窄版深棕腰带收束，配奶油白便鞋和小银圈耳饰。",
-        "换成酒红色针织上衣配深灰直筒半身裙，外搭短款黑色夹克，配黑色乐福鞋。",
-        "换成奶油白针织上衣配深蓝高腰长裙，外搭浅灰开衫，配一枚复古腕表。",
-        "换成浅杏色薄风衣内搭白色细针织衫和炭灰长裤，配棕色短靴和丝巾发带。",
-        "换成深蓝短款针织上衣配焦糖色伞裙，外搭酒红薄外套，配深棕便鞋。",
+    day_rendered = [
+        (
+            item,
+            render_day_look(item[1], item[0]),
+        )
+        for item in day_candidates
     ]
-    evening_outfit = choose_rendered(evening_looks, lambda item: item)
+
+    def choose_day_outfit(*, exclude: Optional[set[str]] = None) -> str:
+        blocked_values = avoid | set(exclude or set())
+        candidates = [value for _, value in day_rendered if value not in blocked_values]
+        return random.choice(candidates or [value for _, value in day_rendered])
+
+    # Keep one coherent daytime look by default. A rare change can happen at a
+    # real transition, but a new outfit is never assigned merely because the
+    # clock crossed into another period.
+    day_outfit = choose_day_outfit()
+    day_outfits: Dict[str, str] = {
+        "morning": day_outfit,
+        "noon": day_outfit,
+        "afternoon": day_outfit,
+    }
+    used_outfits.update(day_outfits.values())
+    evening_looks = [
+        "墨绿色细针织连衣裙，外搭短款米白开衫，配棕色低跟便鞋和细金属耳饰。",
+        "雾蓝衬衫裙，腰间用窄版深棕腰带收束，配奶油白便鞋和小银圈耳饰。",
+        "酒红色针织上衣配深灰直筒半身裙，外搭短款黑色夹克，配黑色乐福鞋。",
+        "奶油白针织上衣配深蓝高腰长裙，外搭浅灰开衫，配一枚复古腕表。",
+        "浅杏色薄风衣内搭白色细针织衫和炭灰长裤，配棕色短靴和丝巾发带。",
+        "深蓝短款针织上衣配焦糖色伞裙，外搭酒红薄外套，配深棕便鞋。",
+    ]
+    evening_outfit = (
+        day_outfits["afternoon"]
+        if random.random() < 0.68
+        else _remove_outer_layer(day_outfits["afternoon"])
+    )
+    if not evening_outfit or evening_outfit == day_outfits["afternoon"]:
+        evening_outfit = day_outfits["afternoon"]
+    used_outfits.add(evening_outfit)
     home_looks = [
         "雾蓝色柔软针织上衣配奶油白直筒长裤，剪裁宽松但有清楚层次。",
         "深莓色薄款针织套头衫配炭灰色舒适长裤，配色沉稳有重点。",
@@ -550,47 +1364,74 @@ def fallback_daily_profile(
         "浅蓝色宽松棉质衬衫配柔灰色针织长裤，袖口自然挽起，舒适但不邋遢。",
         "奶油白薄卫衣配深绿色家居长裤，配色安静，轮廓清楚利落。",
         "浅紫灰色针织套头衫配暖灰色阔腿长裤，材质柔软，整体轻松整洁。",
+        "雾灰蓝柔软睡衣套装，配室内软底拖鞋和简洁发带，舒适但保持整洁轮廓。",
+        "奶油白针织家居连衣裙，配浅灰室内拖鞋和一枚小巧发夹，适合睡前状态。",
     ]
-    home_outfit = choose_rendered(home_looks, lambda item: item)
+    home_outfit = choose_rendered(home_looks, lambda item: item, blocked=used_outfits)
+    used_outfits.add(home_outfit)
+    late_home_candidate = choose_rendered(home_looks, lambda item: item, blocked=used_outfits)
+    # The route's night and late-night events are home-based. Returning home
+    # is therefore the natural clothing transition; staying in the outdoor
+    # look here creates an avoidable scene/outfit mismatch.
+    night_outfit = home_outfit
+    late_home_outfit = (
+        night_outfit
+        if random.random() < 0.74
+        else late_home_candidate
+    )
     outfit_by_period = {
-        "morning": day_outfit,
-        "noon": day_outfit,
-        "afternoon": day_outfit,
+        "morning": day_outfits["morning"],
+        "noon": day_outfits["noon"],
+        "afternoon": day_outfits["afternoon"],
         "evening": evening_outfit,
         "night": home_outfit,
-        "late_night": home_outfit,
+        "late_night": late_home_outfit,
     }
-    status_variants = [
-        {
-            "morning": "刚洗漱整理好，精神清爽但还没有完全进入忙碌节奏，动作自然放松。",
-            "noon": "上午的事情告一段落，状态明亮利落，像顺手记录下短暂的喘息。",
-            "afternoon": "下午节奏放缓，神情里有一点慵懒，姿态自然，不像专门摆拍。",
-            "evening": "傍晚回到安静节奏，心情柔和下来，穿搭和状态都更松弛。",
-            "night": "夜间换成舒适状态，动作收得自然，像在家里随手留下的一帧。",
-            "late_night": "深夜更安静，神情放松，保留准备休息前的生活感。",
-        },
-        {
-            "morning": "窗边的光线刚亮起来，头发和衣服简单整理过，整个人清醒又不紧绷。",
-            "noon": "白天光线变亮，状态轻快一些，像忙完手头小事后自然看向镜头。",
-            "afternoon": "下午有短暂空闲，姿态随意而稳定，保留一点日常发呆的松弛感。",
-            "evening": "天色渐暗后状态沉静下来，动作更从容，像刚结束一天的琐事。",
-            "night": "夜里回到舒服的居家节奏，神情安稳，画面不刻意制造戏剧感。",
-            "late_night": "准备休息前随手记录，表情柔和，动作轻松，不显得疲惫或僵硬。",
-        },
-        {
-            "morning": "早晨带着刚整理完生活的清爽感，神情柔和，姿态轻松自然。",
-            "noon": "午间精神稳定，像在熟悉的日常空间里短暂停下来，状态干净利落。",
-            "afternoon": "午后稍微放空，眼神和动作都松一点，保留真实生活中的小停顿。",
-            "evening": "傍晚的状态温和安定，像把外面的节奏慢慢收回来。",
-            "night": "夜间只保留舒适、整洁的居家状态，动作自然，不要过度表演。",
-            "late_night": "深夜安静下来，神情温柔松弛，像睡前最后一次随手记录。",
-        },
+    special_pool_candidates = [
+        render_day_look(item[1], item[0])
+        for item in day_candidates
+        if not item[1][2]
+    ] + [
+        str(item)
+        for item in home_looks
+        if "睡衣" in str(item) or "连衣裙" in str(item)
     ]
-    status_candidates = [
-        item for item in status_variants
-        if set(item.values()) != (avoid_statuses or set())
-    ]
-    status_by_period = dict(random.choice(status_candidates or status_variants))
+    pool_candidates = special_pool_candidates + [
+        render_day_look(item[1], item[0])
+        for item in day_candidates
+        if item[1][2]
+    ] + [str(item) for item in [*evening_looks, *home_looks] if "睡衣" not in str(item) and "连衣裙" not in str(item)]
+    random.shuffle(pool_candidates)
+    outfit_pool = _complete_outfit_pool(
+        outfit_by_period,
+        [*outfit_by_period.values(), *pool_candidates],
+    )
+    route = _select_daily_schedule_route(
+        avoid_scenes=avoid_scenes,
+        avoid_actions=avoid_actions,
+        avoid_statuses=avoid_statuses,
+        avoid_route_ids=avoid_route_ids,
+    )
+    status_by_period, scene_by_period, action_by_period = _route_context_maps(route)
+    schedule_by_period = _schedule_from_legacy_maps(
+        status_by_period=status_by_period,
+        outfit_by_period=outfit_by_period,
+        scene_by_period=scene_by_period,
+        action_by_period=action_by_period,
+        outfit_pool=outfit_pool,
+    )
+    mood = random_pick([
+        "放松、安静、柔和", "清爽、自然、轻松", "温柔、治愈、稳定", "元气、明亮、轻快",
+        "清醒、松弛、有一点小得意", "安静、利落、带着生活气", "柔和、从容、不刻意",
+    ])
+    timeline = timeline_from_period_route(
+        route,
+        date=date,
+        seed=seed,
+        outfit_by_period=outfit_by_period,
+        period_keys=DAILY_PERIOD_KEYS,
+    )
+    timeline.mood = mood
     period = current_period()
     return DailySelfieProfile(
         date=date,
@@ -598,14 +1439,17 @@ def fallback_daily_profile(
         status=status_by_period.get(period, "处于自然放松的日常状态，画面安静、统一、真实。"),
         status_by_period=status_by_period,
         outfit_by_period=outfit_by_period,
-        mood=random_pick([
-            "放松、安静、柔和", "清爽、自然、轻松", "温柔、治愈、稳定", "元气、明亮、轻快",
-            "清醒、松弛、有一点小得意", "安静、利落、带着生活气", "柔和、从容、不刻意",
-        ]),
+        outfit_pool=outfit_pool,
+        scene_by_period=scene_by_period,
+        action_by_period=action_by_period,
+        schedule_by_period=schedule_by_period,
+        day_theme=str(route.get("theme") or "一条有自然转场的连续日程。"),
+        mood=mood,
         seed=seed,
         updated_at=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
         source="fallback",
         llm_attempted=llm_attempted,
+        timeline=timeline,
     )
 
 
@@ -623,6 +1467,10 @@ class PersonaManager:
             "updated_at": "",
             "daily_selfie_profile": None,
         }
+        self.daily_schedule_store = DailyScheduleStore(
+            os.path.join(data_dir, "daily_schedule.json")
+        )
+        self.business_day_start = DEFAULT_BUSINESS_DAY_START
         self._daily_profile_lock = asyncio.Lock()
         self.load()
 
@@ -649,6 +1497,27 @@ class PersonaManager:
                 "daily_selfie_profile": raw.get("daily_selfie_profile"),
             }
         )
+        self._migrate_legacy_daily_schedule(self.data.get("daily_selfie_profile"))
+
+    def _migrate_legacy_daily_schedule(self, raw: Any) -> Optional[DailySchedule]:
+        """Import the old period snapshot once; the schedule store is canonical."""
+        if self.daily_schedule_store.current is not None:
+            return self.daily_schedule_store.current
+        if not isinstance(raw, dict):
+            return None
+        date = str(raw.get("date") or "").strip()
+        if not date:
+            return None
+        schedule = legacy_profile_to_schedule(
+            raw,
+            date=date,
+            period_keys=DAILY_PERIOD_KEYS,
+            period_ranges=PERIOD_TIME_RANGES,
+        )
+        if schedule is None:
+            return None
+        self.daily_schedule_store.set_current(schedule, remember_previous=False)
+        return schedule
 
     def save(self) -> None:
         save_json_file(self.file_path, self.data)
@@ -1111,132 +1980,222 @@ class PersonaManager:
     async def ensure_daily_selfie_profile(
         self,
         action: str = "",
-        *,
-        llm_generate: Optional[Callable[[str], Awaitable[str]]] = None,
     ) -> DailySelfieProfile:
         # Batch shots may initialize the profile concurrently; serialize the
         # read/generate/save sequence so every shot shares one daily snapshot.
         async with self._daily_profile_lock:
-            return await self._ensure_daily_selfie_profile_unlocked(
-                action, llm_generate=llm_generate
-            )
+            return await self._ensure_daily_selfie_profile_unlocked(action)
+
+    def _profile_from_timeline(
+        self,
+        schedule: DailySchedule,
+        *,
+        legacy: Optional[dict[str, Any]] = None,
+    ) -> DailySelfieProfile:
+        statuses, outfits, scenes, actions, nodes = project_schedule_to_period_maps(
+            schedule,
+            DAILY_PERIOD_KEYS,
+            PERIOD_TIME_RANGES,
+        )
+        event = schedule.current_event()
+        outfit_pool = _complete_outfit_pool(
+            outfits,
+            list(schedule.outfits.values()) + list((legacy or {}).get("outfit_pool") or []),
+        )
+        return DailySelfieProfile(
+            date=schedule.date,
+            outfit=schedule.outfit_for_event(event),
+            status=(event.status if event else "") or str((legacy or {}).get("status") or ""),
+            mood=schedule.mood or str((legacy or {}).get("mood") or ""),
+            seed=schedule.seed,
+            updated_at=schedule.updated_at,
+            source="fallback",
+            status_by_period=statuses,
+            outfit_by_period=outfits,
+            outfit_pool=outfit_pool,
+            scene_by_period=scenes,
+            action_by_period=actions,
+            schedule_by_period=nodes,
+            day_theme=schedule.theme,
+            occasion=schedule.occasion,
+            llm_attempted=False,
+            timeline=schedule,
+        )
 
     async def _ensure_daily_selfie_profile_unlocked(
         self,
         action: str = "",
-        *,
-        llm_generate: Optional[Callable[[str], Awaitable[str]]] = None,
     ) -> DailySelfieProfile:
-        today = local_date_key()
+        today = daily_schedule_date_key(self.business_day_start)
         existed = self.data.get("daily_selfie_profile")
-        if isinstance(existed, dict) and existed.get("date") == today and existed.get("outfit") and existed.get("status"):
+        canonical = self.get_daily_schedule(today)
+        if canonical is not None:
+            profile = self._profile_from_timeline(
+                canonical,
+                legacy=existed if isinstance(existed, dict) else None,
+            )
+            # Keep the old in-memory/API shape for callers, while all future
+            # prompt selection reads the canonical timeline store.
+            if not isinstance(existed, dict) or existed.get("schema_version") != DAILY_PROFILE_SCHEMA_VERSION:
+                self._persist_daily_selfie_profile(profile)
+            return profile
+        if isinstance(existed, dict) and existed.get("date") == today:
             status_by_period = existed.get("status_by_period") if isinstance(existed.get("status_by_period"), dict) else {}
             outfit_by_period = existed.get("outfit_by_period") if isinstance(existed.get("outfit_by_period"), dict) else {}
-            clean_outfits = {str(k): str(v).strip() for k, v in outfit_by_period.items()}
-            source = str(existed.get("source") or "fallback")
-            llm_attempted = bool(existed.get("llm_attempted", source == "llm"))
-            has_period_outfits = all(clean_outfits.get(key) for key in DAILY_PERIOD_KEYS)
-            waiting_for_llm = source == "fallback" and llm_generate is not None and not llm_attempted
-            if has_period_outfits and not waiting_for_llm:
-                return DailySelfieProfile(
-                    date=str(existed.get("date") or today),
-                    outfit=clean_outfits.get(current_period()) or str(existed.get("outfit") or ""),
-                    status=str(status_by_period.get(current_period()) or existed.get("status") or ""),
-                    mood=str(existed.get("mood") or ""),
-                    seed=str(existed.get("seed") or ""),
-                    updated_at=str(existed.get("updated_at") or ""),
-                    source=source,
-                    status_by_period={str(k): str(v) for k, v in status_by_period.items()},
+            scene_by_period = existed.get("scene_by_period") if isinstance(existed.get("scene_by_period"), dict) else {}
+            action_by_period = existed.get("action_by_period") if isinstance(existed.get("action_by_period"), dict) else {}
+            clean_status = {str(key): str(value).strip() for key, value in status_by_period.items()}
+            clean_outfits = {str(key): str(value).strip() for key, value in outfit_by_period.items()}
+            clean_scenes = {str(key): str(value).strip() for key, value in scene_by_period.items()}
+            clean_actions = {str(key): str(value).strip() for key, value in action_by_period.items()}
+            outfit_pool = _complete_outfit_pool(clean_outfits, existed.get("outfit_pool"))
+            raw_schedule = _normalize_schedule_by_period(existed.get("schedule_by_period"))
+            raw_schedule_complete = bool(raw_schedule) and all(
+                raw_schedule.get(key, {}).get("status")
+                and raw_schedule.get(key, {}).get("scene")
+                and raw_schedule.get(key, {}).get("action")
+                and raw_schedule.get(key, {}).get("outfit_ref")
+                for key in DAILY_PERIOD_KEYS
+            )
+            schedule = raw_schedule
+            if schedule:
+                schedule = _complete_schedule_from_maps(
+                    schedule,
+                    status_by_period=clean_status,
                     outfit_by_period=clean_outfits,
-                    occasion=str(existed.get("occasion") or ""),
-                    llm_attempted=llm_attempted,
+                    scene_by_period=clean_scenes,
+                    action_by_period=clean_actions,
+                    outfit_pool=outfit_pool,
                 )
-            if llm_generate is None:
-                return DailySelfieProfile(
-                    date=str(existed.get("date") or today),
-                    outfit=clean_outfits.get(current_period()) or str(existed.get("outfit") or ""),
-                    status=str(status_by_period.get(current_period()) or existed.get("status") or ""),
-                    mood=str(existed.get("mood") or ""),
-                    seed=str(existed.get("seed") or ""),
-                    updated_at=str(existed.get("updated_at") or ""),
-                    source=source,
-                    status_by_period={str(k): str(v) for k, v in status_by_period.items()},
+                clean_outfits, clean_status, clean_scenes, clean_actions = _derive_period_maps_from_schedule(
+                    schedule,
+                    outfit_pool,
+                    legacy_outfits=clean_outfits,
+                    legacy_status=clean_status,
+                    legacy_scenes=clean_scenes,
+                    legacy_actions=clean_actions,
+                )
+            elif all(clean_outfits.get(key) for key in DAILY_PERIOD_KEYS):
+                schedule = _schedule_from_legacy_maps(
+                    status_by_period=clean_status,
                     outfit_by_period=clean_outfits,
-                    occasion=str(existed.get("occasion") or ""),
-                    llm_attempted=llm_attempted,
+                    scene_by_period=clean_scenes,
+                    action_by_period=clean_actions,
+                    outfit_pool=outfit_pool,
                 )
 
-        profile: Optional[DailySelfieProfile] = None
-        if llm_generate is not None:
-            prompt = (
-                "为 AI 自拍角色规划今天一整天的日常穿搭与状态。只返回一个 JSON 对象，不要 Markdown："
-                '{"outfit_by_period":{"morning":"...","noon":"...","afternoon":"...",'
-                '"evening":"...","night":"...","late_night":"..."},"occasion":"...",'
-                '"mood":"...","status_by_period":{"morning":"...","noon":"...",'
-                '"afternoon":"...","evening":"...","night":"...","late_night":"..."}}。'
-                f"{daily_calendar_context(today)}"
-                "角色始终是成年人物。穿搭适合日常自拍，但要有明确的风格方向和视觉重点：写清廓形、层次、材质、主色与一个点缀色，搭配完整具体，避免只写普通的上衣加裙子/裤子，也不要堆无关配饰或奢侈品牌。"
-                "六个时段分别给出完整可直接画出的服装搭配；早晨到下午保持同一套主搭配或做合理的小调整，傍晚可以因活动/回家自然增减外套或更换搭配，夜晚和深夜可换成协调、得体、舒适的居家服。变化要符合一天的连续性，不要每个时段像完全不同的人，也不要臆造出行或活动。"
-                "结合给出的公历日期、星期和季节选择适合的面料与层次。若日期确实对应你能确认的节日或节气，可在 occasion 中说明，并只用配色或一两处小细节呼应；不确定时留空，不编造节日、天气或活动，不把日常穿搭变成主题服/戏服。"
-                "outfit_by_period 的每个值只写当时实际穿着的衣服、鞋履和少量配饰，不写时间、地点、光线、心情或拍照动作。occasion 可为空；mood 描述全天基调；status_by_period 描述各时段的状态和时间感，不锁定具体地点、镜头或构图，留给自拍场景选择。"
-                "内容得体，不写暴露、色情或未成年人内容；每个穿搭字段不超过 220 字，occasion 不超过 100 字，mood 不超过 80 字，各状态不超过 160 字。"
+            source = str(existed.get("source") or "fallback").strip().lower()
+            complete = (
+                source == "fallback"
+                and raw_schedule_complete
+                and all(clean_status.get(key) for key in DAILY_PERIOD_KEYS)
+                and all(clean_outfits.get(key) for key in DAILY_PERIOD_KEYS)
+                and all(clean_scenes.get(key) and clean_actions.get(key) for key in DAILY_PERIOD_KEYS)
+                and all(
+                    schedule.get(key, {}).get("scene")
+                    and schedule.get(key, {}).get("action")
+                    and schedule.get(key, {}).get("outfit_ref")
+                    for key in DAILY_PERIOD_KEYS
+                )
             )
-            try:
-                raw = str(await llm_generate(prompt) or "").strip()
-                match = re.search(r"\{[\s\S]*\}", raw)
-                data = json.loads(match.group(0)) if match else {}
-                periods = data.get("status_by_period") if isinstance(data, dict) and isinstance(data.get("status_by_period"), dict) else {}
-                outfits = data.get("outfit_by_period") if isinstance(data, dict) and isinstance(data.get("outfit_by_period"), dict) else {}
-                clean_outfits = {
-                    key: str(outfits.get(key) or "").strip()
-                    for key in DAILY_PERIOD_KEYS
-                }
-                mood = str(data.get("mood") or "自然、放松、轻松").strip()
-                clean_periods = {
-                    key: str(periods.get(key) or "").strip()
-                    for key in DAILY_PERIOD_KEYS
-                }
-                occasion = str(data.get("occasion") or "").strip()
-                forbidden = ("未成年", "裸", "裸体", "色情", "暴露", "内衣", "乳", "私密")
-                all_text = " ".join([*clean_outfits.values(), occasion, mood, *clean_periods.values()])
-                time_locked = ("清晨", "早晨", "午后", "傍晚", "夜里", "夜晚", "深夜", "凌晨")
+            if complete:
+                profile = DailySelfieProfile(
+                    date=today,
+                    outfit=clean_outfits.get(current_period()) or str(existed.get("outfit") or ""),
+                    status=clean_status.get(current_period()) or str(existed.get("status") or ""),
+                    mood=str(existed.get("mood") or ""),
+                    seed=str(existed.get("seed") or ""),
+                    updated_at=str(existed.get("updated_at") or ""),
+                    source="fallback",
+                    status_by_period=clean_status,
+                    outfit_by_period=clean_outfits,
+                    outfit_pool=outfit_pool,
+                    scene_by_period=clean_scenes,
+                    action_by_period=clean_actions,
+                    schedule_by_period=schedule,
+                    day_theme=str(existed.get("day_theme") or ""),
+                    occasion=str(existed.get("occasion") or ""),
+                    llm_attempted=False,
+                )
+                # Normalize legacy fields once; ordinary shots reuse the
+                # in-memory snapshot without rewriting the profile file.
                 if (
-                    all(clean_outfits.values())
-                    and all(len(value) <= 220 for value in clean_outfits.values())
-                    and len(occasion) <= 100
-                    and len(mood) <= 80
-                    and all(clean_periods.values())
-                    and all(len(value) <= 160 for value in clean_periods.values())
-                    and not any(word in all_text for word in forbidden)
-                    and not any(word in value for value in clean_outfits.values() for word in time_locked)
+                    existed.get("schema_version") != DAILY_PROFILE_SCHEMA_VERSION
+                    or existed.get("source") != "fallback"
+                    or existed.get("llm_attempted") is not False
+                    or existed.get("outfit") != profile.outfit
+                    or existed.get("status") != profile.status
+                    or existed.get("status_by_period") != clean_status
+                    or existed.get("outfit_by_period") != clean_outfits
+                    or existed.get("outfit_pool") != outfit_pool
+                    or existed.get("scene_by_period") != clean_scenes
+                    or existed.get("action_by_period") != clean_actions
+                    or existed.get("schedule_by_period") != schedule
                 ):
-                    profile = DailySelfieProfile(
-                        date=today,
-                        outfit=clean_outfits.get(current_period(), clean_outfits["morning"]),
-                        status=clean_periods.get(current_period(), clean_periods["morning"]),
-                        status_by_period=clean_periods,
-                        outfit_by_period=clean_outfits,
-                        occasion=occasion,
-                        mood=mood,
-                        seed=make_random_seed(),
-                        updated_at=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
-                        source="llm",
-                        llm_attempted=True,
-                    )
-            except Exception:
-                profile = None
-        if profile is None:
-            profile = fallback_daily_profile(
-                today, make_random_seed(), llm_attempted=llm_generate is not None
-            )
+                    self._persist_daily_selfie_profile(profile)
+                return profile
+
+            avoid_outfits = set(clean_outfits.values())
+            avoid_statuses = set(clean_status.values())
+            avoid_scenes = set(clean_scenes.values())
+            avoid_actions = set(clean_actions.values())
+        else:
+            avoid_outfits = set()
+            avoid_statuses = set()
+            avoid_scenes = set()
+            avoid_actions = set()
+
+        profile = fallback_daily_profile(
+            today,
+            make_random_seed(),
+            llm_attempted=False,
+            avoid_outfits=avoid_outfits,
+            avoid_statuses=avoid_statuses,
+            avoid_scenes=avoid_scenes,
+            avoid_actions=avoid_actions,
+            avoid_route_ids=self.daily_schedule_store.recent_route_ids(),
+        )
         self._persist_daily_selfie_profile(profile)
         return profile
 
     def _persist_daily_selfie_profile(self, profile: DailySelfieProfile) -> None:
+        timeline = profile.timeline
+        if timeline is None:
+            timeline = legacy_profile_to_schedule(
+                {
+                    "date": profile.date,
+                    "outfit": profile.outfit,
+                    "outfit_by_period": profile.outfit_by_period,
+                    "outfit_pool": profile.outfit_pool,
+                    "scene_by_period": profile.scene_by_period,
+                    "action_by_period": profile.action_by_period,
+                    "status_by_period": profile.status_by_period,
+                    "day_theme": profile.day_theme,
+                    "occasion": profile.occasion,
+                    "mood": profile.mood,
+                    "seed": profile.seed,
+                    "updated_at": profile.updated_at,
+                },
+                date=profile.date,
+                period_keys=DAILY_PERIOD_KEYS,
+                period_ranges=PERIOD_TIME_RANGES,
+            )
+        if timeline is not None:
+            timeline.mood = profile.mood
+            timeline.theme = profile.day_theme or timeline.theme
+            timeline.occasion = profile.occasion
+            timeline.updated_at = profile.updated_at or timeline.updated_at
+            self.daily_schedule_store.set_current(timeline)
         self.data["daily_selfie_profile"] = {
+            "schema_version": DAILY_PROFILE_SCHEMA_VERSION,
             "date": profile.date,
             "outfit": profile.outfit,
             "outfit_by_period": profile.outfit_by_period,
+            "outfit_pool": profile.outfit_pool,
+            "scene_by_period": profile.scene_by_period,
+            "action_by_period": profile.action_by_period,
+            "schedule_by_period": profile.schedule_by_period,
+            "day_theme": profile.day_theme,
             "occasion": profile.occasion,
             "status": profile.status,
             "status_by_period": profile.status_by_period,
@@ -1255,20 +2214,71 @@ class PersonaManager:
             previous = self.get_daily_selfie_profile()
             avoid_outfits = set(previous.outfit_by_period.values()) if previous else set()
             avoid_statuses = set(previous.status_by_period.values()) if previous else set()
+            avoid_scenes = set(previous.scene_by_period.values()) if previous else set()
+            avoid_actions = set(previous.action_by_period.values()) if previous else set()
             profile = fallback_daily_profile(
-                local_date_key(),
+                daily_schedule_date_key(self.business_day_start),
                 make_random_seed(),
-                llm_attempted=True,
+                llm_attempted=False,
                 avoid_outfits=avoid_outfits,
                 avoid_statuses=avoid_statuses,
+                avoid_scenes=avoid_scenes,
+                avoid_actions=avoid_actions,
+                avoid_route_ids=self.daily_schedule_store.recent_route_ids(),
             )
             self._persist_daily_selfie_profile(profile)
             return profile
 
-    def refresh_daily_selfie_profile_for_test(self) -> None:
-        self.data["daily_selfie_profile"] = None
-        self.data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
-        self.save()
+    def get_daily_schedule(self, date: Optional[str] = None) -> Optional[DailySchedule]:
+        """Return the canonical timeline, migrating an old snapshot if needed."""
+        schedule = self.daily_schedule_store.current
+        if schedule is None:
+            schedule = self._migrate_legacy_daily_schedule(self.data.get("daily_selfie_profile"))
+        if schedule is None:
+            return None
+        if date is not None and schedule.date != str(date):
+            return None
+        return schedule
+
+    def get_current_daily_event(self) -> Optional[Any]:
+        schedule = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
+        return schedule.current_event() if schedule else None
+
+    def daily_schedule_payload(self) -> Dict[str, Any]:
+        schedule = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
+        if schedule is None:
+            return {"schedule": None, "current_event": None, "next_event": None}
+        current = schedule.current_event()
+        current_index = schedule.events.index(current) if current in schedule.events else -1
+        next_event = schedule.events[current_index + 1] if current_index >= 0 and current_index + 1 < len(schedule.events) else None
+        return {
+            "schedule": schedule.to_dict(),
+            "current_event": current.to_dict() if current else None,
+            "next_event": next_event.to_dict() if next_event else None,
+        }
+
+    def daily_schedule_text(self) -> str:
+        schedule = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
+        if schedule is None:
+            return "今天还没有可用的本地日程。"
+        current = schedule.current_event()
+        lines = [
+            f"日期：{schedule.date}",
+            f"主题：{schedule.theme}" if schedule.theme else "",
+            f"心情：{schedule.mood}" if schedule.mood else "",
+            "当前事件：" + (
+                f"{current.start}-{current.end} {current.title}｜{current.scene}｜{current.action}"
+                if current else "暂无"
+            ),
+            "日程安排：",
+        ]
+        for event in schedule.events:
+            outfit = schedule.outfit_for_event(event)
+            suffix = f"｜穿搭变化：{event.outfit_change}" if event.outfit_change else ""
+            lines.append(
+                f"{event.start}-{event.end} {event.title}：{event.scene}；{event.action}；穿搭：{outfit}{suffix}"
+            )
+        return "\n".join(line for line in lines if line)
 
     def get_daily_selfie_profile(self) -> Optional[DailySelfieProfile]:
         raw = self.data.get("daily_selfie_profile")
@@ -1276,7 +2286,48 @@ class PersonaManager:
             return None
         status_by_period = raw.get("status_by_period") if isinstance(raw.get("status_by_period"), dict) else {}
         outfit_by_period = raw.get("outfit_by_period") if isinstance(raw.get("outfit_by_period"), dict) else {}
+        outfit_pool = _complete_outfit_pool(
+            {str(k): str(v) for k, v in outfit_by_period.items()},
+            raw.get("outfit_pool"),
+        )
+        scene_by_period = raw.get("scene_by_period") if isinstance(raw.get("scene_by_period"), dict) else {}
+        action_by_period = raw.get("action_by_period") if isinstance(raw.get("action_by_period"), dict) else {}
         clean_outfits = {str(k): str(v) for k, v in outfit_by_period.items()}
+        clean_scenes = {str(k): str(v) for k, v in scene_by_period.items()}
+        clean_actions = {str(k): str(v) for k, v in action_by_period.items()}
+        schedule_by_period = _normalize_schedule_by_period(raw.get("schedule_by_period"))
+        if schedule_by_period:
+            schedule_by_period = _complete_schedule_from_maps(
+                schedule_by_period,
+                status_by_period={str(k): str(v) for k, v in status_by_period.items()},
+                outfit_by_period=clean_outfits,
+                scene_by_period=clean_scenes,
+                action_by_period=clean_actions,
+                outfit_pool=outfit_pool,
+            )
+            (
+                clean_outfits,
+                clean_status,
+                clean_scenes,
+                clean_actions,
+            ) = _derive_period_maps_from_schedule(
+                schedule_by_period,
+                outfit_pool,
+                legacy_outfits=clean_outfits,
+                legacy_status={str(k): str(v) for k, v in status_by_period.items()},
+                legacy_scenes=clean_scenes,
+                legacy_actions=clean_actions,
+            )
+            status_by_period = clean_status
+        elif all(clean_outfits.get(key) for key in DAILY_PERIOD_KEYS):
+            schedule_by_period = _schedule_from_legacy_maps(
+                status_by_period={str(k): str(v) for k, v in status_by_period.items()},
+                outfit_by_period=clean_outfits,
+                scene_by_period=clean_scenes,
+                action_by_period=clean_actions,
+                outfit_pool=outfit_pool,
+            )
+        timeline = self.get_daily_schedule(str(raw.get("date") or ""))
         return DailySelfieProfile(
             date=str(raw.get("date") or ""),
             outfit=str(clean_outfits.get(current_period()) or raw.get("outfit") or ""),
@@ -1284,11 +2335,19 @@ class PersonaManager:
             mood=str(raw.get("mood") or ""),
             seed=str(raw.get("seed") or ""),
             updated_at=str(raw.get("updated_at") or ""),
-            source=str(raw.get("source") or "fallback"),
+            # Daily schedules are local-only; legacy LLM snapshots are read
+            # only as data to be replaced by the ensure path.
+            source="fallback",
             status_by_period={str(k): str(v) for k, v in status_by_period.items()},
             outfit_by_period=clean_outfits,
+            outfit_pool=outfit_pool,
+            scene_by_period=clean_scenes,
+            action_by_period=clean_actions,
+            schedule_by_period=schedule_by_period,
+            day_theme=str(raw.get("day_theme") or ""),
             occasion=str(raw.get("occasion") or ""),
-            llm_attempted=bool(raw.get("llm_attempted", str(raw.get("source") or "") == "llm")),
+            llm_attempted=False,
+            timeline=timeline,
         )
 
     def build_selfie_prompt(
@@ -1298,6 +2357,7 @@ class PersonaManager:
         personality: str,
         has_reference_image: bool,
         extra_reference_count: int = 0,
+        has_external_reference: Optional[bool] = None,
     ) -> str:
         act = str(action or "").strip()
         intent = self.analyze_selfie_intent(act)
@@ -1676,25 +2736,108 @@ class PersonaManager:
         skip_period = extra_overrides_period(extra)
         skip_status = extra_overrides_context(extra)
         skip_mood = extra_overrides_mood(extra)
-        use_daily_now = (not intent.is_legs_only) and (not intent.is_cos_look)
+        # Schedule context belongs to identity-free daily shots. Leg-focus
+        # can borrow the event's location, but keeps its own pose and outfit.
+        external_reference = (
+            bool(has_external_reference)
+            if has_external_reference is not None
+            else int(extra_reference_count or 0) > 0
+        )
+        has_daily_context = (
+            not intent.is_cos_look
+            and not intent.is_group_photo
+            and not external_reference
+        )
+        use_daily_now = has_daily_context and not intent.is_legs_only
         today_lines: list[str] = []
         if use_daily_now and daily and not skip_period:
             period = current_period()
             label = period_label(period)
             today_lines.append(f"当前时间段：{label}")
-            selected_outfit = str(daily.outfit_by_period.get(period) or daily.outfit or "").strip()
-            if intent.use_today_outfit and selected_outfit and not skip_outfit:
+            timeline = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
+            timeline_event = timeline.current_event() if timeline else None
+            current_event = (
+                {
+                    "title": timeline_event.title,
+                    "start": timeline_event.start,
+                    "end": timeline_event.end,
+                    "status": timeline_event.status,
+                    "scene": timeline_event.scene,
+                    "action": timeline_event.action,
+                    "outfit_change": timeline_event.outfit_change,
+                }
+                if timeline_event
+                else (daily.schedule_by_period.get(period) if daily.schedule_by_period else {})
+            )
+            if daily.day_theme:
+                today_lines.append(f"今日日程基调：{daily.day_theme}")
+            if current_event and intent.is_legs_only and not skip_status:
+                if current_event.get("scene"):
+                    today_lines.append(f"当前日程场景：{current_event['scene']}")
+            elif current_event and not skip_status and not intent.change_pose:
+                today_lines.append(
+                    "当前日程事件："
+                    + "；".join(
+                        item
+                        for item in (
+                            f"{current_event.get('start')}-{current_event.get('end')} {current_event.get('title')}"
+                            if current_event.get("title")
+                            else "",
+                            f"状态={current_event.get('status')}" if current_event.get("status") else "",
+                            f"场景={current_event.get('scene')}" if current_event.get("scene") else "",
+                            f"动作={current_event.get('action')}" if current_event.get("action") else "",
+                            f"穿搭变化={current_event.get('outfit_change')}" if current_event.get("outfit_change") else "",
+                        )
+                        if item
+                    )
+                )
+            selected_outfit = (
+                timeline.outfit_for_event(timeline_event)
+                if timeline and timeline_event
+                else str(daily.outfit_by_period.get(period) or daily.outfit or "").strip()
+            )
+            if intent.use_today_outfit and not intent.is_legs_only and selected_outfit and not skip_outfit:
                 outfit_label = f"今日穿搭（{label}）" if daily.outfit_by_period else "今日穿搭"
                 today_lines.append(f"{outfit_label}：{selected_outfit}")
             if daily.occasion:
                 today_lines.append(f"今日时令 / 节日氛围：{daily.occasion}")
             if not skip_status:
                 status = ""
-                if daily.status_by_period:
+                if timeline_event and timeline_event.status:
+                    status = timeline_event.status
+                elif daily.status_by_period:
                     status = str(daily.status_by_period.get(period) or "")
                 status = status or str(daily.status or "")
                 if status:
                     today_lines.append(f"当前状态：{status}")
+                scene = (
+                    timeline_event.scene.strip()
+                    if timeline_event
+                    else str(daily.scene_by_period.get(period) or "").strip()
+                )
+                daily_action = (
+                    timeline_event.action.strip()
+                    if timeline_event
+                    else str(daily.action_by_period.get(period) or "").strip()
+                )
+                has_staging_contract = any(
+                    marker in act for marker in ("场景倾向：", "小动作：", "动作瞬间：", "今日日程场景参考：")
+                )
+                if scene and not has_staging_contract:
+                    today_lines.append(f"当前日常场景参考：{scene}")
+                if daily_action and not intent.is_legs_only and not has_staging_contract:
+                    today_lines.append(f"当前日常动作参考：{daily_action}")
+        if has_daily_context and intent.is_legs_only and daily and not skip_status:
+            period = current_period()
+            timeline = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
+            timeline_event = timeline.current_event() if timeline else None
+            scene = (
+                timeline_event.scene.strip()
+                if timeline_event
+                else str(daily.scene_by_period.get(period) or "").strip()
+            )
+            if scene and "今日日程场景参考：" not in act:
+                today_lines.append(f"当前日程场景：{scene}")
         if use_daily_now and daily and daily.mood and not skip_mood:
             today_lines.append(f"当前心情：{daily.mood}")
 
@@ -1783,17 +2926,41 @@ class PersonaManager:
         lines.append("当前已设置 AI 自拍参考图。" if self.has_reference_image() else "当前还没有设置 AI 自拍参考图。")
         lines.append(f"形象类型：{self.appearance_type_label()}（自动=不追加类型说明；真人/动漫会补对应说明）")
         if daily:
+            period = current_period()
             lines.extend(
                 [
                     f"今日自拍设定：{daily.date}",
                     f"来源：{'本地随机兜底' if daily.source == 'fallback' else daily.source}",
                     f"当前状态({period_label(current_period())})：{daily.status}",
                     f"当前心情：{daily.mood}",
+                    f"可选穿搭池：{len(daily.outfit_pool)}套",
                 ]
             )
+            if daily.day_theme:
+                lines.append(f"今日日程基调：{daily.day_theme}")
+            timeline = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
+            timeline_event = timeline.current_event() if timeline else None
+            if timeline_event:
+                lines.append(
+                    f"当前日程事件：{timeline_event.start}-{timeline_event.end} {timeline_event.title}；"
+                    f"场景={timeline_event.scene}；动作={timeline_event.action}"
+                )
+            elif daily.scene_by_period.get(period):
+                lines.append(f"当前场景({period_label(period)})：{daily.scene_by_period[period]}")
+            if timeline and timeline_event:
+                lines.append(f"当前事件穿搭：{timeline.outfit_for_event(timeline_event)}")
             if daily.occasion:
                 lines.append(f"今日时令 / 节日氛围：{daily.occasion}")
-            if daily.outfit_by_period:
+            if timeline:
+                lines.append("今日日程：")
+                for event in timeline.events:
+                    outfit = timeline.outfit_for_event(event)
+                    change = f"；变化={event.outfit_change}" if event.outfit_change else ""
+                    lines.append(
+                        f"{event.start}-{event.end} {event.title}：{event.scene}；"
+                        f"{event.action}；穿搭={outfit}{change}"
+                    )
+            elif daily.outfit_by_period:
                 lines.extend(
                     f"{period_label(period)}穿搭：{daily.outfit_by_period[period]}"
                     for period in DAILY_PERIOD_KEYS

@@ -164,6 +164,16 @@
       white-space: pre-wrap; background: #f8fafc; border: 1px solid var(--line); border-radius: var(--radius-sm);
       padding: 10px; min-height: 24px; max-width: 100%; overflow-wrap: anywhere; word-break: break-word;
     }
+    .daily-schedule { margin-top: 12px; display: grid; gap: 8px; }
+    .daily-schedule-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .daily-schedule-head strong { font-size: 14px; }
+    .daily-schedule-list { display: grid; gap: 6px; }
+    .daily-event { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 9px 10px; border-left: 3px solid var(--line-strong); background: var(--panel-soft); border-radius: 4px; }
+    .daily-event.current { border-left-color: var(--primary); background: var(--primary-weak); }
+    .daily-event-time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .daily-event-body { min-width: 0; display: grid; gap: 3px; }
+    .daily-event-title { font-size: 13px; font-weight: 650; }
+    .daily-event-detail { color: var(--text-secondary); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
     .muted { color: var(--muted); font-size: 13px; line-height: 1.45; }
     .card { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; background: #fff; margin-bottom: 12px; box-shadow: var(--shadow); }
     .soft { background: var(--panel-soft); }
@@ -1538,11 +1548,11 @@
         <button id="uploadSelfie">上传并保存</button>
         <button class="secondary" onclick="refreshSelfie()">刷新预览</button>
         <button class="danger" onclick="clearSelfie()">清除参考图</button>
-        <button class="ok" onclick="refreshDailySelfieLlm()">LLM刷新</button>
         <span class="muted">今日穿搭</span>
         <button class="secondary" onclick="refreshDailySelfieLocal()">本地刷新</button>
       </div>
       <div id="selfieStatus" class="status"></div>
+      <div id="selfieDailySchedule" class="daily-schedule" hidden></div>
     </section>
 
     <section id="audit">
@@ -7064,6 +7074,30 @@ Source prompt:
       showTestPanel('result');
     }
 
+    function renderSelfieDailySchedule(payload) {
+      const root = $('selfieDailySchedule');
+      if (!root) return;
+      const schedule = payload && payload.schedule;
+      if (!schedule || !Array.isArray(schedule.events) || !schedule.events.length) {
+        root.hidden = true;
+        root.innerHTML = '';
+        return;
+      }
+      const currentId = payload.current_event && String(payload.current_event.id || '');
+      const events = schedule.events.map(event => {
+        const outfit = schedule.outfits && schedule.outfits[event.outfit_ref]
+          ? `穿搭：${schedule.outfits[event.outfit_ref]}` : '';
+        const detail = [event.scene, event.action, outfit, event.outfit_change ? `变化：${event.outfit_change}` : '']
+          .filter(Boolean).map(escapeHtml).join('；');
+        return `<div class="daily-event${String(event.id || '') === currentId ? ' current' : ''}">
+          <div class="daily-event-time">${escapeHtml(event.start || '')}-${escapeHtml(event.end || '')}</div>
+          <div class="daily-event-body"><div class="daily-event-title">${escapeHtml(event.title || '日程事件')}</div><div class="daily-event-detail">${detail}</div></div>
+        </div>`;
+      }).join('');
+      root.innerHTML = `<div class="daily-schedule-head"><strong>${escapeHtml(schedule.date || '今日')} · ${escapeHtml(schedule.theme || '今日安排')}</strong><span class="muted">${escapeHtml((payload.current_event && payload.current_event.title) || '当前无进行中事件')}</span></div><div class="daily-schedule-list">${events}</div>`;
+      root.hidden = false;
+    }
+
     async function refreshSelfie() {
       try {
         const res = await api('/api/selfie-reference');
@@ -7079,25 +7113,17 @@ Source prompt:
           $('selfiePreview').style.display = 'none';
         }
         $('selfieStatus').textContent = data.status || (data.has_image ? '已设置形象参考图' : '还没有形象参考图');
+        renderSelfieDailySchedule(data.daily_schedule);
         if ($('selfieAppearanceType')) {
           $('selfieAppearanceType').value = data.appearance_type || 'auto';
         }
       } catch (e) { $('selfieStatus').textContent = e.message; }
     }
-    async function refreshDailySelfieLlm() {
-      try {
-        const res = await api('/api/selfie-profile/refresh', {method:'POST', body:'{}'});
-        $('selfieStatus').textContent = (res.data && res.data.status) || 'LLM今日穿搭已刷新';
-        showToast('LLM今日穿搭已刷新', 'ok');
-      } catch (e) {
-        $('selfieStatus').textContent = e.message;
-        showToast(e.message, 'bad');
-      }
-    }
     async function refreshDailySelfieLocal() {
       try {
         const res = await api('/api/selfie-profile/refresh-local', {method:'POST', body:'{}'});
         $('selfieStatus').textContent = (res.data && res.data.status) || '本地今日穿搭已刷新';
+        renderSelfieDailySchedule(res.data && res.data.daily_schedule);
         showToast('本地今日穿搭已刷新', 'ok');
       } catch (e) {
         $('selfieStatus').textContent = e.message;

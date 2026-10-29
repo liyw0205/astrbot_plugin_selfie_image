@@ -431,12 +431,43 @@ def pick_stocking_finish() -> str:
     return random.choice(bag)
 
 
-def pick_leg_focus_pose(*, avoid_id: str = "") -> Dict[str, str]:
+def _leg_pose_compatible_with_scene(pose: Dict[str, str], scene: str) -> bool:
+    scene_text = str(scene or "")
+    if not scene_text:
+        return True
+    pose_id = str(pose.get("id") or "")
+    indoor = any(token in scene_text for token in ("室内", "卧室", "客厅", "咖啡", "书店", "劇院", "剧院", "餐廊", "厨房", "家中", "室内"))
+    outdoor = any(token in scene_text for token in ("街", "海", "河岸", "码头", "天台", "公园", "户外", "露台", "步道", "庭院", "石阶", "小径"))
+    if pose_id in {"sofa_front_crop", "sofa_cross_crop", "sofa_occlusion_crop"}:
+        return any(token in scene_text for token in ("沙发", "床", "客厅", "休息区"))
+    if pose_id == "chair_side_crop":
+        return any(token in scene_text for token in ("椅", "座位", "咖啡", "书桌", "餐廊", "茶室", "长凳"))
+    if pose_id == "floor_knees_crop":
+        return "窗" in scene_text
+    if pose_id == "floor_side_kneel_crop":
+        return any(token in scene_text for token in ("小径", "步道", "草地", "庭院", "花园"))
+    if pose_id in {"staggered_stair_step_crop", "toe_touch_step_crop"}:
+        return any(token in scene_text for token in ("台阶", "石阶", "楼梯"))
+    if pose_id == "bench_side_sit_crop":
+        return "长凳" in scene_text or "座椅" in scene_text
+    if pose_id in {"cross_step_snapshot_crop", "turn_and_settle_crop"}:
+        return not indoor or any(token in scene_text for token in ("走廊", "大厅", "通道"))
+    if pose_id == "back_staggered_step_crop":
+        return not indoor or any(token in scene_text for token in ("空地", "走廊", "大厅"))
+    if pose_id == "stool_edge_crop":
+        return any(token in scene_text for token in ("矮凳", "座位", "咖啡", "茶室", "书桌"))
+    if outdoor and not indoor and pose_id in {"sofa_front_crop", "sofa_cross_crop", "sofa_occlusion_crop", "stool_edge_crop"}:
+        return False
+    return True
+
+
+def pick_leg_focus_pose(*, avoid_id: str = "", preferred_scene: str = "") -> Dict[str, str]:
     """Pick one neutral full-length pose, avoiding explicit detail-only views."""
     pool = [
         item for item in LEGFOCUS_POSE_POOL
         if str(item.get("id") or "") not in LEGFOCUS_EXPLICIT_ONLY_POSE_IDS
         and str(item.get("id") or "") != str(avoid_id or "")
+        and _leg_pose_compatible_with_scene(item, preferred_scene)
     ]
     if not pool:
         pool = list(LEGFOCUS_POSE_POOL)
@@ -557,8 +588,15 @@ def build_leg_focus_action(
     force_pose: str = "",
     force_camera: str = "",
     force_framing: str = "",
+    preferred_scene: str = "",
 ) -> str:
     """Build a complete outfit action for ``看看腿`` with optional local framing."""
+    scene_override_terms = (
+        "卧室", "客厅", "厨房", "书店", "咖啡馆", "咖啡店", "咖啡厅", "街上", "街边",
+        "天台", "海边", "河边", "公园", "阳台", "窗边", "浴室", "走廊", "场景不变", "背景不变",
+    )
+    if any(term in str(extra_request or "") for term in scene_override_terms):
+        preferred_scene = ""
     forced_pose_id = str(force_pose or "").strip()
     if not forced_pose_id:
         forced_pose_id = parse_requested_leg_pose(extra_request)
@@ -569,7 +607,7 @@ def build_leg_focus_action(
         None,
     )
     if pose is None:
-        pose = pick_leg_focus_pose(avoid_id=avoid_pose)
+        pose = pick_leg_focus_pose(avoid_id=avoid_pose, preferred_scene=preferred_scene)
         pose_tag = ""
     pose_bucket = str(pose.get("id") or "sofa_front_crop")
     if not pose_tag:
@@ -663,6 +701,7 @@ def build_leg_focus_action(
         "【legs:outfit】"
         f"【frame:{requested_framing}】"
         f"【姿势池·{pose.get('title') or '随机姿势'}】{pose_prompt}"
+        f"{'今日日程场景参考：' + preferred_scene + '；腿部姿势已按该场景筛选。' if preferred_scene else ''}"
         f"{legwear_rule}"
         f"{outfit_rule}"
         f"{anatomy_rules}"

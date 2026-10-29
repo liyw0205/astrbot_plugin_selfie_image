@@ -295,9 +295,6 @@ class FakeWebPlugin:
         self.selfie_reference = {"data": b"", "mime_type": "image/png", "updated_at": "2026-07-06 00:00:00"}
         return {"has_image": False, "status": "cleared"}
 
-    async def refresh_selfie_profile_from_web(self):
-        return {"status": "refreshed", "updated_at": "2026-07-04 00:00:00"}
-
     async def refresh_selfie_profile_local_from_web(self):
         return {"status": "local refreshed", "updated_at": "2026-07-04 00:00:00", "source": "fallback"}
 
@@ -462,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.60")
+        self.assertEqual(PLUGIN_VERSION, "1.6.61")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5144,7 +5141,6 @@ class WebApiTests(unittest.TestCase):
         routes = [
             "/api/selfie-reference",
             "/api/selfie-reference/clear",
-            "/api/selfie-profile/refresh",
             "/api/test-image-channel",
             "/api/test-image-channel/tasks",
             "/api/refresh-image-models",
@@ -5402,17 +5398,12 @@ class WebApiTests(unittest.TestCase):
         client = self.make_client(FakeWebPlugin("secret"), host="0.0.0.0")
         headers = {"X-Selfie-Image-Token": "secret"}
 
+        removed = client.post("/api/selfie-profile/refresh", json={}, headers=headers)
+        self.assertEqual(removed.status_code, 404)
+
         response = client.post("/api/selfie-reference/clear", json={}, headers=headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"]["status"], "cleared")
-
-        response = client.post("/api/selfie-profile/refresh", json={}, headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"]["status"], "refreshed")
-
-        response = client.post("/api/selfie-profile/refresh", data="", headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"]["status"], "refreshed")
 
         response = client.post("/api/selfie-profile/refresh-local", json={}, headers=headers)
         self.assertEqual(response.status_code, 200)
@@ -5533,18 +5524,6 @@ class WebApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("非法记录 ID", response.get_json()["error"])
-
-    def test_web_error_responses_redact_sensitive_text(self) -> None:
-        class FailingPlugin(FakeWebPlugin):
-            async def refresh_selfie_profile_from_web(self):
-                raise RuntimeError("Authorization: Bearer sk-live-secret-token")
-
-        client = self.make_client(FailingPlugin("secret"), host="0.0.0.0")
-        response = client.post("/api/selfie-profile/refresh", json={}, headers={"X-Selfie-Image-Token": "secret"})
-
-        self.assertEqual(response.status_code, 500)
-        self.assertIn("Bearer [REDACTED]", response.get_json()["error"])
-        self.assertNotIn("sk-live-secret-token", response.get_json()["error"])
 
     def test_web_task_status_validates_task_id(self) -> None:
         plugin = FakeWebPlugin("secret")
@@ -12733,54 +12712,20 @@ class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin._image_batch_gate._value, 1)
 
 
-class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
-    async def test_daily_profile_prefers_valid_llm_json(self) -> None:
-        from astrbot_plugin_selfie_image.features.persona import (
-            DAILY_PERIOD_KEYS,
-            PersonaManager,
-            current_period,
-        )
-
-        periods = {key: f"{key} 的自然状态" for key in DAILY_PERIOD_KEYS}
-        outfits = {key: f"{key} 的完整搭配" for key in DAILY_PERIOD_KEYS}
-        captured_prompt = ""
-        with tempfile.TemporaryDirectory() as tmp:
-            manager = PersonaManager(tmp)
-
-            async def generate(prompt: str) -> str:
-                nonlocal captured_prompt
-                captured_prompt = prompt
-                return json.dumps(
-                    {
-                        "outfit_by_period": outfits,
-                        "occasion": "",
-                        "mood": "清爽",
-                        "status_by_period": periods,
-                    },
-                    ensure_ascii=False,
-                )
-
-            profile = await manager.ensure_daily_selfie_profile("看看你", llm_generate=generate)
-            self.assertEqual(profile.source, "llm")
-            self.assertEqual(profile.outfit, outfits[current_period()])
-            self.assertEqual(profile.outfit_by_period, outfits)
-            self.assertIn("六个时段分别给出完整可直接画出的服装搭配", captured_prompt)
-            self.assertIn("节日或节气", captured_prompt)
-            self.assertIn("公历日期：", captured_prompt)
-
-    async def test_daily_profile_falls_back_when_llm_fails(self) -> None:
+class DailySelfieLocalProfileTests(unittest.IsolatedAsyncioTestCase):
+    async def test_daily_profile_is_generated_locally(self) -> None:
         from astrbot_plugin_selfie_image.features.persona import DAILY_PERIOD_KEYS, PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
-
-            async def generate(_: str) -> str:
-                raise TimeoutError("timeout")
-
-            profile = await manager.ensure_daily_selfie_profile("看看你", llm_generate=generate)
+            profile = await manager.ensure_daily_selfie_profile("看看你")
             self.assertEqual(profile.source, "fallback")
+            self.assertFalse(profile.llm_attempted)
             self.assertTrue(profile.outfit)
             self.assertEqual(set(profile.outfit_by_period), set(DAILY_PERIOD_KEYS))
+            self.assertGreaterEqual(len(profile.outfit_pool), 10)
+            self.assertEqual(set(profile.scene_by_period), set(DAILY_PERIOD_KEYS))
+            self.assertEqual(set(profile.action_by_period), set(DAILY_PERIOD_KEYS))
             self.assertNotEqual(profile.outfit_by_period["afternoon"], profile.outfit_by_period["night"])
             for token in ("清晨穿着", "午后是", "傍晚换成", "夜里是", "深夜会偏居家"):
                 self.assertNotIn(token, profile.outfit)
@@ -12794,110 +12739,74 @@ class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
             second = await manager.refresh_daily_selfie_profile_local()
 
         self.assertEqual(first.source, "fallback")
-        self.assertTrue(first.llm_attempted)
+        self.assertFalse(first.llm_attempted)
         self.assertEqual(second.source, "fallback")
-        self.assertTrue(second.llm_attempted)
+        self.assertFalse(second.llm_attempted)
         self.assertNotEqual(first.outfit_by_period, second.outfit_by_period)
+        self.assertGreaterEqual(len(first.outfit_pool), 10)
+        self.assertGreaterEqual(len(second.outfit_pool), 10)
         self.assertNotEqual(first.status_by_period, second.status_by_period)
         self.assertNotEqual(first.outfit, second.outfit)
 
-    async def test_legacy_single_outfit_llm_response_does_not_freeze_the_day(self) -> None:
+    def test_fallback_daily_profile_uses_one_complete_visual_route(self) -> None:
+        from astrbot_plugin_selfie_image.features.persona import (
+            DAILY_PERIOD_KEYS,
+            DAILY_SCHEDULE_ROUTES,
+            fallback_daily_profile,
+        )
+
+        profile = fallback_daily_profile("2026-08-09", "route-test")
+        matching = [route for route in DAILY_SCHEDULE_ROUTES if route["theme"] == profile.day_theme]
+        self.assertEqual(len(matching), 1)
+        events = matching[0]["events"]
+        for period in DAILY_PERIOD_KEYS:
+            self.assertEqual(profile.status_by_period[period], events[period]["status"])
+            self.assertEqual(profile.scene_by_period[period], events[period]["scene"])
+            self.assertEqual(profile.action_by_period[period], events[period]["action"])
+            self.assertEqual(profile.schedule_by_period[period]["scene"], events[period]["scene"])
+            self.assertEqual(profile.schedule_by_period[period]["action"], events[period]["action"])
+
+    def test_daily_schedule_routes_are_varied_and_complete(self) -> None:
+        from astrbot_plugin_selfie_image.features.persona import DAILY_PERIOD_KEYS, DAILY_SCHEDULE_ROUTES
+
+        self.assertGreaterEqual(len(DAILY_SCHEDULE_ROUTES), 8)
+        self.assertEqual(len({route["id"] for route in DAILY_SCHEDULE_ROUTES}), len(DAILY_SCHEDULE_ROUTES))
+        self.assertEqual(len({route["theme"] for route in DAILY_SCHEDULE_ROUTES}), len(DAILY_SCHEDULE_ROUTES))
+        for route in DAILY_SCHEDULE_ROUTES:
+            self.assertEqual(set(route["events"]), set(DAILY_PERIOD_KEYS))
+            for event in route["events"].values():
+                self.assertTrue(event["status"])
+                self.assertTrue(event["scene"])
+                self.assertTrue(event["action"])
+
+    async def test_daily_profile_initialization_is_shared_across_concurrent_shots(self) -> None:
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
-
-            async def generate(_: str) -> str:
-                return json.dumps(
-                    {
-                        "outfit": "浅蓝衬衫和白色长裙",
-                        "mood": "清爽",
-                        "status_by_period": {
-                            key: f"{key}的自然状态"
-                            for key in ("morning", "noon", "afternoon", "evening", "night", "late_night")
-                        },
-                    },
-                    ensure_ascii=False,
-                )
-
-            profile = await manager.ensure_daily_selfie_profile("自拍", llm_generate=generate)
-            self.assertEqual(profile.source, "fallback")
-            self.assertNotEqual(profile.outfit_by_period["afternoon"], profile.outfit_by_period["night"])
-
-    async def test_daily_profile_initialization_is_shared_across_concurrent_shots(self) -> None:
-        from astrbot_plugin_selfie_image.features.persona import DAILY_PERIOD_KEYS, PersonaManager
-
-        calls = 0
-        periods = {key: f"{key} 的自然状态" for key in DAILY_PERIOD_KEYS}
-        outfits = {key: f"{key} 的搭配" for key in DAILY_PERIOD_KEYS}
-        with tempfile.TemporaryDirectory() as tmp:
-            manager = PersonaManager(tmp)
-
-            async def generate(_: str) -> str:
-                nonlocal calls
-                calls += 1
-                await asyncio.sleep(0.01)
-                return json.dumps(
-                    {"outfit_by_period": outfits, "mood": "清爽", "status_by_period": periods},
-                    ensure_ascii=False,
-                )
-
             profiles = await asyncio.gather(
-                *(manager.ensure_daily_selfie_profile("看看你", llm_generate=generate) for _ in range(4))
+                *(manager.ensure_daily_selfie_profile("看看你") for _ in range(4))
             )
-            self.assertEqual(calls, 1)
-            self.assertEqual({tuple(sorted(profile.outfit_by_period.items())) for profile in profiles}, {tuple(sorted(outfits.items()))})
+            self.assertEqual({profile.seed for profile in profiles}, {profiles[0].seed})
+            self.assertTrue(all(profile.source == "fallback" for profile in profiles))
 
-    async def test_legacy_daily_profile_is_upgraded_when_llm_becomes_available(self) -> None:
-        from astrbot_plugin_selfie_image.features.persona import (
-            DAILY_PERIOD_KEYS,
-            PersonaManager,
-            local_date_key,
-        )
+    async def test_old_llm_or_incomplete_cache_is_replaced_locally(self) -> None:
+        from astrbot_plugin_selfie_image.features.persona import DAILY_PERIOD_KEYS, PersonaManager, local_date_key
 
-        outfits = {key: f"更新后的{key}搭配" for key in DAILY_PERIOD_KEYS}
-        periods = {key: f"更新后的{key}状态" for key in DAILY_PERIOD_KEYS}
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
             manager.data["daily_selfie_profile"] = {
                 "date": local_date_key(),
-                "outfit": "旧版缓存穿搭",
+                "outfit": "旧版 LLM 穿搭",
                 "status": "旧版状态",
-                "status_by_period": periods,
-                "source": "fallback",
+                "source": "llm",
+                "llm_attempted": True,
             }
-
-            async def generate(_: str) -> str:
-                return json.dumps(
-                    {"outfit_by_period": outfits, "mood": "清爽", "status_by_period": periods},
-                    ensure_ascii=False,
-                )
-
-            profile = await manager.ensure_daily_selfie_profile("看看你", llm_generate=generate)
-            self.assertEqual(profile.source, "llm")
-            self.assertEqual(profile.outfit_by_period, outfits)
-            self.assertNotEqual(profile.outfit, "旧版缓存穿搭")
-
-    async def test_fallback_profile_is_upgraded_on_the_first_llm_generation(self) -> None:
-        from astrbot_plugin_selfie_image.features.persona import DAILY_PERIOD_KEYS, PersonaManager
-
-        outfits = {key: f"LLM 生成的{key}完整穿搭" for key in DAILY_PERIOD_KEYS}
-        periods = {key: f"{key}的时间状态" for key in DAILY_PERIOD_KEYS}
-        with tempfile.TemporaryDirectory() as tmp:
-            manager = PersonaManager(tmp)
-            fallback = await manager.ensure_daily_selfie_profile("查看今日自拍设定")
-            self.assertEqual(fallback.source, "fallback")
-            self.assertFalse(fallback.llm_attempted)
-
-            async def generate(_: str) -> str:
-                return json.dumps(
-                    {"outfit_by_period": outfits, "mood": "清爽", "status_by_period": periods},
-                    ensure_ascii=False,
-                )
-
-            upgraded = await manager.ensure_daily_selfie_profile("自拍", llm_generate=generate)
-            self.assertEqual(upgraded.source, "llm")
-            self.assertEqual(upgraded.outfit_by_period, outfits)
+            profile = await manager.ensure_daily_selfie_profile("看看你")
+            self.assertEqual(profile.source, "fallback")
+            self.assertFalse(profile.llm_attempted)
+            self.assertNotEqual(profile.outfit, "旧版 LLM 穿搭")
+            self.assertEqual(set(profile.schedule_by_period), set(DAILY_PERIOD_KEYS))
 
     def test_selfie_prompt_uses_period_outfit_and_one_compatible_snapshot(self) -> None:
         from astrbot_plugin_selfie_image.features.persona import (
@@ -12921,8 +12830,8 @@ class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
                 "status": periods[current_period()],
                 "status_by_period": periods,
                 "mood": "自然轻松",
-                "source": "llm",
-                "llm_attempted": True,
+                "source": "fallback",
+                "llm_attempted": False,
             }
             with patch(
                 "astrbot_plugin_selfie_image.features.persona.random.choice",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import re
 from collections.abc import Callable
-from typing import List, Tuple
+from typing import Iterable, List, Tuple
 
 from ..features.persona import (
     appearance_type_instruction,
@@ -130,6 +130,16 @@ def _requested_staging_orientation(text: str) -> str:
     return ""
 
 
+def _has_explicit_action_override(text: str) -> bool:
+    compact = re.sub(r"\s+", "", str(text or ""))
+    terms = (
+        "站立", "站着", "坐姿", "坐着", "跪坐", "跪姿", "躺下", "侧躺", "趴着",
+        "行走", "走路", "散步", "奔跑", "跳跃", "托腮", "比心", "双手举起",
+        "整理发丝", "整理袖口", "拿着花", "拿着书", "抱着", "倚靠", "靠墙",
+    )
+    return any(_has_positive_staging_term(compact, term) for term in terms)
+
+
 def _has_positive_staging_term(text: str, term: str) -> bool:
     start = 0
     while True:
@@ -162,8 +172,41 @@ def _scene_contains(scene: str, *terms: str) -> bool:
     return any(term.lower() in compact for term in terms)
 
 
+def _event_context_tags(
+    scene: str = "",
+    action: str = "",
+    tags: Iterable[str] = (),
+) -> set[str]:
+    """Normalize schedule metadata so one event controls one coherent shot."""
+    text = f"{scene} {action}"
+    compact = re.sub(r"\s+", "", text)
+    action_compact = re.sub(r"\s+", "", str(action or ""))
+    result = {str(item).strip().lower() for item in tags if str(item).strip()}
+    if any(token in text for token in ("家中", "室内", "卧室", "客厅", "书店", "咖啡馆", "剧院", "温室", "餐廊", "厨房")):
+        result.add("indoor")
+    if any(token in text for token in ("天台", "河岸", "街", "海", "码头", "公园", "露台", "步道", "户外", "城市")):
+        result.add("outdoor")
+    if any(token in text for token in ("坐", "椅", "沙发", "桌", "床沿", "靠坐")):
+        result.add("seated")
+    if any(token in text for token in ("走", "步道", "经过", "散步", "行走")):
+        result.add("walking")
+    if any(token in text for token in ("栏杆", "窗台", "门框", "墙边", "靠墙", "立柱")):
+        result.add("needs_support")
+    if any(token in action_compact for token in ("背对镜头", "背向镜头", "背身", "背面", "背影", "服装后侧", "背部朝")):
+        result.add("back_orientation")
+    elif any(token in action_compact for token in ("侧身", "侧面", "侧后方", "侧前方", "身体微侧", "身体朝向一侧")):
+        result.add("side_orientation")
+    return result
+
+
+def _scene_has_support(scene: str) -> bool:
+    return _scene_contains(scene, "栏杆", "窗台", "门框", "窗框", "靠墙", "墙边", "立柱", "护栏", "wall", "door")
+
+
 def _scene_supports_shot(scene: str, shot: str) -> bool:
     """Keep a randomly selected shot grounded in the selected environment."""
+    if shot in {"back_view", "side_profile"} and _scene_contains(scene, "镜前", "镜面", "镜子", "mirror"):
+        return False
     if shot in {"mirror_half", "mirror_full"}:
         return _scene_contains(scene, "镜", "mirror")
     if shot == "window_side":
@@ -202,7 +245,72 @@ def _shots_supported_by_scenes(
         item for item in shot_pool
         if any(_scene_supports_shot(scene, item[0]) for scene in source)
     ]
-    return compatible or shot_pool
+    if compatible:
+        return compatible
+    if source:
+        generic_shots = {
+            "arm_half", "high_angle", "close_portrait", "half_front",
+            "three_quarter", "env_mid", "close_smile", "low_over",
+            "back_view", "side_profile",
+        }
+        return [item for item in shot_pool if item[0] in generic_shots] or shot_pool
+    return shot_pool
+
+
+def _event_shot_pool(
+    shot_pool: List[Tuple[str, int]],
+    *,
+    scene: str = "",
+    action: str = "",
+    tags: Iterable[str] = (),
+) -> List[Tuple[str, int]]:
+    """Restrict a daily event's random camera to its declared orientation."""
+    context = _event_context_tags(scene, action, tags)
+    if "back_orientation" in context:
+        selected = [item for item in shot_pool if item[0] == "back_view"]
+        return selected or shot_pool
+    if "side_orientation" in context:
+        selected = [item for item in shot_pool if item[0] == "side_profile"]
+        return selected or shot_pool
+    return shot_pool
+
+
+def _daily_action_compatible(action: str, scene: str, shot: str) -> bool:
+    """Reject actions that contradict the selected camera or available prop."""
+    compact = re.sub(r"\s+", "", str(action or ""))
+    if not compact:
+        return False
+    if shot == "back_view" and any(token in compact for token in ("回头", "回眸", "回望", "看向镜头", "抬眼", "露出正脸")):
+        return False
+    if shot == "side_profile" and any(token in compact for token in ("背对", "背向", "正面看向镜头", "回头", "回眸", "回望", "看向镜头")):
+        return False
+    if any(token in compact for token in ("栏杆", "窗台", "门框", "靠墙", "搭在墙")) and not _scene_has_support(scene):
+        return False
+    if any(token in compact for token in ("杯", "饮品", "咖啡")) and not _scene_contains(scene, "杯", "咖啡", "厨房", "桌"):
+        return False
+    if any(token in compact for token in ("翻书", "书页", "书本")) and not _scene_contains(scene, "书", "阅读", "桌"):
+        return False
+    if shot == "walk_candid" and any(token in compact for token in ("坐", "床", "沙发", "桌前")):
+        return False
+    if shot in {"desk_sit", "sofa_casual"} and any(token in compact for token in ("行走", "走过", "步道")):
+        return False
+    return True
+
+
+def _safe_daily_action(scene: str, shot: str, *, selfie: bool) -> str:
+    if shot == "back_view":
+        if _scene_has_support(scene):
+            return "双手自然搭在场景中已有的支撑物上，背部朝向镜头，头部不回转"
+        return "双手自然垂在身体两侧，背部朝向镜头，头部不回转"
+    if shot == "side_profile":
+        return "身体和头部自然朝向同一侧，手臂放松，不回头硬露正脸"
+    if shot == "walk_candid":
+        return "行走中自然停步，头部顺着行进方向，手臂放松"
+    if shot in {"desk_sit", "sofa_casual"}:
+        return "在已有座位上自然坐好，手臂放松，动作刚好停住"
+    if selfie:
+        return random.choice(_selfie_gestures_for_scene(scene, shot))
+    return random.choice(_third_person_actions_for_scene(scene, shot))
 
 
 def _selfie_gestures_for_scene(scene: str, shot: str) -> List[str]:
@@ -318,6 +426,9 @@ def build_selfie_look_action(
     avoid_shot: str = "",
     appearance_type: str = "auto",
     scene_light_provider: Callable[[str], Tuple[List[str], List[str]]] = period_scene_light_pools,
+    preferred_scene: str = "",
+    preferred_gesture: str = "",
+    preferred_tags: Iterable[str] = (),
 ) -> str:
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
     appearance_type = resolve_appearance_type(appearance_type, extra)
@@ -332,7 +443,24 @@ def build_selfie_look_action(
     shot_pool = [item for item in SELFIE_SHOT_POOL if item[0] != avoid_shot]
     if not shot_pool:
         shot_pool = list(SELFIE_SHOT_POOL)
-    shot_pool = _shots_supported_by_scenes(shot_pool, scenes, extra if explicit_scene else "")
+    event_context_enabled = bool(
+        preferred_scene
+        and not explicit_scene
+        and not _requested_staging_orientation(extra)
+        and not _has_explicit_action_override(extra)
+    )
+    scene_source = [preferred_scene] if event_context_enabled else scenes
+    shot_pool = _shots_supported_by_scenes(
+        shot_pool,
+        scene_source,
+        extra if explicit_scene else "",
+    )
+    shot_pool = _event_shot_pool(
+        shot_pool,
+        scene=preferred_scene if event_context_enabled else "",
+        action=preferred_gesture if event_context_enabled else "",
+        tags=preferred_tags if event_context_enabled else (),
+    )
     orientation = _requested_staging_orientation(extra)
     shot = (
         "back_view" if orientation == "back"
@@ -345,16 +473,26 @@ def build_selfie_look_action(
     )
     explicit_light = _has_explicit_staging_light(extra)
     if shot == "back_view":
-        scene = "" if explicit_scene else _pick_staging_scene(scenes, "back", shot)
-        gesture = "双手自然垂放；场景中已有合适支撑物时可轻轻搭放"
+        preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
+        scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot))
+        gesture = (
+            preferred_gesture
+            if preferred_gesture and _daily_action_compatible(preferred_gesture, scene, shot)
+            else _safe_daily_action(scene, shot, selfie=True)
+        )
         light = "" if explicit_light else random.choice(lights)
     else:
-        scene = "" if explicit_scene else _pick_staging_scene(scenes, orientation, shot)
+        preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
+        scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, orientation, shot))
         gesture_scene = scene or next(
             (item for item in scenes if _scene_supports_shot(item, shot)),
             "",
         )
-        gesture = random.choice(_selfie_gestures_for_scene(gesture_scene, shot))
+        gesture = (
+            preferred_gesture
+            if event_context_enabled and preferred_gesture and _daily_action_compatible(preferred_gesture, scene, shot)
+            else _safe_daily_action(gesture_scene, shot, selfie=True)
+        )
         light = "" if explicit_light else random.choice(lights)
     rear_view = shot == "back_view"
     side_view = shot == "side_profile"
@@ -414,16 +552,32 @@ def build_third_person_look_action(
     avoid_shot: str = "",
     appearance_type: str = "auto",
     scene_light_provider: Callable[[str], Tuple[List[str], List[str]]] = period_scene_light_pools,
+    preferred_scene: str = "",
+    preferred_action: str = "",
+    preferred_tags: Iterable[str] = (),
 ) -> str:
     scenes, lights = scene_light_provider("look_you")
     explicit_scene = _has_explicit_staging_scene(extra_request)
     shot_pool = [item for item in THIRD_PERSON_SHOT_POOL if item[0] != avoid_shot]
     if not shot_pool:
         shot_pool = list(THIRD_PERSON_SHOT_POOL)
+    event_context_enabled = bool(
+        preferred_scene
+        and not explicit_scene
+        and not _requested_staging_orientation(extra_request)
+        and not _has_explicit_action_override(extra_request)
+    )
+    scene_source = [preferred_scene] if event_context_enabled else scenes
     shot_pool = _shots_supported_by_scenes(
         shot_pool,
-        scenes,
+        scene_source,
         extra_request if explicit_scene else "",
+    )
+    shot_pool = _event_shot_pool(
+        shot_pool,
+        scene=preferred_scene if event_context_enabled else "",
+        action=preferred_action if event_context_enabled else "",
+        tags=preferred_tags if event_context_enabled else (),
     )
     orientation = _requested_staging_orientation(extra_request)
     shot = (
@@ -437,16 +591,26 @@ def build_third_person_look_action(
     )
     explicit_light = _has_explicit_staging_light(extra_request)
     if shot == "back_view":
-        scene = "" if explicit_scene else _pick_staging_scene(scenes, "back", shot)
-        action = "双手放松垂在身侧；场景中已有合适支撑物时可轻轻搭放"
+        preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
+        scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot))
+        action = (
+            preferred_action
+            if preferred_action and _daily_action_compatible(preferred_action, scene, shot)
+            else _safe_daily_action(scene, shot, selfie=False)
+        )
         light = "" if explicit_light else random.choice(lights)
     else:
-        scene = "" if explicit_scene else _pick_staging_scene(scenes, orientation, shot)
+        preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
+        scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, orientation, shot))
         action_scene = scene or next(
             (item for item in scenes if _scene_supports_shot(item, shot)),
             "",
         )
-        action = random.choice(_third_person_actions_for_scene(action_scene, shot))
+        action = (
+            preferred_action
+            if event_context_enabled and preferred_action and _daily_action_compatible(preferred_action, scene, shot)
+            else _safe_daily_action(action_scene, shot, selfie=False)
+        )
         light = "" if explicit_light else random.choice(lights)
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
     rear_view = shot == "back_view"
@@ -460,7 +624,7 @@ def build_third_person_look_action(
             if rear_view
             else (
                 "本次采用纯侧身构图：身体、肩线和头部朝向一致，不回头或扭颈硬露正脸。"
-                "保持 AI 当前形象、今日穿搭和生活状态一致，采用竖屏半身中近景，姿态、背景层次和光线自然清楚。"
+                "保持 AI 当前形象、今日穿搭和生活状态一致，采用竖屏半身中近景，姿态、背景层次和光线自然清楚；不要美颜滤镜、不要影楼精修。"
                 if side_view
                 else (
                     "正面构图时可自然看向镜头；侧面构图时头部顺着身体方向，不强行回头露正脸。"

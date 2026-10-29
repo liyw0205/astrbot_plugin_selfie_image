@@ -135,13 +135,13 @@ def test_record_persona_reference_is_loaded_after_markup_without_inline_html_dat
     assert 'src="${escapeHtml(src)}" alt="形象图"' not in PAGE
 
 
-def test_selfie_controls_separate_llm_and_local_daily_outfit_refresh():
+def test_selfie_controls_only_offer_local_daily_outfit_refresh():
     controls = PAGE[PAGE.index('<input id="selfieFile"'):PAGE.index('<div id="selfieStatus"', PAGE.index('<input id="selfieFile"'))]
     assert controls.index('onclick="refreshSelfie()"') < controls.index('onclick="clearSelfie()"')
-    assert controls.index('onclick="clearSelfie()"') < controls.index('onclick="refreshDailySelfieLlm()"')
     assert '今日穿搭' in controls
     assert 'onclick="refreshDailySelfieLocal()"' in controls
-    assert "async function refreshDailySelfieLlm()" in PAGE
+    assert 'onclick="refreshDailySelfieLlm()"' not in PAGE
+    assert "async function refreshDailySelfieLlm()" not in PAGE
     assert "async function refreshDailySelfieLocal()" in PAGE
     assert "'/api/selfie-profile/refresh-local'" in PAGE
 

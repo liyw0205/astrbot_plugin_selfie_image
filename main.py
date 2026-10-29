@@ -142,7 +142,7 @@ from .core.models import (
     usable_api_keys,
     preflight_video_channel,
 )
-from .features.persona import PersonaManager
+from .features.persona import PersonaManager, current_period
 from .studio.studio import (
     BUILTIN_PROMPTS,
     StudioStore,
@@ -1370,6 +1370,19 @@ class SelfieImagePlugin(
     def _tool_success(self, kind: str = "image", count: int = 1) -> str:
         return tool_success(kind, count)
 
+    async def _ensure_daily_selfie_schedule(self, action: str, has_refs: bool) -> None:
+        if has_refs:
+            return
+        persona = getattr(self, "persona", None)
+        ensure = getattr(persona, "ensure_daily_selfie_profile", None)
+        analyze = getattr(persona, "analyze_selfie_intent", None)
+        if not callable(ensure) or not callable(analyze):
+            return
+        intent = analyze(str(action or ""))
+        if intent.is_cos_look or intent.is_group_photo:
+            return
+        await ensure(action)
+
     def _build_leg_focus_action(
         self,
         extra_request: str = "",
@@ -1380,6 +1393,12 @@ class SelfieImagePlugin(
         force_pose: str = "",
         force_camera: str = "",
     ) -> str:
+        daily_event = (
+            getattr(getattr(self, "persona", None), "get_current_daily_event", lambda: None)()
+            if not has_refs
+            else None
+        )
+        preferred_scene = str(getattr(daily_event, "scene", "") or "").strip()
         return build_leg_focus_action(
             extra_request,
             has_refs,
@@ -1387,6 +1406,7 @@ class SelfieImagePlugin(
             force_legwear=force_legwear,
             force_pose=force_pose,
             force_camera=force_camera,
+            preferred_scene=preferred_scene,
         )
 
     def _normalize_selfie_action(self, action: str, has_refs: bool) -> str:
@@ -1413,12 +1433,29 @@ class SelfieImagePlugin(
         avoid_shot: str = "",
     ) -> str:
         scene_provider = getattr(self, "_period_scene_light_pools", period_scene_light_pools)
+        # An attached message image is the visual source for this shot. Do not
+        # mix today's identity-free schedule scene into a reference-driven
+        # composition.
+        daily = (
+            getattr(getattr(self, "persona", None), "get_daily_selfie_profile", lambda: None)()
+            if not has_refs
+            else None
+        )
+        daily_event = (
+            getattr(getattr(self, "persona", None), "get_current_daily_event", lambda: None)()
+            if not has_refs
+            else None
+        )
+        period = current_period()
         return build_selfie_look_action(
             extra_request,
             has_refs,
             avoid_shot=avoid_shot,
             appearance_type=_appearance_type_for_request(getattr(self, "persona", None), extra_request),
             scene_light_provider=scene_provider,
+            preferred_scene=(str(getattr(daily_event, "scene", "") or "").strip() or str(getattr(daily, "scene_by_period", {}).get(period) or "")) if daily else "",
+            preferred_gesture=(str(getattr(daily_event, "action", "") or "").strip() or str(getattr(daily, "action_by_period", {}).get(period) or "")) if daily else "",
+            preferred_tags=getattr(daily_event, "tags", ()) if daily_event else (),
         )
 
     def _build_selfie_request_action(self, extra_request: str = "", has_refs: bool = False) -> str:
@@ -1447,12 +1484,26 @@ class SelfieImagePlugin(
         avoid_shot: str = "",
     ) -> str:
         scene_provider = getattr(self, "_period_scene_light_pools", period_scene_light_pools)
+        daily = (
+            getattr(getattr(self, "persona", None), "get_daily_selfie_profile", lambda: None)()
+            if not has_refs
+            else None
+        )
+        daily_event = (
+            getattr(getattr(self, "persona", None), "get_current_daily_event", lambda: None)()
+            if not has_refs
+            else None
+        )
+        period = current_period()
         return build_third_person_look_action(
             extra_request,
             has_refs,
             avoid_shot=avoid_shot,
             appearance_type=_appearance_type_for_request(getattr(self, "persona", None), extra_request),
             scene_light_provider=scene_provider,
+            preferred_scene=(str(getattr(daily_event, "scene", "") or "").strip() or str(getattr(daily, "scene_by_period", {}).get(period) or "")) if daily else "",
+            preferred_action=(str(getattr(daily_event, "action", "") or "").strip() or str(getattr(daily, "action_by_period", {}).get(period) or "")) if daily else "",
+            preferred_tags=getattr(daily_event, "tags", ()) if daily_event else (),
         )
 
     def _build_group_selfie_action(
@@ -1598,6 +1649,7 @@ class SelfieImagePlugin(
             context_hint=action,
             allow_context_fallback=True,
         )
+        await self._ensure_daily_selfie_schedule(action, bool(extra_refs))
         cos_selection = self._select_selfie_references(action, extra_refs)
         group_selection = (
             self._select_group_references(extra_refs)
@@ -2465,8 +2517,9 @@ class SelfieImagePlugin(
         event: Optional[AstrMessageEvent] = None,
         cos_selection: Optional[CosReferenceSelection] = None,
     ) -> Tuple[str, List[ImageReference]]:
-        llm_generate = (lambda prompt: self._call_text_llm(event, prompt, timeout=6)) if event is not None else None
-        await self.persona.ensure_daily_selfie_profile(action, llm_generate=llm_generate)
+        # Avoid creating or refreshing a local daily snapshot for COS, group,
+        # or reference-driven shots; those prompts have their own composition.
+        await self._ensure_daily_selfie_schedule(action, bool(extra_refs))
         persona_ref = self._persona_identity_reference(allow_logo=not self._is_cos_action(action))
         if cos_selection is None:
             cos_selection = self._select_selfie_references(action, extra_refs)
@@ -2486,6 +2539,7 @@ class SelfieImagePlugin(
             personality=self.config.personality,
             has_reference_image=bool(identity_ref),
             extra_reference_count=(cos_selection.extra_reference_image_count if cos_selection else len(extra_refs)),
+            has_external_reference=bool(extra_refs),
         )
         return prompt, refs
 
@@ -2579,6 +2633,7 @@ class SelfieImagePlugin(
             "ref_mime_type": data.get("ref_mime_type") or "image/png",
             "updated_at": data.get("updated_at") or "",
             "status": self.persona.status_text(),
+            "daily_schedule": self.persona.daily_schedule_payload(),
         }
         if not ref:
             return {
@@ -2616,17 +2671,6 @@ class SelfieImagePlugin(
         self.persona.clear_reference_image()
         return self.get_selfie_reference_payload()
 
-    async def refresh_selfie_profile_from_web(self) -> Dict[str, Any]:
-        self.persona.refresh_daily_selfie_profile_for_test()
-        await self.persona.ensure_daily_selfie_profile(
-            "手动刷新今日自拍设定",
-            llm_generate=lambda prompt: self._call_text_llm(None, prompt, timeout=8),
-        )
-        return {
-            "status": self.persona.status_text(),
-            "updated_at": self.persona.get().get("updated_at") or "",
-        }
-
     async def refresh_selfie_profile_local_from_web(self) -> Dict[str, Any]:
         """Refresh today's profile using only the local varied fallback pool."""
         profile = await self.persona.refresh_daily_selfie_profile_local()
@@ -2636,6 +2680,12 @@ class SelfieImagePlugin(
             "source": profile.source,
             "outfit": profile.outfit,
             "outfit_by_period": dict(profile.outfit_by_period),
+            "outfit_pool": list(profile.outfit_pool),
+            "scene_by_period": dict(profile.scene_by_period),
+            "action_by_period": dict(profile.action_by_period),
+            "schedule_by_period": copy.deepcopy(profile.schedule_by_period),
+            "daily_schedule": self.persona.daily_schedule_payload(),
+            "day_theme": profile.day_theme,
             "occasion": profile.occasion,
             "mood": profile.mood,
         }
@@ -7123,6 +7173,7 @@ class SelfieImagePlugin(
         else:
             expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         has_refs = bool(extract_image_sources_from_event(event))
+        await self._ensure_daily_selfie_schedule(expanded_extra or "自拍", has_refs)
         base_action = self._build_selfie_request_action(expanded_extra, has_refs)
         async for item in self._handle_selfie_command(
             event=event,
@@ -7169,7 +7220,9 @@ class SelfieImagePlugin(
             expanded_extra = special_variants[0]
         else:
             expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
-        fallback = self._build_leg_focus_action(expanded_extra, bool(extract_image_sources_from_event(event)))
+        has_refs = bool(extract_image_sources_from_event(event))
+        await self._ensure_daily_selfie_schedule(expanded_extra or "看看腿", has_refs)
+        fallback = self._build_leg_focus_action(expanded_extra, has_refs)
         async for item in self._handle_selfie_command(
             event=event,
             command_name="看看腿",
@@ -7279,7 +7332,9 @@ class SelfieImagePlugin(
             expanded_extra = special_variants[0]
         else:
             expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
-        fallback = self._build_third_person_look_action(expanded_extra, bool(extract_image_sources_from_event(event)))
+        has_refs = bool(extract_image_sources_from_event(event))
+        await self._ensure_daily_selfie_schedule(expanded_extra or "看看你", has_refs)
+        fallback = self._build_third_person_look_action(expanded_extra, has_refs)
         async for item in self._handle_selfie_command(
             event=event,
             command_name="看看你",
@@ -7359,6 +7414,12 @@ class SelfieImagePlugin(
         if path:
             yield event.chain_result([self._create_image_component(path)])
         yield event.plain_result(self.persona.status_text())
+
+    @filter.command("今日日程")
+    async def cmd_daily_schedule(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
+        """查看当前本地日程事件链。"""
+        await self.persona.ensure_daily_selfie_profile("查看今日日程")
+        yield event.plain_result(self.persona.daily_schedule_text())
 
     @filter.command("形象设置")
     async def cmd_persona_set(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
@@ -7498,11 +7559,7 @@ class SelfieImagePlugin(
     @filter.command("形象刷新")
     async def cmd_persona_refresh(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
         """刷新今日穿搭与状态。"""
-        self.persona.refresh_daily_selfie_profile_for_test()
-        await self.persona.ensure_daily_selfie_profile(
-            "手动刷新今日自拍设定",
-            llm_generate=lambda prompt: self._call_text_llm(event, prompt, timeout=8),
-        )
+        await self.persona.refresh_daily_selfie_profile_local()
         yield event.plain_result("今日自拍设定已刷新。\n" + self.persona.status_text())
 
     @filter.command("预设", prefix_optional=True)

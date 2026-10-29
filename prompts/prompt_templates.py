@@ -134,6 +134,8 @@ def append_daily_context_to_english_prompt(english_prompt: str, source_prompt: s
         "当前时间段": "Current time period",
         "当前状态": "Current state",
         "当前心情": "Current mood",
+        "今日日程基调": "Today's schedule theme",
+        "当前日程事件": "Current schedule event",
     }
     lines = []
     for source_label, english_label in labels.items():
