@@ -613,6 +613,19 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
 
+        @app.route("/api/selfie-profile/refresh-local", methods=["POST"])
+        def selfie_profile_refresh_local() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                data = self._run_async(self.plugin.refresh_selfie_profile_local_from_web(), timeout=20)
+                return ok(data, message="本地今日穿搭已刷新")
+            except Exception as exc:
+                return fail(str(exc), 500)
+
         @app.route("/api/test-image-channel", methods=["POST"])
         def test_image_channel() -> Any:
             if not check_auth():

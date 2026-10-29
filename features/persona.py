@@ -480,49 +480,117 @@ def make_random_seed() -> str:
 
 
 def fallback_daily_profile(
-    date: str, seed: str, *, llm_attempted: bool = False
+    date: str,
+    seed: str,
+    *,
+    llm_attempted: bool = False,
+    avoid_outfits: Optional[set[str]] = None,
+    avoid_statuses: Optional[set[str]] = None,
 ) -> DailySelfieProfile:
     try:
         month = datetime.date.fromisoformat(date).month
     except (TypeError, ValueError):
         month = 4
-    outerwear = {
-        12: "莓红短款呢外套", 1: "莓红短款呢外套", 2: "莓红短款呢外套",
-        3: "浅卡其薄风衣", 4: "浅卡其薄风衣", 5: "浅卡其薄风衣",
-        6: "轻薄白色亚麻衬衫外搭", 7: "轻薄白色亚麻衬衫外搭", 8: "轻薄白色亚麻衬衫外搭",
-        9: "深橄榄短夹克", 10: "深橄榄短夹克", 11: "深橄榄短夹克",
+    seasonal_layers = {
+        12: ["莓红短款呢外套", "深灰短款羊毛夹克", "奶油白绗缝外套"],
+        1: ["莓红短款呢外套", "深灰短款羊毛夹克", "奶油白绗缝外套"],
+        2: ["莓红短款呢外套", "深灰短款羊毛夹克", "奶油白绗缝外套"],
+        3: ["浅卡其薄风衣", "雾蓝短款针织开衫", "米白轻薄工装夹克"],
+        4: ["浅卡其薄风衣", "雾蓝短款针织开衫", "米白轻薄工装夹克"],
+        5: ["浅卡其薄风衣", "雾蓝短款针织开衫", "米白轻薄工装夹克"],
+        6: ["轻薄白色亚麻衬衫外搭", "浅灰薄针织开衫", "淡青色防晒衬衫"],
+        7: ["轻薄白色亚麻衬衫外搭", "浅灰薄针织开衫", "淡青色防晒衬衫"],
+        8: ["轻薄白色亚麻衬衫外搭", "浅灰薄针织开衫", "淡青色防晒衬衫"],
+        9: ["深橄榄短夹克", "烟灰薄风衣", "酒红短款针织外套"],
+        10: ["深橄榄短夹克", "烟灰薄风衣", "酒红短款针织外套"],
+        11: ["深橄榄短夹克", "烟灰薄风衣", "酒红短款针织外套"],
     }[month]
     day_looks = [
         ("莓果红方领针织上衣", "深蓝高腰直筒牛仔裤", "焦糖棕乐福鞋", "细金属耳饰"),
         ("奶油黄翻领针织背心叠穿白衬衫", "墨绿色百褶长裙", "黑色短靴", "窄版深棕皮带"),
         ("雾蓝细条纹衬衫", "炭灰色高腰阔腿裤", "银灰复古运动鞋", "小型银色耳圈"),
         ("炭灰短款拉链针织上衣", "酒红色直筒半身裙", "黑色玛丽珍鞋", "一枚亮色发夹"),
+        ("奶油白方领衬衫", "焦糖色高腰伞裙", "深棕短靴", "复古方形腕表"),
+        ("浅杏色薄针织上衣", "靛青色直筒牛仔裤", "白色低帮帆布鞋", "一只小巧丝巾发带"),
+        ("雾紫色短款开衫叠穿白色背心", "深灰高腰西装裤", "黑色尖头平底鞋", "银色细项链"),
+        ("浅青色翻领短袖衬衫", "奶油白A字中长裙", "棕色便鞋", "小型珍珠耳钉"),
+        ("深蓝细针织马甲叠穿条纹衬衫", "浅灰高腰工装长裤", "米白复古运动鞋", "窄版帆布腰带"),
+        ("砖红色圆领针织上衣", "墨黑色高腰直筒裙", "酒红玛丽珍鞋", "一枚哑光金属胸针"),
     ]
-    top, bottoms, shoes, accent = random.choice(day_looks)
-    day_outfit = f"{outerwear}敞开穿着，内搭{top}，配{bottoms}和{shoes}，以{accent}作一个清晰点缀。"
+    avoid = {str(value).strip() for value in (avoid_outfits or set()) if str(value).strip()}
+
+    def choose_rendered(items: list[Any], render: Callable[[Any], str]) -> str:
+        rendered = [(item, render(item)) for item in items]
+        candidates = [value for value in rendered if value[1] not in avoid]
+        return random.choice(candidates or rendered)[1]
+
+    day_candidates = [(layer, look) for layer in seasonal_layers for look in day_looks]
+    day_outfit = choose_rendered(
+        day_candidates,
+        lambda item: (
+            f"{item[0]}敞开穿着，内搭{item[1][0]}，配{item[1][1]}和{item[1][2]}，"
+            f"以{item[1][3]}作一个清晰点缀。"
+        ),
+    )
+    evening_looks = [
+        "换成墨绿色细针织连衣裙，外搭短款米白开衫，配棕色低跟便鞋和细金属耳饰。",
+        "换成雾蓝衬衫裙，腰间用窄版深棕腰带收束，配奶油白便鞋和小银圈耳饰。",
+        "换成酒红色针织上衣配深灰直筒半身裙，外搭短款黑色夹克，配黑色乐福鞋。",
+        "换成奶油白针织上衣配深蓝高腰长裙，外搭浅灰开衫，配一枚复古腕表。",
+        "换成浅杏色薄风衣内搭白色细针织衫和炭灰长裤，配棕色短靴和丝巾发带。",
+        "换成深蓝短款针织上衣配焦糖色伞裙，外搭酒红薄外套，配深棕便鞋。",
+    ]
+    evening_outfit = choose_rendered(evening_looks, lambda item: item)
     home_looks = [
         "雾蓝色柔软针织上衣配奶油白直筒长裤，剪裁宽松但有清楚层次。",
         "深莓色薄款针织套头衫配炭灰色舒适长裤，配色沉稳有重点。",
         "浅绿色棉质短袖上衣配深蓝色宽松长裤，简洁清爽且版型利落。",
         "奶油黄罗纹针织上衣配烟灰色直筒长裤，柔软材质与清晰轮廓兼顾。",
+        "雾粉色家居针织开衫配米白色直筒长裤，内搭干净的浅灰背心。",
+        "浅蓝色宽松棉质衬衫配柔灰色针织长裤，袖口自然挽起，舒适但不邋遢。",
+        "奶油白薄卫衣配深绿色家居长裤，配色安静，轮廓清楚利落。",
+        "浅紫灰色针织套头衫配暖灰色阔腿长裤，材质柔软，整体轻松整洁。",
     ]
-    home_outfit = random.choice(home_looks)
+    home_outfit = choose_rendered(home_looks, lambda item: item)
     outfit_by_period = {
         "morning": day_outfit,
         "noon": day_outfit,
         "afternoon": day_outfit,
-        "evening": day_outfit,
+        "evening": evening_outfit,
         "night": home_outfit,
         "late_night": home_outfit,
     }
-    status_by_period = {
-        "morning": "刚开始一天，神情清爽安静，还带着一点没完全醒透的松弛感。",
-        "noon": "上午忙碌告一段落，精神明亮些，状态轻快但不刻意摆拍。",
-        "afternoon": "下午节奏稍缓，神情自然，带一点慵懒的生活感。",
-        "evening": "一天接近尾声，状态放松下来，心情柔和而安定。",
-        "night": "夜间进入舒适的居家节奏，动作放松，神情安静。",
-        "late_night": "深夜更安静松弛，像准备休息前顺手记录下此刻。",
-    }
+    status_variants = [
+        {
+            "morning": "刚洗漱整理好，精神清爽但还没有完全进入忙碌节奏，动作自然放松。",
+            "noon": "上午的事情告一段落，状态明亮利落，像顺手记录下短暂的喘息。",
+            "afternoon": "下午节奏放缓，神情里有一点慵懒，姿态自然，不像专门摆拍。",
+            "evening": "傍晚回到安静节奏，心情柔和下来，穿搭和状态都更松弛。",
+            "night": "夜间换成舒适状态，动作收得自然，像在家里随手留下的一帧。",
+            "late_night": "深夜更安静，神情放松，保留准备休息前的生活感。",
+        },
+        {
+            "morning": "窗边的光线刚亮起来，头发和衣服简单整理过，整个人清醒又不紧绷。",
+            "noon": "白天光线变亮，状态轻快一些，像忙完手头小事后自然看向镜头。",
+            "afternoon": "下午有短暂空闲，姿态随意而稳定，保留一点日常发呆的松弛感。",
+            "evening": "天色渐暗后状态沉静下来，动作更从容，像刚结束一天的琐事。",
+            "night": "夜里回到舒服的居家节奏，神情安稳，画面不刻意制造戏剧感。",
+            "late_night": "准备休息前随手记录，表情柔和，动作轻松，不显得疲惫或僵硬。",
+        },
+        {
+            "morning": "早晨带着刚整理完生活的清爽感，神情柔和，姿态轻松自然。",
+            "noon": "午间精神稳定，像在熟悉的日常空间里短暂停下来，状态干净利落。",
+            "afternoon": "午后稍微放空，眼神和动作都松一点，保留真实生活中的小停顿。",
+            "evening": "傍晚的状态温和安定，像把外面的节奏慢慢收回来。",
+            "night": "夜间只保留舒适、整洁的居家状态，动作自然，不要过度表演。",
+            "late_night": "深夜安静下来，神情温柔松弛，像睡前最后一次随手记录。",
+        },
+    ]
+    status_candidates = [
+        item for item in status_variants
+        if set(item.values()) != (avoid_statuses or set())
+    ]
+    status_by_period = dict(random.choice(status_candidates or status_variants))
     period = current_period()
     return DailySelfieProfile(
         date=date,
@@ -530,7 +598,10 @@ def fallback_daily_profile(
         status=status_by_period.get(period, "处于自然放松的日常状态，画面安静、统一、真实。"),
         status_by_period=status_by_period,
         outfit_by_period=outfit_by_period,
-        mood=random_pick(["放松、安静、柔和", "清爽、自然、轻松", "温柔、治愈、稳定", "元气、明亮、轻快"]),
+        mood=random_pick([
+            "放松、安静、柔和", "清爽、自然、轻松", "温柔、治愈、稳定", "元气、明亮、轻快",
+            "清醒、松弛、有一点小得意", "安静、利落、带着生活气", "柔和、从容、不刻意",
+        ]),
         seed=seed,
         updated_at=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
         source="fallback",
@@ -1158,6 +1229,10 @@ class PersonaManager:
             profile = fallback_daily_profile(
                 today, make_random_seed(), llm_attempted=llm_generate is not None
             )
+        self._persist_daily_selfie_profile(profile)
+        return profile
+
+    def _persist_daily_selfie_profile(self, profile: DailySelfieProfile) -> None:
         self.data["daily_selfie_profile"] = {
             "date": profile.date,
             "outfit": profile.outfit,
@@ -1173,7 +1248,22 @@ class PersonaManager:
         }
         self.data["updated_at"] = profile.updated_at
         self.save()
-        return profile
+
+    async def refresh_daily_selfie_profile_local(self) -> DailySelfieProfile:
+        """Create a fresh local-random daily profile without calling an LLM."""
+        async with self._daily_profile_lock:
+            previous = self.get_daily_selfie_profile()
+            avoid_outfits = set(previous.outfit_by_period.values()) if previous else set()
+            avoid_statuses = set(previous.status_by_period.values()) if previous else set()
+            profile = fallback_daily_profile(
+                local_date_key(),
+                make_random_seed(),
+                llm_attempted=True,
+                avoid_outfits=avoid_outfits,
+                avoid_statuses=avoid_statuses,
+            )
+            self._persist_daily_selfie_profile(profile)
+            return profile
 
     def refresh_daily_selfie_profile_for_test(self) -> None:
         self.data["daily_selfie_profile"] = None

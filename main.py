@@ -2627,6 +2627,19 @@ class SelfieImagePlugin(
             "updated_at": self.persona.get().get("updated_at") or "",
         }
 
+    async def refresh_selfie_profile_local_from_web(self) -> Dict[str, Any]:
+        """Refresh today's profile using only the local varied fallback pool."""
+        profile = await self.persona.refresh_daily_selfie_profile_local()
+        return {
+            "status": self.persona.status_text(),
+            "updated_at": profile.updated_at,
+            "source": profile.source,
+            "outfit": profile.outfit,
+            "outfit_by_period": dict(profile.outfit_by_period),
+            "occasion": profile.occasion,
+            "mood": profile.mood,
+        }
+
     def _find_image_target(self, channel_name: str = "", model: str = "") -> Optional[ImageModelTarget]:
         targets: List[ImageModelTarget] = []
         for channel in self.config.image_channels:

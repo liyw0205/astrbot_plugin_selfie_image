@@ -127,6 +127,25 @@ def test_record_source_buttons_copy_and_response_base64_opens():
     assert "Base64（点击打开）" in PAGE
 
 
+def test_record_persona_reference_is_loaded_after_markup_without_inline_html_data():
+    assert "function loadPersonaReferenceThumbs(root = document)" in PAGE
+    assert "SELFIE_REFERENCE_DATA_URL = data.has_image" in PAGE
+    assert "img.src = src;" in PAGE
+    assert "loadPersonaReferenceThumbs($('recordDetailBody'))" in PAGE
+    assert 'src="${escapeHtml(src)}" alt="形象图"' not in PAGE
+
+
+def test_selfie_controls_separate_llm_and_local_daily_outfit_refresh():
+    controls = PAGE[PAGE.index('<input id="selfieFile"'):PAGE.index('<div id="selfieStatus"', PAGE.index('<input id="selfieFile"'))]
+    assert controls.index('onclick="refreshSelfie()"') < controls.index('onclick="clearSelfie()"')
+    assert controls.index('onclick="clearSelfie()"') < controls.index('onclick="refreshDailySelfieLlm()"')
+    assert '今日穿搭' in controls
+    assert 'onclick="refreshDailySelfieLocal()"' in controls
+    assert "async function refreshDailySelfieLlm()" in PAGE
+    assert "async function refreshDailySelfieLocal()" in PAGE
+    assert "'/api/selfie-profile/refresh-local'" in PAGE
+
+
 def test_dashboard_shortcuts_and_priority_pin_cover_all_model_kinds():
     for target in ("test", "studio", "selfie", "channels", "monitor"):
         assert f'data-nav-target="{target}"' in PAGE

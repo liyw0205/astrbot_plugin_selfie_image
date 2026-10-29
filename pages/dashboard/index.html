@@ -1537,8 +1537,10 @@
       <div class="actions">
         <button id="uploadSelfie">上传并保存</button>
         <button class="secondary" onclick="refreshSelfie()">刷新预览</button>
-        <button class="ok" onclick="refreshDailySelfie()">换今日穿搭</button>
         <button class="danger" onclick="clearSelfie()">清除参考图</button>
+        <button class="ok" onclick="refreshDailySelfieLlm()">LLM刷新</button>
+        <span class="muted">今日穿搭</span>
+        <button class="secondary" onclick="refreshDailySelfieLocal()">本地刷新</button>
       </div>
       <div id="selfieStatus" class="status"></div>
     </section>
@@ -2012,7 +2014,10 @@
       return item;
     }
     function requestTraceSnapshot() { return REQUEST_TRACE.map(item => Object.assign({}, item)); }
-    let CONFIG = {};    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0, viewportFittedForSession: false };
+    let CONFIG = {};
+    let SELFIE_REFERENCE_DATA_URL = '';
+    let SELFIE_REFERENCE_REQUEST = null;
+    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0, viewportFittedForSession: false };
     let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", galleryRequestSeq: 0, presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
     const PICKER_CACHE = {
       prompt: {
@@ -5950,11 +5955,42 @@ Source prompt:
       );
     }
     function personaReferenceThumb() {
-      const src = String($('selfiePreview')?.src || '').trim();
-      if (!src || !src.startsWith('data:image/')) {
-        return '<div class="thumb-card"><div class="muted">形象图（当前预览未加载）</div></div>';
+      return '<div class="thumb-card persona-reference-thumb"><div class="status persona-reference-placeholder">正在加载形象图…</div><img alt="形象图" style="display:none"><div class="muted">形象图</div></div>';
+    }
+    async function loadSelfieReferenceDataUrl() {
+      if (SELFIE_REFERENCE_DATA_URL) return SELFIE_REFERENCE_DATA_URL;
+      if (!SELFIE_REFERENCE_REQUEST) {
+        SELFIE_REFERENCE_REQUEST = api('/api/selfie-reference').then(res => {
+          const image = String(res?.data?.image || '').trim();
+          SELFIE_REFERENCE_DATA_URL = image.startsWith('data:image/') ? image : '';
+          return SELFIE_REFERENCE_DATA_URL;
+        }).catch(() => '').finally(() => {
+          SELFIE_REFERENCE_REQUEST = null;
+        });
       }
-      return `<div class="thumb-card"><img src="${escapeHtml(src)}" alt="形象图"><div class="muted">形象图</div></div>`;
+      return SELFIE_REFERENCE_REQUEST;
+    }
+    async function loadPersonaReferenceThumbs(root = document) {
+      const images = root?.querySelectorAll?.('.persona-reference-thumb img') || [];
+      if (!images.length) return;
+      const src = await loadSelfieReferenceDataUrl();
+      images.forEach(img => {
+        const card = img.closest('.persona-reference-thumb');
+        const placeholder = card?.querySelector('.persona-reference-placeholder');
+        if (!src) {
+          if (placeholder) placeholder.textContent = '形象图读取失败';
+          return;
+        }
+        img.onload = () => {
+          img.style.display = 'block';
+          if (placeholder) placeholder.remove();
+        };
+        img.onerror = () => {
+          img.style.display = 'none';
+          if (placeholder) placeholder.textContent = '形象图加载失败';
+        };
+        img.src = src;
+      });
     }
     function recordRequestReferences(record) {
       const parts = [];
@@ -6481,6 +6517,7 @@ Source prompt:
       });
       loadProtectedImages($('recordDetailBody'));
       loadProtectedVideos($('recordDetailBody'));
+      loadPersonaReferenceThumbs($('recordDetailBody')).catch(() => {});
     }
     function closeRecordDetail() {
       closeMediaSourceModal();
@@ -7031,10 +7068,14 @@ Source prompt:
       try {
         const res = await api('/api/selfie-reference');
         const data = res.data || {};
-        if (data.has_image && data.image) {
-          $('selfiePreview').src = data.image;
+        SELFIE_REFERENCE_DATA_URL = data.has_image && String(data.image || '').startsWith('data:image/')
+          ? String(data.image)
+          : '';
+        if (SELFIE_REFERENCE_DATA_URL) {
+          $('selfiePreview').src = SELFIE_REFERENCE_DATA_URL;
           $('selfiePreview').style.display = 'block';
         } else {
+          $('selfiePreview').removeAttribute('src');
           $('selfiePreview').style.display = 'none';
         }
         $('selfieStatus').textContent = data.status || (data.has_image ? '已设置形象参考图' : '还没有形象参考图');
@@ -7043,11 +7084,21 @@ Source prompt:
         }
       } catch (e) { $('selfieStatus').textContent = e.message; }
     }
-    async function refreshDailySelfie() {
+    async function refreshDailySelfieLlm() {
       try {
         const res = await api('/api/selfie-profile/refresh', {method:'POST', body:'{}'});
-        $('selfieStatus').textContent = (res.data && res.data.status) || '今日穿搭已刷新';
-        showToast('今日穿搭已刷新', 'ok');
+        $('selfieStatus').textContent = (res.data && res.data.status) || 'LLM今日穿搭已刷新';
+        showToast('LLM今日穿搭已刷新', 'ok');
+      } catch (e) {
+        $('selfieStatus').textContent = e.message;
+        showToast(e.message, 'bad');
+      }
+    }
+    async function refreshDailySelfieLocal() {
+      try {
+        const res = await api('/api/selfie-profile/refresh-local', {method:'POST', body:'{}'});
+        $('selfieStatus').textContent = (res.data && res.data.status) || '本地今日穿搭已刷新';
+        showToast('本地今日穿搭已刷新', 'ok');
       } catch (e) {
         $('selfieStatus').textContent = e.message;
         showToast(e.message, 'bad');

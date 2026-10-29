@@ -298,6 +298,9 @@ class FakeWebPlugin:
     async def refresh_selfie_profile_from_web(self):
         return {"status": "refreshed", "updated_at": "2026-07-04 00:00:00"}
 
+    async def refresh_selfie_profile_local_from_web(self):
+        return {"status": "local refreshed", "updated_at": "2026-07-04 00:00:00", "source": "fallback"}
+
     async def web_test_image(self, payload):
         return {"success": True, "payload": copy.deepcopy(payload)}
 
@@ -459,7 +462,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.59")
+        self.assertEqual(PLUGIN_VERSION, "1.6.60")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5411,6 +5414,10 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["data"]["status"], "refreshed")
 
+        response = client.post("/api/selfie-profile/refresh-local", json={}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"]["status"], "local refreshed")
+
     def test_selfie_reference_route_saves_and_rejects_invalid_images(self) -> None:
         plugin = FakeWebPlugin("secret")
         client = self.make_client(plugin, host="0.0.0.0")
@@ -9725,7 +9732,11 @@ class LegFocusTests(unittest.TestCase):
         self.assertNotIn("真人摄影质感", selfie_cover)
         self.assertIn("不要美颜滤镜", selfie_cover)
         self.assertNotIn("过度美颜磨皮", selfie_cover)
-        group_cover = plugin_main.SelfieImagePlugin._build_group_selfie_action(_P(), "", False)
+        with patch(
+            "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
+            return_value=["group_portrait"],
+        ):
+            group_cover = plugin_main.SelfieImagePlugin._build_group_selfie_action(_P(), "", False)
         self.assertIn("竖屏", group_cover)
         self.assertTrue("半身" in group_cover or "中远景" in group_cover)
         self.assertIn("窗光", group_cover)
@@ -12773,6 +12784,22 @@ class DailySelfieLlmFallbackTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(profile.outfit_by_period["afternoon"], profile.outfit_by_period["night"])
             for token in ("清晨穿着", "午后是", "傍晚换成", "夜里是", "深夜会偏居家"):
                 self.assertNotIn(token, profile.outfit)
+
+    async def test_local_daily_refresh_rotates_outfit_and_daily_state(self) -> None:
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            first = await manager.refresh_daily_selfie_profile_local()
+            second = await manager.refresh_daily_selfie_profile_local()
+
+        self.assertEqual(first.source, "fallback")
+        self.assertTrue(first.llm_attempted)
+        self.assertEqual(second.source, "fallback")
+        self.assertTrue(second.llm_attempted)
+        self.assertNotEqual(first.outfit_by_period, second.outfit_by_period)
+        self.assertNotEqual(first.status_by_period, second.status_by_period)
+        self.assertNotEqual(first.outfit, second.outfit)
 
     async def test_legacy_single_outfit_llm_response_does_not_freeze_the_day(self) -> None:
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
