@@ -12,6 +12,8 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_RANDOM_POSE_CLASSES,
     COS_RANDOM_SCENE_CLASSES,
     COS_RANDOM_COMPOSITION_CLASSES,
+    COS_RANDOM_CAMERA_POSE_IDS,
+    COS_RANDOM_CAMERA_FRAMING_IDS,
     COS_SCENE_POSE_FRAMING_EXCLUSIONS,
     COS_POSE_CAMERA_COMPATIBILITY,
     COS_POSE_FRAMING_COMPATIBILITY,
@@ -451,6 +453,8 @@ def test_outfit_framing_words_do_not_suppress_random_view():
         selected = pick_cos_framing(
             outfit="竖屏9:16，半身到全身构图，人物对镜站立",
             extra_request="COS 换装：自然站立",
+            scene_id="rooftop_sunset",
+            camera="third",
         )
     assert selected["view_id"] == "low_angle_hero"
     assert selected["prompt"] == COS_FRAMING_CLASSES["low_angle_hero"]["prompt"]
@@ -480,6 +484,42 @@ def test_first_person_random_pose_excludes_pure_side_profile_but_explicit_surviv
         camera="first",
     )
     assert explicit["pose_id"] == "side_profile"
+
+
+def test_random_scene_poses_are_curated_for_scene_and_camera_together():
+    assert "side_profile" not in COS_RANDOM_SCENE_CLASSES["cinema_projection_room"]["pose_ids"]
+    assert "side_profile" not in COS_RANDOM_CAMERA_POSE_IDS["selfie"]
+    assert "one_knee_crouch" not in COS_RANDOM_CAMERA_POSE_IDS["first"]
+    assert "one_knee_crouch" in COS_RANDOM_CAMERA_POSE_IDS["third"]
+    assert "half_turn" not in COS_RANDOM_COMPOSITION_CLASSES["dynamic_freeze"]["poses"]
+
+    for camera, allowed_poses in COS_RANDOM_CAMERA_POSE_IDS.items():
+        allowed_framings = COS_RANDOM_CAMERA_FRAMING_IDS[camera]
+        for _ in range(120):
+            variation = pick_cos_variation("roxy_cream", camera=camera)
+            framing = pick_cos_framing(
+                pose_id=variation["pose_id"],
+                scene_id=variation["scene_id"],
+                camera=camera,
+            )
+            assert variation["pose_id"] in allowed_poses
+            if framing["view_id"] not in {"unspecified", "user"}:
+                assert framing["view_id"] in allowed_framings
+
+    explicit_selfie_profile = pick_cos_variation(
+        "roxy_cream",
+        extra_request="自拍纯侧身",
+        camera="selfie",
+    )
+    assert explicit_selfie_profile["pose_id"] == "side_profile"
+
+    explicit_first_person_crouch = pick_cos_variation(
+        "roxy_cream",
+        extra_request="第一视角玻璃花房单膝蹲",
+        camera="first",
+    )
+    assert explicit_first_person_crouch["pose_id"] == "one_knee_crouch"
+    assert explicit_first_person_crouch["scene_id"] == "greenhouse"
 
 
 def test_snowy_walking_staging_avoids_distant_environmental_framing():
@@ -518,7 +558,7 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
         assert profile["scene_ids"] == list(COS_RANDOM_SCENE_CLASSES)
         assert profile["pose_ids"] == list(COS_RANDOM_POSE_CLASSES)
         assert profile["scene_pose_compatibility"] == {
-            scene_id: list(dict.fromkeys([*scene["pose_ids"], "side_profile"]))
+            scene_id: list(dict.fromkeys(scene["pose_ids"]))
             for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
         }
         assert profile["pose_framing_compatibility"] == {
@@ -528,6 +568,14 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
         assert profile["pose_camera_compatibility"] == {
             pose_id: list(cameras)
             for pose_id, cameras in COS_POSE_CAMERA_COMPATIBILITY.items()
+        }
+        assert profile["random_camera_pose_compatibility"] == {
+            camera: sorted(pose_ids)
+            for camera, pose_ids in COS_RANDOM_CAMERA_POSE_IDS.items()
+        }
+        assert profile["random_camera_framing_compatibility"] == {
+            camera: sorted(framing_ids)
+            for camera, framing_ids in COS_RANDOM_CAMERA_FRAMING_IDS.items()
         }
         assert profile["framing_scene_compatibility"] == {
             framing_id: list(scenes)
@@ -589,6 +637,12 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
         assert camera in profile["pose_camera_compatibility"].get(
             variation["pose_id"], ("third", "first", "selfie")
         )
+
+    for camera, allowed_poses in COS_RANDOM_CAMERA_POSE_IDS.items():
+        for _ in range(100):
+            variation = pick_cos_variation("roxy_cream", camera=camera)
+            assert variation["pose_id"] in allowed_poses
+            assert variation["pose_id"] in profile["scene_pose_compatibility"][variation["scene_id"]]
 
     with patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
@@ -683,7 +737,7 @@ def test_back_and_side_cos_staging_never_randomly_forces_a_lookback():
         "rear_three_quarter", "rear_low_medium", "rear_low_hero", "environmental", "eye_level_full",
     }
     side_framing = pick_cos_framing(pose_id="side_profile")
-    assert side_framing["view_id"] in {"side_profile", "environmental", "eye_level_full", "low_angle_full", "low_angle_hero"}
+    assert side_framing["view_id"] in {"side_profile", "environmental", "eye_level_full", "low_angle_full"}
 
     with patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
@@ -720,6 +774,8 @@ def test_back_view_can_use_a_controlled_low_angle_only_in_third_person():
 
     assert selected["view_id"] == "rear_low_hero"
     assert "轻微仰拍" in selected["prompt"]
+    assert "背面全身构图" in selected["prompt"]
+    assert "全身或三分之二身" not in selected["prompt"]
     assert "肩线、胯部和头部朝向一致" in selected["prompt"]
     assert "不回头、不回眸、不扭转颈部" in selected["prompt"]
     assert "不使用超广角" in selected["prompt"]
@@ -731,6 +787,19 @@ def test_back_view_can_use_a_controlled_low_angle_only_in_third_person():
         }
         assert first_person["view_id"] != "rear_low_hero"
         assert first_person["view_id"] != "environmental"
+
+
+def test_low_angle_hero_is_reserved_for_open_scenes():
+    assert "stone_staircase" not in COS_FRAMING_SCENE_COMPATIBILITY["low_angle_hero"]
+    assert "rooftop_sunset" in COS_FRAMING_SCENE_COMPATIBILITY["low_angle_hero"]
+
+    for _ in range(40):
+        framing = pick_cos_framing(
+            pose_id="half_turn",
+            scene_id="stone_staircase",
+            camera="third",
+        )
+        assert framing["view_id"] != "low_angle_hero"
 
 
 def test_first_person_walking_pose_uses_observer_wording():

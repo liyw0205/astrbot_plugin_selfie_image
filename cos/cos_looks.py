@@ -1834,7 +1834,6 @@ COS_EXPLICIT_ONLY_FRAMING_IDS = {
     "low_angle_neck_to_knee",
     "low_angle_full_2",
 }
-COS_SCENE_GENERIC_POSE_IDS = ("side_profile",)
 
 COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
     "bedroom_carpet": {
@@ -2227,7 +2226,7 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
     },
     "rear_low_hero": {
         "title": "背面轻仰拍全身",
-        "prompt": "从人物膝盖附近略低处以正常焦段轻微仰拍背面全身或三分之二身；人物背对镜头，肩线、胯部和头部朝向一致，头部保持正向，不回头、不回眸、不扭转颈部；完整保留头部、双肩、服装后侧和双脚，人物比例自然，不贴近腿部、不使用超广角、不从臀部近距离仰拍，不出现肩颈扭曲或额外肢体",
+        "prompt": "从人物膝盖附近略低处以正常焦段轻微仰拍背面全身构图；人物背对镜头，肩线、胯部和头部朝向一致，头部保持正向，不回头、不回眸、不扭转颈部；完整保留头部、双肩、服装后侧和双脚，人物比例自然，不贴近腿部、不使用超广角、不从臀部近距离仰拍，不出现肩颈扭曲或额外肢体",
     },
     "rear_lookback": {
         "title": "轻微侧后方回眸",
@@ -2357,7 +2356,7 @@ COS_RANDOM_COMPOSITION_CLASSES: Dict[str, Dict[str, Any]] = {
         "title": "动态抓拍定格",
         "prompt": "像摄影师抓拍动作刚开始或刚结束的一瞬间，人物和服装边缘保持清晰，只有衣摆或发梢有轻微真实动势；不使用运动模糊、不跳跃、不改变已选姿势",
         "cameras": ("third",),
-        "poses": ("walking_turn", "half_turn", "reach_light", "overhead_stretch"),
+        "poses": ("walking_turn", "reach_light", "overhead_stretch"),
     },
     "backlight_rim_detail": {
         "title": "逆光轮廓层次",
@@ -2377,6 +2376,16 @@ COS_FRAMING_SCENE_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
         "bedroom_carpet", "photo_studio", "living_room_rug", "cafe_corner",
         "stone_staircase", "japanese_ink_room", "spiral_archive",
     ),
+    "low_angle_hero": (
+        "garden_walkway", "bamboo_garden", "cherry_blossom_path",
+        "seaside_boardwalk", "rooftop_sunset", "old_town_lane",
+        "rainy_neon_street", "festival_lantern", "greenhouse",
+        "snowy_courtyard", "old_city_rooftop", "aquarium_tunnel",
+        "greenhouse_storm", "skybridge_after_rain", "last_train_platform",
+        "theater_stage_wing", "planetarium_dome", "sea_cliff_lighthouse",
+        "spiral_archive", "red_rock_canyon", "snow_observation_corridor",
+        "modern_art_gallery",
+    ),
 }
 COS_FRAMING_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     # Environmental portrait language is third-person staging. Keeping it out
@@ -2390,10 +2399,10 @@ COS_FRAMING_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
 COS_POSE_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     "back_to_camera": ("third", "first"),
     "over_shoulder": ("third",),
-    # A pure side profile is a poor random first-person default: the observer
-    # viewpoint and a profile silhouette compete for the same face direction.
-    # Explicit side-profile requests still pass through unchanged.
-    "side_profile": ("third", "selfie"),
+    # Random side-profile selfies need a mirror or timer setup not represented
+    # by the ordinary selfie contract. Explicit requests remain authoritative.
+    "side_profile": ("third",),
+    "one_knee_crouch": ("third",),
 }
 
 # Environmental staging and a distant telephoto view make a walking pose too
@@ -2411,13 +2420,50 @@ COS_RANDOM_SELFIE_POSE_IDS = frozenset(
         "standing_detail",
         "half_turn",
         "seated_composed",
-        "kneeling_carpet",
-        "floor_sit_side",
-        "side_profile",
-        "relaxed_recline",
         "overhead_stretch",
     }
 )
+
+COS_RANDOM_CAMERA_POSE_IDS: Dict[str, frozenset[str]] = {
+    "third": frozenset(
+        pose_id
+        for pose_id, pose in COS_RANDOM_POSE_CLASSES.items()
+        if not pose.get("explicit_only")
+    ),
+    "first": frozenset(
+        {
+            "standing_detail",
+            "half_turn",
+            "walking_turn",
+            "reach_light",
+            "back_to_camera",
+        }
+    ),
+    "selfie": COS_RANDOM_SELFIE_POSE_IDS,
+}
+
+COS_RANDOM_CAMERA_FRAMING_IDS: Dict[str, frozenset[str]] = {
+    "third": frozenset(COS_FRAMING_CLASSES),
+    "first": frozenset(
+        {
+            "front_half",
+            "three_quarter_front",
+            "two_thirds",
+            "eye_level_full",
+            "high_angle_three_quarter",
+            "rear_three_quarter",
+            "rear_low_medium",
+        }
+    ),
+    "selfie": frozenset(
+        {
+            "front_half",
+            "three_quarter_front",
+            "two_thirds",
+            "high_angle_three_quarter",
+        }
+    ),
+}
 
 COS_FRAMING_TERMS = (
     "横屏", "竖屏", "方形", "正方形", "全身", "半身", "胸像", "肖像",
@@ -2609,6 +2655,7 @@ def pick_cos_framing(
             "composition": {},
         }
     avoided = _as_id_set(avoid_framings)
+    random_camera_framings = COS_RANDOM_CAMERA_FRAMING_IDS.get(camera)
     pose_framings = COS_POSE_FRAMING_COMPATIBILITY.get(pose_id)
     orientation = str(COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("orientation") or "")
     compatible = set(pose_framings) if pose_framings else {
@@ -2622,6 +2669,10 @@ def pick_cos_framing(
             or (item == "rear_lookback" and pose_id == "over_shoulder")
         )
         and (compatible is None or item in compatible)
+        and (
+            random_camera_framings is None
+            or item in random_camera_framings
+        )
     ]
     if scene_id:
         excluded_framings = COS_SCENE_POSE_FRAMING_EXCLUSIONS.get(
@@ -2649,6 +2700,10 @@ def pick_cos_framing(
             item for item in COS_FRAMING_CLASSES
             if item not in COS_EXPLICIT_ONLY_FRAMING_IDS
             and (compatible is None or item in compatible)
+            and (
+                random_camera_framings is None
+                or item in random_camera_framings
+            )
             and (
                 item not in COS_FRAMING_CAMERA_COMPATIBILITY
                 or not camera
@@ -2750,6 +2805,14 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
             pose_id: list(cameras)
             for pose_id, cameras in COS_POSE_CAMERA_COMPATIBILITY.items()
         },
+        "random_camera_pose_compatibility": {
+            camera: sorted(pose_ids)
+            for camera, pose_ids in COS_RANDOM_CAMERA_POSE_IDS.items()
+        },
+        "random_camera_framing_compatibility": {
+            camera: sorted(framing_ids)
+            for camera, framing_ids in COS_RANDOM_CAMERA_FRAMING_IDS.items()
+        },
         "fixed_reason": "",
     }
 
@@ -2760,7 +2823,7 @@ def get_cos_look_by_id(cos_id: str) -> Dict[str, Any]:
 
 
 def _scene_pose_ids(scene: Mapping[str, Any]) -> List[str]:
-    return list(dict.fromkeys([*scene["pose_ids"], *COS_SCENE_GENERIC_POSE_IDS]))
+    return list(dict.fromkeys(scene.get("pose_ids") or []))
 
 
 COS_STYLE_REQUEST_TERMS = (
@@ -2787,12 +2850,13 @@ def _poses_for_orientation(pose_ids: Iterable[str], orientation: str) -> List[st
 def _poses_for_camera(pose_ids: Iterable[str], camera: str) -> List[str]:
     if not camera:
         return list(pose_ids)
+    random_allowed = COS_RANDOM_CAMERA_POSE_IDS.get(camera)
     compatible = []
     for pose_id in pose_ids:
+        if random_allowed is not None and pose_id not in random_allowed:
+            continue
         allowed_cameras = COS_POSE_CAMERA_COMPATIBILITY.get(pose_id)
         if allowed_cameras and camera not in allowed_cameras:
-            continue
-        if camera == "selfie" and pose_id not in COS_RANDOM_SELFIE_POSE_IDS:
             continue
         compatible.append(pose_id)
     return compatible
