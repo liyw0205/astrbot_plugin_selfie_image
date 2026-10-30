@@ -634,7 +634,9 @@ def test_back_and_side_cos_staging_never_randomly_forces_a_lookback():
     assert "不回头、不回眸、不扭转颈部" in selected["prompt"]
 
     back_framing = pick_cos_framing(pose_id="back_to_camera")
-    assert back_framing["view_id"] in {"rear_three_quarter", "rear_low_medium", "environmental", "eye_level_full"}
+    assert back_framing["view_id"] in {
+        "rear_three_quarter", "rear_low_medium", "rear_low_hero", "environmental", "eye_level_full",
+    }
     side_framing = pick_cos_framing(pose_id="side_profile")
     assert side_framing["view_id"] in {"side_profile", "environmental", "eye_level_full", "low_angle_full", "low_angle_hero"}
 
@@ -659,6 +661,50 @@ def test_back_and_side_cos_staging_never_randomly_forces_a_lookback():
     assert pick_cos_camera(camera="selfie", pose_id="over_shoulder") == "selfie"
     assert pick_cos_camera(pose_id="back_to_camera") in {"third", "first"}
     assert pick_cos_camera(camera="selfie", pose_id="back_to_camera") == "selfie"
+
+
+def test_back_view_can_use_a_controlled_low_angle_only_in_third_person():
+    def choose_low_rear_framing(values):
+        return "rear_low_hero" if "rear_low_hero" in values else values[0]
+
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=choose_low_rear_framing,
+    ):
+        selected = pick_cos_framing(pose_id="back_to_camera", camera="third")
+
+    assert selected["view_id"] == "rear_low_hero"
+    assert "轻微仰拍" in selected["prompt"]
+    assert "肩线、胯部和头部朝向一致" in selected["prompt"]
+    assert "不回头、不回眸、不扭转颈部" in selected["prompt"]
+    assert "不使用超广角" in selected["prompt"]
+
+    for _ in range(20):
+        first_person = pick_cos_framing(pose_id="back_to_camera", camera="first")
+        assert first_person["view_id"] in {
+            "rear_three_quarter", "rear_low_medium", "eye_level_full",
+        }
+        assert first_person["view_id"] != "rear_low_hero"
+        assert first_person["view_id"] != "environmental"
+
+
+def test_first_person_walking_pose_uses_observer_wording():
+    def choose_walking_pose(values):
+        return "walking_turn" if "walking_turn" in values else values[0]
+
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=choose_walking_pose,
+    ):
+        selected = pick_cos_variation(
+            "test",
+            extra_request="第一视角 老旧楼群天台",
+            camera="first",
+        )
+
+    assert selected["pose_id"] == "walking_turn"
+    assert "主角自然经过观察者的视线前方" in selected["prompt"]
+    assert "身体自然侧向镜头" not in selected["prompt"]
 
 
 def test_face_cropping_framing_is_explicit_only():

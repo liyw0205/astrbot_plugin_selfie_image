@@ -2225,6 +2225,10 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
         "title": "背面轻低机位",
         "prompt": "从人物背后略低处拍摄中景，人物背对镜头且头部保持朝前，不回眸或扭转颈部；透视自然，服装后侧和姿态清楚",
     },
+    "rear_low_hero": {
+        "title": "背面轻仰拍全身",
+        "prompt": "从人物膝盖附近略低处以正常焦段轻微仰拍背面全身或三分之二身；人物背对镜头，肩线、胯部和头部朝向一致，头部保持正向，不回头、不回眸、不扭转颈部；完整保留头部、双肩、服装后侧和双脚，人物比例自然，不贴近腿部、不使用超广角、不从臀部近距离仰拍，不出现肩颈扭曲或额外肢体",
+    },
     "rear_lookback": {
         "title": "轻微侧后方回眸",
         "prompt": "仅在用户明确要求回眸时使用：镜头从人物后方偏侧拍摄，身体和肩胯仍朝向远离镜头的一侧；头部只向镜头所在一侧轻轻转动，露出自然侧脸轮廓，下巴微收、目光低垂看向身侧或地面，不直视镜头、不转成正脸，保留自然颈部角度，不把脸扭过肩线",
@@ -2282,7 +2286,7 @@ COS_POSE_FRAMING_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
         "side_profile", "environmental", "eye_level_full", "low_angle_full", "low_angle_hero",
     ),
     "back_to_camera": (
-        "rear_three_quarter", "rear_low_medium", "environmental", "eye_level_full",
+        "rear_three_quarter", "rear_low_medium", "rear_low_hero", "environmental", "eye_level_full",
     ),
     "relaxed_recline": (
         "environmental", "eye_level_full", "high_angle_three_quarter",
@@ -2374,8 +2378,13 @@ COS_FRAMING_SCENE_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     ),
 }
 COS_FRAMING_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
+    # Environmental portrait language is third-person staging. Keeping it out
+    # of random first-person shots prevents observer and photographer framing
+    # from being fused into one image.
+    "environmental": ("third",),
     "low_angle_hero": ("third",),
     "high_angle_oblique": ("third",),
+    "rear_low_hero": ("third",),
 }
 COS_POSE_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     "back_to_camera": ("third", "first"),
@@ -2591,7 +2600,7 @@ def pick_cos_framing(
     pose_framings = COS_POSE_FRAMING_COMPATIBILITY.get(pose_id)
     orientation = str(COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("orientation") or "")
     compatible = set(pose_framings) if pose_framings else {
-        "back": {"rear_three_quarter", "rear_low_medium", "environmental", "eye_level_full"},
+        "back": {"rear_three_quarter", "rear_low_medium", "rear_low_hero", "environmental", "eye_level_full"},
         "side": {"side_profile", "environmental", "eye_level_full", "low_angle_full"},
     }.get(orientation)
     candidates = [
@@ -2646,7 +2655,21 @@ def pick_cos_framing(
     if not available:
         # Avoid lists may exhaust the pool, but must not bypass pose/framing safety.
         available = candidates
-    view_id = random.choice(available)
+    selection_pool = available
+    if pose_id == "back_to_camera" and camera == "third":
+        # A restrained low angle is useful for a rear outfit view, but keep
+        # eye-level and rear three-quarter options in rotation to avoid making
+        # every back view look like a forced hero shot.
+        selection_pool = [
+            item
+            for item in available
+            for _ in range(
+                3 if item == "rear_low_hero"
+                else 2 if item == "rear_low_medium"
+                else 1
+            )
+        ]
+    view_id = random.choice(selection_pool)
     selected = dict(COS_FRAMING_CLASSES[view_id])
     selected["view_id"] = view_id
     selected["outfit_text"] = resolved_outfit
@@ -2755,6 +2778,16 @@ def _poses_for_camera(pose_ids: Iterable[str], camera: str) -> List[str]:
     return compatible
 
 
+def _cos_pose_prompt_for_camera(pose_id: str, camera: str) -> str:
+    """Keep first-person action wording in the observer's coordinate system."""
+    if pose_id == "walking_turn" and camera == "first":
+        return (
+            "主角自然经过观察者的视线前方，刚迈出一步；身体和头部顺着行进方向，"
+            "观察者与主角保持正常距离，不突然回头，不跳跃或奔跑，衣摆只有轻微真实动势。"
+        )
+    return str(COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("prompt") or "")
+
+
 def pick_cos_variation(
     cos_id: str,
     *,
@@ -2853,7 +2886,7 @@ def pick_cos_variation(
             else "本次随机姿势优先于套装正文中残留的人物姿势描述："
         )
         prompt_parts.append(
-            pose_prefix + COS_RANDOM_POSE_CLASSES[pose_id]["prompt"]
+            pose_prefix + _cos_pose_prompt_for_camera(pose_id, camera)
         )
     return {
         "pose_id": pose_id,
