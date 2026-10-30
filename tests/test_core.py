@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.63")
+        self.assertEqual(PLUGIN_VERSION, "1.6.65")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -11223,6 +11223,67 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual(built_actions[0], ("白丝，按引用图的场景", True))
         self.assertEqual(built["handler"]["source"], "command-look-legs")
         self.assertEqual(built["handler"]["rebuild_extra_request"], "白丝，按引用图的场景")
+
+    def test_explicit_media_commands_disable_default_llm_fallback(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        plugin._quota_error_message = lambda *_args, **_kwargs: "quota-stop"
+        plugin._rate_limit_error_message = lambda *_args, **_kwargs: ""
+
+        class Event:
+            def __init__(self) -> None:
+                self.call_llm = False
+                self.calls = []
+
+            def should_call_llm(self, value: bool) -> None:
+                self.calls.append(value)
+                self.call_llm = value
+
+            def plain_result(self, text: str) -> str:
+                return text
+
+        async def invoke():
+            event = Event()
+            output = [
+                item
+                async for item in plugin_main.SelfieImagePlugin.cmd_draw(
+                    plugin, event, "一只猫"
+                )
+            ]
+            return event, output
+
+        event, output = asyncio.run(invoke())
+        self.assertEqual(output, ["quota-stop"])
+        self.assertEqual(event.calls, [True])
+        self.assertTrue(event.call_llm)
+
+        async def invoke_selfie_command():
+            event = Event()
+            output = [
+                item
+                async for item in plugin._handle_selfie_command(
+                    event=event,
+                    command_name="看看COS",
+                    fallback="cos",
+                    default_action="cos",
+                    default_action_with_refs="cos",
+                    progress_label="自拍",
+                    source="command-look-cos",
+                    fail_label="failed",
+                    requested_count_override=1,
+                )
+            ]
+            return event, output
+
+        event, output = asyncio.run(invoke_selfie_command())
+        self.assertEqual(output, ["quota-stop"])
+        self.assertEqual(event.calls, [True])
+        self.assertTrue(event.call_llm)
+
+        legacy_event = types.SimpleNamespace(call_llm=False)
+        plugin_main.SelfieImagePlugin._claim_media_command_event(legacy_event)
+        self.assertTrue(legacy_event.call_llm)
 
     def test_image_commands_accept_count_before_or_after_prompt(self) -> None:
         """All image/selfie commands accept the common count positions."""

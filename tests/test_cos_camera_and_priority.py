@@ -12,6 +12,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_RANDOM_POSE_CLASSES,
     COS_RANDOM_SCENE_CLASSES,
     COS_RANDOM_COMPOSITION_CLASSES,
+    COS_SCENE_POSE_FRAMING_EXCLUSIONS,
     COS_POSE_CAMERA_COMPATIBILITY,
     COS_POSE_FRAMING_COMPATIBILITY,
     COS_FRAMING_SCENE_COMPATIBILITY,
@@ -21,6 +22,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     build_cos_third_person_prompt,
     cos_prompt_has_framing,
     cos_look_compatibility,
+    adapt_cos_outfit_for_camera,
     match_cos_look_sets,
     normalize_cos_prompt_negatives,
     pick_cos_framing,
@@ -453,6 +455,49 @@ def test_outfit_framing_words_do_not_suppress_random_view():
     assert selected["view_id"] == "low_angle_hero"
     assert selected["prompt"] == COS_FRAMING_CLASSES["low_angle_hero"]["prompt"]
     assert selected["outfit_text"] == "竖屏9:16，半身到全身构图，人物对镜站立"
+
+
+def test_camera_adaptation_does_not_corrupt_existing_facing_phrases():
+    adapted = adapt_cos_outfit_for_camera(
+        "人物面对镜头；人物正对镜头；人物对镜自拍。",
+        "first",
+    )
+    assert "人物面对镜头" in adapted
+    assert "人物正面向镜头" in adapted
+    assert "面面向镜头头" not in adapted
+    assert "镜头头" not in adapted
+
+
+def test_first_person_random_pose_excludes_pure_side_profile_but_explicit_survives():
+    assert "first" not in COS_POSE_CAMERA_COMPATIBILITY["side_profile"]
+    for _ in range(40):
+        selected = pick_cos_variation("roxy_cream", camera="first")
+        assert selected["pose_id"] != "side_profile"
+
+    explicit = pick_cos_variation(
+        "roxy_cream",
+        extra_request="第一视角纯侧身",
+        camera="first",
+    )
+    assert explicit["pose_id"] == "side_profile"
+
+
+def test_snowy_walking_staging_avoids_distant_environmental_framing():
+    assert "environmental" in COS_SCENE_POSE_FRAMING_EXCLUSIONS[
+        ("snowy_courtyard", "walking_turn")
+    ]
+    assert "walking_turn" not in COS_RANDOM_COMPOSITION_CLASSES[
+        "telephoto_compression"
+    ]["poses"]
+    for _ in range(40):
+        framing = pick_cos_framing(
+            pose_id="walking_turn",
+            scene_id="snowy_courtyard",
+            camera="third",
+        )
+        assert framing["view_id"] != "environmental"
+        composition = framing.get("composition") or {}
+        assert composition.get("composition_id") != "telephoto_compression"
 
 
 def test_every_cos_look_uses_scene_pose_and_framing_compatibility():

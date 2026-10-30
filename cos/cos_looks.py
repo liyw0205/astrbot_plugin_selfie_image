@@ -1773,7 +1773,7 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, Any]] = {
     },
     "walking_turn": {
         "title": "轻步转身",
-        "prompt": "行走中刚迈出一步的抓拍瞬间，身体自然侧向镜头，头部顺着行进方向，不突然回头；步幅自然，衣摆只有轻微动态，避免奔跑、跳跃或战斗动作。",
+        "prompt": "行走中刚迈出一步的抓拍瞬间，身体自然侧向镜头，头部顺着行进方向，不突然回头；双臂随步伐自然摆动，双手不向两侧平伸，不做夸张动作；步幅自然，衣摆只有轻微动态，双脚和鞋履保持完整入画，避免奔跑、跳跃或战斗动作。",
         "orientation": "side",
     },
     "kneeling_carpet": {
@@ -1883,7 +1883,7 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "title": "樱花步道",
         "aliases": ("樱花步道", "樱花树下", "樱花小径", "樱花林"),
         "prompt": "春日樱花步道，少量花瓣随风飘落，远处花树形成柔和纵深，画面清新自然。",
-        "style_prompt": "淡粉与雾白的柔焦胶片色彩，逆光花瓣轻微泛白，低对比、细颗粒，不遮挡人物五官。",
+        "style_prompt": "淡粉樱花与较深树干、石板步道形成清晰明暗层次，柔和胶片色彩与细颗粒；逆光花瓣可以轻微泛白，但人物白色服装保留边缘、褶皱和蓝色层次，不做整体雾白低对比，不遮挡人物五官。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "back_to_camera", "overhead_stretch"),
     },
     "seaside_boardwalk": {
@@ -1960,7 +1960,7 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "title": "雪后庭院",
         "aliases": ("雪后庭院", "雪地", "冬日庭院", "雪景"),
         "prompt": "雪后安静庭院，薄雪覆在石路和枝头，冷冽天光与少量暖色窗光形成清晰对比，背景无其他人物。",
-        "style_prompt": "冷蓝DV静帧，低灰度柔和配色、明显细颗粒和雪面略微过曝，面部妆容与皮肤颜色自然保留。",
+        "style_prompt": "冷蓝冬日DV静帧，雪地与深色檐廊、树影形成明暗对比；冷色环境保留黄绿服装和少量暖色窗光的色彩层次，明显细颗粒，雪面局部略微过曝但人物面部、发型和服装纹理清晰。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "reach_light", "over_shoulder", "back_to_camera"),
     },
     "japanese_ink_room": {
@@ -2316,6 +2316,7 @@ COS_RANDOM_COMPOSITION_CLASSES: Dict[str, Dict[str, Any]] = {
         "title": "长焦空间压缩",
         "prompt": "摄影者退到较远距离使用中长焦视角压缩背景层次，人物比例和服装细节自然清楚；不使用广角，不把背景贴到人物身上",
         "cameras": ("third",),
+        "poses": ("standing_detail", "half_turn", "seated_composed", "leaning_rest", "side_profile", "back_to_camera"),
     },
     "architectural_frame": {
         "title": "建筑框景纵深",
@@ -2389,6 +2390,17 @@ COS_FRAMING_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
 COS_POSE_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     "back_to_camera": ("third", "first"),
     "over_shoulder": ("third",),
+    # A pure side profile is a poor random first-person default: the observer
+    # viewpoint and a profile silhouette compete for the same face direction.
+    # Explicit side-profile requests still pass through unchanged.
+    "side_profile": ("third", "selfie"),
+}
+
+# Environmental staging and a distant telephoto view make a walking pose too
+# small and mechanically posed in the snowy courtyard. Keep that exact pair
+# out of the random picker while leaving both options available elsewhere.
+COS_SCENE_POSE_FRAMING_EXCLUSIONS: Dict[tuple[str, str], frozenset[str]] = {
+    ("snowy_courtyard", "walking_turn"): frozenset({"environmental"}),
 }
 
 # Selfie is a valid explicit request for every pose, but some poses are poor
@@ -2612,12 +2624,19 @@ def pick_cos_framing(
         and (compatible is None or item in compatible)
     ]
     if scene_id:
+        excluded_framings = COS_SCENE_POSE_FRAMING_EXCLUSIONS.get(
+            (scene_id, pose_id), frozenset()
+        )
         candidates = [
             item for item in candidates
-            if item not in COS_FRAMING_SCENE_COMPATIBILITY
-            or scene_id in COS_FRAMING_SCENE_COMPATIBILITY[item]
+            if (
+                item not in COS_FRAMING_SCENE_COMPATIBILITY
+                or scene_id in COS_FRAMING_SCENE_COMPATIBILITY[item]
+            )
+            and item not in excluded_framings
         ]
     else:
+        excluded_framings = frozenset()
         candidates = [item for item in candidates if item not in COS_FRAMING_SCENE_COMPATIBILITY]
     if camera:
         candidates = [
@@ -2639,6 +2658,7 @@ def pick_cos_framing(
                 item not in COS_FRAMING_SCENE_COMPATIBILITY
                 or (scene_id and scene_id in COS_FRAMING_SCENE_COMPATIBILITY[item])
             )
+            and item not in excluded_framings
         ]
     if not candidates:
         return {
@@ -3425,7 +3445,11 @@ def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
     text = text.replace("全身镜", "室内背景")
     text = text.replace("镜子", "室内背景")
     text = text.replace("镜前", "室内环境")
-    text = text.replace("对镜", "面向镜头")
+    # Replace standalone capture wording only.  A literal ``面对镜头`` is
+    # already valid Chinese; replacing its ``对镜`` substring produces the
+    # corrupted ``面面向镜头头`` seen in generated prompts.
+    text = re.sub(r"(?<!面)对镜头", "面向镜头", text)
+    text = re.sub(r"(?<!面)对镜(?!头)", "面向镜头", text)
     return text
 
 

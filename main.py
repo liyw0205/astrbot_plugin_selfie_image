@@ -540,6 +540,19 @@ class SelfieImagePlugin(
     def _permission_denied_message(self, event: AstrMessageEvent) -> str:
         return permission_denied_message(self._access_status(event))
 
+    @staticmethod
+    def _claim_media_command_event(event: AstrMessageEvent) -> None:
+        """Keep an explicit media command out of AstrBot's default LLM stage."""
+        should_call_llm = getattr(event, "should_call_llm", None)
+        if callable(should_call_llm):
+            should_call_llm(True)
+            return
+        # AstrBot versions before ``should_call_llm`` exposed the flag directly.
+        try:
+            event.call_llm = True
+        except Exception:
+            pass
+
     def _quota_error_message(self, event: AstrMessageEvent, requested_count: int = 1) -> str:
         permission_error = self._permission_denied_message(event)
         if permission_error:
@@ -4212,6 +4225,7 @@ class SelfieImagePlugin(
         *,
         mode: str = "auto",
     ) -> AsyncGenerator[Any, None]:
+        self._claim_media_command_event(event)
         denied = self._permission_denied_message(event)
         if denied:
             yield event.plain_result(denied)
@@ -6303,6 +6317,7 @@ class SelfieImagePlugin(
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
     ) -> AsyncGenerator[Any, None]:
+        self._claim_media_command_event(event)
         message = (
             message_override.strip()
             if message_override
@@ -6895,6 +6910,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """写想要的画面出图。有附图/引用图时按图改；没图时按文字出。不会自动带入形象图。"""
+        self._claim_media_command_event(event)
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, ("画", "生图"), fallback, include_quote_text=True)
         message, requested_count = self._extract_command_count(message, allow_trailing=True)
@@ -6995,6 +7011,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """按你写的原文出图，不走自拍人设包装，也不使用形象图。"""
+        self._claim_media_command_event(event)
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, "文生图", fallback, include_quote_text=True)
         message, requested_count = self._extract_command_count(message, allow_trailing=True)
@@ -7078,6 +7095,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """带图或引用图，按原文改图。需要附图，不会自动使用形象图。"""
+        self._claim_media_command_event(event)
         fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
         message = extract_command_message(event, "图生图", fallback, include_quote_text=True)
         message, requested_count = self._extract_command_count(message, allow_trailing=True)
