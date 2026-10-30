@@ -480,6 +480,7 @@ class SelfieImagePlugin(
             whitelist_users=self.config.whitelist_users,
             whitelist_groups=self.config.whitelist_groups,
             group_chat_configs=self.config.group_chat_configs,
+            usable_users_enabled=self.config.usable_users_enabled,
         )
         # Administrators get the same audit/quota exemptions as configured
         # unlimited users, while explicit access denials still take priority.
@@ -502,6 +503,7 @@ class SelfieImagePlugin(
                 "fixed_model": "",
             }))
         payload["models"] = [target.label for target in self.config.get_enabled_image_targets()]
+        payload["bot_ids"] = self._bot_account_ids()
         return payload
 
     def update_group_chat_configs_from_web(self, payload: Any) -> Dict[str, Any]:
@@ -528,7 +530,11 @@ class SelfieImagePlugin(
             permission = payload["permission"]
             patch["permission"] = {
                 key: permission[key]
-                for key in ("blocked_users", "whitelist_users")
+                for key in (
+                    "usable_users", "usable_users_enabled",
+                    "blocked_users", "blocked_user_reasons",
+                    "whitelist_users", "whitelist_user_reasons",
+                )
                 if key in permission
             }
         updated = self.update_config_from_web(patch) if patch else self.get_config_for_web()
@@ -539,6 +545,104 @@ class SelfieImagePlugin(
 
     def _permission_denied_message(self, event: AstrMessageEvent) -> str:
         return permission_denied_message(self._access_status(event))
+
+    @staticmethod
+    def _parse_access_user_command(event: AstrMessageEvent, payload: str) -> Tuple[str, str]:
+        target = ""
+        message_obj = getattr(event, "message_obj", None)
+        segments = getattr(message_obj, "message", None) or getattr(event, "message", None) or []
+        if not isinstance(segments, (list, tuple)):
+            segments = []
+        for segment in segments:
+            segment_type = str(getattr(segment, "type", "") or type(segment).__name__).lower()
+            data = getattr(segment, "data", None)
+            if not isinstance(data, Mapping):
+                data = {}
+            if segment_type in {"at", "messagecomponenttype.at"} or type(segment).__name__.lower() == "at":
+                candidate = getattr(segment, "qq", None) or getattr(segment, "user_id", None) or data.get("qq") or data.get("user_id")
+                if candidate:
+                    target = str(candidate).strip()
+                    break
+
+        text = str(payload or "").strip()
+        mention_patterns = (
+            r"\[CQ:at,qq=(\d+)(?:,[^\]]*)?\]",
+            r"\[At:(\d+)\]",
+            r"<at:(\d+)>",
+            r"@([0-9]+)",
+        )
+        if not target:
+            for pattern in mention_patterns:
+                match = re.search(pattern, text, flags=re.IGNORECASE)
+                if match:
+                    target = match.group(1)
+                    break
+        if not target:
+            match = re.search(r"(?<!\w)(\d+)(?!\w)", text)
+            if match:
+                target = match.group(1)
+        if not target or not target.isdigit():
+            return "", ""
+
+        cleaned = text
+        for pattern in mention_patterns:
+            cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(rf"(?<!\w){re.escape(target)}(?!\w)", " ", cleaned, count=1)
+        reason = re.sub(r"^[\s,，:：|]+|[\s,，:：|]+$", "", cleaned).strip()
+        return target, reason
+
+    @staticmethod
+    def _access_user_ids(value: Any) -> List[str]:
+        values = value if isinstance(value, (list, tuple, set)) else re.split(r"[\s,|]+", str(value or ""))
+        return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
+
+    def _mutate_access_user(self, action: str, event: AstrMessageEvent, payload: str) -> Tuple[bool, str]:
+        target, reason = self._parse_access_user_command(event, payload)
+        if not target:
+            return False, "请提供 QQ 号或 @ 用户。"
+        reason = reason[:200]
+
+        permission = copy.deepcopy(self.raw_config.get("permission") or {})
+        blocked = self._access_user_ids(permission.get("blocked_users"))
+        whitelisted = self._access_user_ids(permission.get("whitelist_users"))
+        blocked_reasons = permission.get("blocked_user_reasons")
+        whitelist_reasons = permission.get("whitelist_user_reasons")
+        blocked_reasons = copy.deepcopy(blocked_reasons) if isinstance(blocked_reasons, dict) else {}
+        whitelist_reasons = copy.deepcopy(whitelist_reasons) if isinstance(whitelist_reasons, dict) else {}
+
+        if action == "black":
+            whitelisted = [user_id for user_id in whitelisted if user_id != target]
+            whitelist_reasons.pop(target, None)
+            if target not in blocked:
+                blocked.append(target)
+            if reason:
+                blocked_reasons[target] = reason
+            label = "黑名单"
+        elif action == "white":
+            blocked = [user_id for user_id in blocked if user_id != target]
+            blocked_reasons.pop(target, None)
+            if target not in whitelisted:
+                whitelisted.append(target)
+            if reason:
+                whitelist_reasons[target] = reason
+            label = "白名单"
+        elif action == "release":
+            blocked = [user_id for user_id in blocked if user_id != target]
+            whitelisted = [user_id for user_id in whitelisted if user_id != target]
+            blocked_reasons.pop(target, None)
+            whitelist_reasons.pop(target, None)
+            label = "已释放"
+        else:
+            return False, "未知的名单操作。"
+
+        self.update_config_from_web({"permission": {
+            "blocked_users": blocked,
+            "blocked_user_reasons": blocked_reasons,
+            "whitelist_users": whitelisted,
+            "whitelist_user_reasons": whitelist_reasons,
+        }})
+        detail = f"（{reason}）" if reason and action != "release" else ""
+        return True, f"{target} 已加入{label}{detail}。" if action != "release" else f"{target} 已从黑名单和白名单释放。"
 
     @staticmethod
     def _claim_media_command_event(event: AstrMessageEvent) -> None:
@@ -6464,6 +6568,7 @@ class SelfieImagePlugin(
                 "· /生图模型　看列表；跟序号或 渠道/模型 切换（只影响当前群/私聊）；发「清除」恢复默认",
                 "· /生图任务　看出图/视频进行中的任务，包含 LLM 调用；可跟任务号",
                 "· /生图取消　取消还在排的/进行中的任务",
+                "· 管理员名单：/生图加黑 ID/@用户 [理由]、/生图加白 ID/@用户 [理由]、/生图释放 ID/@用户",
                 "",
                 "形象：",
                 "· /形象查看　看当前参考图、形象类型与今日状态",
@@ -7764,6 +7869,45 @@ class SelfieImagePlugin(
             yield event.plain_result("格式：/预设删除 名称")
             return
         success, message = self._handle_preset_mutation(event, "delete", payload)
+        yield event.plain_result(f"{'✅' if success else '❌'} {message}")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("生图加黑", prefix_optional=True)
+    async def cmd_image_access_black(
+        self, event: AstrMessageEvent,
+        p1: str = "", p2: str = "", p3: str = "", p4: str = "", p5: str = "",
+        p6: str = "", p7: str = "", p8: str = "", p9: str = "", p10: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        """将用户加入生图黑名单，可附加原因。"""
+        fallback = " ".join(item for item in (p1, p2, p3, p4, p5, p6, p7, p8, p9, p10) if item).strip()
+        payload = extract_command_message(event, "生图加黑", fallback)
+        success, message = self._mutate_access_user("black", event, payload)
+        yield event.plain_result(f"{'✅' if success else '❌'} {message}")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("生图加白", prefix_optional=True)
+    async def cmd_image_access_white(
+        self, event: AstrMessageEvent,
+        p1: str = "", p2: str = "", p3: str = "", p4: str = "", p5: str = "",
+        p6: str = "", p7: str = "", p8: str = "", p9: str = "", p10: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        """将用户加入生图白名单，可附加原因。"""
+        fallback = " ".join(item for item in (p1, p2, p3, p4, p5, p6, p7, p8, p9, p10) if item).strip()
+        payload = extract_command_message(event, "生图加白", fallback)
+        success, message = self._mutate_access_user("white", event, payload)
+        yield event.plain_result(f"{'✅' if success else '❌'} {message}")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("生图释放", prefix_optional=True)
+    async def cmd_image_access_release(
+        self, event: AstrMessageEvent,
+        p1: str = "", p2: str = "", p3: str = "", p4: str = "", p5: str = "",
+        p6: str = "", p7: str = "", p8: str = "", p9: str = "", p10: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        """从生图黑名单和白名单中移除用户。"""
+        fallback = " ".join(item for item in (p1, p2, p3, p4, p5, p6, p7, p8, p9, p10) if item).strip()
+        payload = extract_command_message(event, "生图释放", fallback)
+        success, message = self._mutate_access_user("release", event, payload)
         yield event.plain_result(f"{'✅' if success else '❌'} {message}")
 
     @LLM_TOOL(name="generate_image")

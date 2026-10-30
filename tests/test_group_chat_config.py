@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import asyncio
 import sys
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from astrbot_plugin_selfie_image.core.models import AICatConfig
 from astrbot_plugin_selfie_image.features.access_policy import access_status, permission_denied_message
 from astrbot_plugin_selfie_image.features.qq_group_cache import QQGroupCache
+from astrbot_plugin_selfie_image.features.config_manager import ConfigurationMixin
 from astrbot_plugin_selfie_image.webui.web import FlaskWebServer
 
 
@@ -72,6 +74,48 @@ def test_permission_lists_accept_pipe_separators_without_usable_list():
     assert config.blocked_users == ["10001", "10002", "10003"]
     assert config.whitelist_users == ["20001", "20002"]
     assert config.usable_users == ["legacy-user"]
+    assert config.usable_users_enabled
+    assert config.raw["permission"]["usable_users_enabled"] is True
+
+
+def test_legacy_usable_list_defaults_enabled_but_explicit_false_is_kept(tmp_path):
+    plugin = object.__new__(ConfigurationMixin)
+    plugin.config_path = str(tmp_path / "config.json")
+    plugin.key_config = {"web": {}}
+    config_path = tmp_path / "config.json"
+
+    config_path.write_text(json.dumps({"permission": {"usable_users": "10001"}}), encoding="utf-8")
+    assert plugin._load_initial_config()["permission"]["usable_users_enabled"] is True
+
+    config_path.write_text(json.dumps({
+        "permission": {"usable_users": "10001", "usable_users_enabled": False}
+    }), encoding="utf-8")
+    assert plugin._load_initial_config()["permission"]["usable_users_enabled"] is False
+
+
+def test_global_usable_user_gate_overrides_group_and_user_access_lists():
+    groups = {"100": {"chat_type": "black"}, "200": {"chat_type": "white"}}
+    denied = access_status(
+        user_id="outside", group_id="200", blocked_users=[], usable_users=["inside"],
+        whitelist_users=["outside"], whitelist_groups=["200"], group_chat_configs=groups,
+        usable_users_enabled=True,
+    )
+    assert not denied["allowed"]
+    assert denied["reason"] == "可用名单"
+
+    allowed = access_status(
+        user_id="inside", group_id="100", blocked_users=["inside"], usable_users=["inside"],
+        whitelist_users=[], whitelist_groups=[], group_chat_configs=groups,
+        usable_users_enabled=True,
+    )
+    assert allowed["allowed"]
+
+    empty = access_status(
+        user_id="outside", group_id="200", blocked_users=[], usable_users=[],
+        whitelist_users=["outside"], whitelist_groups=[], group_chat_configs=groups,
+        usable_users_enabled=True,
+    )
+    assert empty["allowed"] and empty["whitelist"]
 
 
 def test_group_model_modes_use_enabled_models_and_fixed_selection():

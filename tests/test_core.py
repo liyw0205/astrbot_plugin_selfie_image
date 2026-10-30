@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.66")
+        self.assertEqual(PLUGIN_VERSION, "1.6.67")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -5835,6 +5835,51 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertTrue(plugin._is_admin_event(event))
         self.assertFalse(plugin._is_audit_exempt(event))
         self.assertIn("黑名单", plugin._permission_denied_message(event))
+
+    def test_access_user_commands_keep_black_white_lists_mutually_exclusive(self) -> None:
+        plugin = self._plugin_stub()
+        plugin.raw_config = {"permission": {
+            "blocked_users": [], "blocked_user_reasons": {},
+            "whitelist_users": [], "whitelist_user_reasons": {},
+        }}
+
+        def apply_patch(patch):
+            plugin.raw_config["permission"].update(patch["permission"])
+            return plugin.raw_config
+
+        plugin.update_config_from_web = apply_patch
+        event = types.SimpleNamespace(message_obj=types.SimpleNamespace(message=[]))
+
+        success, _ = plugin._mutate_access_user("black", event, "12345 spam reason")
+        self.assertTrue(success)
+        self.assertEqual(plugin.raw_config["permission"]["blocked_users"], ["12345"])
+        self.assertEqual(plugin.raw_config["permission"]["blocked_user_reasons"]["12345"], "spam reason")
+
+        success, _ = plugin._mutate_access_user("white", event, "12345 trusted")
+        self.assertTrue(success)
+        self.assertEqual(plugin.raw_config["permission"]["blocked_users"], [])
+        self.assertEqual(plugin.raw_config["permission"]["whitelist_users"], ["12345"])
+        self.assertEqual(plugin.raw_config["permission"]["whitelist_user_reasons"]["12345"], "trusted")
+
+        success, _ = plugin._mutate_access_user("release", event, "12345")
+        self.assertTrue(success)
+        self.assertEqual(plugin.raw_config["permission"]["blocked_users"], [])
+        self.assertEqual(plugin.raw_config["permission"]["whitelist_users"], [])
+        self.assertEqual(plugin.raw_config["permission"]["blocked_user_reasons"], {})
+        self.assertEqual(plugin.raw_config["permission"]["whitelist_user_reasons"], {})
+
+    def test_access_user_command_extracts_at_target_and_reason(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        class At:
+            type = "at"
+            data = {"qq": "54321"}
+
+        event = types.SimpleNamespace(message_obj=types.SimpleNamespace(message=[At()]))
+        self.assertEqual(
+            plugin_main.SelfieImagePlugin._parse_access_user_command(event, "[At:54321] reason text"),
+            ("54321", "reason text"),
+        )
 
     def test_command_error_hides_leading_channel_model_route(self) -> None:
         from astrbot_plugin_selfie_image.prompts.response_text import friendly_user_error_message

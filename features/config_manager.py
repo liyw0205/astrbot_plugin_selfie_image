@@ -24,6 +24,7 @@ from ..core.models import (
     normalize_config_tree,
     normalize_legacy_keys,
     preflight_config_channels,
+    split_values,
     strip_channel_timeouts,
     is_masked_secret,
     usable_api_keys,
@@ -502,9 +503,17 @@ class ConfigurationMixin:
 
     def _load_initial_config(self) -> Dict[str, Any]:
         persisted = self._strip_web_startup_config(load_json_file(self.config_path))
-        source = strip_channel_timeouts(
-            normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, persisted)))
+        normalized_persisted = normalize_legacy_keys(normalize_config_tree(persisted))
+        permission_source = normalized_persisted.get("permission") if isinstance(normalized_persisted.get("permission"), dict) else {}
+        legacy_usable_list = (
+            bool(split_values(permission_source.get("usable_users")))
+            and "usable_users_enabled" not in permission_source
         )
+        source = strip_channel_timeouts(
+            normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, normalized_persisted)))
+        )
+        if legacy_usable_list:
+            source.setdefault("permission", {})["usable_users_enabled"] = True
         source.setdefault("image", {})["max_concurrent_tasks"] = AICatConfig.from_dict(source).image_max_concurrent_tasks
         source["web"] = copy.deepcopy(self.key_config["web"])
         return source

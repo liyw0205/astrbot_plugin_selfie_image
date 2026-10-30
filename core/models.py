@@ -135,8 +135,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "permission": {
         "usable_users": "",
+        "usable_users_enabled": False,
         "blocked_users": "",
+        "blocked_user_reasons": {},
         "whitelist_users": "",
+        "whitelist_user_reasons": {},
         "whitelist_groups": "",
     },
     "proxies": [],
@@ -349,6 +352,7 @@ class AICatConfig:
     image_image_prompt_en_template: str
     image_video_prompt_en_template: str
     usable_users: List[str]
+    usable_users_enabled: bool
     blocked_users: List[str]
     whitelist_users: List[str]
     whitelist_groups: List[str]
@@ -391,6 +395,7 @@ class AICatConfig:
         # default tree adds an empty ``image_channels`` first, the legacy
         # ``imageChannels`` value would otherwise be ignored as a duplicate.
         migrated = normalize_legacy_keys(normalize_config_tree(migrated))
+        permission_source = migrated.get("permission") if isinstance(migrated.get("permission"), dict) else {}
         raw = normalize_config_tree(deep_merge(DEFAULT_CONFIG, migrated))
         raw = normalize_legacy_keys(raw)
         raw = strip_channel_timeouts(raw)
@@ -490,6 +495,11 @@ class AICatConfig:
             image_model_call_mode = "sequence"
         raw["image_model_call_mode"] = image_model_call_mode
         raw.pop("random_image_model", None)
+        usable_users_enabled = to_bool(
+            permission_source.get("usable_users_enabled"),
+            bool(split_values(permission_source.get("usable_users"))),
+        )
+        permission["usable_users_enabled"] = usable_users_enabled
         return cls(
             raw=raw,
             bot_name=str(raw.get("bot_name") or raw.get("botName") or DEFAULT_CONFIG["bot_name"]).strip() or "AI",
@@ -533,6 +543,7 @@ class AICatConfig:
             image_image_prompt_en_template=str(image.get("image_prompt_en_template") or image.get("imagePromptEnTemplate") or "").strip() or DEFAULT_CONFIG["image"]["image_prompt_en_template"],
             image_video_prompt_en_template=str(image.get("video_prompt_en_template") or image.get("videoPromptEnTemplate") or "").strip() or DEFAULT_CONFIG["image"]["video_prompt_en_template"],
             usable_users=split_values(permission.get("usable_users")),
+            usable_users_enabled=usable_users_enabled,
             blocked_users=split_values(permission.get("blocked_users")),
             whitelist_users=split_values(permission.get("whitelist_users")),
             whitelist_groups=split_values(permission.get("whitelist_groups")),

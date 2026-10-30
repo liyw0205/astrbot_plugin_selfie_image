@@ -366,6 +366,12 @@
     .group-access-panel h3 { margin: 0; }
     .group-access-panel .between { align-items: baseline; gap: 10px; }
     .group-access-panel textarea { min-height: 68px; }
+    .group-usable-toggle { display: inline-flex; align-items: center; gap: 7px; margin: 0; white-space: nowrap; }
+    .group-usable-toggle input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+    .group-policy-overridden { opacity: .48; }
+    .group-policy-note { margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid var(--primary); background: #eef7fc; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
+    .group-config-trigger[data-config-field="chat_type"].policy-overridden { opacity: .42; }
+    .group-access-summary { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
     #taskQueueTable { table-layout: fixed; }
     #taskQueueTable th:nth-child(1), #taskQueueTable td:nth-child(1) { width: 38px; }
     #taskQueueTable th:nth-child(2), #taskQueueTable td:nth-child(2) { width: 170px; }
@@ -1206,6 +1212,15 @@
       <div id="groupsStatus" class="status">尚未读取群列表</div>
       <div class="group-access-panel">
         <div class="between">
+          <h3>全局可用名单</h3>
+          <label class="group-usable-toggle"><input id="groupUsableEnabled" type="checkbox">启用限制</label>
+        </div>
+        <p class="muted" style="margin:6px 0 0">填写后仅名单内用户可生图；启用时会覆盖用户黑白名单和群聊访问类型。</p>
+        <textarea id="groupUsableUsers" aria-label="全局可用名单" placeholder="例如：10001|10002"></textarea>
+        <div id="groupUsableNote" class="group-policy-note" hidden>全局可用名单正在生效：用户访问名单和群聊类型已禁用；模型模式仍可配置。</div>
+      </div>
+      <div class="group-access-panel" id="groupUserAccessPanel">
+        <div class="between">
           <h3>用户访问名单</h3>
           <span class="muted">多个 QQ 号可用 | 或英文逗号分隔</span>
         </div>
@@ -1213,6 +1228,7 @@
           <div><label>用户黑名单</label><textarea id="groupBlockedUsers" placeholder="例如：10001|10002"></textarea></div>
           <div><label>用户白名单</label><textarea id="groupWhitelistUsers" placeholder="例如：20001,20002"></textarea></div>
         </div>
+        <div id="groupAccessSummary" class="group-access-summary" aria-live="polite"></div>
       </div>
       <div class="group-config-list" id="groupConfigTable" style="margin-top:12px">
         <div class="group-config-head" role="row"><span>群聊</span><span>类型</span><span>模型模式</span><span>固定模型</span></div>
@@ -2507,8 +2523,11 @@ Source prompt:
         normalizeAuditChannels();
         normalizeVideoChannels();
         const p = CONFIG.permission, img = CONFIG.image;
+        setTextList('groupUsableUsers', p.usable_users);
+        $('groupUsableEnabled').checked = !!p.usable_users_enabled;
         setTextList('groupBlockedUsers', p.blocked_users);
         setTextList('groupWhitelistUsers', p.whitelist_users);
+        updateGlobalUsableGateUi();
 
         for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, img.default_aspect_ratio || '9:16');
         $('defaultResolution').value = img.default_resolution || '1K';
@@ -3770,11 +3789,47 @@ Source prompt:
 
     let QQ_GROUP_ROWS = [];
     let QQ_GROUP_MODELS = [];
+    let QQ_BOT_IDS = [];
     let QQ_GROUP_MODAL = null;
     const QQ_GROUP_CHAT_TYPES = [['none', '无', '不额外限制群聊'], ['black', '黑', '禁止此群使用生图'], ['white', '白', '允许此群使用生图']];
     const QQ_GROUP_MODEL_MODES = [['default', '默认', '跟随全局默认调用模式'], ['sequence', '顺序', '按全局模型优先级顺序尝试'], ['random', '随机', '按全局模型优先级随机选择'], ['fixed', '固定', '固定使用指定模型']];
     function groupConfigValue(index, field) {
       return String(QQ_GROUP_ROWS[index]?.config?.[field] || (field === 'chat_type' ? 'none' : field === 'model_priority_mode' ? 'default' : ''));
+    }
+    function globalUsableGateActive() {
+      return !!$('groupUsableEnabled')?.checked && textList('groupUsableUsers').length > 0;
+    }
+    function updateGlobalUsableGateUi() {
+      const active = globalUsableGateActive();
+      const panel = $('groupUserAccessPanel');
+      panel?.classList.toggle('group-policy-overridden', active);
+      for (const id of ['groupBlockedUsers', 'groupWhitelistUsers']) {
+        const input = $(id);
+        if (input) input.disabled = active;
+      }
+      const note = $('groupUsableNote');
+      if (note) note.hidden = !active;
+      const save = $('saveGroupsBtn');
+      if (save) save.disabled = false;
+      if (active && QQ_GROUP_MODAL?.field === 'chat_type') closeGroupConfigModal();
+      renderGroupAccessSummary();
+      renderQQGroups();
+    }
+    function renderGroupAccessSummary() {
+      const target = $('groupAccessSummary');
+      if (!target) return;
+      const permission = CONFIG.permission || {};
+      const format = (ids, kind, reasons = {}) => ids.map(id => {
+        const reason = String(reasons?.[id] || '').trim();
+        return `${id}(${kind}${reason ? `：${reason}` : ''})`;
+      });
+      const groups = [
+        QQ_BOT_IDS.map(id => `${id}(机器人)`),
+        format(textList('groupUsableUsers'), '可用'),
+        format(textList('groupBlockedUsers'), '黑名单', permission.blocked_user_reasons),
+        format(textList('groupWhitelistUsers'), '白名单', permission.whitelist_user_reasons),
+      ].filter(items => items.length).map(items => items.join(','));
+      target.textContent = groups.length ? groups.join(' | ') : '暂无名单条目';
     }
     function groupConfigLabel(field, value) {
       const choices = field === 'chat_type' ? QQ_GROUP_CHAT_TYPES : QQ_GROUP_MODEL_MODES;
@@ -3785,6 +3840,7 @@ Source prompt:
       QQ_GROUP_MODAL = null;
     }
     function openGroupConfigModal(index, field) {
+      if (field === 'chat_type' && globalUsableGateActive()) return;
       const row = QQ_GROUP_ROWS[index];
       if (!row) return;
       QQ_GROUP_MODAL = {index, field};
@@ -3834,7 +3890,7 @@ Source prompt:
         const fixed = mode === 'fixed' ? (config.fixed_model || '未选择') : '不适用';
         return `<div class="group-config-row" data-group-index="${index}" role="row">
           <div class="group-config-identity"><strong>${escapeHtml(row.group_id)}</strong><span title="${escapeHtml(row.group_name || '')}">${escapeHtml(row.group_name || '未命名群')}</span></div>
-          <button class="group-config-trigger" type="button" onclick="openGroupConfigModal(${index}, 'chat_type')"><span>${escapeHtml(groupConfigLabel('chat_type', config.chat_type || 'none'))}</span></button>
+          <button class="group-config-trigger${globalUsableGateActive() ? ' policy-overridden' : ''}" data-config-field="chat_type" type="button" ${globalUsableGateActive() ? 'disabled title="由全局可用名单覆盖"' : `onclick="openGroupConfigModal(${index}, 'chat_type')"`}><span>${escapeHtml(groupConfigLabel('chat_type', config.chat_type || 'none'))}</span></button>
           <button class="group-config-trigger" type="button" onclick="openGroupConfigModal(${index}, 'model_priority_mode')"><span>${escapeHtml(groupConfigLabel('model_priority_mode', mode))}</span></button>
           <button class="group-config-trigger" type="button" ${mode === 'fixed' ? `onclick="openGroupConfigModal(${index}, 'fixed_model')"` : 'disabled'}><span>${escapeHtml(fixed)}</span></button>
         </div>`;
@@ -3846,6 +3902,7 @@ Source prompt:
         const res = await api('/api/qq-groups' + (force ? '?refresh=1' : ''));
         const data = res.data || {};
         QQ_GROUP_MODELS = Array.isArray(data.models) ? uniq(data.models) : [];
+        QQ_BOT_IDS = Array.isArray(data.bot_ids) ? uniq(data.bot_ids.map(String)) : [];
         QQ_GROUP_ROWS = (Array.isArray(data.groups) ? data.groups : []).map(row => ({...row, config: {
           chat_type: row.config?.chat_type || 'none',
           model_priority_mode: row.config?.model_priority_mode || 'default',
@@ -3855,6 +3912,7 @@ Source prompt:
         const resultText = data.available ? `已读取 ${QQ_GROUP_ROWS.length} 个群` : (data.message || 'QQ 平台不可用');
         setStatus('groupsStatus', force ? '' : resultText);
         if (force) showToast(resultText, data.available ? 'ok' : 'info');
+        renderGroupAccessSummary();
         renderQQGroups();
       } catch (error) {
         const message = error.message || '读取群列表失败';
@@ -3865,14 +3923,23 @@ Source prompt:
     async function saveQQGroups() {
       try {
         const rows = QQ_GROUP_ROWS.map(row => ({group_id: row.group_id, config: row.config}));
+        const blockedUsers = textList('groupBlockedUsers');
+        const whitelistUsers = textList('groupWhitelistUsers');
+        const blockedReasons = CONFIG.permission?.blocked_user_reasons || {};
+        const whitelistReasons = CONFIG.permission?.whitelist_user_reasons || {};
         const permission = {
-          blocked_users: textList('groupBlockedUsers'),
-          whitelist_users: textList('groupWhitelistUsers'),
+          usable_users: textList('groupUsableUsers'),
+          usable_users_enabled: $('groupUsableEnabled').checked,
+          blocked_users: blockedUsers,
+          blocked_user_reasons: Object.fromEntries(Object.entries(blockedReasons).filter(([id]) => blockedUsers.includes(id))),
+          whitelist_users: whitelistUsers,
+          whitelist_user_reasons: Object.fromEntries(Object.entries(whitelistReasons).filter(([id]) => whitelistUsers.includes(id))),
         };
         const result = await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify({groups: rows, permission})});
         if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
         CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
         if (result.data?.permission) CONFIG.permission = {...CONFIG.permission, ...result.data.permission};
+        updateGlobalUsableGateUi();
         showToast('群聊配置和用户名单已保存', 'ok');
       } catch (error) { showToast(error.message || '保存群聊配置失败', 'bad'); }
     }
@@ -9858,6 +9925,9 @@ Source prompt:
     $('loginBtn').onclick = enterApp;
     $('refreshGroupsBtn')?.addEventListener('click', () => loadQQGroups(true));
     $('saveGroupsBtn')?.addEventListener('click', saveQQGroups);
+    $('groupUsableEnabled')?.addEventListener('change', updateGlobalUsableGateUi);
+    $('groupUsableUsers')?.addEventListener('input', updateGlobalUsableGateUi);
+    for (const id of ['groupBlockedUsers', 'groupWhitelistUsers']) $(id)?.addEventListener('input', renderGroupAccessSummary);
     $('groupConfigSearch')?.addEventListener('input', renderGroupConfigModalOptions);
     $('loginToken').onkeydown = event => { if (event.key === 'Enter') enterApp(); };
     $('logoutBtn').onclick = logout;
