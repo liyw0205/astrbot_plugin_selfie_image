@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.62")
+        self.assertEqual(PLUGIN_VERSION, "1.6.63")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -12055,12 +12055,35 @@ class StudioStoreTests(unittest.TestCase):
         row = listed["tasks"][0]
         self.assertEqual(row["media_type"], "video")
         self.assertEqual(row["prompt"], "private")
-        self.assertEqual(
-            row["request_image_paths"],
-            ["request/result.png", "request/live.png", "request/fallback.png"],
-        )
+        self.assertNotIn("request_image_paths", row)
         for key in ("request_data", "result", "request_fingerprint", "owner_session"):
             self.assertNotIn(key, row)
+
+        detail = stub.get_web_task_detail("web-12345678-1")
+        self.assertEqual(
+            detail["request_image_paths"],
+            ["request/result.png", "request/live.png", "request/fallback.png"],
+        )
+
+        stub._web_tasks["web-persona-12345678-1"] = {
+            "task_id": "web-persona-12345678-1",
+            "status": "succeeded",
+            "success": True,
+            "created_ts": 1,
+            "request_data": {"kind": "自拍"},
+            "result": {
+                "request_data": {
+                    "use_selfie_reference": True,
+                    "persona_reference_count": 1,
+                    "identity_reference_source": "persona",
+                    "request_image_paths": ["request/nested.png"],
+                }
+            },
+        }
+        persona_detail = stub.get_web_task_detail("web-persona-12345678-1")
+        self.assertTrue(persona_detail["parameters"]["use_selfie_reference"])
+        self.assertEqual(persona_detail["parameters"]["identity_reference_source"], "persona")
+        self.assertEqual(persona_detail["request_image_paths"], ["request/nested.png"])
 
     def test_web_task_list_filters_history_by_source_status_model_keyword_and_time(self) -> None:
         from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin

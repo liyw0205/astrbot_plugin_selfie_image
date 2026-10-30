@@ -372,21 +372,14 @@
     #taskQueueTable th:nth-child(3), #taskQueueTable td:nth-child(3) { width: 90px; }
     #taskQueueTable th:nth-child(4), #taskQueueTable td:nth-child(4) { width: 54px; }
     #taskQueueTable th:nth-child(5), #taskQueueTable td:nth-child(5) { width: 150px; }
-    #taskQueueTable th:nth-child(6), #taskQueueTable td:nth-child(6) { width: 112px; }
-    #taskQueueTable th:nth-child(7), #taskQueueTable td:nth-child(7) { width: 220px; }
-    #taskQueueTable th:nth-child(8), #taskQueueTable td:nth-child(8) { width: 170px; }
-    #taskQueueTable th:nth-child(9), #taskQueueTable td:nth-child(9) { width: 66px; }
+    #taskQueueTable th:nth-child(6), #taskQueueTable td:nth-child(6) { width: 220px; }
+    #taskQueueTable th:nth-child(7), #taskQueueTable td:nth-child(7) { width: 170px; }
+    #taskQueueTable th:nth-child(8), #taskQueueTable td:nth-child(8) { width: 66px; }
     .task-prompt-cell { min-width: 0; max-width: 260px; }
     .task-prompt-cell details { min-width: 0; }
     .task-prompt-cell summary { cursor: pointer; color: var(--text-secondary); list-style-position: inside; }
     .task-prompt-preview { display: inline-block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
     .task-prompt-full { max-height: 180px; overflow: auto; margin-top: 6px; padding: 7px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel-soft); border: 1px solid var(--line); border-radius: 6px; font-size: 12px; line-height: 1.45; }
-    .task-request-images { display: flex; align-items: center; gap: 4px; min-height: 48px; max-width: 104px; overflow: hidden; }
-    .task-request-images .media-zoom-shell { flex: 0 0 48px; width: 48px; height: 48px; }
-    .task-request-images .media-zoom-shell img { display: block; width: 48px; height: 48px; object-fit: cover; border: 1px solid var(--line); border-radius: 6px; background: #f1f4f7; }
-    .task-request-images .media-zoom-button { top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 5px; }
-    .task-request-images .media-zoom-button svg { width: 12px; height: 12px; }
-    .task-request-more { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
     .preview { max-width: 260px; border: 1px solid var(--line); border-radius: var(--radius-md); display: none; margin-top: 10px; box-shadow: var(--shadow); }
     .images { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-top: 12px; }
     .images img { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); }
@@ -4735,12 +4728,18 @@ Source prompt:
       const text = String(value || '').trim();
       return text ? `<div><label>${escapeHtml(label)}</label><pre class="status" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(text)}</pre></div>` : '';
     }
-    function taskRequestImageCell(paths) {
-      const items = [...new Set((Array.isArray(paths) ? paths : []).map(item => String(item || '').trim()).filter(Boolean))];
-      if (!items.length) return '<span class="muted">-</span>';
-      const visible = items.slice(0, 2);
-      const extra = items.length - visible.length;
-      return `<div class="task-request-images" title="请求图 ${items.length} 张">${visible.map(path => `<img class="task-request-thumb" data-cache-path="${escapeHtml(path)}" alt="请求图">`).join('')}${extra > 0 ? `<span class="task-request-more">+${extra}</span>` : ''}</div>`;
+    function taskUsesPersonaReference(task) {
+      const params = task?.parameters && typeof task.parameters === 'object' ? task.parameters : {};
+      const selection = params.reference_selection && typeof params.reference_selection === 'object' ? params.reference_selection : {};
+      const roles = selection.roles && typeof selection.roles === 'object' ? selection.roles : {};
+      return Boolean(
+        params.use_selfie_reference
+        || Number(params.persona_reference_count || 0) > 0
+        || selection.used_persona
+        || Number(roles.persona || 0) > 0
+        || Number(roles.persona_extra || 0) > 0
+        || String(params.identity_reference_source || '').trim() === 'persona'
+      );
     }
     async function retryTaskFromRecord(recordId, strategy = 'full') {
       if (!recordId) return;
@@ -4761,6 +4760,10 @@ Source prompt:
         const res = await api('/api/tasks/' + encodeURIComponent(taskId));
         const task = res.data || {};
         const params = task.parameters || {};
+        const requestImagePaths = Array.isArray(task.request_image_paths) ? task.request_image_paths : [];
+        const personaReference = taskUsesPersonaReference(task)
+          ? `<div style="margin-top:14px"><div class="detail-title"><h3>形象图</h3></div><div class="images">${personaReferenceThumb()}</div></div>`
+          : '';
         const attempts = Array.isArray(task.attempts) ? task.attempts : [];
         const attemptRows = attempts.length
           ? `<div style="overflow:auto;margin-top:12px"><table class="table"><thead><tr><th>#</th><th>渠道/模型</th><th>结果</th><th>耗时</th><th>原因</th></tr></thead><tbody>${attempts.map(item => `<tr><td>${escapeHtml(String(item.attempt || ''))}</td><td>${escapeHtml(String(item.model || item.channel || ''))}</td><td>${item.success ? '成功' : '失败'}</td><td>${escapeHtml(String(item.elapsed_seconds ?? '-'))}s</td><td>${escapeHtml(String(item.error || item.error_category || ''))}</td></tr>`).join('')}</tbody></table></div>`
@@ -4787,11 +4790,15 @@ Source prompt:
           ${deliveryNote}
           ${taskDetailPrompt('原始提示词', task.original_prompt)}
           ${taskDetailPrompt('最终提示词', task.final_prompt)}
+          ${personaReference}
+          ${requestImagePaths.length ? `<div style="margin-top:14px">${imageThumbs(requestImagePaths, '请求图')}</div>` : ''}
           ${parameterRows ? `<div class="grid" style="margin-top:12px">${parameterRows}</div>` : ''}
           <div class="detail-title" style="margin-top:14px"><h3>关联记录</h3>${linkedRecordIds.length ? linkedRecordIds.map(id => `<button class="secondary mini task-record-open" data-record-id="${escapeHtml(id)}" type="button">查看 ${escapeHtml(id)}</button>`).join(' ') : recordId ? `<button class="secondary mini task-record-open" data-record-id="${escapeHtml(recordId)}" type="button">查看来源记录</button>` : '<span class="muted">生成记录尚未写入</span>'}${recordId ? `<button class="ok mini task-record-retry" data-record-id="${escapeHtml(recordId)}" type="button">重新执行来源</button>` : ''}</div>
           ${attemptRows}`;
         body.querySelectorAll('.task-record-open').forEach(button => button.addEventListener('click', () => { closeTaskDetail(); openRecordDetail(button.dataset.recordId || ''); }));
         body.querySelector('.task-record-retry')?.addEventListener('click', () => retryTaskFromRecord(recordId, String($('taskRetryStrategy')?.value || 'full')));
+        loadProtectedImages(body);
+        loadPersonaReferenceThumbs(body);
       } catch (e) {
         body.innerHTML = `<div class="status">${escapeHtml(e.message || '任务详情读取失败')}</div>`;
       }
@@ -4811,7 +4818,7 @@ Source prompt:
         }
         $('taskQueueSummary').textContent = `${prefix} · 第 ${TASK_PAGE}/${pageCount} 页 · 匹配 ${filteredTotal} · 排队 ${Number(summary.queued || 0)} · 进行中 ${Number(summary.running || 0)} · 图片槽位 ${Number(summary.image_active_slots || 0)}/${Number(summary.image_max_concurrent_tasks || 0)} · 视频槽位 ${Number(summary.video_active_slots || 0)}/${Number(summary.video_max_concurrent_tasks || 0)}`;
         const rows = Array.isArray(data.tasks) ? data.tasks : [];
-        $('taskQueueTable').innerHTML = rows.length ? `<thead><tr><th></th><th>任务</th><th>来源</th><th>类型</th><th>状态</th><th>请求图</th><th>提示词</th><th>模型/原因</th><th></th></tr></thead><tbody>${rows.map(task => {
+        $('taskQueueTable').innerHTML = rows.length ? `<thead><tr><th></th><th>任务</th><th>来源</th><th>类型</th><th>状态</th><th>提示词</th><th>模型/原因</th><th></th></tr></thead><tbody>${rows.map(task => {
           const id = escapeHtml(String(task.task_id || ''));
           const rawId = String(task.task_id || '');
           const type = task.media_type === 'video' ? '视频' : '图片';
@@ -4828,9 +4835,8 @@ Source prompt:
           const promptCell = prompt
             ? `<details><summary><span class="task-prompt-preview">${escapeHtml(promptPreview)}</span></summary><div class="task-prompt-full">${escapeHtml(prompt)}</div></details>`
             : '-';
-          return `<tr class="task-detail-row" data-task-id="${id}" style="cursor:pointer"><td><input type="checkbox" data-task-select="${id}" aria-label="选择任务 ${id}" ${TASK_SELECTION.has(rawId) ? 'checked' : ''}></td><td class="mono">${id}</td><td>${escapeHtml(displaySourceLabel(task))}</td><td>${type}</td><td>${taskQueueStatusLabel(task.status)}${statusMeta ? `<br><span class="muted">${escapeHtml(statusMeta)}</span>` : ''}</td><td>${taskRequestImageCell(task.request_image_paths)}</td><td class="task-prompt-cell">${promptCell}</td><td>${escapeHtml(String(info))}</td><td>${canCancel ? `<button class="danger mini task-cancel-btn" data-task-id="${id}" type="button">取消</button>` : '<button class="secondary mini task-detail-btn" data-task-id="' + id + '" type="button">详情</button>'}</td></tr>`;
-        }).join('')}</tbody>` : `<tbody><tr><td colspan="9" class="muted">${scope === 'recent' ? '没有最近任务' : '当前没有活动任务'}</td></tr></tbody>`;
-        loadProtectedImages($('taskQueueTable'));
+          return `<tr class="task-detail-row" data-task-id="${id}" style="cursor:pointer"><td><input type="checkbox" data-task-select="${id}" aria-label="选择任务 ${id}" ${TASK_SELECTION.has(rawId) ? 'checked' : ''}></td><td class="mono">${id}</td><td>${escapeHtml(displaySourceLabel(task))}</td><td>${type}</td><td>${taskQueueStatusLabel(task.status)}${statusMeta ? `<br><span class="muted">${escapeHtml(statusMeta)}</span>` : ''}</td><td class="task-prompt-cell">${promptCell}</td><td>${escapeHtml(String(info))}</td><td>${canCancel ? `<button class="danger mini task-cancel-btn" data-task-id="${id}" type="button">取消</button>` : '<button class="secondary mini task-detail-btn" data-task-id="' + id + '" type="button">详情</button>'}</td></tr>`;
+        }).join('')}</tbody>` : `<tbody><tr><td colspan="8" class="muted">${scope === 'recent' ? '没有最近任务' : '当前没有活动任务'}</td></tr></tbody>`;
         const pager = $('taskQueuePager');
         if (pager) {
           pager.dataset.total = String(filteredTotal);

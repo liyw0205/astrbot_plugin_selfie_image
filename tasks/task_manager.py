@@ -572,6 +572,9 @@ class WebTaskMixin:
             task,
             task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {},
         ]
+        result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+        if isinstance(result.get("request_data"), Mapping):
+            containers.insert(1, result["request_data"])
         for container in containers:
             raw_paths = container.get("request_image_paths")
             if not isinstance(raw_paths, (list, tuple)):
@@ -610,7 +613,12 @@ class WebTaskMixin:
             "is_terminal": terminal,
         }
 
-    def _task_list_row(self, task: Mapping[str, Any]) -> Dict[str, Any]:
+    def _task_list_row(
+        self,
+        task: Mapping[str, Any],
+        *,
+        include_request_images: bool = False,
+    ) -> Dict[str, Any]:
         """Create the small, poll-safe task shape used by the task center."""
         request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
         result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
@@ -696,18 +704,22 @@ class WebTaskMixin:
                 "record_id": retry_record_id[:128],
                 "retry_record_id": retry_record_id[:128],
                 "record_ids": linked_record_ids,
-                "request_image_paths": self._task_request_image_paths(task),
                 **self.task_operation_capabilities({**task, "retry_record_id": retry_record_id, "record_ids": linked_record_ids}),
             }
         )
+        if include_request_images:
+            row["request_image_paths"] = self._task_request_image_paths(task)
         return redact_sensitive_data(row)
 
     def get_web_task_detail(self, task_id: str) -> Dict[str, Any]:
-        """Return a redacted detail view without request bodies or local file paths."""
+        """Return a redacted detail view with bounded request-image paths."""
         task = self.get_web_image_task(task_id)
         request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
         result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
-        detail = self._task_list_row(task)
+        result_request = result.get("request_data") if isinstance(result.get("request_data"), Mapping) else {}
+        detail = self._task_list_row(task, include_request_images=True)
+        request_details = dict(result_request)
+        request_details.update({key: value for key, value in request.items() if value not in (None, "")})
         original_prompt = str(
             request.get("original_prompt")
             or request.get("prompt")
@@ -726,7 +738,7 @@ class WebTaskMixin:
                 "original_prompt": redact_sensitive_text(original_prompt)[:50000],
                 "final_prompt": redact_sensitive_text(final_prompt)[:50000],
                 "parameters": {
-                    key: redact_sensitive_data(request.get(key))
+                    key: redact_sensitive_data(request_details.get(key))
                     for key in (
                         "kind",
                         "mode",
@@ -743,7 +755,9 @@ class WebTaskMixin:
                         "count",
                         "requested_count",
                         "prompt_enhance",
+                        "use_selfie_reference",
                         "reference_image_count",
+                        "persona_reference_count",
                         "raw_reference_image_count",
                         "deduplicated_reference_image_count",
                         "duplicate_reference_image_count",
@@ -766,7 +780,7 @@ class WebTaskMixin:
                         "cos_view",
                         "request_prompt_en",
                     )
-                    if request.get(key) not in (None, "")
+                    if request_details.get(key) not in (None, "")
                 },
                 "record_ids": list(detail.get("record_ids") or []),
                 "attempts": self._task_attempt_summaries(task),
@@ -1123,7 +1137,7 @@ class WebTaskMixin:
                 detail = self.get_web_image_task(task_id)
             except Exception:
                 detail = raw
-            rows.append(self._task_list_row(detail))
+            rows.append(self._task_list_row(detail, include_request_images=True))
             if len(rows) >= 200:
                 break
         return {

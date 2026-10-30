@@ -181,6 +181,24 @@ def test_dashboard_action_feedback_uses_toasts_without_empty_bottom_status_bar()
     assert 'white-space: normal; overflow-wrap: anywhere; font-size: 12px;' in PAGE
 
 
+def test_task_queue_defers_request_image_loading_until_detail_modal():
+    queue_start = PAGE.index("$('taskQueueTable').innerHTML")
+    queue_end = PAGE.index("        $('taskQueueTable').querySelectorAll", queue_start)
+    queue_render = PAGE[queue_start:queue_end]
+    assert '<th>请求图</th>' not in queue_render
+    assert 'taskRequestImageCell' not in queue_render
+    assert "loadProtectedImages($('taskQueueTable'))" not in queue_render
+    detail_start = PAGE.index('async function openTaskDetail')
+    detail_end = PAGE.index('    async function loadTasksNow', detail_start)
+    detail = PAGE[detail_start:detail_end]
+    assert "const requestImagePaths = Array.isArray(task.request_image_paths)" in detail
+    assert "imageThumbs(requestImagePaths, '请求图')" in detail
+    assert "function taskUsesPersonaReference(task)" in PAGE
+    assert 'personaReferenceThumb()' in detail
+    assert 'loadProtectedImages(body);' in detail
+    assert 'loadPersonaReferenceThumbs(body);' in detail
+
+
 def test_dashboard_shortcuts_and_priority_pin_cover_all_model_kinds():
     for target in ("test", "studio", "selfie", "channels", "monitor"):
         assert f'data-nav-target="{target}"' in PAGE
