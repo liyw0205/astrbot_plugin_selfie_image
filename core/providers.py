@@ -69,6 +69,10 @@ class ImageGenerateResult:
     attempts: List[Dict[str, Any]] = field(default_factory=list)
     retry_count: int = 0
     retry_exhausted: bool = False
+    # Number of input reference images removed because the upstream echoed them
+    # as generated outputs.  Kept for task diagnostics; not a provider error by
+    # itself when other generated images are present.
+    reference_echo_count: int = 0
 
 
 class BaseImageAdapter:

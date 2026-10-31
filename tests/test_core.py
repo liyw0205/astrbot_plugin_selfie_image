@@ -4312,16 +4312,81 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fallback_drops_reference_echo_and_uses_next_target(self) -> None:
+        first = make_target("openai", "echo-model")
+        second = make_target("openai", "good-model")
+        generated = b"generated-image"
+        reference = ImageReference(data=PNG_BYTES, mime_type="image/png")
+        calls = []
+
+        async def fake_try_model(active, request, budget, session):
+            calls.append(active.model)
+            if active.model == "echo-model":
+                return ImageGenerateResult(images=[PNG_BYTES])
+            return ImageGenerateResult(images=[generated])
+
+        with patch("astrbot_plugin_selfie_image.generation.generator._try_model", side_effect=fake_try_model):
+            result = await generate_image_with_fallback(
+                [first, second],
+                ImageGenerateRequest(prompt="edit", images=[reference]),
+                FakeSession(),
+            )
+
+        self.assertEqual(calls, ["echo-model", "good-model"])
+        self.assertEqual(result.images, [generated])
+        self.assertEqual(result.used_model, second.label)
+        self.assertEqual(result.attempts[0]["reference_echo_count"], 1)
+        self.assertFalse(result.attempts[0]["success"])
+
+    async def test_fallback_removes_reference_echoes_from_mixed_output(self) -> None:
+        target = make_target("openai", "mixed-model")
+        generated = b"generated-image"
+        reference = ImageReference(data=PNG_BYTES, mime_type="image/png")
+
+        async def fake_try_model(active, request, budget, session):
+            return ImageGenerateResult(images=[PNG_BYTES, generated, PNG_BYTES])
+
+        with patch("astrbot_plugin_selfie_image.generation.generator._try_model", side_effect=fake_try_model):
+            result = await generate_image_with_fallback(
+                [target],
+                ImageGenerateRequest(prompt="edit", images=[reference]),
+                FakeSession(),
+            )
+
+        self.assertEqual(result.images, [generated])
+        self.assertEqual(result.attempts[0]["reference_echo_count"], 2)
+        self.assertTrue(result.attempts[0]["success"])
+
+    async def test_fallback_rejects_reference_echo_when_no_model_remains(self) -> None:
+        target = make_target("openai", "echo-model")
+        reference = ImageReference(data=PNG_BYTES, mime_type="image/png")
+
+        async def fake_try_model(active, request, budget, session):
+            return ImageGenerateResult(images=[PNG_BYTES])
+
+        with patch("astrbot_plugin_selfie_image.generation.generator._try_model", side_effect=fake_try_model):
+            result = await generate_image_with_fallback(
+                [target],
+                ImageGenerateRequest(prompt="edit", images=[reference]),
+                FakeSession(),
+            )
+
+        self.assertEqual(result.images, [])
+        self.assertIn("仅返回参考图", result.error)
+        self.assertEqual(result.attempts[0]["reference_echo_count"], 1)
+        self.assertFalse(result.attempts[0]["success"])
+
     async def test_fallback_builds_a_separate_request_for_each_target(self) -> None:
         first = make_target("openai", "describe-first")
         second = make_target("openai", "plain-edit")
         calls = []
+        generated = b"generated-image"
 
         async def fake_try_model(active, request, budget, session):
             calls.append((active.model, request.prompt, len(request.images)))
             if active.model == "describe-first":
                 return ImageGenerateResult(error="temporary failure")
-            return ImageGenerateResult(images=[PNG_BYTES])
+            return ImageGenerateResult(images=[generated])
 
         reference = ImageReference(data=PNG_BYTES, mime_type="image/png")
         base_request = ImageGenerateRequest(prompt="original", images=[reference])
@@ -4339,7 +4404,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
                 request_factory=request_factory,
             )
 
-        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(result.images, [generated])
         self.assertEqual(
             calls,
             [
@@ -4539,6 +4604,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         second = make_target("openai", "gpt-image-1")
         second.channel_name = "备用"
         calls = []
+        generated = b"generated-image"
 
         def create_fake_adapter(target, session):
             calls.append(target.label)
@@ -4549,7 +4615,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
                         return ImageGenerateResult(
                             error="HTTP 400: 请求参数不受当前模型支持 (request id: x)；兼容 image[] 重试也失败: HTTP 400"
                         )
-                    return ImageGenerateResult(images=[PNG_BYTES])
+                    return ImageGenerateResult(images=[generated])
 
             return A()
 
@@ -4567,7 +4633,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
                 max_attempts=2,
             )
 
-        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(result.images, [generated])
         self.assertEqual(result.used_model, second.label)
         self.assertEqual(result.attempts[0].get("error_category"), "param")
         self.assertTrue(result.attempts[1].get("success"))

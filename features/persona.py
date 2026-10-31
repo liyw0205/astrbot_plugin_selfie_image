@@ -2364,6 +2364,21 @@ class PersonaManager:
         if intent.is_legs_only and not has_leg_focus_contract(act):
             act = ensure_leg_focus_action(act, has_reference_image)
             intent = self.analyze_selfie_intent(act)
+        # Mode-specific action builders already select one coherent shot,
+        # scene, gesture, and light. Do not layer an unrelated legacy snapshot
+        # preset on top of that contract.
+        has_staging_contract = (
+            "本次机位：" in act
+            and any(
+                marker in act
+                for marker in (
+                    "场景倾向：",
+                    "小动作：",
+                    "动作瞬间：",
+                    "今日日程场景参考：",
+                )
+            )
+        )
         user_text = extract_user_action_text(act)
         appearance_type = resolve_appearance_type(
             self.get_appearance_type(),
@@ -2481,7 +2496,12 @@ class PersonaManager:
         )
         snapshot_prompt = (
             random.choice(SELFIE_SNAPSHOT_PRESETS)
-            if not explicit_context and not back_facing_shot and not side_facing_shot
+            if (
+                not explicit_context
+                and not has_staging_contract
+                and not back_facing_shot
+                and not side_facing_shot
+            )
             else ""
         )
         mode_lines: list[str] = []
@@ -2819,9 +2839,6 @@ class PersonaManager:
                     timeline_event.action.strip()
                     if timeline_event
                     else str(daily.action_by_period.get(period) or "").strip()
-                )
-                has_staging_contract = any(
-                    marker in act for marker in ("场景倾向：", "小动作：", "动作瞬间：", "今日日程场景参考：")
                 )
                 if scene and not has_staging_contract:
                     today_lines.append(f"当前日常场景参考：{scene}")

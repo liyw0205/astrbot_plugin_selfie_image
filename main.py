@@ -1630,11 +1630,21 @@ class SelfieImagePlugin(
         *,
         avoid_shot: str = "",
     ) -> str:
+        persona = getattr(self, "persona", None)
+        has_identity_reference = getattr(persona, "has_reference_image", None)
+        if callable(has_identity_reference):
+            has_identity_reference = bool(has_identity_reference())
+        else:
+            # Lightweight test/integration stubs historically exposed only
+            # ``get_appearance_type``; keep their ``has_refs`` behavior while
+            # real PersonaManager instances use the actual identity state.
+            has_identity_reference = bool(has_refs)
         return build_group_selfie_action(
             extra_request,
             has_refs,
             avoid_shot=avoid_shot,
-            appearance_type=_appearance_type_for_request(getattr(self, "persona", None), extra_request),
+            appearance_type=_appearance_type_for_request(persona, extra_request),
+            has_identity_reference=has_identity_reference,
         )
 
     def _looks_like_group_selfie_intent(self, text: str) -> bool:
@@ -1660,6 +1670,7 @@ class SelfieImagePlugin(
         camera: str = "",
         match_query: str = "",
         force_id: str = "",
+        force_multi_view_collage: bool = False,
     ) -> str:
         appearance_type = _appearance_type_for_request(getattr(self, "persona", None), extra_request)
         chosen_force = force_id
@@ -1686,6 +1697,7 @@ class SelfieImagePlugin(
                 appearance_type=appearance_type,
                 match_query="",
                 force_id="",
+                force_multi_view_collage=force_multi_view_collage,
                 picker=lambda **_: dict(custom_item),
             )
         return build_cos_look_action(
@@ -1704,6 +1716,7 @@ class SelfieImagePlugin(
             appearance_type=appearance_type,
             match_query=match_query,
             force_id=chosen_force,
+            force_multi_view_collage=force_multi_view_collage,
             picker=pick_cos_look_set,
         )
 
@@ -5507,6 +5520,7 @@ class SelfieImagePlugin(
                         avoid_cameras=used_cos_cameras,
                         match_query=rebuild_match_query or extra_keep,
                         force_id=last_cos if keep_cos_outfit else "",
+                        force_multi_view_collage="【cos_view:multi_view_collage】" in str(action or ""),
                     )
                     m_cos = re.search(r"【cos:([a-z0-9_]+)】", round_action)
                     if m_cos:

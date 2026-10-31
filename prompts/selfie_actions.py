@@ -589,7 +589,11 @@ def build_selfie_look_action(
     if has_refs:
         base = "参考用户提供的图片氛围、场景或构图，" + base + " 主角身份仍以 AI 形象为准。"
     if extra:
-        base += f" 用户补充要求优先：{extra}。"
+        # A raw ``/自拍 ... COS ...`` request is still ordinary selfie mode;
+        # keep the user's text without the COS contract marker used by the
+        # downstream COS router.
+        label = "用户指定内容" if re.search(r"\bcos\b|COS", extra, re.I) else "用户补充要求优先"
+        base += f" {label}：{extra}。"
     return base + f" 【shot:{shot}】"
 
 
@@ -677,7 +681,7 @@ def build_third_person_look_action(
                 else (
                     "正面构图时可自然看向镜头；侧面构图时头部顺着身体方向，不强行回头露正脸。"
                     "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
-                    "竖屏手机近景半身："
+                    "构图保持竖屏，不自行追加近景半身或其他景别，严格以本次机位为准；"
                     + ("" if explicit_light else "窗光或暖灯，")
                     + "构图干净自然，不要美颜滤镜、不要影楼精修。"
                 )
@@ -707,6 +711,7 @@ def build_group_selfie_action(
     *,
     avoid_shot: str = "",
     appearance_type: str = "auto",
+    has_identity_reference: bool = False,
 ) -> str:
     orientation = _requested_staging_orientation(extra_request)
     if orientation == "back":
@@ -731,14 +736,29 @@ def build_group_selfie_action(
     explicit_light = _has_explicit_staging_light(extra_request)
     appearance_line = appearance_type_instruction(
         appearance_type,
-        has_reference_image=True,
+        has_reference_image=has_identity_reference,
     )
     style_blob = " ".join(group_style_lines(appearance_type))
+    identity_expression_line = (
+        "表情与眼神按本次合影氛围自然重画，不要原样复制形象参考图的固定表情。"
+        if has_identity_reference
+        else "表情与眼神按本次合影氛围自然重画，不凭空复制外部参考对象的固定表情。"
+    )
+    reference_population_line = (
+        "如果同一张参考图里有多个可见人物 / 角色，按实际可见人数全部保留为独立同框对象。"
+        if has_refs
+        else "同框对象按用户文字要求或当前场景自然安排，不凭空增加人物。"
+    )
     base = (
         "合影 / 合照 / 同框。AI 自己必须作为画面主角之一，与用户指定或提供的对象自然同框合影。"
-        "AI 保持当前身份：性别、脸型五官、发型发色、体态一致；表情与眼神按本次合影氛围自然重画，不要原样复制形象参考图的固定表情。"
-        "形象参考图是女性则 AI 必须是女性，是男性则必须是男性；禁止无故改成异性。"
-        "如果同一张参考图里有多个可见人物 / 角色，按实际可见人数全部保留为独立同框对象。"
+        "AI 保持当前身份：性别、脸型五官、发型发色、体态一致；"
+        + identity_expression_line
+        + (
+            "形象参考图是女性则 AI 必须是女性，是男性则必须是男性；禁止无故改成异性。"
+            if has_identity_reference
+            else "按当前角色设定保持主角身份和性别稳定；未说明性别时默认成年女性，禁止无故改成男性。"
+        )
+        + reference_population_line
     )
     if appearance_line:
         base += appearance_line

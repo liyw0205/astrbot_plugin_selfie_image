@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -72,6 +73,40 @@ def judge_attempt(result: ImageGenerateResult) -> str:
     if _should_rotate_api_key(info):
         return NEXT_KEY
     return NEXT_MODEL
+
+
+def _remove_reference_echoes(
+    result: ImageGenerateResult,
+    references: List[Any],
+) -> int:
+    """Drop upstream outputs that are byte-identical to a request reference.
+
+    Some image relays occasionally return the input image as a successful
+    output for an image-to-image request.  Treating that response as a normal
+    result makes the caller send the persona/reference image back to the chat.
+    Exact-byte matching is intentional: it cannot discard a legitimately
+    edited image that only happens to look similar.
+    """
+    if not result.images or not references:
+        return 0
+    reference_digests = {
+        hashlib.sha256(bytes(reference.data)).digest()
+        for reference in references
+        if getattr(reference, "data", None)
+    }
+    if not reference_digests:
+        return 0
+    kept = []
+    removed = 0
+    for image in result.images:
+        if hashlib.sha256(bytes(image)).digest() in reference_digests:
+            removed += 1
+        else:
+            kept.append(image)
+    if removed:
+        result.images = kept
+        result.reference_echo_count = int(getattr(result, "reference_echo_count", 0) or 0) + removed
+    return removed
 
 
 def _sync_try_model(target: ImageModelTarget, req: ImageGenerateRequest, budget: int) -> ImageGenerateResult:
@@ -187,6 +222,12 @@ async def generate_image_with_fallback(
             wall = time.monotonic() - started
             elapsed = round(min(wall, float(budget)), 2)
             attempt_info["elapsed_seconds"] = elapsed
+
+            reference_echo_count = _remove_reference_echoes(result, req.images)
+            if reference_echo_count:
+                attempt_info["reference_echo_count"] = reference_echo_count
+                if not result.images and not result.error:
+                    result.error = "上游仅返回参考图，未生成新图片"
 
             decision = judge_attempt(result)
             if decision == SUCCESS:

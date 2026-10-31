@@ -151,6 +151,13 @@ LEGFOCUS_EXPLICIT_ONLY_POSE_IDS = frozenset(
     {"floor_topdown_cross_crop", "first_person_topdown_legs_crop"}
 )
 
+LEGFOCUS_SCENE_TERMS = (
+    "咖啡馆", "咖啡店", "咖啡厅", "休息区", "长凳", "座椅", "书桌", "窗边",
+    "卧室", "客厅", "厨房", "书店", "茶室", "餐廊", "浴室", "走廊", "家中", "室内",
+    "沙发", "床边", "街上", "街边", "天台", "海边", "河边", "公园", "阳台", "室外",
+    "庭院", "花园", "小径", "步道", "石阶", "楼梯", "草地", "户外",
+)
+
 # Older persisted actions use these broad pose ids. Resolve them to the newer
 # complete compositions while keeping the original tag for prompt compatibility.
 LEGFOCUS_POSE_ALIASES = {
@@ -431,6 +438,55 @@ def pick_stocking_finish() -> str:
     return random.choice(bag)
 
 
+def _has_positive_leg_scene_term(text: str, term: str) -> bool:
+    compact = re.sub(r"\s+", "", str(text or ""))
+    start = 0
+    while True:
+        index = compact.find(term, start)
+        if index < 0:
+            return False
+        prefix = compact[max(0, index - 6) : index]
+        if not re.search(r"(?:不要|不在|不去|不选|避免|禁止|别)(?:再|去|在|用|选择|采用)?$", prefix):
+            return True
+        start = index + len(term)
+
+
+def parse_requested_leg_scene(text: str) -> str:
+    """Extract a concrete scene hint used only for pose compatibility."""
+    raw = str(text or "")
+    raw = re.sub(r"场景不变|背景不变|保持场景|保持背景", "", raw)
+    matched = [
+        term for term in sorted(LEGFOCUS_SCENE_TERMS, key=len, reverse=True)
+        if _has_positive_leg_scene_term(raw, term)
+    ]
+    return " ".join(dict.fromkeys(matched))
+
+
+def _leg_pose_compatible_with_camera(pose: Dict[str, str], camera: str) -> bool:
+    if str(camera or "").strip() != "selfie":
+        return True
+    prompt = str(pose.get("prompt") or "")
+    return not re.search(r"第三人称|摄影机|摄影者", prompt)
+
+
+def _adapt_leg_pose_prompt_for_camera(prompt: str, camera: str) -> str:
+    """Remove third-person wording when a legacy pose is used for a selfie."""
+    if str(camera or "").strip() != "selfie":
+        return prompt
+    adapted = str(prompt or "")
+    replacements = (
+        ("第三人称平视拍摄", "第一人称自然视角平视拍摄"),
+        ("摄影机在台阶正前方平视", "自拍镜头在台阶正前方平视"),
+        ("摄影机从斜前方平视拍摄", "自拍镜头从斜前方平视拍摄"),
+        ("摄影机从人物后方平视拍摄", "画外固定镜头从人物后方平视拍摄"),
+        ("摄影机平视拍摄", "自拍镜头平视拍摄"),
+        ("摄影者完全在画面外", "拍摄设备留在画面外"),
+    )
+    for source, target in replacements:
+        adapted = adapted.replace(source, target)
+    return adapted
+
+
 def _leg_pose_compatible_with_scene(pose: Dict[str, str], scene: str) -> bool:
     scene_text = str(scene or "")
     if not scene_text:
@@ -461,16 +517,23 @@ def _leg_pose_compatible_with_scene(pose: Dict[str, str], scene: str) -> bool:
     return True
 
 
-def pick_leg_focus_pose(*, avoid_id: str = "", preferred_scene: str = "") -> Dict[str, str]:
+def pick_leg_focus_pose(
+    *, avoid_id: str = "", preferred_scene: str = "", camera_kind: str = ""
+) -> Dict[str, str]:
     """Pick one neutral full-length pose, avoiding explicit detail-only views."""
     pool = [
         item for item in LEGFOCUS_POSE_POOL
         if str(item.get("id") or "") not in LEGFOCUS_EXPLICIT_ONLY_POSE_IDS
         and str(item.get("id") or "") != str(avoid_id or "")
         and _leg_pose_compatible_with_scene(item, preferred_scene)
+        and _leg_pose_compatible_with_camera(item, camera_kind)
     ]
     if not pool:
-        pool = list(LEGFOCUS_POSE_POOL)
+        pool = [
+            item for item in LEGFOCUS_POSE_POOL
+            if str(item.get("id") or "") != str(avoid_id or "")
+            and _leg_pose_compatible_with_camera(item, camera_kind)
+        ] or list(LEGFOCUS_POSE_POOL)
     return dict(random.choice(pool))
 
 
@@ -591,12 +654,12 @@ def build_leg_focus_action(
     preferred_scene: str = "",
 ) -> str:
     """Build a complete outfit action for ``看看腿`` with optional local framing."""
-    scene_override_terms = (
-        "卧室", "客厅", "厨房", "书店", "咖啡馆", "咖啡店", "咖啡厅", "街上", "街边",
-        "天台", "海边", "河边", "公园", "阳台", "窗边", "浴室", "走廊", "场景不变", "背景不变",
-    )
-    if any(term in str(extra_request or "") for term in scene_override_terms):
-        preferred_scene = ""
+    explicit_scene = parse_requested_leg_scene(extra_request)
+    pose_scene = explicit_scene or str(preferred_scene or "")
+    schedule_scene = "" if explicit_scene else str(preferred_scene or "")
+    camera_kind = str(force_camera or "").strip()
+    if camera_kind not in {"selfie", "third"}:
+        camera_kind = parse_requested_leg_camera(extra_request)
     forced_pose_id = str(force_pose or "").strip()
     if not forced_pose_id:
         forced_pose_id = parse_requested_leg_pose(extra_request)
@@ -607,7 +670,11 @@ def build_leg_focus_action(
         None,
     )
     if pose is None:
-        pose = pick_leg_focus_pose(avoid_id=avoid_pose, preferred_scene=preferred_scene)
+        pose = pick_leg_focus_pose(
+            avoid_id=avoid_pose,
+            preferred_scene=pose_scene,
+            camera_kind=camera_kind,
+        )
         pose_tag = ""
     pose_bucket = str(pose.get("id") or "sofa_front_crop")
     if not pose_tag:
@@ -620,11 +687,9 @@ def build_leg_focus_action(
         )
         for _ in range(weight)
     ]
-    camera_kind = str(force_camera or "").strip()
-    if camera_kind not in {"selfie", "third"}:
-        camera_kind = parse_requested_leg_camera(extra_request)
     if camera_kind not in {"selfie", "third"}:
         camera_kind = random.choice(camera_bag)
+    pose_prompt = _adapt_leg_pose_prompt_for_camera(pose_prompt, camera_kind)
     requested_framing = str(force_framing or "").strip()
     if requested_framing not in {"full_outfit", "leg_detail"}:
         explicit_detail = bool(LEG_DETAIL_REQUEST_PATTERN.search(extra_request))
@@ -701,7 +766,7 @@ def build_leg_focus_action(
         "【legs:outfit】"
         f"【frame:{requested_framing}】"
         f"【姿势池·{pose.get('title') or '随机姿势'}】{pose_prompt}"
-        f"{'今日日程场景参考：' + preferred_scene + '；腿部姿势已按该场景筛选。' if preferred_scene else ''}"
+        f"{'今日日程场景参考：' + schedule_scene + '；腿部姿势已按该场景筛选。' if schedule_scene else ''}"
         f"{legwear_rule}"
         f"{outfit_rule}"
         f"{anatomy_rules}"

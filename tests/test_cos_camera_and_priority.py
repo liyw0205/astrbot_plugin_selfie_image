@@ -21,6 +21,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_FRAMING_SCENE_COMPATIBILITY,
     COS_FRAMING_CAMERA_COMPATIBILITY,
     COS_LOOK_COMPATIBILITY_EXPANSION,
+    COS_SUBJECT_CLARITY_PROMPT,
     audit_cos_look_catalog,
     build_cos_look_action,
     build_cos_third_person_prompt,
@@ -32,6 +33,11 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     pick_cos_framing,
     pick_cos_camera,
     pick_cos_variation,
+    requests_cos_multi_view_collage,
+    _cos_face_risk_tags,
+    _cos_face_safety_prompt,
+    _cos_unsafe_framings,
+    _cos_unsafe_random_pair,
 )
 from astrbot_plugin_selfie_image.core.providers import ImageReference
 from astrbot_plugin_selfie_image.features.reference_collector import (
@@ -40,6 +46,7 @@ from astrbot_plugin_selfie_image.features.reference_collector import (
 )
 from astrbot_plugin_selfie_image.features.persona import (
     PersonaManager,
+    SELFIE_SNAPSHOT_PRESETS,
     appearance_type_instruction,
     group_style_lines,
 )
@@ -49,7 +56,9 @@ from astrbot_plugin_selfie_image.prompts.selfie_actions import (
     build_third_person_look_action,
     looks_like_selfie_intent,
 )
+from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
 from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
+from astrbot_plugin_selfie_image.prompts.command_parser import extract_prompt_aspect_ratio
 from astrbot_plugin_selfie_image.studio.studio import build_studio_action, empty_session
 
 
@@ -1086,6 +1095,80 @@ def test_cos_scene_style_keeps_the_subject_sharp_unless_soft_focus_is_explicit()
     assert "面部、双眼" not in requested_soft_focus["prompt"]
 
 
+def test_face_safety_contract_covers_the_three_reported_blur_patterns():
+    echidna = _cos_face_safety_prompt(
+        "rezero_echidna_witch_scholar", "greenhouse", "seated_composed", "selfie"
+    )
+    fu_hua = _cos_face_safety_prompt(
+        "hi3_fu_hua_red_sash", "last_train_platform", "seated_composed", "selfie"
+    )
+    luna = _cos_face_safety_prompt(
+        "luna_frost_moon_mirror", "bedroom_window", "overhead_stretch", "third"
+    )
+
+    assert "帽檐阴影不能覆盖面部" in echidna
+    assert "玻璃反光、折射和散射光只出现在背景" in echidna
+    assert "夜间环境必须保留人物面部的有效亮度" in fu_hua
+    assert "自拍坐姿优先使用三分之二身" in fu_hua
+    assert "透明、金属、缎面或高反光服装只保留服装自身的材质高光" in luna
+    assert "逆光只勾勒发丝和肩部轮廓" in luna
+    assert "舒展动作保持稳定定格" in luna
+    assert COS_SUBJECT_CLARITY_PROMPT.split("；", 1)[0] in _cos_face_safety_prompt(
+        "rezero_echidna_witch_scholar", "greenhouse", "seated_composed", "selfie", include_base=True
+    )
+
+
+def test_random_face_blur_combinations_are_filtered_but_explicit_requests_remain_available():
+    assert _cos_unsafe_random_pair(
+        "rezero_echidna_witch_scholar", "greenhouse", "seated_composed", "selfie"
+    )
+    assert _cos_unsafe_random_pair(
+        "hi3_fu_hua_red_sash", "last_train_platform", "seated_composed", "selfie"
+    )
+    assert _cos_unsafe_random_pair(
+        "luna_frost_moon_mirror", "bedroom_window", "overhead_stretch", "third"
+    )
+    assert not _cos_unsafe_random_pair(
+        "rezero_echidna_witch_scholar", "greenhouse", "standing_detail", "selfie"
+    )
+    assert "high_angle_three_quarter" in _cos_unsafe_framings(
+        "greenhouse", "seated_composed", "selfie"
+    )
+    assert "front_half" in _cos_unsafe_framings(
+        "last_train_platform", "seated_composed", "selfie"
+    )
+    assert "environmental" in _cos_unsafe_framings(
+        "bedroom_window", "overhead_stretch", "third"
+    )
+    assert "glass_reflection" in _cos_face_risk_tags(
+        "rezero_echidna_witch_scholar", "greenhouse", "seated_composed", "selfie"
+    )
+
+    explicit = pick_cos_variation(
+        "rezero_echidna_witch_scholar",
+        extra_request="玻璃花房端正坐姿",
+        camera="selfie",
+    )
+    assert explicit["scene_id"] == "greenhouse"
+    assert explicit["pose_id"] == "seated_composed"
+
+
+def test_random_picker_never_emits_the_reported_face_blur_pairs():
+    for look_id, camera in (
+        ("rezero_echidna_witch_scholar", "selfie"),
+        ("hi3_fu_hua_red_sash", "selfie"),
+        ("luna_frost_moon_mirror", "third"),
+    ):
+        for _ in range(120):
+            variation = pick_cos_variation(look_id, camera=camera)
+            assert not _cos_unsafe_random_pair(
+                look_id,
+                variation["scene_id"],
+                variation["pose_id"],
+                camera,
+            )
+
+
 def test_explicit_back_view_adapts_across_selfie_group_and_cos_routes():
     selfie = build_selfie_look_action("背对镜头，卧室")
     third_person = build_third_person_look_action("背对镜头，卧室")
@@ -1363,7 +1446,8 @@ def test_explicit_cos_scene_and_pose_are_not_overridden():
     assert "【cos_scene:bedroom_carpet】" in action
     assert "【cos_pose:kneeling_carpet】" in action
     assert "按用户指定的镜头构图执行" not in action
-    assert "用户补充要求优先：卧室地毯上跪坐" in action
+    assert "用户补充要求优先：卧室地毯上" in action
+    assert "用户补充要求优先：卧室地毯上跪坐" not in action
 
 
 def test_back_look_pose_uses_a_downcast_profile_instead_of_a_full_turn():
@@ -1401,6 +1485,128 @@ def test_random_cos_framing_is_always_selected_when_unspecified():
     explicit = pick_cos_framing(extra_request="COS 换装：竖屏全身构图")
     assert explicit["explicit"] is True
     assert explicit["view_id"] == "user"
+
+
+def test_cos_multi_view_collage_keeps_one_scene_and_distinct_compatible_poses():
+    item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
+    action = build_cos_look_action(
+        "多视角拼贴",
+        picker=lambda **_: item,
+    )
+
+    assert requests_cos_multi_view_collage("多视角拼贴") is True
+    assert requests_cos_multi_view_collage("不要多视角拼贴") is False
+    assert "【cam:third】" in action
+    assert "【cos_view:multi_view_collage】" in action
+    main_framing = re.search(r"【cos_framing:([a-z0-9_]+)】", action).group(1)
+    assert main_framing in COS_FRAMING_CLASSES
+    assert "方形画布" in action
+    assert extract_prompt_aspect_ratio(action) == "1:1"
+    assert "保持上方已确定的单一构图" not in action
+    assert "总数严格为七张独立照片，不增不减" in action
+    assert "自然错落、非对称的七格摄影拼贴" in action
+    assert "中央是一张贯穿画面主要高度的高幅大主图" in action
+    assert "左右分割线高度彼此错开" in action
+    assert "不做表格、九宫格或规则卡片墙" in action
+    assert "中央高幅主画格（大图）" in action
+    assert all(label in action for label in (
+        "左侧小画格1", "左侧小画格2", "左侧小画格3",
+        "右侧小画格1", "右侧小画格2", "右侧小画格3",
+    ))
+
+    variation = pick_cos_variation(
+        item["id"],
+        camera="third",
+        multi_view_collage=True,
+    )
+    assert len(variation["panel_pose_ids"]) == 7
+    assert len(variation["panel_framing_ids"]) == 7
+    assert len(set(zip(variation["panel_pose_ids"], variation["panel_framing_ids"]))) == 7
+    assert variation["main_framing_id"] == variation["panel_framing_ids"][0]
+    assert variation["scene_id"] in COS_RANDOM_SCENE_CLASSES
+    assert set(variation["panel_pose_ids"]) <= set(
+        COS_RANDOM_SCENE_CLASSES[variation["scene_id"]]["pose_ids"]
+    )
+
+
+def test_cos_collage_respects_single_pose_framing_and_camera_constraints():
+    item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
+    explicit_pose = build_cos_look_action(
+        "多视角拼贴，背对镜头",
+        picker=lambda **_: item,
+    )
+    explicit_framing = build_cos_look_action(
+        "多视角拼贴，竖屏全身构图",
+        picker=lambda **_: item,
+    )
+    selfie = build_cos_look_action(
+        "多视角拼贴",
+        camera="selfie",
+        picker=lambda **_: item,
+    )
+    first_person = build_cos_look_action(
+        "多视角拼贴，第一视角",
+        picker=lambda **_: item,
+    )
+
+    assert "【cos_view:multi_view_collage】" not in explicit_pose
+    assert "【cos_view:multi_view_collage】" not in explicit_framing
+    assert "【cos_view:multi_view_collage】" not in selfie
+    assert "【cos_view:multi_view_collage】" not in first_person
+    assert "【cam:third】" in explicit_pose
+    assert "【cam:selfie】" in selfie
+    assert "背对镜头" in explicit_pose
+    assert "单张照片" in explicit_pose
+    assert "用户补充要求优先：多视角拼贴" not in explicit_pose
+
+    negative_request = build_cos_look_action(
+        "不要多视角拼贴",
+        picker=lambda **_: item,
+    )
+    assert "【cos_view:multi_view_collage】" not in negative_request
+
+
+def test_cos_multi_view_collage_is_a_low_weight_random_third_person_view():
+    item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
+
+    def choose_collage_once(values):
+        if values == [False] * 23 + [True]:
+            return True
+        return values[0]
+
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=choose_collage_once,
+    ):
+        action = build_cos_look_action(
+            "",
+            camera="third",
+            picker=lambda **_: item,
+        )
+
+    assert "【cos_view:multi_view_collage】" in action
+
+
+def test_cos_multi_view_collage_supports_all_builtin_costumes():
+    for item in COS_LOOK_SETS:
+        action = build_cos_look_action(
+            "多视角拼贴",
+            picker=lambda **_: item,
+        )
+        assert "【cos_view:multi_view_collage】" in action, item["id"]
+        variation = pick_cos_variation(
+            item["id"],
+            camera="third",
+            multi_view_collage=True,
+        )
+        assert len(variation["panel_pose_ids"]) == 7, item["id"]
+        assert len(set(zip(variation["panel_pose_ids"], variation["panel_framing_ids"]))) == 7, item["id"]
+
+    square_with_user_override = build_cos_look_action(
+        "多视角拼贴，16:9",
+        picker=lambda **_: item,
+    )
+    assert extract_prompt_aspect_ratio(square_with_user_override) == "16:9"
 
 
 def test_cos_framing_alternatives_are_resolved_before_prompt_generation():
@@ -1704,7 +1910,72 @@ def test_selfie_command_cos_request_does_not_use_cos_pool():
     assert "【cos:" not in action
     assert "【自拍 / 看看模式】" in action
     assert len(re.findall(r"【shot:[a-z_]+】", action)) == 1
-    assert action.count("用户补充要求优先：") == 1
+    assert "用户补充要求优先：" not in action
+
+
+def test_generated_selfie_staging_does_not_add_a_second_snapshot_preset():
+    action = build_selfie_look_action(
+        "",
+        scene_light_provider=lambda _kind: (["测试 staging 场景"], ["测试光线"]),
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        prompt = PersonaManager(tmp).build_selfie_prompt(
+            action, "小助", "温柔", False, 0
+        )
+    assert "场景倾向：测试 staging 场景" in prompt
+    for preset in SELFIE_SNAPSHOT_PRESETS:
+        assert preset not in prompt
+
+
+def test_environment_look_does_not_lock_a_conflicting_close_framing():
+    with patch(
+        "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
+        return_value=["env_mid"],
+    ):
+        action = build_third_person_look_action(
+            "",
+            scene_light_provider=lambda _kind: (["测试场景"], ["测试光线"]),
+        )
+    assert "【shot:env_mid】" in action
+    assert "中远景环境人像" in action
+    assert "竖屏手机近景半身" not in action
+    assert "竖屏半身中近景" not in action
+
+
+def test_leg_focus_explicit_scene_filters_pose_pool():
+    bedroom_ids = set()
+    rooftop_ids = set()
+    for seed in range(80):
+        import random
+
+        random.seed(seed)
+        bedroom = build_leg_focus_action("卧室")
+        rooftop = build_leg_focus_action("天台")
+        bedroom_ids.add(re.search(r"【pose:([a-z_]+)】", bedroom).group(1))
+        rooftop_ids.add(re.search(r"【pose:([a-z_]+)】", rooftop).group(1))
+    assert bedroom_ids <= {
+        "sofa_front_crop", "sofa_cross_crop", "sofa_occlusion_crop",
+        "seat_knees_cross_crop",
+    }
+    assert not rooftop_ids & {"sofa_front_crop", "sofa_cross_crop", "sofa_occlusion_crop", "stool_edge_crop"}
+
+
+def test_leg_focus_selfie_does_not_keep_third_person_pose_wording():
+    for seed in range(80):
+        import random
+
+        random.seed(seed)
+        action = build_leg_focus_action("自拍")
+        assert "【cam:selfie】" in action
+        assert not re.search(r"第三人称|摄影机|摄影者", action)
+
+
+def test_group_without_identity_reference_does_not_invent_reference_image_one():
+    action = build_group_selfie_action(
+        "和我合影", has_refs=False, has_identity_reference=False
+    )
+    assert "参考图一" not in action
+    assert "当前角色设定保持主角身份和性别稳定" in action
 
 
 def test_private_hoshino_and_sunna_cos_outfits_are_registered():
