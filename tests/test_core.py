@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.69")
+        self.assertEqual(PLUGIN_VERSION, "1.6.70")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -9046,7 +9046,16 @@ class LegFocusTests(unittest.TestCase):
             [(item["id"], item["title"], item["prompt"]) for item in web_pool],
             [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
         )
-        series_expected = {"碧蓝航线": 10, "蔚蓝档案": 11, "公主连结": 11, "无职转生": 12}
+        series_expected = {
+            "碧蓝航线": 10,
+            "蔚蓝档案": 11,
+            "公主连结": 11,
+            "无职转生": 12,
+            "世界计划 缤纷舞台": 19,
+            "明日方舟": 20,
+            "崩坏3": 20,
+            "Fate": 20,
+        }
         for series, minimum in series_expected.items():
             series_items = [item for item in plugin_main.COS_LOOK_SETS if item["cos_type"] == series]
             self.assertGreaterEqual(len(series_items), minimum)
@@ -10857,14 +10866,22 @@ class StudioStoreTests(unittest.TestCase):
             list_cos_look_sets,
             COS_RANDOM_POSE_CLASSES,
             COS_RANDOM_SCENE_CLASSES,
+            COS_LOOK_COMPATIBILITY_EXPANSION,
         )
 
         from astrbot_plugin_selfie_image.cos.cos_looks import COS_LOOK_SETS
+        shared_scenes = [
+            scene_id for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+            if not scene.get("cos_look_only")
+        ]
         for item in COS_LOOK_SETS:
             profile = cos_look_compatibility(item["id"])
             self.assertTrue(profile["variation_enabled"], item["id"])
-            self.assertEqual(profile["pose_ids"], list(COS_RANDOM_POSE_CLASSES))
-            self.assertEqual(profile["scene_ids"], list(COS_RANDOM_SCENE_CLASSES))
+            self.assertTrue(profile["pose_ids"], item["id"])
+            self.assertTrue(profile["scene_ids"], item["id"])
+            if item["id"] not in COS_LOOK_COMPATIBILITY_EXPANSION:
+                self.assertEqual(profile["pose_ids"], list(COS_RANDOM_POSE_CLASSES))
+                self.assertEqual(profile["scene_ids"], shared_scenes)
             self.assertFalse(profile["fixed_reason"], item["id"])
 
         # Every catalog entry exposes the same stable schema, so dashboard
@@ -10877,6 +10894,7 @@ class StudioStoreTests(unittest.TestCase):
             "recommended_pose_ids",
             "recommended_scene_ids",
             "recommended_view_ids",
+            "recommended_framing_ids",
             "incompatible_pose_ids",
             "incompatible_scene_ids",
             "scene_pose_compatibility",

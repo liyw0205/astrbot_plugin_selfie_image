@@ -20,6 +20,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_POSE_FRAMING_COMPATIBILITY,
     COS_FRAMING_SCENE_COMPATIBILITY,
     COS_FRAMING_CAMERA_COMPATIBILITY,
+    COS_LOOK_COMPATIBILITY_EXPANSION,
     audit_cos_look_catalog,
     build_cos_look_action,
     build_cos_third_person_prompt,
@@ -553,14 +554,21 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
         if "kneeling_carpet" in scene["pose_ids"]
     }
     assert kneeling_scenes == {"bedroom_carpet", "living_room_rug"}
+    shared_scenes = [
+        scene_id for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+        if not scene.get("cos_look_only")
+    ]
     for item in COS_LOOK_SETS:
         profile = cos_look_compatibility(item["id"])
         assert profile["variation_enabled"], item["id"]
-        assert profile["scene_ids"] == list(COS_RANDOM_SCENE_CLASSES)
-        assert profile["pose_ids"] == list(COS_RANDOM_POSE_CLASSES)
+        assert profile["scene_ids"]
+        assert profile["pose_ids"]
+        if item["id"] not in COS_LOOK_COMPATIBILITY_EXPANSION:
+            assert profile["scene_ids"] == shared_scenes
+            assert profile["pose_ids"] == list(COS_RANDOM_POSE_CLASSES)
         assert profile["scene_pose_compatibility"] == {
-            scene_id: list(dict.fromkeys(scene["pose_ids"]))
-            for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+            scene_id: [pose_id for pose_id in dict.fromkeys(COS_RANDOM_SCENE_CLASSES[scene_id]["pose_ids"]) if pose_id in profile["pose_ids"]]
+            for scene_id in profile["scene_ids"]
         }
         assert profile["pose_framing_compatibility"] == {
             pose_id: list(framings)
@@ -607,7 +615,7 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
     }
     actual_back_scenes = {
         scene_id
-        for scene_id, compatible_poses in profile["scene_pose_compatibility"].items()
+        for scene_id, compatible_poses in cos_look_compatibility("custom_cos_id")["scene_pose_compatibility"].items()
         if "back_to_camera" in compatible_poses
     }
     assert actual_back_scenes == expected_back_scenes
@@ -629,6 +637,7 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
         assert scene["pose_ids"]
         assert set(scene["pose_ids"]) <= COS_RANDOM_POSE_CLASSES.keys()
 
+    profile = cos_look_compatibility("roxy_cream")
     for _ in range(100):
         variation = pick_cos_variation("roxy_cream")
         assert variation["pose_id"] in profile["scene_pose_compatibility"][variation["scene_id"]]
@@ -656,6 +665,57 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
     }
     assert "随机场景" in selected["prompt"]
     assert "随机姿势" not in selected["prompt"]
+
+
+def test_expansion_looks_use_curated_scene_pose_and_framing_profiles():
+    from astrbot_plugin_selfie_image.cos.cos_looks import (
+        COS_LOOK_SETS_EXPANSION,
+        pick_cos_framing,
+    )
+
+    assert len(COS_LOOK_SETS_EXPANSION) == 123
+    assert len(COS_LOOK_COMPATIBILITY_EXPANSION) == len(COS_LOOK_SETS_EXPANSION)
+    for look in COS_LOOK_SETS_EXPANSION:
+        profile = cos_look_compatibility(look["id"])
+        expected = COS_LOOK_COMPATIBILITY_EXPANSION[look["id"]]
+        assert profile["scene_ids"] == list(expected["scene_ids"]), look["id"]
+        assert profile["recommended_pose_ids"]
+        assert profile["recommended_view_ids"] == ["selfie", "first", "third"]
+        for camera in ("third", "first", "selfie"):
+            variation = pick_cos_variation(look["id"], camera=camera)
+            assert variation["scene_id"] in profile["scene_ids"], look["id"]
+            assert variation["pose_id"] in profile["recommended_pose_ids"], look["id"]
+            assert variation["pose_id"] in profile["scene_pose_compatibility"][variation["scene_id"]]
+            framing = pick_cos_framing(
+                pose_id=variation["pose_id"],
+                scene_id=variation["scene_id"],
+                camera=camera,
+                allowed_framings=profile["recommended_framing_ids"],
+            )
+            if profile["recommended_framing_ids"]:
+                assert framing["view_id"] in profile["recommended_framing_ids"], look["id"]
+        action = build_cos_look_action(
+            "",
+            picker=lambda item=look, **_: item,
+        )
+        camera = re.search(r"【cam:([a-z]+)】", action).group(1)
+        pose_id = re.search(r"【cos_pose:([a-z0-9_]+)】", action).group(1)
+        scene_id = re.search(r"【cos_scene:([a-z0-9_]+)】", action).group(1)
+        framing_id = re.search(r"【cos_framing:([a-z0-9_]+)】", action).group(1)
+        assert camera in profile["recommended_view_ids"], look["id"]
+        assert scene_id in profile["scene_ids"], look["id"]
+        assert pose_id in profile["scene_pose_compatibility"][scene_id], look["id"]
+        if profile["recommended_framing_ids"]:
+            assert framing_id in profile["recommended_framing_ids"], look["id"]
+    assert match_cos_look_sets("Project SEKAI 星乃一歌")[0]["id"] == "prsk_ichika_leoneed"
+    assert match_cos_look_sets("FGO 伊什塔尔")[0]["id"] == "fate_ishtar_red_gold"
+    explicit_conflict = pick_cos_variation(
+        "style_eclipse_court",
+        extra_request="跪坐",
+        camera="third",
+    )
+    assert explicit_conflict["pose_id"] == "kneeling_carpet"
+    assert explicit_conflict["scene_id"] == "user"
 
 
 def test_pose_and_scene_detection_preserves_explicit_user_staging():
@@ -711,7 +771,7 @@ def test_random_scene_is_uniformly_selected_before_compatible_pose():
         side_effect=choose_final_scene_and_back_pose,
     ):
         selected = pick_cos_variation("custom_cos_id")
-    final_scene_id = list(COS_RANDOM_SCENE_CLASSES)[-1]
+    final_scene_id = cos_look_compatibility("custom_cos_id")["scene_ids"][-1]
     assert selected["scene_id"] == final_scene_id
     assert selected["pose_id"] == "back_to_camera"
     assert selected["pose_id"] != "over_shoulder"

@@ -1716,8 +1716,13 @@ def _apply_cos_negative_normalization() -> None:
 # shared negative contract is appended to them exactly once like every other
 # record.
 from .cos_looks_extra import COS_LOOK_SETS_EXTRA
+from .cos_looks_expansion import (
+    COS_LOOK_COMPATIBILITY_EXPANSION,
+    COS_LOOK_SETS_EXPANSION,
+)
 
 COS_LOOK_SETS.extend(COS_LOOK_SETS_EXTRA)
+COS_LOOK_SETS.extend(COS_LOOK_SETS_EXPANSION)
 
 _apply_cos_negative_normalization()
 
@@ -2060,6 +2065,118 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "style_prompt": "干净硬朗的时装编辑摄影，石灰白空间搭配克制的钴蓝、朱红与芥黄装置色块，天窗侧光和细腻胶片颗粒并存；不改变人物原有媒介质感。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "back_to_camera", "over_shoulder"),
     },
+    "eclipse_observatory": {
+        "title": "日蚀观测台",
+        "aliases": ("日蚀观测台", "日蚀天文台", "日蚀观测廊"),
+        "prompt": "高处天文观测台的封闭观景廊，弧形金属结构与窄幅穹顶天窗构成秩序感，远处天际保持清晰；不直视太阳，不出现文字、游客或悬浮符号。",
+        "style_prompt": "日蚀前后的深靛蓝天光与细窄金色边缘光，古典观测仪器的铜色只作背景细节，克制、清晰，不添加发光光环或雾化。",
+        "pose_ids": ("standing_detail", "half_turn", "leaning_rest", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "undersea_opera_hall": {
+        "title": "深海歌剧厅",
+        "aliases": ("深海歌剧厅", "海底歌剧院", "深海歌剧院"),
+        "prompt": "海底建筑内部的空旷歌剧厅，厚实弧形玻璃窗外是安静深蓝海水与稀疏珊瑚轮廓，室内有暗红座椅和简洁金属栏线；不出现鱼群贴窗、观众、文字或水体进入室内。",
+        "style_prompt": "深海蓝与珊瑚红形成低饱和冷暖对照，玻璃外的柔和水纹只留在背景，人物边缘和服装纹理保持锐利。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "obsidian_workshop": {
+        "title": "黑曜石高定工坊",
+        "aliases": ("黑曜石工坊", "黑曜工坊", "火山黑曜工坊"),
+        "prompt": "安静的黑曜石高定工坊展厅，哑光黑石墙面、赤铜色细线与一张空置工作台构成几何背景；工具收纳在柜内，不出现操作中的机械、火焰或文字。",
+        "style_prompt": "黑曜与熔铜色的硬朗质感配合局部暖色轮廓光，曝光克制，黑色服装仍保留褶皱和材质层次。",
+        "pose_ids": ("standing_detail", "half_turn", "leaning_rest", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "armillary_dome": {
+        "title": "浑天仪穹顶厅",
+        "aliases": ("浑天仪穹顶", "天象仪大厅", "星盘穹顶厅"),
+        "prompt": "安静的圆顶天象仪大厅，中央是一座固定在基座上的大型金属浑天仪，穹顶投影为简洁星轨，地面留出清晰通道；不出现漂浮星体、可读文字、观众或额外道具。",
+        "style_prompt": "深蓝穹顶与黄铜仪器形成沉静的星际歌剧质感，星点稀疏、层次清楚，不用强发光特效或镜面反射。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "stained_glass_hall": {
+        "title": "彩窗拱廊",
+        "aliases": ("彩窗拱廊", "彩窗大厅", "彩玻璃长廊"),
+        "prompt": "高挑石质拱廊的一侧是几何彩色玻璃窗，彩光落在远离人物的地面与墙面，空间简洁干净；不出现宗教徽记、文字、人群或光环。",
+        "style_prompt": "琥珀、钴蓝和深红的彩窗色块与冷灰石材形成清晰对比，光影边界柔和但人物面部与衣料保持准确对焦。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "art_deco_airship_deck": {
+        "title": "装饰艺术飞艇观景舱",
+        "aliases": ("装饰艺术飞艇", "飞艇观景舱", "飞艇沙龙"),
+        "prompt": "装饰艺术风格飞艇的封闭观景舱，黄铜几何窗框、墨绿墙面和宽阔舷窗展现云层与远方城市；不出现驾驶台特写、飞行员、可读仪表文字或开放舱门。",
+        "style_prompt": "墨绿、黄铜与云层银灰的复古装饰艺术影像，窗外天光清晰通透，人物比例自然，不叠加蒸汽朋克机械。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "ice_lake_pavilion": {
+        "title": "冰湖镜面亭",
+        "aliases": ("冰湖镜面亭", "冰湖亭", "冰封湖畔"),
+        "prompt": "冬日冰湖边的玻璃观景亭，冰面纹理和远处雪岭构成清晰纵深，亭内地面干燥并有坚实扶栏；不出现浓雾、破碎冰面、落水或其他人物。",
+        "style_prompt": "冰蓝、银白与深松绿形成高反差冬日色层，冷光清透、细节锐利，避免整体过曝和雪雾遮脸。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "mechanical_greenhouse": {
+        "title": "机械植物温室",
+        "aliases": ("机械植物园", "机械温室", "机械植物温室"),
+        "prompt": "玻璃穹顶植物温室中有少量黄铜叶脉形支架和成片真实绿植，结构固定在花坛边缘并与人物保持距离；不出现机械肢体、缠绕人物的枝条或悬浮花朵。",
+        "style_prompt": "墨绿叶片、黄铜结构和玻璃天光形成精致的新艺术风格，色彩丰富但不过度饱和，人物与服装清晰。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "reach_light", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "lunar_hotel_gallery": {
+        "title": "月面酒店观景廊",
+        "aliases": ("月面酒店", "月面酒店长廊", "月球酒店观景廊"),
+        "prompt": "未来酒店内部的安静观景廊，宽阔圆窗外可见灰白月面与远处地球，室内以银白石材和深色金属线条装饰；不出现宇航服、失重漂浮、文字或设备特写。",
+        "style_prompt": "银白建筑、深空蓝与少量宝石色点缀构成克制的未来高定影像，光线干净，人物保持自然重力和真实比例。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "salt_lake_star_map": {
+        "title": "盐湖星图台地",
+        "aliases": ("盐湖星图", "盐湖星图台地", "月蚀盐湖"),
+        "prompt": "日落后的开阔盐湖台地，浅水薄薄映出暮色与稀疏星点，远方地平线平直清楚，地面坚实可站立；不出现深水、漂浮符号、帐篷或其他人物。",
+        "style_prompt": "赤铜暮色渐入靛蓝夜空，盐晶反光细而克制，保留人物轮廓和服装暗部细节，不使用强烈光晕。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "storm_observation_deck": {
+        "title": "风暴观测站外廊",
+        "aliases": ("风暴观测站", "风暴观测甲板", "海岸观测站"),
+        "prompt": "海岸气象观测站的封闭外廊，厚玻璃窗外是雨后的云层和远海，固定金属栏杆沿墙延伸，地面干燥防滑；不出现雷电击中人物、飞散设备或可读仪表。",
+        "style_prompt": "石墨灰风暴云、冷蓝海面与少量琥珀指示灯构成强烈但自然的冷暖层次，人物曝光稳定、五官清晰。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "empty_opera_house": {
+        "title": "空城歌剧院",
+        "aliases": ("空城歌剧院", "空置歌剧院", "无人歌剧院"),
+        "prompt": "没有观众的古典歌剧院内厅，深酒红座椅、金色包厢栏线和远处空舞台形成纵深，通道整洁；不出现演出人员、镜面、文字或舞台烟雾。",
+        "style_prompt": "酒红天鹅绒、旧金色与银灰舞台余光构成沉静戏剧感，颗粒细腻、曝光清楚，不做恐怖片或废墟效果。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "cliff_cableway_station": {
+        "title": "高崖缆车观景站",
+        "aliases": ("高崖缆车站", "悬崖缆车站", "高空缆车观景台"),
+        "prompt": "山崖上的封闭缆车观景站，远处缆车沿高空索道缓慢经过，安全栏杆与岩壁形成稳定结构；人物站在安全平台内，不出现悬空危险动作、工具散落或其他乘客。",
+        "style_prompt": "高空冷灰岩壁与亮黄安全标识形成简洁工业色块，薄云和远山保留层次，人物曝光自然、比例稳定。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
+    "midnight_runway_hall": {
+        "title": "午夜红毯展厅",
+        "aliases": ("午夜红毯", "午夜红毯展厅", "黑红时装展厅"),
+        "prompt": "午夜时分的空旷时装展厅，黑色石材地面上铺一段暗红短红毯，几何金属立柱和侧向柔光构成纵深；不使用镜面，不出现摄影师、宾客、文字或水晶吊灯。",
+        "style_prompt": "黑红与冷银色构成克制的高级时装影像，边缘光清晰但不过曝，暗色衣料仍能辨认纹理，不产生镜像人物。",
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "side_profile", "back_to_camera"),
+        "cos_look_only": True,
+    },
 }
 
 # These tags guide random scene selection from costume cues; explicit scene
@@ -2097,6 +2214,20 @@ COS_SCENE_THEME_TAGS: Dict[str, frozenset[str]] = {
     "cinema_projection_room": frozenset({"indoor", "cinematic", "night"}),
     "snow_observation_corridor": frozenset({"indoor", "ice", "snow", "winter"}),
     "modern_art_gallery": frozenset({"indoor", "modern", "editorial"}),
+    "eclipse_observatory": frozenset({"indoor", "cosmic", "architecture", "night"}),
+    "undersea_opera_hall": frozenset({"indoor", "marine", "aquatic", "theatrical"}),
+    "obsidian_workshop": frozenset({"indoor", "modern", "industrial", "editorial"}),
+    "armillary_dome": frozenset({"indoor", "cosmic", "theatrical", "architecture"}),
+    "stained_glass_hall": frozenset({"indoor", "classical", "architecture"}),
+    "art_deco_airship_deck": frozenset({"indoor", "historic", "transit", "editorial"}),
+    "ice_lake_pavilion": frozenset({"ice", "snow", "winter", "landscape"}),
+    "mechanical_greenhouse": frozenset({"indoor", "nature", "botanical", "modern"}),
+    "lunar_hotel_gallery": frozenset({"indoor", "cosmic", "modern", "architecture"}),
+    "salt_lake_star_map": frozenset({"arid", "desert", "cosmic", "landscape"}),
+    "storm_observation_deck": frozenset({"coastal", "marine", "rain", "night", "architecture"}),
+    "empty_opera_house": frozenset({"indoor", "theatrical", "classical"}),
+    "cliff_cableway_station": frozenset({"transit", "landscape", "architecture"}),
+    "midnight_runway_hall": frozenset({"indoor", "modern", "editorial", "night"}),
 }
 
 COS_LOOK_THEME_MARKERS: Dict[str, tuple[str, ...]] = {
@@ -2670,6 +2801,7 @@ def pick_cos_framing(
     pose_id: str = "",
     scene_id: str = "",
     camera: str = "third",
+    allowed_framings: Iterable[str] = (),
 ) -> Dict[str, Any]:
     """Pick a concrete framing unless the user's extra request already fixes it."""
     camera = str(camera or "third")
@@ -2715,6 +2847,7 @@ def pick_cos_framing(
             "composition": {},
         }
     avoided = _as_id_set(avoid_framings)
+    look_framings = _as_id_set(allowed_framings)
     random_camera_framings = COS_RANDOM_CAMERA_FRAMING_IDS.get(camera)
     pose_framings = COS_POSE_FRAMING_COMPATIBILITY.get(pose_id)
     orientation = str(COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("orientation") or "")
@@ -2729,6 +2862,7 @@ def pick_cos_framing(
             or (item == "rear_lookback" and pose_id == "over_shoulder")
         )
         and (compatible is None or item in compatible)
+        and (not look_framings or item in look_framings)
         and (
             random_camera_framings is None
             or item in random_camera_framings
@@ -2760,6 +2894,7 @@ def pick_cos_framing(
             item for item in COS_FRAMING_CLASSES
             if item not in COS_EXPLICIT_ONLY_FRAMING_IDS
             and (compatible is None or item in compatible)
+            and (not look_framings or item in look_framings)
             and (
                 random_camera_framings is None
                 or item in random_camera_framings
@@ -2820,24 +2955,44 @@ def pick_cos_framing(
     return selected
 
 def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
-    """Return the common staging pool used across built-in and custom looks."""
-    poses = list(COS_RANDOM_POSE_CLASSES)
-    scenes = list(COS_RANDOM_SCENE_CLASSES)
-    views = ["selfie", "first", "third"]
+    """Return a look-specific staging profile, falling back to the shared pool."""
+    look_id = str(cos_id or "").strip()
+    all_poses = list(COS_RANDOM_POSE_CLASSES)
+    all_scenes = list(COS_RANDOM_SCENE_CLASSES)
+    override = COS_LOOK_COMPATIBILITY_EXPANSION.get(look_id, {})
+    poses = [item for item in override.get("pose_ids", all_poses) if item in COS_RANDOM_POSE_CLASSES]
+    scene_ids = override.get(
+        "scene_ids",
+        (scene_id for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items() if not scene.get("cos_look_only")),
+    )
+    scenes = [
+        item for item in scene_ids
+        if item in COS_RANDOM_SCENE_CLASSES
+        and any(pose_id in poses for pose_id in _scene_pose_ids(COS_RANDOM_SCENE_CLASSES[item]))
+    ]
+    views = [item for item in override.get("camera_ids", ("selfie", "first", "third")) if item in {"selfie", "first", "third"}]
+    framings = list(override.get("framing_ids") or ())
+    scene_pose_compatibility = {
+        scene_id: [pose_id for pose_id in _scene_pose_ids(COS_RANDOM_SCENE_CLASSES[scene_id]) if pose_id in poses]
+        for scene_id in scenes
+    }
+    recommended_poses = [
+        pose_id for pose_id in poses
+        if pose_id not in COS_EXPLICIT_ONLY_POSE_IDS
+        and any(pose_id in scene_poses for scene_poses in scene_pose_compatibility.values())
+    ]
     return {
         "variation_enabled": True,
         "pose_ids": poses,
         "scene_ids": scenes,
         "view_ids": views,
-        "recommended_pose_ids": [item for item in poses if item not in COS_EXPLICIT_ONLY_POSE_IDS],
+        "recommended_pose_ids": recommended_poses,
         "recommended_scene_ids": list(scenes),
         "recommended_view_ids": list(views),
-        "incompatible_pose_ids": [],
-        "incompatible_scene_ids": [],
-        "scene_pose_compatibility": {
-            scene_id: _scene_pose_ids(scene)
-            for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
-        },
+        "recommended_framing_ids": framings,
+        "incompatible_pose_ids": [item for item in all_poses if item not in poses],
+        "incompatible_scene_ids": [item for item in all_scenes if item not in scenes],
+        "scene_pose_compatibility": scene_pose_compatibility,
         "pose_framing_compatibility": {
             pose_id: list(framings)
             for pose_id, framings in COS_POSE_FRAMING_COMPATIBILITY.items()
@@ -2998,6 +3153,8 @@ def pick_cos_variation(
     if not profile["variation_enabled"]:
         return {"pose_id": "", "scene_id": "", "prompt": ""}
 
+    allowed_poses = set(profile["recommended_pose_ids"])
+    allowed_scenes = set(profile["recommended_scene_ids"])
     avoided_poses = _as_id_set(avoid_poses) | _as_id_set(avoid_pose)
     avoided_scenes = _as_id_set(avoid_scenes) | _as_id_set(avoid_scene)
     requested_pose = _requested_cos_pose(extra_request)
@@ -3010,6 +3167,10 @@ def pick_cos_variation(
         scene_id = requested_scene
         scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
         compatible_poses = _scene_pose_ids(scene) if scene else list(profile["recommended_pose_ids"])
+        if scene_id in allowed_scenes:
+            compatible_poses = [item for item in compatible_poses if item in allowed_poses]
+        else:
+            compatible_poses = [item for item in compatible_poses if item not in COS_EXPLICIT_ONLY_POSE_IDS]
         if not requested_pose:
             compatible_poses = _poses_for_orientation(compatible_poses, requested_orientation)
             compatible_poses = _poses_for_camera(compatible_poses, camera)
@@ -3021,20 +3182,26 @@ def pick_cos_variation(
         compatible_scenes = [
             scene_id
             for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+            if scene_id in allowed_scenes
             if requested_pose == "user" or requested_pose in _scene_pose_ids(scene)
         ]
-        available_scenes = [item for item in compatible_scenes if item not in avoided_scenes]
-        weighted_scenes = _weighted_compatible_scene_ids(
-            available_scenes or compatible_scenes,
-            cos_id,
-        )
-        scene_id = random.choice(weighted_scenes or compatible_scenes)
+        if compatible_scenes:
+            available_scenes = [item for item in compatible_scenes if item not in avoided_scenes]
+            weighted_scenes = _weighted_compatible_scene_ids(
+                available_scenes or compatible_scenes,
+                cos_id,
+            )
+            scene_id = random.choice(weighted_scenes or compatible_scenes)
+        else:
+            scene_id = "user"
     else:
         pairs = [
             (scene_id, pose_id)
             for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
+            if scene_id in allowed_scenes
             for pose_id in _scene_pose_ids(scene)
-            if pose_id not in COS_EXPLICIT_ONLY_POSE_IDS
+            if pose_id in allowed_poses
+            and pose_id not in COS_EXPLICIT_ONLY_POSE_IDS
             and pose_id in _poses_for_camera((pose_id,), camera)
         ]
         compatible_scene_ids = set(
@@ -3065,9 +3232,14 @@ def pick_cos_variation(
             candidate_poses = [pair[1] for pair in available_pairs if pair[0] == scene_id]
             pose_id = random.choice(candidate_poses)
         else:
-            candidate_scenes = [scene_id for scene_id in COS_RANDOM_SCENE_CLASSES if scene_id not in avoided_scenes]
-            scene_id = random.choice(candidate_scenes or list(COS_RANDOM_SCENE_CLASSES))
-            pose_id = "user"
+            candidate_scenes = [scene_id for scene_id in allowed_scenes if scene_id not in avoided_scenes]
+            scene_id = random.choice(candidate_scenes or list(allowed_scenes))
+            scene = COS_RANDOM_SCENE_CLASSES[scene_id]
+            candidate_poses = [
+                pose_id for pose_id in _scene_pose_ids(scene)
+                if pose_id in allowed_poses and pose_id in _poses_for_camera((pose_id,), camera)
+            ]
+            pose_id = random.choice(candidate_poses or list(allowed_poses))
 
     scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
 
@@ -3140,12 +3312,18 @@ COS_LOOK_TYPE_ALIASES: Dict[str, tuple[str, ...]] = {
     "公主连结": ("公主连结", "Princess Connect", "princessconnect", "公主连接"),
     "无职转生": ("无职转生", "Mushoku Tensei", "mushokutensei", "无职转生到了异世界就拿出真本事"),
     "从零开始的异世界生活": ("从零开始的异世界生活", "Re:Zero", "Re:ゼロ", "rezero"),
+    "世界计划 缤纷舞台": ("世界计划 缤纷舞台", "Project SEKAI", "Project Sekai", "プロジェクトセカイ", "プロセカ"),
+    "明日方舟": ("明日方舟", "Arknights", "Ark Nights"),
+    "崩坏3": ("崩坏3", "崩坏 3", "Honkai Impact 3rd", "Honkai Impact 3"),
     "埃罗芒阿老师": ("埃罗芒阿老师", "Eromanga Sensei", "eromangasensei"),
     "斗罗大陆": ("斗罗大陆", "Soul Land", "Douluo Dalu", "douluodalu"),
     "王者荣耀": ("王者荣耀", "王者", "honorofkings", "hok"),
     "永劫无间": ("永劫无间", "永劫", "naraka", "narakabladepoint"),
     "原神": ("原神", "genshin", "genshinimpact"),
-    "Fate": ("Fate", "Fate/stay night", "fate stay night"),
+    "Fate": (
+        "Fate", "Fate/stay night", "fate stay night", "Fate/Grand Order", "FGO",
+        "Fate/EXTRA", "Fate/Apocrypha",
+    ),
     "叛逆的鲁鲁修": ("叛逆的鲁鲁修", "Code Geass", "codegeass"),
     "三国杀": ("三国杀", "Sanguosha", "sanguosha"),
     "崩坏：星穹铁道": ("崩坏：星穹铁道", "崩坏星穹铁道", "Honkai Star Rail", "honkaistarrail", "hsr"),
@@ -3244,6 +3422,7 @@ _COS_LOOK_CATEGORY_RANK = {
 _COS_LOOK_SERIES_ORDER = (
     "",
     "碧蓝航线", "蔚蓝档案", "公主连结", "无职转生", "从零开始的异世界生活",
+    "世界计划 缤纷舞台", "明日方舟", "崩坏3",
     "原神", "绝区零", "鸣潮", "王者荣耀", "永劫无间",
     "斗罗大陆", "缘之空", "叛逆的鲁鲁修", "崩坏：星穹铁道", "埃罗芒阿老师",
     "Fate", "三国杀", "Hololive", "永雏塔菲",
@@ -3583,11 +3762,15 @@ def pick_cos_camera(
     avoid: Iterable[str] = (),
     camera: str = "",
     pose_id: str = "",
+    allowed_cameras: Iterable[str] = (),
 ) -> str:
     forced = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
     if forced in {"selfie", "first", "third"}:
         return forced
     choices = ("third", "first", "selfie")
+    allowed = _as_id_set(allowed_cameras)
+    if allowed:
+        choices = tuple(kind for kind in choices if kind in allowed)
     compatible = COS_POSE_CAMERA_COMPATIBILITY.get(pose_id)
     if compatible:
         choices = tuple(kind for kind in choices if kind in compatible)
@@ -3595,7 +3778,7 @@ def pick_cos_camera(
         choices = tuple(kind for kind in choices if kind != "selfie")
     avoided = _as_id_set(avoid)
     available = tuple(kind for kind in choices if kind not in avoided)
-    return random.choice(available or choices)
+    return random.choice(available or choices or ("third",))
 
 
 def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
@@ -3727,6 +3910,7 @@ def build_cos_look_action(
     requested_camera = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
     phone_face_cover = requests_phone_face_cover(extra_request)
     cos_id = str(chosen.get("id") or "cos")
+    look_profile = cos_look_compatibility(cos_id)
     requested_pose = _requested_cos_pose(extra_request)
     pose_avoidance = _as_id_set(avoid_poses)
     if requested_camera == "selfie" and any(
@@ -3739,6 +3923,7 @@ def build_cos_look_action(
         avoid=_as_id_set(avoid_cameras) | _as_id_set(avoid_camera),
         camera=requested_camera,
         pose_id=requested_pose,
+        allowed_cameras=look_profile["recommended_view_ids"],
     )
     variation = pick_cos_variation(
         cos_id,
@@ -3762,6 +3947,7 @@ def build_cos_look_action(
         pose_id=variation["pose_id"],
         scene_id=variation["scene_id"],
         camera=camera_kind,
+        allowed_framings=look_profile["recommended_framing_ids"],
     )
     outfit = framing_choice.get("outfit_text", outfit)
     extra_request = framing_choice.get("extra_request_text", extra_request)
