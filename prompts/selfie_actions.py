@@ -31,6 +31,7 @@ SELFIE_SHOT_POOL = (
 
 SELFIE_SHOT_LINES = {
     "arm_half": "手机自拍臂中近景：手臂自然伸向镜头，头部到腰线入镜，上衣版型与搭配层次清楚，表情松弛。",
+    "timer_half": "画外固定机位定时自拍：手机或支架固定在画面外，主角不持机、不伸手臂向镜头；头部到腰部入镜，手势完整清楚，人物透视自然。",
     "mirror_half": "镜前中近景自拍：头部到胯部上方入镜，手机不挡住主要服装，镜中自然看向手机镜头，展示今日穿搭的上下层次。",
     "mirror_full": "全身镜前穿搭自拍：头部、上衣、下装和鞋履完整入镜，手机自然持握且不遮挡衣服，人物与倒影比例一致。",
     "window_side": "窗边侧光自拍：身体略侧，头部自然转向镜头，头部到腰线或胯部上方入镜，衣服层次清楚。",
@@ -46,7 +47,7 @@ SELFIE_GESTURES = (
     "嘴角轻微笑意",
     "一只手整理发丝或衣领",
     "托腮听人说话的轻松感",
-    "比个很小的 OK 或比心（含蓄）",
+    "一只手比很小的 OK 手势",
     "双手捧杯刚抬眼",
     "刚坐好整理袖口",
 )
@@ -127,6 +128,30 @@ def _requested_staging_orientation(text: str) -> str:
         return "back"
     if any(_has_positive_staging_term(compact, term) for term in ("侧身", "侧面", "侧后方", "侧前方")):
         return "side"
+    return ""
+
+
+def _requested_heart_pose(text: str) -> str:
+    """Return an explicit heart-hand pose without treating negated requests as intent."""
+    compact = re.sub(r"\s+", "", str(text or ""))
+    heart_pattern = re.compile(r"比心|比(?:一|个|一个)?心|(?:爱心|心形)(?:手势)?|手势爱心")
+    negation_pattern = re.compile(
+        r"不要|不需要|不必|不想|不允许|不能|不会|不可|别|避免|禁止|拒绝"
+    )
+    for match in heart_pattern.finditer(compact):
+        clause_start = max(
+            (compact.rfind(mark, 0, match.start()) for mark in "，,。；;！!？?\n"),
+            default=-1,
+        ) + 1
+        context = compact[clause_start : match.start()]
+        context = re.split(r"改成|改为|换成|改用|而是|不过|但是", context)[-1]
+        if negation_pattern.search(context):
+            continue
+        if re.search(r"双手|两手|两只手", context):
+            return "double"
+        if re.search(r"单手|一只手|一手|手指", context):
+            return "single"
+        return random.choice(("single", "double"))
     return ""
 
 
@@ -440,15 +465,18 @@ def build_selfie_look_action(
         )
     scenes, lights = scene_light_provider("selfie")
     explicit_scene = _has_explicit_staging_scene(extra)
-    shot_pool = [item for item in SELFIE_SHOT_POOL if item[0] != avoid_shot]
-    if not shot_pool:
-        shot_pool = list(SELFIE_SHOT_POOL)
     event_context_enabled = bool(
         preferred_scene
         and not explicit_scene
         and not _requested_staging_orientation(extra)
         and not _has_explicit_action_override(extra)
     )
+    heart_pose = _requested_heart_pose(extra) or (
+        _requested_heart_pose(preferred_gesture) if event_context_enabled else ""
+    )
+    shot_pool = [item for item in SELFIE_SHOT_POOL if item[0] != avoid_shot]
+    if not shot_pool:
+        shot_pool = list(SELFIE_SHOT_POOL)
     scene_source = [preferred_scene] if event_context_enabled else scenes
     shot_pool = _shots_supported_by_scenes(
         shot_pool,
@@ -463,7 +491,8 @@ def build_selfie_look_action(
     )
     orientation = _requested_staging_orientation(extra)
     shot = (
-        "back_view" if orientation == "back"
+        "timer_half" if heart_pose
+        else "back_view" if orientation == "back"
         else "side_profile" if orientation == "side"
         else random.choices(
             [name for name, _ in shot_pool],
@@ -488,25 +517,44 @@ def build_selfie_look_action(
             (item for item in scenes if _scene_supports_shot(item, shot)),
             "",
         )
-        gesture = (
-            preferred_gesture
-            if event_context_enabled and preferred_gesture and _daily_action_compatible(preferred_gesture, scene, shot)
-            else _safe_daily_action(gesture_scene, shot, selfie=True)
-        )
+        if heart_pose == "double":
+            gesture = "双手在胸前自然组成清晰完整的爱心，左右手各一只，双臂从肩部自然连接"
+        elif heart_pose == "single":
+            gesture = "一只手在胸前自然比心，另一只手放松垂在身体侧边，双臂从肩部自然连接"
+        else:
+            gesture = (
+                preferred_gesture
+                if event_context_enabled and preferred_gesture and _daily_action_compatible(preferred_gesture, scene, shot)
+                else _safe_daily_action(gesture_scene, shot, selfie=True)
+            )
         light = "" if explicit_light else random.choice(lights)
     rear_view = shot == "back_view"
     side_view = shot == "side_profile"
     full_mirror_view = shot == "mirror_full"
     capture_finishes = SELFIE_MIRROR_FINISHES if shot in {"mirror_half", "mirror_full"} else SELFIE_CANDID_FINISHES
-    capture_finish = random.choice(capture_finishes) if not extra else ""
+    capture_finish = random.choice(capture_finishes) if not extra and not heart_pose else ""
     selfie_framing = (
-        "竖屏全身镜面自拍：人物从头到鞋完整入镜，手机不遮挡今日穿搭；"
-        if full_mirror_view
-        else "竖屏手机中近景半身：画面至少到腰线，优先看清今日上衣和搭配层次；"
+        "竖屏半身构图，头部到腰部入镜，双手手势在胸前完整呈现且不贴近镜头，手部比例自然；"
+        if heart_pose
+        else (
+            "竖屏全身镜面自拍：人物从头到鞋完整入镜，手机不遮挡今日穿搭；"
+            if full_mirror_view
+            else "竖屏手机中近景半身：画面至少到腰线，优先看清今日上衣和搭配层次；"
+        )
     )
     base = (
         "【自拍 / 看看模式】展示 AI 现在的样子。"
         + (
+            "画外固定机位定时自拍，手机与支架均留在画面外，拍摄者不入画。"
+            + (
+                "主角肩线和胸口自然朝向镜头，双手在胸前清楚组成完整爱心；"
+                if heart_pose == "double"
+                else "主角肩线和胸口自然朝向镜头，一只手在胸前比心，另一只手放松垂在身体侧边；"
+            )
+            + "只有正常连接于肩部的两条手臂和两只手，不持机、不伸手臂向镜头，手部比例自然。"
+            "保持面部清晰、肩颈放松、身体比例自然；不要夸张近大远小透视。"
+            if heart_pose
+            else
             "由主角自行启动手机定时拍摄，拍摄者不入画；这是自摄成片，不要求出现手机或自拍手臂。"
             "主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈，也不要求露出正脸；双手放松垂在身侧，不凭空增加栏杆、手机或其他道具。"
             "保持竖屏半身中近景与自然透视，重点呈现背面发型和当前穿搭；不要美颜滤镜、不要棚拍精修。"

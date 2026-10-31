@@ -1243,6 +1243,19 @@ def test_llm_image_detection_sends_explicit_look_modes_to_selfie_flow():
     assert not looks_like_selfie_intent("看看这张城市夜景照片")
 
 
+def test_llm_selfie_double_heart_uses_the_offscreen_timer_builder():
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    with tempfile.TemporaryDirectory() as tmp:
+        plugin = object.__new__(SelfieImagePlugin)
+        plugin.persona = PersonaManager(tmp)
+        action, _, _ = plugin._prepare_llm_selfie_action("【LLM 自拍】双手比心", False)
+
+    assert "【shot:timer_half】" in action
+    assert "手机与支架均留在画面外" in action
+    assert "双手在胸前自然组成清晰完整的爱心" in action
+
+
 def test_random_cos_scene_bundles_include_a_distinct_visual_treatment():
     japanese_room = pick_cos_variation("test", extra_request="和风室内")
     assert japanese_room["scene_id"] == "japanese_ink_room"

@@ -189,6 +189,70 @@ def test_daily_side_event_uses_side_camera_without_forcing_face_turn() -> None:
     assert "不回头硬露正脸" in action
 
 
+def test_double_heart_selfie_uses_offscreen_timer_and_overrides_daily_action() -> None:
+    action = build_selfie_look_action(
+        "双手比心",
+        scene_light_provider=lambda _kind: (["窗边沙发"], ["窗光"]),
+        preferred_scene="书桌前",
+        preferred_gesture="刚坐好整理袖口",
+    )
+
+    assert "【shot:timer_half】" in action
+    assert "画外固定机位定时自拍" in action
+    assert "双手在胸前自然组成清晰完整的爱心" in action
+    assert "小动作：双手在胸前自然组成清晰完整的爱心" in action
+    assert "整理袖口" not in action
+    assert "手臂自然伸向镜头" not in action
+    assert "自己举机或镜前自拍" not in action
+    assert "手机与支架均留在画面外" in action
+
+
+def test_single_heart_selfie_leaves_the_other_hand_free_and_normal_selfie_keeps_arm_shot() -> None:
+    single = build_selfie_look_action(
+        "单手比心",
+        scene_light_provider=lambda _kind: (["浅色墙与窗边"], ["窗光"]),
+    )
+    assert "【shot:timer_half】" in single
+    assert "一只手在胸前自然比心，另一只手放松垂在身体侧边" in single
+    assert "双手在胸前清楚组成完整爱心" not in single
+    assert "手臂自然伸向镜头" not in single
+
+    with patch(
+        "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
+        return_value=["arm_half"],
+    ):
+        ordinary = build_selfie_look_action(
+            scene_light_provider=lambda _kind: (["浅色墙与窗边"], ["窗光"]),
+        )
+    assert "【shot:arm_half】" in ordinary
+
+    with patch(
+        "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
+        return_value=["arm_half"],
+    ):
+        negated_actions = [
+            build_selfie_look_action(
+                request,
+                scene_light_provider=lambda _kind: (["浅色墙与窗边"], ["窗光"]),
+            )
+            for request in ("不要比心", "不要双手在胸前比心", "不要一只手比心")
+        ]
+    assert all("【shot:arm_half】" in action for action in negated_actions)
+    assert all("指定比心动作" not in action for action in negated_actions)
+
+
+def test_daily_heart_gesture_uses_timer_shot_without_competing_pose() -> None:
+    action = build_selfie_look_action(
+        scene_light_provider=lambda _kind: (["咖啡馆座位"], ["窗光"]),
+        preferred_scene="咖啡馆座位",
+        preferred_gesture="双手在胸前比心",
+    )
+
+    assert "【shot:timer_half】" in action
+    assert "小动作：双手在胸前自然组成清晰完整的爱心" in action
+    assert "手机随手拍质感" not in action
+
+
 def test_reference_driven_selfie_does_not_inject_daily_schedule(tmp_path) -> None:
     from astrbot_plugin_selfie_image.features.persona import PersonaManager, local_date_key
 
