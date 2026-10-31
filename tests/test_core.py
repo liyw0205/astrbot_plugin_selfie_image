@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.70")
+        self.assertEqual(PLUGIN_VERSION, "1.6.72")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -10583,7 +10583,7 @@ class StudioStoreTests(unittest.TestCase):
         for need in (
             "捧脸", "遮脸", "变真人", "变动漫", "变猫娘", "变Q版", "变像素",
             "果冻化", "真人化", "变COS",
-            "漫画封面", "证件照", "男友视角", *structure_presets,
+            "漫画封面", "证件照", "男友视角", "巨大化", "蚊子视角", *structure_presets,
         ):
             self.assertIn(need, gnames)
         special = special_prompt_presets()
@@ -10608,6 +10608,17 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("一对与头部自然连接的猫耳", seed["变猫娘"]["prompt"])
         self.assertIn("Q版动漫角色", seed["变Q版"]["prompt"])
         self.assertIn("像素画风", seed["变像素"]["prompt"])
+        giant = seed["巨大化"]["prompt"]
+        self.assertIn("第1张参考图片中的人物为唯一主体", giant)
+        self.assertIn("城市建筑高度约为人物身高的三分之一", giant)
+        self.assertIn("仰视低角度、斜侧方视角", giant)
+        self.assertIn("市中心遭到不明生物入侵", giant)
+        self.assertIn("16:9横屏比例", giant)
+        mosquito = seed["蚊子视角"]["prompt"]
+        self.assertIn("重点放大双眼", mosquito)
+        self.assertIn("鼻尖保持自然比例", mosquito)
+        self.assertIn("低机位第一人称仰拍", mosquito)
+        self.assertIn("9:16竖屏比例", mosquito)
         lou = seed["漏腰"]["prompt"]
         self.assertIn("原有上衣", lou)
         self.assertIn("下摆缩短", lou)
