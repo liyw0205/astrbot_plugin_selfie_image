@@ -1868,7 +1868,7 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "title": "庭院小径",
         "aliases": ("庭院", "花园", "小径", "庭院小路", "树下"),
         "prompt": "安静整洁的庭院小径，少量绿植作为自然背景，人物仍是画面主体。",
-        "style_prompt": "低饱和自然电影感，树叶透光形成零散光斑，浅绿与灰白过渡柔和，带轻微胶片褪色。",
+        "style_prompt": "自然电影静帧，树叶透光只在背景形成少量清楚的光斑；浅绿与灰白保持层次，明暗反差适中，人物面部、眼睛、发丝和服装纹理准确对焦，不做整体柔焦或褪色雾化。",
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "reach_light", "over_shoulder", "back_to_camera", "overhead_stretch"),
     },
     "bamboo_garden": {
@@ -1966,7 +1966,7 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "title": "和风墨花室内",
         "aliases": ("和风室内", "和室", "日式房间", "墨花", "墨花屏风"),
         "prompt": "简洁的和风室内，木格门、榻榻米或素色屏风形成安静背景，点缀一幅水墨花枝装饰，不出现文字或额外人物。",
-        "style_prompt": "古早DV录像静帧，低灰度柔和配色、冷蓝色偏、明显胶片颗粒和梦核抓拍的朦胧感；面部和露出皮肤微微过曝，妆容饱和度保留，五官边缘仍清晰。",
+        "style_prompt": "古早DV录像静帧，低灰度柔和配色与克制冷蓝色偏，明显但细腻的胶片颗粒；梦核抓拍的朦胧感仅由背景虚化、边缘柔光和轻微高光晕形成。人物面部保持正常曝光、不柔焦，双眼、眉眼鼻唇轮廓、发丝和皮肤纹理清楚对焦，妆容饱和度保留；避免整体失焦、面部泛白或五官细节丢失。",
         "pose_ids": ("standing_detail", "half_turn", "seated_composed", "leaning_rest", "reach_light", "over_shoulder"),
     },
     "old_city_rooftop": {
@@ -2037,7 +2037,7 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "aliases": ("红岩峡谷", "峡谷观景台", "红岩观景台", "峡谷高台"),
         "prompt": "红岩峡谷高处的宽阔观景台，层叠岩壁与蓝灰远山构成辽阔纵深；人物位于坚实平台内侧，不靠近崖边，不出现游客、标牌或帐篷。",
         "style_prompt": "赤褐岩层与蓝灰山影形成冷暖撞色，斜向夕光勾勒岩壁纹理；旅行杂志胶片摄影质感，色彩有张力但不整体偏橙，人物肤色自然。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "one_knee_crouch", "back_to_camera", "over_shoulder"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "back_to_camera", "over_shoulder"),
     },
     "cinema_projection_room": {
         "title": "老电影院放映间",
@@ -2061,6 +2061,66 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "pose_ids": ("standing_detail", "half_turn", "walking_turn", "back_to_camera", "over_shoulder"),
     },
 }
+
+# These tags guide random scene selection from costume cues; explicit scene
+# requests still take precedence over all inferred preferences.
+COS_SCENE_THEME_TAGS: Dict[str, frozenset[str]] = {
+    "bedroom_carpet": frozenset({"indoor", "domestic", "soft_ground"}),
+    "bedroom_window": frozenset({"indoor", "domestic"}),
+    "photo_studio": frozenset({"indoor", "neutral", "editorial"}),
+    "living_room_rug": frozenset({"indoor", "domestic", "soft_ground"}),
+    "garden_walkway": frozenset({"nature", "botanical"}),
+    "bamboo_garden": frozenset({"nature", "botanical", "traditional"}),
+    "cherry_blossom_path": frozenset({"nature", "botanical", "floral", "spring"}),
+    "seaside_boardwalk": frozenset({"coastal", "marine", "nature"}),
+    "rooftop_sunset": frozenset({"urban", "rooftop", "sunset"}),
+    "old_town_lane": frozenset({"urban", "historic", "traditional"}),
+    "rainy_neon_street": frozenset({"urban", "night", "neon"}),
+    "library_wood": frozenset({"indoor", "academic", "wood"}),
+    "museum_hall": frozenset({"indoor", "classical", "architecture"}),
+    "cafe_corner": frozenset({"indoor", "urban", "casual"}),
+    "festival_lantern": frozenset({"traditional", "night", "festival"}),
+    "stone_staircase": frozenset({"architecture", "classical", "stone"}),
+    "greenhouse": frozenset({"indoor", "nature", "botanical"}),
+    "snowy_courtyard": frozenset({"ice", "snow", "winter", "nature"}),
+    "japanese_ink_room": frozenset({"indoor", "traditional", "japanese"}),
+    "old_city_rooftop": frozenset({"urban", "rooftop", "daylight"}),
+    "aquarium_tunnel": frozenset({"indoor", "marine", "aquatic"}),
+    "greenhouse_storm": frozenset({"indoor", "nature", "botanical", "rain", "night"}),
+    "skybridge_after_rain": frozenset({"indoor", "urban", "rain", "night"}),
+    "last_train_platform": frozenset({"urban", "transit", "night"}),
+    "theater_stage_wing": frozenset({"indoor", "theatrical", "night"}),
+    "planetarium_dome": frozenset({"indoor", "cosmic", "night"}),
+    "sea_cliff_lighthouse": frozenset({"coastal", "marine", "nature"}),
+    "spiral_archive": frozenset({"indoor", "historic", "architecture"}),
+    "red_rock_canyon": frozenset({"arid", "desert", "landscape"}),
+    "cinema_projection_room": frozenset({"indoor", "cinematic", "night"}),
+    "snow_observation_corridor": frozenset({"indoor", "ice", "snow", "winter"}),
+    "modern_art_gallery": frozenset({"indoor", "modern", "editorial"}),
+}
+
+COS_LOOK_THEME_MARKERS: Dict[str, tuple[str, ...]] = {
+    "ice": ("冰雪", "融雪", "冰霜", "冰晶", "冰瀑", "寒瀑", "霜凝雪", "雪花", "雪之"),
+    "floral": ("樱花", "花瓣", "雏菊", "花朵", "兰花", "花枝", "花卉", "牡丹", "莲花", "蔷薇", "玫瑰"),
+    "marine": ("海浪", "巡浪", "鲨鱼主题", "海洋", "水手服", "泳装", "水着", "珊瑚", "海军", "海岛", "贝壳"),
+    "traditional": ("汉服", "和风", "旗袍", "古风", "古装", "巫女", "唐制", "明制", "日式", "忍者", "改良古风"),
+    "futuristic": ("未来感", "机甲", "赛博", "机械", "电子徽章", "科幻", "科技", "战术"),
+}
+
+COS_LOOK_SCENE_THEME_CONFLICTS = {
+    "ice": frozenset({"arid", "desert"}),
+}
+
+COS_SUBJECT_CLARITY_PROMPT = (
+    "人物面部、双眼、发丝轮廓与服装纹理清晰对焦，曝光自然、五官细节可辨；"
+    "胶片颗粒、色调、柔光或景深效果只作用于氛围与背景，不得抹平或模糊人物主体；"
+    "避免整体雾化、磨皮、低对比失焦和运动模糊。"
+)
+
+COS_EXPLICIT_SOFT_FOCUS_TERMS = (
+    "面部柔焦", "脸部柔焦", "面部虚化", "脸部虚化", "主体虚化", "人物失焦",
+    "故意失焦", "人物运动模糊", "面部运动模糊",
+)
 
 COS_POSE_REQUEST_ALIASES = {
     "kneeling_carpet": ("跪坐在柔软地毯上", "跪坐在地毯上", "跪坐在地毯", "地毯跪坐", "跪坐在", "跪坐", "跪姿", "跪着", "跪在"),
@@ -2214,7 +2274,7 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
     },
     "side_profile": {
         "title": "自然侧面人像",
-        "prompt": "侧面或侧后三分之四机位，人物肩线、胯部和头部朝向连贯，不要求回头露出正脸",
+        "prompt": "镜头从人物侧面或侧后方拍摄，肩线、胯部与面部朝向保持一致；头部顺着躯干方向自然转动，颈部保持放松连贯，不回头、不回眸、不为展示正脸单独扭脸；允许自然侧脸，远侧五官按透视自然遮挡",
     },
     "rear_three_quarter": {
         "title": "背后偏侧中景",
@@ -2226,7 +2286,7 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
     },
     "rear_low_hero": {
         "title": "背面轻仰拍全身",
-        "prompt": "从人物膝盖附近略低处以正常焦段轻微仰拍背面全身构图；人物背对镜头，肩线、胯部和头部朝向一致，头部保持正向，不回头、不回眸、不扭转颈部；完整保留头部、双肩、服装后侧和双脚，人物比例自然，不贴近腿部、不使用超广角、不从臀部近距离仰拍，不出现肩颈扭曲或额外肢体",
+        "prompt": "从人物膝盖附近略低处以正常焦段轻微仰拍背面全身构图；人物背对镜头，肩线、胯部和头部朝向一致，头部保持正向，不回头、不回眸、不扭转颈部；完整保留头部、双肩、服装后侧和双脚；仰拍带来的腿部自然显长透视可以保留，同时保持肩部至腰胯的躯干纵向长度自然完整，不压缩上身、不把腰线抬高到胸下，躯干与腿部衔接协调；不贴近腿部、不使用超广角、不从臀部近距离仰拍，不出现肩颈扭曲或额外肢体",
     },
     "rear_lookback": {
         "title": "轻微侧后方回眸",
@@ -2309,7 +2369,7 @@ COS_POSE_FRAMING_COMPATIBILITY["relaxed_recline"] += ("high_angle_oblique",)
 COS_RANDOM_COMPOSITION_CLASSES: Dict[str, Dict[str, Any]] = {
     "asymmetric_negative_space": {
         "title": "非对称留白",
-        "prompt": "采用非对称构图，人物位于画面左侧或右侧三分之一处，另一侧留出有层次的场景空间；视线或身体方向自然引向留白，不裁断头部、手部或服装主体",
+        "prompt": "采用非对称构图，人物位于画面左侧或右侧三分之一处，另一侧留出有层次的场景空间；通过人物位置和背景纵深形成视觉平衡，不改变已选姿势、镜头视角或头部朝向，不为指向留白单独转头、回眸或扭颈；不裁断头部、手部或服装主体",
     },
     "telephoto_compression": {
         "title": "长焦空间压缩",
@@ -2872,6 +2932,57 @@ def _cos_pose_prompt_for_camera(pose_id: str, camera: str) -> str:
     return str(COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("prompt") or "")
 
 
+def _cos_look_theme_tags(cos_id: str) -> set[str]:
+    look = get_cos_look_by_id(cos_id)
+    if not look:
+        return set()
+    clauses = re.split(r"[。；;\n]", str(look.get("prompt") or ""))
+    positive_prompt = " ".join(
+        clause for clause in clauses
+        if not re.search(r"不要|禁止|避免|不出现|不添加", clause)
+    )
+    description = f"{look.get('title') or ''} {positive_prompt}"
+    return {
+        theme
+        for theme, markers in COS_LOOK_THEME_MARKERS.items()
+        if any(marker in description for marker in markers)
+    }
+
+
+def _weighted_compatible_scene_ids(scene_ids: Iterable[str], cos_id: str) -> List[str]:
+    available = list(dict.fromkeys(scene_ids))
+    look_themes = _cos_look_theme_tags(cos_id)
+    if not available or not look_themes:
+        return available
+
+    compatible = [
+        scene_id for scene_id in available
+        if all(
+            not (COS_LOOK_SCENE_THEME_CONFLICTS.get(look_theme, frozenset()) & COS_SCENE_THEME_TAGS.get(scene_id, frozenset()))
+            for look_theme in look_themes
+        )
+    ]
+    if not compatible:
+        compatible = available
+
+    preferred = [
+        scene_id for scene_id in compatible
+        if look_themes & COS_SCENE_THEME_TAGS.get(scene_id, frozenset())
+    ]
+    other = [scene_id for scene_id in compatible if scene_id not in preferred]
+    if not preferred or not other:
+        return compatible
+
+    # Keep compatible alternatives in rotation, while making coherent matches
+    # the normal outcome rather than an occasional accident.
+    repetitions = max(1, (2 * len(other) + len(preferred) - 1) // len(preferred))
+    return [*([scene_id for scene_id in preferred for _ in range(repetitions)]), *other]
+
+
+def _requests_explicit_soft_focus(text: str) -> bool:
+    return any(_has_positive_request(text, term) for term in COS_EXPLICIT_SOFT_FOCUS_TERMS)
+
+
 def pick_cos_variation(
     cos_id: str,
     *,
@@ -2913,7 +3024,11 @@ def pick_cos_variation(
             if requested_pose == "user" or requested_pose in _scene_pose_ids(scene)
         ]
         available_scenes = [item for item in compatible_scenes if item not in avoided_scenes]
-        scene_id = random.choice(available_scenes or compatible_scenes)
+        weighted_scenes = _weighted_compatible_scene_ids(
+            available_scenes or compatible_scenes,
+            cos_id,
+        )
+        scene_id = random.choice(weighted_scenes or compatible_scenes)
     else:
         pairs = [
             (scene_id, pose_id)
@@ -2922,6 +3037,10 @@ def pick_cos_variation(
             if pose_id not in COS_EXPLICIT_ONLY_POSE_IDS
             and pose_id in _poses_for_camera((pose_id,), camera)
         ]
+        compatible_scene_ids = set(
+            _weighted_compatible_scene_ids((scene_id for scene_id, _ in pairs), cos_id)
+        )
+        pairs = [pair for pair in pairs if pair[0] in compatible_scene_ids]
         if requested_orientation:
             pairs = [
                 pair for pair in pairs
@@ -2941,7 +3060,8 @@ def pick_cos_variation(
             available_pairs = pairs
         if available_pairs:
             candidate_scenes = list(dict.fromkeys(pair[0] for pair in available_pairs))
-            scene_id = random.choice(candidate_scenes)
+            weighted_scenes = _weighted_compatible_scene_ids(candidate_scenes, cos_id)
+            scene_id = random.choice(weighted_scenes or candidate_scenes)
             candidate_poses = [pair[1] for pair in available_pairs if pair[0] == scene_id]
             pose_id = random.choice(candidate_poses)
         else:
@@ -2963,6 +3083,8 @@ def pick_cos_variation(
         )
     if scene and scene.get("style_prompt") and not _requested_cos_style(extra_request):
         prompt_parts.append("本次场景影像风格：" + scene["style_prompt"])
+    if scene and not _requests_explicit_soft_focus(extra_request):
+        prompt_parts.append(COS_SUBJECT_CLARITY_PROMPT)
     if pose_id in COS_RANDOM_POSE_CLASSES and (not requested_pose or pose_id == "over_shoulder"):
         pose_prefix = (
             "本次回眸姿势按以下细节执行："
@@ -3675,7 +3797,7 @@ def build_cos_look_action(
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或第二台拍摄设备；"
             "若套装姿势已明确占用双手或不宜举手机，保留原姿势和道具，不额外添加手机，也不强行遮脸。"
             if phone_face_cover
-            else "摄影师在画面外；主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然，摄影师不入画；未明确要求遮脸时保持面部和服装清晰可见。"
+            else "摄影师在画面外；主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然，摄影师不入画；未明确要求遮脸时保持面部和服装清晰可辨，严格遵循已选机位与姿势呈现面部；侧脸按自然透视呈现，不为露出正脸强行扭头或扭颈。"
         )
         framing = (
             "【他拍 / 看看COS模式】"

@@ -11,6 +11,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_LOOK_SETS,
     COS_RANDOM_POSE_CLASSES,
     COS_RANDOM_SCENE_CLASSES,
+    COS_SCENE_THEME_TAGS,
     COS_RANDOM_COMPOSITION_CLASSES,
     COS_RANDOM_CAMERA_POSE_IDS,
     COS_RANDOM_CAMERA_FRAMING_IDS,
@@ -778,6 +779,8 @@ def test_back_view_can_use_a_controlled_low_angle_only_in_third_person():
     assert "全身或三分之二身" not in selected["prompt"]
     assert "肩线、胯部和头部朝向一致" in selected["prompt"]
     assert "不回头、不回眸、不扭转颈部" in selected["prompt"]
+    assert "腿部自然显长透视可以保留" in selected["prompt"]
+    assert "不压缩上身、不把腰线抬高到胸下" in selected["prompt"]
     assert "不使用超广角" in selected["prompt"]
 
     for _ in range(20):
@@ -787,6 +790,32 @@ def test_back_view_can_use_a_controlled_low_angle_only_in_third_person():
         }
         assert first_person["view_id"] != "rear_low_hero"
         assert first_person["view_id"] != "environmental"
+
+
+def test_side_profile_and_negative_space_do_not_force_a_head_turn():
+    def choose_side_profile(values):
+        if "side_profile" in values:
+            return "side_profile"
+        if "asymmetric_negative_space" in values:
+            return "asymmetric_negative_space"
+        return values[0]
+
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=choose_side_profile,
+    ):
+        selected = pick_cos_framing(
+            pose_id="one_knee_crouch",
+            scene_id="greenhouse",
+            camera="third",
+        )
+
+    assert selected["view_id"] == "side_profile"
+    assert "肩线、胯部与面部朝向保持一致" in selected["prompt"]
+    assert "不为展示正脸单独扭脸" in selected["prompt"]
+    composition = selected["composition"]
+    assert composition["composition_id"] == "asymmetric_negative_space"
+    assert "不为指向留白单独转头、回眸或扭颈" in composition["prompt"]
 
 
 def test_low_angle_hero_is_reserved_for_open_scenes():
@@ -960,6 +989,41 @@ def test_new_scene_uses_its_bound_style_unless_the_user_supplies_one():
     )
     assert explicit_style["scene_id"] == "aquarium_tunnel"
     assert scene["style_prompt"] not in explicit_style["prompt"]
+
+
+def test_costume_themes_guide_random_scenes_without_overriding_explicit_scenes():
+    assert set(COS_SCENE_THEME_TAGS) == set(COS_RANDOM_SCENE_CLASSES)
+
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
+        icy_look = pick_cos_variation("zipingyin_melted_snow")
+        marine_look = pick_cos_variation("mualani_surfing_wave")
+        explicit_canyon = pick_cos_variation(
+            "zipingyin_melted_snow",
+            extra_request="红岩峡谷",
+        )
+
+    assert icy_look["scene_id"] in {"snowy_courtyard", "snow_observation_corridor"}
+    assert icy_look["scene_id"] != "red_rock_canyon"
+    assert marine_look["scene_id"] in {
+        "seaside_boardwalk", "aquarium_tunnel", "sea_cliff_lighthouse",
+    }
+    assert explicit_canyon["scene_id"] == "red_rock_canyon"
+
+
+def test_cos_scene_style_keeps_the_subject_sharp_unless_soft_focus_is_explicit():
+    garden = pick_cos_variation("custom_cos_id", extra_request="庭院小径")
+    assert "不做整体柔焦或褪色雾化" in COS_RANDOM_SCENE_CLASSES["garden_walkway"]["style_prompt"]
+    assert "双眼" in garden["prompt"]
+    assert "不得抹平或模糊人物主体" in garden["prompt"]
+
+    requested_soft_focus = pick_cos_variation(
+        "custom_cos_id",
+        extra_request="庭院小径，面部柔焦",
+    )
+    assert "面部、双眼" not in requested_soft_focus["prompt"]
 
 
 def test_explicit_back_view_adapts_across_selfie_group_and_cos_routes():
@@ -1184,6 +1248,9 @@ def test_random_cos_scene_bundles_include_a_distinct_visual_treatment():
     assert japanese_room["scene_id"] == "japanese_ink_room"
     assert "古早DV录像静帧" in japanese_room["prompt"]
     assert "冷蓝色偏" in japanese_room["prompt"]
+    assert "梦核抓拍的朦胧感仅由背景虚化、边缘柔光和轻微高光晕形成" in japanese_room["prompt"]
+    assert "人物面部保持正常曝光、不柔焦" in japanese_room["prompt"]
+    assert "面部和露出皮肤微微过曝" not in japanese_room["prompt"]
 
     rooftop = pick_cos_variation("test", extra_request="老旧楼群天台")
     assert rooftop["scene_id"] == "old_city_rooftop"
