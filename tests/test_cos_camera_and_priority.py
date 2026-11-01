@@ -21,6 +21,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_FRAMING_SCENE_COMPATIBILITY,
     COS_FRAMING_CAMERA_COMPATIBILITY,
     COS_LOOK_COMPATIBILITY_EXPANSION,
+    COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
     COS_SUBJECT_CLARITY_PROMPT,
     audit_cos_look_catalog,
     build_cos_look_action,
@@ -567,12 +568,15 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
         scene_id for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
         if not scene.get("cos_look_only")
     ]
+    configured_look_ids = set(COS_LOOK_COMPATIBILITY_EXPANSION) | set(
+        COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS
+    )
     for item in COS_LOOK_SETS:
         profile = cos_look_compatibility(item["id"])
         assert profile["variation_enabled"], item["id"]
         assert profile["scene_ids"]
         assert profile["pose_ids"]
-        if item["id"] not in COS_LOOK_COMPATIBILITY_EXPANSION:
+        if item["id"] not in configured_look_ids:
             assert profile["scene_ids"] == shared_scenes
             assert profile["pose_ids"] == list(COS_RANDOM_POSE_CLASSES)
         assert profile["scene_pose_compatibility"] == {
@@ -1088,11 +1092,50 @@ def test_cos_scene_style_keeps_the_subject_sharp_unless_soft_focus_is_explicit()
     assert "双眼" in garden["prompt"]
     assert "不得抹平或模糊人物主体" in garden["prompt"]
 
+    ink_room = pick_cos_variation("custom_cos_id", extra_request="和风室内")
+    assert "朦胧感仅由背景虚化、边缘柔光和轻微高光晕形成" in ink_room["prompt"]
+    assert "人物面部保持正常曝光、不柔焦" in ink_room["prompt"]
+    assert COS_SUBJECT_CLARITY_PROMPT in ink_room["prompt"]
+
+    requested_dreamcore = pick_cos_variation(
+        "custom_cos_id",
+        extra_request="和风室内，梦核朦胧感",
+    )
+    assert COS_SUBJECT_CLARITY_PROMPT in requested_dreamcore["prompt"]
+    assert "梦核抓拍的朦胧感仅由背景虚化" not in requested_dreamcore["prompt"]
+
     requested_soft_focus = pick_cos_variation(
         "custom_cos_id",
         extra_request="庭院小径，面部柔焦",
     )
     assert "面部、双眼" not in requested_soft_focus["prompt"]
+
+
+def test_ccd_sleepwear_cos_look_keeps_camera_and_pose_in_the_shared_random_pools():
+    look = next(
+        item for item in COS_LOOK_SETS
+        if item["id"] == "original_ccd_sleepwear_overknees"
+    )
+    prompt = look["prompt"]
+
+    assert look["cos_type"] == "原创COS"
+    assert "成年女性" in prompt
+    assert "灰色居家睡衣" in prompt
+    assert "黑色哑光不透明过膝袜" in prompt
+    assert "低像素家用CCD快照质感" in prompt
+    assert "面部若入镜则双眼与五官正常曝光、清晰对焦" in prompt
+    assert not any(term in prompt for term in (
+        "背对镜头", "不露脸", "手机前置摄像头", "1:1", "2:3", "睡在床铺里",
+    ))
+
+    profile = cos_look_compatibility(look["id"])
+    shared_profile = cos_look_compatibility("custom_cos_id")
+    assert profile["recommended_view_ids"] == ["selfie", "first", "third"]
+    assert profile["recommended_pose_ids"] == shared_profile["recommended_pose_ids"]
+    assert profile["recommended_scene_ids"] == shared_profile["recommended_scene_ids"]
+
+    variation = pick_cos_variation(look["id"], camera="third")
+    assert COS_SUBJECT_CLARITY_PROMPT in variation["prompt"]
 
 
 def test_face_safety_contract_covers_the_three_reported_blur_patterns():

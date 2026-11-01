@@ -1642,6 +1642,7 @@ _COS_ANIME_NEGATIVE_PROMPT = (
     "不要额外人物、文字、字幕或水印；禁止真人照片质感、写实摄影、真人皮肤纹理、"
     "3D渲染、塑料皮肤和超现实发光。"
 )
+_COS_AUTO_REFERENCE_NEGATIVE_PROMPT = "不要额外人物、文字、字幕或水印。"
 _COS_COMMON_NEGATIVE_VARIANTS = (
     "第二个人", "第二人物", "品牌水印", "视频字幕", "可读文字",
     "额外人物", "文字", "字幕", "水印", "动漫插画", "赛璐璐",
@@ -1672,13 +1673,23 @@ def _remove_common_negative_terms(clause: str) -> str:
     return updated
 
 
-def normalize_cos_prompt_negatives(prompt: str, appearance_type: str = "auto") -> str:
+def normalize_cos_prompt_negatives(
+    prompt: str,
+    appearance_type: str = "auto",
+    *,
+    preserve_reference_medium: bool = False,
+) -> str:
     """Normalize shared COS exclusions for the selected visual medium."""
     kind = str(appearance_type or "").strip().lower()
     anime_medium = kind in {"anime", "cartoon", "2d", "动漫", "动画", "二次元"}
+    reference_medium = kind == "auto" and preserve_reference_medium
     text = str(prompt or "").strip()
     if not text:
-        return _COS_ANIME_NEGATIVE_PROMPT if anime_medium else _COS_COMMON_NEGATIVE_PROMPT
+        if anime_medium:
+            return _COS_ANIME_NEGATIVE_PROMPT
+        if reference_medium:
+            return _COS_AUTO_REFERENCE_NEGATIVE_PROMPT
+        return _COS_COMMON_NEGATIVE_PROMPT
     chunks = re.split(r"([。；])", text)
     normalized: List[str] = []
     for chunk in chunks:
@@ -1691,7 +1702,12 @@ def normalize_cos_prompt_negatives(prompt: str, appearance_type: str = "auto") -
     text = re.sub(r"[；，,]\s*[。；]", "。", text)
     text = re.sub(r"[。；]\s*[。；]", "。", text)
     text = re.sub(r"\s{2,}", " ", text).strip()
-    shared_negative = _COS_ANIME_NEGATIVE_PROMPT if anime_medium else _COS_COMMON_NEGATIVE_PROMPT
+    if anime_medium:
+        shared_negative = _COS_ANIME_NEGATIVE_PROMPT
+    elif reference_medium:
+        shared_negative = _COS_AUTO_REFERENCE_NEGATIVE_PROMPT
+    else:
+        shared_negative = _COS_COMMON_NEGATIVE_PROMPT
     if shared_negative not in text:
         text = text.rstrip("。； ") + "。" + shared_negative
     return text
@@ -1720,9 +1736,14 @@ from .cos_looks_expansion import (
     COS_LOOK_COMPATIBILITY_EXPANSION,
     COS_LOOK_SETS_EXPANSION,
 )
+from .cos_looks_honor_of_kings import (
+    COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
+    COS_LOOK_SETS_HONOR_OF_KINGS,
+)
 
 COS_LOOK_SETS.extend(COS_LOOK_SETS_EXTRA)
 COS_LOOK_SETS.extend(COS_LOOK_SETS_EXPANSION)
+COS_LOOK_SETS.extend(COS_LOOK_SETS_HONOR_OF_KINGS)
 
 _apply_cos_negative_normalization()
 
@@ -2902,6 +2923,7 @@ def pick_cos_framing(
     scene_id: str = "",
     camera: str = "third",
     allowed_framings: Iterable[str] = (),
+    framing_weights: Optional[Mapping[str, int]] = None,
     multi_view_collage: bool = False,
 ) -> Dict[str, Any]:
     """Pick a concrete framing unless the user's extra request already fixes it."""
@@ -3043,6 +3065,7 @@ def pick_cos_framing(
         # Avoid lists may exhaust the pool, but must not bypass pose/framing safety.
         available = candidates
     selection_pool = available
+    weights = framing_weights or {}
     if pose_id == "back_to_camera" and camera == "third":
         # A restrained low angle is useful for a rear outfit view, but keep
         # eye-level and rear three-quarter options in rotation to avoid making
@@ -3050,11 +3073,17 @@ def pick_cos_framing(
         selection_pool = [
             item
             for item in available
-            for _ in range(
+            for _ in range(max(1, int(weights.get(item, 1))) * (
                 3 if item == "rear_low_hero"
                 else 2 if item == "rear_low_medium"
                 else 1
-            )
+            ))
+        ]
+    elif weights:
+        selection_pool = [
+            item
+            for item in available
+            for _ in range(max(1, int(weights.get(item, 1))))
         ]
     view_id = random.choice(selection_pool)
     selected = dict(COS_FRAMING_CLASSES[view_id])
@@ -3076,7 +3105,9 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
     look_id = str(cos_id or "").strip()
     all_poses = list(COS_RANDOM_POSE_CLASSES)
     all_scenes = list(COS_RANDOM_SCENE_CLASSES)
-    override = COS_LOOK_COMPATIBILITY_EXPANSION.get(look_id, {})
+    override = COS_LOOK_COMPATIBILITY_EXPANSION.get(look_id)
+    if override is None:
+        override = COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS.get(look_id, {})
     poses = [item for item in override.get("pose_ids", all_poses) if item in COS_RANDOM_POSE_CLASSES]
     scene_ids = override.get(
         "scene_ids",
@@ -3107,6 +3138,7 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
         "recommended_scene_ids": list(scenes),
         "recommended_view_ids": list(views),
         "recommended_framing_ids": framings,
+        "recommended_framing_weights": dict(override.get("framing_weights") or {}),
         "incompatible_pose_ids": [item for item in all_poses if item not in poses],
         "incompatible_scene_ids": [item for item in all_scenes if item not in scenes],
         "scene_pose_compatibility": scene_pose_compatibility,
@@ -4305,6 +4337,11 @@ def build_cos_third_person_prompt(text: str) -> str:
         scene_id=str(variation.get("scene_id") or ""),
         pose_id=str(variation.get("pose_id") or ""),
         camera="third",
+        framing_weights=(
+            cos_look_compatibility(look_match.group(1))["recommended_framing_weights"]
+            if look_match
+            else {}
+        ),
     )
     adapted = framing.get("extra_request_text", adapted)
     if framing.get("randomized_from_options"):
@@ -4435,7 +4472,11 @@ def build_cos_look_action(
         str(chosen.get("prompt") or "").strip(), camera_kind
     )
     outfit = adapt_cos_prompt_for_appearance(outfit, appearance_type)
-    outfit = normalize_cos_prompt_negatives(outfit, appearance_type=appearance_type)
+    outfit = normalize_cos_prompt_negatives(
+        outfit,
+        appearance_type=appearance_type,
+        preserve_reference_medium=has_refs,
+    )
     framing_choice = pick_cos_framing(
         outfit=outfit,
         extra_request=extra_request,
@@ -4445,6 +4486,7 @@ def build_cos_look_action(
         scene_id=variation["scene_id"],
         camera=camera_kind,
         allowed_framings=look_profile["recommended_framing_ids"],
+        framing_weights=look_profile["recommended_framing_weights"],
         multi_view_collage=collage_active,
     )
     # A camera/pose pair can legitimately have only one compatible crop (for
@@ -4479,6 +4521,7 @@ def build_cos_look_action(
                 scene_id=retry_variation.get("scene_id", ""),
                 camera=camera_kind,
                 allowed_framings=look_profile["recommended_framing_ids"],
+                framing_weights=look_profile["recommended_framing_weights"],
                 multi_view_collage=bool(retry_variation.get("panel_prompt")),
             )
             if retry_framing.get("view_id") not in avoided_framing_ids:
@@ -4579,7 +4622,7 @@ def build_cos_look_action(
         framing
         + f"本次套装：{series_prefix}{title}。"
         + outfit
-        + "服装颜色、层数、配饰、开叉、荷叶边、鞋履等结构要尽量齐全高还原；"
+        + "严格还原套装提示词明确列出的颜色、层次、配饰、鞋履和材质；未提及或未核实的部件不自行添加；"
         + (
             "保持七张照片的不规则拼贴关系：中央高幅主图明显更大，左右侧栏各三张小图错落分布，避免等分网格；"
             "各画格使用不同姿势和机位但场景、服装与影像风格一致；不要简化成普通常服；画面干净得体。"

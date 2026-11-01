@@ -459,7 +459,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.72")
+        self.assertEqual(PLUGIN_VERSION, "1.6.73")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -9105,7 +9105,14 @@ class LegFocusTests(unittest.TestCase):
             ):
                 self.assertNotIn(forbidden, item["prompt"], item["id"])
         for item in plugin_main.COS_LOOK_SETS:
-            self.assertTrue(item["prompt"].startswith("以形象图中的人为COS主体") or item["prompt"].startswith("严格换装为"), item["id"])
+            self.assertTrue(
+                item["prompt"].startswith((
+                    "以形象图中的人为COS主体",
+                    "严格换装为",
+                    "身份与参考图边界：",
+                )),
+                item["id"],
+            )
             self.assertNotRegex(item["prompt"], r"(?:室内柔光对镜全身|客厅电视柜前|白色皮革电竞椅)")
         web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
         self.assertEqual(
@@ -9272,6 +9279,10 @@ class LegFocusTests(unittest.TestCase):
             {
                 "xishi_fan_qipao", "xishi_cyan_qipao", "xishi_shiyu_jiangnan",
                 "xishi_crop_qipao", "xishi_chengliyiao", "xishi_xuxiangsi",
+                "hok_xishi_huansha_zhiling", "hok_xishi_guixu_mengyan",
+                "hok_xishi_zhimei_chengliyao", "hok_xishi_xuejing_qiyu",
+                "hok_xishi_linglongzhenwei", "hok_xishi_youlongqingying",
+                "hok_xishi_zhimengren",
             },
         )
         qipao_ids = {item["id"] for item in plugin_main.match_cos_look_sets("旗袍")}
@@ -9402,7 +9413,14 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("王昭君")},
-            {"wangzhaojun_old_blue"},
+            {
+                "wangzhaojun_old_blue",
+                "hok_wangzhaojun_bingxuezhihua", "hok_wangzhaojun_jingling_gongzhu",
+                "hok_wangzhaojun_ouxiang_geshou", "hok_wangzhaojun_huanxiang_qimiaoye",
+                "hok_wangzhaojun_qiqiao_zhiqing", "hok_wangzhaojun_wuhou_shiguang",
+                "hok_wangzhaojun_yingshanke", "hok_wangzhaojun_changye_huansheng",
+                "hok_wangzhaojun_fengqiuhuang", "hok_wangzhaojun_xingqiongzhisheng",
+            },
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("玉玲珑")},
@@ -9414,11 +9432,24 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("瑶")},
-            {"yao_mint_blue_dress", "yao_deer_theme"},
+            {
+                "yao_mint_blue_dress", "yao_deer_theme",
+                "hok_yao_shizhi_yuanjing", "hok_yao_shanhai_biboxing",
+                "hok_yao_zhenwo_hez", "hok_yao_yujianshenlu",
+                "hok_yao_shiguang_yingxiang", "hok_yao_luling_shouxin",
+                "hok_yao_shizhi_qiyuan", "hok_yao_daxiongou_zhimeng",
+                "hok_yao_sen",
+            },
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("露娜")},
-            {"luna_zixia_fairy", "luna_frost_moon_mirror"},
+            {
+                "luna_zixia_fairy", "luna_frost_moon_mirror",
+                "hok_luna_qishizhiyin", "hok_luna_feihongzhiren",
+                "hok_luna_gute_meigui", "hok_luna_yueguang_zhinv",
+                "hok_luna_mingyun_jiaoguan", "hok_luna_ciyujianxin",
+                "hok_luna_yisheng_suoai",
+            },
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("神里绫华")},
@@ -9479,6 +9510,14 @@ class LegFocusTests(unittest.TestCase):
                         "gongsunli_lihenyan_sleeves",
                         "gongsunli_yutu_braid_shadow",
                         "gongsunli_white_green_ruffle",
+                        "hok_gongsunli_tushan_rongrong",
+                        "hok_gongsunli_mijuzhixia",
+                        "hok_gongsunli_qixuelingzhu",
+                        "hok_gongsunli_wuxian_xingshangguan",
+                        "hok_gongsunli_huajianwu",
+                        "hok_gongsunli_yunnuo_qianshan",
+                        "hok_gongsunli_huanwu_linglong",
+                        "hok_gongsunli_jiyizhixin",
                     }
                 )
             self.assertEqual(
@@ -10944,6 +10983,7 @@ class StudioStoreTests(unittest.TestCase):
             COS_RANDOM_POSE_CLASSES,
             COS_RANDOM_SCENE_CLASSES,
             COS_LOOK_COMPATIBILITY_EXPANSION,
+            COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
         )
 
         from astrbot_plugin_selfie_image.cos.cos_looks import COS_LOOK_SETS
@@ -10951,12 +10991,15 @@ class StudioStoreTests(unittest.TestCase):
             scene_id for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
             if not scene.get("cos_look_only")
         ]
+        configured_look_ids = set(COS_LOOK_COMPATIBILITY_EXPANSION) | set(
+            COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS
+        )
         for item in COS_LOOK_SETS:
             profile = cos_look_compatibility(item["id"])
             self.assertTrue(profile["variation_enabled"], item["id"])
             self.assertTrue(profile["pose_ids"], item["id"])
             self.assertTrue(profile["scene_ids"], item["id"])
-            if item["id"] not in COS_LOOK_COMPATIBILITY_EXPANSION:
+            if item["id"] not in configured_look_ids:
                 self.assertEqual(profile["pose_ids"], list(COS_RANDOM_POSE_CLASSES))
                 self.assertEqual(profile["scene_ids"], shared_scenes)
             self.assertFalse(profile["fixed_reason"], item["id"])

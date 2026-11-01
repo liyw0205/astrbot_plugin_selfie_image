@@ -9,6 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from astrbot_plugin_selfie_image.cos.cos_looks import (
+    _COS_AUTO_REFERENCE_NEGATIVE_PROMPT,
     _COS_ANIME_NEGATIVE_PROMPT,
     _COS_COMMON_NEGATIVE_PROMPT,
     build_cos_look_action,
@@ -72,6 +73,34 @@ def test_cos_negative_contract_matches_selected_medium():
     )
     assert _COS_COMMON_NEGATIVE_PROMPT in real_action
     assert _COS_ANIME_NEGATIVE_PROMPT not in real_action
+
+
+def test_auto_cos_with_reference_preserves_reference_medium():
+    item = {
+        "id": "auto_reference_medium_test",
+        "title": "自动媒介参考测试",
+        "cos_type": "测试",
+        "prompt": "换装为测试角色 COS：白色外套和蓝色长裙。",
+    }
+    action = build_cos_look_action(
+        "",
+        has_refs=True,
+        camera="third",
+        appearance_type="auto",
+        picker=lambda **_: item,
+    )
+
+    assert _COS_AUTO_REFERENCE_NEGATIVE_PROMPT in action
+    assert _COS_COMMON_NEGATIVE_PROMPT not in action
+    assert "禁止动漫插画" not in action
+    assert "未提及或未核实的部件不自行添加" in action
+    assert "开叉、荷叶边" not in action
+
+    with tempfile.TemporaryDirectory() as tmp:
+        persona = PersonaManager(tmp)
+        prompt = persona.build_selfie_prompt(action, "bot", "tone", True, 0)
+    assert "视觉媒介、质感和人物比例以参考图一为唯一主形象依据" in prompt
+    assert "禁止动漫插画" not in prompt
 
 
 def test_persona_selfie_prompt_finishes_with_selected_medium_contract():
