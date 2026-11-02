@@ -4168,11 +4168,42 @@ def pick_cos_look_set(*, avoid_id: str = "", query: str = "") -> Dict[str, str]:
     return dict(random.choice(pool))
 
 
-def format_cos_look_list() -> str:
-    lines = [f"看看COS 随机池（{len(COS_LOOK_SETS)}套）："]
+def parse_cos_look_list_request(text: str) -> Optional[int]:
+    """Return the requested catalog page, or ``None`` for a generation query."""
+    compact = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(text or "")).lower()
+    match = re.fullmatch(
+        r"(?:列表|全部|查看|list|all|view)(?:第?(\d{1,4})页?)?",
+        compact,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return max(1, int(match.group(1) or 1))
+
+
+def format_cos_look_list(page: int = 1, page_size: int = 20) -> str:
+    """Format a bounded COS catalog page suitable for QQ text delivery."""
+    safe_page_size = max(1, int(page_size or 20))
+    total = len(COS_LOOK_SETS)
+    total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
+    current_page = min(total_pages, max(1, int(page or 1)))
+    start = (current_page - 1) * safe_page_size
+    items = COS_LOOK_SETS[start : start + safe_page_size]
+    lines = [
+        f"看看COS 随机池（{total}套）：",
+        f"第 {current_page}/{total_pages} 页，每页 {safe_page_size} 套。",
+        "翻页：/看看COS 全部 页码",
+        "",
+    ]
+    if total_pages > 1:
+        if current_page < total_pages:
+            lines.append(f"下一页：/看看COS 全部 {current_page + 1}")
+        if current_page > 1:
+            lines.append(f"上一页：/看看COS 全部 {current_page - 1}")
+        lines.append("")
     lines.extend(
-        f"{index}. {item.get('title') or '未命名套装'}"
-        for index, item in enumerate(COS_LOOK_SETS, 1)
+        f"{start + offset + 1}. {item.get('title') or '未命名套装'}"
+        for offset, item in enumerate(items)
     )
     return "\n".join(lines)
 

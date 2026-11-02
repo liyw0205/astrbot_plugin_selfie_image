@@ -464,7 +464,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.74")
+        self.assertEqual(PLUGIN_VERSION, "1.6.75")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -9839,6 +9839,7 @@ class LegFocusTests(unittest.TestCase):
                 )
             ]
 
+        total_pages = (len(plugin_main.COS_LOOK_SETS) + 19) // 20
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
@@ -9846,8 +9847,20 @@ class LegFocusTests(unittest.TestCase):
                 f"看看COS 随机池（{len(plugin_main.COS_LOOK_SETS)}套）：",
                 response[0],
             )
-            for title in (item["title"] for item in plugin_main.COS_LOOK_SETS):
-                self.assertIn(title, response[0])
+            self.assertIn(f"第 1/{total_pages} 页", response[0])
+            self.assertIn(plugin_main.COS_LOOK_SETS[0]["title"], response[0])
+            self.assertNotIn(plugin_main.COS_LOOK_SETS[20]["title"], response[0])
+
+            page_two = asyncio.run(collect_list_response(f"/看看COS {alias} 2"))
+            self.assertEqual(len(page_two), 1)
+            self.assertIn("第 2/", page_two[0])
+            self.assertIn(plugin_main.COS_LOOK_SETS[20]["title"], page_two[0])
+            self.assertNotIn(plugin_main.COS_LOOK_SETS[0]["title"], page_two[0])
+
+        self.assertEqual(plugin_main.parse_cos_look_list_request("全部"), 1)
+        self.assertEqual(plugin_main.parse_cos_look_list_request("全部第2页"), 2)
+        self.assertEqual(plugin_main.parse_cos_look_list_request("list 3"), 3)
+        self.assertIsNone(plugin_main.parse_cos_look_list_request("原神 2"))
         self.assertNotIn("lusha_cat_crown", {x["id"] for x in plugin_main.COS_LOOK_SETS})
         self.assertNotIn("yao_cinnamoroll", {x["id"] for x in plugin_main.COS_LOOK_SETS})
         for removed in (

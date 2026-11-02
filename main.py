@@ -88,6 +88,7 @@ from .cos.cos_looks import (
     list_cos_look_sets,
     looks_like_cos_prompt,
     match_cos_look_sets,
+    parse_cos_look_list_request,
     parse_requested_cos_camera,
     pick_cos_camera,
     pick_cos_look_set,
@@ -7400,9 +7401,9 @@ class SelfieImagePlugin(
         # Also accept lowercase command text extraction fallbacks.
         if not raw_message:
             raw_message = extract_command_message(event, "看看cos", fallback_args, include_quote_text=True)
-        list_request = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(raw_message or "")).lower()
-        if list_request in {"列表", "全部", "查看", "list", "all", "view"}:
-            yield event.plain_result(format_cos_look_list())
+        list_page = parse_cos_look_list_request(raw_message)
+        if list_page is not None:
+            yield event.plain_result(format_cos_look_list(page=list_page))
             return
         raw_extra, requested_count = self._extract_command_count(raw_message, allow_attached=True)
         # A declared series is a hard narrowing constraint.  Do not let an
