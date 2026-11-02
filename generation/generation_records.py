@@ -15,6 +15,239 @@ METRIC_WINDOW_SECONDS = {
     "30d": 30 * 24 * 60 * 60,
 }
 
+MODEL_STATUS_BUCKETS = 24
+
+
+def _status_target_identity(target: Any) -> tuple[str, str, str, str]:
+    """Return channel/model identity for a config target or serialized row."""
+    if isinstance(target, Mapping):
+        channel = str(target.get("channel") or target.get("channel_name") or "").strip()
+        model = str(target.get("model") or "").strip()
+        label = str(target.get("label") or "").strip()
+        provider = str(target.get("provider_type") or "").strip()
+    else:
+        channel = str(getattr(target, "channel_name", "") or "").strip()
+        model = str(getattr(target, "model", "") or "").strip()
+        label = str(getattr(target, "label", "") or "").strip()
+        provider = str(getattr(target, "provider_type", "") or "").strip()
+    if label and (not channel or not model) and "/" in label:
+        label_channel, label_model = label.split("/", 1)
+        channel = channel or label_channel.strip()
+        model = model or label_model.strip()
+    channel = channel or "未命名渠道"
+    model = model or "未标识模型"
+    label = label or f"{channel}/{model}"
+    return channel, model, label, provider
+
+
+def _status_event_identity(event: Mapping[str, Any]) -> tuple[str, str, str, str]:
+    channel, model, label, provider = _status_target_identity(event)
+    # Older health history rows only stored the channel. Keep these rows
+    # visible without pretending they belong to a newly configured model.
+    if model == "未标识模型":
+        label = f"{channel}/历史模型未标识"
+        model = "历史模型未标识"
+    return channel, model, label, provider
+
+
+def build_model_status(
+    events: Iterable[Mapping[str, Any]],
+    *,
+    enabled_targets: Iterable[Any] = (),
+    runtime_health: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    window_seconds: int = 7 * 24 * 60 * 60,
+    now: Optional[float] = None,
+    bucket_count: int = MODEL_STATUS_BUCKETS,
+) -> Dict[str, Any]:
+    """Aggregate persisted model attempts into a compact monitoring payload.
+
+    This deliberately consumes health events rather than issuing provider
+    requests. It is safe to use from both a QQ command and the web monitor.
+    """
+    current = float(now if now is not None else time.time())
+    safe_window = max(1, int(window_seconds or 1))
+    safe_bucket_count = max(1, int(bucket_count or MODEL_STATUS_BUCKETS))
+    cutoff = current - safe_window
+    aggregates: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
+
+    def ensure(identity: tuple[str, str, str, str]) -> Dict[str, Any]:
+        row = aggregates.get(identity)
+        if row is None:
+            channel, model, label, provider = identity
+            row = {
+                "channel": channel,
+                "model": model,
+                "label": label,
+                "provider_type": provider,
+                "attempts": 0,
+                "successes": 0,
+                "failures": 0,
+                "elapsed_seconds": 0.0,
+                "elapsed_count": 0,
+                "error_categories": {},
+                "last_timestamp": 0.0,
+                "last_success": None,
+                "last_error_category": "",
+                "history": [0] * safe_bucket_count,
+                "_bucket_success": [0] * safe_bucket_count,
+                "_bucket_failure": [0] * safe_bucket_count,
+                "_events": [],
+            }
+            aggregates[identity] = row
+        return row
+
+    for raw in events or ():
+        if not isinstance(raw, Mapping):
+            continue
+        media_type = str(raw.get("media_type") or "image").strip().lower()
+        if media_type != "image":
+            continue
+        try:
+            timestamp = float(raw.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            timestamp = 0.0
+        if timestamp < cutoff:
+            continue
+        identity = _status_event_identity(raw)
+        row = ensure(identity)
+        success = bool(raw.get("success"))
+        row["attempts"] += 1
+        row["successes"] += int(success)
+        row["failures"] += int(not success)
+        category = str(raw.get("error_category") or "unknown").strip() or "unknown"
+        row["_events"].append((timestamp, success, category))
+        if not success:
+            categories = row["error_categories"]
+            categories[category] = int(categories.get(category) or 0) + 1
+        try:
+            elapsed = max(0.0, float(raw.get("elapsed_seconds") or 0))
+        except (TypeError, ValueError):
+            elapsed = 0.0
+        if elapsed > 0:
+            row["elapsed_seconds"] += elapsed
+            row["elapsed_count"] += 1
+        if timestamp >= row["last_timestamp"]:
+            row["last_timestamp"] = timestamp
+        bucket = min(
+            safe_bucket_count - 1,
+            max(0, int((timestamp - cutoff) / safe_window * safe_bucket_count))
+            if safe_window
+            else safe_bucket_count - 1,
+        )
+        if success:
+            row["_bucket_success"][bucket] += 1
+        else:
+            row["_bucket_failure"][bucket] += 1
+
+    # Include configured models even when they have no events in this window.
+    configured: Dict[tuple[str, str, str, str], None] = {}
+    for target in enabled_targets or ():
+        identity = _status_target_identity(target)
+        configured[identity] = None
+        ensure(identity)
+
+    health_by_channel = runtime_health if isinstance(runtime_health, Mapping) else {}
+    models: List[Dict[str, Any]] = []
+    for identity, row in aggregates.items():
+        attempts = int(row["attempts"])
+        successes = int(row["successes"])
+        failures = int(row["failures"])
+        success_rate = successes / attempts if attempts else 0.0
+        average_elapsed = row["elapsed_seconds"] / row["elapsed_count"] if row["elapsed_count"] else 0.0
+        ordered_events = sorted(row["_events"], key=lambda item: item[0])
+        if ordered_events:
+            latest_timestamp, latest_success, latest_event_category = ordered_events[-1]
+            row["last_timestamp"] = latest_timestamp
+            row["last_success"] = latest_success
+            row["last_error_category"] = "" if latest_success else latest_event_category
+        consecutive_failures = 0
+        for _, event_success, _ in reversed(ordered_events):
+            if event_success:
+                break
+            consecutive_failures += 1
+        latest_category = str(row.get("last_error_category") or "").strip().lower()
+        channel_health = health_by_channel.get(row["channel"], {})
+        if not isinstance(channel_health, Mapping):
+            channel_health = {}
+        # The runtime health cache predates model-level monitoring and is
+        # channel-scoped. Use it only as a conservative cooldown hint; the
+        # per-model failure streak above remains the source of truth.
+        cooling_down = bool(channel_health.get("cooling_down")) and row.get("last_success") is False
+        if attempts == 0:
+            status = "未使用"
+        elif latest_category in {"auth", "authentication", "unauthorized", "forbidden"} and row.get("last_success") is False:
+            status = "验证失败"
+        elif latest_category in {"rate_limit", "quota", "throttle"} and row.get("last_success") is False:
+            status = "限流"
+        elif failures == attempts:
+            status = "断流"
+        elif cooling_down or consecutive_failures >= 3 or success_rate < 0.7:
+            status = "异常"
+        elif success_rate < 0.9 or average_elapsed >= 8 or failures:
+            status = "降级"
+        else:
+            status = "正常"
+        history: List[str] = []
+        for success_count, failure_count in zip(row["_bucket_success"], row["_bucket_failure"]):
+            if not success_count and not failure_count:
+                history.append("-")
+            elif failure_count and not success_count:
+                history.append("×")
+            elif failure_count or average_elapsed >= 8:
+                history.append("▲")
+            else:
+                history.append("■")
+        category_counts = dict(sorted(row["error_categories"].items(), key=lambda item: (-item[1], item[0])))
+        models.append(
+            {
+                "channel": row["channel"],
+                "model": row["model"],
+                "label": row["label"],
+                "provider_type": row["provider_type"],
+                "status": status,
+                "attempts": attempts,
+                "successes": successes,
+                "failures": failures,
+                "success_rate": round(success_rate, 4),
+                "average_elapsed_seconds": round(average_elapsed, 2),
+                "last_timestamp": row["last_timestamp"],
+                "last_success": row["last_success"],
+                "last_error_category": row["last_error_category"],
+                "error_categories": category_counts,
+                "consecutive_failures": consecutive_failures,
+                "cooling_down": cooling_down,
+                "history": "".join(history),
+                "configured": identity in configured,
+            }
+        )
+    models.sort(key=lambda item: (not item["configured"], item["channel"], item["model"]))
+    if any(item["status"] in {"异常", "断流", "验证失败", "限流"} for item in models):
+        overall_status = "异常"
+    elif any(item["status"] == "降级" for item in models):
+        overall_status = "降级"
+    elif models and all(item["status"] == "未使用" for item in models):
+        overall_status = "未使用"
+    elif models:
+        overall_status = "正常"
+    else:
+        overall_status = "无模型"
+    alerts = []
+    for item in models:
+        if item["status"] not in {"正常", "未使用"}:
+            alerts.append(f"{item['label']}：{item['status']}")
+    return {
+        "window_seconds": safe_window,
+        "updated_at": current,
+        "overall_status": overall_status,
+        "models": models,
+        "model_count": len(models),
+        "channel_count": len({item["channel"] for item in models}),
+        "available_count": sum(1 for item in models if item["status"] in {"正常", "降级"} and item["successes"] > 0),
+        "alert_count": sum(1 for item in models if item["status"] not in {"正常", "未使用"}),
+        "unused_count": sum(1 for item in models if item["status"] == "未使用"),
+        "alerts": alerts,
+    }
+
 
 def metric_window_seconds(value: Any) -> Optional[int]:
     """Normalize a metrics window key; ``None`` means all retained records."""

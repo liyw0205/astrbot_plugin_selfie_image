@@ -21,6 +21,14 @@ from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Tuple
 import aiohttp
 
 try:
+    from PIL import Image as PILImage
+    from PIL import ImageDraw, ImageFont
+except Exception:  # Pillow is bundled by AstrBot but keep local imports optional.
+    PILImage = None
+    ImageDraw = None
+    ImageFont = None
+
+try:
     from astrbot.api.star import Context, Star, register
     from astrbot.api.event import AstrMessageEvent, filter
     from astrbot.api import llm_tool, logger
@@ -29,6 +37,12 @@ except ImportError:  # Compatibility with older AstrBot layouts
     from astrbot.api.event import AstrMessageEvent, filter
     from astrbot.api import llm_tool
     from astrbot.api.utils import logger
+
+try:
+    from astrbot.api.provider import LLMResponse, ProviderRequest
+except ImportError:  # Older AstrBot versions do not expose provider hook types.
+    LLMResponse = Any
+    ProviderRequest = Any
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -95,6 +109,7 @@ from .cos.cos_looks import (
 )
 from .generation.generator import generate_image_with_fallback
 from .generation.image_scheduler import ImageJobScheduler
+from .generation.generation_records import metric_window_seconds
 from .generation.generation_store import GenerationStoreMixin, RECORD_KEEP_LIMIT
 from .generation.generation_results import (
     batch_failure_policy,
@@ -260,6 +275,21 @@ def optional_event_message_type(priority: int = 100):
     event_type = getattr(getattr(filter, "EventMessageType", None), "ALL", None)
     if callable(decorator) and event_type is not None:
         return decorator(event_type, priority=priority)
+
+    def passthrough(func):
+        return func
+
+    return passthrough
+
+
+def optional_filter_hook(name: str):
+    """Use a lifecycle hook when the host supports it, otherwise stay loadable."""
+    decorator = getattr(filter, str(name or ""), None)
+    if callable(decorator):
+        try:
+            return decorator()
+        except TypeError:
+            return decorator
 
     def passthrough(func):
         return func
@@ -465,10 +495,47 @@ class SelfieImagePlugin(
                 is_bot=is_bot,
                 image_sources=list(msg.get("image_sources") or []),
                 msg_id=self._event_message_id(event),
+                source="event",
             )
         except Exception as exc:
             logger.debug(f"[SelfieImage] 记录上下文失败: {exc}")
         return None
+
+    @optional_filter_hook("on_llm_request")
+    async def on_llm_request_context(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ) -> None:
+        """同步 AstrBot 官方会话上下文，补齐未经过消息记录钩子的当前消息。"""
+        try:
+            self._sync_provider_context(event, req)
+            if event is None:
+                return
+            msg = self._extract_context_message_info(event)
+            sender_id = event_user_id(event)
+            bot_ids = set(self._bot_account_ids(event))
+            is_bot = bool(sender_id and sender_id in bot_ids)
+            self._add_context_message(
+                session_key=self._provider_context_session_key(event, req),
+                sender_id=sender_id,
+                sender_name=self._event_sender_name(event, is_bot=is_bot),
+                content=str(msg.get("content") or ""),
+                is_bot=is_bot,
+                image_sources=list(msg.get("image_sources") or []),
+                msg_id=self._event_message_id(event),
+                source="llm_request",
+            )
+        except Exception as exc:
+            logger.debug(f"[SelfieImage] 同步 AstrBot 请求上下文失败: {exc}")
+
+    @optional_filter_hook("on_llm_response")
+    async def on_llm_response_context(
+        self, event: AstrMessageEvent, resp: LLMResponse
+    ) -> None:
+        """记录完成的 assistant 回复，跳过工具调用中间轮和流式分片。"""
+        try:
+            self._record_llm_response_context(event, resp)
+        except Exception as exc:
+            logger.debug(f"[SelfieImage] 记录 AstrBot 回复上下文失败: {exc}")
 
     def _access_status(self, event: AstrMessageEvent) -> Dict[str, Any]:
         user_id = event_user_id(event)
@@ -1249,6 +1316,7 @@ class SelfieImagePlugin(
             content=text,
             is_bot=True,
             msg_id=f"bot:{time.time_ns()}",
+            source="plugin",
         )
 
     def _record_bot_image_context(self, event: Optional[AstrMessageEvent], files: Iterable[str]) -> None:
@@ -1265,6 +1333,7 @@ class SelfieImagePlugin(
                 is_bot=True,
                 image_sources=[os.path.abspath(str(file_path))],
                 msg_id=f"bot-image:{time.time_ns()}",
+                source="plugin",
             )
 
     def _is_admin_event(self, event: AstrMessageEvent) -> bool:
@@ -3113,6 +3182,337 @@ class SelfieImagePlugin(
 
     def _available_model_labels(self) -> List[str]:
         return available_model_labels(self.config.get_prioritized_targets())
+
+    @staticmethod
+    def _format_model_status_age(timestamp: Any, now: Optional[float] = None) -> str:
+        try:
+            value = float(timestamp or 0)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value <= 0:
+            return "无请求"
+        age = max(0, int(float(now if now is not None else time.time()) - value))
+        if age < 60:
+            return f"{age} 秒前"
+        if age < 3600:
+            return f"{age // 60} 分钟前"
+        if age < 86400:
+            return f"{age // 3600} 小时前"
+        return f"{age // 86400} 天前"
+
+    @staticmethod
+    def _model_status_error_label(category: str) -> str:
+        labels = {
+            "auth": "鉴权失败",
+            "authentication": "鉴权失败",
+            "unauthorized": "鉴权失败",
+            "forbidden": "鉴权失败",
+            "rate_limit": "限流",
+            "quota": "额度/限流",
+            "timeout": "超时",
+            "timeout_create": "创建超时",
+            "timeout_poll": "轮询超时",
+            "network": "网络错误",
+            "server": "上游错误",
+            "safety": "安全审核",
+            "param": "参数错误",
+            "not_found": "模型不存在",
+        }
+        return labels.get(str(category or "").strip().lower(), str(category or "未知错误"))
+
+    def _format_model_status_text(
+        self,
+        status: Mapping[str, Any],
+        *,
+        page: int = 1,
+        page_size: int = 6,
+    ) -> str:
+        models = [item for item in status.get("models", []) if isinstance(item, Mapping)]
+        safe_page_size = max(1, int(page_size or 6))
+        page_count = max(1, (len(models) + safe_page_size - 1) // safe_page_size)
+        safe_page = max(1, min(int(page or 1), page_count))
+        start = (safe_page - 1) * safe_page_size
+        current_models = models[start : start + safe_page_size]
+        window_seconds = int(status.get("window_seconds") or 0)
+        window_label = {
+            3600: "最近 1 小时",
+            86400: "最近 24 小时",
+            7 * 86400: "最近 7 天",
+            30 * 86400: "最近 30 天",
+        }.get(window_seconds, f"最近 {window_seconds // 3600} 小时")
+        updated = status.get("updated_at") or time.time()
+        try:
+            updated_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(updated)))
+        except (TypeError, ValueError, OverflowError):
+            updated_text = "未知"
+        lines = [
+            "生图模型运行状态",
+            f"统计窗口：{window_label}",
+            f"更新时间：{updated_text}",
+            f"整体状态：{status.get('overall_status') or '未知'}",
+            "",
+            f"模型总数：{int(status.get('model_count') or 0)}　渠道总数：{int(status.get('channel_count') or 0)}",
+            f"可用模型：{int(status.get('available_count') or 0)}　告警模型：{int(status.get('alert_count') or 0)}　未使用：{int(status.get('unused_count') or 0)}",
+            "",
+            f"第 {safe_page}/{page_count} 页",
+        ]
+        now = time.time()
+        for index, item in enumerate(current_models, start=start + 1):
+            attempts = int(item.get("attempts") or 0)
+            successes = int(item.get("successes") or 0)
+            success_rate = float(item.get("success_rate") or 0) * 100
+            average = float(item.get("average_elapsed_seconds") or 0)
+            average_text = f"{average:.2f} 秒" if average > 0 else "-"
+            last_success = item.get("last_success")
+            if last_success is True:
+                recent = "正常"
+            elif last_success is False:
+                recent = self._model_status_error_label(item.get("last_error_category"))
+            else:
+                recent = "无请求"
+            error_counts = item.get("error_categories") if isinstance(item.get("error_categories"), Mapping) else {}
+            error_text = "、".join(
+                f"{self._model_status_error_label(key)} {int(value)}"
+                for key, value in list(error_counts.items())[:3]
+            )
+            lines.extend(
+                [
+                    "",
+                    f"{index}. {item.get('label') or '未命名模型'}",
+                    f"   状态：{item.get('status') or '未知'}",
+                    f"   请求：成功 {successes} / 总计 {attempts}",
+                    f"   可用性：{success_rate:.2f}%",
+                    f"   平均耗时：{average_text}",
+                    f"   最近请求：{self._format_model_status_age(item.get('last_timestamp'), now)}",
+                    f"   最近状态：{recent}",
+                    f"   历史：{item.get('history') or '-'}",
+                ]
+            )
+            if error_text:
+                lines.append(f"   主要错误：{error_text}")
+            if int(item.get("consecutive_failures") or 0) > 0:
+                lines.append(f"   连续失败：{int(item.get('consecutive_failures') or 0)} 次")
+        alerts = [str(item).strip() for item in status.get("alerts", []) if str(item).strip()]
+        if alerts:
+            lines.extend(["", "告警："])
+            lines.extend(f"- {item}" for item in alerts[:8])
+        if page_count > 1:
+            window_token = {
+                3600: "1h",
+                86400: "24h",
+                7 * 86400: "7d",
+                30 * 86400: "30d",
+            }.get(window_seconds, "7d")
+            lines.extend(["", f"下一页：/生图记录状态 {window_token} {safe_page + 1 if safe_page < page_count else 1}"])
+        return "\n".join(lines)
+
+    @staticmethod
+    def _status_report_font(size: int, *, bold: bool = False) -> Any:
+        if ImageFont is None:
+            return None
+        suffix = "Bold" if bold else "Regular"
+        candidates = [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/source-han/SourceHanSansCN-Regular.otf",
+            "/root/xiu2/data/xiuxian/font/SourceHanSerifCN-Heavy.otf",
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            f"/usr/share/fonts/truetype/noto/NotoSansCJK-{suffix}.ttc",
+            f"/root/AstrBot/data/plugins/astrbot_plugin_status/templates/res/fonts/Noto-Sans-SC-{suffix}.ttf",
+            f"/usr/share/fonts/truetype/noto/NotoSansMono-{suffix}.ttf",
+            f"/usr/share/fonts/truetype/dejavu/DejaVuSans{'-Bold' if bold else ''}.ttf",
+            f"/data/data/com.termux/files/usr/share/fonts/TTF/DejaVuSans{'-Bold' if bold else ''}.ttf",
+        ]
+        for path in candidates:
+            if os.path.isfile(path):
+                try:
+                    font = ImageFont.truetype(path, size=size)
+                    # Some bundled fonts are Latin subsets despite their SC name.
+                    # Skip them when the report needs Chinese labels.
+                    if any(font.getmask(sample).getbbox() is None for sample in ("模型状态成功率", "123-:.%/", "最近 7 天")):
+                        continue
+                    return font
+                except Exception:
+                    continue
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:
+            return ImageFont.load_default()
+
+    @staticmethod
+    def _status_report_wrap(draw: Any, text: str, font: Any, max_width: int, max_lines: int = 2) -> List[str]:
+        raw = str(text or "").strip()
+        if not raw:
+            return [""]
+        lines: List[str] = []
+        current = ""
+        for char in raw:
+            candidate = current + char
+            if current and draw.textbbox((0, 0), candidate, font=font)[2] > max_width:
+                lines.append(current)
+                current = char
+                if len(lines) >= max_lines:
+                    break
+            else:
+                current = candidate
+        if len(lines) < max_lines and current:
+            lines.append(current)
+        if len(lines) == max_lines and draw.textbbox((0, 0), lines[-1], font=font)[2] > max_width:
+            while lines[-1] and draw.textbbox((0, 0), lines[-1] + "…", font=font)[2] > max_width:
+                lines[-1] = lines[-1][:-1]
+            lines[-1] = lines[-1].rstrip() + "…"
+        return lines[:max_lines]
+
+    def _render_model_status_image(
+        self,
+        status: Mapping[str, Any],
+        *,
+        page: int = 1,
+        page_size: int = 6,
+    ) -> Optional[str]:
+        """Render the model monitor as a self-contained QQ-friendly image."""
+        if PILImage is None or ImageDraw is None or ImageFont is None:
+            return None
+        try:
+            models = [item for item in status.get("models", []) if isinstance(item, Mapping)]
+            safe_page_size = max(1, int(page_size or 6))
+            page_count = max(1, (len(models) + safe_page_size - 1) // safe_page_size)
+            safe_page = max(1, min(int(page or 1), page_count))
+            start = (safe_page - 1) * safe_page_size
+            current_models = models[start : start + safe_page_size]
+            window_seconds = int(status.get("window_seconds") or 0)
+            window_label = {
+                3600: "最近 1 小时",
+                86400: "最近 24 小时",
+                7 * 86400: "最近 7 天",
+                30 * 86400: "最近 30 天",
+            }.get(window_seconds, f"最近 {max(1, window_seconds // 3600)} 小时")
+            overall = str(status.get("overall_status") or "未知")
+            status_colors = {
+                "正常": (34, 151, 116),
+                "降级": (193, 123, 24),
+                "异常": (205, 72, 76),
+                "断流": (139, 66, 150),
+                "验证失败": (139, 66, 150),
+                "限流": (193, 123, 24),
+                "未使用": (106, 118, 134),
+            }
+            status_color = status_colors.get(overall, (72, 92, 116))
+            width = 1080
+            margin = 42
+            card_width = width - margin * 2
+            title_font = self._status_report_font(38, bold=True)
+            section_font = self._status_report_font(22, bold=True)
+            body_font = self._status_report_font(21)
+            small_font = self._status_report_font(17)
+            tiny_font = self._status_report_font(14)
+            header_height = 184
+            kpi_height = 124
+            row_height = 232
+            gap = 18
+            alert_rows = [str(item).strip() for item in status.get("alerts", []) if str(item).strip()][:4]
+            height = header_height + gap + kpi_height + gap + len(current_models) * (row_height + gap) + 76
+            if alert_rows:
+                height += 52 + len(alert_rows) * 34
+            image = PILImage.new("RGB", (width, height), (244, 247, 251))
+            draw = ImageDraw.Draw(image)
+
+            def rounded(box: Tuple[int, int, int, int], fill: Tuple[int, int, int], radius: int = 18, outline: Optional[Tuple[int, int, int]] = None) -> None:
+                draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=2 if outline else 1)
+
+            def write(x: int, y: int, text: str, font: Any, fill: Tuple[int, int, int], max_width: Optional[int] = None, lines: int = 1, spacing: int = 4) -> int:
+                chunks = self._status_report_wrap(draw, text, font, max_width or width, lines)
+                for index, chunk in enumerate(chunks):
+                    draw.text((x, y + index * (font.size + spacing)), chunk, font=font, fill=fill)
+                return len(chunks) * (font.size + spacing)
+
+            draw.rectangle((0, 0, width, header_height), fill=(21, 34, 56))
+            write(margin, 28, "生图模型运行状态", title_font, (245, 249, 255))
+            updated = status.get("updated_at") or time.time()
+            try:
+                updated_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(updated)))
+            except (TypeError, ValueError, OverflowError):
+                updated_text = "未知"
+            write(margin, 86, f"{window_label}  ·  更新于 {updated_text}", body_font, (184, 202, 222))
+            rounded((width - margin - 210, 32, width - margin, 100), status_color, 34)
+            status_box = draw.textbbox((0, 0), overall, font=section_font)
+            draw.text((width - margin - 105 - (status_box[2] - status_box[0]) / 2, 52), overall, font=section_font, fill=(255, 255, 255))
+            write(margin, 132, f"第 {safe_page}/{page_count} 页", small_font, (146, 167, 191))
+
+            kpis = [
+                ("模型", str(int(status.get("model_count") or 0)), (47, 116, 173)),
+                ("渠道", str(int(status.get("channel_count") or 0)), (47, 116, 173)),
+                ("可用", str(int(status.get("available_count") or 0)), (34, 151, 116)),
+                ("告警", str(int(status.get("alert_count") or 0)), (205, 72, 76)),
+            ]
+            kpi_gap = 14
+            kpi_width = (card_width - kpi_gap * 3) // 4
+            kpi_top = header_height + gap
+            for index, (label, value, color) in enumerate(kpis):
+                left = margin + index * (kpi_width + kpi_gap)
+                rounded((left, kpi_top, left + kpi_width, kpi_top + kpi_height), (255, 255, 255), 16, (222, 229, 237))
+                draw.rectangle((left, kpi_top, left + 7, kpi_top + kpi_height), fill=color)
+                write(left + 24, kpi_top + 20, label, small_font, (105, 119, 137))
+                write(left + 24, kpi_top + 50, value, self._status_report_font(32, bold=True), (27, 42, 63))
+
+            top = kpi_top + kpi_height + gap
+            for item in current_models:
+                row_top = top
+                rounded((margin, row_top, width - margin, row_top + row_height), (255, 255, 255), 16, (222, 229, 237))
+                item_status = str(item.get("status") or "未知")
+                item_color = status_colors.get(item_status, (72, 92, 116))
+                draw.rectangle((margin, row_top, margin + 8, row_top + row_height), fill=item_color)
+                label = str(item.get("label") or "未命名模型")
+                write(margin + 28, row_top + 18, label, section_font, (27, 42, 63), card_width - 260, 1)
+                badge_left = width - margin - 180
+                rounded((badge_left, row_top + 16, width - margin - 22, row_top + 58), item_color, 21)
+                badge_box = draw.textbbox((0, 0), item_status, font=small_font)
+                draw.text((badge_left + 90 - (badge_box[2] - badge_box[0]) / 2, row_top + 26), item_status, font=small_font, fill=(255, 255, 255))
+                success_rate = float(item.get("success_rate") or 0) * 100
+                average = float(item.get("average_elapsed_seconds") or 0)
+                recent = "正常" if item.get("last_success") is True else self._model_status_error_label(item.get("last_error_category")) if item.get("last_success") is False else "无请求"
+                metrics = f"成功率 {success_rate:.1f}%   请求 {int(item.get('successes') or 0)}/{int(item.get('attempts') or 0)}   平均 {average:.2f}s   最近 {recent}"
+                write(margin + 28, row_top + 76, metrics, small_font, (78, 95, 116), card_width - 56, 1)
+                history = str(item.get("history") or "-")
+                history_left = margin + 28
+                history_top = row_top + 120
+                for history_index, marker in enumerate(history[:24]):
+                    history_color = {"■": (34, 151, 116), "▲": (193, 123, 24), "×": (205, 72, 76)}.get(marker, (210, 218, 228))
+                    left = history_left + history_index * 37
+                    rounded((left, history_top, left + 27, history_top + 27), history_color, 6)
+                errors = item.get("error_categories") if isinstance(item.get("error_categories"), Mapping) else {}
+                error_text = "、".join(f"{self._model_status_error_label(k)} {int(v)}" for k, v in list(errors.items())[:3]) or "暂无错误"
+                write(margin + 28, row_top + 164, f"错误：{error_text}", tiny_font, (105, 119, 137), card_width - 56, 1)
+                top = row_top + row_height + gap
+
+            if alert_rows:
+                write(margin, top + 4, "告警", section_font, (205, 72, 76))
+                top += 42
+                for alert in alert_rows:
+                    write(margin + 8, top, f"· {alert}", small_font, (105, 71, 72), card_width - 16, 1)
+                    top += 34
+            footer = "下一页：/生图记录状态 " + {3600: "1h", 86400: "24h", 7 * 86400: "7d", 30 * 86400: "30d"}.get(window_seconds, "7d") + f" {safe_page + 1 if safe_page < page_count else 1}" if page_count > 1 else "数据来自最近生图请求记录"
+            write(margin, height - 46, footer, tiny_font, (126, 140, 158), card_width, 1)
+
+            report_dir = os.path.join(self.data_dir, "status_reports")
+            os.makedirs(report_dir, exist_ok=True)
+            try:
+                old_reports = sorted(
+                    (os.path.join(report_dir, name) for name in os.listdir(report_dir) if name.startswith("model_status_") and name.endswith(".png")),
+                    key=lambda path: os.path.getmtime(path),
+                )
+                for stale in old_reports[:-20]:
+                    try:
+                        os.unlink(stale)
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+            path = os.path.join(report_dir, f"model_status_{time.time_ns()}.png")
+            image.save(path, format="PNG", optimize=True)
+            return path
+        except Exception as exc:
+            logger.warning("[SelfieImage] 生图模型状态图片渲染失败: %s", redact_sensitive_text(str(exc)))
+            return None
 
     def _get_session_model_override(self, event: Optional[AstrMessageEvent] = None) -> str:
         if event is None:
@@ -6581,6 +6981,7 @@ class SelfieImagePlugin(
                 "",
                 "模型与进度：",
                 "· /生图模型　看列表；跟序号或 渠道/模型 切换（只影响当前群/私聊）；发「清除」恢复默认",
+                "· /生图记录状态　看最近 7 天模型成功率、耗时、错误和历史；可跟 1h、24h、7d、30d 与页码",
                 "· /生图任务　看出图/视频进行中的任务，包含 LLM 调用；可跟任务号",
                 "· /生图取消　取消还在排的/进行中的任务",
                 "· 管理员名单：/生图加黑 ID/@用户 [理由]、/生图加白 ID/@用户 [理由]、/生图释放 ID/@用户",
@@ -6828,6 +7229,52 @@ class SelfieImagePlugin(
             return
         yield event.plain_result(f"图片 MD5：{md5}\nLLM 反推提示词：\n{prompt}")
 
+    @filter.command("生图记录状态")
+    async def cmd_image_model_status(
+        self,
+        event: AstrMessageEvent,
+        p1: str = "",
+        p2: str = "",
+        p3: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        """查看近期生图模型的成功率、耗时、错误和历史状态。"""
+        denied = self._permission_denied_message(event)
+        if denied:
+            yield event.plain_result(denied)
+            return
+        fallback = " ".join(item for item in (p1, p2, p3) if item).strip()
+        message = extract_command_message(event, "生图记录状态", fallback).strip()
+        window_token = "7d"
+        page = 1
+        invalid: List[str] = []
+        for token in re.split(r"[\s,，]+", message):
+            token = str(token or "").strip().lower()
+            if not token:
+                continue
+            if token in {"1h", "24h", "7d", "30d"}:
+                window_token = token
+            elif token.isdigit() and int(token) > 0:
+                page = int(token)
+            elif token not in {"状态", "查看", "默认", "全部"}:
+                invalid.append(token)
+        if invalid:
+            yield event.plain_result("参数格式：/生图记录状态 [1h|24h|7d|30d] [页码]")
+            return
+        try:
+            window_seconds = metric_window_seconds(window_token)
+            if window_seconds is None:
+                window_seconds = 7 * 24 * 60 * 60
+            status = self.get_model_status(window_seconds=window_seconds)
+        except Exception as exc:
+            logger.warning("[SelfieImage] 生图模型状态读取失败: %s", redact_sensitive_text(str(exc)))
+            yield event.plain_result("生图模型状态暂时无法读取，请稍后再试。")
+            return
+        report_path = self._render_model_status_image(status, page=page)
+        if report_path:
+            yield event.image_result(report_path)
+            return
+        yield event.plain_result(self._format_model_status_text(status, page=page))
+
     @filter.command("生图模型")
     async def cmd_image_model(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
         """查看或切换当前聊天使用的模型。可跟序号、渠道/模型，或发「清除」恢复默认。"""
@@ -6958,7 +7405,16 @@ class SelfieImagePlugin(
                 continue
             content = " ".join(str(item.get("content") or "").split())[:100]
             if content:
-                lines.append(f"{'我' if item.get('is_bot') else item.get('sender_name') or '用户'}：{content}")
+                source_labels = {
+                    "astrbot": "框架上下文",
+                    "llm_response": "助手回复",
+                    "plugin": "插件消息",
+                    "llm_request": "LLM请求",
+                }
+                source = source_labels.get(str(item.get("source") or ""), "消息")
+                lines.append(
+                    f"[{source}] {'我' if item.get('is_bot') else item.get('sender_name') or '用户'}：{content}"
+                )
         yield event.plain_result("\n".join(lines))
 
     @filter.command("上下文清除")

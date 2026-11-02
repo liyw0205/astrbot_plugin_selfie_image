@@ -14,7 +14,12 @@ import time
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from .generation_records import _record_timestamp, build_generation_metrics, composition_metadata
+from .generation_records import (
+    _record_timestamp,
+    build_generation_metrics,
+    build_model_status,
+    composition_metadata,
+)
 from .record_database import RecordDatabase
 from .storage_consistency import inspect_storage_consistency
 from ..core.providers import ImageReference
@@ -201,6 +206,26 @@ class GenerationStoreMixin:
         if export:
             payload["format"] = "json"
         return payload
+
+    def get_model_status(self, *, window_seconds: int = 7 * 24 * 60 * 60) -> Dict[str, Any]:
+        """Return model-level health from persisted attempt events."""
+        events = self._load_channel_health_history()
+        targets = []
+        config = getattr(self, "config", None)
+        getter = getattr(config, "get_enabled_image_targets", None)
+        if callable(getter):
+            try:
+                targets = list(getter() or [])
+            except Exception:
+                targets = []
+        get_health = getattr(self, "get_channel_health", None)
+        runtime_health = get_health() if callable(get_health) else {}
+        return build_model_status(
+            events,
+            enabled_targets=targets,
+            runtime_health=runtime_health,
+            window_seconds=window_seconds,
+        )
 
     def inspect_storage_consistency(self) -> Dict[str, Any]:
         """Return a read-only consistency report for records and media."""
@@ -2227,6 +2252,9 @@ class GenerationStoreMixin:
                 {
                     "timestamp": now,
                     "channel": redact_sensitive_text(channel)[:160],
+                    "model": redact_sensitive_text(str(attempt.get("model") or ""))[:180],
+                    "label": redact_sensitive_text(str(attempt.get("label") or ""))[:220],
+                    "provider_type": redact_sensitive_text(str(attempt.get("provider_type") or ""))[:80],
                     "media_type": str(media_type or "image").strip().lower() or "image",
                     "success": success,
                     "elapsed_seconds": round(max(0.0, float(attempt.get("elapsed_seconds") or 0)), 2),
