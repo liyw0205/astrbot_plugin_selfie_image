@@ -16,7 +16,14 @@ from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 
-from ..core.error_classify import classify_generation_error, format_timeout_user_message, retry_action, retry_after_seconds
+from ..core.error_classify import (
+    classify_generation_error,
+    extract_upstream_error_detail,
+    format_generation_error_message,
+    format_timeout_user_message,
+    retry_action,
+    retry_after_seconds,
+)
 from ..core.models import ImageModelTarget
 from ..core.proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, image_client_timeout, target_session_proxy
 from ..core.providers import ImageGenerateRequest, ImageGenerateResult, create_adapter
@@ -244,10 +251,15 @@ async def generate_image_with_fallback(
             raw_error = str(result.error or "生成失败")
             safe_error = redact_sensitive_text(raw_error)
             class_info = classify_generation_error(safe_error)
-            last_error = f"{label}: {class_info.get('user_message') or safe_error}"
+            display_error = format_generation_error_message(safe_error, class_info)
+            last_error = f"{label}: {display_error}"
             attempt_info["success"] = False
             attempt_info["error"] = raw_error
-            attempt_info["error_user_message"] = str(class_info.get("user_message") or safe_error)
+            attempt_info["error_user_message"] = display_error
+            attempt_info["upstream_detail"] = extract_upstream_error_detail(
+                safe_error,
+                str(class_info.get("category") or ""),
+            )
             attempt_info["error_category"] = class_info.get("category")
             attempt_info["retryable"] = bool(class_info.get("retryable"))
             attempt_info["image_count"] = len(result.images or [])

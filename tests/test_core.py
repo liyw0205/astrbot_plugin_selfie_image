@@ -38,6 +38,8 @@ from astrbot_plugin_selfie_image.core.proxy import (
 from astrbot_plugin_selfie_image.generation.video import VideoGenerateRequest, VideoGenerateResult, generate_video_with_fallback
 from astrbot_plugin_selfie_image.core.error_classify import (
     classify_generation_error,
+    extract_upstream_error_detail,
+    format_generation_error_message,
     is_non_retryable_generation_error,
     is_param_profile_switch_error,
     is_transport_profile_switch_error,
@@ -77,6 +79,9 @@ from astrbot_plugin_selfie_image.core.providers import (
     http_error_preview,
     images_from_response_unknown,
     looks_like_binary_image,
+    map_aspect_ratio_to_agnes_size,
+    map_aspect_ratio_to_gpt_image_size,
+    map_aspect_ratio_to_openai_size,
     map_aspect_ratio_to_nai_gateway_size,
     map_aspect_ratio_to_nai_size,
     normalize_gemini_base_url,
@@ -459,7 +464,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.73")
+        self.assertEqual(PLUGIN_VERSION, "1.6.74")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -1707,6 +1712,26 @@ class ConfigModelTests(unittest.TestCase):
         )
         self.assertEqual(guardrail_safety["category"], "safety")
         self.assertIn("内容未通过上游安全策略", guardrail_safety["user_message"])
+        guardrail_display = format_generation_error_message(
+            "HTTP 400: We’re so sorry, but the prompt may violate our guardrails around nudity, sexuality, or erotic content."
+        )
+        self.assertIn("上游原因", guardrail_display)
+        self.assertIn("nudity, sexuality, or erotic content", guardrail_display)
+        self.assertEqual(
+            format_generation_error_message(
+                'HTTP 400: {"error":{"message":"prompt may violate guardrails around nudity"}}'
+            ),
+            "内容未通过上游安全策略，提示词或参考图可能触发了限制：上游原因：prompt may violate guardrails around nudity",
+        )
+        self.assertEqual(
+            extract_upstream_error_detail("HTTP 400: Generated image rejected by content moderation."),
+            "",
+        )
+        redacted_detail = format_generation_error_message(
+            "HTTP 400: {\"error\":{\"message\":\"policy blocked; token=abcdefghijklmnop\"}}"
+        )
+        self.assertIn("policy blocked", redacted_detail)
+        self.assertNotIn("abcdefghijklmnop", redacted_detail)
         policy_safety = classify_generation_error(
             "HTTP 400: 非常抱歉，该提示可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。"
         )
@@ -1735,8 +1760,9 @@ class ConfigModelTests(unittest.TestCase):
                     "attempt": 1,
                     "label": "自建聚合/gpt-image-2",
                     "success": False,
-                    "error": "HTTP 400: 您的请求无法用于生成图像。该请求可能因安全政策被拦截，或不适合进行图像生成。",
+                    "error": "HTTP 400: prompt may violate guardrails around nudity",
                     "error_category": "safety",
+                    "error_user_message": "内容未通过上游安全策略：上游原因：prompt may violate guardrails around nudity",
                 },
                 {
                     "attempt": 2,
@@ -1750,6 +1776,8 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(summary["last_failed_model"], "自建聚合/grok-imagine-image-quality")
         self.assertIn("内容未通过上游安全策略", summary["failure_reason"])
         self.assertEqual(len(summary["failure_reasons"]), 2)
+        self.assertIn("nudity", summary["failure_reasons"][0]["error_user_message"])
+        self.assertIn("nudity", summary["failure_reasons"][0]["upstream_detail"])
 
         server_summary = summarize_generation_failures(
             [
@@ -4153,6 +4181,13 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["aspect_ratio"], "auto")
         self.assertEqual(payload["resolution"], "4k")
         self.assertEqual(payload["response_format"], "b64_json")
+
+    def test_freeform_portrait_ratio_keeps_portrait_provider_mapping(self) -> None:
+        self.assertEqual(map_aspect_ratio_to_openai_size("9:19"), "1024x1792")
+        self.assertEqual(map_aspect_ratio_to_gpt_image_size("9:19"), "1024x1536")
+        self.assertEqual(map_aspect_ratio_to_agnes_size("9:19"), "576x1024")
+        self.assertEqual(map_aspect_ratio_to_nai_size("9:19"), (832, 1216))
+        self.assertEqual(map_aspect_ratio_to_nai_gateway_size("9:19"), "竖图")
 
     def test_agnes_payload_builder_keeps_remote_reference_url(self) -> None:
         adapter = AgnesImageAdapter(make_target(), FakeSession())

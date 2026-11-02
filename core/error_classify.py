@@ -6,6 +6,7 @@ Selfie target 09.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, Optional
 
@@ -124,6 +125,101 @@ def _quota_error_message() -> str:
 
 def _param_error_message() -> str:
     return "上游拒绝了请求参数，可能是尺寸、比例、模型参数或参考图格式不兼容"
+
+
+def _first_structured_error_text(value: Any) -> str:
+    """Find the most useful provider error field without exposing the payload."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for key in ("message", "detail", "error_description", "description", "msg", "reason"):
+            if key in value:
+                found = _first_structured_error_text(value.get(key))
+                if found:
+                    return found
+        for key in ("error", "errors", "error_messages"):
+            if key in value:
+                found = _first_structured_error_text(value.get(key))
+                if found:
+                    return found
+        # Some relays only return a machine-readable policy/parameter code.
+        for key in ("code", "type"):
+            found = _first_structured_error_text(value.get(key))
+            if found:
+                return found
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            found = _first_structured_error_text(item)
+            if found:
+                return found
+    return ""
+
+
+def _is_redundant_error_detail(detail: str, category: str, base: str = "") -> bool:
+    compact = re.sub(r"[\s\u3000`*_~\"'“”‘’「」『』()\[\]{}，。！？、；：,.!?;:]+", "", detail).lower()
+    base_compact = re.sub(r"[\s\u3000`*_~\"'“”‘’「」『』()\[\]{}，。！？、；：,.!?;:]+", "", base).lower()
+    if not compact or compact == base_compact:
+        return True
+    # These are provider-wide summaries rather than a useful reason. Keep
+    # them out even when callers do not pass the already classified category.
+    if re.fullmatch(
+        r"(?:the)?(?:generated)?images?(?:appear(?:tobe)?)?unsafe|"
+        r"(?:generated)?images?rejectedbycontentmoderation|"
+        r"(?:rejected|blocked)by(?:content)?(?:moderation|policy)|"
+        r"content(?:policy|moderation)",
+        compact,
+        flags=re.I,
+    ):
+        return True
+    if category != "safety":
+        return False
+    return bool(
+        re.fullmatch(
+            r"(?:the)?(?:generated)?images?(?:appear(?:tobe)?)?unsafe|"
+            r"(?:generated)?images?rejectedbycontentmoderation|"
+            r"(?:rejected|blocked)by(?:content)?(?:moderation|policy)|"
+            r"content(?:policy|moderation)|"
+            r"内容(?:未通过|审核(?:未通过|不通过|违规|被拒))|"
+            r"(?:安全策略|安全政策|安全审核)(?:拦截|限制|拒绝|不通过)?",
+            compact,
+            flags=re.I,
+        )
+    )
+
+
+def extract_upstream_error_detail(error: Any, category: str = "") -> str:
+    """Extract a concise, redacted reason from an upstream error response."""
+    raw = redact_sensitive_text(str(error or "")).strip()
+    if not raw:
+        return ""
+    payload = raw
+    match = re.search(r"\bHTTP\s+\d{3}\b\s*[:：-]?\s*", payload, flags=re.I)
+    if match:
+        payload = payload[match.end():].strip()
+    structured = ""
+    try:
+        structured = _first_structured_error_text(json.loads(payload))
+    except (TypeError, ValueError):
+        structured = ""
+    detail = structured or payload
+    detail = re.sub(r"[\r\n\t]+", " ", detail)
+    detail = re.sub(r"\s+", " ", detail).strip(" ：:;；")
+    if not detail or re.search(r"<!doctype\s+html|<html\b|<body\b", detail, flags=re.I):
+        return ""
+    if _is_redundant_error_detail(detail, str(category or ""), raw):
+        return ""
+    return detail[:300] + ("…" if len(detail) > 300 else "")
+
+
+def format_generation_error_message(error: Any, classified: Optional[Dict[str, Any]] = None) -> str:
+    """Combine stable classification with a safe upstream-specific reason."""
+    safe_error = redact_sensitive_text(str(error or "")).strip() or "生成失败"
+    info = classified or classify_generation_error(safe_error)
+    base = redact_sensitive_text(str(info.get("user_message") or safe_error)).strip()
+    detail = extract_upstream_error_detail(safe_error, str(info.get("category") or ""))
+    if not detail or detail in base:
+        return base
+    return f"{base}：上游原因：{detail}" if base else detail
 
 
 def extract_http_status(error: str) -> int | None:
@@ -400,7 +496,18 @@ def summarize_generation_failures(
         source_error = raw or stored_user_message or str(fallback_error or "").strip() or "生成失败"
         info = classify_generation_error(source_error)
         category = str(info.get("category") or item.get("error_category") or "").strip()
-        user_message = str(info.get("user_message") or item.get("error_user_message") or raw or "生成失败").strip()
+        classified_message = format_generation_error_message(source_error, info)
+        # New attempts already carry the enriched display message. For legacy
+        # rows, prefer the stored message only when it contains more detail
+        # than the old category-only fallback.
+        user_message = stored_user_message or classified_message or raw or "生成失败"
+        if stored_user_message and raw and (
+            stored_user_message == str(info.get("user_message") or "").strip()
+            or classified_message.startswith(stored_user_message + "：")
+            or classified_message.startswith(stored_user_message + ":")
+        ):
+            user_message = classified_message
+        upstream_detail = extract_upstream_error_detail(source_error, category)
         if not raw and not user_message:
             continue
         rows.append(
@@ -409,6 +516,7 @@ def summarize_generation_failures(
                 "error": raw,
                 "error_user_message": user_message,
                 "error_category": category,
+                "upstream_detail": upstream_detail,
                 "elapsed_seconds": item.get("elapsed_seconds"),
                 "attempt": item.get("attempt"),
             }

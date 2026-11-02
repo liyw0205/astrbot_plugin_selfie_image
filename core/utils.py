@@ -1140,6 +1140,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
                     "success": item.get("success"),
                     "error": _truncate_text(item.get("error"), 800),
                     "error_user_message": _truncate_text(item.get("error_user_message"), 300),
+                    "upstream_detail": _truncate_text(item.get("upstream_detail"), 300),
                     "error_category": item.get("error_category") or "",
                     "elapsed_seconds": item.get("elapsed_seconds"),
                     "timeout": item.get("timeout"),
@@ -1163,6 +1164,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
                     "label": item.get("label") or "",
                     "error": _truncate_text(item.get("error"), 500),
                     "error_user_message": _truncate_text(item.get("error_user_message"), 300),
+                    "upstream_detail": _truncate_text(item.get("upstream_detail"), 300),
                     "error_category": item.get("error_category") or "",
                     "elapsed_seconds": item.get("elapsed_seconds"),
                     "attempt": item.get("attempt"),
@@ -1185,6 +1187,7 @@ def summarize_record_for_list(record: Dict[str, Any]) -> Dict[str, Any]:
                 "label": a.get("label") or a.get("model") or "",
                 "error": a.get("error") or "",
                 "error_user_message": a.get("error_user_message") or "",
+                "upstream_detail": a.get("upstream_detail") or "",
                 "error_category": a.get("error_category") or "",
                 "elapsed_seconds": a.get("elapsed_seconds"),
             }

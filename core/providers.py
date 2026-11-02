@@ -281,10 +281,31 @@ def image_sources_from_response(data: Any, base_url: str = "") -> List[Dict[str,
     return sources
 
 
+def _aspect_orientation(aspect: str) -> str:
+    """Classify both preset and free-form ratios without losing orientation."""
+    raw = str(aspect or "").strip().replace("：", ":").replace("／", "/")
+    match = re.fullmatch(r"(\d{1,5})\s*[:/]\s*(\d{1,5})", raw)
+    if not match:
+        match = re.fullmatch(r"(\d{1,5})\s*[x×✕Ｘ]\s*(\d{1,5})", raw, flags=re.I)
+    if match:
+        width, height = int(match.group(1)), int(match.group(2))
+        if width == height:
+            return "square"
+        return "portrait" if width < height else "landscape"
+    if raw in {"自动", ""}:
+        return "square"
+    if raw in {"16:9", "3:2", "4:3", "5:4", "21:9"}:
+        return "landscape"
+    if raw in {"9:16", "2:3", "3:4", "4:5"}:
+        return "portrait"
+    return "square"
+
+
 def map_aspect_ratio_to_openai_size(aspect: str) -> str:
-    if not aspect or aspect in {"自动", "1:1"}:
+    orientation = _aspect_orientation(aspect)
+    if orientation == "square":
         return "1024x1024"
-    if aspect in {"16:9", "3:2", "4:3", "5:4", "21:9"}:
+    if orientation == "landscape":
         return "1792x1024"
     return "1024x1792"
 
@@ -296,19 +317,19 @@ def map_aspect_ratio_to_gpt_image_size(aspect: str, *, allow_omit_auto: bool = F
     When allow_omit_auto and aspect is 自动/空: return "" so callers can omit size
     (img_gen leaves unspecified size unset; some relays reject explicit size on edits).
     """
+    orientation = _aspect_orientation(aspect)
     if not aspect or aspect in {"自动", ""}:
         return "" if allow_omit_auto else "1024x1024"
-    if aspect in {"1:1"}:
+    if orientation == "square":
         return "1024x1024"
-    if aspect in {"3:2", "16:9", "4:3", "5:4", "21:9"}:
+    if orientation == "landscape":
         return "1536x1024"
-    if aspect in {"2:3", "3:4", "9:16", "4:5"}:
-        return "1024x1536"
-    return "1024x1024"
+    return "1024x1536"
 
 
 def map_aspect_ratio_to_agnes_size(aspect: str) -> str:
-    if not aspect or aspect in {"自动", "1:1"}:
+    orientation = _aspect_orientation(aspect)
+    if orientation == "square":
         return "1024x1024"
     if aspect == "16:9":
         return "1024x576"
@@ -328,7 +349,7 @@ def map_aspect_ratio_to_agnes_size(aspect: str) -> str:
         return "1024x819"
     if aspect == "21:9":
         return "1024x439"
-    return "1024x1024"
+    return "576x1024" if orientation == "portrait" else "1024x576"
 
 
 def _agnes_image_family(model: str) -> str:
@@ -789,9 +810,10 @@ def map_aspect_ratio_to_nai_size(aspect: str, resolution: str = "1K") -> tuple[i
     aspect = str(aspect or "自动").strip()
     res = str(resolution or "1K").strip().upper()
     # Official common presets; 2K/4K only meaningfully used by gateway size labels.
-    if aspect in {"16:9", "3:2", "4:3", "5:4", "21:9"}:
+    orientation = _aspect_orientation(aspect)
+    if orientation == "landscape":
         base = (1216, 832)
-    elif aspect in {"9:16", "2:3", "3:4", "4:5"}:
+    elif orientation == "portrait":
         base = (832, 1216)
     else:
         base = (1024, 1024)
@@ -807,9 +829,10 @@ def map_aspect_ratio_to_nai_gateway_size(aspect: str, resolution: str = "1K") ->
     """Nai2API / third-party GET gateways use Chinese size labels."""
     aspect = str(aspect or "自动").strip()
     res = str(resolution or "1K").strip().upper()
-    if aspect in {"16:9", "3:2", "4:3", "5:4", "21:9"}:
+    orientation = _aspect_orientation(aspect)
+    if orientation == "landscape":
         orient = "横图"
-    elif aspect in {"9:16", "2:3", "3:4", "4:5"}:
+    elif orientation == "portrait":
         orient = "竖图"
     else:
         orient = "方图"

@@ -327,6 +327,12 @@ def test_prompt_aspect_ratio_supports_orientation_and_pixel_dimensions() -> None
     assert extract_prompt_aspect_ratio("方图正面构图") == "1:1"
     assert extract_prompt_aspect_ratio("尺寸 1024x1536") == "2:3"
     assert extract_prompt_aspect_ratio("不要横屏，使用竖屏") == "9:16"
+    assert extract_prompt_aspect_ratio("画面比例9:19,超高清晰度") == "9:19"
+    _, aspect, _ = parse_prompt_options(
+        "画面比例9:19,超高清晰度",
+        default_aspect_ratio="1:1",
+    )
+    assert aspect == "9:19"
 
 
 def test_explicit_ar_option_beats_natural_prompt_ratio() -> None:
