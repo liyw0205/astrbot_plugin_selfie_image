@@ -7791,7 +7791,9 @@ Source prompt:
           if (!item) return;
           const input = $(targetInputId);
           if (input) {
-            input.value = item.prompt || '';
+            input.value = item.mode === 'special'
+              ? `${item.prompt || ''} 【cos:${item.id || ''}】【cos_mode:special】`
+              : (item.prompt || '');
             input.dispatchEvent(new Event('input', {bubbles:true}));
           }
           if (targetInputId === 'testPrompt' && TEST_MODE === 'video' && item.duration) {
@@ -8153,7 +8155,9 @@ Source prompt:
           if (!item) return;
           const input = $(targetInputId);
           if (input) {
-            input.value = item.prompt || '';
+            input.value = item.mode === 'special'
+              ? `${item.prompt || ''} 【cos:${item.id || ''}】【cos_mode:special】`
+              : (item.prompt || '');
             input.dispatchEvent(new Event('input', {bubbles:true}));
           }
           panel.querySelectorAll('.preset-chip').forEach(el => el.classList.remove('active'));
@@ -8197,7 +8201,7 @@ Source prompt:
     }
     function openCosPoolModal() {
       ['cosCustomId','cosCustomTitle','cosCustomPrompt','cosCustomTags'].forEach(id => { if ($(id)) $(id).value = ''; });
-      if ($('cosPoolStatus')) $('cosPoolStatus').textContent = '自定义 COS 只保存服饰提示词；姿势和环境由兼容矩阵决定。';
+      if ($('cosPoolStatus')) $('cosPoolStatus').textContent = '普通自定义 COS 使用兼容矩阵；带 mode=special 的固定 COS 会完整保留自己的场景、风格、姿势和镜头。';
       $('cosPoolModal')?.classList.add('show');
       $('cosCustomId')?.focus();
     }

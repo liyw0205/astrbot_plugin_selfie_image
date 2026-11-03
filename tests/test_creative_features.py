@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from astrbot_plugin_selfie_image.cos.cos_pool import CosPoolStore
+from astrbot_plugin_selfie_image.cos.cos_looks import build_cos_look_action
 from astrbot_plugin_selfie_image.core.providers import ImageReference
 from astrbot_plugin_selfie_image.features.creative_features import (
     CreativeFeaturesMixin,
@@ -369,6 +370,30 @@ def test_cos_pool_round_trip_and_custom_validation() -> None:
         assert restored.list_custom()[0]["title"] == "自定义"
         with pytest.raises(ValueError):
             store.save_custom({"id": "missing-prompt", "title": "无效"})
+
+
+def test_cos_pool_preserves_special_fixed_staging_contract() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = CosPoolStore(directory)
+        saved = store.save_custom(
+            {
+                "id": "custom-special",
+                "title": "自定义固定成片",
+                "prompt": "完整提示词：窗边逆光、低角度侧后方、CCD颗粒和固定姿势。",
+                "mode": "special",
+                "special_camera": "first",
+            }
+        )
+        assert saved["mode"] == "special"
+        assert saved["special_camera"] == "first"
+        restored = store.list_custom()[0]
+        action = build_cos_look_action("", picker=lambda **_: restored)
+        assert restored["prompt"] in action
+        assert "【cos_mode:special】" in action
+        assert "【cam:first】" in action
+        assert "【cos_pose:" not in action
+        assert "【cos_scene:" not in action
+        assert "【cos_framing:" not in action
 
 
 def test_cos_pool_drops_legacy_builtin_id_duplicates() -> None:

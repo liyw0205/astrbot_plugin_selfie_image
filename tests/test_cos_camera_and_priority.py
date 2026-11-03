@@ -11,6 +11,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_LOOK_SETS,
     COS_RANDOM_POSE_CLASSES,
     COS_RANDOM_SCENE_CLASSES,
+    COS_COMBINATION_PRESETS,
     COS_SCENE_THEME_TAGS,
     COS_RANDOM_COMPOSITION_CLASSES,
     COS_RANDOM_CAMERA_POSE_IDS,
@@ -22,17 +23,22 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_FRAMING_CAMERA_COMPATIBILITY,
     COS_LOOK_COMPATIBILITY_EXPANSION,
     COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
+    COS_SPECIAL_LOOK_SETS,
     COS_SUBJECT_CLARITY_PROMPT,
     audit_cos_look_catalog,
     build_cos_look_action,
+    build_special_cos_look_action,
     build_cos_third_person_prompt,
     cos_prompt_has_framing,
     cos_look_compatibility,
+    get_cos_look_by_id,
+    is_special_cos_look,
     adapt_cos_outfit_for_camera,
     match_cos_look_sets,
     normalize_cos_prompt_negatives,
     pick_cos_framing,
     pick_cos_camera,
+    pick_cos_look_set,
     pick_cos_variation,
     requests_cos_multi_view_collage,
     _cos_face_risk_tags,
@@ -68,6 +74,13 @@ def test_default_cos_pool_actions_randomize_camera_and_keep_contracts_clean():
         action = build_cos_look_action("", picker=lambda item=item, **_: item)
         camera = re.search(r"【cam:(selfie|first|third)】", action).group(1)
         assert camera in {"selfie", "first", "third"}
+        if is_special_cos_look(item):
+            assert "【cos_mode:special】" in action
+            assert item["prompt"] in action
+            assert not re.search(r"【cos_(?:pose|scene|framing):", action)
+            assert "本次随机场景优先于套装正文" not in action
+            assert "本次随机姿势优先于套装正文" not in action
+            continue
         assert re.search(r"【cos_pose:[a-z0-9_]+】", action)
         assert re.search(r"【cos_scene:[a-z0-9_]+】", action)
         assert re.search(r"【cos_framing:[a-z0-9_]+】", action)
@@ -75,7 +88,7 @@ def test_default_cos_pool_actions_randomize_camera_and_keep_contracts_clean():
         assert "本次随机姿势优先于套装正文" in action
         if camera == "third":
             assert "【他拍 / 看看COS模式】" in action
-            assert "自拍" not in action
+            assert "【自拍 / 看看COS模式】" not in action
             assert "镜前" not in action
             assert "镜子" not in action
             assert "对镜取景" not in action
@@ -83,7 +96,7 @@ def test_default_cos_pool_actions_randomize_camera_and_keep_contracts_clean():
         elif camera == "first":
             assert "【第一视角 / 看看COS模式】" in action
             assert "手持设备" in action
-            assert "自拍" not in action
+            assert "【自拍 / 看看COS模式】" not in action
         else:
             assert "【自拍 / 看看COS模式】" in action
 
@@ -573,6 +586,12 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
     )
     for item in COS_LOOK_SETS:
         profile = cos_look_compatibility(item["id"])
+        if is_special_cos_look(item):
+            assert profile["variation_enabled"] is False, item["id"]
+            assert profile["mode"] == "special", item["id"]
+            assert profile["pose_ids"] == [], item["id"]
+            assert profile["scene_ids"] == [], item["id"]
+            continue
         assert profile["variation_enabled"], item["id"]
         assert profile["scene_ids"]
         assert profile["pose_ids"]
@@ -1460,6 +1479,28 @@ def test_random_cos_scene_bundles_include_a_distinct_visual_treatment():
     assert "低机位" not in rooftop["prompt"]
 
 
+def test_curated_cos_combinations_are_valid_and_sleep_has_a_real_bed_scene():
+    assert len(COS_COMBINATION_PRESETS) == 25
+    for combination in COS_COMBINATION_PRESETS.values():
+        scene_id = combination["scene_id"]
+        pose_id = combination["pose_id"]
+        framing_id = combination["framing_id"]
+        assert pose_id in COS_RANDOM_SCENE_CLASSES[scene_id]["pose_ids"]
+        assert framing_id in COS_POSE_FRAMING_COMPATIBILITY[pose_id]
+        assert scene_id in COS_FRAMING_SCENE_COMPATIBILITY.get(framing_id, (scene_id,))
+
+    sleep = COS_COMBINATION_PRESETS["bedroom_sleep_snapshot"]
+    assert sleep["scene_id"] == "bedroom_sleep"
+    assert sleep["pose_id"] == "sleeping_on_bed"
+    assert sleep["framing_id"] == "high_angle_phone_wide"
+    assert "bedroom_sleep" in COS_FRAMING_SCENE_COMPATIBILITY["high_angle_phone_wide"]
+
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.0):
+        variation = pick_cos_variation("roxy_cream", camera="third", use_combinations=True)
+    assert variation["combination_id"] in COS_COMBINATION_PRESETS
+    assert variation["framing_id"] == COS_COMBINATION_PRESETS[variation["combination_id"]]["framing_id"]
+
+
 def test_cos_back_view_does_not_require_a_visible_face_in_third_person_mode():
     item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
     action = build_cos_look_action(
@@ -1636,6 +1677,11 @@ def test_cos_multi_view_collage_supports_all_builtin_costumes():
             "多视角拼贴",
             picker=lambda **_: item,
         )
+        if is_special_cos_look(item):
+            assert "【cos_mode:special】" in action, item["id"]
+            assert "【cos_view:multi_view_collage】" not in action, item["id"]
+            assert cos_look_compatibility(item["id"])["variation_enabled"] is False
+            continue
         assert "【cos_view:multi_view_collage】" in action, item["id"]
         variation = pick_cos_variation(
             item["id"],
@@ -1650,6 +1696,110 @@ def test_cos_multi_view_collage_supports_all_builtin_costumes():
         picker=lambda **_: item,
     )
     assert extract_prompt_aspect_ratio(square_with_user_override) == "16:9"
+
+
+def test_special_cos_is_fixed_and_addressable_without_random_staging():
+    assert COS_SPECIAL_LOOK_SETS
+    special = COS_SPECIAL_LOOK_SETS[0]
+    assert is_special_cos_look(special)
+    assert is_special_cos_look(special["id"])
+    assert get_cos_look_by_id(special["id"])["prompt"] == special["prompt"]
+
+    action = build_special_cos_look_action(special)
+    assert special["prompt"] in action
+    assert "【cos_mode:special】" in action
+    assert not re.search(r"【cos_(?:pose|scene|framing):", action)
+
+    # Rebuilding from the tagged action must preserve the same complete prompt
+    # instead of wrapping it in another random third-person contract.
+    rebuilt = build_cos_third_person_prompt(action)
+    assert rebuilt == action
+
+    # Special looks participate in broad random selection, while their fixed
+    # prompt still prevents ordinary random staging from being appended.
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: next(
+            item for item in values if item["id"] == special["id"]
+        ),
+    ):
+        assert pick_cos_look_set()["id"] == special["id"]
+    assert pick_cos_look_set(query=special["title"])["id"] == special["id"]
+
+
+def test_rooftop_special_cos_is_single_subject_and_keeps_complete_prompt():
+    look = get_cos_look_by_id("original_rooftop_side_back_single")
+    assert look
+    prompt = str(look["prompt"])
+    assert "城市高处天台边缘" in prompt
+    assert "画面只保留这一名女性" in prompt
+    assert "侧后方视角" in prompt
+    assert "略带仰拍角度" in prompt
+    assert "左侧女子" not in prompt
+    assert "第二名女性" not in prompt
+
+    action = build_cos_look_action(picker=lambda **_: look)
+    assert prompt in action
+    assert "【cos_mode:special】" in action
+    assert not re.search(r"【cos_(?:pose|scene|framing):", action)
+
+
+def test_review_stage_special_cos_batch_is_resolved_and_fixed():
+    expected = {
+        "original_chiaroscuro_white_shirt": ("黑色背景", "斜向硬光", "双手"),
+        "original_veranda_green_side_profile": ("日式住宅的缘侧", "侧颜", "白色雪纺吊带裙"),
+        "original_vintage_wicker_sweater": ("复古藤编靠背椅", "米色", "抬起的膝盖"),
+        "original_ryokan_blue_flower_yukata": ("传统日式旅馆房间", "蓝色花卉图案", "浴衣"),
+        "firefly_star_rail_sleeping_cabin": ("星际列车", "流萤", "9:16竖式构图"),
+    }
+    for look_id, markers in expected.items():
+        look = get_cos_look_by_id(look_id)
+        assert look and is_special_cos_look(look), look_id
+        prompt = str(look["prompt"])
+        assert "{argument" not in prompt, look_id
+        assert "画面只保留" in prompt, look_id
+        for marker in markers:
+            assert marker in prompt, (look_id, marker)
+        action = build_cos_look_action(picker=lambda **_: look)
+        assert prompt in action, look_id
+        assert "【cos_mode:special】" in action, look_id
+        assert not re.search(r"【cos_(?:pose|scene|framing):", action), look_id
+
+
+def test_extracted_special_styles_have_explicit_compatible_random_contracts():
+    cases = (
+        ("黑背景影棚 胸前拢衣", "black_studio_chiaroscuro", "hands_gathered_at_sternum", "斜向硬光"),
+        ("日式缘侧 缘侧侧颜", "veranda_green_side_profile", "veranda_side_profile", "85mm镜头"),
+        ("藤编椅 椅上抬膝", "vintage_wicker_room", "seated_knee_up", "藤编靠背椅"),
+        ("日式旅馆 前倾伸手", "ryokan_night_room", "lean_forward_hands", "冷暖对比"),
+        ("窗边CCD 窗边背影抬臂", "window_ccd_snapshot", "window_back_raised_arms", "CCD"),
+        ("星穹铁道休息舱 床上熟睡", "star_rail_rest_cabin", "sleeping_on_bed", "高动态范围"),
+    )
+    for request, expected_scene, expected_pose, style_marker in cases:
+        variation = pick_cos_variation("custom_cos_id", extra_request=request, camera="third")
+        assert variation["scene_id"] == expected_scene
+        assert variation["pose_id"] == expected_pose
+        # A style word inside the selected scene alias still belongs to that
+        # scene contract and must be present in the final prompt.
+        assert style_marker in variation["prompt"]
+        framing = pick_cos_framing(
+            pose_id=variation["pose_id"],
+            scene_id=variation["scene_id"],
+            camera="third",
+        )
+        assert framing["view_id"] in COS_POSE_FRAMING_COMPATIBILITY[expected_pose]
+        if framing["view_id"] in COS_FRAMING_SCENE_COMPATIBILITY:
+            assert expected_scene in COS_FRAMING_SCENE_COMPATIBILITY[framing["view_id"]]
+        assert "手机" not in variation["prompt"]
+        assert "手机" not in framing["prompt"]
+
+    explicit_style = pick_cos_variation(
+        "custom_cos_id",
+        extra_request="窗边CCD，使用胶片质感",
+        camera="third",
+    )
+    assert explicit_style["scene_id"] == "window_ccd_snapshot"
+    assert "本次场景影像风格" not in explicit_style["prompt"]
 
 
 def test_cos_framing_alternatives_are_resolved_before_prompt_generation():

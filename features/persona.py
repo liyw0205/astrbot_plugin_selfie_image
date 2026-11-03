@@ -35,6 +35,7 @@ from .daily_schedule import (
 )
 from ..prompts.prompt_templates import (
     COS_IDENTITY_CONTRACT_ZH,
+    COS_HAIR_OVERRIDE_CONTRACT_ZH,
     has_viewpoint_change_request,
     resolve_appearance_type,
 )
@@ -2391,6 +2392,10 @@ class PersonaManager:
         )
         shot_match = re.search(r"【shot:([a-z_]+)】", act, re.I)
         shot_id = str(shot_match.group(1) if shot_match else "")
+        group_contract = bool(
+            intent.is_group_photo
+            and shot_id in {"group_portrait", "group_environment", "back_view", "side_profile"}
+        )
         cos_pose_match = re.search(r"【cos_pose:([a-z_]+)】", act, re.I)
         cos_pose_id = str(cos_pose_match.group(1) if cos_pose_match else "")
         back_facing_shot = shot_id in {"back_view", "rear_rooftop"} or cos_pose_id in {
@@ -2436,10 +2441,16 @@ class PersonaManager:
                     "形象参考以角色名称、人设和本次 COS 套装为准；未说明性别默认成年女性。",
                 ]
             )
+        if intent.is_cos_look:
+            identity_lines.append(COS_HAIR_OVERRIDE_CONTRACT_ZH)
         if intent.is_legs_only and feet_cropped:
             identity_lines = (
                 [
-                    "参考图一只用于自然体态和构图；服装按本次锁定搭配执行，人物身份保持一致。",
+                    (
+                        "引用图一作为本次主角身份来源；保留其中人物身份和自然体态，服装按本次锁定搭配执行。"
+                        if has_external_reference
+                        else "参考图一只用于自然体态和构图；服装按本次锁定搭配执行，人物身份保持一致。"
+                    ),
                 ]
                 if has_reference_image
                 else [
@@ -2458,8 +2469,14 @@ class PersonaManager:
         if appearance_line and not (intent.is_legs_only and feet_cropped):
             identity_lines.insert(1 if has_reference_image else 0, appearance_line)
 
+        # Generated group actions already contain their identity, medium, and
+        # companion-conversion rules. Emitting them again here only lengthens
+        # the prompt and can make the model resolve duplicate instructions.
+        if group_contract:
+            identity_lines = []
+
         reference_lines: list[str] = []
-        if extra_reference_count > 0:
+        if extra_reference_count > 0 and not group_contract:
             reference_lines.append(f"另有 {extra_reference_count} 张额外参考图。")
             if intent.is_group_photo:
                 reference_lines.extend(group_style_lines(appearance_type))
@@ -2539,28 +2556,29 @@ class PersonaManager:
                     "未指定时自然参考形象图，头部、视线和表情保持连贯，避免无依据过度变形；面部边缘清晰、肤色自然，不用白色薄膜或雾化遮住五官。"
                 )
         elif intent.is_group_photo:
-            mode_lines.append("【合影 / 同框模式】")
-            if appearance_type == "anime":
-                mode_lines.append("先确定你自己的柔光京阿尼动漫形象，再把每张额外参考图落实为独立的同框动漫人物。")
-            elif appearance_type == "real":
-                mode_lines.append("先确定你自己的写实形象，再把每张额外参考图落实为独立的同框写实人物。")
+            if group_contract:
+                mode_lines.extend(("【合影 / 同框模式】", act))
             else:
-                mode_lines.append("先锁定主形象参考图的媒介和身份，再把每张额外参考图落实为独立同框对象；额外参考不得改变主角媒介。")
-            # With extra references, the same style/conversion guidance is
-            # already emitted in reference_lines above.
-            if not extra_reference_count:
-                mode_lines.extend(group_style_lines(appearance_type))
-            mode_lines.extend(
-                [
-                    "同框对象必须是独立完整人物（有头有身体），禁止原样保留玩偶/毛绒玩具/吉祥物外形，禁止贴在主角衣服上或与身体衣物粘连融合。",
-                    "同框人物自然站位或坐位，距离、遮挡、视线和互动关系合理；与主角边界清晰、可并肩，不要融成一团。",
-                    "正面合影默认多数人看向镜头（或看向画面中的相机方向），表情自然、有互动；背面或侧身构图按选定朝向执行，不强迫主角回头；你自己的表情按合影氛围重画，不要僵住参考图一的原表情。",
-                    "除非用户明确要求看向彼此或看向别处，不要全员心不在焉、眼神飘走。",
-                    "你自己作为主角之一时，若面向镜头，优先与镜头有眼神交流，像认真合影而不是走神。",
-                ]
-            )
-            if extra_reference_count > 1:
-                mode_lines.append("多人合影时，每个人都有清晰、独立、稳定的身份。")
+                mode_lines.append("【合影 / 同框模式】")
+                if appearance_type == "anime":
+                    mode_lines.append("先确定你自己的柔光京阿尼动漫形象，再把每张额外参考图落实为独立的同框动漫人物。")
+                elif appearance_type == "real":
+                    mode_lines.append("先确定你自己的写实形象，再把每张额外参考图落实为独立的同框写实人物。")
+                else:
+                    mode_lines.append("先锁定主形象参考图的媒介和身份，再把每张额外参考图落实为独立同框对象；额外参考不得改变主角媒介。")
+                if not extra_reference_count:
+                    mode_lines.extend(group_style_lines(appearance_type))
+                mode_lines.extend(
+                    [
+                        "同框对象必须是独立完整人物（有头有身体），禁止原样保留玩偶/毛绒玩具/吉祥物外形，禁止贴在主角衣服上或与身体衣物粘连融合。",
+                        "同框人物自然站位或坐位，距离、遮挡、视线和互动关系合理；与主角边界清晰、可并肩，不要融成一团。",
+                        "正面合影默认多数人看向镜头（或看向画面中的相机方向），表情自然、有互动；背面或侧身构图按选定朝向执行，不强迫主角回头；你自己的表情按合影氛围重画，不要僵住参考图一的原表情。",
+                        "除非用户明确要求看向彼此或看向别处，不要全员心不在焉、眼神飘走。",
+                        "你自己作为主角之一时，若面向镜头，优先与镜头有眼神交流，像认真合影而不是走神。",
+                    ]
+                )
+                if extra_reference_count > 1:
+                    mode_lines.append("多人合影时，每个人都有清晰、独立、稳定的身份。")
         elif intent.is_legs_only:
             camera_match = re.search(r"【cam:(selfie|third)】", act)
             camera_kind = str(camera_match.group(1) if camera_match else "selfie")
@@ -2661,7 +2679,9 @@ class PersonaManager:
             if intent.change_clothes:
                 mode_lines.append("本次同时包含换装要求：优先使用用户指定的服装/穿搭。")
         elif intent.is_third_person_photo:
-            if explicit_context:
+            if has_staging_contract:
+                mode_lines.extend(("【他拍 / 日常照片模式】", act))
+            elif explicit_context:
                 mode_lines.extend(
                     [
                         "【他拍 / 用户指定场景模式】",
@@ -2720,6 +2740,8 @@ class PersonaManager:
                     "额外参考图里的遮挡面部物件不属于姿势目标，除非用户明确要求保留。",
                 ]
             )
+        elif has_staging_contract:
+            mode_lines.extend(("【自拍 / 日常穿搭模式】", act))
         elif explicit_context:
             mode_lines.extend(
                 [
@@ -2795,22 +2817,31 @@ class PersonaManager:
                 if current_event.get("scene"):
                     today_lines.append(f"当前日程场景：{current_event['scene']}")
             elif current_event and not skip_status and not intent.change_pose:
-                today_lines.append(
-                    "当前日程事件："
-                    + "；".join(
-                        item
-                        for item in (
-                            f"{current_event.get('start')}-{current_event.get('end')} {current_event.get('title')}"
-                            if current_event.get("title")
-                            else "",
-                            f"状态={current_event.get('status')}" if current_event.get("status") else "",
-                            f"场景={current_event.get('scene')}" if current_event.get("scene") else "",
-                            f"动作={current_event.get('action')}" if current_event.get("action") else "",
-                            f"穿搭变化={current_event.get('outfit_change')}" if current_event.get("outfit_change") else "",
-                        )
-                        if item
+                event_items = (
+                    (
+                        f"{current_event.get('start')}-{current_event.get('end')} {current_event.get('title')}"
+                        if current_event.get("title")
+                        else "",
+                        f"状态={current_event.get('status')}" if current_event.get("status") else "",
+                        f"穿搭变化={current_event.get('outfit_change')}"
+                        if current_event.get("outfit_change")
+                        else "",
+                    )
+                    if has_staging_contract
+                    else (
+                        f"{current_event.get('start')}-{current_event.get('end')} {current_event.get('title')}"
+                        if current_event.get("title")
+                        else "",
+                        f"状态={current_event.get('status')}" if current_event.get("status") else "",
+                        f"场景={current_event.get('scene')}" if current_event.get("scene") else "",
+                        f"动作={current_event.get('action')}" if current_event.get("action") else "",
+                        f"穿搭变化={current_event.get('outfit_change')}"
+                        if current_event.get("outfit_change")
+                        else "",
                     )
                 )
+                if any(event_items):
+                    today_lines.append("当前日程事件：" + "；".join(item for item in event_items if item))
             selected_outfit = (
                 timeline.outfit_for_event(timeline_event)
                 if timeline and timeline_event
@@ -2867,6 +2898,10 @@ class PersonaManager:
             )
         elif intent.is_cos_look and cos_contract:
             action_line = "用户要求：按以上已锁定的 COS 套装、相机、构图、姿势和场景规则生成。"
+        elif group_contract:
+            action_line = "用户要求：按以上已锁定的合影机位与同框关系生成。"
+        elif has_staging_contract:
+            action_line = "用户要求：按以上已锁定的机位、场景和动作生成。"
         else:
             action_line = f"用户要求：{act}" if act else "用户要求：看着镜头自然自拍，展示你现在的样子。"
         if intent.is_legs_only:
@@ -2892,7 +2927,7 @@ class PersonaManager:
         if intent.is_cos_look:
             output_lines = ["【生成要求】"]
             output_lines.append(
-                "按以上完整 COS 规则生成一张自然成片；未明确的部分保持连贯，不额外改写。"
+                "仅执行上方已锁定的单一 COS 规则，生成一张自然成片。"
                 if cos_contract
                 else "按以上 COS 套装、构图、姿势和表情生成一张完整自然的成片。"
             )

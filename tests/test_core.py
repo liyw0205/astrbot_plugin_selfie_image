@@ -464,7 +464,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.75")
+        self.assertEqual(PLUGIN_VERSION, "1.6.77")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -9092,12 +9092,16 @@ class LegFocusTests(unittest.TestCase):
         for _ in range(40):
             t = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
             self.assertIn("看看COS模式", t)
-            self.assertIn("换装", t)
             m = re.search(r"【cos:([a-z0-9_]+)】", t)
             self.assertTrue(m, t)
             ids.add(m.group(1))
             cam = re.search(r"【cam:(selfie|first|third)】", t)
             self.assertTrue(cam, t)
+            if "【cos_mode:special】" in t:
+                self.assertIn("特殊 COS", t)
+                self.assertNotRegex(t, r"【cos_(?:pose|scene|framing):[a-z0-9_]+】")
+                continue
+            self.assertIn("换装", t)
             self.assertRegex(t, r"【cos_pose:[a-z0-9_]+】")
             self.assertRegex(t, r"【cos_scene:[a-z0-9_]+】")
             self.assertRegex(t, r"【cos_framing:[a-z0-9_]+】")
@@ -9132,6 +9136,8 @@ class LegFocusTests(unittest.TestCase):
             len(plugin_main.COS_LOOK_SETS),
         )
         for item in plugin_main.COS_LOOK_SETS:
+            if plugin_main.is_special_cos_look(item):
+                continue
             for forbidden in (
                 "血迹", "血腥", "幼儿体型", "儿童体型", "未成年", "过度裸露",
                 "透明裸露", "裸露内衣", "成人化妆容", "成人化姿势", "儿童房",
@@ -9188,6 +9194,10 @@ class LegFocusTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.cos.cos_looks import cos_look_compatibility
         for item in plugin_main.COS_LOOK_SETS:
             profile = cos_look_compatibility(item["id"])
+            if plugin_main.is_special_cos_look(item):
+                self.assertFalse(profile["variation_enabled"], item["id"])
+                self.assertEqual(profile["mode"], "special", item["id"])
+                continue
             self.assertTrue(profile["variation_enabled"], item["id"])
             self.assertTrue(profile["scene_ids"], item["id"])
             self.assertTrue(profile["pose_ids"], item["id"])
@@ -9211,7 +9221,10 @@ class LegFocusTests(unittest.TestCase):
                 ),
             )
         self.assertNotIn("视角按本套 COS 套装描述执行", shuilaner_action)
-        self.assertIn("本次未指定视角，随机采用", shuilaner_action)
+        self.assertTrue(
+            "本次未指定视角，随机采用" in shuilaner_action
+            or "本次采用精选组合" in shuilaner_action
+        )
         self.assertIn("镜头位于腰部附近略低位置", shuilaner_action)
         self.assertNotIn("从人物膝盖略低处向上拍摄", shuilaner_action)
         self.assertNotRegex(
@@ -9766,6 +9779,9 @@ class LegFocusTests(unittest.TestCase):
         # is already present in the selected outfit title/prompt.
         batch_plugin = object.__new__(plugin_main.SelfieImagePlugin)
         batch_plugin.config = type("Config", (), {"image_max_batch_count": 10})()
+        batch_plugin.persona = types.SimpleNamespace(
+            analyze_selfie_intent=lambda _text: types.SimpleNamespace(is_cos_look=True)
+        )
         rebuilt_actions = []
         rebuilt_queries = []
 
@@ -9839,23 +9855,25 @@ class LegFocusTests(unittest.TestCase):
                 )
             ]
 
-        total_pages = (len(plugin_main.COS_LOOK_SETS) + 19) // 20
+        random_pool_size = len(plugin_main.COS_LOOK_SETS)
+        random_pool = list(plugin_main.COS_LOOK_SETS)
+        total_pages = (random_pool_size + 19) // 20
         for alias in ("列表", "全部", "查看"):
             response = asyncio.run(collect_list_response(f"/看看COS {alias}"))
             self.assertEqual(len(response), 1)
             self.assertIn(
-                f"看看COS 随机池（{len(plugin_main.COS_LOOK_SETS)}套）：",
+                f"看看COS 随机池（{random_pool_size}套）：",
                 response[0],
             )
             self.assertIn(f"第 1/{total_pages} 页", response[0])
-            self.assertIn(plugin_main.COS_LOOK_SETS[0]["title"], response[0])
-            self.assertNotIn(plugin_main.COS_LOOK_SETS[20]["title"], response[0])
+            self.assertIn(random_pool[0]["title"], response[0])
+            self.assertNotIn(random_pool[20]["title"], response[0])
 
             page_two = asyncio.run(collect_list_response(f"/看看COS {alias} 2"))
             self.assertEqual(len(page_two), 1)
             self.assertIn("第 2/", page_two[0])
-            self.assertIn(plugin_main.COS_LOOK_SETS[20]["title"], page_two[0])
-            self.assertNotIn(plugin_main.COS_LOOK_SETS[0]["title"], page_two[0])
+            self.assertIn(random_pool[20]["title"], page_two[0])
+            self.assertNotIn(random_pool[0]["title"], page_two[0])
 
         self.assertEqual(plugin_main.parse_cos_look_list_request("全部"), 1)
         self.assertEqual(plugin_main.parse_cos_look_list_request("全部第2页"), 2)
@@ -9876,7 +9894,8 @@ class LegFocusTests(unittest.TestCase):
         ):
             self.assertNotIn(removed, {x["id"] for x in plugin_main.COS_LOOK_SETS})
         for item in plugin_main.COS_LOOK_SETS:
-            self.assertNotIn("手机", item["prompt"], item["id"])
+            if not plugin_main.is_special_cos_look(item):
+                self.assertNotIn("手机", item["prompt"], item["id"])
         wrap = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
         self.assertTrue(any(marker in wrap for marker in ("对镜", "他拍", "第一视角")), wrap)
         self.assertNotIn("第一人称自拍或居家随手拍", wrap)
@@ -11032,6 +11051,7 @@ class StudioStoreTests(unittest.TestCase):
             COS_RANDOM_SCENE_CLASSES,
             COS_LOOK_COMPATIBILITY_EXPANSION,
             COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
+            is_special_cos_look,
         )
 
         from astrbot_plugin_selfie_image.cos.cos_looks import COS_LOOK_SETS
@@ -11044,6 +11064,12 @@ class StudioStoreTests(unittest.TestCase):
         )
         for item in COS_LOOK_SETS:
             profile = cos_look_compatibility(item["id"])
+            if is_special_cos_look(item):
+                self.assertFalse(profile["variation_enabled"], item["id"])
+                self.assertEqual(profile["mode"], "special", item["id"])
+                self.assertEqual(profile["pose_ids"], [], item["id"])
+                self.assertEqual(profile["scene_ids"], [], item["id"])
+                continue
             self.assertTrue(profile["variation_enabled"], item["id"])
             self.assertTrue(profile["pose_ids"], item["id"])
             self.assertTrue(profile["scene_ids"], item["id"])

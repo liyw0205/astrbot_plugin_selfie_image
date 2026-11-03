@@ -98,6 +98,7 @@ from .cos.cos_looks import (
     build_cos_look_action,
     cos_query_has_series_constraint,
     format_cos_look_list,
+    is_special_cos_look,
     keep_cos_outfit_requested,
     list_cos_look_sets,
     looks_like_cos_prompt,
@@ -1744,11 +1745,20 @@ class SelfieImagePlugin(
     ) -> str:
         appearance_type = _appearance_type_for_request(getattr(self, "persona", None), extra_request)
         chosen_force = force_id
+        custom = getattr(getattr(self, "cos_pool", None), "list_custom", lambda: [])()
+        custom_special_ids = {
+            str(item.get("id") or "").strip()
+            for item in custom
+            if is_special_cos_look(item)
+        }
         if not chosen_force:
             favorites = getattr(getattr(self, "cos_pool", None), "list_favorites", lambda: [])()
+            favorites = [
+                item for item in favorites
+                if not is_special_cos_look(item) and str(item) not in custom_special_ids
+            ]
             if favorites and not match_query and not extra_request:
                 chosen_force = random.choice(favorites)
-        custom = getattr(getattr(self, "cos_pool", None), "list_custom", lambda: [])()
         custom_item = next((item for item in custom if str(item.get("id") or "") == str(chosen_force or "")), None)
         if custom_item:
             return build_cos_look_action(
@@ -5843,7 +5853,7 @@ class SelfieImagePlugin(
             m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
-                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_pose|cos_scene|cos_framing|cos_composition|cos_view|legs|wear|outfit|frame):[a-z0-9_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_mode|cos_pose|cos_scene|cos_framing|cos_composition|cos_view|legs|wear|outfit|frame):[a-z0-9_]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
             # Keep the original command query even when it is already present
             # in the selected outfit title/prompt and therefore has no user
@@ -5865,13 +5875,16 @@ class SelfieImagePlugin(
             m_cos = re.search(r"【cos:([a-z0-9_]+)】", str(action or ""))
             if m_cos:
                 last_cos = str(m_cos.group(1) or "")
+            is_special_cos = bool(re.search(r"【cos_mode:special】", str(action or ""), flags=re.I))
             m_cam = re.search(r"【cam:(selfie|first|third)】", str(action or ""))
             if m_cam:
                 last_cam = str(m_cam.group(1) or "")
             m_cos_pose = re.search(r"【cos_pose:([a-z_]+)】", str(action or ""))
             if m_cos_pose:
                 last_cos_pose = str(m_cos_pose.group(1) or "")
-            keep_cos_outfit = source == "command-look-cos" and keep_cos_outfit_requested(extra_keep)
+            keep_cos_outfit = is_special_cos or (
+                source == "command-look-cos" and keep_cos_outfit_requested(extra_keep)
+            )
         round_actions: List[str] = []
         for index in range(total):
             round_action = action

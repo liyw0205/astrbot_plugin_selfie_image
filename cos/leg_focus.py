@@ -487,6 +487,22 @@ def _adapt_leg_pose_prompt_for_camera(prompt: str, camera: str) -> str:
     return adapted
 
 
+def _adapt_leg_pose_prompt_for_framing(prompt: str, framing: str) -> str:
+    """Rewrite legacy detail-crop wording when a full outfit is requested."""
+    if str(framing or "").strip() != "full_outfit":
+        return str(prompt or "")
+    adapted = str(prompt or "")
+    for source, target in (
+        ("腰线至鞋履", "头部至鞋履"),
+        ("从腰线到鞋履", "从头部到鞋履"),
+        ("腿部穿搭构图", "全身穿搭构图"),
+        ("腿部穿搭照片", "全身穿搭照片"),
+        ("腿部穿搭", "全身穿搭"),
+    ):
+        adapted = adapted.replace(source, target)
+    return adapted
+
+
 def _leg_pose_compatible_with_scene(pose: Dict[str, str], scene: str) -> bool:
     scene_text = str(scene or "")
     if not scene_text:
@@ -689,7 +705,6 @@ def build_leg_focus_action(
     ]
     if camera_kind not in {"selfie", "third"}:
         camera_kind = random.choice(camera_bag)
-    pose_prompt = _adapt_leg_pose_prompt_for_camera(pose_prompt, camera_kind)
     requested_framing = str(force_framing or "").strip()
     if requested_framing not in {"full_outfit", "leg_detail"}:
         explicit_detail = bool(LEG_DETAIL_REQUEST_PATTERN.search(extra_request))
@@ -702,6 +717,8 @@ def build_leg_focus_action(
             if explicit_full_outfit and not explicit_detail
             else "leg_detail"
         )
+    pose_prompt = _adapt_leg_pose_prompt_for_camera(pose_prompt, camera_kind)
+    pose_prompt = _adapt_leg_pose_prompt_for_framing(pose_prompt, requested_framing)
     is_detail = requested_framing == "leg_detail"
     if camera_kind == "selfie":
         camera_line = (
@@ -774,7 +791,7 @@ def build_leg_focus_action(
         f"{leg_continuity_rule}"
     )
     if has_refs:
-        base += " 用户提供的图片只参考氛围、构图、姿势和场景环境；服装按本次锁定的完整搭配执行，主角身份仍以 AI 形象参考图为准。"
+        base += " 用户提供的引用图片作为本次主角身份来源；保留其中人物身份线索，服装按本次锁定的完整搭配执行，不把引用图降级为仅供氛围参考。"
     extra = str(extra_request or "")
     # Camera and top-down words are already resolved into tags and pose text.
     extra = re.sub(

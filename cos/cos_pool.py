@@ -56,7 +56,14 @@ class CosPoolStore:
         prompt = str(item.get("prompt") or "").strip()
         if not item_id or not title or not prompt or CosPoolStore._is_builtin_id(item_id):
             return None
-        return {
+        mode = str(
+            item.get("mode")
+            or item.get("cos_mode")
+            or item.get("staging_mode")
+            or ""
+        ).strip().lower()
+        special = bool(item.get("special") is True or mode in {"special", "fixed", "standalone"})
+        normalized = {
             "id": item_id[:120],
             "title": title[:200],
             "prompt": prompt[:30000],
@@ -67,6 +74,15 @@ class CosPoolStore:
             else [],
             "compatibility": copy.deepcopy(item.get("compatibility") or {}),
         }
+        if special:
+            normalized["mode"] = "special"
+            normalized["special_camera"] = str(
+                item.get("special_camera") or item.get("fixed_camera") or "third"
+            ).strip()[:20]
+            special_prompt = str(item.get("special_prompt") or "").strip()
+            if special_prompt:
+                normalized["special_prompt"] = special_prompt[:30000]
+        return normalized
 
     def _normalize_custom(self, items: Iterable[Any]) -> List[Dict[str, Any]]:
         result: List[Dict[str, Any]] = []

@@ -103,6 +103,58 @@ def test_auto_cos_with_reference_preserves_reference_medium():
     assert "禁止动漫插画" not in prompt
 
 
+def test_cos_costume_hair_overrides_reference_bangs_and_color_consistently():
+    item = {
+        "id": "hair_override_test",
+        "title": "金发假发测试",
+        "cos_type": "测试",
+        "prompt": "佩戴金色长假发，齐刘海，两侧低马尾以黑色缎带束起；穿白色长袖制服。",
+    }
+    action = build_cos_look_action(
+        "",
+        has_refs=True,
+        camera="third",
+        force_id="",
+        picker=lambda **_: item,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        prompt = PersonaManager(tmp).build_selfie_prompt(
+            action, "小助", "温柔", True, 0
+        )
+
+    assert "按指定内容替换参考图中对应的刘海、鬓发、分缝、长度或束发" in prompt
+    assert "未写明的发型细节自然补全" in prompt
+    assert "从发根到刘海、鬓发和发尾统一使用该颜色" in prompt
+    assert "不得残留参考图旧色刘海" in prompt
+    assert "发型发色来自参考图一" not in prompt
+
+
+def test_english_cos_builtin_has_matching_hair_override_contract():
+    item = {
+        "id": "english_hair_override_test",
+        "title": "Silver Wig Test",
+        "cos_type": "Test",
+        "prompt": "Wear a silver long wig with straight bangs and a red hair bow.",
+    }
+    action = build_cos_look_action(
+        "",
+        has_refs=True,
+        camera="third",
+        picker=lambda **_: item,
+    )
+    prompt = build_selfie_builtin_prompt(
+        action,
+        language="en",
+        has_reference_image=True,
+        appearance_type="auto",
+    )
+
+    assert "Replace only the hairstyle features that are specified" in prompt
+    assert "apply it consistently from roots through bangs" in prompt
+    assert "do not leave the reference hair color in the bangs" in prompt
+    assert "do not infer a wig from the character name" in prompt
+
+
 def test_persona_selfie_prompt_finishes_with_selected_medium_contract():
     with tempfile.TemporaryDirectory() as tmp:
         persona = PersonaManager(tmp)

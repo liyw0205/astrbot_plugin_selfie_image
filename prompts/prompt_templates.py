@@ -19,12 +19,27 @@ COS_IDENTITY_CONTRACT_ZH = (
     "除非用户明确要求，不固定角色瞳色、脸型或五官比例。"
 )
 
+COS_HAIR_OVERRIDE_CONTRACT_ZH = (
+    "头发、假发和头饰只按本套装明示的细节逐项执行：指定发型轮廓时，按指定内容替换参考图中对应的刘海、鬓发、分缝、长度或束发；未写明的发型细节自然补全，不照搬与套装设定冲突的参考特征，也不擅自补造角色发型。"
+    "指定发色时，从发根到刘海、鬓发和发尾统一使用该颜色，除非套装明确要求挑染或渐变；不得残留参考图旧色刘海。"
+    "若只指定头饰而未指定发型或发色，则保留参考图发色与自然发型特征，仅为稳固佩戴头饰进行必要整理，不按角色名推断假发；"
+    "头饰需贴合头部并与刘海、发束协调，不穿插、悬浮或与头发融合。"
+)
+
 COS_IDENTITY_CONTRACT_EN = (
     "Use the identity reference image as the same person's identity anchor: preserve the person's face outline, "
     "facial feature proportions, eye and lip contours, gender, apparent age, and skin tone.\n"
     "COS changes only clothing, accessories, the character wig or hairstyle, and makeup; do not replace the person "
     "with the face of the original character.\n"
     "Unless the user explicitly requests it, do not lock the character's eye color, face shape, or facial feature proportions."
+)
+
+COS_HAIR_OVERRIDE_CONTRACT_EN = (
+    "Follow only the hair and headwear details explicitly stated for this costume. Replace only the hairstyle features that are specified, such as bangs, side locks, parting, length, or tied sections. "
+    "Complete unspecified hairstyle details naturally without copying reference features that conflict with the costume, and do not invent a character-specific hairstyle. When a hair color is specified, "
+    "apply it consistently from roots through bangs, side locks, and ends; do not leave the reference hair color in the bangs unless the costume explicitly calls for highlights or a gradient. "
+    "If only an ornament is specified, keep the reference hair color and natural hairstyle, making only the small adjustments needed to secure the ornament; "
+    "do not infer a wig from the character name. Fit headwear naturally without floating, intersecting, or merging it with the hair."
 )
 
 
@@ -239,6 +254,7 @@ def build_selfie_builtin_prompt(
         elif is_cos:
             lines.extend([
                 COS_IDENTITY_CONTRACT_EN if has_reference_image else "Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.",
+                COS_HAIR_OVERRIDE_CONTRACT_EN,
                 "Follow the complete COS action contract below exactly once. Preserve its selected outfit, pose, scene, camera, and single framing without adding another camera or crop choice.",
                 rendered_action,
             ])
@@ -469,6 +485,7 @@ def build_selfie_builtin_prompt(
         photo_type_line,
         identity_line,
         eye_line,
+        COS_HAIR_OVERRIDE_CONTRACT_ZH if is_cos else "",
         (
             "参考图用于保持主角身份和自然体态；额外参考图仅提供用户指定的服装、姿势、构图、光线或场景。"
             if is_legs and not feet_cropped

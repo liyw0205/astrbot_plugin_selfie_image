@@ -1722,8 +1722,27 @@ def adapt_cos_prompt_for_appearance(prompt: str, appearance_type: str = "auto") 
     return text
 
 
+def is_special_cos_look(item_or_id: Any) -> bool:
+    """Return whether a COS record owns a complete fixed staging contract."""
+    if isinstance(item_or_id, Mapping):
+        item_id = str(item_or_id.get("id") or "").strip()
+        mode = str(
+            item_or_id.get("mode")
+            or item_or_id.get("cos_mode")
+            or item_or_id.get("staging_mode")
+            or ""
+        ).strip().lower()
+        if item_or_id.get("special") is True or mode in {"special", "fixed", "standalone"}:
+            return True
+    else:
+        item_id = str(item_or_id or "").strip()
+    return item_id in COS_SPECIAL_LOOK_CONFIG
+
+
 def _apply_cos_negative_normalization() -> None:
     for item in COS_LOOK_SETS:
+        if is_special_cos_look(item):
+            continue
         item["prompt"] = normalize_cos_prompt_negatives(item.get("prompt", ""))
 
 
@@ -1740,10 +1759,15 @@ from .cos_looks_honor_of_kings import (
     COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
     COS_LOOK_SETS_HONOR_OF_KINGS,
 )
+from .cos_looks_special import (
+    COS_SPECIAL_LOOK_CONFIG,
+    COS_SPECIAL_LOOK_SETS,
+)
 
 COS_LOOK_SETS.extend(COS_LOOK_SETS_EXTRA)
 COS_LOOK_SETS.extend(COS_LOOK_SETS_EXPANSION)
 COS_LOOK_SETS.extend(COS_LOOK_SETS_HONOR_OF_KINGS)
+COS_LOOK_SETS.extend(COS_SPECIAL_LOOK_SETS)
 
 _apply_cos_negative_normalization()
 
@@ -1850,6 +1874,41 @@ COS_RANDOM_POSE_CLASSES: Dict[str, Dict[str, Any]] = {
         "title": "单臂舒展",
         "prompt": "身体轻微侧转，一只手臂向上舒展或轻触头侧发饰，另一只手遵循套装已有动作；肩颈放松，衣袖和上身结构完整可见。",
     },
+    "quiet_low_gaze": {
+        "title": "安静低眸",
+        "prompt": "头部自然微微低垂，闭眼或低眸，嘴唇保持放松；肩颈和下颌线自然连贯，不为露出正脸扭转脖子，双手放松并遵循套装已有动作。",
+    },
+    "hands_gathered_at_sternum": {
+        "title": "胸前拢衣",
+        "prompt": "双手在胸骨上方自然收拢当前服装前襟或衣摆，手指轻柔交叠并与布料真实接触；头部自然低垂，肩线放松，衣料保持不透明和得体覆盖，不把构图中心转向裸露或身体解剖细节。",
+    },
+    "window_back_raised_arms": {
+        "title": "窗边背影抬臂",
+        "prompt": "人物背对镜头站在已经存在的窗边，双臂略微向上抬起或整理头发，肩线、胯部和头部朝向一致；不回头、不回眸、不扭颈，背部、服装后侧和手臂连接自然，不凭空增加窗户或设备。",
+        "orientation": "back",
+    },
+    "side_back_rail_lean": {
+        "title": "栏杆侧后方倚靠",
+        "prompt": "人物以侧身或侧后三分之四角度倚靠当前场景已有的栏杆，双手自然搭在栏杆上，身体向画面内微倾；肩线、胯部和头部方向连贯，不回头、不回眸、不扭颈，稳定展示服装侧后方轮廓，不凭空添加栏杆。",
+        "orientation": "side",
+    },
+    "veranda_side_profile": {
+        "title": "缘侧扶手侧颜",
+        "prompt": "人物站在已有的缘侧或廊檐扶手旁，面部保持自然侧颜并望向远方；一只手轻搭扶手，另一只手轻捏腰前衣料，重心偏向扶手一侧，肩腰只有轻微自然扭转，不回头或强行露出双眼。",
+        "orientation": "side",
+    },
+    "seated_knee_up": {
+        "title": "椅上抬膝",
+        "prompt": "坐在当前场景已经存在的椅子或软垫上，一只膝盖自然抬起并靠近镜头，双手放在衣摆附近；背部有稳定支撑，腿部和脚部连接自然，不凭空增加椅子，不把膝盖或身体裁成畸形。",
+    },
+    "lean_forward_hands": {
+        "title": "前倾伸手",
+        "prompt": "上半身自然向镜头前倾，双手从身体两侧向镜头前方伸出但保持属于主角自身，肩膀放松、手腕和手指连接自然；头部微微低垂，视线柔和向下，不出现摄影者手臂、自拍设备或第二人物。",
+    },
+    "sleeping_on_bed": {
+        "title": "床上自然熟睡",
+        "prompt": "人物自然躺在当前场景已有的床铺上熟睡，眼睛闭合，呼吸放松，头发和衣料有真实睡乱褶皱；被子、枕头或毯子自然遮挡身体，四肢连接完整，不摆拍、不睁眼直视镜头、不出现额外人物或设备。",
+    },
 }
 
 COS_EXPLICIT_ONLY_POSE_IDS = {
@@ -1873,6 +1932,13 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "prompt": "温馨整洁的卧室，木地板上铺柔软浅色地毯，床、床头柜和一张简洁矮凳作为背景，不遮挡人物。",
         "style_prompt": "古早家用DV静帧质感，暖灰低饱和、明显胶片颗粒和轻微高光泛白；保留妆容与皮肤细节，不做塑料美颜。",
         "pose_ids": ("standing_detail", "half_turn", "seated_composed", "kneeling_carpet", "floor_sit_side", "leaning_rest", "relaxed_recline"),
+    },
+    "bedroom_sleep": {
+        "title": "卧室床铺熟睡",
+        "aliases": ("床上熟睡", "卧室床铺", "睡在床上", "床铺卧室"),
+        "prompt": "安静整洁的卧室床铺，柔软床单、枕头和薄被形成自然生活背景，床边只保留少量干净空间，不出现其他人物或拍摄设备。",
+        "style_prompt": "凌晨室内的低照度家用DV快照，床头暖灯与窗外冷色月光形成克制冷暖对照，轻微颗粒和压缩感；人物脸部、闭合眼睑、发丝、四肢连接与衣料褶皱保持清晰，不用过度柔焦或黑暗吞没主体。",
+        "pose_ids": ("sleeping_on_bed", "relaxed_recline"),
     },
     "bedroom_window": {
         "title": "明亮窗边",
@@ -1928,7 +1994,7 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "aliases": ("屋顶夕阳", "天台", "城市屋顶", "屋顶夜景"),
         "prompt": "日落时分的城市屋顶露台，远处楼群被暖色夕光勾勒，栏杆和天际线保持简洁。",
         "style_prompt": "暖金色胶片快照，夕阳高光轻微泛白，低饱和、柔光晕和浅浅颗粒，避免橙色滤镜过重。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "reach_light", "over_shoulder", "back_to_camera", "overhead_stretch"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_back_rail_lean", "reach_light", "over_shoulder", "back_to_camera", "overhead_stretch"),
     },
     "old_town_lane": {
         "title": "古街巷口",
@@ -1997,7 +2063,7 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "title": "和风墨花室内",
         "aliases": ("和风室内", "和室", "日式房间", "墨花", "墨花屏风"),
         "prompt": "简洁的和风室内，木格门、榻榻米或素色屏风形成安静背景，点缀一幅水墨花枝装饰，不出现文字或额外人物。",
-        "style_prompt": "古早DV录像静帧，低灰度柔和配色与克制冷蓝色偏，明显但细腻的胶片颗粒；梦核抓拍的朦胧感仅由背景虚化、边缘柔光和轻微高光晕形成。人物面部保持正常曝光、不柔焦，双眼、眉眼鼻唇轮廓、发丝和皮肤纹理清楚对焦，妆容饱和度保留；避免整体失焦、面部泛白或五官细节丢失。",
+        "style_prompt": "古早DV录像静帧，低灰度柔和配色与克制冷蓝色偏，明显但细腻的胶片颗粒；梦核抓拍的朦胧感仅由背景虚化、边缘柔光和轻微高光晕形成。人物面部保持正常曝光、不柔焦。",
         "pose_ids": ("standing_detail", "half_turn", "seated_composed", "leaning_rest", "reach_light", "over_shoulder"),
     },
     "old_city_rooftop": {
@@ -2005,7 +2071,63 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
         "aliases": ("老旧楼群天台", "密集旧楼天台", "水泥栏杆天台", "城市高处天台"),
         "prompt": "城市高处的旧楼天台，远处密密层叠的老旧楼群清晰形成纵深，近处是朴素水泥栏杆，环境不出现路人或杂乱设备。",
         "style_prompt": "强烈日光下的暖色低饱和胶片快照，高光轻微过曝，带柔光晕、明显胶片颗粒和边缘泛白；保留人物与服装细节。",
-        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_profile", "back_to_camera", "over_shoulder"),
+        "pose_ids": ("standing_detail", "half_turn", "walking_turn", "leaning_rest", "side_profile", "side_back_rail_lean", "back_to_camera", "over_shoulder"),
+    },
+    "dream_flash_portrait": {
+        "title": "黑背景闪光梦核肖像",
+        "aliases": ("黑背景梦核", "闪光梦核", "梦境闪光肖像", "黑背景闪光"),
+        "prompt": "近乎纯黑的无家具室内或影棚背景，画面只保留一名主角，背景不出现家具、设备或其他人物。",
+        "style_prompt": "近距离闪光灯快照的低分辨率梦核质感，轻微曝光过度、低饱和冷白色、柔焦氛围、轻微快门拖影和细腻胶片颗粒；脸部、双手和服装主体仍保持足够清晰，不用整体失焦覆盖五官。",
+        "pose_ids": ("quiet_low_gaze", "hands_gathered_at_sternum", "standing_detail"),
+    },
+    "black_studio_chiaroscuro": {
+        "title": "黑背景斜光影棚",
+        "aliases": ("黑色影棚", "黑背景影棚", "明暗对照影棚", "斜光影棚"),
+        "prompt": "几乎纯黑的无家具影棚式室内，画面右上方有一束狭窄硬朗的暖白斜光，背景不出现摄影设备、家具或其他人物。",
+        "style_prompt": "电影感明暗对照摄影，单一斜向硬光照亮发丝、鼻梁、嘴唇、锁骨、双手和服装褶皱，其他区域自然沉入深黑；高对比度、清晰投影、克制色彩和细腻胶片颗粒，不使用美容补光或面部黑白失真。",
+        "pose_ids": ("quiet_low_gaze", "hands_gathered_at_sternum", "side_profile", "standing_detail"),
+    },
+    "gray_wall_dreamcore": {
+        "title": "淡灰墙面DV梦核",
+        "aliases": ("淡灰墙面", "灰墙梦核", "灰墙室内", "DV梦核室内"),
+        "prompt": "纯色淡灰色墙面室内背景，空间简洁，不凭空增加医疗设施、家具、道具或其他人物。",
+        "style_prompt": "古早DV梦核质感，冷调柔和面光微微过曝，低饱和冷棕光影、低分辨率颗粒、轻微噪点和柔和背景虚化；人物脸部、服装边缘、四肢连接和身体比例保持清晰自然。",
+        "pose_ids": ("leaning_rest", "hands_gathered_at_sternum", "quiet_low_gaze"),
+    },
+    "window_ccd_snapshot": {
+        "title": "窗边CCD生活快照",
+        "aliases": ("窗边CCD", "CCD窗边", "窗边生活快照", "老式CCD窗边"),
+        "prompt": "安静的室内窗边，窗外自然光形成轻微逆光和浅色边缘，室内不出现杂乱家具、拍摄设备或其他人物。",
+        "style_prompt": "老式小传感器CCD的真实生活快照，镜片泛灰发白、低动态范围、像素不高、受控模糊、轻微噪点、压缩感和边缘泛白；人物轮廓、服装结构和身体比例仍清楚，不把主体处理成失焦剪影。",
+        "pose_ids": ("window_back_raised_arms",),
+    },
+    "veranda_green_side_profile": {
+        "title": "日式缘侧绿意侧颜",
+        "aliases": ("日式缘侧", "缘侧庭院", "日式住宅缘侧", "绿意侧颜"),
+        "prompt": "日式住宅的缘侧，左侧有障子门与深色木框，右侧有延伸至背景的木质扶手，后方是深绿色园林和一座隐约可见的小瓦房，背景大光圈虚化。",
+        "style_prompt": "专业相机写实杂志人像，约85mm镜头、F1.8浅景深、柔和暖色晨光和绿色反射光；整体低对比度、绿色与白色主调、皮肤保留自然纹理，背景柔和但人物面部和服装清晰。",
+        "pose_ids": ("veranda_side_profile", "side_profile", "reach_light", "standing_detail"),
+    },
+    "vintage_wicker_room": {
+        "title": "复古藤编椅居家肖像",
+        "aliases": ("藤编椅", "复古藤编椅", "米色毛衣室内", "藤编椅室内"),
+        "prompt": "室内米色墙板背景，左侧可见雕花木质藤编靠背椅框架，右侧是深灰色窗帘，地板和柔和地毯在远处自然虚化，不出现其他人物或杂乱设备。",
+        "style_prompt": "暖色室内环境光、浅景深、真实皮肤纹理和柔和电影感光晕，兼具高分辨率自然摄影与亲密居家肖像质感；颜色柔和，不使用过度磨皮或塑料皮肤。",
+        "pose_ids": ("seated_knee_up", "seated_composed", "relaxed_recline"),
+    },
+    "ryokan_night_room": {
+        "title": "传统旅馆冷暖夜色",
+        "aliases": ("日式旅馆", "旅馆房间", "榻榻米旅馆", "夜间旅馆"),
+        "prompt": "安静的传统日式旅馆房间，铺设榻榻米，身后有木质推拉门和障子窗，窗外可见夜间庭院、微弱灯笼与深蓝色夜空，不出现其他人物或现代酒店设施。",
+        "style_prompt": "左后方暖色室内光与室外柔和月光形成冷暖对比，头发和肩膀有细腻轮廓光；85mm镜头、F1.8浅景深、高动态范围、电影级调色，皮肤和衣物清晰，不让夜色吞没五官。",
+        "pose_ids": ("lean_forward_hands", "seated_composed", "quiet_low_gaze"),
+    },
+    "star_rail_rest_cabin": {
+        "title": "星穹铁道休息舱抓拍",
+        "aliases": ("星穹铁道休息舱", "列车休息舱", "流萤休息舱", "星际列车客房"),
+        "prompt": "星际列车临时休息舱与旅馆客房融合的床铺空间，包含合金墙面、舷窗式窗格、淡蓝色霓虹、金属床头柜、折叠行李和星轨旅行物件；环境有一晚旅途后的生活感但保持干净，不出现其他人物。",
+        "style_prompt": "凌晨两点社交平台直闪快照，直闪混合微弱环境光，高动态范围、轻微手震模糊、自然噪点和压缩感；暗背景保留细节，床单和皮肤边缘可轻微过曝，但人物脸部和服装保持清晰。",
+        "pose_ids": ("sleeping_on_bed",),
     },
     "aquarium_tunnel": {
         "title": "深海水族馆隧道",
@@ -2209,6 +2331,7 @@ COS_RANDOM_SCENE_CLASSES: Dict[str, Dict[str, Any]] = {
 # requests still take precedence over all inferred preferences.
 COS_SCENE_THEME_TAGS: Dict[str, frozenset[str]] = {
     "bedroom_carpet": frozenset({"indoor", "domestic", "soft_ground"}),
+    "bedroom_sleep": frozenset({"indoor", "domestic", "sleep", "soft_ground"}),
     "bedroom_window": frozenset({"indoor", "domestic"}),
     "photo_studio": frozenset({"indoor", "neutral", "editorial"}),
     "living_room_rug": frozenset({"indoor", "domestic", "soft_ground"}),
@@ -2228,6 +2351,14 @@ COS_SCENE_THEME_TAGS: Dict[str, frozenset[str]] = {
     "snowy_courtyard": frozenset({"ice", "snow", "winter", "nature"}),
     "japanese_ink_room": frozenset({"indoor", "traditional", "japanese"}),
     "old_city_rooftop": frozenset({"urban", "rooftop", "daylight"}),
+    "dream_flash_portrait": frozenset({"indoor", "studio", "dark", "dreamcore"}),
+    "black_studio_chiaroscuro": frozenset({"indoor", "studio", "dark", "editorial"}),
+    "gray_wall_dreamcore": frozenset({"indoor", "domestic", "dreamcore"}),
+    "window_ccd_snapshot": frozenset({"indoor", "domestic", "window", "daylight"}),
+    "veranda_green_side_profile": frozenset({"indoor", "nature", "botanical", "traditional", "japanese"}),
+    "vintage_wicker_room": frozenset({"indoor", "domestic", "vintage"}),
+    "ryokan_night_room": frozenset({"indoor", "traditional", "japanese", "night"}),
+    "star_rail_rest_cabin": frozenset({"indoor", "cosmic", "transit", "night", "domestic"}),
     "aquarium_tunnel": frozenset({"indoor", "marine", "aquatic"}),
     "greenhouse_storm": frozenset({"indoor", "nature", "botanical", "rain", "night"}),
     "skybridge_after_rain": frozenset({"indoor", "urban", "rain", "night"}),
@@ -2279,6 +2410,7 @@ COS_SUBJECT_CLARITY_PROMPT = (
 # these as structured tags so the random picker can reject unsafe pairs and
 # the prompt builder can add a targeted correction for explicit requests.
 COS_SCENE_FACE_RISK_TAGS: Dict[str, frozenset[str]] = {
+    "bedroom_sleep": frozenset({"low_light", "mixed_light"}),
     "bedroom_window": frozenset({"backlight"}),
     "rooftop_sunset": frozenset({"backlight"}),
     "seaside_boardwalk": frozenset({"backlight"}),
@@ -2292,6 +2424,12 @@ COS_SCENE_FACE_RISK_TAGS: Dict[str, frozenset[str]] = {
     "cinema_projection_room": frozenset({"low_light", "projection_light"}),
     "skybridge_after_rain": frozenset({"low_light", "reflective_background"}),
     "storm_observation_deck": frozenset({"backlight", "reflective_background"}),
+    "dream_flash_portrait": frozenset({"scattered_light"}),
+    "black_studio_chiaroscuro": frozenset({"high_contrast"}),
+    "window_ccd_snapshot": frozenset({"backlight"}),
+    "veranda_green_side_profile": frozenset({"backlight"}),
+    "ryokan_night_room": frozenset({"low_light", "mixed_light"}),
+    "star_rail_rest_cabin": frozenset({"low_light", "mixed_light", "visual_noise"}),
 }
 
 COS_LOOK_FACE_RISK_TAGS: Dict[str, frozenset[str]] = {
@@ -2337,6 +2475,14 @@ COS_POSE_REQUEST_ALIASES = {
     "over_shoulder": ("背身回眸", "侧身回看", "转身回看", "回头望", "回头看镜头", "从肩上回眸", "回眸"),
     "relaxed_recline": ("沙发斜倚", "倚坐在沙发", "靠坐在沙发", "侧身倚靠"),
     "overhead_stretch": ("单臂舒展", "举手伸展", "伸展姿势", "手臂向上"),
+    "quiet_low_gaze": ("安静低眸", "低眸", "闭眼低眸", "低头闭眼"),
+    "hands_gathered_at_sternum": ("胸前拢衣", "双手拢衣", "双手收拢衣襟", "胸前收拢衣襟"),
+    "window_back_raised_arms": ("窗边背影抬臂", "背对窗户抬臂", "背窗抬臂", "窗边背影抬手"),
+    "side_back_rail_lean": ("栏杆侧后方", "侧后方倚栏杆", "双手搭栏杆", "栏杆侧身"),
+    "veranda_side_profile": ("缘侧侧颜", "日式缘侧侧颜", "扶手侧颜", "缘侧扶手侧颜"),
+    "seated_knee_up": ("椅上抬膝", "抬膝坐姿", "单膝靠近镜头", "藤编椅抬膝"),
+    "lean_forward_hands": ("前倾伸手", "双手靠近镜头", "向镜头伸手", "前倾双手"),
+    "sleeping_on_bed": ("床上熟睡", "熟睡姿势", "睡在床上", "躺床熟睡"),
 }
 
 COS_SCENE_REQUEST_TERMS = (
@@ -2434,12 +2580,18 @@ def _strip_parsed_cos_request_terms(
     *,
     requested_camera: str = "",
     requested_pose: str = "",
+    requested_scene: str = "",
     requested_orientation: str = "",
 ) -> str:
     """Remove only request words already represented by COS contract tags."""
     cleaned = str(text or "")
     if requested_pose and requested_pose != "user":
         for alias in sorted(COS_POSE_REQUEST_ALIASES.get(requested_pose, ()), key=len, reverse=True):
+            if _has_positive_request(text, alias):
+                cleaned = re.sub(re.escape(alias), " ", cleaned)
+    if requested_scene and requested_scene != "user":
+        scene = COS_RANDOM_SCENE_CLASSES.get(requested_scene, {})
+        for alias in sorted(scene.get("aliases") or (), key=len, reverse=True):
             if _has_positive_request(text, alias):
                 cleaned = re.sub(re.escape(alias), " ", cleaned)
     if requested_orientation:
@@ -2536,6 +2688,22 @@ COS_FRAMING_CLASSES: Dict[str, Dict[str, str]] = {
         "title": "横屏低机位颈下至膝上",
         "prompt": "横屏低机位构图，画面从颈部以下拍到膝上，头部自然位于画面外，突出服装和动作",
     },
+    "close_vertical_three_quarter": {
+        "title": "竖幅近距三分之四",
+        "prompt": "9:16竖幅近距离三分之四站立肖像，从头顶拍到臀部以下；脸部、双手和上身服装清晰，背景保持简洁，不把构图中心转向身体解剖细节",
+    },
+    "side_profile_4_5": {
+        "title": "4:5胸高侧颜",
+        "prompt": "4:5竖构图、胸口高度接近视平线的自然侧颜人像，画面主要展示膝盖以上；约85mm镜头和浅景深，肩线、胯部与面部朝向一致，不回头、不扭颈",
+    },
+    "intimate_phone_vertical": {
+        "title": "近距生活竖幅",
+        "prompt": "9:16近距离生活抓拍，主体略偏右居中，面部位于上方中间，前景自然带到衣物或支撑物；保持自然近距透视和真实比例，不出现拍摄设备或摄影者肢体",
+    },
+    "high_angle_phone_wide": {
+        "title": "高位广角熟睡构图",
+        "prompt": "9:16略高角度广角构图，约24mm视野，床铺和人物全身勉强入镜，头顶、手臂或脚尖可以自然略微裁切；画面保持轻微倾斜的随手感，不拉伸或压缩身体比例，不出现拍摄设备",
+    },
 }
 
 COS_POSE_FRAMING_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
@@ -2594,6 +2762,36 @@ COS_POSE_FRAMING_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     "overhead_stretch": (
         "front_half", "three_quarter_front", "two_thirds", "environmental",
         "eye_level_full", "high_angle_three_quarter",
+    ),
+    "quiet_low_gaze": (
+        "front_half", "three_quarter_front", "two_thirds", "environmental",
+        "side_profile", "close_vertical_three_quarter",
+    ),
+    "hands_gathered_at_sternum": (
+        "front_half", "three_quarter_front", "two_thirds", "environmental",
+        "close_vertical_three_quarter", "intimate_phone_vertical",
+    ),
+    "window_back_raised_arms": (
+        "rear_three_quarter", "rear_low_medium", "environmental", "eye_level_full",
+    ),
+    "side_back_rail_lean": (
+        "side_profile", "rear_three_quarter", "rear_low_medium", "environmental",
+        "eye_level_full", "low_angle_full", "low_angle_hero",
+    ),
+    "veranda_side_profile": (
+        "side_profile", "side_profile_4_5", "environmental", "eye_level_full",
+    ),
+    "seated_knee_up": (
+        "front_half", "three_quarter_front", "two_thirds", "environmental",
+        "eye_level_full", "high_angle_three_quarter", "high_angle_oblique",
+        "intimate_phone_vertical",
+    ),
+    "lean_forward_hands": (
+        "front_half", "three_quarter_front", "two_thirds", "environmental",
+        "close_vertical_three_quarter", "intimate_phone_vertical",
+    ),
+    "sleeping_on_bed": (
+        "high_angle_phone_wide", "high_angle_oblique", "environmental", "side_profile",
     ),
 }
 
@@ -2676,6 +2874,15 @@ COS_FRAMING_SCENE_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
         "bedroom_carpet", "photo_studio", "living_room_rug", "cafe_corner",
         "stone_staircase", "japanese_ink_room", "spiral_archive",
     ),
+    "close_vertical_three_quarter": (
+        "dream_flash_portrait", "black_studio_chiaroscuro", "gray_wall_dreamcore",
+        "ryokan_night_room",
+    ),
+    "side_profile_4_5": ("veranda_green_side_profile",),
+    "intimate_phone_vertical": (
+        "vintage_wicker_room", "ryokan_night_room", "bedroom_carpet",
+    ),
+    "high_angle_phone_wide": ("star_rail_rest_cabin", "bedroom_sleep"),
     "low_angle_hero": (
         "garden_walkway", "bamboo_garden", "cherry_blossom_path",
         "seaside_boardwalk", "rooftop_sunset", "old_town_lane",
@@ -2695,6 +2902,10 @@ COS_FRAMING_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     "low_angle_hero": ("third",),
     "high_angle_oblique": ("third",),
     "rear_low_hero": ("third",),
+    "close_vertical_three_quarter": ("third",),
+    "side_profile_4_5": ("third",),
+    "intimate_phone_vertical": ("third",),
+    "high_angle_phone_wide": ("third",),
 }
 COS_POSE_CAMERA_COMPATIBILITY: Dict[str, tuple[str, ...]] = {
     "back_to_camera": ("third", "first"),
@@ -2765,8 +2976,139 @@ COS_RANDOM_CAMERA_FRAMING_IDS: Dict[str, frozenset[str]] = {
     ),
 }
 
+# Curated staging bundles keep a scene, pose, and framing that already work
+# well together.  They reference the atomic pools above so costume-specific
+# restrictions and face-safety rules still apply in one place.
+COS_COMBINATION_PRESETS: Dict[str, Dict[str, Any]] = {
+    "rooftop_rail_warm_film": {
+        "title": "天台栏杆暖色胶片",
+        "scene_id": "rooftop_sunset", "pose_id": "side_back_rail_lean", "framing_id": "low_angle_hero",
+        "family": "urban_cinematic", "weight": 8,
+    },
+    "old_city_rooftop_rail_hero": {
+        "title": "旧楼天台栏杆气场",
+        "scene_id": "old_city_rooftop", "pose_id": "side_back_rail_lean", "framing_id": "low_angle_hero",
+        "family": "urban_cinematic", "weight": 7,
+    },
+    "rooftop_back_low_medium": {
+        "title": "夕照天台背面中景",
+        "scene_id": "rooftop_sunset", "pose_id": "back_to_camera", "framing_id": "rear_low_medium",
+        "family": "urban_cinematic", "weight": 5,
+    },
+    "rainy_neon_walking_hero": {
+        "title": "雨夜霓虹行走",
+        "scene_id": "rainy_neon_street", "pose_id": "walking_turn", "framing_id": "low_angle_hero",
+        "family": "urban_night", "weight": 5,
+    },
+    "seaside_back_dv": {
+        "title": "海边栈道背影",
+        "scene_id": "seaside_boardwalk", "pose_id": "back_to_camera", "framing_id": "rear_low_hero",
+        "family": "coastal_cinematic", "weight": 5,
+    },
+    "bamboo_back_cold_green": {
+        "title": "竹林背面冷绿胶片",
+        "scene_id": "bamboo_garden", "pose_id": "back_to_camera", "framing_id": "rear_low_hero",
+        "family": "nature_cinematic", "weight": 5,
+    },
+    "cherry_reach_side": {
+        "title": "樱花步道伸手侧面",
+        "scene_id": "cherry_blossom_path", "pose_id": "reach_light", "framing_id": "side_profile",
+        "family": "nature_cinematic", "weight": 5,
+    },
+    "veranda_side_magazine": {
+        "title": "日式缘侧侧颜",
+        "scene_id": "veranda_green_side_profile", "pose_id": "veranda_side_profile", "framing_id": "side_profile_4_5",
+        "family": "japanese_lifestyle", "weight": 7,
+    },
+    "wicker_knee_phone": {
+        "title": "藤编椅抬膝生活肖像",
+        "scene_id": "vintage_wicker_room", "pose_id": "seated_knee_up", "framing_id": "intimate_phone_vertical",
+        "family": "domestic_lifestyle", "weight": 6,
+    },
+    "ryokan_forward_close": {
+        "title": "旅馆冷暖前倾近景",
+        "scene_id": "ryokan_night_room", "pose_id": "lean_forward_hands", "framing_id": "close_vertical_three_quarter",
+        "family": "japanese_lifestyle", "weight": 5,
+    },
+    "cafe_high_angle": {
+        "title": "咖啡馆窗座斜俯",
+        "scene_id": "cafe_corner", "pose_id": "seated_composed", "framing_id": "high_angle_oblique",
+        "family": "domestic_lifestyle", "weight": 5,
+    },
+    "stone_stair_oblique": {
+        "title": "石阶坐姿几何构图",
+        "scene_id": "stone_staircase", "pose_id": "stair_sit", "framing_id": "high_angle_oblique",
+        "family": "architectural_cinematic", "weight": 5,
+    },
+    "window_ccd_back": {
+        "title": "窗边 CCD 背影",
+        "scene_id": "window_ccd_snapshot", "pose_id": "window_back_raised_arms", "framing_id": "rear_three_quarter",
+        "family": "domestic_lifestyle", "weight": 5,
+    },
+    "dream_flash_low_gaze": {
+        "title": "闪光梦核低眸",
+        "scene_id": "dream_flash_portrait", "pose_id": "quiet_low_gaze", "framing_id": "close_vertical_three_quarter",
+        "family": "dreamcore_portrait", "weight": 5,
+    },
+    "black_studio_gathered": {
+        "title": "黑背景斜光拢衣",
+        "scene_id": "black_studio_chiaroscuro", "pose_id": "hands_gathered_at_sternum", "framing_id": "close_vertical_three_quarter",
+        "family": "editorial_portrait", "weight": 5,
+    },
+    "gray_wall_low_gaze": {
+        "title": "灰墙 DV 梦核低眸",
+        "scene_id": "gray_wall_dreamcore", "pose_id": "quiet_low_gaze", "framing_id": "close_vertical_three_quarter",
+        "family": "dreamcore_portrait", "weight": 5,
+    },
+    "greenhouse_reach_side": {
+        "title": "玻璃花房触景侧面",
+        "scene_id": "greenhouse", "pose_id": "reach_light", "framing_id": "side_profile",
+        "family": "nature_cinematic", "weight": 5,
+    },
+    "aquarium_back_hero": {
+        "title": "深海隧道背面仰拍",
+        "scene_id": "aquarium_tunnel", "pose_id": "back_to_camera", "framing_id": "rear_low_hero",
+        "family": "fantasy_environment", "weight": 4,
+    },
+    "theater_side_hero": {
+        "title": "剧院侧幕舞台气场",
+        "scene_id": "theater_stage_wing", "pose_id": "half_turn", "framing_id": "low_angle_hero",
+        "family": "theatrical_cinematic", "weight": 4,
+    },
+    "planetarium_back_hero": {
+        "title": "星图穹顶背面仰拍",
+        "scene_id": "planetarium_dome", "pose_id": "back_to_camera", "framing_id": "rear_low_hero",
+        "family": "cosmic_environment", "weight": 4,
+    },
+    "spiral_archive_stair": {
+        "title": "环形档案馆台阶坐姿",
+        "scene_id": "spiral_archive", "pose_id": "stair_sit", "framing_id": "high_angle_oblique",
+        "family": "architectural_cinematic", "weight": 4,
+    },
+    "modern_gallery_side_hero": {
+        "title": "几何美术馆侧身气场",
+        "scene_id": "modern_art_gallery", "pose_id": "half_turn", "framing_id": "low_angle_hero",
+        "family": "editorial_environment", "weight": 4,
+    },
+    "museum_side_environment": {
+        "title": "古典展厅侧身电影静帧",
+        "scene_id": "museum_hall", "pose_id": "half_turn", "framing_id": "environmental",
+        "family": "architectural_cinematic", "weight": 4,
+    },
+    "festival_back_dv": {
+        "title": "灯会长廊背影 DV",
+        "scene_id": "festival_lantern", "pose_id": "back_to_camera", "framing_id": "rear_three_quarter",
+        "family": "traditional_night", "weight": 4,
+    },
+    "bedroom_sleep_snapshot": {
+        "title": "卧室床铺熟睡快照",
+        "scene_id": "bedroom_sleep", "pose_id": "sleeping_on_bed", "framing_id": "high_angle_phone_wide",
+        "family": "domestic_lifestyle", "weight": 5,
+    },
+}
+
 COS_FRAMING_TERMS = (
-    "横屏", "竖屏", "方形", "正方形", "全身", "半身", "胸像", "肖像",
+    "横屏", "竖屏", "方形", "正方形", "1:1", "4:5", "9:16", "16:9", "全身", "半身", "胸像", "肖像",
     "近景", "中景", "远景", "环境人像", "三分之四", "三分之三", "三分之二",
     "正面机位", "正面拍摄", "正面站立", "正面构图", "正对镜头", "侧前方", "侧身",
     "从背后拍", "侧后方", "侧面机位",
@@ -2925,6 +3267,7 @@ def pick_cos_framing(
     allowed_framings: Iterable[str] = (),
     framing_weights: Optional[Mapping[str, int]] = None,
     multi_view_collage: bool = False,
+    forced_framing_id: str = "",
 ) -> Dict[str, Any]:
     """Pick a concrete framing unless the user's extra request already fixes it."""
     camera = str(camera or "third")
@@ -2958,6 +3301,43 @@ def pick_cos_framing(
             "randomized_from_options": False,
             "explicit": True,
         }
+    forced = str(forced_framing_id or "").strip()
+    if forced in COS_FRAMING_CLASSES and pose_id != "user":
+        forced_allowed = forced not in COS_EXPLICIT_ONLY_FRAMING_IDS
+        forced_allowed = forced_allowed and forced in COS_RANDOM_CAMERA_FRAMING_IDS.get(camera, frozenset())
+        forced_allowed = forced_allowed and (
+            not allowed_framings or forced in _as_id_set(allowed_framings)
+        )
+        pose_framings = COS_POSE_FRAMING_COMPATIBILITY.get(pose_id)
+        forced_allowed = forced_allowed and (not pose_framings or forced in pose_framings)
+        forced_allowed = forced_allowed and (
+            forced not in COS_FRAMING_SCENE_COMPATIBILITY
+            or scene_id in COS_FRAMING_SCENE_COMPATIBILITY[forced]
+        )
+        forced_allowed = forced_allowed and (
+            forced not in COS_FRAMING_CAMERA_COMPATIBILITY
+            or camera in COS_FRAMING_CAMERA_COMPATIBILITY[forced]
+        )
+        forced_allowed = forced_allowed and forced not in COS_SCENE_POSE_FRAMING_EXCLUSIONS.get(
+            (scene_id, pose_id), frozenset()
+        )
+        forced_allowed = forced_allowed and forced not in _as_id_set(avoid_framings)
+        forced_allowed = forced_allowed and forced not in _cos_unsafe_framings(scene_id, pose_id, camera)
+        if forced_allowed:
+            selected = dict(COS_FRAMING_CLASSES[forced])
+            selected["view_id"] = forced
+            selected["outfit_text"] = resolved_outfit
+            selected["extra_request_text"] = resolved_extra
+            selected["randomized_from_options"] = False
+            selected["explicit"] = False
+            selected["combination_locked"] = True
+            selected["composition"] = _pick_cos_composition(
+                pose_id=pose_id,
+                scene_id=scene_id,
+                camera=camera,
+                avoid=avoid_compositions,
+            )
+            return selected
     if pose_id == "user":
         return {
             "view_id": "unspecified",
@@ -3105,6 +3485,64 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
     look_id = str(cos_id or "").strip()
     all_poses = list(COS_RANDOM_POSE_CLASSES)
     all_scenes = list(COS_RANDOM_SCENE_CLASSES)
+    special = COS_SPECIAL_LOOK_CONFIG.get(look_id)
+    if special:
+        fixed_camera = str(special.get("camera") or "third").strip()
+        fixed_view_ids = [fixed_camera] if fixed_camera in {"selfie", "first", "third"} else []
+        return {
+            "variation_enabled": False,
+            "mode": "special",
+            "pose_ids": [],
+            "scene_ids": [],
+            "view_ids": fixed_view_ids,
+            "recommended_pose_ids": [],
+            "recommended_scene_ids": [],
+            "recommended_view_ids": fixed_view_ids,
+            "recommended_framing_ids": [],
+            "recommended_framing_weights": {},
+            "incompatible_pose_ids": all_poses,
+            "incompatible_scene_ids": all_scenes,
+            "scene_pose_compatibility": {},
+            "pose_framing_compatibility": {
+                pose_id: list(framings)
+                for pose_id, framings in COS_POSE_FRAMING_COMPATIBILITY.items()
+            },
+            "framing_scene_compatibility": {
+                framing_id: list(scene_ids)
+                for framing_id, scene_ids in COS_FRAMING_SCENE_COMPATIBILITY.items()
+            },
+            "framing_camera_compatibility": {
+                framing_id: list(cameras)
+                for framing_id, cameras in COS_FRAMING_CAMERA_COMPATIBILITY.items()
+            },
+            "composition_constraints": {
+                composition_id: {
+                    **{
+                        key: list(item[key])
+                        for key in ("poses", "scenes")
+                        if item.get(key)
+                    },
+                    "cameras": list(item.get("cameras") or ("third",)),
+                }
+                for composition_id, item in COS_RANDOM_COMPOSITION_CLASSES.items()
+            },
+            "pose_camera_compatibility": {
+                pose_id: list(cameras)
+                for pose_id, cameras in COS_POSE_CAMERA_COMPATIBILITY.items()
+            },
+            "random_camera_pose_compatibility": {
+                camera: sorted(pose_ids)
+                for camera, pose_ids in COS_RANDOM_CAMERA_POSE_IDS.items()
+            },
+            "random_camera_framing_compatibility": {
+                camera: sorted(framing_ids)
+                for camera, framing_ids in COS_RANDOM_CAMERA_FRAMING_IDS.items()
+            },
+            "fixed_reason": str(
+                special.get("fixed_reason")
+                or "特殊 COS 可参与随机抽取，但保持完整固定成片规则"
+            ),
+        }
     override = COS_LOOK_COMPATIBILITY_EXPANSION.get(look_id)
     if override is None:
         override = COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS.get(look_id, {})
@@ -3298,14 +3736,90 @@ def _cos_unsafe_framings(scene_id: str, pose_id: str, camera: str) -> set[str]:
     return unsafe
 
 
+def _pick_cos_combination(
+    cos_id: str,
+    *,
+    allowed_poses: Iterable[str],
+    allowed_scenes: Iterable[str],
+    camera: str,
+    avoid_poses: Iterable[str] = (),
+    avoid_scenes: Iterable[str] = (),
+    avoid_framings: Iterable[str] = (),
+) -> Optional[Dict[str, Any]]:
+    """Pick one curated staging bundle without bypassing atomic compatibility."""
+    # Anonymous picker fixtures and user-supplied one-off prompts do not have
+    # enough costume metadata for a curated bundle; keep them on the atomic
+    # scene/pose randomizer.
+    if camera != "third" or not get_cos_look_by_id(cos_id):
+        return None
+    pose_set = set(allowed_poses)
+    scene_set = set(allowed_scenes)
+    avoided_poses = _as_id_set(avoid_poses)
+    avoided_scenes = _as_id_set(avoid_scenes)
+    avoided_framings = _as_id_set(avoid_framings)
+    candidates: List[tuple[str, Mapping[str, Any]]] = []
+    for combination_id, combination in COS_COMBINATION_PRESETS.items():
+        scene_id = str(combination.get("scene_id") or "")
+        pose_id = str(combination.get("pose_id") or "")
+        framing_id = str(combination.get("framing_id") or "")
+        if not scene_id or not pose_id or not framing_id:
+            continue
+        if scene_id not in scene_set or pose_id not in pose_set:
+            continue
+        if scene_id in avoided_scenes or pose_id in avoided_poses or framing_id in avoided_framings:
+            continue
+        scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
+        if not scene or scene.get("cos_look_only") or pose_id not in _scene_pose_ids(scene):
+            continue
+        if pose_id in COS_EXPLICIT_ONLY_POSE_IDS:
+            continue
+        if framing_id in COS_EXPLICIT_ONLY_FRAMING_IDS:
+            continue
+        if framing_id not in COS_RANDOM_CAMERA_FRAMING_IDS["third"]:
+            continue
+        if framing_id not in COS_POSE_FRAMING_COMPATIBILITY.get(pose_id, ()):
+            continue
+        if (
+            framing_id in COS_FRAMING_SCENE_COMPATIBILITY
+            and scene_id not in COS_FRAMING_SCENE_COMPATIBILITY[framing_id]
+        ):
+            continue
+        if framing_id in COS_FRAMING_CAMERA_COMPATIBILITY and "third" not in COS_FRAMING_CAMERA_COMPATIBILITY[framing_id]:
+            continue
+        if framing_id in COS_SCENE_POSE_FRAMING_EXCLUSIONS.get((scene_id, pose_id), frozenset()):
+            continue
+        if _cos_unsafe_random_pair(cos_id, scene_id, pose_id, "third"):
+            continue
+        candidates.append((combination_id, combination))
+    if not candidates:
+        return None
+    weighted = [
+        combination_id
+        for combination_id, combination in candidates
+        for _ in range(max(1, int(combination.get("weight") or 1)))
+    ]
+    chosen_id = random.choice(weighted)
+    chosen = dict(COS_COMBINATION_PRESETS[chosen_id])
+    chosen["combination_id"] = chosen_id
+    return chosen
+
+
 COS_STYLE_REQUEST_TERMS = (
-    "dv", "vhs", "ins风", "芭比质感", "梦核", "胶片", "颗粒", "低饱和", "低灰度",
-    "冷蓝", "暖色调", "过曝", "柔光晕", "朦胧感", "录像质感",
+    "dv", "vhs", "ccd", "ins风", "芭比质感", "梦核", "胶片", "颗粒", "低饱和", "低灰度",
+    "冷蓝", "暖色调", "过曝", "柔光晕", "朦胧感", "录像质感", "手机抓拍", "手机hdr",
+    "明暗对照", "硬光", "斜光", "社交平台快照", "生活快照",
 )
 
 
-def _requested_cos_style(text: str) -> bool:
-    compact = re.sub(r"\s+", "", str(text or "")).lower()
+def _requested_cos_style(text: str, *, requested_scene: str = "") -> bool:
+    # Scene aliases such as "窗边CCD" contain style words themselves. They
+    # select a complete scene contract and must not suppress that contract's
+    # own style prompt; only style text left outside the alias is explicit.
+    residual = _strip_parsed_cos_request_terms(
+        text,
+        requested_scene=requested_scene,
+    )
+    compact = re.sub(r"\s+", "", residual).lower()
     return any(term in compact for term in COS_STYLE_REQUEST_TERMS)
 
 
@@ -3536,8 +4050,20 @@ def _pick_cos_collage_variation(
         "左侧小画格1", "左侧小画格2", "左侧小画格3",
         "右侧小画格1", "右侧小画格2", "右侧小画格3",
     )
+    def collage_framing_prompt(framing_id: str) -> str:
+        # Panel ratios describe individual photos, not the output canvas. Keep
+        # numeric ratios out of the collage prompt so the global aspect parser
+        # cannot mistake a side panel for the square canvas ratio.
+        prompt = str(COS_FRAMING_CLASSES[framing_id]["prompt"])
+        return (
+            prompt.replace("9:16", "竖幅")
+            .replace("4:5", "窄竖幅")
+            .replace("16:9", "横幅")
+            .replace("1:1", "方形")
+        )
+
     panels = [
-        f"{slot_labels[index]}：{COS_FRAMING_CLASSES[framing_id]['prompt']}；"
+        f"{slot_labels[index]}：{collage_framing_prompt(framing_id)}；"
         f"{_cos_pose_prompt_for_camera(pose_id, 'third')}"
         for index, (pose_id, framing_id) in enumerate(panel_views)
     ]
@@ -3548,7 +4074,10 @@ def _pick_cos_collage_variation(
         ("按用户指定场景补充环境细节：" if requested_scene else "本次随机场景优先于套装正文中残留的背景或环境描述：")
         + scene["prompt"]
     )
-    if scene.get("style_prompt") and not _requested_cos_style(extra_request):
+    if scene.get("style_prompt") and not _requested_cos_style(
+        extra_request,
+        requested_scene=requested_scene,
+    ):
         prompt_parts.append("本次场景影像风格：" + scene["style_prompt"])
     if not _requests_explicit_soft_focus(extra_request):
         prompt_parts.append(COS_SUBJECT_CLARITY_PROMPT)
@@ -3580,11 +4109,13 @@ def pick_cos_variation(
     *,
     avoid_pose: str = "",
     avoid_scene: str = "",
+    avoid_framings: Iterable[str] = (),
     avoid_poses: Iterable[str] = (),
     avoid_scenes: Iterable[str] = (),
     extra_request: str = "",
     camera: str = "",
     multi_view_collage: bool = False,
+    use_combinations: bool = False,
 ) -> Dict[str, Any]:
     """Pick a compatible scene and pose, honoring explicit user constraints."""
     profile = cos_look_compatibility(cos_id)
@@ -3598,6 +4129,7 @@ def pick_cos_variation(
     requested_pose = _requested_cos_pose(extra_request)
     requested_scene = _requested_cos_scene(extra_request)
     requested_orientation = _requested_cos_orientation(extra_request)
+    selected_combination: Optional[Dict[str, Any]] = None
 
     if multi_view_collage and not requested_pose and camera == "third":
         collage = _pick_cos_collage_variation(
@@ -3609,7 +4141,29 @@ def pick_cos_variation(
         if collage:
             return collage
 
-    if requested_scene and requested_pose:
+    if (
+        use_combinations
+        and camera == "third"
+        and not multi_view_collage
+        and not requested_scene
+        and not requested_pose
+        and not requested_orientation
+        and random.random() < 0.6
+    ):
+        selected_combination = _pick_cos_combination(
+            cos_id,
+            allowed_poses=allowed_poses,
+            allowed_scenes=allowed_scenes,
+            camera=camera,
+            avoid_poses=avoided_poses,
+            avoid_scenes=avoided_scenes,
+            avoid_framings=avoid_framings,
+        )
+
+    if selected_combination:
+        scene_id = str(selected_combination["scene_id"])
+        pose_id = str(selected_combination["pose_id"])
+    elif requested_scene and requested_pose:
         scene_id, pose_id = requested_scene, requested_pose
     elif requested_scene:
         scene_id = requested_scene
@@ -3722,7 +4276,10 @@ def pick_cos_variation(
             )
             + scene["prompt"]
         )
-    if scene and scene.get("style_prompt") and not _requested_cos_style(extra_request):
+    if scene and scene.get("style_prompt") and not _requested_cos_style(
+        extra_request,
+        requested_scene=requested_scene,
+    ):
         prompt_parts.append("本次场景影像风格：" + scene["style_prompt"])
     if scene and not _requests_explicit_soft_focus(extra_request):
         prompt_parts.append(COS_SUBJECT_CLARITY_PROMPT)
@@ -3743,11 +4300,20 @@ def pick_cos_variation(
         prompt_parts.append(
             pose_prefix + _cos_pose_prompt_for_camera(pose_id, camera)
         )
-    return {
+    result = {
         "pose_id": pose_id,
         "scene_id": scene_id,
         "prompt": "".join(prompt_parts),
     }
+    if selected_combination:
+        result.update(
+            {
+                "combination_id": selected_combination["combination_id"],
+                "combination_title": selected_combination.get("title", ""),
+                "framing_id": selected_combination["framing_id"],
+            }
+        )
+    return result
 
 
 def keep_cos_outfit_requested(text: str) -> bool:
@@ -4161,6 +4727,8 @@ def pick_cos_look_set(*, avoid_id: str = "", query: str = "") -> Dict[str, str]:
     # the historical random fallback behavior.
     if not matched and cos_query_has_series_constraint(query):
         return {}
+    # Special looks participate in selection just like ordinary looks. Their
+    # fixed staging contract is preserved later by build_cos_look_action.
     pool = matched or list(COS_LOOK_SETS)
     pool = [item for item in pool if str(item.get("id") or "") != str(avoid_id or "")]
     if not pool:
@@ -4184,11 +4752,12 @@ def parse_cos_look_list_request(text: str) -> Optional[int]:
 def format_cos_look_list(page: int = 1, page_size: int = 20) -> str:
     """Format a bounded COS catalog page suitable for QQ text delivery."""
     safe_page_size = max(1, int(page_size or 20))
-    total = len(COS_LOOK_SETS)
+    random_pool = list(COS_LOOK_SETS)
+    total = len(random_pool)
     total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
     current_page = min(total_pages, max(1, int(page or 1)))
     start = (current_page - 1) * safe_page_size
-    items = COS_LOOK_SETS[start : start + safe_page_size]
+    items = random_pool[start : start + safe_page_size]
     lines = [
         f"看看COS 随机池（{total}套）：",
         f"第 {current_page}/{total_pages} 页，每页 {safe_page_size} 套。",
@@ -4218,6 +4787,7 @@ def list_cos_look_sets() -> List[Dict[str, Any]]:
             "cos_type": str(item.get("cos_type") or _cos_item_series(item)).strip(),
             "series": _cos_item_series(item),
             "series_aliases": list(COS_LOOK_SERIES_ALIASES.get(_cos_item_series(item), ())),
+            "mode": "special" if is_special_cos_look(item) else "random",
             "compatibility": cos_look_compatibility(str(item.get("id") or "")),
         }
         for item in COS_LOOK_SETS
@@ -4346,6 +4916,23 @@ def build_cos_third_person_prompt(text: str) -> str:
     raw = str(text or "").strip()
     if not looks_like_cos_prompt(raw):
         return raw
+    if "【cos_mode:special】" in raw.lower():
+        if "【特殊 COS / 固定成片模式】" in raw:
+            return raw
+        tagged_id = re.search(r"【cos:([a-z0-9_]+)】", raw, flags=re.I)
+        tagged_item = get_cos_look_by_id(tagged_id.group(1)) if tagged_id else {}
+        if tagged_item and is_special_cos_look(tagged_item):
+            return build_special_cos_look_action(tagged_item, has_refs=False)
+        return raw
+    exact_special = next(
+        (
+            item for item in COS_SPECIAL_LOOK_SETS
+            if re.sub(r"\s+", " ", str(item.get("prompt") or "")).strip() == raw
+        ),
+        None,
+    )
+    if exact_special:
+        return build_special_cos_look_action(exact_special, has_refs=False)
     adapted = adapt_cos_outfit_for_camera(raw, "third")
     adapted = re.sub(r"【cam:(?:selfie|first|third)】", "", adapted, flags=re.I)
     variation = {}
@@ -4398,6 +4985,57 @@ def build_cos_third_person_prompt(text: str) -> str:
     )
 
 
+def build_special_cos_look_action(
+    chosen: Mapping[str, Any],
+    *,
+    has_refs: bool = False,
+    appearance_type: str = "auto",
+) -> str:
+    """Build a fixed COS action without injecting shared random staging."""
+    item = dict(chosen or {})
+    look_id = str(item.get("id") or "cos").strip()
+    title = str(item.get("title") or "特殊 COS").strip()
+    cos_type = str(item.get("cos_type") or "").strip()
+    config = dict(COS_SPECIAL_LOOK_CONFIG.get(look_id) or {})
+    if str(item.get("mode") or item.get("cos_mode") or "").strip().lower() in {
+        "special", "fixed", "standalone"
+    }:
+        config = {**config, "mode": "special"}
+    camera = str(
+        item.get("special_camera")
+        or item.get("fixed_camera")
+        or config.get("camera")
+        or "third"
+    ).strip()
+    if camera not in {"selfie", "first", "third"}:
+        camera = "third"
+    prompt = str(item.get("special_prompt") or item.get("prompt") or "").strip()
+    if not prompt:
+        return ""
+    # A special prompt is deliberately kept verbatim.  Only the outer mode
+    # contract and machine-readable tags are added for downstream routing.
+    medium = {
+        "third": "【他拍 / 看看COS模式】",
+        "selfie": "【自拍 / 看看COS模式】",
+        "first": "【第一视角 / 看看COS模式】",
+    }[camera]
+    source_prefix = f"《{cos_type}》" if cos_type else ""
+    coherence_line = ""
+    if "未明确的部分保持连贯，不额外改写。" not in prompt:
+        coherence_line = "未明确的部分保持连贯，不额外改写。"
+    return (
+        "【特殊 COS / 固定成片模式】"
+        + medium
+        + "本次特殊 COS 自带完整的服装、场景、影像风格、姿势和镜头构图规则；"
+        "以下提示词必须作为一个整体执行，不从普通 COS 随机池追加或覆盖场景、风格、姿势、视角、景别和构图；"
+        + coherence_line
+        + f"本次套装：{source_prefix}{title}。"
+        + prompt
+        + "不要把本条改写成普通随机 COS。"
+        + f" 【cos:{look_id}】 【cos_mode:special】 【cam:{camera}】"
+    )
+
+
 def build_cos_look_action(
     extra_request: str = "",
     has_refs: bool = False,
@@ -4430,6 +5068,12 @@ def build_cos_look_action(
         # matching outfit; callers can surface the empty selection instead of
         # accidentally generating from the full catalog.
         return ""
+    if is_special_cos_look(chosen):
+        return build_special_cos_look_action(
+            chosen,
+            has_refs=has_refs,
+            appearance_type=appearance_type,
+        )
     title = str(chosen.get("title") or "随机COS")
     cos_type = str(chosen.get("cos_type") or "").strip()
     requested_camera = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
@@ -4484,11 +5128,13 @@ def build_cos_look_action(
         cos_id,
         avoid_pose=avoid_pose,
         avoid_scene=avoid_scene,
+        avoid_framings=avoid_framings,
         avoid_poses=pose_avoidance,
         avoid_scenes=avoid_scenes,
         extra_request=extra_request,
         camera=requested_camera or camera_kind,
         multi_view_collage=collage_active,
+        use_combinations=True,
     )
     collage_active = bool(variation.get("panel_prompt"))
     collage_fallback_reason = ""
@@ -4519,6 +5165,7 @@ def build_cos_look_action(
         allowed_framings=look_profile["recommended_framing_ids"],
         framing_weights=look_profile["recommended_framing_weights"],
         multi_view_collage=collage_active,
+        forced_framing_id=str(variation.get("framing_id") or ""),
     )
     # A camera/pose pair can legitimately have only one compatible crop (for
     # example a selfie half-turn). When a caller is rotating a batch, retry
@@ -4537,11 +5184,13 @@ def build_cos_look_action(
                 cos_id,
                 avoid_pose=avoid_pose,
                 avoid_scene=avoid_scene,
+                avoid_framings=avoid_framings,
                 avoid_poses=pose_avoidance | {variation.get("pose_id", "")},
                 avoid_scenes=_as_id_set(avoid_scenes) | {variation.get("scene_id", "")},
                 extra_request=extra_request,
                 camera=requested_camera or camera_kind,
                 multi_view_collage=collage_active,
+                use_combinations=True,
             )
             retry_framing = pick_cos_framing(
                 outfit=outfit,
@@ -4554,6 +5203,7 @@ def build_cos_look_action(
                 allowed_framings=look_profile["recommended_framing_ids"],
                 framing_weights=look_profile["recommended_framing_weights"],
                 multi_view_collage=bool(retry_variation.get("panel_prompt")),
+                forced_framing_id=str(retry_variation.get("framing_id") or ""),
             )
             if retry_framing.get("view_id") not in avoided_framing_ids:
                 variation = retry_variation
@@ -4576,6 +5226,11 @@ def build_cos_look_action(
         )
     elif framing_choice.get("randomized_from_options"):
         framing_line = f"本次从已有视角选项中随机确定为{framing_choice['prompt']}；"
+    elif variation.get("combination_id") and framing_choice.get("prompt"):
+        framing_line = (
+            f"本次采用精选组合“{variation.get('combination_title') or variation['combination_id']}”，"
+            f"镜头构图锁定为{framing_choice['prompt']}；"
+        )
     elif framing_choice.get("explicit"):
         framing_line = "按用户指定的镜头构图执行；"
     elif framing_choice["view_id"] and framing_choice["prompt"]:
@@ -4592,7 +5247,7 @@ def build_cos_look_action(
         framing_line += f"附加构图强化：{composition['prompt']}；"
     if camera_kind == "third":
         hand_rule = (
-            "背面他拍：摄影师在画面外，人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；"
+            "背面他拍：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；"
             "双手按已选姿势自然摆放，人物恰好两条手臂和两只手，不额外添加拍摄设备，不要求露出面部。"
             if variation["pose_id"] == "back_to_camera"
             else
@@ -4601,7 +5256,7 @@ def build_cos_look_action(
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或第二台拍摄设备；"
             "若套装姿势已明确占用双手或不宜举手机，保留原姿势和道具，不额外添加手机，也不强行遮脸。"
             if phone_face_cover
-            else "摄影师在画面外；主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然，摄影师不入画；未明确要求遮脸时保持面部和服装清晰可辨，严格遵循已选机位与姿势呈现面部；侧脸按自然透视呈现，不为露出正脸强行扭头或扭颈。"
+            else "主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然；未明确要求遮脸时保持面部和服装清晰可辨，严格遵循已选机位与姿势呈现面部；侧脸按自然透视呈现，不为露出正脸强行扭头或扭颈。"
         )
         framing = (
             "【他拍 / 看看COS模式】"
@@ -4666,7 +5321,7 @@ def build_cos_look_action(
     if variation.get("panel_prompt"):
         base += variation["panel_prompt"]
     if has_refs:
-        base = "参考用户附图的氛围或构图，" + base
+        base = "用户提供的引用图片作为本次主角身份来源，服装、场景和构图按本次已锁定的 COS 规则执行；" + base
     extra = _strip_parsed_cos_request_terms(
         re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。"),
         requested_camera=requested_camera,
@@ -4691,6 +5346,7 @@ def build_cos_look_action(
         + (f" 【cos_pose:{variation['pose_id']}】" if variation["pose_id"] else "")
         + (f" 【cos_scene:{variation['scene_id']}】" if variation["scene_id"] else "")
         + (f" 【cos_framing:{framing_id}】" if framing_id else "")
+        + (f" 【cos_combo:{variation['combination_id']}】" if variation.get("combination_id") else "")
         + (f" 【cos_view:{COS_MULTI_VIEW_COLLAGE_ID}】" if collage_active else "")
         + (f" 【cos_composition:{composition['composition_id']}】" if composition.get("composition_id") else "")
     )

@@ -21,7 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from astrbot_plugin_selfie_image.cos.cos_looks import COS_LOOK_SETS, get_cos_look_by_id
+from astrbot_plugin_selfie_image.cos.cos_looks import (
+    COS_LOOK_SETS,
+    get_cos_look_by_id,
+    is_special_cos_look,
+)
 
 CRAFT_MARKER = "真人COS摄影执行规范"
 CRAFT_SENTENCE = (
@@ -56,6 +60,8 @@ class CosCraftSpecHygieneTest(unittest.TestCase):
 
     def test_old_leaky_fragments_are_gone_pool_wide(self) -> None:
         for item in self.items:
+            if is_special_cos_look(item):
+                continue
             prompt = str(item.get("prompt") or "")
             for fragment in OLD_LEAK_FRAGMENTS:
                 self.assertNotIn(fragment, prompt, str(item.get("id")))
@@ -83,6 +89,8 @@ class CosCraftSpecHygieneTest(unittest.TestCase):
 
     def test_negative_contract_still_once_per_prompt(self) -> None:
         for item in self.items:
+            if is_special_cos_look(item):
+                continue
             prompt = str(item.get("prompt") or "")
             self.assertEqual(prompt.count("不要额外人物"), 1, str(item.get("id")))
 
