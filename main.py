@@ -3321,32 +3321,63 @@ class SelfieImagePlugin(
         if ImageFont is None:
             return None
         suffix = "Bold" if bold else "Regular"
-        candidates = [
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/source-han/SourceHanSansCN-Regular.otf",
-            "/root/xiu2/data/xiuxian/font/SourceHanSerifCN-Heavy.otf",
-            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
-            f"/usr/share/fonts/truetype/noto/NotoSansCJK-{suffix}.ttc",
-            f"/root/AstrBot/data/plugins/astrbot_plugin_status/templates/res/fonts/Noto-Sans-SC-{suffix}.ttf",
-            f"/usr/share/fonts/truetype/noto/NotoSansMono-{suffix}.ttf",
-            f"/usr/share/fonts/truetype/dejavu/DejaVuSans{'-Bold' if bold else ''}.ttf",
-            f"/data/data/com.termux/files/usr/share/fonts/TTF/DejaVuSans{'-Bold' if bold else ''}.ttf",
-        ]
+        candidates: List[str] = []
+        configured_font = str(os.environ.get("ASTRBOT_STATUS_FONT") or "").strip()
+        if configured_font:
+            candidates.append(os.path.expandvars(os.path.expanduser(configured_font)))
+
+        windows_root = str(
+            os.environ.get("WINDIR") or os.environ.get("SystemRoot") or ""
+        ).strip()
+        if windows_root:
+            windows_fonts = os.path.join(windows_root, "Fonts")
+            windows_names = (
+                (
+                    "msyhbd.ttc",
+                    "simhei.ttf",
+                    "simsunb.ttf",
+                    "Dengb.ttf",
+                    "msyh.ttc",
+                    "simsun.ttc",
+                    "Deng.ttf",
+                )
+                if bold
+                else ("msyh.ttc", "simhei.ttf", "simsun.ttc", "Deng.ttf")
+            )
+            candidates.extend(os.path.join(windows_fonts, name) for name in windows_names)
+
+        candidates.extend(
+            [
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/source-han/SourceHanSansCN-Regular.otf",
+                "/root/xiu2/data/xiuxian/font/SourceHanSerifCN-Heavy.otf",
+                "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+                f"/usr/share/fonts/truetype/noto/NotoSansCJK-{suffix}.ttc",
+                f"/root/AstrBot/data/plugins/astrbot_plugin_status/templates/res/fonts/Noto-Sans-SC-{suffix}.ttf",
+                f"/usr/share/fonts/truetype/noto/NotoSansMono-{suffix}.ttf",
+                f"/usr/share/fonts/truetype/dejavu/DejaVuSans{'-Bold' if bold else ''}.ttf",
+                f"/data/data/com.termux/files/usr/share/fonts/TTF/DejaVuSans{'-Bold' if bold else ''}.ttf",
+            ]
+        )
         for path in candidates:
             if os.path.isfile(path):
                 try:
                     font = ImageFont.truetype(path, size=size)
-                    # Some bundled fonts are Latin subsets despite their SC name.
-                    # Skip them when the report needs Chinese labels.
-                    if any(font.getmask(sample).getbbox() is None for sample in ("模型状态成功率", "123-:.%/", "最近 7 天")):
+                    # Pillow's default glyph box can be non-empty even when it is
+                    # the same missing-character square for every Chinese glyph.
+                    glyphs = []
+                    for sample in "模型状态成功率最近":
+                        mask = font.getmask(sample)
+                        if mask.getbbox() is None:
+                            glyphs = []
+                            break
+                        glyphs.append((mask.size, mask.tobytes()))
+                    if len(set(glyphs)) != len("模型状态成功率最近"):
                         continue
                     return font
                 except Exception:
                     continue
-        try:
-            return ImageFont.load_default(size=size)
-        except TypeError:
-            return ImageFont.load_default()
+        return None
 
     @staticmethod
     def _status_report_wrap(draw: Any, text: str, font: Any, max_width: int, max_lines: int = 2) -> List[str]:
@@ -3415,6 +3446,12 @@ class SelfieImagePlugin(
             body_font = self._status_report_font(21)
             small_font = self._status_report_font(17)
             tiny_font = self._status_report_font(14)
+            if any(
+                font is None
+                for font in (title_font, section_font, body_font, small_font, tiny_font)
+            ):
+                logger.warning("[SelfieImage] 未找到支持中文的状态图字体，改用文字状态报告")
+                return None
             header_height = 184
             kpi_height = 124
             row_height = 232

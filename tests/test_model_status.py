@@ -112,9 +112,13 @@ def test_model_status_uses_latest_event_for_recent_state_and_old_rows_are_visibl
 
 
 def test_model_status_report_renders_a_png(tmp_path) -> None:
+    import pytest
     from PIL import Image
 
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    if SelfieImagePlugin._status_report_font(14) is None:
+        pytest.skip("A Chinese TrueType font is not installed in this test environment")
 
     plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
     plugin.data_dir = str(tmp_path)
@@ -149,3 +153,73 @@ def test_model_status_report_renders_a_png(tmp_path) -> None:
         assert image.format == "PNG"
         assert image.width == 1080
         assert image.height > 500
+
+
+def test_model_status_font_uses_windows_chinese_fonts(monkeypatch) -> None:
+    import astrbot_plugin_selfie_image.main as main_module
+
+    class Mask:
+        size = (1, 1)
+
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+        def getbbox(self):
+            return (0, 0, 1, 1)
+
+        def tobytes(self):
+            return self.value.encode("utf-8")
+
+    class Font:
+        def getmask(self, value: str):
+            return Mask(value)
+
+    class FontLoader:
+        @staticmethod
+        def truetype(path: str, size: int):
+            assert path.replace("\\", "/").lower().endswith("fonts/msyh.ttc")
+            return Font()
+
+    monkeypatch.setenv("WINDIR", "C:\\Windows")
+    monkeypatch.delenv("ASTRBOT_STATUS_FONT", raising=False)
+    monkeypatch.setattr(
+        main_module.os.path,
+        "isfile",
+        lambda path: path.replace("\\", "/").lower().endswith("fonts/msyh.ttc"),
+    )
+    monkeypatch.setattr(main_module, "ImageFont", FontLoader)
+
+    assert isinstance(main_module.SelfieImagePlugin._status_report_font(20), Font)
+
+
+def test_model_status_font_rejects_missing_glyph_boxes(monkeypatch) -> None:
+    import astrbot_plugin_selfie_image.main as main_module
+
+    class MissingGlyphMask:
+        size = (1, 1)
+
+        def getbbox(self):
+            return (0, 0, 1, 1)
+
+        def tobytes(self):
+            return b"same tofu box"
+
+    class Font:
+        def getmask(self, _value: str):
+            return MissingGlyphMask()
+
+    class FontLoader:
+        @staticmethod
+        def truetype(_path: str, _size: int):
+            return Font()
+
+    monkeypatch.setenv("WINDIR", "C:\\Windows")
+    monkeypatch.delenv("ASTRBOT_STATUS_FONT", raising=False)
+    monkeypatch.setattr(
+        main_module.os.path,
+        "isfile",
+        lambda path: path.replace("\\", "/").lower().endswith("fonts/msyh.ttc"),
+    )
+    monkeypatch.setattr(main_module, "ImageFont", FontLoader)
+
+    assert main_module.SelfieImagePlugin._status_report_font(20) is None

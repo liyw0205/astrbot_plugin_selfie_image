@@ -24,12 +24,16 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_LOOK_COMPATIBILITY_EXPANSION,
     COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
     COS_SPECIAL_LOOK_SETS,
+    COS_FULL_EYE_COVER_PROMPT,
+    COS_VISIBLE_EYE_PROMPT,
+    COS_SUBJECT_CLARITY_COVERED_EYES_PROMPT,
     COS_SUBJECT_CLARITY_PROMPT,
     audit_cos_look_catalog,
     build_cos_look_action,
     build_special_cos_look_action,
     build_cos_third_person_prompt,
     cos_prompt_has_framing,
+    cos_eye_mode,
     cos_look_compatibility,
     get_cos_look_by_id,
     is_special_cos_look,
@@ -99,6 +103,33 @@ def test_default_cos_pool_actions_randomize_camera_and_keep_contracts_clean():
             assert "【自拍 / 看看COS模式】" not in action
         else:
             assert "【自拍 / 看看COS模式】" in action
+
+
+def test_ninghongye_full_eye_cover_uses_a_dedicated_contract():
+    look = get_cos_look_by_id("ninghongye_plain_white_snake")
+    action = build_cos_look_action("", picker=lambda **_: look)
+
+    assert cos_eye_mode(look["id"]) == "full_cover"
+    assert "【cos_eye:full_cover】" in action
+    assert COS_FULL_EYE_COVER_PROMPT in action
+    assert COS_SUBJECT_CLARITY_COVERED_EYES_PROMPT in action
+    assert COS_SUBJECT_CLARITY_PROMPT not in action
+    assert "眼带材质厚实且完全不透明" not in action
+
+    builtin = build_selfie_builtin_prompt(action, has_reference_image=True)
+    assert "本次套装明确使用不透明眼带遮挡双眼" in builtin
+    assert "优先保留脸型轮廓、五官比例、眼睛和嘴唇轮廓" not in builtin
+
+
+def test_ninghongye_clear_eye_keeps_visible_eye_contract():
+    look = get_cos_look_by_id("ninghongye_clear_eye")
+    action = build_cos_look_action("", picker=lambda **_: look)
+
+    assert cos_eye_mode(look["id"]) == "visible"
+    assert "【cos_eye:visible】" in action
+    assert COS_VISIBLE_EYE_PROMPT in action
+    assert COS_SUBJECT_CLARITY_PROMPT in action
+    assert COS_FULL_EYE_COVER_PROMPT not in action
 
 
 def test_cos_catalog_audit_allows_costume_features_and_rejects_identity_locks():

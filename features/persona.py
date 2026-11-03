@@ -34,6 +34,7 @@ from .daily_schedule import (
     timeline_from_period_route,
 )
 from ..prompts.prompt_templates import (
+    COS_COVERED_EYES_IDENTITY_CONTRACT_ZH,
     COS_IDENTITY_CONTRACT_ZH,
     COS_HAIR_OVERRIDE_CONTRACT_ZH,
     has_viewpoint_change_request,
@@ -2390,6 +2391,7 @@ class PersonaManager:
         cos_contract = bool(
             intent.is_cos_look and re.search(r"【cam:(?:selfie|first|third)】", act, re.I)
         )
+        covered_eyes = "【cos_eye:full_cover】" in act.lower()
         shot_match = re.search(r"【shot:([a-z_]+)】", act, re.I)
         shot_id = str(shot_match.group(1) if shot_match else "")
         group_contract = bool(
@@ -2425,7 +2427,9 @@ class PersonaManager:
             # head, and expression contract. The shared identity contract is
             # emitted here exactly once for every referenced COS identity.
             identity_lines = [
-                COS_IDENTITY_CONTRACT_ZH
+                COS_COVERED_EYES_IDENTITY_CONTRACT_ZH
+                if has_reference_image and covered_eyes
+                else COS_IDENTITY_CONTRACT_ZH
                 if has_reference_image
                 else "形象参考以角色名称、人设和本次 COS 套装为准；未说明性别默认成年女性。"
             ]

@@ -19,6 +19,13 @@ COS_IDENTITY_CONTRACT_ZH = (
     "除非用户明确要求，不固定角色瞳色、脸型或五官比例。"
 )
 
+COS_COVERED_EYES_IDENTITY_CONTRACT_ZH = (
+    "以身份参考图为本人身份来源：保留本人脸型轮廓、鼻唇轮廓、性别、年龄感和肤色；"
+    "眼睛服从本次套装的眼带遮挡规则，不要求复现参考图中可见的双眼。\n"
+    "COS 只改变服装、配饰、角色假发/发型和妆容，不把角色原画的脸当作新身份。\n"
+    "除非用户明确要求，不固定角色瞳色、脸型或五官比例。"
+)
+
 COS_HAIR_OVERRIDE_CONTRACT_ZH = (
     "头发、假发和头饰只按本套装明示的细节逐项执行：指定发型轮廓时，按指定内容替换参考图中对应的刘海、鬓发、分缝、长度或束发；未写明的发型细节自然补全，不照搬与套装设定冲突的参考特征，也不擅自补造角色发型。"
     "指定发色时，从发根到刘海、鬓发和发尾统一使用该颜色，除非套装明确要求挑染或渐变；不得残留参考图旧色刘海。"
@@ -29,6 +36,15 @@ COS_HAIR_OVERRIDE_CONTRACT_ZH = (
 COS_IDENTITY_CONTRACT_EN = (
     "Use the identity reference image as the same person's identity anchor: preserve the person's face outline, "
     "facial feature proportions, eye and lip contours, gender, apparent age, and skin tone.\n"
+    "COS changes only clothing, accessories, the character wig or hairstyle, and makeup; do not replace the person "
+    "with the face of the original character.\n"
+    "Unless the user explicitly requests it, do not lock the character's eye color, face shape, or facial feature proportions."
+)
+
+COS_COVERED_EYES_IDENTITY_CONTRACT_EN = (
+    "Use the identity reference image as the same person's identity anchor: preserve the person's face outline, "
+    "nose and lip contours, gender, apparent age, and skin tone; the eyes follow the costume's blindfold rule "
+    "and do not need to remain visibly reproduced from the reference.\n"
     "COS changes only clothing, accessories, the character wig or hairstyle, and makeup; do not replace the person "
     "with the face of the original character.\n"
     "Unless the user explicitly requests it, do not lock the character's eye color, face shape, or facial feature proportions."
@@ -213,6 +229,7 @@ def build_selfie_builtin_prompt(
     )
     rendered_action = str(action_content or action or "").strip()
     is_cos = "看看COS" in str(action) or "看看cos" in str(action).lower() or "【cos:" in str(action)
+    covered_eyes = "【cos_eye:full_cover】" in str(action).lower()
     is_legs = (not is_cos) and (
         "看看腿" in str(action)
         or "腿部" in str(action)
@@ -253,7 +270,11 @@ def build_selfie_builtin_prompt(
             lines.append("Use the main reference to preserve the subject's identity and visual medium; follow the selected outfit and framing below.")
         elif is_cos:
             lines.extend([
-                COS_IDENTITY_CONTRACT_EN if has_reference_image else "Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.",
+                COS_COVERED_EYES_IDENTITY_CONTRACT_EN
+                if has_reference_image and covered_eyes
+                else COS_IDENTITY_CONTRACT_EN
+                if has_reference_image
+                else "Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.",
                 COS_HAIR_OVERRIDE_CONTRACT_EN,
                 "Follow the complete COS action contract below exactly once. Preserve its selected outfit, pose, scene, camera, and single framing without adding another camera or crop choice.",
                 rendered_action,
@@ -437,10 +458,15 @@ def build_selfie_builtin_prompt(
         else "固定主角身份：脸型五官、发型发色、性别、体态与整体长相保持稳定；表情按本次场景自然变化。"
     )
     eye_line = (
-        "COS 套装或用户明确要求的歪头、仰头、低头、闭眼或夸张表情应保留；"
-        "未指定时自然参考形象图，头部、视线和表情保持连贯；优先保留脸型轮廓、五官比例、眼睛和嘴唇轮廓，面部边缘清晰、肤色自然。"
-        if is_cos
-        else "" if is_legs else "正对镜头时自然看向镜头，眼神有焦点。"
+        "本次套装明确使用不透明眼带遮挡双眼；眼带保持连续贴合，不要求复现参考图中可见的双眼；"
+        "头部、视线和表情按已选姿势保持连贯，鼻唇轮廓和眼带边缘清晰。"
+        if is_cos and covered_eyes
+        else (
+            "COS 套装或用户明确要求的歪头、仰头、低头、闭眼或夸张表情应保留；"
+            "未指定时自然参考形象图，头部、视线和表情保持连贯；优先保留脸型轮廓、五官比例、眼睛和嘴唇轮廓，面部边缘清晰、肤色自然。"
+            if is_cos
+            else "" if is_legs else "正对镜头时自然看向镜头，眼神有焦点。"
+        )
     )
     leg_crop_line = (
         "以腰线至鞋履的自然构图展示下装、袜装和鞋履，肢体比例自然连续，避免家具遮挡袜装或鞋履。"

@@ -2405,6 +2405,64 @@ COS_SUBJECT_CLARITY_PROMPT = (
     "人物脸部必须保留足够有效像素和自然微对比，避免整体雾化、磨皮、低对比失焦和运动模糊。"
 )
 
+COS_SUBJECT_CLARITY_COVERED_EYES_PROMPT = (
+    "人物面部是画面最高优先级，鼻梁、嘴唇、下颌、眼带边缘、发丝轮廓与服装纹理清晰对焦，曝光自然；"
+    "眼带保持连续、平整、边缘清楚，不因柔光、景深或颗粒出现透明、破洞或重影；"
+    "胶片颗粒、色调、柔光或景深效果只作用于氛围与背景，不得抹平或模糊人物主体。"
+)
+
+COS_EYE_MODE_BY_LOOK_ID: Dict[str, str] = {
+    # These skins use Ning Hongye's opaque red blindfold as a defining costume
+    # element. Keep the eye-covering rule separate from generic face clarity.
+    "ninghongye_plain_white_snake": "full_cover",
+    "ninghongye_dragon_path_baizhi": "full_cover",
+    "ninghongye_underworld_goddess": "full_cover",
+    "ninghongye_cloud_fairy": "full_cover",
+    "ninghongye_red_hao_new_joy": "full_cover",
+    "ninghongye_spider_demon": "full_cover",
+    "ninghongye_clear_eye": "visible",
+}
+
+COS_FULL_EYE_COVER_PROMPT = (
+    "眼部造型锁定为独立的正红色不透明绸缎眼带：横向贴合面部，左端延伸至左太阳穴，"
+    "右端延伸至右太阳穴；带体覆盖双眼所在区域与上鼻梁，完整遮住双眼、眼白、眼睑和睫毛；"
+    "带体是连续平整的实体布面，无孔洞、无网纱、无透明区域、无眼睛图案，"
+    "不是眼妆、发饰、额饰或悬浮装饰；眼带下方不绘制可见眼睛，只保留鼻子、嘴唇和下半脸轮廓。"
+)
+
+COS_VISIBLE_EYE_PROMPT = (
+    "眼部造型锁定为双眼自然可见，眼白、虹膜、眼睑和睫毛清晰；不佩戴横跨双眼的眼罩或眼带。"
+)
+
+
+def cos_eye_mode(cos_id: str) -> str:
+    """Return the explicit eye treatment for a COS look when catalogued."""
+    return str(COS_EYE_MODE_BY_LOOK_ID.get(str(cos_id or ""), "unspecified"))
+
+
+def _cos_subject_clarity_prompt(cos_id: str = "") -> str:
+    if cos_eye_mode(cos_id) == "full_cover":
+        return COS_SUBJECT_CLARITY_COVERED_EYES_PROMPT
+    return COS_SUBJECT_CLARITY_PROMPT
+
+
+def normalize_cos_eye_contract(prompt: str, cos_id: str = "") -> str:
+    """Normalize eye-cover wording without weakening other costume details."""
+    text = str(prompt or "").strip()
+    mode = cos_eye_mode(cos_id)
+    if mode == "visible" and COS_VISIBLE_EYE_PROMPT not in text:
+        return f"{text}{COS_VISIBLE_EYE_PROMPT}"
+    if mode != "full_cover":
+        return text
+    old_contract = re.compile(
+        r"宁红夜的双眼必须被横向红色绸缎仪式眼罩完整覆盖；.*?"
+        r"眼带不是发饰、头巾、透明纱、蕾丝、金属面罩或悬浮装饰。"
+    )
+    text = old_contract.sub(COS_FULL_EYE_COVER_PROMPT, text, count=1)
+    if COS_FULL_EYE_COVER_PROMPT not in text:
+        text = f"{COS_FULL_EYE_COVER_PROMPT}{text}"
+    return text
+
 # Some scene treatments are visually attractive but routinely spend the
 # image's sharpness budget on glass highlights, darkness, or backlight.  Keep
 # these as structured tags so the random picker can reject unsafe pairs and
@@ -3704,8 +3762,8 @@ def _cos_face_safety_prompt(
     if "motion_risk" in risk:
         prompts.append("舒展动作保持稳定定格，发梢和衣摆可有轻微动势但脸部、眼睛和嘴唇绝不使用动态模糊。")
     if not prompts:
-        return COS_SUBJECT_CLARITY_PROMPT if include_base else ""
-    prefix = COS_SUBJECT_CLARITY_PROMPT if include_base else ""
+        return _cos_subject_clarity_prompt(cos_id) if include_base else ""
+    prefix = _cos_subject_clarity_prompt(cos_id) if include_base else ""
     return prefix + "".join(prompts)
 
 
@@ -4080,7 +4138,7 @@ def _pick_cos_collage_variation(
     ):
         prompt_parts.append("本次场景影像风格：" + scene["style_prompt"])
     if not _requests_explicit_soft_focus(extra_request):
-        prompt_parts.append(COS_SUBJECT_CLARITY_PROMPT)
+        prompt_parts.append(_cos_subject_clarity_prompt(cos_id))
     panel_prompt = (
         "本次随机姿势优先于套装正文中残留的人物姿势描述：采用自然错落、非对称的七格摄影拼贴，拒绝规整宫格；"
         "中央是一张贯穿画面主要高度的高幅大主图，明显大于其余画格；左右两侧各有恰好三张较小照片，"
@@ -4282,7 +4340,7 @@ def pick_cos_variation(
     ):
         prompt_parts.append("本次场景影像风格：" + scene["style_prompt"])
     if scene and not _requests_explicit_soft_focus(extra_request):
-        prompt_parts.append(COS_SUBJECT_CLARITY_PROMPT)
+        prompt_parts.append(_cos_subject_clarity_prompt(cos_id))
         safety_prompt = _cos_face_safety_prompt(
             cos_id,
             scene_id,
@@ -4941,6 +4999,8 @@ def build_cos_third_person_prompt(text: str) -> str:
         if match:
             variation[key] = match.group(1)
     look_match = re.search(r"【cos:([a-z0-9_]+)】", raw, flags=re.I)
+    if look_match:
+        adapted = normalize_cos_eye_contract(adapted, look_match.group(1))
     safety_line = ""
     if look_match and variation.get("scene_id") and not _requests_explicit_soft_focus(adapted):
         safety_line = _cos_face_safety_prompt(
@@ -5148,6 +5208,7 @@ def build_cos_look_action(
     outfit = adapt_cos_outfit_for_camera(
         str(chosen.get("prompt") or "").strip(), camera_kind
     )
+    outfit = normalize_cos_eye_contract(outfit, cos_id)
     outfit = adapt_cos_prompt_for_appearance(outfit, appearance_type)
     outfit = normalize_cos_prompt_negatives(
         outfit,
@@ -5343,6 +5404,7 @@ def build_cos_look_action(
     return (
         base
         + f" 【cos:{cos_id}】 【cam:{camera_kind}】"
+        + (f" 【cos_eye:{cos_eye_mode(cos_id)}】" if cos_eye_mode(cos_id) != "unspecified" else "")
         + (f" 【cos_pose:{variation['pose_id']}】" if variation["pose_id"] else "")
         + (f" 【cos_scene:{variation['scene_id']}】" if variation["scene_id"] else "")
         + (f" 【cos_framing:{framing_id}】" if framing_id else "")
