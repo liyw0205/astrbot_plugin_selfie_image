@@ -5466,7 +5466,12 @@ class SelfieImagePlugin(
                     skipped_shots += 1
                     persist_progress(index + 1)
                     mode, skip_max = self._batch_failure_policy()
-                    has_remaining = index + 1 < total
+                    # Completion order is independent of shot index when
+                    # requests run concurrently. A late-index failure can
+                    # arrive while lower-index shots are still queued or
+                    # in-flight, so derive this from terminal shot counts.
+                    completed_shots = succeeded_shots + skipped_shots + cancelled_shots
+                    has_remaining = completed_shots < total
                     will_continue = has_remaining and (
                         mode == "skip" or (mode == "skip_max" and skipped_shots <= skip_max)
                     )
