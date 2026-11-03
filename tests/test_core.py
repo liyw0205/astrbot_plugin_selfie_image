@@ -12822,6 +12822,66 @@ class ImageBatchSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(peak, 3)
         self.assertEqual(plugin._image_batch_gate._value, 3)
 
+    async def test_batch_keeps_inflight_successes_when_last_shot_fails_first(self) -> None:
+        from types import SimpleNamespace
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        class Event:
+            def plain_result(self, text):
+                return text
+
+            async def send(self, _message):
+                return None
+
+        plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+        plugin.config = SimpleNamespace(
+            image_max_concurrent_tasks=5,
+            image_batch_on_failure="skip",
+            image_batch_skip_max=2,
+            image_show_generation_info=False,
+            image_enable_daily_limit=False,
+            image_show_model_info=False,
+        )
+        plugin._image_batch_gate = asyncio.Semaphore(5)
+        plugin._web_task_lock = threading.RLock()
+        plugin._web_tasks = {"task": {"cancel_requested": False, "requested_count": 5}}
+        plugin._record_generated_images = lambda *_args: None
+        plugin._send_generated_images = lambda *_args: asyncio.sleep(0)
+        plugin._send_task_notification = lambda *_args, **_kwargs: asyncio.sleep(0)
+        plugin._set_task_notification_status = lambda *_args, **_kwargs: None
+        plugin._friendly_user_error_message = lambda error, fallback: error or fallback
+
+        all_started = asyncio.Event()
+        started = 0
+
+        async def run_one(index):
+            nonlocal started
+            started += 1
+            if started == 5:
+                all_started.set()
+            await all_started.wait()
+            if index == 4:
+                return {"success": False, "error": "upstream failure"}
+            await asyncio.sleep(0.01)
+            return {"success": True, "files": [f"generated-{index}.png"]}
+
+        with patch("astrbot_plugin_selfie_image.main.IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS", 0):
+            result = await plugin._run_counted_generation_shots(
+                task_id="task",
+                event=Event(),
+                total=5,
+                fail_label="failed",
+                run_one=run_one,
+                log_prefix="out-of-order failure batch",
+            )
+
+        self.assertEqual(started, 5)
+        self.assertEqual(result["succeeded_count"], 4)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertEqual(result["completed_count"], 5)
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(len(result["files"]), 4)
+
     async def test_batch_persists_progress_after_each_completed_shot(self) -> None:
         from types import SimpleNamespace
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin

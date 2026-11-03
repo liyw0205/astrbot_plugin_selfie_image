@@ -5444,12 +5444,10 @@ class SelfieImagePlugin(
                 raw_attempts = result.get("attempts") if isinstance(result, dict) else None
                 if isinstance(raw_attempts, list):
                     all_attempts.extend(item for item in raw_attempts if isinstance(item, dict))
-                if stop:
-                    if self._task_cancel_requested(task_id):
-                        cancelled = True
-                        cancelled_shots += 1
-                        persist_progress(index + 1)
-                    return
+                # ``stop`` only prevents shots that have not acquired a
+                # generation slot yet. This shot already entered ``run_one``
+                # and its result must still be committed even if another
+                # in-flight shot failed first.
                 if self._task_cancel_requested(task_id):
                     cancelled = True
                     stop = True
