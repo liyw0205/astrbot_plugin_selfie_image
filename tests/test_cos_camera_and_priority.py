@@ -22,7 +22,9 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_FRAMING_SCENE_COMPATIBILITY,
     COS_FRAMING_CAMERA_COMPATIBILITY,
     COS_LOOK_COMPATIBILITY_EXPANSION,
+    COS_LOOK_COMPATIBILITY_DOULUO_BTTH,
     COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
+    COS_LOOK_SETS_DOULUO_BTTH,
     COS_SPECIAL_LOOK_SETS,
     COS_FULL_EYE_COVER_PROMPT,
     COS_VISIBLE_EYE_PROMPT,
@@ -612,8 +614,10 @@ def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
         scene_id for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
         if not scene.get("cos_look_only")
     ]
-    configured_look_ids = set(COS_LOOK_COMPATIBILITY_EXPANSION) | set(
-        COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS
+    configured_look_ids = (
+        set(COS_LOOK_COMPATIBILITY_EXPANSION)
+        | set(COS_LOOK_COMPATIBILITY_DOULUO_BTTH)
+        | set(COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS)
     )
     for item in COS_LOOK_SETS:
         profile = cos_look_compatibility(item["id"])
@@ -779,6 +783,68 @@ def test_expansion_looks_use_curated_scene_pose_and_framing_profiles():
     )
     assert explicit_conflict["pose_id"] == "kneeling_carpet"
     assert explicit_conflict["scene_id"] == "user"
+
+
+def test_douluo_btth_looks_randomize_only_compatible_staging():
+    assert len(COS_LOOK_SETS_DOULUO_BTTH) == 33
+    look_ids = {look["id"] for look in COS_LOOK_SETS_DOULUO_BTTH}
+    assert len(look_ids) == 33
+    assert set(COS_LOOK_COMPATIBILITY_DOULUO_BTTH) == look_ids
+    assert audit_cos_look_catalog(COS_LOOK_SETS_DOULUO_BTTH) == []
+    assert match_cos_look_sets("斗破苍穹 云韵")[0]["id"] == "btth_yun_yun_cloud_mist"
+    assert match_cos_look_sets("BTTH 小医仙")[0]["id"] == "btth_xiao_yixian_healer"
+    assert {look["id"] for look in match_cos_look_sets("斗破苍穹")} >= {
+        look["id"] for look in COS_LOOK_SETS_DOULUO_BTTH if look["cos_type"] == "斗破苍穹"
+    }
+    assert match_cos_look_sets("Soul Land 王冬儿")[0]["id"] == "douluo2_wang_donger_butterfly"
+
+    for look in COS_LOOK_SETS_DOULUO_BTTH:
+        profile = cos_look_compatibility(look["id"])
+        expected = COS_LOOK_COMPATIBILITY_DOULUO_BTTH[look["id"]]
+        assert profile["scene_ids"] == list(expected["scene_ids"]), look["id"]
+        assert profile["pose_ids"] == list(expected["pose_ids"]), look["id"]
+        assert profile["recommended_view_ids"] == ["selfie", "first", "third"]
+        assert "以形象图中的人为COS主体" in look["prompt"]
+        assert not re.search(r"姿势|动作|场景|灯光|镜头|景别|构图|画面风格", look["prompt"]), look["id"]
+
+        for camera in ("selfie", "first", "third"):
+            for _ in range(8):
+                variation = pick_cos_variation(look["id"], camera=camera)
+                scene_id = variation["scene_id"]
+                pose_id = variation["pose_id"]
+                assert scene_id in profile["scene_ids"], look["id"]
+                assert pose_id in profile["recommended_pose_ids"], look["id"]
+                assert pose_id in profile["scene_pose_compatibility"][scene_id], look["id"]
+                assert pose_id in COS_RANDOM_CAMERA_POSE_IDS[camera], (look["id"], camera, pose_id)
+                if pose_id in COS_POSE_CAMERA_COMPATIBILITY:
+                    assert camera in COS_POSE_CAMERA_COMPATIBILITY[pose_id], (look["id"], camera, pose_id)
+                assert not _cos_unsafe_random_pair(look["id"], scene_id, pose_id, camera), (
+                    look["id"], camera, scene_id, pose_id
+                )
+
+                framing = pick_cos_framing(
+                    pose_id=pose_id,
+                    scene_id=scene_id,
+                    camera=camera,
+                )
+                framing_id = framing["view_id"]
+                assert framing_id in COS_POSE_FRAMING_COMPATIBILITY[pose_id], (
+                    look["id"], camera, pose_id, framing_id
+                )
+                assert scene_id in COS_FRAMING_SCENE_COMPATIBILITY.get(framing_id, (scene_id,)), (
+                    look["id"], camera, scene_id, framing_id
+                )
+                assert camera in COS_FRAMING_CAMERA_COMPATIBILITY.get(framing_id, (camera,)), (
+                    look["id"], camera, framing_id
+                )
+
+        for _ in range(8):
+            combination = pick_cos_variation(look["id"], camera="third", use_combinations=True)
+            assert combination["scene_id"] in profile["scene_ids"], look["id"]
+            assert combination["pose_id"] in profile["scene_pose_compatibility"][combination["scene_id"]], look["id"]
+            assert not _cos_unsafe_random_pair(
+                look["id"], combination["scene_id"], combination["pose_id"], "third"
+            ), look["id"]
 
 
 def test_pose_and_scene_detection_preserves_explicit_user_staging():

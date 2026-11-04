@@ -1755,6 +1755,10 @@ from .cos_looks_expansion import (
     COS_LOOK_COMPATIBILITY_EXPANSION,
     COS_LOOK_SETS_EXPANSION,
 )
+from .cos_looks_douluo_btth import (
+    COS_LOOK_COMPATIBILITY_DOULUO_BTTH,
+    COS_LOOK_SETS_DOULUO_BTTH,
+)
 from .cos_looks_honor_of_kings import (
     COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
     COS_LOOK_SETS_HONOR_OF_KINGS,
@@ -1766,6 +1770,7 @@ from .cos_looks_special import (
 
 COS_LOOK_SETS.extend(COS_LOOK_SETS_EXTRA)
 COS_LOOK_SETS.extend(COS_LOOK_SETS_EXPANSION)
+COS_LOOK_SETS.extend(COS_LOOK_SETS_DOULUO_BTTH)
 COS_LOOK_SETS.extend(COS_LOOK_SETS_HONOR_OF_KINGS)
 COS_LOOK_SETS.extend(COS_SPECIAL_LOOK_SETS)
 
@@ -3603,6 +3608,8 @@ def cos_look_compatibility(cos_id: str) -> Dict[str, Any]:
         }
     override = COS_LOOK_COMPATIBILITY_EXPANSION.get(look_id)
     if override is None:
+        override = COS_LOOK_COMPATIBILITY_DOULUO_BTTH.get(look_id)
+    if override is None:
         override = COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS.get(look_id, {})
     poses = [item for item in override.get("pose_ids", all_poses) if item in COS_RANDOM_POSE_CLASSES]
     scene_ids = override.get(
@@ -4418,6 +4425,7 @@ COS_LOOK_TYPE_ALIASES: Dict[str, tuple[str, ...]] = {
     "崩坏3": ("崩坏3", "崩坏 3", "Honkai Impact 3rd", "Honkai Impact 3"),
     "埃罗芒阿老师": ("埃罗芒阿老师", "Eromanga Sensei", "eromangasensei"),
     "斗罗大陆": ("斗罗大陆", "Soul Land", "Douluo Dalu", "douluodalu"),
+    "斗破苍穹": ("斗破苍穹", "BTTH", "Fights Break Sphere"),
     "王者荣耀": ("王者荣耀", "王者", "honorofkings", "hok"),
     "永劫无间": ("永劫无间", "永劫", "naraka", "narakabladepoint"),
     "原神": ("原神", "genshin", "genshinimpact"),
@@ -4525,7 +4533,7 @@ _COS_LOOK_SERIES_ORDER = (
     "碧蓝航线", "蔚蓝档案", "公主连结", "无职转生", "从零开始的异世界生活",
     "世界计划 缤纷舞台", "明日方舟", "崩坏3",
     "原神", "绝区零", "鸣潮", "王者荣耀", "永劫无间",
-    "斗罗大陆", "缘之空", "叛逆的鲁鲁修", "崩坏：星穹铁道", "埃罗芒阿老师",
+    "斗罗大陆", "斗破苍穹", "缘之空", "叛逆的鲁鲁修", "崩坏：星穹铁道", "埃罗芒阿老师",
     "Fate", "三国杀", "Hololive", "永雏塔菲",
     "古风", "和风", "巫女", "围裙", "礼服", "通用COS", "原创COS",
 )
@@ -4765,7 +4773,12 @@ def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
     return []
 
 
-def pick_cos_look_set(*, avoid_id: str = "", query: str = "") -> Dict[str, str]:
+def pick_cos_look_set(
+    *,
+    avoid_id: str = "",
+    query: str = "",
+    exclude_special: bool = False,
+) -> Dict[str, str]:
     normalized_query = re.sub(r"\s+", " ", str(query or "")).strip()
     if normalized_query:
         exact_prompt = next(
@@ -4788,6 +4801,12 @@ def pick_cos_look_set(*, avoid_id: str = "", query: str = "") -> Dict[str, str]:
     # Special looks participate in selection just like ordinary looks. Their
     # fixed staging contract is preserved later by build_cos_look_action.
     pool = matched or list(COS_LOOK_SETS)
+    if exclude_special:
+        compatible_pool = [item for item in pool if not is_special_cos_look(item)]
+        if compatible_pool:
+            pool = compatible_pool
+        elif matched:
+            return {}
     pool = [item for item in pool if str(item.get("id") or "") != str(avoid_id or "")]
     if not pool:
         pool = matched or list(COS_LOOK_SETS)
@@ -5119,10 +5138,13 @@ def build_cos_look_action(
 ) -> str:
     """Build one matched or random COS action with a compatible camera."""
     choose = picker or pick_cos_look_set
-    chosen = get_cos_look_by_id(force_id) or choose(
-        avoid_id=avoid_id,
-        query=str(match_query).strip() if str(match_query).strip() else extra_request,
-    )
+    query = str(match_query).strip() if str(match_query).strip() else extra_request
+    requested_camera = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
+    chosen = get_cos_look_by_id(force_id) if force_id else None
+    if not chosen and requested_camera and choose is pick_cos_look_set:
+        chosen = choose(avoid_id=avoid_id, query=query, exclude_special=True)
+    elif not chosen:
+        chosen = choose(avoid_id=avoid_id, query=query)
     if not chosen:
         # Keep the action contract intact when an explicit series has no
         # matching outfit; callers can surface the empty selection instead of
@@ -5136,7 +5158,6 @@ def build_cos_look_action(
         )
     title = str(chosen.get("title") or "随机COS")
     cos_type = str(chosen.get("cos_type") or "").strip()
-    requested_camera = str(camera or "").strip() or parse_requested_cos_camera(extra_request)
     requested_camera_in_text = parse_requested_cos_camera(extra_request)
     explicit_collage = requests_cos_multi_view_collage(extra_request)
     explicit_selfie = any(
@@ -5282,7 +5303,7 @@ def build_cos_look_action(
     )
     if collage_active:
         framing_line = (
-            "本次采用方形画布上的自然错落式多视角拼贴，优先于套装正文中的单一景别描述；"
+            "本次采用1:1方形画布上的自然错落式多视角拼贴，优先于套装正文中的单一景别描述；"
             "以下各画格保持同一人物、同一套装、同一场景和影像风格；"
         )
     elif framing_choice.get("randomized_from_options"):

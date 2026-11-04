@@ -464,7 +464,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.81")
+        self.assertEqual(PLUGIN_VERSION, "1.6.82")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -1556,17 +1556,23 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(targets["gemini-2.5-flash-image"], "openai_chat")
         self.assertEqual(config.image_channels[0].base_url, "http://chami.yyqzx.com/GPTimage/chami")
 
-    def test_grok_edit_payload_uses_data_url_image(self) -> None:
-        adapter = GrokImageAdapter(make_target("grok", "grok-imagine-image"), FakeSession())
-        payload = adapter.build_edit_payload(
-            ImageGenerateRequest(
-                prompt="keep identity",
-                images=[ImageReference(data=PNG_BYTES, mime_type="image/png")],
+    def test_grok_edit_payload_preserves_model_id_and_uses_data_url_image(self) -> None:
+        for model in (
+            "grok-imagine-image",
+            "grok-imagine-image2.0",
+            "grok-imagine-image-edit",
+            "grok-imagine-image-quality",
+        ):
+            adapter = GrokImageAdapter(make_target("grok", model), FakeSession())
+            payload = adapter.build_edit_payload(
+                ImageGenerateRequest(
+                    prompt="keep identity",
+                    images=[ImageReference(data=PNG_BYTES, mime_type="image/png")],
+                )
             )
-        )
-        self.assertEqual(payload["model"], "grok-imagine-image-edit")
-        self.assertIn("image", payload)
-        self.assertTrue(str(payload["image"]["url"]).startswith("data:image/png;base64,"))
+            self.assertEqual(payload["model"], model)
+            self.assertIn("image", payload)
+            self.assertTrue(str(payload["image"]["url"]).startswith("data:image/png;base64,"))
 
     def test_channel_preflight_requires_key_url_and_model(self) -> None:
         bad = preflight_image_channel({"name": "x", "provider_type": "openai"}, kind="image")
@@ -4181,6 +4187,23 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["aspect_ratio"], "auto")
         self.assertEqual(payload["resolution"], "4k")
         self.assertEqual(payload["response_format"], "b64_json")
+
+    async def test_grok_image_edit_sends_exact_configured_model_id(self) -> None:
+        model = "grok-imagine-image2.0"
+        session = FakeSession({"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]})
+        adapter = GrokImageAdapter(make_target("grok", model), session)
+
+        result = await adapter.generate(
+            ImageGenerateRequest(
+                prompt="edit this image",
+                images=[ImageReference(data=PNG_BYTES, mime_type="image/png")],
+            )
+        )
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertEqual(len(session.requests), 1)
+        self.assertEqual(session.requests[0]["url"], "https://example.test/v1/images/edits")
+        self.assertEqual(session.requests[0]["json"]["model"], model)
 
     def test_freeform_portrait_ratio_keeps_portrait_provider_mapping(self) -> None:
         self.assertEqual(map_aspect_ratio_to_openai_size("9:19"), "1024x1792")
@@ -9468,7 +9491,7 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("小舞")},
-            {"xiaowu_pink_rabbit", "hutao_xiaowu"},
+            {"xiaowu_pink_rabbit", "douluo1_xiaowu_shrek", "hutao_xiaowu"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("王昭君")},
@@ -11216,6 +11239,7 @@ class StudioStoreTests(unittest.TestCase):
             COS_RANDOM_POSE_CLASSES,
             COS_RANDOM_SCENE_CLASSES,
             COS_LOOK_COMPATIBILITY_EXPANSION,
+            COS_LOOK_COMPATIBILITY_DOULUO_BTTH,
             COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
             is_special_cos_look,
         )
@@ -11225,8 +11249,10 @@ class StudioStoreTests(unittest.TestCase):
             scene_id for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
             if not scene.get("cos_look_only")
         ]
-        configured_look_ids = set(COS_LOOK_COMPATIBILITY_EXPANSION) | set(
-            COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS
+        configured_look_ids = (
+            set(COS_LOOK_COMPATIBILITY_EXPANSION)
+            | set(COS_LOOK_COMPATIBILITY_DOULUO_BTTH)
+            | set(COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS)
         )
         for item in COS_LOOK_SETS:
             profile = cos_look_compatibility(item["id"])
