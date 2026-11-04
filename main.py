@@ -5915,16 +5915,14 @@ class SelfieImagePlugin(
             m_cos = re.search(r"【cos:([a-z0-9_]+)】", str(action or ""))
             if m_cos:
                 last_cos = str(m_cos.group(1) or "")
-            is_special_cos = bool(re.search(r"【cos_mode:special】", str(action or ""), flags=re.I))
             m_cam = re.search(r"【cam:(selfie|first|third)】", str(action or ""))
             if m_cam:
                 last_cam = str(m_cam.group(1) or "")
             m_cos_pose = re.search(r"【cos_pose:([a-z_]+)】", str(action or ""))
             if m_cos_pose:
                 last_cos_pose = str(m_cos_pose.group(1) or "")
-            keep_cos_outfit = is_special_cos or (
-                source == "command-look-cos" and keep_cos_outfit_requested(extra_keep)
-            )
+            # A special look fixes one shot's full prompt, not every shot in a random batch.
+            keep_cos_outfit = source == "command-look-cos" and keep_cos_outfit_requested(extra_keep)
         round_actions: List[str] = []
         for index in range(total):
             round_action = action

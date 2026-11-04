@@ -464,7 +464,7 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.80")
+        self.assertEqual(PLUGIN_VERSION, "1.6.81")
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -10166,6 +10166,92 @@ class LegFocusTests(unittest.TestCase):
         self.assertEqual(len(rebuilt_actions), 6)
         self.assertEqual(len(selfie_requests), 0)
         self.assertEqual(len(cos_requests), 6)
+
+    def test_random_special_cos_batch_rotates_but_explicit_lock_is_preserved(self) -> None:
+        stub_factory = SessionModelAndTaskTests()
+        batch_plugin = stub_factory._plugin_stub()
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        batch_plugin.config = type("Config", (), {"image_max_batch_count": 10})()
+        rebuilt_actions = []
+        build_calls = []
+
+        async def fake_build_prompt(event, action, extra_refs):
+            rebuilt_actions.append(action)
+            return action, [], {}
+
+        async def fake_generate(prompt, aspect, resolution, refs, **kwargs):
+            return {"success": True, "files": ["generated.png"]}
+
+        async def fake_counted(*, task_id, event, total, fail_label, run_one, log_prefix):
+            for index in range(total):
+                await run_one(index)
+            return {"success": True, "files": []}
+
+        def fake_build_cos_action(extra_request="", has_refs=False, **kwargs):
+            build_calls.append(dict(kwargs))
+            look_id = str(kwargs.get("force_id") or f"random_look_{len(build_calls)}")
+            return f"重建 COS 提示词 {len(build_calls)} 【cos:{look_id}】 【cam:first】"
+
+        batch_plugin._build_selfie_prompt_and_refs_for_event = fake_build_prompt
+        batch_plugin._run_image_generation = fake_generate
+        batch_plugin._run_counted_generation_shots = fake_counted
+        batch_plugin._build_cos_look_action = fake_build_cos_action
+
+        special_action = (
+            "【特殊 COS / 固定成片模式】【他拍 / 看看COS模式】测试固定提示词"
+            "【cos:special_fixed_test】【cos_mode:special】【cam:third】"
+        )
+        asyncio.run(
+            batch_plugin._run_selfie_batches_unlocked(
+                "test-random-special-cos-batch",
+                object(),
+                special_action,
+                [],
+                "command-look-cos",
+                3,
+                "9:16",
+                "1K",
+                "生成失败",
+            )
+        )
+
+        random_actions = rebuilt_actions[:3]
+        random_calls = build_calls[:3]
+        self.assertEqual([call.get("force_id") for call in random_calls], ["", "", ""])
+        self.assertEqual(
+            [re.search(r"【cos:([a-z0-9_]+)】", action).group(1) for action in random_actions],
+            ["random_look_1", "random_look_2", "random_look_3"],
+        )
+
+        explicit_start = len(rebuilt_actions)
+        explicit_action = special_action + " 用户补充要求优先：保持服饰"
+        asyncio.run(
+            batch_plugin._run_selfie_batches_unlocked(
+                "test-explicit-special-cos-lock",
+                object(),
+                explicit_action,
+                [],
+                "command-look-cos",
+                2,
+                "9:16",
+                "1K",
+                "生成失败",
+            )
+        )
+
+        explicit_calls = build_calls[3:]
+        self.assertEqual(
+            [call.get("force_id") for call in explicit_calls],
+            ["special_fixed_test", "special_fixed_test"],
+        )
+        self.assertEqual(
+            [
+                re.search(r"【cos:([a-z0-9_]+)】", action).group(1)
+                for action in rebuilt_actions[explicit_start:]
+            ],
+            ["special_fixed_test", "special_fixed_test"],
+        )
 
     def test_selfie_command_never_rebuilds_from_cos_pool(self) -> None:
         """COS catalog matching is reserved for the explicit COS command."""
