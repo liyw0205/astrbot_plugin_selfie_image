@@ -298,6 +298,27 @@ def test_leg_focus_borrows_scene_but_keeps_compatible_pose_and_outfit() -> None:
     assert "白色不透连裤袜" in indoor
 
 
+def test_full_outfit_leg_focus_does_not_keep_lower_body_only_rule(tmp_path) -> None:
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+    action = build_leg_focus_action(
+        force_pose="sofa_front_crop",
+        force_camera="selfie",
+        force_framing="full_outfit",
+        force_legwear="赤足",
+    )
+    assert "【frame:full_outfit】" in action
+    assert "头部和面部自然入镜" in action
+    assert "本次默认只拍下半身" not in action
+
+    prompt = PersonaManager(tmp_path).build_selfie_prompt(
+        action, "小助", "温柔", True, 0, has_external_reference=False
+    )
+    assert "头部、上衣、下装和足部都完整入镜" in prompt
+    assert "严格从胸下或腰线开始" not in prompt
+    assert "本次默认只拍下半身" not in prompt
+
+
 def test_reference_driven_leg_focus_does_not_inject_daily_scene(tmp_path) -> None:
     from astrbot_plugin_selfie_image.features.persona import PersonaManager, local_date_key
 
@@ -317,4 +338,97 @@ def test_reference_driven_leg_focus_does_not_inject_daily_scene(tmp_path) -> Non
         action, "小助", "温柔", True, 0, has_external_reference=True
     )
     assert "当前日程场景" not in prompt
+    assert "当前时间段" not in prompt
     assert "日程穿搭" not in prompt
+
+
+def test_unreferenced_leg_focus_uses_daily_context_without_changing_locked_outfit(tmp_path) -> None:
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager, local_date_key
+    from astrbot_plugin_selfie_image.features.daily_schedule import DailySchedule, ScheduleEvent
+    from astrbot_plugin_selfie_image.prompts.prompt_templates import append_daily_context_to_english_prompt
+
+    manager = PersonaManager(tmp_path)
+    today = local_date_key()
+    manager.data["daily_selfie_profile"] = {
+        "date": today,
+        "outfit": "日程穿搭不得覆盖白丝锁定",
+        "outfit_by_period": {"morning": "日程穿搭不得覆盖白丝锁定"},
+        "status": "晨间状态",
+        "status_by_period": {"morning": "晨间状态"},
+        "scene_by_period": {"morning": "咖啡馆窗边"},
+        "action_by_period": {"morning": "日程动作不得照搬"},
+        "schedule_by_period": {
+            "morning": {
+                "start": "08:00",
+                "end": "10:00",
+                "title": "窗边早午餐",
+                "status": "晨间状态",
+                "scene": "咖啡馆窗边",
+                "action": "日程动作不得照搬",
+                "outfit_ref": "main",
+                "outfit_change": "日程穿搭变化不得照搬",
+            }
+        },
+        "day_theme": "轻松城市漫游",
+        "occasion": "初夏微风",
+        "mood": "放松愉快",
+        "source": "fallback",
+        "llm_attempted": False,
+    }
+    manager.daily_schedule_store.set_current(
+        DailySchedule(
+            date=today,
+            route_id="test-route",
+            theme="轻松城市漫游",
+            mood="放松愉快",
+            seed="test",
+            occasion="初夏微风",
+            events=[
+                ScheduleEvent(
+                    id="brunch",
+                    start="08:00",
+                    end="10:00",
+                    title="窗边早午餐",
+                    status="晨间状态",
+                    scene="咖啡馆窗边",
+                    action="日程动作不得照搬",
+                    outfit_ref="main",
+                    outfit_change="日程穿搭变化不得照搬",
+                )
+            ],
+            outfits={"main": "日程穿搭不得覆盖白丝锁定"},
+        ),
+        remember_previous=False,
+    )
+    action = build_leg_focus_action(
+        "看看腿 白丝", force_pose="sofa_front_crop", preferred_scene="咖啡馆窗边"
+    )
+    with patch("astrbot_plugin_selfie_image.features.persona.current_period", return_value="morning"):
+        prompt = manager.build_selfie_prompt(
+            action, "小助", "温柔", True, 0, has_external_reference=False
+        )
+
+    assert "当前时间段：早晨" in prompt
+    assert "今日日程基调：轻松城市漫游" in prompt
+    assert "当前日程事件：08:00-10:00 窗边早午餐" in prompt
+    assert "当前日程场景：咖啡馆窗边" in prompt
+    assert "当前状态：晨间状态" in prompt
+    assert "今日时令 / 节日氛围：初夏微风" in prompt
+    assert "当前心情：放松愉快" in prompt
+    assert "日程动作不得照搬" not in prompt
+    assert "日程穿搭变化不得照搬" not in prompt
+    assert "日程穿搭不得覆盖白丝锁定" not in prompt
+    assert "腿部日程约束：" in prompt
+    assert "形象参考图一作为主角身份锚点" in prompt
+    assert "姿势池·" in action and "【pose:sofa_front_crop】" in action
+    assert "【wear:white】" in action
+
+    from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
+
+    assert "形象参考图用于保持身份" in build_selfie_builtin_prompt(
+        action, has_reference_image=True
+    )
+    english = append_daily_context_to_english_prompt("Locked leg outfit prompt", prompt)
+    assert "Current schedule scene: 咖啡馆窗边" in english
+    assert "Today's seasonal or holiday atmosphere: 初夏微风" in english
+    assert "must not override the locked pose, camera, framing, or complete lower outfit" in english

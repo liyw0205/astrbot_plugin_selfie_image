@@ -2180,6 +2180,12 @@ def test_leg_focus_explicit_scene_filters_pose_pool():
     assert bedroom_ids <= {
         "sofa_front_crop", "sofa_cross_crop", "sofa_occlusion_crop",
         "seat_knees_cross_crop",
+        "knees_forward_sit_crop", "one_knee_bent_sit_crop",
+        "side_folded_sit_crop", "reclined_bent_knees_crop",
+        "one_leg_extended_sit_crop", "heels_folded_sit_crop",
+        "edge_dangle_sit_crop", "crossed_ankles_sit_crop",
+        "crossed_knee_sit_crop", "over_leg_sit_crop",
+        "supported_legs_forward_crop", "relaxed_knees_apart_sit_crop",
     }
     assert not rooftop_ids & {"sofa_front_crop", "sofa_cross_crop", "sofa_occlusion_crop", "stool_edge_crop"}
 

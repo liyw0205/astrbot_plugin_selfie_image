@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from ..cos.leg_focus import (
     ensure_leg_focus_action,
     get_leg_focus_outfit,
+    has_leg_face_context,
     has_leg_focus_contract,
     is_leg_calf_crop_action,
 )
@@ -167,12 +168,20 @@ def append_daily_context_to_english_prompt(english_prompt: str, source_prompt: s
         "当前心情": "Current mood",
         "今日日程基调": "Today's schedule theme",
         "当前日程事件": "Current schedule event",
+        "当前日程场景": "Current schedule scene",
+        "今日时令 / 节日氛围": "Today's seasonal or holiday atmosphere",
     }
     lines = []
     for source_label, english_label in labels.items():
         match = re.search(rf"^{re.escape(source_label)}：(.+)$", str(source_prompt or ""), re.M)
         if match:
             lines.append(f"{english_label}: {match.group(1).strip()}")
+    if re.search(r"^腿部日程约束：", str(source_prompt or ""), re.M):
+        lines.append(
+            "For leg-focused images, daily context is only a time, scene, and atmosphere reference. "
+            "It must not override the locked pose, camera, framing, or complete lower outfit, "
+            "and must not copy the schedule's original action or outfit change."
+        )
     if not lines:
         return str(english_prompt or "").strip()
     return _join(english_prompt, "Daily context (follow unless the user explicitly overrides it):", *lines)
@@ -184,7 +193,7 @@ def extract_user_prompt(action: str) -> str:
     match = re.search(r"(?:用户补充要求优先|用户补充要求|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
     if match:
         value = match.group(1)
-        value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
+        value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|legs_face|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
         return re.sub(r"\s+", " ", value).strip(" 。")
     if any(marker in text for marker in ("【自拍 / 看看模式】", "【他拍 / 看看你模式】", "【自拍 / 看看COS模式】", "【他拍 / 看看COS模式】", "【第一视角 / 看看COS模式】", "【合影 / 合照模式】", "看看腿。", "【legs:outfit】", "成年人物日常下半身穿搭展示", "【唯一姿势·不可混用】")):
         return ""
@@ -239,6 +248,7 @@ def build_selfie_builtin_prompt(
     )
     is_group = (not is_cos) and ("合影" in str(action) or "合照" in str(action) or "同框" in str(action))
     feet_cropped = is_legs and is_leg_calf_crop_action(str(action))
+    leg_face_context = is_legs and feet_cropped and has_leg_face_context(str(action))
     if language == "en":
         style = {
             "real": "realistic photographic",
@@ -292,7 +302,7 @@ def build_selfie_builtin_prompt(
                     else "Use reference image 1 as the primary identity and visual-medium anchor; extra references must not replace or override the primary subject's visual medium."
                 )
                 if not is_legs or not feet_cropped
-                else "Use reference image 1 for identity and natural proportions; follow the selected outfit and waist-to-shoes framing."
+                else "Use reference image 1 for identity and natural proportions; follow the selected outfit and lower-body framing."
             )
             if viewpoint_change and not is_legs:
                 lines.append(
@@ -308,7 +318,7 @@ def build_selfie_builtin_prompt(
         if is_legs:
             camera_match = re.search(r"【cam:(selfie|first|third)】", str(action))
             camera_kind = str(camera_match.group(1) if camera_match else "selfie")
-            wear_match = re.search(r"【wear:(daily|custom|white|black|bare|pantyhose)】", str(action))
+            wear_match = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", str(action))
             selected = str(wear_match.group(1) if wear_match else "daily")
             selected_text = {
                 "daily": "full-length everyday trousers and coordinated shoes",
@@ -316,48 +326,65 @@ def build_selfie_builtin_prompt(
                 "white": "opaque white full-length tights",
                 "black": "opaque black full-length tights",
                 "bare": "opaque skin-tone full-length legwear",
+                "barefoot": "naturally bare feet, with no hosiery or shoes",
                 "pantyhose": "opaque white full-length tights",
             }[selected]
+            foot_target = "feet" if selected == "barefoot" else "shoes"
+            lower_outfit_display = "the lower outfit and naturally bare feet" if selected == "barefoot" else "the lower outfit, hosiery, and shoes"
             legwear_line = (
                 f"Use the selected complete lower outfit: {selected_text}. Follow it consistently."
             )
             outfit_match = re.search(r"【outfit:([a-z_]+)】", str(action))
             outfit = get_leg_focus_outfit(outfit_match.group(1) if outfit_match else "")
             if outfit:
+                footwear_rule = (
+                    " Do not add hosiery or shoes."
+                    if selected == "barefoot"
+                    else " Do not replace the selected bottoms or shoes."
+                )
                 outfit_line = (
                     "Use the code-locked complete outfit exactly: "
-                    f"{outfit.get('prompt_en', '')}. Do not replace the selected bottoms or shoes."
+                    f"{outfit.get('prompt_en', '')}.{footwear_rule}"
                 )
             else:
                 outfit_line = "Follow any explicitly specified clothing and shoes exactly."
             lines.append(
-                "First-person natural outfit framing from waist to shoes; clearly show the skirt, hosiery, and shoes."
+                f"First-person natural outfit framing from waist to {foot_target}; keep the head and face out of frame."
+                if feet_cropped and camera_kind == "selfie" and not leg_face_context
+                else f"First-person natural outfit framing from waist to {foot_target}; the head may enter the upper edge only when paired with the selected facial expression and leg-related gesture."
                 if feet_cropped and camera_kind == "selfie"
-                else "Full-length mirror selfie framing: show the subject from head to shoes; hold the phone naturally without hiding the outfit."
+                else f"Full-length mirror selfie framing: show the subject from head to {foot_target}; hold the phone naturally without hiding the outfit."
                 if camera_kind == "selfie"
-                else "Third-person legwear outfit photo from waist to shoes; keep the photographer outside the frame and retain a little environment."
+                else f"Third-person legwear outfit photo from waist to {foot_target}; keep the head, face, and shoulders out of frame."
+                if feet_cropped and not leg_face_context
+                else f"Third-person legwear outfit photo from waist to {foot_target}; the head may enter the upper edge only with a coordinated expression and gesture, while the photographer stays outside the frame."
                 if feet_cropped
-                else "Third-person full-length everyday photograph: keep the photographer outside the frame and show the subject from head to shoes."
+                else f"Third-person full-length everyday photograph: keep the photographer outside the frame and show the subject from head to {foot_target}."
             )
             if feet_cropped:
                 lines.extend([
                     (
-                        "Vertical anime outfit illustration: use a natural waist-to-shoes outfit composition for one adult subject."
+                        f"Vertical anime legwear illustration: use a clean lower-body composition from waist to {foot_target}; keep the head and face out of frame unless the action explicitly enables coordinated face context."
                         if effective_appearance_type == "anime"
-                        else "Casual vertical outfit photograph: use a natural waist-to-shoes composition for one adult subject."
+                        else f"Casual vertical legwear photograph: use a clean lower-body composition from waist to {foot_target}; keep the head and face out of frame unless the action explicitly enables coordinated face context."
                     ),
+                    "When face context is enabled, keep the expression, gaze, upper-body gesture, and leg pose in one coherent action; do not add a detached portrait above the legs."
+                    if leg_face_context
+                    else "Do not add a face through a mirror, reflection, phone screen, or picture-in-picture.",
                     legwear_line,
                     outfit_line,
-                    "Keep visible anatomy natural and continuous; show the hosiery and shoes clearly without furniture blocking them.",
-                    "Show the lower outfit, hosiery, and shoes clearly at a normal eye-level perspective; keep proportions natural.",
+                    "Keep visible anatomy natural and continuous; show bare feet clearly without furniture blocking them."
+                    if selected == "barefoot"
+                    else "Keep visible anatomy natural and continuous; show the hosiery and shoes clearly without furniture blocking them.",
+                    f"Show {lower_outfit_display} clearly at a normal eye-level perspective; keep proportions natural.",
                     "Match the lighting to the requested scene; otherwise use soft available light, natural exposure, realistic fabric, and an unretouched everyday smartphone feel. Avoid studio polish, plastic skin, or 3D-rendered surfaces.",
                 ])
             else:
                 lines.extend([
-                    "Single adult subject only: show the complete outfit from head to shoes at a natural camera distance.",
+                    f"Single adult subject only: show the complete outfit from head to {foot_target} at a natural camera distance.",
                     legwear_line,
                     outfit_line,
-                    "Keep the head, upper clothing, lower clothing, and shoes inside the frame; use natural proportions and a relaxed pose.",
+                    f"Keep the head, upper clothing, lower clothing, and {foot_target} inside the frame; use natural proportions and a relaxed pose.",
                     "Use ordinary camera perspective, scene-appropriate ambient light, realistic fabric texture, and an unretouched everyday feel; avoid studio polish, plastic skin, or 3D-rendered surfaces.",
                 ])
         elif is_group:
@@ -384,11 +411,11 @@ def build_selfie_builtin_prompt(
                 "seat_knees_cross_crop": "Stand naturally with feet about shoulder-width apart and arms relaxed.",
                 "floor_topdown_cross_crop": "Follow the explicitly requested overhead angle with a stable seated pose.",
                 "first_person_topdown_legs_crop": "Use the explicitly requested first-person downward view with both legs naturally aligned.",
-                "staggered_stair_step_crop": "Stand on broad steps with one foot on a lower step and the other on the upper step; keep a stable balance and eye-level waist-to-shoes framing.",
-                "cross_step_snapshot_crop": "Capture a light walking step with the front foot crossing naturally ahead of the weight-bearing leg; keep ankles aligned and the waist-to-shoes view sharp.",
-                "turn_and_settle_crop": "Show a gentle half-turn ending in a stable stance, with one foot lightly touching down and the other bearing weight; keep the waist-to-shoes view natural.",
-                "bench_side_sit_crop": "Sit at one end of a bench in a relaxed side-facing pose, with one heel grounded and the other leg comfortably bent; keep hosiery and shoes unobstructed.",
-                "toe_touch_step_crop": "Stand beside a broad low step with one foot grounded and the other toe lightly touching the first step; keep a stable eye-level waist-to-shoes view.",
+                "staggered_stair_step_crop": "Stand on broad steps with one foot on a lower step and the other on the upper step; keep a stable balance and eye-level lower-body framing.",
+                "cross_step_snapshot_crop": "Capture a light walking step with the front foot crossing naturally ahead of the weight-bearing leg; keep ankles aligned and the lower-body view sharp.",
+                "turn_and_settle_crop": "Show a gentle half-turn ending in a stable stance, with one foot lightly touching down and the other bearing weight; keep the lower-body framing natural.",
+                "bench_side_sit_crop": "Sit at one end of a bench in a relaxed side-facing pose, with one heel grounded and the other leg comfortably bent; keep the lower outfit and feet unobstructed.",
+                "toe_touch_step_crop": "Stand beside a broad low step with one foot grounded and the other toe lightly touching the first step; keep a stable eye-level lower-body view.",
                 "back_staggered_step_crop": "Show the subject from behind with feet in a comfortable staggered stance; keep shoulders, hips, and head facing away without looking back.",
                 "sit": "Sit naturally on a chair or sofa with both feet grounded.",
                 "sit_crop": "Sit naturally on a chair or sofa with both feet grounded.",
@@ -425,19 +452,28 @@ def build_selfie_builtin_prompt(
     user = translated_user or extract_user_prompt(action)
     camera_match = re.search(r"【cam:(selfie|third)】", str(action))
     camera_kind = str(camera_match.group(1) if camera_match else "selfie")
+    wear_match = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", str(action))
+    selected_wear = str(wear_match.group(1) if wear_match else "daily")
+    foot_target_zh = "足部" if selected_wear == "barefoot" else "鞋履"
+    lower_outfit_display_zh = "下装和赤足双脚" if selected_wear == "barefoot" else "下装、袜装与鞋履"
+    foot_visibility_zh = "双脚自然赤足并清晰可见" if selected_wear == "barefoot" else "日常袜装与鞋履清楚可见"
     camera_line_zh = (
-        "第一人称自然视角服装照：腰线至鞋履入镜，清楚呈现下装、袜装与鞋履。"
+        f"第一人称腿部展示构图：腰线至{foot_target_zh}入镜，头部和脸部默认不入镜。"
         if feet_cropped and camera_kind == "selfie"
-        else "全身镜前自拍：人物从头部到鞋履完整入镜，手机自然持握且不遮挡主要穿搭。"
+        else f"全身镜前自拍：人物从头部到{foot_target_zh}完整入镜，手机自然持握且不遮挡主要穿搭。"
         if camera_kind == "selfie"
-        else "第三人称腿部穿搭照片：摄影者完全在画面外，平视拍摄腰线至鞋履，保留少量环境。"
+        else f"第三人称腿部穿搭照片：摄影者完全在画面外，平视拍摄腰线至{foot_target_zh}，头部和脸部默认不入镜。"
         if feet_cropped
-        else "第三人称全身日常照片：拍摄者完全在画面外，人物从头部到鞋履完整入镜。"
+        else f"第三人称全身日常照片：拍摄者完全在画面外，人物从头部到{foot_target_zh}完整入镜。"
     )
     if is_legs and feet_cropped:
-        legs_line = camera_line_zh + "成年人物腿部穿搭展示：腰线至鞋履自然入镜，日常袜装与鞋履清楚可见，保持服装完整、比例自然。"
+        legs_line = camera_line_zh + (
+            "若头部进入画面，必须同时有与腿部姿势配套的视线、表情和上肢动作；不要把脸单独悬在腿部构图上。"
+            if leg_face_context
+            else "画面上缘从胸下或腰线开始，不出现头部、脸部和肩膀，也不通过镜面或倒影补出脸。"
+        ) + f"成年人物腿部穿搭展示：腰线至{foot_target_zh}自然入镜，{foot_visibility_zh}，保持服装完整、比例自然。"
     elif is_legs:
-        legs_line = camera_line_zh + "成年人物全身穿搭照片，头部、上衣、下装与鞋履完整入镜，以正常拍摄距离自然呈现整体穿搭。"
+        legs_line = camera_line_zh + f"成年人物全身穿搭照片，头部、上衣、下装与{foot_target_zh}完整入镜，以正常拍摄距离自然呈现整体穿搭。"
     else:
         legs_line = ""
     if is_legs:
@@ -469,29 +505,35 @@ def build_selfie_builtin_prompt(
         )
     )
     leg_crop_line = (
-        "以腰线至鞋履的自然构图展示下装、袜装和鞋履，肢体比例自然连续，避免家具遮挡袜装或鞋履。"
+        f"以腰线至{foot_target_zh}的自然构图展示{lower_outfit_display_zh}，肢体比例自然连续，避免家具遮挡足部。"
         if is_legs and feet_cropped
         else ""
     )
     outfit_match = re.search(r"【outfit:([a-z_]+)】", str(action))
     outfit = get_leg_focus_outfit(outfit_match.group(1) if outfit_match else "")
-    leg_outfit_line = (
-        f"代码已锁定下装服饰组合：{outfit.get('bottoms') or outfit.get('skirt', '')}、{outfit.get('shoes', '')}。"
-        if outfit
-        else "裙装或鞋履按用户明确指定内容执行。"
-        if is_legs and outfit_match
-        else ""
-    )
+    if outfit:
+        outfit_parts = [str(outfit.get("bottoms") or outfit.get("skirt") or "").strip()]
+        if outfit.get("shoes"):
+            outfit_parts.append(str(outfit["shoes"]).strip())
+        leg_outfit_line = f"代码已锁定下装服饰组合：{'、'.join(part for part in outfit_parts if part)}。"
+        if selected_wear == "barefoot":
+            leg_outfit_line += "双脚保持自然赤足，不添加袜子或鞋履。"
+    else:
+        leg_outfit_line = (
+            "裙装或鞋履按用户明确指定内容执行。"
+            if is_legs and outfit_match
+            else ""
+        )
     if is_legs and effective_appearance_type == "anime":
         photo_style_line = (
             "动漫插画质感：保持统一的柔光京阿尼风格；"
-            + ("以自然腰线至鞋履构图清楚呈现袜装穿搭，" if feet_cropped else "以自然全身构图清楚呈现整体服装，")
+            + (f"以自然腰线至{foot_target_zh}构图清楚呈现{lower_outfit_display_zh}，" if feet_cropped else "以自然全身构图清楚呈现整体服装，")
             + "光线服从用户指定场景，未指定时使用柔和自然光或环境光。"
         )
     elif is_legs and effective_appearance_type == "real":
         photo_style_line = (
             "真人摄影质感：像普通相机拍摄的竖屏"
-            + ("腰线至鞋履的日常穿搭照片；" if feet_cropped else "全身日常照片；")
+            + (f"腰线至{foot_target_zh}的日常穿搭照片；" if feet_cropped else "全身日常照片；")
             + "光线服从用户指定场景，未指定时使用柔和自然光或环境光，"
             "保留真实布料厚度、细小褶皱和自然曝光变化；避免棚拍精修、塑料材质、插画感、3D渲染感和过度虚化。"
         )
@@ -515,7 +557,11 @@ def build_selfie_builtin_prompt(
         (
             "参考图用于保持主角身份和自然体态；额外参考图仅提供用户指定的服装、姿势、构图、光线或场景。"
             if is_legs and not feet_cropped
-            else "参考图只用于自然体态和构图，按当前选定的腰线至鞋履构图呈现袜装穿搭。"
+            else (
+                f"主角形象参考图用于保持身份与自然体态，按当前选定的腰线至{foot_target_zh}构图呈现"
+                + ("下装和自然赤足双脚，不添加袜子或鞋履；" if selected_wear == "barefoot" else "袜装穿搭；")
+                + "默认不露头，除非动作合同明确允许配套露脸。"
+            )
             if is_legs
             else "参考图一只锁定主角身份和身体比例；额外参考图只用于用户指定的服装、姿势、构图、光线或场景。"
             if is_cos

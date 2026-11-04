@@ -144,11 +144,130 @@ LEGFOCUS_POSE_POOL: List[Dict[str, str]] = [
             "摄影机从人物后方平视拍摄腰线至鞋履，清楚呈现服装后侧、袜装和鞋履，比例自然。"
         ),
     },
+    {
+        "id": "knees_forward_sit_crop",
+        "title": "并膝前伸坐姿",
+        "prompt": (
+            "人物坐在稳固座椅上，双膝自然并拢，双腿向前舒展，脚踝放松；"
+            "背部挺直但不僵硬，双手自然扶在座面两侧。"
+            "从斜前方平视拍摄，完整呈现下装和双脚，比例自然。"
+        ),
+    },
+    {
+        "id": "one_knee_bent_sit_crop",
+        "title": "单膝弯曲坐姿",
+        "prompt": (
+            "人物坐在稳固座椅上，一侧膝盖自然弯曲并由座面支撑，另一条小腿向前放松伸展；"
+            "双手轻扶座面保持平衡，姿势舒展而稳定。"
+            "从斜前方平视拍摄，下装和双脚完整自然入镜。"
+        ),
+    },
+    {
+        "id": "side_folded_sit_crop",
+        "title": "侧向收腿坐姿",
+        "prompt": (
+            "人物在稳固座椅上自然侧坐，双膝弯曲并收向身体一侧，脚踝轻松并列；"
+            "上身保持端正，双手自然支撑在座面。"
+            "从斜前方平视拍摄，清楚呈现下装轮廓和双脚。"
+        ),
+    },
+    {
+        "id": "reclined_bent_knees_crop",
+        "title": "靠坐屈膝",
+        "prompt": (
+            "人物在有靠背的稳固座椅上轻松后靠，双膝自然弯曲，双脚平稳放在地面；"
+            "肩背由靠背支撑，手臂放松，不做夸张后仰。"
+            "从正前方平视拍摄，座椅支撑关系清楚，下装和双脚完整入镜。"
+        ),
+    },
+    {
+        "id": "one_leg_extended_sit_crop",
+        "title": "单腿伸展坐姿",
+        "prompt": (
+            "人物坐在稳固座椅边缘，一侧膝盖自然弯曲、脚掌平稳落地，另一条腿向前舒适伸展；"
+            "双手轻扶座面，身体重心稳定。"
+            "从斜前方平视拍摄，伸展腿不抬高，完整呈现下装和双脚。"
+        ),
+    },
+    {
+        "id": "heels_folded_sit_crop",
+        "title": "脚背后收跪坐",
+        "prompt": (
+            "人物在柔软且平整的坐垫上自然跪坐，双膝并拢，双脚向身后舒适收拢；"
+            "上身直立，双手轻放在大腿上，姿态稳定，不压迫关节。"
+            "从斜前方平视拍摄，服装完整得体，腿部和足部自然入镜。"
+        ),
+    },
+    {
+        "id": "edge_dangle_sit_crop",
+        "title": "座沿垂腿",
+        "prompt": (
+            "人物坐在稳固长凳或座椅前沿，双腿自然并行下垂，脚尖轻触地面或自然悬在座沿下方；"
+            "背部放松，双手轻扶座面两侧。"
+            "从正前方平视拍摄，座沿与腿部关系清楚，双脚不被遮挡。"
+        ),
+    },
+    {
+        "id": "crossed_ankles_sit_crop",
+        "title": "脚踝交叠坐姿",
+        "prompt": (
+            "人物坐在稳固座椅上，双膝并行向前，脚踝轻轻交叠，膝盖和脚尖方向自然；"
+            "上身端正放松，双手轻放膝上。"
+            "从斜前方平视拍摄，完整呈现下装、腿部和双脚，不使用夸张透视。"
+        ),
+    },
+    {
+        "id": "crossed_knee_sit_crop",
+        "title": "膝部交叉坐姿",
+        "prompt": (
+            "人物坐在稳固椅子上，一侧膝盖自然搭过另一侧膝盖，双腿保持放松并由座椅稳定支撑；"
+            "上身舒展，双手自然放在身侧或膝上。"
+            "从斜前方平视拍摄，裙摆覆盖得体，下装和双脚完整自然入镜。"
+        ),
+    },
+    {
+        "id": "over_leg_sit_crop",
+        "title": "交叠翘腿坐姿",
+        "prompt": (
+            "人物在有靠背的稳固座椅上自然坐好，一条腿轻松交叠在另一条腿上方，踝部放松；"
+            "背部由靠背支撑，手臂自然下垂或轻扶座面，姿态端庄稳定。"
+            "从斜前方平视拍摄，服装覆盖完整，双脚均清晰入镜。"
+        ),
+    },
+    {
+        "id": "supported_legs_forward_crop",
+        "title": "后撑腿前伸坐姿",
+        "prompt": (
+            "人物坐在平整地面或低矮坐垫上，双手置于身体两侧支撑上身，双腿自然向前伸展并微微分开；"
+            "肩背放松，手臂承重自然，姿势稳定不过度后仰。"
+            "从斜前方平视拍摄，完整呈现下装和双脚，保持自然比例。"
+        ),
+    },
+    {
+        "id": "relaxed_knees_apart_sit_crop",
+        "title": "自然分膝坐姿",
+        "prompt": (
+            "人物坐在稳固座椅上，双膝保持舒适的小幅间距，双脚平稳落地；"
+            "裙摆自然垂落并完整覆盖，上身端正放松，双手自然放在膝上。"
+            "从正前方平视拍摄，画面呈现普通日常穿搭，不刻意强调身体局部。"
+        ),
+    },
 ]
 
 _LEGFOCUS_POSE_IDS = frozenset(str(item["id"]) for item in LEGFOCUS_POSE_POOL)
 LEGFOCUS_EXPLICIT_ONLY_POSE_IDS = frozenset(
     {"floor_topdown_cross_crop", "first_person_topdown_legs_crop"}
+)
+LEGFOCUS_SEATED_POSE_IDS = frozenset(
+    {
+        "sofa_front_crop", "chair_side_crop", "sofa_cross_crop", "sofa_occlusion_crop",
+        "stool_edge_crop", "seat_knees_cross_crop", "floor_topdown_cross_crop",
+        "bench_side_sit_crop", "knees_forward_sit_crop", "one_knee_bent_sit_crop",
+        "side_folded_sit_crop", "reclined_bent_knees_crop", "one_leg_extended_sit_crop",
+        "heels_folded_sit_crop", "edge_dangle_sit_crop", "crossed_ankles_sit_crop",
+        "crossed_knee_sit_crop", "over_leg_sit_crop", "supported_legs_forward_crop",
+        "relaxed_knees_apart_sit_crop",
+    }
 )
 
 LEGFOCUS_SCENE_TERMS = (
@@ -279,27 +398,47 @@ LEGFOCUS_OUTFIT_POOL: List[Dict[str, str]] = [
         "shoes": "深棕色平底鞋",
         "prompt_en": "soft light-gray full-length wide-leg trousers and dark-brown flats",
     },
+    {
+        "id": "barefoot_blue_pleated",
+        "legwear": "赤足",
+        "bottoms": "浅蓝色及膝格纹百褶裙",
+        "skirt": "浅蓝色及膝格纹百褶裙",
+        "shoes": "",
+        "prompt_en": "a light-blue knee-length plaid pleated skirt and naturally bare feet, with no hosiery or shoes",
+    },
+    {
+        "id": "barefoot_gray_pleated",
+        "legwear": "赤足",
+        "bottoms": "灰色及膝百褶裙",
+        "skirt": "灰色及膝百褶裙",
+        "shoes": "",
+        "prompt_en": "a gray knee-length pleated skirt and naturally bare feet, with no hosiery or shoes",
+    },
+    {
+        "id": "barefoot_denim_skirt",
+        "legwear": "赤足",
+        "bottoms": "深蓝色及膝牛仔A字裙",
+        "skirt": "深蓝色及膝牛仔A字裙",
+        "shoes": "",
+        "prompt_en": "a dark-blue knee-length denim A-line skirt and naturally bare feet, with no hosiery or shoes",
+    },
+    {
+        "id": "barefoot_knit_skirt",
+        "legwear": "赤足",
+        "bottoms": "燕麦色中长针织半身裙",
+        "skirt": "燕麦色中长针织半身裙",
+        "shoes": "",
+        "prompt_en": "an oatmeal midi knit skirt and naturally bare feet, with no hosiery or shoes",
+    },
 ]
 _LEGFOCUS_OUTFIT_BY_ID = {str(item["id"]): item for item in LEGFOCUS_OUTFIT_POOL}
 
 
 LEGWEAR_BY_POSE = {
-    "sofa_front_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "chair_side_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "sofa_cross_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "floor_knees_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "sofa_occlusion_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "stool_edge_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "floor_side_kneel_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "seat_knees_cross_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "floor_topdown_cross_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "first_person_topdown_legs_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "staggered_stair_step_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "cross_step_snapshot_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "turn_and_settle_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "bench_side_sit_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "toe_touch_step_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
-    "back_staggered_step_crop": (("白丝", 4), ("黑丝", 4), ("光腿神器", 2)),
+    **{
+        pose_id: (("白丝", 4), ("黑丝", 4), ("光腿神器", 2), ("赤足", 2))
+        for pose_id in _LEGFOCUS_POSE_IDS
+    },
     # Keep old keys readable for persisted actions and third-party callers.
     "sit": (("光腿神器", 4), ("白丝", 3), ("黑丝", 3), ("连裤袜", 2)),
     "sit_crop": (("光腿神器", 2), ("白丝", 5), ("黑丝", 5), ("连裤袜", 2)),
@@ -345,6 +484,18 @@ LEGFOCUS_CAMERA_WEIGHTS = {
     "bench_side_sit_crop": (("third", 1),),
     "toe_touch_step_crop": (("third", 1),),
     "back_staggered_step_crop": (("third", 1),),
+    "knees_forward_sit_crop": (("third", 1),),
+    "one_knee_bent_sit_crop": (("third", 1),),
+    "side_folded_sit_crop": (("third", 1),),
+    "reclined_bent_knees_crop": (("third", 1),),
+    "one_leg_extended_sit_crop": (("third", 1),),
+    "heels_folded_sit_crop": (("third", 1),),
+    "edge_dangle_sit_crop": (("third", 1),),
+    "crossed_ankles_sit_crop": (("third", 1),),
+    "crossed_knee_sit_crop": (("third", 1),),
+    "over_leg_sit_crop": (("third", 1),),
+    "supported_legs_forward_crop": (("third", 1),),
+    "relaxed_knees_apart_sit_crop": (("third", 1),),
     # Compatibility weights for actions generated before the pool migration.
     "sit": (("selfie", 3), ("third", 2)),
     "sit_crop": (("selfie", 4), ("third", 1)),
@@ -371,6 +522,7 @@ LEGWEAR_PROMPTS = {
     "白丝": "本次腿部穿搭：白色不透连裤袜，腰部至脚踝连续覆盖，作为得体日常穿搭的一部分。",
     "黑丝": "本次腿部穿搭：黑色不透连裤袜，腰部至脚踝连续覆盖，作为得体日常穿搭的一部分。",
     "连裤袜": "本次腿部穿搭：白色不透连裤袜，腰部至脚踝连续覆盖，作为得体日常穿搭的一部分。",
+    "赤足": "本次足部搭配：双脚自然赤足，不穿袜子或鞋子；保持日常、得体的完整穿搭。",
 }
 
 STOCKING_FINISH_CHOICES: List[Tuple[str, int]] = [
@@ -383,11 +535,20 @@ STOCKING_FINISH_CHOICES: List[Tuple[str, int]] = [
 ]
 
 LEGWEAR_REQUEST_PATTERN = re.compile(
-    r"(?:光腿神器|光腿|白丝|黑丝|丝袜|短袜|堆堆袜|过膝袜|长筒袜|肉色丝袜|肉丝|连裤袜|长袜)"
+    r"(?:光腿神器|光腿|白丝|黑丝|丝袜|短袜|堆堆袜|过膝袜|长筒袜|肉色丝袜|肉丝|连裤袜|长袜|赤足|裸足|光脚)"
+)
+LEGWEAR_NEGATION_PATTERN = re.compile(
+    r"(?:不穿|不要|不需要|无需|不必|不加|不搭配|不用|不带|没有|没穿)\s*(?:任何)?\s*"
+    r"(?:袜子|袜装|袜|鞋履|鞋子|鞋|靴子|靴)"
+    r"(?:\s*(?:和|与|或|、|及)\s*(?:袜子|袜装|袜|鞋履|鞋子|鞋|靴子|靴))*"
 )
 
 LEG_DETAIL_REQUEST_PATTERN = re.compile(
     r"(?:下半身特写|腿部特写|下装特写|局部特写|腰部以下|只拍腿|只拍下装|不拍上半身|上半身不入镜|不露脸|近距离拍腿)"
+)
+LEG_FACE_REQUEST_PATTERN = re.compile(
+    r"(?:露脸|露头|带脸|看脸|面部入镜|表情|看向镜头|微笑|wink|眨眼|动漫|二次元|anime)",
+    re.I,
 )
 LEG_FULL_OUTFIT_REQUEST_PATTERN = re.compile(
     r"(?:全身|从头到脚|头部到鞋履|全身入镜|全身构图|full[- ]?body)",
@@ -402,6 +563,45 @@ LEGFOCUS_RISKY_EXTRA_REPLACEMENTS = (
     ("不露脸", "服装局部取景"),
 )
 
+LEGFOCUS_FACE_ACTIONS: Dict[str, str] = {
+    "sofa_front_crop": "若头部进入画面，人物一手轻搭膝上，低眸看向自己的袜装，嘴角带轻微自然笑意。",
+    "chair_side_crop": "若头部进入画面，人物一手整理裙摆，身体与腿部保持同向，微微侧脸看向镜头，表情俏皮自然。",
+    "sofa_cross_crop": "若头部进入画面，人物一手轻托下巴，微微歪头，视线落向腿部，表情慵懒放松。",
+    "floor_knees_crop": "若头部进入画面，人物一手轻扶窗框，肩胯和头部方向一致，侧脸看向镜头并保持浅笑。",
+    "sofa_occlusion_crop": "若头部进入画面，人物一手轻按坐垫，低头看向鞋履，表情安静而有焦点。",
+    "stool_edge_crop": "若头部进入画面，人物一手轻扶凳沿，抬眼看向镜头，保持轻松自然的微笑。",
+    "floor_side_kneel_crop": "若头部进入画面，人物在行走中看向镜头，嘴角轻微上扬，手臂随步伐自然摆动。",
+    "seat_knees_cross_crop": "若头部进入画面，人物一手插入口袋或轻扶衣摆，抬眼看向镜头，表情自信但不过度摆拍。",
+    "floor_topdown_cross_crop": "若头部进入画面，人物低头看向并拢的双腿，表情安静，视线与俯拍方向一致。",
+    "first_person_topdown_legs_crop": "第一人称向下看腿时不强行露头；若画面边缘带到脸部，只保留自然低眸，不出现扭颈或夸张表情。",
+    "staggered_stair_step_crop": "若头部进入画面，人物一手轻扶现场栏杆，视线顺着台阶落向脚尖，表情专注自然。",
+    "cross_step_snapshot_crop": "若头部进入画面，人物在迈步时自然看向镜头，轻微抬眉或浅笑，肩胯方向与步伐一致。",
+    "turn_and_settle_crop": "若头部进入画面，人物完成半转后保持肩胯与头部同向，视线自然落向镜头，不回头扭颈。",
+    "bench_side_sit_crop": "若头部进入画面，人物一手轻扶长凳，低眸看向向前伸出的腿，表情柔和自然。",
+    "toe_touch_step_crop": "若头部进入画面，人物一手轻扶台阶旁的支撑物，低头看向点阶脚尖，表情专注而自然。",
+    "back_staggered_step_crop": "该姿势保持背对镜头，不露正脸；头部顺着肩胯方向，不回头、不回眸、不扭颈。",
+}
+
+
+def parse_requested_leg_face(text: str) -> bool:
+    """Whether the user allows a coordinated face-and-leg composition."""
+    raw = str(text or "")
+    if re.search(
+        r"(?:不露脸|不露头|不需要露脸|不需要露头|无需露脸|无需露头|不必露脸|不必露头|"
+        r"不要脸|不要露头|不拍脸|只拍腿|只拍下装|上半身不入镜)",
+        raw,
+    ):
+        return False
+    return bool(LEG_FACE_REQUEST_PATTERN.search(raw))
+
+
+def has_leg_face_context(text: str) -> bool:
+    """Whether a built leg action carries the optional face context contract."""
+    # Only the builder's explicit tag is authoritative.  A completed action
+    # may contain words such as "表情" in a pose description even when the
+    # user asked for a strict lower-body crop.
+    return "【legs_face:context】" in str(text or "")
+
 LEGFOCUS_OUTFIT_REQUEST_PATTERN = re.compile(
     r"(?:裙|百褶|A字|半身|裤|鞋|靴|平底|乐福|玛丽珍|帆布鞋|凉鞋)"
 )
@@ -413,6 +613,7 @@ SAFE_LEGWEAR_LABELS = {
     "白丝": "白色不透连裤袜，腰部至脚踝连续覆盖",
     "黑丝": "黑色不透连裤袜，腰部至脚踝连续覆盖",
     "连裤袜": "白色不透连裤袜，腰部至脚踝连续覆盖",
+    "赤足": "双腿不穿连裤袜，双脚自然赤足",
 }
 
 
@@ -469,6 +670,15 @@ def _leg_pose_compatible_with_camera(pose: Dict[str, str], camera: str) -> bool:
     return not re.search(r"第三人称|摄影机|摄影者", prompt)
 
 
+def _leg_pose_compatible_with_face_context(pose: Dict[str, str], include_face: bool) -> bool:
+    if not include_face:
+        return True
+    return str(pose.get("id") or "") not in {
+        "back_staggered_step_crop",
+        "first_person_topdown_legs_crop",
+    }
+
+
 def _adapt_leg_pose_prompt_for_camera(prompt: str, camera: str) -> str:
     """Remove third-person wording when a legacy pose is used for a selfie."""
     if str(camera or "").strip() != "selfie":
@@ -503,6 +713,24 @@ def _adapt_leg_pose_prompt_for_framing(prompt: str, framing: str) -> str:
     return adapted
 
 
+def _adapt_leg_pose_prompt_for_footwear(prompt: str, legwear: str) -> str:
+    if str(legwear or "").strip() != "赤足":
+        return str(prompt or "")
+    adapted = str(prompt or "")
+    for source, target in (
+        ("袜装与鞋履", "赤足双脚"),
+        ("袜装和鞋履", "赤足双脚"),
+        ("袜装", "下装"),
+        ("头部至鞋履", "头部至足部"),
+        ("头部到鞋履", "头部到足部"),
+        ("腰线至鞋履", "腰线至足部"),
+        ("从腰线到鞋履", "从腰线到足部"),
+        ("鞋履", "赤足足部"),
+    ):
+        adapted = adapted.replace(source, target)
+    return adapted
+
+
 def _leg_pose_compatible_with_scene(pose: Dict[str, str], scene: str) -> bool:
     scene_text = str(scene or "")
     if not scene_text:
@@ -510,6 +738,9 @@ def _leg_pose_compatible_with_scene(pose: Dict[str, str], scene: str) -> bool:
     pose_id = str(pose.get("id") or "")
     indoor = any(token in scene_text for token in ("室内", "卧室", "客厅", "咖啡", "书店", "劇院", "剧院", "餐廊", "厨房", "家中", "室内"))
     outdoor = any(token in scene_text for token in ("街", "海", "河岸", "码头", "天台", "公园", "户外", "露台", "步道", "庭院", "石阶", "小径"))
+    if pose_id in LEGFOCUS_SEATED_POSE_IDS and outdoor and not indoor:
+        has_seat = any(token in scene_text for token in ("长凳", "座椅", "椅子", "座位"))
+        return has_seat and pose_id in {"chair_side_crop", "bench_side_sit_crop", "edge_dangle_sit_crop"}
     if pose_id in {"sofa_front_crop", "sofa_cross_crop", "sofa_occlusion_crop"}:
         return any(token in scene_text for token in ("沙发", "床", "客厅", "休息区"))
     if pose_id == "chair_side_crop":
@@ -534,7 +765,11 @@ def _leg_pose_compatible_with_scene(pose: Dict[str, str], scene: str) -> bool:
 
 
 def pick_leg_focus_pose(
-    *, avoid_id: str = "", preferred_scene: str = "", camera_kind: str = ""
+    *,
+    avoid_id: str = "",
+    preferred_scene: str = "",
+    camera_kind: str = "",
+    include_face: bool = False,
 ) -> Dict[str, str]:
     """Pick one neutral full-length pose, avoiding explicit detail-only views."""
     pool = [
@@ -543,12 +778,14 @@ def pick_leg_focus_pose(
         and str(item.get("id") or "") != str(avoid_id or "")
         and _leg_pose_compatible_with_scene(item, preferred_scene)
         and _leg_pose_compatible_with_camera(item, camera_kind)
+        and _leg_pose_compatible_with_face_context(item, include_face)
     ]
     if not pool:
         pool = [
             item for item in LEGFOCUS_POSE_POOL
             if str(item.get("id") or "") != str(avoid_id or "")
             and _leg_pose_compatible_with_camera(item, camera_kind)
+            and _leg_pose_compatible_with_face_context(item, include_face)
         ] or list(LEGFOCUS_POSE_POOL)
     return dict(random.choice(pool))
 
@@ -575,10 +812,11 @@ def get_leg_focus_outfit(outfit_id: str) -> Dict[str, str]:
 
 def has_explicit_leg_outfit(text: str) -> bool:
     """Whether the user supplied a skirt, trouser, or shoe description."""
+    cleaned = LEGWEAR_NEGATION_PATTERN.sub(" ", str(text or ""))
     cleaned = re.sub(
         r"(?:白色|黑色|肉色)?\s*(?:不透)?(?:连裤袜|白丝|黑丝|丝袜|肉丝|光腿神器|光腿)",
         " ",
-        str(text or ""),
+        cleaned,
     )
     cleaned = re.sub(r"(?:参考图中的)?鞋袜搭配|鞋袜", " ", cleaned)
     return bool(LEGFOCUS_OUTFIT_REQUEST_PATTERN.search(cleaned))
@@ -629,7 +867,7 @@ def parse_requested_leg_pose(text: str) -> str:
 def parse_requested_legwear(text: str) -> str:
     """Honor explicit user legwear; empty means random selection by pose."""
     raw = str(text or "")
-    safe_tag = re.search(r"【wear:(daily|custom|white|black|bare|pantyhose)】", raw)
+    safe_tag = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", raw)
     if safe_tag:
         return {
             "daily": "日常裤装",
@@ -637,6 +875,7 @@ def parse_requested_legwear(text: str) -> str:
             "white": "白丝",
             "black": "黑丝",
             "bare": "光腿神器",
+            "barefoot": "赤足",
             "pantyhose": "连裤袜",
         }[safe_tag.group(1)]
     match = re.search(r"本次(?:腿部穿搭|服装搭配|下装搭配)(?:已锁定为)?[:：]\s*(日常裤装|光腿神器|白丝|黑丝|连裤袜)", raw)
@@ -653,6 +892,8 @@ def parse_requested_legwear(text: str) -> str:
         return "白丝"
     if re.search(r"黑丝", cleaned):
         return "黑丝"
+    if re.search(r"赤足|裸足|光脚", cleaned):
+        return "赤足"
     if re.search(r"光腿神器|光腿", cleaned):
         return "光腿神器"
     return ""
@@ -673,6 +914,7 @@ def build_leg_focus_action(
     explicit_scene = parse_requested_leg_scene(extra_request)
     pose_scene = explicit_scene or str(preferred_scene or "")
     schedule_scene = "" if explicit_scene else str(preferred_scene or "")
+    include_face = parse_requested_leg_face(extra_request)
     camera_kind = str(force_camera or "").strip()
     if camera_kind not in {"selfie", "third"}:
         camera_kind = parse_requested_leg_camera(extra_request)
@@ -690,11 +932,37 @@ def build_leg_focus_action(
             avoid_id=avoid_pose,
             preferred_scene=pose_scene,
             camera_kind=camera_kind,
+            include_face=include_face,
         )
         pose_tag = ""
     pose_bucket = str(pose.get("id") or "sofa_front_crop")
     if not pose_tag:
         pose_tag = pose_bucket
+    requested = str(force_legwear or "").strip()
+    if requested not in LEGWEAR_PROMPTS:
+        requested = parse_requested_legwear(extra_request)
+    explicit_outfit = has_explicit_leg_outfit(extra_request)
+    shoe_request = LEGWEAR_NEGATION_PATTERN.sub(" ", str(extra_request or ""))
+    explicit_shoes = bool(re.search(r"(?:鞋|靴|乐福|玛丽珍|帆布鞋|凉鞋)", shoe_request))
+    if requested == "赤足" and explicit_shoes:
+        requested = ""
+    if requested in LEGWEAR_PROMPTS:
+        legwear = requested
+    elif explicit_outfit:
+        legwear = "用户指定"
+    else:
+        legwear_options = LEGWEAR_BY_POSE.get(
+            pose_bucket, LEGWEAR_BY_POSE["sit_crop"]
+        )
+        legwear = random.choices(
+            [name for name, _ in legwear_options],
+            weights=[weight for _, weight in legwear_options],
+            k=1,
+        )[0]
+    outfit = {} if explicit_outfit else pick_leg_focus_outfit(legwear=legwear)
+    foot_target = "足部" if legwear == "赤足" else "鞋履"
+    lower_outfit_display = "下装和赤足双脚" if legwear == "赤足" else "下装、袜装与鞋履"
+    foot_visibility = "双脚自然赤足并清晰可见" if legwear == "赤足" else "袜装与鞋履清晰可见"
     pose_prompt = str(pose.get("prompt") or "").strip()
     camera_bag = [
         kind
@@ -719,48 +987,50 @@ def build_leg_focus_action(
         )
     pose_prompt = _adapt_leg_pose_prompt_for_camera(pose_prompt, camera_kind)
     pose_prompt = _adapt_leg_pose_prompt_for_framing(pose_prompt, requested_framing)
+    pose_prompt = _adapt_leg_pose_prompt_for_footwear(pose_prompt, legwear)
+    face_action = LEGFOCUS_FACE_ACTIONS.get(
+        pose_bucket, "人物保持轻松自然的表情，视线方向与坐姿协调。"
+    )
+    face_action = _adapt_leg_pose_prompt_for_footwear(face_action, legwear)
     is_detail = requested_framing == "leg_detail"
     if camera_kind == "selfie":
         camera_line = (
-            "第一人称自然视角服装照：腰线至鞋履入镜，清楚呈现下装、袜装与鞋履。"
+            f"第一人称自然视角服装照：腰线至{foot_target}入镜，清楚呈现{lower_outfit_display}。"
             if is_detail
-            else "全身镜前自拍：人物从头部到鞋履完整入镜，镜中只有主角，手机自然持握且不遮挡主要穿搭。"
+            else f"全身镜前自拍：人物从头部到{foot_target}完整入镜，镜中只有主角，手机自然持握且不遮挡主要穿搭。"
         )
     else:
         camera_line = (
-            "第三人称腿部穿搭照片：摄影者完全在画面外，平视拍摄腰线至鞋履，保留少量环境。"
+            f"第三人称腿部穿搭照片：摄影者完全在画面外，平视拍摄腰线至{foot_target}，保留少量环境。"
             if is_detail
-            else "第三人称全身日常照片：摄影者完全在画面外，人物从头部到鞋履完整入镜。"
+            else f"第三人称全身日常照片：摄影者完全在画面外，人物从头部到{foot_target}完整入镜。"
         )
     framing_rule = (
-        "采用腰线至鞋履的腿部穿搭构图，自然展示裙摆、袜装与鞋履；保持正常拍摄距离、平视机位和适量环境，不使用夸张透视。"
+        f"采用腰线至{foot_target}的腿部穿搭构图，自然展示裙摆、{lower_outfit_display}；保持正常拍摄距离、平视机位和适量环境，不使用夸张透视。"
         if is_detail
-        else "全身穿搭构图，头部、上衣、下装和鞋履完整入镜；镜头保持正常拍摄距离，不集中裁切身体局部。"
+        else f"全身穿搭构图，头部、上衣、下装和{foot_target}完整入镜；镜头保持正常拍摄距离，不集中裁切身体局部。"
     )
     leg_continuity_rule = (
-        "腰线至鞋履的构图完整自然，袜装和鞋履清楚可见，不被家具遮挡；人物比例与肢体结构自然连续。"
+        f"腰线至{foot_target}的构图完整自然，{foot_visibility}，不被家具遮挡；人物比例与肢体结构自然连续。"
         if is_detail
-        else "人物身体比例自然，左右肢体结构清晰，站坐重心稳定；衣物与鞋履边缘完整呈现。"
+        else f"人物身体比例自然，左右肢体结构清晰，站坐重心稳定；衣物与{foot_target}完整呈现。"
     )
-    anatomy_rules = "单人、成年人；姿态放松自然，服装完整合身，呈现清晰的日常穿搭照片。"
-    requested = str(force_legwear or "").strip()
-    if requested not in LEGWEAR_PROMPTS:
-        requested = parse_requested_legwear(extra_request)
-    explicit_outfit = has_explicit_leg_outfit(extra_request)
-    if requested in LEGWEAR_PROMPTS:
-        legwear = requested
-    elif explicit_outfit:
-        legwear = "用户指定"
-    else:
-        legwear_options = LEGWEAR_BY_POSE.get(
-            pose_bucket, LEGWEAR_BY_POSE["sit_crop"]
+    if requested_framing == "full_outfit":
+        face_framing_rule = (
+            "本次采用头部至足部的全身穿搭构图，头部和面部自然入镜；表情、视线与姿势协调。"
+            + (f"{face_action}" if include_face else "")
         )
-        legwear = random.choices(
-            [name for name, _ in legwear_options],
-            weights=[weight for _, weight in legwear_options],
-            k=1,
-        )[0]
-    outfit = {} if explicit_outfit else pick_leg_focus_outfit(legwear=legwear)
+    elif include_face:
+        face_framing_rule = (
+            "本次允许腿部展示画面带到头部；若头部入镜，必须同时执行配套表情和上肢动作，"
+            f"保持视线、肩胯方向与腿部动作一致。{face_action}"
+        )
+    else:
+        face_framing_rule = (
+            "本次默认只拍下半身：画面上缘从胸下或腰线开始，头部、脸部、肩膀和大部分上半身不入镜；"
+            "不要通过镜面、玻璃倒影、手机屏幕或画中画补出脸部。"
+        )
+    anatomy_rules = "单人、成年人；姿态放松自然，服装完整合身，呈现清晰的日常穿搭照片。"
     legwear_label = SAFE_LEGWEAR_LABELS.get(
         legwear, "代码选定的单一腿部穿搭"
     )
@@ -773,9 +1043,12 @@ def build_leg_focus_action(
     outfit_tag = "custom"
     if outfit:
         outfit_tag = str(outfit.get("id") or "custom")
+        outfit_parts = [str(outfit.get("bottoms") or outfit.get("skirt") or "").strip()]
+        if outfit.get("shoes"):
+            outfit_parts.append(str(outfit["shoes"]).strip())
         outfit_rule = (
-            f"完整下装服饰组合已由代码锁定：{outfit.get('bottoms') or outfit.get('skirt', '')}、"
-            f"{outfit.get('shoes', '')}；只生成这一套组合，不自行替换下装或鞋履。"
+            f"完整下装服饰组合已由代码锁定：{'、'.join(part for part in outfit_parts if part)}；"
+            + ("双脚保持自然赤足，不添加袜子或鞋履。" if legwear == "赤足" else "只生成这一套组合，不自行替换下装或鞋履。")
         )
     base = (
         "成年人物日常穿搭记录。竖屏照片。"
@@ -783,6 +1056,7 @@ def build_leg_focus_action(
         "【legs:outfit】"
         f"【frame:{requested_framing}】"
         f"【姿势池·{pose.get('title') or '随机姿势'}】{pose_prompt}"
+        f"{face_framing_rule}"
         f"{'今日日程场景参考：' + schedule_scene + '；腿部姿势已按该场景筛选。' if schedule_scene else ''}"
         f"{legwear_rule}"
         f"{outfit_rule}"
@@ -822,11 +1096,13 @@ def build_leg_focus_action(
         "白丝": "white",
         "黑丝": "black",
         "光腿神器": "bare",
+        "赤足": "barefoot",
         "连裤袜": "pantyhose",
     }.get(
         legwear, "daily"
     )
-    return base + f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_tag}】 【outfit:{outfit_tag}】"
+    face_tag = " 【legs_face:context】" if include_face else ""
+    return base + f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_tag}】 【outfit:{outfit_tag}】{face_tag}"
 
 
 def has_leg_focus_contract(text: str) -> bool:
@@ -835,7 +1111,7 @@ def has_leg_focus_contract(text: str) -> bool:
     return bool(
         "【legs:outfit】" in raw
         and re.search(r"【cam:(?:selfie|third)】", raw)
-        and re.search(r"【wear:(?:daily|custom|white|black|bare|pantyhose)】", raw)
+        and re.search(r"【wear:(?:daily|custom|white|black|bare|barefoot|pantyhose)】", raw)
         and re.search(r"【frame:(?:full_outfit|leg_detail)】", raw)
         and re.search(r"【pose:[a-z_]+】", raw)
         and re.search(r"【outfit:[a-z_]+】", raw)
@@ -853,7 +1129,7 @@ def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
         return raw
     pose_match = re.search(r"【pose:([a-z_]+)】", raw)
     camera_match = re.search(r"【cam:(selfie|third)】", raw)
-    wear_match = re.search(r"【wear:(daily|custom|white|black|bare|pantyhose)】", raw)
+    wear_match = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", raw)
     forced_pose = str(pose_match.group(1) if pose_match else "").strip()
     forced_camera = str(camera_match.group(1) if camera_match else "").strip()
     requested_pose = parse_requested_leg_pose(raw)
@@ -866,7 +1142,7 @@ def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
     frame_match = re.search(r"【frame:(full_outfit|leg_detail)】", raw)
     forced_framing = str(frame_match.group(1) if frame_match else "")
     extra = re.sub(r"/?看看腿", " ", raw, flags=re.I)
-    extra = re.sub(r"【(?:legs|cam|wear|pose|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
+    extra = re.sub(r"【(?:legs|legs_face|cam|wear|pose|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
     # These words have already been resolved into concrete tags; retaining them
     # would restate the same choice in the free-form supplement.
     extra = re.sub(

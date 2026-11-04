@@ -19,6 +19,7 @@ from ..cos.cos_looks import (
 from ..cos.leg_focus import (
     ensure_leg_focus_action,
     get_leg_focus_outfit,
+    has_leg_face_context,
     has_leg_focus_contract,
     is_leg_calf_crop_action,
 )
@@ -248,7 +249,7 @@ def extract_user_extra_text(action: str) -> str:
     if not match:
         return ""
     value = match.group(1)
-    value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
+    value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|legs_face|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
     return re.sub(r"\s+", " ", value).strip(" 。")
 
 
@@ -2406,6 +2407,7 @@ class PersonaManager:
         }
         side_facing_shot = shot_id == "side_profile" or cos_pose_id == "side_profile"
         feet_cropped = is_leg_calf_crop_action(act)
+        leg_face_context = intent.is_legs_only and feet_cropped and has_leg_face_context(act)
         daily = self.get_daily_selfie_profile()
 
         identity_lines = (
@@ -2453,7 +2455,7 @@ class PersonaManager:
                     (
                         "引用图一作为本次主角身份来源；保留其中人物身份和自然体态，服装按本次锁定搭配执行。"
                         if has_external_reference
-                        else "参考图一只用于自然体态和构图；服装按本次锁定搭配执行，人物身份保持一致。"
+                        else "形象参考图一作为主角身份锚点；保持人物身份特征和自然体态，服装按本次锁定搭配执行。"
                     ),
                 ]
                 if has_reference_image
@@ -2595,20 +2597,24 @@ class PersonaManager:
             pool_pose_text = re.sub(
                 r"\s+", " ", str(pool_pose_match.group(1) if pool_pose_match else "")
             ).strip(" 。；")
-            wear_tag_match = re.search(r"【wear:(daily|custom|white|black|bare|pantyhose)】", act)
+            pool_pose_text = re.sub(
+                r"今日日程场景参考：.*?；腿部姿势已按该场景筛选。?", "", pool_pose_text
+            ).strip(" 。；")
+            wear_tag_match = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", act)
             selected = {
                 "daily": "日常裤装",
                 "custom": "用户指定",
                 "white": "白丝",
                 "black": "黑丝",
                 "bare": "光腿神器",
+                "barefoot": "赤足",
                 "pantyhose": "连裤袜",
             }.get(wear_tag_match.group(1) if wear_tag_match else "", "")
             if not selected:
                 wear_match = re.search(r"本次服装搭配(?:已锁定为)?[:：]\s*([^。]+)", act)
                 if wear_match:
                     selected_source = str(wear_match.group(1)).strip().split("；", 1)[0]
-                    selected = next((name for name in ("日常裤装", "用户指定", "光腿神器", "白丝", "黑丝", "连裤袜") if name in selected_source), "")
+                    selected = next((name for name in ("日常裤装", "用户指定", "光腿神器", "白丝", "黑丝", "连裤袜", "赤足") if name in selected_source), "")
             selected_text = {
                 "日常裤装": "完整的日常长裤搭配",
                 "用户指定": "用户指定的完整服装搭配",
@@ -2616,38 +2622,53 @@ class PersonaManager:
                 "白丝": "白色不透连裤袜，完整日常穿搭",
                 "黑丝": "黑色不透连裤袜，完整日常穿搭",
                 "连裤袜": "白色不透连裤袜，完整日常穿搭",
+                "赤足": "双腿不穿连裤袜，双脚自然赤足",
             }.get(selected)
             outfit_match = re.search(r"【outfit:([a-z_]+)】", act)
             outfit = get_leg_focus_outfit(outfit_match.group(1) if outfit_match else "")
+            foot_target = "足部" if selected == "赤足" else "鞋履"
+            lower_outfit_display = "下装和赤足双脚" if selected == "赤足" else "下装、袜装与鞋履"
+            foot_visibility = "双脚自然赤足并清晰可见" if selected == "赤足" else "袜装与鞋履保持完整可见"
             mode_lines.extend(
                 [
-                    f"【{'腿部穿搭展示' if feet_cropped else '全身穿搭展示'} / {'全身镜自拍' if camera_kind == 'selfie' and not feet_cropped else '第一人称腰线至鞋履构图' if camera_kind == 'selfie' else '第三人称摄影'}】",
+                    f"【{'腿部穿搭展示' if feet_cropped else '全身穿搭展示'} / {'全身镜自拍' if camera_kind == 'selfie' and not feet_cropped else f'第一人称腰线至{foot_target}构图' if camera_kind == 'selfie' else '第三人称摄影'}】",
                     (
-                        "第一人称自然视角服装照：腰线至鞋履入镜，清楚呈现下装、袜装与鞋履。"
+                        f"第一人称自然视角服装照：腰线至{foot_target}入镜，清楚呈现{lower_outfit_display}。"
                         if camera_kind == "selfie" and feet_cropped
-                        else "全身镜前自拍：从头部到鞋履完整入镜，手机自然持握且不遮挡主要穿搭。"
+                        else f"全身镜前自拍：从头部到{foot_target}完整入镜，手机自然持握且不遮挡主要穿搭。"
                         if camera_kind == "selfie"
-                        else "第三人称腿部穿搭照片：摄影者完全在画面外，平视拍摄腰线至鞋履，保留少量环境。"
+                        else f"第三人称腿部穿搭照片：摄影者完全在画面外，平视拍摄腰线至{foot_target}，保留少量环境。"
                         if feet_cropped
-                        else "第三人称全身日常照片：摄影者完全在画面外，从头部到鞋履完整入镜。"
+                        else f"第三人称全身日常照片：摄影者完全在画面外，从头部到{foot_target}完整入镜。"
                     ),
-                    "成年人物腿部穿搭构图：腰线至鞋履自然入镜，袜装与鞋履清晰可见，平视并保留少量环境。"
+                    (
+                        f"成年人物腿部穿搭构图：腰线至{foot_target}自然入镜，{foot_visibility}；"
+                        "允许上缘带到头部时，必须同时执行已选姿势对应的表情、视线和上肢动作，"
+                        "不要把脸单独悬在腿部画面上。"
+                        if leg_face_context
+                        else "成年人物腿部穿搭构图：严格从胸下或腰线开始，头部、脸部和肩膀不入镜；"
+                        "不要通过镜面、玻璃倒影、手机屏幕或画中画补出脸部。"
+                    )
                     if feet_cropped
-                    else "成年人物单人全身构图：头部、上衣、下装和鞋履都完整入镜，以正常拍摄距离呈现整体穿搭。",
+                    else f"成年人物单人全身构图：头部、上衣、下装和{foot_target}都完整入镜，以正常拍摄距离呈现整体穿搭。",
                     f"本次穿搭固定为{selected_text}；按这一套完整呈现。"
                     if selected_text
                     else "本次下装和鞋履已由代码锁定；按同一套日常穿搭完成画面。",
                     "服装穿着完整，颜色、材质和层次清楚自然。",
-                    "人物比例与肢体结构自然连续；袜装和鞋履保持完整可见，不被家具遮挡。"
+                    f"人物比例与肢体结构自然连续；{foot_visibility}，不被家具遮挡。"
                     if feet_cropped
-                    else "人物比例、站坐姿态和鞋履完整自然，服装边缘清晰，不裁掉头部或脚部。",
+                    else f"人物比例、站坐姿态和{foot_target}完整自然，服装边缘清晰，不裁掉头部或脚部。",
                     "严格按已锁定的单一视角、姿势和完整服装搭配生成，不在选项之间切换，不自行补充其他方案。",
                 ]
             )
             if outfit:
-                mode_lines.append(
-                    f"代码锁定下装服饰组合：{outfit.get('bottoms') or outfit.get('skirt', '')}、{outfit.get('shoes', '')}。"
-                )
+                outfit_parts = [str(outfit.get("bottoms") or outfit.get("skirt") or "").strip()]
+                if outfit.get("shoes"):
+                    outfit_parts.append(str(outfit["shoes"]).strip())
+                outfit_line = f"代码锁定下装服饰组合：{'、'.join(part for part in outfit_parts if part)}。"
+                if selected == "赤足":
+                    outfit_line += "双脚保持自然赤足，不添加袜子或鞋履。"
+                mode_lines.append(outfit_line)
             elif outfit_match:
                 mode_lines.append("裙装或鞋履按用户明确指定内容执行，不自行替换。")
             if pose_match:
@@ -2782,8 +2803,7 @@ class PersonaManager:
         skip_period = extra_overrides_period(extra)
         skip_status = extra_overrides_context(extra)
         skip_mood = extra_overrides_mood(extra)
-        # Schedule context belongs to identity-free daily shots. Leg-focus
-        # can borrow the event's location, but keeps its own pose and outfit.
+        # External references own the scene; persona identity references do not.
         external_reference = (
             bool(has_external_reference)
             if has_external_reference is not None
@@ -2879,27 +2899,71 @@ class PersonaManager:
                     today_lines.append(f"当前日常场景参考：{scene}")
                 if daily_action and not intent.is_legs_only and not has_staging_contract:
                     today_lines.append(f"当前日常动作参考：{daily_action}")
-        if has_daily_context and intent.is_legs_only and daily and not skip_status:
+        if has_daily_context and intent.is_legs_only and daily:
             period = current_period()
+            if not skip_period:
+                today_lines.append(f"当前时间段：{period_label(period)}")
             timeline = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
             timeline_event = timeline.current_event() if timeline else None
-            scene = (
-                timeline_event.scene.strip()
+            current_event = (
+                {
+                    "title": timeline_event.title,
+                    "start": timeline_event.start,
+                    "end": timeline_event.end,
+                    "status": timeline_event.status,
+                    "scene": timeline_event.scene,
+                }
                 if timeline_event
-                else str(daily.scene_by_period.get(period) or "").strip()
+                else (daily.schedule_by_period.get(period) if daily.schedule_by_period else {})
             )
-            if scene and "今日日程场景参考：" not in act:
-                today_lines.append(f"当前日程场景：{scene}")
+            if not skip_status:
+                if daily.day_theme:
+                    today_lines.append(f"今日日程基调：{daily.day_theme}")
+                if current_event:
+                    event_title = str(current_event.get("title") or "").strip()
+                    event_time = ""
+                    if current_event.get("start") and current_event.get("end"):
+                        event_time = f"{current_event['start']}-{current_event['end']} "
+                    if event_title:
+                        today_lines.append(f"当前日程事件：{event_time}{event_title}")
+                status = (
+                    str(current_event.get("status") or "").strip()
+                    or str(daily.status_by_period.get(period) or "").strip()
+                    or str(daily.status or "").strip()
+                )
+                if status:
+                    today_lines.append(f"当前状态：{status}")
+                scene = (
+                    str(current_event.get("scene") or "").strip()
+                    or str(daily.scene_by_period.get(period) or "").strip()
+                )
+                if scene:
+                    today_lines.append(f"当前日程场景：{scene}")
+                if daily.occasion:
+                    today_lines.append(f"今日时令 / 节日氛围：{daily.occasion}")
+            if daily.mood and not skip_mood:
+                today_lines.append(f"当前心情：{daily.mood}")
+            today_lines.append(
+                "腿部日程约束：日程只作时段、场景与氛围参考；不得覆盖已锁定的姿势、机位、构图和完整下装穿搭，也不照搬日程原动作或穿搭变化。"
+            )
         if use_daily_now and daily and daily.mood and not skip_mood:
             today_lines.append(f"当前心情：{daily.mood}")
 
         if intent.is_legs_only:
             extra_action = extract_user_extra_text(act)
-            action_line = f"用户要求：{extra_action}" if extra_action else (
-                "用户要求：按腰线至鞋履的日常袜装穿搭构图生成。"
-                if feet_cropped
-                else "用户要求：按全身穿搭展示模式生成。"
-            )
+            if extra_action:
+                action_line = f"用户要求：{extra_action}"
+            elif feet_cropped and leg_face_context:
+                action_line = (
+                    f"用户要求：按腰线至{foot_target}的腿部穿搭构图生成；若上缘带到头部，"
+                    "必须使用已选姿势配套的表情、视线和上肢动作。"
+                )
+            else:
+                action_line = (
+                    f"用户要求：按严格不露头的腰线至{foot_target}腿部穿搭构图生成。"
+                    if feet_cropped
+                    else "用户要求：按全身穿搭展示模式生成。"
+                )
         elif intent.is_cos_look and cos_contract:
             action_line = "用户要求：按以上已锁定的 COS 套装、相机、构图、姿势和场景规则生成。"
         elif group_contract:
@@ -2912,7 +2976,7 @@ class PersonaManager:
             subject_photo_label = (
                 "第三人称腿部穿搭照片" if feet_cropped else "第三人称全身穿搭照片"
             ) if camera_kind == "third" else (
-                "第一人称腰线至鞋履照片" if feet_cropped else "全身镜自拍照片"
+                f"第一人称腰线至{foot_target}照片" if feet_cropped else "全身镜自拍照片"
             )
         elif intent.is_cos_look:
             subject_photo_label = {
