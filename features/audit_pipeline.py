@@ -167,8 +167,6 @@ class AuditMixin:
         for record in records:
             if not record.get("generated_image_paths"):
                 continue
-            if str(record.get("media_type") or "image").lower() == "video":
-                continue
             if self._record_image_md5(record) == wanted:
                 record["md5"] = wanted
                 return record
@@ -389,19 +387,15 @@ class AuditMixin:
         target: Optional[ImageModelTarget] = None,
     ) -> bool:
         """Whether prompt EN translation is enabled and applicable for this text."""
-        if media == "video":
-            if not bool(getattr(self.config, "image_enable_video_prompt_en", False)):
-                return False
-        else:
-            global_enabled = bool(getattr(self.config, "image_enable_image_prompt_en", False))
-            model_enabled = bool(
-                target
-                and (getattr(target, "extra", {}) or {}).get("prompt_en_enabled")
-            )
-            # The global switch is authoritative. When it is off, the model
-            # checkbox is the independent opt-in for NAI-like models.
-            if not global_enabled and not model_enabled:
-                return False
+        global_enabled = bool(getattr(self.config, "image_enable_image_prompt_en", False))
+        model_enabled = bool(
+            target
+            and (getattr(target, "extra", {}) or {}).get("prompt_en_enabled")
+        )
+        # The global switch is authoritative. When it is off, the model
+        # checkbox is the independent opt-in for NAI-like models.
+        if not global_enabled and not model_enabled:
+            return False
         mode = str(getattr(self.config, "image_prompt_en_mode", "if_cjk") or "if_cjk").strip().lower()
         if mode == "always":
             return True
@@ -427,18 +421,12 @@ class AuditMixin:
         if not self._prompt_en_needed(raw, media=media, target=target):
             meta["skipped"] = "not_needed"
             return raw, meta
-        template = (
-            getattr(self.config, "image_video_prompt_en_template", "")
-            if media == "video"
-            else getattr(self.config, "image_image_prompt_en_template", "")
-        )
+        template = getattr(self.config, "image_image_prompt_en_template", "")
         template = str(template or "").strip()
         if not template or "{prompt}" not in template:
             from ..core.models import DEFAULT_CONFIG
             template = str(
-                DEFAULT_CONFIG["image"]["video_prompt_en_template"]
-                if media == "video"
-                else DEFAULT_CONFIG["image"]["image_prompt_en_template"]
+                DEFAULT_CONFIG["image"]["image_prompt_en_template"]
             )
         instruct = template.replace("{prompt}", raw)
         model_label = str(getattr(self.config, "image_prompt_en_model", "") or "").strip()

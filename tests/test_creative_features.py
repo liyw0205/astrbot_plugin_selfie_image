@@ -14,8 +14,6 @@ from astrbot_plugin_selfie_image.features.creative_features import (
     apply_retry_strategy,
     build_prompt_variations,
     compare_generation_records,
-    normalize_storyboard_payload,
-    parse_video_storyboard,
     render_prompt_template,
 )
 from astrbot_plugin_selfie_image.prompts.command_parser import (
@@ -23,9 +21,7 @@ from astrbot_plugin_selfie_image.prompts.command_parser import (
     extract_template_options,
     parse_prompt_options,
 )
-from astrbot_plugin_selfie_image.prompts.preset import VideoPresetManager
 from astrbot_plugin_selfie_image.features.reference_collector import CollectedReferences
-from astrbot_plugin_selfie_image.studio.studio import default_video_preset_seed
 
 
 def test_template_variables_support_chinese_aliases_and_explicit_values() -> None:
@@ -51,198 +47,6 @@ def test_variations_keep_fixed_values_and_change_requested_fields() -> None:
     assert [row["prompt"] for row in rows] == [row["prompt"] for row in build_prompt_variations("{角色}在{场景}，{姿势}", 4, fixed_values={"角色": "角色A"}, vary=["scene", "pose"], seed="stable")]
 
 
-def test_storyboard_parses_lines_and_durations() -> None:
-    parsed = parse_video_storyboard("镜头1：推近角色，时长2秒\n镜头2：转身看向窗外")
-    assert parsed["enabled"] is True
-    assert parsed["shots"][0]["duration"] == 2
-    assert parsed["shots"][1]["description"] == "转身看向窗外"
-    assert "镜头1" in parsed["prompt"]
-
-    parenthesized = parse_video_storyboard("镜头1：推近角色（2秒）")
-    assert parenthesized["shots"][0]["duration"] == 2
-    assert parenthesized["shots"][0]["description"] == "推近角色"
-
-
-def test_storyboard_normalizes_edited_dashboard_rows() -> None:
-    parsed = normalize_storyboard_payload(
-        {"shots": [{"description": "镜头推进", "duration": "2"}, {"prompt": "转身", "duration": 0}]}
-    )
-    assert parsed["enabled"] is True
-    assert parsed["shots"][0]["duration"] == 2
-    assert parsed["shots"][1]["index"] == 2
-    assert "镜头2" in parsed["prompt"]
-
-
-def test_builtin_dance_video_presets_include_motion_audio_and_duration() -> None:
-    seed = default_video_preset_seed()
-
-    assert "Whiplash完整舞蹈" not in seed
-    assert "镜头推进" not in seed
-    assert "转身定格" not in seed
-    assert all(isinstance(item.get("duration"), int) and 6 <= item["duration"] <= 12 for item in seed.values())
-
-    xiaoban = seed["小半"]
-    assert xiaoban["duration"] == 12
-    assert "左右点胯2次" in xiaoban["prompt"]
-    assert "baby, i am worth it" in xiaoban["prompt"]
-    assert "必须输出可听见的BGM" in xiaoban["prompt"]
-
-    jiatong = seed["嘉桐摇"]
-    assert jiatong["duration"] == 10
-    assert "BPM为115" in jiatong["prompt"]
-    assert "双手做可爱的猫爪姿势" in jiatong["prompt"]
-    assert "必须输出可听见的BGM" in jiatong["prompt"]
-
-    sequence = seed["兰花指卡点舞"]
-    assert sequence["duration"] == 12
-    assert "严格按1至19的原顺序逐拍完成" in sequence["prompt"]
-    assert "连续完成3次波浪手" in sequence["prompt"]
-    assert "双手向左右交替推送5次" in sequence["prompt"]
-    assert "第5个八拍" in sequence["prompt"]
-    assert "必须输出可听见的BGM" in sequence["prompt"]
-
-    revenge = seed["复仇摇"]
-    assert revenge["duration"] == 12
-    assert "镜头随律动轻微晃动" in revenge["prompt"]
-    assert "短促人声采样片段" in revenge["prompt"]
-    assert "不要生成琵琶、古筝或其他古风乐器音效" in revenge["prompt"]
-
-    revenge_two = seed["复仇摇2"]
-    assert revenge_two["duration"] == 12
-    assert "镜头全程跟随女孩跳‘复仇摇’" in revenge_two["prompt"]
-    assert "发丝具有真实惯性但全程不遮脸" in revenge_two["prompt"]
-    assert "必须输出可听见的BGM" in revenge_two["prompt"]
-
-    fish = seed["鱼块摇"]
-    assert fish["duration"] == 12
-    assert "生成12秒9:16竖屏高清真人舞蹈视频" in fish["prompt"]
-    assert "整体是魔性、带感、卡点精准的鱼块摇风格" in fish["prompt"]
-    assert "《Blow (鱼块摇)》DJ电子鼓点版" in fish["prompt"]
-    assert "动作必须按以下顺序完整执行，不循环、不跳过" in fish["prompt"]
-    assert "1，右手放胯部，坐胯" in fish["prompt"]
-    assert "2，双手交替点点点，同时双手绕腕扭胯" in fish["prompt"]
-    assert "7，左手锤右肩3次" in fish["prompt"]
-    assert "14，双手举起卖萌，收尾定格" in fish["prompt"]
-    assert "所有动作必须卡在《Blow (鱼块摇)》DJ电子鼓点的重拍上" in fish["prompt"]
-    assert "弹琵琶仅表现手部拨弦手势" in fish["prompt"]
-    assert "禁止古风乐器独奏" in fish["prompt"]
-    assert "禁止古风乐器音效" in fish["prompt"]
-    assert "必须输出可听见的BGM" in fish["prompt"]
-
-    skirt = seed["提裙摇"]
-    assert skirt["duration"] == 10
-    assert "单手从长裙前片底部正中抓起" in skirt["prompt"]
-    assert "不是抓侧边，不是捏边缘" in skirt["prompt"]
-    assert "前裙被提起的部分呈扇形铺开" in skirt["prompt"]
-    assert "提裙摇风格" in skirt["prompt"]
-
-    chair = seed["椅子摇"]
-    assert chair["duration"] == 10
-    assert "坐在椅子上舞动" in chair["prompt"]
-    assert "BGM使用《椅子摇》DJ电子鼓点版" in chair["prompt"]
-
-    slow = seed["慢摇"]
-    assert slow["duration"] == 10
-    assert "整体是慵懒、带感、卡点精准的慢摇风格" in slow["prompt"]
-
-    houyi = seed["后裔摇"]
-    assert houyi["duration"] == 12
-    assert "BGM使用《后裔摇》DJ电子鼓点版" in houyi["prompt"]
-    assert "双手交叠放于身前，配合左右顶胯，收尾定格" in houyi["prompt"]
-
-    hip_presets = {
-        "正太扭腰": "腰部向右再向左各扭一次",
-        "左右顶胯": "右脚向侧点地",
-        "八字胯": "髋部画‘8’字",
-        "点胯坐胯": "先向右点胯两次，再向下坐胯一次",
-        "坐胯": "膝盖弯曲下坐",
-        "绕胯": "顺时针绕髋一整圈",
-    }
-    for name, marker in hip_presets.items():
-        assert seed[name]["duration"] == 10
-        assert marker in seed[name]["prompt"]
-        assert "动作必须按以下顺序完整执行，不循环、不跳过" in seed[name]["prompt"]
-
-    transition = seed["动作转场"]
-    assert transition["duration"] == 8
-    assert "动作1：人物保持跪姿" in transition["prompt"]
-    assert "动作2：切到下一个动作" in transition["prompt"]
-    assert "动作4：切到下一个动作" in transition["prompt"]
-    assert "不能跳帧、残影、动作叠加" in transition["prompt"]
-    assert "必须输出可听见的BGM" in transition["prompt"]
-
-    transition_two = seed["动作转场2"]
-    assert transition_two["duration"] == 6
-    assert "三个动作按顺序呈现" in transition_two["prompt"]
-    assert "短暂黑屏切镜" in transition_two["prompt"]
-    assert "人物侧身面对镜头" in transition_two["prompt"]
-    assert "人物正面面对镜头" in transition_two["prompt"]
-    assert "人物背对镜头" in transition_two["prompt"]
-    assert "必须输出可听见的BGM" in transition_two["prompt"]
-
-    with tempfile.TemporaryDirectory() as directory:
-        manager = VideoPresetManager(directory)
-        assert manager.has_preset("小半")
-        assert manager.has_preset("嘉桐摇")
-        assert manager.has_preset("兰花指卡点舞")
-        assert manager.has_preset("复仇摇")
-        assert manager.has_preset("复仇摇2")
-        assert manager.has_preset("鱼块摇")
-        assert manager.has_preset("提裙摇")
-        assert manager.has_preset("椅子摇")
-        assert manager.has_preset("慢摇")
-        assert manager.has_preset("后裔摇")
-        assert manager.has_preset("正太扭腰")
-        assert manager.has_preset("左右顶胯")
-        assert manager.has_preset("八字胯")
-        assert manager.has_preset("点胯坐胯")
-        assert manager.has_preset("坐胯")
-        assert manager.has_preset("绕胯")
-        assert not manager.has_preset("Whiplash完整舞蹈")
-        assert not manager.has_preset("镜头推进")
-        assert not manager.has_preset("转身定格")
-        assert manager.has_preset("动作转场")
-        assert manager.has_preset("动作转场2")
-        assert manager.resolve("小半")["duration"] == 12
-        assert manager.resolve("嘉桐摇")["duration"] == 10
-        assert manager.resolve("兰花指卡点舞")["duration"] == 12
-        assert manager.resolve("复仇摇")["duration"] == 12
-        assert manager.resolve("复仇摇2")["duration"] == 12
-        assert manager.resolve("鱼块摇")["duration"] == 12
-        assert manager.resolve("提裙摇")["duration"] == 10
-        assert manager.resolve("椅子摇")["duration"] == 10
-        assert manager.resolve("慢摇")["duration"] == 10
-        assert manager.resolve("后裔摇")["duration"] == 12
-        assert manager.resolve("正太扭腰")["duration"] == 10
-        assert manager.resolve("左右顶胯")["duration"] == 10
-        assert manager.resolve("八字胯")["duration"] == 10
-        assert manager.resolve("点胯坐胯")["duration"] == 10
-        assert manager.resolve("坐胯")["duration"] == 10
-        assert manager.resolve("绕胯")["duration"] == 10
-        assert manager.resolve("动作转场")["duration"] == 8
-        assert manager.resolve("动作转场2")["duration"] == 6
-
-
-def test_builtin_hip_video_presets_have_distinct_action_plans_and_reference_contract() -> None:
-    seed = default_video_preset_seed()
-    names = ["正太扭腰", "左右顶胯", "八字胯", "点胯坐胯", "坐胯", "绕胯"]
-    action_sections = []
-    for name in names:
-        prompt = seed[name]["prompt"]
-        assert "严格继承输入生图/首帧中的人物身份、脸部、发型、体型、服饰和场景，不换装" in prompt
-        start = prompt.index("动作必须按以下顺序完整执行")
-        end = prompt.index("所有动作必须卡在DJ电子鼓点", start)
-        action_sections.append(prompt[start:end])
-
-    assert len(set(action_sections)) == len(names)
-    assert "胸前做连续左右摆臂" in seed["正太扭腰"]["prompt"]
-    assert "右脚向侧点地" in seed["左右顶胯"]["prompt"]
-    assert "髋部画‘8’字" in seed["八字胯"]["prompt"]
-    assert "先向右点胯两次，再向下坐胯一次" in seed["点胯坐胯"]["prompt"]
-    assert "膝盖弯曲下坐" in seed["坐胯"]["prompt"]
-    assert "顺时针绕髋一整圈" in seed["绕胯"]["prompt"]
-
-
 def test_reference_selection_reports_cross_source_duplicates_after_deduplication() -> None:
     repeated = ImageReference(data=b"same-image", mime_type="image/png")
     unique = ImageReference(data=b"unique-image", mime_type="image/png")
@@ -253,51 +57,6 @@ def test_reference_selection_reports_cross_source_duplicates_after_deduplication
     assert summary["raw_selected_count"] == 3
     assert summary["selected_count"] == 2
     assert summary["duplicate_count"] == 1
-
-
-def test_video_preset_manager_migrates_removed_builtins() -> None:
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / "video_presets.json"
-        path.write_text(
-            json.dumps(
-                {
-                    "Whiplash完整舞蹈": {"prompt": "旧舞蹈"},
-                    "镜头推进": {"prompt": "旧推进"},
-                    "转身定格": {"prompt": "旧定格"},
-                    "自定义视频": {"prompt": "保留这个"},
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-        manager = VideoPresetManager(directory)
-        assert not manager.has_preset("Whiplash完整舞蹈")
-        assert not manager.has_preset("镜头推进")
-        assert not manager.has_preset("转身定格")
-        assert manager.has_preset("自定义视频")
-        saved = json.loads(path.read_text(encoding="utf-8"))
-        assert "Whiplash完整舞蹈" not in saved
-        assert "自定义视频" in saved
-
-
-def test_video_preset_manager_upgrades_only_legacy_hip_builtins() -> None:
-    seed = default_video_preset_seed()
-    legacy = "生成10秒9:16竖屏高清真人舞蹈视频，带原生同步音轨；人物从第0秒开始跟拍舞动，始终居中，镜头随律动轻微晃动但保持稳定，不突然推拉、不切镜；长发随肢体惯性自然飘动，始终不遮挡脸部。整体是活泼、卡点精准的八字胯风格，动作俏皮有力。动作必须按以下顺序完整执行，不循环、不跳过：1，双手轻搭腰侧，身体随节奏做八字胯动作，胯部画‘8’字；2，双手向上抬起至胸前，手腕轻转，同时做八字胯动作；3，双手向两侧打开，手腕轻转，配合八字胯动作；4，双手交叠放于身前，配合八字胯动作，身体轻微前后晃动；5，双手向上抬起至头顶，手腕轻转，同时做八字胯动作；6，双手向两侧打开，手腕轻转，配合八字胯动作；7，双手交叠放于身前，配合八字胯动作，身体轻微前后晃动；8，双手向上抬起至胸前，手腕轻转，同时做八字胯动作；9，双手自然垂放于身体两侧，配合八字胯动作；10，双手轻搭腰侧，身体随节奏做八字胯动作，收尾定格。所有动作必须卡在DJ电子鼓点的重拍上，卡点精准，节奏明快。音轨必须从第0秒开始并与动作同步：BGM使用DJ电子鼓点版，加入短促人声采样片段但不得出现对白；禁止古风乐器音效，不要生成琵琶、古筝或其他古风乐器音效。必须输出可听见的BGM，禁止静音、禁止口型说话。自然光影、真实肤质、动态流畅；避免动作延迟、机械循环、手指粘连、手腕反折、肢体穿模、额外手臂、手指畸形、头发遮脸、服装漂移、背景闪烁和镜头剧烈抖动。"
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / "video_presets.json"
-        path.write_text(
-            json.dumps(
-                {
-                    "八字胯": {"prompt": legacy, "duration": 10},
-                    "自定义视频": {"prompt": legacy.replace("八字胯", "我的自定义动作")},
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-        manager = VideoPresetManager(directory)
-        assert manager.presets["八字胯"].prompt == seed["八字胯"]["prompt"]
-        assert manager.presets["自定义视频"].prompt != seed["八字胯"]["prompt"]
 
 
 def test_command_template_options_can_be_mixed_with_prompt() -> None:

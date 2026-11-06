@@ -23,11 +23,16 @@ from ..core.utils import (
 from ..generation.generation_records import metric_window_seconds
 from .contracts import TASK_CANCEL_ROUTE_ALIASES
 from .services import (
+    CATALOG_PAGE_SIZE,
+    MAX_CATALOG_PAGE_SIZE,
     WebContractError,
     build_health_payload,
+    catalog_pagination_requested,
     filter_record_page,
+    flatten_cos_pool_rows,
     gallery_pagination,
     normalize_task_ids,
+    paginate_catalog_rows,
     parse_bounded_int,
     parse_query_bool,
     parse_task_query,
@@ -674,26 +679,6 @@ class FlaskWebServer:
                 methods=["POST"],
             )
 
-        @app.route("/api/test-video-channel/tasks", methods=["POST"])
-        def test_video_channel_task_start() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            try:
-                data = self.plugin.start_web_image_task({**payload, "media_type": "video"})
-                return ok(redact_sensitive_data(data))
-            except Exception as exc:
-                return fail(str(exc), 500)
-
-        @app.route("/api/test-video-channel/tasks/<task_id>", methods=["GET"])
-        def test_video_channel_task_status(task_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            return generation_task_status(task_id)
-
-
         @app.route("/api/proxies", methods=["GET"])
         def proxies_list() -> Any:
             if not check_auth():
@@ -856,8 +841,8 @@ class FlaskWebServer:
             pinned = query_bool(request.args.get("pinned"))
             try:
                 media_type = str(request.args.get("media_type") or "").strip().lower()
-                if media_type not in {"", "image", "video"}:
-                    return fail("media_type 必须是 image 或 video", 400)
+                if media_type not in {"", "image"}:
+                    return fail("当前仅支持图片媒体", 400)
                 raw_success = str(request.args.get("success") or "").strip().lower()
                 success = query_bool(raw_success)
                 if raw_success and success is None:
@@ -1141,8 +1126,8 @@ class FlaskWebServer:
                 return fail(str(exc), 400)
             if not info.get("exists"):
                 return fail("图片已清理", 404)
-            if not info.get("is_image") and not info.get("is_video"):
-                return fail("缓存文件不是有效图片或视频", 400)
+            if not info.get("is_image"):
+                return fail("缓存文件不是有效图片", 400)
             return send_file(info["absolute_path"], mimetype=info.get("mime_type") or "application/octet-stream")
 
 
@@ -1163,8 +1148,8 @@ class FlaskWebServer:
                     "available": False,
                     "message": "缓存文件已清理",
                 }, message="缓存文件已清理")
-            if not info.get("is_image") and not info.get("is_video"):
-                return fail("缓存文件不是有效图片或视频", 400)
+            if not info.get("is_image"):
+                return fail("缓存文件不是有效图片", 400)
             path = str(info.get("absolute_path") or "")
             try:
                 with open(path, "rb") as handle:
@@ -1483,7 +1468,21 @@ class FlaskWebServer:
                 data = self.plugin.list_prompt_presets_for_web(kind)
                 status_getter = getattr(self.plugin, "get_prompt_preset_status_for_web", None)
                 status = status_getter(kind) if callable(status_getter) else {"ok": True, "source": "legacy", "error": ""}
+                if catalog_pagination_requested(request.args):
+                    limit = parse_bounded_int(request.args, "limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
+                    offset = parse_bounded_int(request.args, "offset", 0, 0, 1_000_000)
+                    page = paginate_catalog_rows(
+                        data,
+                        offset=offset,
+                        limit=limit,
+                        query=request.args.get("search") or "",
+                        fields=("name", "title", "prompt", "description"),
+                    )
+                    page["load_status"] = status
+                    return ok(page, count=page["total"], load_status=status)
                 return ok(data, count=len(data), load_status=status)
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
             except Exception as exc:
                 return fail(str(exc), 500)
 
@@ -1496,7 +1495,21 @@ class FlaskWebServer:
                 data = self.plugin.list_managed_prompt_presets_for_web(kind)
                 status_getter = getattr(self.plugin, "get_prompt_preset_status_for_web", None)
                 status = status_getter(kind) if callable(status_getter) else {"ok": True, "source": "legacy", "error": ""}
+                if catalog_pagination_requested(request.args):
+                    limit = parse_bounded_int(request.args, "limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
+                    offset = parse_bounded_int(request.args, "offset", 0, 0, 1_000_000)
+                    page = paginate_catalog_rows(
+                        data,
+                        offset=offset,
+                        limit=limit,
+                        query=request.args.get("search") or "",
+                        fields=("name", "title", "prompt", "description"),
+                    )
+                    page["load_status"] = status
+                    return ok(page, count=page["total"], load_status=status)
                 return ok(data, load_status=status)
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
             except Exception as exc:
                 return fail(str(exc), 500)
 
@@ -1554,7 +1567,21 @@ class FlaskWebServer:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             try:
-                return ok(self.plugin.list_cos_pools_for_web())
+                data = self.plugin.list_cos_pools_for_web()
+                if catalog_pagination_requested(request.args):
+                    limit = parse_bounded_int(request.args, "limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
+                    offset = parse_bounded_int(request.args, "offset", 0, 0, 1_000_000)
+                    page = paginate_catalog_rows(
+                        flatten_cos_pool_rows(data),
+                        offset=offset,
+                        limit=limit,
+                        query=request.args.get("search") or "",
+                        fields=("title", "id", "prompt", "tags"),
+                    )
+                    return ok(page, count=page["total"])
+                return ok(data)
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
             except Exception as exc:
                 return fail(str(exc), 500)
 
@@ -1644,19 +1671,6 @@ class FlaskWebServer:
                 prompt = str((payload or {}).get("prompt") or "")
                 count = int((payload or {}).get("count") or 1)
                 return ok({"variations": self.plugin.build_creative_variations(prompt, count, payload or {})})
-            except Exception as exc:
-                return fail(str(exc), 400)
-
-        @app.route("/api/creative/storyboard", methods=["POST"])
-        def creative_storyboard() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            try:
-                prompt = str((payload or {}).get("prompt") or (payload or {}).get("text") or "")
-                return ok(self.plugin.parse_storyboard_for_web(prompt))
             except Exception as exc:
                 return fail(str(exc), 400)
 

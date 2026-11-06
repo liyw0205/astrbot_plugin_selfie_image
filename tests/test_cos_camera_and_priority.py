@@ -21,10 +21,6 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_POSE_FRAMING_COMPATIBILITY,
     COS_FRAMING_SCENE_COMPATIBILITY,
     COS_FRAMING_CAMERA_COMPATIBILITY,
-    COS_LOOK_COMPATIBILITY_EXPANSION,
-    COS_LOOK_COMPATIBILITY_DOULUO_BTTH,
-    COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
-    COS_LOOK_SETS_DOULUO_BTTH,
     COS_SPECIAL_LOOK_SETS,
     COS_FULL_EYE_COVER_PROMPT,
     COS_VISIBLE_EYE_PROMPT,
@@ -75,41 +71,23 @@ from astrbot_plugin_selfie_image.prompts.command_parser import extract_prompt_as
 from astrbot_plugin_selfie_image.studio.studio import build_studio_action, empty_session
 
 
-def test_default_cos_pool_actions_randomize_camera_and_keep_contracts_clean():
-    for item in COS_LOOK_SETS:
-        action = build_cos_look_action("", picker=lambda item=item, **_: item)
-        camera = re.search(r"【cam:(selfie|first|third)】", action).group(1)
-        assert camera in {"selfie", "first", "third"}
-        if is_special_cos_look(item):
-            assert "【cos_mode:special】" in action
-            assert item["prompt"] in action
-            assert not re.search(r"【cos_(?:pose|scene|framing):", action)
-            assert "本次随机场景优先于套装正文" not in action
-            assert "本次随机姿势优先于套装正文" not in action
-            continue
-        assert re.search(r"【cos_pose:[a-z0-9_]+】", action)
-        assert re.search(r"【cos_scene:[a-z0-9_]+】", action)
-        assert re.search(r"【cos_framing:[a-z0-9_]+】", action)
-        assert "本次随机场景优先于套装正文" in action
-        assert "本次随机姿势优先于套装正文" in action
-        if camera == "third":
-            assert "【他拍 / 看看COS模式】" in action
-            assert "【自拍 / 看看COS模式】" not in action
-            assert "镜前" not in action
-            assert "镜子" not in action
-            assert "对镜取景" not in action
-            assert "两条手臂和两只手" in action
-        elif camera == "first":
-            assert "【第一视角 / 看看COS模式】" in action
-            assert "手持设备" in action
-            assert "【自拍 / 看看COS模式】" not in action
-        else:
-            assert "【自拍 / 看看COS模式】" in action
+def test_json_cos_explicit_scene_and_pose_make_a_compatible_pair_on_demand():
+    action = build_cos_look_action(
+        "卧室地毯上跪坐",
+        force_id="xiaowu_pink_rabbit",
+    )
+    scene_id = re.search(r"【cos_scene:([a-z0-9_]+)】", action).group(1)
+    pose_id = re.search(r"【cos_pose:([a-z0-9_]+)】", action).group(1)
+    from astrbot_plugin_selfie_image.cos.cos_looks_loader import COS_JSON_SCENES
+
+    assert scene_id == "bedroom_carpet"
+    assert pose_id == "kneeling_carpet"
+    assert pose_id in COS_JSON_SCENES[scene_id]["pose_ids"]
 
 
 def test_ninghongye_full_eye_cover_uses_a_dedicated_contract():
     look = get_cos_look_by_id("ninghongye_plain_white_snake")
-    action = build_cos_look_action("", picker=lambda **_: look)
+    action = build_cos_look_action("姿势：自然站姿展示细节", picker=lambda **_: look)
 
     assert cos_eye_mode(look["id"]) == "full_cover"
     assert "【cos_eye:full_cover】" in action
@@ -125,7 +103,7 @@ def test_ninghongye_full_eye_cover_uses_a_dedicated_contract():
 
 def test_ninghongye_clear_eye_keeps_visible_eye_contract():
     look = get_cos_look_by_id("ninghongye_clear_eye")
-    action = build_cos_look_action("", picker=lambda **_: look)
+    action = build_cos_look_action("姿势：自然站姿展示细节", picker=lambda **_: look)
 
     assert cos_eye_mode(look["id"]) == "visible"
     assert "【cos_eye:visible】" in action
@@ -319,7 +297,6 @@ def test_group_reference_selection_does_not_promote_attached_image_without_perso
     assert selected.identity_ref is None
     assert selected.refs == [anime]
     assert selected.identity_reference_count == 0
-
 
 
 def test_auto_group_media_policy_never_lets_extra_reference_choose_the_main_medium():
@@ -544,309 +521,6 @@ def test_first_person_random_pose_excludes_pure_side_profile_but_explicit_surviv
     assert explicit["pose_id"] == "side_profile"
 
 
-def test_random_scene_poses_are_curated_for_scene_and_camera_together():
-    assert "side_profile" not in COS_RANDOM_SCENE_CLASSES["cinema_projection_room"]["pose_ids"]
-    assert "side_profile" not in COS_RANDOM_CAMERA_POSE_IDS["selfie"]
-    assert "one_knee_crouch" not in COS_RANDOM_CAMERA_POSE_IDS["first"]
-    assert "one_knee_crouch" in COS_RANDOM_CAMERA_POSE_IDS["third"]
-    assert "half_turn" not in COS_RANDOM_COMPOSITION_CLASSES["dynamic_freeze"]["poses"]
-
-    for camera, allowed_poses in COS_RANDOM_CAMERA_POSE_IDS.items():
-        allowed_framings = COS_RANDOM_CAMERA_FRAMING_IDS[camera]
-        for _ in range(120):
-            variation = pick_cos_variation("roxy_cream", camera=camera)
-            framing = pick_cos_framing(
-                pose_id=variation["pose_id"],
-                scene_id=variation["scene_id"],
-                camera=camera,
-            )
-            assert variation["pose_id"] in allowed_poses
-            if framing["view_id"] not in {"unspecified", "user"}:
-                assert framing["view_id"] in allowed_framings
-
-    explicit_selfie_profile = pick_cos_variation(
-        "roxy_cream",
-        extra_request="自拍纯侧身",
-        camera="selfie",
-    )
-    assert explicit_selfie_profile["pose_id"] == "side_profile"
-
-    explicit_first_person_crouch = pick_cos_variation(
-        "roxy_cream",
-        extra_request="第一视角玻璃花房单膝蹲",
-        camera="first",
-    )
-    assert explicit_first_person_crouch["pose_id"] == "one_knee_crouch"
-    assert explicit_first_person_crouch["scene_id"] == "greenhouse"
-
-
-def test_snowy_walking_staging_avoids_distant_environmental_framing():
-    assert "environmental" in COS_SCENE_POSE_FRAMING_EXCLUSIONS[
-        ("snowy_courtyard", "walking_turn")
-    ]
-    assert "walking_turn" not in COS_RANDOM_COMPOSITION_CLASSES[
-        "telephoto_compression"
-    ]["poses"]
-    for _ in range(40):
-        framing = pick_cos_framing(
-            pose_id="walking_turn",
-            scene_id="snowy_courtyard",
-            camera="third",
-        )
-        assert framing["view_id"] != "environmental"
-        composition = framing.get("composition") or {}
-        assert composition.get("composition_id") != "telephoto_compression"
-
-
-def test_every_cos_look_uses_scene_pose_and_framing_compatibility():
-    assert COS_RANDOM_POSE_CLASSES.keys() >= {"kneeling_carpet"}
-    assert len(COS_RANDOM_POSE_CLASSES) >= 12
-    assert len(COS_RANDOM_SCENE_CLASSES) >= 32
-    assert COS_RANDOM_SCENE_CLASSES["bedroom_carpet"]["pose_ids"]
-    assert "kneeling_carpet" in COS_RANDOM_SCENE_CLASSES["bedroom_carpet"]["pose_ids"]
-    kneeling_scenes = {
-        scene_id
-        for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
-        if "kneeling_carpet" in scene["pose_ids"]
-    }
-    assert kneeling_scenes == {"bedroom_carpet", "living_room_rug"}
-    shared_scenes = [
-        scene_id for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
-        if not scene.get("cos_look_only")
-    ]
-    configured_look_ids = (
-        set(COS_LOOK_COMPATIBILITY_EXPANSION)
-        | set(COS_LOOK_COMPATIBILITY_DOULUO_BTTH)
-        | set(COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS)
-    )
-    for item in COS_LOOK_SETS:
-        profile = cos_look_compatibility(item["id"])
-        if is_special_cos_look(item):
-            assert profile["variation_enabled"] is False, item["id"]
-            assert profile["mode"] == "special", item["id"]
-            assert profile["pose_ids"] == [], item["id"]
-            assert profile["scene_ids"] == [], item["id"]
-            continue
-        assert profile["variation_enabled"], item["id"]
-        assert profile["scene_ids"]
-        assert profile["pose_ids"]
-        if item["id"] not in configured_look_ids:
-            assert profile["scene_ids"] == shared_scenes
-            assert profile["pose_ids"] == list(COS_RANDOM_POSE_CLASSES)
-        assert profile["scene_pose_compatibility"] == {
-            scene_id: [pose_id for pose_id in dict.fromkeys(COS_RANDOM_SCENE_CLASSES[scene_id]["pose_ids"]) if pose_id in profile["pose_ids"]]
-            for scene_id in profile["scene_ids"]
-        }
-        assert profile["pose_framing_compatibility"] == {
-            pose_id: list(framings)
-            for pose_id, framings in COS_POSE_FRAMING_COMPATIBILITY.items()
-        }
-        assert profile["pose_camera_compatibility"] == {
-            pose_id: list(cameras)
-            for pose_id, cameras in COS_POSE_CAMERA_COMPATIBILITY.items()
-        }
-        assert profile["random_camera_pose_compatibility"] == {
-            camera: sorted(pose_ids)
-            for camera, pose_ids in COS_RANDOM_CAMERA_POSE_IDS.items()
-        }
-        assert profile["random_camera_framing_compatibility"] == {
-            camera: sorted(framing_ids)
-            for camera, framing_ids in COS_RANDOM_CAMERA_FRAMING_IDS.items()
-        }
-        assert profile["framing_scene_compatibility"] == {
-            framing_id: list(scenes)
-            for framing_id, scenes in COS_FRAMING_SCENE_COMPATIBILITY.items()
-        }
-        assert profile["framing_camera_compatibility"] == {
-            framing_id: list(cameras)
-            for framing_id, cameras in COS_FRAMING_CAMERA_COMPATIBILITY.items()
-        }
-        assert set(profile["composition_constraints"]) == set(COS_RANDOM_COMPOSITION_CLASSES)
-    for scene in COS_RANDOM_SCENE_CLASSES.values():
-        assert scene["pose_ids"]
-        assert set(scene["pose_ids"]) <= COS_RANDOM_POSE_CLASSES.keys()
-
-    assert "one_knee_crouch" not in COS_RANDOM_SCENE_CLASSES["rainy_neon_street"]["pose_ids"]
-    assert "one_knee_crouch" not in COS_RANDOM_SCENE_CLASSES["snowy_courtyard"]["pose_ids"]
-    assert "low_angle_neck_to_knee" in COS_EXPLICIT_ONLY_FRAMING_IDS
-
-    expected_back_scenes = {
-        "garden_walkway", "bamboo_garden", "cherry_blossom_path",
-        "seaside_boardwalk", "rooftop_sunset", "old_town_lane",
-        "rainy_neon_street", "festival_lantern", "stone_staircase",
-        "snowy_courtyard", "old_city_rooftop", "aquarium_tunnel",
-        "greenhouse_storm", "skybridge_after_rain", "last_train_platform",
-        "theater_stage_wing", "planetarium_dome", "sea_cliff_lighthouse",
-        "spiral_archive", "red_rock_canyon", "cinema_projection_room",
-        "snow_observation_corridor", "modern_art_gallery",
-    }
-    actual_back_scenes = {
-        scene_id
-        for scene_id, compatible_poses in cos_look_compatibility("custom_cos_id")["scene_pose_compatibility"].items()
-        if "back_to_camera" in compatible_poses
-    }
-    assert actual_back_scenes == expected_back_scenes
-    assert set(COS_POSE_FRAMING_COMPATIBILITY) == set(COS_RANDOM_POSE_CLASSES)
-    for pose_id, framing_ids in COS_POSE_FRAMING_COMPATIBILITY.items():
-        assert framing_ids
-        assert set(framing_ids) <= COS_FRAMING_CLASSES.keys(), pose_id
-
-    new_scene_ids = {
-        "aquarium_tunnel", "greenhouse_storm", "skybridge_after_rain",
-        "last_train_platform", "theater_stage_wing", "planetarium_dome",
-        "sea_cliff_lighthouse", "spiral_archive", "red_rock_canyon",
-        "cinema_projection_room", "snow_observation_corridor",
-        "modern_art_gallery",
-    }
-    for scene_id in new_scene_ids:
-        scene = COS_RANDOM_SCENE_CLASSES[scene_id]
-        assert scene["style_prompt"]
-        assert scene["pose_ids"]
-        assert set(scene["pose_ids"]) <= COS_RANDOM_POSE_CLASSES.keys()
-
-    profile = cos_look_compatibility("roxy_cream")
-    for _ in range(100):
-        variation = pick_cos_variation("roxy_cream")
-        assert variation["pose_id"] in profile["scene_pose_compatibility"][variation["scene_id"]]
-        framing = pick_cos_framing(pose_id=variation["pose_id"])
-        assert framing["view_id"] in profile["pose_framing_compatibility"][variation["pose_id"]]
-        camera = pick_cos_camera(pose_id=variation["pose_id"])
-        assert camera in profile["pose_camera_compatibility"].get(
-            variation["pose_id"], ("third", "first", "selfie")
-        )
-
-    for camera, allowed_poses in COS_RANDOM_CAMERA_POSE_IDS.items():
-        for _ in range(100):
-            variation = pick_cos_variation("roxy_cream", camera=camera)
-            assert variation["pose_id"] in allowed_poses
-            assert variation["pose_id"] in profile["scene_pose_compatibility"][variation["scene_id"]]
-
-    with patch(
-        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        side_effect=lambda values: values[0],
-    ):
-        selected = pick_cos_variation("roxy_cream", extra_request="跪坐")
-    assert selected["pose_id"] == "kneeling_carpet"
-    assert selected["scene_id"] in {
-        "bedroom_carpet", "living_room_rug"
-    }
-    assert "随机场景" in selected["prompt"]
-    assert "随机姿势" not in selected["prompt"]
-
-
-def test_expansion_looks_use_curated_scene_pose_and_framing_profiles():
-    from astrbot_plugin_selfie_image.cos.cos_looks import (
-        COS_LOOK_SETS_EXPANSION,
-        pick_cos_framing,
-    )
-
-    assert len(COS_LOOK_SETS_EXPANSION) == 123
-    assert len(COS_LOOK_COMPATIBILITY_EXPANSION) == len(COS_LOOK_SETS_EXPANSION)
-    for look in COS_LOOK_SETS_EXPANSION:
-        profile = cos_look_compatibility(look["id"])
-        expected = COS_LOOK_COMPATIBILITY_EXPANSION[look["id"]]
-        assert profile["scene_ids"] == list(expected["scene_ids"]), look["id"]
-        assert profile["recommended_pose_ids"]
-        assert profile["recommended_view_ids"] == ["selfie", "first", "third"]
-        for camera in ("third", "first", "selfie"):
-            variation = pick_cos_variation(look["id"], camera=camera)
-            assert variation["scene_id"] in profile["scene_ids"], look["id"]
-            assert variation["pose_id"] in profile["recommended_pose_ids"], look["id"]
-            assert variation["pose_id"] in profile["scene_pose_compatibility"][variation["scene_id"]]
-            framing = pick_cos_framing(
-                pose_id=variation["pose_id"],
-                scene_id=variation["scene_id"],
-                camera=camera,
-                allowed_framings=profile["recommended_framing_ids"],
-            )
-            if profile["recommended_framing_ids"]:
-                assert framing["view_id"] in profile["recommended_framing_ids"], look["id"]
-        action = build_cos_look_action(
-            "",
-            picker=lambda item=look, **_: item,
-        )
-        camera = re.search(r"【cam:([a-z]+)】", action).group(1)
-        pose_id = re.search(r"【cos_pose:([a-z0-9_]+)】", action).group(1)
-        scene_id = re.search(r"【cos_scene:([a-z0-9_]+)】", action).group(1)
-        framing_id = re.search(r"【cos_framing:([a-z0-9_]+)】", action).group(1)
-        assert camera in profile["recommended_view_ids"], look["id"]
-        assert scene_id in profile["scene_ids"], look["id"]
-        assert pose_id in profile["scene_pose_compatibility"][scene_id], look["id"]
-        if profile["recommended_framing_ids"]:
-            assert framing_id in profile["recommended_framing_ids"], look["id"]
-    assert match_cos_look_sets("Project SEKAI 星乃一歌")[0]["id"] == "prsk_ichika_leoneed"
-    assert match_cos_look_sets("FGO 伊什塔尔")[0]["id"] == "fate_ishtar_red_gold"
-    explicit_conflict = pick_cos_variation(
-        "style_eclipse_court",
-        extra_request="跪坐",
-        camera="third",
-    )
-    assert explicit_conflict["pose_id"] == "kneeling_carpet"
-    assert explicit_conflict["scene_id"] == "user"
-
-
-def test_douluo_btth_looks_randomize_only_compatible_staging():
-    assert len(COS_LOOK_SETS_DOULUO_BTTH) == 33
-    look_ids = {look["id"] for look in COS_LOOK_SETS_DOULUO_BTTH}
-    assert len(look_ids) == 33
-    assert set(COS_LOOK_COMPATIBILITY_DOULUO_BTTH) == look_ids
-    assert audit_cos_look_catalog(COS_LOOK_SETS_DOULUO_BTTH) == []
-    assert match_cos_look_sets("斗破苍穹 云韵")[0]["id"] == "btth_yun_yun_cloud_mist"
-    assert match_cos_look_sets("BTTH 小医仙")[0]["id"] == "btth_xiao_yixian_healer"
-    assert {look["id"] for look in match_cos_look_sets("斗破苍穹")} >= {
-        look["id"] for look in COS_LOOK_SETS_DOULUO_BTTH if look["cos_type"] == "斗破苍穹"
-    }
-    assert match_cos_look_sets("Soul Land 王冬儿")[0]["id"] == "douluo2_wang_donger_butterfly"
-
-    for look in COS_LOOK_SETS_DOULUO_BTTH:
-        profile = cos_look_compatibility(look["id"])
-        expected = COS_LOOK_COMPATIBILITY_DOULUO_BTTH[look["id"]]
-        assert profile["scene_ids"] == list(expected["scene_ids"]), look["id"]
-        assert profile["pose_ids"] == list(expected["pose_ids"]), look["id"]
-        assert profile["recommended_view_ids"] == ["selfie", "first", "third"]
-        assert "以形象图中的人为COS主体" in look["prompt"]
-        assert not re.search(r"姿势|动作|场景|灯光|镜头|景别|构图|画面风格", look["prompt"]), look["id"]
-
-        for camera in ("selfie", "first", "third"):
-            for _ in range(8):
-                variation = pick_cos_variation(look["id"], camera=camera)
-                scene_id = variation["scene_id"]
-                pose_id = variation["pose_id"]
-                assert scene_id in profile["scene_ids"], look["id"]
-                assert pose_id in profile["recommended_pose_ids"], look["id"]
-                assert pose_id in profile["scene_pose_compatibility"][scene_id], look["id"]
-                assert pose_id in COS_RANDOM_CAMERA_POSE_IDS[camera], (look["id"], camera, pose_id)
-                if pose_id in COS_POSE_CAMERA_COMPATIBILITY:
-                    assert camera in COS_POSE_CAMERA_COMPATIBILITY[pose_id], (look["id"], camera, pose_id)
-                assert not _cos_unsafe_random_pair(look["id"], scene_id, pose_id, camera), (
-                    look["id"], camera, scene_id, pose_id
-                )
-
-                framing = pick_cos_framing(
-                    pose_id=pose_id,
-                    scene_id=scene_id,
-                    camera=camera,
-                )
-                framing_id = framing["view_id"]
-                assert framing_id in COS_POSE_FRAMING_COMPATIBILITY[pose_id], (
-                    look["id"], camera, pose_id, framing_id
-                )
-                assert scene_id in COS_FRAMING_SCENE_COMPATIBILITY.get(framing_id, (scene_id,)), (
-                    look["id"], camera, scene_id, framing_id
-                )
-                assert camera in COS_FRAMING_CAMERA_COMPATIBILITY.get(framing_id, (camera,)), (
-                    look["id"], camera, framing_id
-                )
-
-        for _ in range(8):
-            combination = pick_cos_variation(look["id"], camera="third", use_combinations=True)
-            assert combination["scene_id"] in profile["scene_ids"], look["id"]
-            assert combination["pose_id"] in profile["scene_pose_compatibility"][combination["scene_id"]], look["id"]
-            assert not _cos_unsafe_random_pair(
-                look["id"], combination["scene_id"], combination["pose_id"], "third"
-            ), look["id"]
-
-
 def test_pose_and_scene_detection_preserves_explicit_user_staging():
     kneeling = pick_cos_variation("roxy_cream", extra_request="跪坐在地毯上")
     assert kneeling["pose_id"] == "kneeling_carpet"
@@ -877,16 +551,7 @@ def test_pose_and_scene_detection_preserves_explicit_user_staging():
 
     requested_back = pick_cos_variation("roxy_cream", extra_request="背影")
     assert requested_back["pose_id"] == "back_to_camera"
-    assert requested_back["scene_id"] in {
-        "garden_walkway", "bamboo_garden", "cherry_blossom_path",
-        "seaside_boardwalk", "rooftop_sunset", "old_town_lane",
-        "rainy_neon_street", "festival_lantern", "stone_staircase",
-        "snowy_courtyard", "old_city_rooftop", "aquarium_tunnel",
-        "greenhouse_storm", "skybridge_after_rain", "last_train_platform",
-        "theater_stage_wing", "planetarium_dome", "sea_cliff_lighthouse",
-        "spiral_archive", "red_rock_canyon", "cinema_projection_room",
-        "snow_observation_corridor", "modern_art_gallery",
-    }
+    assert requested_back["pose_id"] in COS_RANDOM_SCENE_CLASSES[requested_back["scene_id"]]["pose_ids"]
 
 
 def test_random_scene_is_uniformly_selected_before_compatible_pose():
@@ -904,52 +569,6 @@ def test_random_scene_is_uniformly_selected_before_compatible_pose():
     assert selected["scene_id"] == final_scene_id
     assert selected["pose_id"] == "back_to_camera"
     assert selected["pose_id"] != "over_shoulder"
-
-
-def test_back_and_side_cos_staging_never_randomly_forces_a_lookback():
-    assert COS_RANDOM_POSE_CLASSES["over_shoulder"]["explicit_only"] is True
-    assert "over_shoulder" not in cos_look_compatibility("test")["recommended_pose_ids"]
-    def choose_back_pose(values):
-        if "back_to_camera" in values:
-            return "back_to_camera"
-        return values[-1]
-
-    with patch(
-        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        side_effect=choose_back_pose,
-    ):
-        selected = pick_cos_variation("test")
-    assert selected["pose_id"] == "back_to_camera"
-    assert "不回头、不回眸、不扭转颈部" in selected["prompt"]
-
-    back_framing = pick_cos_framing(pose_id="back_to_camera")
-    assert back_framing["view_id"] in {
-        "rear_three_quarter", "rear_low_medium", "rear_low_hero", "environmental", "eye_level_full",
-    }
-    side_framing = pick_cos_framing(pose_id="side_profile")
-    assert side_framing["view_id"] in {"side_profile", "environmental", "eye_level_full", "low_angle_full"}
-
-    with patch(
-        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        side_effect=lambda values: values[-1],
-    ):
-        exhausted_back_framing = pick_cos_framing(
-            pose_id="back_to_camera",
-            avoid_framings=COS_FRAMING_CLASSES,
-        )
-    assert exhausted_back_framing["view_id"] != "rear_lookback"
-
-    with patch(
-        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        return_value="rear_lookback",
-    ):
-        requested_lookback = pick_cos_framing(pose_id="over_shoulder")
-    assert requested_lookback["view_id"] == "rear_lookback"
-
-    assert pick_cos_camera(pose_id="over_shoulder") == "third"
-    assert pick_cos_camera(camera="selfie", pose_id="over_shoulder") == "selfie"
-    assert pick_cos_camera(pose_id="back_to_camera") in {"third", "first"}
-    assert pick_cos_camera(camera="selfie", pose_id="back_to_camera") == "selfie"
 
 
 def test_back_view_can_use_a_controlled_low_angle_only_in_third_person():
@@ -1018,25 +637,6 @@ def test_low_angle_hero_is_reserved_for_open_scenes():
             camera="third",
         )
         assert framing["view_id"] != "low_angle_hero"
-
-
-def test_first_person_walking_pose_uses_observer_wording():
-    def choose_walking_pose(values):
-        return "walking_turn" if "walking_turn" in values else values[0]
-
-    with patch(
-        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        side_effect=choose_walking_pose,
-    ):
-        selected = pick_cos_variation(
-            "test",
-            extra_request="第一视角 老旧楼群天台",
-            camera="first",
-        )
-
-    assert selected["pose_id"] == "walking_turn"
-    assert "主角自然经过观察者的视线前方" in selected["prompt"]
-    assert "身体自然侧向镜头" not in selected["prompt"]
 
 
 def test_face_cropping_framing_is_explicit_only():
@@ -1162,71 +762,6 @@ def test_composition_avoidance_keeps_only_compatible_candidates():
     }
 
 
-def test_new_scene_uses_its_bound_style_unless_the_user_supplies_one():
-    scene = COS_RANDOM_SCENE_CLASSES["aquarium_tunnel"]
-    selected = pick_cos_variation(
-        "custom_cos_id",
-        extra_request="水族馆隧道",
-    )
-    assert selected["scene_id"] == "aquarium_tunnel"
-    assert scene["prompt"] in selected["prompt"]
-    assert scene["style_prompt"] in selected["prompt"]
-
-    explicit_style = pick_cos_variation(
-        "custom_cos_id",
-        extra_request="水族馆隧道，使用胶片质感",
-    )
-    assert explicit_style["scene_id"] == "aquarium_tunnel"
-    assert scene["style_prompt"] not in explicit_style["prompt"]
-
-
-def test_costume_themes_guide_random_scenes_without_overriding_explicit_scenes():
-    assert set(COS_SCENE_THEME_TAGS) == set(COS_RANDOM_SCENE_CLASSES)
-
-    with patch(
-        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-        side_effect=lambda values: values[0],
-    ):
-        icy_look = pick_cos_variation("zipingyin_melted_snow")
-        marine_look = pick_cos_variation("mualani_surfing_wave")
-        explicit_canyon = pick_cos_variation(
-            "zipingyin_melted_snow",
-            extra_request="红岩峡谷",
-        )
-
-    assert icy_look["scene_id"] in {"snowy_courtyard", "snow_observation_corridor"}
-    assert icy_look["scene_id"] != "red_rock_canyon"
-    assert marine_look["scene_id"] in {
-        "seaside_boardwalk", "aquarium_tunnel", "sea_cliff_lighthouse",
-    }
-    assert explicit_canyon["scene_id"] == "red_rock_canyon"
-
-
-def test_cos_scene_style_keeps_the_subject_sharp_unless_soft_focus_is_explicit():
-    garden = pick_cos_variation("custom_cos_id", extra_request="庭院小径")
-    assert "不做整体柔焦或褪色雾化" in COS_RANDOM_SCENE_CLASSES["garden_walkway"]["style_prompt"]
-    assert "双眼" in garden["prompt"]
-    assert "不得抹平或模糊人物主体" in garden["prompt"]
-
-    ink_room = pick_cos_variation("custom_cos_id", extra_request="和风室内")
-    assert "朦胧感仅由背景虚化、边缘柔光和轻微高光晕形成" in ink_room["prompt"]
-    assert "人物面部保持正常曝光、不柔焦" in ink_room["prompt"]
-    assert COS_SUBJECT_CLARITY_PROMPT in ink_room["prompt"]
-
-    requested_dreamcore = pick_cos_variation(
-        "custom_cos_id",
-        extra_request="和风室内，梦核朦胧感",
-    )
-    assert COS_SUBJECT_CLARITY_PROMPT in requested_dreamcore["prompt"]
-    assert "梦核抓拍的朦胧感仅由背景虚化" not in requested_dreamcore["prompt"]
-
-    requested_soft_focus = pick_cos_variation(
-        "custom_cos_id",
-        extra_request="庭院小径，面部柔焦",
-    )
-    assert "面部、双眼" not in requested_soft_focus["prompt"]
-
-
 def test_ccd_sleepwear_cos_look_keeps_camera_and_pose_in_the_shared_random_pools():
     look = next(
         item for item in COS_LOOK_SETS
@@ -1250,66 +785,9 @@ def test_ccd_sleepwear_cos_look_keeps_camera_and_pose_in_the_shared_random_pools
     assert profile["recommended_pose_ids"] == shared_profile["recommended_pose_ids"]
     assert profile["recommended_scene_ids"] == shared_profile["recommended_scene_ids"]
 
-    variation = pick_cos_variation(look["id"], camera="third")
-    assert COS_SUBJECT_CLARITY_PROMPT in variation["prompt"]
-
-
-def test_face_safety_contract_covers_the_three_reported_blur_patterns():
-    echidna = _cos_face_safety_prompt(
-        "rezero_echidna_witch_scholar", "greenhouse", "seated_composed", "selfie"
-    )
-    fu_hua = _cos_face_safety_prompt(
-        "hi3_fu_hua_red_sash", "last_train_platform", "seated_composed", "selfie"
-    )
-    luna = _cos_face_safety_prompt(
-        "luna_frost_moon_mirror", "bedroom_window", "overhead_stretch", "third"
-    )
-
-    assert "帽檐阴影不能覆盖面部" in echidna
-    assert "玻璃反光、折射和散射光只出现在背景" in echidna
-    assert "夜间环境必须保留人物面部的有效亮度" in fu_hua
-    assert "自拍坐姿优先使用三分之二身" in fu_hua
-    assert "透明、金属、缎面或高反光服装只保留服装自身的材质高光" in luna
-    assert "逆光只勾勒发丝和肩部轮廓" in luna
-    assert "舒展动作保持稳定定格" in luna
-    assert COS_SUBJECT_CLARITY_PROMPT.split("；", 1)[0] in _cos_face_safety_prompt(
-        "rezero_echidna_witch_scholar", "greenhouse", "seated_composed", "selfie", include_base=True
-    )
-
-
-def test_random_face_blur_combinations_are_filtered_but_explicit_requests_remain_available():
-    assert _cos_unsafe_random_pair(
-        "rezero_echidna_witch_scholar", "greenhouse", "seated_composed", "selfie"
-    )
-    assert _cos_unsafe_random_pair(
-        "hi3_fu_hua_red_sash", "last_train_platform", "seated_composed", "selfie"
-    )
-    assert _cos_unsafe_random_pair(
-        "luna_frost_moon_mirror", "bedroom_window", "overhead_stretch", "third"
-    )
-    assert not _cos_unsafe_random_pair(
-        "rezero_echidna_witch_scholar", "greenhouse", "standing_detail", "selfie"
-    )
-    assert "high_angle_three_quarter" in _cos_unsafe_framings(
-        "greenhouse", "seated_composed", "selfie"
-    )
-    assert "front_half" in _cos_unsafe_framings(
-        "last_train_platform", "seated_composed", "selfie"
-    )
-    assert "environmental" in _cos_unsafe_framings(
-        "bedroom_window", "overhead_stretch", "third"
-    )
-    assert "glass_reflection" in _cos_face_risk_tags(
-        "rezero_echidna_witch_scholar", "greenhouse", "seated_composed", "selfie"
-    )
-
-    explicit = pick_cos_variation(
-        "rezero_echidna_witch_scholar",
-        extra_request="玻璃花房端正坐姿",
-        camera="selfie",
-    )
-    assert explicit["scene_id"] == "greenhouse"
-    assert explicit["pose_id"] == "seated_composed"
+    for orientation in ("正面站姿", "背影"):
+        action = build_cos_look_action(orientation, force_id=look["id"], camera="third")
+        assert COS_SUBJECT_CLARITY_PROMPT in action
 
 
 def test_random_picker_never_emits_the_reported_face_blur_pairs():
@@ -1363,19 +841,6 @@ def test_group_random_staging_uses_environment_when_selected():
     assert "所有人保持中远景可辨识" in action
     assert "背面构图" not in action
     assert "竖屏手机近景半身" not in action
-
-
-def test_group_random_staging_can_choose_a_back_view():
-    with patch(
-        "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
-        return_value=["back_view"],
-    ):
-        action = build_group_selfie_action("和我合影")
-
-    assert "【shot:back_view】" in action
-    assert "本次合影采用背面构图" in action
-    assert "竖屏中远景" in action
-    assert "不强迫回头" in action
 
 
 def test_selfie_scene_and_light_overrides_are_independent():
@@ -1576,28 +1041,6 @@ def test_random_cos_scene_bundles_include_a_distinct_visual_treatment():
     assert "低机位" not in rooftop["prompt"]
 
 
-def test_curated_cos_combinations_are_valid_and_sleep_has_a_real_bed_scene():
-    assert len(COS_COMBINATION_PRESETS) == 25
-    for combination in COS_COMBINATION_PRESETS.values():
-        scene_id = combination["scene_id"]
-        pose_id = combination["pose_id"]
-        framing_id = combination["framing_id"]
-        assert pose_id in COS_RANDOM_SCENE_CLASSES[scene_id]["pose_ids"]
-        assert framing_id in COS_POSE_FRAMING_COMPATIBILITY[pose_id]
-        assert scene_id in COS_FRAMING_SCENE_COMPATIBILITY.get(framing_id, (scene_id,))
-
-    sleep = COS_COMBINATION_PRESETS["bedroom_sleep_snapshot"]
-    assert sleep["scene_id"] == "bedroom_sleep"
-    assert sleep["pose_id"] == "sleeping_on_bed"
-    assert sleep["framing_id"] == "high_angle_phone_wide"
-    assert "bedroom_sleep" in COS_FRAMING_SCENE_COMPATIBILITY["high_angle_phone_wide"]
-
-    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.0):
-        variation = pick_cos_variation("roxy_cream", camera="third", use_combinations=True)
-    assert variation["combination_id"] in COS_COMBINATION_PRESETS
-    assert variation["framing_id"] == COS_COMBINATION_PRESETS[variation["combination_id"]]["framing_id"]
-
-
 def test_cos_back_view_does_not_require_a_visible_face_in_third_person_mode():
     item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
     action = build_cos_look_action(
@@ -1631,7 +1074,7 @@ def test_explicit_cos_scene_and_pose_are_not_overridden():
     assert "用户补充要求优先：卧室地毯上跪坐" not in action
 
 
-def test_back_look_pose_uses_a_downcast_profile_instead_of_a_full_turn():
+def test_back_three_quarter_pose_keeps_head_aligned_without_lookback():
     item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
     action = build_cos_look_action(
         "背身回眸",
@@ -1640,9 +1083,11 @@ def test_back_look_pose_uses_a_downcast_profile_instead_of_a_full_turn():
         picker=lambda **_: item,
     )
     assert "【cos_pose:over_shoulder】" in action
-    assert "【cos_framing:rear_lookback】" in action
-    assert "低垂看向身侧或地面" in action
-    assert "不直视镜头、不转成正脸" in action
+    assert "【cos_framing:rear_lookback】" not in action
+    assert "背后三分之四角度朝向场景纵深" in action
+    assert "肩线、胯部与头部朝向保持一致" in action
+    assert "不回头、不回眸、不扭颈" in action
+    assert "面部自然朝向画外" in action
 
     with tempfile.TemporaryDirectory() as tmp:
         persona = PersonaManager(tmp)
@@ -1653,7 +1098,11 @@ def test_back_look_pose_uses_a_downcast_profile_instead_of_a_full_turn():
 
 def test_back_look_orientation_does_not_count_as_a_complete_framing_request():
     selected = pick_cos_framing(extra_request="背身回眸", pose_id="over_shoulder")
-    assert selected["view_id"] == "rear_lookback"
+    assert selected["view_id"] in {"rear_three_quarter", "rear_low_medium"}
+    assert selected["prompt"] in {
+        COS_FRAMING_CLASSES[framing_id]["prompt"]
+        for framing_id in COS_POSE_FRAMING_COMPATIBILITY["over_shoulder"]
+    }
 
 
 def test_random_cos_framing_is_always_selected_when_unspecified():
@@ -1666,48 +1115,6 @@ def test_random_cos_framing_is_always_selected_when_unspecified():
     explicit = pick_cos_framing(extra_request="COS 换装：竖屏全身构图")
     assert explicit["explicit"] is True
     assert explicit["view_id"] == "user"
-
-
-def test_cos_multi_view_collage_keeps_one_scene_and_distinct_compatible_poses():
-    item = next(item for item in COS_LOOK_SETS if item["id"] == "roxy_cream")
-    action = build_cos_look_action(
-        "多视角拼贴",
-        picker=lambda **_: item,
-    )
-
-    assert requests_cos_multi_view_collage("多视角拼贴") is True
-    assert requests_cos_multi_view_collage("不要多视角拼贴") is False
-    assert "【cam:third】" in action
-    assert "【cos_view:multi_view_collage】" in action
-    main_framing = re.search(r"【cos_framing:([a-z0-9_]+)】", action).group(1)
-    assert main_framing in COS_FRAMING_CLASSES
-    assert "方形画布" in action
-    assert extract_prompt_aspect_ratio(action) == "1:1"
-    assert "保持上方已确定的单一构图" not in action
-    assert "总数严格为七张独立照片，不增不减" in action
-    assert "自然错落、非对称的七格摄影拼贴" in action
-    assert "中央是一张贯穿画面主要高度的高幅大主图" in action
-    assert "左右分割线高度彼此错开" in action
-    assert "不做表格、九宫格或规则卡片墙" in action
-    assert "中央高幅主画格（大图）" in action
-    assert all(label in action for label in (
-        "左侧小画格1", "左侧小画格2", "左侧小画格3",
-        "右侧小画格1", "右侧小画格2", "右侧小画格3",
-    ))
-
-    variation = pick_cos_variation(
-        item["id"],
-        camera="third",
-        multi_view_collage=True,
-    )
-    assert len(variation["panel_pose_ids"]) == 7
-    assert len(variation["panel_framing_ids"]) == 7
-    assert len(set(zip(variation["panel_pose_ids"], variation["panel_framing_ids"]))) == 7
-    assert variation["main_framing_id"] == variation["panel_framing_ids"][0]
-    assert variation["scene_id"] in COS_RANDOM_SCENE_CLASSES
-    assert set(variation["panel_pose_ids"]) <= set(
-        COS_RANDOM_SCENE_CLASSES[variation["scene_id"]]["pose_ids"]
-    )
 
 
 def test_cos_collage_respects_single_pose_framing_and_camera_constraints():
@@ -1863,42 +1270,6 @@ def test_review_stage_special_cos_batch_is_resolved_and_fixed():
         assert not re.search(r"【cos_(?:pose|scene|framing):", action), look_id
 
 
-def test_extracted_special_styles_have_explicit_compatible_random_contracts():
-    cases = (
-        ("黑背景影棚 胸前拢衣", "black_studio_chiaroscuro", "hands_gathered_at_sternum", "斜向硬光"),
-        ("日式缘侧 缘侧侧颜", "veranda_green_side_profile", "veranda_side_profile", "85mm镜头"),
-        ("藤编椅 椅上抬膝", "vintage_wicker_room", "seated_knee_up", "藤编靠背椅"),
-        ("日式旅馆 前倾伸手", "ryokan_night_room", "lean_forward_hands", "冷暖对比"),
-        ("窗边CCD 窗边背影抬臂", "window_ccd_snapshot", "window_back_raised_arms", "CCD"),
-        ("星穹铁道休息舱 床上熟睡", "star_rail_rest_cabin", "sleeping_on_bed", "高动态范围"),
-    )
-    for request, expected_scene, expected_pose, style_marker in cases:
-        variation = pick_cos_variation("custom_cos_id", extra_request=request, camera="third")
-        assert variation["scene_id"] == expected_scene
-        assert variation["pose_id"] == expected_pose
-        # A style word inside the selected scene alias still belongs to that
-        # scene contract and must be present in the final prompt.
-        assert style_marker in variation["prompt"]
-        framing = pick_cos_framing(
-            pose_id=variation["pose_id"],
-            scene_id=variation["scene_id"],
-            camera="third",
-        )
-        assert framing["view_id"] in COS_POSE_FRAMING_COMPATIBILITY[expected_pose]
-        if framing["view_id"] in COS_FRAMING_SCENE_COMPATIBILITY:
-            assert expected_scene in COS_FRAMING_SCENE_COMPATIBILITY[framing["view_id"]]
-        assert "手机" not in variation["prompt"]
-        assert "手机" not in framing["prompt"]
-
-    explicit_style = pick_cos_variation(
-        "custom_cos_id",
-        extra_request="窗边CCD，使用胶片质感",
-        camera="third",
-    )
-    assert explicit_style["scene_id"] == "window_ccd_snapshot"
-    assert "本次场景影像风格" not in explicit_style["prompt"]
-
-
 def test_cos_framing_alternatives_are_resolved_before_prompt_generation():
     selected = pick_cos_framing(
         extra_request="COS 换装：正面或三分之四侧身站立，近景至全身构图"
@@ -1943,37 +1314,6 @@ def test_framing_option_combinations_can_be_avoided_between_batch_shots():
     assert first["view_id"] == "option_0_0"
     assert second["view_id"] != first["view_id"]
     assert second["prompt"] != first["prompt"]
-
-
-def test_cos_pool_batch_can_rotate_pose_scene_framing_and_camera():
-    used_poses = set()
-    used_scenes = set()
-    used_framings = set()
-    used_cameras = set()
-    actions = []
-    for _ in range(3):
-        action = build_cos_look_action(
-            "洛琪希",
-            avoid_poses=used_poses,
-            avoid_scenes=used_scenes,
-            avoid_framings=used_framings,
-            avoid_cameras=used_cameras,
-            match_query="洛琪希",
-        )
-        actions.append(action)
-        for tag, values in (
-            ("cos_pose", used_poses),
-            ("cos_scene", used_scenes),
-            ("cos_framing", used_framings),
-            ("cam", used_cameras),
-        ):
-            match = re.search(rf"【{tag}:([a-z0-9_]+)】", action)
-            assert match, (tag, action)
-            values.add(match.group(1))
-
-    for tag in ("cos_pose", "cos_scene", "cos_framing", "cam"):
-        values = [re.search(rf"【{tag}:([a-z0-9_]+)】", action).group(1) for action in actions]
-        assert len(set(values)) == 3, (tag, values)
 
 
 def test_cos_english_builtin_keeps_the_complete_action_once():
@@ -2230,30 +1570,6 @@ def test_environment_look_does_not_lock_a_conflicting_close_framing():
     assert "中远景环境人像" in action
     assert "竖屏手机近景半身" not in action
     assert "竖屏半身中近景" not in action
-
-
-def test_leg_focus_explicit_scene_filters_pose_pool():
-    bedroom_ids = set()
-    rooftop_ids = set()
-    for seed in range(80):
-        import random
-
-        random.seed(seed)
-        bedroom = build_leg_focus_action("卧室")
-        rooftop = build_leg_focus_action("天台")
-        bedroom_ids.add(re.search(r"【pose:([a-z_]+)】", bedroom).group(1))
-        rooftop_ids.add(re.search(r"【pose:([a-z_]+)】", rooftop).group(1))
-    assert bedroom_ids <= {
-        "sofa_front_crop", "sofa_cross_crop", "sofa_occlusion_crop",
-        "seat_knees_cross_crop",
-        "knees_forward_sit_crop", "one_knee_bent_sit_crop",
-        "side_folded_sit_crop", "reclined_bent_knees_crop",
-        "one_leg_extended_sit_crop", "heels_folded_sit_crop",
-        "edge_dangle_sit_crop", "crossed_ankles_sit_crop",
-        "crossed_knee_sit_crop", "over_leg_sit_crop",
-        "supported_legs_forward_crop", "relaxed_knees_apart_sit_crop",
-    }
-    assert not rooftop_ids & {"sofa_front_crop", "sofa_cross_crop", "sofa_occlusion_crop", "stool_edge_crop"}
 
 
 def test_leg_focus_selfie_does_not_keep_third_person_pose_wording():

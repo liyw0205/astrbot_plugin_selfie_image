@@ -159,8 +159,8 @@ class GenerationStoreMixin:
         except (TypeError, ValueError):
             window = 86400
         wanted_type = str(media_type or "").strip().lower()
-        if wanted_type not in {"", "image", "video", "audit", "auxiliary"}:
-            raise ValueError("media_type 必须是 image、video、audit 或 auxiliary")
+        if wanted_type not in {"", "image", "audit", "auxiliary"}:
+            raise ValueError("media_type 必须是 image、audit 或 auxiliary")
         now = time.time()
         cutoff = now - window if window else 0
         rows = []
@@ -323,17 +323,7 @@ class GenerationStoreMixin:
             image_sources = response.get("generated_image_sources")
         if not isinstance(image_sources, list):
             image_sources = []
-        video_source = (
-            record.get("video_source")
-            or record.get("video_url")
-            or response.get("video_source")
-            or response.get("video_url")
-            or ""
-        )
-        return {
-            "generated_image_sources": copy.deepcopy(image_sources),
-            "video_source": copy.deepcopy(video_source),
-        }
+        return {"generated_image_sources": copy.deepcopy(image_sources)}
 
     def _record_cache_media_paths(self, record: Mapping[str, Any]) -> List[str]:
         """Return generated media paths in the same order as source entries."""
@@ -432,11 +422,11 @@ class GenerationStoreMixin:
 
     @staticmethod
     def _remove_media_sources(record: Dict[str, Any]) -> None:
-        for key in ("generated_image_sources", "video_source", "video_url"):
+        for key in ("generated_image_sources",):
             record.pop(key, None)
         response = record.get("response_data")
         if isinstance(response, dict):
-            for key in ("generated_image_sources", "video_source", "video_url"):
+            for key in ("generated_image_sources",):
                 response.pop(key, None)
 
     def _sidecar_path(self, record_id: str) -> str:
@@ -449,7 +439,7 @@ class GenerationStoreMixin:
 
     def _write_media_sidecar(self, record_id: str, record: Mapping[str, Any]) -> str:
         sources = self._compact_media_sources(record, self._record_media_sources(record))
-        if not sources["generated_image_sources"] and not sources["video_source"]:
+        if not sources["generated_image_sources"]:
             return ""
         path = self._sidecar_path(record_id)
         if not path:
@@ -469,13 +459,13 @@ class GenerationStoreMixin:
         filename = str(record.get("media_sources_file") or "").strip()
         root = self._media_sources_root()
         if not root or not record_id:
-            return {"generated_image_sources": [], "video_source": ""}
+            return {"generated_image_sources": []}
         path = os.path.abspath(os.path.join(root, filename)) if filename else self._sidecar_path(record_id)
         if path == root or not path.startswith(os.path.abspath(root) + os.sep):
-            return {"generated_image_sources": [], "video_source": ""}
+            return {"generated_image_sources": []}
         data = load_json_file(path)
         if not isinstance(data, Mapping):
-            return {"generated_image_sources": [], "video_source": ""}
+            return {"generated_image_sources": []}
         sources = self._record_media_sources(data)
         image_sources = sources.get("generated_image_sources")
         if not isinstance(image_sources, list):
@@ -502,14 +492,10 @@ class GenerationStoreMixin:
         sources = self._read_media_sidecar(record)
         if sources["generated_image_sources"]:
             record["generated_image_sources"] = sources["generated_image_sources"]
-        if sources["video_source"]:
-            record["video_source"] = sources["video_source"]
         response = record.get("response_data")
         if isinstance(response, dict):
             if sources["generated_image_sources"]:
                 response["generated_image_sources"] = copy.deepcopy(sources["generated_image_sources"])
-            if sources["video_source"]:
-                response["video_source"] = sources["video_source"]
         return record
 
     def _delete_media_sidecars(self, records: Iterable[Mapping[str, Any]]) -> None:
@@ -971,7 +957,7 @@ class GenerationStoreMixin:
                         path_filter.intersection(
                             {
                                 str(item).strip()
-                                for key in ("generated_image_paths", "generated_video_paths")
+                                for key in ("generated_image_paths",)
                                 for item in (record.get(key) if isinstance(record.get(key), list) else [])
                                 if str(item).strip()
                             }
@@ -1085,10 +1071,8 @@ class GenerationStoreMixin:
         request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
         result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
         media_type = str(task.get("media_type") or request.get("media_type") or "").strip().lower()
-        if media_type not in {"image", "video"}:
-            kind = str(request.get("kind") or "").strip().lower()
-            source = str(task.get("source") or "").strip().lower()
-            media_type = "video" if kind == "video" or "视频" in kind or "video" in source else "image"
+        if media_type != "image":
+            media_type = "image"
         linked = task.get("record_ids")
         if not isinstance(linked, list):
             linked = result.get("record_ids") if isinstance(result.get("record_ids"), list) else []
@@ -1311,8 +1295,7 @@ class GenerationStoreMixin:
             record_media_type = str(record.get("media_type") or "").strip().lower()
             if not record_media_type:
                 image_paths = record.get("generated_image_paths") if isinstance(record.get("generated_image_paths"), list) else []
-                video_paths = record.get("generated_video_paths") if isinstance(record.get("generated_video_paths"), list) else []
-                record_media_type = "video" if video_paths and not image_paths else "image"
+                record_media_type = "image"
             if media_text and record_media_type != media_text:
                 continue
             if success is not None and bool(record.get("success")) is not bool(success):
@@ -1539,23 +1522,18 @@ class GenerationStoreMixin:
         exists = os.path.exists(abs_path) and os.path.isfile(abs_path)
         mime = "image/png"
         is_image = False
-        is_video = False
         if exists:
             with open(abs_path, "rb") as handle:
                 head = handle.read(512)
             is_image = looks_like_image_bytes(head)
-            is_video = head[4:12].startswith(b"ftyp") or abs_path.lower().endswith((".mp4", ".webm", ".mov"))
             if is_image:
                 mime = detect_mime_by_bytes(head)
-            elif is_video:
-                mime = "video/webm" if abs_path.lower().endswith(".webm") else "video/quicktime" if abs_path.lower().endswith(".mov") else "video/mp4"
         return {
             "path": rel_path,
             "absolute_path": abs_path,
             "name": os.path.basename(abs_path),
             "exists": exists,
             "is_image": is_image,
-            "is_video": is_video,
             "mime_type": mime,
         }
 

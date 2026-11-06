@@ -16,7 +16,7 @@ try:
 except ImportError:
     from astrbot.api.utils import logger
 
-from ..core.constants import LEGACY_CONFIG_FILENAME, LEGACY_PLUGIN_NAME, VIDEO_MAX_CONCURRENT_TASKS
+from ..core.constants import LEGACY_CONFIG_FILENAME, LEGACY_PLUGIN_NAME
 from ..core.models import (
     AICatConfig,
     DEFAULT_CONFIG,
@@ -75,7 +75,7 @@ def _channel_identity(row: Any) -> str:
 def _mask_web_channel_credentials(config: Dict[str, Any]) -> Dict[str, Any]:
     """Return a dashboard-safe config copy with channel API keys masked."""
     safe = copy.deepcopy(config if isinstance(config, dict) else {})
-    for key in ("image_channels", "audit_channels", "video_channels"):
+    for key in ("image_channels", "audit_channels"):
         rows = safe.get(key)
         if not isinstance(rows, list):
             continue
@@ -106,7 +106,7 @@ def _restore_web_channel_credentials(
     """Restore existing channel keys when the dashboard sends mask markers."""
     result = copy.deepcopy(patch if isinstance(patch, dict) else {})
     current = current if isinstance(current, dict) else {}
-    for key in ("image_channels", "audit_channels", "video_channels"):
+    for key in ("image_channels", "audit_channels"):
         rows = result.get(key)
         old_rows = current.get(key)
         if not isinstance(rows, list) or not isinstance(old_rows, list):
@@ -220,12 +220,12 @@ class ConfigurationMixin:
             }
 
         results = []
-        for key in ("image_channels", "audit_channels", "video_channels"):
+        for key in ("image_channels", "audit_channels"):
             rows = report.get(key) if isinstance(report, dict) else []
             if isinstance(rows, list):
                 results.extend(row for row in rows if isinstance(row, dict))
         generation_results = [
-            row for row in results if str(row.get("kind") or "").strip().lower() in {"image", "video"}
+            row for row in results if str(row.get("kind") or "").strip().lower() == "image"
         ]
         errors = [
             {
@@ -340,7 +340,6 @@ class ConfigurationMixin:
             for key in (
                 "imageChannels",
                 "auditChannels",
-                "videoChannels",
                 "imageModelCallMode",
                 "randomImageModel",
             )
@@ -540,9 +539,6 @@ class ConfigurationMixin:
             self._image_scheduler = ImageJobScheduler(self.config.image_max_concurrent_tasks)
         else:
             scheduler.set_limit(self.config.image_max_concurrent_tasks)
-        self._video_semaphore = asyncio.Semaphore(
-            max(1, int(getattr(self.config, "video_max_concurrent_tasks", VIDEO_MAX_CONCURRENT_TASKS) or VIDEO_MAX_CONCURRENT_TASKS))
-        )
         self._persist_config()
 
     def _start_web_server(self) -> None:
@@ -663,17 +659,15 @@ class ConfigurationMixin:
             channel_keys = (
                 "image_channels",
                 "audit_channels",
-                "video_channels",
                 "imageChannels",
                 "auditChannels",
-                "videoChannels",
             )
             if isinstance(patch, dict) and any(key in patch for key in channel_keys):
                 if not report.get("ok"):
                     raise RuntimeError(report.get("message") or "渠道配置预检未通过")
                 # Prefer sanitized tree from preflight when present.
                 if isinstance(report.get("config"), dict):
-                    for key in ("image_channels", "audit_channels", "video_channels"):
+                    for key in ("image_channels", "audit_channels"):
                         if key in report["config"]:
                             merged[key] = report["config"][key]
             self._apply_raw_config(merged)

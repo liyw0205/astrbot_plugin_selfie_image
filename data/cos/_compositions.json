@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "items": {
+    "asymmetric_negative_space": {
+      "title": "非对称留白",
+      "prompt": "采用非对称构图，人物位于画面左侧或右侧三分之一处，另一侧留出有层次的场景空间；通过人物位置和背景纵深形成视觉平衡，不改变已选姿势、镜头视角或头部朝向，不为指向留白单独转头、回眸或扭颈；不裁断头部、手部或服装主体"
+    },
+    "telephoto_compression": {
+      "title": "长焦空间压缩",
+      "prompt": "摄影者退到较远距离使用中长焦视角压缩背景层次，人物比例和服装细节自然清楚；不使用广角，不把背景贴到人物身上",
+      "cameras": ["third"],
+      "poses": ["standing_detail", "half_turn", "seated_composed", "leaning_rest", "side_profile", "back_to_camera"]
+    },
+    "architectural_frame": {
+      "title": "建筑框景纵深",
+      "prompt": "利用当前场景已经存在的门框、拱门、廊柱或窗格形成边缘框景，主体完整清晰；前景结构只贴画面边缘，不遮挡脸、手和服装，不凭空增加建筑",
+      "scenes": ["old_town_lane", "museum_hall", "japanese_ink_room", "theater_dressing_room", "greenhouse"],
+      "cameras": ["third"],
+      "poses": ["standing_detail", "half_turn", "seated_composed", "leaning_rest", "side_profile", "back_to_camera"]
+    },
+    "architectural_leading_lines": {
+      "title": "建筑引导线",
+      "prompt": "借助当前场景已有的地面、台阶、廊柱或道路线条形成清楚的纵深引导，并把视线带向人物；不新增道路或栏杆，线条不穿过人物身体",
+      "scenes": ["garden_walkway", "bamboo_garden", "cherry_blossom_path", "seaside_boardwalk", "rooftop_sunset", "old_town_lane", "rainy_neon_street", "festival_lantern", "stone_staircase", "museum_hall", "greenhouse"],
+      "cameras": ["third"],
+      "poses": ["standing_detail", "half_turn", "leaning_rest", "side_profile", "back_to_camera", "stair_sit"]
+    },
+    "layered_foreground": {
+      "title": "前后景分层",
+      "prompt": "形成近处少量柔和虚化边缘、中景清晰人物、远处场景的三层空间；前景只占画面边缘，绝不遮挡脸、手、腿或服装关键结构，不额外生成物件",
+      "scenes": ["garden_walkway", "bamboo_garden", "cherry_blossom_path", "old_town_lane", "festival_lantern", "greenhouse"],
+      "cameras": ["third"],
+      "poses": ["standing_detail", "half_turn", "seated_composed", "leaning_rest", "reach_light", "side_profile", "back_to_camera"]
+    },
+    "dynamic_freeze": {
+      "title": "生活静态抓拍",
+      "prompt": "像普通相机记录人物自然停留的一张生活照片，姿势保持静态、重心稳定，衣摆和发梢保留自然褶皱；画面清楚但不过度锐化",
+      "cameras": ["third"],
+      "poses": ["reach_light"]
+    },
+    "backlight_rim_detail": {
+      "title": "逆光轮廓层次",
+      "prompt": "只利用当前场景已有的窗光、天光或舞台光形成柔和边缘逆光，同时保留面部、发型和服装纹理细节；人物不可变成黑色剪影，不改变场景时段或主色",
+      "scenes": ["bedroom_window", "garden_walkway", "cherry_blossom_path", "seaside_boardwalk", "rooftop_sunset", "festival_lantern", "snowy_courtyard", "greenhouse"],
+      "cameras": ["third"],
+      "poses": ["standing_detail", "half_turn", "reach_light", "side_profile", "back_to_camera"]
+    }
+  },
+  "request_terms": [
+    "框景", "门框", "拱门", "非对称构图", "留白", "长焦", "压缩背景",
+    "引导线", "前景", "前后景", "动态抓拍", "动作定格", "逆光", "轮廓光"
+  ],
+  "multi_view_request_terms": [
+    "多视角拼贴", "多格拼贴", "杂志拼贴", "多视角杂志", "多画格拼贴"
+  ],
+  "multi_view": {
+    "id": "multi_view_collage",
+    "title": "9:16竖幅自然错落式多视角拼贴",
+    "prompt": "9:16竖幅画布上的自然错落式多视角拼贴构图",
+    "panel_count": 7,
+    "panel_labels": [
+      "中央竖幅主画格（大图）",
+      "上部辅助画格1", "上部辅助画格2", "中部辅助画格1",
+      "中部辅助画格2", "下部辅助画格1", "下部辅助画格2"
+    ]
+  }
+}

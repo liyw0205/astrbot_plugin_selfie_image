@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import random
-import hashlib
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -64,18 +63,6 @@ LEGACY_BUILTIN_PROMPT_REPLACEMENTS = {
 }
 
 
-# Upgrade only the shipped hip presets that still contain the old shared
-# action skeleton. Hash matching keeps same-name user presets untouched.
-VIDEO_LEGACY_BUILTIN_PROMPT_HASHES = {
-    "正太扭腰": "cdebddfc59f5330f1289622d568298596ab2e012a95390869b30972c9fc9c7aa",
-    "左右顶胯": "cc758f2272bbe061d054982325cefc53b671e21ccdbe9daf16ea4285d7debf7c",
-    "八字胯": "c3586d1301deb68bd7e46a017dcb5a4d3461a776d6cb622ce6b8f952ffeff0cd",
-    "点胯坐胯": "ab367e54175710cbb3c72cad03028488260ef7f5027dfa534d5400cc11289a04",
-    "坐胯": "a3da828ca1834652774d3866c99b6ea5c7470afbb1d2a84392b9aee112c49cef",
-    "绕胯": "6c390da3638a98e8f29eb825a646be07f052009054b3542c64caea1b6417cae9",
-}
-
-
 @dataclass
 class ImagePreset:
     prompt: str
@@ -83,7 +70,6 @@ class ImagePreset:
     resolution: str = ""
     description: str = ""
     extra_prompt: str = ""
-    duration: int = 0
 
 
 def _default_seed() -> Dict[str, Dict[str, str]]:
@@ -152,7 +138,6 @@ class ImagePresetManager:
                 resolution=str(value.get("resolution") or "").strip(),
                 description=str(value.get("description") or "").strip(),
                 extra_prompt=str(value.get("extra_prompt") or value.get("extraPrompt") or "").strip(),
-                duration=self._parse_duration(value.get("duration")),
             )
 
         # Seed missing built-in defaults and upgrade only exact legacy defaults.
@@ -170,7 +155,6 @@ class ImagePresetManager:
                 presets[key] = ImagePreset(
                     prompt=prompt,
                     description=str((value or {}).get("description") or key).strip(),
-                    duration=self._parse_duration((value or {}).get("duration")),
                 )
                 dirty = True
             elif existing.prompt == LEGACY_BUILTIN_PROMPT_REPLACEMENTS.get(key):
@@ -217,7 +201,6 @@ class ImagePresetManager:
                 "resolution": preset.resolution,
                 "description": preset.description,
                 "extra_prompt": preset.extra_prompt,
-                "duration": preset.duration,
             }
             for name, preset in self.presets.items()
         }
@@ -244,7 +227,6 @@ class ImagePresetManager:
                     "aspect_ratio": preset.aspect_ratio or "",
                     "resolution": preset.resolution or "",
                     "extra_prompt": preset.extra_prompt or "",
-                    "duration": preset.duration,
                     "source": "user",
                     "preset_group": _preset_group_for_name(name),
                     "special_group": _preset_group_for_name(name),
@@ -297,7 +279,6 @@ class ImagePresetManager:
                     "aspect_ratio": preset.aspect_ratio or "",
                     "resolution": preset.resolution or "",
                     "extra_prompt": preset.extra_prompt or "",
-                    "duration": preset.duration,
                     "source": "builtin" if name in builtin_names else "user",
                     "preset_group": _preset_group_for_name(name),
                     "special_group": _preset_group_for_name(name),
@@ -354,7 +335,6 @@ class ImagePresetManager:
                     resolution=str(payload.get("resolution") or "").strip(),
                     description=str(payload.get("description") or "").strip(),
                     extra_prompt=str(payload.get("extra_prompt") or payload.get("extraPrompt") or "").strip(),
-                    duration=self._parse_duration(payload.get("duration")),
                 ),
             ),
             "",
@@ -432,7 +412,6 @@ class ImagePresetManager:
             "preset_name": preset_name,
             "description": preset.description,
             "extra_prompt": preset.extra_prompt,
-            "duration": preset.duration,
         }
 
     def has_preset(self, name: str) -> bool:
@@ -451,18 +430,10 @@ class ImagePresetManager:
                         resolution=str(obj.get("resolution") or "").strip(),
                         description=str(obj.get("description") or "").strip(),
                         extra_prompt=str(obj.get("extra_prompt") or obj.get("extraPrompt") or "").strip(),
-                        duration=self._parse_duration(obj.get("duration")),
                     )
             except Exception:
                 pass
         return ImagePreset(prompt=raw_value)
-
-    @staticmethod
-    def _parse_duration(value: object) -> int:
-        try:
-            return max(0, min(60, int(float(str(value or 0).strip()))))
-        except Exception:
-            return 0
 
     def _normalize_text(self, text: str) -> str:
         return str(text or "").strip().replace("\t", " ").replace("\n", " ").replace("\r", " ").replace("  ", " ")
@@ -520,47 +491,3 @@ class ImagePresetManager:
 
     def _join_prompt(self, parts: List[str]) -> str:
         return " ".join(part for part in parts if str(part or "").strip()).strip()
-
-
-class VideoPresetManager(ImagePresetManager):
-    """独立保存视频提示词预设，沿用管理页的增删改导入导出格式。"""
-
-    PRESET_FILENAME = "video_presets.json"
-    _REMOVED_BUILTIN_NAMES = frozenset({"Whiplash完整舞蹈", "镜头推进", "转身定格"})
-
-    def load(self) -> None:
-        super().load()
-        seed = self._load_builtin_seed()
-        dirty = False
-        for name, legacy_hash in VIDEO_LEGACY_BUILTIN_PROMPT_HASHES.items():
-            existing = self.presets.get(name)
-            replacement = seed.get(name) if isinstance(seed, dict) else None
-            if not existing or not isinstance(replacement, dict):
-                continue
-            current_hash = hashlib.sha256(existing.prompt.encode("utf-8")).hexdigest()
-            if current_hash != legacy_hash:
-                continue
-            existing.prompt = str(replacement.get("prompt") or existing.prompt).strip()
-            existing.description = str(replacement.get("description") or existing.description).strip()
-            existing.duration = self._parse_duration(replacement.get("duration")) or existing.duration
-            dirty = True
-        stale_names = [name for name in self._REMOVED_BUILTIN_NAMES if name in self.presets]
-        if not stale_names and not dirty:
-            return
-        for name in stale_names:
-            self.presets.pop(name, None)
-            self._deleted_builtin_names.add(name)
-        if stale_names or dirty:
-            self.save()
-
-    @staticmethod
-    def _builtin_seed() -> Dict[str, Dict[str, str]]:
-        try:
-            from ..studio.studio import default_video_preset_seed
-
-            seed = default_video_preset_seed()
-            if not isinstance(seed, dict):
-                raise TypeError("default video preset seed must be a mapping")
-            return seed
-        except (ImportError, AttributeError):
-            return {}

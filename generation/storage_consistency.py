@@ -24,9 +24,7 @@ def _record_paths(record: Mapping[str, Any]) -> List[str]:
     response = record.get("response_data")
     response = response if isinstance(response, Mapping) else {}
     paths: List[str] = []
-    # Images and videos share the generated cache root.  Keep both fields in
-    # the reference set so a retained video is not reported as an orphan.
-    for key in ("generated_image_paths", "generated_video_paths"):
+    for key in ("generated_image_paths",):
         values = record.get(key)
         if not isinstance(values, list) or not values:
             values = response.get(key)
@@ -95,10 +93,7 @@ def inspect_storage_consistency(
         response = response if isinstance(response, Mapping) else {}
         has_sources = bool(
             record.get("generated_image_sources")
-            or record.get("video_source")
             or response.get("generated_image_sources")
-            or response.get("video_source")
-            or record.get("video_url")
         )
         name = os.path.basename(declared) if declared else (_sidecar_name(record_id) if has_sources else "")
         if name and sidecar_root:

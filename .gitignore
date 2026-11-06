@@ -14,5 +14,7 @@ image-persona/
 .tmp_douyin_*/
 scripts/douyin_frames.py
 search_txt.txt
+cos/.review_stage/
+.pytest_cache/
 
 .venv/

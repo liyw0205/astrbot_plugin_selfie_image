@@ -4,7 +4,7 @@ PLUGIN_NAME = "astrbot_plugin_selfie_image"
 LEGACY_PLUGIN_NAME = "astrbot_plugin_aicat"
 PLUGIN_DISPLAY_NAME = "Selfie Image 生图自拍"
 PLUGIN_AUTHOR = "Selfie Image"
-PLUGIN_VERSION = "1.6.82"
+PLUGIN_VERSION = "1.7.1"
 PLUGIN_CONFIG_FILENAME = "selfie_image_config.json"
 LEGACY_CONFIG_FILENAME = "aicat_config.json"
 
@@ -20,22 +20,5 @@ PROVIDER_TYPES = [
     "grok",
     "agnes",
     "novelai",
+    "hunyuan",
 ]
-# Video model-family protocols (like image provider types). Transport modes kept as advanced aliases.
-# openai_video = generic OpenAI-compatible /videos/generations (default midgate).
-VIDEO_PROVIDER_TYPES = [
-    "openai_video",
-    "sora",
-    "veo",
-    "seedance",
-    "agnes",
-    "kling",
-    "cogvideo",
-    "grok",
-    "video_chat",
-    "video_sync",
-]
-
-# Default number of video generations allowed to run at once.  Video jobs
-# still enter the shared task queue when all slots are occupied.
-VIDEO_MAX_CONCURRENT_TASKS = 3

@@ -167,7 +167,7 @@ def test_model_status_font_uses_windows_chinese_fonts(monkeypatch) -> None:
         def getbbox(self):
             return (0, 0, 1, 1)
 
-        def tobytes(self):
+        def __bytes__(self):
             return self.value.encode("utf-8")
 
     class Font:
@@ -201,7 +201,7 @@ def test_model_status_font_rejects_missing_glyph_boxes(monkeypatch) -> None:
         def getbbox(self):
             return (0, 0, 1, 1)
 
-        def tobytes(self):
+        def __bytes__(self):
             return b"same tofu box"
 
     class Font:

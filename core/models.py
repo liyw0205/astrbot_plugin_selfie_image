@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
-from .constants import PROVIDER_TYPES, VIDEO_MAX_CONCURRENT_TASKS, VIDEO_PROVIDER_TYPES
+from .constants import PROVIDER_TYPES
 from .proxy import LOCAL_IMAGE_WAIT_SECONDS
 from .utils import unique as unique_values
 
@@ -92,7 +92,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "use_logo_when_no_persona": True,
         # Prompt EN for models weak on Chinese (uses audit-channel chat).
         "enable_image_prompt_en": False,
-        "enable_video_prompt_en": False,
         "prompt_en_mode": "if_cjk",  # if_cjk | always
         "prompt_en_model": "",
         "image_prompt_en_template": (
@@ -113,25 +112,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "Source prompt:\n"
             "{prompt}"
         ),
-        "video_prompt_en_template": (
-            "Translate the video-generation prompt into natural English.\n"
-            "Goal: faithful language conversion only. Do not rewrite creative intent.\n"
-            "\n"
-            "Rules:\n"
-            "1. Keep the same meaning, detail order, motion, camera cues, style, and constraints.\n"
-            "2. Do not add, remove, or invent actions, shots, characters, or plot.\n"
-            "3. Do not summarize, beautify, or restructure into a new prompt.\n"
-            "4. Proper nouns and technical tags may stay as-is when needed.\n"
-            "5. If already English, return it with only minimal grammar fixes.\n"
-            "\n"
-            "Return ONLY one JSON object (no markdown, no extra text):\n"
-            '{"ok":true,"en":"<english prompt>"}\n'
-            'On failure still return JSON: {"ok":false,"en":""}\n'
-            "\n"
-            "Source prompt:\n"
-            "{prompt}"
-        ),
-
     },
     "permission": {
         "usable_users": "",
@@ -145,19 +125,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "proxies": [],
     "image_channels": [],
     "audit_channels": [],
-    "video_channels": [],
     "enabled_image_model_priority": [],
     "enabled_audit_model_priority": [],
-    "enabled_video_model_priority": [],
     "group_chat_configs": {},
     # sequence: priority list only, or enabled order when empty; random: one from priority; fixed: priority 1 or enabled 1.
     "image_model_call_mode": "sequence",
-    "video": {
-        "enable": True,
-        "default_duration": 5,
-        "max_concurrent_tasks": VIDEO_MAX_CONCURRENT_TASKS,
-        "global_timeout": 300,
-    },
 }
 
 
@@ -251,31 +223,20 @@ class ImageChannelConfig:
         if not self.enabled:
             return []
         models = self.enabled_models or ([self.model] if self.model else [])
-        is_video_proto = bool(normalize_video_provider_type(self.provider_type)) or str(self.provider_type or "").startswith(
-            "video_"
-        )
         # Default-lock OpenAI-compatible *image* channel types so model names cannot jump protocols.
-        lock = (not is_video_proto) and (bool(self.protocol_lock) or self.provider_type in {"openai", "openai_chat", "gemini_openai"})
+        lock = bool(self.protocol_lock) or self.provider_type in {"openai", "openai_chat", "gemini_openai"}
         keys = self.resolved_api_keys()
         primary_key = keys[0] if keys else str(self.api_key or "").strip()
         result: List[ImageModelTarget] = []
         for model in models:
             if not model:
                 continue
-            model_video_override = normalize_video_provider_type(self.model_provider_types.get(model, ""))
-            if is_video_proto or model_video_override:
-                ptype = resolve_video_model_provider_type(
-                    model,
-                    self.provider_type if is_video_proto else "openai_video",
-                    self.model_provider_types.get(model, ""),
-                )
-            else:
-                ptype = resolve_model_provider_type(
-                    model,
-                    self.provider_type,
-                    self.model_provider_types.get(model, ""),
-                    protocol_lock=lock,
-                )
+            ptype = resolve_model_provider_type(
+                model,
+                self.provider_type,
+                self.model_provider_types.get(model, ""),
+                protocol_lock=lock,
+            )
             extra = copy.deepcopy(self.extra)
             extra["image_to_text_enabled"] = model in self.image_to_text_models
             extra["prompt_en_enabled"] = model in self.prompt_en_models
@@ -290,16 +251,7 @@ class ImageChannelConfig:
                     base_url=self.base_url,
                     api_key=primary_key,
                     model=model,
-                    # Image requests have a per-model hard cap; callers may
-                    # override it for video targets, which use their global budget.
-                    timeout=max(
-                        10,
-                        int(
-                            request_timeout
-                            if request_timeout is not None
-                            else (global_timeout if is_video_proto or model_video_override else LOCAL_IMAGE_WAIT_SECONDS)
-                        ),
-                    ),
+                    timeout=max(10, int(request_timeout if request_timeout is not None else LOCAL_IMAGE_WAIT_SECONDS)),
                     proxy=self.proxy,
                     extra=extra,
                     api_keys=list(keys),
@@ -346,11 +298,9 @@ class AICatConfig:
     image_output_audit_template: str
     image_use_logo_when_no_persona: bool
     image_enable_image_prompt_en: bool
-    image_enable_video_prompt_en: bool
     image_prompt_en_mode: str
     image_prompt_en_model: str
     image_image_prompt_en_template: str
-    image_video_prompt_en_template: str
     usable_users: List[str]
     usable_users_enabled: bool
     blocked_users: List[str]
@@ -360,15 +310,9 @@ class AICatConfig:
     proxies: List[Dict[str, Any]]
     image_channels: List[ImageChannelConfig]
     audit_channels: List[ImageChannelConfig]
-    video_channels: List[ImageChannelConfig]
     enabled_image_model_priority: List[str]
     enabled_audit_model_priority: List[str]
-    enabled_video_model_priority: List[str]
     image_model_call_mode: str
-    video_enable: bool
-    video_default_duration: int
-    video_max_concurrent_tasks: int
-    video_global_timeout: int
     _target_cache: Dict[str, List[ImageModelTarget]] = field(default_factory=dict, init=False, repr=False)
 
     def _target_cache_key(self, kind: str) -> str:
@@ -402,7 +346,20 @@ class AICatConfig:
 
         web = ensure_dict(raw, "web")
         image = ensure_dict(raw, "image")
-        video = ensure_dict(raw, "video")
+        # Retired media settings are ignored during legacy config migration and
+        # are never copied into the normalized image-only config.
+        raw.pop("video_channels", None)
+        raw.pop("videoChannels", None)
+        raw.pop("enabled_video_model_priority", None)
+        raw.pop("enabledVideoModelPriority", None)
+        raw.pop("video_only", None)
+        raw.pop("videoOnly", None)
+        raw.pop("video", None)
+        image_raw = ensure_dict(raw, "image")
+        image_raw.pop("enable_video_prompt_en", None)
+        image_raw.pop("enableVideoPromptEn", None)
+        image_raw.pop("video_prompt_en_template", None)
+        image_raw.pop("videoPromptEnTemplate", None)
         permission = ensure_dict(raw, "permission")
         group_chat_configs = normalize_group_chat_configs(raw.get("group_chat_configs"))
         raw["group_chat_configs"] = group_chat_configs
@@ -436,13 +393,11 @@ class AICatConfig:
         channels = [channel for channel in channels if channel.name and channel.provider_type in PROVIDER_TYPES]
         audit_channels = [_build_image_channel(item) for item in template_list_items(raw.get("audit_channels"))]
         audit_channels = [channel for channel in audit_channels if channel.name and channel.provider_type in PROVIDER_TYPES]
-        video_channels = [_build_video_channel(item) for item in template_list_items(raw.get("video_channels"))]
-        video_channels = [channel for channel in video_channels if channel.name]
-        for channel in (*channels, *audit_channels, *video_channels):
+        for channel in (*channels, *audit_channels):
             _migrate_channel_proxy(channel)
         raw["proxies"] = proxies
         # Persist proxy_id on raw channel dicts for Web round-trip; drop bare proxy string preference.
-        for key, chs in (("image_channels", channels), ("audit_channels", audit_channels), ("video_channels", video_channels)):
+        for key, chs in (("image_channels", channels), ("audit_channels", audit_channels)):
             raw_list = template_list_items(raw.get(key))
             by_name = {c.name: c for c in chs}
             for item in raw_list:
@@ -537,11 +492,9 @@ class AICatConfig:
             image_output_audit_template=str(image.get("output_audit_template") or DEFAULT_CONFIG["image"]["output_audit_template"]),
             image_use_logo_when_no_persona=to_bool(image.get("use_logo_when_no_persona"), True),
             image_enable_image_prompt_en=to_bool(image.get("enable_image_prompt_en") or image.get("enableImagePromptEn"), False),
-            image_enable_video_prompt_en=to_bool(image.get("enable_video_prompt_en") or image.get("enableVideoPromptEn"), False),
             image_prompt_en_mode=prompt_en_mode,
             image_prompt_en_model=str(image.get("prompt_en_model") or image.get("promptEnModel") or "").strip(),
             image_image_prompt_en_template=str(image.get("image_prompt_en_template") or image.get("imagePromptEnTemplate") or "").strip() or DEFAULT_CONFIG["image"]["image_prompt_en_template"],
-            image_video_prompt_en_template=str(image.get("video_prompt_en_template") or image.get("videoPromptEnTemplate") or "").strip() or DEFAULT_CONFIG["image"]["video_prompt_en_template"],
             usable_users=split_values(permission.get("usable_users")),
             usable_users_enabled=usable_users_enabled,
             blocked_users=split_values(permission.get("blocked_users")),
@@ -551,15 +504,9 @@ class AICatConfig:
             proxies=proxies,
             image_channels=channels,
             audit_channels=audit_channels,
-            video_channels=video_channels,
             enabled_image_model_priority=split_values(raw.get("enabled_image_model_priority")),
             enabled_audit_model_priority=split_values(raw.get("enabled_audit_model_priority")),
-            enabled_video_model_priority=split_values(raw.get("enabled_video_model_priority")),
             image_model_call_mode=image_model_call_mode,
-            video_enable=to_bool(video.get("enable"), True),
-            video_default_duration=to_int(video.get("default_duration"), 5, minimum=1, maximum=60),
-            video_max_concurrent_tasks=to_int(video.get("max_concurrent_tasks"), VIDEO_MAX_CONCURRENT_TASKS, minimum=1, maximum=5),
-            video_global_timeout=to_int(video.get("global_timeout"), 300, minimum=30, maximum=1800),
         )
 
     @staticmethod
@@ -722,44 +669,6 @@ class AICatConfig:
         result = self._bind_download_proxies(self._prioritize_targets(targets, self.enabled_audit_model_priority))
         return self._store_targets(key, result)
 
-    def get_prioritized_video_targets(self) -> List[ImageModelTarget]:
-        if not self.video_enable:
-            return []
-        key = self._target_cache_key("video")
-        cached = self._cached_targets(key)
-        if cached is not None:
-            return cached
-        targets: List[ImageModelTarget] = []
-        for channel in self.video_channels:
-            video_timeout = self.video_global_timeout or self.image_global_timeout
-            targets.extend(channel.targets(video_timeout, request_timeout=video_timeout))
-        priority = self.enabled_video_model_priority
-        if priority:
-            # A bare model id is allowed for convenience, but it must resolve
-            # to one deterministic target.  Previously every channel carrying
-            # the same model id passed the allow-list filter, which made the
-            # fallback chain call models that were not actually selected.
-            by_label = {target.label: target for target in targets}
-            by_colon = {f"{target.channel_name}:{target.model}": target for target in targets}
-            by_model: Dict[str, List[ImageModelTarget]] = {}
-            for target in targets:
-                by_model.setdefault(target.model, []).append(target)
-            selected: List[ImageModelTarget] = []
-            seen = set()
-            for raw_key in priority:
-                key = str(raw_key or "").strip()
-                target = by_label.get(key) or by_colon.get(key)
-                if target is None:
-                    candidates = by_model.get(key) or []
-                    target = candidates[0] if candidates else None
-                if target and target.label not in seen:
-                    selected.append(target)
-                    seen.add(target.label)
-        else:
-            selected = targets
-        return self._store_targets(key, self._bind_download_proxies(selected))
-
-
 def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
     raw = copy.deepcopy(raw)
 
@@ -771,10 +680,6 @@ def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
         raw["enabled_image_model_priority"] = raw["enabledImageModelPriority"]
     if "enabledAuditModelPriority" in raw and "enabled_audit_model_priority" not in raw:
         raw["enabled_audit_model_priority"] = raw["enabledAuditModelPriority"]
-    if "enabledVideoModelPriority" in raw and "enabled_video_model_priority" not in raw:
-        raw["enabled_video_model_priority"] = raw["enabledVideoModelPriority"]
-    if "videoChannels" in raw and "video_channels" not in raw:
-        raw["video_channels"] = raw["videoChannels"]
     if "botName" in raw and "bot_name" not in raw:
         raw["bot_name"] = raw["botName"]
 
@@ -1098,176 +1003,6 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
     )
 
 
-def _build_video_channel(raw: Any) -> ImageChannelConfig:
-    """Video channels reuse ImageChannelConfig; keep video protocol types (async/sync/chat)."""
-    data = raw if isinstance(raw, dict) else {}
-    # Temporarily allow video provider types through image builder by mapping first.
-    patched = dict(data)
-    raw_type = patched.get("provider_type", patched.get("providerType", patched.get("api_type", "")))
-    # bare openai / empty / legacy async on video channel → generic openai_video
-    raw_lower = str(raw_type or "").strip().lower().replace("-", "_")
-    if raw_lower in {"", "openai", "openai_compatible", "openai_image", "video_async", "async", "async_task"}:
-        vtype = "openai_video"
-    else:
-        vtype = normalize_video_provider_type(raw_type) or "openai_video"
-    # Feed image builder a benign type so it does not blank provider_type.
-    patched["provider_type"] = "openai"
-    channel = _build_image_channel(patched)
-    channel.provider_type = vtype
-    channel.protocol_lock = False
-    # Keep per-model video protocol overrides.
-    fixed_map: Dict[str, str] = {}
-    for model, ptype in (channel.model_provider_types or {}).items():
-        vt = normalize_video_provider_type(ptype)
-        if vt:
-            fixed_map[str(model)] = vt
-    # Also accept raw map before image normalize stripped unknown types.
-    raw_map = data.get("model_provider_types") or data.get("modelProviderTypes") or {}
-    if isinstance(raw_map, dict):
-        for model, ptype in raw_map.items():
-            vt = normalize_video_provider_type(ptype)
-            if vt:
-                fixed_map[str(model)] = vt
-    channel.model_provider_types = fixed_map
-    return channel
-
-
-def normalize_video_provider_type(value: Any) -> str:
-    """Map free-form labels to video model-family protocols.
-
-    Families (primary): openai_video / sora / veo / seedance / agnes / kling / cogvideo
-    Transport (advanced): video_chat / video_sync
-    Legacy video_async → openai_video
-    """
-    text = str(value or "").strip().lower().replace("-", "_")
-    if not text:
-        return ""
-    raw = str(value or "")
-    if "对话" in raw:
-        return "video_chat"
-    if "同步" in raw and "异步" not in raw:
-        return "video_sync"
-    aliases = {
-        # generic OpenAI-compatible video gateway
-        "openai_video": "openai_video",
-        "openai_compatible": "openai_video",
-        "openai_videos": "openai_video",
-        "async": "openai_video",
-        "async_task": "openai_video",
-        "video_async": "openai_video",
-        "video": "openai_video",
-        "videos": "openai_video",
-        "poll": "openai_video",
-        "通用": "openai_video",
-        # families
-        "sora": "sora",
-        "sora2": "sora",
-        "openai_sora": "sora",
-        "veo": "veo",
-        "veo2": "veo",
-        "veo3": "veo",
-        "google_veo": "veo",
-        "gemini_veo": "veo",
-        "seedance": "seedance",
-        "doubao_seedance": "seedance",
-        "seedance_1": "seedance",
-        "jimeng_video": "seedance",
-        "即梦视频": "seedance",
-        "agnes": "agnes",
-        "agnes_video": "agnes",
-        "agnes_ai": "agnes",
-        "kling": "kling",
-        "可灵": "kling",
-        "kuaishou_kling": "kling",
-        "cogvideo": "cogvideo",
-        "cogvideox": "cogvideo",
-        "zhipu_video": "cogvideo",
-        "智谱视频": "cogvideo",
-        "grok": "grok",
-        "grok_video": "grok",
-        "grok_imagine": "grok",
-        "grok_midgate": "grok",
-        "xai": "grok",
-        "x_ai": "grok",
-        # transport
-        "sync": "video_sync",
-        "openai_sync": "video_sync",
-        "video_sync": "video_sync",
-        "chat": "video_chat",
-        "video_chat": "video_chat",
-    }
-    # bare openai is image protocol — only video channel builder maps it
-    text = aliases.get(text, text)
-    if text in VIDEO_PROVIDER_TYPES:
-        return text
-    # fuzzy contains
-    if "sora" in text:
-        return "sora"
-    if "veo" in text:
-        return "veo"
-    if "seedance" in text or "seedance" in raw.lower():
-        return "seedance"
-    if "agnes" in text:
-        return "agnes"
-    if "kling" in text or "可灵" in raw:
-        return "kling"
-    if "cogvideo" in text or "zhipu" in text:
-        return "cogvideo"
-    if "grok" in text or "xai" in text or "x_ai" in text:
-        return "grok"
-    return ""
-
-
-def infer_video_provider_type_from_model(model: str) -> str:
-    """Heuristic auto family from model name (like image provider infer)."""
-    text = str(model or "").strip().lower()
-    compact = re.sub(r"[\s_]+", "-", text)
-    if not compact:
-        return ""
-    if "sora" in compact:
-        return "sora"
-    if "veo" in compact:
-        return "veo"
-    if "seedance" in compact or "doubao-seedance" in compact:
-        return "seedance"
-    if "agnes" in compact:
-        return "agnes"
-    if "kling" in compact or "可灵" in text:
-        return "kling"
-    if "cogvideo" in compact or "cog-videox" in compact or "viduq" in compact:
-        return "cogvideo"
-    if "grok" in compact and "video" in compact:
-        return "grok"
-    if compact.startswith("grok-imagine-video") or compact.startswith("grok_imagine_video"):
-        return "grok"
-    # chat-style models that return video links
-    if any(k in compact for k in ("gpt-4o", "gpt4o", "claude", "deepseek-chat")) and "video" in compact:
-        return "video_chat"
-    if compact.endswith("-chat") or compact.startswith("chat-"):
-        return "video_chat"
-    # generic async video gateways still common
-    if any(k in compact for k in ("luma", "runway", "minimax", "hailuo", "vidu", "wanx", "wan2", "gen-3", "gen3")):
-        return "openai_video"
-    if "sync" in compact and "video" in compact:
-        return "video_sync"
-    return ""
-
-
-def resolve_video_model_provider_type(
-    model: str,
-    channel_provider_type: str,
-    model_override: str = "",
-) -> str:
-    manual = normalize_video_provider_type(model_override)
-    if manual:
-        return manual
-    inferred = infer_video_provider_type_from_model(model)
-    if inferred:
-        return inferred
-    channel = normalize_video_provider_type(channel_provider_type) or "openai_video"
-    return channel
-
-
 def normalize_provider_type(value: Any) -> str:
     text = str(value or "").strip().lower().replace("-", "_")
     aliases = {
@@ -1285,6 +1020,8 @@ def normalize_provider_type(value: Any) -> str:
         "jimeng2": "jimeng2api",
         "xai": "grok",
         "x_ai": "grok",
+        "hy_image": "hunyuan",
+        "hunyuan_image": "hunyuan",
         "nai": "novelai",
         "novel_ai": "novelai",
         "novelai_image": "novelai",
@@ -1302,6 +1039,8 @@ def infer_provider_type_from_model(model: str) -> str:
     compact = re.sub(r"[\s_]+", "-", text)
     if not compact:
         return ""
+    if compact.startswith(("hy-image", "hunyuan-image")):
+        return "hunyuan"
     if "agnes" in compact:
         return "agnes"
     if "z-image" in compact or compact.startswith("zimage"):
@@ -1321,7 +1060,7 @@ def infer_provider_type_from_model(model: str) -> str:
 
 # Native adapters that cannot ride the OpenAI images/edits codepath.
 STRONG_NATIVE_PROVIDER_TYPES = frozenset(
-    {"grok", "novelai", "agnes", "jimeng2api", "z_image_gitee"}
+    {"grok", "novelai", "agnes", "jimeng2api", "z_image_gitee", "hunyuan"}
 )
 
 
@@ -1407,40 +1146,10 @@ def preflight_image_channel(raw: Any, *, kind: str = "image") -> Dict[str, Any]:
     }
 
 
-def preflight_video_channel(raw: Any) -> Dict[str, Any]:
-    """Local video channel preflight (VIDEO V1). No network."""
-    errors: List[Dict[str, str]] = []
-    channel = _build_video_channel(raw if isinstance(raw, dict) else {})
-    label = channel.name or "未命名视频渠道"
-    auto_disabled = False
-    if not str(channel.name or "").strip():
-        errors.append({"field": "name", "message": "视频渠道缺少名称"})
-    if not str(channel.base_url or "").strip():
-        errors.append({"field": "base_url", "message": f"视频渠道 {label} 缺少 base_url"})
-    if not channel.resolved_api_keys():
-        errors.append({"field": "api_key", "message": f"视频渠道 {label} 缺少 api_key"})
-    models = channel.enabled_models or ([channel.model] if channel.model else [])
-    if not models and channel.enabled:
-        auto_disabled = True
-        channel.enabled = False
-        if isinstance(raw, dict):
-            raw["enabled"] = False
-    return {
-        "ok": not errors,
-        "errors": errors,
-        "channel_name": label,
-        "kind": "video",
-        "enabled": bool(channel.enabled),
-        "model_count": len(models),
-        "auto_disabled": auto_disabled,
-        "message": "；".join(item["message"] for item in errors),
-    }
-
-
 def sanitize_channels_for_save(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Mutate channel lists in-place: enabled + no models → disable (no hard fail)."""
     data = raw if isinstance(raw, dict) else {}
-    for key, kind in (("image_channels", "image"), ("audit_channels", "audit"), ("video_channels", "video")):
+    for key, kind in (("image_channels", "image"), ("audit_channels", "audit")):
         items = template_list_items(data.get(key))
         cleaned: List[Any] = []
         for item in items:
@@ -1449,10 +1158,7 @@ def sanitize_channels_for_save(raw: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             row = copy.deepcopy(item)
             row.pop("timeout", None)
-            if kind == "video":
-                preflight_video_channel(row)
-            else:
-                preflight_image_channel(row, kind=kind)
+            preflight_image_channel(row, kind=kind)
             cleaned.append(row)
         if key in data or cleaned:
             data[key] = cleaned
@@ -1460,20 +1166,18 @@ def sanitize_channels_for_save(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def preflight_config_channels(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Preflight all image/audit/video channels in a config dict."""
+    """Preflight all image and audit channels in a config dict."""
     data = sanitize_channels_for_save(copy.deepcopy(raw if isinstance(raw, dict) else {}))
     image_results = [preflight_image_channel(item, kind="image") for item in template_list_items(data.get("image_channels"))]
     audit_results = [preflight_image_channel(item, kind="audit") for item in template_list_items(data.get("audit_channels"))]
-    video_results = [preflight_video_channel(item) for item in template_list_items(data.get("video_channels"))]
     errors: List[Dict[str, str]] = []
-    for result in image_results + audit_results + video_results:
+    for result in image_results + audit_results:
         errors.extend(result.get("errors") or [])
     return {
         "ok": not errors,
         "errors": errors,
         "image_channels": image_results,
         "audit_channels": audit_results,
-        "video_channels": video_results,
         "message": "；".join(item["message"] for item in errors),
         "config": data,
     }
@@ -1542,7 +1246,7 @@ def template_list_items(value: Any) -> List[Any]:
 def strip_channel_timeouts(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Return config data without the retired per-channel timeout field."""
     data = copy.deepcopy(raw if isinstance(raw, dict) else {})
-    for key in ("image_channels", "audit_channels", "video_channels"):
+    for key in ("image_channels", "audit_channels"):
         items = template_list_items(data.get(key))
         cleaned: List[Any] = []
         for item in items:

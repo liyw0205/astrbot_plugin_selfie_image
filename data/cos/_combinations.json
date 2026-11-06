@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "items": {
+    "rooftop_rail_warm_film": {"title": "天台栏杆暖色胶片", "scene_id": "rooftop_sunset", "pose_id": "side_back_rail_lean", "family": "urban_cinematic", "weight": 8},
+    "old_city_rooftop_rail_hero": {"title": "旧楼天台栏杆气场", "scene_id": "old_city_rooftop", "pose_id": "side_back_rail_lean", "family": "urban_cinematic", "weight": 7},
+    "rooftop_back_low_medium": {"title": "夕照天台背面中景", "scene_id": "rooftop_sunset", "pose_id": "back_to_camera", "family": "urban_cinematic", "weight": 5},
+    "seaside_back_dv": {"title": "海边栈道背影", "scene_id": "seaside_boardwalk", "pose_id": "back_to_camera", "family": "coastal_cinematic", "weight": 5},
+    "bamboo_back_cold_green": {"title": "竹林背面冷绿胶片", "scene_id": "bamboo_garden", "pose_id": "back_to_camera", "family": "nature_cinematic", "weight": 5},
+    "cherry_reach_side": {"title": "樱花步道伸手侧面", "scene_id": "cherry_blossom_path", "pose_id": "reach_light", "family": "nature_cinematic", "weight": 5},
+    "cafe_high_angle": {"title": "咖啡馆窗座斜俯", "scene_id": "cafe_corner", "pose_id": "seated_composed", "family": "domestic_lifestyle", "weight": 5},
+    "stone_stair_oblique": {"title": "石阶坐姿几何构图", "scene_id": "stone_staircase", "pose_id": "stair_sit", "family": "architectural_cinematic", "weight": 5},
+    "greenhouse_reach_side": {"title": "玻璃花房触景侧面", "scene_id": "greenhouse", "pose_id": "reach_light", "family": "nature_cinematic", "weight": 5},
+    "museum_side_environment": {"title": "古典展厅侧身电影静帧", "scene_id": "museum_hall", "pose_id": "half_turn", "family": "architectural_cinematic", "weight": 4},
+    "festival_back_dv": {"title": "灯会长廊背影 DV", "scene_id": "festival_lantern", "pose_id": "back_to_camera", "family": "traditional_night", "weight": 4},
+    "bedroom_sleep_snapshot": {"title": "卧室床铺熟睡快照", "scene_id": "bedroom_sleep", "pose_id": "sleeping_on_bed", "family": "domestic_lifestyle", "weight": 5},
+    "garden_back_three_quarter": {"title": "庭院背后三分之四", "scene_id": "garden_walkway", "pose_id": "over_shoulder", "family": "nature_lifestyle", "weight": 5},
+    "window_back_three_quarter": {"title": "窗边背后三分之四", "scene_id": "bedroom_window", "pose_id": "over_shoulder", "family": "domestic_lifestyle", "weight": 4},
+    "old_town_back_three_quarter": {"title": "古街背后三分之四", "scene_id": "old_town_lane", "pose_id": "over_shoulder", "family": "traditional_lifestyle", "weight": 4},
+    "atelier_side_edge_bend": {"title": "试衣角侧边前倾", "scene_id": "costume_atelier", "pose_id": "side_edge_bend", "family": "domestic_lifestyle", "weight": 7},
+    "theater_rear_edge_curve": {"title": "后台门框背身前倾", "scene_id": "theater_dressing_room", "pose_id": "rear_edge_curve", "family": "editorial_portrait", "weight": 6},
+    "shrine_side_edge_hip": {"title": "木格侧边外推腰胯", "scene_id": "shrine_interior", "pose_id": "side_edge_hip_shift", "family": "traditional_lifestyle", "weight": 6},
+    "old_town_rear_hip_shift": {"title": "古街墙角背身偏侧", "scene_id": "old_town_lane", "pose_id": "rear_hip_shift", "family": "traditional_lifestyle", "weight": 5},
+    "cafe_knee_up_portrait": {"title": "咖啡馆抬膝近景", "scene_id": "cafe_corner", "pose_id": "seated_knee_up", "family": "domestic_lifestyle", "weight": 4},
+    "library_low_gaze": {"title": "阅览室低眸静帧", "scene_id": "library_wood", "pose_id": "quiet_low_gaze", "family": "domestic_lifestyle", "weight": 4},
+    "studio_gathered_front": {"title": "影棚胸前拢衣", "scene_id": "photo_studio", "pose_id": "hands_gathered_at_sternum", "family": "editorial_portrait", "weight": 4},
+    "studio_forward_hands": {"title": "影棚轻微前倾", "scene_id": "photo_studio", "pose_id": "lean_forward_hands", "family": "editorial_portrait", "weight": 3},
+    "window_back_raised_arms": {"title": "窗边背影抬臂", "scene_id": "bedroom_window", "pose_id": "window_back_raised_arms", "family": "domestic_lifestyle", "weight": 4}
+  }
+}

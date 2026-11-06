@@ -246,11 +246,7 @@ class StudioMixin:
 
     def get_prompt_preset_status_for_web(self, kind: str = "image") -> Dict[str, Any]:
         """Expose load failures separately from an intentionally empty list."""
-        manager = (
-            getattr(self, "video_presets", None)
-            if str(kind or "").strip().lower() == "video"
-            else getattr(self, "presets", None)
-        )
+        manager = getattr(self, "presets", None)
         if manager is None:
             return {"ok": False, "source": "manager", "error": "预设管理器不可用"}
         getter = getattr(manager, "get_load_status", None)
@@ -258,13 +254,6 @@ class StudioMixin:
 
     def list_prompt_presets_for_web(self, kind: str = "image") -> List[Dict[str, Any]]:
         """Return the picker presets for one media kind."""
-        kind = "video" if str(kind or "").strip().lower() == "video" else "image"
-        if kind == "video":
-            manager = getattr(self, "video_presets", None)
-            if manager is not None:
-                manager.load()
-                return manager.list_public()
-            return []
         merged: Dict[str, Dict[str, Any]] = {}
         for item in global_prompt_presets():
             name = str(item.get("name") or item.get("title") or "").strip()
@@ -304,40 +293,32 @@ class StudioMixin:
 
     def list_managed_prompt_presets_for_web(self, kind: str = "image") -> List[Dict[str, str]]:
         """Return the persisted preset set used by the preset management page."""
-        manager = (getattr(self, "video_presets", self.presets)
-                   if str(kind or "").strip().lower() == "video" else self.presets)
-        manager.load()
-        return manager.list_management()
+        self.presets.load()
+        return self.presets.list_management()
 
     def save_prompt_preset_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(payload or {})
-        manager = (getattr(self, "video_presets", self.presets)
-                   if str(payload.get("kind") or payload.get("media_type") or "").strip().lower() == "video" else self.presets)
-        manager.load()
-        ok, message = manager.save_management(payload)
+        self.presets.load()
+        ok, message = self.presets.save_management(payload)
         if not ok:
             raise ValueError(message)
-        return {"message": message, "kind": "video" if manager is getattr(self, "video_presets", None) else "image", "presets": manager.list_management()}
+        return {"message": message, "kind": "image", "presets": self.presets.list_management()}
 
     def delete_prompt_preset_from_web(self, name: str, kind: str = "image") -> Dict[str, Any]:
-        manager = (getattr(self, "video_presets", self.presets)
-                   if str(kind or "").strip().lower() == "video" else self.presets)
-        manager.load()
-        ok, message = manager.remove(name)
+        self.presets.load()
+        ok, message = self.presets.remove(name)
         if not ok:
             raise ValueError(message)
-        return {"message": message, "kind": "video" if manager is getattr(self, "video_presets", None) else "image", "presets": manager.list_management()}
+        return {"message": message, "kind": "image", "presets": self.presets.list_management()}
 
     def import_prompt_presets_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(payload or {})
-        manager = (getattr(self, "video_presets", self.presets)
-                   if str(payload.get("kind") or payload.get("media_type") or "").strip().lower() == "video" else self.presets)
-        manager.load()
+        self.presets.load()
         source = payload.get("presets") if isinstance(payload, dict) else None
         if source is None and isinstance(payload, dict):
             source = payload.get("items")
-        imported, message = manager.import_management(source)
-        return {"message": message, "imported": imported, "kind": "video" if manager is getattr(self, "video_presets", None) else "image", "presets": manager.list_management()}
+        imported, message = self.presets.import_management(source)
+        return {"message": message, "imported": imported, "kind": "image", "presets": self.presets.list_management()}
 
     def list_cos_look_sets_for_web(self) -> List[Dict[str, Any]]:
         """Expose the command COS pool to the canvas and quick-test pickers."""
@@ -610,8 +591,6 @@ class StudioMixin:
         payload = payload if isinstance(payload, dict) else {}
         record_id = str(record_id or "").strip()
         record = self.get_record_for_web(record_id)
-        if str(record.get("media_type") or "image").strip().lower() == "video":
-            raise ValueError("视频资产不能作为图片参考加入画布")
         response = record.get("response_data") if isinstance(record.get("response_data"), dict) else {}
         paths = list(record.get("generated_image_paths") or response.get("generated_image_paths") or [])
         image_path = str(paths[0] if paths else "").strip()

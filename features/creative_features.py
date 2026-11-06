@@ -1,4 +1,4 @@
-"""Reusable creative helpers for prompt variables, variations and storyboards.
+"""Reusable creative helpers for prompt variables and variations.
 
 The helpers in this module are deliberately side-effect free.  They are used by
 commands, the embedded dashboard and the standalone Web UI so every entry point
@@ -32,7 +32,6 @@ TEMPLATE_VARIABLE_ALIASES: Dict[str, str] = {
     "视角": "view",
     "构图": "composition",
     "光线": "lighting",
-    "时长": "duration",
     "role": "role",
     "character": "role",
     "subject": "role",
@@ -47,7 +46,6 @@ TEMPLATE_VARIABLE_ALIASES: Dict[str, str] = {
     "view": "view",
     "composition": "composition",
     "lighting": "lighting",
-    "duration": "duration",
 }
 
 GENERIC_TEMPLATE_POOLS: Dict[str, Tuple[str, ...]] = {
@@ -59,17 +57,6 @@ GENERIC_TEMPLATE_POOLS: Dict[str, Tuple[str, ...]] = {
 }
 
 _VARIABLE_RE = re.compile(r"\{\s*([^{}|]+?)\s*(?:\|\s*([^{}]*?)\s*)?\}")
-_STORYBOARD_LINE_RE = re.compile(
-    r"^(?:镜头|shot|scene|分镜)\s*([0-9]+)?\s*[:：\-]?\s*(.*)$",
-    re.IGNORECASE,
-)
-_DURATION_RE = re.compile(
-    r"(?:[（(]\s*)?(?:时长|duration)\s*[:：=]?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:秒|s)?\s*(?:[）)]\s*)?",
-    re.IGNORECASE,
-)
-_PAREN_DURATION_RE = re.compile(r"[（(]\s*([0-9]+(?:\.[0-9]+)?)\s*(?:秒|s)\s*[）)]", re.IGNORECASE)
-
-
 def canonical_template_variable(name: Any) -> str:
     """Normalize Chinese/English aliases to one stable key."""
     raw = str(name or "").strip()
@@ -215,95 +202,6 @@ def build_prompt_variations(
     return rows
 
 
-def parse_video_storyboard(text: str) -> Dict[str, Any]:
-    """Parse a lightweight storyboard from lines or ``|``-separated shots."""
-    raw = str(text or "").replace("\r", "").strip()
-    if not raw:
-        return {"enabled": False, "shots": [], "prompt": ""}
-    lines = [item.strip() for item in re.split(r"\n+|\s*\|\s*", raw) if item.strip()]
-    explicit: List[Dict[str, Any]] = []
-    for line in lines:
-        match = _STORYBOARD_LINE_RE.match(line)
-        if not match:
-            continue
-        description = str(match.group(2) or "").strip()
-        if not description:
-            continue
-        duration_match = _DURATION_RE.search(description) or _PAREN_DURATION_RE.search(description)
-        duration = float(duration_match.group(1)) if duration_match else 0.0
-        description = _DURATION_RE.sub("", description)
-        description = _PAREN_DURATION_RE.sub("", description).strip(" ,，。")
-        explicit.append({"index": len(explicit) + 1, "description": description, "duration": duration})
-    if not explicit and len(lines) > 1:
-        explicit = [{"index": index + 1, "description": line, "duration": 0.0} for index, line in enumerate(lines)]
-    if not explicit:
-        return {"enabled": False, "shots": [], "prompt": raw}
-    default_duration = round(5.0 / len(explicit), 2)
-    for shot in explicit:
-        if not shot["duration"]:
-            shot["duration"] = default_duration
-    prompt_parts = [
-        f"镜头{shot['index']}（约{shot['duration']:g}秒）：{shot['description']}"
-        for shot in explicit
-    ]
-    return {
-        "enabled": True,
-        "shots": explicit,
-        "prompt": "；".join(prompt_parts),
-    }
-
-
-def normalize_storyboard_payload(value: Any, fallback_prompt: str = "") -> Dict[str, Any]:
-    """Normalize an edited dashboard storyboard or plain storyboard text.
-
-    The browser may send either the parser result (``enabled/shots/prompt``),
-    a list of shot objects, or free-form text.  Invalid/empty rows are removed
-    and durations are clamped to a sensible per-shot range before the payload
-    reaches a video provider.
-    """
-    if isinstance(value, Mapping):
-        raw_shots = value.get("shots")
-        if isinstance(raw_shots, Sequence) and not isinstance(raw_shots, (str, bytes)):
-            shots: List[Dict[str, Any]] = []
-            for raw in raw_shots:
-                if not isinstance(raw, Mapping):
-                    continue
-                description = str(raw.get("description") or raw.get("prompt") or "").strip()
-                if not description:
-                    continue
-                try:
-                    duration = float(raw.get("duration") or 0)
-                except (TypeError, ValueError):
-                    duration = 0.0
-                shots.append(
-                    {
-                        "index": len(shots) + 1,
-                        "description": description[:10000],
-                        "duration": max(0.0, min(60.0, duration)),
-                    }
-                )
-            if shots:
-                default_duration = round(5.0 / len(shots), 2)
-                for shot in shots:
-                    if not shot["duration"]:
-                        shot["duration"] = default_duration
-                return {
-                    "enabled": True,
-                    "shots": shots,
-                    "prompt": "；".join(
-                        f"镜头{shot['index']}（约{shot['duration']:g}秒）：{shot['description']}"
-                        for shot in shots
-                    ),
-                }
-        text = str(value.get("prompt") or value.get("text") or "").strip()
-        if text:
-            return parse_video_storyboard(text)
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return normalize_storyboard_payload({"shots": value}, fallback_prompt)
-    text = str(value or fallback_prompt or "").strip()
-    return parse_video_storyboard(text)
-
-
 def apply_retry_strategy(
     payload: Mapping[str, Any],
     strategy: str = "full",
@@ -343,11 +241,6 @@ def apply_retry_strategy(
     elif normalized == "lower_resolution":
         current = str(result.get("resolution") or result.get("size") or "1K").strip().upper()
         result["resolution"] = {"4K": "2K", "2K": "1K", "1K": "1K"}.get(current, "1K")
-        if str(result.get("media_type") or "image").lower() == "video":
-            try:
-                result["duration"] = max(1, min(60, int(result.get("duration") or 5)))
-            except (TypeError, ValueError):
-                result["duration"] = 5
         result["retry_strategy"] = normalized
     else:
         result["retry_strategy"] = "full"
@@ -374,7 +267,6 @@ def compare_generation_records(records: Iterable[Mapping[str, Any]], limit: int 
         request = raw.get("request_data") if isinstance(raw.get("request_data"), Mapping) else {}
         response = raw.get("response_data") if isinstance(raw.get("response_data"), Mapping) else {}
         paths = list(raw.get("generated_image_paths") or response.get("generated_image_paths") or [])
-        video_paths = list(raw.get("generated_video_paths") or response.get("generated_video_paths") or [])
         rows.append(
             {
                 "id": record_id,
@@ -389,7 +281,6 @@ def compare_generation_records(records: Iterable[Mapping[str, Any]], limit: int 
                 "favorite": bool(raw.get("favorite")),
                 "pinned": bool(raw.get("pinned")),
                 "image_paths": [str(path) for path in paths[:8]],
-                "video_paths": [str(path) for path in video_paths[:2]],
             }
         )
         if len(rows) >= max(1, min(50, int(limit or 8))):
@@ -442,12 +333,6 @@ class CreativeFeaturesMixin:
             pools=pools,
             seed=seed or data.get("variation_seed") or data.get("template_seed"),
         )
-
-    def parse_storyboard_for_web(self, prompt: str) -> Dict[str, Any]:
-        return parse_video_storyboard(prompt)
-
-    def normalize_storyboard_for_web(self, value: Any, fallback_prompt: str = "") -> Dict[str, Any]:
-        return normalize_storyboard_payload(value, fallback_prompt)
 
     def list_cos_pools_for_web(self) -> Dict[str, Any]:
         from ..cos.cos_looks import list_cos_look_sets

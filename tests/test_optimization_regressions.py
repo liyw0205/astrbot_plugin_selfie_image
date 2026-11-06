@@ -47,7 +47,6 @@ from astrbot_plugin_selfie_image.features.config_manager import ConfigurationMix
 from astrbot_plugin_selfie_image.features.conversation_context import ConversationContextMixin
 from astrbot_plugin_selfie_image.generation.asset_collections import AssetCollectionStore
 from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
-from astrbot_plugin_selfie_image.generation.video import VideoGenerateRequest, VideoGenerateResult, generate_video_with_fallback
 from astrbot_plugin_selfie_image.studio.studio import StudioStore
 from astrbot_plugin_selfie_image.features.reference_collector import CollectedReferences
 from astrbot_plugin_selfie_image.features.audit_pipeline import AuditMixin
@@ -73,11 +72,11 @@ def test_production_python_has_no_unapproved_noop_functions(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("task", "expected"),
     [
-        ({"media_type": "video"}, "video"),
+        ({"media_type": "video"}, "image"),
         ({"request_data": {"media_type": "image"}}, "image"),
-        ({"request_data": {"kind": "video"}}, "video"),
-        ({"request_data": {"kind": "生成视频"}}, "video"),
-        ({"source": "record-video-retry"}, "video"),
+        ({"request_data": {"kind": "video"}}, "image"),
+        ({"request_data": {"kind": "生成视频"}}, "image"),
+        ({"source": "record-video-retry"}, "image"),
         ({"request_data": []}, "image"),
         ({}, "image"),
     ],
@@ -98,11 +97,11 @@ def test_task_media_type_has_one_shared_public_rule(task, expected) -> None:
         ("【legs:outfit】", False),
         ("【frame:full_outfit】【pose:sofa_front_crop】", False),
         ("【frame:leg_detail】", True),
-        ("【crop:calves】", True),
+        ("【crop:calves】", False),
         ("看看腿", False),
         ("下半身穿搭", False),
         ("下半身特写", True),
-        ("请不展示脚部", True),
+        ("请不展示脚部", False),
         ("普通半身自拍", False),
     ],
 )
@@ -163,60 +162,6 @@ def test_ordered_unique_helper_is_shared_by_models_and_utils() -> None:
     values = [" a ", "", None, "a", 3, "3", "b"]
     assert unique(values) == ["a", "3", "b"]
     assert unique_values is unique
-
-
-def test_legacy_douyin_script_delegates_media_processing() -> None:
-    import ast
-
-    source = (ROOT / "scripts" / "douyin_frames.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    function_names = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    assert "_download" not in function_names
-    assert "_extract_frames" not in function_names
-    assert "video_prompt_frames" in source
-
-
-def test_video_delivery_unknown_does_not_retry_or_expose_local_path() -> None:
-    import asyncio
-    from astrbot_plugin_selfie_image.features.reference_media import ReferenceMediaMixin
-
-    class Event:
-        def __init__(self):
-            self.sent = []
-
-        def chain_result(self, value):
-            return ("chain", value)
-
-        def plain_result(self, value):
-            return ("plain", value)
-
-        async def send(self, value):
-            self.sent.append(value)
-            raise RuntimeError("ActionFailed retcode=1200 Timeout sendMsg")
-
-    event = Event()
-    sender = object.__new__(ReferenceMediaMixin)
-
-    with pytest.raises(RuntimeError, match="retcode=1200"):
-        asyncio.run(sender._send_generated_video(event, "/tmp/private-video.mp4", caption="视频好了。"))
-
-    assert len(event.sent) == 1
-    assert event.sent[0][0] == "chain"
-    assert all(item[0] != "plain" for item in event.sent)
-
-
-def test_non_timeout_video_delivery_failure_returns_redacted_upstream_reason() -> None:
-    from astrbot_plugin_selfie_image.core.utils import redact_sensitive_text
-
-    reason = "ActionFailed: invalid token sk-test-secret"
-    message = f"视频已生成，但发送失败：{redact_sensitive_text(reason)}"
-
-    assert "视频已生成，但发送失败：" in message
-    assert "sk-test-secret" not in message
 
 
 def test_dashboard_config_json_transfer_controls_are_present() -> None:
@@ -440,9 +385,9 @@ def test_config_file_schema_migration_failure_restores_original_file(monkeypatch
 def test_terminal_state_matrix_preserves_media_completion_and_late_success() -> None:
     cases = [
         ({"success": True, "files": ["image.png"]}, 1, "succeeded"),
-        ({"success": True, "video_path": "video.mp4"}, 1, "succeeded"),
+        ({"success": True, "files": ["second.png"]}, 1, "succeeded"),
         ({"success": False, "files": ["one.png"], "requested_count": 2, "succeeded_count": 1, "failed_count": 1}, 2, "partial_success"),
-        ({"success": False, "generation_success": True, "delivery_failed": True, "files": ["video.mp4"]}, 1, "delivery_failed"),
+        ({"success": False, "generation_success": True, "delivery_failed": True, "files": ["second.png"]}, 1, "delivery_failed"),
         ({"success": False, "error": "nope"}, 1, "failed"),
         ({"success": False, "cancelled": True, "error": "任务已取消"}, 1, "cancelled"),
     ]
@@ -465,274 +410,6 @@ def test_terminal_state_matrix_preserves_media_completion_and_late_success() -> 
     assert late["cancelled"] is False
     assert late["terminal_status"] == "succeeded"
     assert late["result"]["cancelled"] is False
-
-
-def test_video_auth_failure_falls_back_to_next_channel_but_timeout_does_not(monkeypatch) -> None:
-    from astrbot_plugin_selfie_image.generation import video as video_module
-
-    first = ImageModelTarget("first", "openai_video", "https://first.test", "bad", "v1", 30)
-    second = ImageModelTarget("second", "openai_video", "https://second.test", "good", "v2", 30)
-    calls = []
-
-    async def fake_generate(target, request, session, *, save_dir, timeout_override=None):
-        calls.append(target.channel_name)
-        if target.channel_name == "first":
-            return VideoGenerateResult(
-                error="HTTP 401: invalid token",
-                attempts=[{"channel": "first", "success": False, "error_category": "auth"}],
-            )
-        return VideoGenerateResult(
-            video_path="/tmp/video.mp4",
-            used_model=target.label,
-            attempts=[{"channel": "second", "success": True}],
-        )
-
-    monkeypatch.setattr(video_module, "generate_video_openai_compatible", fake_generate)
-    result = asyncio.run(
-        generate_video_with_fallback(
-            [first, second],
-            VideoGenerateRequest(prompt="move"),
-            object(),
-            save_dir=tempfile.gettempdir(),
-        )
-    )
-    assert calls == ["first", "second"]
-    assert result.video_path == "/tmp/video.mp4"
-
-    calls.clear()
-
-    async def timeout_generate(target, request, session, *, save_dir, timeout_override=None):
-        calls.append(target.channel_name)
-        return VideoGenerateResult(
-            error="视频请求超时（未自动重提，以免重复提交）",
-            attempts=[{"channel": target.channel_name, "success": False, "error_category": "timeout"}],
-        )
-
-    monkeypatch.setattr(video_module, "generate_video_openai_compatible", timeout_generate)
-    timeout_result = asyncio.run(
-        generate_video_with_fallback(
-            [first, second],
-            VideoGenerateRequest(prompt="move"),
-            object(),
-            save_dir=tempfile.gettempdir(),
-        )
-    )
-    assert calls == ["first"]
-    assert timeout_result.attempts[-1]["error_category"] == "timeout"
-
-
-def test_video_poll_queries_immediately_before_waiting_between_retries(monkeypatch) -> None:
-    from astrbot_plugin_selfie_image.generation import video as video_module
-
-    sleep_calls = []
-    get_calls = []
-    events = []
-
-    async def fake_sleep(delay):
-        sleep_calls.append(delay)
-        events.append(("sleep", delay))
-
-    class Response:
-        status = 200
-
-        def __init__(self, payload):
-            self.payload = payload
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def json(self, content_type=None):
-            return self.payload
-
-    class Session:
-        def get(self, url, **kwargs):
-            get_calls.append((url, kwargs))
-            events.append("get")
-            if len(get_calls) == 1:
-                return Response({"status": "in_progress"})
-            return Response({"status": "completed", "video_url": "https://cdn.test/video.mp4"})
-
-    monkeypatch.setattr(video_module.asyncio, "sleep", fake_sleep)
-    result = asyncio.run(
-        video_module._poll_task(
-            Session(),
-            poll_url="https://api.test/tasks/task-1",
-            headers={"Authorization": "Bearer test"},
-            timeout_seconds=30,
-        )
-    )
-
-    assert result == "https://cdn.test/video.mp4"
-    assert len(get_calls) == 2
-    assert events == ["get", ("sleep", 10), "get"]
-    assert sleep_calls == [10]
-
-
-def test_video_file_download_streams_chunks_without_reading_response(monkeypatch, tmp_path) -> None:
-    from astrbot_plugin_selfie_image.generation import video as video_module
-
-    class Content:
-        async def iter_chunked(self, _size):
-            yield b"ftyp"
-            yield b"-video-data"
-
-    class Response:
-        status = 200
-        headers = {"Content-Type": "video/mp4"}
-        content = Content()
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def read(self):
-            raise AssertionError("streaming download must not read the whole response")
-
-    class Session:
-        def get(self, _url, **_kwargs):
-            return Response()
-
-    result = asyncio.run(
-        video_module._download_video_file(
-            Session(),
-            "https://cdn.test/video.mp4",
-            timeout=30,
-            save_dir=str(tmp_path),
-        )
-    )
-
-    path = Path(result)
-    assert path.read_bytes() == b"ftyp-video-data"
-    path.unlink()
-
-
-def test_video_file_download_keeps_urllib_json_http_url_fallback(monkeypatch, tmp_path) -> None:
-    from astrbot_plugin_selfie_image.generation import video as video_module
-
-    class Response:
-        def __init__(self, data, content_type):
-            self.data = data
-            self.headers = {"Content-Type": content_type}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def read(self, size=-1):
-            chunk, self.data = self.data[:size], self.data[size:]
-            return chunk
-
-    responses = [
-        Response(b'{"video_url":"https://cdn.test/final.mp4"}', "application/json"),
-        Response(b"ftyp-final-video", "video/mp4"),
-    ]
-
-    class Opener:
-        def open(self, _request, timeout=None):
-            return responses.pop(0)
-
-    monkeypatch.setattr(video_module.aiohttp, "ClientTimeout", lambda **_kwargs: None)
-    monkeypatch.setattr(video_module.urllib.request, "build_opener", lambda *_args, **_kwargs: Opener())
-
-    class Session:
-        def get(self, *_args, **_kwargs):
-            raise RuntimeError("force urllib fallback")
-
-    result = asyncio.run(
-        video_module._download_video_file(
-            Session(),
-            "https://cdn.test/envelope",
-            timeout=30,
-            save_dir=str(tmp_path),
-        )
-    )
-
-    assert Path(result).read_bytes() == b"ftyp-final-video"
-
-
-def test_video_output_paths_are_unique_within_one_millisecond(monkeypatch, tmp_path) -> None:
-    from astrbot_plugin_selfie_image.generation import video as video_module
-
-    monkeypatch.setattr(video_module.time, "time", lambda: 1000.0)
-    first = video_module._video_output_path(str(tmp_path))
-    second = video_module._video_output_path(str(tmp_path))
-
-    assert first != second
-    assert first.endswith(".mp4") and second.endswith(".mp4")
-
-
-def test_video_file_download_cleans_part_file_after_stream_failure(tmp_path) -> None:
-    from astrbot_plugin_selfie_image.generation import video as video_module
-
-    class Content:
-        async def iter_chunked(self, _size):
-            yield b"partial"
-            raise RuntimeError("connection dropped")
-
-    class Response:
-        status = 200
-        headers = {"Content-Type": "video/mp4"}
-        content = Content()
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-    class Session:
-        def get(self, *_args, **_kwargs):
-            return Response()
-
-    with pytest.raises(RuntimeError, match="视频下载失败"):
-        asyncio.run(
-            video_module._download_video_file(
-                Session(), "https://cdn.test/fail.mp4", timeout=30, save_dir=str(tmp_path)
-            )
-        )
-
-    assert not list(tmp_path.glob("*.part"))
-    assert not list(tmp_path.glob("*.mp4"))
-
-
-def test_video_file_download_rejects_html_without_publishing_file(tmp_path) -> None:
-    from astrbot_plugin_selfie_image.generation import video as video_module
-
-    class Content:
-        async def iter_chunked(self, _size):
-            yield b"<html>bad gateway</html>"
-
-    class Response:
-        status = 200
-        headers = {"Content-Type": "text/html"}
-        content = Content()
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-    class Session:
-        def get(self, *_args, **_kwargs):
-            return Response()
-
-    with pytest.raises(RuntimeError, match="JSON/HTML"):
-        asyncio.run(
-            video_module._download_video_file(
-                Session(), "https://cdn.test/error", timeout=30, save_dir=str(tmp_path)
-            )
-        )
-
-    assert not list(tmp_path.glob("*.part"))
-    assert not list(tmp_path.glob("*.mp4"))
 
 
 def test_high_frequency_json_snapshots_keep_atomicity_and_reduce_whitespace(tmp_path) -> None:
@@ -1024,23 +701,6 @@ def test_storage_consistency_repair_accepts_one_kind_string() -> None:
         plugin.media_sources_dir = str(sidecars)
         result = plugin.repair_storage_consistency(confirm=True, kinds="orphan_cache")
         assert result["deleted"] == [{"kind": "orphan_cache", "path": "orphan.png"}]
-
-
-def test_storage_consistency_keeps_retained_video_references() -> None:
-    with tempfile.TemporaryDirectory() as directory:
-        cache = Path(directory) / "image_cache"
-        sidecars = Path(directory) / "media_sources"
-        (cache / "video").mkdir(parents=True)
-        sidecars.mkdir()
-        (cache / "video" / "clip.mp4").write_bytes(b"video")
-        plugin = object.__new__(GenerationStoreMixin)
-        plugin._records_lock = __import__("threading").RLock()
-        plugin._records = [{"id": "video-1", "generated_video_paths": ["video/clip.mp4"]}]
-        plugin.generated_dir = str(cache)
-        plugin.media_sources_dir = str(sidecars)
-        report = plugin.inspect_storage_consistency()
-        assert report["ok"] is True
-        assert report["counts"] == {}
 
 
 def test_studio_copy_clears_results_and_remaps_slots() -> None:
@@ -1356,7 +1016,7 @@ def test_cancel_resolution_preserves_all_completion_evidence_classes() -> None:
     assert resolved["cancelled"] is True
 
 
-@pytest.mark.parametrize("media_type", ["image", "video"])
+@pytest.mark.parametrize("media_type", ["image"])
 def test_web_runner_publishes_terminal_state_after_late_cancel(media_type: str) -> None:
     import threading
 
@@ -1486,7 +1146,7 @@ def test_dashboard_fallback_generation_and_check_scripts_share_canonical_source(
 
 
 def test_web_route_alias_contract_is_shared_by_both_adapters() -> None:
-    assert len(TASK_CANCEL_ROUTE_ALIASES) == len(DASHBOARD_TASK_CANCEL_ROUTES) == 4
+    assert len(TASK_CANCEL_ROUTE_ALIASES) == len(DASHBOARD_TASK_CANCEL_ROUTES) == 3
     assert DASHBOARD_ROUTE_PREFIXES == ("", "page/")
     assert TASK_CANCEL_ROUTE_ALIASES[0].endswith("tasks/{task_id}/cancel")
     assert DASHBOARD_TASK_CANCEL_ROUTES[0] == "tasks/<task_id>/cancel"

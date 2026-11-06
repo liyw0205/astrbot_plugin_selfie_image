@@ -20,29 +20,22 @@ STATUS_LABELS = {
 
 MEDIA_LABELS = {
     "image": "图片",
-    "video": "视频",
 }
 
 SOURCE_LABELS = {
     "web-test": "Web 试画",
-    "web-video-test": "Web 试视频",
     "studio-run": "创作画布",
     "record-retry": "记录重试",
-    "record-video-retry": "记录重试",
     "llm-generate-image": "LLM 生图",
     "llm-generate-selfie": "LLM 自拍",
 }
 
 
 def task_media_type(task: Mapping[str, Any]) -> str:
-    """Return the persisted task's normalized image/video classification."""
+    """Return the persisted task's normalized image classification."""
     request = task.get("request_data") if isinstance(task.get("request_data"), Mapping) else {}
     value = str(task.get("media_type") or request.get("media_type") or "").strip().lower()
-    if value in {"image", "video"}:
-        return value
-    kind = str(request.get("kind") or "").strip().lower()
-    source = str(task.get("source") or "").strip().lower()
-    return "video" if kind == "video" or "视频" in kind or "video" in source else "image"
+    return "image"
 
 
 def task_source_label(task: Mapping[str, Any]) -> str:
@@ -103,13 +96,10 @@ def format_task_list_text(
 ) -> str:
     items = list(tasks)
     if not items:
-        return "最近没有任务记录。" if include_finished else "现在没有进行中的出图/视频任务。"
+        return "最近没有任务记录。" if include_finished else "现在没有进行中的出图任务。"
     wanted_media = str(media_type or "").strip().lower()
-    video_only = wanted_media == "video" or all(task_media_type(item) == "video" for item in items)
     lines = [
-        ("最近的视频任务：" if video_only else "最近的任务：")
-        if include_finished
-        else ("进行中的视频任务：" if video_only else "进行中的任务：")
+        "最近的任务：" if include_finished else "进行中的任务："
     ]
     for index, task in enumerate(items, 1):
         task_id = str(task.get("task_id") or "")
@@ -134,17 +124,9 @@ def format_task_list_text(
         suffix += f"（{warning}）" if warning else ""
         lines.append(f"{index}. {task_id} [{status_cn}/{kind}] {prompt}{suffix}")
     if include_finished:
-        lines.append(
-            "查看详情：/视频任务 历史 编号或任务号"
-            if video_only
-            else "查看详情：/生图任务 历史 编号或任务号"
-        )
+        lines.append("查看详情：/生图任务 历史 编号或任务号")
     else:
-        lines.append(
-            "查看：/视频任务 编号或任务号；取消：/视频取消 …"
-            if video_only
-            else "查看：/生图任务 编号或任务号；取消：/生图取消 …"
-        )
+        lines.append("查看：/生图任务 编号或任务号；取消：/生图取消 …")
     return "\n".join(lines)
 
 
@@ -202,11 +184,9 @@ def format_task_detail_text(task: Mapping[str, Any]) -> str:
         result.get("files")
         or result.get("image_paths")
         or result.get("generated_image_paths")
-        or result.get("generated_video_paths")
     )
     if result_files:
-        label = "视频" if media_type == "video" else "图片"
-        lines.append(f"{label}：{len(result_files)} 个")
+        lines.append(f"图片：{len(result_files)} 个")
     if task.get("status") in {"queued", "running"}:
         lines.append(f"已用时：{task.get('running_seconds', 0)} 秒")
     attempts = result.get("attempts") if isinstance(result.get("attempts"), list) else []

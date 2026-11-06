@@ -28,7 +28,7 @@ def test_media_consumers_reuse_cached_response_for_detail_and_download():
 def test_media_cache_has_auth_and_deletion_invalidation_paths():
     assert "clearProtectedMediaCache();" in PAGE
     assert "ensureProtectedMediaScope();" in PAGE
-    assert "images.concat(videos).forEach(invalidateProtectedMediaPath);" in PAGE
+    assert "images.forEach(invalidateProtectedMediaPath);" in PAGE
 
 
 def test_gallery_picker_uses_one_long_lived_shared_cache_for_both_canvases():
@@ -40,13 +40,21 @@ def test_gallery_picker_uses_one_long_lived_shared_cache_for_both_canvases():
     assert "CREATIVE_CANVAS_GALLERY_CACHE_TTL_MS" not in PAGE
 
 
-def test_gallery_and_catalog_pickers_bound_first_render_and_support_search():
+def test_gallery_and_catalog_pickers_use_server_pages_and_support_search():
     assert "const PICKER_PAGE_SIZE = 30;" in PAGE
     assert "function renderGalleryPage(panel, items, onPick)" in PAGE
     assert "data-gallery-more" in PAGE
     assert "data-prompt-search" in PAGE
     assert "data-cos-search" in PAGE
-    assert "filteredRows.slice(0, PICKER_PAGE_SIZE)" in PAGE
+    assert "async function fetchCatalogPage(kind, query, page, force = false)" in PAGE
+    assert "limit: String(PICKER_PAGE_SIZE), offset: String(offset), search: normalizedQuery" in PAGE
+    assert "data-picker-page=\"1\"" in PAGE
+    assert "id=\"presetManagerPager\"" in PAGE
+    assert "id=\"presetCosManagerPager\"" in PAGE
+    assert 'id="assetStudioPresetSearch"' in PAGE
+    assert "await fetchCatalogPage('image', search, ASSET_STUDIO_PRESET_PAGE)" in PAGE
+    assert "api('/api/prompt-presets?kind=" not in PAGE
+    assert "api('/api/cos-pools')" not in PAGE
 
 
 def test_canvas_state_has_request_trace_viewport_fit_and_mobile_node_drawer():
@@ -68,7 +76,8 @@ def test_desktop_node_panel_has_an_independent_vertical_scroll_region():
 def test_preset_manager_supports_fuzzy_name_and_prompt_search_for_all_kinds():
     assert 'id="presetManagerSearch"' in PAGE
     assert 'id="presetCosManagerSearch"' in PAGE
-    assert "const PRESET_MANAGER_QUERIES = {image: '', video: '', cos: ''};" in PAGE
+    assert "const PRESET_MANAGER_QUERIES = {image: '', cos: ''};" in PAGE
+    assert "search:query" in PAGE
     assert "item.name || item.title || ''}\\n${item.prompt || ''}" in PAGE
     assert "item.title || item.id || ''}\\n${item.prompt || ''}" in PAGE
     assert "renderManagedPromptPresets();" in PAGE
@@ -206,7 +215,6 @@ def test_dashboard_shortcuts_and_priority_pin_cover_all_model_kinds():
     assert "main.app-shell > section" in PAGE
     assert "function movePriorityToTop" in PAGE
     assert "movePriorityToTop('${kind}', ${i})" in PAGE
-    assert "for (const kind of ['image','audit','video'])" in PAGE
+    assert "for (const kind of ['image','audit'])" in PAGE
     assert "priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\\n')" in PAGE
     assert "auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\\n')" in PAGE
-    assert "videoPriorityList').value = (CONFIG.enabled_video_model_priority || []).join('\\n')" in PAGE

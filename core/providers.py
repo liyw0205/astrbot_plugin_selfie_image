@@ -52,7 +52,7 @@ class ImageReference:
 @dataclass
 class ImageGenerateRequest:
     prompt: str
-    aspect_ratio: str = "自动"
+    aspect_ratio: str = "9:16"
     resolution: str = "1K"
     images: List[ImageReference] = field(default_factory=list)
     allow_compat_retry: bool = True
@@ -281,6 +281,10 @@ def image_sources_from_response(data: Any, base_url: str = "") -> List[Dict[str,
     return sources
 
 
+def _is_automatic_aspect(aspect: str) -> bool:
+    return str(aspect or "").strip().lower() in {"", "自动", "auto", "automatic"}
+
+
 def _aspect_orientation(aspect: str) -> str:
     """Classify both preset and free-form ratios without losing orientation."""
     raw = str(aspect or "").strip().replace("：", ":").replace("／", "/")
@@ -292,8 +296,8 @@ def _aspect_orientation(aspect: str) -> str:
         if width == height:
             return "square"
         return "portrait" if width < height else "landscape"
-    if raw in {"自动", ""}:
-        return "square"
+    if _is_automatic_aspect(raw):
+        return "portrait"
     if raw in {"16:9", "3:2", "4:3", "5:4", "21:9"}:
         return "landscape"
     if raw in {"9:16", "2:3", "3:4", "4:5"}:
@@ -310,16 +314,15 @@ def map_aspect_ratio_to_openai_size(aspect: str) -> str:
     return "1024x1792"
 
 
-def map_aspect_ratio_to_gpt_image_size(aspect: str, *, allow_omit_auto: bool = False) -> str:
+def map_aspect_ratio_to_gpt_image_size(aspect: str) -> str:
     """Map aspect to GPT Image size tokens.
 
     Official GPT Image accepts only 1024x1024 / 1536x1024 / 1024x1536.
-    When allow_omit_auto and aspect is 自动/空: return "" so callers can omit size
-    (img_gen leaves unspecified size unset; some relays reject explicit size on edits).
+    Automatic aspect uses the plugin's 9:16 portrait default.
     """
     orientation = _aspect_orientation(aspect)
-    if not aspect or aspect in {"自动", ""}:
-        return "" if allow_omit_auto else "1024x1024"
+    if _is_automatic_aspect(aspect):
+        return "1024x1536"
     if orientation == "square":
         return "1024x1024"
     if orientation == "landscape":
@@ -383,7 +386,7 @@ def _gpt_image_payload_profiles(req: ImageGenerateRequest, model: str) -> List[D
 
     Source: starmiaoa/astrbot-plugin-gpt-image dual-profile idea (target 10).
     - standard: explicit pixel size (official / many NewAPI relays)
-    - flexible: omit rigid size when aspect is 自动, or add quality-friendly fields for picky relays
+    - flexible: keep the requested orientation while simplifying fields for picky relays
     """
     base_model = model or "gpt-image-1"
     size = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio)
@@ -400,11 +403,7 @@ def _gpt_image_payload_profiles(req: ImageGenerateRequest, model: str) -> List[D
         "prompt": req.prompt,
         "n": 1,
     }
-    if req.aspect_ratio and req.aspect_ratio not in {"自动", "1:1", ""}:
-        flexible["size"] = size
-    else:
-        # Keep an explicit square for 自动 to avoid upstream auto stalls, but drop extra fields.
-        flexible["size"] = "1024x1024"
+    flexible["size"] = size
     # Only add a distinct second attempt when it differs or when compat retry is allowed.
     if flexible != standard:
         profiles.append(flexible)
@@ -494,9 +493,8 @@ class OpenAIImageAdapter(BaseImageAdapter):
         form.add_field("prompt", req.prompt)
         form.add_field("n", "1")
         if include_size:
-            # When profile asks for size: always send one of the 3 official tokens.
-            # 自动 / empty → 1024x1024 (do not omit here; omit is a separate profile).
-            size = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio, allow_omit_auto=False)
+            # Always send one of the 3 official tokens; automatic maps to portrait.
+            size = map_aspect_ratio_to_gpt_image_size(req.aspect_ratio)
             if size:
                 form.add_field("size", size)
         if include_input_fidelity and str(req.reference_fidelity or "").strip().lower() == "low":
@@ -698,7 +696,7 @@ class ZImageAdapter(SimpleOpenAIImageAdapter):
         return {
             "model": self.target.model or self.default_model,
             "prompt": req.prompt,
-            "size": "1024x1024",
+            "size": map_aspect_ratio_to_openai_size(req.aspect_ratio),
             "num_inference_steps": 9,
         }
 
@@ -716,7 +714,7 @@ class GrokImageAdapter(SimpleOpenAIImageAdapter):
         payload: Dict[str, Any] = {
             "model": self.target.model or self.default_model,
             "prompt": req.prompt,
-            "aspect_ratio": "auto" if req.aspect_ratio == "自动" else (req.aspect_ratio or "auto"),
+            "aspect_ratio": "9:16" if _is_automatic_aspect(req.aspect_ratio) else req.aspect_ratio,
             "resolution": (req.resolution or "2K").lower(),
             "response_format": "b64_json",
         }
@@ -734,11 +732,44 @@ class GrokImageAdapter(SimpleOpenAIImageAdapter):
             "image": {"url": data_url, "type": "image_url"},
             "response_format": "b64_json",
         }
-        if req.aspect_ratio and req.aspect_ratio not in {"自动", ""}:
-            payload["aspect_ratio"] = req.aspect_ratio
+        payload["aspect_ratio"] = "9:16" if _is_automatic_aspect(req.aspect_ratio) else req.aspect_ratio
         if req.resolution:
             payload["resolution"] = str(req.resolution).lower()
         return payload
+
+    async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
+        base = normalize_image_base_url(self.target.base_url) or self.default_base_url
+        if req.images:
+            url = f"{base}/v1/images/edits"
+            payload = self.build_edit_payload(req)
+        else:
+            url = f"{base}/v1/images/generations"
+            payload = self.build_payload(req)
+        data, error = await self.post_json_data_or_error(url, payload, http_preview_limit=300)
+        if error or data is None:
+            return ImageGenerateResult(error=error or "接口未返回有效 JSON")
+        return await self.result_from_response(data, req, base)
+
+
+class HunyuanImageAdapter(SimpleOpenAIImageAdapter):
+    default_base_url = "https://your-company.copilot.qq.com"
+    default_model = "hy-image-3.5"
+
+    def build_edit_payload(self, req: ImageGenerateRequest) -> Dict[str, Any]:
+        return {
+            "model": self.target.model or self.default_model,
+            "prompt": req.prompt,
+            "images": [
+                {
+                    "image_url": bytes_to_data_url(
+                        image.data,
+                        normalize_image_mime(image.mime_type or "image/png"),
+                    )
+                }
+                for image in req.images
+                if image.data
+            ],
+        }
 
     async def generate(self, req: ImageGenerateRequest) -> ImageGenerateResult:
         base = normalize_image_base_url(self.target.base_url) or self.default_base_url
@@ -776,8 +807,10 @@ class AgnesImageAdapter(BaseImageAdapter):
                 else _agnes_image_resolution(req.resolution)
             ),
         }
-        if family != "v20" and req.aspect_ratio and req.aspect_ratio not in {"自动", ""}:
-            payload["ratio"] = str(req.aspect_ratio).strip()
+        if family != "v20":
+            payload["ratio"] = (
+                "9:16" if _is_automatic_aspect(req.aspect_ratio) else str(req.aspect_ratio).strip()
+            )
         extra_body: Dict[str, Any] = {}
         if req.images:
             extra_body["image"] = [self._reference_image_value(image) for image in req.images if image.data]
@@ -1156,6 +1189,7 @@ IMAGE_ADAPTER_TYPES: Dict[str, type[BaseImageAdapter]] = {
     "grok": GrokImageAdapter,
     "agnes": AgnesImageAdapter,
     "novelai": NovelAIImageAdapter,
+    "hunyuan": HunyuanImageAdapter,
 }
 
 

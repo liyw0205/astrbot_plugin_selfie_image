@@ -12,6 +12,7 @@ from ..cos.leg_focus import (
     has_leg_focus_contract,
     is_leg_calf_crop_action,
 )
+from .group_prompt_pool import has_group_composition_contract
 
 
 COS_IDENTITY_CONTRACT_ZH = (
@@ -203,7 +204,7 @@ def extract_user_prompt(action: str) -> str:
 def extract_generated_action_contract(action: str) -> str:
     """Keep the generated action body separate from its user supplement."""
     text = str(action or "").strip()
-    match = re.search(r"\s*用户补充要求优先[:：]", text)
+    match = re.search(r"\s*(?:用户补充要求优先|用户补充要求)[:：]", text)
     if match:
         return text[: match.start()].rstrip(" 。")
     return text
@@ -247,6 +248,7 @@ def build_selfie_builtin_prompt(
         or "【pose:" in str(action)
     )
     is_group = (not is_cos) and ("合影" in str(action) or "合照" in str(action) or "同框" in str(action))
+    is_group_contract = is_group and has_group_composition_contract(str(action))
     feet_cropped = is_legs and is_leg_calf_crop_action(str(action))
     leg_face_context = is_legs and feet_cropped and has_leg_face_context(str(action))
     if language == "en":
@@ -263,6 +265,8 @@ def build_selfie_builtin_prompt(
                 if is_legs
                 else "Create one cohesive soft Kyoto Animation-like anime cosplay illustration."
                 if is_cos
+                else "Create one cohesive soft Kyoto Animation-like vertical group-photo illustration with framing set by the selected composition contract."
+                if is_group_contract
                 else "Create one cohesive soft Kyoto Animation-like anime illustration in vertical smartphone selfie composition."
             )
         elif is_legs:
@@ -273,12 +277,29 @@ def build_selfie_builtin_prompt(
             )
         elif is_cos:
             opening = f"Create one natural {style} COS cover photo."
+        elif is_group_contract:
+            opening = f"Create one natural {style} vertical group photograph following the selected composition contract."
         else:
             opening = f"Create one natural {style} vertical smartphone cover photo."
         lines = [opening]
         if is_legs:
-            lines.append("Use the main reference to preserve the subject's identity and visual medium; follow the selected outfit and framing below.")
-        elif is_cos:
+            lines.extend([
+                "Follow the generated leg-focus action contract below as the sole source for pose, camera, indoor scene, crop, and complete clothing; do not add another framing or outfit choice.",
+                rendered_action,
+                "Keep the selected indoor setting secondary, with natural perspective and anatomy; framing follows the action contract.",
+            ])
+            if not has_reference_image:
+                lines.append("Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.")
+            if extra_reference_count:
+                lines.append("Use extra references only for the specific clothing or visual details requested; do not let them override the selected camera or pose.")
+            if translated_user and translated_user not in rendered_action:
+                lines.append(f"User request: {translated_user}")
+            if effective_appearance_type == "real":
+                lines.append("Use natural indoor available light, realistic fabric, and ordinary camera perspective; avoid studio polish and 3D-rendered surfaces.")
+            elif effective_appearance_type == "anime":
+                lines.append("Keep one cohesive 2D anime medium with natural indoor light and clean, believable fabric folds.")
+            return _join(*lines)
+        if is_cos:
             lines.extend([
                 COS_COVERED_EYES_IDENTITY_CONTRACT_EN
                 if has_reference_image and covered_eyes
@@ -289,116 +310,47 @@ def build_selfie_builtin_prompt(
                 "Follow the complete COS action contract below exactly once. Preserve its selected outfit, pose, scene, camera, and single framing without adding another camera or crop choice.",
                 rendered_action,
             ])
-        else:
+        elif not is_group_contract:
             lines.extend([
                 "Keep the main subject's identity, gender, face, hair, body proportions, and overall appearance stable; change expression naturally with the scene.",
                 "When facing the camera, keep natural focused eye contact unless the request says otherwise.",
             ])
-        if has_reference_image:
+        if has_reference_image and not (is_cos or is_group_contract):
             lines.append(
                 (
                     "Use reference image 1 as the identity anchor. The selected appearance type controls the rendered visual medium; do not copy the reference's medium."
                     if effective_appearance_type != "auto"
                     else "Use reference image 1 as the primary identity and visual-medium anchor; extra references must not replace or override the primary subject's visual medium."
                 )
-                if not is_legs or not feet_cropped
-                else "Use reference image 1 for identity and natural proportions; follow the selected outfit and lower-body framing."
             )
             if viewpoint_change and not is_legs:
                 lines.append(
                     "The requested camera view takes priority over the reference projection. Preserve identity cues, but do not copy the reference head orientation, facial projection, shoulder line, or pose. Reconstruct the face naturally for this view; in profile or three-quarter views, let far-side features be naturally occluded instead of forcing both eyes into view."
                 )
-        else:
+        elif not is_cos and not is_group_contract:
             lines.append("Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.")
-        if extra_reference_count:
+        if extra_reference_count and not (is_cos or is_group_contract):
             lines.append(
                 "Use extra references only for independent companions or explicitly requested clothing, pose, composition, lighting, or scene. Extra references must not override the primary subject's visual medium."
             )
-        # Legs first: action text may contain "不要合影" which must not flip into group mode.
-        if is_legs:
-            camera_match = re.search(r"【cam:(selfie|first|third)】", str(action))
-            camera_kind = str(camera_match.group(1) if camera_match else "selfie")
-            wear_match = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", str(action))
-            selected = str(wear_match.group(1) if wear_match else "daily")
-            selected_text = {
-                "daily": "full-length everyday trousers and coordinated shoes",
-                "custom": "the user's explicitly specified complete outfit",
-                "white": "opaque white full-length tights",
-                "black": "opaque black full-length tights",
-                "bare": "opaque skin-tone full-length legwear",
-                "barefoot": "naturally bare feet, with no hosiery or shoes",
-                "pantyhose": "opaque white full-length tights",
-            }[selected]
-            foot_target = "feet" if selected == "barefoot" else "shoes"
-            lower_outfit_display = "the lower outfit and naturally bare feet" if selected == "barefoot" else "the lower outfit, hosiery, and shoes"
-            legwear_line = (
-                f"Use the selected complete lower outfit: {selected_text}. Follow it consistently."
-            )
-            outfit_match = re.search(r"【outfit:([a-z_]+)】", str(action))
-            outfit = get_leg_focus_outfit(outfit_match.group(1) if outfit_match else "")
-            if outfit:
-                footwear_rule = (
-                    " Do not add hosiery or shoes."
-                    if selected == "barefoot"
-                    else " Do not replace the selected bottoms or shoes."
-                )
-                outfit_line = (
-                    "Use the code-locked complete outfit exactly: "
-                    f"{outfit.get('prompt_en', '')}.{footwear_rule}"
-                )
-            else:
-                outfit_line = "Follow any explicitly specified clothing and shoes exactly."
-            lines.append(
-                f"First-person natural outfit framing from waist to {foot_target}; keep the head and face out of frame."
-                if feet_cropped and camera_kind == "selfie" and not leg_face_context
-                else f"First-person natural outfit framing from waist to {foot_target}; the head may enter the upper edge only when paired with the selected facial expression and leg-related gesture."
-                if feet_cropped and camera_kind == "selfie"
-                else f"Full-length mirror selfie framing: show the subject from head to {foot_target}; hold the phone naturally without hiding the outfit."
-                if camera_kind == "selfie"
-                else f"Third-person legwear outfit photo from waist to {foot_target}; keep the head, face, and shoulders out of frame."
-                if feet_cropped and not leg_face_context
-                else f"Third-person legwear outfit photo from waist to {foot_target}; the head may enter the upper edge only with a coordinated expression and gesture, while the photographer stays outside the frame."
-                if feet_cropped
-                else f"Third-person full-length everyday photograph: keep the photographer outside the frame and show the subject from head to {foot_target}."
-            )
-            if feet_cropped:
+        if is_group:
+            if is_group_contract:
                 lines.extend([
-                    (
-                        f"Vertical anime legwear illustration: use a clean lower-body composition from waist to {foot_target}; keep the head and face out of frame unless the action explicitly enables coordinated face context."
-                        if effective_appearance_type == "anime"
-                        else f"Casual vertical legwear photograph: use a clean lower-body composition from waist to {foot_target}; keep the head and face out of frame unless the action explicitly enables coordinated face context."
-                    ),
-                    "When face context is enabled, keep the expression, gaze, upper-body gesture, and leg pose in one coherent action; do not add a detached portrait above the legs."
-                    if leg_face_context
-                    else "Do not add a face through a mirror, reflection, phone screen, or picture-in-picture.",
-                    legwear_line,
-                    outfit_line,
-                    "Keep visible anatomy natural and continuous; show bare feet clearly without furniture blocking them."
-                    if selected == "barefoot"
-                    else "Keep visible anatomy natural and continuous; show the hosiery and shoes clearly without furniture blocking them.",
-                    f"Show {lower_outfit_display} clearly at a normal eye-level perspective; keep proportions natural.",
-                    "Match the lighting to the requested scene; otherwise use soft available light, natural exposure, realistic fabric, and an unretouched everyday smartphone feel. Avoid studio polish, plastic skin, or 3D-rendered surfaces.",
+                    "Follow the selected group composition contract below as the sole source for people, scene, pose, gaze, and framing.",
+                    rendered_action,
                 ])
             else:
                 lines.extend([
-                    f"Single adult subject only: show the complete outfit from head to {foot_target} at a natural camera distance.",
-                    legwear_line,
-                    outfit_line,
-                    f"Keep the head, upper clothing, lower clothing, and {foot_target} inside the frame; use natural proportions and a relaxed pose.",
-                    "Use ordinary camera perspective, scene-appropriate ambient light, realistic fabric texture, and an unretouched everyday feel; avoid studio polish, plastic skin, or 3D-rendered surfaces.",
+                    "Turn each referenced person or non-person subject into an independent complete person with clear boundaries; do not leave toys or flat cutouts.",
+                    "Keep everyone in one coherent vertical half-body scene with natural positions, scale, perspective, and friendly interaction.",
                 ])
-        elif is_group:
-            lines.extend([
-                "Turn each referenced person or non-person subject into an independent complete person with clear boundaries; do not leave toys or flat cutouts.",
-                "Keep everyone in one coherent vertical half-body scene with natural positions, scale, perspective, and friendly interaction.",
-            ])
-        else:
+        elif not is_cos:
             lines.extend([
                 "Keep a vertical close half-body everyday photo, with coherent light, color, depth, camera perspective, clothing, and scene relationships.",
                 "Keep visible anatomy complete and natural: one left and one right hand or foot, connected limbs, and complete fingers or toes.",
-                ])
+            ])
         pose = re.search(r"【(?:pose|shot):([a-z_]+)】", str(action))
-        if pose:
+        if pose and not is_group_contract:
             pose_id = pose.group(1)
             pose_descriptions = {
                 "sofa_front_crop": "Sit naturally at the front edge of a sofa with both feet grounded.",
@@ -446,10 +398,31 @@ def build_selfie_builtin_prompt(
         final_style_contract = {
             "real": "Final visual medium: a cohesive realistic human photograph. Selfie, phone, camera, and COS wording controls composition and content, not a different visual medium.",
             "anime": "Final visual medium: a cohesive 2D anime illustration. Selfie, phone, camera, photo, and COS wording controls framing and content only; never render photorealistically or mix anime and live-action styles.",
-        }.get(effective_appearance_type, "")
+        }.get(effective_appearance_type, "") if not is_group_contract else ""
         return _join(*lines, user_line, final_style_contract)
 
     user = translated_user or extract_user_prompt(action)
+    if is_legs:
+        camera_match = re.search(r"【cam:(selfie|third)】", str(action))
+        camera_kind = str(camera_match.group(1) if camera_match else "selfie")
+        photo_type_line = "这是第一人称手机视角照片。" if camera_kind == "selfie" else "这是第三人称画外机位照片。"
+        identity_line = (
+            "参考图用于保持主角身份与自然体态；服装、姿势、机位和场景严格按本次动作合同执行。"
+            if has_reference_image
+            else "按角色设定保持主角身份和自然体态；服装、姿势、机位和场景严格按本次动作合同执行。"
+        )
+        lines = [
+            photo_type_line,
+            identity_line,
+            "以下动作合同是本次取景、姿势、机位、室内场景和穿搭的唯一来源；不要增加或替换合同未指定的服饰。",
+            rendered_action,
+            "保持自然人体比例、真实布料和室内环境光；背景简洁，景别服从动作合同。"
+            if effective_appearance_type != "anime"
+            else "保持统一的 2D 动漫媒介、自然人体比例和室内环境光；背景简洁，不使用远景。",
+        ]
+        if user and user not in rendered_action:
+            lines.append(f"用户补充要求：{user}")
+        return _join(*lines)
     camera_match = re.search(r"【cam:(selfie|third)】", str(action))
     camera_kind = str(camera_match.group(1) if camera_match else "selfie")
     wear_match = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", str(action))

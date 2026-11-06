@@ -52,8 +52,6 @@ TEMPLATE_OPTION_ALIASES = {
     "composition": "composition",
     "光线": "lighting",
     "lighting": "lighting",
-    "时长": "duration",
-    "duration": "duration",
 }
 
 # Natural-language prompts often carry their own framing hint.  This is

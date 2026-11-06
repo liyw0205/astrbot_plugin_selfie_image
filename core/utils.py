@@ -255,7 +255,7 @@ def save_image_bytes(data: bytes, save_dir: str, prefix: str = "img", mime: str 
 def collect_record_cache_paths(records: Any) -> List[str]:
     result: List[str] = []
     seen = set()
-    path_keys = ("request_image_paths", "generated_image_paths", "image_paths", "generated_video_paths", "video_paths")
+    path_keys = ("request_image_paths", "generated_image_paths", "image_paths")
 
     def add(value: Any) -> None:
         if isinstance(value, str):
@@ -577,9 +577,6 @@ def redact_generation_record(record: Any) -> Dict[str, Any]:
             continue
         if "generated_image_sources" in container:
             container["generated_image_sources"] = []
-        for key in ("video_url", "video_source"):
-            if key in container:
-                container[key] = ""
 
     redacted = redact_sensitive_data(working)
     if not isinstance(redacted, dict):
@@ -588,9 +585,6 @@ def redact_generation_record(record: Any) -> Dict[str, Any]:
     # Media origins are explicitly shown/copied in the dashboard. Preserve the
     # upstream value instead of redacting query parameters or base64 payloads.
     def restore_media_fields(source: Dict[str, Any], target: Dict[str, Any]) -> None:
-        for key in ("video_url", "video_source"):
-            if key in source:
-                target[key] = source.get(key) or ""
         if isinstance(source.get("generated_image_sources"), list):
             target["generated_image_sources"] = _preserve_media_sources(source["generated_image_sources"])
 
@@ -659,10 +653,6 @@ def redact_generation_record_for_detail(record: Any) -> Dict[str, Any]:
                 if isinstance(item, (dict, str))
             ]
             container["generated_image_sources"] = target["generated_image_sources"]
-        for key in ("video_source", "video_url"):
-            if key in container:
-                target[key] = _detail_media_source(container.get(key)) if _is_inline_media_source(container.get(key)) else container.get(key) or ""
-                container[key] = target[key]
 
     strip_media(working, detail_media)
     response_data = working.get("response_data")
@@ -694,7 +684,7 @@ def redact_generation_record_for_detail(record: Any) -> Dict[str, Any]:
 def generation_record_media_sources(record: Any) -> Dict[str, Any]:
     """Extract original media sources for an explicit copy action."""
     if not isinstance(record, dict):
-        return {"generated_image_sources": [], "video_source": ""}
+        return {"generated_image_sources": []}
     response_data = record.get("response_data") if isinstance(record.get("response_data"), dict) else {}
     image_sources = record.get("generated_image_sources")
     if not isinstance(image_sources, list) or not image_sources:
@@ -703,11 +693,7 @@ def generation_record_media_sources(record: Any) -> Dict[str, Any]:
             image_sources = fallback_sources
     if not isinstance(image_sources, list):
         image_sources = []
-    video_source = record.get("video_source") or record.get("video_url") or response_data.get("video_source") or response_data.get("video_url") or ""
-    return {
-        "generated_image_sources": image_sources,
-        "video_source": video_source,
-    }
+    return {"generated_image_sources": image_sources}
 
 
 def _truncate_text(value: Any, limit: int) -> str:
@@ -865,8 +851,6 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "requested_count",
             "count",
             "raw_reference_image_count",
-            "duration",
-            "requested_duration",
             "timeout_seconds",
             "size",
             "media_type",
@@ -1015,8 +999,6 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
         out["request_data"] = slim_rd
         for key in (
             "requested_count",
-            "duration",
-            "requested_duration",
             "raw_reference_image_count",
             "timeout_seconds",
             "size",
@@ -1084,14 +1066,9 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "generated_image_paths": resp.get("generated_image_paths")
             if isinstance(resp.get("generated_image_paths"), list)
             else [],
-            "generated_video_paths": resp.get("generated_video_paths")
-            if isinstance(resp.get("generated_video_paths"), list)
-            else [],
             "generated_image_sources": resp.get("generated_image_sources")
             if isinstance(resp.get("generated_image_sources"), list)
             else [],
-            "video_url": resp.get("video_url") or "",
-            "video_source": resp.get("video_source") or "",
             "retry_count": resp.get("retry_count"),
             "retry_exhausted": resp.get("retry_exhausted"),
         }
@@ -1249,9 +1226,6 @@ def summarize_record_for_list(record: Dict[str, Any]) -> Dict[str, Any]:
         else [],
         "generated_image_paths": record.get("generated_image_paths")
         if isinstance(record.get("generated_image_paths"), list)
-        else [],
-        "generated_video_paths": record.get("generated_video_paths")
-        if isinstance(record.get("generated_video_paths"), list)
         else [],
         "favorite": bool(record.get("favorite") or record.get("is_favorite")),
         "pinned": bool(record.get("pinned") or record.get("is_pinned")),
@@ -1562,7 +1536,7 @@ QUOTE_TEXT_MAX_CHARS = 6000
 # starts with 图片 ("图片里的女孩穿白色连衣裙") survives.
 _CQ_CODE_RE = re.compile(r"\[CQ:[^\]]*\]")
 _MEDIA_PLACEHOLDERS = frozenset(
-    {"图片", "视频", "语音", "文件", "表情", "动画表情", "图片消息", "视频消息"}
+    {"图片", "语音", "文件", "表情", "动画表情", "图片消息"}
 )
 
 

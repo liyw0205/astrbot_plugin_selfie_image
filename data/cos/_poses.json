@@ -1,0 +1,925 @@
+{
+  "schema_version": 1,
+  "request_aliases": {
+    "kneeling_carpet": ["跪坐在柔软地毯上", "跪坐在地毯上", "跪坐在地毯", "地毯跪坐", "跪坐在", "跪坐", "跪姿", "跪着", "跪在"],
+    "standing_detail": ["自然站姿", "站姿", "站立", "站着"],
+    "front_sleeve_display": ["双手展示袖口", "双手捏袖口", "肩侧展示袖口", "抬手展示袖子", "双手扶在肩侧"],
+    "front_hem_display": ["双手轻提衣摆", "轻提裙摆展示", "双手提裙摆", "展示裙摆", "提衣摆姿势"],
+    "half_turn": ["侧身姿势", "自然侧身", "身体侧向镜头"],
+    "side_profile": ["纯侧身", "侧身", "侧面站姿", "侧面朝向", "侧身不回头", "侧身但不回头"],
+    "back_to_camera": ["背对镜头", "背向镜头", "背身站立", "背身", "背影", "背影姿势", "背面构图", "后背视角", "只拍背影", "面朝远处"],
+    "seated_composed": ["端正坐姿", "坐姿", "坐着", "坐在"],
+    "chair_diagonal_leg": ["椅上单腿斜伸", "椅上单腿前伸", "椅上错腿坐姿", "一腿前伸坐姿", "椅上伸腿坐姿", "坐姿单腿斜伸"],
+    "floor_sit_side": ["侧坐地面", "坐在地毯上", "坐在地上", "地面坐姿"],
+    "one_knee_crouch": ["单膝低姿", "单膝蹲", "单膝跪地", "半蹲", "蹲姿", "蹲下"],
+    "low_kneel_open": ["低位双膝跪蹲", "低位跪蹲", "双膝低姿", "双膝分开跪蹲", "低位双膝屈蹲"],
+    "leaning_rest": ["倚靠停留", "靠在", "倚在", "靠墙", "倚墙", "倚靠"],
+    "stair_sit": ["台阶坐姿", "坐在台阶", "坐在石阶"],
+    "reach_light": ["伸手触景", "伸手触碰", "触碰身旁", "伸手", "抬手"],
+    "over_shoulder": ["背身回眸", "侧身回看", "转身回看", "回头望", "回头看镜头", "从肩上回眸", "回眸", "背面侧身", "背身侧身", "背身侧面", "背面侧颜", "背身侧颜"],
+    "relaxed_recline": ["沙发斜倚", "倚坐在沙发", "靠坐在沙发", "侧身倚靠"],
+    "quiet_low_gaze": ["安静低眸", "低眸", "闭眼低眸", "低头闭眼"],
+    "hands_gathered_at_sternum": ["胸前拢衣", "双手拢衣", "双手收拢衣襟", "胸前收拢衣襟"],
+    "window_back_raised_arms": ["窗边背影抬臂", "背对窗户抬臂", "背窗抬臂", "窗边背影抬手"],
+    "side_back_rail_lean": ["栏杆侧后方", "侧后方倚栏杆", "双手搭栏杆", "栏杆侧身"],
+    "side_edge_bend": ["扶着侧边弯腰", "扶侧边弯腰", "扶着侧边前倾", "扶侧边前倾", "扶着门框侧边", "扶门框侧边", "扶着墙角侧边", "扶墙角侧边", "侧边支撑弯腰", "侧边扶靠弯腰", "靠门框侧边弯腰", "侧边弯腰", "扶着侧边"],
+    "side_edge_hip_shift": ["扶着侧边展示腰线", "侧身扶边展示腰线", "侧边外推腰胯", "扶边外推腰胯", "侧身扶边", "侧身扶着边缘", "扶着边缘展示身材"],
+    "rear_edge_curve": ["背身扶侧边", "背面扶侧边", "背身扶门框侧边", "背身扶墙角", "背对侧边前倾", "背身侧边前倾", "背身扶边弯腰"],
+    "rear_hip_shift": ["背身展示后腰", "背身展示腰线", "背身髋部后移", "背身扶边站姿", "背身侧腰", "背身偏侧展示身材"],
+    "wall_lean_curve": ["扶墙侧身", "侧身扶墙", "扶墙弯腰", "扶墙微弯", "靠墙侧身"],
+    "rear_wall_curve": ["背身扶墙微弯", "背身扶墙", "背对扶墙", "背面扶墙", "背身微弯"],
+    "seated_side_curve": ["坐姿侧腰", "侧腰坐姿", "坐姿展示腰线"],
+    "veranda_side_profile": ["缘侧侧颜", "日式缘侧侧颜", "扶手侧颜", "缘侧扶手侧颜"],
+    "seated_knee_up": ["椅上抬膝", "抬膝坐姿", "单膝靠近镜头", "藤编椅抬膝"],
+    "lean_forward_hands": ["前倾伸手", "双手靠近镜头", "向镜头伸手", "前倾双手"],
+    "sleeping_on_bed": ["床上熟睡", "熟睡姿势", "睡在床上", "躺床熟睡"]
+  },
+  "classification_terms": {
+    "edge": ["侧边", "边缘", "门框边", "门框侧", "墙角", "墙边", "柱子侧面", "柱边", "侧板"],
+    "bend": ["弯腰", "前倾", "弯身", "下腰", "髋部后移"],
+    "back": ["背身", "背向镜头", "背对镜头", "背面", "背影"],
+    "side": ["侧身", "侧面", "侧后三分之四", "侧后方"],
+    "orientation_back": ["背对镜头", "背向镜头", "背影", "背身", "背面构图", "后背视角", "从背后拍"],
+    "orientation_side": ["侧身", "侧面", "侧后方", "侧前方"],
+    "orientation_front": ["正面", "正对镜头", "面向镜头"],
+    "orientation_strip": ["背对镜头", "背向镜头", "背身", "背面构图", "背面侧身", "背身侧身", "背面侧颜", "背身侧颜", "后背视角", "从背后拍", "侧后方", "侧前方", "侧身", "侧面", "正对镜头", "面向镜头", "正面"]
+  },
+  "custom_request_terms": [
+    "叉腰", "插腰", "抱胸", "交叉双臂", "交叉手臂", "托腮", "托脸", "捧脸", "撩发",
+    "倚靠", "靠在", "倚在", "靠墙", "倚墙", "靠坐", "躺在", "蹲下", "半蹲", "弯腰",
+    "鞠躬", "抬手", "举手", "伸手", "手扶", "手搭", "手持"
+  ],
+  "request_syntax_terms": {
+    "labels": ["姿势", "姿態", "动作", "動作"],
+    "assignments": ["是", "为", "改成", "采用", "保持", "设为", "设置为", "：", ":"]
+  },
+  "items": {
+    "standing_detail": {
+      "title": "自然站姿",
+      "prompt": "一侧腿自然承重，另一腿轻轻错后或脚尖向外，肩线放松；手部可轻触衣摆、腰线或套装配饰，展示服装剪裁和层次，不摆证件照式双脚并拢正面站姿。",
+      "pose_family": "standing",
+      "random_weight": 5,
+      "framing_ids": [
+        "front_half",
+        "three_quarter_front",
+        "two_thirds",
+        "environmental",
+        "eye_level_full",
+        "high_angle_three_quarter",
+        "low_angle_full",
+        "low_angle_hero",
+        "side_profile"
+      ],
+      "expression_ids": [
+        "gentle",
+        "deep_affection",
+        "melancholy",
+        "lively",
+        "playful",
+        "calm",
+        "confident",
+        "shy",
+        "cool",
+        "mysterious"
+      ],
+      "random_camera_ids": [
+        "third",
+        "first",
+        "selfie"
+      ]
+    },
+    "front_sleeve_display": {
+      "title": "正面肩侧展示袖口",
+      "prompt": "人物正面或轻微三分之四朝向镜头站立，一侧腿自然承重；双肘弯曲并向外微开，双手停在肩线附近，分别轻捏袖口或袖侧布料，动作自然错开，不把手臂伸向镜头、不遮挡服装主体。只整理当前 COS 服装原有袖子，不新增或改变服装；若服装无袖，双手放松停在肩线外侧，不虚抓布料。肩颈放松，保持稳定的静态展示姿势。",
+      "orientation": "front",
+      "pose_family": "standing",
+      "random_weight": 2,
+      "framing_ids": [
+        "front_half",
+        "three_quarter_front",
+        "two_thirds",
+        "close_vertical_three_quarter"
+      ],
+      "expression_ids": [
+        "calm",
+        "gentle",
+        "confident",
+        "playful"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "front_hem_display": {
+      "title": "正面轻提衣摆",
+      "prompt": "人物正面或三分之四侧前方站立，一条腿自然承重，另一条腿轻轻错开。仅当当前服装本身有可活动的裙摆或外层衣摆时，双手分别轻扶衣摆两侧并小幅向外展开，展示原有廓形和层次；不高举、不大幅掀起、不拉扯或改变服装。若服装没有合适衣摆，双手分别轻触腰侧与服装侧缝，不凭空添加裙装。保持覆盖得体、重心稳定，手指与布料接触清楚，采用静态服装展示姿势。",
+      "orientation": "front",
+      "pose_family": "standing",
+      "random_weight": 2,
+      "framing_ids": [
+        "three_quarter_front",
+        "two_thirds",
+        "eye_level_full"
+      ],
+      "expression_ids": [
+        "calm",
+        "gentle",
+        "confident",
+        "playful"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "half_turn": {
+      "title": "自然侧身",
+      "prompt": "身体以约四十五度侧向镜头，肩胯自然错开，一侧腿略前、一侧腿略后以展示腰线和衣摆；头部和视线顺着身体方向，不强行回头或扭转颈部，手部轻触衣料或配饰但不遮挡服装主体。",
+      "orientation": "side",
+      "pose_family": "side",
+      "random_weight": 4,
+      "framing_ids": [
+        "three_quarter_front",
+        "two_thirds",
+        "environmental",
+        "eye_level_full",
+        "high_angle_three_quarter",
+        "low_angle_full",
+        "low_angle_hero",
+        "side_profile"
+      ],
+      "expression_ids": [
+        "gentle",
+        "deep_affection",
+        "melancholy",
+        "lively",
+        "playful",
+        "calm",
+        "confident",
+        "shy",
+        "cool",
+        "mysterious"
+      ],
+      "random_camera_ids": [
+        "third",
+        "first",
+        "selfie"
+      ]
+    },
+    "seated_composed": {
+      "title": "端正坐姿",
+      "prompt": "只使用当前场景中已经存在且合适的椅子、沙发、矮凳或榻榻米边缘坐下；若场景没有合适支撑面则改为自然站姿，不凭空增加家具。上身舒展，双腿并拢后自然斜向一侧；手部动作遵循套装已有道具与配饰，衣摆自然落下。",
+      "pose_family": "seated",
+      "random_weight": 3,
+      "framing_ids": [
+        "front_half",
+        "three_quarter_front",
+        "two_thirds",
+        "environmental",
+        "eye_level_full",
+        "high_angle_three_quarter",
+        "side_profile",
+        "high_angle_oblique"
+      ],
+      "expression_ids": [
+        "calm",
+        "gentle",
+        "confident",
+        "playful"
+      ],
+      "random_camera_ids": [
+        "third",
+        "selfie"
+      ]
+    },
+    "chair_diagonal_leg": {
+      "title": "椅上单腿斜伸",
+      "prompt": "只坐在当前场景已经存在的稳固椅子、长凳或试衣凳上；躯干正面或略偏三分之四，背部自然舒展。一条腿从膝部向前方斜伸，另一条腿屈膝并稳定落地，双腿不交叉叠压，膝踝连接和脚部方向自然；一只手轻放座面或椅侧，另一只手自然落在大腿或衣摆边缘，服装顺势垂落。保持稳定坐姿，不把腿过度靠近镜头；若场景没有合适座位或服装不支持该腿部姿势，改为双腿斜向一侧的端坐。",
+      "orientation": "front",
+      "pose_family": "seated",
+      "random_weight": 2,
+      "framing_ids": [
+        "eye_level_full",
+        "low_angle_full"
+      ],
+      "expression_ids": [
+        "calm",
+        "gentle",
+        "confident",
+        "playful"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "kneeling_carpet": {
+      "title": "地毯跪坐",
+      "prompt": "双膝并拢跪坐在柔软地毯上，双腿收拢压在身下，臀部自然坐在脚跟上，脚部不向两侧张开；上身自然挺直，手部动作遵循套装已有道具与配饰，不遮挡服装主体。",
+      "pose_family": "seated",
+      "random_weight": 2,
+      "framing_ids": [
+        "environmental",
+        "eye_level_full",
+        "high_angle_three_quarter",
+        "side_profile",
+        "high_angle_oblique"
+      ],
+      "expression_ids": [
+        "gentle",
+        "deep_affection",
+        "melancholy",
+        "lively",
+        "playful",
+        "calm",
+        "confident",
+        "shy",
+        "cool",
+        "mysterious"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "floor_sit_side": {
+      "title": "侧坐地面",
+      "prompt": "坐在干净柔软的地面或地毯上，双腿收拢并自然转向身体一侧，一只手轻撑身侧保持平衡；上身舒展，不盘腿、不大幅分腿，服装结构清晰。",
+      "pose_family": "seated",
+      "random_weight": 2,
+      "framing_ids": [
+        "environmental",
+        "eye_level_full",
+        "high_angle_three_quarter",
+        "side_profile",
+        "high_angle_oblique"
+      ],
+      "expression_ids": [
+        "gentle",
+        "deep_affection",
+        "melancholy",
+        "lively",
+        "playful",
+        "calm",
+        "confident",
+        "shy",
+        "cool",
+        "mysterious"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "one_knee_crouch": {
+      "title": "单膝低姿",
+      "prompt": "采用稳定的单膝低姿，一腿弯曲支撑、另一腿自然屈起，上身保持舒展；只有在套装下摆允许时执行，不拉扯或压住服装，避免夸张蹲姿。",
+      "pose_family": "low_static",
+      "random_weight": 1,
+      "framing_ids": [
+        "three_quarter_front",
+        "environmental",
+        "eye_level_full",
+        "high_angle_three_quarter",
+        "side_profile",
+        "high_angle_oblique"
+      ],
+      "expression_ids": [
+        "confident",
+        "calm",
+        "cool"
+      ],
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "low_kneel_open": {
+      "title": "低位双膝跪蹲",
+      "prompt": "在当前场景干净平整的地面做稳定低位跪蹲，双膝自然弯曲并略微分开，不超过肩宽；小腿和脚部按当前鞋履自然落地，臀部降低至脚跟上方附近，上身保持舒展直立，双手轻放在大腿上方以稳定姿态。衣摆和长外套自然垂落，不压扯或折叠服装；不做单膝突起、劈腿、极限深蹲或动态动作，膝踝连接清楚，重心稳定。",
+      "orientation": "front",
+      "pose_family": "low_static",
+      "random_weight": 1,
+      "framing_ids": [
+        "eye_level_full",
+        "low_angle_full"
+      ],
+      "expression_ids": [
+        "calm",
+        "confident",
+        "playful"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "leaning_rest": {
+      "title": "倚靠停留",
+      "prompt": "仅轻靠当前场景中明确存在且位置合适的窗框、栏杆或墙面；若没有合适支撑物则保持自然站姿，不凭空增加墙、栏杆或道具。肩部放松，一腿自然微屈，身体重心稳定，手部动作遵循套装已有道具。",
+      "pose_family": "leaning",
+      "random_weight": 3,
+      "framing_ids": [
+        "three_quarter_front",
+        "environmental",
+        "eye_level_full",
+        "side_profile",
+        "low_angle_full",
+        "low_angle_hero"
+      ],
+      "expression_ids": [
+        "calm",
+        "cool",
+        "gentle",
+        "confident"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "stair_sit": {
+      "title": "台阶坐姿",
+      "prompt": "坐在宽阔平整的台阶边缘，一条腿自然屈起、另一条腿顺着台阶放低；身体重心稳定，衣摆顺着台阶铺开但不遮住服装细节。",
+      "pose_family": "seated",
+      "random_weight": 2,
+      "framing_ids": [
+        "environmental",
+        "eye_level_full",
+        "high_angle_three_quarter",
+        "side_profile",
+        "high_angle_oblique"
+      ],
+      "expression_ids": [
+        "gentle",
+        "deep_affection",
+        "melancholy",
+        "lively",
+        "playful",
+        "calm",
+        "confident",
+        "shy",
+        "cool",
+        "mysterious"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "reach_light": {
+      "title": "伸手触景",
+      "prompt": "身体微微转向一侧；仅在当前场景确实有近处枝叶、窗框或栏杆时，一只手自然抬起轻触该物件，否则手自然停在身侧。视线顺着动作方向，动作克制，不凭空增加道具。",
+      "pose_family": "gesture_static",
+      "random_weight": 2,
+      "framing_ids": [
+        "front_half",
+        "three_quarter_front",
+        "two_thirds",
+        "environmental",
+        "eye_level_full",
+        "high_angle_three_quarter",
+        "side_profile"
+      ],
+      "expression_ids": [
+        "gentle",
+        "calm",
+        "mysterious"
+      ],
+      "random_camera_ids": [
+        "third",
+        "first"
+      ]
+    },
+    "over_shoulder": {
+      "title": "背后三分之四展示",
+      "prompt": "人物以背后三分之四角度朝向场景纵深，背部和一侧身形自然呈现；肩线、胯部与头部朝向保持一致，头部顺着躯干朝前，不回头、不回眸、不扭颈，也不要求露出侧脸或正脸。重心自然落在一条腿上，另一腿轻轻错后，髋部向一侧自然外移，展示后背剪裁、腰胯曲线和服装侧后方层次；保持静态、稳定、自然的站姿。",
+      "orientation": "back",
+      "pose_family": "back_display",
+      "random_weight": 6,
+      "incompatible_expression_ids": [
+        "deep_affection"
+      ],
+      "framing_ids": [
+        "rear_three_quarter",
+        "rear_low_medium"
+      ],
+      "expression_ids": [
+        "calm",
+        "melancholy",
+        "mysterious",
+        "shy"
+      ],
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ],
+      "traits": [
+        "body_curve"
+      ]
+    },
+    "side_profile": {
+      "title": "纯侧身",
+      "prompt": "肩线、胯部和面部朝向保持一致，人物以自然侧面或侧后三分之四角度面对镜头，腰线、腿部比例和服装侧面剪裁自然可见；不回头、不回眸、不为露出正脸扭转脖子，姿态稳定。",
+      "orientation": "side",
+      "pose_family": "side",
+      "random_weight": 3,
+      "framing_ids": [
+        "side_profile",
+        "environmental",
+        "eye_level_full",
+        "low_angle_full",
+        "low_angle_hero"
+      ],
+      "expression_ids": [
+        "calm",
+        "cool",
+        "gentle",
+        "mysterious"
+      ],
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "back_to_camera": {
+      "title": "背对镜头",
+      "prompt": "人物背部朝向镜头，肩线、胯部和头部朝向一致，头部保持正向，不回头、不回眸、不扭转颈部；一侧腿自然承重、另一侧腿略错后，展示后背剪裁、腰线和衣摆层次；身体面向窗外、道路、天际线、庭院深处或室内纵深，不面朝近处空墙；长发自然垂落背部，双手按场景已有栏杆、窗台或衣摆自然摆放，不凭空增加道具。",
+      "orientation": "back",
+      "pose_family": "back",
+      "random_weight": 5,
+      "incompatible_expression_ids": [
+        "deep_affection"
+      ],
+      "framing_ids": [
+        "rear_low_medium",
+        "rear_low_hero"
+      ],
+      "expression_ids": [
+        "calm",
+        "melancholy",
+        "mysterious"
+      ],
+      "camera_ids": [
+        "third",
+        "first"
+      ],
+      "random_camera_ids": [
+        "third",
+        "first"
+      ]
+    },
+    "relaxed_recline": {
+      "title": "沙发斜倚",
+      "prompt": "只倚靠当前场景中已经存在的沙发、床沿或日间榻边；若没有合适的柔软支撑面则改为端坐，不凭空增加家具。由一侧前臂稳定支撑上身，双腿自然收拢；呈放松休息状态，不完全躺倒，不遮挡或压乱服装。",
+      "pose_family": "seated",
+      "random_weight": 2,
+      "framing_ids": [
+        "environmental",
+        "eye_level_full",
+        "high_angle_three_quarter",
+        "side_profile",
+        "high_angle_oblique"
+      ],
+      "expression_ids": [
+        "gentle",
+        "deep_affection",
+        "melancholy",
+        "lively",
+        "playful",
+        "calm",
+        "confident",
+        "shy",
+        "cool",
+        "mysterious"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "quiet_low_gaze": {
+      "title": "安静低眸",
+      "prompt": "头部自然微微低垂，闭眼或低眸，嘴唇保持放松；肩颈和下颌线自然连贯，不为露出正脸扭转脖子，双手放松并遵循套装已有动作。",
+      "pose_family": "quiet_portrait",
+      "random_weight": 2,
+      "incompatible_expression_ids": [
+        "deep_affection"
+      ],
+      "framing_ids": [
+        "front_half",
+        "three_quarter_front",
+        "two_thirds",
+        "environmental",
+        "side_profile",
+        "close_vertical_three_quarter"
+      ],
+      "expression_ids": [
+        "calm",
+        "melancholy",
+        "shy"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "hands_gathered_at_sternum": {
+      "title": "胸前拢衣",
+      "prompt": "双手在胸骨上方自然收拢当前服装前襟或衣摆，手指轻柔交叠并与布料真实接触；头部自然低垂，肩线放松，衣料保持不透明和得体覆盖，不把构图中心转向裸露或身体解剖细节。",
+      "pose_family": "quiet_portrait",
+      "random_weight": 2,
+      "framing_ids": [
+        "front_half",
+        "three_quarter_front",
+        "two_thirds",
+        "environmental",
+        "close_vertical_three_quarter",
+        "intimate_phone_vertical"
+      ],
+      "expression_ids": [
+        "shy",
+        "calm",
+        "melancholy"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "window_back_raised_arms": {
+      "title": "窗边背影抬臂",
+      "prompt": "人物背对镜头站在已经存在的窗边，双臂略微向上抬起或整理头发，肩线、胯部和头部朝向一致；不回头、不回眸、不扭颈，背部、服装后侧和手臂连接自然，不凭空增加窗户或设备。",
+      "orientation": "back",
+      "pose_family": "back",
+      "random_weight": 1,
+      "framing_ids": [
+        "rear_low_medium",
+        "rear_low_hero"
+      ],
+      "expression_ids": [
+        "calm",
+        "mysterious",
+        "melancholy"
+      ],
+      "camera_ids": [
+        "third",
+        "first"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "side_back_rail_lean": {
+      "title": "栏杆侧后方倚靠",
+      "prompt": "人物以侧身或侧后三分之四角度倚靠当前场景已有的栏杆，双手自然搭在栏杆上，身体向画面内微倾；肩线、胯部和头部方向连贯，不回头、不回眸、不扭颈，稳定展示服装侧后方轮廓，不凭空添加栏杆。",
+      "orientation": "side",
+      "pose_family": "side_lean",
+      "random_weight": 2,
+      "framing_ids": [
+        "side_profile",
+        "rear_three_quarter",
+        "rear_low_medium",
+        "environmental",
+        "eye_level_full",
+        "low_angle_full",
+        "low_angle_hero"
+      ],
+      "expression_ids": [
+        "calm",
+        "cool",
+        "mysterious"
+      ],
+      "camera_ids": [
+        "third",
+        "first"
+      ],
+      "random_camera_ids": [
+        "third"
+      ],
+      "traits": [
+        "body_curve"
+      ]
+    },
+    "wall_lean_curve": {
+      "title": "扶墙侧身微弯",
+      "prompt": "人物以侧后三分之四角度站在当前场景已经存在的墙面、门框或窗框旁，靠近支撑面的一只手抬到肩部以上轻扶，另一只手自然整理腰侧或衣摆；髋部向外略推，腰部形成自然S曲线，一条腿承重、另一条腿膝盖放松微屈，脚尖轻触地面以展示侧腰、胯线和服装侧面剪裁。采用贴近的侧后方近中景，允许只露半边脸，不摆平直证件照站姿，不夸张拧胯、不凭空增加墙面或道具，保持单张照片的静态重心。",
+      "orientation": "side",
+      "pose_family": "curve_static",
+      "random_weight": 2,
+      "framing_ids": [
+        "three_quarter_front",
+        "two_thirds",
+        "eye_level_full",
+        "side_profile",
+        "rear_three_quarter",
+        "low_angle_full",
+        "low_angle_hero"
+      ],
+      "expression_ids": [
+        "calm",
+        "cool",
+        "confident",
+        "gentle"
+      ],
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ],
+      "traits": [
+        "body_curve"
+      ]
+    },
+    "rear_wall_curve": {
+      "title": "背身扶墙微弯",
+      "prompt": "人物背向镜头并略偏向一侧，站在当前场景已经存在的墙面、门框或窗边；双手分开抬到肩部以上自然扶住支撑面，手臂顺着墙面延伸，从髋部做明确但可控的前倾，髋部后移、双膝微屈以保持重心，形成背部、腰线与衣摆的自然曲线。镜头从背后偏侧的略低处取贴近近中景，优先展示后背剪裁、腰胯线条和服装后侧；头部顺着支撑面方向，不回头、不回眸、不扭颈。保持单张照片的静态支撑，不做极限弯折，不强求直角、不塌腰、不凭空增加支撑物。",
+      "orientation": "back",
+      "pose_family": "back_curve_static",
+      "random_weight": 2,
+      "incompatible_expression_ids": [
+        "deep_affection"
+      ],
+      "framing_ids": [
+        "rear_low_medium",
+        "rear_low_hero"
+      ],
+      "expression_ids": [
+        "calm",
+        "mysterious",
+        "cool"
+      ],
+      "camera_ids": [
+        "third",
+        "first"
+      ],
+      "random_camera_ids": [
+        "third"
+      ],
+      "traits": [
+        "body_curve"
+      ]
+    },
+    "side_edge_bend": {
+      "title": "侧边支撑前倾",
+      "prompt": "人物站在当前场景已经存在的窄竖向侧边旁，例如门框窄边、墙角、柱子侧面或柜体侧板；身体侧面或背侧朝向镜头，胸口和肩部朝向侧边支撑物，不是正对镜头摆拍。双手必须同时扶住同一条窄侧边：两只手都在肩部至头部附近接触并支撑同一边缘，位置可相邻或轻微上下错开；要清楚表现两只手都压扶在边缘上、双臂共同承担身体前倾的支撑力。不得省略第二只手，不得把第二只手改成整理衣料、放在腰侧或悬空。头部靠近并转向侧边，视线看向支撑边或自然落在边缘附近，不需要正脸，可只见侧脸、让脸被手臂或头发自然遮住，也可完全不露脸，不为了露脸回头或扭颈。从髋部明显但可控地向前倾，臀胯向后外移，双膝微屈稳定重心，形成清楚的前倾斜线和自然腰胯曲线，突出侧腰、臀胯、腿部比例和 COS 服装侧后方剪裁；静态保持，不做跑跳、瑜伽、拉伸或极限下腰。采用贴近的竖幅近景或近中景，不使用远景。不要把窄侧边改成正面墙面或窗户正面，不要变成单手支撑，也不要让双手左右分开、对称撑墙。",
+      "orientation": "side",
+      "pose_family": "side_edge_curve_static",
+      "random_weight": 3,
+      "incompatible_expression_ids": [
+        "deep_affection"
+      ],
+      "framing_ids": [
+        "side_profile",
+        "rear_three_quarter",
+        "rear_low_medium",
+        "low_angle_full",
+        "low_angle_hero",
+        "close_vertical_three_quarter"
+      ],
+      "expression_ids": [
+        "calm",
+        "cool",
+        "confident",
+        "mysterious"
+      ],
+      "camera_ids": [
+        "third",
+        "first"
+      ],
+      "random_camera_ids": [
+        "third",
+        "first"
+      ],
+      "traits": [
+        "body_curve"
+      ]
+    },
+    "side_edge_hip_shift": {
+      "title": "侧身扶边外推腰胯",
+      "prompt": "人物以侧身或侧后三分之四站在已有的门框侧边、墙角、廊柱侧面或栏杆立柱旁；一只手在较高处轻扶侧边，另一只手自然停在腰侧或轻拎衣摆，手臂和手指与支撑物连接真实。承重腿保持稳定，另一腿向后错开或膝盖放松，髋部向远离支撑边的一侧自然外推，肩胯错开形成柔和S曲线，展示侧腰、臀胯和服装侧面层次。头部顺着身体方向，可保留自然侧脸或半边脸，不回头、不扭颈；画面采用贴近近中景，不用远景、俯拍或平直证件照站姿，不把侧边写成正面墙面。",
+      "orientation": "side",
+      "pose_family": "side_edge_curve_static",
+      "random_weight": 2,
+      "incompatible_expression_ids": [
+        "deep_affection"
+      ],
+      "framing_ids": [
+        "side_profile",
+        "rear_three_quarter",
+        "rear_low_medium",
+        "low_angle_full",
+        "low_angle_hero",
+        "close_vertical_three_quarter"
+      ],
+      "expression_ids": [
+        "calm",
+        "cool",
+        "confident",
+        "gentle"
+      ],
+      "camera_ids": [
+        "third",
+        "first"
+      ],
+      "random_camera_ids": [
+        "third",
+        "first"
+      ],
+      "traits": [
+        "body_curve"
+      ]
+    },
+    "rear_edge_curve": {
+      "title": "背身侧边前倾",
+      "prompt": "人物背向镜头并偏向一侧，靠近当前场景已有的门框侧边、墙角、柱子侧面或窄栏杆边缘；一侧手臂在较高处扶住侧边，另一只手可在较低处轻触同一支撑边或整理后腰衣料，不左右对称撑住正面墙。身体从髋部明显前倾，髋部后移，一条腿承重、另一条腿向后错开，膝盖微屈并保持稳定，突出后腰、臀胯曲线和服装后侧垂坠。镜头从背后偏侧的近中景或轻低机位拍摄，允许露出侧脸轮廓或遮住面部；头部顺着躯干方向，不回头、不回眸、不扭颈，不做直角下腰、运动或极限弯折。",
+      "orientation": "back",
+      "pose_family": "back_edge_curve_static",
+      "random_weight": 2,
+      "incompatible_expression_ids": [
+        "deep_affection"
+      ],
+      "framing_ids": [
+        "rear_three_quarter",
+        "rear_low_medium",
+        "rear_low_hero",
+        "side_profile",
+        "low_angle_hero"
+      ],
+      "expression_ids": [
+        "calm",
+        "mysterious",
+        "cool"
+      ],
+      "camera_ids": [
+        "third",
+        "first"
+      ],
+      "random_camera_ids": [
+        "third",
+        "first"
+      ],
+      "traits": [
+        "body_curve"
+      ]
+    },
+    "rear_hip_shift": {
+      "title": "背身偏侧展示后腰",
+      "prompt": "人物背对镜头并保持背后三分之四角度，站在当前场景已有的窄侧边、门框或柱边；一只手轻扶侧边或搭在边缘，另一只手自然整理腰后或衣摆，不能出现左右对称撑墙。重心落在一条腿上，另一条腿自然错后，髋部轻轻向一侧外移，肩胯形成自然错位，清楚展示后腰、臀胯、腿部线条和服装背面剪裁。采用贴近的背后偏侧近中景，允许半边脸自然露出或完全不露脸；头部不强行回头，不使用远景、俯拍、平拍和动态动作。",
+      "orientation": "back",
+      "pose_family": "back_curve_static",
+      "random_weight": 2,
+      "incompatible_expression_ids": [
+        "deep_affection"
+      ],
+      "framing_ids": [
+        "rear_three_quarter",
+        "rear_low_medium",
+        "rear_low_hero",
+        "side_profile",
+        "low_angle_hero"
+      ],
+      "expression_ids": [
+        "calm",
+        "cool",
+        "mysterious",
+        "confident"
+      ],
+      "camera_ids": [
+        "third",
+        "first"
+      ],
+      "random_camera_ids": [
+        "third",
+        "first"
+      ],
+      "traits": [
+        "body_curve"
+      ]
+    },
+    "seated_side_curve": {
+      "title": "坐姿侧腰展示",
+      "prompt": "坐在当前场景已经存在的椅子、长凳或矮榻边缘，身体向一侧自然转开并由一只手轻撑，另一侧手整理腰前衣料；一条腿自然屈起、另一条腿顺势放低，展示侧腰、腰线和服装层次，肩颈放松，不塌腰、不夸张拧胯，不凭空增加家具。",
+      "orientation": "side",
+      "pose_family": "seated_curve_static",
+      "random_weight": 2,
+      "framing_ids": [
+        "three_quarter_front",
+        "two_thirds",
+        "eye_level_full",
+        "side_profile",
+        "high_angle_oblique"
+      ],
+      "expression_ids": [
+        "calm",
+        "confident",
+        "gentle",
+        "playful"
+      ],
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ],
+      "traits": [
+        "body_curve"
+      ]
+    },
+    "veranda_side_profile": {
+      "title": "缘侧扶手侧颜",
+      "prompt": "人物站在已有的缘侧或廊檐扶手旁，面部保持自然侧颜并望向远方；一只手轻搭扶手，另一只手轻捏腰前衣料，重心偏向扶手一侧，肩腰只有轻微自然扭转，不回头或强行露出双眼。",
+      "orientation": "side",
+      "pose_family": "side",
+      "random_weight": 1,
+      "explicit_only": true,
+      "framing_ids": [
+        "side_profile",
+        "side_profile_4_5",
+        "environmental",
+        "eye_level_full"
+      ],
+      "expression_ids": [
+        "calm",
+        "gentle",
+        "mysterious"
+      ],
+      "camera_ids": [
+        "third",
+        "first"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "seated_knee_up": {
+      "title": "椅上抬膝",
+      "prompt": "坐在当前场景已经存在的椅子或软垫上，一只膝盖自然抬起并靠近镜头，双手放在衣摆附近；背部有稳定支撑，腿部和脚部连接自然，不凭空增加椅子，不把膝盖或身体裁成畸形。",
+      "pose_family": "seated",
+      "random_weight": 1,
+      "framing_ids": [
+        "front_half",
+        "three_quarter_front",
+        "two_thirds",
+        "environmental",
+        "eye_level_full",
+        "high_angle_three_quarter",
+        "high_angle_oblique",
+        "intimate_phone_vertical"
+      ],
+      "expression_ids": [
+        "calm",
+        "playful",
+        "confident"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "lean_forward_hands": {
+      "title": "前倾伸手",
+      "prompt": "上半身自然向镜头前倾，双手从身体两侧向镜头前方伸出但保持属于主角自身，肩膀放松、手腕和手指连接自然；头部微微低垂，视线柔和向下，不出现摄影者手臂、自拍设备或第二人物。",
+      "pose_family": "gesture_static",
+      "random_weight": 1,
+      "framing_ids": [
+        "front_half",
+        "three_quarter_front",
+        "two_thirds",
+        "environmental",
+        "close_vertical_three_quarter",
+        "intimate_phone_vertical"
+      ],
+      "expression_ids": [
+        "gentle",
+        "deep_affection",
+        "melancholy",
+        "lively",
+        "playful",
+        "calm",
+        "confident",
+        "shy",
+        "cool",
+        "mysterious"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "sleeping_on_bed": {
+      "title": "床上自然熟睡",
+      "prompt": "人物自然躺在当前场景已有的床铺上熟睡，眼睛闭合，呼吸放松，头发和衣料有真实睡乱褶皱；被子、枕头或毯子自然遮挡身体，四肢连接完整，不摆拍、不睁眼直视镜头、不出现额外人物或设备。",
+      "pose_family": "sleep",
+      "random_weight": 1,
+      "framing_ids": [
+        "high_angle_phone_wide",
+        "high_angle_oblique",
+        "environmental",
+        "side_profile"
+      ],
+      "expression_ids": [
+        "calm",
+        "melancholy"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    }
+  }
+}

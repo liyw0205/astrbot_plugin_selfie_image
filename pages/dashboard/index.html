@@ -267,7 +267,7 @@
     .media-source-modal-dialog { width: min(960px, 100%); max-height: 92vh; background: #111; color: #fff; }
     .media-source-modal-dialog .modal-footer { background: linear-gradient(180deg, rgba(17,17,17,0), #111 24px); }
     .media-source-preview { min-height: 220px; max-height: calc(92vh - 120px); overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px; padding: 4px; }
-    .media-source-preview img, .media-source-preview video { display: block; max-width: 100%; max-height: calc(92vh - 150px); object-fit: contain; background: #000; }
+    .media-source-preview img { display: block; max-width: 100%; max-height: calc(92vh - 150px); object-fit: contain; background: #000; }
     .media-lightbox-dialog { width: min(1180px, 100%); height: min(94vh, 900px); display:flex; flex-direction:column; overflow:hidden; background:#0b1014; color:#fff; border:1px solid rgba(255,255,255,.16); border-radius:12px; box-shadow:0 22px 70px rgba(0,0,0,.45); }
     .media-lightbox-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:52px; padding:10px 12px 10px 16px; border-bottom:1px solid rgba(255,255,255,.12); }
     .media-lightbox-toolbar strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
@@ -400,9 +400,8 @@
     .asset-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
     .asset-card:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--line)); transform: translateY(-1px); box-shadow: 0 12px 26px rgba(27,28,29,.1); }
     .asset-thumb { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #f1f4f7; }
-    .asset-thumb img, .asset-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; background: #111; }
+    .asset-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; background: #111; }
     .asset-thumb .status { width: 100%; min-height: 0; padding: 10px; border: 0; border-radius: 0; background: transparent; text-align: center; }
-    .asset-video-label { position: absolute; right: 8px; bottom: 8px; padding: 3px 7px; border-radius: 6px; color: #fff; background: rgba(27,28,29,.74); font-size: 11px; font-weight: 650; }
     .asset-select { position: absolute; z-index: 2; top: 8px; left: 8px; width: 20px; height: 20px; margin: 0; accent-color: var(--primary); }
     .asset-flag { position: absolute; z-index: 2; top: 8px; right: 8px; display: flex; gap: 4px; }
     .asset-flag span { padding: 3px 6px; border-radius: 6px; color: #fff; background: rgba(27,28,29,.72); font-size: 11px; font-weight: 650; }
@@ -579,6 +578,12 @@
     }
     @media (min-width: 681px) { .mobile-only { display:none !important; } }
     .preset-manager-list { display:grid; gap:10px; margin-top:14px; }
+    .asset-preset-picker { display:flex; align-items:center; gap:4px; }
+    .asset-preset-picker input { width:150px; }
+    .asset-preset-picker select { width:180px; }
+    .asset-preset-picker button { min-width:34px; padding-inline:8px; }
+    .catalog-pager { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:12px; }
+    .catalog-pager:empty { display:none; }
     .preset-manager-list .preset-group-heading { margin-top:8px; }
     .preset-manager-row { display:grid; grid-template-columns:minmax(150px,.35fr) minmax(0,1fr) auto; gap:12px; align-items:start; padding:13px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--panel); box-shadow:var(--shadow-soft); }
     .preset-manager-name { min-width:0; font-weight:700; overflow-wrap:anywhere; }
@@ -676,8 +681,6 @@
     .images .media-zoom-button { top:44px; right:8px; }
     .asset-thumb .media-zoom-button { top:36px; right:6px; }
     .studio-canvas-node .media-zoom-button { top:auto; right:6px; bottom:6px; }
-    .video-card { position:relative; margin-top:8px; }
-    .video-card .thumb-dl { position:absolute; top:8px; right:8px; z-index:2; width:30px; height:30px; padding:0; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.92); }
     .checkline { display: flex; align-items: center; gap: 8px; min-height: 38px; }
     .checkline input { width: auto; }
     .topline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -987,7 +990,7 @@
     html { scrollbar-gutter: stable; }
     body.authed main.app-shell, body.authed main.app-shell * { min-width: 0; }
     body.authed main.app-shell { width: 100%; max-width: none; padding-left: 38px; }
-    body.authed main.app-shell img, body.authed main.app-shell video, body.authed main.app-shell iframe { max-width: 100%; }
+    body.authed main.app-shell img, body.authed main.app-shell iframe { max-width: 100%; }
     body.authed section { overflow: hidden; }
     body.authed .grid, body.authed .grid3, body.authed .grid4, body.authed .channel-row,
     body.authed .baseurl-row, body.authed .proxy-card, body.authed .proxy-actions,
@@ -1157,11 +1160,9 @@
       <div class="tabs-inline" role="tablist" aria-label="渠道分类">
         <button id="channelTabImage" class="active" type="button" onclick="switchChannelPane('image')">生图渠道</button>
         <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">辅助渠道</button>
-        <button id="channelTabVideo" type="button" onclick="switchChannelPane('video')">视频渠道</button>
       </div>
       <div id="channelPaneImage" class="channel-pane active"><div id="channelList"></div></div>
       <div id="channelPaneAudit" class="channel-pane"><div id="auditChannelList"></div></div>
-      <div id="channelPaneVideo" class="channel-pane"><div id="videoChannelList"></div></div>
       <div class="priority-block" data-priority-kind="image">
         <h3>生图模型优先级</h3>
         <p class="muted">候选范围：有优先级时只用优先级模型，未设置时使用全部启用模型。顺序会依次重试，随机只选一个，固定只用候选模型 1。</p>
@@ -1183,21 +1184,10 @@
         <textarea id="auditPriorityList" style="display:none"></textarea>
         <div id="auditPriorityRows" class="model-list"></div>
       </div>
-      <div class="priority-block" data-priority-kind="video">
-        <h3>视频模型优先级</h3>
-        <p class="muted">只控制视频渠道；视频生成失败时按此顺序切换。</p>
-        <div class="grid">
-          <div><label>选择视频模型</label><select id="videoPriorityPicker"></select></div>
-          <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" onclick="addPriority('video')">加入</button><button class="secondary" type="button" onclick="clearPriority('video')">清空</button></div></div>
-        </div>
-        <textarea id="videoPriorityList" style="display:none"></textarea>
-        <div id="videoPriorityRows" class="model-list"></div>
-      </div>
       <div id="channelStatus" class="status" style="margin-top:12px"></div>
       <div class="floating-actions" aria-label="添加渠道">
         <button class="secondary has-label" type="button" data-channel-add="image" onclick="addChannel()" data-tooltip="添加生图渠道" aria-label="添加生图渠道" title="添加生图渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">图</span></button>
         <button class="secondary has-label" type="button" data-channel-add="audit" onclick="addAuditChannel()" data-tooltip="添加辅助渠道" aria-label="添加辅助渠道" title="添加辅助渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">辅</span></button>
-        <button class="secondary has-label" type="button" data-channel-add="video" onclick="addVideoChannel()" data-tooltip="添加视频渠道" aria-label="添加视频渠道" title="添加视频渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">视</span></button>
       </div>
     </section>
 
@@ -1258,7 +1248,7 @@
         </div>
       </div>
       <div class="grid4">
-        <div><label>记录类型</label><select id="monitorMedia"><option value="">全部</option><option value="image">图片</option><option value="video">视频</option></select></div>
+        <div><label>记录类型</label><select id="monitorMedia"><option value="">全部</option><option value="image">图片</option></select></div>
         <div><label>来源筛选</label><input id="monitorSource" list="monitorSourceList" placeholder="输入来源关键词"><datalist id="monitorSourceList"></datalist></div>
         <div><label>模型筛选</label><select id="monitorModel"><option value="">全部</option></select></div>
         <div><label>状态</label><select id="monitorSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
@@ -1272,7 +1262,7 @@
       <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button></div>
       <div class="grid" style="margin-top:8px">
         <div><label>显示范围</label><select id="taskQueueScope" onchange="taskQueueViewChanged()"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
-        <div><label>媒体类型</label><select id="taskQueueMedia" onchange="taskQueueViewChanged()"><option value="">全部</option><option value="image">图片</option><option value="video">视频</option></select></div>
+        <div><label>媒体类型</label><select id="taskQueueMedia" onchange="taskQueueViewChanged()"><option value="">全部</option><option value="image">图片</option></select></div>
         <div><label>任务状态</label><select id="taskQueueStatus" onchange="taskQueueFilterChanged()"><option value="">全部</option><option value="queued">排队</option><option value="running">进行中</option><option value="succeeded">完成</option><option value="partial_success">部分完成</option><option value="failed">失败</option><option value="delivery_failed">发送失败</option><option value="cancelled">已取消</option><option value="expired">已过期</option></select></div>
         <div><label>来源筛选</label><input id="taskQueueSource" placeholder="例如：LLM、画布、重试" oninput="taskQueueFilterChanged()"></div>
         <div><label>模型筛选</label><input id="taskQueueModel" placeholder="输入模型名" oninput="taskQueueFilterChanged()"></div>
@@ -1313,10 +1303,15 @@
       <div class="between">
         <div>
           <h2>资产库</h2>
-          <p class="muted">集中浏览已生成的图片和视频，支持组合筛选与批量整理。</p>
+          <p class="muted">集中浏览已生成的图片，支持组合筛选与批量整理。</p>
         </div>
         <div class="actions" style="margin-top:0">
-          <select id="assetStudioPreset" class="mini" title="加入画布时附加的预设"><option value="">加入画布（不套预设）</option></select>
+          <div class="asset-preset-picker">
+            <input id="assetStudioPresetSearch" class="mini" type="search" placeholder="搜索预设" aria-label="搜索加入画布预设">
+            <select id="assetStudioPreset" class="mini" title="加入画布时附加的预设"><option value="">不套预设</option></select>
+            <button id="assetStudioPresetPrev" class="secondary mini" type="button" title="上一页" aria-label="预设上一页" disabled>‹</button>
+            <button id="assetStudioPresetNext" class="secondary mini" type="button" title="下一页" aria-label="预设下一页" disabled>›</button>
+          </div>
           <button class="secondary mini" type="button" onclick="addSelectedAssetToStudio()">加入画布</button>
           <button class="secondary" type="button" onclick="exportAssets()">导出元数据</button>
           <button class="secondary" type="button" onclick="document.getElementById('assetImportFile').click()">导入元数据</button>
@@ -1327,7 +1322,7 @@
         <div><label>关键词</label><input id="assetKeyword" placeholder="提示词、备注、来源或模型"></div>
         <div><label>来源</label><input id="assetSource" placeholder="来源关键词"></div>
         <div><label>模型筛选</label><select id="assetModel"><option value="">全部</option></select></div>
-        <div><label>媒体类型</label><select id="assetMedia"><option value="">全部</option><option value="image" selected>图片</option><option value="video">视频</option></select></div>
+        <div><label>媒体类型</label><select id="assetMedia"><option value="">全部</option><option value="image" selected>图片</option></select></div>
         <div><label>状态</label><select id="assetSuccess"><option value="">全部</option><option value="true" selected>成功</option><option value="false">失败</option></select></div>
         <div><label>资产标记</label><select id="assetMark"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
         <div><label>标签</label><input id="assetTag" list="assetTagList" placeholder="精确匹配标签"><datalist id="assetTagList"></datalist></div>
@@ -1473,7 +1468,7 @@
       <div class="between">
         <div>
           <h2>预设管理</h2>
-          <p class="muted">管理生图和视频指令里的预设。导入导出使用 JSON 文本，不会下载文件。</p>
+          <p class="muted">管理生图指令里的预设。导入导出使用 JSON 文本，不会下载文件。</p>
         </div>
         <div class="actions">
           <button class="secondary" id="presetImportBtn" type="button">导入文本</button>
@@ -1482,7 +1477,6 @@
       </div>
       <div class="tabs-inline" style="margin-top:12px" role="tablist" aria-label="预设类型">
         <button id="presetKindImage" class="active" type="button" role="tab">生图预设</button>
-        <button id="presetKindVideo" type="button" role="tab">视频预设</button>
         <button id="presetKindCos" type="button" role="tab">COS 池</button>
       </div>
       <div class="between" style="margin-top:12px">
@@ -1493,6 +1487,7 @@
         <div id="presetPromptManager" class="preset-manager-view">
           <input id="presetManagerSearch" type="search" placeholder="搜索预设名或提示词" aria-label="搜索预设名或提示词">
           <div id="presetManagerList" class="preset-manager-list"></div>
+          <div id="presetManagerPager" class="catalog-pager"></div>
         </div>
         <div id="presetCosManager" class="preset-manager-view" hidden>
           <div class="card soft" style="margin-top:14px">
@@ -1507,10 +1502,11 @@
                 <button class="secondary mini" id="presetCosExportBtn" type="button">导出</button>
               </div>
             </div>
-            <div id="presetCosManagerStatus" class="status" style="margin-top:10px">正在读取 COS 池…</div>
+            <div id="presetCosManagerStatus" class="status" style="margin-top:10px">切换到 COS 池后加载</div>
             <input id="presetCosManagerSearch" type="search" placeholder="搜索套装名或提示词" aria-label="搜索 COS 套装名或提示词" style="margin-top:10px">
           </div>
           <div id="presetCosManagerList" class="preset-manager-list"></div>
+          <div id="presetCosManagerPager" class="catalog-pager"></div>
         </div>
       </div>
       <div class="floating-actions" aria-label="预设操作">
@@ -1519,14 +1515,13 @@
     </section>
 
     <section id="test">
-      <div class="between"><h2>试画 / 试视频</h2><div class="tabs-inline" style="margin:0"><button id="testModeImage" class="active" type="button" onclick="switchTestMode('image')">图片</button><button id="testModeVideo" type="button" onclick="switchTestMode('video')">视频</button></div></div>
+      <div class="between"><h2>试画</h2></div>
       <div class="grid">
         <div><label>用哪个渠道</label><select id="testChannel"></select></div>
         <div><label>模型</label><select id="testModel"></select></div>
         <div><label>画面比例</label><select id="testAspect"></select></div>
         <div id="testResolutionWrap"><label>清晰度</label><select id="testResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
         <div id="testCountWrap"><label>生成数量</label><input id="testCount" type="number" min="1" max="100" value="1" title="单次试画最多生成几张"></div>
-        <div id="testDurationWrap" style="display:none"><label>视频时长（秒）</label><input id="testDuration" type="number" min="1" max="60" value="5"></div>
       </div>
       <div class="between">
         <label id="testPromptLabel">想画什么</label>
@@ -1559,11 +1554,6 @@
         <label class="checkline"><input type="checkbox" value="shot" data-test-vary checked> 镜头</label>
         <label class="checkline"><input type="checkbox" value="view" data-test-vary> 视角</label>
       </div>
-      <div id="testStoryboardWrap" style="display:none;margin-top:8px">
-        <div class="between"><label for="testStoryboard">视频分镜（每行一个镜头，可写“时长2秒”）</label><button class="secondary mini" id="testStoryboardPreviewBtn" type="button">解析分镜</button></div>
-        <textarea id="testStoryboard" rows="4" placeholder="镜头1：镜头缓慢推进角色，时长2秒\n镜头2：角色转身看向窗外，时长3秒"></textarea>
-        <div id="testStoryboardPreview" class="status" style="margin-top:6px"></div>
-      </div>
       <div id="testTemplatePreview" class="status" style="display:none;margin-top:8px"></div>
       <div class="grid">
         <label class="checkline" id="promptEnhanceWrap"><input id="promptEnhance" type="checkbox"> 润色提示词</label>
@@ -1572,7 +1562,6 @@
       </div>
       <div class="actions">
         <button class="ok" id="testImageBtn">开始试画</button>
-        <button class="ok" id="testVideoBtn" style="display:none">开始试视频</button>
         <button class="danger" id="testCancelBtn" type="button" style="display:none">取消任务</button>
         <button class="secondary" id="testRetryStatusBtn" type="button" style="display:none">重新查询</button>
         <button class="secondary" onclick="showTestPanel('request')">看请求</button>
@@ -1665,7 +1654,6 @@
       <p class="muted">部分模型对中文不友好。开启后，在真正请求渠道前把提示词译成英文；原文仍记入记录。走辅助渠道对话模型，失败则保留原文。</p>
       <div class="grid">
         <label class="checkline"><input id="enableImagePromptEn" type="checkbox"> 生图提示词转英文</label>
-        <label class="checkline"><input id="enableVideoPromptEn" type="checkbox"> 视频提示词转英文</label>
         <div><label>翻译模式</label>
           <select id="promptEnMode">
             <option value="if_cjk">含中文时翻译</option>
@@ -1675,7 +1663,6 @@
         <div><label>翻译模型</label><select id="promptEnModel"></select></div>
       </div>
       <label>生图翻译说明</label><textarea id="imagePromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
-      <label>视频翻译说明</label><textarea id="videoPromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
       <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核和图转文请选能看图的模型；留空时使用当前 LLM。转英文与辅助功能共用辅助渠道模型。</div>
     </section>
 
@@ -1862,7 +1849,6 @@
           <div><label>预设名</label><input id="presetName" maxlength="100" placeholder="例如：夜景人像"></div>
           <div id="presetAspectWrap"><label>画面比例（可选）</label><input id="presetAspect" placeholder="例如：9:16"></div>
           <div id="presetResolutionWrap"><label>清晰度（可选）</label><input id="presetResolution" placeholder="例如：1K"></div>
-          <div id="presetDurationWrap" style="display:none"><label>默认时长（秒，可选）</label><input id="presetDuration" type="number" min="1" max="60" placeholder="例如：5"></div>
           <div><label>说明（可选）</label><input id="presetDescription" placeholder="给自己看的备注"></div>
         </div>
         <label>提示词</label><textarea id="presetPrompt" rows="7" placeholder="输入这个预设要追加的提示词"></textarea>
@@ -2036,7 +2022,7 @@
   <script>
     const $ = id => document.getElementById(id);
     const ASPECTS = ['自动','1:1','2:3','3:2','3:4','4:3','4:3','4:5','5:4','9:16','16:9','21:9'].filter((v,i,a)=>a.indexOf(v)===i);
-    const PROVIDERS = ['openai','openai_chat','gemini','gemini_openai','z_image_gitee','jimeng2api','grok','agnes','novelai'];
+    const PROVIDERS = ['openai','openai_chat','gemini','gemini_openai','z_image_gitee','jimeng2api','grok','agnes','novelai','hunyuan'];
     const IMAGE_PROVIDER_LABELS = {
       openai: 'openai',
       openai_chat: 'openai_chat',
@@ -2046,7 +2032,8 @@
       jimeng2api: 'jimeng2api',
       grok: 'grok',
       agnes: 'agnes',
-      novelai: 'NovelAI'
+      novelai: 'NovelAI',
+      hunyuan: 'Hunyuan / 混元'
     };
     const PROVIDER_DEFAULT_BASE_URLS = {
       openai: 'https://api.openai.com',
@@ -2057,46 +2044,17 @@
       jimeng2api: 'http://localhost:5100',
       grok: 'https://api.x.ai',
       agnes: 'https://apihub.agnes-ai.com',
-      novelai: 'https://image.novelai.net'
-    };
-    const VIDEO_PROVIDER_DEFAULT_BASE_URLS = {
-      openai_video: 'https://api.openai.com',
-      sora: 'https://api.openai.com',
-      veo: 'https://generativelanguage.googleapis.com',
-      seedance: 'https://api.openai.com',
-      agnes: 'https://apihub.agnes-ai.com',
-      kling: 'https://api.openai.com',
-      cogvideo: 'https://api.openai.com',
-      grok: 'https://api.x.ai',
-      video_chat: 'https://api.openai.com',
-      video_sync: 'https://api.openai.com'
+      novelai: 'https://image.novelai.net',
+      hunyuan: 'https://your-company.copilot.qq.com'
     };
     function defaultBaseUrlForProvider(provider, kind = 'image') {
       const p = String(provider || '').trim();
-      if (kind === 'video') return VIDEO_PROVIDER_DEFAULT_BASE_URLS[p] || VIDEO_PROVIDER_DEFAULT_BASE_URLS.openai_video || 'https://api.openai.com';
       return PROVIDER_DEFAULT_BASE_URLS[p] || PROVIDER_DEFAULT_BASE_URLS.openai || 'https://api.openai.com';
     }
     function normalizeBaseUrlCompare(url) {
       return String(url || '').trim().replace(/\/+$/, '').toLowerCase();
     }
     const AUDIT_PROVIDERS = ['openai','gemini','gemini_openai'];
-    // Video model-family protocols (like image provider types). Auto by model name; manual override.
-    // Video provider choices are temporarily limited to Agnes. Keep the full
-    // protocol set for normalizing legacy saved channels and model overrides.
-    const VIDEO_PROVIDERS = ['agnes'];
-    const VIDEO_PROVIDER_TYPES = ['openai_video','sora','veo','seedance','agnes','kling','cogvideo','grok','video_chat','video_sync'];
-    const VIDEO_PROVIDER_LABELS = {
-      openai_video: '通用 OpenAI 视频（/videos/generations）',
-      sora: 'Sora',
-      veo: 'Veo（Google）',
-      seedance: 'Seedance / 即梦视频',
-      agnes: 'Agnes 视频',
-      kling: '可灵 Kling',
-      cogvideo: 'CogVideo / 智谱',
-      grok: 'Grok 视频（/videos/generations）',
-      video_chat: '对话回链（chat/completions）',
-      video_sync: '同步长等（高级）'
-    };
     const MONITOR_PAGE_SIZE = 20;
     const ASSET_PAGE_SIZE = 24;
     // AstrBot plugin iframe is sandboxed without allow-same-origin.
@@ -2114,8 +2072,9 @@
     // Prompt/COS/tag catalogs refresh periodically; the shared gallery cache has no TTL.
     const PICKER_CATALOG_CACHE_TTL_MS = 30000;
     const PICKER_PAGE_SIZE = 30;
-    const COS_PICKER_QUERY = new Map();
-    const PROMPT_PICKER_QUERY = new Map();
+    const PICKER_PAGE_CACHE = new Map();
+    const PICKER_PANEL_STATES = new Map();
+    const PICKER_SEARCH_TIMERS = new Map();
     const PICKER_LOADING = new Set();
     // Redacted client-side request trace for page diagnostics.
     const REQUEST_TRACE = [];
@@ -2131,14 +2090,9 @@
     let CONFIG = {};
     let SELFIE_REFERENCE_DATA_URL = '';
     let SELFIE_REFERENCE_REQUEST = null;
-    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: [], video: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0, viewportFittedForSession: false };
+    let STUDIO = { sessions: [], current: null, canvas: null, selectedNodeId: "", connectNodeId: "", prompts: [], templates: [], promptPresets: [], promptPresetsByKind: {image: []}, cosLooks: [], cosPools: null, pollTimer: null, pollFailures: 0, taskId: "", taskNodeId: "", taskProgress: null, uploadSlotId: "", presetOpen: false, cosOpen: false, nodePresetOpen: false, nodeCosOpen: false, running: false, galleryTargetSlotId: "", nodeSearch: "", viewport: {x: 120, y: 80, zoom: 1}, drag: null, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0, viewportFittedForSession: false };
     let CREATIVE_CANVAS = { sessions: [], current: null, templates: [], prompts: [], promptPresets: [], cosLooks: [], taskId: "", running: false, pollTimer: null, uploadSlotId: "", galleryTargetSlotId: "", galleryRequestSeq: 0, presetOpen: false, cosOpen: false, sessionsLoadedAt: 0, sessionsRequest: null, loadSeq: 0 };
     const PICKER_CACHE = {
-      prompt: {
-        image: {data: [], loadedAt: 0, request: null, version: 0},
-        video: {data: [], loadedAt: 0, request: null, version: 0},
-      },
-      cos: {data: [], loadedAt: 0, request: null, version: 0},
       tags: {data: [], loadedAt: 0, request: null, version: 0},
     };
 
@@ -2170,6 +2124,8 @@
     let RECORD_PAGE_CACHE_VERSION = 0;
     let ASSET_PAGE_CACHE_VERSION = 0;
     let ASSET_STUDIO_PRESETS = [];
+    let ASSET_STUDIO_PRESET_PAGE = 1;
+    let ASSET_STUDIO_PRESET_SEARCH_TIMER = null;
     let AUTH_TOKEN = safeStorageGet('selfieImageToken') || safeStorageGet('aicatToken') || '';
     let IS_FILLING = false;
     let AUTO_SAVE_TIMER = null;
@@ -2208,10 +2164,14 @@
     let TEST_MODE = 'image';
     let DASHBOARD_BRIDGE = null;
     let PRESET_MANAGE_ROWS = [];
+    let COS_MANAGE_ROWS = [];
     let PRESET_EDIT_ORIGINAL = '';
     let PRESET_KIND = 'image';
     let PRESET_LOAD_SEQ = 0;
-    const PRESET_MANAGER_QUERIES = {image: '', video: '', cos: ''};
+    const PRESET_MANAGER_PAGES = {image: 1, cos: 1};
+    const PRESET_MANAGER_TOTALS = {image: 0, cos: 0};
+    const PRESET_MANAGER_SEARCH_TIMERS = {image: null, cos: null};
+    const PRESET_MANAGER_QUERIES = {image: '', cos: ''};
     let CURRENT_COMPARE = null;
 
     function isEmbeddedFrame() {
@@ -2400,9 +2360,9 @@
       return new Promise(resolve => { CONFIRM_RESOLVER = resolve; });
     }
     function switchChannelPane(kind = 'image') {
-      ACTIVE_CHANNEL_PANE = (kind === 'audit' || kind === 'video') ? kind : 'image';
-      const map = { image: 'channelTabImage', audit: 'channelTabAudit', video: 'channelTabVideo' };
-      const panes = { image: 'channelPaneImage', audit: 'channelPaneAudit', video: 'channelPaneVideo' };
+      ACTIVE_CHANNEL_PANE = kind === 'audit' ? 'audit' : 'image';
+      const map = { image: 'channelTabImage', audit: 'channelTabAudit' };
+      const panes = { image: 'channelPaneImage', audit: 'channelPaneAudit' };
       for (const key of Object.keys(map)) {
         const tab = $(map[key]);
         const pane = $(panes[key]);
@@ -2432,22 +2392,6 @@ On failure still return JSON: {"ok":false,"en":""}
 
 Source prompt:
 {prompt}`;
-    const DEFAULT_VIDEO_PROMPT_EN_TEMPLATE = `Translate the video-generation prompt into natural English.
-Goal: faithful language conversion only. Do not rewrite creative intent.
-
-Rules:
-1. Keep the same meaning, detail order, motion, camera cues, style, and constraints.
-2. Do not add, remove, or invent actions, shots, characters, or plot.
-3. Do not summarize, beautify, or restructure into a new prompt.
-4. Proper nouns and technical tags may stay as-is when needed.
-5. If already English, return it with only minimal grammar fixes.
-
-Return ONLY one JSON object (no markdown, no extra text):
-{"ok":true,"en":"<english prompt>"}
-On failure still return JSON: {"ok":false,"en":""}
-
-Source prompt:
-{prompt}`;
     function ensureConfig() {
       delete CONFIG.web;
       delete CONFIG.webHost;
@@ -2458,14 +2402,11 @@ Source prompt:
       CONFIG.personality ??= '可爱猫娘助手，说话带“喵”等语气词，活泼俏皮会撒娇';
       CONFIG.permission ??= {};
       CONFIG.image ??= {};
-      CONFIG.video ??= {};
       CONFIG.proxies ??= [];
       CONFIG.image_channels ??= [];
       CONFIG.audit_channels ??= [];
-      CONFIG.video_channels ??= [];
       CONFIG.enabled_image_model_priority ??= [];
       CONFIG.enabled_audit_model_priority ??= [];
-      CONFIG.enabled_video_model_priority ??= [];
       CONFIG.image_model_call_mode ??= CONFIG.random_image_model ? 'random' : 'sequence';
       delete CONFIG.random_image_model;
       const img = CONFIG.image;
@@ -2501,18 +2442,10 @@ Source prompt:
       if (img.prompt_audit_template === '你是生图安全审核员。请判断以下提示词是否安全。提示词：{prompt}。仅输出 JSON：{"allow":true/false,"reason":"原因"}') img.prompt_audit_template = '你是生图安全审核员。请评估以下提示词的违规风险。提示词：{prompt}。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"type":"sex","percentage":0-100,"reason":"原因"}';
       if (img.output_audit_template === '你是图像安全审核员。请判断以下图片是否适合普通用户。仅输出 JSON：{"allow":true/false,"reason":"原因"}') img.output_audit_template = '你是图像安全审核员。请评估以下图片不适合普通用户的风险。type 是主要风险类型，只能填写 sex、violence、drugs、illegal 或 other；percentage 是违规风险百分比（0=无风险，100=确定违规）；根据阈值 {threshold}% 填写 allow（percentage 大于等于阈值时为 false，否则为 true）。仅输出 JSON：{"allow":true/false,"type":"sex","percentage":0-100,"reason":"原因"}';
       img.enable_image_prompt_en ??= false;
-      img.enable_video_prompt_en ??= false;
       img.prompt_en_mode ??= 'if_cjk';
       img.prompt_en_model ??= '';
       img.image_prompt_en_template = String(img.image_prompt_en_template || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
-      img.video_prompt_en_template = String(img.video_prompt_en_template || '').trim() || DEFAULT_VIDEO_PROMPT_EN_TEMPLATE;
       if (String(img.image_prompt_en_template||'').includes('Task: rewrite the user prompt') || !String(img.image_prompt_en_template||'').includes('"ok":true')) img.image_prompt_en_template = DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
-      if (String(img.video_prompt_en_template||'').includes('Task: rewrite the user prompt') || String(img.video_prompt_en_template||'').includes('Prefer concrete motion verbs') || !String(img.video_prompt_en_template||'').includes('"ok":true')) img.video_prompt_en_template = DEFAULT_VIDEO_PROMPT_EN_TEMPLATE;
-      const vid = CONFIG.video;
-      vid.enable ??= true;
-      vid.default_duration ??= 5;
-      vid.max_concurrent_tasks ??= 3;
-      vid.global_timeout ??= 300;
     }
 
     function fillForms() {
@@ -2521,7 +2454,6 @@ Source prompt:
         ensureConfig();
         normalizeChannels();
         normalizeAuditChannels();
-        normalizeVideoChannels();
         const p = CONFIG.permission, img = CONFIG.image;
         setTextList('groupUsableUsers', p.usable_users);
         $('groupUsableEnabled').checked = !!p.usable_users_enabled;
@@ -2570,14 +2502,11 @@ Source prompt:
         $('promptAuditTemplate').value = img.prompt_audit_template || '';
         $('outputAuditTemplate').value = img.output_audit_template || '';
         if ($('enableImagePromptEn')) $('enableImagePromptEn').checked = !!img.enable_image_prompt_en;
-        if ($('enableVideoPromptEn')) $('enableVideoPromptEn').checked = !!img.enable_video_prompt_en;
         if ($('promptEnMode')) $('promptEnMode').value = (img.prompt_en_mode === 'always') ? 'always' : 'if_cjk';
         if ($('imagePromptEnTemplate')) $('imagePromptEnTemplate').value = String(img.image_prompt_en_template || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
-        if ($('videoPromptEnTemplate')) $('videoPromptEnTemplate').value = String(img.video_prompt_en_template || '').trim() || DEFAULT_VIDEO_PROMPT_EN_TEMPLATE;
 
         $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
         $('auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\n');
-        $('videoPriorityList').value = (CONFIG.enabled_video_model_priority || []).join('\n');
         if ($('imageModelCallMode')) $('imageModelCallMode').value = ['sequence','random','fixed'].includes(CONFIG.image_model_call_mode) ? CONFIG.image_model_call_mode : 'sequence';
         renderAllChannelLists();
         refreshModelSelectors();
@@ -2629,16 +2558,13 @@ Source prompt:
       CONFIG.image.prompt_audit_template = $('promptAuditTemplate').value;
       CONFIG.image.output_audit_template = $('outputAuditTemplate').value;
        CONFIG.image.enable_image_prompt_en = !!( $('enableImagePromptEn') && $('enableImagePromptEn').checked );
-       CONFIG.image.enable_video_prompt_en = !!( $('enableVideoPromptEn') && $('enableVideoPromptEn').checked );
        CONFIG.image.prompt_en_mode = ($('promptEnMode') && $('promptEnMode').value === 'always') ? 'always' : 'if_cjk';
        CONFIG.image.prompt_en_model = ($('promptEnModel') && $('promptEnModel').value) || '';
        CONFIG.image.image_prompt_en_template = String(($('imagePromptEnTemplate') && $('imagePromptEnTemplate').value) || '').trim() || DEFAULT_IMAGE_PROMPT_EN_TEMPLATE;
-       CONFIG.image.video_prompt_en_template = String(($('videoPromptEnTemplate') && $('videoPromptEnTemplate').value) || '').trim() || DEFAULT_VIDEO_PROMPT_EN_TEMPLATE;
       collectChannels();
-      for (const kind of ['image','audit','video']) prunePriorityList(kind);
+      for (const kind of ['image','audit']) prunePriorityList(kind);
       CONFIG.enabled_image_model_priority = textList('priorityList');
       CONFIG.enabled_audit_model_priority = textList('auditPriorityList');
-      CONFIG.enabled_video_model_priority = textList('videoPriorityList');
       CONFIG.image_model_call_mode = ($('imageModelCallMode') && $('imageModelCallMode').value) || 'sequence';
       return CONFIG;
     }
@@ -2681,51 +2607,17 @@ Source prompt:
         bestnai: 'novelai',
         ppnai: 'novelai',
         xai: 'grok',
-        x_ai: 'grok'
+        x_ai: 'grok',
+        hy_image: 'hunyuan',
+        hunyuan_image: 'hunyuan'
       };
       const normalized = aliases[raw] || raw;
       return PROVIDERS.includes(normalized) ? normalized : '';
     }
-    function normalizeVideoProviderType(value) {
-      const rawText = String(value || '').trim();
-      const raw = rawText.toLowerCase().replace(/-/g, '_');
-      if (!raw) return '';
-      if (rawText.includes('对话')) return 'video_chat';
-      if (rawText.includes('同步') && !rawText.includes('异步')) return 'video_sync';
-      const aliases = {
-        openai_video: 'openai_video',
-        openai_compatible: 'openai_video',
-        openai_videos: 'openai_video',
-        async: 'openai_video',
-        async_task: 'openai_video',
-        openai_video: 'openai_video',
-        video: 'openai_video',
-        videos: 'openai_video',
-        poll: 'openai_video',
-        sora: 'sora', sora2: 'sora', openai_sora: 'sora',
-        veo: 'veo', veo2: 'veo', veo3: 'veo', google_veo: 'veo', gemini_veo: 'veo',
-        seedance: 'seedance', doubao_seedance: 'seedance', jimeng_video: 'seedance',
-        agnes: 'agnes', agnes_video: 'agnes', agnes_ai: 'agnes',
-        kling: 'kling', kuaishou_kling: 'kling',
-        cogvideo: 'cogvideo', cogvideox: 'cogvideo', zhipu_video: 'cogvideo',
-        grok: 'grok', grok_video: 'grok', grok_imagine: 'grok', grok_midgate: 'grok', xai: 'grok', x_ai: 'grok',
-        sync: 'video_sync', openai_sync: 'video_sync', video_sync: 'video_sync',
-        chat: 'video_chat', video_chat: 'video_chat'
-      };
-      let normalized = aliases[raw] || raw;
-      if (VIDEO_PROVIDER_TYPES.includes(normalized)) return normalized;
-      if (raw.includes('sora')) return 'sora';
-      if (raw.includes('veo')) return 'veo';
-      if (raw.includes('seedance')) return 'seedance';
-      if (raw.includes('agnes')) return 'agnes';
-      if (raw.includes('kling') || rawText.includes('可灵')) return 'kling';
-      if (raw.includes('cogvideo') || raw.includes('zhipu')) return 'cogvideo';
-      if (raw.includes('grok') || raw.includes('xai') || raw.includes('x_ai')) return 'grok';
-      return '';
-    }
     function inferProviderTypeFromModel(model) {
       const compact = String(model || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
       if (!compact) return '';
+      if (compact.startsWith('hy-image') || compact.startsWith('hunyuan-image')) return 'hunyuan';
       if (compact.includes('agnes')) return 'agnes';
       if (compact.includes('z-image') || compact.startsWith('zimage')) return 'z_image_gitee';
       if (compact.includes('jimeng') || compact.includes('seedream') || compact.includes('doubao-seedream')) return 'jimeng2api';
@@ -2735,27 +2627,11 @@ Source prompt:
       if (compact.includes('gemini') || compact.includes('nano-banana')) return 'gemini';
       return '';
     }
-    function inferVideoProviderTypeFromModel(model) {
-      const compact = String(model || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
-      if (!compact) return '';
-      if (compact.includes('sora')) return 'sora';
-      if (compact.includes('veo')) return 'veo';
-      if (compact.includes('seedance') || compact.includes('doubao-seedance')) return 'seedance';
-      if (compact.includes('agnes')) return 'agnes';
-      if (compact.includes('kling') || compact.includes('可灵')) return 'kling';
-      if (compact.includes('cogvideo') || compact.includes('cog-videox')) return 'cogvideo';
-      if ((compact.includes('grok') && compact.includes('video')) || compact.startsWith('grok-imagine-video')) return 'grok';
-      if ((['gpt-4o','gpt4o','claude','deepseek-chat'].some(k => compact.includes(k))) && compact.includes('video')) return 'video_chat';
-      if (compact.endsWith('-chat') || compact.startsWith('chat-')) return 'video_chat';
-      if (['luma','runway','minimax','hailuo','vidu','wanx','wan2','gen-3','gen3'].some(k => compact.includes(k))) return 'openai_video';
-      if (compact.includes('sync') && compact.includes('video')) return 'video_sync';
-      return '';
-    }
     function resolveModelProviderType(model, defaultProviderType, manualProviderType = '') {
       const manual = normalizeProviderType(manualProviderType);
       const def = normalizeProviderType(defaultProviderType) || 'openai';
       const inferred = inferProviderTypeFromModel(model);
-      const strong = new Set(['grok','novelai','agnes','jimeng2api','z_image_gitee']);
+      const strong = new Set(['grok','novelai','agnes','jimeng2api','z_image_gitee','hunyuan']);
       if (manual) {
         if (strong.has(inferred) && manual === def && inferred !== manual) return inferred;
         return manual;
@@ -2765,12 +2641,6 @@ Source prompt:
         return def;
       }
       return inferred || def || 'openai';
-    }
-    function resolveVideoModelProviderType(model, defaultProviderType, manualProviderType = '') {
-      return normalizeVideoProviderType(manualProviderType)
-        || inferVideoProviderTypeFromModel(model)
-        || normalizeVideoProviderType(defaultProviderType)
-        || 'openai_video';
     }
     function collectModelDownloadProxyIds(ch, enabled) {
       const enabledSet = new Set(enabled || []);
@@ -2856,12 +2726,11 @@ Source prompt:
       const enabledSet = new Set(enabled || []);
       const out = {};
       const sources = [ch.model_provider_types, ch.modelProviderTypes, ch.provider_types, ch.providerTypes];
-      const isVideo = EDITING_CHANNEL_KIND === 'video' || !!normalizeVideoProviderType(ch.provider_type);
       for (const source of sources) {
         if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
         for (const [model, provider] of Object.entries(source)) {
           const name = String(model || '').trim();
-          const resolved = isVideo ? normalizeVideoProviderType(provider) : normalizeProviderType(provider);
+          const resolved = normalizeProviderType(provider);
           if (name && enabledSet.has(name) && resolved) out[name] = resolved;
         }
       }
@@ -2869,7 +2738,7 @@ Source prompt:
         if (!item || typeof item !== 'object') continue;
         const name = modelId(item);
         const raw = item.provider_type || item.providerType || item.api_type || item.apiType;
-        const resolved = isVideo ? normalizeVideoProviderType(raw) : normalizeProviderType(raw);
+        const resolved = normalizeProviderType(raw);
         if (name && enabledSet.has(name) && resolved) out[name] = resolved;
       }
       return out;
@@ -2877,9 +2746,8 @@ Source prompt:
     function compactModelProviderTypes(ch) {
       const enabledSet = new Set(ch.enabled_models || []);
       const out = {};
-      const isVideo = !!normalizeVideoProviderType(ch.provider_type) || EDITING_CHANNEL_KIND === 'video';
       for (const [model, provider] of Object.entries(ch.model_provider_types || {})) {
-        const resolved = isVideo ? normalizeVideoProviderType(provider) : normalizeProviderType(provider);
+        const resolved = normalizeProviderType(provider);
         if (enabledSet.has(model) && resolved) out[model] = resolved;
       }
       ch.model_provider_types = out;
@@ -2890,8 +2758,7 @@ Source prompt:
       const enabled = uniq((ch.enabled_models || ch.enabledModels || (ch.model ? [ch.model] : [])).map(modelId));
       const cache = uniq((ch.models_cache || ch.modelsCache || ch.available_models || ch.availableModels || []).map(modelId));
       const rawType = ch.provider_type || ch.providerType || ch.api_type || ch.apiType;
-      const videoType = normalizeVideoProviderType(rawType);
-      const providerType = videoType || normalizeProviderType(rawType) || 'openai';
+      const providerType = normalizeProviderType(rawType) || 'openai';
       const normalized = {
         name: String(ch.name || ch.id || 'new-channel').trim(),
         provider_type: providerType,
@@ -2913,9 +2780,6 @@ Source prompt:
       // and saving; the server restores the original secret for existing rows.
       if (ch.api_key === '******' || ch.api_key === '[REDACTED]') normalized.api_key = ch.api_key;
       if (Array.isArray(ch.api_keys)) normalized.api_keys = ch.api_keys.slice();
-      if (videoType || String(providerType).startsWith('video_')) {
-        return compactModelProviderTypes(normalized);
-      }
       return compactModelPromptEnModels(compactModelProviderTypes(applyProviderDefaults(normalized)));
     }
     function normalizeChannels() {
@@ -2928,28 +2792,12 @@ Source prompt:
         return ch;
       });
     }
-    function normalizeVideoChannels() {
-      CONFIG.video_channels = (CONFIG.video_channels || []).map(ch => {
-        ch = normalizeChannel(ch);
-        ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'openai_video';
-        const enabledSet = new Set(ch.enabled_models || []);
-        const out = {};
-        for (const [model, provider] of Object.entries(ch.model_provider_types || {})) {
-          const resolved = normalizeVideoProviderType(provider);
-          if (enabledSet.has(model) && resolved) out[model] = resolved;
-        }
-        ch.model_provider_types = out;
-        return ch;
-      });
-    }
     function channelListFor(kind) {
       if (kind === 'audit') return CONFIG.audit_channels;
-      if (kind === 'video') return CONFIG.video_channels;
       return CONFIG.image_channels;
     }
     function setChannelListFor(kind, list) {
       if (kind === 'audit') CONFIG.audit_channels = list;
-      else if (kind === 'video') CONFIG.video_channels = list;
       else CONFIG.image_channels = list;
     }
     function setChannelEnabledModels(ch, list) {
@@ -2976,7 +2824,6 @@ Source prompt:
     }
     function channelFactory(kind = 'image') {
       if (kind === 'audit') return newAuditChannel;
-      if (kind === 'video') return newVideoChannel;
       return newChannel;
     }
     function newChannel() {
@@ -2985,16 +2832,11 @@ Source prompt:
     function newAuditChannel() {
       return normalizeChannel({name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
     }
-    function newVideoChannel() {
-      return normalizeChannel({name:'video-channel', provider_type:'agnes', base_url:'https://apihub.agnes-ai.com', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
-    }
     function applyProviderDefaults(ch, force = false, kind = 'image') {
       ch = ch && typeof ch === 'object' ? ch : {};
-      const provider = kind === 'video'
-        ? (normalizeVideoProviderType(ch.provider_type) || 'openai_video')
-        : (ch.provider_type || 'openai');
+      const provider = ch.provider_type || 'openai';
       ch.provider_type = provider;
-      const def = defaultBaseUrlForProvider(provider, kind);
+      const def = defaultBaseUrlForProvider(provider);
       const cur = String(ch.base_url || '').trim();
       // Only fill empty base_url, or force restore; never clobber custom non-default URLs unless force.
       if (force || !cur) {
@@ -3002,7 +2844,7 @@ Source prompt:
       } else {
         // keep custom
       }
-      if (provider === 'agnes' && kind !== 'video') {
+      if (provider === 'agnes') {
         if (!Array.isArray(ch.enabled_models) || !ch.enabled_models.length || force) ch.enabled_models = ['agnes-image-2.1-flash'];
         if (!Array.isArray(ch.models_cache) || !ch.models_cache.length || force) ch.models_cache = ['agnes-image-2.1-flash'];
         if (!ch.model) ch.model = (ch.enabled_models && ch.enabled_models[0]) || 'agnes-image-2.1-flash';
@@ -3020,12 +2862,6 @@ Source prompt:
       normalizeAuditChannels();
       switchChannelPane('audit');
       openChannelModal(-1, 'audit', { isNew: true });
-    }
-    function addVideoChannel() {
-      ensureConfig();
-      normalizeVideoChannels();
-      switchChannelPane('video');
-      openChannelModal(-1, 'video', { isNew: true });
     }
     function removeChannel(index, kind = 'image') {
       // AstrBot iframe may block native confirmation dialogs; use two-click page button instead.
@@ -3055,7 +2891,7 @@ Source prompt:
     }
     function duplicateChannel(index, kind = 'image') {
       const list = channelListFor(kind);
-      const factory = kind === 'audit' ? newAuditChannel : (kind === 'video' ? newVideoChannel : newChannel);
+      const factory = kind === 'audit' ? newAuditChannel : newChannel;
       const copy = JSON.parse(JSON.stringify(list[index] || factory()));
       copy.name = (copy.name || 'channel') + '-copy';
       list.splice(index + 1, 0, normalizeChannel(copy));
@@ -3066,7 +2902,6 @@ Source prompt:
     function renderAllChannelLists() {
       renderChannels();
       renderAuditChannels();
-      renderVideoChannels();
     }
     function renderChannelCards(boxId, list, kind, emptyText) {
       const box = $(boxId);
@@ -3091,7 +2926,7 @@ Source prompt:
                 ${ch.enabled === false ? '<span class="pill gray">已停用</span>' : '<span class="pill">使用中</span>'}
               </div>
             </div>
-            <div class="muted" style="font-size:12px">${kind === 'video' ? 'OpenAI 兼容视频' : '协议随模型'}</div>
+            <div class="muted" style="font-size:12px">协议随模型</div>
             <label class="checkline"><input type="checkbox" ${ch.enabled !== false ? 'checked' : ''}>启用</label>
             <div class="actions" style="margin-top:0">
               <button class="secondary" type="button" data-act="edit">编辑</button>
@@ -3151,15 +2986,10 @@ Source prompt:
       normalizeAuditChannels();
       renderChannelCards('auditChannelList', CONFIG.audit_channels || [], 'audit', '还没有辅助渠道。');
     }
-    function renderVideoChannels() {
-      normalizeVideoChannels();
-      renderChannelCards('videoChannelList', CONFIG.video_channels || [], 'video', '还没有视频渠道。');
-    }
     function collectChannels() {
       normalizeChannels();
       normalizeAuditChannels();
-      normalizeVideoChannels();
-      for (const ch of [...(CONFIG.image_channels || []), ...(CONFIG.audit_channels || []), ...(CONFIG.video_channels || [])]) {
+      for (const ch of [...(CONFIG.image_channels || []), ...(CONFIG.audit_channels || [])]) {
         softDisableChannelIfNoModels(ch);
       }
     }
@@ -3184,9 +3014,7 @@ Source prompt:
       const enabled = Array.from(document.querySelectorAll('#enabledModels .model-row .name')).map(el => el.textContent || '');
       const ch = normalizeChannel(Object.assign({}, source, {
         name: $('modalChannelName').value.trim(),
-        provider_type: EDITING_CHANNEL_KIND === 'video'
-          ? (normalizeVideoProviderType($('modalProvider').value || source.provider_type) || 'openai_video')
-          : ($('modalProvider').value || source.provider_type || 'openai'),
+        provider_type: $('modalProvider').value || source.provider_type || 'openai',
         base_url: $('modalBaseUrl').value.trim(),
         api_key: $('modalApiKey').value.trim(),
         proxy_id: ($('modalProxyId') && $('modalProxyId').value) || '',
@@ -3244,9 +3072,7 @@ Source prompt:
       document.querySelectorAll('#enabledModels .model-row').forEach(row => {
         const model = String(row.querySelector('.name')?.textContent || '').trim();
         const raw = row.querySelector('.model-provider')?.value || '';
-        const provider = EDITING_CHANNEL_KIND === 'video'
-          ? normalizeVideoProviderType(raw)
-          : normalizeProviderType(raw);
+        const provider = normalizeProviderType(raw);
         if (model && enabledSet.has(model) && provider) out[model] = provider;
       });
       return out;
@@ -3263,53 +3089,41 @@ Source prompt:
     function openChannelModal(index, kind = 'image', options = {}) {
       normalizeChannels();
       normalizeAuditChannels();
-      normalizeVideoChannels();
       const isNew = !!options.isNew || index < 0;
       EDITING_CHANNEL_IS_NEW = isNew;
-      EDITING_CHANNEL_KIND = (kind === 'audit' || kind === 'video') ? kind : 'image';
+      EDITING_CHANNEL_KIND = kind === 'audit' ? 'audit' : 'image';
       EDITING_CHANNEL_INDEX = isNew ? -1 : index;
       CHANNEL_MODAL_DIRTY = false;
       const factory = channelFactory(EDITING_CHANNEL_KIND);
       let ch;
       if (isNew) {
         ch = normalizeChannel(factory());
-        if (EDITING_CHANNEL_KIND === 'video') ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'openai_video';
-        else applyProviderDefaults(ch, false, EDITING_CHANNEL_KIND);
+        applyProviderDefaults(ch, false, EDITING_CHANNEL_KIND);
         CHANNEL_DRAFT = ch;
       } else {
         const list = channelListFor(EDITING_CHANNEL_KIND);
         ch = normalizeChannel(list[index] || factory());
-        if (EDITING_CHANNEL_KIND === 'video') ch.provider_type = normalizeVideoProviderType(ch.provider_type) || 'openai_video';
-        else applyProviderDefaults(ch, false, EDITING_CHANNEL_KIND);
+        applyProviderDefaults(ch, false, EDITING_CHANNEL_KIND);
         list[index] = ch;
         CHANNEL_DRAFT = null;
       }
       const titles = {
         image: isNew ? '新建生图渠道' : '编辑生图渠道',
         audit: isNew ? '新建辅助渠道' : '编辑辅助渠道',
-        video: isNew ? '新建视频渠道' : '编辑视频渠道',
       };
       $('channelModalTitle').textContent = titles[EDITING_CHANNEL_KIND] || (isNew ? '新建渠道' : '编辑渠道');
-      const providerChoices = EDITING_CHANNEL_KIND === 'video'
-        ? VIDEO_PROVIDERS
-        : (EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS : PROVIDERS);
-      const defaultProvider = EDITING_CHANNEL_KIND === 'video'
-        ? (normalizeVideoProviderType(ch.provider_type) || 'openai_video')
-        : (ch.provider_type || 'openai');
+      const providerChoices = EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS : PROVIDERS;
+      const defaultProvider = ch.provider_type || 'openai';
       setSelectOptions('modalProvider', providerChoices, defaultProvider);
       const sel = $('modalProvider');
-      if (EDITING_CHANNEL_KIND === 'video') {
-        Array.from(sel.options || []).forEach(opt => {
-          opt.textContent = VIDEO_PROVIDER_LABELS[opt.value] || opt.value;
-        });
-      } else if (EDITING_CHANNEL_KIND === 'image') {
+      if (EDITING_CHANNEL_KIND === 'image') {
         Array.from(sel.options || []).forEach(opt => {
           opt.textContent = IMAGE_PROVIDER_LABELS[opt.value] || opt.value;
         });
       }
-      // 生图和视频均可设置默认类型，模型旁仍可覆盖为自动或手动类型。
+      // 渠道可设置默认类型，模型旁仍可覆盖为自动或手动类型。
       if ($('modalProviderWrap')) {
-        $('modalProviderWrap').style.display = EDITING_CHANNEL_KIND === 'image' || EDITING_CHANNEL_KIND === 'video' ? '' : 'none';
+        $('modalProviderWrap').style.display = '';
       }
       $('modalChannelName').value = ch.name || '';
       $('modalProvider').value = defaultProvider;
@@ -3322,11 +3136,9 @@ Source prompt:
       $('manualModel').value = '';
       $('modalStatus').textContent = isNew ? '填写后点「保存渠道」才会加入列表；关闭则不添加。' : '';
       if ($('modalProviderHint')) {
-        $('modalProviderHint').textContent = EDITING_CHANNEL_KIND === 'video'
-          ? '当前视频渠道暂仅支持 Agnes；模型旁可「自动」识别或手动指定协议。'
-          : EDITING_CHANNEL_KIND === 'image'
-            ? '选择渠道默认类型；模型旁可改协议，下载代理仅影响结果图/视频拉取。'
-            : '渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。';
+        $('modalProviderHint').textContent = EDITING_CHANNEL_KIND === 'image'
+          ? '选择渠道默认类型；模型旁可改协议，下载代理仅影响结果图拉取。'
+          : '渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。';
       }
       renderModalModels(ch);
       $('channelModal').classList.add('show');
@@ -3334,12 +3146,10 @@ Source prompt:
     function modalProviderChanged() {
       const ch = currentModalChannel();
       const prev = String(($('modalProvider').dataset.prevProvider || ch.provider_type || '')).trim();
-      const next = EDITING_CHANNEL_KIND === 'video'
-        ? (normalizeVideoProviderType($('modalProvider').value) || 'openai_video')
-        : ($('modalProvider').value || 'openai');
+      const next = $('modalProvider').value || 'openai';
       const curBase = String($('modalBaseUrl').value || ch.base_url || '').trim();
-      const prevDefault = defaultBaseUrlForProvider(prev, EDITING_CHANNEL_KIND);
-      const nextDefault = defaultBaseUrlForProvider(next, EDITING_CHANNEL_KIND);
+      const prevDefault = defaultBaseUrlForProvider(prev);
+      const nextDefault = defaultBaseUrlForProvider(next);
       ch.provider_type = next;
       // Only auto-switch base_url when empty or still on previous type default (don't clobber custom).
       if (!curBase || normalizeBaseUrlCompare(curBase) === normalizeBaseUrlCompare(prevDefault)) {
@@ -3348,7 +3158,7 @@ Source prompt:
       } else {
         ch.base_url = curBase;
       }
-      if (EDITING_CHANNEL_KIND !== 'video') applyProviderDefaults(ch, false, EDITING_CHANNEL_KIND);
+      applyProviderDefaults(ch, false, EDITING_CHANNEL_KIND);
       $('modalProvider').dataset.prevProvider = next;
       CHANNEL_MODAL_DIRTY = true;
       storeModalChannel(ch);
@@ -3356,10 +3166,8 @@ Source prompt:
       refreshModelSelectors();
     }
     function restoreModalBaseUrlDefault() {
-      const provider = EDITING_CHANNEL_KIND === 'video'
-        ? (normalizeVideoProviderType($('modalProvider').value) || 'openai_video')
-        : ($('modalProvider').value || 'openai');
-      const def = defaultBaseUrlForProvider(provider, EDITING_CHANNEL_KIND);
+      const provider = $('modalProvider').value || 'openai';
+      const def = defaultBaseUrlForProvider(provider);
       $('modalBaseUrl').value = def;
       const ch = currentModalChannel();
       ch.base_url = def;
@@ -3472,21 +3280,14 @@ Source prompt:
       renderModalModels(ch);
     }
     function modelProviderSelectHtml(ch, model, index) {
-      const isVideo = EDITING_CHANNEL_KIND === 'video';
-      const manual = isVideo
-        ? normalizeVideoProviderType((ch.model_provider_types || {})[model] || '')
-        : normalizeProviderType((ch.model_provider_types || {})[model] || '');
-      let choices = isVideo
-        ? VIDEO_PROVIDERS.slice()
-        : (EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS.slice() : PROVIDERS.slice());
+      const manual = normalizeProviderType((ch.model_provider_types || {})[model] || '');
+      const choices = EDITING_CHANNEL_KIND === 'audit' ? AUDIT_PROVIDERS.slice() : PROVIDERS.slice();
       if (manual && !choices.includes(manual)) choices.unshift(manual);
-      const auto = isVideo
-        ? resolveVideoModelProviderType(model, ch.provider_type, '')
-        : resolveModelProviderType(model, ch.provider_type, '');
-      const autoLabel = isVideo ? (VIDEO_PROVIDER_LABELS[auto] || auto) : (IMAGE_PROVIDER_LABELS[auto] || auto);
+      const auto = resolveModelProviderType(model, ch.provider_type, '');
+      const autoLabel = IMAGE_PROVIDER_LABELS[auto] || auto;
       const options = [`<option value="" ${manual ? '' : 'selected'}>自动：${escapeHtml(autoLabel)}</option>`]
         .concat(choices.map(provider => {
-          const label = isVideo ? (VIDEO_PROVIDER_LABELS[provider] || provider) : (IMAGE_PROVIDER_LABELS[provider] || provider);
+          const label = IMAGE_PROVIDER_LABELS[provider] || provider;
           return `<option value="${escapeHtml(provider)}" ${manual === provider ? 'selected' : ''}>${escapeHtml(label)}</option>`;
         }));
       return `<select class="model-provider" title="模型类型：自动按模型名识别，也可手动指定" onchange="setModelProviderType(${index}, this.value)">${options.join('')}</select>`;
@@ -3501,9 +3302,7 @@ Source prompt:
       const model = (ch.enabled_models || [])[index] || '';
       if (!model) return;
       ch.model_provider_types ||= {};
-      const resolved = EDITING_CHANNEL_KIND === 'video'
-        ? normalizeVideoProviderType(provider)
-        : normalizeProviderType(provider);
+      const resolved = normalizeProviderType(provider);
       if (resolved) ch.model_provider_types[model] = resolved;
       else delete ch.model_provider_types[model];
       compactModelProviderTypes(ch);
@@ -3627,15 +3426,6 @@ Source prompt:
       }
       return uniq(keys);
     }
-    function videoModelLabels() {
-      collectChannels();
-      const labels = [];
-      for (const ch of CONFIG.video_channels || []) {
-        if (ch.enabled === false) continue;
-        for (const model of (ch.enabled_models?.length ? ch.enabled_models : [ch.model]).filter(Boolean)) labels.push(`${ch.name}/${model}`);
-      }
-      return labels;
-    }
     function auditModelLabels() {
       collectChannels();
       const labels = [];
@@ -3649,16 +3439,14 @@ Source prompt:
       const labels = allModelLabels();
       setSelectOptions('priorityPicker', labels, labels[0] || '');
       const audits = auditModelLabels();
-      const videos = videoModelLabels();
       setSelectOptions('auditPriorityPicker', audits, audits[0] || '');
-      setSelectOptions('videoPriorityPicker', videos, videos[0] || '');
-      for (const kind of ['image','audit','video']) prunePriorityList(kind);
+      for (const kind of ['image','audit']) prunePriorityList(kind);
       const auditLabels = [''].concat(auditModelLabels());
       setSelectOptions('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
       setSelectOptions('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
       setSelectOptions('ocrModel', auditLabels, CONFIG.image?.ocr_model || '');
       setSelectOptions('promptEnModel', auditLabels, CONFIG.image?.prompt_en_model || '');
-      const testChannels = (TEST_MODE === 'video' ? CONFIG.video_channels : CONFIG.image_channels || []).filter(c => c.enabled !== false && c.name);
+      const testChannels = (CONFIG.image_channels || []).filter(c => c.enabled !== false && c.name);
       const currentTestChannel = $('testChannel').value;
       const selectedTestChannel = testChannels.some(c => c.name === currentTestChannel) ? currentTestChannel : (testChannels[0]?.name || '');
       setSelectOptions('testChannel', testChannels.map(c => c.name), selectedTestChannel);
@@ -3666,22 +3454,17 @@ Source prompt:
     }
     function refreshTestModels() {
       const name = $('testChannel').value;
-      const ch = ((TEST_MODE === 'video' ? CONFIG.video_channels : CONFIG.image_channels) || []).find(c => c.enabled !== false && c.name === name) || {};
+      const ch = (CONFIG.image_channels || []).find(c => c.enabled !== false && c.name === name) || {};
       const models = (ch.enabled_models?.length ? ch.enabled_models : [ch.model]).filter(Boolean);
       setSelectOptions('testModel', models, models.includes(ch.model) ? ch.model : (models[0] || ''));
-      // Channel connectivity tests are more stable on an explicit square size.
-      if ($('testAspect') && (!$('testAspect').value || $('testAspect').value === '自动')) {
-        $('testAspect').value = '1:1';
-      }
     }
     const PRIORITY_UI = {
       image: {picker:'priorityPicker', list:'priorityList', rows:'priorityRows'},
       audit: {picker:'auditPriorityPicker', list:'auditPriorityList', rows:'auditPriorityRows'},
-      video: {picker:'videoPriorityPicker', list:'videoPriorityList', rows:'videoPriorityRows'},
     };
     function priorityUi(kind = 'image') { return PRIORITY_UI[kind] || PRIORITY_UI.image; }
     function priorityLabels(kind) {
-      return kind === 'audit' ? auditModelLabels() : kind === 'video' ? videoModelLabels() : allModelLabels();
+      return kind === 'audit' ? auditModelLabels() : allModelLabels();
     }
     function priorityEntryMatchesLabel(entry, label) {
       const item = String(entry || '').trim();
@@ -3778,10 +3561,10 @@ Source prompt:
           <button class="secondary mini" type="button" onclick="movePriorityToTop('${kind}', ${i})" ${i === 0 ? 'disabled' : ''}>置顶</button>
           <button class="secondary mini" type="button" onclick="movePriority('${kind}', ${i}, 1)">下移</button>
           <button class="danger mini" type="button" onclick="removePriority('${kind}', ${i})">移除</button>
-        </div></div>`).join('') || `<div class="muted">未设置${kind === 'image' ? '生图' : kind === 'audit' ? '辅助' : '视频'}优先级时按启用顺序尝试。</div>`;
+        </div></div>`).join('') || `<div class="muted">未设置${kind === 'image' ? '生图' : '辅助'}优先级时按启用顺序尝试。</div>`;
     }
     function renderAllPriorityRows() {
-      for (const kind of ['image','audit','video']) {
+      for (const kind of ['image','audit']) {
         prunePriorityList(kind);
         renderPriorityRows(kind);
       }
@@ -4333,7 +4116,7 @@ Source prompt:
           const removed = CONFIG.proxies.splice(idx, 1)[0];
           const rid = removed && removed.id;
           if (rid) {
-            for (const list of [CONFIG.image_channels, CONFIG.audit_channels, CONFIG.video_channels]) {
+            for (const list of [CONFIG.image_channels, CONFIG.audit_channels]) {
               for (const ch of list || []) {
                 if (ch && ch.proxy_id === rid) ch.proxy_id = '';
               }
@@ -4397,18 +4180,15 @@ Source prompt:
       ensureConfig();
       normalizeChannels();
       normalizeAuditChannels();
-      normalizeVideoChannels();
-      for (const ch of [...(CONFIG.image_channels || []), ...(CONFIG.audit_channels || []), ...(CONFIG.video_channels || [])]) {
+      for (const ch of [...(CONFIG.image_channels || []), ...(CONFIG.audit_channels || [])]) {
         softDisableChannelIfNoModels(ch);
       }
       const copy = value => JSON.parse(JSON.stringify(value || []));
       return {
         image_channels: copy(CONFIG.image_channels),
         audit_channels: copy(CONFIG.audit_channels),
-        video_channels: copy(CONFIG.video_channels),
         enabled_image_model_priority: $('priorityList') ? textList('priorityList') : copy(CONFIG.enabled_image_model_priority),
         enabled_audit_model_priority: $('auditPriorityList') ? textList('auditPriorityList') : copy(CONFIG.enabled_audit_model_priority),
-        enabled_video_model_priority: $('videoPriorityList') ? textList('videoPriorityList') : copy(CONFIG.enabled_video_model_priority),
         image_model_call_mode: ($('imageModelCallMode') && $('imageModelCallMode').value) || CONFIG.image_model_call_mode || 'sequence',
       };
     }
@@ -4427,7 +4207,6 @@ Source prompt:
         ensureConfig();
         if ($('priorityList')) $('priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\n');
         if ($('auditPriorityList')) $('auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\n');
-        if ($('videoPriorityList')) $('videoPriorityList').value = (CONFIG.enabled_video_model_priority || []).join('\n');
         renderAllChannelLists();
         refreshModelSelectors();
         renderAllPriorityRows();
@@ -4668,7 +4447,7 @@ Source prompt:
       return '';
     }
     function taskQueueTiming(task) {
-      if (task?.media_type !== 'video') return '';
+      return '';
       const queueSeconds = Number(task?.queue_wait_seconds || 0);
       const runningSeconds = Number(task?.running_seconds || 0);
       const parts = [];
@@ -4681,7 +4460,7 @@ Source prompt:
     }
     function taskQueueMedia() {
       const value = String($('taskQueueMedia')?.value || '').trim();
-      return value === 'image' || value === 'video' ? value : '';
+      return value === 'image' ? value : '';
     }
     function taskQueueViewChanged() {
       TASK_PAGE = 1;
@@ -4840,14 +4619,14 @@ Source prompt:
         const recordIds = Array.isArray(task.record_ids) ? task.record_ids.map(item => String(item || '').trim()).filter(Boolean) : [];
         const linkedRecordIds = [...new Set(recordIds)];
         const deliveryNote = task.status === 'delivery_failed'
-          ? '<div class="status" style="margin-top:12px">图片/视频已经生成，但发送到会话失败；可在关联记录中重新执行。</div>'
+          ? '<div class="status" style="margin-top:12px">图片已经生成，但发送到会话失败；可在关联记录中重新执行。</div>'
           : '';
         body.innerHTML = `
           <div class="grid">
             <div><label>任务</label><div class="status mono">${escapeHtml(String(task.task_id || ''))}</div></div>
             <div><label>状态</label><div class="status">${escapeHtml(taskQueueStatusLabel(task.status))}</div></div>
             <div><label>来源</label><div class="status">${escapeHtml(displaySourceLabel(task))}</div></div>
-            <div><label>媒体</label><div class="status">${task.media_type === 'video' ? '视频' : '图片'}</div></div>
+            <div><label>媒体</label><div class="status">图片</div></div>
             <div><label>模型</label><div class="status">${escapeHtml(String(task.used_model || '未记录'))}</div></div>
           <div><label>进度</label><div class="status">${escapeHtml([taskQueueProgress(task), taskQueueTiming(task)].filter(Boolean).join(' · ') || '-')}</div></div>
             <div><label>生成阶段</label><div class="status">${escapeHtml(taskQueueStage(task) || '-')}</div></div>
@@ -4883,12 +4662,12 @@ Source prompt:
           TASK_PAGE = pageCount;
           if (filteredTotal && !(Array.isArray(data.tasks) && data.tasks.length)) return loadTasks(false);
         }
-        $('taskQueueSummary').textContent = `${prefix} · 第 ${TASK_PAGE}/${pageCount} 页 · 匹配 ${filteredTotal} · 排队 ${Number(summary.queued || 0)} · 进行中 ${Number(summary.running || 0)} · 图片槽位 ${Number(summary.image_active_slots || 0)}/${Number(summary.image_max_concurrent_tasks || 0)} · 视频槽位 ${Number(summary.video_active_slots || 0)}/${Number(summary.video_max_concurrent_tasks || 0)}`;
+        $('taskQueueSummary').textContent = `${prefix} · 第 ${TASK_PAGE}/${pageCount} 页 · 匹配 ${filteredTotal} · 排队 ${Number(summary.queued || 0)} · 进行中 ${Number(summary.running || 0)} · 图片槽位 ${Number(summary.image_active_slots || 0)}/${Number(summary.image_max_concurrent_tasks || 0)}`;
         const rows = Array.isArray(data.tasks) ? data.tasks : [];
         $('taskQueueTable').innerHTML = rows.length ? `<thead><tr><th></th><th>任务</th><th>来源</th><th>类型</th><th>状态</th><th>提示词</th><th>模型/原因</th><th></th></tr></thead><tbody>${rows.map(task => {
           const id = escapeHtml(String(task.task_id || ''));
           const rawId = String(task.task_id || '');
-          const type = task.media_type === 'video' ? '视频' : '图片';
+          const type = '图片';
           const canCancel = task.can_cancel === true || (
             !Object.prototype.hasOwnProperty.call(task, 'can_cancel') &&
             (task.status === 'queued' || task.status === 'running') && !task.cancel_requested
@@ -5179,9 +4958,6 @@ Source prompt:
       if (actual !== '' && String(actual) !== String(requested)) add('实际生成张数', actual);
       add('画面比例', rd.aspect_ratio || composition.aspect_ratio);
       add('清晰度', rd.resolution || composition.resolution);
-      add('视频尺寸', rd.size);
-      const videoDuration = rd.duration ?? rd.requested_duration;
-      add('视频时长', videoDuration !== undefined && videoDuration !== null && videoDuration !== '' ? `${videoDuration} 秒` : '');
       add('全局超时', rd.timeout_seconds !== undefined && rd.timeout_seconds !== null && rd.timeout_seconds !== '' ? `${rd.timeout_seconds} 秒` : '');
       add('参考图（实际）', rd.reference_image_count ?? r.reference_images);
       add('参考图（原始）', rd.raw_reference_image_count);
@@ -5349,7 +5125,7 @@ Source prompt:
       $('recordTable').innerHTML = '<thead><tr><th></th><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型/失败原因</th></tr></thead><tbody>' +
         (pageRows.length ? pageRows.map(r => {
           const id = String(r.id || '');
-          return `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td>${escapeHtml(r.time||'')}</td><td>${r.media_type === 'video' ? '视频' : '图片'}</td><td>${escapeHtml(displaySourceLabel(r))}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
+          return `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td>${escapeHtml(r.time||'')}</td><td>图片</td><td>${escapeHtml(displaySourceLabel(r))}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
         }).join('') : '<tr><td colspan="7" class="muted">没有匹配的监控记录</td></tr>') +
         '</tbody>';
       $('recordTable').querySelectorAll('input[data-record-select]').forEach(input => input.onchange = event => {
@@ -5392,8 +5168,6 @@ Source prompt:
     function closeCompareModal() { $('compareModal')?.classList.remove('show'); CURRENT_COMPARE = null; }
     function comparisonMediaMarkup(item) {
       const images = Array.isArray(item.image_paths) ? item.image_paths : [];
-      const videos = Array.isArray(item.video_paths) ? item.video_paths : [];
-      if (videos.length) return videoThumbs(videos, '');
       return images.length ? imageThumbs(images, '对比图') : '<div class="status">没有可预览的媒体</div>';
     }
     async function compareSelectedRecords() {
@@ -5410,7 +5184,7 @@ Source prompt:
         body.innerHTML = rows.length ? `<div class="muted" style="margin-bottom:10px">共同提示词：${escapeHtml(CURRENT_COMPARE.common_prompt || '未记录')}</div><div class="comparison-grid">${rows.map(item => `<article class="comparison-card"><div class="between"><b>${escapeHtml(item.model || '未记录模型')}</b><span class="pill ${item.success ? 'green' : 'gray'}">${item.success ? '成功' : '失败'}</span></div><div class="muted">${escapeHtml(item.channel || '未记录渠道')} · ${escapeHtml(item.elapsed_seconds == null ? '-' : String(item.elapsed_seconds))}s</div>${comparisonMediaMarkup(item)}<div class="actions"><button class="secondary mini" type="button" data-compare-reuse="${escapeHtml(item.id)}">复用参数</button><button class="secondary mini" type="button" data-compare-favorite="${escapeHtml(item.id)}">收藏最佳</button></div></article>`).join('')}</div>` : '<div class="status">没有可对比的记录</div>';
         body.querySelectorAll('[data-compare-reuse]').forEach(btn => btn.onclick = () => reuseRecordPromptById(btn.dataset.compareReuse || ''));
         body.querySelectorAll('[data-compare-favorite]').forEach(btn => btn.onclick = () => markRecordFavoriteById(btn.dataset.compareFavorite || ''));
-        loadProtectedImages(body); loadProtectedVideos(body);
+        loadProtectedImages(body);
       } catch (e) { body.innerHTML = `<div class="status">${escapeHtml(e.message || '对比失败')}</div>`; }
     }
     async function reuseRecordPromptById(id) {
@@ -5447,13 +5221,10 @@ Source prompt:
     }
     function assetPrimaryPath(record) {
       const images = Array.isArray(record?.generated_image_paths) ? record.generated_image_paths : [];
-      const videos = Array.isArray(record?.generated_video_paths) ? record.generated_video_paths : [];
-      const mediaType = String(record?.media_type || '').toLowerCase();
-      const useVideo = mediaType === 'video' ? videos.length > 0 : (!images.length && videos.length > 0);
       return {
-        kind: useVideo ? 'video' : 'image',
-        path: String((useVideo ? videos[0] : images[0]) || videos[0] || images[0] || '').trim(),
-        count: Math.max(images.length, videos.length)
+        kind: 'image',
+        path: String(images[0] || '').trim(),
+        count: images.length
       };
     }
     function assetTagPills(record) {
@@ -5514,13 +5285,12 @@ Source prompt:
         ? `已选择 ${selectedVisible} 项（当前页）`
         : '当前页未选择资产';
       if ($('assetStats')) {
-        const images = rows.filter(row => String(row.media_type || 'image').toLowerCase() !== 'video').length;
-        const videos = rows.length - images;
+        const images = rows.length;
         const favorites = rows.filter(row => row.favorite).length;
         const pinned = rows.filter(row => row.pinned).length;
         $('assetStats').innerHTML = [
           ['筛选结果', filtered], ['记录总数', total], ['本页图片', images],
-          ['本页视频', videos], ['本页收藏', favorites], ['本页置顶', pinned]
+          ['本页收藏', favorites], ['本页置顶', pinned]
         ].map(([key, value]) => `<div class="stat-card"><div class="k">${escapeHtml(key)}</div><div class="v">${escapeHtml(String(value))}</div></div>`).join('');
       }
       if ($('assetGrid')) {
@@ -5528,12 +5298,10 @@ Source prompt:
         $('assetGrid').innerHTML = rows.length ? rows.map(record => {
           const id = String(record.id || '');
           const media = assetPrimaryPath(record);
-          const name = media.path.split('/').pop() || (media.kind === 'video' ? '视频' : '图片');
+          const name = media.path.split('/').pop() || '图片';
           const prompt = String(record.original_prompt || record.request_prompt || '').trim();
           const thumb = media.path
-            ? media.kind === 'video'
-              ? `<video muted playsinline preload="metadata" data-cache-video="${escapeHtml(media.path)}"></video><span class="asset-video-label">视频${media.count > 1 ? ` ×${media.count}` : ''}</span>`
-              : `<img data-cache-path="${escapeHtml(media.path)}" alt="${escapeHtml(name)}">${media.count > 1 ? `<span class="asset-video-label">图片 ×${media.count}</span>` : ''}`
+            ? `<img data-cache-path="${escapeHtml(media.path)}" alt="${escapeHtml(name)}">${media.count > 1 ? `<span class="asset-count-label">图片 ×${media.count}</span>` : ''}`
             : '<div class="status">没有缓存媒体</div>';
           const flags = `${record.pinned ? '<span>置顶</span>' : ''}${record.favorite ? '<span>收藏</span>' : ''}`;
           return `<article class="asset-card" data-record-id="${escapeHtml(id)}">
@@ -5557,7 +5325,6 @@ Source prompt:
         }).join('') : '<div class="asset-empty muted">没有匹配的资产</div>';
         pruneProtectedMediaLoadQueue();
         loadProtectedImages($('assetGrid'));
-        loadProtectedVideos($('assetGrid'));
       }
       if ($('assetPager')) {
         $('assetPager').innerHTML = `
@@ -5640,12 +5407,18 @@ Source prompt:
         if ($('assetStatus')) $('assetStatus').textContent = e.message || '资产标签读取失败';
       }
     }
-    async function loadAssetStudioPresets() {
+    async function loadAssetStudioPresets(page = ASSET_STUDIO_PRESET_PAGE) {
       const select = $('assetStudioPreset');
       if (!select) return;
       try {
-        ASSET_STUDIO_PRESETS = await loadPromptPresetsCached('image');
-        select.innerHTML = '<option value="">加入画布（不套预设）</option>';
+        ASSET_STUDIO_PRESET_PAGE = Math.max(1, Number(page) || 1);
+        const selected = select.value;
+        const search = String($('assetStudioPresetSearch')?.value || '').trim();
+        const result = await fetchCatalogPage('image', search, ASSET_STUDIO_PRESET_PAGE);
+        ASSET_STUDIO_PRESETS = result.items;
+        const pageCount = Math.max(1, Math.ceil(result.total / PICKER_PAGE_SIZE));
+        if (ASSET_STUDIO_PRESET_PAGE > pageCount) return loadAssetStudioPresets(pageCount);
+        select.innerHTML = '<option value="">不套预设</option>';
         ASSET_STUDIO_PRESETS.forEach(item => {
           const name = String(item?.name || item?.title || '').trim();
           if (!name) return;
@@ -5654,6 +5427,12 @@ Source prompt:
           option.textContent = `加入画布 · ${name}`;
           select.appendChild(option);
         });
+        if ([...select.options].some(option => option.value === selected)) select.value = selected;
+        const prev = $('assetStudioPresetPrev');
+        const next = $('assetStudioPresetNext');
+        if (prev) prev.disabled = ASSET_STUDIO_PRESET_PAGE <= 1;
+        if (next) next.disabled = ASSET_STUDIO_PRESET_PAGE >= pageCount;
+        select.title = `加入画布时附加的预设 · 第 ${ASSET_STUDIO_PRESET_PAGE}/${pageCount} 页，共 ${result.total} 项`;
       } catch (e) {
         if ($('assetStatus')) $('assetStatus').textContent = e.message || '画布预设读取失败';
       }
@@ -5781,8 +5560,7 @@ Source prompt:
         clearPickerCache('tags');
         selected.forEach(record => {
           const images = Array.isArray(record.generated_image_paths) ? record.generated_image_paths : [];
-          const videos = Array.isArray(record.generated_video_paths) ? record.generated_video_paths : [];
-          images.concat(videos).forEach(invalidateProtectedMediaPath);
+          images.forEach(invalidateProtectedMediaPath);
         });
         if (selected.length !== ids.length) clearProtectedMediaCache();
         clearGalleryPickerCache();
@@ -5796,8 +5574,7 @@ Source prompt:
       const files = [];
       selected.forEach(record => {
         const imagePaths = Array.isArray(record.generated_image_paths) ? record.generated_image_paths : [];
-        const videoPaths = Array.isArray(record.generated_video_paths) ? record.generated_video_paths : [];
-        imagePaths.concat(videoPaths).filter(Boolean).forEach(path => files.push(String(path)));
+        imagePaths.filter(Boolean).forEach(path => files.push(String(path)));
       });
       if (!files.length) return showToast('选中的资产没有可下载缓存', 'bad');
       for (const path of files) await downloadCachePath(path, path.split('/').pop() || 'asset');
@@ -6085,9 +5862,7 @@ Source prompt:
       shell.appendChild(button);
     }
     function enqueueProtectedMediaLoad(element, path, priority = 0) {
-      PROTECTED_MEDIA_LOAD_QUEUE.push({element, path, priority, loader: () => element.tagName === 'VIDEO'
-        ? loadProtectedVideo(element, path)
-        : loadProtectedImage(element, path)});
+      PROTECTED_MEDIA_LOAD_QUEUE.push({element, path, priority, loader: () => loadProtectedImage(element, path)});
       PROTECTED_MEDIA_LOAD_QUEUE.sort((a, b) => b.priority - a.priority);
       drainProtectedMediaLoadQueue();
     }
@@ -6149,18 +5924,6 @@ Source prompt:
       const shell = button && button.closest('.media-preview-shell');
       if (!shell || !path) return;
       shell.innerHTML = '<div class="status">正在加载预览…</div>';
-      if (kind === 'video') {
-        const video = document.createElement('video');
-        video.controls = true;
-        video.preload = 'metadata';
-        video.style.width = '100%';
-        video.style.maxHeight = '480px';
-        video.style.borderRadius = '12px';
-        shell.innerHTML = '';
-        shell.appendChild(video);
-        loadProtectedVideo(video, path);
-        return;
-      }
       const img = document.createElement('img');
       img.alt = path;
       shell.innerHTML = '';
@@ -6169,39 +5932,7 @@ Source prompt:
       loadProtectedImage(img, path);
     }
     function lazyMediaPreview(kind, path) {
-      const label = kind === 'video' ? '加载视频预览' : '加载图片预览';
-      return `<div class="media-preview-shell"><button class="secondary mini" type="button" onclick="loadRecordMediaPreview(this,'${kind}','${escapeJs(path)}')">${label}</button><span class="muted" style="margin-left:8px">打开详情时不自动下载</span></div>`;
-    }
-    function videoThumbs(paths, source, lazy = false) {
-      const list = (paths || []).filter(Boolean);
-      const sources = normalizeMediaSources(source);
-      if (!list.length) return `${mediaHead('生成视频', sources, 'video')}<div class="muted">没有生成视频</div>`;
-      return mediaHead('生成视频', sources, 'video') + list.map((path, index) => {
-        const name = String(path).split('/').pop() || 'video.mp4';
-        const preview = lazy ? lazyMediaPreview('video', path) : `<video controls preload="metadata" style="width:100%;max-height:480px;border-radius:12px" data-cache-video="${escapeHtml(path)}"></video>`;
-        return `<div class="video-card"><button class="secondary thumb-dl" type="button" title="下载" aria-label="下载" onclick="downloadCachePath('${escapeJs(path)}','${escapeJs(name)}')">${downloadIconSvg()}</button>${preview}${mediaItemSource(sources, index, 'video')}</div>`;
-      }).join('');
-    }
-    async function loadProtectedVideo(video, path) {
-      try {
-        const media = await getProtectedMedia(path);
-        const url = protectedMediaUrl(media);
-        if (!url) throw new Error('视频已清理');
-        video.src = url;
-      } catch (e) {
-        video.outerHTML = `<div class="status">视频读取失败：${escapeHtml(e.message || e)}</div>`;
-      }
-    }
-    function loadProtectedVideos(root = document) {
-      const queued = root?.id === 'assetGrid';
-      root.querySelectorAll('video[data-cache-video]').forEach(video => {
-        const path = video.getAttribute('data-cache-video');
-        if (path) {
-          video.removeAttribute('data-cache-video');
-          if (queued) observeProtectedMedia(video, path);
-          else loadProtectedVideo(video, path);
-        }
-      });
+      return `<div class="media-preview-shell"><button class="secondary mini" type="button" onclick="loadRecordMediaPreview(this,'image','${escapeJs(path)}')">加载图片预览</button><span class="muted" style="margin-left:8px">打开详情时不自动下载</span></div>`;
     }
     function imageThumbs(paths, title = '图片', sources = [], lazy = false) {
       const items = (paths || []).filter(Boolean);
@@ -6480,11 +6211,10 @@ Source prompt:
       const path = value.split(/[?#]/, 1)[0].toLowerCase();
       const extensionMimes = {
         '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
-        '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml',
-        '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/mp4'
+        '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml'
       };
       const match = Object.keys(extensionMimes).find(ext => path.endsWith(ext));
-      return match ? extensionMimes[match] : (kind === 'video' ? 'video/mp4' : 'image/png');
+      return match ? extensionMimes[match] : 'image/png';
     }
     function mediaSourceBrowserValue(source, kind = 'image') {
       const value = String(source?.value || '').trim();
@@ -6505,18 +6235,10 @@ Source prompt:
       list.forEach(source => {
         const value = mediaSourceBrowserValue(source, source?.mediaKind || kind);
         if (!value) return;
-        const mime = mediaSourceMime(source, source?.mediaKind || kind);
-        const isVideo = mime.startsWith('video/') || source?.mediaKind === 'video';
-        const media = document.createElement(isVideo ? 'video' : 'img');
+        const media = document.createElement('img');
         media.src = value;
-        if (isVideo) {
-          media.controls = true;
-          media.autoplay = false;
-          media.playsInline = true;
-        } else {
-          media.alt = label || '原始图片';
-          media.decoding = 'async';
-        }
+        media.alt = label || '原始图片';
+        media.decoding = 'async';
         preview.appendChild(media);
       });
       if (!preview.children.length) {
@@ -6528,7 +6250,7 @@ Source prompt:
     }
     async function loadRecordMediaSources() {
       const id = String(CURRENT_RECORD?.id || '').trim();
-      if (!id) return {generated_image_sources: [], video_source: ''};
+      if (!id) return {generated_image_sources: []};
       if (RECORD_MEDIA_SOURCE_CACHE.has(id)) return RECORD_MEDIA_SOURCE_CACHE.get(id);
       if (RECORD_MEDIA_SOURCE_REQUESTS.has(id)) return RECORD_MEDIA_SOURCE_REQUESTS.get(id);
       const request = api('/api/records/' + encodeURIComponent(id) + '/media-sources')
@@ -6557,7 +6279,7 @@ Source prompt:
       const data = cachedRecordMediaSources();
       if (!data) return null;
       const all = normalizeMediaSources(data.generated_image_sources || []);
-      return all[item?.index ?? -1] || (data.video_source ? normalizeMediaSources([data.video_source])[0] : null);
+      return all[item?.index ?? -1] || null;
     }
     async function resolveMediaSourceForDisplay(source) {
       const item = normalizeMediaSources(source)[0];
@@ -6646,12 +6368,10 @@ Source prompt:
         const data = cachedRecordMediaSources();
         if (data) {
           resolvedList = normalizeMediaSources(data.generated_image_sources || []);
-          if (!resolvedList.length && data.video_source) resolvedList = normalizeMediaSources([data.video_source]);
         } else if (String(CURRENT_RECORD?.id || '').trim()) {
           try {
             const loaded = await loadRecordMediaSources();
             resolvedList = normalizeMediaSources(loaded.generated_image_sources || []);
-            if (!resolvedList.length && loaded.video_source) resolvedList = normalizeMediaSources([loaded.video_source]);
           } catch (_) {
             resolvedList = [];
           }
@@ -6704,13 +6424,6 @@ Source prompt:
     }
     function generatedMediaDetailBlock(record) {
       const imagePaths = (record.generated_image_paths?.length ? record.generated_image_paths : (record.response_data?.generated_image_paths || [])).filter(Boolean);
-      const videoPaths = (record.generated_video_paths?.length ? record.generated_video_paths : (record.response_data?.generated_video_paths || [])).filter(Boolean);
-      const mediaType = String(record.media_type || '').trim().toLowerCase();
-      const isVideo = mediaType === 'video' || (!imagePaths.length && videoPaths.length);
-      if (isVideo) {
-        const source = record.response_data?.video_source || record.response_data?.video_url || record.video_source || record.video_url || '';
-        return videoThumbs(videoPaths, source);
-      }
       const sources = Array.isArray(record.generated_image_sources) && record.generated_image_sources.length
         ? record.generated_image_sources
         : (record.response_data?.generated_image_sources || []);
@@ -6747,7 +6460,7 @@ Source prompt:
           <div><label>时间</label><div class="status">${escapeHtml(r.time || '')}</div></div>
           <div><label>来源</label><div class="status">${escapeHtml(displaySourceLabel(r))}</div></div>
           <div><label>状态</label><div class="status">${r.success ? '成功' : '失败'}</div></div>
-          <div><label>类型</label><div class="status">${r.media_type === 'video' ? '视频' : '图片'}</div></div>
+          <div><label>类型</label><div class="status">图片</div></div>
           <div><label>MD5</label><div class="status" style="overflow-wrap:anywhere">${escapeHtml(String(r.md5 || '空'))}</div></div>
           <div><label>用时</label><div class="status">${escapeHtml(formatRecordElapsed(r))}</div></div>
           ${r.generation_success !== undefined || r.delivery_success !== undefined ? `<div><label>生成/发送</label><div class="status">${r.generation_success === true ? '生成成功' : r.generation_success === false ? '生成失败' : '-'}${r.delivery_success === true ? ' · 已发送' : r.delivery_success === false ? ' · 发送失败' : ''}</div></div>` : ''}
@@ -6790,7 +6503,6 @@ Source prompt:
         openTaskDetail(taskId);
       });
       loadProtectedImages($('recordDetailBody'));
-      loadProtectedVideos($('recordDetailBody'));
       loadPersonaReferenceThumbs($('recordDetailBody')).catch(() => {});
     }
     function closeRecordDetail() {
@@ -6829,18 +6541,17 @@ Source prompt:
         showToast('提示词已复制，可粘贴到出图输入框', 'ok');
       } catch (e) { showToast(e.message || '复用失败', 'bad'); }
     }
-    function recordRetryTaskStatusPath(taskId, mediaType) {
-      const kind = mediaType === 'video' ? 'video' : 'image';
-      return `/api/test-${kind}-channel/tasks/${encodeURIComponent(taskId)}`;
+    function recordRetryTaskStatusPath(taskId) {
+      return `/api/test-image-channel/tasks/${encodeURIComponent(taskId)}`;
     }
-    async function pollRecordRetryTask(taskId, mediaType, failStreak = 0) {
+    async function pollRecordRetryTask(taskId, failStreak = 0) {
       const status = $('recordRetryStatus');
       try {
-        const res = await api(recordRetryTaskStatusPath(taskId, mediaType));
+        const res = await api(recordRetryTaskStatusPath(taskId));
         const task = res.data || {};
         if (task.status === 'queued' || task.status === 'running') {
           if (status) status.textContent = task.status === 'queued' ? '排队中…' : `生成中 ${Number(task.running_seconds || 0)}s`;
-          setTimeout(() => pollRecordRetryTask(taskId, mediaType, 0), 2000);
+          setTimeout(() => pollRecordRetryTask(taskId, 0), 2000);
           return;
         }
         if (status) status.textContent = task.success ? '已完成' : (task.error || '生成失败');
@@ -6856,7 +6567,7 @@ Source prompt:
       } catch (e) {
         if (failStreak < 6) {
           if (status) status.textContent = `状态读取失败，正在重试（${failStreak + 1}/6）…`;
-          setTimeout(() => pollRecordRetryTask(taskId, mediaType, failStreak + 1), 2000);
+          setTimeout(() => pollRecordRetryTask(taskId, failStreak + 1), 2000);
         } else if (status) {
           status.textContent = e.message || '重试状态读取失败';
         }
@@ -6877,7 +6588,7 @@ Source prompt:
         if (!task.task_id) throw new Error('后台任务提交失败：未返回 task_id');
         if (status) status.textContent = `任务 ${task.task_id} 已提交`;
         showToast('已提交重试任务', 'ok');
-        pollRecordRetryTask(task.task_id, String(CURRENT_RECORD?.media_type || 'image').toLowerCase());
+        pollRecordRetryTask(task.task_id);
       } catch (e) {
         if (status) status.textContent = e.message || '提交失败';
         showToast(e.message || '重试提交失败', 'bad');
@@ -6963,20 +6674,6 @@ Source prompt:
         target.textContent = `预览：${data.prompt || body.prompt || ''}${unresolved}${randomized}`;
       } catch (e) { target.textContent = e.message || '模板预览失败'; }
     }
-    async function previewTestStoryboard() {
-      const target = $('testStoryboardPreview');
-      const text = String($('testStoryboard')?.value || '').trim();
-      if (!target) return;
-      if (!text) { target.textContent = '还没有填写分镜'; return; }
-      target.textContent = '正在解析…';
-      try {
-        const res = await api('/api/creative/storyboard', {method:'POST', body: JSON.stringify({prompt:text})});
-        const data = res.data || {};
-        target.textContent = data.enabled
-          ? data.shots.map(shot => `镜头${shot.index} · ${shot.duration}s · ${shot.description}`).join('\n')
-          : '未识别到多镜头格式，将按普通视频提示词处理';
-      } catch (e) { target.textContent = e.message || '分镜解析失败'; }
-    }
     function clearTestTaskPoll() {
       if (TEST_TASK_POLL_TIMER) {
         clearTimeout(TEST_TASK_POLL_TIMER);
@@ -7007,46 +6704,28 @@ Source prompt:
       showToast(`已保留后台任务 ${taskId}`, 'ok');
       return true;
     }
-    async function switchTestMode(mode) {
-      const nextMode = mode === 'video' ? 'video' : 'image';
-      if (nextMode !== TEST_MODE && TEST_TASK_ID && !(await prepareActiveTestTask('切换模式'))) return;
-      TEST_MODE = nextMode;
-      $('testModeImage').classList.toggle('active', TEST_MODE === 'image');
-      $('testModeVideo').classList.toggle('active', TEST_MODE === 'video');
-      $('testImageBtn').style.display = TEST_MODE === 'image' ? '' : 'none';
-      $('testVideoBtn').style.display = TEST_MODE === 'video' ? '' : 'none';
-      $('testResolutionWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
-      if ($('testCountWrap')) $('testCountWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
-      $('testDurationWrap').style.display = TEST_MODE === 'video' ? '' : 'none';
-      if ($('testStoryboardWrap')) $('testStoryboardWrap').style.display = TEST_MODE === 'video' ? '' : 'none';
-      $('promptEnhanceWrap').style.display = TEST_MODE === 'image' ? '' : 'none';
+    async function switchTestMode() {
+      TEST_MODE = 'image';
+      if (TEST_TASK_ID && !(await prepareActiveTestTask('刷新试画'))) return;
+      $('testResolutionWrap').style.display = '';
+      if ($('testCountWrap')) $('testCountWrap').style.display = '';
+      if ($('promptEnhanceWrap')) $('promptEnhanceWrap').style.display = '';
       $('useSelfieWrap').style.display = '';
-      $('useSelfie').disabled = TEST_MODE === 't2v';
-      $('useSelfieHint').textContent = TEST_MODE === 'video' ? '（勾选后使用当前形象参考）' : '';
-      $('testPromptLabel').textContent = TEST_MODE === 'video' ? '想生成什么视频' : '想画什么';
-      $('testRefsLabel').textContent = TEST_MODE === 'video' ? '首帧参考图（可选一张）' : '额外参考图';
-      $('testRefs').multiple = TEST_MODE === 'image';
-      if (TEST_MODE === 'video') {
-        $('testPrompt').value = $('testPrompt').value || '镜头自然推进，人物轻轻转头看向镜头，动作流畅，光线真实';
-        setSelectOptions('testAspect', ['16:9','9:16','1:1'], '16:9');
-      } else {
-        setSelectOptions('testAspect', ASPECTS, CONFIG.image?.default_aspect_ratio || '9:16');
-      }
+      $('useSelfie').disabled = false;
+      $('testRefs').multiple = true;
+      setSelectOptions('testAspect', ASPECTS, CONFIG.image?.default_aspect_ratio || '9:16');
       refreshModelSelectors();
       clearTestData(false);
       if (window.__TEST_PRESET_OPEN) {
-        ensurePromptPresetsLoaded(TEST_MODE === 'video' ? 'video' : 'image').then(() =>
-          renderPresetPanel('testPresetPanel', 'testPrompt', true, 'testPresetBtn')
-        );
+        const state = catalogPickerState('testPresetPanel');
+        void loadCatalogPickerPage('testPresetPanel', 'image', state.page);
       }
     }
     function setTestBusy(busy) {
       $('testImageBtn').disabled = !!busy;
-      $('testVideoBtn').disabled = !!busy;
       $('testCancelBtn').style.display = busy && TEST_TASK_ID ? '' : 'none';
       $('testRetryStatusBtn').style.display = 'none';
-      $('testImageBtn').textContent = busy && TEST_MODE === 'image' ? '正在画…' : '开始试画';
-      $('testVideoBtn').textContent = busy && TEST_MODE === 'video' ? '正在生成…' : '开始试视频';
+      $('testImageBtn').textContent = busy ? '正在画…' : '开始试画';
     }
     function taskProgressText(task) {
       const requested = Number(task?.requested_count || 0);
@@ -7070,7 +6749,6 @@ Source prompt:
       ).trim();
       if (source === 'studio-run') return `Web/${title || '画布'}`;
       if (source === 'web-test') return 'Web/快速试画';
-      if (source === 'web-video-test') return 'Web/快速试视频';
       return String(item?.source_label || item?.source || '未知来源');
     }
     async function recoverTestTaskAfterCancelFailure(taskId) {
@@ -7144,9 +6822,8 @@ Source prompt:
     function renderImageTestResult(data) {
       $('testResponseData').textContent = JSON.stringify(data || {}, null, 2);
       const imagePaths = Array.isArray(data?.generated_image_paths) ? data.generated_image_paths : [];
-      const videoPaths = Array.isArray(data?.generated_video_paths) ? data.generated_video_paths : [];
       const partial = String(data?.status || '').toLowerCase() === 'partial_success';
-      const hasMedia = imagePaths.length > 0 || videoPaths.length > 0;
+      const hasMedia = imagePaths.length > 0;
       if (!data || (data.success !== true && !(partial && hasMedia))) {
         $('testStatus').textContent = `失败：${(data && (data.error || data.response_data?.error)) || '这次没顺好'}`;
         showTestPanel('response');
@@ -7155,19 +6832,12 @@ Source prompt:
       const generatedCount = Number(data.succeeded_count || data.generated_image_paths?.length || 0);
       const prefix = partial ? '部分完成' : '成功';
       $('testStatus').textContent = `${prefix}：${data.used_model || ''}，耗时 ${data.elapsed_seconds}s，${generatedCount || 1} 张，参考图 ${data.reference_images || 0} 张${partial && data.error ? `；${data.error}` : ''}`;
-      $('testImages').innerHTML = '';
-      if (data.generated_video_paths && data.generated_video_paths.length) {
-        $('testImages').innerHTML = videoThumbs(data.generated_video_paths, data.video_source || data.video_url || '');
-        loadProtectedVideos($('testImages'));
-      } else {
-        $('testImages').innerHTML = imageThumbs(data.generated_image_paths || [], '生成图', data.generated_image_sources || []);
-        loadProtectedImages($('testImages'));
-      }
+      $('testImages').innerHTML = imageThumbs(data.generated_image_paths || [], '生成图', data.generated_image_sources || []);
+      loadProtectedImages($('testImages'));
       showTestPanel('result');
     }
     function testTaskStatusPath(taskId) {
-      const kind = TEST_MODE === 'video' ? 'video' : 'image';
-      return `/api/test-${kind}-channel/tasks/${encodeURIComponent(taskId)}`;
+      return `/api/test-image-channel/tasks/${encodeURIComponent(taskId)}`;
     }
     async function pollImageTestTask(taskId, failStreak = 0) {
       clearTestTaskPoll();
@@ -7242,8 +6912,7 @@ Source prompt:
     async function resumeImageTestTask() {
       const taskId = safeStorageGet('selfieImageLastTestTaskId') || '';
       if (!taskId) return;
-      const savedMode = safeStorageGet('selfieImageLastTestMode') || 'image';
-      await switchTestMode(savedMode);
+      await switchTestMode();
       try {
         const res = await api(testTaskStatusPath(taskId));
         const task = res.data || {};
@@ -7268,40 +6937,36 @@ Source prompt:
       safeStorageRemove('selfieImageLastTestMode');
       }
     }
-    async function runMediaTest(mode = 'image') {
-      TEST_MODE = mode === 'video' ? 'video' : 'image';
+    async function runMediaTest() {
+      TEST_MODE = 'image';
       if (TEST_TASK_ID && !(await prepareActiveTestTask('开始新任务'))) return;
       collectForms();
       clearTestData(false);
       setTestBusy(true);
-      $('testStatus').textContent = TEST_MODE === 'video' ? '正在提交试视频…' : '正在提交试画…';
+      $('testStatus').textContent = '正在提交试画…';
       try {
         if (!$('testChannel').value) throw new Error('还没有可用渠道，先去「渠道」里启用');
         if (!$('testModel').value) throw new Error('这个渠道还没有可用模型，先启用模型');
         const images = [];
         for (const file of $('testRefs').files) {
           images.push(await readFileDataUrl(file));
-          if (TEST_MODE === 'video') break;
         }
         const payload = {
-          media_type: TEST_MODE,
+          media_type: 'image',
           channel: $('testChannel').value,
           model: $('testModel').value,
           prompt: $('testPrompt').value.trim(),
           aspect_ratio: $('testAspect').value,
           resolution: $('testResolution').value,
-          count: TEST_MODE === 'image' ? Number($('testCount')?.value || 1) : 1,
-          duration: Number($('testDuration').value || CONFIG.video?.default_duration || 5),
-          prompt_enhance: TEST_MODE === 'image' && $('promptEnhance').checked,
-          use_selfie_reference: TEST_MODE !== 't2v' && $('useSelfie').checked,
+          count: Number($('testCount')?.value || 1),
+          prompt_enhance: $('promptEnhance').checked,
+          use_selfie_reference: $('useSelfie').checked,
           images,
-          ...creativeTestPayload(),
-          storyboard: TEST_MODE === 'video' ? String($('testStoryboard')?.value || '').trim() : ''
+          ...creativeTestPayload()
         };
         $('testRequestData').textContent = JSON.stringify({...payload, images: `[${images.length} images]`}, null, 2);
         showTestPanel('request');
-        const endpoint = TEST_MODE === 'video' ? '/api/test-video-channel/tasks' : '/api/test-image-channel/tasks';
-        const res = await api(endpoint, {method:'POST', body: JSON.stringify(payload)});
+        const res = await api('/api/test-image-channel/tasks', {method:'POST', body: JSON.stringify(payload)});
         const task = res.data || {};
         TEST_TASK_ID = task.task_id || '';
         if (!TEST_TASK_ID) throw new Error('后台任务提交失败：未返回 task_id');
@@ -7317,8 +6982,7 @@ Source prompt:
         showTestPanel('response');
       }
     }
-    async function runImageTest() { return runMediaTest('image'); }
-    async function runVideoTest() { return runMediaTest('video'); }
+    async function runImageTest() { return runMediaTest(); }
     function showTestPanel(name) {
       ['request','response','result'].forEach(key => $('test' + key[0].toUpperCase() + key.slice(1) + 'Panel').classList.toggle('active', key === name));
     }
@@ -7619,24 +7283,6 @@ Source prompt:
     function pickerCacheFresh(entry) {
       return entry.loadedAt > 0 && (Date.now() - entry.loadedAt) < PICKER_CATALOG_CACHE_TTL_MS;
     }
-    function syncPromptPresetState(kind, rows) {
-      const normalized = Array.isArray(rows) ? rows : [];
-      STUDIO.promptPresetsByKind = STUDIO.promptPresetsByKind || {image: [], video: []};
-      STUDIO.promptPresetsByKind[kind] = normalized;
-      STUDIO.promptPresets = normalized;
-      if (kind === 'image') {
-        CREATIVE_CANVAS.promptPresets = normalized;
-        ASSET_STUDIO_PRESETS = normalized;
-      }
-      return normalized;
-    }
-    function syncCosState(rows, pools = null) {
-      const normalized = Array.isArray(rows) ? rows : [];
-      STUDIO.cosLooks = normalized;
-      if (pools) STUDIO.cosPools = pools;
-      CREATIVE_CANVAS.cosLooks = normalized;
-      return normalized;
-    }
     async function loadAssetTagsCached(force = false) {
       const entry = PICKER_CACHE.tags;
       if (!force && pickerCacheFresh(entry)) return entry.data;
@@ -7657,72 +7303,6 @@ Source prompt:
       entry.request = request;
       return request;
     }
-    async function loadPromptPresetsCached(kind = 'image', force = false) {
-      kind = kind === 'video' ? 'video' : 'image';
-      const entry = PICKER_CACHE.prompt[kind];
-      if (!force && pickerCacheFresh(entry)) return syncPromptPresetState(kind, entry.data);
-      if (entry.request) return entry.request;
-      const version = entry.version;
-      let request;
-      request = (async () => {
-        const res = await api('/api/prompt-presets?kind=' + encodeURIComponent(kind));
-        const payload = res.data || {};
-        const rows = Array.isArray(payload) ? payload : payload.presets;
-        const loadStatus = Array.isArray(payload) ? res.load_status : payload.load_status;
-        if (loadStatus && loadStatus.ok === false) throw new Error(loadStatus.error || '预设加载失败');
-        const normalized = mergePromptPresets(rows || []);
-        if (entry.version === version) {
-          entry.data = normalized;
-          entry.loadedAt = Date.now();
-          syncPromptPresetState(kind, normalized);
-        }
-        return normalized;
-      })().finally(() => {
-        if (entry.request === request) entry.request = null;
-      });
-      entry.request = request;
-      return request;
-    }
-    async function loadCosLooksCached(force = false) {
-      const entry = PICKER_CACHE.cos;
-      if (!force && pickerCacheFresh(entry)) return syncCosState(entry.data);
-      if (entry.request) return entry.request;
-      const version = entry.version;
-      let request;
-      request = (async () => {
-        let pools;
-        try {
-          const res = await api('/api/cos-pools');
-          pools = res.data || {};
-          const builtins = Array.isArray(pools.builtin) ? pools.builtin : [];
-          const custom = Array.isArray(pools.custom) ? pools.custom : [];
-          const builtinIds = new Set(builtins.map(item => String(item?.id || '').trim()).filter(Boolean));
-          const rows = [...builtins, ...custom.filter(item => !builtinIds.has(String(item?.id || '').trim()))]
-            .filter(item => item && item.id && item.prompt)
-            .sort(cosPoolSort);
-          if (entry.version === version) {
-            entry.data = rows;
-            entry.loadedAt = Date.now();
-            syncCosState(rows, pools);
-          }
-          return rows;
-        } catch (primaryError) {
-          // Older remote plugin versions expose only the immutable look-set endpoint.
-          const legacy = await api('/api/cos-look-sets');
-          const rows = (Array.isArray(legacy.data) ? legacy.data : []).sort(cosPoolSort);
-          if (entry.version === version) {
-            entry.data = rows;
-            entry.loadedAt = Date.now();
-            syncCosState(rows);
-          }
-          return rows;
-        }
-      })().finally(() => {
-        if (entry.request === request) entry.request = null;
-      });
-      entry.request = request;
-      return request;
-    }
     function clearPickerCache(kind = '') {
       const normalized = String(kind || '').trim().toLowerCase();
       const clearEntry = entry => {
@@ -7731,22 +7311,20 @@ Source prompt:
         entry.request = null;
         entry.version += 1;
       };
-      if (!normalized || normalized === 'image' || normalized === 'video') {
-        if (!normalized || normalized === 'image') clearEntry(PICKER_CACHE.prompt.image);
-        if (!normalized || normalized === 'video') clearEntry(PICKER_CACHE.prompt.video);
-      }
-      if (!normalized || normalized === 'cos') clearEntry(PICKER_CACHE.cos);
       if (!normalized || normalized === 'tags') clearEntry(PICKER_CACHE.tags);
       if (!normalized || normalized === 'image') {
-        STUDIO.promptPresetsByKind.image = [];
-        CREATIVE_CANVAS.promptPresets = [];
         ASSET_STUDIO_PRESETS = [];
       }
-      if (!normalized || normalized === 'video') STUDIO.promptPresetsByKind.video = [];
-      if (!normalized || normalized === 'cos') {
-        STUDIO.cosLooks = [];
-        STUDIO.cosPools = null;
-        CREATIVE_CANVAS.cosLooks = [];
+      for (const key of [...PICKER_PAGE_CACHE.keys()]) {
+        if (!normalized || key.startsWith(`${normalized}:`)) PICKER_PAGE_CACHE.delete(key);
+      }
+      for (const state of PICKER_PANEL_STATES.values()) {
+        if (!normalized || state.kind === normalized) {
+          state.items = [];
+          state.total = 0;
+          state.loaded = false;
+          state.error = '';
+        }
       }
     }
     function syncPresetToggleButton(btnId, open) {
@@ -7759,67 +7337,182 @@ Source prompt:
       if (!btn) return;
       btn.textContent = open ? '收回' : 'COS池';
     }
+    function catalogPickerState(panelId) {
+      if (!PICKER_PANEL_STATES.has(panelId)) {
+        PICKER_PANEL_STATES.set(panelId, {
+          kind: '', items: [], total: 0, page: 1, query: '', loaded: false, autoLoadScheduled: false, error: '', seq: 0,
+        });
+      }
+      return PICKER_PANEL_STATES.get(panelId);
+    }
+    async function fetchCatalogPage(kind, query, page, force = false) {
+      const offset = Math.max(0, (page - 1) * PICKER_PAGE_SIZE);
+      const normalizedQuery = String(query || '').trim();
+      const key = `${kind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
+      let cached = PICKER_PAGE_CACHE.get(key);
+      if (force) { PICKER_PAGE_CACHE.delete(key); cached = null; }
+      if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
+      if (cached?.request) return cached.request;
+      const params = new URLSearchParams({limit: String(PICKER_PAGE_SIZE), offset: String(offset), search: normalizedQuery});
+      if (kind === 'image') params.set('kind', 'image');
+      const endpoint = kind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets?';
+      const request = (async () => {
+        const res = await api(endpoint + params.toString());
+        const payload = res.data || {};
+        if (payload.load_status && payload.load_status.ok === false) throw new Error(payload.load_status.error || '预设加载失败');
+        let items = Array.isArray(payload.items) ? payload.items : [];
+        let total = Number(payload.total ?? res.count ?? items.length);
+        if (Array.isArray(payload)) {
+          const filtered = payload.filter(item => !normalizedQuery || `${item.name || item.title || ''} ${item.prompt || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
+          total = filtered.length;
+          items = filtered.slice(offset, offset + PICKER_PAGE_SIZE);
+        } else if (kind === 'image' && !Array.isArray(payload.items)) {
+          const rows = mergePromptPresets(Array.isArray(payload.presets) ? payload.presets : []);
+          const filtered = rows.filter(item => !normalizedQuery || `${item.name || item.title || ''} ${item.prompt || ''} ${item.description || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
+          total = filtered.length;
+          items = filtered.slice(offset, offset + PICKER_PAGE_SIZE);
+        } else if (kind === 'cos' && !Array.isArray(payload.items)) {
+          const rows = flattenCosPickerPayload(payload);
+          const filtered = rows.filter(item => !normalizedQuery || `${item.title || ''} ${item.id || ''} ${item.prompt || ''} ${(item.tags || []).join(' ')}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
+          total = filtered.length;
+          items = filtered.slice(offset, offset + PICKER_PAGE_SIZE);
+        }
+        if (kind === 'image') items = mergePromptPresets(items);
+        const data = {items, total, offset, limit: PICKER_PAGE_SIZE};
+        PICKER_PAGE_CACHE.set(key, {data, loadedAt: Date.now(), request: null});
+        while (PICKER_PAGE_CACHE.size > 80) PICKER_PAGE_CACHE.delete(PICKER_PAGE_CACHE.keys().next().value);
+        return data;
+      })().catch(error => {
+        PICKER_PAGE_CACHE.delete(key);
+        throw error;
+      });
+      PICKER_PAGE_CACHE.set(key, {data: null, loadedAt: 0, request});
+      return request;
+    }
+    function flattenCosPickerPayload(payload) {
+      const pools = payload && typeof payload === 'object' ? payload : {};
+      const builtins = Array.isArray(pools.builtin) ? pools.builtin : [];
+      const custom = Array.isArray(pools.custom) ? pools.custom : [];
+      const builtinIds = new Set(builtins.map(item => String(item?.id || '').trim()).filter(Boolean));
+      return [...builtins, ...custom.filter(item => !builtinIds.has(String(item?.id || '').trim()))]
+        .filter(item => item && item.id && item.prompt).sort(cosPoolSort);
+    }
+    function pickerPagerMarkup(state) {
+      const pages = Math.max(1, Math.ceil(state.total / PICKER_PAGE_SIZE));
+      if (pages <= 1) return '';
+      const start = (state.page - 1) * PICKER_PAGE_SIZE + 1;
+      const end = Math.min(state.total, start + state.items.length - 1);
+      return `<div class="catalog-pager"><span class="muted">${start}-${end} / ${state.total}</span><button class="secondary mini" type="button" data-picker-page="-1" ${state.page <= 1 ? 'disabled' : ''}>上一页</button><button class="secondary mini" type="button" data-picker-page="1" ${state.page >= pages ? 'disabled' : ''}>下一页</button></div>`;
+    }
+    async function loadCatalogPickerPage(panelId, kind, page = 1, force = false) {
+      const state = catalogPickerState(panelId);
+      state.kind = kind;
+      state.page = Math.max(1, Number(page) || 1);
+      state.error = '';
+      const seq = ++state.seq;
+      PICKER_LOADING.add(panelId);
+      if (!state.loaded) renderCatalogPicker(panelId);
+      try {
+        const data = await fetchCatalogPage(kind, state.query, state.page, force);
+        if (seq !== state.seq) return;
+        state.items = data.items;
+        state.total = data.total;
+        state.loaded = true;
+        const pageCount = Math.max(1, Math.ceil(state.total / PICKER_PAGE_SIZE));
+        if (state.page > pageCount) return loadCatalogPickerPage(panelId, kind, pageCount, force);
+      } catch (error) {
+        if (seq === state.seq) state.error = error.message || '列表读取失败';
+      } finally {
+        if (seq === state.seq) {
+          PICKER_LOADING.delete(panelId);
+          renderCatalogPicker(panelId);
+        }
+      }
+    }
+    function renderCatalogPicker(panelId) {
+      const kind = panelId.toLowerCase().includes('cos') ? 'cos' : 'image';
+      if (kind === 'cos') {
+        const panel = $(panelId);
+        if (!panel) return;
+        const mapping = {
+          studioCosPanel: ['studioPrompt', 'studioCosBtn', !!STUDIO.cosOpen],
+          studioNodeCosPanel: ['studioNodePrompt', 'studioNodeCosBtn', !!STUDIO.nodeCosOpen],
+          testCosPanel: ['testPrompt', 'testCosBtn', !!window.__TEST_COS_OPEN],
+          creativeCanvasCosPanel: ['creativeCanvasPrompt', 'creativeCanvasCosBtn', !!CREATIVE_CANVAS.cosOpen],
+        }[panelId] || ['', '', true];
+        renderCosPanel(panelId, mapping[0], mapping[2], mapping[1]);
+        return;
+      }
+      const mapping = {
+        studioPresetPanel: ['studioPrompt', 'studioPresetBtn', !!STUDIO.presetOpen],
+        studioNodePresetPanel: ['studioNodePrompt', 'studioNodePresetBtn', !!STUDIO.nodePresetOpen],
+        testPresetPanel: ['testPrompt', 'testPresetBtn', !!window.__TEST_PRESET_OPEN],
+        creativeCanvasPresetPanel: ['creativeCanvasPrompt', 'creativeCanvasPresetBtn', !!CREATIVE_CANVAS.presetOpen],
+      }[panelId] || ['', '', true];
+      renderPresetPanel(panelId, mapping[0], mapping[2], mapping[1]);
+    }
+    function bindCatalogPickerControls(panel, panelId, kind) {
+      const state = catalogPickerState(panelId);
+      panel.querySelectorAll('[data-picker-page]').forEach(button => button.onclick = () => {
+        void loadCatalogPickerPage(panelId, kind, state.page + Number(button.dataset.pickerPage));
+      });
+      const search = panel.querySelector(kind === 'cos' ? '[data-cos-search]' : '[data-prompt-search]');
+      if (search) search.addEventListener('input', event => {
+        const value = String(event.target.value || '');
+        state.query = value;
+        state.page = 1;
+        state.seq += 1;
+        clearTimeout(PICKER_SEARCH_TIMERS.get(panelId));
+        PICKER_SEARCH_TIMERS.set(panelId, setTimeout(() => void loadCatalogPickerPage(panelId, kind, 1), 250));
+      });
+    }
     function renderPresetPanel(panelId, targetInputId, open, btnId) {
       const panel = $(panelId);
       if (!panel) return;
       if (btnId) syncPresetToggleButton(btnId, open);
       if (!open) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
       panel.classList.add('open');
+      const state = catalogPickerState(panelId);
       if (PICKER_LOADING.has(panelId)) { panel.innerHTML = '<div class="status">正在加载预设…</div>'; return; }
-      const rows = STUDIO.promptPresets || [];
-      if (!rows.length) {
-        panel.innerHTML = '<div class="status">暂无预设</div>';
+      if (state.error) {
+        panel.innerHTML = `<div class="status">${escapeHtml(state.error)} <button type="button" class="secondary mini" data-picker-retry>重试</button></div>`;
+        panel.querySelector('[data-picker-retry]')?.addEventListener('click', () => void loadCatalogPickerPage(panelId, 'image', state.page, true));
         return;
       }
-      // Name-only chips, with a bounded first page so a large catalog cannot
-      // push the form out of view.
-      const query = String(PROMPT_PICKER_QUERY.get(panelId) || '').trim().toLowerCase();
-      const filteredRows = query ? rows.filter(item => `${item.name || ''} ${item.title || ''} ${item.prompt || ''}`.toLowerCase().includes(query)) : rows;
-      const visibleRows = filteredRows.slice(0, PICKER_PAGE_SIZE);
+      if (!state.loaded) {
+        panel.innerHTML = '<div class="status">正在加载预设…</div>';
+        if (!state.autoLoadScheduled) {
+          state.autoLoadScheduled = true;
+          queueMicrotask(() => { state.autoLoadScheduled = false; void loadCatalogPickerPage(panelId, 'image', state.page); });
+        }
+        return;
+      }
+      const rows = state.items;
+      const query = state.query;
       let lastGroup = '';
-      const presetButtons = visibleRows.map((item, idx) => {
+      const presetButtons = rows.map((item, idx) => {
         const name = escapeHtml(item.name || item.title || '');
         const group = promptPresetGroup(item);
         const heading = group && group !== lastGroup ? `<div class="preset-group-heading">${escapeHtml(promptPresetGroupLabel(item))}</div>` : '';
         lastGroup = group;
         return `${heading}<button type="button" class="preset-chip" data-preset-idx="${idx}" title="${name}">${name}</button>`;
       }).join('');
-      panel.innerHTML = `<div class="cos-panel-toolbar"><span class="muted">${query ? `${filteredRows.length}/${rows.length}` : `${rows.length}`} 项 · 首屏 ${Math.min(PICKER_PAGE_SIZE, filteredRows.length)}</span></div><input class="studio-node-search" data-prompt-search type="search" placeholder="搜索预设" aria-label="搜索预设" value="${escapeHtml(query)}">` + presetButtons;
-      panel.querySelectorAll('[data-preset-idx]').forEach(btn => {
-        btn.onclick = () => {
-          const item = filteredRows[Number(btn.getAttribute('data-preset-idx'))];
-          if (!item) return;
-          const input = $(targetInputId);
-          if (input) {
-            input.value = item.mode === 'special'
-              ? `${item.prompt || ''} 【cos:${item.id || ''}】【cos_mode:special】`
-              : (item.prompt || '');
-            input.dispatchEvent(new Event('input', {bubbles:true}));
-          }
-          if (targetInputId === 'testPrompt' && TEST_MODE === 'video' && item.duration) {
-            $('testDuration').value = item.duration;
-          }
-          panel.querySelectorAll('.preset-chip').forEach(el => el.classList.remove('active'));
-          btn.classList.add('active');
-          // Do not auto-collapse; user closes via 收回.
-        };
+      const pages = Math.max(1, Math.ceil(state.total / PICKER_PAGE_SIZE));
+      panel.innerHTML = `<div class="cos-panel-toolbar"><span class="muted">第 ${state.page}/${pages} 页 · 共 ${state.total} 项</span></div><input class="studio-node-search" data-prompt-search type="search" placeholder="搜索预设" aria-label="搜索预设" value="${escapeHtml(query)}">` + (presetButtons || `<div class="status">${query ? '没有匹配的预设' : '暂无预设'}</div>` ) + pickerPagerMarkup(state);
+      panel.querySelectorAll('[data-preset-idx]').forEach(btn => btn.onclick = () => {
+        const item = rows[Number(btn.getAttribute('data-preset-idx'))];
+        if (!item) return;
+        const input = $(targetInputId);
+        if (input) {
+          input.value = item.mode === 'special'
+            ? `${item.prompt || ''} 【cos:${item.id || ''}】【cos_mode:special】`
+            : (item.prompt || '');
+          input.dispatchEvent(new Event('input', {bubbles:true}));
+        }
+        panel.querySelectorAll('.preset-chip').forEach(el => el.classList.remove('active'));
+        btn.classList.add('active');
       });
-      panel.querySelector('[data-prompt-search]')?.addEventListener('input', event => {
-        PROMPT_PICKER_QUERY.set(panelId, String(event.target.value || ''));
-        renderPresetPanel(panelId, targetInputId, true, btnId);
-        panel.querySelector('[data-prompt-search]')?.focus();
-      });
-    }
-    async function ensurePromptPresetsLoaded(kind = (TEST_MODE === 'video' ? 'video' : 'image')) {
-      kind = kind === 'video' ? 'video' : 'image';
-      STUDIO.promptPresetsByKind = STUDIO.promptPresetsByKind || {image: [], video: []};
-      try {
-        return await loadPromptPresetsCached(kind);
-      } catch (e) {
-        if ($('presetManagerStatus')) presetManagerStatus(e.message || '预设读取失败', true);
-        return STUDIO.promptPresetsByKind[kind] || [];
-      }
-      return STUDIO.promptPresetsByKind[kind] || [];
+      bindCatalogPickerControls(panel, panelId, 'image');
     }
     function presetManagerStatus(text, bad = false) {
       const el = $('presetManagerStatus');
@@ -7836,21 +7529,14 @@ Source prompt:
     function renderManagedCosPool() {
       const wrap = $('presetCosManagerList');
       if (!wrap) return;
-      const rows = Array.isArray(STUDIO.cosLooks) ? STUDIO.cosLooks : [];
-      const query = String(PRESET_MANAGER_QUERIES.cos || '').trim().toLowerCase();
-      const filteredRows = query
-        ? rows.filter(item => `${item.title || item.id || ''}\n${item.prompt || ''}`.toLowerCase().includes(query))
-        : rows;
-      if (!filteredRows.length) {
-        wrap.innerHTML = `<div class="status">${rows.length ? '没有匹配的 COS 池项目。' : '暂无 COS 池项目，点击“维护 COS 池”添加自定义项目。'}</div>`;
-        return;
-      }
+      const rows = COS_MANAGE_ROWS;
+      const query = String(PRESET_MANAGER_QUERIES.cos || '').trim();
       if (!rows.length) {
-        wrap.innerHTML = '<div class="status">暂无 COS 池项目，点击“维护 COS 池”添加自定义项目。</div>';
+        wrap.innerHTML = `<div class="status">${query ? '没有匹配的 COS 池项目。' : '暂无 COS 池项目，点击“维护 COS 池”添加自定义项目。'}</div>`;
+        renderPresetManagerPager('cos');
         return;
       }
-      wrap.innerHTML = filteredRows.map(item => {
-        const idx = rows.indexOf(item);
+      wrap.innerHTML = rows.map((item, idx) => {
         const title = escapeHtml(item.title || item.id || '未命名套装');
         const prompt = escapeHtml(item.prompt || '');
         const source = item.source === 'custom' ? '自定义' : '内置';
@@ -7867,7 +7553,7 @@ Source prompt:
         button.disabled = true;
         try {
           await api('/api/cos-pools/favorite', {method:'POST', body:JSON.stringify({id:item.id, enabled:!item.favorite})});
-          await loadManagedCosPool(true);
+          await refreshCosCatalogViews(true);
         } catch (e) {
           presetCosManagerStatus(e.message || '收藏失败', true);
           button.disabled = false;
@@ -7878,30 +7564,55 @@ Source prompt:
         if (!item?.id || !await confirmAction(`确定删除自定义 COS「${item.title || item.id}」吗？`, {title:'删除自定义 COS', confirmText:'删除'})) return;
         try {
           await api('/api/cos-pools/custom/delete', {method:'POST', body:JSON.stringify({id:item.id})});
-          await loadManagedCosPool(true);
+          await refreshCosCatalogViews(true);
           showToast('自定义 COS 已删除', 'ok');
         } catch (e) { presetCosManagerStatus(e.message || '删除失败', true); }
       });
+      renderPresetManagerPager('cos');
     }
     async function loadManagedCosPool(force = false) {
       PRESET_KIND = 'cos';
+      presetCosManagerStatus('正在读取 COS 池…');
+      const loadSeq = ++PRESET_LOAD_SEQ;
+      const page = PRESET_MANAGER_PAGES.cos;
+      const query = String(PRESET_MANAGER_QUERIES.cos || '').trim();
+      const params = new URLSearchParams({limit:String(PICKER_PAGE_SIZE), offset:String((page - 1) * PICKER_PAGE_SIZE), search:query});
       try {
-        await loadCosLooksCached(force);
-        const count = Array.isArray(STUDIO.cosLooks) ? STUDIO.cosLooks.length : 0;
+        const res = await api('/api/cos-pools?' + params.toString());
+        if (loadSeq !== PRESET_LOAD_SEQ || PRESET_KIND !== 'cos') return;
+        const data = res.data || {};
+        if (Array.isArray(data.items)) {
+          COS_MANAGE_ROWS = data.items;
+          PRESET_MANAGER_TOTALS.cos = Number(data.total || 0);
+        } else {
+          const rows = flattenCosPickerPayload(data);
+          const filtered = rows.filter(item => !query || `${item.title || item.id || ''}\n${item.prompt || ''}`.toLowerCase().includes(query.toLowerCase()));
+          PRESET_MANAGER_TOTALS.cos = filtered.length;
+          COS_MANAGE_ROWS = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
+        }
+        const pageCount = Math.max(1, Math.ceil(PRESET_MANAGER_TOTALS.cos / PICKER_PAGE_SIZE));
+        if (page > pageCount) { PRESET_MANAGER_PAGES.cos = pageCount; return loadManagedCosPool(force); }
         renderManagedCosPool();
-        presetCosManagerStatus(`COS 池 · 共 ${count} 个`);
+        presetCosManagerStatus(`COS 池 · 共 ${PRESET_MANAGER_TOTALS.cos} 个 · 第 ${page}/${pageCount} 页`);
       } catch (e) {
+        if (loadSeq !== PRESET_LOAD_SEQ) return;
+        COS_MANAGE_ROWS = [];
+        PRESET_MANAGER_TOTALS.cos = 0;
         renderManagedCosPool();
         presetCosManagerStatus(e.message || 'COS 池读取失败', true);
       }
     }
     async function loadManagedPromptPresets(kind = PRESET_KIND) {
       if (kind === 'cos') return loadManagedCosPool();
-      const requestedKind = kind === 'video' ? 'video' : 'image';
+      const requestedKind = 'image';
       PRESET_KIND = requestedKind;
+      presetManagerStatus('正在读取预设…');
       const loadSeq = ++PRESET_LOAD_SEQ;
+      const page = PRESET_MANAGER_PAGES.image;
+      const query = String(PRESET_MANAGER_QUERIES.image || '').trim();
+      const params = new URLSearchParams({kind:requestedKind, limit:String(PICKER_PAGE_SIZE), offset:String((page - 1) * PICKER_PAGE_SIZE), search:query});
       try {
-        const res = await api('/api/prompt-presets/manage?kind=' + encodeURIComponent(requestedKind));
+        const res = await api('/api/prompt-presets/manage?' + params.toString());
         // A slower request from the previous tab must not overwrite the current list.
         if (loadSeq !== PRESET_LOAD_SEQ || requestedKind !== PRESET_KIND) return;
         const data = res.data;
@@ -7909,13 +7620,23 @@ Source prompt:
         if (loadStatus && loadStatus.ok === false) {
           throw new Error(loadStatus.error || '预设加载失败');
         }
-        PRESET_MANAGE_ROWS = (Array.isArray(data) ? data : (data && Array.isArray(data.presets) ? data.presets : []))
-          .slice().sort(promptPresetCompare);
+        if (Array.isArray(data?.items)) {
+          PRESET_MANAGE_ROWS = data.items;
+          PRESET_MANAGER_TOTALS.image = Number(data.total || 0);
+        } else {
+          const rows = (Array.isArray(data) ? data : (data && Array.isArray(data.presets) ? data.presets : [])).slice().sort(promptPresetCompare);
+          const filtered = rows.filter(item => !query || `${item.name || item.title || ''}\n${item.prompt || ''}`.toLowerCase().includes(query.toLowerCase()));
+          PRESET_MANAGER_TOTALS.image = filtered.length;
+          PRESET_MANAGE_ROWS = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
+        }
+        const pageCount = Math.max(1, Math.ceil(PRESET_MANAGER_TOTALS.image / PICKER_PAGE_SIZE));
+        if (page > pageCount) { PRESET_MANAGER_PAGES.image = pageCount; return loadManagedPromptPresets(requestedKind); }
         renderManagedPromptPresets();
-        presetManagerStatus(`${PRESET_KIND === 'video' ? '视频' : '生图'}预设 · 共 ${PRESET_MANAGE_ROWS.length} 个`);
+        presetManagerStatus(`生图预设 · 共 ${PRESET_MANAGER_TOTALS.image} 个 · 第 ${page}/${pageCount} 页`);
       } catch (e) {
         if (loadSeq !== PRESET_LOAD_SEQ || requestedKind !== PRESET_KIND) return;
         PRESET_MANAGE_ROWS = [];
+        PRESET_MANAGER_TOTALS.image = 0;
         renderManagedPromptPresets();
         presetManagerStatus(e.message || '预设读取失败', true);
       }
@@ -7923,26 +7644,19 @@ Source prompt:
     function renderManagedPromptPresets() {
       const wrap = $('presetManagerList');
       if (!wrap) return;
-      const query = String(PRESET_MANAGER_QUERIES[PRESET_KIND] || '').trim().toLowerCase();
-      const filteredRows = query
-        ? PRESET_MANAGE_ROWS.filter(item => `${item.name || item.title || ''}\n${item.prompt || ''}`.toLowerCase().includes(query))
-        : PRESET_MANAGE_ROWS;
-      if (!filteredRows.length) {
-        wrap.innerHTML = `<div class="status">${PRESET_MANAGE_ROWS.length ? '没有匹配的预设。' : '暂无预设，先新增一个。'}</div>`;
-        return;
-      }
+      const query = String(PRESET_MANAGER_QUERIES.image || '').trim();
       if (!PRESET_MANAGE_ROWS.length) {
-        wrap.innerHTML = '<div class="status">暂无预设，先新增一个。</div>';
+        wrap.innerHTML = `<div class="status">${query ? '没有匹配的预设。' : '暂无预设，先新增一个。'}</div>`;
+        renderPresetManagerPager('image');
         return;
       }
       let lastGroup = '';
-      wrap.innerHTML = filteredRows.map(item => {
-        const idx = PRESET_MANAGE_ROWS.indexOf(item);
+      wrap.innerHTML = PRESET_MANAGE_ROWS.map((item, idx) => {
         const name = escapeHtml(item.name || item.title || '未命名');
         const prompt = escapeHtml(item.prompt || '');
         const desc = escapeHtml(item.description || '');
         const source = item.source === 'builtin' ? '内置' : '自定义';
-        const meta = [item.aspect_ratio ? '比例 ' + escapeHtml(item.aspect_ratio) : '', item.resolution ? '清晰度 ' + escapeHtml(item.resolution) : '', item.duration ? '时长 ' + escapeHtml(String(item.duration)) + 's' : '', source]
+        const meta = [item.aspect_ratio ? '比例 ' + escapeHtml(item.aspect_ratio) : '', item.resolution ? '清晰度 ' + escapeHtml(item.resolution) : '', source]
           .filter(Boolean).map(v => `<span class="pill">${v}</span>`).join('');
         const group = promptPresetGroup(item);
         const heading = group && group !== lastGroup ? `<div class="preset-group-heading">${escapeHtml(promptPresetGroupLabel(item))}</div>` : '';
@@ -7955,11 +7669,39 @@ Source prompt:
       }).join('');
       wrap.querySelectorAll('[data-preset-edit]').forEach(btn => btn.onclick = () => openPresetEditor(PRESET_MANAGE_ROWS[Number(btn.dataset.presetEdit)]));
       wrap.querySelectorAll('[data-preset-delete]').forEach(btn => btn.onclick = () => deleteManagedPromptPreset(PRESET_MANAGE_ROWS[Number(btn.dataset.presetDelete)]));
+      renderPresetManagerPager('image');
+    }
+    function renderPresetManagerPager(kind) {
+      const id = kind === 'cos' ? 'presetCosManagerPager' : 'presetManagerPager';
+      const wrap = $(id);
+      if (!wrap) return;
+      const total = PRESET_MANAGER_TOTALS[kind] || 0;
+      const page = PRESET_MANAGER_PAGES[kind] || 1;
+      const pages = Math.max(1, Math.ceil(total / PICKER_PAGE_SIZE));
+      if (pages <= 1) { wrap.innerHTML = ''; return; }
+      const start = (page - 1) * PICKER_PAGE_SIZE + 1;
+      const end = Math.min(total, start + (kind === 'cos' ? COS_MANAGE_ROWS.length : PRESET_MANAGE_ROWS.length) - 1);
+      wrap.innerHTML = `<span class="muted">${start}-${end} / ${total}</span><button class="secondary mini" type="button" data-manager-page="-1" ${page <= 1 ? 'disabled' : ''}>上一页</button><button class="secondary mini" type="button" data-manager-page="1" ${page >= pages ? 'disabled' : ''}>下一页</button>`;
+      wrap.querySelectorAll('[data-manager-page]').forEach(button => button.onclick = () => {
+        PRESET_MANAGER_PAGES[kind] = page + Number(button.dataset.managerPage);
+        if (kind === 'cos') void loadManagedCosPool();
+        else void loadManagedPromptPresets('image');
+      });
+    }
+    function schedulePresetManagerSearch(kind, value) {
+      PRESET_MANAGER_QUERIES[kind] = String(value || '');
+      PRESET_MANAGER_PAGES[kind] = 1;
+      clearTimeout(PRESET_MANAGER_SEARCH_TIMERS[kind]);
+      PRESET_MANAGER_SEARCH_TIMERS[kind] = setTimeout(() => {
+        if (PRESET_KIND !== kind) return;
+        if (kind === 'cos') void loadManagedCosPool();
+        else void loadManagedPromptPresets('image');
+      }, 250);
     }
     async function switchPresetKind(kind) {
-      PRESET_KIND = kind === 'cos' ? 'cos' : (kind === 'video' ? 'video' : 'image');
+      PRESET_KIND = kind === 'cos' ? 'cos' : 'image';
+      clearTimeout(PRESET_MANAGER_SEARCH_TIMERS[PRESET_KIND === 'cos' ? 'image' : 'cos']);
       $('presetKindImage').classList.toggle('active', PRESET_KIND === 'image');
-      $('presetKindVideo').classList.toggle('active', PRESET_KIND === 'video');
       $('presetKindCos').classList.toggle('active', PRESET_KIND === 'cos');
       const isCos = PRESET_KIND === 'cos';
       const promptManager = $('presetPromptManager');
@@ -7988,11 +7730,8 @@ Source prompt:
       $('presetAspect').value = row?.aspect_ratio || '';
       $('presetResolution').value = row?.resolution || '';
       $('presetExtraPrompt').value = row?.extra_prompt || '';
-      $('presetDuration').value = row?.duration || '';
-      const isVideo = PRESET_KIND === 'video';
-      $('presetAspectWrap').style.display = isVideo ? 'none' : '';
-      $('presetResolutionWrap').style.display = isVideo ? 'none' : '';
-      $('presetDurationWrap').style.display = isVideo ? '' : 'none';
+      $('presetAspectWrap').style.display = '';
+      $('presetResolutionWrap').style.display = '';
       $('presetEditorStatus').textContent = '';
       $('presetEditorModal').classList.add('show');
       $('presetName').focus();
@@ -8010,7 +7749,6 @@ Source prompt:
         aspect_ratio: $('presetAspect').value.trim(),
         resolution: $('presetResolution').value.trim(),
         extra_prompt: $('presetExtraPrompt').value.trim(),
-        duration: $('presetDuration').value.trim(),
         kind: PRESET_KIND
       };
       if (!body.name || !body.prompt) {
@@ -8019,11 +7757,12 @@ Source prompt:
       }
       $('presetEditorStatus').textContent = '保存中…';
       try {
+        const isNew = !PRESET_EDIT_ORIGINAL;
         const res = await api('/api/prompt-presets/manage/save', {method:'POST', body:JSON.stringify(body)});
         closePresetEditor();
+        if (isNew) PRESET_MANAGER_PAGES.image = 1;
+        await refreshPromptCatalogViews(true);
         await loadManagedPromptPresets();
-        clearPickerCache(PRESET_KIND);
-        await loadPromptPresetsCached(PRESET_KIND, true);
         showToast((res.data && res.data.message) || '预设已保存', 'ok');
       } catch (e) {
         $('presetEditorStatus').textContent = e.message || '保存失败';
@@ -8034,22 +7773,21 @@ Source prompt:
       if (!await confirmAction(`确定删除预设「${row.name}」吗？`, {title:'删除预设', confirmText:'删除预设'})) return;
       try {
         const res = await api('/api/prompt-presets/manage/delete', {method:'POST', body:JSON.stringify({name:row.name, kind:PRESET_KIND})});
+        await refreshPromptCatalogViews(true);
         await loadManagedPromptPresets(PRESET_KIND);
-        clearPickerCache(PRESET_KIND);
-        await loadPromptPresetsCached(PRESET_KIND, true);
         showToast((res.data && res.data.message) || '预设已删除', 'ok');
       } catch (e) {
         presetManagerStatus(e.message || '删除失败', true);
       }
     }
-    function presetTransferPayload() {
+    function presetTransferPayload(rows = PRESET_MANAGE_ROWS) {
       return {
         version: 1,
-        type: PRESET_KIND === 'video' ? 'selfie-video-prompt-presets' : 'selfie-image-prompt-presets',
+        type: 'selfie-image-prompt-presets',
         kind: PRESET_KIND,
-        presets: PRESET_MANAGE_ROWS.map(item => ({
+        presets: rows.map(item => ({
           name: item.name || item.title || '', prompt: item.prompt || '', description: item.description || '',
-          aspect_ratio: item.aspect_ratio || '', resolution: item.resolution || '', extra_prompt: item.extra_prompt || '', duration: item.duration || 0
+          aspect_ratio: item.aspect_ratio || '', resolution: item.resolution || '', extra_prompt: item.extra_prompt || ''
         }))
       };
     }
@@ -8058,16 +7796,24 @@ Source prompt:
         exportCosPool();
         return;
       }
-      if (!PRESET_MANAGE_ROWS.length) await loadManagedPromptPresets(PRESET_KIND);
-      $('presetTransferTitle').textContent = '导出预设文本';
-      $('presetTransferHint').textContent = '已生成 JSON 文本。系统会尝试写入剪贴板，失败时请在下方文本框中手动全选复制。';
-      $('presetTransferText').value = JSON.stringify(presetTransferPayload(), null, 2);
-      $('presetTransferImportBtn').style.display = 'none';
-      $('presetTransferCopyBtn').style.display = '';
-      $('presetTransferStatus').textContent = '';
-      $('presetTransferModal').classList.add('show');
-      try { await copyPresetTransfer(); } catch (e) {
-        $('presetTransferStatus').textContent = e.message || '复制失败，请手动复制';
+      try {
+        const res = await api('/api/prompt-presets/manage?kind=image');
+        const data = res.data;
+        const loadStatus = Array.isArray(data) ? res.load_status : data?.load_status;
+        if (loadStatus && loadStatus.ok === false) throw new Error(loadStatus.error || '预设读取失败');
+        const rows = Array.isArray(data) ? data : (Array.isArray(data?.presets) ? data.presets : []);
+        $('presetTransferTitle').textContent = '导出预设文本';
+        $('presetTransferHint').textContent = '已生成 JSON 文本。系统会尝试写入剪贴板，失败时请在下方文本框中手动全选复制。';
+        $('presetTransferText').value = JSON.stringify(presetTransferPayload(rows), null, 2);
+        $('presetTransferImportBtn').style.display = 'none';
+        $('presetTransferCopyBtn').style.display = '';
+        $('presetTransferStatus').textContent = '';
+        $('presetTransferModal').classList.add('show');
+        try { await copyPresetTransfer(); } catch (e) {
+          $('presetTransferStatus').textContent = e.message || '复制失败，请手动复制';
+        }
+      } catch (e) {
+        showToast(e.message || '预设导出失败', 'bad');
       }
     }
     function openPresetImport() {
@@ -8111,9 +7857,9 @@ Source prompt:
       try {
         const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind:PRESET_KIND})});
         closePresetTransfer();
+        PRESET_MANAGER_PAGES.image = 1;
+        await refreshPromptCatalogViews(true);
         await loadManagedPromptPresets(PRESET_KIND);
-        clearPickerCache(PRESET_KIND);
-        await loadPromptPresetsCached(PRESET_KIND, true);
         showToast((res.data && res.data.message) || '预设已导入', 'ok');
       } catch (e) {
         $('presetTransferStatus').textContent = e.message || '导入失败';
@@ -8126,32 +7872,35 @@ Source prompt:
       if (!open) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
       panel.classList.add('open');
       if (PICKER_LOADING.has(panelId)) { panel.innerHTML = '<div class="status">正在加载 COS 池…</div>'; return; }
-      const rows = STUDIO.cosLooks || [];
-      if (!rows.length) {
-        panel.innerHTML = '<div class="status">COS池为空<button class="secondary mini" type="button" data-cos-maintain>维护 COS 池</button></div>';
-        panel.querySelector('[data-cos-maintain]')?.addEventListener('click', openCosPoolModal);
+      const state = catalogPickerState(panelId);
+      if (state.error) {
+        panel.innerHTML = `<div class="status">${escapeHtml(state.error)} <button type="button" class="secondary mini" data-picker-retry>重试</button></div>`;
+        panel.querySelector('[data-picker-retry]')?.addEventListener('click', () => void loadCatalogPickerPage(panelId, 'cos', state.page, true));
         return;
       }
-      const query = String(COS_PICKER_QUERY.get(panelId) || '').trim().toLowerCase();
-      const filteredRows = query ? rows.filter(item => `${item.title || ''} ${item.id || ''} ${item.prompt || ''} ${(item.tags || []).join(' ')}`.toLowerCase().includes(query)) : rows;
-      const visibleRows = filteredRows.slice(0, PICKER_PAGE_SIZE);
-      panel.innerHTML = `<div class="cos-panel-toolbar"><button class="secondary mini" type="button" data-cos-maintain>维护 COS 池</button><span class="muted">${query ? `${filteredRows.length}/${rows.length}` : `${rows.length}`} 项 · 首屏 ${Math.min(PICKER_PAGE_SIZE, filteredRows.length)}</span></div><input class="studio-node-search" data-cos-search type="search" placeholder="搜索 COS" aria-label="搜索 COS" value="${escapeHtml(query)}">` + visibleRows.map((item, idx) => {
+      if (!state.loaded) {
+        panel.innerHTML = '<div class="status">正在加载 COS 池…</div>';
+        if (!state.autoLoadScheduled) {
+          state.autoLoadScheduled = true;
+          queueMicrotask(() => { state.autoLoadScheduled = false; void loadCatalogPickerPage(panelId, 'cos', state.page); });
+        }
+        return;
+      }
+      const rows = state.items;
+      const pages = Math.max(1, Math.ceil(state.total / PICKER_PAGE_SIZE));
+      panel.innerHTML = `<div class="cos-panel-toolbar"><button class="secondary mini" type="button" data-cos-maintain>维护 COS 池</button><span class="muted">第 ${state.page}/${pages} 页 · 共 ${state.total} 项</span></div><input class="studio-node-search" data-cos-search type="search" placeholder="搜索 COS" aria-label="搜索 COS" value="${escapeHtml(state.query)}">` + (rows.length ? rows.map((item, idx) => {
         const title = escapeHtml(item.title || item.id || '未命名套装');
         const compatibility = item.compatibility && item.compatibility.variation_enabled
           ? '可随机姿势/场景'
           : '固定构图';
         const source = item.source === 'custom' ? '自定义' : (item.favorite ? '已收藏' : '内置');
         return `<div class="cos-pool-row"><button type="button" class="preset-chip" data-cos-idx="${idx}" title="${title} · ${compatibility}">${title}<small>${escapeHtml(source)}</small></button><button type="button" class="secondary mini cos-favorite-btn" data-cos-favorite="${idx}" title="${item.favorite ? '取消收藏' : '收藏'}" aria-label="${item.favorite ? '取消收藏' : '收藏'}">${item.favorite ? '★' : '☆'}</button>${item.source === 'custom' ? `<button type="button" class="danger mini cos-delete-btn" data-cos-delete="${idx}" title="删除自定义 COS" aria-label="删除自定义 COS">×</button>` : ''}</div>`;
-      }).join('');
+      }).join('') : `<div class="status">${state.query ? '没有匹配的 COS 项目' : 'COS 池为空'}</div>`) + pickerPagerMarkup(state);
       panel.querySelector('[data-cos-maintain]')?.addEventListener('click', openCosPoolModal);
-      panel.querySelector('[data-cos-search]')?.addEventListener('input', event => {
-        COS_PICKER_QUERY.set(panelId, String(event.target.value || ''));
-        renderCosPanel(panelId, targetInputId, true, btnId);
-        panel.querySelector('[data-cos-search]')?.focus();
-      });
+      bindCatalogPickerControls(panel, panelId, 'cos');
       panel.querySelectorAll('[data-cos-idx]').forEach(btn => {
         btn.onclick = () => {
-          const item = filteredRows[Number(btn.getAttribute('data-cos-idx'))];
+          const item = rows[Number(btn.getAttribute('data-cos-idx'))];
           if (!item) return;
           const input = $(targetInputId);
           if (input) {
@@ -8166,22 +7915,20 @@ Source prompt:
       });
       panel.querySelectorAll('[data-cos-favorite]').forEach(btn => btn.onclick = async event => {
         event.stopPropagation();
-        const item = filteredRows[Number(btn.dataset.cosFavorite)];
+        const item = rows[Number(btn.dataset.cosFavorite)];
         if (!item?.id) return;
         try {
           await api('/api/cos-pools/favorite', {method:'POST', body: JSON.stringify({id:item.id, enabled:!item.favorite})});
-          await ensureCosLooksLoaded(true);
-          renderCosPanel(panelId, targetInputId, true, btnId);
+          await refreshCosCatalogViews(true);
         } catch (e) { showToast(e.message || '收藏失败', 'bad'); }
       });
       panel.querySelectorAll('[data-cos-delete]').forEach(btn => btn.onclick = async event => {
         event.stopPropagation();
-        const item = filteredRows[Number(btn.dataset.cosDelete)];
+        const item = rows[Number(btn.dataset.cosDelete)];
         if (!item?.id || !await confirmAction(`确定删除自定义 COS「${item.title || item.id}」吗？`, {title:'删除自定义 COS', confirmText:'删除'})) return;
         try {
           await api('/api/cos-pools/custom/delete', {method:'POST', body: JSON.stringify({id:item.id})});
-          await ensureCosLooksLoaded(true);
-          renderCosPanel(panelId, targetInputId, true, btnId);
+          await refreshCosCatalogViews(true);
           showToast('自定义 COS 已删除', 'ok');
         } catch (e) { showToast(e.message || '删除失败', 'bad'); }
       });
@@ -8192,12 +7939,43 @@ Source prompt:
       return String(a.title || a.id || '').localeCompare(String(b.title || b.id || ''), 'zh');
     }
     async function ensureCosLooksLoaded(force = false) {
-      try {
-        return await loadCosLooksCached(force);
-      } catch (error) {
-        showToast(error.message || 'COS 预设读取失败', 'bad');
+      return refreshCosCatalogViews(force);
+    }
+    async function refreshCosCatalogViews(force = true) {
+      clearPickerCache('cos');
+      const jobs = [];
+      const openPanels = [
+        ['studioCosPanel', !!STUDIO.cosOpen],
+        ['studioNodeCosPanel', !!STUDIO.nodeCosOpen],
+        ['testCosPanel', !!window.__TEST_COS_OPEN],
+        ['creativeCanvasCosPanel', !!CREATIVE_CANVAS.cosOpen],
+      ];
+      for (const [panelId, isOpen] of openPanels) {
+        if (!isOpen) continue;
+        const state = catalogPickerState(panelId);
+        jobs.push(loadCatalogPickerPage(panelId, 'cos', state.page, force));
       }
-      return STUDIO.cosLooks || [];
+      if (PRESET_KIND === 'cos' && document.querySelector('nav.page-nav button.active')?.dataset.tab === 'presets') {
+        jobs.push(loadManagedCosPool(true));
+      }
+      await Promise.all(jobs);
+    }
+    async function refreshPromptCatalogViews(force = true) {
+      clearPickerCache('image');
+      const jobs = [];
+      const openPanels = [
+        ['studioPresetPanel', !!STUDIO.presetOpen],
+        ['studioNodePresetPanel', !!STUDIO.nodePresetOpen],
+        ['testPresetPanel', !!window.__TEST_PRESET_OPEN],
+        ['creativeCanvasPresetPanel', !!CREATIVE_CANVAS.presetOpen],
+      ];
+      for (const [panelId, isOpen] of openPanels) {
+        if (!isOpen) continue;
+        const state = catalogPickerState(panelId);
+        jobs.push(loadCatalogPickerPage(panelId, 'image', state.page, force));
+      }
+      if ($('assetStudioPreset')) jobs.push(loadAssetStudioPresets(ASSET_STUDIO_PRESET_PAGE));
+      await Promise.all(jobs);
     }
     function openCosPoolModal() {
       ['cosCustomId','cosCustomTitle','cosCustomPrompt','cosCustomTags'].forEach(id => { if ($(id)) $(id).value = ''; });
@@ -8216,11 +7994,6 @@ Source prompt:
         await api('/api/cos-pools/custom/save', {method:'POST', body: JSON.stringify({id, title, prompt, tags:String($('cosCustomTags')?.value || '').split(/[,，]/).map(v => v.trim()).filter(Boolean)})});
         await ensureCosLooksLoaded(true);
         closeCosPoolModal();
-        if (PRESET_KIND === 'cos') await loadManagedCosPool(false);
-        renderCosPanel('studioCosPanel', 'studioPrompt', !!STUDIO.cosOpen, 'studioCosBtn');
-        renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', !!STUDIO.nodeCosOpen, 'studioNodeCosBtn');
-        renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
-        renderCosPanel('creativeCanvasCosPanel', 'creativeCanvasPrompt', !!CREATIVE_CANVAS.cosOpen, 'creativeCanvasCosBtn');
         showToast('自定义 COS 已保存', 'ok');
       } catch (e) { if (status) status.textContent = e.message || '保存失败'; }
     }
@@ -8240,11 +8013,6 @@ Source prompt:
           const payload = JSON.parse(await file.text());
           await api('/api/cos-pools/import', {method:'POST', body: JSON.stringify(payload)});
           await ensureCosLooksLoaded(true); closeCosPoolModal();
-          if (PRESET_KIND === 'cos') await loadManagedCosPool(false);
-          renderCosPanel('studioCosPanel', 'studioPrompt', !!STUDIO.cosOpen, 'studioCosBtn');
-          renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', !!STUDIO.nodeCosOpen, 'studioNodeCosBtn');
-          renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
-          renderCosPanel('creativeCanvasCosPanel', 'creativeCanvasPrompt', !!CREATIVE_CANVAS.cosOpen, 'creativeCanvasCosBtn');
           showToast('COS 池已导入', 'ok');
         } catch (e) { if ($('cosPoolStatus')) $('cosPoolStatus').textContent = e.message || '导入失败'; }
       };
@@ -8255,8 +8023,8 @@ Source prompt:
       STUDIO.cosOpen = false;
       renderCosPanel('studioCosPanel', 'studioPrompt', false, 'studioCosBtn');
       if (STUDIO.presetOpen) {
-        PICKER_LOADING.add('studioPresetPanel'); renderPresetPanel('studioPresetPanel', 'studioPrompt', true, 'studioPresetBtn');
-        await ensurePromptPresetsLoaded(); PICKER_LOADING.delete('studioPresetPanel');
+        const state = catalogPickerState('studioPresetPanel');
+        await loadCatalogPickerPage('studioPresetPanel', 'image', state.page);
         window.__TEST_PRESET_OPEN = false;
         window.__TEST_COS_OPEN = false;
         renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
@@ -8269,8 +8037,8 @@ Source prompt:
       STUDIO.presetOpen = false;
       renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
       if (STUDIO.cosOpen) {
-        PICKER_LOADING.add('studioCosPanel'); renderCosPanel('studioCosPanel', 'studioPrompt', true, 'studioCosBtn');
-        await ensureCosLooksLoaded(); PICKER_LOADING.delete('studioCosPanel');
+        const state = catalogPickerState('studioCosPanel');
+        await loadCatalogPickerPage('studioCosPanel', 'cos', state.page);
         window.__TEST_PRESET_OPEN = false;
         window.__TEST_COS_OPEN = false;
         renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
@@ -8283,8 +8051,8 @@ Source prompt:
       window.__TEST_COS_OPEN = false;
       renderCosPanel('testCosPanel', 'testPrompt', false, 'testCosBtn');
       if (window.__TEST_PRESET_OPEN) {
-        PICKER_LOADING.add('testPresetPanel'); renderPresetPanel('testPresetPanel', 'testPrompt', true, 'testPresetBtn');
-        await ensurePromptPresetsLoaded(); PICKER_LOADING.delete('testPresetPanel');
+        const state = catalogPickerState('testPresetPanel');
+        await loadCatalogPickerPage('testPresetPanel', 'image', state.page);
         STUDIO.presetOpen = false;
         STUDIO.cosOpen = false;
         renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
@@ -8297,8 +8065,8 @@ Source prompt:
       window.__TEST_PRESET_OPEN = false;
       renderPresetPanel('testPresetPanel', 'testPrompt', false, 'testPresetBtn');
       if (window.__TEST_COS_OPEN) {
-        PICKER_LOADING.add('testCosPanel'); renderCosPanel('testCosPanel', 'testPrompt', true, 'testCosBtn');
-        await ensureCosLooksLoaded(); PICKER_LOADING.delete('testCosPanel');
+        const state = catalogPickerState('testCosPanel');
+        await loadCatalogPickerPage('testCosPanel', 'cos', state.page);
         STUDIO.presetOpen = false;
         STUDIO.cosOpen = false;
         renderPresetPanel('studioPresetPanel', 'studioPrompt', false, 'studioPresetBtn');
@@ -9155,14 +8923,20 @@ Source prompt:
     async function studioToggleNodePresets() {
       STUDIO.nodePresetOpen = !STUDIO.nodePresetOpen;
       STUDIO.nodeCosOpen = false;
-      if (STUDIO.nodePresetOpen) await ensurePromptPresetsLoaded('image');
+      if (STUDIO.nodePresetOpen) {
+        const state = catalogPickerState('studioNodePresetPanel');
+        await loadCatalogPickerPage('studioNodePresetPanel', 'image', state.page);
+      }
       renderPresetPanel('studioNodePresetPanel', 'studioNodePrompt', STUDIO.nodePresetOpen, 'studioNodePresetBtn');
       renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', false, 'studioNodeCosBtn');
     }
     async function studioToggleNodeCos() {
       STUDIO.nodeCosOpen = !STUDIO.nodeCosOpen;
       STUDIO.nodePresetOpen = false;
-      if (STUDIO.nodeCosOpen) await ensureCosLooksLoaded();
+      if (STUDIO.nodeCosOpen) {
+        const state = catalogPickerState('studioNodeCosPanel');
+        await loadCatalogPickerPage('studioNodeCosPanel', 'cos', state.page);
+      }
       renderPresetPanel('studioNodePresetPanel', 'studioNodePrompt', false, 'studioNodePresetBtn');
       renderCosPanel('studioNodeCosPanel', 'studioNodePrompt', STUDIO.nodeCosOpen, 'studioNodeCosBtn');
     }
@@ -9544,26 +9318,7 @@ Source prompt:
       setSelectOptions('creativeCanvasAspect', ['自动','1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'], value || '自动');
     }
     function renderCreativeCanvasPresetPanel() {
-      const panel = $('creativeCanvasPresetPanel');
-      const button = $('creativeCanvasPresetBtn');
-      if (!panel) return;
-      if (button) button.textContent = CREATIVE_CANVAS.presetOpen ? '收回' : '预设';
-      if (!CREATIVE_CANVAS.presetOpen) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
-      panel.classList.add('open');
-      if (PICKER_LOADING.has('creativeCanvasPresetPanel')) { panel.innerHTML = '<div class="status">正在加载预设…</div>'; return; }
-      const rows = CREATIVE_CANVAS.promptPresets || [];
-      let lastGroup = '';
-      const buttons = rows.map((item, index) => {
-        const group = promptPresetGroup(item);
-        const heading = group && group !== lastGroup ? `<div class="preset-group-heading">${escapeHtml(promptPresetGroupLabel(item))}</div>` : '';
-        lastGroup = group;
-        return `${heading}<button type="button" class="preset-chip" data-creative-preset="${index}">${escapeHtml(item.name || item.title || '')}</button>`;
-      }).join('');
-      panel.innerHTML = rows.length ? buttons : '<div class="status">暂无预设</div>';
-      panel.querySelectorAll('[data-creative-preset]').forEach(button => button.onclick = () => {
-        const item = rows[Number(button.dataset.creativePreset)];
-        if (item) $('creativeCanvasPrompt').value = item.prompt || '';
-      });
+      renderPresetPanel('creativeCanvasPresetPanel', 'creativeCanvasPrompt', !!CREATIVE_CANVAS.presetOpen, 'creativeCanvasPresetBtn');
     }
     function renderCreativeCanvasCosPanel() {
       if (PICKER_LOADING.has('creativeCanvasCosPanel')) {
@@ -9576,13 +9331,19 @@ Source prompt:
     async function toggleCreativeCanvasPresets() {
       CREATIVE_CANVAS.presetOpen = !CREATIVE_CANVAS.presetOpen;
       CREATIVE_CANVAS.cosOpen = false;
-      if (CREATIVE_CANVAS.presetOpen) { PICKER_LOADING.add('creativeCanvasPresetPanel'); renderCreativeCanvasPresetPanel(); await loadPromptPresetsCached('image'); PICKER_LOADING.delete('creativeCanvasPresetPanel'); }
+      if (CREATIVE_CANVAS.presetOpen) {
+        const state = catalogPickerState('creativeCanvasPresetPanel');
+        await loadCatalogPickerPage('creativeCanvasPresetPanel', 'image', state.page);
+      }
       renderCreativeCanvasPresetPanel(); renderCreativeCanvasCosPanel();
     }
     async function toggleCreativeCanvasCos() {
       CREATIVE_CANVAS.cosOpen = !CREATIVE_CANVAS.cosOpen;
       CREATIVE_CANVAS.presetOpen = false;
-      if (CREATIVE_CANVAS.cosOpen) { PICKER_LOADING.add('creativeCanvasCosPanel'); renderCreativeCanvasCosPanel(); await loadCosLooksCached(); PICKER_LOADING.delete('creativeCanvasCosPanel'); }
+      if (CREATIVE_CANVAS.cosOpen) {
+        const state = catalogPickerState('creativeCanvasCosPanel');
+        await loadCatalogPickerPage('creativeCanvasCosPanel', 'cos', state.page);
+      }
       renderCreativeCanvasPresetPanel(); renderCosPanel('creativeCanvasCosPanel', 'creativeCanvasPrompt', CREATIVE_CANVAS.cosOpen, 'creativeCanvasCosBtn');
     }
     function renderCreativeCanvasSlots() {
@@ -9990,15 +9751,12 @@ Source prompt:
     }
     $('presetAddBtn').onclick = () => openPresetEditor();
     $('presetKindImage').onclick = () => switchPresetKind('image');
-    $('presetKindVideo').onclick = () => switchPresetKind('video');
     $('presetKindCos').onclick = () => switchPresetKind('cos');
     $('presetManagerSearch').oninput = event => {
-      PRESET_MANAGER_QUERIES[PRESET_KIND === 'video' ? 'video' : 'image'] = String(event.target.value || '');
-      renderManagedPromptPresets();
+      schedulePresetManagerSearch('image', event.target.value);
     };
     $('presetCosManagerSearch').oninput = event => {
-      PRESET_MANAGER_QUERIES.cos = String(event.target.value || '');
-      renderManagedCosPool();
+      schedulePresetManagerSearch('cos', event.target.value);
     };
     $('presetImportBtn').onclick = openPresetImport;
     $('presetExportBtn').onclick = openPresetExport;
@@ -10035,14 +9793,12 @@ Source prompt:
       el.addEventListener(eventName, () => { if (isChannelModalOpen()) CHANNEL_MODAL_DIRTY = true; });
     });
     $('testImageBtn').onclick = runImageTest;
-    $('testVideoBtn').onclick = runVideoTest;
     $('testCancelBtn').onclick = cancelTestTask;
     $('testRetryStatusBtn').onclick = () => {
       if (TEST_TASK_ID) pollImageTestTask(TEST_TASK_ID, 0);
     };
     if ($('testTemplatePreviewBtn')) $('testTemplatePreviewBtn').onclick = previewTestTemplate;
     if ($('testTemplateRandomBtn')) $('testTemplateRandomBtn').onclick = randomizeTestTemplateValues;
-    if ($('testStoryboardPreviewBtn')) $('testStoryboardPreviewBtn').onclick = previewTestStoryboard;
     if ($('testVariationEnabled')) $('testVariationEnabled').onchange = () => { $('testVariationFieldsWrap').style.display = $('testVariationEnabled').checked ? '' : 'none'; };
     if ($('studioCreateBtn')) $('studioCreateBtn').onclick = openStudioCreateModal;
     if ($('studioCreateConfirmBtn')) $('studioCreateConfirmBtn').onclick = studioCreate;
@@ -10161,6 +9917,15 @@ Source prompt:
     ['assetModel','assetMedia','assetSuccess','assetMark','assetSort','assetStartTime','assetEndTime'].forEach(id => {
       if ($(id)) $(id).onchange = assetFilterChanged;
     });
+    if ($('assetStudioPresetSearch')) $('assetStudioPresetSearch').oninput = () => {
+      clearTimeout(ASSET_STUDIO_PRESET_SEARCH_TIMER);
+      ASSET_STUDIO_PRESET_PAGE = 1;
+      ASSET_STUDIO_PRESET_SEARCH_TIMER = setTimeout(() => void loadAssetStudioPresets(1), 250);
+    };
+    if ($('assetStudioPresetPrev')) $('assetStudioPresetPrev').onclick = () =>
+      void loadAssetStudioPresets(ASSET_STUDIO_PRESET_PAGE - 1);
+    if ($('assetStudioPresetNext')) $('assetStudioPresetNext').onclick = () =>
+      void loadAssetStudioPresets(ASSET_STUDIO_PRESET_PAGE + 1);
 
     (async function init() {
       for (const id of ['defaultAspect','selfieAspect','testAspect']) setSelectOptions(id, ASPECTS, '自动');

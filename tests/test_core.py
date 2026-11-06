@@ -35,7 +35,6 @@ from astrbot_plugin_selfie_image.core.proxy import (
     image_download_timeout,
     parse_channel_proxy,
 )
-from astrbot_plugin_selfie_image.generation.video import VideoGenerateRequest, VideoGenerateResult, generate_video_with_fallback
 from astrbot_plugin_selfie_image.core.error_classify import (
     classify_generation_error,
     extract_upstream_error_detail,
@@ -464,7 +463,8 @@ class ConfigModelTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"version: {PLUGIN_VERSION}", metadata)
         self.assertIn(f"当前稳定版：`{PLUGIN_VERSION}`", readme)
-        self.assertEqual(PLUGIN_VERSION, "1.6.82")
+        metadata = (Path(__file__).resolve().parents[1] / "metadata.yaml").read_text(encoding="utf-8")
+        self.assertEqual(PLUGIN_VERSION, re.search(r"^version:\s*(\S+)", metadata, re.M).group(1))
 
     def test_runtime_defaults_match_public_schema(self) -> None:
         config = AICatConfig.from_dict({})
@@ -474,7 +474,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(config.image_default_aspect_ratio, "9:16")
         self.assertEqual(DEFAULT_CONFIG["image"]["default_aspect_ratio"], "9:16")
 
-    def test_image_targets_use_model_cap_and_video_keeps_global_timeout(self) -> None:
+    def test_image_targets_use_model_cap(self) -> None:
         config = AICatConfig.from_dict(
             {
                 "image": {"global_timeout": 280},
@@ -486,20 +486,10 @@ class ConfigModelTests(unittest.TestCase):
                         "enabled_models": ["gpt-image-2"],
                     }
                 ],
-                "video": {"global_timeout": 320},
-                "video_channels": [
-                    {
-                        "name": "video",
-                        "provider_type": "openai",
-                        "base_url": "https://video.test",
-                        "enabled_models": ["video-model"],
-                    }
-                ],
             }
         )
 
         self.assertEqual(config.get_prioritized_targets()[0].timeout, LOCAL_IMAGE_WAIT_SECONDS)
-        self.assertEqual(config.get_prioritized_video_targets()[0].timeout, 320)
 
     def test_image_to_text_models_are_normalized_and_mark_targets(self) -> None:
         config = AICatConfig.from_dict(
@@ -633,7 +623,6 @@ class ConfigModelTests(unittest.TestCase):
                 parse_channel_proxy(value)
 
 
-
     def test_model_download_proxy_override(self) -> None:
         from astrbot_plugin_selfie_image.core.models import AICatConfig
         cfg = AICatConfig.from_dict({
@@ -714,8 +703,6 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(len(changed_cfg._target_cache), 1)
 
 
-    
-
     def test_parse_prompt_en_response_json(self) -> None:
         from pathlib import Path
         import json
@@ -723,13 +710,10 @@ class ConfigModelTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.core.models import DEFAULT_CONFIG
 
         img_t = DEFAULT_CONFIG["image"]["image_prompt_en_template"]
-        vid_t = DEFAULT_CONFIG["image"]["video_prompt_en_template"]
         self.assertIn("faithful language conversion only", img_t)
         self.assertIn('"ok":true', img_t)
         self.assertIn("{prompt}", img_t)
         self.assertNotIn("Task: rewrite the user prompt", img_t)
-        self.assertIn("faithful language conversion only", vid_t)
-        self.assertIn('"ok":true', vid_t)
         root = Path(__file__).resolve().parents[1]
         main_src = (root / "main.py").read_text(encoding="utf-8")
         translation_src = (root / "prompts/prompt_translation.py").read_text(encoding="utf-8")
@@ -790,80 +774,31 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("Current mood: 清爽", preserved)
 
     def test_selfie_builtin_prompt_has_compact_english_version(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
         from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
 
-        zh = build_selfie_builtin_prompt(
-            "看看腿。用户补充要求优先：窗边白裙。 【pose:sit】 【wear:white】",
-            language="zh",
-            has_reference_image=True,
-            extra_reference_count=0,
-            appearance_type="real",
+        action = build_leg_focus_action(
+            force_pose="bed_edge_diagonal", force_camera="third", has_refs=True,
         )
+        zh = build_selfie_builtin_prompt(action, has_reference_image=True, appearance_type="real")
+        self.assertEqual(zh.count(action), 1)
+        self.assertIn("头部、脸部和肩膀不入镜", zh)
+        translated_action = "Adult indoor lower-body photo. Sit on the bed edge; preserve the referenced clothes."
         en = build_selfie_builtin_prompt(
-            "看看腿。用户补充要求优先：窗边白裙。 【pose:sit】 【wear:white】",
-            language="en",
-            has_reference_image=True,
-            extra_reference_count=0,
-            appearance_type="real",
+            action, language="en", has_reference_image=True, appearance_type="real",
+            action_content=translated_action, user_text="soft window light",
         )
-        self.assertIn("腿部穿搭展示", zh)
-        self.assertIn("腰线至鞋履", zh)
-        self.assertIn("袜装", zh)
-        self.assertNotIn("全身穿搭", zh)
-        self.assertIn("真人摄影质感", zh)
-        self.assertIn("普通相机", zh)
-        self.assertIn("竖屏", zh)
-        selfie_zh = build_selfie_builtin_prompt(
-            "【自拍 / 看看模式】展示现在的样子。",
-            language="zh",
-            has_reference_image=True,
-            appearance_type="real",
-        )
-        self.assertIn("竖屏", selfie_zh)
-        self.assertIn("真人摄影质感", selfie_zh)
-        self.assertIn("普通手机", selfie_zh)
+        self.assertEqual(en.count(translated_action), 1)
         self.assertIn("legwear-focused outfit photograph", en)
-        self.assertIn("Third-person legwear outfit photo from waist to shoes", en)
-        self.assertIn("plastic skin", en)
-        self.assertNotIn("thigh-high", en)
-        self.assertNotIn("complete outfit from head to shoes", en)
-        self.assertIn("vertical", en.lower())
+        self.assertIn("User request: soft window light", en)
+        self.assertNotIn("waist to shoes", en)
         self.assertNotRegex(en, r"[\u3400-\u9fff]")
-        self.assertNotIn("User request:", en)
         self.assertLess(len(en), 2400)
-
-        pose_expectations = {
-            "sit_crop": "Sit naturally on a chair or sofa",
-            "kneel_crop": "Use a stable seated pose on a chair or sofa",
-            "side_lie_crop": "Use a relaxed seated pose with balanced posture",
-            "windowsill_crop": "Sit on a stable chair beside a window",
-            "desk_sit_crop": "Sit naturally on a chair beside a desk",
-            "floor_knees_up_crop": "Use a relaxed seated pose on a stable chair",
-            "reclined_knees_crop": "Sit comfortably while keeping the torso upright",
-            "bed_supine_crop": "Use a relaxed seated pose on a stable chair",
-            "staggered_stair_step_crop": "Stand on broad steps with one foot on a lower step",
-            "cross_step_snapshot_crop": "Capture a light walking step with the front foot crossing naturally",
-            "turn_and_settle_crop": "Show a gentle half-turn ending in a stable stance",
-            "bench_side_sit_crop": "Sit at one end of a bench in a relaxed side-facing pose",
-            "toe_touch_step_crop": "Stand beside a broad low step with one foot grounded",
-            "back_staggered_step_crop": "Show the subject from behind with feet in a comfortable staggered stance",
-        }
-        for pose_id, expected in pose_expectations.items():
-            pose_en = build_selfie_builtin_prompt(
-                f"看看腿。 【cam:selfie】 【pose:{pose_id}】",
-                language="en",
-                has_reference_image=True,
-            )
-            self.assertIn(expected, pose_en)
-
-        translated = build_selfie_builtin_prompt(
-            "看看腿。用户补充要求优先：窗边白裙。 【pose:sit】",
-            language="en",
-            has_reference_image=True,
-            appearance_type="real",
-            user_text="a white dress by the window",
+        selfie_zh = build_selfie_builtin_prompt(
+            "【自拍 / 看看模式】展示现在的样子。", has_reference_image=True, appearance_type="real",
         )
-        self.assertIn("User request: a white dress by the window", translated)
+        for expected in ("竖屏", "真人摄影质感", "普通手机"):
+            self.assertIn(expected, selfie_zh)
 
     def test_batch_failure_llm_prompt_is_soft_and_keeps_single_reason(self) -> None:
         from astrbot_plugin_selfie_image.prompts.prompt_templates import build_batch_failure_llm_prompt
@@ -1038,21 +973,21 @@ class ConfigModelTests(unittest.TestCase):
             {
                 "task_id": "cmd-12345678-2",
                 "status": "succeeded",
-                "media_type": "video",
-                "request_data": {"kind": "video", "original_prompt": "镜头推进"},
+                "media_type": "image",
+                "request_data": {"kind": "image", "original_prompt": "窗边人像"},
             },
             {
                 "task_id": "cmd-12345678-1",
                 "status": "failed",
-                "media_type": "video",
-                "request_data": {"kind": "video", "original_prompt": "舞蹈"},
+                "media_type": "image",
+                "request_data": {"kind": "image", "original_prompt": "室内人像"},
             },
         ]
-        text = format_task_list_text(rows, include_finished=True, media_type="video")
-        self.assertIn("最近的视频任务", text)
-        self.assertIn("完成/视频", text)
-        self.assertIn("失败/视频", text)
-        self.assertIn("查看详情：/视频任务 历史 编号或任务号", text)
+        text = format_task_list_text(rows, include_finished=True, media_type="image")
+        self.assertIn("最近的任务", text)
+        self.assertIn("完成/图片", text)
+        self.assertIn("失败/图片", text)
+        self.assertIn("查看详情：/生图任务 历史 编号或任务号", text)
 
     def test_task_history_request_aliases(self) -> None:
         from astrbot_plugin_selfie_image.main import SelfieImagePlugin
@@ -1357,64 +1292,28 @@ class ConfigModelTests(unittest.TestCase):
             self.assertFalse(tasks["task-1"]["success"])
             self.assertIn("重新提交", tasks["task-1"]["error"])
 
-    def test_video_payload_grok_midgate_minimal(self) -> None:
-        from astrbot_plugin_selfie_image.core.models import ImageModelTarget
-        from astrbot_plugin_selfie_image.generation.video import VideoGenerateRequest, _extract_task_id, _video_payload, build_video_generations_endpoint
-        target = ImageModelTarget(
-            channel_name="t",
-            provider_type="grok",
-            base_url="https://api.futureppo.top",
-            api_key="k",
-            model="grok-imagine-video",
-            timeout=60,
-        )
-        req = VideoGenerateRequest(prompt="a cat", duration=6, size="1280x720")
-        payload = _video_payload(target, req, [], family="grok")
-        self.assertEqual(payload.get("model"), "grok-imagine-video")
-        self.assertEqual(payload.get("prompt"), "a cat")
-        self.assertNotIn("seconds", payload)
-        self.assertNotIn("n_seconds", payload)
-        self.assertNotIn("n", payload)
-        self.assertNotIn("size", payload)
-        self.assertIn(payload.get("aspect_ratio"), {"16:9", "1280x720"})
-        # default openai family still has duration
-        payload2 = _video_payload(target, req, [], family="openai_video")
-        self.assertIn("duration", payload2)
-        self.assertEqual(
-            build_video_generations_endpoint("https://api.futureppo.top"),
-            "https://api.futureppo.top/v1/videos/generations",
-        )
-        self.assertEqual(_extract_task_id({"request_id": "task_abc"}), "task_abc")
-        self.assertEqual(_extract_task_id({"data": {"request_id": "task_nested"}}), "task_nested")
-
 
     def test_prompt_en_config_and_cjk_gate(self) -> None:
         from astrbot_plugin_selfie_image.core.models import AICatConfig, DEFAULT_CONFIG
         self.assertIn("enable_image_prompt_en", DEFAULT_CONFIG["image"])
-        self.assertIn("enable_video_prompt_en", DEFAULT_CONFIG["image"])
         cfg = AICatConfig.from_dict({
             "image": {
                 "enable_image_prompt_en": True,
-                "enable_video_prompt_en": True,
                 "prompt_en_mode": "if_cjk",
                 "prompt_en_model": "audit/gpt",
             }
         })
         self.assertTrue(cfg.image_enable_image_prompt_en)
-        self.assertTrue(cfg.image_enable_video_prompt_en)
         self.assertEqual(cfg.image_prompt_en_mode, "if_cjk")
         self.assertEqual(cfg.image_prompt_en_model, "audit/gpt")
         html = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
         self.assertIn("enableImagePromptEn", html)
-        self.assertIn("enableVideoPromptEn", html)
         self.assertIn("promptEnMode", html)
         self.assertIn("生图提示词转英文", html)
-        self.assertIn("视频提示词转英文", html)
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
         self.assertIn("_translate_prompt_to_english", main_src)
         self.assertIn("_prompt_en_needed", main_src)
         self.assertIn('media="image"', main_src)
-        self.assertIn('media="video"', main_src)
 
     def test_proxy_list_migrate_channel_proxy(self) -> None:
         from astrbot_plugin_selfie_image.core.models import AICatConfig, normalize_proxy_entry
@@ -1851,9 +1750,6 @@ class ConfigModelTests(unittest.TestCase):
                 "deduplicated_reference_image_count_total": 2,
                 "duplicate_reference_image_count_total": 1,
                 "requested_count": 4,
-                "duration": 7,
-                "timeout_seconds": 300,
-                "size": "16:9",
                 "targets": ["m1"],
                 "request_image_paths": ["a.png"],
                 "request_prompt_en": "translated prompt",
@@ -1898,7 +1794,7 @@ class ConfigModelTests(unittest.TestCase):
         self.assertLessEqual(len(slim["attempts"][0]["error"]), 801)
         self.assertEqual(slim["md5"], "a" * 32)
         self.assertEqual(slim["requested_count"], 4)
-        self.assertEqual(slim["duration"], 7)
+        self.assertNotIn("duration", slim)
         self.assertEqual(slim["raw_reference_image_count"], 2)
         self.assertEqual(slim["request_data"]["identity_reference_source"], "persona")
         self.assertEqual(slim["request_data"]["identity_reference_count"], 1)
@@ -1949,12 +1845,11 @@ class ConfigModelTests(unittest.TestCase):
         record = redact_generation_record(
             {
                 "generated_image_sources": [{"type": "url", "value": "https://cdn.example.test/a.png?api_key=secretvalue"}],
-                "response_data": {"video_source": "https://cdn.example.test/v.mp4?api_key=secretvalue"},
             }
         )
         slim = compact_generation_record(record)
         self.assertEqual(record["generated_image_sources"][0]["value"], "https://cdn.example.test/a.png?api_key=secretvalue")
-        self.assertEqual(slim["response_data"]["video_source"], "https://cdn.example.test/v.mp4?api_key=secretvalue")
+        self.assertNotIn("video_source", slim.get("response_data") or {})
 
     def test_detail_record_defers_large_inline_media(self) -> None:
         from astrbot_plugin_selfie_image.core.utils import redact_generation_record_for_detail
@@ -1966,7 +1861,6 @@ class ConfigModelTests(unittest.TestCase):
                 "generated_image_sources": [{"type": "base64", "value": inline}],
                 "response_data": {
                     "generated_image_sources": [{"type": "base64", "value": inline}],
-                    "video_source": inline,
                 },
             }
         )
@@ -1975,7 +1869,6 @@ class ConfigModelTests(unittest.TestCase):
         self.assertTrue(detail["generated_image_sources"][0]["deferred"])
         self.assertEqual(detail["generated_image_sources"][0]["size"], len(inline))
         self.assertEqual(detail["response_data"]["generated_image_sources"][0]["value"], "[Base64，点击复制按钮获取原文]")
-        self.assertEqual(detail["response_data"]["video_source"]["value"], "[Base64，点击复制按钮获取原文]")
 
     def test_media_sources_preserve_legacy_string_arrays(self) -> None:
         from astrbot_plugin_selfie_image.core.utils import (
@@ -2398,10 +2291,9 @@ class ImageUtilityTests(unittest.TestCase):
 
     def test_web_prunes_invalid_model_priority_before_save(self) -> None:
         self.assertIn("function prunePriorityList", INDEX_HTML)
-        self.assertIn("for (const kind of ['image','audit','video']) prunePriorityList(kind);", INDEX_HTML)
+        self.assertIn("for (const kind of ['image','audit']) prunePriorityList(kind);", INDEX_HTML)
         self.assertIn("CONFIG.enabled_image_model_priority = textList('priorityList');", INDEX_HTML)
         self.assertIn("CONFIG.enabled_audit_model_priority = textList('auditPriorityList');", INDEX_HTML)
-        self.assertIn("CONFIG.enabled_video_model_priority = textList('videoPriorityList');", INDEX_HTML)
 
     def test_dashboard_shortcuts_and_priority_pin_use_stable_targets(self) -> None:
         dashboard = (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")
@@ -4184,7 +4076,7 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
     def test_grok_payload_maps_auto_aspect_and_resolution(self) -> None:
         adapter = GrokImageAdapter(make_target("grok", "grok-imagine-image"), FakeSession())
         payload = adapter.build_payload(ImageGenerateRequest(prompt="cat", aspect_ratio="自动", resolution="4K"))
-        self.assertEqual(payload["aspect_ratio"], "auto")
+        self.assertEqual(payload["aspect_ratio"], "9:16")
         self.assertEqual(payload["resolution"], "4k")
         self.assertEqual(payload["response_format"], "b64_json")
 
@@ -4599,36 +4491,6 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.attempts[0]["error_category"], "server")
         self.assertTrue(result.attempts[0]["retryable"])
 
-    async def test_video_fallback_tries_next_target_after_failure(self) -> None:
-        first = make_target("openai", "bad-video")
-        second = make_target("openai", "good-video")
-        calls = []
-
-        async def fake_generate(target, request, session, *, save_dir):
-            calls.append(target.model)
-            if target.model == "bad-video":
-                return VideoGenerateResult(
-                    error="temporary video failure",
-                    used_model=target.label,
-                    attempts=[{"label": target.label, "success": False, "error_category": "network"}],
-                )
-            return VideoGenerateResult(
-                video_path="/tmp/good.mp4",
-                used_model=target.label,
-                attempts=[{"label": target.label, "success": True}],
-            )
-
-        with patch("astrbot_plugin_selfie_image.generation.video.generate_video_openai_compatible", side_effect=fake_generate):
-            result = await generate_video_with_fallback(
-                [first, second],
-                VideoGenerateRequest(prompt="move naturally"),
-                object(),
-                save_dir=tempfile.gettempdir(),
-            )
-
-        self.assertEqual(calls, ["bad-video", "good-video"])
-        self.assertEqual(result.used_model, second.label)
-        self.assertEqual([item["success"] for item in result.attempts], [False, True])
 
     async def test_fallback_stops_on_non_retryable_auth_error(self) -> None:
         first = make_target("openai", "bad-model")
@@ -4947,7 +4809,7 @@ class WebApiTests(unittest.TestCase):
 
         response = client.get(
             "/api/tasks",
-            query_string={"media_type": "video", "include_finished": "true", "limit": "12"},
+            query_string={"media_type": "image", "include_finished": "true", "limit": "12"},
             headers=headers,
         )
         self.assertEqual(response.status_code, 200)
@@ -4956,7 +4818,7 @@ class WebApiTests(unittest.TestCase):
         self.assertIn("tasks", payload)
         self.assertNotIn("sk-live-secret", json.dumps(payload, ensure_ascii=False))
         self.assertNotIn("should not be returned", json.dumps(payload, ensure_ascii=False))
-        self.assertEqual(plugin.task_query, {"include_finished": True, "limit": 12, "offset": 0, "media_type": "video"})
+        self.assertEqual(plugin.task_query, {"include_finished": True, "limit": 12, "offset": 0, "media_type": "image"})
 
         for value in ("0", "201", "not-a-number"):
             bad = client.get("/api/tasks", query_string={"limit": value}, headers=headers)
@@ -5424,7 +5286,7 @@ class WebApiTests(unittest.TestCase):
         headers = {"X-Selfie-Image-Token": "secret"}
         response = client.get("/api/assets", query_string={"media_type": "audio"}, headers=headers)
         self.assertEqual(response.status_code, 400)
-        self.assertIn("media_type 必须是 image 或 video", response.get_json()["error"])
+        self.assertIn("当前仅支持图片媒体", response.get_json()["error"])
         response = client.get("/api/assets", query_string={"limit": "0"}, headers=headers)
         self.assertEqual(response.status_code, 400)
         response = client.post("/api/assets/metadata", json={"ids": "asset-1"}, headers=headers)
@@ -5451,7 +5313,7 @@ class WebApiTests(unittest.TestCase):
 
         response = client.get("/api/records/1/media-sources", headers=headers)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["data"], {"generated_image_sources": [], "video_source": ""})
+        self.assertEqual(response.get_json()["data"], {"generated_image_sources": []})
 
         response = client.get("/api/records/" + ("x" * 200), headers=headers)
         self.assertEqual(response.status_code, 400)
@@ -5766,29 +5628,7 @@ class WebApiTests(unittest.TestCase):
 
         response = client.get("/api/cache-image?path=not-image.txt", headers=headers)
         self.assertEqual(response.status_code, 400)
-        self.assertIn("缓存文件不是有效图片或视频", response.get_json()["error"])
-
-    def test_video_task_route_marks_payload_and_serves_video(self) -> None:
-        plugin = FakeWebPlugin("secret")
-        client = self.make_client(plugin, host="0.0.0.0")
-        headers = {"X-Selfie-Image-Token": "secret"}
-
-        response = client.post(
-            "/api/test-video-channel/tasks",
-            json={"channel": "video", "model": "v1", "prompt": "waves"},
-            headers=headers,
-        )
-        self.assertEqual(response.status_code, 200)
-        request_data = response.get_json()["data"]["request_data"]
-        self.assertEqual(request_data["media_type"], "video")
-
-        video_path = os.path.join(plugin.generated_dir, "clip.mp4")
-        video_bytes = b"\x00\x00\x00\x20ftypisom" + b"video-data"
-        Path(video_path).write_bytes(video_bytes)
-        response = client.get("/api/cache-image?path=clip.mp4", headers=headers)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, video_bytes)
-        response.close()
+        self.assertIn("缓存文件不是有效图片", response.get_json()["error"])
 
 
 class SchemaTests(unittest.TestCase):
@@ -6525,106 +6365,6 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual({call["aspect_ratio"] for call in calls}, {"16:9"})
         self.assertEqual(progress[-1]["progress_percent"], 100)
 
-    def test_llm_tool_tasks_are_visible_while_running(self) -> None:
-        """LLM tool calls must register the same live tasks as slash commands."""
-        plugin = self._plugin_stub()
-        from astrbot_plugin_selfie_image import main as plugin_main
-
-        plugin._runtime_generation_tasks = {}
-        plugin._session_key = lambda _event=None: "group:llm"
-        plugin._reserve_quota_for_task = lambda *_args, **_kwargs: ""
-        plugin._release_quota_reservation = lambda _task_id: None
-        plugin._remember_llm_generation = lambda *_args, **_kwargs: None
-        plugin._normalize_count = lambda value: max(1, int(value or 1))
-        plugin._quota_error_message = lambda *_args, **_kwargs: ""
-        plugin._rate_limit_error_message = lambda *_args, **_kwargs: ""
-        plugin._natural_fail_fallback = lambda kind: f"{kind} failed"
-        plugin._tool_success = lambda kind, count: f"{kind}:{count}"
-        plugin._tool_soft_fail = lambda error, *_args: f"failed:{error}"
-        plugin._resolve_image_preset = lambda prompt, *_args: (prompt, "9:16", "1K", "", "")
-        plugin._looks_like_selfie_intent = lambda _prompt: False
-
-        class Event:
-            pass
-
-        async def scenario() -> None:
-            image_started = asyncio.Event()
-            image_release = asyncio.Event()
-
-            async def progress_text(*_args, **_kwargs):
-                return "progress"
-
-            async def send_progress(*_args, **_kwargs):
-                return None
-
-            async def references(*_args, **_kwargs):
-                return []
-
-            async def draw_batches(task_id, *_args, **_kwargs):
-                image_started.set()
-                await image_release.wait()
-                return {"success": True, "files": ["image.png"], "requested_count": 1}
-
-            plugin._build_contextual_progress_text = progress_text
-            plugin._send_progress_text = send_progress
-            plugin._event_reference_images = references
-            plugin._background_draw_batches = draw_batches
-
-            image_call = asyncio.create_task(
-                plugin_main.SelfieImagePlugin.tool_generate_image(
-                    plugin, Event(), "约 20 岁的角色", count=1
-                )
-            )
-            await image_started.wait()
-            image_tasks = plugin._list_image_tasks_for_session("group:llm", include_finished=False)
-            self.assertEqual(len(image_tasks), 1)
-            self.assertEqual(image_tasks[0]["source"], "llm-generate-image")
-            self.assertEqual(image_tasks[0]["status"], "running")
-            image_release.set()
-            self.assertEqual(await image_call, "image:1")
-
-            video_started = asyncio.Event()
-            video_release = asyncio.Event()
-            sent_videos = []
-            video_captions = []
-
-            async def run_video(_event, _prompt, _refs, *, task_id="", **_kwargs):
-                self.assertTrue(task_id.startswith("cmd-"))
-                video_started.set()
-                await video_release.wait()
-                return {
-                    "success": True,
-                    "video_path": "clip.mp4",
-                    "elapsed_seconds": 1.25,
-                    "used_model": "video/test",
-                }
-
-            async def send_video(_event, path, **_kwargs):
-                sent_videos.append(path)
-                video_captions.append(_kwargs.get("caption", ""))
-
-            plugin._video_prompt_requests_persona = lambda _prompt: False
-            plugin._run_video_generation = run_video
-            plugin._send_generated_video = send_video
-
-            video_call = asyncio.create_task(
-                plugin_main.SelfieImagePlugin.tool_generate_video(
-                    plugin, Event(), "镜头缓慢推进", duration=5
-                )
-            )
-            await video_started.wait()
-            video_tasks = plugin._list_image_tasks_for_session(
-                "group:llm", include_finished=False, media_type="video"
-            )
-            self.assertEqual(len(video_tasks), 1)
-            self.assertEqual(video_tasks[0]["source"], "llm-generate-video")
-            self.assertEqual(video_tasks[0]["status"], "running")
-            video_release.set()
-            self.assertEqual(await video_call, "video:1")
-            self.assertEqual(sent_videos, ["clip.mp4"])
-            self.assertEqual(video_captions, ["视频好了。 用时 1.25s 模型 video/test"])
-
-        asyncio.run(scenario())
 
     def test_command_task_late_success_result_wins_cancellation_race(self) -> None:
         plugin = self._plugin_stub()
@@ -7315,8 +7055,8 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("failStreak", self.html)
         self.assertIn("setTestBusy(false);\n        TEST_TASK_ID = '';\n        safeStorageRemove('selfieImageLastTestTaskId');", self.html)
         self.assertTrue(("15–60" in self.html) or ("15-60" in self.html) or ("15–60秒" in self.html.replace(" ", "")))
-        # 1:1 preference when auto
-        self.assertTrue("1:1" in self.html)
+        self.assertIn("9:16", self.html)
+        self.assertNotIn("$('testAspect').value = '1:1';", self.html)
         self.assertIn("async function recoverTestTaskAfterCancelFailure", self.html)
         self.assertIn("recoverTestTaskAfterCancelFailure(taskId)", self.html)
         self.assertIn("setTestBusy(false)", self.html)
@@ -7330,9 +7070,9 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("nav.page-nav", self.html)
         self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr))", self.html)
         self.assertIn("nav.page-nav button.active", self.html)
-        self.assertIn("addVideoChannel", self.html)
-        self.assertIn("channelTabVideo", self.html)
-        self.assertIn("videoChannelList", self.html)
+        self.assertNotIn("addVideoChannel", self.html)
+        self.assertNotIn("channelTabVideo", self.html)
+        self.assertNotIn("videoChannelList", self.html)
         self.assertIn("softDisableChannelIfNoModels", self.html)
         self.assertIn("isChannelModalOpen", self.html)
         self.assertIn("EDITING_CHANNEL_IS_NEW", self.html)
@@ -7347,16 +7087,16 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("modalProvider", self.html)
         self.assertIn("openai_chat", self.html)
         self.assertIn("IMAGE_PROVIDER_LABELS", self.html)
-        self.assertIn("VIDEO_PROVIDERS", self.html)
-        self.assertIn("openai_video", self.html)
-        self.assertIn("sora", self.html)
-        self.assertIn("veo", self.html)
-        self.assertIn("seedance", self.html)
+        self.assertNotIn("VIDEO_PROVIDERS", self.html)
+        self.assertNotIn("openai_video", self.html)
+        self.assertNotIn("sora", self.html)
+        self.assertNotIn("veo", self.html)
+        self.assertNotIn("seedance", self.html)
         self.assertIn("agnes", self.html)
-        self.assertIn("video_sync", self.html)
-        self.assertIn("video_chat", self.html)
-        self.assertIn("resolveVideoModelProviderType", self.html)
-        self.assertIn("normalizeVideoProviderType", self.html)
+        self.assertNotIn("video_sync", self.html)
+        self.assertNotIn("video_chat", self.html)
+        self.assertNotIn("resolveVideoModelProviderType", self.html)
+        self.assertNotIn("normalizeVideoProviderType", self.html)
         self.assertIn("toastOnOk", self.html)
         self.assertIn("allowWhileModal", self.html)
         self.assertIn('id="monitorMetricsWindow"', self.html)
@@ -7379,7 +7119,7 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("#3c96ca", page_html)
         self.assertIn("header-brand", page_html)
         self.assertIn("page-nav", page_html)
-        self.assertIn("channelTabVideo", page_html)
+        self.assertNotIn("channelTabVideo", page_html)
         self.assertIn("开始试画", page_html)
         logo = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "logo.png"
         self.assertTrue(logo.is_file())
@@ -7569,7 +7309,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
         self.assertTrue(hasattr(plugin_main, "SelfieImagePlugin"))
         # command handlers exist
-        for name in ("cmd_help", "cmd_help_text", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel", "cmd_video", "cmd_t2v", "cmd_i2v", "cmd_persona_video", "cmd_look_video"):
+        for name in ("cmd_help", "cmd_help_text", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel"):
             self.assertTrue(hasattr(plugin_main.SelfieImagePlugin, name), name)
 
     def test_help_uses_shipped_static_poster_only(self) -> None:
@@ -7598,11 +7338,6 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             "cmd_draw": "不会自动带入形象图",
             "cmd_raw_text_to_image": "不使用形象图",
             "cmd_raw_image_to_image": "不会自动使用形象图",
-            "cmd_video": "没图默认按文字生成",
-            "cmd_t2v": "也不使用形象图",
-            "cmd_i2v": "不会自动使用当前形象图",
-            "cmd_persona_video": "当前形象图作为首帧",
-            "cmd_look_video": "当前形象图主动出视频",
             "cmd_selfie": "用当前形象自拍",
             "cmd_group_selfie": "自己使用当前形象",
             "cmd_persona_set": "自动 / 真人 / 动漫",
@@ -7620,10 +7355,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         help_body = main_src.split("def _help_text_body", 1)[1].split("def _resolve_help_image_path", 1)[0]
         self.assertIn("自动判断", help_body)
         self.assertIn("不会自动塞形象图", help_body)
-        self.assertIn("有图=图生视频", help_body)
-        self.assertIn("没图=文生视频", help_body)
-        self.assertIn("/形象视频", help_body)
-        self.assertIn("/看看视频", help_body)
+        self.assertNotIn("文生视频", help_body)
+        self.assertNotIn("图生视频", help_body)
         self.assertIn("/画 3", help_body)
         self.assertIn("-c 3", help_body)
         self.assertIn("20 岁", help_body)
@@ -7677,24 +7410,18 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("幽灵手", selfie)
             self.assertNotIn("断臂", selfie)
             legs = manager.build_selfie_prompt("看看腿 【wear:white】", "小助", "温柔", True, 0)
-            self.assertIn("腿部穿搭展示", legs)
-            self.assertIn("腰线至鞋履", legs)
-            self.assertIn("袜装", legs)
-            self.assertIn("成年人物", legs)
-            self.assertIn("颜色、材质和层次清楚自然", legs)
-            self.assertIn("本张固定姿势与构图", legs)
-            self.assertNotIn("自然坐姿、跪坐、侧躺、抱膝、交叠坐姿、窗边坐或席地屈膝", legs)
-            self.assertNotIn("晒腿", legs)
-            self.assertNotIn("主要看腿形", legs)
-            self.assertNotIn("不露脸", legs)
+            self.assertIn("室内竖屏腿部穿搭照片", legs)
+            self.assertIn("头部、脸部和肩膀不入镜", legs)
+            self.assertIn("不夸张拉伸身体比例", legs)
+            self.assertIn("【outfit:reference】", legs)
+            self.assertEqual(legs.count("【legs:outfit】"), 1)
+            self.assertNotIn("正对镜头时自然看向镜头", legs)
             self.assertNotIn("【合影 / 同框模式】", legs)
             self.assertNotIn("幽灵手", legs)
             self.assertNotIn("勒进大腿肉", legs)
             self.assertNotIn("不要大象腿猪腿", legs)
             self.assertNotIn("微胖软肉", legs)
-            self.assertNotIn("看看腿", legs)
             self.assertNotIn("全身穿搭展示", legs)
-            self.assertNotIn("赤足", legs)
             self.assertNotIn("碰脚", legs)
             self.assertNotIn("脚趾自然清晰", legs)
             group = manager.build_selfie_prompt("合影", "小助", "温柔", True, 1)
@@ -7791,8 +7518,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("构图与画面质量", enhanced)
         self.assertIn("左右手/脚各一", enhanced)
         legs_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(object.__new__(plugin_main.SelfieImagePlugin), "", False, force_legwear="白丝")
-        self.assertIn("姿态放松自然", legs_action)
-        self.assertIn("单人", legs_action)
+        self.assertIn("不夸张拉伸身体比例", legs_action)
+        self.assertIn("不能遮挡腿部姿势和主要轮廓", legs_action)
         self.assertNotIn("同框", legs_action)
         self.assertNotIn("幽灵手", legs_action)
         self.assertNotIn("断臂", legs_action)
@@ -7806,8 +7533,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertTrue(intent.is_legs_only)
             self.assertFalse(intent.is_group_photo)
             prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
-            self.assertIn("腿部穿搭展示", prompt)
-            self.assertIn("腰线至鞋履", prompt)
+            self.assertIn("腿部穿搭半身照", prompt)
+            self.assertIn("头部、脸部和肩膀不入镜", prompt)
             self.assertNotIn("勒进大腿肉", prompt)
             self.assertNotIn("微胖软肉", prompt)
             self.assertNotIn("不要大象腿猪腿", prompt)
@@ -7825,7 +7552,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("身体比例来自参考图一", cos_prompt)
             self.assertNotIn("体态来自参考图一", cos_prompt)
             self.assertNotIn("【合影 / 同框模式】", prompt)
-            self.assertIn("成年人物腿部穿搭构图", prompt)
+            self.assertEqual(prompt.count(legs_action), 1)
 
         # /看看COS must not be hijacked into 晒腿 by 高叉/与腿 wording
         class _P:
@@ -8112,42 +7839,23 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("只锁身份长相", clothes)
 
 
-    def test_legs_persona_uses_only_supported_legwear(self) -> None:
+    def test_legs_persona_preserves_reference_outfit_and_requested_detail(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
+        action = build_leg_focus_action(
+            "白丝", has_refs=True, force_pose="bed_edge_diagonal", force_camera="third",
+        )
         with tempfile.TemporaryDirectory() as tmp:
-            manager = PersonaManager(tmp)
-            text = manager.build_selfie_prompt(
-                action="看看腿 【wear:white】",
-                bot_name="小助",
-                personality="温柔",
-                has_reference_image=True,
-                extra_reference_count=0,
-            )
-            self.assertIn("腿部穿搭展示", text)
-            self.assertIn("腰线至鞋履", text)
-            self.assertIn("袜装", text)
-            self.assertIn("成年人物", text)
-            self.assertIn("颜色、材质和层次清楚自然", text)
-            self.assertNotIn("晒腿", text)
-            self.assertNotIn("主要看腿形", text)
-            self.assertNotIn("脚部画外", text)
-            self.assertNotIn("双脚裁出画外", text)
-            self.assertNotIn("不露脸", text)
-            for forbidden in ("过膝袜", "长筒袜", "肉色丝袜", "丝袜", "勒进大腿肉", "半透明", "赤足", "碰脚", "脚趾自然清晰", "完整包住脚部"):
-                self.assertNotIn(forbidden, text)
-            self.assertTrue(any(label in text for label in ("白色不透连裤袜", "黑色不透连裤袜", "自然肤色不透打底")))
-            self.assertNotIn("完整的日常长裤搭配", text)
-            self.assertNotIn("看看腿", text)
-            self.assertNotIn("全身穿搭展示", text)
-            self.assertNotRegex(text, r"光腿神器、白丝、黑丝(?:或连裤袜)?(?:三|四)选一")
-            self.assertNotIn("禁止中筒袜、短袜", text)
-            self.assertNotIn("微胖软肉", text)
-            self.assertNotIn("不要大象腿猪腿", text)
-            self.assertNotIn("主姿势在多种日常拍腿姿势间变化", text)
-            self.assertNotIn("· 坐姿拍腿", text)
-            self.assertNotIn("小皮鞋", text)
-            self.assertNotIn("居家拖鞋", text)
+            text = PersonaManager(tmp).build_selfie_prompt(action, "小助", "温柔", True, 0)
+        self.assertEqual(text.count(action), 1)
+        self.assertIn("【outfit:reference】", text)
+        self.assertIn("【wear:white】", text)
+        self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", text)
+        self.assertIn("仅在与引用图穿搭兼容时执行", text)
+        self.assertIn("头部、脸部和肩膀不入镜", text)
+        for forbidden in ("白色不透连裤袜，完整日常穿搭", "小皮鞋", "日常长裤搭配", "全身穿搭展示"):
+            self.assertNotIn(forbidden, text)
 
     def test_daily_profile_does_not_add_unselected_legwear(self) -> None:
         from astrbot_plugin_selfie_image.features.persona import fallback_daily_profile
@@ -8184,1114 +7892,20 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertTrue(("半身" in look) or ("三分之四" in look) or ("抓拍" in look))
 
 
-class VideoV1Tests(unittest.TestCase):
-    def test_video_count_only_accepts_explicit_c_option(self) -> None:
-        plugin = SessionModelAndTaskTests()._plugin_stub()
-
-        cases = (
-            ("-c 3 嘉桐摇", "嘉桐摇", 3),
-            ("嘉桐摇 -c=2", "嘉桐摇", 2),
-            ("-c3 动作第4拍、115 BPM", "动作第4拍、115 BPM", 3),
-            ("动作第4拍，连续5次，115 BPM", "动作第4拍，连续5次，115 BPM", 1),
-            ("视频 3 女孩跳舞", "视频 3 女孩跳舞", 1),
-        )
-        for raw, expected_prompt, expected_count in cases:
-            with self.subTest(raw=raw):
-                self.assertEqual(plugin._extract_video_count(raw), (expected_prompt, expected_count))
-
-    def test_video_command_puts_explicit_count_in_task_summary(self) -> None:
-        plugin = SessionModelAndTaskTests()._plugin_stub()
-        from astrbot_plugin_selfie_image import main as plugin_main
-
-        plugin._permission_denied_message = lambda _event: ""
-        plugin._render_command_template = lambda text: (text, {}, False, [])
-        plugin.render_creative_prompt = lambda text, _context: {"prompt": text, "unresolved": []}
-        plugin._expand_video_prompt_with_preset = lambda text, duration=None: (text, duration, "")
-        plugin._event_reference_images = lambda *_args, **_kwargs: asyncio.sleep(0, result=[])
-        captured = {}
-        plugin.start_command_image_task = lambda *_args, **kwargs: captured.update(kwargs.get("summary", {})) or {"task_id": "task"}
-
-        class Event:
-            def plain_result(self, text):
-                return text
-
-        async def invoke():
-            with patch.object(
-                plugin_main,
-                "extract_command_message",
-                return_value="-c 3 动作第4拍 115 BPM",
-            ):
-                return [
-                    item
-                    async for item in plugin._handle_video_command(
-                        Event(), "视频", "", mode="t2v"
-                    )
-                ]
-
-        output = asyncio.run(invoke())
-        self.assertEqual(captured["prompt"], "动作第4拍 115 BPM")
-        self.assertEqual(captured["requested_count"], 3)
-        self.assertEqual(captured["kind"], "video")
-        self.assertIn("共 3 个视频", output[0])
-
-    def test_counted_video_generation_sends_each_video_and_tracks_progress(self) -> None:
-        plugin = SessionModelAndTaskTests()._plugin_stub()
-        plugin.config.image_max_batch_count = 3
-        plugin.config.video_max_concurrent_tasks = 2
-        plugin._web_tasks = {"task": {"cancel_requested": False}}
-        plugin._task_cancel_requested = lambda _task_id: False
-        plugin._wait_for_record_commits = lambda _task_id: asyncio.sleep(0)
-        plugin._set_task_notification_status = lambda *_args, **_kwargs: None
-        plugin._friendly_user_error_message = lambda error, fallback: error or fallback
-        progress = []
-        sent = []
-        captions = []
-        delivery_events = []
-        calls = []
-        plugin._set_web_image_task = lambda _task_id, **fields: progress.append(dict(fields))
-
-        async def generate(_event, _prompt, _refs, **_kwargs):
-            index = len(calls) + 1
-            calls.append(index)
-            return {
-                "success": True,
-                "video_path": f"video-{index}.mp4",
-                "elapsed_seconds": 0.1,
-                "used_model": "video/test",
-                "attempts": [{"label": "video/test", "success": True}],
-            }
-
-        async def send(_event, path, **_kwargs):
-            sent.append(path)
-            captions.append(_kwargs.get("caption", ""))
-
-        async def mark(task_id, *, delivered, error="", paths=None):
-            delivery_events.append((task_id, delivered, error, list(paths or [])))
-
-        plugin._run_video_generation = generate
-        plugin._send_generated_video = send
-        plugin._mark_task_records_delivery = mark
-
-        result = asyncio.run(
-            plugin._run_counted_video_generation(
-                "task", object(), "嘉桐摇", [], "command-视频", 3, duration=8
-            )
-        )
-
-        self.assertTrue(result["success"])
-        self.assertEqual(calls, [1, 2, 3])
-        self.assertEqual(sent, ["video-1.mp4", "video-2.mp4", "video-3.mp4"])
-        self.assertEqual(result["requested_count"], 3)
-        self.assertEqual(result["completed_count"], 3)
-        self.assertEqual(result["succeeded_count"], 3)
-        self.assertEqual(result["failed_count"], 0)
-        self.assertEqual(result["generated_video_paths"], sent)
-        self.assertEqual(len(delivery_events), 3)
-        self.assertEqual(progress[-1]["progress_percent"], 100)
-        self.assertEqual(len(captions), 3)
-        self.assertTrue(all("用时 0.1s" in caption for caption in captions))
-        self.assertTrue(all("模型 video/test" in caption for caption in captions))
-
-    def test_counted_video_generation_keeps_partial_success_after_one_failure(self) -> None:
-        plugin = SessionModelAndTaskTests()._plugin_stub()
-        plugin.config.image_max_batch_count = 3
-        plugin.config.video_max_concurrent_tasks = 1
-        plugin.config.image_batch_on_failure = "skip"
-        plugin._web_tasks = {"task": {"cancel_requested": False}}
-        plugin._task_cancel_requested = lambda _task_id: False
-        plugin._wait_for_record_commits = lambda _task_id: asyncio.sleep(0)
-        plugin._set_task_notification_status = lambda *_args, **_kwargs: None
-        plugin._friendly_user_error_message = lambda error, fallback: error or fallback
-        plugin._set_web_image_task = lambda *_args, **_kwargs: None
-        plugin._send_generated_video = lambda *_args, **_kwargs: asyncio.sleep(0)
-        plugin._mark_task_records_delivery = lambda *_args, **_kwargs: asyncio.sleep(0)
-        plugin._send_task_notification = lambda *_args, **_kwargs: asyncio.sleep(0)
-        calls = []
-
-        async def generate(_event, _prompt, _refs, **_kwargs):
-            index = len(calls)
-            calls.append(index)
-            if index == 0:
-                return {"success": False, "error": "upstream failure"}
-            return {"success": True, "video_path": f"video-{index}.mp4"}
-
-        plugin._run_video_generation = generate
-        result = asyncio.run(
-            plugin._run_counted_video_generation(
-                "task", object(), "复仇摇", [], "command-视频", 3
-            )
-        )
-
-        self.assertFalse(result["success"])
-        self.assertEqual(result["requested_count"], 3)
-        self.assertEqual(result["completed_count"], 3)
-        self.assertEqual(result["succeeded_count"], 2)
-        self.assertEqual(result["failed_count"], 1)
-        self.assertEqual(result["status"], "partial_success")
-
-    def test_video_preflight_failure_is_recorded_as_video(self) -> None:
-        factory = SessionModelAndTaskTests()
-        plugin = factory._plugin_stub()
-        plugin.config.video_enable = True
-        plugin.config.get_prioritized_video_targets = lambda: []
-        records = []
-        plugin._record_task = records.append
-        plugin._source_context = lambda *_args, **_kwargs: {}
-
-        result = asyncio.run(plugin._run_video_generation(object(), "test video", []))
-
-        self.assertFalse(result["success"])
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["media_type"], "video")
-        self.assertFalse(records[0]["success"])
-        self.assertEqual(records[0]["response_data"]["stage"], "select_channel")
-
-    def test_video_generation_failure_is_recorded_with_attempts(self) -> None:
-        factory = SessionModelAndTaskTests()
-        plugin = factory._plugin_stub()
-        from astrbot_plugin_selfie_image import main as plugin_main
-
-        plugin.config.video_enable = True
-        target = make_target("agnes", "agnes-video-2.5")
-        plugin.config.get_prioritized_video_targets = lambda: [target]
-        plugin._video_semaphore = asyncio.Semaphore(1)
-        plugin.video_dir = tempfile.gettempdir()
-        plugin._prompt_en_needed = lambda *_args, **_kwargs: False
-        plugin._record_channel_health = lambda _attempts: None
-        records = []
-        plugin._record_task = records.append
-        plugin._source_context = lambda *_args, **_kwargs: {}
-
-        async def failed_video(*_args, **_kwargs):
-            return VideoGenerateResult(
-                error="upstream video failure",
-                used_model=target.label,
-                attempts=[{"label": target.label, "success": False, "error": "upstream video failure"}],
-            )
-
-        class Session:
-            async def __aenter__(self):
-                return object()
-
-            async def __aexit__(self, *_args):
-                return None
-
-        with (
-            patch.object(plugin_main, "generate_video_with_fallback", side_effect=failed_video),
-            patch.object(plugin_main.aiohttp, "ClientSession", return_value=Session()),
-        ):
-            result = asyncio.run(plugin._run_video_generation(object(), "test video", []))
-
-        self.assertFalse(result["success"])
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["media_type"], "video")
-        self.assertEqual(records[0]["response_data"]["stage"], "generate")
-        self.assertEqual(records[0]["attempts"][0]["label"], target.label)
-
-    def test_video_task_exception_uses_video_record_and_notice(self) -> None:
-        factory = SessionModelAndTaskTests()
-        plugin = factory._plugin_stub()
-        plugin._task_cancel_requested = lambda _task_id: False
-        plugin._set_web_image_task = lambda *_args, **_kwargs: None
-        plugin._web_tasks = {
-            "task-video": {
-                "source": "command-视频",
-                "request_data": {"kind": "video", "prompt": "test video"},
-            }
-        }
-        plugin._web_task_timestamp = lambda: "t"
-        records = []
-        plugin._record_task = records.append
-        notices = []
-
-        class Event:
-            def plain_result(self, text):
-                return text
-
-            async def send(self, message):
-                notices.append(message)
-
-        async def failed_runner(_task_id):
-            raise RuntimeError()
-
-        asyncio.run(plugin._run_command_image_task("task-video", Event(), failed_runner))
-
-        self.assertEqual(records[0]["media_type"], "video")
-        self.assertTrue(notices)
-        self.assertIn("视频没有完成", notices[0])
-
-    def test_video_channel_config_and_preflight(self) -> None:
-        from astrbot_plugin_selfie_image.core.models import AICatConfig, preflight_video_channel
-
-        bad = preflight_video_channel({"name": "v1"})
-        self.assertFalse(bad["ok"])
-        good = preflight_video_channel(
-            {
-                "name": "vid",
-                "base_url": "https://example.com/v1",
-                "api_key": "sk-test",
-                "model": "sora-like",
-                "enabled": True,
-            }
-        )
-        self.assertTrue(good["ok"], good.get("message"))
-
-        cfg = AICatConfig.from_dict(
-            {
-                "video": {"enable": True, "default_duration": 6, "global_timeout": 320},
-                "video_channels": [
-                    {
-                        "name": "vid",
-                        "base_url": "https://example.com/v1",
-                        "api_key": "sk-a\nsk-b",
-                        "model": "sora-like",
-                        "enabled_models": ["sora-like", "gpt-4o-video-chat"],
-                        "enabled": True,
-                        "provider_type": "openai_video",
-                        "model_provider_types": {"gpt-4o-video-chat": "video_chat"},
-                    }
-                ],
-                "enabled_video_model_priority": ["vid/sora-like", "vid/gpt-4o-video-chat"],
-            }
-        )
-        self.assertTrue(cfg.video_enable)
-        self.assertEqual(cfg.video_default_duration, 6)
-        targets = cfg.get_prioritized_video_targets()
-        self.assertEqual(len(targets), 2)
-        self.assertEqual(targets[0].label, "vid/sora-like")
-        # model name sora-like auto-infers family sora (not channel default)
-        self.assertEqual(targets[0].provider_type, "sora")
-        self.assertEqual(targets[1].provider_type, "video_chat")
-        self.assertEqual(targets[0].resolved_api_keys(), ["sk-a", "sk-b"])
-        self.assertGreaterEqual(targets[0].timeout, 60)
-
-        # legacy openai label on video channel maps to openai_video
-        legacy = AICatConfig.from_dict(
-            {
-                "video": {"enable": True},
-                "video_channels": [
-                    {
-                        "name": "old",
-                        "base_url": "https://x/v1",
-                        "api_key": "k",
-                        "model": "midgate-video-1",
-                        "enabled_models": ["midgate-video-1"],
-                        "enabled": True,
-                        "provider_type": "openai",
-                    }
-                ],
-            }
-        )
-        self.assertEqual(legacy.video_channels[0].provider_type, "openai_video")
-        self.assertEqual(legacy.get_prioritized_video_targets()[0].provider_type, "openai_video")
-
-        disabled = AICatConfig.from_dict({"video": {"enable": False}, "video_channels": [{"name": "vid", "base_url": "https://x", "api_key": "k", "model": "m"}]})
-        self.assertEqual(disabled.get_prioritized_video_targets(), [])
-
-    def test_image_audit_video_priorities_are_independent(self) -> None:
-        from astrbot_plugin_selfie_image.core.models import AICatConfig
-
-        cfg = AICatConfig.from_dict(
-            {
-                "image_channels": [
-                    {"name": "img", "base_url": "https://x", "api_key": "i", "enabled_models": ["i1", "i2"]}
-                ],
-                "audit_channels": [
-                    {"name": "audit", "base_url": "https://x", "api_key": "a", "enabled_models": ["a1", "a2"]}
-                ],
-                "video_channels": [
-                    {"name": "video", "base_url": "https://x", "api_key": "v", "enabled_models": ["v1", "v2"]}
-                ],
-                "enabled_image_model_priority": ["img/i2"],
-                "enabled_audit_model_priority": ["audit/a2"],
-                "enabled_video_model_priority": ["video/v2"],
-            }
-        )
-        self.assertEqual(cfg.get_prioritized_targets()[0].label, "img/i2")
-        self.assertEqual(cfg.get_audit_targets()[0].label, "audit/a2")
-        self.assertEqual(cfg.get_prioritized_video_targets()[0].label, "video/v2")
-        self.assertNotEqual(cfg.enabled_image_model_priority, cfg.enabled_audit_model_priority)
-        self.assertNotEqual(cfg.enabled_image_model_priority, cfg.enabled_video_model_priority)
-
-    def test_video_priority_excludes_enabled_targets_not_in_priority(self) -> None:
-        cfg = AICatConfig.from_dict(
-            {
-                "video_channels": [
-                    {
-                        "name": "agnes",
-                        "base_url": "https://agnes.example",
-                        "api_key": "key-a",
-                        "enabled_models": ["agnes-video-2.5-flash"],
-                    },
-                    {
-                        "name": "小水管",
-                        "base_url": "https://pipe.example",
-                        "api_key": "key-b",
-                        "enabled_models": ["agnes-video-2.5-flash"],
-                    },
-                ],
-                "enabled_video_model_priority": ["小水管/agnes-video-2.5-flash"],
-            }
-        )
-
-        self.assertEqual(
-            [target.label for target in cfg.get_prioritized_video_targets()],
-            ["小水管/agnes-video-2.5-flash"],
-        )
-
-    def test_video_priority_bare_model_resolves_to_one_target(self) -> None:
-        cfg = AICatConfig.from_dict(
-            {
-                "video_channels": [
-                    {
-                        "name": "first",
-                        "base_url": "https://first.example",
-                        "api_key": "key-a",
-                        "enabled_models": ["agnes-video-2.5"],
-                    },
-                    {
-                        "name": "second",
-                        "base_url": "https://second.example",
-                        "api_key": "key-b",
-                        "enabled_models": ["agnes-video-2.5"],
-                    },
-                ],
-                "enabled_video_model_priority": ["agnes-video-2.5"],
-            }
-        )
-
-        targets = cfg.get_prioritized_video_targets()
-        self.assertEqual([target.label for target in targets], ["first/agnes-video-2.5"])
-
-    def test_dashboard_separates_priorities_and_has_video_test(self) -> None:
-        from astrbot_plugin_selfie_image.webui.web import INDEX_HTML
-
-        for token in (
-            "enabled_audit_model_priority",
-            "enabled_video_model_priority",
-            "auditPriorityRows",
-            "videoPriorityRows",
-            "testVideoBtn",
-            "/api/test-video-channel/tasks",
-            "generated_video_paths",
-            "记录类型",
-            "responseDataDetailBlock",
-            "generatedMediaDetailBlock",
-            "base64-copy",
-            "copyMediaSource",
-            "RECORD_MEDIA_SOURCE_CACHE",
-            "RECORD_MEDIA_SOURCE_REQUESTS",
-            "cachedRecordMediaSources",
-            "prefetchRecordMediaSources",
-        ):
-            self.assertIn(token, INDEX_HTML)
-
-    def test_video_protocol_normalize_and_infer(self) -> None:
-        from astrbot_plugin_selfie_image.core.models import (
-            infer_video_provider_type_from_model,
-            normalize_video_provider_type,
-            resolve_video_model_provider_type,
-        )
-
-        self.assertEqual(normalize_video_provider_type("async_task"), "openai_video")
-        self.assertEqual(normalize_video_provider_type("sora"), "sora")
-        self.assertEqual(normalize_video_provider_type("veo-3"), "veo")
-        self.assertEqual(normalize_video_provider_type("seedance"), "seedance")
-        self.assertEqual(normalize_video_provider_type("agnes"), "agnes")
-        self.assertEqual(normalize_video_provider_type("grok"), "grok")
-        self.assertEqual(normalize_video_provider_type("grok_video"), "grok")
-        self.assertEqual(normalize_video_provider_type("xai"), "grok")
-        self.assertEqual(normalize_video_provider_type("openai_sync"), "video_sync")
-        self.assertEqual(normalize_video_provider_type("video_chat"), "video_chat")
-        self.assertEqual(normalize_video_provider_type("openai_chat"), "")  # image protocol
-        self.assertEqual(normalize_video_provider_type("openai"), "")  # image protocol
-        self.assertEqual(infer_video_provider_type_from_model("sora-2"), "sora")
-        self.assertEqual(infer_video_provider_type_from_model("veo-3.1"), "veo")
-        self.assertEqual(infer_video_provider_type_from_model("doubao-seedance-1.0"), "seedance")
-        self.assertEqual(infer_video_provider_type_from_model("agnes-video-pro"), "agnes")
-        self.assertEqual(infer_video_provider_type_from_model("kling-v2"), "kling")
-        self.assertEqual(infer_video_provider_type_from_model("grok-imagine-video"), "grok")
-        self.assertEqual(infer_video_provider_type_from_model("grok-imagine-video-1.5"), "grok")
-        self.assertEqual(
-            resolve_video_model_provider_type("unknown", "video_sync", ""),
-            "video_sync",
-        )
-        self.assertEqual(
-            resolve_video_model_provider_type("x", "openai_video", "sora"),
-            "sora",
-        )
-
-
-    def test_agnes_official_endpoints_and_frames(self) -> None:
-        from types import SimpleNamespace
-        from astrbot_plugin_selfie_image.generation.video import (
-            VideoGenerateRequest,
-            _agnes_payload,
-            _agnes_video_family,
-            _extract_video_url,
-            agnes_num_frames_for_duration,
-            agnes_size_wh,
-            build_agnes_result_url,
-            build_agnes_videos_endpoint,
-            video_error_user_message,
-        )
-
-        self.assertTrue(build_agnes_videos_endpoint("https://apihub.agnes-ai.com").endswith("/v1/videos"))
-        self.assertTrue(build_agnes_videos_endpoint("https://apihub.agnes-ai.com/v1").endswith("/v1/videos"))
-        poll = build_agnes_result_url("https://apihub.agnes-ai.com/v1", "task_abc", model="agnes-video-v2.0")
-        self.assertIn("/agnesapi?video_id=task_abc", poll)
-        self.assertIn("model_name=agnes-video-v2.0", poll)
-        frames = agnes_num_frames_for_duration(5, 24)
-        self.assertEqual(frames, 121)
-        self.assertEqual((frames - 1) % 8, 0)
-        self.assertLessEqual(agnes_num_frames_for_duration(99, 24), 441)
-        self.assertEqual(agnes_size_wh("16:9"), (1152, 768))
-        self.assertEqual(agnes_size_wh("9:16"), (768, 1152))
-        completed = {"status": "completed", "metadata": {"url": "https://cdn.example/a.mp4"}}
-        self.assertEqual(_extract_video_url(completed), "https://cdn.example/a.mp4")
-        target = SimpleNamespace(model="agnes-video-v2.0")
-        payload = _agnes_payload(target, VideoGenerateRequest(prompt="cat on beach", duration=5, size="16:9"), [])
-        self.assertEqual(payload["model"], "agnes-video-v2.0")
-        self.assertEqual(payload["num_frames"], 121)
-        self.assertEqual(payload["frame_rate"], 24)
-        self.assertEqual(payload["width"], 1152)
-        self.assertEqual(payload["height"], 768)
-        self.assertIn("cat on beach", payload["prompt"])
-
-        target25 = SimpleNamespace(model="agnes-video-2.5")
-        reference = ImageReference(data=PNG_BYTES, source_url="https://cdn.example/ref.png")
-        payload25 = _agnes_payload(
-            target25,
-            VideoGenerateRequest(
-                prompt="animate this",
-                duration=9,
-                size="9:16",
-                extra={"size": "1080P", "seconds": "7"},
-                images=[reference],
-            ),
-            ["data:image/png;base64,AAAA"],
-            [reference],
-        )
-        self.assertEqual(_agnes_video_family(target25.model), "v25")
-        self.assertEqual(payload25["mode"], "keyframe")
-        self.assertEqual(payload25["seconds"], "7")
-        self.assertEqual(payload25["size"], "1080P")
-        self.assertEqual(payload25["aspect_ratio"], "9:16")
-        self.assertEqual(payload25["first_frame"], "https://cdn.example/ref.png")
-        self.assertNotIn("num_frames", payload25)
-        self.assertNotIn("frame_rate", payload25)
-
-        local_reference = ImageReference(data=PNG_BYTES)
-        local_payload = _agnes_payload(
-            target25,
-            VideoGenerateRequest(prompt="animate local image", duration=5, images=[local_reference]),
-            ["data:image/png;base64,AAAA"],
-            [local_reference],
-        )
-        self.assertTrue(local_payload["first_frame"].startswith("data:image/png;base64,"))
-
-        auth_message = video_error_user_message("HTTP 401: Bearer super-secret-token")
-        self.assertIn("鉴权失败", auth_message)
-        self.assertNotIn("super-secret-token", auth_message)
-        server_message = video_error_user_message(
-            "HTTP 503: https://user:password@example.test/result?token=secret-token"
-        )
-        self.assertIn("上游服务异常", server_message)
-        self.assertNotIn("password", server_message)
-        self.assertNotIn("secret-token", server_message)
-
-        target_flash = SimpleNamespace(model="agnes-video-2.5-flash")
-        payload_flash = _agnes_payload(
-            target_flash,
-            VideoGenerateRequest(
-                prompt="reference mode",
-                extra={
-                    "mode": "reference",
-                    "size": "2K",
-                    "images": [f"https://cdn.example/{i}.png" for i in range(7)],
-                    "audios": [f"https://cdn.example/{i}.mp3" for i in range(5)],
-                    "videos": [{"url": "https://cdn.example/input.mp4"}],
-                },
-            ),
-            [],
-        )
-        self.assertEqual(_agnes_video_family(target_flash.model), "v25_flash")
-        self.assertEqual(payload_flash["size"], "720P")
-        self.assertEqual(len(payload_flash["images"]), 5)
-        self.assertEqual(len(payload_flash["audios"]), 3)
-        self.assertNotIn("videos", payload_flash)
-
-
-    def test_video_endpoint_and_extractors(self) -> None:
-        from astrbot_plugin_selfie_image.generation.video import (
-            build_video_generations_endpoint,
-            _extract_task_id,
-            _extract_video_url,
-            _extract_task_status,
-        )
-
-        self.assertTrue(build_video_generations_endpoint("https://api.example.com/v1").endswith("/videos/generations"))
-        self.assertTrue(build_video_generations_endpoint("https://api.example.com/v1/videos/generations").endswith("/videos/generations"))
-        self.assertEqual(_extract_task_id({"task_id": "abc"}), "abc")
-        self.assertEqual(_extract_task_status({"status": "succeeded"}), "SUCCEEDED")
-        self.assertEqual(_extract_video_url({"data": [{"url": "https://cdn.example/a.mp4"}]}), "https://cdn.example/a.mp4")
-
-    def test_main_help_mentions_video_commands(self) -> None:
-        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
-        self.assertIn('@filter.command("视频")', main_src)
-        self.assertIn('@filter.command("文生视频")', main_src)
-        self.assertIn('@filter.command("图生视频")', main_src)
-        self.assertIn('@filter.command("形象视频")', main_src)
-        self.assertIn('@filter.command("看看视频")', main_src)
-        self.assertIn("视频：", main_src)
-
-    def test_video_proxy_covers_polling_and_download(self) -> None:
-        video_src = (Path(__file__).resolve().parents[1] / "generation/video.py").read_text(encoding="utf-8")
-        for token in (
-            "async def _download_video_bytes(session: aiohttp.ClientSession, url: str, timeout: int, proxy: str = \"\")",
-            "proxy=proxy or None",
-            "return await _poll_task(session, poll_url=poll_url, headers=headers, timeout_seconds=timeout, proxy=target.proxy)",
-            "proxy=target.proxy",
-        ):
-            self.assertIn(token, video_src)
-
-    def test_new_image_channel_shows_channel_type_selector(self) -> None:
-        for html in (INDEX_HTML, (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")):
-            self.assertIn("EDITING_CHANNEL_KIND === 'image' || EDITING_CHANNEL_KIND === 'video'", html)
-
-    def test_video_persona_reference_is_explicit_across_entry_points(self) -> None:
-        from astrbot_plugin_selfie_image import main as plugin_main
-
-        root = Path(__file__).resolve().parents[1]
-        main_src = (root / "main.py").read_text(encoding="utf-8")
-        reference_src = (root / "features/reference_media.py").read_text(encoding="utf-8")
-        self.assertTrue(
-            hasattr(plugin_main.SelfieImagePlugin, "_video_persona_reference")
-        )
-        self.assertIn("def _video_persona_reference", reference_src)
-        for token in (
-            "@LLM_TOOL(name=\"generate_video\")",
-            "tool_generate_video",
-            "_video_prompt_requests_persona",
-            "persona_ref = self._configured_video_persona_reference()",
-            "refs = [persona_ref]",
-            "if payload.get(\"use_selfie_reference\") and not refs:",
-            "valid_targets: List[ImageModelTarget] = []",
-            "targets = valid_targets",
-        ):
-            self.assertIn(token, main_src)
-        for html in (INDEX_HTML, (Path(__file__).resolve().parents[1] / "pages/dashboard/index.html").read_text(encoding="utf-8")):
-            self.assertIn("TEST_MODE !== 't2v'", html)
-            self.assertIn("use_selfie_reference: TEST_MODE !== 't2v'", html)
-            self.assertIn("勾选后使用当前形象参考", html)
-
-    def test_video_prompt_persona_intent_requires_explicit_self_reference(self) -> None:
-        from astrbot_plugin_selfie_image import main as plugin_main
-
-        matcher = plugin_main.SelfieImagePlugin._video_prompt_requests_persona
-        self.assertTrue(matcher("我出镜跳一段舞"))
-        self.assertTrue(matcher("使用当前形象，保持我的脸"))
-        self.assertTrue(matcher("自拍视频，镜头推进"))
-        self.assertTrue(matcher("让你出镜跳一段舞"))
-        self.assertFalse(matcher("一只小猫在草地上奔跑"))
-        self.assertFalse(matcher("不要使用形象图，纯文字生成"))
-        self.assertFalse(matcher("不要使用当前形象，纯文生视频"))
-
-    def test_look_video_command_uses_persona_mode(self) -> None:
-        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
-        block = main_src.split("async def cmd_look_video", 1)[1].split("async def ", 1)[0]
-        self.assertIn('@filter.command("看看视频")', main_src)
-        self.assertIn('self._handle_video_command(event, "看看视频", fallback, mode="persona")', block)
-
-
 class LegFocusTests(unittest.TestCase):
-    def test_leg_focus_action_random_poses(self) -> None:
-        # Import main with minimal astrbot stubs (same pattern as smoke tests).
-        import sys
-        import types
-        import tempfile
-
-        if "astrbot" not in sys.modules:
-            astrbot = types.ModuleType("astrbot")
-            api = types.ModuleType("astrbot.api")
-            star = types.ModuleType("astrbot.api.star")
-            event = types.ModuleType("astrbot.api.event")
-            comps = types.ModuleType("astrbot.api.message_components")
-
-            class Star:
-                pass
-
-            def register(*a, **k):
-                def deco(cls):
-                    return cls
-                return deco
-
-            class filter:
-                @staticmethod
-                def command(*a, **k):
-                    def deco(fn):
-                        return fn
-                    return deco
-
-                class PermissionType:
-                    ADMIN = "admin"
-                    MEMBER = "member"
-
-                @staticmethod
-                def permission_type(*a, **k):
-                    def deco(fn):
-                        return fn
-                    return deco
-
-            star.Context = object
-            star.Star = Star
-            star.register = register
-            event.AstrMessageEvent = object
-            event.filter = filter
-            comps.Image = type("Image", (), {})
-            api.star = star
-            api.event = event
-            api.message_components = comps
-            api.llm_tool = lambda *a, **k: (lambda f: f)
-            api.logger = types.SimpleNamespace(
-                info=lambda *a, **k: None,
-                warning=lambda *a, **k: None,
-                error=lambda *a, **k: None,
-                debug=lambda *a, **k: None,
-            )
-            astrbot.api = api
-            sys.modules["astrbot"] = astrbot
-            sys.modules["astrbot.api"] = api
-            sys.modules["astrbot.api.star"] = star
-            sys.modules["astrbot.api.event"] = event
-            sys.modules["astrbot.api.message_components"] = comps
-            sys.modules["astrbot.core"] = types.ModuleType("astrbot.core")
-            sys.modules["astrbot.core.utils"] = types.ModuleType("astrbot.core.utils")
-            pathmod = types.ModuleType("astrbot.core.utils.astrbot_path")
-            pathmod.get_astrbot_data_path = lambda: tempfile.gettempdir()
-            sys.modules["astrbot.core.utils.astrbot_path"] = pathmod
-
-        # Ensure permission_type exists even if astrbot was stubbed earlier without it
-        filt = sys.modules.get("astrbot.api.event")
-        if filt is not None and hasattr(filt, "filter"):
-            fobj = filt.filter
-            if not hasattr(fobj, "PermissionType"):
-                class PermissionType:
-                    ADMIN = "admin"
-                    MEMBER = "member"
-                fobj.PermissionType = PermissionType
-            if not hasattr(fobj, "permission_type"):
-                fobj.permission_type = staticmethod(lambda *a, **k: (lambda fn: fn))
-
-        from importlib import reload
-        import astrbot_plugin_selfie_image.main as plugin_main
-        # if previous import failed, modules may be partial; force reimport path
-        if not hasattr(plugin_main, "SelfieImagePlugin"):
-            plugin_main = reload(plugin_main)
-
-        class _P:
-            pass
-
-        found = set()
-        expected_poses = {
-            "sofa_front_crop", "chair_side_crop", "sofa_cross_crop",
-            "floor_knees_crop", "sofa_occlusion_crop", "stool_edge_crop",
-            "floor_side_kneel_crop", "seat_knees_cross_crop",
-            "staggered_stair_step_crop", "cross_step_snapshot_crop",
-            "turn_and_settle_crop", "bench_side_sit_crop",
-            "toe_touch_step_crop", "back_staggered_step_crop",
-            "knees_forward_sit_crop", "one_knee_bent_sit_crop",
-            "side_folded_sit_crop", "reclined_bent_knees_crop",
-            "one_leg_extended_sit_crop", "heels_folded_sit_crop",
-            "edge_dangle_sit_crop", "crossed_ankles_sit_crop",
-            "crossed_knee_sit_crop", "over_leg_sit_crop",
-            "supported_legs_forward_crop", "relaxed_knees_apart_sit_crop",
-        }
-        for _ in range(360):
-            t = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
-            self.assertIn("【legs:outfit】", t)
-            self.assertIn("成年人物", t)
-            self.assertIn("【frame:leg_detail】", t)
-            self.assertIn("【姿势池·", t)
-            self.assertIn("本次服装搭配", t)
-            self.assertIn("【wear:", t)
-            self.assertIn("【cam:third】", t)
-            self.assertNotIn("晒腿", t)
-            self.assertNotIn("主要看腿形", t)
-            self.assertNotIn("不露脸", t)
-            self.assertNotIn("双脚完整裁出画外", t)
-            m = re.search(r"【pose:([a-z_]+)】", t)
-            if m:
-                pose = m.group(1)
-                found.add(pose)
-                self.assertIn(pose, expected_poses)
-            wear_match = re.search(r"【wear:([a-z_]+)】", t)
-            self.assertIn(wear_match.group(1), {"white", "black", "bare", "barefoot"})
-            if wear_match.group(1) == "barefoot":
-                self.assertIn("腰线至足部", t)
-                self.assertIn("双脚自然赤足并清晰可见", t)
-                self.assertNotIn("袜装", t)
-            else:
-                self.assertIn("腰线至鞋履", t)
-                self.assertIn("袜装", t)
-        for key in expected_poses:
-            self.assertTrue(any(p == key for p in found), f"missing pose family {key} in {found}")
-        self.assertNotIn("stand_topdown", found)
-        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_POOL
-        pose_by_id = {str(item["id"]): item for item in LEGFOCUS_POSE_POOL}
-        for pose_id in (
-            "staggered_stair_step_crop",
-            "cross_step_snapshot_crop",
-            "turn_and_settle_crop",
-            "bench_side_sit_crop",
-            "toe_touch_step_crop",
-            "back_staggered_step_crop",
-        ):
-            pose = pose_by_id[pose_id]
-            with patch(
-                "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_pose",
-                return_value=pose,
-            ):
-                action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
-                    _P(), "", False, force_legwear="白丝"
-                )
-            self.assertIn(f"【pose:{pose_id}】", action)
-            self.assertIn(str(pose["prompt"]), action)
-            self.assertIn("【cam:third】", action)
-            self.assertIn("【frame:leg_detail】", action)
-        with patch(
-            "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_pose",
-            return_value={
-                "id": "floor_topdown_cross_crop",
-                "title": "俯拍交叉坐姿",
-                "prompt": "人物坐姿自然，完整穿搭入镜。",
-            },
-        ):
-            topdown = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False)
-        self.assertIn("【pose:floor_topdown_cross_crop】", topdown)
-        self.assertIn("完整穿搭入镜", topdown)
-        first_person_down = plugin_main.SelfieImagePlugin._build_leg_focus_action(
-            _P(), "第一人称俯视伸腿", False
+    def test_leg_focus_legacy_pose_tags_resolve_to_indoor_contracts(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            LEGFOCUS_POSE_ALIASES, LEGFOCUS_POSE_BY_ID, ensure_leg_focus_action,
         )
-        self.assertIn("【cam:selfie】", first_person_down)
-        self.assertIn("【pose:first_person_topdown_legs_crop】", first_person_down)
-        self.assertIn("【frame:leg_detail】", first_person_down)
-        self.assertIn("双腿自然并行向前", first_person_down)
-        self.assertIn("脚部完整可见", first_person_down)
-        self.assertEqual(plugin_main.parse_requested_leg_pose("俯拍"), "floor_topdown_cross_crop")
-        self.assertEqual(
-            plugin_main.parse_requested_leg_pose("第一人称俯拍双腿平行向前伸展"),
-            "first_person_topdown_legs_crop",
-        )
-        full_outfit = None
-        with patch(
-            "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_pose",
-            return_value={
-                "id": "sofa_front_crop",
-                "title": "沙发正坐",
-                "prompt": "头部到鞋履完整入镜，整体穿搭清晰自然。",
-            },
-        ):
-            full_outfit = plugin_main.SelfieImagePlugin._build_leg_focus_action(
-                _P(), "全身日常穿搭，长裤", False
-            )
-        self.assertIn("【pose:sofa_front_crop】", full_outfit)
-        self.assertIn("【姿势池·沙发正坐】", full_outfit)
-        self.assertIn("【legs:outfit】", full_outfit)
-        self.assertIn("【frame:full_outfit】", full_outfit)
-        self.assertIn("不透日常长裤", full_outfit)
-        self.assertIn("头部到鞋履完整入镜", full_outfit)
-        self.assertNotIn("腰部以下", full_outfit)
-        from astrbot_plugin_selfie_image.features.persona import PersonaManager
-        from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
-        with tempfile.TemporaryDirectory() as tmp:
-            final_full = PersonaManager(tmp).build_selfie_prompt(full_outfit, "小助", "温柔", True, 0)
-        self.assertIn("全身穿搭展示", final_full)
-        self.assertNotIn("换装要求", final_full)
-        self.assertIn("头部、上衣、下装和鞋履都完整入镜", final_full)
-        self.assertIn("本张固定姿势与构图", final_full)
-        self.assertIn("完整的日常长裤搭配", final_full)
-        self.assertNotIn("服装局部展示", final_full)
-        self.assertNotIn("腰部以下", final_full)
-        self.assertNotIn("上半身完全在画面外", final_full)
-        self.assertNotIn("大腿上部", final_full)
-        self.assertNotIn("看看腿", final_full)
-        for conflict in ("脚趾五个分开", "身体从入镜部位连续到脚", "包住整脚到脚趾", "勒进大腿肉", "晒腿", "主要看腿形"):
-            self.assertNotIn(conflict, final_full)
-        self.assertNotIn("微胖软肉", final_full)
-        self.assertNotIn("不要大象腿猪腿", final_full)
-        final_full_en = build_selfie_builtin_prompt(full_outfit, language="en", has_reference_image=True)
-        self.assertIn("Third-person full-length everyday photograph", final_full_en)
-        self.assertIn("complete outfit from head to shoes", final_full_en)
-        self.assertNotIn("thigh-high", final_full_en)
-        self.assertNotIn("lower-body outfit detail", final_full_en)
-        explicit_detail = plugin_main.SelfieImagePlugin._build_leg_focus_action(
-            _P(), "下半身特写 白丝", False
-        )
-        self.assertIn("【frame:leg_detail】", explicit_detail)
-        with tempfile.TemporaryDirectory() as tmp:
-            final_detail = PersonaManager(tmp).build_selfie_prompt(
-                explicit_detail, "小助", "温柔", True, 0
-            )
-        self.assertIn("腿部穿搭展示", final_detail)
-        self.assertIn("腰线至鞋履", final_detail)
-        with patch(
-            "astrbot_plugin_selfie_image.main.random.choice",
-            side_effect=lambda values: values[0],
-        ):
-            selfie_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
-                _P(), "", False, force_camera="selfie"
-            )
-        with patch(
-            "astrbot_plugin_selfie_image.main.random.choice",
-            side_effect=lambda values: values[-1],
-        ):
-            third_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
-                _P(), "", False, force_pose="floor_topdown_cross_crop"
-            )
-        self.assertIn("【cam:selfie】", selfie_action)
-        self.assertIn("【cam:third】", third_action)
-        self.assertIn("第一人称自然视角服装照", selfie_action)
-        self.assertIn("第三人称腿部穿搭照片", third_action)
-        for camera_kind, zh_label, zh_phrase, en_phrase in (
-            ("selfie", "第一人称腰线至鞋履构图", "第一人称自然视角服装照", "First-person natural outfit framing from waist to shoes"),
-            ("third", "第三人称摄影", "第三人称腿部穿搭照片", "Third-person legwear outfit photo from waist to shoes"),
-        ):
-            action = f"看看腿。 【cam:{camera_kind}】 【pose:sit_crop】 【wear:white】"
-            with tempfile.TemporaryDirectory() as tmp:
-                camera_prompt = PersonaManager(tmp).build_selfie_prompt(
-                    action, "小助", "温柔", True, 0
-                )
-            self.assertIn(zh_label, camera_prompt)
-            self.assertIn(zh_phrase, camera_prompt)
-            self.assertIn("腰线至鞋履", camera_prompt)
-            camera_prompt_en = build_selfie_builtin_prompt(
-                action, language="en", has_reference_image=True
-            )
-            self.assertIn(en_phrase, camera_prompt_en)
-            other_en_phrase = (
-                "Third-person legwear outfit photo from waist to shoes"
-                if camera_kind == "selfie"
-                else "Full-length mirror selfie"
-            )
-            self.assertNotIn(other_en_phrase, camera_prompt_en)
-        local_action = "看看腿。下半身特写。 【cam:selfie】 【pose:sit_crop】 【wear:white】"
-        local_prompt_en = build_selfie_builtin_prompt(
-            local_action, language="en", has_reference_image=True
-        )
-        self.assertIn("First-person natural outfit framing from waist to shoes", local_prompt_en)
-        self.assertNotIn("Full-length mirror selfie", local_prompt_en)
-        filtered = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "短袜 过膝袜 肉丝 清晨", False)
-        self.assertIn("清晨", filtered)
-        filtered_extra = re.split(r"用户补充要求优先[:：]", filtered, maxsplit=1)[-1]
-        for forbidden in ("短袜", "过膝袜", "肉丝"):
-            self.assertNotIn(forbidden, filtered_extra)
-        neutralized = plugin_main.SelfieImagePlugin._build_leg_focus_action(
-            _P(), "侧躺 跪坐 掀衣摆 不露脸 主要看腿形 短裙", False
-        )
-        self.assertIn("侧躺", neutralized)
-        self.assertIn("跪坐", neutralized)
-        self.assertIn("整理衣摆", neutralized)
-        self.assertIn("服装局部取景", neutralized)
-        self.assertIn("重点看服装版型", neutralized)
-        for risky in ("掀衣摆", "不露脸", "主要看腿形", "短裙"):
-            self.assertNotIn(risky, neutralized)
-
-        self.assertIn("日常裤装", plugin_main.LEGWEAR_PROMPTS)
-        self.assertIn("用户指定", plugin_main.LEGWEAR_PROMPTS)
-        bare_leg = plugin_main.LEGWEAR_PROMPTS["光腿神器"]
-        self.assertIn("自然肤色", bare_leg)
-        self.assertNotIn("主要看腿形", bare_leg)
-        self.assertNotIn("脚趾", bare_leg)
-        for name in ("白丝", "黑丝"):
-            text = plugin_main.LEGWEAR_PROMPTS[name]
-            self.assertIn("不透", text)
-            self.assertIn("腰部至脚踝", text)
-            self.assertNotIn("主要看腿形", text)
-            self.assertNotIn("脚部", text)
-            self.assertNotIn("微胖软肉", text)
-            self.assertNotIn("半透明", text)
-            self.assertNotIn("勒进大腿肉", text)
-            self.assertNotIn("浅压痕", text)
-            self.assertNotIn("大象腿", text)
-            self.assertNotIn("细杆腿", text)
-            self.assertNotIn("连裤丝袜：", text)
-        pantyhose = plugin_main.LEGWEAR_PROMPTS["连裤袜"]
-        self.assertIn("白色不透连裤袜", pantyhose)
-        self.assertIn("腰部至脚踝", pantyhose)
-
-        # /看看COS random outfit pool. The catalog body is intentionally
-        # outfit-only; series, scene, pose, and framing are separate fields.
-        ids = set()
-        for _ in range(40):
-            t = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "", False)
-            self.assertIn("看看COS模式", t)
-            m = re.search(r"【cos:([a-z0-9_]+)】", t)
-            self.assertTrue(m, t)
-            ids.add(m.group(1))
-            cam = re.search(r"【cam:(selfie|first|third)】", t)
-            self.assertTrue(cam, t)
-            if "【cos_mode:special】" in t:
-                self.assertIn("特殊 COS", t)
-                self.assertNotRegex(t, r"【cos_(?:pose|scene|framing):[a-z0-9_]+】")
-                continue
-            self.assertIn("换装", t)
-            self.assertRegex(t, r"【cos_pose:[a-z0-9_]+】")
-            self.assertRegex(t, r"【cos_scene:[a-z0-9_]+】")
-            self.assertRegex(t, r"【cos_framing:[a-z0-9_]+】")
-        self.assertGreaterEqual(len(ids), 3, ids)
-        self.assertGreaterEqual(len(plugin_main.COS_LOOK_SETS), 200)
-        self.assertTrue(
-            all(
-                set(item) == {"id", "title", "cos_type", "prompt"}
-                and str(item["cos_type"]).strip()
-                for item in plugin_main.COS_LOOK_SETS
-            )
-        )
-        expected_cos_types = {
-            "xiaowu_pink_rabbit": "斗罗大陆",
-            "rem_blue_lolita": "从零开始的异世界生活",
-            "hanfu_peach": "古风",
-            "white_hair_black_bow_apron": "围裙",
-            "xiao_qiao_white_bear": "王者荣耀",
-        }
-        for look_id, cos_type in expected_cos_types.items():
-            look = next(item for item in plugin_main.COS_LOOK_SETS if item["id"] == look_id)
-            self.assertEqual(look["cos_type"], cos_type)
-        from astrbot_plugin_selfie_image.cos.cos_looks import _cos_item_category_rank
-
-        category_ranks = [
-            _cos_item_category_rank(item)
-            for item in plugin_main.COS_LOOK_SETS
-        ]
-        self.assertEqual(category_ranks, sorted(category_ranks))
-        self.assertEqual(
-            len({item["id"] for item in plugin_main.COS_LOOK_SETS}),
-            len(plugin_main.COS_LOOK_SETS),
-        )
-        for item in plugin_main.COS_LOOK_SETS:
-            if plugin_main.is_special_cos_look(item):
-                continue
-            for forbidden in (
-                "血迹", "血腥", "幼儿体型", "儿童体型", "未成年", "过度裸露",
-                "透明裸露", "裸露内衣", "成人化妆容", "成人化姿势", "儿童房",
-                "畸形手指", "畸形手脚", "多余肢体", "第三只手", "重复手臂", "肢体变形",
-                "抖音", "擦边", "反差",
-            ):
-                self.assertNotIn(forbidden, item["prompt"], item["id"])
-        for item in plugin_main.COS_LOOK_SETS:
-            self.assertTrue(
-                item["prompt"].startswith((
-                    "以形象图中的人为COS主体",
-                    "严格换装为",
-                    "身份与参考图边界：",
-                )),
-                item["id"],
-            )
-            self.assertNotRegex(item["prompt"], r"(?:室内柔光对镜全身|客厅电视柜前|白色皮革电竞椅)")
-        web_pool = plugin_main.SelfieImagePlugin.list_cos_look_sets_for_web(_P())
-        self.assertEqual(
-            [(item["id"], item["title"], item["prompt"]) for item in web_pool],
-            [(item["id"], item["title"], item["prompt"]) for item in plugin_main.COS_LOOK_SETS],
-        )
-        series_expected = {
-            "碧蓝航线": 10,
-            "蔚蓝档案": 11,
-            "公主连结": 11,
-            "无职转生": 12,
-            "世界计划 缤纷舞台": 19,
-            "明日方舟": 20,
-            "崩坏3": 20,
-            "Fate": 20,
-        }
-        for series, minimum in series_expected.items():
-            series_items = [item for item in plugin_main.COS_LOOK_SETS if item["cos_type"] == series]
-            self.assertGreaterEqual(len(series_items), minimum)
-            self.assertTrue(all(item["title"] for item in series_items))
-            self.assertTrue(all(series not in item["title"] for item in series_items))
-        titles = {item["title"] for item in plugin_main.COS_LOOK_SETS}
-        self.assertTrue(
-            {
-                "洛琪希·奶油睡衣", "蕾姆·蓝白女仆洛丽塔", "白细肩带迷你裙",
-                "海月·白蓝花瓣水母", "蓝梦·龙之道", "西施·诗语江南",
-                "姬小满·黑金橙短装", "小乔·丁香结", "公孙离·玉兔公主",
-                "和泉纱雾·粉色家居服", "王昭君·旧版原皮蓝白", "瑶·小鹿主题",
-                "砂狼白子·黑白运动服", "菲比·白金圣洁礼服", "古风·淡粉月夜薄纱古装",
-            }.issubset(titles)
-        )
-        roxy = next(item for item in plugin_main.COS_LOOK_SETS if item["id"] == "roxy_cream")
-        self.assertIn("以形象图中的人为COS主体", roxy["prompt"])
-        self.assertIn("双麻花辫", roxy["prompt"])
-        rem = next(item for item in plugin_main.COS_LOOK_SETS if item["id"] == "rem_blue_lolita")
-        self.assertIn("蓝白女仆洛丽塔", rem["title"])
-        self.assertIn("白色长袖蓬袖衬衣", rem["prompt"])
-        from astrbot_plugin_selfie_image.cos.cos_looks import cos_look_compatibility
-        for item in plugin_main.COS_LOOK_SETS:
-            profile = cos_look_compatibility(item["id"])
-            if plugin_main.is_special_cos_look(item):
-                self.assertFalse(profile["variation_enabled"], item["id"])
-                self.assertEqual(profile["mode"], "special", item["id"])
-                continue
-            self.assertTrue(profile["variation_enabled"], item["id"])
-            self.assertTrue(profile["scene_ids"], item["id"])
-            self.assertTrue(profile["pose_ids"], item["id"])
-        def choose_framing_first(values):
-            if "rooftop_sunset" in values:
-                return "rooftop_sunset"
-            if "low_angle_hero" in values:
-                return "low_angle_hero"
-            return values[0]
-
-        with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
-            "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
-            side_effect=choose_framing_first,
-        ):
-            shuilaner_action = plugin_main.build_cos_look_action(
-                camera="third",
-                picker=lambda **_: next(
-                    item
-                    for item in plugin_main.COS_LOOK_SETS
-                    if item["id"] == "shuilaner_horned_brocade_qipao"
-                ),
-            )
-        self.assertNotIn("视角按本套 COS 套装描述执行", shuilaner_action)
-        self.assertTrue(
-            "本次未指定视角，随机采用" in shuilaner_action
-            or "本次采用精选组合" in shuilaner_action
-        )
-        self.assertIn("镜头位于腰部附近略低位置", shuilaner_action)
-        self.assertNotIn("从人物膝盖略低处向上拍摄", shuilaner_action)
-        self.assertNotRegex(
-            shuilaner_action.split("本次套装：", 1)[0],
-            r"(?:正面|侧身|近景|全身|半身)或(?:正面|侧身|近景|全身|半身)",
-        )
-        self.assertNotIn("平视机位和正常拍摄距离", shuilaner_action)
-        for title in (
-            "满穗·灰白和风",
-            "小乔·白熊围巾",
-            "芙宁娜·奶油浅蓝荷叶裙",
-            "古风·浅蓝花卉挂脖兜兜",
-            "神里绫华·白袖蓝袴",
-            "古拉·小鲨鱼",
-            "小乔·少御粉色短装",
-            "瑶·小鹿主题",
-            "和泉纱雾·粉绿印花短装",
-            "芭芭拉·白色偶像礼服",
-            "Saber·青花瓷短装",
-            "银狼·蓝黑街头短装",
-            "嫦娥·落星盏金月短装",
-            "小乔·战国袍",
-            "爱弥斯·黑白蓝坐姿",
-            "洛琪希·露肩短睡裙",
-            "卡提希娅·白黑蓝短装",
-            "水兰儿·羊角提花短旗袍",
-            "砂狼白子·黑白运动服",
-            "菲比·白金圣洁礼服",
-        ):
-            self.assertEqual(
-                [item["title"] for item in plugin_main.match_cos_look_sets(title)],
-                [title],
-            )
+        for old_id, pose_id in LEGFOCUS_POSE_ALIASES.items():
+            with self.subTest(old_id=old_id):
+                action = ensure_leg_focus_action(f"看看腿 【pose:{old_id}】 【cam:third】", True)
+                self.assertIn(f"【pose:{pose_id}】", action)
+                self.assertIn(LEGFOCUS_POSE_BY_ID[pose_id]["camera_views"]["third"], action)
+                self.assertIn("【outfit:reference】", action)
+                self.assertIn("头部、脸部和肩膀不入镜", action)
+                self.assertNotIn("本次随机腿部细节", action)
+                self.assertNotIn("户外小径漫步", action)
 
     def test_cos_look_matching_and_count_shorthand(self) -> None:
         if "astrbot" not in sys.modules:
@@ -9862,17 +8476,19 @@ class LegFocusTests(unittest.TestCase):
             {re.search(r"【cos:([a-z0-9_]+)】", action).group(1) for action in rebuilt_actions},
             {"roxy_cream", "roxy_off_shoulder_sleep_dress"},
         )
-        for tag, expected_count in (
-            ("cos_pose", 3),
-            ("cos_scene", 3),
-            ("cos_framing", 3),
-            ("cam", 3),
-        ):
+        # Batch count semantics rotate COS identities.  A profile owns its
+        # camera/pose/scene/framing contract, so repeated field values across
+        # different COS items are valid and should not force legacy staging.
+        for tag in ("cos_pose", "cos_scene", "cos_framing", "cam"):
             selected = [
                 re.search(rf"【{tag}:([a-z0-9_]+)】", action).group(1)
                 for action in rebuilt_actions
             ]
-            self.assertEqual(len(set(selected)), expected_count, tag)
+            self.assertEqual(len(selected), 3, tag)
+            self.assertTrue(all(selected), tag)
+        for action in rebuilt_actions:
+            self.assertIn("【cos_expression:", action)
+            self.assertIn("【cos_makeup:", action)
 
         class Event:
             def __init__(self, message: str) -> None:
@@ -10110,7 +8726,8 @@ class LegFocusTests(unittest.TestCase):
             self.assertNotIn("当前时间段：", cos)
             legs = manager.build_selfie_prompt("看看腿 【wear:white】", "小助", "温柔", True, 0)
             self.assertNotIn("今日穿搭：", legs)
-            self.assertIn(f"当前时间段：{label}", legs)
+            self.assertNotIn("当前时间段：", legs)
+            self.assertIn("【outfit:reference】", legs)
 
         class PersonaStub:
             class Intent:
@@ -10124,7 +8741,8 @@ class LegFocusTests(unittest.TestCase):
         normalized = plugin._normalize_selfie_action("看看腿 白丝 短袜 清晨", False)
         self.assertIn("【pose:", normalized)
         self.assertIn("清晨", normalized)
-        self.assertIn("本次服装搭配已锁定为：白色不透连裤袜", normalized)
+        self.assertIn("【wear:white】", normalized)
+        self.assertIn("不改变下装类别、长度或鞋履", normalized)
         self.assertNotIn("本次腿部穿搭：", normalized)
         normalized_extra = re.split(r"用户补充要求优先[:：]", normalized, maxsplit=1)[-1]
         self.assertNotIn("短袜", normalized_extra)
@@ -10328,247 +8946,34 @@ class LegFocusTests(unittest.TestCase):
         assert len(selfie_requests) == 2
         assert len(cos_requests) == 0
 
-    def test_user_requested_legwear_is_honored(self) -> None:
-        import sys
-        import types
-        import tempfile
-        import re
+    def test_user_requested_legwear_keeps_existing_clothing_structure(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action, parse_requested_legwear
 
-        if "astrbot" not in sys.modules:
-            astrbot = types.ModuleType("astrbot")
-            api = types.ModuleType("astrbot.api")
-            star = types.ModuleType("astrbot.api.star")
-            event = types.ModuleType("astrbot.api.event")
-            comps = types.ModuleType("astrbot.api.message_components")
-            class Star: pass
-            class Context: pass
-            def register(*a, **k):
-                def deco(cls): return cls
-                return deco
-            star.Star = Star
-            star.Context = Context
-            star.register = register
-            class filter:
-                @staticmethod
-                def command(*a, **k):
-                    return lambda fn: fn
-                class PermissionType:
-                    ADMIN = "admin"
-                    MEMBER = "member"
-                @staticmethod
-                def permission_type(*a, **k):
-                    return lambda fn: fn
-            event.filter = filter
-            api.logger = types.SimpleNamespace(info=lambda *a, **k: None, warning=lambda *a, **k: None, error=lambda *a, **k: None, debug=lambda *a, **k: None)
-            sys.modules["astrbot"] = astrbot
-            sys.modules["astrbot.api"] = api
-            sys.modules["astrbot.api.star"] = star
-            sys.modules["astrbot.api.event"] = event
-            sys.modules["astrbot.api.message_components"] = comps
-            sys.modules["astrbot.core"] = types.ModuleType("astrbot.core")
-            sys.modules["astrbot.core.utils"] = types.ModuleType("astrbot.core.utils")
-            pathmod = types.ModuleType("astrbot.core.utils.astrbot_path")
-            pathmod.get_astrbot_data_path = lambda: tempfile.gettempdir()
-            sys.modules["astrbot.core.utils.astrbot_path"] = pathmod
-
-        from importlib import reload
-        import astrbot_plugin_selfie_image.main as plugin_main
-        if not hasattr(plugin_main, "parse_requested_legwear"):
-            plugin_main = reload(plugin_main)
-
-        self.assertEqual(plugin_main.parse_requested_legwear("看看腿 白丝"), "白丝")
-        self.assertEqual(plugin_main.parse_requested_legwear("黑丝 3"), "黑丝")
-        self.assertEqual(plugin_main.parse_requested_legwear("光腿"), "光腿神器")
-        self.assertEqual(plugin_main.parse_requested_legwear("白色连裤袜"), "连裤袜")
-        self.assertEqual(plugin_main.parse_requested_legwear("日常裤装"), "日常裤装")
-        self.assertEqual(plugin_main.parse_requested_legwear("赤足"), "赤足")
-        boilerplate = "若本次是白丝/黑丝：丝袜必须包住整只脚到脚趾。本次腿部穿搭：光腿神器。"
-        self.assertEqual(plugin_main.parse_requested_legwear(boilerplate), "光腿神器")
-
-        class _P:
-            pass
-
-        white = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "白丝 清晨", False)
-        self.assertIn("本次服装搭配已锁定为：白色不透连裤袜", white)
-        self.assertNotIn("本次腿部穿搭：", white)
-        black = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "黑丝", False)
-        self.assertIn("本次服装搭配已锁定为：黑色不透连裤袜", black)
-        bare = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "光腿神器", False)
-        self.assertIn("本次服装搭配已锁定为：自然肤色不透打底", bare)
-        bare_no_shoes = plugin_main.SelfieImagePlugin._build_leg_focus_action(
-            _P(), "赤足，不穿袜子或鞋履", False
-        )
-        self.assertIn("【wear:barefoot】", bare_no_shoes)
-        self.assertNotIn("【outfit:custom】", bare_no_shoes)
-        self.assertIn("自然赤足", bare_no_shoes)
-        forced = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "", False, force_legwear="白丝")
-        self.assertIn("本次服装搭配已锁定为：白色不透连裤袜", forced)
-        pantyhose = plugin_main.SelfieImagePlugin._build_leg_focus_action(_P(), "连裤袜", False)
-        self.assertIn("本次服装搭配已锁定为：白色不透连裤袜", pantyhose)
-        self.assertIn("【wear:pantyhose】", pantyhose)
-        from astrbot_plugin_selfie_image.features.persona import PersonaManager
-        from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
-
-        sample = (
-            "第一人称视角，俯拍，一位女性穿着浅蓝色格纹百褶短裙，"
-            "搭配白色连裤袜和深棕色平底鞋。坐姿，双腿交叉。"
-            "背景是户外深色的木质地板露台，自然光下有柔和的阴影，"
-            "写实摄影风格，画面比例9:16。"
-        )
-        sample_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
-            _P(), sample, False
-        )
-        self.assertIn("【cam:selfie】", sample_action)
-        self.assertIn("【pose:floor_topdown_cross_crop】", sample_action)
-        self.assertIn("【wear:pantyhose】", sample_action)
-        self.assertIn("【outfit:custom】", sample_action)
-        self.assertEqual(sample_action.count("浅蓝色格纹百褶裙"), 1)
-        self.assertEqual(sample_action.count("深棕色平底鞋"), 1)
-        self.assertEqual(plugin_main.ensure_leg_focus_action(sample_action), sample_action)
-        with tempfile.TemporaryDirectory() as tmp:
-            sample_zh = PersonaManager(tmp).build_selfie_prompt(
-                sample_action, "小助", "温柔", True, 0
-            )
-        self.assertNotIn("【outfit:custom】", sample_zh)
-        sample_en = build_selfie_builtin_prompt(
-            sample_action,
-            language="en",
-            has_reference_image=True,
-            appearance_type="real",
-        )
-        self.assertNotIn("indoor", sample_en.lower())
-        self.assertNotIn("room light", sample_en.lower())
-
-        batch_plugin = object.__new__(plugin_main.SelfieImagePlugin)
-        batch_plugin.config = type("Config", (), {"image_max_batch_count": 10})()
-        rebuilt_actions = []
-
-        async def fake_build_prompt(event, action, extra_refs):
-            rebuilt_actions.append(action)
-            return action, [], {}
-
-        async def fake_generate(prompt, aspect, resolution, refs, **kwargs):
-            return {"success": True, "files": ["generated.png"]}
-
-        async def fake_counted(*, task_id, event, total, fail_label, run_one, log_prefix):
-            for index in range(total):
-                await run_one(index)
-            return {"success": True, "files": []}
-
-        batch_plugin._build_selfie_prompt_and_refs_for_event = fake_build_prompt
-        batch_plugin._run_image_generation = fake_generate
-        batch_plugin._run_counted_generation_shots = fake_counted
-        asyncio.run(
-            batch_plugin._run_selfie_batches_unlocked(
-                "test-leg-batch",
-                object(),
-                sample_action,
-                [],
-                "command-look-legs",
-                3,
-                "9:16",
-                "1K",
-                "生成失败",
-                rebuild_extra_request=sample,
-            )
-        )
-        self.assertEqual(len(rebuilt_actions), 3)
-        for rebuilt in rebuilt_actions:
-            self.assertIn("【cam:selfie】", rebuilt)
-            self.assertIn("【pose:floor_topdown_cross_crop】", rebuilt)
-            self.assertIn("【wear:pantyhose】", rebuilt)
-            self.assertIn("【outfit:custom】", rebuilt)
-
-        for legwear, expected in (
-            ("光腿神器", "自然肤色不透打底，完整日常穿搭"),
-            ("白丝", "白色不透连裤袜，完整日常穿搭"),
-            ("黑丝", "黑色不透连裤袜，完整日常穿搭"),
-            ("连裤袜", "白色不透连裤袜，完整日常穿搭"),
-        ):
-            action = plugin_main.SelfieImagePlugin._build_leg_focus_action(
-                _P(), "", False, force_legwear=legwear
-            )
-            with tempfile.TemporaryDirectory() as tmp:
-                final = PersonaManager(tmp).build_selfie_prompt(action, "小助", "温柔", True, 0)
-            self.assertIn(expected, final)
-
-        from astrbot_plugin_selfie_image.cos.leg_focus import (
-            LEGFOCUS_POSE_POOL,
-            build_leg_focus_action,
-            ensure_leg_focus_action,
-            has_leg_focus_contract,
-        )
-        from astrbot_plugin_selfie_image.features.persona import PersonaManager
-        from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
-
-        with tempfile.TemporaryDirectory() as tmp:
-            persona = PersonaManager(tmp)
-            for pose in LEGFOCUS_POSE_POOL:
+        cases = {"白丝": "white", "黑丝": "black", "光腿": "bare", "赤足": "barefoot", "连裤袜": "pantyhose"}
+        for request, tag in cases.items():
+            with self.subTest(request=request):
+                self.assertEqual(parse_requested_legwear(request), request)
                 action = build_leg_focus_action(
-                    force_legwear="赤足",
-                    force_pose=str(pose["id"]),
+                    request, has_refs=True, force_pose="bed_edge_diagonal", force_camera="third",
                 )
-                self.assertIn("【wear:barefoot】", action)
-                self.assertTrue(has_leg_focus_contract(action))
-                self.assertEqual(ensure_leg_focus_action(action), action)
-                self.assertNotIn("袜装", action)
-                self.assertNotIn("腰线至鞋履", action)
+                self.assertIn(f"【wear:{tag}】", action)
+                self.assertIn("【outfit:reference】", action)
+                self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", action)
+                self.assertNotIn("本次随机腿部细节", action)
+        explicit = build_leg_focus_action("穿着蓝白连体COS服和长靴", scheduled_outfit="灰色长裤")
+        self.assertIn("【outfit:custom】", explicit)
+        self.assertIn("蓝白连体COS服和长靴", explicit)
+        self.assertNotIn("灰色长裤", explicit)
 
-                zh = persona.build_selfie_prompt(action, "小助", "温柔", True, 0)
-                en = build_selfie_builtin_prompt(action, language="en", has_reference_image=True)
-                for text, foot_label in ((zh, "赤足"), (en, "bare feet")):
-                    self.assertIn(foot_label, text)
-                    for conflict in (
-                        "腰线至鞋履",
-                        "呈现袜装与鞋履",
-                        "袜装与鞋履清晰可见",
-                        "waist-to-shoes",
-                        "hosiery and shoes unobstructed",
-                        "show the hosiery and shoes clearly",
-                    ):
-                        self.assertNotIn(conflict, text)
-                self.assertIn("no hosiery or shoes", en)
+    def test_locked_leg_outfit_bypasses_random_legwear(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_POOL, build_leg_focus_action
 
-            face_action = build_leg_focus_action(
-                "赤足 露脸",
-                force_legwear="赤足",
-                force_pose="sofa_front_crop",
-            )
-            self.assertIn("【legs_face:context】", face_action)
-            self.assertIn("看向自己的下装", face_action)
-            self.assertNotIn("看向自己的袜装", face_action)
-
-            full_barefoot = build_leg_focus_action(
-                force_legwear="赤足",
-                force_pose="sofa_front_crop",
-                force_framing="full_outfit",
-            )
-            self.assertIn("【frame:full_outfit】", full_barefoot)
-            self.assertIn("头部到足部完整入镜", full_barefoot)
-            self.assertNotIn("头部到鞋履", full_barefoot)
-            full_zh = persona.build_selfie_prompt(full_barefoot, "小助", "温柔", True, 0)
-            full_en = build_selfie_builtin_prompt(
-                full_barefoot, language="en", has_reference_image=True
-            )
-            self.assertIn("头部、上衣、下装和足部都完整入镜", full_zh)
-            self.assertIn("complete outfit from head to feet", full_en)
-            self.assertNotIn("complete outfit from head to shoes", full_en)
-
-    def test_legwear_is_pose_weighted(self) -> None:
-        from astrbot_plugin_selfie_image.cos.leg_focus import LEGWEAR_BY_POSE
-
-        default_weights = dict(LEGWEAR_BY_POSE["sofa_front_crop"])
-        self.assertEqual(default_weights, {"白丝": 4, "黑丝": 4, "光腿神器": 2, "赤足": 2})
-        self.assertEqual(sum(default_weights.values()), 12)
-        self.assertEqual(
-            LEGWEAR_BY_POSE["side_lie"],
-            (("光腿神器", 6), ("白丝", 3), ("黑丝", 1), ("连裤袜", 2)),
-        )
-        self.assertEqual(
-            LEGWEAR_BY_POSE["cross_leg"],
-            (("光腿神器", 2), ("白丝", 4), ("黑丝", 4), ("连裤袜", 2)),
-        )
-        self.assertNotIn("stand_topdown", LEGWEAR_BY_POSE)
+        with patch("astrbot_plugin_selfie_image.cos.leg_focus._weighted_detail_choice", side_effect=AssertionError("locked outfit must not randomize")):
+            for pose in LEGFOCUS_POSE_POOL:
+                action = build_leg_focus_action(force_pose=pose["id"], scheduled_outfit="青色连体服和长靴")
+                self.assertIn("青色连体服和长靴", action)
+                self.assertIn("【outfit:scheduled】", action)
+                self.assertNotIn("本次随机腿部细节", action)
 
     def test_multi_image_commands_rebuild_each_shot(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
@@ -10584,14 +8989,17 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("command-look-you", main_src)
 
 
-    def test_leg_focus_camera_weights_follow_pose_context(self) -> None:
-        import astrbot_plugin_selfie_image.main as plugin_main
+    def test_leg_focus_explicit_camera_uses_the_selected_pose_view(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_POOL, build_leg_focus_action
 
-        weights = plugin_main.LEGFOCUS_CAMERA_WEIGHTS
-        self.assertGreater(dict(weights["bed_supine_crop"])["selfie"], dict(weights["bed_supine_crop"])["third"])
-        self.assertGreater(dict(weights["windowsill_crop"])["third"], dict(weights["windowsill_crop"])["selfie"])
-        self.assertGreater(dict(weights["cross_leg"])["third"], dict(weights["cross_leg"])["selfie"])
-        self.assertNotIn("stand_topdown", weights)
+        for pose in LEGFOCUS_POSE_POOL:
+            for camera in pose["camera_views"]:
+                with self.subTest(pose=pose["id"], camera=camera):
+                    action = build_leg_focus_action(force_pose=pose["id"], force_camera=camera)
+                    self.assertIn(f"【cam:{camera}】", action)
+                    self.assertIn(pose["camera_views"][camera], action)
+                    other = "selfie" if camera == "third" else "third"
+                    self.assertNotIn(pose["camera_views"][other], action)
 
 
 class StudioStoreTests(unittest.TestCase):
@@ -11232,64 +9640,6 @@ class StudioStoreTests(unittest.TestCase):
         self.assertTrue(keep_cos_outfit_requested("保持服饰，只换姿势和场景"))
         self.assertFalse(keep_cos_outfit_requested("夜景他拍"))
 
-    def test_entire_cos_catalog_gets_compatible_random_staging(self) -> None:
-        from astrbot_plugin_selfie_image.cos.cos_looks import (
-            cos_look_compatibility,
-            list_cos_look_sets,
-            COS_RANDOM_POSE_CLASSES,
-            COS_RANDOM_SCENE_CLASSES,
-            COS_LOOK_COMPATIBILITY_EXPANSION,
-            COS_LOOK_COMPATIBILITY_DOULUO_BTTH,
-            COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS,
-            is_special_cos_look,
-        )
-
-        from astrbot_plugin_selfie_image.cos.cos_looks import COS_LOOK_SETS
-        shared_scenes = [
-            scene_id for scene_id, scene in COS_RANDOM_SCENE_CLASSES.items()
-            if not scene.get("cos_look_only")
-        ]
-        configured_look_ids = (
-            set(COS_LOOK_COMPATIBILITY_EXPANSION)
-            | set(COS_LOOK_COMPATIBILITY_DOULUO_BTTH)
-            | set(COS_LOOK_COMPATIBILITY_HONOR_OF_KINGS)
-        )
-        for item in COS_LOOK_SETS:
-            profile = cos_look_compatibility(item["id"])
-            if is_special_cos_look(item):
-                self.assertFalse(profile["variation_enabled"], item["id"])
-                self.assertEqual(profile["mode"], "special", item["id"])
-                self.assertEqual(profile["pose_ids"], [], item["id"])
-                self.assertEqual(profile["scene_ids"], [], item["id"])
-                continue
-            self.assertTrue(profile["variation_enabled"], item["id"])
-            self.assertTrue(profile["pose_ids"], item["id"])
-            self.assertTrue(profile["scene_ids"], item["id"])
-            if item["id"] not in configured_look_ids:
-                self.assertEqual(profile["pose_ids"], list(COS_RANDOM_POSE_CLASSES))
-                self.assertEqual(profile["scene_ids"], shared_scenes)
-            self.assertFalse(profile["fixed_reason"], item["id"])
-
-        # Every catalog entry exposes the same stable schema, so dashboard
-        # clients never need outfit-specific key checks.
-        required = {
-            "variation_enabled",
-            "pose_ids",
-            "scene_ids",
-            "view_ids",
-            "recommended_pose_ids",
-            "recommended_scene_ids",
-            "recommended_view_ids",
-            "recommended_framing_ids",
-            "incompatible_pose_ids",
-            "incompatible_scene_ids",
-            "scene_pose_compatibility",
-            "random_camera_pose_compatibility",
-            "random_camera_framing_compatibility",
-            "fixed_reason",
-        }
-        for item in list_cos_look_sets():
-            self.assertTrue(required.issubset(item["compatibility"].keys()), item["id"])
 
     def test_azur_lane_and_blue_archive_cos_are_casual_and_weapon_free(self) -> None:
         """New naval/school cosplay prompts must stay suitable for daily photos."""
@@ -12552,13 +10902,13 @@ class StudioStoreTests(unittest.TestCase):
                 "created_ts": 1,
                 "updated_ts": 2,
                 "request_data": {
-                    "media_type": "video",
+                    "media_type": "image",
                     "prompt": "private",
                     "request_image_paths": ["request/fallback.png", "../outside.png"],
                 },
                 "request_image_paths": ["request/live.png"],
                 "result": {
-                    "video_path": "/private/video.mp4",
+                    "image_paths": ["/private/image.png"],
                     "request_image_paths": ["request/result.png", "request/result.png", "/private.png"],
                 },
                 "request_fingerprint": "private-fingerprint",
@@ -12567,7 +10917,7 @@ class StudioStoreTests(unittest.TestCase):
         }
         listed = stub.list_web_tasks(include_finished=True)
         row = listed["tasks"][0]
-        self.assertEqual(row["media_type"], "video")
+        self.assertEqual(row["media_type"], "image")
         self.assertEqual(row["prompt"], "private")
         self.assertNotIn("request_image_paths", row)
         for key in ("request_data", "result", "request_fingerprint", "owner_session"):
@@ -12739,13 +11089,13 @@ class StudioStoreTests(unittest.TestCase):
         self.assertIn("studioCosBtn", INDEX_HTML)
         self.assertIn("testCosBtn", INDEX_HTML)
         self.assertIn("renderCosPanel", INDEX_HTML)
-        self.assertIn("/api/cos-look-sets", INDEX_HTML)
+        self.assertIn("/api/cos-pools?", INDEX_HTML)
         self.assertIn("syncPresetToggleButton", INDEX_HTML)
         self.assertIn("preset-chip", INDEX_HTML)
         self.assertIn("'收回'", INDEX_HTML)
         self.assertNotIn("上方芯片随模板变化", INDEX_HTML)
         # click-to-use should not auto collapse panel
-        panel_fn = INDEX_HTML.split("function renderPresetPanel", 1)[-1].split("async function ensurePromptPresetsLoaded", 1)[0]
+        panel_fn = INDEX_HTML.split("function renderPresetPanel", 1)[1].split("function presetManagerStatus", 1)[0]
         self.assertNotIn("STUDIO.presetOpen = false", panel_fn)
         self.assertNotIn("__TEST_PRESET_OPEN = false", panel_fn)
         self.assertIn("/api/prompt-presets", INDEX_HTML)
@@ -12767,7 +11117,7 @@ class StudioStoreTests(unittest.TestCase):
         dashboard_html = (
             Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html"
         ).read_text(encoding="utf-8")
-        for marker in ("studioCosBtn", "testCosBtn", "renderCosPanel", "/api/cos-look-sets"):
+        for marker in ("studioCosBtn", "testCosBtn", "renderCosPanel", "/api/cos-pools?"):
             self.assertIn(marker, dashboard_html)
 
     def test_standalone_destructive_actions_use_shared_confirmation(self) -> None:

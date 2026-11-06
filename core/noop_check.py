@@ -15,9 +15,7 @@ class NoopFinding:
     function: str
 
 
-ALLOWED_NOOP_FUNCTIONS = {
-    ("scripts/video_prompt_frames.py", "debug"),
-}
+ALLOWED_NOOP_FUNCTIONS = set()
 
 
 def _function_body(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.stmt]:

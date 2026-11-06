@@ -25,6 +25,73 @@ class WebContractError(ValueError):
         self.status_code = int(status_code or 400)
 
 
+CATALOG_PAGE_SIZE = 30
+MAX_CATALOG_PAGE_SIZE = 100
+
+
+def catalog_pagination_requested(params: Mapping[str, Any]) -> bool:
+    return "limit" in params or "offset" in params
+
+
+def paginate_catalog_rows(
+    rows: Any,
+    *,
+    offset: int,
+    limit: int,
+    query: str = "",
+    fields: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Filter and bound prompt/COS catalog payloads for web pickers."""
+    source = rows if isinstance(rows, (list, tuple)) else []
+    needle = str(query or "").strip().casefold()
+    if needle:
+        def matches(row: Any) -> bool:
+            if not isinstance(row, Mapping):
+                return needle in str(row).casefold()
+            values = []
+            for field in fields:
+                value = row.get(field)
+                if isinstance(value, (list, tuple, set)):
+                    values.extend(str(item) for item in value)
+                elif value is not None:
+                    values.append(str(value))
+            return needle in " ".join(values).casefold()
+
+        source = [row for row in source if matches(row)]
+    total = len(source)
+    start = max(0, int(offset))
+    size = max(1, int(limit))
+    return {
+        "items": list(source[start : start + size]),
+        "total": total,
+        "offset": start,
+        "limit": size,
+    }
+
+
+def flatten_cos_pool_rows(pools: Any) -> list[dict[str, Any]]:
+    data = pools if isinstance(pools, Mapping) else {}
+    builtins = data.get("builtin") if isinstance(data.get("builtin"), list) else []
+    custom = data.get("custom") if isinstance(data.get("custom"), list) else []
+    rows: dict[str, dict[str, Any]] = {}
+    for item in [*builtins, *custom]:
+        if not isinstance(item, Mapping):
+            continue
+        row = dict(item)
+        row_id = str(row.get("id") or "").strip()
+        if not row_id or not row.get("prompt"):
+            continue
+        rows.setdefault(row_id, row)
+    return sorted(
+        rows.values(),
+        key=lambda row: (
+            not bool(row.get("favorite")),
+            row.get("source") != "custom",
+            str(row.get("title") or row.get("id") or "").casefold(),
+        ),
+    )
+
+
 VALID_TASK_STATUSES = frozenset(
     {
         "queued",
@@ -117,8 +184,8 @@ def parse_timestamp_query(
 def parse_task_query(params: Mapping[str, Any]) -> dict[str, Any]:
     """Normalize the shared ``GET /api/tasks`` query contract."""
     media_type = query_value(params, "media_type").strip().lower()
-    if media_type not in {"", "image", "video"}:
-        raise WebContractError("media_type 必须是 image 或 video")
+    if media_type not in {"", "image"}:
+        raise WebContractError("media_type 必须是 image")
     status_query = query_value(params, "status").strip().lower()
     if status_query:
         requested = {item.strip() for item in status_query.split(",") if item.strip()}
@@ -197,8 +264,8 @@ def filter_record_page(records: list[Any], params: Mapping[str, Any]) -> tuple[l
     source = query_value(params, "source").strip().lower()
     model = query_value(params, "model").strip().lower()
     media_type = query_value(params, "media_type").strip().lower()
-    if media_type not in {"", "image", "video"}:
-        raise WebContractError("media_type 必须是 image 或 video")
+    if media_type not in {"", "image"}:
+        raise WebContractError("media_type 必须是 image")
     success = query_value(params, "success").strip().lower()
     if success and success not in VALID_SUCCESS_VALUES:
         raise WebContractError("success 必须是 true 或 false")

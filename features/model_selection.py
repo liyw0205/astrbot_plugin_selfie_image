@@ -1,4 +1,4 @@
-"""Image/video model target matching and priority helpers."""
+"""Image model target matching and priority helpers."""
 
 from __future__ import annotations
 

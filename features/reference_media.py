@@ -20,14 +20,6 @@ except ImportError:  # Compatibility with older AstrBot layouts
     from astrbot.api.event.components import Image
     from astrbot.api.utils import logger
 
-try:
-    from astrbot.api.message_components import Video  # type: ignore
-except Exception:
-    try:
-        from astrbot.api.event.components import Video  # type: ignore
-    except Exception:
-        Video = None  # type: ignore
-
 from ..core.providers import ImageReference
 from .reference_collector import ReferenceCollector
 from ..core.utils import detect_mime_by_bytes, extract_event_text, redact_sensitive_text
@@ -329,50 +321,6 @@ class ReferenceMediaMixin:
             return Image.from_file_system(path)
         return Image(file=path)
 
-    def _create_video_component(self, file_path: str) -> Any:
-        path = os.path.abspath(file_path)
-        if Video is None:
-            return {"type": "video", "file": path}
-        if hasattr(Video, "fromFileSystem"):
-            return Video.fromFileSystem(path)
-        if hasattr(Video, "from_file_system"):
-            return Video.from_file_system(path)
-        if hasattr(Video, "fromURL") and str(file_path).startswith("http"):
-            return Video.fromURL(file_path)
-        try:
-            return Video(file=path)
-        except Exception:
-            return Video(path) if callable(Video) else {"type": "video", "file": path}
-
-    async def _send_generated_video(
-        self, event: AstrMessageEvent, file_path: str, caption: str = ""
-    ) -> None:
-        components: List[Any] = []
-        if caption:
-            try:
-                from astrbot.api.message_components import Plain  # type: ignore
-            except Exception:
-                try:
-                    from astrbot.api.event.components import Plain  # type: ignore
-                except Exception:
-                    Plain = None  # type: ignore
-            if Plain is not None:
-                components.append(Plain(caption))
-        components.append(self._create_video_component(file_path))
-        try:
-            await event.send(event.chain_result(components))
-        except Exception as exc:
-            # A timeout or retcode=1200 means the adapter may already have
-            # accepted the message. Retrying would duplicate both caption and
-            # video, so leave the delivery state unknown to the caller.
-            if _image_delivery_is_ambiguous(exc):
-                raise
-            if caption:
-                try:
-                    await event.send(event.plain_result(caption))
-                except Exception:
-                    pass
-            await event.send(event.chain_result([self._create_video_component(file_path)]))
 
     def _persona_identity_reference(self, *, allow_logo: bool = True) -> Optional[ImageReference]:
         """Return the configured persona image, optionally with logo fallback."""
@@ -415,9 +363,6 @@ class ReferenceMediaMixin:
             for item in self.persona.get_auxiliary_reference_images()
             if item.get("data")
         ]
-
-    def _video_persona_reference(self) -> Optional[ImageReference]:
-        return self._persona_identity_reference()
 
     async def _send_generated_images(
         self, event: AstrMessageEvent, files: Iterable[str]

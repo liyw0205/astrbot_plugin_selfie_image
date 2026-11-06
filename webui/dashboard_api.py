@@ -1,5 +1,4 @@
 """AstrBot Dashboard embedded page APIs for Selfie Image.
-
 Dashboard plugin-page APIs registered via ``context.register_web_api``.
 """
 
@@ -31,11 +30,16 @@ from .web import (
 )
 from .contracts import DASHBOARD_ROUTE_PREFIXES, DASHBOARD_TASK_CANCEL_ROUTES
 from .services import (
+    CATALOG_PAGE_SIZE,
+    MAX_CATALOG_PAGE_SIZE,
     WebContractError,
     build_health_payload,
+    catalog_pagination_requested,
     filter_record_page,
+    flatten_cos_pool_rows,
     gallery_pagination,
     normalize_task_ids,
+    paginate_catalog_rows,
     parse_bounded_int,
     parse_query_bool,
     parse_task_query,
@@ -99,13 +103,6 @@ class SelfieImageDashboardAPI:
                 (route, self.page_task_cancel, ["POST"], "Selfie Image cancel task")
                 for route in DASHBOARD_TASK_CANCEL_ROUTES
             ],
-            ("test-video-channel/tasks", self.page_test_video_task_start, ["POST"], "Selfie Image start video channel test"),
-            (
-                "test-video-channel/tasks/<task_id>",
-                self.page_test_image_task_status,
-                ["GET"],
-                "Selfie Image video channel test task status",
-            ),
             ("refresh-image-models", self.page_refresh_image_models, ["POST"], "Selfie Image refresh models"),
             ("records", self.page_records, ["GET"], "Selfie Image generation records"),
             ("records/consistency", self.page_storage_consistency, ["GET"], "Selfie Image storage consistency"),
@@ -187,7 +184,6 @@ class SelfieImageDashboardAPI:
             ("cos-pools/import", self.page_cos_pool_import, ["POST"], "Selfie Image import COS pools"),
             ("creative/template/render", self.page_creative_template_render, ["POST"], "Selfie Image render prompt template"),
             ("creative/variations", self.page_creative_variations, ["POST"], "Selfie Image build prompt variations"),
-            ("creative/storyboard", self.page_creative_storyboard, ["POST"], "Selfie Image parse video storyboard"),
             ("proxies", self.page_proxies_list, ["GET"], "Selfie Image proxy list"),
             ("proxies/test", self.page_proxy_test, ["POST"], "Selfie Image proxy connectivity test"),
             ("proxies/quality-check", self.page_proxy_quality, ["POST"], "Selfie Image proxy quality test"),
@@ -277,7 +273,6 @@ class SelfieImageDashboardAPI:
             return self._ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
         except Exception as exc:
             return self._fail(str(exc), 400)
-
     async def page_auth_check(self) -> Any:
         return self._ok({"authorized": True, "source": "dashboard"})
 
@@ -301,7 +296,6 @@ class SelfieImageDashboardAPI:
             return self._ok(redact_sensitive_data(data))
         except Exception as exc:
             return self._fail(str(exc), 400)
-
     async def page_context_get(self) -> Any:
         getter = getattr(self.plugin, "get_conversation_context", None)
         if not callable(getter):
@@ -494,17 +488,6 @@ class SelfieImageDashboardAPI:
         assert payload is not None
         try:
             data = self.plugin.start_web_image_task(payload)
-            return self._ok(redact_sensitive_data(data))
-        except Exception as exc:
-            return self._fail(str(exc), 500)
-
-    async def page_test_video_task_start(self) -> Any:
-        payload, error = await self._json_object_payload()
-        if error:
-            return error
-        assert payload is not None
-        try:
-            data = self.plugin.start_web_image_task({**payload, "media_type": "video"})
             return self._ok(redact_sensitive_data(data))
         except Exception as exc:
             return self._fail(str(exc), 500)
@@ -744,8 +727,8 @@ class SelfieImageDashboardAPI:
         pinned = self._query_bool(self._query_value("pinned"))
         try:
             media_type = self._query_value("media_type").strip().lower()
-            if media_type not in {"", "image", "video"}:
-                return self._fail("media_type 必须是 image 或 video", 400)
+            if media_type not in {"", "image"}:
+                return self._fail("当前仅支持图片媒体", 400)
             raw_success = self._query_value("success").strip().lower()
             success = self._query_bool(raw_success)
             if raw_success and success is None:
@@ -967,8 +950,8 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 400)
         if not info.get("exists"):
             return self._fail("图片已清理", 404)
-        if not info.get("is_image") and not info.get("is_video"):
-            return self._fail("缓存文件不是有效图片或视频", 400)
+        if not info.get("is_image"):
+            return self._fail("缓存文件不是有效图片", 400)
         return file_response(
             info["absolute_path"],
             filename=str(info.get("name") or "media.bin"),
@@ -992,8 +975,8 @@ class SelfieImageDashboardAPI:
                 },
                 message="图片已清理",
             )
-        if not info.get("is_image") and not info.get("is_video"):
-            return self._fail("缓存文件不是有效图片或视频", 400)
+        if not info.get("is_image"):
+            return self._fail("缓存文件不是有效图片", 400)
         path = str(info.get("absolute_path") or "")
         try:
             with open(path, "rb") as handle:
@@ -1241,6 +1224,23 @@ class SelfieImageDashboardAPI:
             data = self.plugin.list_prompt_presets_for_web(kind)
             status_getter = getattr(self.plugin, "get_prompt_preset_status_for_web", None)
             status = status_getter(kind) if callable(status_getter) else {"ok": True, "source": "legacy", "error": ""}
+            query = getattr(request, "query", {}) or {}
+            if catalog_pagination_requested(query):
+                limit, error = self._int_query("limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
+                if error:
+                    return error
+                offset, error = self._int_query("offset", 0, 0, 1_000_000)
+                if error:
+                    return error
+                page = paginate_catalog_rows(
+                    data,
+                    offset=offset or 0,
+                    limit=limit or CATALOG_PAGE_SIZE,
+                    query=self._query_value("search"),
+                    fields=("name", "title", "prompt", "description"),
+                )
+                page["load_status"] = status
+                return self._ok(page, count=page["total"], load_status=status)
             return self._ok(data, count=len(data), load_status=status)
         except Exception as exc:
             return self._fail(str(exc), 500)
@@ -1251,6 +1251,23 @@ class SelfieImageDashboardAPI:
             data = self.plugin.list_managed_prompt_presets_for_web(kind)
             status_getter = getattr(self.plugin, "get_prompt_preset_status_for_web", None)
             status = status_getter(kind) if callable(status_getter) else {"ok": True, "source": "legacy", "error": ""}
+            query = getattr(request, "query", {}) or {}
+            if catalog_pagination_requested(query):
+                limit, error = self._int_query("limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
+                if error:
+                    return error
+                offset, error = self._int_query("offset", 0, 0, 1_000_000)
+                if error:
+                    return error
+                page = paginate_catalog_rows(
+                    data,
+                    offset=offset or 0,
+                    limit=limit or CATALOG_PAGE_SIZE,
+                    query=self._query_value("search"),
+                    fields=("name", "title", "prompt", "description"),
+                )
+                page["load_status"] = status
+                return self._ok(page, count=page["total"], load_status=status)
             return self._ok(data, load_status=status)
         except Exception as exc:
             return self._fail(str(exc), 500)
@@ -1295,7 +1312,24 @@ class SelfieImageDashboardAPI:
 
     async def page_cos_pools(self) -> Any:
         try:
-            return self._ok(self.plugin.list_cos_pools_for_web())
+            data = self.plugin.list_cos_pools_for_web()
+            query = getattr(request, "query", {}) or {}
+            if catalog_pagination_requested(query):
+                limit, error = self._int_query("limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
+                if error:
+                    return error
+                offset, error = self._int_query("offset", 0, 0, 1_000_000)
+                if error:
+                    return error
+                page = paginate_catalog_rows(
+                    flatten_cos_pool_rows(data),
+                    offset=offset or 0,
+                    limit=limit or CATALOG_PAGE_SIZE,
+                    query=self._query_value("search"),
+                    fields=("title", "id", "prompt", "tags"),
+                )
+                return self._ok(page, count=page["total"])
+            return self._ok(data)
         except Exception as exc:
             return self._fail(str(exc), 500)
 
@@ -1363,15 +1397,5 @@ class SelfieImageDashboardAPI:
             prompt = str((payload or {}).get("prompt") or "")
             count = int((payload or {}).get("count") or 1)
             return self._ok({"variations": self.build_creative_variations(prompt, count, payload or {})})
-        except Exception as exc:
-            return self._fail(str(exc), 400)
-
-    async def page_creative_storyboard(self) -> Any:
-        payload, error = await self._json_object_payload()
-        if error:
-            return error
-        try:
-            prompt = str((payload or {}).get("prompt") or (payload or {}).get("text") or "")
-            return self._ok(self.parse_storyboard_for_web(prompt))
         except Exception as exc:
             return self._fail(str(exc), 400)

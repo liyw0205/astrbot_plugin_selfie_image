@@ -5,6 +5,12 @@ from __future__ import annotations
 import sys
 import types
 import logging
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT.parent) not in sys.path:
+    sys.path.insert(0, str(ROOT.parent))
 
 
 def _install_astrbot_stub() -> None:

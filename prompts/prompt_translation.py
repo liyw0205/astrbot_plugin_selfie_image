@@ -47,6 +47,4 @@ def parse_prompt_en_response(text: str) -> str:
         return ""
     if "faithful language conversion only" in low or "translate the image-generation prompt" in low:
         return ""
-    if "translate the video-generation prompt" in low:
-        return ""
     return plain

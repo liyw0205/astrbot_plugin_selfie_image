@@ -13,6 +13,7 @@ from ..features.persona import (
     current_period,
     group_style_lines,
 )
+from .group_prompt_pool import GROUP_COMPOSITIONS, GROUP_COMPOSITIONS_BY_ID
 from .prompt_templates import resolve_appearance_type
 
 
@@ -124,7 +125,10 @@ SELFIE_LIGHT_TERMS = (
 
 def _requested_staging_orientation(text: str) -> str:
     compact = re.sub(r"\s+", "", str(text or ""))
-    if any(_has_positive_staging_term(compact, term) for term in ("背对镜头", "背向镜头", "背影", "背身")):
+    if any(
+        _has_positive_staging_term(compact, term)
+        for term in ("背对镜头", "背向镜头", "背影", "背身", "背面合影", "背面构图")
+    ):
         return "back"
     if any(_has_positive_staging_term(compact, term) for term in ("侧身", "侧面", "侧后方", "侧前方")):
         return "side"
@@ -719,19 +723,18 @@ def build_group_selfie_action(
     elif orientation == "side":
         group_shot = "side_profile"
     else:
-        shot_options = [
-            ("group_portrait", 5),
-            ("group_environment", 3),
-            ("back_view", 1),
-        ]
-        available_options = [item for item in shot_options if item[0] != avoid_shot]
+        shot_options = GROUP_COMPOSITIONS
+        available_options = [item for item in shot_options if str(item["id"]) != avoid_shot]
         if not available_options:
             available_options = shot_options
         group_shot = random.choices(
-            [name for name, _ in available_options],
-            weights=[weight for _, weight in available_options],
+            [str(item["id"]) for item in available_options],
+            weights=[int(item["weight"]) for item in available_options],
             k=1,
         )[0]
+    composition = GROUP_COMPOSITIONS_BY_ID[group_shot]
+    group_orientation = str(composition.get("orientation") or "front")
+    group_framing = str(composition.get("framing") or "near")
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
     explicit_light = _has_explicit_staging_light(extra_request)
     appearance_line = appearance_type_instruction(
@@ -764,38 +767,35 @@ def build_group_selfie_action(
         base += appearance_line
     base += style_blob
     skin_line = "真实皮肤，" if appearance_type == "auto" else ""
-    if group_shot == "back_view":
-        group_staging = (
-            "本次合影采用背面构图：主角背对镜头，头部与肩胯朝向一致，不回头、不回眸、不扭颈；"
-            "采用竖屏中远景，保证所有同框对象自然入镜；双手放松垂在身侧，不凭空增加支撑物；"
-            "其他同框对象按用户提供的实际人数和站位自然安排，不增删人物。"
-        )
-    elif group_shot == "side_profile":
-        group_staging = (
-            "本次主角采用自然侧身构图：身体、肩线和头部朝向一致，不回头硬露正脸；"
-            "采用竖屏中景，保证所有同框对象自然入镜；其他同框对象按用户提供的实际人数和站位自然安排，不增删人物。"
-        )
-    elif group_shot == "group_environment":
-        group_staging = "本次采用竖屏中远景环境合影构图，所有同框对象和周围场景都清楚，保持对象数量与身份不变。"
-    else:
-        group_staging = "本次采用自然竖屏近景合影构图，保持所有同框对象数量与身份不变。"
+    group_staging = str(composition["prompt"])
+    framing_prompt = {
+        "near": "竖屏手机近景半身。",
+        "medium": "采用竖屏中景，保证所有同框对象自然入镜。",
+        "environment": "所有人保持中远景可辨识，留出足够环境空间。",
+        "close_medium": "采用贴近的竖幅近景至中景，不使用远景。",
+    }[group_framing]
+    orientation_prompt = {
+        "front": "正面合影时可自然看向镜头；",
+        "side": "人物侧身朝向场景或支撑物，头部顺着身体方向，不强迫回头或露出正脸；",
+        "back": "人物背侧朝向场景纵深，头部顺着身体方向，不强迫回头或露出正脸；",
+        "mixed": "同框人物的正面、侧面或背侧朝向自然错开，不要求所有人统一看向镜头；",
+    }[group_orientation]
+    lighting_prompt = (
+        f"{skin_line}{'' if explicit_light else '窗光或暖灯，'}不要美颜滤镜、不要证件照站排。"
+        if group_orientation == "front"
+        else ""
+    )
+    gaze_prompt = (
+        "AI 若自然面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
+        if group_orientation == "front"
+        else ""
+    )
     base += (
         "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动统一。"
-        + (
-            "正面合影时可自然看向镜头；人物侧身或背对镜头时，头部顺着身体方向，不强迫回头或露出正脸。"
-            if group_shot in {"back_view", "side_profile"}
-            else (
-                f"合影默认多数人看向镜头；{skin_line}"
-                + ("" if explicit_light else "窗光或暖灯，")
-                + "不要美颜滤镜、不要证件照站排。"
-                + (
-                    "所有人保持中远景可辨识，留出足够环境空间。"
-                    if group_shot == "group_environment"
-                    else "竖屏手机近景半身。"
-                )
-            )
-        )
-        + "AI 若面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
+        + orientation_prompt
+        + lighting_prompt
+        + framing_prompt
+        + gaze_prompt
         + group_staging
     )
     if appearance_type == "real":

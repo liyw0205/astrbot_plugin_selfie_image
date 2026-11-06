@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "request_terms": [
+    "横屏", "竖屏", "方形", "正方形", "1:1", "4:5", "9:16", "16:9", "全身", "半身", "胸像", "肖像",
+    "近景", "中景", "远景", "环境人像", "三分之四", "三分之三", "三分之二",
+    "正面机位", "正面拍摄", "正面站立", "正面构图", "正对镜头", "侧前方", "侧身",
+    "从背后拍", "侧后方", "侧面机位", "低机位", "高机位", "膝盖附近", "颈下", "膝上",
+    "高位斜俯", "头部位于画面", "头部在画面", "画面从头", "画面只拍", "平视", "平拍",
+    "俯拍", "俯视", "仰拍", "仰视", "高角度", "低角度", "顶视", "鸟瞰", "过肩", "轻仰"
+  ],
+  "option_terms": [
+    "横屏", "竖屏", "方形", "正面近景", "正面半身", "正面", "正对镜头", "三分之四侧前方",
+    "三分之四侧身", "三分之四", "侧前方", "侧身", "环境人像", "近景", "中景", "远景", "全身",
+    "半身", "胸像", "肖像", "三分之二身", "大腿上部", "大腿", "膝上", "平视", "俯拍", "仰拍",
+    "低机位", "高机位"
+  ],
+  "option_suffix_terms": ["机位", "视角", "构图", "摄影", "拍摄", "站立"],
+  "camera_request_terms": {
+    "third": [
+      "他拍", "别人拍", "别人帮拍", "朋友拍", "朋友帮忙拍摄", "有人拍", "被拍", "抓拍",
+      "第三人称", "路人视角", "摄影师拍", "不是自拍", "非自拍", "不要自拍",
+      "不要对镜", "不拿手机", "不要拿手机", "不要手持手机", "candid",
+      "thirdperson", "notselfie"
+    ],
+    "first": [
+      "第一视角", "第一人称视角", "第一人称", "主观视角", "主观镜头",
+      "pov", "firstperson", "first-person", "first person"
+    ],
+    "selfie": [
+      "对着镜子自拍", "对镜自拍", "镜前自拍", "镜中自拍", "镜子自拍", "镜子前自拍",
+      "对着镜子拍照", "对着镜子拍摄", "对镜拍照", "对镜拍摄", "对镜拍",
+      "镜前拍照", "镜前拍摄", "镜子前拍照", "镜子前拍摄", "镜中拍照", "镜中拍摄",
+      "自拍视角", "自拍", "mirror selfie", "mirror-selfie", "selfie", "自己拍摄", "自己拍照"
+    ],
+    "mirror_selfie": [
+      "对着镜子自拍", "对镜自拍", "镜前自拍", "镜中自拍", "镜子自拍", "镜子前自拍",
+      "对着镜子拍照", "对着镜子拍摄", "对镜拍照", "对镜拍摄", "对镜拍",
+      "镜前拍照", "镜前拍摄", "镜子前拍摄", "镜中拍照", "镜中拍摄",
+      "mirror selfie", "mirror-selfie"
+    ]
+  },
+  "items": {
+    "front_half": {
+      "title": "正面半身",
+      "prompt": "正面半身机位，画面从头部拍到腰线，面部和服装主体清晰",
+      "random_camera_ids": [
+        "third",
+        "first",
+        "selfie"
+      ]
+    },
+    "three_quarter_front": {
+      "title": "三分之四侧前方",
+      "prompt": "三分之四侧前方机位，带到大腿上部，突出服装层次",
+      "random_camera_ids": [
+        "third",
+        "first",
+        "selfie"
+      ]
+    },
+    "two_thirds": {
+      "title": "三分之二身",
+      "prompt": "正面三分之二身机位，完整展示上身、腰线和部分下装",
+      "random_camera_ids": [
+        "third",
+        "first",
+        "selfie"
+      ]
+    },
+    "environmental": {
+      "title": "近距离环境中景",
+      "prompt": "近距离竖幅环境中景，人物占据画面主要区域，只保留少量干净背景；不使用远距离全身或空旷环境构图",
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": []
+    },
+    "eye_level_full": {
+      "title": "近距离全身",
+      "prompt": "平视近距离全身机位，人物从头部到鞋履完整入画并占据主要画幅；使用正常焦段，不站在远处拍环境全景",
+      "random_camera_ids": [
+        "third",
+        "first"
+      ]
+    },
+    "high_angle_three_quarter": {
+      "title": "轻俯拍三分之二身",
+      "prompt": "轻微俯拍的三分之二身机位，面部清晰，展示服装层次与腰线",
+      "random_camera_ids": [
+        "third",
+        "first",
+        "selfie"
+      ]
+    },
+    "low_angle_full": {
+      "title": "低机位全身",
+      "prompt": "轻微低机位全身构图，完整展示服装轮廓，透视自然不过度夸张",
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "low_angle_full_2": {
+      "title": "低机位全身2",
+      "prompt": "低机位全身构图，从人物膝盖略低处向上拍摄，突出服装轮廓和人物气场，透视自然不过度夸张",
+      "random_camera_ids": [],
+      "explicit_only": true
+    },
+    "low_angle_hero": {
+      "title": "轻仰角气场人像",
+      "prompt": "镜头位于腰部附近略低位置，以克制的轻仰角拍摄三分之二身构图；保持正常焦段和自然人体比例，不贴近腿部、不使用超广角",
+      "scene_ids": [
+        "garden_walkway",
+        "bamboo_garden",
+        "cherry_blossom_path",
+        "seaside_boardwalk",
+        "rooftop_sunset",
+        "old_town_lane",
+        "rainy_neon_street",
+        "festival_lantern",
+        "greenhouse",
+        "snowy_courtyard",
+        "old_city_rooftop"
+      ],
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "high_angle_oblique": {
+      "title": "高位斜俯环境人像",
+      "prompt": "从人物斜前上方约三十度俯拍中景，人物面部、肩颈和四肢比例自然；地面纹理作为环境层次，不把画面变成正上方监控视角",
+      "scene_ids": [
+        "bedroom_carpet",
+        "photo_studio",
+        "living_room_rug",
+        "cafe_corner",
+        "stone_staircase",
+        "japanese_ink_room"
+      ],
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "side_profile": {
+      "title": "自然侧面人像",
+      "prompt": "镜头从人物侧面或侧后方拍摄，肩线、胯部与面部朝向保持一致；头部顺着躯干方向自然转动，颈部保持放松连贯，不回头、不回眸、不为展示正脸单独扭脸；允许自然侧脸，远侧五官按透视自然遮挡",
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "rear_three_quarter": {
+      "title": "背后偏侧中景",
+      "prompt": "镜头位于人物背后偏一侧，取近景至中景；人物背部朝向镜头，肩胯和头部朝向一致，不回头、不扭颈，服装后侧清楚",
+      "random_camera_ids": [
+        "third",
+        "first"
+      ]
+    },
+    "rear_low_medium": {
+      "title": "背面轻低机位",
+      "prompt": "从人物背后略低处拍摄中景，人物背对镜头且头部保持朝前，不回眸或扭转颈部；透视自然，服装后侧和姿态清楚",
+      "random_camera_ids": [
+        "third",
+        "first"
+      ]
+    },
+    "rear_low_hero": {
+      "title": "背面轻仰拍全身",
+      "prompt": "从人物膝盖附近略低处以正常焦段轻微仰拍背面全身构图；人物背对镜头，肩线、胯部和头部朝向一致，头部保持正向，不回头、不回眸、不扭转颈部；完整保留头部、双肩、服装后侧和双脚；仰拍带来的腿部自然显长透视可以保留，同时保持肩部至腰胯的躯干纵向长度自然完整，不压缩上身、不把腰线抬高到胸下，躯干与腿部衔接协调；不贴近腿部、不使用超广角、不从臀部近距离仰拍，不出现肩颈扭曲或额外肢体",
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "low_angle_neck_to_knee": {
+      "title": "横屏低机位颈下至膝上",
+      "prompt": "横屏低机位构图，画面从颈部以下拍到膝上，头部自然位于画面外，突出服装和动作",
+      "random_camera_ids": [],
+      "explicit_only": true
+    },
+    "close_vertical_three_quarter": {
+      "title": "竖幅近距三分之四",
+      "prompt": "9:16竖幅近距离三分之四站立肖像，从头顶拍到臀部以下；脸部、双手和上身服装清晰，背景保持简洁，不把构图中心转向身体解剖细节",
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "side_profile_4_5": {
+      "title": "4:5胸高侧颜",
+      "prompt": "4:5竖构图、胸口高度接近视平线的自然侧颜人像，画面主要展示膝盖以上；约85mm镜头和浅景深，肩线、胯部与面部朝向一致，不回头、不扭颈",
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "intimate_phone_vertical": {
+      "title": "近距生活竖幅",
+      "prompt": "9:16近距离生活抓拍，主体略偏右居中，面部位于上方中间，前景自然带到衣物或支撑物；保持自然近距透视和真实比例，不出现拍摄设备或摄影者肢体",
+      "scene_ids": [
+        "bedroom_carpet"
+      ],
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": [
+        "third"
+      ]
+    },
+    "high_angle_phone_wide": {
+      "title": "高位广角熟睡构图",
+      "prompt": "9:16略高角度广角构图，约24mm视野，床铺和人物全身勉强入镜，头顶、手臂或脚尖可以自然略微裁切；画面保持轻微倾斜的随手感，不拉伸或压缩身体比例，不出现拍摄设备",
+      "scene_ids": [
+        "bedroom_sleep"
+      ],
+      "camera_ids": [
+        "third"
+      ],
+      "random_camera_ids": []
+    }
+  }
+}

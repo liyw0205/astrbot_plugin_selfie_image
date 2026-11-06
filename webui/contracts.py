@@ -11,13 +11,11 @@ DASHBOARD_ROUTE_PREFIXES = ("", "page/")
 TASK_CANCEL_ROUTE_ALIASES = (
     "/api/tasks/{task_id}/cancel",
     "/api/test-image-channel/tasks/{task_id}/cancel",
-    "/api/test-video-channel/tasks/{task_id}/cancel",
     "/api/studio/tasks/{task_id}/cancel",
 )
 
 DASHBOARD_TASK_CANCEL_ROUTES = (
     "tasks/<task_id>/cancel",
     "test-image-channel/tasks/<task_id>/cancel",
-    "test-video-channel/tasks/<task_id>/cancel",
     "studio/tasks/<task_id>/cancel",
 )

@@ -11,8 +11,6 @@ _COMPLETION_PATH_KEYS = (
     "files",
     "image_paths",
     "generated_image_paths",
-    "video_path",
-    "generated_video_paths",
 )
 
 
@@ -319,7 +317,7 @@ def batch_failure_text(
         if mode == "skip_max":
             return f"{base}，已跳过 {skipped}/{skip_max}，继续后面的"
         return f"{base}，继续后面的"
-    left = max(0, total - index)
+    left = max(0, total - done_files)
     if left:
         return f"{base}，后面 {left} 张先不跑了"
     return base
