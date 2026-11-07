@@ -216,6 +216,107 @@ def test_generic_cos_back_curve_does_not_force_face_or_gaze_to_camera():
     assert "目光稳定地看向镜头" not in prompt
 
 
+def test_front_pose_variants_are_reachable_with_compatible_scene_and_framing():
+    front_poses = (
+        "front_seated_lean", "front_raised_arm", "front_waist_shift", "front_hand_near_face",
+    )
+    for pose_id in front_poses:
+        pose = COS_JSON_POSES[pose_id]
+        assert pose["orientation"] == "front"
+        assert pose["random_weight"] > 0
+        assert "third" in pose["random_camera_ids"]
+        assert pose_id in COS_JSON_SCENES["photo_studio"]["pose_ids"]
+        action = build_cos_look_action(
+            "摄影棚 " + COS_POSE_REQUEST_ALIASES[pose_id][0] + " 慵懒诱惑",
+            force_id="roxy_cream",
+            camera="third",
+        )
+        assert f"【cos_pose:{pose_id}】" in action
+        assert "【cos_scene:photo_studio】" in action
+        assert "【cos_expression:sultry】" in action
+        assert pose["prompt"] in action
+        framing_id = re.search(r"【cos_framing:([a-z0-9_]+)】", action).group(1)
+        assert framing_id in pose["framing_ids"]
+        assert COS_JSON_FRAMINGS[framing_id]["prompt"] in action
+    assert "side_profile" not in COS_JSON_POSES["kneeling_carpet"]["framing_ids"]
+
+
+def test_seductive_expressions_replace_old_entries_without_changing_head_direction():
+    assert not {"shy", "mysterious"} & COS_JSON_EXPRESSIONS.keys()
+    for expression_id in ("flirtatious", "sultry"):
+        expression = COS_JSON_EXPRESSIONS[expression_id]
+        assert "含蓄" not in expression["prompt"]
+        assert "神秘" not in expression["prompt"]
+        for pose_id in ("side_edge_bend", "rear_edge_curve", "over_shoulder"):
+            selected_id, prompt = cos_looks._pick_scene_expression(pose_id, expression["label"])
+            assert selected_id == expression_id
+            assert prompt == expression["prompt"]
+            assert not any(term in prompt for term in ("镜头", "回头", "侧脸", "扭颈", "歪头"))
+
+
+def test_expression_catalog_has_one_schema_and_no_direction_controls():
+    for expression in COS_JSON_EXPRESSIONS.values():
+        assert set(expression) == {"label", "prompt", "aliases"}
+        assert not any(term in expression["prompt"] for term in (
+            "镜头", "回头", "扭颈", "歪头", "远处", "低垂", "肩颈", "头部",
+        ))
+
+
+def test_front_actions_use_multiple_independent_framings():
+    assert "front_seated_medium" not in COS_JSON_FRAMINGS
+    assert "front_raised_arm_medium" not in COS_JSON_FRAMINGS
+    for pose_id in ("front_seated_lean", "front_raised_arm", "front_waist_shift", "front_hand_near_face"):
+        framing_ids = COS_JSON_POSES[pose_id]["framing_ids"]
+        assert "three_quarter_front" in framing_ids
+        assert "high_angle_three_quarter" in framing_ids
+        for framing_id in framing_ids:
+            scene_ids = COS_JSON_FRAMINGS[framing_id].get("scene_ids") or ["photo_studio"]
+            scene_id = next(
+                scene_id for scene_id in scene_ids
+                if pose_id in COS_JSON_SCENES[scene_id]["pose_ids"]
+            )
+            selected = pick_cos_framing(
+                pose_id=pose_id, camera="third", scene_id=scene_id, forced_framing_id=framing_id,
+            )
+            assert selected["view_id"] == framing_id
+
+
+def test_two_handed_pose_does_not_delegate_phone_compatibility_to_the_model():
+    action = build_cos_look_action(
+        "正面坐姿轻前倾 自拍 手机遮脸", force_id="roxy_cream", has_refs=True,
+    )
+    assert "【cos_pose:front_seated_lean】" in action
+    assert "双手严格保持已选姿势" in action
+    assert "不添加手持手机" in action
+    assert "一只手握持唯一一部普通手机" not in action
+    assert "若套装姿势" not in action
+
+
+def test_side_pose_with_extra_reference_does_not_force_a_visible_face(tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+    action = build_cos_look_action(
+        "背身扶墙微弯", force_id="roxy_cream", camera="third", has_refs=True,
+    )
+    prompt = PersonaManager(str(tmp_path)).build_selfie_prompt(
+        action, bot_name="", personality="", has_reference_image=True, extra_reference_count=1,
+    )
+    assert "【cos_pose:rear_wall_curve】" in prompt
+    assert "若当前构图允许面部入镜" in prompt
+    assert "除非用户要求遮脸，否则主角面部清晰自然" not in prompt
+
+
+def test_group_prompt_opening_does_not_call_a_third_person_composition_a_selfie(tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.prompts.selfie_actions import build_group_selfie_action
+
+    action = build_group_selfie_action("背面合影")
+    prompt = PersonaManager(str(tmp_path)).build_selfie_prompt(
+        action, bot_name="", personality="", has_reference_image=True, extra_reference_count=1,
+    )
+    assert prompt.startswith("这是合影照片。")
+
+
 def test_explicit_style_selects_a_compatible_scene_style_from_json():
     with patch.object(cos_looks.random, "choice", side_effect=lambda values: values[0]):
         variation = pick_cos_variation("roxy_cream", extra_request="复古 DV", camera="third")

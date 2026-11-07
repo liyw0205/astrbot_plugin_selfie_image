@@ -1607,11 +1607,9 @@
     <section id="selfie">
       <h2>形象</h2>
       <div class="grid">
-        <div><label>显示名</label><input id="selfieBotName"></div>
         <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
       </div>
-      <label>人设（语气与氛围）</label><textarea id="selfiePersonality"></textarea>
-      <label class="checkline" title="开启：没有上传形象参考图时，用插件 logo 作为形象图；关闭：不注图，只按人设文案生成。人设只用于这种无图文生图，不会注入对话或进度回复。"><input id="useLogoWhenNoPersona" type="checkbox" checked> 无形象图用 logo（关则走人设）</label>
+      <label class="checkline"><input id="useLogoWhenNoPersona" type="checkbox" checked> 无形象图用 logo</label>
       <div class="grid">
         <div>
           <label>形象类型</label>
@@ -2398,8 +2396,9 @@ Source prompt:
       delete CONFIG.webPort;
       delete CONFIG.webToken;
       delete CONFIG.webEnable;
-      CONFIG.bot_name ??= '啊呜';
-      CONFIG.personality ??= '可爱猫娘助手，说话带“喵”等语气词，活泼俏皮会撒娇';
+      delete CONFIG.bot_name;
+      delete CONFIG.botName;
+      delete CONFIG.personality;
       CONFIG.permission ??= {};
       CONFIG.image ??= {};
       CONFIG.proxies ??= [];
@@ -2490,8 +2489,6 @@ Source prompt:
         if ($('useLogoWhenNoPersona')) $('useLogoWhenNoPersona').checked = img.use_logo_when_no_persona !== false;
         $('enableDailyLimit').checked = !!img.enable_daily_limit;
 
-        $('selfieBotName').value = CONFIG.bot_name || '';
-        $('selfiePersonality').value = CONFIG.personality || '';
         $('selfieAspect').value = img.default_aspect_ratio || '9:16';
 
         $('enablePromptAudit').checked = !!img.enable_prompt_audit;
@@ -2520,8 +2517,6 @@ Source prompt:
 
     function collectForms() {
       ensureConfig();
-      CONFIG.bot_name = $('selfieBotName').value.trim() || '啊呜';
-      CONFIG.personality = $('selfiePersonality').value || '';
       CONFIG.permission = {...(CONFIG.permission || {})};
       CONFIG.image.default_aspect_ratio = $('defaultAspect').value || $('selfieAspect').value || '9:16';
       CONFIG.image.default_resolution = $('defaultResolution').value || '1K';

@@ -161,7 +161,7 @@ def resolve_appearance_type(appearance_type: str, user_text: str = "") -> str:
 
 
 def append_daily_context_to_english_prompt(english_prompt: str, source_prompt: str) -> str:
-    """Keep daily lines selected by the Chinese builder during EN conversion."""
+    """Keep the resolved identity and daily context during EN conversion."""
     labels = {
         "今日穿搭": "Today's outfit",
         "当前时间段": "Current time period",
@@ -173,19 +173,24 @@ def append_daily_context_to_english_prompt(english_prompt: str, source_prompt: s
         "今日时令 / 节日氛围": "Today's seasonal or holiday atmosphere",
     }
     lines = []
+    source = str(source_prompt or "")
+    character = re.search(r"^角色设定：([\s\S]*?)\n【角色设定结束】", source, re.M)
+    identity = f"Character settings from AstrBot:\n{character.group(1).strip()}" if character else ""
+    if character:
+        source = source[:character.start()] + source[character.end():]
     for source_label, english_label in labels.items():
-        match = re.search(rf"^{re.escape(source_label)}：(.+)$", str(source_prompt or ""), re.M)
+        match = re.search(rf"^{re.escape(source_label)}：(.+)$", source, re.M)
         if match:
             lines.append(f"{english_label}: {match.group(1).strip()}")
-    if re.search(r"^腿部日程约束：", str(source_prompt or ""), re.M):
+    if re.search(r"^腿部日程约束：", source, re.M):
         lines.append(
             "For leg-focused images, daily context is only a time, scene, and atmosphere reference. "
             "It must not override the locked pose, camera, framing, or complete lower outfit, "
             "and must not copy the schedule's original action or outfit change."
         )
     if not lines:
-        return str(english_prompt or "").strip()
-    return _join(english_prompt, "Daily context (follow unless the user explicitly overrides it):", *lines)
+        return _join(identity, english_prompt)
+    return _join(identity, english_prompt, "Daily context (follow unless the user explicitly overrides it):", *lines)
 
 
 def extract_user_prompt(action: str) -> str:
@@ -550,10 +555,10 @@ def build_selfie_builtin_prompt(
     )
 
 
-def build_batch_failure_llm_prompt(*, bot_name: str, reason: str, index: int, total: int, done_files: int, will_continue: bool) -> str:
+def build_batch_failure_llm_prompt(*, reason: str, index: int, total: int, done_files: int, will_continue: bool) -> str:
     continuation = "还会继续尝试后面的图片" if will_continue else "后面的图片这次先不继续了"
     return _join(
-        f"你是{str(bot_name or '助手')}，请替用户写一句自然、柔和的简体中文说明。",
+        "请给用户写一句自然、柔和的简体中文说明，延续当前对话身份。",
         f"一次多张图片请求中，第 {index}/{total} 张未完成；已经得到 {done_files} 张。",
         f"确定原因只有：{str(reason or '这张没有顺利完成')[:160]}。{continuation}。",
         "只输出一句 12-45 字的话，不要用不确定猜测，不要罗列多个原因，不要提工具、模型、提示词、配置、审核、任务或内部流程。",

@@ -5,6 +5,10 @@
     "standing_detail": ["自然站姿", "站姿", "站立", "站着"],
     "front_sleeve_display": ["双手展示袖口", "双手捏袖口", "肩侧展示袖口", "抬手展示袖子", "双手扶在肩侧"],
     "front_hem_display": ["双手轻提衣摆", "轻提裙摆展示", "双手提裙摆", "展示裙摆", "提衣摆姿势"],
+    "front_seated_lean": ["正面坐姿轻前倾", "正面坐姿前倾", "正面扶膝前倾", "坐姿双手扶腿"],
+    "front_raised_arm": ["正面单臂抬起", "正面抬臂", "抬臂展示腰线", "单手抬到头侧"],
+    "front_waist_shift": ["正面错胯站姿", "正面错胯", "正面展示腰线", "正面手扶腰侧"],
+    "front_hand_near_face": ["正面手停颈侧", "手停在颈侧", "正面手近脸侧", "手指轻停锁骨旁"],
     "half_turn": ["侧身姿势", "自然侧身", "身体侧向镜头"],
     "side_profile": ["纯侧身", "侧身", "侧面站姿", "侧面朝向", "侧身不回头", "侧身但不回头"],
     "back_to_camera": ["背对镜头", "背向镜头", "背身站立", "背身", "背影", "背影姿势", "背面构图", "后背视角", "只拍背影", "面朝远处"],
@@ -78,9 +82,9 @@
         "playful",
         "calm",
         "confident",
-        "shy",
+        "flirtatious",
         "cool",
-        "mysterious"
+        "sultry"
       ],
       "random_camera_ids": [
         "third",
@@ -131,6 +135,46 @@
         "third"
       ]
     },
+    "front_seated_lean": {
+      "title": "正面坐姿轻前倾",
+      "prompt": "正面坐在当前场景已有的稳固座面前沿，双脚自然落地承重，双膝靠近但略有前后错位；双手分别轻压同侧大腿靠近膝部的位置，上身从髋部轻微前倾，肩膀放松，腰部保持自然弧度，展示腰线、服装前片与腿部层次。头颈随躯干自然延伸，不弓背探头，不把膝部推到镜头前；衣物自然覆盖，不拉扯裙裤，不凭空增加家具。",
+      "orientation": "front",
+      "pose_family": "seated",
+      "random_weight": 3,
+      "framing_ids": ["two_thirds", "three_quarter_front", "high_angle_three_quarter", "high_angle_oblique"],
+      "expression_ids": ["confident", "gentle", "flirtatious", "sultry"],
+      "random_camera_ids": ["third"]
+    },
+    "front_raised_arm": {
+      "title": "正面单臂抬起",
+      "prompt": "人物保持展示服装前片的站姿，一侧手臂弯曲抬起，手停在头顶外侧或发旁；另一只手轻放腰侧，承重腿稳定，另一侧膝盖微松，肩腰自然错开，形成舒展的上身与腰线。头部只轻微偏斜，手不遮住眼睛；保持静态，不做拉伸，不改变原有领口、袖子或服装结构。",
+      "orientation": "front",
+      "pose_family": "standing",
+      "random_weight": 3,
+      "framing_ids": ["two_thirds", "three_quarter_front", "high_angle_three_quarter", "low_angle_hero"],
+      "expression_ids": ["confident", "playful", "flirtatious", "sultry"],
+      "random_camera_ids": ["third"]
+    },
+    "front_waist_shift": {
+      "title": "正面错胯站姿",
+      "prompt": "人物保持展示服装前片的站姿，一侧腿稳定承重，另一条腿轻轻错前并放松膝盖，髋部向承重侧小幅外移，肩线保持轻微反向倾斜，呈现自然腰胯曲线。一只手轻贴腰侧，另一只手放松落在大腿外侧，手指不抓扯衣物；上身不过度扭转或后仰，服装前片、腰线与两侧轮廓清楚，保持自然静态。",
+      "orientation": "front",
+      "pose_family": "standing",
+      "random_weight": 3,
+      "framing_ids": ["two_thirds", "three_quarter_front", "close_vertical_three_quarter", "high_angle_three_quarter", "low_angle_hero"],
+      "expression_ids": ["confident", "calm", "flirtatious", "sultry"],
+      "random_camera_ids": ["third", "first"]
+    },
+    "front_hand_near_face": {
+      "title": "正面手停颈侧",
+      "prompt": "人物保持展示服装前片的姿态，一只手手指自然舒展，停在颈侧、下颌外侧或锁骨旁，不遮住嘴眼、不压脸；另一只手放松停在腰侧或服装原有配饰旁。肩线轻微倾斜，躯干稳定，头部只轻偏，不勾头或扭颈；展示肩颈、服装领口与腰线，保留真实手指连接，不凭空添加颈饰或改变衣领。",
+      "orientation": "front",
+      "pose_family": "gesture_static",
+      "random_weight": 2,
+      "framing_ids": ["front_half", "two_thirds", "three_quarter_front", "high_angle_three_quarter"],
+      "expression_ids": ["gentle", "confident", "flirtatious", "sultry"],
+      "random_camera_ids": ["third", "first"]
+    },
     "half_turn": {
       "title": "自然侧身",
       "prompt": "身体以约四十五度侧向镜头，肩胯自然错开，一侧腿略前、一侧腿略后以展示腰线和衣摆；头部和视线顺着身体方向，不强行回头或扭转颈部，手部轻触衣料或配饰但不遮挡服装主体。",
@@ -155,9 +199,9 @@
         "playful",
         "calm",
         "confident",
-        "shy",
+        "flirtatious",
         "cool",
-        "mysterious"
+        "sultry"
       ],
       "random_camera_ids": [
         "third",
@@ -213,14 +257,15 @@
     },
     "kneeling_carpet": {
       "title": "地毯跪坐",
-      "prompt": "双膝并拢跪坐在柔软地毯上，双腿收拢压在身下，臀部自然坐在脚跟上，脚部不向两侧张开；上身自然挺直，手部动作遵循套装已有道具与配饰，不遮挡服装主体。",
+      "prompt": "人物正面朝向镜头，在柔软地毯上双膝自然靠近跪坐，小腿向后收在身下，臀部自然落在脚跟上，脚部不向两侧外翻；上身舒展但不挺胸后仰，双手分别放在同侧大腿靠近膝部的位置，肩线轻微错位，展示服装前片与自然腰线。衣料顺势覆盖腿部，不掀裙摆，不做高位跪立或拉伸。",
+      "orientation": "front",
       "pose_family": "seated",
       "random_weight": 2,
       "framing_ids": [
+        "two_thirds",
         "environmental",
         "eye_level_full",
         "high_angle_three_quarter",
-        "side_profile",
         "high_angle_oblique"
       ],
       "expression_ids": [
@@ -231,9 +276,9 @@
         "playful",
         "calm",
         "confident",
-        "shy",
+        "flirtatious",
         "cool",
-        "mysterious"
+        "sultry"
       ],
       "random_camera_ids": [
         "third"
@@ -259,9 +304,9 @@
         "playful",
         "calm",
         "confident",
-        "shy",
+        "flirtatious",
         "cool",
-        "mysterious"
+        "sultry"
       ],
       "random_camera_ids": [
         "third"
@@ -354,9 +399,9 @@
         "playful",
         "calm",
         "confident",
-        "shy",
+        "flirtatious",
         "cool",
-        "mysterious"
+        "sultry"
       ],
       "random_camera_ids": [
         "third"
@@ -379,7 +424,7 @@
       "expression_ids": [
         "gentle",
         "calm",
-        "mysterious"
+        "sultry"
       ],
       "random_camera_ids": [
         "third",
@@ -392,9 +437,6 @@
       "orientation": "back",
       "pose_family": "back_display",
       "random_weight": 6,
-      "incompatible_expression_ids": [
-        "deep_affection"
-      ],
       "framing_ids": [
         "rear_three_quarter",
         "rear_low_medium"
@@ -402,8 +444,8 @@
       "expression_ids": [
         "calm",
         "melancholy",
-        "mysterious",
-        "shy"
+        "sultry",
+        "flirtatious"
       ],
       "camera_ids": [
         "third"
@@ -432,7 +474,7 @@
         "calm",
         "cool",
         "gentle",
-        "mysterious"
+        "sultry"
       ],
       "camera_ids": [
         "third"
@@ -447,9 +489,6 @@
       "orientation": "back",
       "pose_family": "back",
       "random_weight": 5,
-      "incompatible_expression_ids": [
-        "deep_affection"
-      ],
       "framing_ids": [
         "rear_low_medium",
         "rear_low_hero"
@@ -457,7 +496,7 @@
       "expression_ids": [
         "calm",
         "melancholy",
-        "mysterious"
+        "sultry"
       ],
       "camera_ids": [
         "third",
@@ -488,9 +527,9 @@
         "playful",
         "calm",
         "confident",
-        "shy",
+        "flirtatious",
         "cool",
-        "mysterious"
+        "sultry"
       ],
       "random_camera_ids": [
         "third"
@@ -501,9 +540,6 @@
       "prompt": "头部自然微微低垂，闭眼或低眸，嘴唇保持放松；肩颈和下颌线自然连贯，不为露出正脸扭转脖子，双手放松并遵循套装已有动作。",
       "pose_family": "quiet_portrait",
       "random_weight": 2,
-      "incompatible_expression_ids": [
-        "deep_affection"
-      ],
       "framing_ids": [
         "front_half",
         "three_quarter_front",
@@ -515,7 +551,7 @@
       "expression_ids": [
         "calm",
         "melancholy",
-        "shy"
+        "flirtatious"
       ],
       "random_camera_ids": [
         "third"
@@ -535,7 +571,7 @@
         "intimate_phone_vertical"
       ],
       "expression_ids": [
-        "shy",
+        "flirtatious",
         "calm",
         "melancholy"
       ],
@@ -555,7 +591,7 @@
       ],
       "expression_ids": [
         "calm",
-        "mysterious",
+        "sultry",
         "melancholy"
       ],
       "camera_ids": [
@@ -584,7 +620,7 @@
       "expression_ids": [
         "calm",
         "cool",
-        "mysterious"
+        "sultry"
       ],
       "camera_ids": [
         "third",
@@ -634,16 +670,13 @@
       "orientation": "back",
       "pose_family": "back_curve_static",
       "random_weight": 2,
-      "incompatible_expression_ids": [
-        "deep_affection"
-      ],
       "framing_ids": [
         "rear_low_medium",
         "rear_low_hero"
       ],
       "expression_ids": [
         "calm",
-        "mysterious",
+        "sultry",
         "cool"
       ],
       "camera_ids": [
@@ -663,9 +696,6 @@
       "orientation": "side",
       "pose_family": "side_edge_curve_static",
       "random_weight": 3,
-      "incompatible_expression_ids": [
-        "deep_affection"
-      ],
       "framing_ids": [
         "side_profile",
         "rear_three_quarter",
@@ -678,7 +708,7 @@
         "calm",
         "cool",
         "confident",
-        "mysterious"
+        "sultry"
       ],
       "camera_ids": [
         "third",
@@ -698,9 +728,6 @@
       "orientation": "side",
       "pose_family": "side_edge_curve_static",
       "random_weight": 2,
-      "incompatible_expression_ids": [
-        "deep_affection"
-      ],
       "framing_ids": [
         "side_profile",
         "rear_three_quarter",
@@ -733,9 +760,6 @@
       "orientation": "back",
       "pose_family": "back_edge_curve_static",
       "random_weight": 2,
-      "incompatible_expression_ids": [
-        "deep_affection"
-      ],
       "framing_ids": [
         "rear_three_quarter",
         "rear_low_medium",
@@ -745,7 +769,7 @@
       ],
       "expression_ids": [
         "calm",
-        "mysterious",
+        "sultry",
         "cool"
       ],
       "camera_ids": [
@@ -766,9 +790,6 @@
       "orientation": "back",
       "pose_family": "back_curve_static",
       "random_weight": 2,
-      "incompatible_expression_ids": [
-        "deep_affection"
-      ],
       "framing_ids": [
         "rear_three_quarter",
         "rear_low_medium",
@@ -779,7 +800,7 @@
       "expression_ids": [
         "calm",
         "cool",
-        "mysterious",
+        "sultry",
         "confident"
       ],
       "camera_ids": [
@@ -839,7 +860,7 @@
       "expression_ids": [
         "calm",
         "gentle",
-        "mysterious"
+        "sultry"
       ],
       "camera_ids": [
         "third",
@@ -894,9 +915,9 @@
         "playful",
         "calm",
         "confident",
-        "shy",
+        "flirtatious",
         "cool",
-        "mysterious"
+        "sultry"
       ],
       "random_camera_ids": [
         "third"

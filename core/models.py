@@ -44,8 +44,6 @@ def usable_api_keys(value: Any) -> List[str]:
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "schema_version": 2,
-    "bot_name": "啊呜",
-    "personality": "可爱猫娘助手，说话带“喵”等语气词，活泼俏皮会撒娇",
     "web": {
         "enable": True,
         "host": "127.0.0.1",
@@ -263,8 +261,6 @@ class ImageChannelConfig:
 @dataclass
 class AICatConfig:
     raw: Dict[str, Any]
-    bot_name: str
-    personality: str
     web_enable: bool
     web_host: str
     web_port: int
@@ -457,8 +453,6 @@ class AICatConfig:
         permission["usable_users_enabled"] = usable_users_enabled
         return cls(
             raw=raw,
-            bot_name=str(raw.get("bot_name") or raw.get("botName") or DEFAULT_CONFIG["bot_name"]).strip() or "AI",
-            personality=str(raw.get("personality") or DEFAULT_CONFIG["personality"]).strip(),
             web_enable=to_bool(web.get("enable"), True),
             web_host=str(web.get("host") or "127.0.0.1").strip() or "127.0.0.1",
             web_port=to_int(web.get("port"), 14514, minimum=1, maximum=65535),
@@ -680,8 +674,8 @@ def normalize_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
         raw["enabled_image_model_priority"] = raw["enabledImageModelPriority"]
     if "enabledAuditModelPriority" in raw and "enabled_audit_model_priority" not in raw:
         raw["enabled_audit_model_priority"] = raw["enabledAuditModelPriority"]
-    if "botName" in raw and "bot_name" not in raw:
-        raw["bot_name"] = raw["botName"]
+    for key in ("botName", "bot_name", "personality"):
+        raw.pop(key, None)
 
     image = ensure_dict(raw, "image")
     image.pop("audit_whitelist", None)

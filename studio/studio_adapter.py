@@ -8,9 +8,12 @@ import time
 from typing import Any, Dict, List, Optional
 from astrbot.api import logger
 
-from ..cos.cos_looks import list_cos_look_sets, looks_like_cos_prompt
+from ..cos.cos_looks import finalize_cos_prompt_for_request, list_cos_look_sets, looks_like_cos_prompt
+from ..cos.leg_focus import has_leg_focus_contract
+from ..features.framework_persona import resolve_framework_persona
 from ..prompts.preset import preset_row_display_sort_key
 from ..prompts.prompt_composition import build_prompt_with_reference_instruction
+from ..prompts.prompt_templates import extract_user_prompt, resolve_appearance_type
 from ..core.providers import ImageReference
 from .studio import (
     BUILTIN_PROMPTS,
@@ -962,6 +965,14 @@ class StudioMixin:
             if mode in {"group", "selfie", "i2i"} and not refs:
                 raise RuntimeError("请至少放一张参考图，或先设置形象参考图")
 
+            if looks_like_cos_prompt(action):
+                action = finalize_cos_prompt_for_request(
+                    action,
+                    appearance_type=resolve_appearance_type(
+                        self.persona.get_appearance_type(), extract_user_prompt(action)
+                    ),
+                    has_refs=bool(refs),
+                )
             failure_stage = "prompt_translation"
             self._set_web_image_task(
                 task_id,
@@ -969,18 +980,25 @@ class StudioMixin:
                 generation_stage_label="处理画布提示词",
             )
             if mode in {"group", "selfie"}:
+                has_external_reference = bool(parent_node_id) or any(
+                    str(slot.get("id") or "") in used_slots and slot.get("image_path")
+                    for slot in (session.get("slots") or []) if isinstance(slot, dict)
+                )
                 if mode == "selfie":
-                    action = self._normalize_selfie_action(action, bool(refs))
-                await self.persona.ensure_daily_selfie_profile(action)
+                    action = self._normalize_selfie_action(action, has_external_reference)
+                if not has_leg_focus_contract(action):
+                    await self.persona.ensure_daily_selfie_profile(action)
                 # refs already include identity first when available; do not re-prepend persona
                 has_identity = bool(refs)
                 extra_count = max(0, len(refs) - 1) if has_identity else len(refs)
+                framework_persona = await resolve_framework_persona(getattr(self, "context", None))
                 prompt = self.persona.build_selfie_prompt(
                     action=action,
-                    bot_name=self.config.bot_name,
-                    personality=self.config.personality,
+                    bot_name=framework_persona.name,
+                    personality=framework_persona.prompt,
                     has_reference_image=has_identity,
                     extra_reference_count=extra_count,
+                    has_external_reference=has_external_reference,
                 )
                 prompt_en_meta: Dict[str, Any] = {"enabled": False, "applied": False, "scope": "user_text_only"}
                 if self._prompt_en_needed(action, media="image"):
@@ -988,7 +1006,6 @@ class StudioMixin:
                         append_daily_context_to_english_prompt,
                         build_selfie_builtin_prompt,
                         extract_generated_action_contract,
-                        extract_user_prompt,
                     )
 
                     user_text = extract_user_prompt(action)

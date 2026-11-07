@@ -93,8 +93,8 @@ def clean_ack_message(ack_message: str, user_request: str) -> str:
     return custom[:80]
 
 
-def natural_ack_fallback(kind: str, count: int, bot_name: str = "啊呜") -> str:
-    name = str(bot_name or "").strip() or "啊呜"
+def natural_ack_fallback(kind: str, count: int, bot_name: str = "") -> str:
+    name = str(bot_name or "").strip() or "我"
     multi = count > 1
     if kind == "selfie":
         options = [

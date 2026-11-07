@@ -58,7 +58,7 @@ _COS_COMMON_NEGATIVE_VARIANTS = (
     "3D渲染", "塑料皮肤", "超现实发光",
 )
 _COS_NEGATIVE_MARKERS = (
-    "不要", "禁止", "不出现", "不携带", "不添加", "不自动出现", "不应出现",
+    "不要", "禁止", "不出现", "不携带", "不添加", "不生成", "不自动出现", "不应出现",
 )
 
 
@@ -108,7 +108,7 @@ def normalize_cos_prompt_negatives(
     text = re.sub(r"[、，,]\s*([。；])", r"\1", text)
     text = re.sub(r"[。；]\s*[；，,]\s*[。；]", "。", text)
     text = re.sub(r"[；，,]\s*[。；]", "。", text)
-    text = re.sub(r"[。；]\s*[。；]", "。", text)
+    text = re.sub(r"[。；](?:\s*[。；])+", "。", text)
     text = re.sub(r"\s{2,}", " ", text).strip()
     if anime_medium:
         shared_negative = _COS_ANIME_NEGATIVE_PROMPT
@@ -147,25 +147,13 @@ def is_special_cos_look(item_or_id: Any) -> bool:
     return item_id in COS_SPECIAL_LOOK_CONFIG
 
 
-def _apply_cos_negative_normalization() -> None:
-    for item in COS_LOOK_SETS:
-        if is_special_cos_look(item):
-            continue
-        item["prompt"] = normalize_cos_prompt_negatives(item.get("prompt", ""))
-
-
 from .cos_looks_special import (
     COS_SPECIAL_LOOK_CONFIG,
     COS_SPECIAL_LOOK_SETS,
 )
 
-_apply_cos_negative_normalization()
-
-# The catalog is data-owned by ``cos/cos_looks/*.json``.
-_json_prompt_by_id = {
-    str(item.get("id") or ""): str(item.get("prompt") or "")
-    for item in COS_JSON_LOOK_SETS
-}
+# Shared medium exclusions are added when building a request, after resolving
+# the selected appearance type and whether to preserve the reference medium.
 COS_LOOK_SETS[:] = [
     {
         key: item[key]
@@ -315,7 +303,6 @@ COS_SCENE_FACE_RISK_TAGS: Dict[str, frozenset[str]] = {
 
 COS_LOOK_FACE_RISK_TAGS: Dict[str, frozenset[str]] = {
     # These are stable catalogue facts, not changes to the costume wording.
-    "rezero_echidna_witch_scholar": frozenset({"hat_shadow"}),
     "hi3_fu_hua_red_sash": frozenset({"hair_shadow"}),
     "luna_frost_moon_mirror": frozenset({"reflective_costume"}),
 }
@@ -2215,6 +2202,31 @@ def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
     if exact:
         return exact
 
+    # A query that contains a character and a specific outfit fragment (for
+    # example ``宵宫·烟花祭典``) should resolve to that title instead of
+    # degrading to the character-only pool when the catalog title adds a
+    # suffix such as ``装``.
+    exact_title_segment_matches = [
+        dict(item)
+        for item in all_items
+        if any(
+            compact(segment) == compact_query
+            for segment in re.split(separators, str(item.get("title") or ""))
+            if compact(segment)
+        )
+    ]
+    if exact_title_segment_matches and len(compact_query) >= 3:
+        return exact_title_segment_matches
+
+    title_fragment_matches = [
+        dict(item)
+        for item in all_items
+        if compact_query
+        and compact_query in compact(str(item.get("title") or ""))
+    ]
+    if title_fragment_matches and len(compact_query) >= 3:
+        return title_fragment_matches
+
     selected_name_terms: List[str] = []
     selected_category_terms: List[str] = []
     selected_series_terms: List[str] = []
@@ -2479,6 +2491,25 @@ def looks_like_cos_prompt(text: str) -> bool:
     )
 
 
+def finalize_cos_prompt_for_request(
+    text: str,
+    *,
+    appearance_type: str = "auto",
+    has_refs: bool = False,
+) -> str:
+    """Apply shared exclusions once actual request references are known."""
+    raw = str(text or "")
+    if not looks_like_cos_prompt(raw) or "【cos_mode:special】" in raw.lower():
+        return raw
+    if any(str(item.get("prompt") or "").strip() == raw.strip() for item in COS_SPECIAL_LOOK_SETS):
+        return raw
+    return normalize_cos_prompt_negatives(
+        adapt_cos_prompt_for_appearance(raw, appearance_type),
+        appearance_type,
+        preserve_reference_medium=has_refs,
+    )
+
+
 def build_cos_third_person_prompt(text: str) -> str:
     """Wrap a raw COS-pool prompt in the shared third-person camera contract."""
     raw = str(text or "").strip()
@@ -2710,6 +2741,8 @@ def build_cos_look_action(
     requested_scene = _requested_cos_scene(extra_request)
     requested_orientation = _requested_cos_orientation(extra_request)
     pose_avoidance = _as_id_set(avoid_poses)
+    if phone_face_cover and not requested_pose:
+        pose_avoidance.update(set(COS_RANDOM_POSE_CLASSES) - COS_RANDOM_SELFIE_POSE_IDS)
     if requested_camera == "selfie" and any(
         _has_positive_request(extra_request, term)
         for term in COS_JSON_CAMERA_REQUEST_TERMS["mirror_selfie"]
@@ -2857,6 +2890,9 @@ def build_cos_look_action(
     composition = framing_choice.get("composition") or {}
     if composition.get("prompt"):
         framing_line += f"附加构图强化：{composition['prompt']}；"
+    pose_id = variation["pose_id"]
+    handheld_allowed = pose_id == "user" or pose_id in COS_RANDOM_SELFIE_POSE_IDS
+    phone_face_cover = phone_face_cover and handheld_allowed
     if camera_kind == "third":
         hand_rule = (
             "背面他拍：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；"
@@ -2873,7 +2909,6 @@ def build_cos_look_action(
             "不要对镜、不要镜子；画面只允许主角既有的一只手握持唯一一部普通手机，从脸侧或下方自然遮住半张脸；"
             "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或第二台拍摄设备；"
-            "若套装姿势已明确占用双手或不宜举手机，保留原姿势和道具，不额外添加手机，也不强行遮脸。"
             if phone_face_cover
             else "主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然；未明确要求遮脸时保持面部、身体轮廓和服装关键结构清楚，细小纹理允许随景深自然柔化；严格遵循已选机位与姿势呈现面部，侧脸按自然透视呈现，不为露出正脸强行扭头或扭颈。"
         )
@@ -2900,9 +2935,10 @@ def build_cos_look_action(
             "可对镜取景；画面只允许主角既有的一只手握持唯一一部普通手机，从脸侧或下方自然遮住半张脸；"
             "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或其它拍摄设备；"
-            "若套装姿势已明确占用双手或不宜举手机，保留原姿势和道具，不额外添加手机，也不强行遮脸。"
             if phone_face_cover
-            else "可对镜取景，但拍摄设备完全在画面外；主角双手自然入镜或放在身侧，未明确要求遮脸时不要用物件遮脸挡衣服。"
+            else "采用固定或定时自拍，拍摄设备完全在画面外；双手严格保持已选姿势和道具，不添加手持手机，也不强行遮脸。"
+            if not handheld_allowed
+            else "可对镜取景，但拍摄设备完全在画面外；主角双手保持已选动作，未明确要求遮脸时不要用物件遮脸挡衣服。"
         )
         framing = (
             "【自拍 / 看看COS模式】"

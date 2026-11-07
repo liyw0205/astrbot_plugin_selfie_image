@@ -11,7 +11,7 @@ Three guarantees:
 
 from __future__ import annotations
 
-import ast
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -118,7 +118,7 @@ class NewBatchTest(unittest.TestCase):
         for look_id in NEW_IDS:
             item = get_cos_look_by_id(look_id)
             prompt = str(item["prompt"])
-            self.assertGreaterEqual(len(prompt), 120, look_id)
+            self.assertGreaterEqual(len(normalize_cos_prompt_negatives(prompt)), 120, look_id)
             self.assertTrue(item["cos_type"], look_id)
             self.assertTrue(
                 prompt.startswith("以形象图中的人为COS主体") or "真人" in prompt,
@@ -135,28 +135,23 @@ class GenericNegativeNotDuplicatedTest(unittest.TestCase):
     """The shared contract is appended at runtime, so source must not repeat it."""
 
     def _source_records(self):
-        """Parse prompts straight from the module source, before runtime normalization."""
-        module = ast.parse((ROOT / "cos" / "cos_looks.py").read_text(encoding="utf-8"))
+        """Read the JSON-owned catalog without request-time normalization."""
+        directory = ROOT / "data" / "cos" / "looks"
+        index = json.loads((directory / "index.json").read_text(encoding="utf-8"))
         records = []
-        for node in ast.walk(module):
-            if not isinstance(node, ast.Dict):
-                continue
-            fields = {
-                key.value: value
-                for key, value in zip(node.keys, node.values)
-                if isinstance(key, ast.Constant) and isinstance(key.value, str)
-            }
-            look_id = fields.get("id")
-            prompt = fields.get("prompt")
-            if isinstance(look_id, ast.Constant) and isinstance(look_id.value, str) and prompt is not None:
-                records.append({"id": look_id.value, "prompt": ast.literal_eval(prompt)})
+        for entry in index["files"]:
+            payload = json.loads((directory / entry["file"]).read_text(encoding="utf-8"))
+            records.extend(payload["items"])
         return records
 
     def test_source_records_do_not_repeat_shared_contract(self) -> None:
+        records = self._source_records()
+        self.assertGreater(len(records), 0)
+        media_exclusions = "禁止动漫插画、赛璐璐、游戏立绘、3D渲染、塑料皮肤和超现实发光。"
         offenders = [
             rec["id"]
-            for rec in self._source_records()
-            if _COS_COMMON_NEGATIVE_PROMPT in rec["prompt"]
+            for rec in records
+            if media_exclusions in rec["prompt"]
         ]
         self.assertEqual(offenders, [], f"shared contract hard-coded in source: {offenders}")
 

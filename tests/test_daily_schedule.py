@@ -283,6 +283,8 @@ def test_reference_driven_selfie_does_not_inject_daily_schedule(tmp_path) -> Non
 
 
 def test_leg_focus_ignores_outdoor_schedule_scene_and_keeps_indoor_support() -> None:
+    from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_OUTFIT_POOL
+
     with patch(
         "astrbot_plugin_selfie_image.cos.leg_focus.random.choice",
         side_effect=lambda items: items[0],
@@ -295,7 +297,7 @@ def test_leg_focus_ignores_outdoor_schedule_scene_and_keeps_indoor_support() -> 
         assert "城市天台步道" not in action
         assert "户外小径漫步" not in action
         assert f"【wear:{wear}】" in action
-        assert "不改变下装类别、长度或鞋履" in action
+        assert sum(item["prompt"] in action for item in LEGFOCUS_OUTFIT_POOL) == 1
 
 
 def test_full_outfit_leg_focus_does_not_keep_lower_body_only_rule(tmp_path) -> None:
@@ -342,11 +344,12 @@ def test_reference_driven_leg_focus_does_not_inject_daily_scene(tmp_path) -> Non
     assert "日程穿搭" not in prompt
 
 
-def test_leg_focus_uses_schedule_clothes_without_injecting_its_scene_or_action(tmp_path) -> None:
+def test_leg_focus_uses_dedicated_or_reference_outfit_without_daily_clothes(tmp_path) -> None:
     from types import SimpleNamespace
     from astrbot_plugin_selfie_image.features.persona import PersonaManager, daily_schedule_date_key
     from astrbot_plugin_selfie_image.features.daily_schedule import DailySchedule, ScheduleEvent
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_OUTFIT_POOL
 
     manager = PersonaManager(tmp_path)
     outfit = "蓝白连体COS服，保留原有长袜与短靴"
@@ -365,10 +368,14 @@ def test_leg_focus_uses_schedule_clothes_without_injecting_its_scene_or_action(t
         prompt = manager.build_selfie_prompt(
             action, "小助", "温柔", True, int(has_refs), has_external_reference=has_refs,
         )
-        assert prompt.count(outfit) == 1
-        assert "【outfit:scheduled】" in prompt
+        assert outfit not in prompt
+        if has_refs:
+            assert "【outfit:reference】" in prompt
+            assert "保留原有上装、下装、连体结构、袜鞋与配饰" in prompt
+            assert not any(item["prompt"] in prompt for item in LEGFOCUS_OUTFIT_POOL)
+        else:
+            assert sum(item["prompt"] in prompt for item in LEGFOCUS_OUTFIT_POOL) == 1
         assert "【pose:sofa_ankle_cross】" in prompt
-        assert "只改姿势、构图与室内背景" in prompt
         assert "日程动作不得照搬" not in prompt
         assert "城市天台" not in prompt
         assert "本次随机腿部细节" not in prompt

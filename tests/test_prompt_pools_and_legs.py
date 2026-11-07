@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -139,36 +140,32 @@ class PromptPoolJsonTests(unittest.TestCase):
 
             self.assertEqual(manager.get_current_daily_outfit(), outfit)
 
-    def test_scheduled_look_locks_clothes_across_pose_variants_with_references(self) -> None:
+    def test_reference_look_locks_clothes_across_pose_variants(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
 
-        outfit = "海军蓝连体 COS 服，配原有腰带、长袜和短靴"
         with patch(
             "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_outfit",
-            side_effect=AssertionError("scheduled outfit must bypass random legwear"),
+            side_effect=AssertionError("reference outfit must bypass random legwear"),
         ):
             first = build_leg_focus_action(
                 has_refs=True,
                 force_pose="sofa_ankle_cross",
                 force_camera="third",
-                scheduled_outfit=outfit,
             )
             second = build_leg_focus_action(
                 has_refs=True,
                 force_pose="gaming_chair_side_fold",
                 force_camera="third",
-                scheduled_outfit=outfit,
             )
 
         for action in (first, second):
-            self.assertIn(outfit, action)
-            self.assertIn("【outfit:scheduled】", action)
-            self.assertIn("只改姿势", action)
+            self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", action)
+            self.assertIn("【outfit:reference】", action)
             self.assertNotIn("本次随机腿部细节", action)
             self.assertNotIn("白色丝袜", action)
         self.assertNotEqual(first.split("【pose:", 1)[1], second.split("【pose:", 1)[1])
 
-    def test_explicit_user_outfit_overrides_schedule_without_random_replacement(self) -> None:
+    def test_explicit_user_outfit_bypasses_pool_without_random_replacement(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
 
         with patch(
@@ -177,13 +174,11 @@ class PromptPoolJsonTests(unittest.TestCase):
         ):
             action = build_leg_focus_action(
                 "换成蓝白连体COS服和长靴",
-                scheduled_outfit="当前日程穿搭：灰色针织衫和长裤",
                 force_camera="third",
             )
 
         self.assertIn("换成蓝白连体COS服和长靴", action)
-        self.assertIn("用户本次明确指定的服饰是唯一服装来源", action)
-        self.assertNotIn("当前日程穿搭：灰色针织衫和长裤", action)
+        self.assertIn("服饰按用户本次具体要求呈现", action)
         self.assertIn("【outfit:custom】", action)
 
     def test_leg_pool_has_pose_specific_first_and_third_person_indoor_views(self) -> None:
@@ -209,13 +204,13 @@ class PromptPoolJsonTests(unittest.TestCase):
                 selected_scene = action.split("本张室内场景：", 1)[1].split("。", 1)[0]
                 self.assertNotIn("户外", selected_scene)
 
-    def test_random_leg_detail_is_written_once_and_does_not_change_outfit_category(self) -> None:
-        from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
+    def test_bare_leg_detail_is_written_once_with_one_dedicated_outfit(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_OUTFIT_POOL, build_leg_focus_action
 
         detail = {
-            "id": "black_tights",
-            "title": "黑丝",
-            "prompt": "仅在没有锁定穿搭来源且现有服装自然露出腿部时，随机搭配黑色丝袜；不改变裙裤或连体服类别、长度、上装和鞋履。",
+            "id": "bare_legs",
+            "title": "自然光腿",
+            "prompt": "自然肤色光腿，皮肤保留自然纹理，不增加袜装或鞋履。",
             "weight": 2,
         }
         with patch(
@@ -225,9 +220,100 @@ class PromptPoolJsonTests(unittest.TestCase):
             action = build_leg_focus_action(force_pose="bed_edge_diagonal", force_camera="third")
 
         self.assertEqual(action.count(detail["prompt"]), 1)
-        self.assertIn("不推测裙装、裤装或连体服", action)
-        self.assertNotIn("短裙", action)
-        self.assertNotIn("运动裤", action)
+        self.assertEqual(sum(item["prompt"] in action for item in LEGFOCUS_OUTFIT_POOL), 1)
+        self.assertIn("【wear:bare】", action)
+        self.assertNotIn("日程", action)
+        self.assertNotIn("来源优先级", action)
+
+    def test_hosiery_styles_follow_outfit_compatibility_and_explicit_requests(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            LEGFOCUS_HOSIERY_STYLES, LEGFOCUS_OUTFIT_POOL, build_leg_focus_action,
+        )
+
+        for outfit in LEGFOCUS_OUTFIT_POOL:
+            for wear in ("黑丝", "白丝", "连裤袜", "赤足"):
+                with self.subTest(outfit=outfit["id"], wear=wear), patch(
+                    "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_outfit", return_value=outfit,
+                ):
+                    action = build_leg_focus_action(wear, force_pose="sofa_ankle_cross", force_camera="third")
+                    styles = [style for style in LEGFOCUS_HOSIERY_STYLES if style["prompt"] in action]
+                    self.assertEqual(action.count(outfit["prompt"]), 1)
+                    self.assertIn(f"【outfit:{outfit['id']}】", action)
+                    self.assertEqual(len(styles), 0 if wear == "赤足" else 1)
+                    for style in styles:
+                        self.assertIn(style["family"], outfit["hosiery_families"])
+                        if wear == "连裤袜":
+                            self.assertEqual(style["kind"], "tights")
+                        else:
+                            self.assertEqual(style["wear"], wear)
+        for style in LEGFOCUS_HOSIERY_STYLES:
+            for alias in style["aliases"]:
+                with self.subTest(style=style["id"], alias=alias):
+                    action = build_leg_focus_action(alias)
+                    self.assertEqual(action.count(style["prompt"]), 1)
+                    selected = [outfit for outfit in LEGFOCUS_OUTFIT_POOL if outfit["prompt"] in action]
+                    self.assertEqual(len(selected), 1)
+                    self.assertIn(style["family"], selected[0]["hosiery_families"])
+
+    def test_outfit_pool_is_json_owned_and_contains_no_source_policy_prompt(self) -> None:
+        from astrbot_plugin_selfie_image.core.prompt_data import read_versioned_json
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            OUTFIT_DATA_PATH, LEGFOCUS_OUTFIT_POOL, LEGFOCUS_HOSIERY_STYLES,
+        )
+
+        payload = read_versioned_json(OUTFIT_DATA_PATH, "test")
+        self.assertNotIn("source_rule", payload)
+        self.assertEqual(payload["outfits"], LEGFOCUS_OUTFIT_POOL)
+        self.assertEqual(payload["hosiery_styles"], LEGFOCUS_HOSIERY_STYLES)
+
+    def test_canvas_leg_outfits_distinguish_persona_from_uploaded_or_parent_images(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_OUTFIT_POOL, build_leg_focus_action
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+        from astrbot_plugin_selfie_image.studio.studio_adapter import StudioMixin
+
+        for source in ("persona", "uploaded", "parent"):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as tmp:
+                session = {
+                    "id": "legs-canvas", "template": "selfie",
+                    "graph": {"mode": "selfie", "prompt": "看看腿", "count": 1},
+                    "slots": [{"id": "identity", "role": "identity", "image_path": "upload.png" if source == "uploaded" else ""}],
+                    "last_run": {"summary": {"reference_node_id": "parent" if source == "parent" else ""}},
+                    "canvas": {"nodes": [{"id": "parent", "result": {"media_path": "parent.png"}}]},
+                }
+                state = {"status": "queued", "record_ids": []}
+                stub = object.__new__(StudioMixin)
+                stub.config = types.SimpleNamespace(
+                    image_default_aspect_ratio="9:16", image_default_resolution="1K", image_enable_image_prompt_en=False,
+                )
+                stub.studio = types.SimpleNamespace(
+                    get=lambda _session_id: session, attach_run_finish=lambda *_args, **_kwargs: None,
+                )
+                stub.persona = PersonaManager(tmp)
+                stub.persona.get_reference_image = lambda: {"data": b"persona", "mime_type": "image/png"}
+                stub.persona.ensure_daily_selfie_profile = AsyncMock(side_effect=AssertionError("legs must not load the schedule"))
+                stub._build_leg_focus_action = build_leg_focus_action
+                stub._normalize_selfie_action = SelfieImagePlugin._normalize_selfie_action.__get__(stub)
+                stub._task_cancel_requested = lambda _task_id: False
+                stub._web_task_timestamp = lambda: "now"
+                stub._set_web_image_task = lambda _task_id, **fields: state.update(fields)
+                stub.get_web_image_task = lambda _task_id: dict(state)
+                stub._wait_for_record_commits = AsyncMock()
+                stub._load_cache_image_bytes = lambda _path: (b"uploaded", "image/png")
+                stub._prompt_en_needed = lambda *_args, **_kwargs: False
+                stub._record_task = lambda _record: None
+                stub._run_image_generation = AsyncMock(return_value={"success": True, "files": ["out.png"], "image_paths": ["out.png"]})
+
+                asyncio.run(stub._run_studio_task("web-studio-legs", session["id"]))
+
+                self.assertEqual(state["status"], "succeeded", state)
+                action = state["request_data"]["original_prompt"]
+                if source == "persona":
+                    self.assertEqual(sum(item["prompt"] in action for item in LEGFOCUS_OUTFIT_POOL), 1)
+                else:
+                    self.assertIn("【outfit:reference】", action)
+                    self.assertFalse(any(item["prompt"] in action for item in LEGFOCUS_OUTFIT_POOL))
+                stub.persona.ensure_daily_selfie_profile.assert_not_awaited()
 
     def test_leg_prompt_templates_defer_to_the_generated_action_contract(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
@@ -236,7 +322,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         action = build_leg_focus_action(
             force_pose="sofa_armrest_asymmetric",
             force_camera="third",
-            scheduled_outfit="深色连体 COS 服，保留原有长袜和短靴",
+            has_refs=True,
         )
         prompt_zh = build_selfie_builtin_prompt(action, has_reference_image=True)
         prompt_en = build_selfie_builtin_prompt(
@@ -403,11 +489,9 @@ class PromptPoolJsonTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
-        outfit = "深色连体 COS 服，保留原有腰带、长袜和短靴"
         action = build_leg_focus_action(
             has_refs=True,
             preferred_scene="城市天台步道",
-            scheduled_outfit=outfit,
             force_pose="bed_edge_side_dangle",
             force_camera="third",
         )
@@ -421,7 +505,7 @@ class PromptPoolJsonTests(unittest.TestCase):
                 has_external_reference=True,
             )
 
-        self.assertIn(outfit, prompt)
+        self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", prompt)
         self.assertTrue(any(f"【场景池·{title}】" in prompt for title in ("床沿", "卧室床边座面")))
         self.assertNotIn("城市天台步道", prompt)
         self.assertNotIn("当前日程场景", prompt)

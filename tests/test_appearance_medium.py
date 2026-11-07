@@ -13,6 +13,9 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     _COS_ANIME_NEGATIVE_PROMPT,
     _COS_COMMON_NEGATIVE_PROMPT,
     build_cos_look_action,
+    build_cos_third_person_prompt,
+    finalize_cos_prompt_for_request,
+    get_cos_look_by_id,
     normalize_cos_prompt_negatives,
 )
 from astrbot_plugin_selfie_image.features.persona import PersonaManager
@@ -101,6 +104,27 @@ def test_auto_cos_with_reference_preserves_reference_medium():
         prompt = persona.build_selfie_prompt(action, "bot", "tone", True, 0)
     assert "视觉媒介、质感和人物比例以参考图一为唯一主形象依据" in prompt
     assert "禁止动漫插画" not in prompt
+
+
+def test_request_negative_finalization_is_idempotent_and_keeps_special_prompt():
+    look = get_cos_look_by_id("ark_ceobe_wilderness")
+    action = build_cos_third_person_prompt(look["prompt"])
+    real = finalize_cos_prompt_for_request(action, appearance_type="real")
+    assert real.count(_COS_COMMON_NEGATIVE_PROMPT) == 1
+    assert finalize_cos_prompt_for_request(real, appearance_type="real") == real
+    anime = finalize_cos_prompt_for_request(real, appearance_type="anime")
+    assert anime.count(_COS_ANIME_NEGATIVE_PROMPT) == 1
+    assert "禁止动漫插画" not in anime
+    auto = finalize_cos_prompt_for_request(anime, has_refs=True)
+    assert "禁止真人照片质感" not in auto
+    assert "禁止动漫插画" not in auto
+    assert "不带武器" in auto
+    for special in (
+        get_cos_look_by_id("firefly_star_rail_sleeping_cabin")["prompt"],
+        build_cos_third_person_prompt(get_cos_look_by_id("firefly_star_rail_sleeping_cabin")["prompt"]),
+    ):
+        assert finalize_cos_prompt_for_request(special, appearance_type="real") == special
+    assert finalize_cos_prompt_for_request("街边合影") == "街边合影"
 
 
 def test_cos_costume_hair_overrides_reference_bangs_and_color_consistently():

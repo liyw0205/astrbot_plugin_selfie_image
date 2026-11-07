@@ -1,6 +1,11 @@
 {
   "schema_version": 1,
   "items": {
+    "window_front_seated": {"title": "窗边正面坐姿轻前倾", "scene_id": "bedroom_window", "pose_id": "front_seated_lean", "family": "domestic_lifestyle", "weight": 5},
+    "studio_front_raised_arm": {"title": "影棚正面抬臂", "scene_id": "photo_studio", "pose_id": "front_raised_arm", "family": "editorial_portrait", "weight": 5},
+    "garden_front_waist": {"title": "庭院正面错胯", "scene_id": "garden_walkway", "pose_id": "front_waist_shift", "family": "nature_lifestyle", "weight": 5},
+    "living_front_neck_gesture": {"title": "客厅正面颈侧手势", "scene_id": "living_room_rug", "pose_id": "front_hand_near_face", "family": "domestic_lifestyle", "weight": 4},
+    "bedroom_front_kneeling": {"title": "地毯正面跪坐扶腿", "scene_id": "bedroom_carpet", "pose_id": "kneeling_carpet", "family": "domestic_lifestyle", "weight": 4},
     "rooftop_rail_warm_film": {"title": "天台栏杆暖色胶片", "scene_id": "rooftop_sunset", "pose_id": "side_back_rail_lean", "family": "urban_cinematic", "weight": 8},
     "old_city_rooftop_rail_hero": {"title": "旧楼天台栏杆气场", "scene_id": "old_city_rooftop", "pose_id": "side_back_rail_lean", "family": "urban_cinematic", "weight": 7},
     "rooftop_back_low_medium": {"title": "夕照天台背面中景", "scene_id": "rooftop_sunset", "pose_id": "back_to_camera", "family": "urban_cinematic", "weight": 5},

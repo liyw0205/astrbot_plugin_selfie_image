@@ -96,6 +96,7 @@ from .cos.cos_looks import (
     build_cos_third_person_prompt,
     build_cos_look_action,
     cos_query_has_series_constraint,
+    finalize_cos_prompt_for_request,
     format_cos_look_list,
     is_special_cos_look,
     keep_cos_outfit_requested,
@@ -109,6 +110,7 @@ from .cos.cos_looks import (
 )
 from .generation.generator import generate_image_with_fallback
 from .generation.image_scheduler import ImageJobScheduler
+from .features.framework_persona import resolve_framework_persona
 from .generation.generation_records import metric_window_seconds
 from .generation.generation_store import GenerationStoreMixin, RECORD_KEEP_LIMIT
 from .generation.generation_results import (
@@ -848,8 +850,7 @@ class SelfieImagePlugin(
         return blocked_prompt_word(prompt, self.config.image_blocked_words)
 
     def _bot_display_name(self) -> str:
-        name = str(self.config.bot_name or "").strip()
-        return name or "啊呜"
+        return "助手"
 
     def _compact_for_repeat_check(self, text: str) -> str:
         return compact_for_repeat_check(text)
@@ -864,7 +865,7 @@ class SelfieImagePlugin(
         return clean_ack_message(ack_message, user_request)
 
     def _natural_ack_fallback(self, kind: str, count: int) -> str:
-        return natural_ack_fallback(kind, count, self._bot_display_name())
+        return natural_ack_fallback(kind, count)
 
     def _natural_fail_fallback(self, kind: str = "") -> str:
         return natural_fail_fallback(kind)
@@ -1184,6 +1185,8 @@ class SelfieImagePlugin(
         prompt: str,
         timeout: int = 8,
         images: Optional[List[bytes]] = None,
+        *,
+        use_persona: bool = False,
     ) -> str:
         image_urls = [
             bytes_to_data_url(image, detect_mime_by_bytes(image))
@@ -1193,14 +1196,16 @@ class SelfieImagePlugin(
 
         async def request() -> str:
             origin = getattr(event, "unified_msg_origin", None)
+            framework_persona = await resolve_framework_persona(self.context, event) if use_persona else None
+            system_prompt = framework_persona.prompt if framework_persona else ""
             provider_id = None
             try:
                 getter = getattr(self.context, "get_using_provider", None)
                 if callable(getter):
-                    provider = getter()
+                    provider = getter(umo=origin) if origin else getter()
                     requester = getattr(provider, "text_chat", None) or getattr(provider, "request", None)
                     if callable(requester):
-                        kwargs: Dict[str, Any] = {"prompt": prompt}
+                        kwargs: Dict[str, Any] = {"prompt": prompt, "system_prompt": system_prompt}
                         if image_urls:
                             kwargs["image_urls"] = image_urls
                         response = requester(**kwargs)
@@ -1218,7 +1223,7 @@ class SelfieImagePlugin(
             try:
                 generator = getattr(self.context, "llm_generate", None)
                 if callable(generator):
-                    kwargs = {"prompt": prompt}
+                    kwargs = {"prompt": prompt, "system_prompt": system_prompt}
                     if provider_id:
                         kwargs["chat_provider_id"] = provider_id
                     if image_urls:
@@ -1248,19 +1253,18 @@ class SelfieImagePlugin(
         return re.sub(r"\s+", " ", value).strip()
 
     def _build_ack_prompt_for_llm(self, event: AstrMessageEvent, kind: str, user_request: str, count: int) -> str:
-        name = self._bot_display_name()
         context_text = self._format_context_for_llm(event, count=12, max_chars=1400)
         request = str(user_request or "").strip()
         kind_text = "自拍/拍照" if kind == "selfie" else "图片请求"
         count_text = "多张" if count > 1 else "一张"
         return "\n".join(
             [
-                f"你是{name}，正在和用户自然聊天。",
+                "延续当前对话，给用户一句自然回复。",
                 f"用户刚通过指令发起了{kind_text}，数量：{count_text}。",
                 "请只输出一句简体中文短回复，像正在聊天时随口接一句。",
                 "要求：10-32 个汉字；结合最近上下文；不要复述用户提示词；不要解释；不要列点。",
                 "禁止出现：生成、绘制、渲染、工具、提示词、配置、审核、任务、处理中、已收到、开始、为你。",
-                "不要套用人设、语气词或氛围设定；只按当前对话自然接一句。",
+                "不要复述人格设定或编造身份；按当前对话自然接一句。",
                 "如果是自拍/拍照，可以表现为找角度、看光线、调整镜头；如果是普通图片，可以表现为整理画面或构图。",
                 f"最近对话：\n{context_text}" if context_text else "最近对话：无",
                 f"当前请求：{request[:300]}",
@@ -1280,7 +1284,7 @@ class SelfieImagePlugin(
         if ack_message:
             return fallback
         prompt = self._build_ack_prompt_for_llm(event, kind, user_request, count)
-        text = self._strip_llm_short_reply(await self._call_text_llm(event, prompt, timeout=7))
+        text = self._strip_llm_short_reply(await self._call_text_llm(event, prompt, timeout=7, use_persona=True))
         custom = self._clean_ack_message(text, user_request)
         return custom or fallback
 
@@ -1471,7 +1475,7 @@ class SelfieImagePlugin(
         if not callable(ensure) or not callable(analyze):
             return
         intent = analyze(str(action or ""))
-        if intent.is_cos_look or intent.is_group_photo:
+        if intent.is_cos_look or intent.is_group_photo or intent.is_legs_only:
             return
         await ensure(action)
 
@@ -1485,10 +1489,6 @@ class SelfieImagePlugin(
         force_pose: str = "",
         force_camera: str = "",
     ) -> str:
-        persona = getattr(self, "persona", None)
-        daily_event = getattr(persona, "get_current_daily_event", lambda: None)()
-        preferred_scene = "" if has_refs else str(getattr(daily_event, "scene", "") or "").strip()
-        scheduled_outfit = str(getattr(persona, "get_current_daily_outfit", lambda: "")() or "").strip()
         return build_leg_focus_action(
             extra_request,
             has_refs,
@@ -1496,8 +1496,6 @@ class SelfieImagePlugin(
             force_legwear=force_legwear,
             force_pose=force_pose,
             force_camera=force_camera,
-            preferred_scene=preferred_scene,
-            scheduled_outfit=scheduled_outfit,
         )
 
     def _normalize_selfie_action(self, action: str, has_refs: bool) -> str:
@@ -1626,8 +1624,8 @@ class SelfieImagePlugin(
     def _looks_like_group_selfie_intent(self, text: str) -> bool:
         return looks_like_group_selfie_intent(text)
 
-    def _looks_like_selfie_intent(self, text: str) -> bool:
-        return looks_like_selfie_intent(text, bot_name=str(self.config.bot_name or "").strip())
+    def _looks_like_selfie_intent(self, text: str, bot_name: str = "") -> bool:
+        return looks_like_selfie_intent(text, bot_name=bot_name)
 
     def _build_cos_look_action(
         self,
@@ -2619,8 +2617,7 @@ class SelfieImagePlugin(
         event: Optional[AstrMessageEvent] = None,
         cos_selection: Optional[CosReferenceSelection] = None,
     ) -> Tuple[str, List[ImageReference]]:
-        # Avoid creating or refreshing a local daily snapshot for COS, group,
-        # or reference-driven shots; those prompts have their own composition.
+        # These shots carry their own composition and do not need a daily snapshot.
         await self._ensure_daily_selfie_schedule(action, bool(extra_refs))
         persona_ref = self._persona_identity_reference(allow_logo=not self._is_cos_action(action))
         if cos_selection is None:
@@ -2635,10 +2632,11 @@ class SelfieImagePlugin(
             refs.extend(self._persona_auxiliary_references(action))
             refs.extend(extra_refs)
             identity_ref = persona_ref
+        framework_persona = await resolve_framework_persona(getattr(self, "context", None), event)
         prompt = self.persona.build_selfie_prompt(
             action=action or "看着镜头自然自拍，展示你现在的样子",
-            bot_name=self.config.bot_name,
-            personality=self.config.personality,
+            bot_name=framework_persona.name,
+            personality=framework_persona.prompt,
             has_reference_image=bool(identity_ref),
             extra_reference_count=(cos_selection.extra_reference_image_count if cos_selection else len(extra_refs)),
             has_external_reference=bool(extra_refs),
@@ -4560,14 +4558,13 @@ class SelfieImagePlugin(
 
         reason = re.sub(r"\s+", " ", str(error or "").strip())[:160]
         llm_prompt = build_batch_failure_llm_prompt(
-            bot_name=self._bot_display_name(),
             reason=reason,
             index=index,
             total=total,
             done_files=done_files,
             will_continue=will_continue,
         )
-        reply = self._strip_llm_short_reply(await self._call_text_llm(event, llm_prompt, timeout=6))
+        reply = self._strip_llm_short_reply(await self._call_text_llm(event, llm_prompt, timeout=6, use_persona=True))
         if reply and len(reply) <= 90 and "可能" not in reply:
             return reply
         return self._batch_shot_fail_text(
@@ -5031,11 +5028,6 @@ class SelfieImagePlugin(
         variation_rows = []
         if variation_enabled:
             fields = variation_fields or ([variation_field] if variation_field else ["pose", "scene", "shot"])
-            variation_rows = self.build_creative_variations(
-                original_prompt,
-                requested_count,
-                {"variation_fields": fields},
-            )
         prompt_enhance_raw = payload.get("prompt_enhance", True)
         prompt_enhance = not (
             prompt_enhance_raw is False
@@ -5086,6 +5078,19 @@ class SelfieImagePlugin(
                 if len(data) > max_bytes:
                     raise RuntimeError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
                 extra_refs.append(ImageReference(data=data, mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data))))
+
+            original_prompt = finalize_cos_prompt_for_request(
+                original_prompt,
+                appearance_type=_appearance_type_for_request(getattr(self, "persona", None), raw_prompt),
+                has_refs=bool(extra_refs) or bool(payload.get("use_selfie_reference")),
+            )
+            request_summary["original_prompt"] = original_prompt
+            if variation_enabled:
+                variation_rows = self.build_creative_variations(
+                    original_prompt,
+                    requested_count,
+                    {"variation_fields": fields},
+                )
 
             if not prompt_enhance:
                 refs = list(extra_refs)
@@ -6467,9 +6472,6 @@ class SelfieImagePlugin(
         else:
             expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         has_refs = bool(extract_image_sources_from_event(event))
-        # Identity references do not replace the outfit source: legs uses the
-        # current schedule look unless the user explicitly supplies clothing.
-        await self._ensure_daily_selfie_schedule(expanded_extra or "看看腿", False)
         fallback = self._build_leg_focus_action(expanded_extra, has_refs)
         async for item in self._handle_selfie_command(
             event=event,
@@ -7023,7 +7025,8 @@ class SelfieImagePlugin(
         prompt, aspect, resol, _, _ = self._resolve_image_preset(prompt, aspect_ratio, resolution or size)
         if not prompt:
             return self._tool_soft_fail("缺少生图提示词", "你想让我往什么感觉走？")
-        if self._looks_like_selfie_intent(prompt):
+        framework_persona = await resolve_framework_persona(getattr(self, "context", None), event)
+        if self._looks_like_selfie_intent(prompt, bot_name=framework_persona.name):
             return await self._run_llm_selfie_flow(event, prompt, requested_count, aspect, resol, ack_message, model_request=model)
 
         await self._send_progress_text(

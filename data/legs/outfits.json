@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "preserve_prompts": {
+    "custom": "服饰按用户本次具体要求呈现，保持连体结构、上下装关系、袜鞋与配饰，不自行补换其他服饰。",
+    "reference": "保留原有上装、下装、连体结构、袜鞋与配饰，只调整姿势和构图。",
+    "requested_detail": "在不改变原有服饰结构的前提下，腿部细节按以下要求呈现：{detail}"
+  },
+  "wear_prompts": {
+    "日常裤装": "保留用户指定的裤装、长度和鞋袜，不为了展示腿部改成短裙或短裤。",
+    "用户指定": "服装按用户明确提供的内容执行，不自行补充或替换。",
+    "光腿": "自然肤色光腿，不增加袜装；其他服装保持本次选定搭配。",
+    "光腿神器": "按自然肤色光腿处理，不添加厚重假肤打底。",
+    "白丝": "采用白色丝袜，袜长、袜口和织纹按用户指定款式执行；保留其他服饰结构。",
+    "黑丝": "采用黑色丝袜，袜长、袜口和织纹按用户指定款式执行；保留其他服饰结构。",
+    "连裤袜": "采用腰部到足部连续的一体连裤袜，不改成独立长筒袜或踩脚袜。",
+    "赤足": "腿部保持自然肤色，双脚自然赤足，不添加鞋袜；不改变其他服装。"
+  },
+  "wear_labels": {
+    "日常裤装": "用户原有裤装",
+    "用户指定": "用户指定穿搭",
+    "光腿": "自然光腿",
+    "光腿神器": "自然肤色光腿",
+    "白丝": "白色丝袜",
+    "黑丝": "黑色丝袜",
+    "连裤袜": "一体连裤袜",
+    "赤足": "室内光腿赤足"
+  },
+  "random_leg_details": [
+    {"id": "black_tights", "title": "黑丝", "wear": "黑丝", "prompt": "黑色袜装按本次选定款式呈现，不叠加第二层袜子。", "weight": 3},
+    {"id": "white_tights", "title": "白丝", "wear": "白丝", "prompt": "白色袜装按本次选定款式呈现，不叠加第二层袜子。", "weight": 3},
+    {"id": "bare_legs", "title": "自然光腿", "wear": "光腿", "prompt": "自然肤色光腿，皮肤保留自然纹理，不增加袜装或鞋履。", "weight": 2},
+    {"id": "barefoot", "title": "室内赤足", "wear": "赤足", "prompt": "腿部保持自然肤色，双脚自然赤足，不添加袜装或鞋履，脚部比例自然。", "weight": 1}
+  ],
+  "outfits": [
+    {"id": "jk_cardigan_pleats", "title": "JK 针织开衫格纹短裙", "prompt": "成年人物的 JK 风格穿搭：合身薄针织开衫、白衬衫与小领结，下搭高腰格纹百褶短裙；裙摆自然覆盖且不掀起，腰线与褶裥清楚。", "weight": 3, "hosiery_families": ["plain", "ribbed", "bow", "stirrup"]},
+    {"id": "jk_blouse_pleats", "title": "JK 衬衫纯色百褶短裙", "prompt": "成年人物的 JK 风格穿搭：白色短袖衬衫搭深色小领带，下搭深色高腰百褶短裙，衬衫自然收进腰头；上下装版型协调，裙摆自然垂落。", "weight": 3, "hosiery_families": ["plain", "ribbed", "bow", "stirrup"]},
+    {"id": "knit_a_line", "title": "修身针织上衣与 A 字短裙", "prompt": "合身浅色针织上衣搭深色高腰 A 字短裙，上衣自然收腰，裙摆保持原有长度与完整覆盖，轮廓利落。", "weight": 2, "hosiery_families": ["plain", "lace", "pattern", "ribbed"]},
+    {"id": "lace_blouse_skirt", "title": "蕾丝领衬衫与层次短裙", "prompt": "浅色蕾丝领衬衫搭同色系高腰层次短裙，只在领口、袖口和裙边保留少量花边；衣物完整，层次轻盈，不露内衣。", "weight": 2, "hosiery_families": ["plain", "lace", "bow", "ribbed"]},
+    {"id": "tee_denim_shorts", "title": "合身短 T 与牛仔短裤", "prompt": "合身纯色短款 T 恤搭高腰牛仔短裤，衣长停在腰头附近，裤脚平整、长度自然，保留真实牛仔纹理，不添加破洞或夸张开口。", "weight": 3, "hosiery_families": ["plain", "ribbed", "pattern", "stirrup"]},
+    {"id": "sport_shorts_set", "title": "休闲运动短裤套装", "prompt": "同色系轻薄运动短袖与松紧腰运动短裤组成完整休闲套装，短裤有简洁侧边滚条，裤脚自然宽松且覆盖完整；保持室内静态穿搭展示。", "weight": 3, "hosiery_families": ["plain", "ribbed", "stirrup"]},
+    {"id": "tennis_skirt_set", "title": "POLO 上衣与网球短裙", "prompt": "简洁修身 POLO 上衣搭同色系高腰网球百褶短裙，上下装保持运动休闲风格；裙摆自然覆盖，腰线清楚，不摆运动动作。", "weight": 2, "hosiery_families": ["plain", "ribbed", "stirrup"]},
+    {"id": "home_cotton_shorts", "title": "柔软家居短裤套装", "prompt": "柔软纯棉短袖上衣搭配套家居短裤，素色或少量小图案，裤脚宽松自然，布料有真实坐姿褶皱，不把上衣延长遮住整条短裤。", "weight": 2, "hosiery_families": ["plain", "ribbed", "stirrup"]}
+  ],
+  "hosiery_styles": [
+    {"id": "black_sheer", "title": "薄透黑色连裤袜", "wear": "黑丝", "family": "plain", "kind": "tights", "prompt": "薄透黑色连裤袜，膝部与小腿保留自然透肤层次，袜面哑光细腻，足部包覆完整，不做油亮塑料质感。", "aliases": ["薄透黑色连裤袜", "薄透黑丝", "薄黑连裤袜", "黑色连裤袜", "黑色丝袜"], "weight": 2},
+    {"id": "black_over_knee", "title": "黑色窄口过膝袜", "wear": "黑丝", "family": "plain", "kind": "thigh_high", "prompt": "黑色过膝长筒丝袜，平整窄袜口停在大腿中段，裙裤与袜口之间保留自然肤色间隔，双腿袜长一致，足部包覆完整。", "aliases": ["黑色过膝袜", "黑丝过膝", "过膝黑丝", "黑色长筒袜"], "weight": 2},
+    {"id": "black_lace_top", "title": "蕾丝宽边黑色长筒袜", "wear": "黑丝", "family": "lace", "kind": "thigh_high", "prompt": "黑色长筒丝袜，袜身细透、大腿中段是精细蕾丝宽袜口，花纹只集中在袜口；不加吊袜带、腿环或多余绑带，足部包覆完整。", "aliases": ["蕾丝边黑丝", "蕾丝黑丝", "蕾丝宽边黑色长筒袜", "黑色蕾丝袜", "黑丝蕾丝袜口", "黑丝蕾丝边", "黑色蕾丝过膝袜"], "weight": 2},
+    {"id": "black_ribbed", "title": "细竖纹黑色长筒袜", "wear": "黑丝", "family": "ribbed", "kind": "thigh_high", "prompt": "黑色细竖纹长筒袜，针织纹理顺腿部自然延伸，袜口平整，膝部有轻微真实织物变化，不生成粗厚保暖护具。", "aliases": ["竖纹黑丝", "黑色竖纹袜", "黑色针织长筒袜"], "weight": 1},
+    {"id": "black_micro_dot", "title": "细小波点黑色连裤袜", "wear": "黑丝", "family": "pattern", "kind": "tights", "prompt": "薄透黑色连裤袜上均匀分布细小低对比波点，图案疏而小，不变成大网眼；整双连裤袜连贯，足部包覆自然。", "aliases": ["波点黑丝", "黑色波点连裤袜"], "weight": 1},
+    {"id": "black_stirrup", "title": "黑色踩脚长袜", "wear": "黑丝", "family": "stirrup", "kind": "stirrup", "prompt": "黑色过膝踩脚长袜，袜身沿腿部到脚背并由脚弓处一条连续袜带固定，脚趾和脚跟自然露出；袜口简洁，不叠加普通短袜或鞋履。", "aliases": ["黑色踩脚袜", "踩脚黑丝", "黑丝踩脚袜"], "weight": 1},
+    {"id": "white_sheer", "title": "薄透乳白色连裤袜", "wear": "白丝", "family": "plain", "kind": "tights", "prompt": "薄透乳白色连裤袜，织物与自然肤色形成柔和层次，膝踝保留真实立体感，足部包覆完整，不生成纯白无纹理的塑料腿。", "aliases": ["薄透白丝", "薄透白色连裤袜", "乳白连裤袜", "白色连裤袜", "白色丝袜"], "weight": 2},
+    {"id": "white_over_knee", "title": "白色双细条过膝袜", "wear": "白丝", "family": "plain", "kind": "thigh_high", "prompt": "白色过膝长筒袜，袜口只有两道低对比细条纹，停在大腿中段，双腿袜长一致，面料柔软、足部包覆完整。", "aliases": ["白色过膝袜", "白丝过膝", "过膝白丝", "双条纹白袜"], "weight": 2},
+    {"id": "white_lace_top", "title": "蕾丝花边白色长筒袜", "wear": "白丝", "family": "lace", "kind": "thigh_high", "prompt": "乳白色长筒丝袜，袜口有窄幅细密蕾丝花边，袜身保持简单柔软，双腿款式一致；不增加吊袜带、腿环或夸张荷叶边。", "aliases": ["蕾丝边白丝", "蕾丝白丝", "白色蕾丝袜", "白丝蕾丝袜口", "白丝蕾丝边", "白色蕾丝过膝袜"], "weight": 2},
+    {"id": "white_ribbed", "title": "细竖纹白色长筒袜", "wear": "白丝", "family": "ribbed", "kind": "thigh_high", "prompt": "柔软白色细竖纹长筒袜，织纹细密自然，袜口平整，膝踝处少量真实褶皱，不形成厚重堆积或医疗包扎感。", "aliases": ["竖纹白丝", "白色竖纹袜", "白色针织长筒袜"], "weight": 1},
+    {"id": "white_bow", "title": "小蝴蝶结白色过膝袜", "wear": "白丝", "family": "bow", "kind": "thigh_high", "prompt": "白色过膝丝袜，双侧袜口外侧各一枚小而扁的同色蝴蝶结，袜身平整，不添加垂带或大装饰，足部自然包覆。", "aliases": ["蝴蝶结白丝", "白色蝴蝶结过膝袜"], "weight": 1},
+    {"id": "white_stirrup", "title": "白色踩脚长袜", "wear": "白丝", "family": "stirrup", "kind": "stirrup", "prompt": "白色过膝踩脚长袜，袜身自然延伸到脚背，脚弓处连续袜带固定，脚趾和脚跟自然露出；不叠加第二层袜子或鞋履。", "aliases": ["白色踩脚袜", "踩脚白丝", "白丝踩脚袜"], "weight": 1}
+  ]
+}

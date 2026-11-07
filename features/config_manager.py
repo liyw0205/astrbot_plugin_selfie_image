@@ -498,6 +498,8 @@ class ConfigurationMixin:
         cleaned = copy.deepcopy(data if isinstance(data, dict) else {})
         for key in WEB_STARTUP_CONFIG_KEYS:
             cleaned.pop(key, None)
+        for key in ("botName", "bot_name", "personality"):
+            cleaned.pop(key, None)
         return cleaned
 
     def _load_initial_config(self) -> Dict[str, Any]:

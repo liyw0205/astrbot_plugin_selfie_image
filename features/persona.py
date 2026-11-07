@@ -23,6 +23,7 @@ from ..cos.leg_focus import (
     has_leg_focus_contract,
     is_leg_calf_crop_action,
 )
+from ..cos.cos_looks_loader import COS_JSON_POSES
 from ..core.utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
 from .daily_schedule import (
     DEFAULT_BUSINESS_DAY_START,
@@ -1920,7 +1921,8 @@ class PersonaManager:
         act = str(action or "").strip()
         intent = self.analyze_selfie_intent(act)
         if intent.is_legs_only and not has_leg_focus_contract(act):
-            act = ensure_leg_focus_action(act, has_reference_image)
+            external_reference = has_reference_image if has_external_reference is None else has_external_reference
+            act = ensure_leg_focus_action(act, external_reference)
             intent = self.analyze_selfie_intent(act)
         # Mode-specific action builders already select one coherent shot,
         # scene, gesture, and light. Do not layer an unrelated legacy snapshot
@@ -1953,15 +1955,13 @@ class PersonaManager:
         group_contract = bool(intent.is_group_photo and has_group_composition_contract(act))
         cos_pose_match = re.search(r"【cos_pose:([a-z_]+)】", act, re.I)
         cos_pose_id = str(cos_pose_match.group(1) if cos_pose_match else "")
-        back_facing_shot = shot_id in {"back_view", "rear_rooftop"} or cos_pose_id in {
-            "back_to_camera",
-            "over_shoulder",
-        }
-        side_facing_shot = shot_id == "side_profile" or cos_pose_id == "side_profile"
+        cos_orientation = COS_JSON_POSES.get(cos_pose_id, {}).get("orientation")
+        back_facing_shot = shot_id in {"back_view", "rear_rooftop"} or cos_orientation == "back"
+        side_facing_shot = shot_id == "side_profile" or cos_orientation == "side"
         feet_cropped = is_leg_calf_crop_action(act)
         leg_face_context = intent.is_legs_only and feet_cropped and has_leg_face_context(act)
         wear_tag_match = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", act)
-        foot_target = "足部" if wear_tag_match and wear_tag_match.group(1) == "barefoot" else "鞋履"
+        foot_target = "足部" if has_leg_focus_contract(act) or (wear_tag_match and wear_tag_match.group(1) == "barefoot") else "鞋履"
         daily = self.get_daily_selfie_profile()
 
         identity_lines = (
@@ -2051,7 +2051,7 @@ class PersonaManager:
                         "换装 / COS 时只迁移服装、配饰、颜色、材质、印花和造型氛围，不迁移额外参考图人物的脸型、五官、发型发色或体态。",
                         (
                             "性别跟随参考图一；若当前构图允许面部入镜，面部清晰自然，表情眼神按本次场景重画。"
-                            if back_facing_shot
+                            if back_facing_shot or side_facing_shot
                             else "性别跟随参考图一；除非用户要求遮脸，否则主角面部清晰自然，表情眼神按本次场景重画。"
                         ),
                     ]
@@ -2060,7 +2060,7 @@ class PersonaManager:
                         "额外参考图用于构图、衣服、姿势、场景或光线；主角仍符合角色名称和人设。",
                         (
                             "若当前构图允许面部入镜，主角面部清晰自然。"
-                            if back_facing_shot
+                            if back_facing_shot or side_facing_shot
                             else "除非用户要求遮脸，否则主角面部清晰自然。"
                         ),
                     ]
@@ -2492,6 +2492,8 @@ class PersonaManager:
                 intent.camera_kind or ("third" if intent.is_third_person_photo else "selfie"),
                 "自拍动漫画面" if appearance_type == "anime" else "自拍照片",
             )
+        elif intent.is_group_photo:
+            subject_photo_label = "动漫合影画面" if appearance_type == "anime" else "合影照片"
         else:
             if appearance_type == "anime":
                 subject_photo_label = "日常他拍动漫画面" if intent.is_third_person_photo and not intent.is_group_photo else "动漫自拍画面"
@@ -2534,8 +2536,8 @@ class PersonaManager:
         return "\n".join(
             line
             for line in [
-                f"这是 {bot_name or 'AI'} 的{subject_photo_label}。",
-                "" if has_reference_image else (f"角色设定：{personality}" if personality else ""),
+                f"这是{subject_photo_label}。",
+                "" if has_reference_image else (f"角色设定：{personality}\n【角色设定结束】" if personality else ""),
                 *identity_lines,
                 *reference_lines,
                 *today_lines,

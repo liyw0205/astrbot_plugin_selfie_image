@@ -24,7 +24,7 @@
     {
       "cos_type": "从零开始的异世界生活",
       "file": "从零开始的异世界生活.json",
-      "count": 14
+      "count": 19
     },
     {
       "cos_type": "公主连结",
@@ -64,7 +64,7 @@
     {
       "cos_type": "埃罗芒阿老师",
       "file": "埃罗芒阿老师.json",
-      "count": 2
+      "count": 5
     },
     {
       "cos_type": "崩坏3",
@@ -127,6 +127,11 @@
       "count": 17
     },
     {
+      "cos_type": "少女前线",
+      "file": "少女前线.json",
+      "count": 20
+    },
+    {
       "cos_type": "礼服",
       "file": "礼服.json",
       "count": 1
@@ -139,7 +144,12 @@
     {
       "cos_type": "缘之空",
       "file": "缘之空.json",
-      "count": 1
+      "count": 6
+    },
+    {
+      "cos_type": "平凡职业造就世界最强",
+      "file": "平凡职业造就世界最强.json",
+      "count": 10
     },
     {
       "cos_type": "蔚蓝档案",
@@ -458,6 +468,21 @@
     "btth_nalan_yanran_yunlan",
     "btth_han_yue_ice",
     "qiong_white_gaming_room",
+    "artsee384_school_gray_013",
+    "artsee384_gothic_black_white_021",
+    "artsee384_school_navy_034",
+    "artsee384_white_gray_plaid_037",
+    "artsee384_white_ruffle_048",
+    "artsee589_yue_character_sheet",
+    "artsee589_shea_character_sheet",
+    "artsee589_tio_character_sheet",
+    "artsee589_kaori_character_sheet",
+    "artsee589_miu_character_sheet",
+    "artsee589_aiko_character_sheet",
+    "artsee589_nakamura_eri_character_sheet",
+    "artsee589_sonobe_yuuka_character_sheet",
+    "artsee589_cattleya_character_sheet",
+    "artsee589_mona_haulia_character_sheet",
     "cc_white_tiger_pink_gold_dress",
     "silver_wolf_blue_black_street",
     "firefly_white_gauze_dress",
@@ -738,6 +763,9 @@
     "kafka_black_purple_coat",
     "march7th_pink_white_offshoulder",
     "izumi_sagiri_pink_green_print",
+    "artsee613_pink_ruffle_009",
+    "artsee613_green_hoodie_009",
+    "artsee613_black_white_maid_034",
     "fate_bb_pink_black_tech",
     "original_white_shirt_loose_tie",
     "original_knit_cardigan_camisole",
@@ -871,6 +899,26 @@
     "fate_melusine_white_silver",
     "fate_okita_white_red_haori",
     "fate_musashi_red_blue",
-    "fate_atalanta_forest_huntress"
+    "fate_atalanta_forest_huntress",
+    "artsee173_006_kalina_youth",
+    "artsee173_007_kalina_free_street",
+    "artsee173_008_kalina_rock_wrench",
+    "artsee173_009_mk23_sweet_devil",
+    "artsee173_010_9a91_cafe",
+    "artsee173_011_welrod_british",
+    "artsee173_012_ump45_only_this",
+    "artsee173_013_ump9_wait",
+    "artsee173_014_ptrd_romantic",
+    "artsee173_015_sumi_summer",
+    "artsee173_016_type95_cicada",
+    "artsee173_017_wa2000_tropical",
+    "artsee173_018_ntw20_hotday",
+    "artsee173_019_fiveseven_cruise",
+    "artsee173_020_springfield_mermaid",
+    "artsee173_021_m1garand_beach",
+    "artsee173_022_kalina_fireworks",
+    "artsee173_023_m950a_water",
+    "artsee173_024_mg4_survival",
+    "artsee173_025_ar15_new_term"
   ]
 }

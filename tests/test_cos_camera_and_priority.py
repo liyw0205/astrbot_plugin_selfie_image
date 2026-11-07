@@ -171,7 +171,7 @@ def test_corrected_cos_identity_details_are_present_in_final_catalog():
     assert "蔚蓝档案" in prompts["ibuki_red_white_sportswear"]
     assert "白色长发" in prompts["blue_archive_hina"]
     assert "紫色眼睛" in prompts["blue_archive_hina"]
-    assert "粉色长发" in prompts["blue_archive_aru"]
+    assert re.search(r"粉色长(?:假)?发", prompts["blue_archive_aru"])
     assert "红色短发" in prompts["blue_archive_junko"]
     assert "黑色短发" in prompts["blue_archive_tsubaki"]
     assert "金色齐肩双马尾" in prompts["blue_archive_chinatsu"]

@@ -71,6 +71,8 @@ def _load_catalog() -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
 
 def _load_vocab(filename: str) -> Dict[str, Dict[str, Any]]:
     payload = _read_json(COS_DATA_DIR / filename)
+    if payload.get("schema_version") != 1:
+        raise CosLooksDataError(f"COS 词库缺少受支持的 schema_version: {filename}")
     items = payload.get("items") or {}
     if not isinstance(items, Mapping):
         raise CosLooksDataError(f"COS 词库必须是对象: {filename}")
@@ -197,6 +199,12 @@ def validate_json_catalog() -> List[str]:
     expression_ids = set(COS_JSON_EXPRESSIONS)
     makeup_ids = set(COS_JSON_MAKEUPS)
     camera_ids = {"selfie", "first", "third"}
+    for expression_id, expression in COS_JSON_EXPRESSIONS.items():
+        if set(expression) != {"label", "prompt", "aliases"}:
+            issues.append(f"expression {expression_id}: expected label/prompt/aliases")
+        aliases = expression.get("aliases")
+        if not isinstance(aliases, list) or not aliases or any(not isinstance(alias, str) or not alias.strip() for alias in aliases):
+            issues.append(f"expression {expression_id}: aliases must be a non-empty string list")
     unknown_pose_aliases = set(COS_JSON_POSE_REQUEST_ALIASES) - pose_ids
     if unknown_pose_aliases:
         issues.append("pose request aliases reference unknown ids: " + ",".join(sorted(unknown_pose_aliases)[:8]))
@@ -297,6 +305,18 @@ def validate_json_catalog() -> List[str]:
         if not pose_framings and not pose.get("explicit_only"):
             issues.append(f"pose {pose_id}: no compatible framings")
     for framing_id, framing in COS_JSON_FRAMINGS.items():
+        invalid_list = False
+        for field in ("random_camera_ids", "camera_ids", "scene_ids"):
+            if field in framing and (
+                not isinstance(framing[field], list)
+                or any(not isinstance(value, str) or not value.strip() for value in framing[field])
+            ):
+                issues.append(f"framing {framing_id}: {field} must be a list")
+                invalid_list = True
+        if invalid_list:
+            continue
+        if framing.get("camera_ids") and not set(framing.get("random_camera_ids") or []) <= set(framing["camera_ids"]):
+            issues.append(f"framing {framing_id}: random cameras must be allowed by camera_ids")
         missing_scenes = [value for value in framing.get("scene_ids") or [] if value not in scene_ids]
         if missing_scenes:
             issues.append(f"framing {framing_id}: scenes missing {','.join(missing_scenes[:8])}")

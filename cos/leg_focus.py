@@ -12,6 +12,7 @@ from ..core.prompt_data import PromptDataError, read_nonempty_list, read_version
 
 
 DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "legs" / "compositions.json"
+OUTFIT_DATA_PATH = DATA_PATH.with_name("outfits.json")
 
 
 class LegFocusDataError(RuntimeError):
@@ -61,45 +62,83 @@ def _load_pool() -> Dict[str, Any]:
             raise LegFocusDataError(f"看看腿姿势字段不完整或引用无效: {pose_id}")
         pose_ids.add(pose_id)
 
-    for key in ("framing", "full_framing", "scene_rule", "outfit_rule"):
+    for key in ("framing", "full_framing", "scene_rule"):
         if not str(payload.get(key) or "").strip():
             raise LegFocusDataError(f"看看腿提示词池缺少字段: {key}")
-    details = read_nonempty_list(payload, "random_leg_details", "看看腿腿部细节池")
-    seen_details: set[str] = set()
-    for index, raw in enumerate(details):
-        if not isinstance(raw, Mapping):
-            raise LegFocusDataError(f"看看腿腿部细节第 {index + 1} 项必须是对象")
-        detail_id = str(raw.get("id") or "").strip()
-        if (
-            not detail_id
-            or detail_id in seen_details
-            or not str(raw.get("title") or "").strip()
-            or not str(raw.get("prompt") or "").strip()
-            or not isinstance(raw.get("weight"), int)
-            or int(raw.get("weight") or 0) < 1
-        ):
-            raise LegFocusDataError(f"看看腿腿部细节字段不完整或重复: {detail_id or index + 1}")
-        seen_details.add(detail_id)
     return dict(payload)
 
 
+def _load_outfit_pool() -> Dict[str, Any]:
+    try:
+        payload = read_versioned_json(OUTFIT_DATA_PATH, "看看腿服饰池")
+        for key in ("outfits", "random_leg_details", "hosiery_styles"):
+            records = read_nonempty_list(payload, key, "看看腿服饰池")
+            seen: set[str] = set()
+            for raw in records:
+                if not isinstance(raw, Mapping):
+                    raise LegFocusDataError(f"看看腿服饰池 {key} 必须是对象数组")
+                item_id = str(raw.get("id") or "").strip()
+                if (
+                    not item_id or item_id in seen
+                    or not str(raw.get("title") or "").strip()
+                    or not str(raw.get("prompt") or "").strip()
+                    or type(raw.get("weight")) is not int or raw["weight"] < 1
+                ):
+                    raise LegFocusDataError(f"看看腿服饰池字段不完整或重复: {key}/{item_id}")
+                seen.add(item_id)
+    except PromptDataError as exc:
+        raise LegFocusDataError(str(exc)) from exc
+    for key, required in (
+        ("preserve_prompts", {"custom", "reference", "requested_detail"}),
+        ("wear_prompts", {"日常裤装", "用户指定", "光腿", "光腿神器", "黑丝", "白丝", "赤足", "连裤袜"}),
+        ("wear_labels", {"日常裤装", "用户指定", "光腿", "光腿神器", "黑丝", "白丝", "赤足", "连裤袜"}),
+    ):
+        values = payload.get(key)
+        if not isinstance(values, Mapping) or not all(str(values.get(name) or "").strip() for name in required):
+            raise LegFocusDataError(f"看看腿服饰池缺少字段: {key}")
+    for detail in payload["random_leg_details"]:
+        if detail.get("wear") not in {"黑丝", "白丝", "光腿", "赤足"}:
+            raise LegFocusDataError(f"看看腿腿部细节无效: {detail['id']}")
+    for style in payload["hosiery_styles"]:
+        if (
+            style.get("wear") not in {"黑丝", "白丝"}
+            or not str(style.get("family") or "").strip()
+            or style.get("kind") not in {"tights", "thigh_high", "stirrup"}
+            or not isinstance(style.get("aliases"), list)
+            or not style["aliases"]
+            or any(not isinstance(alias, str) or not alias.strip() for alias in style["aliases"])
+        ):
+            raise LegFocusDataError(f"看看腿袜装款式无效: {style['id']}")
+    families = {style["family"] for style in payload["hosiery_styles"]}
+    for outfit in payload["outfits"]:
+        allowed = outfit.get("hosiery_families")
+        if not isinstance(allowed, list) or not allowed or not set(allowed) <= families:
+            raise LegFocusDataError(f"看看腿服饰兼容袜装无效: {outfit['id']}")
+        for wear in ("黑丝", "白丝"):
+            if not any(
+                style["family"] in allowed and style["wear"] == wear and style["kind"] == "tights"
+                for style in payload["hosiery_styles"]
+            ):
+                raise LegFocusDataError(f"看看腿服饰缺少兼容连裤袜: {outfit['id']}/{wear}")
+    return payload
+
+
 _POOL = _load_pool()
+_OUTFITS = _load_outfit_pool()
 LEGFOCUS_SCENE_POOL: List[Dict[str, Any]] = [dict(item) for item in _POOL["scenes"]]
 LEGFOCUS_SCENE_BY_ID = {str(item["id"]): item for item in LEGFOCUS_SCENE_POOL}
 LEGFOCUS_POSE_POOL: List[Dict[str, Any]] = [dict(item) for item in _POOL["poses"]]
 LEGFOCUS_POSE_BY_ID = {str(item["id"]): item for item in LEGFOCUS_POSE_POOL}
 LEGFOCUS_RANDOM_LEG_DETAILS: List[Dict[str, Any]] = [
-    dict(item) for item in _POOL["random_leg_details"]
+    dict(item) for item in _OUTFITS["random_leg_details"]
 ]
 LEGFOCUS_FRAMING = str(_POOL["framing"])
 LEGFOCUS_FULL_FRAMING = str(_POOL["full_framing"])
 LEGFOCUS_SCENE_RULE = str(_POOL["scene_rule"])
-LEGFOCUS_OUTFIT_RULE = str(_POOL["outfit_rule"])
-LEGFOCUS_WEAR_PROMPTS = dict(_POOL.get("wear_prompts") or {})
-LEGFOCUS_WEAR_LABELS = dict(_POOL.get("wear_labels") or {})
-LEGFOCUS_STOCKING_FINISHES: List[Dict[str, Any]] = [
-    dict(item) for item in (_POOL.get("hosiery_finishes") or []) if isinstance(item, Mapping)
-]
+LEGFOCUS_PRESERVE_PROMPTS = dict(_OUTFITS["preserve_prompts"])
+LEGFOCUS_WEAR_PROMPTS = dict(_OUTFITS["wear_prompts"])
+LEGFOCUS_WEAR_LABELS = dict(_OUTFITS["wear_labels"])
+LEGFOCUS_HOSIERY_STYLES: List[Dict[str, Any]] = [dict(item) for item in _OUTFITS["hosiery_styles"]]
 
 LEGFOCUS_POSE_IDS = frozenset(LEGFOCUS_POSE_BY_ID)
 LEGFOCUS_EXPLICIT_ONLY_POSE_IDS = frozenset()
@@ -182,12 +221,7 @@ SAFE_LEGWEAR_LABELS = {
     for key, value in LEGFOCUS_WEAR_LABELS.items()
     if str(key).strip() and str(value).strip()
 }
-_DETAIL_TAGS = {
-    "black_tights": "黑丝",
-    "white_tights": "白丝",
-    "bare_legs": "光腿",
-    "barefoot": "赤足",
-}
+_DETAIL_TAGS = {str(item["id"]): str(item["wear"]) for item in LEGFOCUS_RANDOM_LEG_DETAILS}
 _DETAIL_WEIGHTS = [
     _DETAIL_TAGS[str(item["id"])]
     for item in LEGFOCUS_RANDOM_LEG_DETAILS
@@ -201,9 +235,8 @@ LEGWEAR_BY_POSE = {
 for old_id, current_id in LEGFOCUS_POSE_ALIASES.items():
     LEGWEAR_BY_POSE[old_id] = LEGWEAR_BY_POSE[current_id]
 
-# The former complete outfit pool is intentionally empty: leg focus no longer
-# invents bottoms, shoes, or a replacement costume.
-LEGFOCUS_OUTFIT_POOL: List[Dict[str, str]] = []
+LEGFOCUS_OUTFIT_POOL: List[Dict[str, Any]] = [dict(item) for item in _OUTFITS["outfits"]]
+LEGFOCUS_OUTFIT_BY_ID = {str(item["id"]): item for item in LEGFOCUS_OUTFIT_POOL}
 LEGFOCUS_RISKY_EXTRA_REPLACEMENTS = (
     ("掀衣摆", "整理衣摆"),
     ("晒腿", "记录穿搭"),
@@ -212,7 +245,7 @@ LEGFOCUS_RISKY_EXTRA_REPLACEMENTS = (
 )
 
 LEGWEAR_REQUEST_PATTERN = re.compile(
-    r"(?:光腿神器|光腿|白丝|黑丝|丝袜|短袜|堆堆袜|过膝袜|长筒袜|肉色丝袜|肉丝|连裤袜|长袜|赤足|裸足|光脚)"
+    r"(?:光腿神器|光腿|白丝|黑丝|丝袜|短袜|堆堆袜|过膝袜|长筒袜|踩脚袜|肉色丝袜|肉丝|连裤袜|长袜|赤足|裸足|光脚)"
 )
 LEGWEAR_NEGATION_PATTERN = re.compile(
     r"(?:不穿|不要|不需要|无需|不必|不加|不搭配|不用|不带|没有|没穿)\s*(?:任何)?\s*"
@@ -226,7 +259,9 @@ LEG_FACE_REQUEST_PATTERN = re.compile(r"(?:露脸|露头|带脸|看脸|面部入
 LEG_FULL_OUTFIT_REQUEST_PATTERN = re.compile(
     r"(?:全身|从头到脚|头部到鞋履|全身入镜|全身构图|full[- ]?body)", re.I
 )
-LEGFOCUS_OUTFIT_REQUEST_PATTERN = re.compile(r"(?:裙|百褶|A字|半身|裤|鞋|靴|平底|乐福|玛丽珍|帆布鞋|凉鞋)")
+LEGFOCUS_OUTFIT_REQUEST_PATTERN = re.compile(
+    r"(?:裙|百褶|A字|裤|鞋|靴|平底|乐福|玛丽珍|帆布鞋|凉鞋|JK|洛丽塔|水手服|套装|T恤|衬衫|针织|卫衣|背心)", re.I
+)
 LEGFOCUS_COMPLETE_OUTFIT_REQUEST_PATTERN = re.compile(
     r"(?:身穿|穿着|换成|换上|改穿|连体(?:衣|服)|连衣裙|COS服|cosplay服装|制服|和服|旗袍|女仆装|礼服|参考图.{0,8}(?:服装|衣服|穿搭))",
     re.I,
@@ -260,18 +295,6 @@ def is_leg_calf_crop_action(text: str) -> bool:
 CALF_CROP_POSES = frozenset(
     set(LEGFOCUS_POSE_IDS) | set(LEGFOCUS_POSE_ALIASES) | {"sit", "sit_crop"}
 )
-
-
-def pick_stocking_finish() -> str:
-    if not LEGFOCUS_STOCKING_FINISHES:
-        return ""
-    pool = [
-        str(item.get("prompt") or "")
-        for item in LEGFOCUS_STOCKING_FINISHES
-        for _ in range(max(1, int(item.get("weight") or 1)))
-        if str(item.get("prompt") or "").strip()
-    ]
-    return random.choice(pool) if pool else ""
 
 
 def _has_positive_term(text: str, term: str) -> bool:
@@ -343,19 +366,49 @@ def pick_leg_focus_pose(
     return _weighted_pose_choice(pool)
 
 
-def pick_leg_focus_outfit(*, legwear: str = "", avoid_id: str = "") -> Dict[str, str]:
-    del legwear, avoid_id
-    return {}
+def pick_leg_focus_outfit(*, avoid_id: str = "", hosiery_family: str = "") -> Dict[str, Any]:
+    pool = [
+        item for item in LEGFOCUS_OUTFIT_POOL
+        if item["id"] != avoid_id
+        and (not hosiery_family or hosiery_family in item["hosiery_families"])
+    ]
+    if not pool:
+        pool = [item for item in LEGFOCUS_OUTFIT_POOL if not hosiery_family or hosiery_family in item["hosiery_families"]]
+    if not pool:
+        raise LegFocusDataError(f"看看腿服饰池没有兼容袜装: {hosiery_family}")
+    return dict(random.choices(pool, weights=[item["weight"] for item in pool], k=1)[0])
 
 
-def get_leg_focus_outfit(outfit_id: str) -> Dict[str, str]:
-    del outfit_id
-    return {}
+def get_leg_focus_outfit(outfit_id: str) -> Dict[str, Any]:
+    return dict(LEGFOCUS_OUTFIT_BY_ID.get(str(outfit_id or ""), {}))
+
+
+def _requested_hosiery_style(text: str) -> Dict[str, Any]:
+    matches = [
+        (len(alias), style)
+        for style in LEGFOCUS_HOSIERY_STYLES
+        for alias in (style["title"], *style["aliases"])
+        if _has_positive_term(text, alias)
+    ]
+    return dict(max(matches, key=lambda item: item[0])[1]) if matches else {}
+
+
+def _pick_hosiery_style(wear: str, outfit: Dict[str, Any]) -> Dict[str, Any]:
+    pool = [
+        style for style in LEGFOCUS_HOSIERY_STYLES
+        if style["family"] in outfit["hosiery_families"]
+        and (style["wear"] == wear or (wear == "连裤袜" and style["kind"] == "tights"))
+    ]
+    return dict(random.choices(pool, weights=[item["weight"] for item in pool], k=1)[0]) if pool else {}
 
 
 def has_explicit_leg_outfit(text: str) -> bool:
     cleaned = LEGWEAR_NEGATION_PATTERN.sub(" ", str(text or ""))
+    for style in LEGFOCUS_HOSIERY_STYLES:
+        for term in (style["title"], *style["aliases"]):
+            cleaned = cleaned.replace(term, " ")
     cleaned = LEGWEAR_REQUEST_PATTERN.sub(" ", cleaned)
+    cleaned = re.sub(r"(?:身穿|穿着|换成|换上|改穿)\s*$", " ", cleaned)
     cleaned = re.sub(r"(?:参考图中的)?鞋袜搭配|鞋袜", " ", cleaned)
     return bool(
         LEGFOCUS_OUTFIT_REQUEST_PATTERN.search(cleaned)
@@ -405,9 +458,12 @@ def parse_requested_legwear(text: str) -> str:
             "barefoot": "赤足",
             "pantyhose": "连裤袜",
         }[safe_tag.group(1)]
+    requested_style = _requested_hosiery_style(raw)
+    if requested_style:
+        return str(requested_style["wear"])
     explicit_values = ("白丝", "黑丝", "光腿神器", "光腿", "赤足", "连裤袜", "丝袜", "光脚", "裸足")
     for value in explicit_values:
-        if value in LEGWEAR_NEGATION_PATTERN.sub(" ", raw):
+        if _has_positive_term(LEGWEAR_NEGATION_PATTERN.sub(" ", raw), value):
             if value in {"光脚", "裸足"}:
                 return "赤足"
             if value == "丝袜":
@@ -435,6 +491,9 @@ def _clean_extra_request(extra_request: str) -> str:
         r"(?:第一人称(?:视角)?|第三人称(?:视角)?|手机自拍|自拍|自己拍|他拍|别人拍|朋友拍|摄影师拍|俯拍|正上方|顶拍|top[- ]?down)",
         " ", extra, flags=re.I,
     )
+    for style in LEGFOCUS_HOSIERY_STYLES:
+        for term in sorted((style["title"], *style["aliases"]), key=len, reverse=True):
+            extra = extra.replace(term, " ")
     extra = LEGWEAR_REQUEST_PATTERN.sub(" ", extra)
     for pose in LEGFOCUS_POSE_POOL:
         for term in (str(pose["title"]), *(pose.get("aliases") or [])):
@@ -456,7 +515,6 @@ def build_leg_focus_action(
     force_camera: str = "",
     force_framing: str = "",
     preferred_scene: str = "",
-    scheduled_outfit: str = "",
 ) -> str:
     raw_extra = str(extra_request or "")
     requested_scene = parse_requested_leg_scene(raw_extra)
@@ -495,27 +553,32 @@ def build_leg_focus_action(
     requested_wear = str(force_legwear or "").strip()
     if requested_wear not in LEGWEAR_PROMPTS:
         requested_wear = parse_requested_legwear(raw_extra)
+    requested_style = _requested_hosiery_style(raw_extra)
+    if requested_style and requested_wear not in {requested_style["wear"], ""}:
+        requested_style = {}
     explicit_outfit = has_explicit_leg_outfit(raw_extra)
-    scheduled_outfit = str(scheduled_outfit or "").strip()
     if explicit_outfit:
         outfit_source = "custom"
-    elif scheduled_outfit:
-        outfit_source = "scheduled"
     elif has_refs:
         outfit_source = "reference"
     else:
-        outfit_source = ""
+        outfit_source = "pool"
 
     detail: Dict[str, Any] = {}
+    outfit: Dict[str, Any] = {}
+    style: Dict[str, Any] = {}
     if requested_wear:
         wear = requested_wear
         if wear in {"日常裤装", "用户指定"}:
             wear = "用户指定"
-    elif outfit_source:
+    elif outfit_source != "pool":
         wear = "用户指定"
     else:
         detail = _weighted_detail_choice()
         wear = _DETAIL_TAGS.get(str(detail.get("id") or ""), "用户指定")
+    if outfit_source == "pool":
+        outfit = pick_leg_focus_outfit(hosiery_family=str(requested_style.get("family") or ""))
+        style = requested_style or _pick_hosiery_style(wear, outfit)
 
     framing = str(force_framing or "").strip()
     if framing not in {"full_outfit", "leg_detail"}:
@@ -524,26 +587,19 @@ def build_leg_focus_action(
         )
         framing = "full_outfit" if explicit_full else "leg_detail"
 
-    outfit_line = ""
-    if outfit_source == "scheduled":
-        outfit_line = f"今日日程当前事件完整穿搭：{scheduled_outfit}。只改姿势、构图与室内背景，不新增、删减或替换任何服饰部件。"
-        if requested_wear:
-            outfit_line += f"用户额外指定的腿部细节仅在不破坏该套装结构时执行：{LEGWEAR_PROMPTS.get(requested_wear, requested_wear)}"
-    elif outfit_source == "reference":
-        outfit_line = "引用图中的现有穿搭是本次服装来源；保留原有上装、下装、连体结构、袜鞋与配饰，只调整姿势和构图。"
-        if requested_wear:
-            outfit_line += f"用户额外指定的腿部细节仅在与引用图穿搭兼容时执行：{LEGWEAR_PROMPTS.get(requested_wear, requested_wear)}"
-    elif outfit_source == "custom":
-        outfit_line = "用户本次明确指定的服饰是唯一服装来源；完整保留连体结构、上下装关系、袜鞋与配饰，不自行搭配其他服饰。"
-    elif requested_wear:
-        outfit_line = (
-            "用户明确指定的腿部细节只在现有穿搭兼容时执行："
-            + LEGWEAR_PROMPTS.get(requested_wear, requested_wear)
-        )
-    elif detail:
-        outfit_line = "穿搭按人物设定执行，不推测裙装、裤装或连体服；不替换已有鞋履。"
+    if outfit_source == "pool":
+        outfit_line = str(outfit["prompt"])
+        if style:
+            outfit_line += str(style["prompt"])
+        elif requested_wear:
+            outfit_line += LEGWEAR_PROMPTS[requested_wear]
+        elif detail:
+            outfit_line += str(detail["prompt"])
     else:
-        outfit_line = "服装按用户文字或人物当前设定执行，不猜测下装类别，不补造鞋袜。"
+        outfit_line = LEGFOCUS_PRESERVE_PROMPTS[outfit_source]
+        if requested_wear:
+            detail_prompt = str(requested_style.get("prompt") or LEGWEAR_PROMPTS[requested_wear])
+            outfit_line += LEGFOCUS_PRESERVE_PROMPTS["requested_detail"].format(detail=detail_prompt)
 
     framing_line = LEGFOCUS_FULL_FRAMING if framing == "full_outfit" else LEGFOCUS_FRAMING
     camera_line = str(camera_views[camera_kind])
@@ -555,13 +611,8 @@ def build_leg_focus_action(
         + str(pose["prompt"])
         + camera_line
         + f"本张室内场景：{scene_prompt}"
-        + LEGFOCUS_OUTFIT_RULE
         + outfit_line
     )
-    if detail and not outfit_source:
-        base += f"本次随机腿部细节：{detail['prompt']}"
-    if has_refs:
-        base += "引用图用于保持人物身份和自然体态；服装按本条指定的日程或引用图来源规则执行。"
     extra = _clean_extra_request(raw_extra)
     if extra:
         base += f"用户补充要求优先：{extra}。"
@@ -580,7 +631,7 @@ def build_leg_focus_action(
         base
         + f" 【legs:outfit】 【frame:{framing if framing == 'full_outfit' else 'leg_detail'}】"
         + f"【姿势池·{pose['title']}】【场景池·{scene['title']}】"
-        + f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_id}】 【outfit:{outfit_source or 'random'}】"
+        + f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_id}】 【outfit:{outfit.get('id') or outfit_source}】"
     )
 
 

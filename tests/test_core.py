@@ -216,10 +216,9 @@ WEB_STARTUP_CONFIG_KEYS = ("web", "webEnable", "webHost", "webPort", "webToken")
 
 
 def strip_web_startup_config(data):
-    cleaned = copy.deepcopy(data if isinstance(data, dict) else {})
-    for key in WEB_STARTUP_CONFIG_KEYS:
-        cleaned.pop(key, None)
-    return cleaned
+    from astrbot_plugin_selfie_image.features.config_manager import ConfigurationMixin
+
+    return ConfigurationMixin._strip_web_startup_config(None, data)
 
 
 class FakeWebPlugin:
@@ -804,7 +803,6 @@ class ConfigModelTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.prompts.prompt_templates import build_batch_failure_llm_prompt
 
         prompt = build_batch_failure_llm_prompt(
-            bot_name="啊呜",
             reason="上游暂时繁忙",
             index=2,
             total=4,
@@ -5071,8 +5069,9 @@ class WebApiTests(unittest.TestCase):
         data = response.get_json()["data"]
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("web", data)
-        self.assertEqual(data["bot_name"], "自拍助手")
-        self.assertEqual(plugin.config.bot_name, "自拍助手")
+        self.assertNotIn("bot_name", data)
+        self.assertNotIn("personality", data)
+        self.assertFalse(hasattr(plugin.config, "bot_name"))
         self.assertEqual(plugin.config.image_max_batch_count, 4)
         self.assertEqual(plugin.config.image_cache_limit_mb, 12)
         self.assertEqual(plugin.config.usable_users, ["1001", "1002"])
@@ -6365,6 +6364,51 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual({call["aspect_ratio"] for call in calls}, {"16:9"})
         self.assertEqual(progress[-1]["progress_percent"], 100)
 
+
+    def test_web_cos_negatives_follow_medium_after_pool_tail_cleanup(self) -> None:
+        from astrbot_plugin_selfie_image.cos.cos_looks import (
+            _COS_ANIME_NEGATIVE_PROMPT,
+            _COS_AUTO_REFERENCE_NEGATIVE_PROMPT,
+            _COS_COMMON_NEGATIVE_PROMPT,
+            get_cos_look_by_id,
+        )
+
+        look = get_cos_look_by_id("ark_ceobe_wilderness")
+        self.assertNotIn("禁止动漫插画", look["prompt"])
+        for medium, with_ref, enhance in (
+            ("real", False, False), ("anime", False, False),
+            ("auto", False, True), ("auto", True, False), ("anime", True, True),
+        ):
+            with self.subTest(medium=medium, with_ref=with_ref, enhance=enhance):
+                plugin = self._plugin_stub()
+                plugin.persona = types.SimpleNamespace(get_appearance_type=lambda: medium)
+                plugin._validate_web_test_selection = lambda _: None
+                plugin._find_image_target = lambda *_: make_target()
+                plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+                plugin._record_task = lambda _: None
+                calls = []
+
+                async def generate(**kwargs):
+                    calls.append(kwargs)
+                    return {"success": True, "image_paths": ["generated.png"]}
+
+                plugin._run_image_generation = generate
+                result = asyncio.run(plugin.web_test_image({
+                    "prompt": look["prompt"], "prompt_enhance": enhance,
+                    "images": [bytes_to_data_url(PNG_BYTES, "image/png")] if with_ref else [],
+                }))
+                self.assertTrue(result["success"], result.get("error"))
+                prompt = calls[0]["prompt"]
+                expected = (
+                    _COS_ANIME_NEGATIVE_PROMPT if medium == "anime"
+                    else _COS_AUTO_REFERENCE_NEGATIVE_PROMPT if medium == "auto" and with_ref
+                    else _COS_COMMON_NEGATIVE_PROMPT
+                )
+                self.assertEqual(prompt.count(expected), 1)
+                self.assertIn("不带武器", prompt)
+                self.assertEqual(len(calls[0]["refs"]), int(with_ref))
+                if expected != _COS_COMMON_NEGATIVE_PROMPT:
+                    self.assertNotIn("禁止动漫插画", prompt)
 
     def test_command_task_late_success_result_wins_cancellation_race(self) -> None:
         plugin = self._plugin_stub()
@@ -7852,7 +7896,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("【outfit:reference】", text)
         self.assertIn("【wear:white】", text)
         self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", text)
-        self.assertIn("仅在与引用图穿搭兼容时执行", text)
+        self.assertIn("在不改变原有服饰结构的前提下", text)
         self.assertIn("头部、脸部和肩膀不入镜", text)
         for forbidden in ("白色不透连裤袜，完整日常穿搭", "小皮鞋", "日常长裤搭配", "全身穿搭展示"):
             self.assertNotIn(forbidden, text)
@@ -8013,7 +8057,7 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("宵宫")},
-            {"yoimiya_firework"},
+            {"yoimiya_firework", "yoimiya_firework_festival"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("宵宫·烟花祭典")},
@@ -8742,7 +8786,8 @@ class LegFocusTests(unittest.TestCase):
         self.assertIn("【pose:", normalized)
         self.assertIn("清晨", normalized)
         self.assertIn("【wear:white】", normalized)
-        self.assertIn("不改变下装类别、长度或鞋履", normalized)
+        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_OUTFIT_POOL
+        self.assertEqual(sum(item["prompt"] in normalized for item in LEGFOCUS_OUTFIT_POOL), 1)
         self.assertNotIn("本次腿部穿搭：", normalized)
         normalized_extra = re.split(r"用户补充要求优先[:：]", normalized, maxsplit=1)[-1]
         self.assertNotIn("短袜", normalized_extra)
@@ -8960,7 +9005,7 @@ class LegFocusTests(unittest.TestCase):
                 self.assertIn("【outfit:reference】", action)
                 self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", action)
                 self.assertNotIn("本次随机腿部细节", action)
-        explicit = build_leg_focus_action("穿着蓝白连体COS服和长靴", scheduled_outfit="灰色长裤")
+        explicit = build_leg_focus_action("穿着蓝白连体COS服和长靴")
         self.assertIn("【outfit:custom】", explicit)
         self.assertIn("蓝白连体COS服和长靴", explicit)
         self.assertNotIn("灰色长裤", explicit)
@@ -8970,9 +9015,9 @@ class LegFocusTests(unittest.TestCase):
 
         with patch("astrbot_plugin_selfie_image.cos.leg_focus._weighted_detail_choice", side_effect=AssertionError("locked outfit must not randomize")):
             for pose in LEGFOCUS_POSE_POOL:
-                action = build_leg_focus_action(force_pose=pose["id"], scheduled_outfit="青色连体服和长靴")
+                action = build_leg_focus_action("青色连体服和长靴", force_pose=pose["id"])
                 self.assertIn("青色连体服和长靴", action)
-                self.assertIn("【outfit:scheduled】", action)
+                self.assertIn("【outfit:custom】", action)
                 self.assertNotIn("本次随机腿部细节", action)
 
     def test_multi_image_commands_rebuild_each_shot(self) -> None:
@@ -9003,6 +9048,70 @@ class LegFocusTests(unittest.TestCase):
 
 
 class StudioStoreTests(unittest.TestCase):
+    def test_both_canvas_namespaces_finalize_pool_negatives_with_actual_refs(self) -> None:
+        from astrbot_plugin_selfie_image.cos.cos_looks import (
+            _COS_ANIME_NEGATIVE_PROMPT,
+            _COS_COMMON_NEGATIVE_PROMPT,
+            get_cos_look_by_id,
+        )
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+        look = get_cos_look_by_id("ark_ceobe_wilderness")
+        special = get_cos_look_by_id("firefly_star_rail_sleeping_cabin")
+        for namespace, template, medium, item in (
+            ("studio", "clothes", "real", look),
+            ("creative", "clothes", "anime", look),
+            ("studio", "t2i", "auto", look),
+            ("creative", "clothes", "auto", look),
+            ("creative", "clothes", "real", special),
+        ):
+            with self.subTest(namespace=namespace, template=template, medium=medium, look=item["id"]), tempfile.TemporaryDirectory() as tmp:
+                plugin = SessionModelAndTaskTests()._plugin_stub()
+                plugin.persona = PersonaManager(tmp)
+                plugin.persona.set_appearance_type(medium)
+                plugin.persona.ensure_daily_selfie_profile = lambda _: asyncio.sleep(0)
+                mode = "t2i" if template == "t2i" else "selfie"
+                session = {
+                    "id": "cos-canvas", "template": template, "slots": [],
+                    "graph": {"mode": mode, "prompt": item["prompt"], "count": 1},
+                }
+                store = types.SimpleNamespace(get=lambda _: session, attach_run_finish=lambda *_args, **_kwargs: None)
+                namespaces = []
+                plugin._canvas_store = lambda value: (namespaces.append(value), store)[1]
+                plugin._resolve_studio_refs = lambda *_args, **_kwargs: (
+                    ([(b"image", "image/png")] if mode == "selfie" else []), []
+                )
+                plugin._task_cancel_requested = lambda _: False
+                plugin._web_task_timestamp = lambda: "now"
+                state = {}
+                plugin._set_web_image_task = lambda _, **fields: state.update(fields)
+                plugin.get_web_image_task = lambda _: state
+                plugin._wait_for_record_commits = lambda _: asyncio.sleep(0)
+                plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+                plugin._record_task = lambda _: None
+                calls = []
+
+                async def generate(**kwargs):
+                    calls.append(kwargs)
+                    return {"success": True, "image_paths": ["generated.png"]}
+
+                plugin._run_image_generation = generate
+                asyncio.run(plugin._run_studio_task("cos-task", session["id"], canvas_namespace=namespace))
+                self.assertEqual(state["status"], "succeeded", state.get("error"))
+                self.assertEqual(namespaces, [namespace])
+                prompt = calls[0]["prompt"]
+                if item is special:
+                    self.assertIn(special["prompt"], prompt)
+                    self.assertNotIn(_COS_COMMON_NEGATIVE_PROMPT, prompt)
+                elif medium == "anime":
+                    self.assertEqual(prompt.count(_COS_ANIME_NEGATIVE_PROMPT), 1)
+                    self.assertNotIn("禁止动漫插画", prompt)
+                elif medium == "real" or mode == "t2i":
+                    self.assertEqual(prompt.count(_COS_COMMON_NEGATIVE_PROMPT), 1)
+                else:
+                    self.assertNotIn("禁止动漫插画", prompt)
+                    self.assertEqual(prompt.count("不要额外人物、文字、字幕或水印。"), 1)
+
     def test_studio_preflight_failure_creates_linked_record(self) -> None:
         from astrbot_plugin_selfie_image.studio.studio_adapter import StudioMixin
 

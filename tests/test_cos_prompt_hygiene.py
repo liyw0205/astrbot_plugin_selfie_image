@@ -25,6 +25,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_LOOK_SETS,
     get_cos_look_by_id,
     is_special_cos_look,
+    normalize_cos_prompt_negatives,
 )
 
 CRAFT_MARKER = "真人COS摄影执行规范"
@@ -79,10 +80,11 @@ class CosCraftSpecHygieneTest(unittest.TestCase):
 
     def test_own_costume_details_are_preserved(self) -> None:
         by_id = {str(item.get("id")): str(item.get("prompt") or "") for item in self.items}
-        # Kayoko keeps its own necktie description ahead of the shared spec.
+        # Kayoko keeps its own hoodie and red plaid skirt details.
         kayoko = by_id["blue_archive_kayoko"]
         own = kayoko.split(CRAFT_MARKER, 1)[0]
-        self.assertIn("领带", own)
+        self.assertIn("连帽卫衣", own)
+        self.assertIn("深红格纹短裙", own)
         # Shaoluo keeps its own bunny-ear hair accessory intent.
         shaoluo = by_id["shaoluo_pink_white_rabbit"]
         self.assertIn("兔耳", shaoluo.split(CRAFT_MARKER, 1)[0])
@@ -91,7 +93,7 @@ class CosCraftSpecHygieneTest(unittest.TestCase):
         for item in self.items:
             if is_special_cos_look(item):
                 continue
-            prompt = str(item.get("prompt") or "")
+            prompt = normalize_cos_prompt_negatives(str(item.get("prompt") or ""))
             self.assertEqual(prompt.count("不要额外人物"), 1, str(item.get("id")))
 
 
