@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -1499,29 +1500,37 @@ def resolve_slot_refs_for_run(
     return refs, used
 
 
-def build_studio_action(session: Dict[str, Any]) -> str:
+def build_studio_action(
+    session: Dict[str, Any], *, appearance_type: str = "auto", has_external_reference: bool = False,
+) -> str:
     """Build generation action text from graph mode + prompt."""
     graph = session.get("graph") or {}
     prompt = str(graph.get("prompt") or "").strip()
     mode = str(graph.get("mode") or "group").strip().lower()
     template = str(session.get("template") or "").strip().lower()
     if mode == "group" or template in {"duo", "group"}:
-        base = (
-            "合影 / 合照 / 同框。AI 自己必须作为画面主角之一，与参考图对象自然同框。"
-            "身份锁脸型五官发型体态；表情按合影氛围自然重画。"
-            "同框对象按主角形象类型统一画风（自动/真人/动漫）；非人物参考拟人时无明确性别默认成年女性。"
-            "不要再强制把所有对象改成写实真人。"
+        from ..prompts.group_prompt_pool import has_group_composition_contract
+        from ..prompts.selfie_actions import build_group_selfie_action
+
+        if has_group_composition_contract(prompt):
+            return prompt
+        return build_group_selfie_action(
+            prompt, has_refs=True, has_identity_reference=True, appearance_type=appearance_type,
         )
-        return f"{base} 用户补充要求：{prompt}。" if prompt else base
     if mode == "selfie" or template in {"selfie", "clothes"}:
         if looks_like_cos_prompt(prompt):
             # COS pool entries may contain legacy mirror/selfie wording.  The
             # canvas must emit the same third-person contract as /看看COS,
             # otherwise the clothes template adds a phone-selfie instruction.
             return build_cos_third_person_prompt(prompt)
-        if template == "clothes" or "换装" in prompt or "COS" in prompt.upper() or "cos" in prompt:
-            base = "换装/穿搭自拍：服装来自参考，身份保持，表情眼神按本次场景自然重画，看向镜头。"
-        else:
-            base = "看着镜头自然自拍，展示你现在的样子。"
-        return f"{base} {prompt}".strip() if prompt else base
+        from ..prompts.prompt_templates import has_daily_staging_contract
+        from ..prompts.selfie_actions import build_selfie_look_action
+
+        if has_daily_staging_contract(prompt) or "【legs:outfit】" in prompt or re.match(r"^/?看看腿", prompt):
+            return prompt
+        if template == "clothes":
+            prompt = f"服装按参考图的完整穿搭换装。{prompt}".strip()
+        return build_selfie_look_action(
+            prompt, has_refs=has_external_reference, appearance_type=appearance_type,
+        )
     return prompt or "看着镜头自然自拍"

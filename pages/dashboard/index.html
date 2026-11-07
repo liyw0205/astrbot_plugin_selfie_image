@@ -402,6 +402,8 @@
     .asset-thumb { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #f1f4f7; }
     .asset-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; background: #111; }
     .asset-thumb .status { width: 100%; min-height: 0; padding: 10px; border: 0; border-radius: 0; background: transparent; text-align: center; }
+    .media-retry { display:inline-flex; align-items:center; justify-content:center; gap:4px; margin-left:5px; padding:4px 6px; }
+    .media-retry svg { width:14px; height:14px; }
     .asset-select { position: absolute; z-index: 2; top: 8px; left: 8px; width: 20px; height: 20px; margin: 0; accent-color: var(--primary); }
     .asset-flag { position: absolute; z-index: 2; top: 8px; right: 8px; display: flex; gap: 4px; }
     .asset-flag span { padding: 3px 6px; border-radius: 6px; color: #fff; background: rgba(27,28,29,.72); font-size: 11px; font-weight: 650; }
@@ -2070,7 +2072,10 @@
     // Prompt/COS/tag catalogs refresh periodically; the shared gallery cache has no TTL.
     const PICKER_CATALOG_CACHE_TTL_MS = 30000;
     const PICKER_PAGE_SIZE = 30;
+    const PAGE_PREFETCH_AHEAD = 3;
     const PICKER_PAGE_CACHE = new Map();
+    const MANAGED_PAGE_CACHE = new Map();
+    let PICKER_CATALOG_CACHE_VERSION = 0;
     const PICKER_PANEL_STATES = new Map();
     const PICKER_SEARCH_TIMERS = new Map();
     const PICKER_LOADING = new Set();
@@ -2142,8 +2147,8 @@
     let CURRENT_RECORD = null;
     const RECORD_MEDIA_SOURCE_CACHE = new Map();
     const RECORD_MEDIA_SOURCE_REQUESTS = new Map();
-    // Keep authenticated media in memory so the asset grid, detail modal and download
-    // action can share one response instead of fetching the same path repeatedly.
+    // Keep authenticated media in memory and in a short-lived browser cache so the
+    // asset grid, detail modal and download action share one response across refreshes.
     const PROTECTED_MEDIA_CACHE = new Map();
     const PROTECTED_MEDIA_REQUESTS = new Map();
     let PROTECTED_MEDIA_OBSERVER = null;
@@ -2152,9 +2157,14 @@
     let PROTECTED_MEDIA_LOAD_ACTIVE = 0;
     const PROTECTED_MEDIA_CACHE_MAX_ENTRIES = 100;
     const PROTECTED_MEDIA_CACHE_MAX_BYTES = 200 * 1024 * 1024;
+    const PROTECTED_MEDIA_PERSIST_CACHE_NAME = 'selfie-image-protected-v1';
+    const PROTECTED_MEDIA_PERSIST_META_KEY = 'selfieImageProtectedMediaMeta:v1';
+    const PROTECTED_MEDIA_PERSIST_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+    const PROTECTED_MEDIA_PERSIST_MAX_ENTRIES = 150;
     let PROTECTED_MEDIA_CACHE_BYTES = 0;
     let PROTECTED_MEDIA_CACHE_SCOPE = '';
     let PROTECTED_MEDIA_CACHE_VERSION = 0;
+    let PROTECTED_MEDIA_LAST_PURGE = 0;
     const GALLERY_PICKER_CACHE_MAX_ENTRIES = 100;
     const GALLERY_PICKER_CACHE = {items: [], loaded: false, request: null, version: 0};
     let TEST_TASK_POLL_TIMER = null;
@@ -4815,7 +4825,8 @@ Source prompt:
       ASSET_META = payload.meta;
     }
     function prefetchPages(path, page, totalPages, pageSize, cache, requests, normalize, isValid = () => true, onPage = null) {
-      const targets = [page - 1, page + 1].filter(item => item >= 1 && item <= totalPages);
+      const targets = Array.from({length: PAGE_PREFETCH_AHEAD}, (_, index) => page + index + 1)
+        .filter(item => item >= 1 && item <= totalPages);
       targets.forEach(target => {
         const targetPath = pagePathAt(path, target, pageSize);
         const existing = usablePageCache(cache, targetPath);
@@ -4893,6 +4904,7 @@ Source prompt:
         clearRecordPageCache();
         clearAssetPageCache();
         clearGalleryPickerCache();
+        clearProtectedMediaCache();
         MONITOR_PAGE = 1;
         RECORDS = [];
         RECORD_META = {total: 0, filtered: 0, offset: 0, limit: MONITOR_PAGE_SIZE};
@@ -5296,7 +5308,7 @@ Source prompt:
           const name = media.path.split('/').pop() || '图片';
           const prompt = String(record.original_prompt || record.request_prompt || '').trim();
           const thumb = media.path
-            ? `<img data-cache-path="${escapeHtml(media.path)}" alt="${escapeHtml(name)}">${media.count > 1 ? `<span class="asset-count-label">图片 ×${media.count}</span>` : ''}`
+            ? `<div class="status" data-media-placeholder>加载图片…</div><img data-cache-path="${escapeHtml(media.path)}" alt="${escapeHtml(name)}">${media.count > 1 ? `<span class="asset-count-label">图片 ×${media.count}</span>` : ''}`
             : '<div class="status">没有缓存媒体</div>';
           const flags = `${record.pinned ? '<span>置顶</span>' : ''}${record.favorite ? '<span>收藏</span>' : ''}`;
           return `<article class="asset-card" data-record-id="${escapeHtml(id)}">
@@ -5413,6 +5425,7 @@ Source prompt:
         ASSET_STUDIO_PRESETS = result.items;
         const pageCount = Math.max(1, Math.ceil(result.total / PICKER_PAGE_SIZE));
         if (ASSET_STUDIO_PRESET_PAGE > pageCount) return loadAssetStudioPresets(pageCount);
+        prefetchCatalogPages('image', search, ASSET_STUDIO_PRESET_PAGE, result.total);
         select.innerHTML = '<option value="">不套预设</option>';
         ASSET_STUDIO_PRESETS.forEach(item => {
           const name = String(item?.name || item?.title || '').trim();
@@ -5599,6 +5612,7 @@ Source prompt:
       }
       PROTECTED_MEDIA_CACHE.clear();
       PROTECTED_MEDIA_CACHE_BYTES = 0;
+      void clearPersistentProtectedMedia();
     }
     function clearGalleryPickerCache() {
       GALLERY_PICKER_CACHE.version += 1;
@@ -5661,10 +5675,126 @@ Source prompt:
       const scope = protectedMediaScope();
       if (PROTECTED_MEDIA_CACHE_SCOPE && PROTECTED_MEDIA_CACHE_SCOPE !== scope) clearProtectedMediaCache();
       PROTECTED_MEDIA_CACHE_SCOPE = scope;
+      if (Date.now() - PROTECTED_MEDIA_LAST_PURGE > 300000) {
+        PROTECTED_MEDIA_LAST_PURGE = Date.now();
+        void purgePersistentProtectedMedia(scope);
+      }
       return scope;
     }
     function protectedMediaKey(path) {
       return String(path || '').trim();
+    }
+    function protectedMediaPersistentUrl(key) {
+      return cacheImagePreviewUrl(key);
+    }
+    function readProtectedMediaMeta() {
+      try {
+        const value = JSON.parse(safeStorageGet(PROTECTED_MEDIA_PERSIST_META_KEY, '{}'));
+        return value && typeof value === 'object' ? value : {};
+      } catch (_) {
+        return {};
+      }
+    }
+    function writeProtectedMediaMeta(meta) {
+      try { safeStorageSet(PROTECTED_MEDIA_PERSIST_META_KEY, JSON.stringify(meta || {})); } catch (_) {}
+    }
+    function touchPersistentProtectedMedia(key, scope) {
+      const meta = readProtectedMediaMeta();
+      const item = meta[key];
+      if (!item || item.scope !== scope) return;
+      item.lastAccessed = Date.now();
+      meta[key] = item;
+      writeProtectedMediaMeta(meta);
+    }
+    function mediaPersistentSupported() {
+      try { return typeof window.caches?.open === 'function' && typeof window.Response === 'function'; } catch (_) { return false; }
+    }
+    async function deletePersistentProtectedMedia(key) {
+      const meta = readProtectedMediaMeta();
+      delete meta[key];
+      writeProtectedMediaMeta(meta);
+      if (!mediaPersistentSupported()) return;
+      try {
+        const cache = await caches.open(PROTECTED_MEDIA_PERSIST_CACHE_NAME);
+        await cache.delete(protectedMediaPersistentUrl(key));
+      } catch (_) {}
+    }
+    async function clearPersistentProtectedMedia() {
+      writeProtectedMediaMeta({});
+      if (!mediaPersistentSupported()) return;
+      try { await caches.delete(PROTECTED_MEDIA_PERSIST_CACHE_NAME); } catch (_) {}
+    }
+    async function purgePersistentProtectedMedia(scope = protectedMediaScope()) {
+      if (!mediaPersistentSupported()) return;
+      const now = Date.now();
+      const meta = readProtectedMediaMeta();
+      const cache = await caches.open(PROTECTED_MEDIA_PERSIST_CACHE_NAME).catch(() => null);
+      if (!cache) return;
+      let changed = false;
+      for (const [key, item] of Object.entries(meta)) {
+        const expired = !item || item.scope !== scope || now - Number(item.lastAccessed || item.cachedAt || 0) > PROTECTED_MEDIA_PERSIST_TTL_MS;
+        if (!expired) continue;
+        delete meta[key];
+        changed = true;
+        await cache.delete(protectedMediaPersistentUrl(key)).catch(() => {});
+      }
+      if (changed) writeProtectedMediaMeta(meta);
+    }
+    async function readPersistentProtectedMedia(key, scope) {
+      if (!mediaPersistentSupported()) return null;
+      const meta = readProtectedMediaMeta();
+      const now = Date.now();
+      try {
+        const cache = await caches.open(PROTECTED_MEDIA_PERSIST_CACHE_NAME);
+        const response = await cache.match(protectedMediaPersistentUrl(key));
+        if (!response) {
+          if (meta[key]) await deletePersistentProtectedMedia(key);
+          return null;
+        }
+        const headers = response.headers;
+        const item = meta[key] || {
+          scope: String(headers.get('x-selfie-cache-scope') || ''),
+          cachedAt: Number(headers.get('x-selfie-cache-at') || 0),
+          lastAccessed: Number(headers.get('x-selfie-cache-last-accessed') || 0),
+        };
+        if (item.scope !== scope || now - Number(item.lastAccessed || item.cachedAt || 0) > PROTECTED_MEDIA_PERSIST_TTL_MS) {
+          await deletePersistentProtectedMedia(key);
+          return null;
+        }
+        const payload = await response.json();
+        if (!payload?.data_url) throw new Error('媒体缓存无效');
+        item.lastAccessed = now;
+        meta[key] = item;
+        writeProtectedMediaMeta(meta);
+        return {dataUrl: String(payload.data_url), mimeType: String(payload.mime_type || ''), size: Number(payload.size || 0)};
+      } catch (_) {
+        await deletePersistentProtectedMedia(key);
+        return null;
+      }
+    }
+    async function persistProtectedMedia(key, entry, scope) {
+      if (!mediaPersistentSupported() || !entry?.dataUrl) return;
+      try {
+        const cache = await caches.open(PROTECTED_MEDIA_PERSIST_CACHE_NAME);
+        const now = Date.now();
+        await cache.put(protectedMediaPersistentUrl(key), new Response(JSON.stringify({
+          data_url: entry.dataUrl, mime_type: entry.mimeType || '', size: Number(entry.size || 0)
+        }), {headers: {
+          'content-type': 'application/json',
+          'x-selfie-cache-scope': scope,
+          'x-selfie-cache-at': String(now),
+          'x-selfie-cache-last-accessed': String(now),
+        }}));
+        const meta = readProtectedMediaMeta();
+        meta[key] = {scope, cachedAt: Number(meta[key]?.cachedAt || now), lastAccessed: now};
+        const keys = Object.entries(meta).sort((a, b) => Number(a[1]?.lastAccessed || 0) - Number(b[1]?.lastAccessed || 0));
+        while (keys.length > PROTECTED_MEDIA_PERSIST_MAX_ENTRIES) {
+          const [oldKey] = keys.shift();
+          delete meta[oldKey];
+          await cache.delete(protectedMediaPersistentUrl(oldKey)).catch(() => {});
+        }
+        writeProtectedMediaMeta(meta);
+      } catch (_) {}
     }
     function touchProtectedMedia(key, entry) {
       entry.lastUsed = Date.now();
@@ -5696,22 +5826,83 @@ Source prompt:
     }
     function invalidateProtectedMediaPath(path) {
       const key = protectedMediaKey(path);
-      if (key) forgetProtectedMedia(key);
+      if (key) {
+        forgetProtectedMedia(key);
+        void deletePersistentProtectedMedia(key);
+      }
     }
     function protectedMediaUrl(entry) {
       return String(entry?.objectUrl || entry?.dataUrl || '');
+    }
+    function mediaRetryIconSvg() {
+      return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg>';
+    }
+    function bindProtectedMediaRetry(root = document) {
+      root?.querySelectorAll?.('[data-media-retry]').forEach(button => {
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
+        button.onclick = async event => {
+          event.preventDefault();
+          event.stopPropagation();
+          const path = button.getAttribute('data-media-retry') || '';
+          const frame = button.closest('.studio-gallery-thumb, .asset-thumb');
+          const placeholder = frame?.querySelector('[data-media-placeholder]');
+          let img = frame?.querySelector('img');
+          if (!path || !frame) return;
+          button.disabled = true;
+          invalidateProtectedMediaPath(path);
+          if (!img) {
+            img = document.createElement('img');
+            img.alt = '';
+            const shell = frame.querySelector('.media-zoom-shell');
+            (shell || frame).appendChild(img);
+          }
+          img.hidden = false;
+          if (placeholder) {
+            placeholder.hidden = false;
+            placeholder.textContent = '正在重试…';
+          }
+          await loadProtectedImage(img, path);
+        };
+      });
+    }
+    function showProtectedMediaError(img, path, message) {
+      if (/已清理|不存在|无效/.test(String(message || ''))) invalidateProtectedMediaPath(path);
+      const frame = img.closest('.studio-gallery-thumb, .asset-thumb');
+      const placeholder = frame?.querySelector('[data-media-placeholder]');
+      img.hidden = true;
+      if (placeholder) {
+        placeholder.hidden = false;
+        placeholder.innerHTML = `<span>${escapeHtml(message || '图片加载失败')}</span><button class="secondary mini media-retry" type="button" data-media-retry="${escapeHtml(path)}" title="重新加载图片" aria-label="重新加载图片">${mediaRetryIconSvg()}</button>`;
+        bindProtectedMediaRetry(frame);
+        return;
+      }
+      if (frame) {
+        const div = document.createElement('div');
+        div.className = 'status';
+        div.innerHTML = `<span>${escapeHtml(message || '图片加载失败')}</span><button class="secondary mini media-retry" type="button" data-media-retry="${escapeHtml(path)}" title="重新加载图片" aria-label="重新加载图片">${mediaRetryIconSvg()}</button>`;
+        frame.appendChild(div);
+        bindProtectedMediaRetry(frame);
+        return;
+      }
+      img.replaceWith(Object.assign(document.createElement('div'), {className: 'status', textContent: message || '图片加载失败'}));
     }
     async function getProtectedMedia(path) {
       const key = protectedMediaKey(path);
       if (!key) throw new Error('媒体路径为空');
       const scope = ensureProtectedMediaScope();
       const cached = PROTECTED_MEDIA_CACHE.get(key);
-      if (cached) return touchProtectedMedia(key, cached);
+      if (cached) {
+        touchPersistentProtectedMedia(key, scope);
+        return touchProtectedMedia(key, cached);
+      }
       const pending = PROTECTED_MEDIA_REQUESTS.get(key);
       if (pending) return pending;
       const version = PROTECTED_MEDIA_CACHE_VERSION;
       const request = (async () => {
         let entry;
+        const persisted = await readPersistentProtectedMedia(key, scope);
+        if (persisted) return rememberProtectedMedia(key, persisted);
         if (isDashboardPage()) {
           const res = await api('/api/cache-image-preview?path=' + encodeURIComponent(key));
           const data = res.data || {};
@@ -5742,6 +5933,7 @@ Source prompt:
           if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl);
           return entry;
         }
+        void persistProtectedMedia(key, entry, scope);
         return rememberProtectedMedia(key, entry);
       })();
       PROTECTED_MEDIA_REQUESTS.set(key, request);
@@ -5756,34 +5948,20 @@ Source prompt:
         const media = await getProtectedMedia(path);
         const url = protectedMediaUrl(media);
         if (!url) throw new Error('图片已清理');
-        const thumb = img.closest('.studio-gallery-thumb');
+        const thumb = img.closest('.studio-gallery-thumb, .asset-thumb');
         const placeholder = thumb?.querySelector('[data-media-placeholder]');
         img.addEventListener('load', () => {
           if (thumb) thumb.classList.add('loaded');
           if (placeholder) placeholder.hidden = true;
+          img.hidden = false;
         }, {once: true});
         img.addEventListener('error', () => {
-          if (placeholder) {
-            placeholder.hidden = false;
-            placeholder.textContent = '图片加载失败';
-            img.remove();
-            return;
-          }
-          img.replaceWith(Object.assign(document.createElement('div'), {className: 'status', textContent: '图片加载失败'}));
+          showProtectedMediaError(img, path, '图片加载失败');
         }, {once: true});
+        img.hidden = false;
         img.src = url;
       } catch (e) {
-        const placeholder = img.closest('.studio-gallery-thumb')?.querySelector('[data-media-placeholder]');
-        if (placeholder) {
-          placeholder.hidden = false;
-          placeholder.textContent = e.message || '图片加载失败';
-          img.remove();
-          return;
-        }
-        const div = document.createElement('div');
-        div.className = 'status';
-        div.textContent = e.message || '图片已清理';
-        img.replaceWith(div);
+        showProtectedMediaError(img, path, e.message || '图片已清理');
       }
     }
     function protectedMediaViewportPriority(element) {
@@ -7299,6 +7477,7 @@ Source prompt:
       return request;
     }
     function clearPickerCache(kind = '') {
+      PICKER_CATALOG_CACHE_VERSION += 1;
       const normalized = String(kind || '').trim().toLowerCase();
       const clearEntry = entry => {
         entry.data = [];
@@ -7312,6 +7491,9 @@ Source prompt:
       }
       for (const key of [...PICKER_PAGE_CACHE.keys()]) {
         if (!normalized || key.startsWith(`${normalized}:`)) PICKER_PAGE_CACHE.delete(key);
+      }
+      for (const key of [...MANAGED_PAGE_CACHE.keys()]) {
+        if (!normalized || key.startsWith(`${normalized}:`)) MANAGED_PAGE_CACHE.delete(key);
       }
       for (const state of PICKER_PANEL_STATES.values()) {
         if (!normalized || state.kind === normalized) {
@@ -7348,6 +7530,7 @@ Source prompt:
       if (force) { PICKER_PAGE_CACHE.delete(key); cached = null; }
       if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
       if (cached?.request) return cached.request;
+      const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
       const params = new URLSearchParams({limit: String(PICKER_PAGE_SIZE), offset: String(offset), search: normalizedQuery});
       if (kind === 'image') params.set('kind', 'image');
       const endpoint = kind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets?';
@@ -7374,15 +7557,89 @@ Source prompt:
         }
         if (kind === 'image') items = mergePromptPresets(items);
         const data = {items, total, offset, limit: PICKER_PAGE_SIZE};
-        PICKER_PAGE_CACHE.set(key, {data, loadedAt: Date.now(), request: null});
-        while (PICKER_PAGE_CACHE.size > 80) PICKER_PAGE_CACHE.delete(PICKER_PAGE_CACHE.keys().next().value);
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+          PICKER_PAGE_CACHE.set(key, {data, loadedAt: Date.now(), request: null});
+          while (PICKER_PAGE_CACHE.size > 80) PICKER_PAGE_CACHE.delete(PICKER_PAGE_CACHE.keys().next().value);
+        }
         return data;
       })().catch(error => {
-        PICKER_PAGE_CACHE.delete(key);
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) PICKER_PAGE_CACHE.delete(key);
         throw error;
       });
       PICKER_PAGE_CACHE.set(key, {data: null, loadedAt: 0, request});
       return request;
+    }
+    function prefetchCatalogPages(kind, query, page, total) {
+      const totalPages = Math.max(1, Math.ceil(Number(total || 0) / PICKER_PAGE_SIZE));
+      const targets = Array.from({length: PAGE_PREFETCH_AHEAD}, (_, index) => page + index + 1)
+        .filter(target => target <= totalPages);
+      targets.forEach(target => {
+        void fetchCatalogPage(kind, query, target).catch(() => {});
+      });
+    }
+    async function fetchManagedCatalogPage(kind, searchQuery, page, force = false) {
+      const normalizedQuery = String(searchQuery || '').trim();
+      const normalizedKind = kind === 'cos' ? 'cos' : 'image';
+      const query = normalizedQuery;
+      const key = `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
+      let cached = MANAGED_PAGE_CACHE.get(key);
+      if (force) { MANAGED_PAGE_CACHE.delete(key); cached = null; }
+      if (cached?.data && Date.now() - cached.loadedAt < PICKER_CATALOG_CACHE_TTL_MS) return cached.data;
+      if (cached?.request) return cached.request;
+      const cacheVersion = PICKER_CATALOG_CACHE_VERSION;
+      const params = new URLSearchParams({
+        limit: String(PICKER_PAGE_SIZE),
+        offset: String(Math.max(0, (page - 1) * PICKER_PAGE_SIZE)),
+        search:query,
+      });
+      if (normalizedKind === 'image') params.set('kind', 'image');
+      const endpoint = normalizedKind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets/manage?';
+      const request = (async () => {
+        const res = await api(endpoint + params.toString());
+        const raw = res.data;
+        const rawIsArray = Array.isArray(raw);
+        const data = rawIsArray ? {items: raw, total: raw.length} : (raw || {});
+        const loadStatus = data.load_status || res.load_status;
+        if (loadStatus && loadStatus.ok === false) throw new Error(loadStatus.error || '预设加载失败');
+        let items = Array.isArray(data.items) ? data.items : [];
+        let total = Number(data.total ?? items.length);
+        if (rawIsArray) {
+          const rows = normalizedKind === 'image' ? mergePromptPresets(items) : flattenCosPickerPayload(data);
+          const filtered = rows.filter(item => !normalizedQuery || `${item.name || item.title || item.id || ''}\n${item.prompt || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
+          total = filtered.length;
+          items = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
+        } else if (!Array.isArray(data.items)) {
+          if (normalizedKind === 'image') {
+            const rows = mergePromptPresets(Array.isArray(data.presets) ? data.presets : (Array.isArray(raw) ? raw : []));
+            const filtered = rows.filter(item => !normalizedQuery || `${item.name || item.title || ''}\n${item.prompt || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
+            total = filtered.length;
+            items = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
+          } else {
+            const rows = flattenCosPickerPayload(data);
+            const filtered = rows.filter(item => !normalizedQuery || `${item.title || item.id || ''}\n${item.prompt || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
+            total = filtered.length;
+            items = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
+          }
+        }
+        if (normalizedKind === 'image') items = mergePromptPresets(items);
+        const value = {items, total, offset: (page - 1) * PICKER_PAGE_SIZE, limit: PICKER_PAGE_SIZE};
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) {
+          MANAGED_PAGE_CACHE.set(key, {data: value, loadedAt: Date.now(), request: null});
+          while (MANAGED_PAGE_CACHE.size > 80) MANAGED_PAGE_CACHE.delete(MANAGED_PAGE_CACHE.keys().next().value);
+        }
+        return value;
+      })().catch(error => {
+        if (cacheVersion === PICKER_CATALOG_CACHE_VERSION) MANAGED_PAGE_CACHE.delete(key);
+        throw error;
+      });
+      MANAGED_PAGE_CACHE.set(key, {data: null, loadedAt: 0, request});
+      return request;
+    }
+    function prefetchManagedCatalogPages(kind, query, page, total) {
+      const totalPages = Math.max(1, Math.ceil(Number(total || 0) / PICKER_PAGE_SIZE));
+      Array.from({length: PAGE_PREFETCH_AHEAD}, (_, index) => page + index + 1)
+        .filter(target => target <= totalPages)
+        .forEach(target => { void fetchManagedCatalogPage(kind, query, target).catch(() => {}); });
     }
     function flattenCosPickerPayload(payload) {
       const pools = payload && typeof payload === 'object' ? payload : {};
@@ -7415,6 +7672,7 @@ Source prompt:
         state.loaded = true;
         const pageCount = Math.max(1, Math.ceil(state.total / PICKER_PAGE_SIZE));
         if (state.page > pageCount) return loadCatalogPickerPage(panelId, kind, pageCount, force);
+        prefetchCatalogPages(kind, state.query, state.page, state.total);
       } catch (error) {
         if (seq === state.seq) state.error = error.message || '列表读取失败';
       } finally {
@@ -7571,22 +7829,14 @@ Source prompt:
       const loadSeq = ++PRESET_LOAD_SEQ;
       const page = PRESET_MANAGER_PAGES.cos;
       const query = String(PRESET_MANAGER_QUERIES.cos || '').trim();
-      const params = new URLSearchParams({limit:String(PICKER_PAGE_SIZE), offset:String((page - 1) * PICKER_PAGE_SIZE), search:query});
       try {
-        const res = await api('/api/cos-pools?' + params.toString());
+        const data = await fetchManagedCatalogPage('cos', query, page, force);
         if (loadSeq !== PRESET_LOAD_SEQ || PRESET_KIND !== 'cos') return;
-        const data = res.data || {};
-        if (Array.isArray(data.items)) {
-          COS_MANAGE_ROWS = data.items;
-          PRESET_MANAGER_TOTALS.cos = Number(data.total || 0);
-        } else {
-          const rows = flattenCosPickerPayload(data);
-          const filtered = rows.filter(item => !query || `${item.title || item.id || ''}\n${item.prompt || ''}`.toLowerCase().includes(query.toLowerCase()));
-          PRESET_MANAGER_TOTALS.cos = filtered.length;
-          COS_MANAGE_ROWS = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
-        }
+        COS_MANAGE_ROWS = data.items;
+        PRESET_MANAGER_TOTALS.cos = Number(data.total || 0);
         const pageCount = Math.max(1, Math.ceil(PRESET_MANAGER_TOTALS.cos / PICKER_PAGE_SIZE));
         if (page > pageCount) { PRESET_MANAGER_PAGES.cos = pageCount; return loadManagedCosPool(force); }
+        prefetchManagedCatalogPages('cos', query, page, PRESET_MANAGER_TOTALS.cos);
         renderManagedCosPool();
         presetCosManagerStatus(`COS 池 · 共 ${PRESET_MANAGER_TOTALS.cos} 个 · 第 ${page}/${pageCount} 页`);
       } catch (e) {
@@ -7605,27 +7855,15 @@ Source prompt:
       const loadSeq = ++PRESET_LOAD_SEQ;
       const page = PRESET_MANAGER_PAGES.image;
       const query = String(PRESET_MANAGER_QUERIES.image || '').trim();
-      const params = new URLSearchParams({kind:requestedKind, limit:String(PICKER_PAGE_SIZE), offset:String((page - 1) * PICKER_PAGE_SIZE), search:query});
       try {
-        const res = await api('/api/prompt-presets/manage?' + params.toString());
+        const data = await fetchManagedCatalogPage(requestedKind, query, page);
         // A slower request from the previous tab must not overwrite the current list.
         if (loadSeq !== PRESET_LOAD_SEQ || requestedKind !== PRESET_KIND) return;
-        const data = res.data;
-        const loadStatus = Array.isArray(data) ? res.load_status : data.load_status;
-        if (loadStatus && loadStatus.ok === false) {
-          throw new Error(loadStatus.error || '预设加载失败');
-        }
-        if (Array.isArray(data?.items)) {
-          PRESET_MANAGE_ROWS = data.items;
-          PRESET_MANAGER_TOTALS.image = Number(data.total || 0);
-        } else {
-          const rows = (Array.isArray(data) ? data : (data && Array.isArray(data.presets) ? data.presets : [])).slice().sort(promptPresetCompare);
-          const filtered = rows.filter(item => !query || `${item.name || item.title || ''}\n${item.prompt || ''}`.toLowerCase().includes(query.toLowerCase()));
-          PRESET_MANAGER_TOTALS.image = filtered.length;
-          PRESET_MANAGE_ROWS = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
-        }
+        PRESET_MANAGE_ROWS = data.items;
+        PRESET_MANAGER_TOTALS.image = Number(data.total || 0);
         const pageCount = Math.max(1, Math.ceil(PRESET_MANAGER_TOTALS.image / PICKER_PAGE_SIZE));
         if (page > pageCount) { PRESET_MANAGER_PAGES.image = pageCount; return loadManagedPromptPresets(requestedKind); }
+        prefetchManagedCatalogPages(requestedKind, query, page, PRESET_MANAGER_TOTALS.image);
         renderManagedPromptPresets();
         presetManagerStatus(`生图预设 · 共 ${PRESET_MANAGER_TOTALS.image} 个 · 第 ${page}/${pageCount} 页`);
       } catch (e) {

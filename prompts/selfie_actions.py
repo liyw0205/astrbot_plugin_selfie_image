@@ -14,7 +14,7 @@ from ..features.persona import (
     group_style_lines,
 )
 from .group_prompt_pool import GROUP_COMPOSITIONS, GROUP_COMPOSITIONS_BY_ID
-from .prompt_templates import resolve_appearance_type
+from .prompt_templates import explicit_selfie_action_mode, has_explicit_gaze_request, resolve_appearance_type
 
 
 SELFIE_SHOT_POOL = (
@@ -33,13 +33,13 @@ SELFIE_SHOT_POOL = (
 SELFIE_SHOT_LINES = {
     "arm_half": "手机自拍臂中近景：手臂自然伸向镜头，头部到腰线入镜，上衣版型与搭配层次清楚，表情松弛。",
     "timer_half": "画外固定机位定时自拍：手机或支架固定在画面外，主角不持机、不伸手臂向镜头；头部到腰部入镜，手势完整清楚，人物透视自然。",
-    "mirror_half": "镜前中近景自拍：头部到胯部上方入镜，手机不挡住主要服装，镜中自然看向手机镜头，展示今日穿搭的上下层次。",
+    "mirror_half": "镜前中近景自拍：头部到胯部上方入镜，手机不挡住主要服装，展示今日穿搭的上下层次。",
     "mirror_full": "全身镜前穿搭自拍：头部、上衣、下装和鞋履完整入镜，手机自然持握且不遮挡衣服，人物与倒影比例一致。",
-    "window_side": "窗边侧光自拍：身体略侧，头部自然转向镜头，头部到腰线或胯部上方入镜，衣服层次清楚。",
+    "window_side": "窗边侧光自拍：身体略侧，头部到腰线或胯部上方入镜，衣服层次清楚。",
     "desk_sit": "书桌前坐姿自拍：略俯视中近景，头部到腰部入镜，可自然扶桌沿，今日上衣和配饰清晰。",
     "sofa_casual": "沙发上随手自拍：靠垫只在背景边缘，头部到腰线入镜，穿搭不被抱枕遮挡，姿态放松。",
-    "high_angle": "稍高机位自拍：镜头略高于眼，轻微向下拍到腰线，脸自然抬一点看镜头，显精神，不要过度俯拍变形。",
-    "close_portrait": "近景胸像自拍：脸与肩为主，眼神对焦镜头，五官清晰，浅景深。",
+    "high_angle": "稍高机位自拍：镜头略高于眼，轻微向下拍到腰线，不要过度俯拍变形。",
+    "close_portrait": "近景胸像自拍：脸与肩为主，五官清晰，浅景深。",
     "back_view": "背面自拍构图：主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手自然垂放，只有场景内已有合适支撑物时才自然搭放。",
     "side_profile": "侧身自拍：身体和头部自然朝向同一侧，肩胯约四十五度侧向镜头，不回头硬露正脸，颈部和肩线保持自然。",
 }
@@ -78,13 +78,13 @@ THIRD_PERSON_SHOT_POOL = (
 )
 
 THIRD_PERSON_SHOT_LINES = {
-    "half_front": "半身平视他拍：别人视角的单人半身照，AI 正面或微侧看镜头，眼神有焦点。",
+    "half_front": "半身平视他拍：别人视角的单人半身照，身体正面或微侧。",
     "three_quarter": "三分之四侧身他拍：身体略侧，头部顺着身体方向自然转向，不做突然回头动作。",
-    "env_mid": "中远景环境人像：人物与场景都清楚，AI 仍是主体，自然看向镜头或刚抬头。",
-    "walk_candid": "走路抓拍：侧前方跟随感，步伐自然，可看镜头一瞬，生活感强。",
-    "close_smile": "近景胸像：脸与肩，浅景深，对镜头带一点笑意，五官清晰。",
+    "env_mid": "中远景环境人像：人物与场景都清楚，AI 仍是主体。",
+    "walk_candid": "走路抓拍：侧前方跟随感，步伐自然，生活感强。",
+    "close_smile": "近景胸像：脸与肩，浅景深，五官清晰。",
     "low_over": "轻微低机位侧前方拍摄半身：头颈保持自然，不做过肩回望，不要过度仰拍变形。",
-    "lean_wall": "靠墙/门框他拍：肩背轻靠，双手自然，看镜头，竖构图友好。",
+    "lean_wall": "靠墙/门框他拍：肩背轻靠，双手自然，竖构图友好。",
     "back_view": "背面他拍构图：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手放松垂在身侧，只有场景内已有合适支撑物时才自然搭放。",
     "side_profile": "纯侧身他拍：身体、肩线和面部朝向一致，以自然侧面或侧后三分之四角度呈现，不回头、不为露正脸扭转脖子。",
 }
@@ -97,7 +97,7 @@ THIRD_PERSON_ACTIONS = (
     "双手插兜靠站",
     "拎袋子自然侧身停步",
     "刚坐下整理衣角",
-    "对镜头轻轻点头笑",
+    "整理衣领后自然停留",
 )
 
 THIRD_PERSON_SIDE_ACTIONS = (
@@ -429,12 +429,16 @@ def build_crop_waist_selfie_action(
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
     base = (
         "【自拍 / 漏腰模式】"
-        "以当前 AI 形象为主角的居家休闲自拍成片，室内光线柔和偏暗，角度略高。"
+        "以当前 AI 形象为主角的休闲自拍成片。"
         "唯一调整是将原有上衣的下摆缩短至露出自然腰线的长度，"
         "原有服装的款式、颜色、材质、领口、袖型、图案、配饰、层次和穿着方式全部保持不变，"
-        "保持下装、人物身份、发型、脸部、表情、姿势、镜头和场景不变。"
-        "放松地坐着或靠在深色沙发/床边，头发略显凌乱，像日常随意拍的照片。"
-        "保持 AI 身份长相与发色一致，画面干净得体。"
+        "保持下装、人物身份、发型和脸部特征不变。"
+        + (
+            "姿势、表情、机位、场景和光线沿用参考图，不另加沙发或床。"
+            if has_refs else
+            "室内柔和自然光，略高机位，放松地坐在沙发边，以头部至胯部的竖屏构图清楚呈现腰线。"
+        )
+        + "保持 AI 身份长相与发色一致，画面干净得体。"
     )
     if appearance_type == "real":
         base += "真人摄影质感，保留自然皮肤纹理、布料质感与接触阴影。"
@@ -535,6 +539,11 @@ def build_selfie_look_action(
     rear_view = shot == "back_view"
     side_view = shot == "side_profile"
     full_mirror_view = shot == "mirror_full"
+    gaze_line = (
+        "视线和表情按用户明确要求执行，不额外要求看镜头。"
+        if has_explicit_gaze_request(extra)
+        else "必须看向镜头：眼睛对焦镜头方向，表情自然有神；不要眼神飘走或心不在焉。"
+    )
     capture_finishes = SELFIE_MIRROR_FINISHES if shot in {"mirror_half", "mirror_full"} else SELFIE_CANDID_FINISHES
     capture_finish = random.choice(capture_finishes) if not extra and not heart_pose else ""
     selfie_framing = (
@@ -543,6 +552,8 @@ def build_selfie_look_action(
         else (
             "竖屏全身镜面自拍：人物从头到鞋完整入镜，手机不遮挡今日穿搭；"
             if full_mirror_view
+            else "竖屏近景胸像，画面以头部、脸和肩部为主；"
+            if shot == "close_portrait"
             else "竖屏手机中近景半身：画面至少到腰线，优先看清今日上衣和搭配层次；"
         )
     )
@@ -571,8 +582,8 @@ def build_selfie_look_action(
                 + "不要美颜滤镜、不要棚拍精修。"
                 if side_view
                 else "第一人称自拍视角（自己举机或镜前自拍），不是别人代拍。"
-                "必须看向镜头：眼睛对焦镜头方向，表情自然有神；不要眼神飘走或心不在焉。"
-                "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
+                + gaze_line
+                + "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
                 + selfie_framing
                 + ("" if explicit_light else "窗光或暖灯；")
                 + "不要美颜滤镜、不要棚拍精修。"
@@ -683,8 +694,10 @@ def build_third_person_look_action(
                 "保持 AI 当前形象、今日穿搭和生活状态一致，采用竖屏半身中近景，姿态、背景层次和光线自然清楚；不要美颜滤镜、不要影楼精修。"
                 if side_view
                 else (
-                    "正面构图时可自然看向镜头；侧面构图时头部顺着身体方向，不强行回头露正脸。"
-                    "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
+                    ("视线和表情按用户明确要求执行，不额外要求看镜头。"
+                     if has_explicit_gaze_request(extra_request)
+                     else "正面构图时可自然看向镜头；侧面构图时头部顺着身体方向，不强行回头露正脸。")
+                    + "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
                     "构图保持竖屏，不自行追加近景半身或其他景别，严格以本次机位为准；"
                     + ("" if explicit_light else "窗光或暖灯，")
                     + "构图干净自然，不要美颜滤镜、不要影楼精修。"
@@ -775,7 +788,7 @@ def build_group_selfie_action(
         "close_medium": "采用贴近的竖幅近景至中景，不使用远景。",
     }[group_framing]
     orientation_prompt = {
-        "front": "正面合影时可自然看向镜头；",
+        "front": "正面合影，视线按用户要求执行；" if has_explicit_gaze_request(extra_request) else "正面合影时可自然看向镜头；",
         "side": "人物侧身朝向场景或支撑物，头部顺着身体方向，不强迫回头或露出正脸；",
         "back": "人物背侧朝向场景纵深，头部顺着身体方向，不强迫回头或露出正脸；",
         "mixed": "同框人物的正面、侧面或背侧朝向自然错开，不要求所有人统一看向镜头；",
@@ -787,7 +800,7 @@ def build_group_selfie_action(
     )
     gaze_prompt = (
         "AI 若自然面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
-        if group_orientation == "front"
+        if group_orientation == "front" and not has_explicit_gaze_request(extra_request)
         else ""
     )
     base += (
@@ -821,6 +834,9 @@ def build_group_selfie_action(
 
 def looks_like_group_selfie_intent(text: str) -> bool:
     value = str(text or "")
+    explicit_mode = explicit_selfie_action_mode(value)
+    if explicit_mode:
+        return explicit_mode == "group"
     compact = re.sub(r"[\s，。！？、；：,.!?]", "", value.lower())
     compact_keywords = (
         "合影", "合照", "同框", "一起拍", "一起照", "和我", "跟我", "与我", "陪我",

@@ -129,6 +129,25 @@ def test_record_and_asset_pages_cache_metadata_and_prefetch_neighbors():
     assert "pruneProtectedMediaLoadQueue();" in PAGE
 
 
+def test_catalogs_prefetch_three_forward_pages_without_loading_media():
+    assert "const PAGE_PREFETCH_AHEAD = 3;" in PAGE
+    assert "function prefetchCatalogPages(kind, query, page, total)" in PAGE
+    assert "function prefetchManagedCatalogPages(kind, query, page, total)" in PAGE
+    assert "Array.from({length: PAGE_PREFETCH_AHEAD}, (_, index) => page + index + 1)" in PAGE
+    prefetch = PAGE[PAGE.index("function prefetchCatalogPages"):PAGE.index("function fetchManagedCatalogPage")]
+    assert "loadProtectedImages" not in prefetch
+
+
+def test_protected_media_has_three_day_sliding_persistent_cache_and_retry_ui():
+    assert "PROTECTED_MEDIA_PERSIST_CACHE_NAME" in PAGE
+    assert "PROTECTED_MEDIA_PERSIST_TTL_MS = 3 * 24 * 60 * 60 * 1000" in PAGE
+    assert "async function readPersistentProtectedMedia(key, scope)" in PAGE
+    assert "touchPersistentProtectedMedia(key, scope)" in PAGE
+    assert "async function deletePersistentProtectedMedia(key)" in PAGE
+    assert "data-media-retry" in PAGE
+    assert "function bindProtectedMediaRetry(root = document)" in PAGE
+
+
 def test_record_source_buttons_copy_and_response_base64_opens():
     assert "copyMediaSourceValue" in PAGE
     assert 'title="复制原始来源"' in PAGE

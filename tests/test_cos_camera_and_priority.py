@@ -941,8 +941,8 @@ def test_llm_selfie_intents_route_to_their_mode_builders_and_cos_rebuilds():
 
         assert cos_action.startswith("cos:看看COS：洛琪希")
         assert cos_query == "看看COS：洛琪希"
-        assert legs_action.startswith("legs:")
-        assert legs_extra == "【LLM 自拍】看看腿 白丝"
+        assert legs_action.startswith("legs:看看腿 白丝")
+        assert legs_extra == "看看腿 白丝"
         assert group_action.startswith("group:")
         assert third_action.startswith("third:")
         assert selfie_action.startswith("selfie:")
@@ -1580,6 +1580,26 @@ def test_leg_focus_selfie_does_not_keep_third_person_pose_wording():
         action = build_leg_focus_action("自拍")
         assert "【cam:selfie】" in action
         assert not re.search(r"第三人称|摄影机|摄影者", action)
+
+
+def test_llm_leg_route_marker_does_not_force_a_selfie_camera():
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    with tempfile.TemporaryDirectory() as tmp:
+        plugin = object.__new__(SelfieImagePlugin)
+        plugin.persona = PersonaManager(tmp)
+        for prefix in ("【LLM 自拍】", "LLM 自拍："):
+            for camera in ("selfie", "third"):
+                with patch(
+                    "astrbot_plugin_selfie_image.cos.leg_focus.random.choices",
+                    side_effect=lambda options, **_kwargs: [next((item for item in options if item.get("camera") == camera), options[0])],
+                ):
+                    action, rebuild_extra, _ = plugin._prepare_llm_selfie_action(
+                        f"{prefix}看看腿 白丝", False,
+                    )
+                assert f"【cam:{camera}】" in action
+                assert rebuild_extra == "看看腿 白丝"
+                assert prefix not in action
 
 
 def test_group_without_identity_reference_does_not_invent_reference_image_one():

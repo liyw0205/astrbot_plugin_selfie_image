@@ -7577,7 +7577,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertTrue(intent.is_legs_only)
             self.assertFalse(intent.is_group_photo)
             prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
-            self.assertIn("腿部穿搭半身照", prompt)
+            self.assertIn("腿部穿搭局部照", prompt)
             self.assertIn("头部、脸部和肩膀不入镜", prompt)
             self.assertNotIn("勒进大腿肉", prompt)
             self.assertNotIn("微胖软肉", prompt)
@@ -7895,7 +7895,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertEqual(text.count(action), 1)
         self.assertIn("【outfit:reference】", text)
         self.assertIn("【wear:white】", text)
-        self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", text)
+        self.assertIn("保留原有上装、下装、连体结构和配饰", text)
+        self.assertIn("袜装或鞋履仅按本次明确要求调整", text)
         self.assertIn("在不改变原有服饰结构的前提下", text)
         self.assertIn("头部、脸部和肩膀不入镜", text)
         for forbidden in ("白色不透连裤袜，完整日常穿搭", "小皮鞋", "日常长裤搭配", "全身穿搭展示"):
@@ -7922,7 +7923,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
                 extra_reference_count=0,
             )
             self.assertIn("自拍", selfie)
-            self.assertIn("看向镜头", selfie)
+            self.assertIn("用户要求：看着镜头自然自拍", selfie)
             # variety menu
             self.assertTrue(("自拍臂" in selfie) or ("镜前" in selfie) or ("窗边" in selfie))
             look = manager.build_selfie_prompt(
@@ -7939,13 +7940,15 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 class LegFocusTests(unittest.TestCase):
     def test_leg_focus_legacy_pose_tags_resolve_to_indoor_contracts(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
-            LEGFOCUS_POSE_ALIASES, LEGFOCUS_POSE_BY_ID, ensure_leg_focus_action,
+            LEGFOCUS_POSE_ALIASES, LEGFOCUS_POSE_BY_ID, LEGFOCUS_VIEW_BY_ID, ensure_leg_focus_action,
         )
         for old_id, pose_id in LEGFOCUS_POSE_ALIASES.items():
             with self.subTest(old_id=old_id):
-                action = ensure_leg_focus_action(f"看看腿 【pose:{old_id}】 【cam:third】", True)
+                first_view = LEGFOCUS_VIEW_BY_ID[LEGFOCUS_POSE_BY_ID[pose_id]["view_ids"][0]]
+                action = ensure_leg_focus_action(f"看看腿 【pose:{old_id}】 【cam:{first_view['camera']}】", True)
                 self.assertIn(f"【pose:{pose_id}】", action)
-                self.assertIn(LEGFOCUS_POSE_BY_ID[pose_id]["camera_views"]["third"], action)
+                view_id = re.search(r"【leg_view:([a-z_]+)】", action).group(1)
+                self.assertIn(LEGFOCUS_VIEW_BY_ID[view_id]["prompt"], action)
                 self.assertIn("【outfit:reference】", action)
                 self.assertIn("头部、脸部和肩膀不入镜", action)
                 self.assertNotIn("本次随机腿部细节", action)
@@ -8790,7 +8793,7 @@ class LegFocusTests(unittest.TestCase):
         self.assertEqual(sum(item["prompt"] in normalized for item in LEGFOCUS_OUTFIT_POOL), 1)
         self.assertNotIn("本次腿部穿搭：", normalized)
         normalized_extra = re.split(r"用户补充要求优先[:：]", normalized, maxsplit=1)[-1]
-        self.assertNotIn("短袜", normalized_extra)
+        self.assertIn("白丝 短袜 清晨", normalized_extra)
         self.assertEqual(plugin._normalize_selfie_action(normalized, False), normalized)
 
     def test_cos_command_batch_text_switches_to_cos_pool(self) -> None:
@@ -9003,7 +9006,8 @@ class LegFocusTests(unittest.TestCase):
                 )
                 self.assertIn(f"【wear:{tag}】", action)
                 self.assertIn("【outfit:reference】", action)
-                self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", action)
+                self.assertIn("保留原有上装、下装、连体结构和配饰", action)
+                self.assertNotIn("袜鞋与配饰，只调整姿势和构图", action)
                 self.assertNotIn("本次随机腿部细节", action)
         explicit = build_leg_focus_action("穿着蓝白连体COS服和长靴")
         self.assertIn("【outfit:custom】", explicit)
@@ -9035,16 +9039,17 @@ class LegFocusTests(unittest.TestCase):
 
 
     def test_leg_focus_explicit_camera_uses_the_selected_pose_view(self) -> None:
-        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_POOL, build_leg_focus_action
+        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_POOL, LEGFOCUS_VIEW_BY_ID, build_leg_focus_action
 
         for pose in LEGFOCUS_POSE_POOL:
-            for camera in pose["camera_views"]:
-                with self.subTest(pose=pose["id"], camera=camera):
-                    action = build_leg_focus_action(force_pose=pose["id"], force_camera=camera)
+            for view_id in pose["view_ids"]:
+                view = LEGFOCUS_VIEW_BY_ID[view_id]
+                camera = view["camera"]
+                with self.subTest(pose=pose["id"], view=view_id):
+                    action = build_leg_focus_action(force_pose=pose["id"], force_camera=camera, force_view=view_id)
                     self.assertIn(f"【cam:{camera}】", action)
-                    self.assertIn(pose["camera_views"][camera], action)
-                    other = "selfie" if camera == "third" else "third"
-                    self.assertNotIn(pose["camera_views"][other], action)
+                    self.assertIn(view["prompt"], action)
+                    self.assertEqual(sum(item["prompt"] in action for item in LEGFOCUS_VIEW_BY_ID.values()), 1)
 
 
 class StudioStoreTests(unittest.TestCase):

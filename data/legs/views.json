@@ -1,0 +1,274 @@
+{
+  "version": 1,
+  "views": [
+    {
+      "id": "self_forward_down",
+      "title": "自视正向俯拍",
+      "camera": "selfie",
+      "direction": "front",
+      "elevation": "down",
+      "weight": 3,
+      "support_types": [
+        "seat_edge",
+        "wide_edge",
+        "wide_surface",
+        "long_surface",
+        "reclined_surface",
+        "armrest",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "本人低头正向看自己的腿，相机从本人上身前方自然斜向下拍；近端大腿位于画面下缘，膝盖与脚朝前方延伸，屈膝按真实高度自然遮挡，腿下支撑面或地面构成背景。"
+    },
+    {
+      "id": "self_left_down",
+      "title": "自视偏左斜俯拍",
+      "camera": "selfie",
+      "direction": "left",
+      "elevation": "down",
+      "weight": 2,
+      "support_types": [
+        "seat_edge",
+        "wide_edge",
+        "wide_surface",
+        "long_surface",
+        "reclined_surface",
+        "armrest",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "本人低头并将视线自然偏向自己的左侧腰腿，镜头仍在本人上身前方，斜向左下取景；左侧大腿近端靠近画面下缘，双腿随原姿势展开，不为偏左取景交换屈伸腿或移动支撑手，不绕到身体外侧拍摄。"
+    },
+    {
+      "id": "self_right_down",
+      "title": "自视偏右斜俯拍",
+      "camera": "selfie",
+      "direction": "right",
+      "elevation": "down",
+      "weight": 2,
+      "support_types": [
+        "seat_edge",
+        "wide_edge",
+        "wide_surface",
+        "long_surface",
+        "reclined_surface",
+        "armrest",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "本人低头并将视线自然偏向自己的右侧腰腿，镜头仍在本人上身前方，斜向右下取景；右侧大腿近端靠近画面下缘，双腿随原姿势展开，不为偏右取景交换屈伸腿或移动支撑手，不绕到身体外侧拍摄。"
+    },
+    {
+      "id": "self_steep_down",
+      "title": "自视较陡俯拍",
+      "camera": "selfie",
+      "direction": "front",
+      "elevation": "down",
+      "weight": 1,
+      "support_types": [
+        "wide_surface",
+        "long_surface"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "相机靠近本人眼前，低头以较陡的向下倾角看自己的腰腿与屈膝，近端大腿自然接近画面下缘，双膝按实际姿势分层遮挡，支撑面主要出现在腿下；不是悬在人物外部上空拍整个人。"
+    },
+    {
+      "id": "third_front_level",
+      "title": "正前方腿部平拍",
+      "camera": "third",
+      "direction": "front",
+      "elevation": "level",
+      "weight": 1,
+      "support_types": [
+        "seat_edge",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "画外相机位于人物正前方，以大腿至膝部附近的高度平拍，保持自然距离；腿部形成前后层次，允许交叠，不把平拍理解为必须拍脸，不夸张放大前面的膝盖。"
+    },
+    {
+      "id": "third_front_high",
+      "title": "正前方轻俯拍",
+      "camera": "third",
+      "direction": "front",
+      "elevation": "down",
+      "weight": 2,
+      "support_types": [
+        "seat_edge",
+        "wide_edge",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "画外相机在人物正前方、坐姿腰部以上的位置向下轻俯拍，呈现座沿、腿部上表面与前方地面的关系；机位属于人物对面的拍摄者，不模拟本人低头自视，不用广角缩短腿部。"
+    },
+    {
+      "id": "third_front_low",
+      "title": "正前方适度仰拍",
+      "camera": "third",
+      "direction": "front",
+      "elevation": "up",
+      "weight": 1,
+      "support_types": [
+        "seat_edge",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "画外相机在人物正前方、膝部以下且高于地面的位置适度向上仰拍，与双脚保持足够距离，保留正常膝踝比例；不贴近脚端，不从双腿之间向上取景，服装自然完整。"
+    },
+    {
+      "id": "third_oblique_level",
+      "title": "斜前方腿部平拍",
+      "camera": "third",
+      "direction": "oblique",
+      "elevation": "level",
+      "weight": 3,
+      "support_types": [
+        "seat_edge",
+        "wide_edge",
+        "wide_surface",
+        "long_surface",
+        "reclined_surface",
+        "armrest",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "画外相机从无遮挡的斜前方、约与大腿同高的位置平拍，双膝和小腿呈自然前后层次；身体保持原坐姿，不为看全双腿而扭转髋膝，不移动到侧后方。"
+    },
+    {
+      "id": "third_oblique_high",
+      "title": "斜前方自然俯拍",
+      "camera": "third",
+      "direction": "oblique",
+      "elevation": "down",
+      "weight": 3,
+      "support_types": [
+        "seat_edge",
+        "wide_edge",
+        "wide_surface",
+        "long_surface",
+        "reclined_surface",
+        "armrest",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "画外相机从人物斜前方稍高处斜向下拍，腿部上表面、弯膝层次与支撑位置清楚；相机始终在人身体外部，保留适量地面或座面，不复制本人低头看腿的投影。"
+    },
+    {
+      "id": "third_oblique_low",
+      "title": "斜前方轻仰拍",
+      "camera": "third",
+      "direction": "oblique",
+      "elevation": "up",
+      "weight": 2,
+      "support_types": [
+        "seat_edge",
+        "wide_edge",
+        "armrest",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "画外相机在人物斜前方、略低于膝部的位置轻微向上仰拍，以自然距离表现错开的腿部轮廓；避开近侧扶手遮挡，不贴近脚底，不从双腿之间向上拍，不使用夸张广角。"
+    },
+    {
+      "id": "third_side_level",
+      "title": "侧面腿部平拍",
+      "camera": "third",
+      "direction": "side",
+      "elevation": "level",
+      "weight": 3,
+      "support_types": [
+        "seat_edge",
+        "wide_edge",
+        "wide_surface",
+        "long_surface",
+        "reclined_surface",
+        "armrest",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "画外相机从人物无遮挡的一侧、约与大腿同高的位置侧拍，沿腿部轮廓表现膝踝转折和自然遮挡；远侧腿允许局部遮住，扶手不横挡主体，不强行分开双腿，也不绕到人物背后。"
+    },
+    {
+      "id": "third_side_high",
+      "title": "侧面轻俯拍",
+      "camera": "third",
+      "direction": "side",
+      "elevation": "down",
+      "weight": 2,
+      "support_types": [
+        "wide_surface",
+        "long_surface",
+        "reclined_surface",
+        "armrest"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "画外相机从人物无遮挡的侧方稍高处斜向下拍，保留大腿与支撑面的接触、屈膝弧线和小腿错位；仅侧移相机，不把人物转成背身，不为露全两条腿改变原有动作。"
+    },
+    {
+      "id": "third_side_low",
+      "title": "侧面轻仰拍",
+      "camera": "third",
+      "direction": "side",
+      "elevation": "up",
+      "weight": 1,
+      "support_types": [
+        "seat_edge",
+        "wide_edge",
+        "backrest"
+      ],
+      "framings": [
+        "leg_detail",
+        "full_outfit"
+      ],
+      "prompt": "画外相机从人物侧方略低于膝盖的位置轻微仰拍，保留座沿和自然垂落或前伸的腿部线条；与脚部保持距离，选择无遮挡的一侧，不在人物身后取景，不改变腿部支撑关系。"
+    },
+    {
+      "id": "third_top_down",
+      "title": "画外上方俯拍",
+      "camera": "third",
+      "direction": "front",
+      "elevation": "top",
+      "weight": 1,
+      "support_types": [
+        "wide_surface",
+        "long_surface"
+      ],
+      "framings": [
+        "leg_detail"
+      ],
+      "prompt": "画外相机位于人物双膝前上方，接近垂直地向下拍腿部与支撑面；相机不在本人眼前或胸前，画面上缘可见腰侧、双腿向画面下方展开，头脸留在画外，支撑手允许自然局部入镜，不强求看全所有肢体。"
+    }
+  ]
+}

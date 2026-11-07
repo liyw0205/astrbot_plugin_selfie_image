@@ -1,200 +1,533 @@
 {
   "version": 1,
-  "framing": "竖屏近距离腿部穿搭半身照，从胸下或腰线附近起裁至膝下或足部；头部、脸部和肩膀不入镜，也不通过镜面、玻璃或屏幕补出脸。人物与腿部清楚，室内背景只留少量氛围，不使用远景。服装自然完整，不掀衣、不露内衣，不夸张拉伸身体比例。",
+  "framing": "竖屏近距离腿部穿搭局部照，以腰腿、膝踝和服装细节为主体；头部、脸部和肩膀不入镜，也不通过镜面、玻璃或屏幕补出脸。可见部位随选定机位与屈膝遮挡自然变化，室内环境只留少量氛围，不使用远景。服装自然完整，不掀衣、不露内衣，不夸张拉伸身体比例。",
+  "camera_framings": {
+    "selfie": "本人低头看自己双腿的第一人称主观视角：相机位于本人眼前或上身前方，与本人躯干处于同一侧，朝自己的腿取景。腰侧和大腿近端接近画面下缘，膝脚随实际坐姿向前或侧前方延伸，保持从自己看向双腿的自然透视；屈腿允许遮住部分腰腿，不强求所有部位同时可见。相机不绕到本人对面，不从外部观看完整躯干正面。采用固定在本人上身前方的自视机位，双手按姿势保持支撑，手机与固定装置留在画外。",
+    "third": "第三人称画外相机从人物外部拍摄，拍摄方向和俯仰只执行本张选定机位；从胸下或腰线附近裁至膝下或足部，允许自然遮挡，拍摄者留在画外。相机不移到人物背后，不为了展示腿部而把人物转成背身。"
+  },
   "full_framing": "仅在用户明确要求全身时采用竖屏近中景，人物从头部到足部完整入镜但不拉成远景；保持姿势池中的室内支撑关系和原有服装，不因全身构图补换服饰。",
-  "scene_rule": "只从室内场景池选择：床沿、床面、沙发、电竞椅、普通座椅、地毯或坐垫。不得采用室外、庭院、阳台、街道、台阶或户外步行场景。家具只作稳定支撑，不能遮挡腿部姿势和主要轮廓。",
+  "reference_rules": {
+    "zh": "参考图不锁定拍摄位置或姿势；保持主角身份，穿搭按本次已锁定搭配执行，按选定机位重新建立透视和身体朝向，不复制参考图的人物正面投影或原姿势。",
+    "en": "Reference images do not lock camera position or pose. Preserve the subject's identity and follow the clothing locked for this request. Rebuild perspective and body orientation for the selected camera; do not copy the reference's front-facing body projection or original pose."
+  },
+  "scene_rule": "只使用本张选定的单一室内场景和实际支撑物，不另外添加家具来满足动作；不得采用室外、庭院、阳台、街道、台阶或户外步行场景。家具只作稳定支撑，不能遮挡腿部姿势和主要轮廓。",
   "poses": [
     {
-      "id": "bed_edge_diagonal",
-      "title": "床沿斜向伸腿",
-      "aliases": ["床沿坐", "床边斜坐", "一条腿屈膝另一条腿伸直"],
+      "id": "seated_diagonal_legs",
+      "title": "座沿斜向伸腿",
+      "legacy_ids": [
+        "bed_edge_diagonal"
+      ],
+      "aliases": [
+        "床沿斜向伸腿",
+        "床沿坐",
+        "床边斜坐",
+        "一条腿屈膝另一条腿伸直"
+      ],
       "weight": 3,
-      "prompt": "坐在床沿靠前的位置，髋部向一侧错开，近侧膝自然屈起，另一条腿顺床沿斜向放松伸出；双手分别撑在身侧床面稳定重心，膝、踝和脚尖形成高低错落的斜线，保持静态，不做拉伸动作。",
-      "camera_views": {
-        "selfie": "第一人称胸前固定近景机位，镜头自然略向下，双手仍按姿势支撑床面；画面从胸下裁切，脸和手机均不入镜。",
-        "third": "第三人称画外机位，从斜前方略低于坐姿胸口的位置近拍；摄影者不入镜，不用垂直俯拍。"
-      },
-      "scene_ids": ["bed_edge", "bedroom_bench"]
+      "prompt": "坐在选定座沿靠前的位置，髋部轻微侧移，一侧膝盖自然弯曲，另一条腿斜向前方放松伸出；双手分别压扶身侧座面稳定重心，膝踝错落，保持静态，不做拉伸动作。",
+      "support_types": [
+        "seat_edge"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down",
+        "third_oblique_high",
+        "third_oblique_low",
+        "third_side_level"
+      ]
     },
     {
-      "id": "bed_edge_side_dangle",
-      "title": "床沿侧坐一屈一垂",
-      "aliases": ["床沿侧坐", "一腿屈起一腿垂下", "床边错腿"],
+      "id": "edge_fold_and_drop",
+      "title": "座沿一屈一垂",
+      "legacy_ids": [
+        "bed_edge_side_dangle"
+      ],
+      "aliases": [
+        "床沿侧坐一屈一垂",
+        "床沿侧坐",
+        "一腿屈起一腿垂下",
+        "床边错腿"
+      ],
       "weight": 2,
-      "prompt": "身体侧向坐在床沿，一条腿屈膝收在床面，另一条腿自然垂向床沿外侧；双手在身体两侧压扶床面承重，髋部轻微侧移，让大腿、小腿形成清楚的前后层次，脚部放松，不悬空踢腿。",
-      "camera_views": {
-        "selfie": "第一人称胸前高度近景，镜头自然向下并稍偏向床沿一侧，同时收进屈腿和垂腿，不拍脸、不用镜面。",
-        "third": "第三人称从床沿斜前侧略低机位近拍，强调床沿支撑和一屈一垂的腿部层次，不拍头脸、不用远景。"
-      },
-      "scene_ids": ["bed_edge", "bedroom_bench"]
+      "prompt": "在宽座沿侧向坐稳，一条腿屈膝收在身旁座面，另一条大腿越过座沿后小腿自然下垂；双手压扶身体两侧座面，髋部轻微侧移，膝踝朝向连贯，不悬空踢腿。",
+      "support_types": [
+        "wide_edge"
+      ],
+      "view_ids": [
+        "self_left_down",
+        "self_right_down",
+        "third_oblique_high",
+        "third_side_level",
+        "third_side_low"
+      ]
     },
     {
-      "id": "bed_supported_knees",
-      "title": "床面双手后撑屈膝",
-      "aliases": ["双手后撑", "双手撑床", "床上后撑", "后撑屈膝"],
+      "id": "supported_bent_knees",
+      "title": "双手后撑错膝",
+      "legacy_ids": [
+        "bed_supported_knees"
+      ],
+      "aliases": [
+        "床面双手后撑屈膝",
+        "双手后撑",
+        "双手撑床",
+        "床上后撑",
+        "后撑屈膝"
+      ],
       "weight": 2,
-      "prompt": "坐在整理平整的床面上，双手在身体两侧向后轻撑床面承担上身重量，双膝自然弯曲并略微错开，双脚放松落在床面；肩胯保持稳定，腿部呈自然层次，不做夸张后仰。",
-      "camera_views": {
-        "selfie": "第一人称近距离手机视角，从胸下向膝部自然取景，略微侧向，不采用正上方俯拍。",
-        "third": "第三人称画外近景，从床侧斜前方拍摄，明确看到双手撑床与屈膝关系，人物不露脸。"
-      },
-      "scene_ids": ["bed_surface"]
+      "prompt": "在足够宽的平整支撑面上坐稳，双手在身侧稍后方压撑承担上身重量；双膝弯曲且前后轻微错开，双脚放松落在同一支撑面上，肩胯稳定，不夸张后仰，后撑双手允许自然留在画外。",
+      "support_types": [
+        "wide_surface"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_steep_down",
+        "third_oblique_high",
+        "third_side_level",
+        "third_side_high"
+      ]
     },
     {
-      "id": "bed_side_recline",
-      "title": "床上侧靠错腿",
-      "aliases": ["床上侧靠", "床上侧坐", "床上侧躺", "侧靠错腿"],
+      "id": "reclined_offset_legs",
+      "title": "半靠侧放错腿",
+      "legacy_ids": [
+        "bed_side_recline"
+      ],
+      "aliases": [
+        "床上侧靠错腿",
+        "床上侧靠",
+        "床上侧坐",
+        "床上侧躺",
+        "侧靠错腿"
+      ],
       "weight": 2,
-      "prompt": "在床上以侧坐或半靠姿势由枕头和手臂稳定支撑，双膝轻弯朝同一侧，靠近镜头的一条腿稍向前错开；髋部和大腿自然贴合床面，动作安静，不扭腰硬拗。",
-      "camera_views": {
-        "selfie": "第一人称近距离侧向视角，手机在胸前高度略向下，保留腿部与床面接触关系，不露头脸。",
-        "third": "第三人称从床侧平视略低位置近拍，侧向展示腿部轮廓和床面支撑，不从脚端夸张透视。"
-      },
-      "scene_ids": ["bed_surface"]
+      "prompt": "在宽座面由软靠稳定承托上身，髋部和大腿自然贴合座面；双膝轻弯朝同一侧，一条小腿向前错开，双臂自然支撑，不扭腰硬拗，不把两条腿完全叠成一条轮廓。",
+      "support_types": [
+        "reclined_surface"
+      ],
+      "view_ids": [
+        "third_oblique_level",
+        "third_oblique_high",
+        "third_side_level",
+        "third_side_high"
+      ]
     },
     {
-      "id": "sofa_side_fold",
-      "title": "沙发侧坐收腿",
-      "aliases": ["沙发侧坐", "沙发收腿", "双腿收向一侧", "侧坐屈膝"],
+      "id": "side_folded_legs",
+      "title": "侧坐自然收腿",
+      "legacy_ids": [
+        "sofa_side_fold",
+        "rug_side_fold"
+      ],
+      "aliases": [
+        "沙发侧坐收腿",
+        "沙发侧坐",
+        "沙发收腿",
+        "双腿收向一侧",
+        "侧坐屈膝",
+        "地毯侧向收腿",
+        "地毯侧坐",
+        "地毯收腿",
+        "侧向收膝",
+        "单手撑地"
+      ],
       "weight": 3,
-      "prompt": "在沙发前沿侧坐，双膝弯曲并收向一侧，近侧小腿稍向前错开；一只手压扶沙发侧边或扶手承重，另一只手撑在坐垫上稳定髋部，身体形成轻微侧向折线，不整理或拉扯衣物。",
-      "camera_views": {
-        "selfie": "第一人称手机近景，从胸下自然略向下拍，身体与腿部呈三分之四侧向，不出现脸部倒影。",
-        "third": "第三人称从沙发侧前方平视近拍，重点呈现侧坐与收腿的轮廓，摄影者留在画外。"
-      },
-      "scene_ids": ["sofa"]
+      "prompt": "在宽平支撑面上侧坐，双膝自然弯曲并收向同一侧，一条小腿稍向前错开；一只手压撑身侧，另一只手放松落在腿旁，髋部随腿部方向轻转，不跪立、不拉扯衣物、不做瑜伽拉伸。",
+      "support_types": [
+        "wide_surface"
+      ],
+      "view_ids": [
+        "self_left_down",
+        "self_right_down",
+        "self_steep_down",
+        "third_oblique_high",
+        "third_side_level",
+        "third_side_high"
+      ]
     },
     {
-      "id": "sofa_armrest_asymmetric",
-      "title": "沙发扶手侧撑错腿",
-      "aliases": ["沙发扶手侧撑", "扶手边屈膝伸腿", "沙发侧边支撑"],
+      "id": "armrest_offset_legs",
+      "title": "扶手侧撑错腿",
+      "legacy_ids": [
+        "sofa_armrest_asymmetric"
+      ],
+      "aliases": [
+        "沙发扶手侧撑错腿",
+        "沙发扶手侧撑",
+        "扶手边屈膝伸腿",
+        "沙发侧边支撑"
+      ],
       "weight": 2,
-      "prompt": "坐在沙发一侧靠近扶手的位置，身体侧转并由一侧前臂轻撑扶手，另一只手压住身旁坐垫；一条腿屈膝靠近座面，另一条腿斜向地面自然伸出，膝踝朝向一致，呈现稳定的侧向轮廓，不后仰过度。",
-      "camera_views": {
-        "selfie": "第一人称手机从胸前高度向下近拍，镜头略偏向扶手一侧，让支撑手、屈膝和斜伸腿同时入镜，不拍头脸。",
-        "third": "第三人称从沙发侧前方略低机位近拍，清楚呈现前臂扶手支撑、另一手撑垫和腿部错位，不从正前方平拍。"
-      },
-      "scene_ids": ["sofa"]
+      "prompt": "坐在靠近扶手的一侧，一侧前臂轻撑扶手，另一只手压住身旁座面；一条腿自然屈膝，另一条腿斜向地面舒适伸出，髋部轻微侧转，膝踝朝向连贯，不要求支撑双手同时完整入镜。",
+      "support_types": [
+        "armrest"
+      ],
+      "view_ids": [
+        "self_left_down",
+        "self_right_down",
+        "third_oblique_high",
+        "third_oblique_low",
+        "third_side_level"
+      ]
     },
     {
-      "id": "sofa_forward_leg",
-      "title": "沙发沿单腿前伸",
-      "aliases": ["沙发前伸腿", "沙发单腿伸直", "一条腿向前伸", "沙发边伸腿"],
+      "id": "seated_forward_leg",
+      "title": "坐姿单腿前伸",
+      "legacy_ids": [
+        "sofa_forward_leg"
+      ],
+      "aliases": [
+        "沙发沿单腿前伸",
+        "沙发前伸腿",
+        "沙发单腿伸直",
+        "一条腿向前伸",
+        "沙发边伸腿"
+      ],
       "weight": 3,
-      "prompt": "坐在沙发前沿，身体微微侧转，一条腿屈膝稳稳落在地毯或地面，另一条腿向前舒适伸展并略向外侧错开；双手轻放坐垫两侧辅助平衡，膝踝方向自然一致。",
-      "camera_views": {
-        "selfie": "第一人称胸前高度近拍，手机自然略向下，伸腿方向沿画面斜线展开，脸不入镜。",
-        "third": "第三人称从沙发斜前方略低机位近拍，兼顾伸腿与屈膝层次，不使用广角夸张腿长。"
-      },
-      "scene_ids": ["sofa"]
+      "prompt": "坐在座沿并轻微侧转，一条腿屈膝稳放在地面，另一条腿向前舒适伸展并略向外错开；双手压扶座面两侧辅助平衡，膝踝方向一致，脚部放松，不刻意绷腿。",
+      "support_types": [
+        "seat_edge"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down",
+        "third_front_high",
+        "third_oblique_level",
+        "third_oblique_low",
+        "third_side_low"
+      ]
     },
     {
-      "id": "sofa_ankle_cross",
-      "title": "沙发坐姿脚踝交叠",
-      "aliases": ["脚踝交叠", "交叠脚踝", "沙发坐姿交腿"],
-      "weight": 2,
-      "prompt": "在沙发上自然坐稳，双膝靠近并朝向同一侧，脚踝轻轻交叠，一条小腿略向前形成层次；背部由靠垫承托，手掌放在坐垫边缘，不刻意挺腿或绷脚。",
-      "camera_views": {
-        "selfie": "第一人称近距离轻微斜俯视角，从胸下取景，脚踝交叠保持在画面中心，不拍到脸。",
-        "third": "第三人称从沙发前侧平视近拍，双腿和坐垫支撑关系清楚，不使用正上方机位。"
-      },
-      "scene_ids": ["sofa"]
+      "id": "seated_ankle_cross",
+      "title": "坐姿脚踝轻叠",
+      "legacy_ids": [
+        "sofa_ankle_cross"
+      ],
+      "aliases": [
+        "沙发坐姿脚踝交叠",
+        "脚踝交叠",
+        "交叠脚踝",
+        "沙发坐姿交腿"
+      ],
+      "weight": 1,
+      "prompt": "在座沿自然坐稳，双膝靠近并朝同一侧，双脚落在地面，脚踝轻轻交叠，一条小腿略向前形成层次；手掌放在座面边缘，不刻意挺腿或绷脚，不强行把脚踝放大。",
+      "support_types": [
+        "seat_edge"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down"
+      ]
     },
     {
-      "id": "gaming_chair_staggered",
-      "title": "电竞椅错位伸腿",
-      "aliases": ["电竞椅坐姿", "电竞椅伸腿", "游戏椅错位伸腿"],
+      "id": "backed_staggered_legs",
+      "title": "靠背错位伸腿",
+      "legacy_ids": [
+        "gaming_chair_staggered"
+      ],
+      "aliases": [
+        "电竞椅错位伸腿",
+        "电竞椅坐姿",
+        "电竞椅伸腿",
+        "游戏椅错位伸腿"
+      ],
       "weight": 2,
-      "prompt": "坐在电竞椅上并由靠背承托，髋部轻微侧转；一条腿屈膝稳放在脚下，另一条腿向前斜伸并与近侧小腿错开，双手分别压扶两侧扶手稳定身体，脚部放松，不踩桌面、不做运动姿势。",
-      "camera_views": {
-        "selfie": "第一人称手机近景从胸下略向下取景，椅背只作少量背景，伸腿不贴近镜头造成变形。",
-        "third": "第三人称从椅子斜前侧略低于坐姿腰线近拍，清楚呈现扶手支撑和腿部错位，摄影者不入画。"
-      },
-      "scene_ids": ["gaming_chair", "desk_chair"]
+      "prompt": "坐稳并由靠背承托上身，髋部轻微侧转；一条腿屈膝稳放脚下，另一条腿斜向前伸并与屈腿错开，双手压扶座沿稳定身体，脚部放松，不踩桌面。",
+      "support_types": [
+        "backrest"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down",
+        "third_front_low",
+        "third_oblique_high",
+        "third_oblique_low"
+      ]
     },
     {
-      "id": "gaming_chair_side_fold",
-      "title": "电竞椅侧靠收膝",
-      "aliases": ["电竞椅侧坐", "游戏椅侧靠", "椅上侧向收膝"],
+      "id": "armrest_side_knees",
+      "title": "侧靠并膝错踝",
+      "legacy_ids": [
+        "gaming_chair_side_fold"
+      ],
+      "aliases": [
+        "电竞椅侧靠收膝",
+        "电竞椅侧坐",
+        "游戏椅侧靠",
+        "椅上侧向收膝"
+      ],
       "weight": 2,
-      "prompt": "在电竞椅上坐稳并轻靠一侧扶手，双膝自然弯曲后向同一侧收拢，近侧小腿略向前错开；一只手扶住扶手，另一只手轻放椅面边缘，腿部形成紧凑但分层清晰的轮廓，不蜷缩遮住膝踝。",
-      "camera_views": {
-        "selfie": "第一人称手机从胸前略向下拍，机位偏向收膝一侧，椅背只留少量背景，脸和手机屏幕均不入镜。",
-        "third": "第三人称从椅子侧前方略低于坐姿腰线近拍，展示扶手支撑和侧向收膝，不采用正上方俯拍。"
-      },
-      "scene_ids": ["gaming_chair", "desk_chair"]
+      "prompt": "在座面坐稳并轻靠一侧扶手，双膝靠近后转向同一侧，小腿垂落地面并前后错开；一只手扶住扶手，另一只手轻放座沿，髋膝方向连贯，不把双脚强塞进狭窄座面。",
+      "support_types": [
+        "armrest"
+      ],
+      "view_ids": [
+        "third_oblique_level",
+        "third_oblique_high",
+        "third_side_level",
+        "third_side_high"
+      ]
     },
     {
-      "id": "chair_crossed_knee",
-      "title": "椅上交叠屈膝",
-      "aliases": ["椅上交叠屈膝", "椅上交腿", "交叠膝盖"],
+      "id": "seated_crossed_knee",
+      "title": "坐姿交叠屈膝",
+      "legacy_ids": [
+        "chair_crossed_knee"
+      ],
+      "aliases": [
+        "椅上交叠屈膝",
+        "椅上交腿",
+        "交叠膝盖"
+      ],
       "weight": 2,
-      "prompt": "坐在稳固的室内椅子上，一侧膝盖自然交叠到另一侧膝前，双腿由座面和地面稳定支撑；上身只轻微侧转，手掌放在椅沿或大腿外侧，不遮住主要腿部轮廓。",
-      "camera_views": {
-        "selfie": "第一人称近距离自然向下视角，画面从胸下开始，稍偏向交叠膝部，不使用顶拍或镜面自拍。",
-        "third": "第三人称从斜前方平视近拍，交叠膝部与支撑椅面清晰，人物不露脸。"
-      },
-      "scene_ids": ["gaming_chair", "desk_chair", "living_room_chair"]
+      "prompt": "在座沿坐稳，一侧膝盖自然交叠到另一侧膝前，下面一条腿由地面稳定支撑；上身轻微侧转，手掌压扶座沿或放在大腿外侧，不遮住主要腿部轮廓。",
+      "support_types": [
+        "seat_edge"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down",
+        "third_front_level",
+        "third_oblique_level",
+        "third_oblique_high",
+        "third_side_level"
+      ]
     },
     {
-      "id": "rug_back_support",
-      "title": "地毯后撑并腿",
-      "aliases": ["地毯后撑", "双手撑地", "坐地伸腿", "地毯并腿"],
+      "id": "supported_straight_legs",
+      "title": "后撑并行伸腿",
+      "legacy_ids": [
+        "rug_back_support"
+      ],
+      "aliases": [
+        "地毯后撑并腿",
+        "地毯后撑",
+        "双手撑地",
+        "坐地伸腿",
+        "地毯并腿"
+      ],
       "weight": 2,
-      "prompt": "坐在柔软地毯或坐垫上，双手放在身体两侧稍靠后支撑上身，双腿向前并行伸展并自然错开脚踝；背部微微后倾但不塌腰，手臂承重稳定，姿势静态放松。",
-      "camera_views": {
-        "selfie": "第一人称手机在胸前高度轻微向下，腿部沿画面纵向展开，取景保持近距离但不过度俯拍。",
-        "third": "第三人称从地面附近的斜前侧近拍，体现双手后撑、地毯接触和腿部纵向线条，不用鱼眼透视。"
-      },
-      "scene_ids": ["bedroom_rug", "living_room_rug", "floor_cushion"]
+      "prompt": "在足够宽长的平整支撑面上坐稳，双手放在身侧稍靠后支撑上身；双腿向前并行舒展并自然错开脚踝，背部微微后倾但不塌腰，腿与脚均由支撑面承托，保持静态放松。",
+      "support_types": [
+        "long_surface"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down",
+        "third_oblique_high",
+        "third_side_level",
+        "third_top_down"
+      ]
     },
     {
-      "id": "rug_side_fold",
-      "title": "地毯侧向收腿",
-      "aliases": ["地毯侧坐", "地毯收腿", "侧向收膝", "单手撑地"],
+      "id": "one_knee_side_support",
+      "title": "单膝立起侧撑",
+      "legacy_ids": [
+        "rug_one_knee_side_support"
+      ],
+      "aliases": [
+        "地毯单膝立起侧撑",
+        "地毯单膝侧撑",
+        "一膝立起席地坐",
+        "地面侧撑屈膝"
+      ],
       "weight": 2,
-      "prompt": "坐在地毯上将双膝自然弯曲并收向身体一侧，髋部随腿部方向轻转，一只手在身后或身侧撑地保持稳定，另一手放松落在腿旁；不跪立、不做瑜伽拉伸。",
-      "camera_views": {
-        "selfie": "第一人称略偏侧的近景视角，胸下起裁，腿部朝画面一侧形成自然弧线，不出现头脸。",
-        "third": "第三人称从侧前方低于坐姿胸口的位置近拍，清楚表现收腿方向与单手支撑，不垂直俯拍。"
-      },
-      "scene_ids": ["bedroom_rug", "living_room_rug", "floor_cushion"]
+      "prompt": "在宽平支撑面上坐稳，一侧膝盖自然立起，另一条腿向侧前方收放；同侧手掌压撑身侧稳定重心，另一只手轻放立膝旁，躯干与髋部轻微侧转，不跪立、不做拉伸。",
+      "support_types": [
+        "wide_surface"
+      ],
+      "view_ids": [
+        "self_left_down",
+        "self_right_down",
+        "self_steep_down",
+        "third_oblique_high",
+        "third_side_level",
+        "third_side_high",
+        "third_top_down"
+      ]
     },
     {
-      "id": "rug_one_knee_side_support",
-      "title": "地毯单膝立起侧撑",
-      "aliases": ["地毯单膝侧撑", "一膝立起席地坐", "地面侧撑屈膝"],
+      "id": "reclined_one_knee",
+      "title": "半靠单膝屈起",
+      "legacy_ids": [
+        "bed_one_knee_up"
+      ],
+      "aliases": [
+        "床上单膝自然抬起",
+        "床上单膝抬起",
+        "单膝屈起",
+        "床上屈膝"
+      ],
       "weight": 2,
-      "prompt": "坐在柔软地毯上，一侧膝盖自然立起，另一条腿向身体侧前方收放；同侧手掌撑地稳定重心，另一只手轻放在立起膝旁，躯干和髋部微微侧转，腿部形成前后错位，不跪立、不做瑜伽拉伸。",
-      "camera_views": {
-        "selfie": "第一人称近景从胸下向下并略偏侧取景，保留立膝、收放腿与地毯接触关系，不拍头脸，不做垂直顶拍。",
-        "third": "第三人称从地面斜前侧的低机位近拍，明确表现单膝立起与手掌支撑，避免广角和俯拍。"
-      },
-      "scene_ids": ["bedroom_rug", "living_room_rug", "floor_cushion"]
-    },
-    {
-      "id": "bed_one_knee_up",
-      "title": "床上单膝自然抬起",
-      "aliases": ["床上单膝抬起", "单膝屈起", "床上屈膝"],
-      "weight": 2,
-      "prompt": "在床面半靠坐稳，一条腿屈膝并由床面支撑，另一条腿较舒展地向前放松；双手自然扶在身侧或床面，屈膝高度适中，不将膝盖顶向镜头，不做大幅度拉伸。",
-      "camera_views": {
-        "selfie": "第一人称手机近景从胸下向前膝取景，机位略偏侧，保持膝部自然比例并排除脸部。",
-        "third": "第三人称床侧斜前方近拍，采用自然坐姿高度，展示一屈一伸的腿部层次和床面支撑。"
-      },
-      "scene_ids": ["bed_surface", "bed_edge"]
+      "prompt": "由软靠承托上身并在宽座面半靠坐稳，一条腿屈膝且脚掌落在座面，另一条腿向前放松舒展；双手扶在身侧，屈膝高度适中，不强行拉直膝盖或大幅后仰。",
+      "support_types": [
+        "reclined_surface"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down",
+        "third_oblique_level",
+        "third_oblique_high",
+        "third_side_level"
+      ]
     }
   ],
   "scenes": [
-    {"id": "bed_edge", "title": "床沿", "aliases": ["床边", "床沿", "床边坐", "床沿坐"], "prompt": "整理平整的床沿与床单，只保留少量枕头或被褥纹理，环境安静居家。"},
-    {"id": "bed_surface", "title": "床面", "aliases": ["床上", "床面", "床上坐"], "prompt": "整洁柔软的床面与自然压痕，灯光柔和，避免杂乱寝具抢主体。"},
-    {"id": "bedroom_bench", "title": "卧室床边座面", "aliases": ["床边凳", "卧室凳"], "prompt": "卧室内靠床的稳固软凳或床沿，背景简洁并略带生活感。"},
-    {"id": "sofa", "title": "客厅沙发", "aliases": ["沙发", "客厅沙发"], "prompt": "客厅沙发坐垫与靠垫形成柔和层次，背景略虚但不过度模糊，不遮腿部。"},
-    {"id": "floor_cushion", "title": "室内坐垫", "aliases": ["坐垫", "软垫"], "prompt": "室内柔软坐垫放在整洁地面上，保留自然接触阴影和少量环境。"},
-    {"id": "gaming_chair", "title": "电竞椅", "aliases": ["电竞椅", "游戏椅"], "prompt": "室内电竞椅的靠背和扶手只作简洁背景，不出现桌面杂物或发光屏幕特效。"},
-    {"id": "desk_chair", "title": "书桌椅", "aliases": ["书桌椅", "电脑椅"], "prompt": "有稳固靠背与两侧扶手的室内书桌椅，桌面只在画面边缘出现，环境整洁、光线自然。"},
-    {"id": "living_room_chair", "title": "客厅单椅", "aliases": ["单椅", "客厅椅"], "prompt": "有稳定靠背的客厅单椅和少量靠垫，居家环境安静自然。"},
-    {"id": "bedroom_rug", "title": "卧室地毯", "aliases": ["地毯", "卧室地毯", "床边地毯"], "prompt": "床边柔软地毯和少量床沿背景，画面干净，地面支撑关系明确。"},
-    {"id": "living_room_rug", "title": "客厅地毯", "aliases": ["地毯", "客厅地毯"], "prompt": "客厅地毯与沙发边缘形成简洁层次，灯光柔和，家具不遮挡主体。"}
+    {
+      "id": "bed_edge",
+      "title": "床沿",
+      "aliases": [
+        "床边",
+        "床沿",
+        "床边坐",
+        "床沿坐"
+      ],
+      "prompt": "整理平整的床沿与自然床单纹理，少量床边地面，居家光线柔和，家具只按实际机位可见范围入镜。",
+      "supports": {
+        "seat_edge": "床沿座面与床边地面",
+        "wide_edge": "足以放下一条屈腿的宽床沿，另一条腿可垂向床边地面"
+      }
+    },
+    {
+      "id": "bed_surface",
+      "title": "床面",
+      "aliases": [
+        "床上",
+        "床面",
+        "床上坐",
+        "撑床",
+        "床面支撑",
+        "床上支撑"
+      ],
+      "prompt": "整洁柔软的宽床面与自然压痕，寝具纹理适量，不以背景细节抢主体。",
+      "supports": {
+        "wide_surface": "宽床面，双手与屈腿均由床面承托",
+        "long_surface": "足够让双腿向前舒展的宽长床面",
+        "reclined_surface": "宽床面与承托上身的枕头或床头软靠"
+      }
+    },
+    {
+      "id": "bedroom_bench",
+      "title": "卧室软凳",
+      "aliases": [
+        "床边凳",
+        "卧室凳"
+      ],
+      "prompt": "卧室内靠床的稳固软凳和自然地面，少量生活感，座面边缘不遮挡腿部。",
+      "supports": {
+        "seat_edge": "稳固软凳的座沿与前方地面"
+      }
+    },
+    {
+      "id": "sofa",
+      "title": "客厅沙发",
+      "aliases": [
+        "沙发",
+        "客厅沙发"
+      ],
+      "prompt": "宽敞稳固的客厅沙发，布料与接触阴影自然，坐垫、扶手和地面仅按选定机位实际可见范围入镜。",
+      "supports": {
+        "seat_edge": "沙发前沿座面与前方地面",
+        "wide_edge": "足以放下侧收屈腿的宽沙发沿，另一条腿可自然垂地",
+        "wide_surface": "足够宽的沙发座面，可承托臀部、屈腿和支撑手",
+        "long_surface": "足够长的沙发座面，双腿可沿座面舒展",
+        "reclined_surface": "宽沙发座面与侧边软靠垫",
+        "armrest": "沙发一侧实际存在的稳固扶手、相邻座面和脚下地面",
+        "backrest": "沙发座面、靠背与前方地面"
+      }
+    },
+    {
+      "id": "floor_cushion",
+      "title": "室内坐垫",
+      "aliases": [
+        "坐垫",
+        "软垫"
+      ],
+      "prompt": "宽地垫平铺于整洁室内地面，接触阴影自然，少量环境，不额外添加椅子或扶手。",
+      "supports": {
+        "wide_surface": "宽地垫与同一平面的地面",
+        "long_surface": "宽地垫及前方可让双腿舒展的整洁地面"
+      }
+    },
+    {
+      "id": "gaming_chair",
+      "title": "电竞椅",
+      "aliases": [
+        "电竞椅",
+        "游戏椅"
+      ],
+      "prompt": "室内稳固电竞椅与整洁地面，座面和扶手只作支撑，身后椅背是否可见服从实际机位，不出现杂物或屏幕特效。",
+      "supports": {
+        "seat_edge": "电竞椅座沿与前方地面",
+        "armrest": "电竞椅实际存在的侧扶手、座面和脚下地面",
+        "backrest": "电竞椅靠背、座面与前方地面"
+      }
+    },
+    {
+      "id": "desk_chair",
+      "title": "书桌椅",
+      "aliases": [
+        "书桌椅",
+        "电脑椅"
+      ],
+      "prompt": "有稳定靠背和侧扶手的室内书桌椅，地面整洁，桌面不挡腿部，背景服从机位。",
+      "supports": {
+        "seat_edge": "书桌椅座沿与脚下地面",
+        "armrest": "书桌椅侧扶手、座面与脚下地面",
+        "backrest": "书桌椅靠背、座面与前方地面"
+      }
+    },
+    {
+      "id": "living_room_chair",
+      "title": "客厅单椅",
+      "aliases": [
+        "单椅",
+        "客厅椅"
+      ],
+      "prompt": "客厅稳固单椅与自然地面，少量布料纹理，环境安静，不额外添加扶手。",
+      "supports": {
+        "seat_edge": "客厅单椅座沿与前方地面",
+        "backrest": "客厅单椅靠背、座面与前方地面"
+      }
+    },
+    {
+      "id": "bedroom_rug",
+      "title": "卧室地毯",
+      "aliases": [
+        "地毯",
+        "卧室地毯",
+        "床边地毯",
+        "撑地",
+        "地面支撑"
+      ],
+      "prompt": "卧室柔软地毯与少量自然地面纹理，床沿仅在实际机位看得到时出现在边缘，不遮挡双腿。",
+      "supports": {
+        "wide_surface": "柔软平整的卧室地毯",
+        "long_surface": "足够让双腿向前放松舒展的卧室地毯"
+      }
+    },
+    {
+      "id": "living_room_rug",
+      "title": "客厅地毯",
+      "aliases": [
+        "地毯",
+        "客厅地毯",
+        "撑地",
+        "地面支撑"
+      ],
+      "prompt": "客厅宽地毯与自然接触阴影，少量家具边缘依实际机位入镜，不遮挡腿部。",
+      "supports": {
+        "wide_surface": "宽敞平整的客厅地毯",
+        "long_surface": "足够让双腿舒展的客厅地毯"
+      }
+    }
   ]
 }

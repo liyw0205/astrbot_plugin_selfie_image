@@ -17,6 +17,7 @@ from ..cos.cos_looks import (
     requests_phone_face_cover,
 )
 from ..cos.leg_focus import (
+    LEGFOCUS_REFERENCE_RULES,
     ensure_leg_focus_action,
     get_leg_focus_outfit,
     has_leg_face_context,
@@ -55,6 +56,9 @@ from ..prompts.prompt_templates import (
     COS_COVERED_EYES_IDENTITY_CONTRACT_ZH,
     COS_IDENTITY_CONTRACT_ZH,
     COS_HAIR_OVERRIDE_CONTRACT_ZH,
+    explicit_selfie_action_mode,
+    has_daily_staging_contract,
+    has_explicit_gaze_request,
     has_viewpoint_change_request,
     resolve_appearance_type,
 )
@@ -256,11 +260,12 @@ def includes_any(text: str, items: list[str]) -> bool:
 
 def extract_user_extra_text(action: str) -> str:
     text = str(action or "")
-    match = re.search(r"(?:用户补充要求优先|用户补充要求|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
+    match = re.search(r"(?:用户补充要求优先|用户补充要求|用户指定内容|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
     if not match:
         return ""
     value = match.group(1)
-    value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|legs_face|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
+    value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|legs_face|leg_view|leg_scene|leg_support|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
+    value = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", value)
     return re.sub(r"\s+", " ", value).strip(" 。")
 
 
@@ -1259,6 +1264,7 @@ class PersonaManager:
         extra = extract_user_action_text(raw)
         compact = normalize_intent_text(raw)
         extra_compact = normalize_intent_text(extra)
+        explicit_mode = explicit_selfie_action_mode(raw)
         requests_daily_outfit = includes_any(
             extra_compact, ["今日穿搭", "今天穿搭", "今天这身", "按今天的穿搭"]
         )
@@ -1402,6 +1408,9 @@ class PersonaManager:
             or "【cos:" in raw.lower()
             or "【cos：" in raw
         )
+        if explicit_mode:
+            is_cos_look = explicit_mode == "cos"
+            is_group_photo = explicit_mode == "group"
         is_legs_only = (not is_cos_look) and (
             "【legs:outfit】" in raw
             or includes_any(
@@ -1425,6 +1434,10 @@ class PersonaManager:
                 ],
             )
         )
+        if explicit_mode:
+            is_legs_only = explicit_mode == "legs"
+        elif is_group_photo:
+            is_legs_only = False
         is_third_person_photo = (not is_cos_look) and includes_any(
             compact,
             [
@@ -1457,6 +1470,8 @@ class PersonaManager:
             ],
         )
         camera_kind = ""
+        if explicit_mode in {"selfie", "third"}:
+            is_third_person_photo = explicit_mode == "third"
         if not is_cos_look:
             if "【cam:third】" in raw:
                 is_third_person_photo = True
@@ -1927,7 +1942,7 @@ class PersonaManager:
         # Mode-specific action builders already select one coherent shot,
         # scene, gesture, and light. Do not layer an unrelated legacy snapshot
         # preset on top of that contract.
-        has_staging_contract = (
+        has_staging_contract = has_daily_staging_contract(act) or (
             "本次机位：" in act
             and any(
                 marker in act
@@ -1940,6 +1955,7 @@ class PersonaManager:
             )
         )
         user_text = extract_user_action_text(act)
+        gaze_override = has_explicit_gaze_request(user_text)
         appearance_type = resolve_appearance_type(
             self.get_appearance_type(),
             user_text,
@@ -1970,12 +1986,14 @@ class PersonaManager:
                 "主角的脸型、五官结构、发型发色、体态、性别与整体长相来自参考图一；额外参考图不得替换这些身份特征。",
                 "参考图一是女性则主角必须是女性，是男性则必须是男性；禁止把女形象改成男、把男形象改成女。",
                 "表情、眼神、嘴角与微表情默认按本次场景自然重画，不要原样复制参考图一的固定表情或僵硬眼神；只锁身份长相与性别。",
-                "面向镜头时自然看向镜头、眼神有焦点；用户明确要求侧脸、低头、看彼此或看别处时按要求，不要心不在焉。",
+                "视线和表情按用户明确要求执行，不额外要求看镜头。"
+                if gaze_override else "面向镜头时自然看向镜头、眼神有焦点；用户明确要求侧脸、低头、看彼此或看别处时按要求，不要心不在焉。",
             ]
             if has_reference_image
             else [
                 "形象参考以角色名称、人设和今日状态为准；未说明性别默认成年女性，不无故改成男性。",
-                "正对镜头时自然看向镜头，表情有焦点。",
+                "视线和表情按用户明确要求执行，不额外要求看镜头。"
+                if gaze_override else "正对镜头时自然看向镜头，表情有焦点。",
             ]
         )
         if intent.is_cos_look and cos_contract:
@@ -2017,6 +2035,8 @@ class PersonaManager:
                     "按角色设定保持主角身份和自然体态；取景、姿势、视线和穿搭以本次动作合同为准。",
                 ]
             )
+            if has_reference_image:
+                identity_lines.append(LEGFOCUS_REFERENCE_RULES["zh"])
         if has_reference_image and not intent.is_legs_only and has_viewpoint_change_request(act):
             identity_lines.append(
                 "本次指定或随机选定的镜头视角优先于参考图投影；保留同一人的身份线索，但不要复制参考图里的头部朝向、脸部透视、肩线和原姿势。按目标视角自然重建面部透视；侧脸或三分之四侧面时，远侧五官允许自然遮挡，不要为保留参考图而强行露出双眼或扭脸。"
@@ -2285,6 +2305,8 @@ class PersonaManager:
                 mode_lines.append("本次同时包含换装要求：在他拍视角下优先使用用户指定的服装/穿搭。")
             if intent.change_pose:
                 mode_lines.append("本次同时包含姿势/动作要求：在他拍视角下自然完成用户指定的动作或表情。")
+        elif has_staging_contract:
+            mode_lines.extend(("【自拍 / 日常穿搭模式】", act))
         elif intent.change_clothes and intent.change_pose:
             mode_lines.extend(
                 [
@@ -2321,8 +2343,6 @@ class PersonaManager:
                     "额外参考图里的遮挡面部物件不属于姿势目标，除非用户明确要求保留。",
                 ]
             )
-        elif has_staging_contract:
-            mode_lines.extend(("【自拍 / 日常穿搭模式】", act))
         elif explicit_context:
             mode_lines.extend(
                 [
@@ -2463,7 +2483,7 @@ class PersonaManager:
             camera_match = re.search(r"【cam:(selfie|third)】", act)
             camera_kind = str(camera_match.group(1) if camera_match else "selfie")
             extra_action = extract_user_extra_text(act)
-            if extra_action:
+            if extra_action and not has_leg_focus_contract(act):
                 action_line = f"用户要求：{extra_action}"
             elif has_leg_focus_contract(act):
                 action_line = "用户要求：严格遵循以上已锁定的看看腿动作合同生成。"

@@ -930,7 +930,6 @@ class StudioMixin:
             session["template"] = template_id
             session["graph"] = graph_override
             graph = session.get("graph") or {}
-            action = build_studio_action(session)
             aspect = str(graph.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16")
             resolution = str(graph.get("resolution") or self.config.image_default_resolution or "1K")
             try:
@@ -955,6 +954,14 @@ class StudioMixin:
                 persona_ref=persona_ref,
             )
             refs = [ImageReference(data=data, mime_type=mime) for data, mime in raw_refs]
+            has_external_reference = bool(parent_node_id) or any(
+                str(slot.get("id") or "") in used_slots and slot.get("image_path")
+                for slot in (session.get("slots") or []) if isinstance(slot, dict)
+            )
+            action = build_studio_action(
+                session, appearance_type=getattr(self.persona, "get_appearance_type", lambda: "auto")(),
+                has_external_reference=has_external_reference,
+            )
             source_asset_ids = [
                 str(slot.get("source_record_id") or "").strip()
                 for slot in (session.get("slots") or [])
@@ -980,10 +987,6 @@ class StudioMixin:
                 generation_stage_label="处理画布提示词",
             )
             if mode in {"group", "selfie"}:
-                has_external_reference = bool(parent_node_id) or any(
-                    str(slot.get("id") or "") in used_slots and slot.get("image_path")
-                    for slot in (session.get("slots") or []) if isinstance(slot, dict)
-                )
                 if mode == "selfie":
                     action = self._normalize_selfie_action(action, has_external_reference)
                 if not has_leg_focus_contract(action):
@@ -1006,13 +1009,15 @@ class StudioMixin:
                         append_daily_context_to_english_prompt,
                         build_selfie_builtin_prompt,
                         extract_generated_action_contract,
+                        explicit_selfie_action_mode,
                     )
 
                     user_text = extract_user_prompt(action)
-                    action_source = extract_generated_action_contract(action) if looks_like_cos_prompt(action) else action
+                    has_contract = bool(explicit_selfie_action_mode(action))
+                    action_source = extract_generated_action_contract(action) if has_contract else action
                     translated_action = action_source
                     action_translation_meta: Dict[str, Any] = {}
-                    if looks_like_cos_prompt(action):
+                    if has_contract:
                         translated_action, action_translation_meta = await self._translate_prompt_to_english(
                             action_source, media="image", event=None
                         )
@@ -1027,6 +1032,8 @@ class StudioMixin:
                             translated_user = ""
                     else:
                         prompt_en_meta.update({"enabled": True, "applied": True, "scope": "builtin_only"})
+                    if has_contract:
+                        prompt_en_meta["action_contract"] = action_translation_meta
                     if prompt_en_meta.get("applied"):
                         source_prompt = prompt
                         prompt = build_selfie_builtin_prompt(

@@ -121,7 +121,9 @@ from .generation.generation_results import (
     normalize_generation_result,
 )
 from .cos.leg_focus import (
+    LegFocusDataError,
     build_leg_focus_action,
+    ensure_leg_focus_action,
     has_leg_focus_contract,
     parse_requested_leg_camera,
     parse_requested_leg_pose,
@@ -1488,6 +1490,8 @@ class SelfieImagePlugin(
         force_legwear: str = "",
         force_pose: str = "",
         force_camera: str = "",
+        force_view: str = "",
+        avoid_combinations: Optional[set[Tuple[str, str]]] = None,
     ) -> str:
         return build_leg_focus_action(
             extra_request,
@@ -1496,6 +1500,8 @@ class SelfieImagePlugin(
             force_legwear=force_legwear,
             force_pose=force_pose,
             force_camera=force_camera,
+            force_view=force_view,
+            avoid_combinations=avoid_combinations,
         )
 
     def _normalize_selfie_action(self, action: str, has_refs: bool) -> str:
@@ -1509,6 +1515,8 @@ class SelfieImagePlugin(
             return raw
         if has_leg_focus_contract(raw):
             return raw
+        if "【legs:outfit】" in raw:
+            return ensure_leg_focus_action(raw, has_refs)
         return self._build_leg_focus_action(raw, has_refs)
 
 
@@ -1709,14 +1717,14 @@ class SelfieImagePlugin(
         """Route an LLM selfie request through its mode-specific prompt builder."""
         raw_action = str(action or "").strip() or "看着镜头自然自拍"
         intent = self.persona.analyze_selfie_intent(raw_action)
-        leg_rebuild_extra = (
-            raw_action
-            if intent.is_legs_only and "【legs:outfit】" not in raw_action
-            else ""
-        )
         request_text = re.sub(
             r"^【LLM 自拍】\s*|^LLM\s*自拍[:：]?\s*", "", raw_action
         ).strip()
+        leg_rebuild_extra = (
+            request_text
+            if intent.is_legs_only and "【legs:outfit】" not in raw_action
+            else ""
+        )
         cos_rebuild_query = ""
         if intent.is_cos_look and not re.search(r"【cos:[a-z0-9_]+】", raw_action, re.I):
             cos_rebuild_query = request_text
@@ -1726,8 +1734,8 @@ class SelfieImagePlugin(
                 match_query=request_text,
             )
         elif intent.is_legs_only:
-            raw_action = self._normalize_selfie_action(raw_action, has_refs)
-        elif intent.is_group_photo and not re.search(r"【shot:group_", raw_action):
+            raw_action = self._normalize_selfie_action(request_text, has_refs)
+        elif intent.is_group_photo and not has_group_composition_contract(raw_action):
             raw_action = self._build_group_selfie_action(request_text, has_refs)
         elif intent.is_third_person_photo and not re.search(r"【shot:", raw_action):
             raw_action = self._build_third_person_look_action(request_text, has_refs)
@@ -2088,16 +2096,34 @@ class SelfieImagePlugin(
         }
         if refs and image_to_text_targets:
             try:
+                from .prompts.prompt_templates import explicit_selfie_action_mode
+
+                locked_mode = explicit_selfie_action_mode(request_prompt) or explicit_selfie_action_mode(original_prompt)
+                describe_options = {"prompt_contract": request_prompt} if locked_mode else {}
                 reference_description, image_to_text_meta = await self._describe_reference_images_for_generation(
-                    event, [ref.data for ref in refs if ref and ref.data]
+                    event, [ref.data for ref in refs if ref and ref.data], **describe_options
                 )
                 # Keep the user's instruction intact while making the visual
                 # details available to models that receive a text-only request.
+                if is_leg_focus_request:
+                    description_line = (
+                        "参考图内容描述（仅用于身份及合同要求保留的服饰；不得覆盖已锁定的腿部机位、姿势、场景、裁切或袜装）："
+                        f"{reference_description}"
+                    )
+                elif locked_mode == "cos":
+                    description_line = (
+                        "参考图内容描述（仅用于辅助识别身份；不得覆盖已锁定的 COS 服饰、姿势、场景、机位或构图）："
+                        f"{reference_description}"
+                    )
+                elif locked_mode:
+                    description_line = (
+                        "参考图内容描述（仅补充身份及合同要求保留的服饰；机位、姿势、视线、场景和构图服从本次合同）："
+                        f"{reference_description}"
+                    )
+                else:
+                    description_line = f"参考图内容描述：{reference_description}"
                 request_prompt = "\n\n".join(
-                    part for part in (
-                        request_prompt.strip(),
-                        f"参考图内容描述：{reference_description}",
-                    ) if part
+                    part for part in (request_prompt.strip(), description_line) if part
                 )
                 audit_prompt_text = request_prompt
             except Exception as exc:
@@ -2675,6 +2701,7 @@ class SelfieImagePlugin(
             build_selfie_builtin_prompt,
             extract_generated_action_contract,
             extract_user_prompt,
+            has_daily_staging_contract,
         )
 
         user_text = extract_user_prompt(action)
@@ -2682,6 +2709,7 @@ class SelfieImagePlugin(
             looks_like_cos_prompt(action)
             or has_leg_focus_contract(action)
             or has_group_composition_contract(action)
+            or has_daily_staging_contract(action)
         )
         action_source = extract_generated_action_contract(action) if has_generated_contract else action
         translated_action = action_source
@@ -4737,6 +4765,7 @@ class SelfieImagePlugin(
         used_cos_framings: set[str] = set()
         used_cos_compositions: set[str] = set()
         used_cos_cameras: set[str] = set()
+        used_leg_combinations: set[Tuple[str, str]] = set()
 
         extra_keep = ""
         force_legwear = ""
@@ -4745,22 +4774,23 @@ class SelfieImagePlugin(
         keep_cos_outfit = False
         if rebuild_each:
             # Extra may contain full preset text with many periods — take rest of line, then strip pose/shot tags.
-            m_extra = re.search(r"(?:用户补充要求优先|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
+            m_extra = re.search(r"(?:用户补充要求优先|用户补充要求|用户指定内容|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
             if m_extra:
                 extra_keep = str(m_extra.group(1) or "").strip()
-                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_mode|cos_profile|cos_eye|cos_pose|cos_scene|cos_style|cos_expression|cos_makeup|cos_framing|cos_composition|cos_view|legs|wear|outfit|frame):[a-z0-9_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_mode|cos_profile|cos_eye|cos_pose|cos_scene|cos_style|cos_expression|cos_makeup|cos_framing|cos_composition|cos_view|legs|leg_view|leg_scene|leg_support|wear|outfit|frame):[a-z0-9_]+】\s*", " ", extra_keep)
+                extra_keep = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", extra_keep)
                 extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
             # Keep the original command query even when it is already present
             # in the selected outfit title/prompt and therefore has no user
             # supplement marker in the wrapped action.
             if rebuild_extra_request:
                 extra_keep = str(rebuild_extra_request).strip()
-            # Keep user/locked legwear across rebuild rounds (extra text alone may have stripped 白丝).
-            force_legwear = parse_requested_legwear(str(action or "")) or parse_requested_legwear(extra_keep)
-            # Preserve only explicitly requested leg framing. Random choices in
-            # the first built action must remain free to vary between shots.
-            force_leg_pose = parse_requested_leg_pose(rebuild_extra_request)
-            force_leg_camera = parse_requested_leg_camera(rebuild_extra_request)
+            if source == "command-look-legs" or has_leg_focus_contract(action):
+                # Only user choices persist; a random first shot must not lock
+                # the entire batch's hosiery or camera.
+                force_legwear = parse_requested_legwear(extra_keep)
+                force_leg_pose = parse_requested_leg_pose(extra_keep)
+                force_leg_camera = parse_requested_leg_camera(extra_keep)
             m_pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
             if m_pose:
                 last_pose = str(m_pose.group(1) or "")
@@ -4807,6 +4837,7 @@ class SelfieImagePlugin(
                         force_legwear=force_legwear,
                         force_pose=force_leg_pose,
                         force_camera=force_leg_camera,
+                        avoid_combinations=used_leg_combinations,
                     )
                     m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
                     if m_pose:
@@ -4868,6 +4899,10 @@ class SelfieImagePlugin(
                     m_shot = re.search(r"【shot:([a-z_]+)】", round_action)
                     if m_shot:
                         last_shot = str(m_shot.group(1) or last_shot)
+            leg_pose = re.search(r"【pose:([a-z_]+)】", round_action)
+            leg_view = re.search(r"【leg_view:([a-z_]+)】", round_action)
+            if leg_pose and leg_view:
+                used_leg_combinations.add((leg_pose.group(1), leg_view.group(1)))
             round_actions.append(round_action)
 
         async def run_one(index: int) -> Dict[str, Any]:
@@ -5092,39 +5127,40 @@ class SelfieImagePlugin(
                     {"variation_fields": fields},
                 )
 
-            if not prompt_enhance:
-                refs = list(extra_refs)
+            async def compose_web_prompt(
+                action_text: str,
+            ) -> Tuple[str, List[ImageReference], Optional[Dict[str, Any]]]:
+                if not prompt_enhance:
+                    selected_refs = list(extra_refs)
+                    if payload.get("use_selfie_reference"):
+                        persona_ref = self._persona_identity_reference()
+                        if not persona_ref:
+                            raise RuntimeError("当前未设置 AI 自拍形象参考图，且未启用 logo 回退；请先上传形象图、开启「无形象图用 logo」，或取消使用自拍形象参考图")
+                        selected_refs.insert(0, persona_ref)
+                    return action_text, selected_refs, None
                 if payload.get("use_selfie_reference"):
-                    persona_ref = self._persona_identity_reference()
-                    if not persona_ref:
-                        raise RuntimeError("当前未设置 AI 自拍形象参考图，且未启用 logo 回退；请先上传形象图、开启「无形象图用 logo」，或取消使用自拍形象参考图")
-                    refs.insert(0, persona_ref)
-                prompt = original_prompt
-            elif payload.get("use_selfie_reference"):
-                prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(
-                    None,
-                    original_prompt,
-                    extra_refs,
-                )
-                if not refs:
-                    raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
-            else:
-                refs = extra_refs
-                user_prompt = original_prompt
-                prompt_en_meta = {"enabled": False, "applied": False, "scope": "user_text_only"}
-                if self._prompt_en_needed(user_prompt, media="image"):
-                    translated, prompt_en_meta = await self._translate_prompt_to_english(
-                        user_prompt,
-                        media="image",
-                        event=None,
+                    prepared, selected_refs, translation_meta = await self._build_selfie_prompt_and_refs_for_event(
+                        None, action_text, extra_refs,
                     )
-                    if prompt_en_meta.get("applied") and translated:
+                    if not selected_refs:
+                        raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
+                    return prepared, selected_refs, translation_meta
+                user_prompt = action_text
+                translation_meta = {"enabled": False, "applied": False, "scope": "user_text_only"}
+                if self._prompt_en_needed(user_prompt, media="image"):
+                    translated, translation_meta = await self._translate_prompt_to_english(
+                        user_prompt, media="image", event=None,
+                    )
+                    if translation_meta.get("applied") and translated:
                         user_prompt = translated
-                prompt = build_prompt_with_reference_instruction(
+                prepared = build_prompt_with_reference_instruction(
                     user_prompt,
-                    refs,
+                    extra_refs,
                     language="en" if self.config.image_enable_image_prompt_en else "zh",
                 )
+                return prepared, extra_refs, translation_meta
+
+            prompt, refs, prompt_en_meta = await compose_web_prompt(original_prompt)
 
             all_paths: List[str] = []
             all_request_paths.clear()
@@ -5144,20 +5180,23 @@ class SelfieImagePlugin(
                 if task_id and self._task_cancel_requested(task_id):
                     break
                 shot_prompt = prompt
+                shot_refs = refs
+                shot_translation_meta = prompt_en_meta
                 if variation_rows:
-                    shot_prompt = str(variation_rows[min(index, len(variation_rows) - 1)].get("prompt") or prompt)
+                    variant_action = str(variation_rows[min(index, len(variation_rows) - 1)].get("prompt") or original_prompt)
+                    shot_prompt, shot_refs, shot_translation_meta = await compose_web_prompt(variant_action)
                 one = await self._run_image_generation(
                     prompt=shot_prompt,
                     aspect_ratio=aspect,
                     resolution=resolution,
-                    refs=refs,
+                    refs=shot_refs,
                     targets=[target],
                     source="web-test",
                     original_prompt=shot_prompt,
                     event=None,
                     max_attempts=1,
                     allow_compat_retry=False,
-                    prompt_en_meta=prompt_en_meta,
+                    prompt_en_meta=shot_translation_meta,
                     record_context={
                         key: value
                         for key, value in {
@@ -6472,7 +6511,11 @@ class SelfieImagePlugin(
         else:
             expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
         has_refs = bool(extract_image_sources_from_event(event))
-        fallback = self._build_leg_focus_action(expanded_extra, has_refs)
+        try:
+            fallback = self._build_leg_focus_action(expanded_extra, has_refs)
+        except LegFocusDataError as exc:
+            yield event.plain_result(str(exc))
+            return
         async for item in self._handle_selfie_command(
             event=event,
             command_name="看看腿",

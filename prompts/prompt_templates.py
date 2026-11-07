@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 from ..cos.leg_focus import (
+    LEGFOCUS_REFERENCE_RULES,
     ensure_leg_focus_action,
     get_leg_focus_outfit,
     has_leg_face_context,
@@ -196,10 +197,11 @@ def append_daily_context_to_english_prompt(english_prompt: str, source_prompt: s
 def extract_user_prompt(action: str) -> str:
     """Extract free-form user text from a wrapped selfie action."""
     text = str(action or "").strip()
-    match = re.search(r"(?:用户补充要求优先|用户补充要求|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
+    match = re.search(r"(?:用户补充要求优先|用户补充要求|用户指定内容|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
     if match:
         value = match.group(1)
-        value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|legs_face|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
+        value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|legs_face|leg_view|leg_scene|leg_support|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
+        value = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", value)
         return re.sub(r"\s+", " ", value).strip(" 。")
     if any(marker in text for marker in ("【自拍 / 看看模式】", "【他拍 / 看看你模式】", "【自拍 / 看看COS模式】", "【他拍 / 看看COS模式】", "【第一视角 / 看看COS模式】", "【合影 / 合照模式】", "看看腿。", "【legs:outfit】", "成年人物日常下半身穿搭展示", "【唯一姿势·不可混用】")):
         return ""
@@ -209,10 +211,42 @@ def extract_user_prompt(action: str) -> str:
 def extract_generated_action_contract(action: str) -> str:
     """Keep the generated action body separate from its user supplement."""
     text = str(action or "").strip()
-    match = re.search(r"\s*(?:用户补充要求优先|用户补充要求)[:：]", text)
+    match = re.search(r"\s*(?:用户补充要求优先|用户补充要求|用户指定内容)[:：]", text)
     if match:
         return text[: match.start()].rstrip(" 。")
     return text
+
+
+def explicit_selfie_action_mode(action: str) -> str:
+    """Generated command markers take precedence over words inside descriptions."""
+    raw = str(action or "")
+    for marker, mode in (
+        ("【自拍 / 看看模式】", "selfie"),
+        ("【他拍 / 看看你模式】", "third"),
+        ("【shot:crop_waist】", "selfie"),
+        ("【legs:outfit】", "legs"),
+        ("【cos:", "cos"),
+        ("【cos：", "cos"),
+    ):
+        if marker in raw:
+            return mode
+    if has_group_composition_contract(raw):
+        return "group"
+    return ""
+
+
+def has_daily_staging_contract(action: str) -> bool:
+    return explicit_selfie_action_mode(action) in {"selfie", "third"} and bool(
+        re.search(r"【shot:[a-z_]+】", str(action or ""))
+    )
+
+
+def has_explicit_gaze_request(text: str) -> bool:
+    return bool(re.search(
+        r"视线|目光|眼神|闭眼|闭目|眯眼|看向|望向|看着|看镜头|看彼此|看别处|不看|"
+        r"\b(?:gaze|looking|look at|eyes closed|eye contact)\b",
+        str(text or ""), re.I,
+    ))
 
 
 def build_selfie_builtin_prompt(
@@ -227,11 +261,15 @@ def build_selfie_builtin_prompt(
 ) -> str:
     """Build a compact central built-in prompt; user text is appended separately."""
     raw_action = str(action or "").strip()
-    raw_is_cos = "看看COS" in raw_action or "看看cos" in raw_action.lower() or "【cos:" in raw_action
-    raw_is_legs = (not raw_is_cos) and any(
+    mode = explicit_selfie_action_mode(raw_action)
+    raw_is_cos = mode == "cos" or (not mode and "看看cos" in raw_action.lower())
+    raw_is_group = mode == "group" or (not mode and not raw_is_cos and any(
+        marker in raw_action for marker in ("合影", "合照", "同框", "多人合照", "group photo", "group_photo")
+    ))
+    raw_is_legs = mode == "legs" or (not mode and not raw_is_cos and not raw_is_group and any(
         marker in raw_action
         for marker in ("看看腿", "腿部", "下半身穿搭", "穿搭展示", "【legs:outfit】", "【pose:")
-    )
+    ))
     if raw_is_legs and not has_leg_focus_contract(raw_action):
         action = ensure_leg_focus_action(raw_action, has_reference_image)
     translated_user = str(user_text or "").strip()
@@ -243,16 +281,10 @@ def build_selfie_builtin_prompt(
         _join(extract_user_prompt(raw_action), translated_user),
     )
     rendered_action = str(action_content or action or "").strip()
-    is_cos = "看看COS" in str(action) or "看看cos" in str(action).lower() or "【cos:" in str(action)
+    is_cos = raw_is_cos
     covered_eyes = "【cos_eye:full_cover】" in str(action).lower()
-    is_legs = (not is_cos) and (
-        "看看腿" in str(action)
-        or "腿部" in str(action)
-        or "下半身穿搭" in str(action)
-        or "【legs:outfit】" in str(action)
-        or "【pose:" in str(action)
-    )
-    is_group = (not is_cos) and ("合影" in str(action) or "合照" in str(action) or "同框" in str(action))
+    is_group = raw_is_group
+    is_legs = raw_is_legs
     is_group_contract = is_group and has_group_composition_contract(str(action))
     feet_cropped = is_legs and is_leg_calf_crop_action(str(action))
     leg_face_context = is_legs and feet_cropped and has_leg_face_context(str(action))
@@ -287,13 +319,26 @@ def build_selfie_builtin_prompt(
         else:
             opening = f"Create one natural {style} vertical smartphone cover photo."
         lines = [opening]
+        if has_daily_staging_contract(raw_action):
+            lines = [
+                f"Create one cohesive {style} vertical everyday image following the selected capture contract.",
+                "Preserve the main subject's identity and the resolved daily outfit. The contract below controls camera, framing, pose, gaze, scene, and lighting; do not add another shot or force eye contact.",
+                "Use the primary identity reference for the same person; extra references only supply explicitly requested details."
+                if has_reference_image else "Use the character settings as the identity anchor; default to an adult woman when gender is unspecified.",
+                rendered_action,
+            ]
+            if translated_user and translated_user not in rendered_action:
+                lines.append(f"User request: {translated_user}")
+            return _join(*lines)
         if is_legs:
             lines.extend([
                 "Follow the generated leg-focus action contract below as the sole source for pose, camera, indoor scene, crop, and complete clothing; do not add another framing or outfit choice.",
                 rendered_action,
                 "Keep the selected indoor setting secondary, with natural perspective and anatomy; framing follows the action contract.",
             ])
-            if not has_reference_image:
+            if has_reference_image:
+                lines.append(LEGFOCUS_REFERENCE_RULES["en"])
+            else:
                 lines.append("Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.")
             if extra_reference_count:
                 lines.append("Use extra references only for the specific clothing or visual details requested; do not let them override the selected camera or pose.")
@@ -419,6 +464,7 @@ def build_selfie_builtin_prompt(
         lines = [
             photo_type_line,
             identity_line,
+            LEGFOCUS_REFERENCE_RULES["zh"] if has_reference_image else "",
             "以下动作合同是本次取景、姿势、机位、室内场景和穿搭的唯一来源；不要增加或替换合同未指定的服饰。",
             rendered_action,
             "保持自然人体比例、真实布料和室内环境光；背景简洁，景别服从动作合同。"

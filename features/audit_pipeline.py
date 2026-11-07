@@ -206,6 +206,8 @@ class AuditMixin:
         self,
         event: Optional[AstrMessageEvent],
         images: List[bytes],
+        *,
+        prompt_contract: str = "",
     ) -> Tuple[str, Dict[str, Any]]:
         """Describe reference images for a text-only generation request.
 
@@ -222,6 +224,15 @@ class AuditMixin:
             "只输出描述正文，不要解释、不要 Markdown、不要猜测图片来源，"
             "看不清或无法确定的内容不要编造。"
         )
+        if prompt_contract:
+            instruct = (
+                "请仅提取参考图中可确认的人物身份外观特征，供已有生成合同辅助识别同一人物。"
+                "不要描述原图的姿势、视线、表情、机位、构图、背景、场景或光线，不建议新的动作或场景。"
+                "仅当下方合同明确要求沿用原图服饰时，补充其中未被本次要求替换的衣物细节；"
+                "合同已指定的服装、假发、妆容或袜鞋不要按原图重述。"
+                "只输出可见事实的中文正文，不要解释、不要 Markdown，看不清的内容不要编造。\n"
+                f"本次生成合同（仅用于判断哪些特征已经锁定）：\n{prompt_contract}"
+            )
         configured = str(getattr(self.config, "image_ocr_model", "") or "").strip()
         target = self._find_audit_target(configured) if configured else None
         model = ""
@@ -249,6 +260,7 @@ class AuditMixin:
             "model": model,
             "image_count": len(images),
             "description": cleaned,
+            "scope": "contract_identity" if prompt_contract else "full_image",
         }
 
     async def _audit_chat_via_target(self, target: ImageModelTarget, text: str, images: Optional[List[bytes]] = None) -> str:

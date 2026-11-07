@@ -11,6 +11,7 @@ image_cache/
 image-persona/
 
 # Local COS reverse-engineering leftovers (do not commit).
+data/cos/research/
 .tmp_douyin_*/
 scripts/douyin_frames.py
 search_txt.txt

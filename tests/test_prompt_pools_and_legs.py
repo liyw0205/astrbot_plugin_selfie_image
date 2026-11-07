@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import re
 import sys
 import tempfile
 import types
@@ -29,20 +31,21 @@ except ImportError:
 
 class PromptPoolJsonTests(unittest.TestCase):
     def test_leg_pose_support_matches_the_selected_scene(self) -> None:
-        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_BY_ID, build_leg_focus_action
+        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_BY_ID, build_leg_focus_action, compatible_leg_compositions
 
         expected_supports = {
-            "bed_side_recline": {"bed_surface"},
-            "bed_one_knee_up": {"bed_surface", "bed_edge"},
-            "sofa_side_fold": {"sofa"},
-            "sofa_armrest_asymmetric": {"sofa"},
-            "sofa_forward_leg": {"sofa"},
-            "sofa_ankle_cross": {"sofa"},
+            "reclined_offset_legs": {"bed_surface", "sofa"},
+            "reclined_one_knee": {"bed_surface", "sofa"},
+            "side_folded_legs": {"bed_surface", "sofa", "floor_cushion", "bedroom_rug", "living_room_rug"},
+            "armrest_offset_legs": {"sofa", "gaming_chair", "desk_chair"},
+            "seated_forward_leg": {"bed_edge", "bedroom_bench", "sofa", "gaming_chair", "desk_chair", "living_room_chair"},
+            "seated_ankle_cross": {"bed_edge", "bedroom_bench", "sofa", "gaming_chair", "desk_chair", "living_room_chair"},
         }
         for pose_id, scene_ids in expected_supports.items():
-            self.assertEqual(set(LEGFOCUS_POSE_BY_ID[pose_id]["scene_ids"]), scene_ids)
+            combinations = compatible_leg_compositions(LEGFOCUS_POSE_BY_ID[pose_id])
+            self.assertEqual({scene["id"] for scene, _, _ in combinations}, scene_ids)
         action = build_leg_focus_action(force_pose="bed_edge_diagonal", force_camera="selfie")
-        self.assertIn("双手仍按姿势支撑床面", action)
+        self.assertIn("双手分别压扶身侧座面", action)
         self.assertNotIn("手持", action)
 
     def test_daily_and_builtin_pools_load_complete_versioned_records(self) -> None:
@@ -150,7 +153,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             first = build_leg_focus_action(
                 has_refs=True,
                 force_pose="sofa_ankle_cross",
-                force_camera="third",
+                force_camera="selfie",
             )
             second = build_leg_focus_action(
                 has_refs=True,
@@ -181,28 +184,313 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertIn("服饰按用户本次具体要求呈现", action)
         self.assertIn("【outfit:custom】", action)
 
-    def test_leg_pool_has_pose_specific_first_and_third_person_indoor_views(self) -> None:
+    def test_leg_pool_selects_only_compatible_pose_scene_and_view_combinations(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
             LEGFOCUS_POSE_POOL,
-            LEGFOCUS_SCENE_BY_ID,
+            LEGFOCUS_VIEW_BY_ID,
             build_leg_focus_action,
+            compatible_leg_compositions,
         )
 
         self.assertGreaterEqual(len(LEGFOCUS_POSE_POOL), 14)
         for pose in LEGFOCUS_POSE_POOL:
-            self.assertEqual(set(pose["camera_views"]), {"selfie", "third"})
-            self.assertTrue(pose["scene_ids"])
-            self.assertTrue(all(scene_id in LEGFOCUS_SCENE_BY_ID for scene_id in pose["scene_ids"]))
-            for camera in ("selfie", "third"):
+            self.assertNotIn("camera_views", pose)
+            self.assertNotIn("scene_ids", pose)
+            self.assertGreater(len(pose["view_ids"]), 1)
+            self.assertGreater(len({scene["id"] for scene, _, _ in compatible_leg_compositions(pose)}), 1)
+            for view_id in pose["view_ids"]:
+                camera = LEGFOCUS_VIEW_BY_ID[view_id]["camera"]
                 action = build_leg_focus_action(
                     force_pose=pose["id"],
-                    force_camera=camera,
+                    force_view=view_id,
                 )
                 self.assertIn(f"【cam:{camera}】", action)
                 self.assertIn("【frame:leg_detail】", action)
                 self.assertNotIn("看向镜头", action)
                 selected_scene = action.split("本张室内场景：", 1)[1].split("。", 1)[0]
                 self.assertNotIn("户外", selected_scene)
+
+    def test_leg_camera_contracts_keep_self_view_separate_from_external_crop(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            LEGFOCUS_CAMERA_FRAMINGS, LEGFOCUS_POSE_POOL, LEGFOCUS_VIEW_BY_ID, build_leg_focus_action,
+        )
+
+        for pose in LEGFOCUS_POSE_POOL:
+            for view_id in pose["view_ids"]:
+                view = LEGFOCUS_VIEW_BY_ID[view_id]
+                camera = view["camera"]
+                other = "third" if camera == "selfie" else "selfie"
+                with self.subTest(pose=pose["id"], view=view_id):
+                    action = build_leg_focus_action(
+                        has_refs=True, force_pose=pose["id"], force_view=view_id,
+                    )
+                    self.assertEqual(action.count(LEGFOCUS_CAMERA_FRAMINGS[camera]), 1)
+                    self.assertNotIn(LEGFOCUS_CAMERA_FRAMINGS[other], action)
+                    self.assertEqual(action.count(view["prompt"]), 1)
+                    if camera == "selfie":
+                        self.assertIn("本人低头看自己双腿", action)
+                        self.assertNotIn("从胸下或腰线附近裁", action)
+                        self.assertNotRegex(action, r"胸下(?:起裁|裁切|取景|开始)|三分之四侧向|椅背只")
+                        self.assertNotIn("手持", action)
+                    else:
+                        self.assertIn("第三人称画外相机从人物外部拍摄", action)
+                        self.assertNotIn("本人低头看自己双腿", action)
+
+    def test_leg_camera_contract_survives_persona_and_bilingual_templates(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            LEGFOCUS_CAMERA_FRAMINGS, LEGFOCUS_REFERENCE_RULES, build_leg_focus_action,
+        )
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = PersonaManager(tmp)
+            for pose_id in ("supported_bent_knees", "armrest_offset_legs", "backed_staggered_legs"):
+                for camera in ("selfie", "third"):
+                    for has_refs in (True, False):
+                        action = build_leg_focus_action(
+                            has_refs=has_refs, force_pose=pose_id, force_camera=camera,
+                        )
+                        prompts = {
+                            "persona": manager.build_selfie_prompt(action, "心酱", "", has_refs),
+                            "zh": build_selfie_builtin_prompt(action, has_reference_image=has_refs),
+                            "en": build_selfie_builtin_prompt(action, language="en", has_reference_image=has_refs),
+                        }
+                        for path, prompt in prompts.items():
+                            with self.subTest(pose=pose_id, camera=camera, refs=has_refs, path=path):
+                                self.assertEqual(prompt.count(action), 1)
+                                self.assertEqual(prompt.count(LEGFOCUS_CAMERA_FRAMINGS[camera]), 1)
+                                rule = LEGFOCUS_REFERENCE_RULES["en" if path == "en" else "zh"]
+                                self.assertEqual(prompt.count(rule), int(has_refs))
+                                self.assertNotIn("正对镜头时自然看向镜头", prompt)
+
+    def test_leg_full_outfit_uses_external_camera_without_self_view_or_face_crop(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            LEGFOCUS_CAMERA_FRAMINGS, LEGFOCUS_POSE_POOL, LEGFOCUS_VIEW_BY_ID, LegFocusDataError, build_leg_focus_action,
+        )
+
+        for pose in LEGFOCUS_POSE_POOL:
+            with self.subTest(pose=pose["id"]):
+                if not any(LEGFOCUS_VIEW_BY_ID[view_id]["camera"] == "third" for view_id in pose["view_ids"]):
+                    with self.assertRaises(LegFocusDataError):
+                        build_leg_focus_action(force_pose=pose["id"], force_framing="full_outfit")
+                    continue
+                action = build_leg_focus_action(
+                    has_refs=True, force_pose=pose["id"], force_camera="third",
+                    force_framing="full_outfit",
+                )
+                self.assertIn("【frame:full_outfit】", action)
+                self.assertIn("【cam:third】", action)
+                self.assertIn("头部到足部完整入镜", action)
+                self.assertNotIn(LEGFOCUS_CAMERA_FRAMINGS["selfie"], action)
+                self.assertNotIn(LEGFOCUS_CAMERA_FRAMINGS["third"], action)
+                self.assertNotRegex(action, r"不露脸|不拍头脸|头部、脸部和肩膀不入镜|镜面自拍")
+
+        with self.assertRaisesRegex(LegFocusDataError, "第一人称自视"):
+            build_leg_focus_action("看看腿 全身 第一人称")
+
+    def test_leg_reference_wrapper_does_not_restore_the_reference_pose_or_crop(self) -> None:
+        from astrbot_plugin_selfie_image.core.providers import ImageReference
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            LEGFOCUS_REFERENCE_RULES, build_leg_focus_action,
+        )
+        from astrbot_plugin_selfie_image.prompts.prompt_composition import build_prompt_with_reference_instruction
+
+        reference = ImageReference(data=b"reference")
+        action = build_leg_focus_action(has_refs=True, force_camera="selfie")
+        for language in ("zh", "en"):
+            for wrapped in (False, True):
+                with self.subTest(language=language, wrapped=wrapped):
+                    raw = action + (LEGFOCUS_REFERENCE_RULES[language] if wrapped else "")
+                    prompt = build_prompt_with_reference_instruction(raw, [reference], language=language)
+                    self.assertEqual(prompt.count(action), 1)
+                    self.assertEqual(prompt.count(LEGFOCUS_REFERENCE_RULES[language]), 1)
+                    self.assertNotIn("尽量保持相关人物身份、服装、姿势、场景与构图一致", prompt)
+                    self.assertNotIn("while preserving relevant identity, outfit, pose, scene, and composition", prompt)
+
+    def test_leg_pool_rejects_missing_or_invalid_camera_and_reference_contracts(self) -> None:
+        from astrbot_plugin_selfie_image.cos import leg_focus
+
+        for field in ("camera_framings", "reference_rules"):
+            for invalid in (None, {}, {"selfie": "", "third": "external"}, {"zh": [], "en": "reference"}):
+                with self.subTest(field=field, value=invalid):
+                    payload = dict(leg_focus._POOL)
+                    payload[field] = invalid
+                    with patch.object(leg_focus, "read_versioned_json", side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else {"views": leg_focus.LEGFOCUS_VIEW_POOL}):
+                        with self.assertRaisesRegex(leg_focus.LegFocusDataError, field):
+                            leg_focus._load_pool()
+
+    def test_leg_angle_requests_select_actual_camera_geometry_without_selecting_a_pose(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            LEGFOCUS_VIEW_BY_ID, build_leg_focus_action, parse_requested_leg_pose,
+        )
+
+        for query, camera, direction, elevations in (
+            ("第三人称 侧拍 仰拍", "third", "side", {"up"}),
+            ("第三人称 侧拍 俯拍", "third", "side", {"down"}),
+            ("第三人称 斜前方 平拍", "third", "oblique", {"level"}),
+            ("第三人称 正前方 俯拍", "third", "front", {"down"}),
+            ("第三人称 顶拍", "third", "front", {"top"}),
+            ("第一人称 偏左 俯拍", "selfie", "left", {"down"}),
+        ):
+            with self.subTest(query=query):
+                self.assertEqual(parse_requested_leg_pose(query), "")
+                action = build_leg_focus_action(query)
+                view = LEGFOCUS_VIEW_BY_ID[re.search(r"【leg_view:([a-z_]+)】", action).group(1)]
+                self.assertEqual((view["camera"], view["direction"]), (camera, direction))
+                self.assertIn(view["elevation"], elevations)
+
+        for _ in range(12):
+            action = build_leg_focus_action("第三人称 不要俯拍 不要侧拍 不要背身")
+            view = LEGFOCUS_VIEW_BY_ID[re.search(r"【leg_view:([a-z_]+)】", action).group(1)]
+            self.assertNotIn(view["elevation"], {"down", "top"})
+            self.assertNotEqual(view["direction"], "side")
+
+    def test_leg_incompatible_requests_do_not_silently_change_the_scene_pose_or_person(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import LegFocusDataError, build_leg_focus_action
+
+        for query, options in (
+            ("第三人称", {"force_pose": "seated_ankle_cross"}),
+            ("第一人称", {"force_pose": "reclined_offset_legs"}),
+            ("地毯", {"force_pose": "armrest_offset_legs"}),
+            ("电竞椅", {"force_pose": "side_folded_legs"}),
+            ("第一人称 仰拍", {}),
+            ("第三人称 背身", {}),
+            ("第三人称 仰拍 俯拍", {}),
+            ("地毯", {"force_view": "third_side_low"}),
+        ):
+            with self.subTest(query=query, options=options), self.assertRaises(LegFocusDataError):
+                build_leg_focus_action(query, **options)
+
+    def test_leg_pose_can_change_scene_and_view_without_changing_the_action(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            LEGFOCUS_POSE_BY_ID, build_leg_focus_action, compatible_leg_compositions,
+        )
+
+        for pose_id in ("seated_ankle_cross", "side_folded_legs", "armrest_offset_legs"):
+            pose = LEGFOCUS_POSE_BY_ID[pose_id]
+            for scene, support, view in compatible_leg_compositions(pose):
+                with self.subTest(pose=pose_id, scene=scene["id"], view=view["id"]):
+                    action = build_leg_focus_action(
+                        scene["id"], has_refs=True, force_pose=pose_id, force_view=view["id"],
+                    )
+                    self.assertIn(f"【leg_scene:{scene['id']}】", action)
+                    self.assertIn(f"【leg_support:{support}】", action)
+                    self.assertIn(pose["prompt"], action)
+                    self.assertIn(scene["supports"][support], action)
+                    self.assertEqual(sum(other["prompt"] in action for other in LEGFOCUS_POSE_BY_ID.values()), 1)
+
+    def test_leg_fixed_pose_uses_each_compatible_view_before_repeating(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_BY_ID, build_leg_focus_action
+
+        pose = LEGFOCUS_POSE_BY_ID["seated_diagonal_legs"]
+        used = set()
+        for _ in pose["view_ids"]:
+            action = build_leg_focus_action("沙发", force_pose=pose["id"], avoid_combinations=used)
+            view_id = re.search(r"【leg_view:([a-z_]+)】", action).group(1)
+            self.assertNotIn((pose["id"], view_id), used)
+            used.add((pose["id"], view_id))
+        self.assertEqual({view_id for _, view_id in used}, set(pose["view_ids"]))
+        self.assertIn("【pose:seated_diagonal_legs】", build_leg_focus_action("沙发", force_pose=pose["id"], avoid_combinations=used))
+
+    def test_leg_schema_rejects_unknown_references_and_rear_views(self) -> None:
+        from astrbot_plugin_selfie_image.cos import leg_focus
+
+        for error in ("missing_view", "missing_support", "rear_view", "incompatible_support"):
+            with self.subTest(error=error):
+                payload = copy.deepcopy(leg_focus._POOL)
+                view_payload = {"views": payload.pop("views")}
+                if error == "missing_view":
+                    payload["poses"][0]["view_ids"] = ["does_not_exist"]
+                elif error == "missing_support":
+                    payload["scenes"][0]["supports"] = {}
+                elif error == "rear_view":
+                    view_payload["views"][0]["direction"] = "back"
+                else:
+                    payload["poses"][0]["support_types"] = ["wide_surface"]
+                    payload["poses"][0]["view_ids"] = ["third_side_low"]
+                with patch.object(leg_focus, "read_versioned_json", side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else view_payload):
+                    with self.assertRaises(leg_focus.LegFocusDataError):
+                        leg_focus._load_pool()
+
+    def test_leg_batch_keeps_requested_pose_scene_and_varies_the_concrete_camera(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_BY_ID, build_leg_focus_action
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = object.__new__(SelfieImagePlugin)
+        plugin._normalize_count = int
+        plugin._build_selfie_prompt_and_refs_for_event = AsyncMock(side_effect=lambda _event, action, _refs: (action, [], {}))
+        plugin._run_image_generation = AsyncMock(return_value={"success": True, "files": []})
+        plugin._is_cos_action = lambda _action: False
+        plugin._looks_like_group_selfie_intent = lambda _action: False
+
+        async def run_shots(*, total, run_one, **_kwargs):
+            for index in range(total):
+                await run_one(index)
+            return {"success": True}
+
+        plugin._run_counted_generation_shots = run_shots
+        request = "座沿斜向伸腿 沙发"
+        action = build_leg_focus_action(request)
+        count = len(LEGFOCUS_POSE_BY_ID["seated_diagonal_legs"]["view_ids"])
+        result = asyncio.run(plugin._run_selfie_batches_unlocked(
+            task_id="legs-view-test", event=None, action=action, extra_refs=[],
+            source="command-look-legs", requested_count=count, aspect="9:16",
+            resolution="1K", fail_label="失败", rebuild_extra_request=request,
+        ))
+        self.assertTrue(result["success"])
+        requests = [call.kwargs["original_prompt"] for call in plugin._run_image_generation.await_args_list]
+        self.assertEqual(len(requests), count)
+        self.assertEqual(len({re.search(r"【leg_view:([a-z_]+)】", prompt).group(1) for prompt in requests}), count)
+        for prompt in requests:
+            self.assertIn("【pose:seated_diagonal_legs】", prompt)
+            self.assertIn("【leg_scene:sofa】", prompt)
+        for call in plugin._run_image_generation.await_args_list:
+            self.assertEqual(call.args[0], call.kwargs["original_prompt"])
+
+    def test_leg_legacy_contract_is_rebuilt_without_repeating_its_old_furniture_or_camera(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action, ensure_leg_focus_action
+
+        action = build_leg_focus_action(has_refs=True, force_pose="bed_edge_diagonal", force_camera="selfie")
+        legacy = re.sub(r"【leg_(?:view|scene|support):[a-z_]+】", "", action)
+        rebuilt = ensure_leg_focus_action(legacy, True)
+        self.assertEqual(rebuilt.count("成年人物的室内竖屏腿部穿搭照片"), 1)
+        self.assertIn("【leg_view:", rebuilt)
+        self.assertIn("【pose:seated_diagonal_legs】", rebuilt)
+        self.assertIn("【cam:selfie】", rebuilt)
+        self.assertIn("【outfit:reference】", rebuilt)
+
+    def test_leg_user_supplement_does_not_include_random_pose_scene_or_view_tags(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import build_leg_focus_action
+        from astrbot_plugin_selfie_image.features.persona import extract_user_extra_text
+        from astrbot_plugin_selfie_image.prompts.prompt_templates import extract_user_prompt
+
+        action = build_leg_focus_action("第三人称 侧拍 仰拍 沙发")
+        for extract in (extract_user_extra_text, extract_user_prompt):
+            extra = extract(action)
+            self.assertEqual(extra, "第三人称 侧拍 仰拍 沙发")
+            self.assertNotIn("【", extra)
+
+    def test_leg_command_explains_conflicting_constraints_before_starting_generation(self) -> None:
+        from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+        plugin = object.__new__(SelfieImagePlugin)
+        plugin._extract_command_count = lambda text, **_kwargs: (text, 1)
+        plugin._expand_dynamic_preset_variants = lambda *_args: ([], "", "", "")
+        plugin._expand_user_text_with_preset = lambda text: (text, "", "", "")
+        plugin._handle_selfie_command = AsyncMock(side_effect=AssertionError("must not start generation"))
+        event = types.SimpleNamespace(plain_result=lambda text: text)
+
+        async def invoke():
+            return [item async for item in plugin.cmd_look_legs(event)]
+
+        with patch("astrbot_plugin_selfie_image.main.extract_command_message", return_value="第一人称 仰拍"), patch(
+            "astrbot_plugin_selfie_image.main.extract_image_sources_from_event", return_value=[],
+        ):
+            output = asyncio.run(invoke())
+        self.assertEqual(len(output), 1)
+        self.assertIn("不兼容", output[0])
+        plugin._handle_selfie_command.assert_not_called()
 
     def test_bare_leg_detail_is_written_once_with_one_dedicated_outfit(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_OUTFIT_POOL, build_leg_focus_action
@@ -235,7 +523,7 @@ class PromptPoolJsonTests(unittest.TestCase):
                 with self.subTest(outfit=outfit["id"], wear=wear), patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_outfit", return_value=outfit,
                 ):
-                    action = build_leg_focus_action(wear, force_pose="sofa_ankle_cross", force_camera="third")
+                    action = build_leg_focus_action(wear, force_pose="seated_crossed_knee", force_camera="third")
                     styles = [style for style in LEGFOCUS_HOSIERY_STYLES if style["prompt"] in action]
                     self.assertEqual(action.count(outfit["prompt"]), 1)
                     self.assertIn(f"【outfit:{outfit['id']}】", action)
@@ -506,7 +794,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             )
 
         self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", prompt)
-        self.assertTrue(any(f"【场景池·{title}】" in prompt for title in ("床沿", "卧室床边座面")))
+        self.assertTrue(any(f"【场景池·{title}】" in prompt for title in ("床沿", "客厅沙发")))
         self.assertNotIn("城市天台步道", prompt)
         self.assertNotIn("当前日程场景", prompt)
 
