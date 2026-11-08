@@ -76,7 +76,7 @@ def test_desktop_node_panel_has_an_independent_vertical_scroll_region():
 def test_preset_manager_supports_fuzzy_name_and_prompt_search_for_all_kinds():
     assert 'id="presetManagerSearch"' in PAGE
     assert 'id="presetCosManagerSearch"' in PAGE
-    assert "const PRESET_MANAGER_QUERIES = {image: '', cos: ''};" in PAGE
+    assert "const PRESET_MANAGER_QUERIES = {image: '', cos: '', nai: ''};" in PAGE
     assert "search:query" in PAGE
     assert "item.name || item.title || ''}\\n${item.prompt || ''}" in PAGE
     assert "item.title || item.id || ''}\\n${item.prompt || ''}" in PAGE

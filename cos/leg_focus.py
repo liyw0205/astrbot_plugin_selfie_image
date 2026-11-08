@@ -88,9 +88,11 @@ def _load_pool() -> Dict[str, Any]:
         view_refs = raw.get("view_ids")
         supports = raw.get("support_types")
         aliases = raw.get("legacy_ids")
+        posture = raw.get("posture")
         if (
             not str(raw.get("title") or "").strip()
             or not str(raw.get("prompt") or "").strip()
+            or posture not in {"seated", "reclined", "lying", "kneeling", "standing"}
             or type(raw.get("weight")) is not int
             or int(raw.get("weight") or 0) < 1
             or not isinstance(view_refs, list) or not view_refs or len(set(view_refs)) != len(view_refs)
@@ -208,7 +210,9 @@ LEGFOCUS_HOSIERY_STYLES: List[Dict[str, Any]] = [dict(item) for item in _OUTFITS
 
 LEGFOCUS_POSE_IDS = frozenset(LEGFOCUS_POSE_BY_ID)
 LEGFOCUS_EXPLICIT_ONLY_POSE_IDS = frozenset()
-LEGFOCUS_SEATED_POSE_IDS = LEGFOCUS_POSE_IDS
+LEGFOCUS_SEATED_POSE_IDS = frozenset(
+    item["id"] for item in LEGFOCUS_POSE_POOL if item.get("posture") == "seated"
+)
 LEGFOCUS_SCENE_TERMS = tuple(
     dict.fromkeys(
         str(term).strip()
@@ -960,7 +964,7 @@ def build_leg_focus_action(
 
 def has_leg_focus_contract(text: str) -> bool:
     raw = str(text or "")
-    return bool(
+    if not (
         "【legs:outfit】" in raw
         and re.search(r"【cam:(?:selfie|third)】", raw)
         and re.search(r"【wear:(?:daily|custom|white|black|bare|barefoot|pantyhose)】", raw)
@@ -968,7 +972,21 @@ def has_leg_focus_contract(text: str) -> bool:
         and re.search(r"【pose:[a-z_]+】", raw)
         and re.search(r"【outfit:[a-z_]+】", raw)
         and re.search(r"【leg_view:[a-z_]+】", raw)
+    ):
+        return False
+    pose_id = _resolve_pose_id(re.search(r"【pose:([a-z_]+)】", raw).group(1))
+    scene = re.search(r"【leg_scene:([a-z_]+)】", raw)
+    support = re.search(r"【leg_support:([a-z_]+)】", raw)
+    if not pose_id or not scene or not support:
+        return False
+    combinations = compatible_leg_compositions(
+        LEGFOCUS_POSE_BY_ID[pose_id],
+        camera=re.search(r"【cam:(selfie|third)】", raw).group(1),
+        view_id=re.search(r"【leg_view:([a-z_]+)】", raw).group(1),
+        scene_ids=scene.group(1),
+        framing=re.search(r"【frame:(full_outfit|leg_detail)】", raw).group(1),
     )
+    return any(selected_support == support.group(1) for _, selected_support, _ in combinations)
 
 
 def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
@@ -979,17 +997,26 @@ def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
     camera_match = re.search(r"【cam:(selfie|third)】", raw)
     wear_match = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", raw)
     frame_match = re.search(r"【frame:(full_outfit|leg_detail)】", raw)
+    scene_match = re.search(r"【leg_scene:([a-z_]+)】", raw)
     extra = raw
     if "【legs:outfit】" in raw:
         supplement = re.search(r"用户补充要求优先[:：](.*?)(?=【legs:outfit】|$)", raw, re.S)
         extra = supplement.group(1).strip() if supplement else ""
     extra = re.sub(r"【(?:legs|legs_face|leg_view|leg_scene|leg_support|cam|wear|pose|outfit|frame):[a-z_]+】", " ", extra, flags=re.I)
     extra = re.sub(r"/?看看腿", " ", extra, flags=re.I)
+    pose_id = _resolve_pose_id(str(pose_match.group(1) if pose_match else ""))
+    camera = str(camera_match.group(1) if camera_match else "")
+    # An obsolete generated camera tag must not override the current pose rules.
+    if "【legs:outfit】" in raw and pose_id and camera and not compatible_leg_compositions(
+        LEGFOCUS_POSE_BY_ID[pose_id], camera=camera,
+    ):
+        camera = ""
     return build_leg_focus_action(
         extra,
         has_refs,
-        force_pose=_resolve_pose_id(str(pose_match.group(1) if pose_match else "")),
-        force_camera=str(camera_match.group(1) if camera_match else ""),
+        force_pose=pose_id,
+        force_camera=camera,
         force_legwear=parse_requested_legwear(str(wear_match.group(0) if wear_match else "")),
         force_framing=str(frame_match.group(1) if frame_match else ""),
+        preferred_scene=str(scene_match.group(1) if scene_match else ""),
     )

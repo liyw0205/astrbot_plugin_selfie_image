@@ -491,6 +491,15 @@ def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
     urls: Set[str] = set()
     others: Set[str] = set()
 
+    # Base64 can contain long path-like runs. Remove inline images before the
+    # HTML/relative-path regexes so their backtracking cannot stall AstrBot.
+    def take_inline_image(match: re.Match[str]) -> str:
+        b64.add(match.group(0))
+        return ""
+
+    raw = _MIXED_DATA_IMAGE_RE.sub(take_inline_image, raw)
+    raw = re.sub(r"base64://[A-Za-z0-9+/=_-]+", take_inline_image, raw, flags=re.I)
+
     for match in re.finditer(r"!?\[[^\]]*]\(([\s\S]*?)\)", raw):
         inside = str(match.group(1) or "").strip()
         if inside:
@@ -550,12 +559,6 @@ def extract_image_urls_from_text(text: str) -> Dict[str, List[str]]:
 
     for match in re.finditer(r"url\(\s*([\"']?)(.*?)\1\s*\)", raw, flags=re.I):
         add_html_image_candidate(match.group(2), b64, urls, others)
-
-    for match in re.finditer(r"data:image/[a-zA-Z0-9.+-]+(?:;[^,\s\"'<>;]*)*;base64,[A-Za-z0-9+/=_-]+", raw, flags=re.I):
-        b64.add(match.group(0))
-
-    for match in re.finditer(r"base64://[A-Za-z0-9+/=_-]+", raw, flags=re.I):
-        b64.add(match.group(0))
 
     for match in re.finditer(r"(?<!:)//[^\s\"'<>]+", raw):
         add_maybe_image_url(match.group(0), b64, urls, others)

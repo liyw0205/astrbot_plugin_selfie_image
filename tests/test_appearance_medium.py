@@ -148,8 +148,13 @@ def test_cos_costume_hair_overrides_reference_bangs_and_color_consistently():
 
     assert "按指定内容替换参考图中对应的刘海、鬓发、分缝、长度或束发" in prompt
     assert "未写明的发型细节自然补全" in prompt
-    assert "从发根到刘海、鬓发和发尾统一使用该颜色" in prompt
-    assert "不得残留参考图旧色刘海" in prompt
+    assert "参考图原发完整收在假发内" in prompt
+    assert "可见发际线、刘海和鬓发均属于同一顶假发" in prompt
+    assert "不以是否出现“假发”字样为条件" in prompt
+    assert "发际线、发根、内层、刘海、鬓发和发尾均为该色" in prompt
+    assert "不在新发型下面叠留参考图原色刘海或鬓发" in prompt
+    assert "局部异色仅用于对应发束或区域" in prompt
+    assert "完全未指定发色时也沿用参考图发色" in prompt
     assert "发型发色来自参考图一" not in prompt
 
 
@@ -174,9 +179,14 @@ def test_english_cos_builtin_has_matching_hair_override_contract():
     )
 
     assert "Replace only the hairstyle features that are specified" in prompt
-    assert "apply it consistently from roots through bangs" in prompt
-    assert "do not leave the reference hair color in the bangs" in prompt
-    assert "do not infer a wig from the character name" in prompt
+    assert "tuck all reference hair inside it" in prompt
+    assert "the visible hairline, bangs, and side locks belong to the same wig" in prompt
+    assert "whether or not the word wig appears" in prompt
+    assert "hairline, roots, inner layers, bangs, side locks, and ends" in prompt
+    assert "do not layer new hair over bangs or side locks in the reference's original color" in prompt
+    assert "Local accents apply only to the corresponding strands or regions" in prompt
+    assert "when no color is specified at all" in prompt
+    assert "do not invent unlisted hair details from the character name" in prompt
 
 
 def test_persona_selfie_prompt_finishes_with_selected_medium_contract():

@@ -777,7 +777,7 @@ class ConfigModelTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
 
         action = build_leg_focus_action(
-            force_pose="bed_edge_diagonal", force_camera="third", has_refs=True,
+            force_pose="backed_staggered_legs", force_camera="third", has_refs=True,
         )
         zh = build_selfie_builtin_prompt(action, has_reference_image=True, appearance_type="real")
         self.assertEqual(zh.count(action), 1)
@@ -7887,7 +7887,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         action = build_leg_focus_action(
-            "白丝", has_refs=True, force_pose="bed_edge_diagonal", force_camera="third",
+            "白丝", has_refs=True, force_pose="backed_staggered_legs", force_camera="third",
         )
         with tempfile.TemporaryDirectory() as tmp:
             text = PersonaManager(tmp).build_selfie_prompt(action, "小助", "温柔", True, 0)
@@ -9005,7 +9005,7 @@ class LegFocusTests(unittest.TestCase):
             with self.subTest(request=request):
                 self.assertEqual(parse_requested_legwear(request), request)
                 action = build_leg_focus_action(
-                    request, has_refs=True, force_pose="bed_edge_diagonal", force_camera="third",
+                    request, has_refs=True, force_pose="backed_staggered_legs", force_camera="third",
                 )
                 self.assertIn(f"【wear:{tag}】", action)
                 self.assertIn("【outfit:reference】", action)

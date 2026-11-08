@@ -1047,7 +1047,7 @@ def infer_provider_type_from_model(model: str) -> str:
         return "openai"
     if "gemini" in compact or "nano-banana" in compact:
         return "gemini"
-    if "nai-diffusion" in compact or compact.startswith("nai-") or "novelai" in compact:
+    if "nai-diffusion" in compact or compact.startswith("nai-") or "novelai" in compact or re.match(r"^nai[45](?:\b|[.-])", compact):
         return "novelai"
     return ""
 

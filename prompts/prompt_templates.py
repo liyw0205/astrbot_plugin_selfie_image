@@ -30,9 +30,12 @@ COS_COVERED_EYES_IDENTITY_CONTRACT_ZH = (
 )
 
 COS_HAIR_OVERRIDE_CONTRACT_ZH = (
-    "头发、假发和头饰只按本套装明示的细节逐项执行：指定发型轮廓时，按指定内容替换参考图中对应的刘海、鬓发、分缝、长度或束发；未写明的发型细节自然补全，不照搬与套装设定冲突的参考特征，也不擅自补造角色发型。"
-    "指定发色时，从发根到刘海、鬓发和发尾统一使用该颜色，除非套装明确要求挑染或渐变；不得残留参考图旧色刘海。"
-    "若只指定头饰而未指定发型或发色，则保留参考图发色与自然发型特征，仅为稳固佩戴头饰进行必要整理，不按角色名推断假发；"
+    "套装明示的发型、发色优先于身份参考图的原头发，不以是否出现“假发”字样为条件。"
+    "指定单一发色时，发际线、发根、内层、刘海、鬓发和发尾均为该色，不在新发型下面叠留参考图原色刘海或鬓发。"
+    "挑染、拼色或渐变按明示的颜色及分布呈现；局部异色仅用于对应发束或区域，其余头发遵循本次主发色，不把局部配色扩大为整片异色刘海。"
+    "指定假发时，参考图原发完整收在假发内，可见发际线、刘海和鬓发均属于同一顶假发。"
+    "指定发型轮廓时，按指定内容替换参考图中对应的刘海、鬓发、分缝、长度或束发；未写明的发型细节自然补全。"
+    "仅指定局部挑染而未指定底色时，底色沿用身份参考图；完全未指定发色时也沿用参考图发色。未指定发型时保留与本次设定兼容的自然发型，不按角色名补造未写明的造型。"
     "头饰需贴合头部并与刘海、发束协调，不穿插、悬浮或与头发融合。"
 )
 
@@ -54,11 +57,13 @@ COS_COVERED_EYES_IDENTITY_CONTRACT_EN = (
 )
 
 COS_HAIR_OVERRIDE_CONTRACT_EN = (
-    "Follow only the hair and headwear details explicitly stated for this costume. Replace only the hairstyle features that are specified, such as bangs, side locks, parting, length, or tied sections. "
-    "Complete unspecified hairstyle details naturally without copying reference features that conflict with the costume, and do not invent a character-specific hairstyle. When a hair color is specified, "
-    "apply it consistently from roots through bangs, side locks, and ends; do not leave the reference hair color in the bangs unless the costume explicitly calls for highlights or a gradient. "
-    "If only an ornament is specified, keep the reference hair color and natural hairstyle, making only the small adjustments needed to secure the ornament; "
-    "do not infer a wig from the character name. Fit headwear naturally without floating, intersecting, or merging it with the hair."
+    "The costume's explicit hairstyle and hair colors override the identity reference's original hair, whether or not the word wig appears. "
+    "For a single specified color, use that color throughout the visible hairline, roots, inner layers, bangs, side locks, and ends; do not layer new hair over bangs or side locks in the reference's original color. "
+    "Use the stated colors and distribution for highlights, color blocking, or gradients. Local accents apply only to the corresponding strands or regions; the remaining hair follows the chosen base color. Do not expand a local accent into an entire contrasting fringe. "
+    "When a wig is specified, tuck all reference hair inside it; the visible hairline, bangs, and side locks belong to the same wig. "
+    "Replace only the hairstyle features that are specified, such as bangs, side locks, parting, length, or tied sections. Complete unspecified hairstyle details naturally. "
+    "If only local highlights are specified without a base color, retain the identity reference's base color; retain its hair color as well when no color is specified at all. Keep unspecified hairstyle features compatible with the chosen look; do not invent unlisted hair details from the character name. "
+    "Fit headwear naturally without floating, intersecting, or merging it with the hair."
 )
 
 

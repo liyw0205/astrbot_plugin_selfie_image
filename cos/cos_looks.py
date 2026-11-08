@@ -2566,11 +2566,10 @@ def adapt_cos_outfit_for_camera(outfit: str, camera: str) -> str:
     text = text.replace("全身镜", "室内背景")
     text = text.replace("镜子", "室内背景")
     text = text.replace("镜前", "室内环境")
-    # Replace standalone capture wording only.  A literal ``面对镜头`` is
-    # already valid Chinese; replacing its ``对镜`` substring produces the
-    # corrupted ``面面向镜头头`` seen in generated prompts.
-    text = re.sub(r"(?<!面)对镜头", "面向镜头", text)
-    text = re.sub(r"(?<!面)对镜(?!头)", "面向镜头", text)
+    # Preserve facing directions: matching inside 面对 or 背对 corrupts the
+    # subject's orientation instead of removing mirror-capture wording.
+    text = re.sub(r"(?<![面背])对镜头", "面向镜头", text)
+    text = re.sub(r"(?<![面背])对镜(?!头)", "面向镜头", text)
     return text
 
 

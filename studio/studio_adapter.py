@@ -249,7 +249,7 @@ class StudioMixin:
 
     def get_prompt_preset_status_for_web(self, kind: str = "image") -> Dict[str, Any]:
         """Expose load failures separately from an intentionally empty list."""
-        manager = getattr(self, "presets", None)
+        manager = getattr(self, "nai_artist_presets" if kind == "nai" else "presets", None)
         if manager is None:
             return {"ok": False, "source": "manager", "error": "预设管理器不可用"}
         getter = getattr(manager, "get_load_status", None)
@@ -257,6 +257,9 @@ class StudioMixin:
 
     def list_prompt_presets_for_web(self, kind: str = "image") -> List[Dict[str, Any]]:
         """Return the picker presets for one media kind."""
+        if kind == "nai":
+            self.nai_artist_presets.load()
+            return self.nai_artist_presets.list_management()
         merged: Dict[str, Dict[str, Any]] = {}
         for item in global_prompt_presets():
             name = str(item.get("name") or item.get("title") or "").strip()
@@ -296,32 +299,39 @@ class StudioMixin:
 
     def list_managed_prompt_presets_for_web(self, kind: str = "image") -> List[Dict[str, str]]:
         """Return the persisted preset set used by the preset management page."""
-        self.presets.load()
-        return self.presets.list_management()
+        manager = self.nai_artist_presets if kind == "nai" else self.presets
+        manager.load()
+        return manager.list_management()
 
     def save_prompt_preset_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(payload or {})
-        self.presets.load()
-        ok, message = self.presets.save_management(payload)
+        kind = "nai" if payload.get("kind") == "nai" else "image"
+        manager = self.nai_artist_presets if kind == "nai" else self.presets
+        manager.load()
+        ok, message = manager.save_management(payload)
         if not ok:
             raise ValueError(message)
-        return {"message": message, "kind": "image", "presets": self.presets.list_management()}
+        return {"message": message, "kind": kind, "presets": manager.list_management()}
 
     def delete_prompt_preset_from_web(self, name: str, kind: str = "image") -> Dict[str, Any]:
-        self.presets.load()
-        ok, message = self.presets.remove(name)
+        kind = "nai" if kind == "nai" else "image"
+        manager = self.nai_artist_presets if kind == "nai" else self.presets
+        manager.load()
+        ok, message = manager.remove(name)
         if not ok:
             raise ValueError(message)
-        return {"message": message, "kind": "image", "presets": self.presets.list_management()}
+        return {"message": message, "kind": kind, "presets": manager.list_management()}
 
     def import_prompt_presets_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(payload or {})
-        self.presets.load()
+        kind = "nai" if payload.get("kind") == "nai" else "image"
+        manager = self.nai_artist_presets if kind == "nai" else self.presets
+        manager.load()
         source = payload.get("presets") if isinstance(payload, dict) else None
         if source is None and isinstance(payload, dict):
             source = payload.get("items")
-        imported, message = self.presets.import_management(source)
-        return {"message": message, "imported": imported, "kind": "image", "presets": self.presets.list_management()}
+        imported, message = manager.import_management(source)
+        return {"message": message, "imported": imported, "kind": kind, "presets": manager.list_management()}
 
     def list_cos_look_sets_for_web(self) -> List[Dict[str, Any]]:
         """Expose the command COS pool to the canvas and quick-test pickers."""

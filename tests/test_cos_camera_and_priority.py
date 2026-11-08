@@ -544,14 +544,18 @@ def test_outfit_framing_words_do_not_suppress_random_view():
 
 
 def test_camera_adaptation_does_not_corrupt_existing_facing_phrases():
-    adapted = adapt_cos_outfit_for_camera(
-        "人物面对镜头；人物正对镜头；人物对镜自拍。",
-        "first",
-    )
-    assert "人物面对镜头" in adapted
-    assert "人物正面向镜头" in adapted
-    assert "面面向镜头头" not in adapted
-    assert "镜头头" not in adapted
+    for camera in ("first", "third"):
+        adapted = adapt_cos_outfit_for_camera(
+            "人物面对镜头；人物正对镜头；人物背对镜头；人物背对镜面；人物对镜自拍。",
+            camera,
+        )
+        assert "人物面对镜头" in adapted
+        assert "人物正面向镜头" in adapted
+        assert "人物背对镜头" in adapted
+        assert "人物背对镜面" in adapted
+        assert "背面向镜头" not in adapted
+        assert "面面向镜头头" not in adapted
+        assert "镜头头" not in adapted
 
 
 def test_first_person_random_pose_excludes_pure_side_profile_but_explicit_survives():
@@ -1669,6 +1673,9 @@ def test_llm_leg_route_marker_does_not_force_a_selfie_camera():
         for prefix in ("【LLM 自拍】", "LLM 自拍："):
             for camera in ("selfie", "third"):
                 with patch(
+                    "astrbot_plugin_selfie_image.cos.leg_focus._weighted_pose_choice",
+                    side_effect=lambda options: next(item for item in options if item["id"] == "supported_straight_legs"),
+                ), patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus.random.choices",
                     side_effect=lambda options, **_kwargs: [next((item for item in options if item.get("camera") == camera), options[0])],
                 ), patch(

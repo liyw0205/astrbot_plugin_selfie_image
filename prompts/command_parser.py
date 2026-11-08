@@ -123,7 +123,8 @@ def extract_prompt_aspect_ratio(text: str) -> str:
     contains a ``用户补充要求优先：`` section, only that section is considered
     first so the user's extra request can override a template's framing.
     """
-    raw = str(text or "")
+    # Pool IDs are metadata; e.g. sleep_square_neck_slip is not a square canvas.
+    raw = re.sub(r"【[a-z][a-z0-9_]*:[^】\n]*】", "", str(text or ""), flags=re.IGNORECASE)
     if not raw.strip():
         return ""
 
@@ -353,6 +354,7 @@ def parse_prompt_options(
         key = match.group(1).lower().replace("-", "_")
         value = str(match.group(2) or "").strip()
         if key in {"ar", "aspect", "aspect_ratio", "ratio"} and value:
+            value = value.rstrip("。；;，,.")
             option_aspect = normalize_aspect_ratio_value(value) or value
             aspect = option_aspect
             prompt = prompt[: match.start()] + prompt[match.end() :]

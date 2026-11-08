@@ -9,6 +9,8 @@
       "elevation": "down",
       "weight": 3,
       "support_types": [
+        "raised_soft_surface",
+        "ground_surface",
         "seat_edge",
         "raised_edge",
         "wide_edge",
@@ -32,6 +34,8 @@
       "elevation": "down",
       "weight": 2,
       "support_types": [
+        "raised_soft_surface",
+        "ground_surface",
         "seat_edge",
         "raised_edge",
         "wide_edge",
@@ -55,6 +59,8 @@
       "elevation": "down",
       "weight": 2,
       "support_types": [
+        "raised_soft_surface",
+        "ground_surface",
         "seat_edge",
         "raised_edge",
         "wide_edge",
@@ -78,6 +84,8 @@
       "elevation": "down",
       "weight": 1,
       "support_types": [
+        "raised_soft_surface",
+        "ground_surface",
         "wide_surface",
         "long_surface",
         "kneeling_surface"

@@ -210,19 +210,17 @@
     },
     "half_turn": {
       "title": "自然侧身",
-      "prompt": "身体以约四十五度侧向镜头，肩胯自然错开，一侧腿略前、一侧腿略后以展示腰线和衣摆；头部和视线顺着身体方向，不强行回头或扭转颈部，手部轻触衣料或配饰但不遮挡服装主体。",
+      "prompt": "人物呈侧前三分之四站姿，胸口斜向镜头，服装前片与一侧轮廓自然可见；一侧腿略前、一侧腿略后，肩胯轻微错开以展示腰线和衣摆。头部与胸口同向，视线顺着身体朝向，颈部自然延伸，手部轻触衣料或配饰但不遮挡服装主体。",
       "orientation": "side",
       "pose_family": "side",
       "random_weight": 4,
       "framing_ids": [
         "three_quarter_front",
-        "two_thirds",
         "environmental",
         "eye_level_full",
         "high_angle_three_quarter",
         "low_angle_full",
-        "low_angle_hero",
-        "side_profile"
+        "low_angle_hero"
       ],
       "expression_ids": [
         "gentle",
@@ -498,7 +496,7 @@
     },
     "side_profile": {
       "title": "纯侧身",
-      "prompt": "肩线、胯部和面部朝向保持一致，人物以自然侧面或侧后三分之四角度面对镜头，腰线、腿部比例和服装侧面剪裁自然可见；不回头、不回眸、不为露出正脸扭转脖子，姿态稳定。",
+      "prompt": "人物一侧肩膀朝向镜头，胸口、髋部与头部朝向画面同一侧，保持稳定的侧面站姿；一条腿自然承重，另一条腿轻轻错开，双手放松或轻触服装侧缝，展示腰线、腿部比例和服装侧面剪裁。头颈顺着躯干自然延伸，面部按侧面透视自然遮挡，不为露脸转向镜头。",
       "orientation": "side",
       "pose_family": "side",
       "random_weight": 3,
@@ -682,10 +680,7 @@
       "pose_family": "curve_static",
       "random_weight": 2,
       "framing_ids": [
-        "three_quarter_front",
-        "two_thirds",
         "eye_level_full",
-        "side_profile",
         "rear_three_quarter",
         "low_angle_full",
         "low_angle_hero"
@@ -810,7 +805,6 @@
         "rear_three_quarter",
         "rear_low_medium",
         "rear_low_hero",
-        "side_profile",
         "low_angle_hero"
       ],
       "expression_ids": [
@@ -841,7 +835,6 @@
         "rear_three_quarter",
         "rear_low_medium",
         "rear_low_hero",
-        "side_profile",
         "low_angle_hero"
       ],
       "expression_ids": [

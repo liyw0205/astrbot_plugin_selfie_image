@@ -1480,6 +1480,7 @@
       <div class="tabs-inline" style="margin-top:12px" role="tablist" aria-label="预设类型">
         <button id="presetKindImage" class="active" type="button" role="tab">生图预设</button>
         <button id="presetKindCos" type="button" role="tab">COS 池</button>
+        <button id="presetKindNai" type="button" role="tab">NAI 画师串</button>
       </div>
       <div class="between" style="margin-top:12px">
         <span id="presetManagerStatus" class="status">正在读取预设…</span>
@@ -2174,12 +2175,14 @@
     let PRESET_MANAGE_ROWS = [];
     let COS_MANAGE_ROWS = [];
     let PRESET_EDIT_ORIGINAL = '';
+    let PRESET_EDIT_KIND = 'image';
+    let PRESET_TRANSFER_KIND = 'image';
     let PRESET_KIND = 'image';
     let PRESET_LOAD_SEQ = 0;
-    const PRESET_MANAGER_PAGES = {image: 1, cos: 1};
-    const PRESET_MANAGER_TOTALS = {image: 0, cos: 0};
-    const PRESET_MANAGER_SEARCH_TIMERS = {image: null, cos: null};
-    const PRESET_MANAGER_QUERIES = {image: '', cos: ''};
+    const PRESET_MANAGER_PAGES = {image: 1, cos: 1, nai: 1};
+    const PRESET_MANAGER_TOTALS = {image: 0, cos: 0, nai: 0};
+    const PRESET_MANAGER_SEARCH_TIMERS = {image: null, cos: null, nai: null};
+    const PRESET_MANAGER_QUERIES = {image: '', cos: '', nai: ''};
     let CURRENT_COMPARE = null;
 
     function isEmbeddedFrame() {
@@ -2628,7 +2631,7 @@ Source prompt:
       if (compact.includes('jimeng') || compact.includes('seedream') || compact.includes('doubao-seedream')) return 'jimeng2api';
       if (compact.includes('grok') || compact.includes('xai') || compact.includes('x-ai')) return 'grok';
       if (compact.includes('gpt-image') || compact.includes('dall-e') || compact.includes('dalle')) return 'openai';
-      if (compact.includes('nai-diffusion') || compact.startsWith('nai-') || compact.includes('novelai')) return 'novelai';
+      if (compact.includes('nai-diffusion') || compact.startsWith('nai-') || compact.includes('novelai') || /^nai[45](?:\b|[.-])/.test(compact)) return 'novelai';
       if (compact.includes('gemini') || compact.includes('nano-banana')) return 'gemini';
       return '';
     }
@@ -7579,7 +7582,7 @@ Source prompt:
     }
     async function fetchManagedCatalogPage(kind, searchQuery, page, force = false) {
       const normalizedQuery = String(searchQuery || '').trim();
-      const normalizedKind = kind === 'cos' ? 'cos' : 'image';
+      const normalizedKind = ['cos', 'nai'].includes(kind) ? kind : 'image';
       const query = normalizedQuery;
       const key = `${normalizedKind}:${normalizedQuery.toLocaleLowerCase()}:${page}`;
       let cached = MANAGED_PAGE_CACHE.get(key);
@@ -7592,7 +7595,7 @@ Source prompt:
         offset: String(Math.max(0, (page - 1) * PICKER_PAGE_SIZE)),
         search:query,
       });
-      if (normalizedKind === 'image') params.set('kind', 'image');
+      if (normalizedKind !== 'cos') params.set('kind', normalizedKind);
       const endpoint = normalizedKind === 'cos' ? '/api/cos-pools?' : '/api/prompt-presets/manage?';
       const request = (async () => {
         const res = await api(endpoint + params.toString());
@@ -7604,13 +7607,14 @@ Source prompt:
         let items = Array.isArray(data.items) ? data.items : [];
         let total = Number(data.total ?? items.length);
         if (rawIsArray) {
-          const rows = normalizedKind === 'image' ? mergePromptPresets(items) : flattenCosPickerPayload(data);
+          const rows = normalizedKind === 'cos' ? flattenCosPickerPayload(data) : normalizedKind === 'nai' ? items : mergePromptPresets(items);
           const filtered = rows.filter(item => !normalizedQuery || `${item.name || item.title || item.id || ''}\n${item.prompt || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
           total = filtered.length;
           items = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
         } else if (!Array.isArray(data.items)) {
-          if (normalizedKind === 'image') {
-            const rows = mergePromptPresets(Array.isArray(data.presets) ? data.presets : (Array.isArray(raw) ? raw : []));
+          if (normalizedKind !== 'cos') {
+            const sourceRows = Array.isArray(data.presets) ? data.presets : (Array.isArray(raw) ? raw : []);
+            const rows = normalizedKind === 'nai' ? sourceRows : mergePromptPresets(sourceRows);
             const filtered = rows.filter(item => !normalizedQuery || `${item.name || item.title || ''}\n${item.prompt || ''}`.toLowerCase().includes(normalizedQuery.toLowerCase()));
             total = filtered.length;
             items = filtered.slice((page - 1) * PICKER_PAGE_SIZE, page * PICKER_PAGE_SIZE);
@@ -7849,27 +7853,27 @@ Source prompt:
     }
     async function loadManagedPromptPresets(kind = PRESET_KIND) {
       if (kind === 'cos') return loadManagedCosPool();
-      const requestedKind = 'image';
+      const requestedKind = kind === 'nai' ? 'nai' : 'image';
       PRESET_KIND = requestedKind;
       presetManagerStatus('正在读取预设…');
       const loadSeq = ++PRESET_LOAD_SEQ;
-      const page = PRESET_MANAGER_PAGES.image;
-      const query = String(PRESET_MANAGER_QUERIES.image || '').trim();
+      const page = PRESET_MANAGER_PAGES[requestedKind];
+      const query = String(PRESET_MANAGER_QUERIES[requestedKind] || '').trim();
       try {
         const data = await fetchManagedCatalogPage(requestedKind, query, page);
         // A slower request from the previous tab must not overwrite the current list.
         if (loadSeq !== PRESET_LOAD_SEQ || requestedKind !== PRESET_KIND) return;
         PRESET_MANAGE_ROWS = data.items;
-        PRESET_MANAGER_TOTALS.image = Number(data.total || 0);
-        const pageCount = Math.max(1, Math.ceil(PRESET_MANAGER_TOTALS.image / PICKER_PAGE_SIZE));
-        if (page > pageCount) { PRESET_MANAGER_PAGES.image = pageCount; return loadManagedPromptPresets(requestedKind); }
-        prefetchManagedCatalogPages(requestedKind, query, page, PRESET_MANAGER_TOTALS.image);
+        PRESET_MANAGER_TOTALS[requestedKind] = Number(data.total || 0);
+        const pageCount = Math.max(1, Math.ceil(PRESET_MANAGER_TOTALS[requestedKind] / PICKER_PAGE_SIZE));
+        if (page > pageCount) { PRESET_MANAGER_PAGES[requestedKind] = pageCount; return loadManagedPromptPresets(requestedKind); }
+        prefetchManagedCatalogPages(requestedKind, query, page, PRESET_MANAGER_TOTALS[requestedKind]);
         renderManagedPromptPresets();
-        presetManagerStatus(`生图预设 · 共 ${PRESET_MANAGER_TOTALS.image} 个 · 第 ${page}/${pageCount} 页`);
+        presetManagerStatus(`${requestedKind === 'nai' ? 'NAI 画师串' : '生图预设'} · 共 ${PRESET_MANAGER_TOTALS[requestedKind]} 个 · 第 ${page}/${pageCount} 页`);
       } catch (e) {
         if (loadSeq !== PRESET_LOAD_SEQ || requestedKind !== PRESET_KIND) return;
         PRESET_MANAGE_ROWS = [];
-        PRESET_MANAGER_TOTALS.image = 0;
+        PRESET_MANAGER_TOTALS[requestedKind] = 0;
         renderManagedPromptPresets();
         presetManagerStatus(e.message || '预设读取失败', true);
       }
@@ -7877,10 +7881,11 @@ Source prompt:
     function renderManagedPromptPresets() {
       const wrap = $('presetManagerList');
       if (!wrap) return;
-      const query = String(PRESET_MANAGER_QUERIES.image || '').trim();
+      const kind = PRESET_KIND === 'nai' ? 'nai' : 'image';
+      const query = String(PRESET_MANAGER_QUERIES[kind] || '').trim();
       if (!PRESET_MANAGE_ROWS.length) {
         wrap.innerHTML = `<div class="status">${query ? '没有匹配的预设。' : '暂无预设，先新增一个。'}</div>`;
-        renderPresetManagerPager('image');
+        renderPresetManagerPager(kind);
         return;
       }
       let lastGroup = '';
@@ -7902,7 +7907,7 @@ Source prompt:
       }).join('');
       wrap.querySelectorAll('[data-preset-edit]').forEach(btn => btn.onclick = () => openPresetEditor(PRESET_MANAGE_ROWS[Number(btn.dataset.presetEdit)]));
       wrap.querySelectorAll('[data-preset-delete]').forEach(btn => btn.onclick = () => deleteManagedPromptPreset(PRESET_MANAGE_ROWS[Number(btn.dataset.presetDelete)]));
-      renderPresetManagerPager('image');
+      renderPresetManagerPager(kind);
     }
     function renderPresetManagerPager(kind) {
       const id = kind === 'cos' ? 'presetCosManagerPager' : 'presetManagerPager';
@@ -7918,7 +7923,7 @@ Source prompt:
       wrap.querySelectorAll('[data-manager-page]').forEach(button => button.onclick = () => {
         PRESET_MANAGER_PAGES[kind] = page + Number(button.dataset.managerPage);
         if (kind === 'cos') void loadManagedCosPool();
-        else void loadManagedPromptPresets('image');
+        else void loadManagedPromptPresets(kind);
       });
     }
     function schedulePresetManagerSearch(kind, value) {
@@ -7928,14 +7933,18 @@ Source prompt:
       PRESET_MANAGER_SEARCH_TIMERS[kind] = setTimeout(() => {
         if (PRESET_KIND !== kind) return;
         if (kind === 'cos') void loadManagedCosPool();
-        else void loadManagedPromptPresets('image');
+        else void loadManagedPromptPresets(kind);
       }, 250);
     }
     async function switchPresetKind(kind) {
-      PRESET_KIND = kind === 'cos' ? 'cos' : 'image';
-      clearTimeout(PRESET_MANAGER_SEARCH_TIMERS[PRESET_KIND === 'cos' ? 'image' : 'cos']);
+      PRESET_KIND = ['cos', 'nai'].includes(kind) ? kind : 'image';
+      Object.values(PRESET_MANAGER_SEARCH_TIMERS).forEach(clearTimeout);
       $('presetKindImage').classList.toggle('active', PRESET_KIND === 'image');
       $('presetKindCos').classList.toggle('active', PRESET_KIND === 'cos');
+      $('presetKindNai').classList.toggle('active', PRESET_KIND === 'nai');
+      $('presetManagerSearch').value = PRESET_MANAGER_QUERIES[PRESET_KIND] || '';
+      $('presetManagerSearch').placeholder = PRESET_KIND === 'nai' ? '搜索画师名或画师串' : '搜索预设名或提示词';
+      $('presetManagerSearch').setAttribute('aria-label', $('presetManagerSearch').placeholder);
       const isCos = PRESET_KIND === 'cos';
       const promptManager = $('presetPromptManager');
       const cosManager = $('presetCosManager');
@@ -7955,16 +7964,17 @@ Source prompt:
       else await loadManagedPromptPresets(PRESET_KIND);
     }
     function openPresetEditor(row = null) {
+      PRESET_EDIT_KIND = PRESET_KIND;
       PRESET_EDIT_ORIGINAL = row ? String(row.name || '') : '';
-      $('presetEditorTitle').textContent = row ? '编辑预设' : '新增预设';
+      $('presetEditorTitle').textContent = (row ? '编辑' : '新增') + (PRESET_KIND === 'nai' ? '画师串' : '预设');
       $('presetName').value = row?.name || '';
       $('presetPrompt').value = row?.prompt || '';
       $('presetDescription').value = row?.description || '';
       $('presetAspect').value = row?.aspect_ratio || '';
       $('presetResolution').value = row?.resolution || '';
       $('presetExtraPrompt').value = row?.extra_prompt || '';
-      $('presetAspectWrap').style.display = '';
-      $('presetResolutionWrap').style.display = '';
+      $('presetAspectWrap').style.display = PRESET_KIND === 'nai' ? 'none' : '';
+      $('presetResolutionWrap').style.display = PRESET_KIND === 'nai' ? 'none' : '';
       $('presetEditorStatus').textContent = '';
       $('presetEditorModal').classList.add('show');
       $('presetName').focus();
@@ -7982,7 +7992,7 @@ Source prompt:
         aspect_ratio: $('presetAspect').value.trim(),
         resolution: $('presetResolution').value.trim(),
         extra_prompt: $('presetExtraPrompt').value.trim(),
-        kind: PRESET_KIND
+        kind: PRESET_EDIT_KIND
       };
       if (!body.name || !body.prompt) {
         $('presetEditorStatus').textContent = '预设名和提示词不能为空';
@@ -7993,9 +8003,10 @@ Source prompt:
         const isNew = !PRESET_EDIT_ORIGINAL;
         const res = await api('/api/prompt-presets/manage/save', {method:'POST', body:JSON.stringify(body)});
         closePresetEditor();
-        if (isNew) PRESET_MANAGER_PAGES.image = 1;
-        await refreshPromptCatalogViews(true);
-        await loadManagedPromptPresets();
+        if (isNew) PRESET_MANAGER_PAGES[body.kind] = 1;
+        clearPickerCache(body.kind);
+        if (body.kind === 'image') await refreshPromptCatalogViews(true);
+        if (PRESET_KIND === body.kind) await loadManagedPromptPresets(body.kind);
         showToast((res.data && res.data.message) || '预设已保存', 'ok');
       } catch (e) {
         $('presetEditorStatus').textContent = e.message || '保存失败';
@@ -8003,21 +8014,23 @@ Source prompt:
     }
     async function deleteManagedPromptPreset(row) {
       if (!row || !row.name) return;
+      const kind = PRESET_KIND;
       if (!await confirmAction(`确定删除预设「${row.name}」吗？`, {title:'删除预设', confirmText:'删除预设'})) return;
       try {
-        const res = await api('/api/prompt-presets/manage/delete', {method:'POST', body:JSON.stringify({name:row.name, kind:PRESET_KIND})});
-        await refreshPromptCatalogViews(true);
-        await loadManagedPromptPresets(PRESET_KIND);
+        const res = await api('/api/prompt-presets/manage/delete', {method:'POST', body:JSON.stringify({name:row.name, kind})});
+        clearPickerCache(kind);
+        if (kind === 'image') await refreshPromptCatalogViews(true);
+        if (PRESET_KIND === kind) await loadManagedPromptPresets(kind);
         showToast((res.data && res.data.message) || '预设已删除', 'ok');
       } catch (e) {
         presetManagerStatus(e.message || '删除失败', true);
       }
     }
-    function presetTransferPayload(rows = PRESET_MANAGE_ROWS) {
+    function presetTransferPayload(rows = PRESET_MANAGE_ROWS, kind = PRESET_KIND) {
       return {
         version: 1,
         type: 'selfie-image-prompt-presets',
-        kind: PRESET_KIND,
+        kind,
         presets: rows.map(item => ({
           name: item.name || item.title || '', prompt: item.prompt || '', description: item.description || '',
           aspect_ratio: item.aspect_ratio || '', resolution: item.resolution || '', extra_prompt: item.extra_prompt || ''
@@ -8029,15 +8042,17 @@ Source prompt:
         exportCosPool();
         return;
       }
+      const kind = PRESET_KIND;
       try {
-        const res = await api('/api/prompt-presets/manage?kind=image');
+        const res = await api('/api/prompt-presets/manage?kind=' + encodeURIComponent(kind));
+        if (PRESET_KIND !== kind) return;
         const data = res.data;
         const loadStatus = Array.isArray(data) ? res.load_status : data?.load_status;
         if (loadStatus && loadStatus.ok === false) throw new Error(loadStatus.error || '预设读取失败');
         const rows = Array.isArray(data) ? data : (Array.isArray(data?.presets) ? data.presets : []);
         $('presetTransferTitle').textContent = '导出预设文本';
         $('presetTransferHint').textContent = '已生成 JSON 文本。系统会尝试写入剪贴板，失败时请在下方文本框中手动全选复制。';
-        $('presetTransferText').value = JSON.stringify(presetTransferPayload(rows), null, 2);
+        $('presetTransferText').value = JSON.stringify(presetTransferPayload(rows, kind), null, 2);
         $('presetTransferImportBtn').style.display = 'none';
         $('presetTransferCopyBtn').style.display = '';
         $('presetTransferStatus').textContent = '';
@@ -8054,6 +8069,7 @@ Source prompt:
         openCosPoolImport();
         return;
       }
+      PRESET_TRANSFER_KIND = PRESET_KIND;
       $('presetTransferTitle').textContent = '导入预设文本';
       $('presetTransferHint').textContent = '把导出的 JSON 粘贴到这里，导入会按名称合并，重名预设将被覆盖。';
       $('presetTransferText').value = '';
@@ -8078,9 +8094,14 @@ Source prompt:
       }
     }
     async function importPresetTransfer() {
+      const kind = PRESET_TRANSFER_KIND;
       let parsed;
       try { parsed = JSON.parse($('presetTransferText').value || ''); }
       catch (_) { $('presetTransferStatus').textContent = 'JSON 格式不正确'; return; }
+      if (parsed?.type === 'selfie-image-prompt-presets' && parsed.kind && parsed.kind !== kind) {
+        $('presetTransferStatus').textContent = '预设分类不一致，请切换到对应分类后导入';
+        return;
+      }
       const presets = Array.isArray(parsed) ? parsed : parsed && (parsed.presets || parsed.items || parsed);
       if (!Array.isArray(presets) && (!presets || typeof presets !== 'object')) {
         $('presetTransferStatus').textContent = '没有找到 presets 数组';
@@ -8088,11 +8109,12 @@ Source prompt:
       }
       $('presetTransferStatus').textContent = '导入中…';
       try {
-        const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind:PRESET_KIND})});
+        const res = await api('/api/prompt-presets/manage/import', {method:'POST', body:JSON.stringify({presets, kind})});
         closePresetTransfer();
-        PRESET_MANAGER_PAGES.image = 1;
-        await refreshPromptCatalogViews(true);
-        await loadManagedPromptPresets(PRESET_KIND);
+        PRESET_MANAGER_PAGES[kind] = 1;
+        clearPickerCache(kind);
+        if (kind === 'image') await refreshPromptCatalogViews(true);
+        if (PRESET_KIND === kind) await loadManagedPromptPresets(kind);
         showToast((res.data && res.data.message) || '预设已导入', 'ok');
       } catch (e) {
         $('presetTransferStatus').textContent = e.message || '导入失败';
@@ -9985,8 +10007,9 @@ Source prompt:
     $('presetAddBtn').onclick = () => openPresetEditor();
     $('presetKindImage').onclick = () => switchPresetKind('image');
     $('presetKindCos').onclick = () => switchPresetKind('cos');
+    $('presetKindNai').onclick = () => switchPresetKind('nai');
     $('presetManagerSearch').oninput = event => {
-      schedulePresetManagerSearch('image', event.target.value);
+      schedulePresetManagerSearch(PRESET_KIND === 'nai' ? 'nai' : 'image', event.target.value);
     };
     $('presetCosManagerSearch').oninput = event => {
       schedulePresetManagerSearch('cos', event.target.value);

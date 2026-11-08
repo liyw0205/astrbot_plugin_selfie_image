@@ -304,7 +304,7 @@ def test_full_outfit_leg_focus_does_not_keep_lower_body_only_rule(tmp_path) -> N
     from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
     action = build_leg_focus_action(
-        force_pose="seated_crossed_knee",
+        force_pose="chair_thigh_cross_drop",
         force_camera="third",
         force_framing="full_outfit",
         force_legwear="赤足",

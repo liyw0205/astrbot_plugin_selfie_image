@@ -37,7 +37,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             "reclined_offset_legs": {"bed_surface", "sofa", "floor_window"},
             "reclined_one_knee": {"bed_surface", "sofa", "floor_window"},
             "side_folded_legs": {"bed_surface", "sofa", "floor_cushion", "bedroom_rug", "living_room_rug", "floor_window"},
-            "seated_ankle_cross": {"bed_edge", "bedroom_bench", "sofa", "gaming_chair", "desk_chair", "living_room_chair", "floor_window", "floor_mirror"},
+            "seated_ankle_cross": {"bed_surface", "sofa", "floor_cushion", "bedroom_rug", "living_room_rug", "floor_window", "floor_mirror"},
         }
         for pose_id, scene_ids in expected_supports.items():
             combinations = compatible_leg_compositions(LEGFOCUS_POSE_BY_ID[pose_id])
@@ -236,15 +236,17 @@ class PromptPoolJsonTests(unittest.TestCase):
 
     def test_leg_camera_contract_survives_persona_and_bilingual_templates(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
-            LEGFOCUS_CAMERA_FRAMINGS, LEGFOCUS_REFERENCE_RULES, build_leg_focus_action,
+            LEGFOCUS_CAMERA_FRAMINGS, LEGFOCUS_REFERENCE_RULES, LEGFOCUS_POSE_BY_ID,
+            LEGFOCUS_VIEW_BY_ID, build_leg_focus_action,
         )
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
         from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
 
         with tempfile.TemporaryDirectory() as tmp:
             manager = PersonaManager(tmp)
-            for pose_id in ("supported_bent_knees", "armrest_offset_legs", "backed_staggered_legs"):
-                for camera in ("selfie", "third"):
+            for pose_id in ("supine_offset_legs", "side_lying_offset_legs", "backed_staggered_legs"):
+                cameras = {LEGFOCUS_VIEW_BY_ID[key]["camera"] for key in LEGFOCUS_POSE_BY_ID[pose_id]["view_ids"]}
+                for camera in cameras:
                     for has_refs in (True, False):
                         action = build_leg_focus_action(
                             has_refs=has_refs, force_pose=pose_id, force_camera=camera,
@@ -335,7 +337,6 @@ class PromptPoolJsonTests(unittest.TestCase):
             ("第三人称 侧拍 俯拍", "third", "side", {"down"}),
             ("第三人称 斜前方 平拍", "third", "oblique", {"level"}),
             ("第三人称 正前方 俯拍", "third", "front", {"down"}),
-            ("第三人称 顶拍", "third", "front", {"top"}),
             ("第一人称 偏左 俯拍", "selfie", "left", {"down"}),
         ):
             with self.subTest(query=query):
@@ -359,7 +360,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             ("第三人称", {"force_pose": "reclined_offset_legs"}),
             ("第一人称", {"force_pose": "side_folded_legs"}),
             ("沙发", {"force_pose": "edge_knees_together_dangle"}),
-            ("地毯", {"force_pose": "edge_one_leg_raised"}),
+            ("电竞椅", {"force_pose": "edge_one_leg_raised"}),
             ("电竞椅", {"force_pose": "side_folded_legs"}),
             ("第一人称 仰拍", {}),
             ("第一人称 侧拍", {}),
@@ -371,9 +372,10 @@ class PromptPoolJsonTests(unittest.TestCase):
             ("第三人称 平拍", {"force_pose": "seated_forward_leg"}),
             ("第三人称 俯拍", {"force_pose": "reclined_one_knee"}),
             ("第三人称", {"force_pose": "edge_fold_and_drop"}),
-            ("第三人称", {"force_pose": "edge_staggered_dangle"}),
+            ("第一人称", {"force_pose": "edge_staggered_dangle"}),
             ("第三人称", {"force_pose": "edge_one_leg_raised"}),
             ("第三人称", {"force_pose": "edge_crossed_knee_dangle"}),
+            ("第三人称 顶拍", {}),
             ("第一人称 俯拍", {"force_pose": "supine_offset_legs"}),
             ("第三人称 背身", {}),
             ("第三人称 仰拍 俯拍", {}),
@@ -447,6 +449,26 @@ class PromptPoolJsonTests(unittest.TestCase):
                 with patch.object(leg_focus, "read_versioned_json", side_effect=lambda path, _label: payload if path == leg_focus.DATA_PATH else view_payload):
                     with self.assertRaises(leg_focus.LegFocusDataError):
                         leg_focus._load_pool()
+
+    def test_complex_flat_poses_stay_in_default_random_with_third_person_views(self) -> None:
+        from astrbot_plugin_selfie_image.cos import leg_focus
+
+        expected = {
+            "supported_bent_knees", "side_folded_legs", "side_seated_front_support",
+            "ground_supported_crossed_shins", "kneeling_back_support",
+        }
+        self.assertFalse(leg_focus.LEGFOCUS_EXPLICIT_ONLY_POSE_IDS)
+        for pose_id in expected:
+            def choose_pose(pool):
+                return next(pose for pose in pool if pose["id"] == pose_id)
+
+            with patch.object(leg_focus, "_weighted_pose_choice", side_effect=choose_pose):
+                action = leg_focus.build_leg_focus_action("第三人称")
+                self.assertEqual(leg_focus.pick_leg_focus_pose(camera_kind="third")["id"], pose_id)
+            self.assertIn(f"【pose:{pose_id}】", action)
+            self.assertIn("【cam:third】", action)
+            with self.assertRaises(leg_focus.LegFocusDataError):
+                leg_focus.build_leg_focus_action("第一人称", force_pose=pose_id)
 
     def test_leg_batch_keeps_requested_pose_scene_and_varies_the_concrete_camera(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
@@ -548,7 +570,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             "astrbot_plugin_selfie_image.cos.leg_focus._weighted_detail_choice",
             return_value=detail,
         ):
-            action = build_leg_focus_action(force_pose="bed_edge_diagonal", force_camera="third")
+            action = build_leg_focus_action(force_pose="bed_edge_diagonal", force_camera="selfie")
 
         self.assertEqual(action.count(detail["prompt"]), 1)
         self.assertEqual(sum(item["prompt"] in action for item in LEGFOCUS_OUTFIT_POOL), 1)
@@ -566,7 +588,7 @@ class PromptPoolJsonTests(unittest.TestCase):
                 with self.subTest(outfit=outfit["id"], wear=wear), patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_outfit", return_value=outfit,
                 ):
-                    action = build_leg_focus_action(wear, force_pose="seated_crossed_knee", force_camera="third")
+                    action = build_leg_focus_action(wear, force_pose="seated_crossed_knee", force_camera="selfie")
                     styles = [style for style in LEGFOCUS_HOSIERY_STYLES if style["prompt"] in action]
                     self.assertEqual(action.count(outfit["prompt"]), 1)
                     self.assertIn(f"【outfit:{outfit['id']}】", action)
@@ -652,7 +674,7 @@ class PromptPoolJsonTests(unittest.TestCase):
 
         action = build_leg_focus_action(
             force_pose="sofa_armrest_asymmetric",
-            force_camera="third",
+            force_camera="selfie",
             has_refs=True,
         )
         prompt_zh = build_selfie_builtin_prompt(action, has_reference_image=True)
@@ -677,7 +699,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
 
         action = build_leg_focus_action(
-            force_pose="bed_edge_diagonal",
+            force_pose="backed_staggered_legs",
             force_camera="third",
             force_framing="full_outfit",
         )
@@ -709,7 +731,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         action = build_leg_focus_action(
-            force_pose="bed_edge_diagonal",
+            force_pose="supine_offset_legs",
             force_camera="selfie",
             force_legwear="赤足",
         )
@@ -731,7 +753,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
 
         action = build_leg_focus_action(
-            force_pose="bed_edge_diagonal",
+            force_pose="supine_offset_legs",
             force_camera="selfie",
             force_legwear="赤足",
         )
@@ -825,7 +847,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             has_refs=True,
             preferred_scene="城市天台步道",
             force_pose="bed_edge_diagonal",
-            force_camera="third",
+            force_camera="selfie",
         )
         with tempfile.TemporaryDirectory() as tmp:
             prompt = PersonaManager(tmp).build_selfie_prompt(
@@ -838,7 +860,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             )
 
         self.assertIn("保留原有上装、下装、连体结构、袜鞋与配饰", prompt)
-        self.assertIn("【cam:third】", prompt)
+        self.assertIn("【cam:selfie】", prompt)
         self.assertRegex(prompt, r"【leg_support:(?:raised_soft_surface|ground_surface)】")
         self.assertNotIn("城市天台步道", prompt)
         self.assertNotIn("当前日程场景", prompt)

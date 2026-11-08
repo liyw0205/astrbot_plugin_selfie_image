@@ -175,6 +175,8 @@ from .core.providers import (
     normalize_image_base_url,
     provider_type_from_channel_payload,
 )
+from .nai.artist_presets import NaiArtistPresetManager
+from .nai.commands import NaiCommandMixin
 from .prompts.prompt_composition import (
     append_anatomy_constraints,
     build_prompt_with_reference_instruction,
@@ -297,6 +299,7 @@ def _appearance_type_for_request(persona: Any, text: str = "") -> str:
 @register(PLUGIN_NAME, PLUGIN_AUTHOR, f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}", PLUGIN_VERSION)
 class SelfieImagePlugin(
     StudioMixin,
+    NaiCommandMixin,
     CreativeFeaturesMixin,
     ReferenceMediaMixin,
     ConversationContextMixin,
@@ -386,6 +389,7 @@ class SelfieImagePlugin(
         self._load_persisted_conversation_context()
         self.persona = PersonaManager(self.data_dir)
         self.presets = ImagePresetManager(self.data_dir)
+        self.nai_artist_presets = NaiArtistPresetManager(self.data_dir)
         from .cos.cos_pool import CosPoolStore
         from .generation.asset_collections import AssetCollectionStore
 
@@ -2677,6 +2681,10 @@ class SelfieImagePlugin(
         cos_selection: Optional[CosReferenceSelection] = None,
     ) -> Tuple[str, List[ImageReference], Dict[str, Any]]:
         """Use the central English built-ins and translate only free-form user text."""
+        # Retry records can contain a complete but obsolete leg contract. Normalize
+        # before reference selection and before extracting the English contract so
+        # an old first-person/downward seated shot cannot re-enter the final prompt.
+        action = self._normalize_selfie_action(action, bool(extra_refs))
         if cos_selection is None:
             cos_selection = self._select_selfie_references(action, extra_refs)
         prompt, refs = await self._build_selfie_prompt_and_refs(
@@ -5680,6 +5688,8 @@ class SelfieImagePlugin(
                 "· 引用即提示词　引用一条文字消息后直接发 /画、/自拍 等，会把被引用文字当作提示词；自己写的正文优先",
                 "· /文生图　只用文字按原文出图，不走自拍人设，也不用形象图",
                 "· /图生图　必须附图或引用图，按原文改图；不自动使用形象图",
+                "· /nai　仅选启用的 NAI 模型，优先 NAI4、其次 NAI5，无需加入模型优先级；可写 [画师名] 提示词，附图可图生图",
+                "· /nai5　仅使用启用的 NAI5；/nai 画师 查看画师串，/nai 画师名 设置本会话默认，/nai 默认 恢复；前端预设管理可编辑画师串",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
                 "· /看看腿　随机展示黑丝、白丝等日常袜装穿搭，默认腰线至鞋履的第三人称平视构图；可指定长裤、全身、姿势或自拍",
                 "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
@@ -6165,6 +6175,28 @@ class SelfieImagePlugin(
             await self._send_generated_images(event, files)
         if not result.get("success") and not files:
             yield event.plain_result(f"记录复用失败：{result.get('error') or '生成失败'}")
+
+    @filter.command("nai", alias={"NAI"})
+    async def cmd_nai(
+        self, event: AstrMessageEvent,
+        p1: str = "", p2: str = "", p3: str = "", p4: str = "", p5: str = "",
+        p6: str = "", p7: str = "", p8: str = "", p9: str = "", p10: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        """NAI 生图：优先已启用 NAI4，否则 NAI5，支持 [画师名]。"""
+        fallback = " ".join(item for item in (p1, p2, p3, p4, p5, p6, p7, p8, p9, p10) if item)
+        async for result in self._handle_nai_command(event, fallback):
+            yield result
+
+    @filter.command("nai5", alias={"NAI5"})
+    async def cmd_nai5(
+        self, event: AstrMessageEvent,
+        p1: str = "", p2: str = "", p3: str = "", p4: str = "", p5: str = "",
+        p6: str = "", p7: str = "", p8: str = "", p9: str = "", p10: str = "",
+    ) -> AsyncGenerator[Any, None]:
+        """只使用已启用 NAI5 模型，支持 [画师名]。"""
+        fallback = " ".join(item for item in (p1, p2, p3, p4, p5, p6, p7, p8, p9, p10) if item)
+        async for result in self._handle_nai_command(event, fallback, v5_only=True):
+            yield result
 
     @filter.command("画", alias={"生图"})
     async def cmd_draw(

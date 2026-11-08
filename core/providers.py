@@ -878,7 +878,7 @@ def novelai_model_family(model: str) -> str:
     compact = re.sub(r"[^a-z0-9]+", "-", str(model or "").strip().lower()).strip("-")
     if re.search(r"(?:^|-)diffusion-4-5(?:-|$)", compact):
         return "nai4.5"
-    if re.search(r"(?:^|)(?:nai5|v5|diffusion-5)(?:-|$)", compact):
+    if re.search(r"(?:^|-)(?:nai-?5|v5|diffusion-5)(?:-|$)", compact):
         return "nai5"
     # Unknown/custom NAI names follow the 4.5-compatible payload. This keeps
     # relays that expose names such as Agnes-like aliases usable.

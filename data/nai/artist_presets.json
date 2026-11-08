@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "default_artist": "柔和色彩",
+  "quality_prompt": "best quality, amazing quality, very aesthetic, absurdres",
+  "reference_prompt": "根据参考图的主体、服饰、姿势和场景生成一张完整的动漫插画。",
+  "translation_template": "Convert the following image description to concise English NovelAI / Danbooru tags. Preserve requested characters, outfits, pose, viewpoint, scene, and existing tags and weight syntax. Do not invent artist tags or quality tags. Do not add an unrelated visual style. Return only JSON: {\"prompt\": \"comma-separated tags\"}.\nDescription:\n{prompt}",
+  "presets": [
+    {
+      "name": "柔和色彩",
+      "prompt": "artist:ciloranko, [artist:sho_(sho_lwlw)], [[artist:tianliang_duohe_fangdongye]], [[[[artist:kani_biimu]]]]",
+      "description": "柔和线条、清透色彩、细腻人物插画"
+    },
+    {
+      "name": "轻小说插画",
+      "prompt": "artist:ciloranko, [artist:sho_(sho_lwlw)], [artist:baku-p], [artist:tsubasa_tsubasa], [[artist:as109]]",
+      "description": "轻小说封面感与清晰角色设计"
+    },
+    {
+      "name": "海报构图",
+      "prompt": "artist:ciloranko, {artist:menthako}, {artist:tianliang_duohe_fangdongye}, [artist:sho_(sho_lwlw)], [artist:baku-p]",
+      "description": "适合封面和海报的明确构图"
+    },
+    {
+      "name": "鲜艳色彩",
+      "prompt": "[artist:ningen_mame], {{artist:ciloranko}}, [artist:sho_(sho_lwlw)], [[artist:rhasta]], [artist:wlop], [artist:ke-ta]",
+      "description": "高饱和色彩和强烈视觉对比"
+    },
+    {
+      "name": "细腻厚涂",
+      "prompt": "artist:wlop, artist:ke-ta, [artist:rhasta], [artist:menthako]",
+      "description": "更厚重的笔触与光影层次"
+    }
+  ]
+}

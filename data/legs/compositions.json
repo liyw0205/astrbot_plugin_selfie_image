@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "framing": "成年人物的竖屏腿部近照，腿部轮廓连贯，膝踝转折柔和，保留自然体态与比例。头部、脸部和肩膀不入镜，胸部留在画外，服装完整自然。",
+  "framing": "成年人物的竖屏下半身整体构图，膝踝转折柔和，保留自然体态与比例。左右均指人物自身，双腿各自沿髋、膝、踝连续连接到同侧脚，交叠处保留自然遮挡。头部、脸部和肩膀不入镜，胸部留在画外，服装完整自然。",
   "camera_framings": {
-    "selfie": "本人看向自己双腿的第一人称主观视角，近端大腿由画面下缘向外延伸。机位位于本人眼睛至胸前附近，朝自己的腿部取景，不从人物对面拍摄，设备留在画外。",
-    "third": "第三人称画外相机从人物外部拍摄，拍摄者和设备不入镜。"
+    "selfie": "本人看向自己双腿的第一人称主观视角，近端大腿由画面下缘向外延伸。机位位于本人眼睛至胸前附近，朝自己的腿部取景，不从人物对面拍摄，设备留在画外。使用未放大的手机常规视野，将本人可见的双腿动作整体纳入，沿腿线容纳可见脚端和周围支撑面，不只截取膝部或大腿；身后和被腿遮住的部分保持真实遮挡。",
+    "third": "第三人称画外相机从人物外部拍摄，拍摄者和设备不入镜。相机适当退开，上缘从腰线上方少量下腹与衣摆起，容纳腰胯至脚端的下半身整体动作，姿势轮廓四周留适量余量，并看清身体与支撑物的接触；屈腿后方自然遮挡的部分不强行展露。以腿线斜向展开和近远层次呈现姿势张力，不贴近膝脚拍局部特写，不用超广角夸大近端。"
   },
-  "full_framing": "成年人物的第三人称竖屏近中景，头部到足部完整入镜，身体比例自然。",
+  "full_framing": "成年人物的第三人称竖屏近中景，头部到足部完整入镜，身体比例自然。左右均指人物自身，双腿各自沿髋、膝、踝连续连接到同侧脚，交叠处保留自然遮挡。",
   "reference_rules": {
     "zh": "参考图一用于保持主角身份与自然体态，不锁定原图姿势或拍摄方向。",
     "en": "Use reference image 1 to preserve the subject's identity and natural body proportions; its original pose and camera direction are not fixed."
@@ -15,8 +15,11 @@
     {
       "id": "seated_diagonal_legs",
       "title": "坐姿斜向屈伸",
+      "posture": "seated",
       "legacy_ids": [
-        "bed_edge_diagonal"
+        "bed_edge_diagonal",
+        "edge_fold_and_drop",
+        "bed_edge_side_dangle"
       ],
       "aliases": [
         "座沿斜向伸腿",
@@ -26,48 +29,16 @@
         "一条腿屈膝另一条腿伸直"
       ],
       "weight": 3,
-      "prompt": "自然坐稳，髋部轻微侧转，一条腿舒适屈收，另一条腿向斜前方舒展。两膝与脚踝略微错开，形成连贯的斜向腿线，脚部放松，双手轻扶身侧支撑面。",
+      "prompt": "自然坐稳，髋部轻微侧转，左腿舒适屈收，右腿沿同一平面向斜前方舒展。两膝与脚踝略微错开，形成连贯的斜向腿线，脚部放松，双手轻扶身侧支撑面。",
       "crop_prompts": {
-        "selfie": "大腿至小腿构成主要取景，脚端按自然可见范围保留。",
-        "third": "上缘在腰侧附近，沿腿部斜线取至小腿或脚端，保留近远腿的层次。"
+        "selfie": "斜伸腿贯穿画幅，屈腿保留本人实际可见的部分，两腿的屈伸关系清楚。"
       },
       "support_types": [
-        "seat_edge",
-        "wide_surface",
         "raised_soft_surface",
         "ground_surface"
       ],
       "view_ids": [
         "self_forward_down",
-        "self_left_down",
-        "self_right_down",
-        "third_surface_oblique_low",
-        "third_surface_side_low",
-        "third_ground_oblique_low",
-        "third_ground_side_low"
-      ]
-    },
-    {
-      "id": "edge_fold_and_drop",
-      "title": "座沿一屈一垂",
-      "legacy_ids": [
-        "bed_edge_side_dangle"
-      ],
-      "aliases": [
-        "床沿侧坐一屈一垂",
-        "床沿侧坐",
-        "一腿屈起一腿垂下",
-        "床边错腿"
-      ],
-      "weight": 2,
-      "prompt": "侧坐在宽座沿，一条腿舒适地屈收在身旁，另一条腿越过座沿自然垂下。髋部与收腿方向连贯，双手轻扶座面，形成一收一垂的松弛姿态。",
-      "crop_prompts": {
-        "selfie": "以近侧大腿、屈膝和座沿外的腿为主，远端允许被自然遮挡。"
-      },
-      "support_types": [
-        "wide_edge"
-      ],
-      "view_ids": [
         "self_left_down",
         "self_right_down"
       ]
@@ -75,6 +46,7 @@
     {
       "id": "supported_bent_knees",
       "title": "双手后撑错膝",
+      "posture": "seated",
       "legacy_ids": [
         "bed_supported_knees"
       ],
@@ -86,19 +58,15 @@
         "后撑屈膝"
       ],
       "weight": 2,
-      "prompt": "坐在宽平面，双手在身侧稍后方支撑，上身轻松后倾。双腿舒适屈起，一膝略高、另一膝稍向外放低，双脚稳放同一支撑面，保留大腿与小腿之间自然的弧线。",
+      "prompt": "坐在宽平面，双手在身侧稍后方支撑，上身轻松后倾。左膝舒适屈起略高，右膝稍向外放低，左脚接左小腿、右脚接右小腿，两脚稳放同一支撑面，保留大腿与小腿之间自然的弧线。",
       "crop_prompts": {
-        "selfie": "大腿与屈膝占据画面，脚部允许被膝部自然遮挡。",
-        "third": "以腰侧至屈腿轮廓为取景范围，远侧腿可部分遮挡，支撑手只需局部可见。"
+        "third": "髋部、双膝和落在同一平面的两脚共同形成完整屈腿轮廓，后撑手与身体接触关系可辨，远侧腿保留自然遮挡。"
       },
       "support_types": [
-        "wide_surface",
         "raised_soft_surface",
         "ground_surface"
       ],
       "view_ids": [
-        "self_forward_down",
-        "self_steep_down",
         "third_surface_oblique_low",
         "third_surface_side_low",
         "third_ground_oblique_low",
@@ -108,6 +76,7 @@
     {
       "id": "reclined_offset_legs",
       "title": "半靠侧放错腿",
+      "posture": "reclined",
       "legacy_ids": [
         "bed_side_recline"
       ],
@@ -118,9 +87,9 @@
         "侧靠错腿"
       ],
       "weight": 2,
-      "prompt": "上身由软靠承托，髋部轻侧转，双腿沿座面斜向舒展并自然屈膝，一条腿比另一条稍向前错开。腿侧放松贴合座面，膝踝之间保留柔和转折。",
+      "prompt": "上身由软靠承托，髋部轻侧转，双腿沿座面斜向舒展并自然屈膝，右腿连同右脚比左腿稍向前错开。腿侧放松贴合座面，膝踝之间保留柔和转折。",
       "crop_prompts": {
-        "selfie": "以近侧大腿与屈膝为主体，沿侧放腿线保留实际可见的小腿，远侧腿允许自然遮挡。"
+        "selfie": "侧放双腿的错位轮廓沿画幅展开，远侧腿保持本人视线下的自然遮挡。"
       },
       "support_types": [
         "reclined_surface"
@@ -134,6 +103,7 @@
     {
       "id": "side_folded_legs",
       "title": "侧坐自然收腿",
+      "posture": "seated",
       "legacy_ids": [
         "sofa_side_fold",
         "rug_side_fold"
@@ -151,23 +121,22 @@
         "单手撑地"
       ],
       "weight": 1,
-      "prompt": "自然侧坐，双腿屈起收向同一侧，一侧膝盖略向前、另一侧稍靠后，小腿随势放松。一手撑住身侧，另一手搭在腿旁，腰胯与大腿方向连贯。",
+      "prompt": "自然侧坐，双腿屈起收向身体右侧，右膝略向前、左膝稍靠后。右小腿顺右膝弯曲连到右脚，左小腿顺左膝弯曲连到左脚，两脚随收腿方向放松。一手撑住身侧，另一手搭在腿旁，腰胯与大腿方向连贯。",
       "crop_prompts": {
-        "third": "围绕腰侧至收腿轮廓取景，双腿允许局部重叠，脚部可自然落在画幅边缘。"
+        "third": "侧收双腿与腰胯形成连续轮廓，两脚顺收腿方向留在构图内，重叠处保持自然遮挡。"
       },
       "support_types": [
         "wide_surface"
       ],
       "view_ids": [
         "third_oblique_level",
-        "third_oblique_high",
-        "third_side_level",
-        "third_side_high"
+        "third_side_level"
       ]
     },
     {
       "id": "armrest_offset_legs",
       "title": "侧撑屈伸错腿",
+      "posture": "seated",
       "legacy_ids": [
         "sofa_armrest_asymmetric"
       ],
@@ -179,31 +148,27 @@
         "沙发侧边支撑"
       ],
       "weight": 2,
-      "prompt": "自然侧坐，一手在身侧轻撑，另一手搭住支撑面。髋部顺着腿线轻侧转，一条腿舒适屈收，另一条腿向斜前方舒展，两侧脚踝错开，肩腰与髋膝方向连贯。",
+      "prompt": "自然侧坐，一手在身侧轻撑，另一手搭住支撑面。髋部顺着腿线轻侧转，左腿舒适屈收，右腿沿同一平面向斜前方舒展，两侧脚踝错开，肩腰与髋膝方向连贯。",
       "crop_prompts": {
-        "selfie": "以大腿、双膝和斜伸小腿为主，身侧支撑只在边缘局部出现。",
-        "third": "从腰侧沿斜伸腿取至小腿或脚端，保留腿线的延伸空间。"
+        "selfie": "斜伸腿与身侧承托形成连续方向，远侧屈腿允许局部遮挡，支撑手在边缘自然出现。"
       },
       "support_types": [
-        "armrest",
-        "wide_surface",
         "raised_soft_surface",
         "ground_surface"
       ],
       "view_ids": [
+        "self_forward_down",
         "self_left_down",
-        "self_right_down",
-        "third_surface_oblique_low",
-        "third_surface_side_low",
-        "third_ground_oblique_low",
-        "third_ground_side_low"
+        "self_right_down"
       ]
     },
     {
       "id": "seated_forward_leg",
       "title": "坐姿单腿前伸",
+      "posture": "seated",
       "legacy_ids": [
-        "sofa_forward_leg"
+        "sofa_forward_leg",
+        "edge_one_leg_raised"
       ],
       "aliases": [
         "沙发沿单腿前伸",
@@ -213,30 +178,24 @@
         "沙发边伸腿"
       ],
       "weight": 3,
-      "prompt": "轻微侧坐，一条腿舒适屈起，另一条腿向斜前方自然伸展，脚踝放松。髋膝方向连贯，双手轻扶身侧，形成一屈一伸的柔和长线条。",
+      "prompt": "轻微侧坐，左腿舒适屈起、左脚放在同一支撑面，右腿沿平面向斜前方自然伸展，右脚踝放松。髋膝方向连贯，双手轻扶身侧，形成一屈一伸的柔和长线条。",
       "crop_prompts": {
-        "selfie": "以近端大腿至斜伸小腿为主，远端按实际可见范围保留。",
-        "third": "上缘在腰侧附近，沿伸腿方向保留大腿、膝部与小腿的连续轮廓，脚端随构图自然保留。"
+        "selfie": "舒展腿沿画幅斜向延伸，屈腿与伸腿之间保留清楚的高低层次。"
       },
       "support_types": [
-        "seat_edge",
-        "wide_surface",
         "raised_soft_surface",
         "ground_surface"
       ],
       "view_ids": [
         "self_forward_down",
         "self_left_down",
-        "self_right_down",
-        "third_surface_oblique_low",
-        "third_surface_side_low",
-        "third_ground_oblique_low",
-        "third_ground_side_low"
+        "self_right_down"
       ]
     },
     {
       "id": "seated_ankle_cross",
       "title": "坐姿脚踝轻叠",
+      "posture": "seated",
       "legacy_ids": [
         "sofa_ankle_cross"
       ],
@@ -247,24 +206,28 @@
         "沙发坐姿交腿"
       ],
       "weight": 1,
-      "prompt": "坐稳座沿，双腿轻偏向一侧，小腿向外舒展，脚踝轻轻交叠。双膝自然靠近，脚尖顺着腿线放松，手掌搭在座面边缘。",
+      "prompt": "坐稳宽平面，双腿轻偏向一侧并沿同一支撑面舒展，双膝自然靠近。右脚踝轻搭在左脚踝前上方，左脚跟贴合平面；右小腿连到上方右脚，左小腿连到承托的左脚，脚尖顺腿线放松，手掌搭在身侧。",
       "crop_prompts": {
-        "selfie": "大腿至交叠脚踝构成画面，腿旁仅留少量座面或地面。"
+        "selfie": "并行腿线延伸至轻叠脚踝，保留两腿与平面的接触以及踝部前后遮挡。"
       },
       "support_types": [
-        "seat_edge"
+        "raised_soft_surface",
+        "ground_surface"
       ],
       "view_ids": [
         "self_forward_down",
         "self_left_down",
-        "self_right_down"
+        "self_right_down",
+        "self_steep_down"
       ]
     },
     {
       "id": "backed_staggered_legs",
       "title": "后撑错位伸腿",
+      "posture": "seated",
       "legacy_ids": [
-        "gaming_chair_staggered"
+        "gaming_chair_staggered",
+        "edge_staggered_dangle"
       ],
       "aliases": [
         "靠背错位伸腿",
@@ -274,30 +237,23 @@
         "游戏椅错位伸腿"
       ],
       "weight": 2,
-      "prompt": "坐稳后上身轻松后倾，双手在身侧稍后方承托，髋部轻侧转。一条腿自然屈收，另一条腿向斜前方轻轻伸出，膝盖与脚踝保留自然前后差，脚部松弛。",
+      "prompt": "坐稳座沿后上身轻松后倾，双手在身侧稍后方承托，髋部轻侧转。左小腿自然垂下，左脚落在座前地面；右腿越过座沿向斜前下方轻伸，右脚跟落在更前方地面，膝踝保留自然前后差，脚部松弛。",
       "crop_prompts": {
-        "selfie": "以大腿至错位小腿为主要范围，支撑面仅在髋侧局部可见。",
-        "third": "上缘在腰侧附近，取至小腿或脚端，腿部斜线占据画面。"
+        "third": "座沿、左脚落点和向前轻伸的右腿构成清楚的斜线，座面至地面的落差可辨。"
       },
       "support_types": [
-        "backrest",
-        "wide_surface",
-        "raised_soft_surface",
-        "ground_surface"
+        "seat_edge",
+        "backrest"
       ],
       "view_ids": [
-        "self_forward_down",
-        "self_left_down",
-        "self_right_down",
-        "third_surface_oblique_low",
-        "third_surface_side_low",
-        "third_ground_oblique_low",
-        "third_ground_side_low"
+        "third_oblique_low",
+        "third_side_low"
       ]
     },
     {
       "id": "armrest_side_knees",
       "title": "侧靠并膝错踝",
+      "posture": "seated",
       "legacy_ids": [
         "gaming_chair_side_fold"
       ],
@@ -310,7 +266,7 @@
       "weight": 1,
       "prompt": "轻靠一侧扶手坐稳，双膝自然靠近并偏向侧前方，小腿松弛垂下、脚踝略微错开。一手搭住扶手，另一手放在座沿，腿线保持轻柔弯曲。",
       "crop_prompts": {
-        "third": "围绕腰侧、大腿至脚踝取景，扶手仅留少量边缘。"
+        "third": "侧靠扶手与双腿下垂方向连贯，双膝至错开脚踝的轮廓清楚，扶手不遮挡腿线。"
       },
       "support_types": [
         "armrest"
@@ -323,8 +279,10 @@
     {
       "id": "seated_crossed_knee",
       "title": "坐姿交叠屈膝",
+      "posture": "seated",
       "legacy_ids": [
-        "chair_crossed_knee"
+        "chair_crossed_knee",
+        "edge_crossed_knee_dangle"
       ],
       "aliases": [
         "椅上交叠屈膝",
@@ -332,30 +290,24 @@
         "交叠膝盖"
       ],
       "weight": 2,
-      "prompt": "侧转少许坐稳，一条腿舒适屈起，另一条腿从其膝前自然交过，上侧小腿斜向舒展。脚踝放松，两条腿形成交错的流畅弧线，双手轻搭身侧支撑面。",
+      "prompt": "侧转少许坐稳，左腿舒适屈起，左脚放在支撑面。右腿从左膝前轻轻交过，右小腿沿平面斜向舒展并连到右脚；左小腿在交叠点后方连到左脚，交叠处自然遮挡。脚踝放松，双手轻搭身侧支撑面。",
       "crop_prompts": {
-        "selfie": "大腿与交膝处为主体，上侧小腿延伸至远端，下侧腿可自然遮挡。",
-        "third": "上缘在腰侧附近，保留交膝点与斜伸小腿，远侧腿和脚部按自然遮挡呈现。"
+        "selfie": "交膝点位于画面中部，斜伸腿继续向远端脚部展开，后方腿和脚按本人视线自然遮挡。"
       },
       "support_types": [
-        "seat_edge",
-        "wide_surface",
         "raised_soft_surface",
         "ground_surface"
       ],
       "view_ids": [
         "self_forward_down",
         "self_left_down",
-        "self_right_down",
-        "third_surface_oblique_low",
-        "third_surface_side_low",
-        "third_ground_oblique_low",
-        "third_ground_side_low"
+        "self_right_down"
       ]
     },
     {
       "id": "supported_straight_legs",
       "title": "后撑并行伸腿",
+      "posture": "seated",
       "legacy_ids": [
         "rug_back_support"
       ],
@@ -369,25 +321,26 @@
       "weight": 2,
       "prompt": "坐在宽长平面，双手在身侧稍后方轻撑，双腿向前放松舒展。双膝保留轻柔弯曲，一侧脚踝稍向前错开，脚跟贴合支撑面，脚尖自然放松。",
       "crop_prompts": {
-        "selfie": "从大腿取至前方脚端，腿旁留少量支撑面。",
-        "third": "上缘在腰侧附近，双腿长线条沿画幅斜向展开，脚端保留少量余量。"
+        "selfie": "并行双腿沿画幅向远端展开，保留腿后侧与支撑平面的接触。",
+        "third": "双腿长线条沿画幅斜向展开，髋部与脚跟的承托点清楚。"
       },
       "support_types": [
-        "long_surface"
+        "long_surface",
+        "raised_soft_surface",
+        "ground_surface"
       ],
       "view_ids": [
         "self_forward_down",
         "self_left_down",
         "self_right_down",
-        "third_front_high",
-        "third_oblique_high",
-        "third_side_level",
-        "third_top_down"
+        "self_steep_down",
+        "third_surface_side_low"
       ]
     },
     {
       "id": "one_knee_side_support",
       "title": "单膝立起侧撑",
+      "posture": "seated",
       "legacy_ids": [
         "rug_one_knee_side_support"
       ],
@@ -398,29 +351,24 @@
         "地面侧撑屈膝"
       ],
       "weight": 2,
-      "prompt": "在宽平面轻微侧坐，一膝舒适立起、脚掌落在支撑面，另一条腿自然屈放身旁。一手撑住身侧，另一手轻搭膝旁，两腿保留一高一低的柔和层次。",
+      "prompt": "在宽平面轻微侧坐，左膝舒适立起、左脚掌落在支撑面，右腿自然屈放身旁，右脚跟随右小腿落在同一平面。一手撑住身侧，另一手轻搭膝旁，两腿保留一高一低的柔和层次。",
       "crop_prompts": {
-        "selfie": "以大腿与近侧立膝为主，身旁小腿只保留实际可见部分。",
-        "third": "围绕腰侧、立膝与侧放腿的轮廓取景，允许远侧腿局部遮挡。"
+        "selfie": "立膝与侧放腿形成一高一低的轮廓，远侧小腿与脚端允许被屈膝自然遮挡。"
       },
       "support_types": [
-        "wide_surface",
         "raised_soft_surface",
         "ground_surface"
       ],
       "view_ids": [
+        "self_forward_down",
         "self_left_down",
-        "self_right_down",
-        "self_steep_down",
-        "third_surface_oblique_low",
-        "third_surface_side_low",
-        "third_ground_oblique_low",
-        "third_ground_side_low"
+        "self_right_down"
       ]
     },
     {
       "id": "reclined_one_knee",
       "title": "半靠单膝屈起",
+      "posture": "reclined",
       "legacy_ids": [
         "bed_one_knee_up"
       ],
@@ -431,10 +379,9 @@
         "床上屈膝"
       ],
       "weight": 2,
-      "prompt": "由软靠承托上身自然半靠，一条腿舒适屈起、脚掌放在座面，另一条腿沿座面斜向舒展。两腿一屈一伸，脚踝松弛，双手轻放身侧。",
+      "prompt": "由软靠承托上身自然半靠，左腿舒适屈起、左脚掌放在座面，右腿沿座面斜向舒展、右脚跟贴合座面。两腿一屈一伸，脚踝松弛，双手轻放身侧。",
       "crop_prompts": {
-        "selfie": "近端大腿与屈膝占画面主体，伸腿延至远端，保留真实遮挡。",
-        "third": "以腰侧至一屈一伸的腿形为主体，脚部随构图保留，软靠只在边缘出现。"
+        "selfie": "屈膝与舒展腿形成高低层次，伸腿延至远端，保留真实遮挡。"
       },
       "support_types": [
         "reclined_surface"
@@ -442,349 +389,544 @@
       "view_ids": [
         "self_forward_down",
         "self_left_down",
-        "self_right_down",
-        "third_surface_oblique_low",
-        "third_surface_side_low"
+        "self_right_down"
       ]
     },
     {
       "id": "edge_knees_together_dangle",
       "title": "座沿并膝悬腿",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["并膝悬腿", "并腿悬垂", "双腿悬垂", "座沿垂腿", "悬腿", "双脚悬空", "椅上并膝垂腿", "椅上并腿垂腿", "并膝垂腿"],
+      "aliases": [
+        "并膝悬腿",
+        "并腿悬垂",
+        "双腿悬垂",
+        "座沿垂腿",
+        "悬腿",
+        "双脚悬空",
+        "椅上并膝垂腿",
+        "椅上并腿垂腿",
+        "并膝垂腿"
+      ],
       "weight": 2,
       "prompt": "坐稳较高座沿，双膝轻轻靠近，小腿松弛悬下，双脚离地。两侧脚踝略有前后差，脚尖自然下垂，双手轻扶座面，保持轻松坐姿。",
       "crop_prompts": {
-        "selfie": "大腿与双膝为主体，悬腿远端按自然遮挡保留。",
-        "third": "从大腿上段取至脚端，脚下留少量空间，座沿仅作边缘。"
+        "third": "座沿承托大腿与双脚离地的关系清楚，两条小腿保留松弛垂落的完整轮廓。"
       },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_front_low", "third_oblique_low", "third_side_low"]
-    },
-    {
-      "id": "edge_staggered_dangle",
-      "title": "座沿错位悬腿",
-      "legacy_ids": [],
-      "aliases": ["错位悬腿", "一前一后悬腿", "错位垂腿"],
-      "weight": 2,
-      "prompt": "坐稳较高座沿，髋部微微侧转，一条小腿松弛悬下，另一条向斜前方轻伸，两脚离地。双膝略微错开，脚踝自然放松，双手搭住座沿。",
-      "crop_prompts": {
-        "selfie": "以大腿、错位双膝和斜伸小腿为主要取景，远侧脚可自然遮挡。"
-      },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down"]
-    },
-    {
-      "id": "edge_one_leg_raised",
-      "title": "座沿单腿抬伸",
-      "legacy_ids": [],
-      "aliases": ["单腿抬伸", "单脚前举", "一脚向前抬起", "一腿抬起一腿悬垂"],
-      "weight": 2,
-      "prompt": "在较高座沿坐稳，一条腿向斜前方轻轻抬伸，脚尖顺小腿方向放松；另一条小腿自然悬下，两脚离地且一高一低。髋部顺着伸腿方向轻转，双手扶住座面，幅度舒适。",
-      "crop_prompts": {
-        "selfie": "以大腿至抬伸脚为主，近侧屈膝可自然遮住另一侧远端。"
-      },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down"]
-    },
-    {
-      "id": "edge_crossed_knee_dangle",
-      "title": "座沿交膝悬腿",
-      "legacy_ids": [],
-      "aliases": ["交膝悬腿", "交膝垂腿", "悬空交腿"],
-      "weight": 2,
-      "prompt": "坐稳较高座沿，一条腿轻搭另一条腿的膝部，上侧小腿向斜下方放松，双脚离地。髋部轻侧转，交膝与脚踝形成柔和错位，双手搭住座面。",
-      "crop_prompts": {
-        "selfie": "大腿与交膝处为主体，下侧腿允许自然遮挡。"
-      },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down"]
+      "support_types": [
+        "raised_edge"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low",
+        "third_side_low"
+      ]
     },
     {
       "id": "edge_parallel_forward",
       "title": "座沿并腿前伸",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["并腿前伸", "双脚向前伸", "双腿前伸", "双脚前举"],
+      "aliases": [
+        "并腿前伸",
+        "双脚向前伸",
+        "双腿前伸",
+        "双脚前举"
+      ],
       "weight": 1,
       "prompt": "在较高座沿轻微侧坐，双腿靠近并向斜前方舒展，膝盖保持柔和弯曲，两脚离地。脚踝一前一后略微错开，脚尖顺腿线放松，双手轻扶座沿。",
       "crop_prompts": {
-        "selfie": "以大腿至斜伸小腿为主体，脚端按实际可见范围保留。",
-        "third": "以大腿、双膝和斜伸小腿构成主要画面，沿腿线留出空间，脚端随构图保留。"
+        "third": "双腿前伸的斜线与座沿落差形成层次，完整呈现从膝部到悬空脚端的延伸方向。"
       },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_front_low", "third_oblique_low", "third_side_low"]
+      "support_types": [
+        "raised_edge"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low",
+        "third_side_low"
+      ]
     },
     {
       "id": "edge_knees_together_ankles_apart",
       "title": "座沿并膝分踝悬腿",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["并膝分踝", "小腿倒V", "倒V", "倒V悬腿", "倒V坐姿"],
+      "aliases": [
+        "并膝分踝",
+        "小腿倒V",
+        "倒V",
+        "倒V悬腿",
+        "倒V坐姿"
+      ],
       "weight": 2,
       "prompt": "坐稳较高座沿，大腿自然靠拢，双膝轻轻相近，小腿从膝部向两侧小幅分开，脚踝间距略大于膝间距，形成上窄下宽的倒V轮廓。双脚离地，脚踝松弛，双手轻扶身侧座面。",
       "crop_prompts": {
-        "selfie": "以大腿、并拢的膝部和向两侧分开的小腿为主，脚端按自然可见范围保留。",
-        "third": "从大腿上段取至脚端，保留双膝靠拢与两踝分开的完整关系，脚下留少量空间。"
+        "third": "双膝靠拢与两踝分开的倒V轮廓清楚，座沿承托与双脚悬空的关系可辨。"
       },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_front_low", "third_oblique_low"]
+      "support_types": [
+        "raised_edge"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low"
+      ]
     },
     {
       "id": "edge_ankles_apart_single_flex",
       "title": "座沿分踝单脚轻勾",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["倒V单脚轻勾", "分踝单脚勾起"],
+      "aliases": [
+        "倒V单脚轻勾",
+        "分踝单脚勾起"
+      ],
       "weight": 1,
       "prompt": "坐稳较高座沿，大腿与双膝自然靠近，小腿从膝部向两侧小幅分开，脚踝间距略大于膝间距。双脚离地，一侧脚尖向小腿方向轻勾，另一侧自然垂放，保持并膝分踝的轮廓，双手轻扶座面。",
       "crop_prompts": {
-        "selfie": "沿大腿和并拢的膝部取至分开的小腿，脚端按自然遮挡保留。",
-        "third": "从大腿上段取至双脚，保留膝近踝远与单侧轻勾的关系。"
+        "third": "保留膝近踝远与单侧轻勾的轮廓，双脚悬空位置清楚。"
       },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_front_low", "third_oblique_low"]
+      "support_types": [
+        "raised_edge"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low"
+      ]
     },
     {
       "id": "edge_ankles_apart_both_flex",
       "title": "座沿分踝双脚轻勾",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["倒V双脚轻勾", "分踝双脚勾起"],
+      "aliases": [
+        "倒V双脚轻勾",
+        "分踝双脚勾起"
+      ],
       "weight": 1,
       "prompt": "坐稳较高座沿，大腿与双膝自然靠近，小腿从膝部向两侧小幅分开，脚踝间距略大于膝间距。双脚离地，两侧脚尖以舒适幅度向小腿方向轻勾，脚趾放松，双手轻扶身侧座面。",
       "crop_prompts": {
-        "selfie": "沿大腿、并拢的膝部取至两侧小腿与自然可见的脚端，不为展示脚掌改变机位。",
-        "third": "从大腿上段取至双脚，保留上窄下宽的腿部轮廓，两脚保持自然大小。"
+        "third": "保留上窄下宽的倒V轮廓与两脚轻勾的弧线，两脚保持自然大小。"
       },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_front_low", "third_oblique_low"]
+      "support_types": [
+        "raised_edge"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low"
+      ]
     },
     {
       "id": "edge_single_foot_flex",
       "title": "座沿并膝单脚轻勾",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["单脚轻勾", "单脚勾起", "单脚掌上抬"],
+      "aliases": [
+        "单脚轻勾",
+        "单脚勾起",
+        "单脚掌上抬"
+      ],
       "weight": 2,
       "prompt": "坐稳较高座沿，双膝自然靠近，两条小腿松弛悬下，双脚离地。一侧脚尖轻轻向小腿方向勾回，另一只脚自然垂放，变化只发生在脚踝，不为勾脚抬高整条腿；双手轻扶座面。",
       "crop_prompts": {
-        "selfie": "沿近侧大腿与双膝取至实际可见的脚端，保留两脚的自然前后层次。",
-        "third": "从大腿上段取至双脚，保留单侧脚踝轻勾的轮廓，脚端不贴近镜头。"
+        "third": "单侧脚踝轻勾与另一脚自然垂放形成轻微变化，小腿方向连贯。"
       },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_front_low", "third_oblique_low", "third_side_low"]
+      "support_types": [
+        "raised_edge"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low",
+        "third_side_low"
+      ]
     },
     {
       "id": "edge_both_feet_flex",
       "title": "座沿并腿双脚轻勾",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["双脚轻勾", "双脚勾起", "双脚掌上抬"],
+      "aliases": [
+        "双脚轻勾",
+        "双脚勾起",
+        "双脚掌上抬"
+      ],
       "weight": 1,
       "prompt": "坐稳较高座沿，大腿与双膝自然靠近，小腿并行向前轻轻舒展，双脚离地。两侧脚尖以舒适幅度向小腿方向轻勾，脚趾放松，不绷紧或夸张翘起，双手扶住身侧座面。",
       "crop_prompts": {
-        "selfie": "以大腿至向前延伸的小腿为主，两脚按实际可见范围保留，不为看全脚端改变相机人称。",
-        "third": "围绕大腿、双膝至脚端取景，沿并行腿线留出空间，两脚保持自然大小。"
+        "third": "并行腿线与两脚轻勾的轮廓连贯，两脚保持自然大小。"
       },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_front_low", "third_oblique_low", "third_side_low"]
+      "support_types": [
+        "raised_edge"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low",
+        "third_side_low"
+      ]
     },
     {
       "id": "edge_feet_overlap",
       "title": "座沿并膝轻叠脚",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["并膝轻叠脚", "并腿叠脚", "脚掌相叠", "悬腿叠脚"],
+      "aliases": [
+        "并膝轻叠脚",
+        "并腿叠脚",
+        "脚掌相叠",
+        "悬腿叠脚"
+      ],
       "weight": 2,
-      "prompt": "坐稳较高座沿，大腿与双膝轻轻靠拢，小腿基本并行悬下，双脚离地。只在脚踝末端让两脚前后轻叠，一只脚略向前并轻勾，另一只脚自然垂放；膝部与小腿不交叉，双手搭住身侧座面。",
+      "prompt": "坐稳较高座沿，大腿与双膝轻轻靠拢，小腿基本并行悬下，双脚离地。仅在脚端让右脚轻放在左脚前方并稍勾起，左脚自然垂放；右踝接右脚、左踝接左脚，膝部与小腿不交叉，双手搭住身侧座面。",
       "crop_prompts": {
-        "selfie": "沿并拢的大腿与双膝取至自然可见的脚端，远侧脚可局部遮挡。",
-        "third": "从大腿上段取至双脚，保留并行小腿与末端轻叠的关系，允许两脚局部遮挡。"
+        "third": "并行小腿与末端轻叠的关系清楚，允许两脚局部遮挡。"
       },
-      "support_types": ["raised_edge"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_front_low", "third_oblique_low"]
+      "support_types": [
+        "raised_edge"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low"
+      ]
     },
     {
       "id": "surface_extended_foot_flex",
       "title": "平面屈伸轻勾脚",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["平面勾脚", "伸腿轻勾脚", "屈伸勾脚"],
+      "aliases": [
+        "平面勾脚",
+        "伸腿轻勾脚",
+        "屈伸勾脚"
+      ],
       "weight": 1,
-      "prompt": "在宽平面自然侧坐，一条腿舒适屈收，另一条腿沿支撑面斜向伸展，伸腿侧脚跟轻贴支撑面、脚尖向小腿方向轻轻勾回。屈腿侧脚部顺势放置，双手在身侧承托，髋膝方向连贯。",
+      "prompt": "在宽平面自然侧坐，左腿舒适屈收、左脚顺势放在同一平面，右腿沿支撑面斜向伸展，右脚跟轻贴平面、右脚尖向右小腿方向轻轻勾回。双手在身侧承托，髋膝方向连贯。",
       "crop_prompts": {
-        "selfie": "以近端大腿、屈膝和斜伸小腿为主，脚端按真实遮挡保留。",
-        "third": "从腰侧沿斜伸腿取至脚端，保留脚跟接触支撑面与轻勾脚踝的轮廓。"
+        "selfie": "斜伸腿延向远端，右脚跟接触平面与轻勾脚踝的轮廓清楚。"
       },
-      "support_types": ["wide_surface", "raised_soft_surface", "ground_surface"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_surface_oblique_low", "third_surface_side_low", "third_ground_oblique_low", "third_ground_side_low"]
+      "support_types": [
+        "raised_soft_surface",
+        "ground_surface"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down"
+      ]
     },
     {
       "id": "surface_parallel_feet_overlap",
       "title": "平面并腿轻叠脚",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["平面叠脚", "并行伸腿叠脚"],
+      "aliases": [
+        "平面叠脚",
+        "并行伸腿叠脚"
+      ],
       "weight": 1,
-      "prompt": "坐在宽长平面，双手在身侧稍后方轻撑，双腿靠近并向斜前方舒展，膝盖保持柔和弯曲。仅在脚踝末端让两脚前后轻叠，上侧脚轻勾，下侧脚跟自然贴合支撑面，大腿与小腿保持基本并行。",
+      "prompt": "坐在宽长平面，双手在身侧稍后方轻撑，双腿靠近并向斜前方舒展，膝盖保持柔和弯曲。右脚踝末端轻叠在左脚踝前上方，右脚轻勾，左脚跟贴合支撑面；右小腿连到上方右脚，左小腿连到下方左脚，大腿与小腿保持基本并行。",
       "crop_prompts": {
-        "selfie": "沿自身大腿和并行小腿取至自然可见的脚端，允许两脚局部重叠。",
-        "third": "从腰侧沿并行腿线取至脚端，足部轻叠留在远端，不为看全两脚分开双膝。"
+        "selfie": "足部轻叠留在并行腿线远端，不为看全两脚分开双膝。"
       },
-      "support_types": ["wide_surface", "raised_soft_surface", "ground_surface"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_surface_oblique_low", "third_surface_side_low", "third_ground_oblique_low", "third_ground_side_low"]
+      "support_types": [
+        "raised_soft_surface",
+        "ground_surface"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down",
+        "self_steep_down"
+      ]
     },
     {
       "id": "seated_knees_together",
       "title": "坐姿自然并膝",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["并膝自视", "并膝坐姿", "坐姿并膝", "自己低头看腿"],
+      "aliases": [
+        "并膝坐姿",
+        "坐姿并膝"
+      ],
       "weight": 3,
       "prompt": "自然坐稳，双膝轻轻靠近，双腿可整体略偏向一侧，小腿松弛垂下、两脚落地。一手搭在大腿外侧，另一手轻扶座面。",
       "crop_prompts": {
-        "selfie": "采用大腿至膝盖的紧凑近照，裙裤下摆局部可见，小腿和脚留在画外。",
-        "third": "围绕大腿至小腿取景，膝部保留少量前后层次，脚端随画幅自然保留。"
+        "third": "并拢的双膝与自然落地的两脚形成连续腿线，膝部保留少量前后层次。"
       },
-      "support_types": ["seat_edge", "backrest"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "third_front_level", "third_front_low", "third_oblique_level", "third_oblique_low"]
+      "support_types": [
+        "seat_edge",
+        "backrest"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low"
+      ]
     },
     {
       "id": "supine_offset_legs",
       "title": "仰躺自然错腿",
+      "posture": "lying",
       "legacy_ids": [],
-      "aliases": ["仰躺", "仰卧", "卧躺", "躺着", "平躺", "躺拍"],
+      "aliases": [
+        "仰躺",
+        "仰卧",
+        "卧躺",
+        "躺着",
+        "平躺",
+        "躺拍"
+      ],
       "weight": 3,
-      "prompt": "背部与髋部由软面承托，自然仰躺，双腿沿软面舒展。一膝轻微弯曲，另一条腿稍向前错开，脚跟轻贴软面，双脚放松，腿线随身体自然延伸。",
+      "prompt": "背部与髋部由软面承托，自然仰躺，双腿沿软面舒展。左膝轻微弯曲，右腿连同右脚稍向前错开，两脚跟轻贴软面，脚踝放松，腿线随身体自然延伸。",
       "crop_prompts": {
-        "selfie": "以大腿至膝部或小腿为主体，脚端允许自然遮挡，软面仅留少量边缘。",
-        "third": "围绕腰侧至小腿的连贯轮廓取景，双腿沿画幅斜向延伸，脚端随构图自然保留。"
+        "selfie": "顺自身腿线朝远端脚部展开，近端膝部保留适量起伏，软面在腿侧连续可见。"
       },
-      "support_types": ["lying_surface"],
-      "view_ids": ["self_reclined_forward", "self_reclined_left", "self_reclined_right", "third_surface_oblique_low", "third_surface_side_low"]
+      "support_types": [
+        "lying_surface"
+      ],
+      "view_ids": [
+        "self_reclined_forward",
+        "self_reclined_left",
+        "self_reclined_right"
+      ]
     },
     {
       "id": "side_lying_offset_legs",
       "title": "侧卧轻屈错腿",
+      "posture": "lying",
       "legacy_ids": [],
-      "aliases": ["侧卧", "侧躺", "侧卧错腿", "床上侧躺"],
+      "aliases": [
+        "侧卧",
+        "侧躺",
+        "侧卧错腿",
+        "床上侧躺"
+      ],
       "weight": 2,
-      "prompt": "身体自然侧卧，腰胯与腿侧由软面承托，下侧腿舒展并微屈，上侧腿轻向前错开、膝盖弯曲。两腿顺身体方向延伸，脚踝松弛，保持舒适的侧卧弧线。",
+      "prompt": "身体向左自然侧卧，左腿侧由软面承托并舒展微屈，右腿位于上方、轻向前错开屈膝，右脚跟随右小腿向前放置，左脚留在左腿延长线上。两腿顺身体方向延伸，脚踝松弛，保持舒适的侧卧弧线。",
       "crop_prompts": {
-        "selfie": "近侧大腿占画面下缘，沿本人实际能看到的腿侧取至屈膝与部分小腿，远侧腿允许遮挡。",
-        "third": "以腰侧、大腿和屈膝形成的曲线为主体，软面留在下缘，脚部按自然可见范围保留。"
+        "selfie": "侧卧腿线沿画幅向远端延伸，近侧屈膝与远侧腿之间保留自然遮挡。"
       },
-      "support_types": ["lying_surface"],
-      "view_ids": ["self_reclined_left", "self_reclined_right", "third_surface_oblique_low", "third_surface_side_low"]
+      "support_types": [
+        "lying_surface"
+      ],
+      "view_ids": [
+        "self_reclined_left",
+        "self_reclined_right"
+      ]
     },
     {
       "id": "kneeling_sit_back",
       "title": "并膝自然跪坐",
+      "posture": "kneeling",
       "legacy_ids": [],
-      "aliases": ["跪坐", "跪姿", "双膝跪坐", "坐在脚跟上"],
+      "aliases": [
+        "跪坐",
+        "跪姿",
+        "双膝跪坐",
+        "坐在脚跟上"
+      ],
       "weight": 2,
       "prompt": "双膝自然靠近落在柔软平面上，小腿顺势向后放平，臀部轻落脚跟，上身自然直立。双手轻搭大腿外侧，膝盖与脚踝保持舒适，不刻意向两侧翻折。",
       "crop_prompts": {
-        "selfie": "以近端大腿至并拢的双膝为主，小腿与脚处在身后画外，不强行绕拍。",
-        "third": "围绕腰胯、大腿与跪坐膝部取景，侧向小腿可局部露出，脚端允许被身体自然遮挡。"
+        "selfie": "以近端大腿至并拢的双膝为主，小腿与脚处在身后画外，不强行绕拍。"
       },
-      "support_types": ["kneeling_surface"],
-      "view_ids": ["self_forward_down", "self_left_down", "self_right_down", "self_steep_down", "third_oblique_level", "third_oblique_high", "third_side_level", "third_side_high"]
+      "support_types": [
+        "kneeling_surface"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down",
+        "self_steep_down"
+      ]
     },
     {
       "id": "kneeling_upright",
       "title": "直身轻侧跪姿",
+      "posture": "kneeling",
       "legacy_ids": [],
-      "aliases": ["直身跪姿", "直身跪", "高跪姿", "跪姿", "跪立"],
+      "aliases": [
+        "直身跪姿",
+        "直身跪",
+        "高跪姿",
+        "跪姿",
+        "跪立"
+      ],
       "weight": 2,
       "prompt": "双膝稳落柔软平面，小腿向后自然放平，臀部轻轻离开脚跟，大腿与髋部向上舒展。身体轻侧转，一膝比另一膝稍向前错开，双手轻放腿侧，保持松弛直身跪姿。",
       "crop_prompts": {
-        "third": "从腰侧取至双膝和部分小腿，保留大腿到屈膝处的连续曲线。"
+        "selfie": "从自身大腿向下取至双膝，身后的小腿与脚不强行入镜。",
+        "third": "腰胯、大腿与屈膝处形成连续曲线，小腿向后延伸，脚部按跪姿真实遮挡。"
       },
-      "support_types": ["kneeling_surface"],
-      "view_ids": ["third_oblique_level", "third_oblique_high", "third_oblique_low", "third_side_level", "third_side_high"]
+      "support_types": [
+        "kneeling_surface"
+      ],
+      "view_ids": [
+        "self_forward_down",
+        "self_left_down",
+        "self_right_down",
+        "self_steep_down",
+        "third_oblique_low"
+      ]
     },
     {
       "id": "chair_thigh_cross_slant",
       "title": "椅上叠腿斜伸",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["椅上大腿交叠斜伸", "椅上叠腿斜伸", "椅上翘腿斜伸"],
+      "aliases": [
+        "椅上大腿交叠斜伸",
+        "椅上叠腿斜伸",
+        "椅上翘腿斜伸"
+      ],
       "weight": 2,
-      "prompt": "自然坐稳椅座，一条大腿轻搭在另一条大腿靠近膝部的位置，上侧小腿向斜前方舒展，下侧小腿自然落向前方地面。上下腿的膝踝前后错开，脚踝放松，髋部稳定，双手轻搭椅座两侧。",
+      "prompt": "自然坐稳椅座，右大腿轻搭在左大腿靠近膝部的位置，右膝位于交叠点上方，右小腿向斜前方舒展并连到悬空的右脚；左小腿从下方左膝落向地面，左脚着地。两脚前后错开、脚踝不缠绕，髋部稳定，双手轻搭椅座两侧。",
       "crop_prompts": {
-        "third": "从腰侧取至双脚，保留大腿交叠点、斜伸小腿和下侧腿的连续轮廓，椅座仅在髋侧局部可见。"
+        "third": "大腿交叠点、斜伸小腿和下侧腿的连续轮廓清楚，椅座承托与左脚落点可辨。"
       },
-      "support_types": ["chair_seat"],
-      "view_ids": ["third_front_level", "third_front_low", "third_oblique_low"]
+      "support_types": [
+        "chair_seat"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low"
+      ]
     },
     {
       "id": "chair_thigh_cross_drop",
       "title": "椅上叠腿垂落",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["椅上大腿交叠垂腿", "椅上叠腿垂落", "椅上翘腿垂落"],
+      "aliases": [
+        "椅上大腿交叠垂腿",
+        "椅上叠腿垂落",
+        "椅上翘腿垂落"
+      ],
       "weight": 2,
-      "prompt": "自然坐稳椅座，一条大腿轻搭在另一条大腿靠近膝部的位置；上侧小腿顺重力向前下方松弛垂落，下侧脚稳放地面。两条小腿形成自然前后层次，脚踝不再互相缠绕，双手轻搭椅座两侧，保持松弛坐姿。",
+      "prompt": "自然坐稳椅座，右大腿轻搭在左大腿靠近膝部的位置，右小腿从上方右膝顺重力向前下方垂落并连到悬空的右脚；左小腿从下方左膝落向地面，左脚稳放地面。两条小腿有自然前后层次，脚踝不缠绕，双手轻搭椅座两侧，保持松弛坐姿。",
       "crop_prompts": {
-        "third": "从大腿上段取至双脚，交叠膝部与前后小腿构成主体，允许远侧腿按透视局部遮挡。"
+        "third": "交叠膝部与前后小腿形成清楚层次，允许远侧腿按透视局部遮挡。"
       },
-      "support_types": ["chair_seat"],
-      "view_ids": ["third_front_level", "third_front_low", "third_oblique_low"]
+      "support_types": [
+        "chair_seat"
+      ],
+      "view_ids": [
+        "third_front_low",
+        "third_oblique_low"
+      ]
     },
     {
       "id": "side_seated_front_support",
       "title": "侧坐收腿双手前撑",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["侧坐双手前撑", "侧坐收腿前撑", "侧坐屈腿双手撑地"],
+      "aliases": [
+        "侧坐双手前撑",
+        "侧坐收腿前撑",
+        "侧坐屈腿双手撑地"
+      ],
       "weight": 2,
-      "prompt": "坐在宽平面上，双腿自然屈起收向身体同一侧，两膝略有前后错位，小腿顺势放松。双手分别撑在髋部斜前方的同一平面，上身轻轻前倾，腰胯随腿线自然侧转，臀部和双腿保持承托，不变成跪立。",
+      "prompt": "坐在宽平面上，双腿自然屈起收向身体右侧，右膝稍前、左膝稍后，右小腿连到右脚、左小腿连到左脚，两脚随收腿方向放松。双手分别撑在髋部斜前方的同一平面，上身轻轻前倾，腰胯随腿线自然侧转，臀部和双腿保持承托，不变成跪立。",
       "crop_prompts": {
-        "third": "以腰侧至侧收双腿为主体，支撑手允许在画幅边缘局部可见，小腿与脚端按实际遮挡保留。"
+        "third": "双手前撑与侧收腿线形成稳定轮廓，臀部、双手和双腿的承托关系可辨。"
       },
-      "support_types": ["wide_surface"],
-      "view_ids": ["third_oblique_high", "third_side_high"]
+      "support_types": [
+        "wide_surface"
+      ],
+      "view_ids": [
+        "third_oblique_level",
+        "third_side_level"
+      ]
     },
     {
       "id": "ground_supported_crossed_shins",
       "title": "地面后撑屈膝叠小腿",
+      "posture": "seated",
       "legacy_ids": [],
-      "aliases": ["地面后撑屈膝交叠", "后撑屈膝叠小腿", "屈膝交叠小腿"],
+      "aliases": [
+        "地面后撑屈膝交叠",
+        "后撑屈膝叠小腿",
+        "屈膝交叠小腿"
+      ],
       "weight": 2,
-      "prompt": "坐在宽平面上，一只手撑住髋部侧后方，另一手轻放膝旁，上身自然后倾。双膝舒适抬起并略有前后差，两条小腿在膝下自然前后交过，两脚一近一远放在同一支撑平面；膝踝方向连贯，脚踝不缠绕，臀部与双脚保持承托。",
+      "prompt": "坐在宽平面上，一只手撑住髋部侧后方，另一手轻放膝旁，上身自然后倾。双膝舒适抬起，右小腿从左小腿前方轻轻交过；右膝经右小腿连到身体斜前方较远的右脚，左膝经左小腿连到离身体较近的左脚，两脚均放在同一支撑平面。交叠处自然遮挡，脚踝不缠绕，臀部与双脚保持承托。",
       "crop_prompts": {
-        "third": "从腰侧沿抬起的双膝取至脚端，保留小腿交叠与两脚前后差，近处脚部有自然透视但不占满画幅。"
+        "third": "抬起双膝、小腿交叠与两脚前后差同时可辨，保留交叠处的自然遮挡。"
       },
-      "support_types": ["ground_surface"],
-      "view_ids": ["third_ground_front_low", "third_ground_oblique_low"]
+      "support_types": [
+        "ground_surface"
+      ],
+      "view_ids": [
+        "third_ground_front_low",
+        "third_ground_oblique_low"
+      ]
     },
     {
       "id": "kneeling_back_support",
       "title": "并膝跪坐后撑",
+      "posture": "kneeling",
       "legacy_ids": [],
-      "aliases": ["并膝跪坐后撑", "跪坐单手后撑", "跪坐轻后仰"],
+      "aliases": [
+        "并膝跪坐后撑",
+        "跪坐单手后撑",
+        "跪坐轻后仰"
+      ],
       "weight": 2,
       "prompt": "双膝自然靠近落在柔软平面，小腿顺势向后收，臀部轻落脚跟。一只手在髋部侧后方撑住同一平面，另一手自然放在大腿外侧，上身随支撑轻轻后倾；双膝与脚踝保持舒适，不抬臀跪立，不做大幅后弯。",
       "crop_prompts": {
-        "third": "围绕腰胯、大腿与并拢双膝取景，后方支撑手可局部可见，小腿和脚允许被大腿自然遮住。"
+        "third": "腰胯、大腿和并拢双膝构成完整跪坐轮廓，后撑手与同一平面的接触可辨，小腿和脚允许被大腿自然遮住。"
       },
-      "support_types": ["kneeling_surface"],
-      "view_ids": ["third_oblique_high", "third_side_high"]
+      "support_types": [
+        "kneeling_surface"
+      ],
+      "view_ids": [
+        "third_oblique_high",
+        "third_side_high"
+      ]
     },
     {
       "id": "side_lying_parallel_legs",
       "title": "侧卧并腿舒展",
+      "posture": "lying",
       "legacy_ids": [],
-      "aliases": ["侧卧并腿", "侧躺并腿", "侧卧叠放双腿"],
+      "aliases": [
+        "侧卧并腿",
+        "侧躺并腿",
+        "侧卧叠放双腿"
+      ],
       "weight": 2,
-      "prompt": "自然侧卧在宽长软面上，腰胯和腿侧得到承托。双腿顺着躯干方向靠拢舒展，上侧腿轻落在下侧腿上，两膝保留轻柔弯曲，脚踝略有前后差；两腿保持基本平行，不交叉扭转，脚部自然放松。",
+      "prompt": "向左自然侧卧在宽长软面上，腰胯和左腿侧得到承托。右腿轻落在左腿上方并顺躯干方向舒展，两膝保留轻柔弯曲，右脚跟随右小腿位于上方，左脚跟随左小腿贴近软面；两腿基本平行，脚踝稍错开，脚部自然放松。",
       "crop_prompts": {
-        "third": "从腰侧沿并行腿线取至小腿或脚端，保留两腿叠放的自然遮挡与软面接触关系。"
+        "selfie": "并行腿线沿画幅延向远端，保留上下腿自然遮挡，不为看全双脚绕到身体外侧。"
       },
-      "support_types": ["lying_surface"],
-      "view_ids": ["third_oblique_high", "third_side_high"]
+      "support_types": [
+        "lying_surface"
+      ],
+      "view_ids": [
+        "self_reclined_left",
+        "self_reclined_right"
+      ]
     },
     {
       "id": "standing_edge_support_knees_together",
       "title": "并腿扶桌沿",
+      "posture": "standing",
       "legacy_ids": [],
-      "aliases": ["并腿扶桌沿", "扶桌沿并腿", "并腿扶柜沿"],
+      "aliases": [
+        "并腿扶桌沿",
+        "扶桌沿并腿",
+        "并腿扶柜沿"
+      ],
       "weight": 2,
       "prompt": "站在稳固边沿旁，双手分别轻撑腰胯两侧的边沿，臀部靠近支撑物但不坐上去。双腿自然并拢向下延伸，双膝放松微屈，双脚落地，上身随手部支撑略向前倾，保持稳定松弛。",
       "crop_prompts": {
-        "third": "以腰线至双膝、小腿为主体，支撑手和少量边沿可在两侧入画，脚端按俯拍透视自然保留。"
+        "third": "支撑手和少量桌柜边沿在两侧入画，并腿轮廓连续延至地面，保留真实俯拍透视。"
       },
-      "support_types": ["standing_edge"],
-      "view_ids": ["third_front_steep_down", "third_oblique_steep_down"]
+      "support_types": [
+        "standing_edge"
+      ],
+      "view_ids": [
+        "third_front_steep_down",
+        "third_oblique_steep_down"
+      ]
     }
   ],
   "scenes": [
@@ -853,7 +995,7 @@
         "long_surface": "宽长的沙发座面",
         "reclined_surface": "宽沙发座面与侧边软靠垫",
         "raised_soft_surface": "高于地面的宽沙发座面，臀部与双腿均在坐垫范围内承托，不越过座沿悬垂",
-        "armrest": "沙发侧扶手与相邻座面",
+        "armrest": "沙发侧扶手、相邻座面与前方地面",
         "backrest": "沙发座面、靠背与前方地面",
         "lying_surface": "宽长沙发贵妃位与低靠垫",
         "kneeling_surface": "宽而平整的沙发坐垫"
@@ -964,6 +1106,7 @@
       "supports": {
         "seat_edge": "镜前稳固软凳的座沿与前方地面",
         "wide_surface": "落地镜前宽而平整的地毯",
+        "ground_surface": "落地镜前同一地面上的宽地毯承托臀部与脚部",
         "long_surface": "落地镜前宽长地毯与平整地面",
         "kneeling_surface": "落地镜前厚实柔软的地垫"
       }

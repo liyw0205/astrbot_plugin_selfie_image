@@ -95,12 +95,29 @@ def test_prompt_aspect_ratio_supports_orientation_and_pixel_dimensions() -> None
     assert aspect == "9:19"
 
 
+def test_prompt_aspect_ratio_ignores_internal_pool_tags() -> None:
+    text = "竖屏下半身整体构图。【outfit:sleep_square_neck_slip】 【pose:horizontal_legs】"
+    assert extract_prompt_aspect_ratio(text) == "9:16"
+    assert extract_prompt_aspect_ratio("【outfit:sleep_square_neck_slip】") == ""
+    cleaned, aspect, _ = parse_prompt_options(text, default_aspect_ratio="自动")
+    assert aspect == "9:16"
+    assert "【outfit:sleep_square_neck_slip】" in cleaned
+    assert extract_prompt_aspect_ratio(text + "用户补充要求优先：方图。") == "1:1"
+    assert parse_prompt_options(text + " --ar 16:9")[1] == "16:9"
+
+
 def test_explicit_ar_option_beats_natural_prompt_ratio() -> None:
     _, aspect, _ = parse_prompt_options(
         "猫 --ar 1:1 横屏16:9",
         default_aspect_ratio="9:16",
     )
     assert aspect == "1:1"
+
+
+@pytest.mark.parametrize("suffix", ["。", "，", ".", ";"])
+def test_explicit_ar_option_accepts_action_wrapper_punctuation(suffix) -> None:
+    _, aspect, _ = parse_prompt_options(f"竖屏下半身构图。用户补充要求优先：--ar 3:4{suffix}")
+    assert aspect == "3:4"
 
 
 def test_retry_strategies_are_bounded_and_preserve_prompt() -> None:
