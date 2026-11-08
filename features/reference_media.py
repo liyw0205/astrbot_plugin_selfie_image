@@ -371,10 +371,19 @@ class ReferenceMediaMixin:
         failed = 0
         unknown = 0
         for file_path in files:
+            record = None
             try:
-                await event.send(
-                    event.chain_result([self._create_image_component(file_path)])
-                )
+                wait_record = getattr(self, "_wait_for_image_record", None)
+                if callable(wait_record):
+                    await wait_record(file_path)
+                    record = self._prompt_record_for_file(file_path)
+            except Exception as exc:
+                logger.warning("[SelfieImage] image code lookup failed: %s", redact_sensitive_text(str(exc)))
+            try:
+                result = event.chain_result([self._create_image_component(file_path)])
+                if record and record.get("image_code"):
+                    result.message("\n生图编号：" + record["image_code"])
+                receipt = await event.send(result)
             except Exception as exc:
                 logger.warning(
                     "[SelfieImage] image send failed: %s",
@@ -392,6 +401,11 @@ class ReferenceMediaMixin:
                             self._cache_relative_path(file_path)
                         )
                 continue
+            if record:
+                try:
+                    await asyncio.to_thread(self._remember_prompt_delivery, event, record, receipt)
+                except Exception as exc:
+                    logger.warning("[SelfieImage] image message link failed: %s", redact_sensitive_text(str(exc)))
             self._record_bot_image_context(event, [file_path])
             sent += 1
             await asyncio.sleep(0.4)

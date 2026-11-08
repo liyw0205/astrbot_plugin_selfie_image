@@ -250,6 +250,7 @@ def record_matches_query(
                 "failure_reason",
                 "original_prompt",
                 "request_prompt",
+                "image_code",
                 "group_id",
                 "user_id",
             )

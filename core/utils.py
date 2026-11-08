@@ -1196,6 +1196,7 @@ def summarize_record_for_list(record: Dict[str, Any]) -> Dict[str, Any]:
             model = model or str(record.get("used_model") or "").strip()
     return {
         "id": record.get("id"),
+        "image_code": str(record.get("image_code") or ""),
         "task_id": str(record.get("task_id") or "").strip(),
         "time": record.get("time"),
         "source": record.get("source"),

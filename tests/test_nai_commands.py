@@ -129,6 +129,7 @@ def plugin_for_nai(tmp_path, models=("gpt-image-2", "nai5", "nai4.5"), refs=()):
     plugin._quota_error_message = Mock(return_value="")
     plugin._rate_limit_error_message = Mock(return_value="")
     plugin._record_bot_text_context = Mock()
+    plugin._set_web_image_task = Mock()
     plugin._session_key = lambda event: event.unified_msg_origin
     plugin._event_reference_images_with_stats = AsyncMock(return_value=(list(refs), len(refs), 0))
     plugin._call_text_llm = AsyncMock(return_value='{"prompt":"1girl, cherry blossoms, best quality"}')
@@ -199,7 +200,7 @@ def test_missing_model_exits_without_falling_back_to_other_image_models(tmp_path
     plugin._run_image_generation.assert_not_awaited()
 
 
-def test_reference_images_flow_to_nai_without_persona_or_llm_rewrite(tmp_path):
+def test_reference_images_are_reversed_without_persona_or_second_rewrite(tmp_path):
     ref = ImageReference(data=b"image", mime_type="image/png")
     plugin, captured = plugin_for_nai(tmp_path, refs=[ref])
     original_targets = plugin.config.get_enabled_image_targets()
@@ -207,17 +208,73 @@ def test_reference_images_flow_to_nai_without_persona_or_llm_rewrite(tmp_path):
         target.extra.update({"prompt_en_enabled": True, "image_to_text_enabled": True})
     plugin.config.get_enabled_image_targets = lambda: original_targets
     run_command(plugin, captured, "/NAI [柔和色彩] 1girl, blue dress")
-    assert plugin._run_image_generation.call_args.args[3] == [ref]
+    call = plugin._run_image_generation.call_args
+    assert call.args[3] == []
+    assert call.kwargs["record_context"]["nai_reference"]["references"][0]["source"] == "vision"
     selected = plugin._run_image_generation.call_args.kwargs["targets"]
     assert all(not target.extra["prompt_en_enabled"] and not target.extra["image_to_text_enabled"] for target in selected)
     assert all(target.extra["prompt_en_enabled"] and target.extra["image_to_text_enabled"] for target in original_targets)
-    plugin._call_text_llm.assert_not_awaited()
+    plugin._call_text_llm.assert_awaited_once()
+    assert plugin._call_text_llm.call_args.kwargs["images"] == [ref.data]
+    assert plugin._call_text_llm.call_args.kwargs["use_persona"] is False
 
 
 def test_empty_description_with_reference_still_generates(tmp_path):
     plugin, captured = plugin_for_nai(tmp_path, refs=[ImageReference(data=b"image", mime_type="image/png")])
     run_command(plugin, captured, "/nai5", v5=True)
-    assert "根据参考图" in plugin._run_image_generation.call_args.args[0]
+    final = plugin._run_image_generation.call_args.args[0]
+    assert "cherry blossoms" in final
+    assert "根据参考图" not in final
+    assert plugin._run_image_generation.call_args.args[3] == []
+
+
+def test_reference_edits_replace_old_attributes_and_batch_resolves_once(tmp_path):
+    from io import BytesIO
+    import json
+    from PIL import Image, PngImagePlugin
+
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("Software", "NovelAI")
+    metadata.add_text("Comment", json.dumps({
+        "prompt": "1girl, red dress, sitting, black hair, artist:old, best quality",
+        "seed": 1, "steps": 28,
+    }))
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2)).save(buffer, format="PNG", pnginfo=metadata)
+    plugin, captured = plugin_for_nai(tmp_path, refs=[ImageReference(data=buffer.getvalue(), mime_type="image/png")])
+    plugin._call_text_llm.return_value = '{"prompt":"1girl, blue dress, standing, pink hair, pink bangs"}'
+    run_command(plugin, captured, "/nai 换蓝裙站起来，粉色头发包括刘海 -c 3")
+
+    plugin._call_text_llm.assert_awaited_once()
+    call = plugin._call_text_llm.call_args
+    assert call.kwargs["images"] == []
+    assert '"prompt": "1girl, red dress, sitting, black hair"' in call.args[1]
+    assert "replace every conflicting old attribute" in call.args[1]
+    assert '"user_instruction": "换蓝裙站起来，粉色头发包括刘海"' in call.args[1]
+    assert plugin._run_image_generation.await_count == 3
+    for shot in plugin._run_image_generation.call_args_list:
+        final = shot.args[0]
+        assert "blue dress, standing, pink hair, pink bangs" in final
+        assert not any(old in final for old in ("red dress", "sitting", "black hair", "artist:old"))
+        assert final.count("best quality") == final.count("artist:ciloranko") == 1
+        assert shot.args[3] == []
+
+
+@pytest.mark.parametrize("response", ["", "cannot inspect image", '{"ok":false}', '{"prompt":[]}', '{"prompt":"best quality"}'])
+def test_failed_reference_reverse_stops_before_image_generation(tmp_path, response):
+    plugin, captured = plugin_for_nai(tmp_path, refs=[ImageReference(data=b"image", mime_type="image/png")])
+    plugin._call_text_llm.return_value = response
+    with pytest.raises(RuntimeError, match="未发送生图请求"):
+        run_command(plugin, captured, "/nai 换成蓝裙")
+    plugin._run_image_generation.assert_not_awaited()
+
+
+def test_reference_reverse_exception_stops_before_image_generation(tmp_path):
+    plugin, captured = plugin_for_nai(tmp_path, refs=[ImageReference(data=b"image", mime_type="image/png")])
+    plugin._call_text_llm.side_effect = RuntimeError("provider failed")
+    with pytest.raises(RuntimeError, match="未发送生图请求"):
+        run_command(plugin, captured, "/nai5", v5=True)
+    plugin._run_image_generation.assert_not_awaited()
 
 
 @pytest.mark.parametrize("raises", [False, True])
@@ -301,7 +358,7 @@ def test_artist_api_crud_pagination_search_and_image_isolation(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("global_translation", [False, True])
-def test_real_generation_pipeline_preserves_nai_tags_and_references(tmp_path, global_translation):
+def test_real_generation_pipeline_sends_resolved_tags_without_reference_payload(tmp_path, global_translation):
     from astrbot_plugin_selfie_image.core.providers import ImageGenerateResult
 
     ref = ImageReference(data=b"reference", mime_type="image/png")
@@ -334,9 +391,22 @@ def test_real_generation_pipeline_preserves_nai_tags_and_references(tmp_path, gl
         run_command(plugin, captured, "/nai [海报构图] 樱花树下")
     assert len(requests) == 2
     for request in requests:
-        assert request.images == [ref]
+        assert request.images == []
         assert "cherry blossoms" in request.prompt
         assert request.prompt.count("artist:ciloranko") == request.prompt.count("best quality") == 1
         assert "{artist:menthako}" in request.prompt
+        adapter = NovelAIImageAdapter(plugin.config.get_enabled_image_targets()[-1], None)
+        payload = adapter.build_official_payload(request)
+        assert payload["action"] == "generate"
+        assert "image" not in payload["parameters"]
+        import json
+        relay_payload = adapter.build_relay_payload(request)
+        assert "image" not in json.loads(relay_payload["messages"][1]["content"])
+    plugin._call_text_llm.assert_awaited_once()
+    record = plugin._record_task.call_args.args[0]
+    assert record["raw_reference_image_count"] == 1
+    assert record["request_data"]["reference_image_count"] == 0
+    assert record["request_data"]["nai_reference"]["mode"] == "pseudo_img2img"
+    assert "cherry blossoms" in record["request_data"]["nai_reference"]["resolved_prompt"]
     plugin._translate_prompt_to_english.assert_not_awaited()
     plugin._describe_reference_images_for_generation.assert_not_awaited()

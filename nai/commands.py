@@ -12,6 +12,7 @@ from ..core.providers import novelai_model_family
 from ..core.utils import event_user_id, extract_command_message, load_json_file, save_json_file
 from ..prompts.prompt_translation import parse_prompt_en_response
 from .prompts import compose_nai_prompt, extract_artist_request, select_nai_targets
+from .reference import resolve_reference_prompt
 
 
 class NaiCommandMixin:
@@ -78,15 +79,14 @@ class NaiCommandMixin:
         if not prompt and not refs:
             yield event.plain_result(f"请输入提示词或附带参考图，例如：/{command} [柔和色彩] 樱花树下的少女")
             return
-        if not prompt:
-            prompt = str(manager.settings["reference_prompt"])
         selected_artist = artist_name or self._nai_session_artist(event)
         selected_artist, artist = manager.find_artist(selected_artist)
         if not artist:
             selected_artist, artist = manager.find_artist(manager.settings.get("default_artist", ""))
         quality = str(manager.settings.get("quality_prompt") or "")
         preview_prompt = compose_nai_prompt(prompt, artist, quality)
-        # Keep artist weights intact and pass references directly to NAI.
+        # Content is resolved once here; shared translation/image-to-text must
+        # not rewrite artist weights or process the same references again.
         targets = [replace(target, extra={
             **target.extra, "prompt_en_enabled": False, "image_to_text_enabled": False,
         }) for target in targets]
@@ -95,7 +95,16 @@ class NaiCommandMixin:
         async def runner(task_id):
             user_prompt = prompt
             translation = {"enabled": False, "applied": False, "scope": "nai_user_tags"}
-            if novelai_model_family(targets[0].model) != "nai5" and re.search(r"[\u3400-\u9fff]", prompt):
+            record_context = {"task_id": task_id, "requested_count": requested_count}
+            if refs:
+                self._set_generation_stage(record_context, "image_to_text", "反推 NAI 参考图并合并修改")
+                user_prompt, reference_meta = await resolve_reference_prompt(
+                    self._call_text_llm, event, refs, prompt,
+                )
+                record_context.update({
+                    "raw_reference_image_count": len(refs), "nai_reference": reference_meta,
+                })
+            elif novelai_model_family(targets[0].model) != "nai5" and re.search(r"[\u3400-\u9fff]", prompt):
                 template = str(manager.settings.get("translation_template") or "")
                 if template:
                     try:
@@ -110,14 +119,18 @@ class NaiCommandMixin:
                     if translated:
                         user_prompt = translated
             final_prompt = compose_nai_prompt(user_prompt, artist, quality)
+            if refs:
+                setter = getattr(self, "_set_web_image_task", None)
+                if callable(setter):
+                    setter(task_id, final_prompt=final_prompt, nai_reference=reference_meta)
 
             async def run_one(_index):
                 return await self._run_image_generation(
-                    final_prompt, aspect, resolution, refs,
+                    final_prompt, aspect, resolution, [],
                     targets=targets, source=source,
                     audit_user_id=event_user_id(event), event=event,
                     original_prompt=message, prompt_en_meta=translation,
-                    record_context={"task_id": task_id, "requested_count": requested_count},
+                    record_context=record_context,
                 )
 
             return await self._run_counted_generation_shots(
@@ -136,6 +149,8 @@ class NaiCommandMixin:
             runner=runner,
         )
         progress = f"NAI 正在生成 {requested_count} 张图片，模型：{targets[0].model}"
+        if refs:
+            progress = f"NAI 正在反推参考图并准备生成 {requested_count} 张图片，模型：{targets[0].model}"
         if selected_artist:
             progress += f"，画师串：{selected_artist}"
         self._record_bot_text_context(event, progress)

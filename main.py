@@ -912,6 +912,7 @@ class SelfieImagePlugin(
             "source_label": label,
             "group_id": gid,
             "user_id": uid,
+            "lookup_scope": self._context_session_key(event) if event is not None else "",
             "chat_type": "group" if gid else ("private" if uid else "web"),
         }
 
@@ -2200,6 +2201,8 @@ class SelfieImagePlugin(
             "targets": [redact_sensitive_text(target.label) for target in selected_targets],
             "image_to_text": image_to_text_meta,
         }
+        if isinstance(record_context, Mapping) and isinstance(record_context.get("nai_reference"), Mapping):
+            request_data["nai_reference"] = dict(record_context["nai_reference"])
         if reference_fidelity:
             request_data["reference_fidelity"] = reference_fidelity
         add_selection_metadata(request_data)
@@ -5389,6 +5392,7 @@ class SelfieImagePlugin(
         elif api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         errors: List[str] = []
+        model_list_unavailable = True
         async with aiohttp.ClientSession(trust_env=False) as base_session:
             async with channel_client_session(proxy, base_session) as session:
                 request_proxy = http_proxy_url(proxy)
@@ -5397,15 +5401,24 @@ class SelfieImagePlugin(
                     try:
                         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12), proxy=request_proxy) as response:
                             if response.status >= 400:
+                                if response.status not in {404, 405, 501}:
+                                    model_list_unavailable = False
                                 errors.append(f"{safe_url}: HTTP {response.status} {redact_sensitive_text(await response.text())[:200]}")
                                 continue
+                            model_list_unavailable = False
                             data = await response.json(content_type=None)
                         models = self._extract_model_ids(data)
                         if models:
                             return models
                         errors.append(f"{safe_url}: 返回成功但未识别到模型")
                     except Exception as exc:
+                        model_list_unavailable = False
                         errors.append(f"{safe_url}: {redact_sensitive_text(str(exc))}")
+        if provider_type == "novelai" and model_list_unavailable:
+            raise RuntimeError(
+                "此 NovelAI 原生接口未提供模型列表，请手动添加上游支持的模型名（如 nai-diffusion-4-5-full）。\n"
+                + "\n".join(errors)
+            )
         raise RuntimeError("\n".join(errors))
 
     def _extract_model_ids(self, data: Any) -> List[str]:
@@ -5692,8 +5705,8 @@ class SelfieImagePlugin(
                 "· /nai5　仅使用启用的 NAI5；/nai 画师 查看画师串，/nai 画师名 设置本会话默认，/nai 默认 恢复；前端预设管理可编辑画师串",
                 "· /自拍 或 /看看　用当前形象自拍；可写动作、场景、换装",
                 "· /看看腿　随机展示黑丝、白丝等日常袜装穿搭，默认腰线至鞋履的第三人称平视构图；可指定长裤、全身、姿势或自拍",
-                "· /查看提示词　引用图片后查看原生图提示词；没有生图记录时由当前聊天 LLM 反推",
-                "· /查看生图提示词　引用或附带图片后，始终由当前聊天 LLM 反推生图提示词，不查询生图记录",
+                "· /查看提示词 [六位编号|最近]　查询最终实际提示词，也支持引用图片；编号和正文分两条消息",
+                "· /查看生图提示词 [六位编号]　由当前聊天 LLM 反推图片；反推编号可取回已有结果",
                 "· /看看COS　随机一套内置 COS 换装；未指定时每次随机使用他拍、第一视角或自拍视角，可明确写「他拍」「第一视角」或「自拍」固定视角；可用 -c 指定数量，预设、随机池角色/类别和额外提示词可任意顺序，未匹配文本保留为额外提示；可发「看看COS 列表/全部/查看」浏览标题",
                 "· /看看你　像别人随手拍你",
                 "· /合影 或 /合照　和对象同框；可附图或@对方，自己用当前形象",
@@ -5841,6 +5854,14 @@ class SelfieImagePlugin(
                 continue
             if not payload.get("message") and isinstance(payload.get("data"), Mapping):
                 payload = payload["data"]
+            message = payload.get("message") or []
+            text = message if isinstance(message, str) else "".join(
+                str(part.get("data", {}).get("text") or "")
+                for part in message if isinstance(part, Mapping) and part.get("type") == "text"
+            )
+            linked = self._prompt_records_from_quote_text(event, text)
+            for record in linked:
+                await asyncio.to_thread(self._remember_prompt_delivery, event, record, {"message_id": reply_id})
             raw_event = SimpleNamespace(message_obj=None, message=None, raw_message=payload)
             buckets = extract_structured_image_sources(raw_event, include_image_alternates=True)
             for role in ("message", "quote", "forward"):
@@ -5850,16 +5871,68 @@ class SelfieImagePlugin(
         return sources
 
     @filter.command("查看提示词")
-    async def cmd_view_prompt(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """引用一张图片查看原生图提示词；没有记录时由当前聊天 LLM 反推。"""
+    async def cmd_view_prompt(self, event: AstrMessageEvent, code: str = "") -> AsyncGenerator[Any, None]:
+        """按编号、最近或引用一张图片，查询已保存的最终提示词。"""
+        from .generation.prompt_lookup import CODE_PATTERN, record_final_prompt
+
         denied = self._permission_denied_message(event)
         if denied:
             yield event.plain_result(denied)
             return
+        argument = extract_command_message(event, "查看提示词", code).strip().upper()
+        if argument and argument not in {"最近", "最新"} and not CODE_PATTERN.fullmatch(argument):
+            yield event.plain_result("用法：/查看提示词 [六位编号|最近]，也可以直接引用图片查询。")
+            return
+        refs = []
+        candidates = []
+        if argument in {"最近", "最新"}:
+            record = self._recent_prompt_record(event)
+            method = "本人当前会话最近一张"
+        elif argument:
+            record = self._prompt_record_by_code(event, argument)
+            method = "编号查询"
+            if record:
+                await asyncio.to_thread(self._confirm_prompt_candidate, event, record)
+            if record and self._quoted_reply_ids(event):
+                refs = await self._prompt_lookup_references(event, "查看提示词")
+                await asyncio.to_thread(self._remember_prompt_aliases, record, refs)
+        else:
+            reply_ids = self._quoted_reply_ids(event)
+            record, method, candidates = await asyncio.to_thread(self._lookup_prompt_image, event, [], reply_ids)
+            if record is None and not candidates:
+                refs = await self._prompt_lookup_references(event, "查看提示词")
+                record, method, candidates = await asyncio.to_thread(self._lookup_prompt_image, event, refs, reply_ids)
+        if candidates:
+            await asyncio.to_thread(self._remember_prompt_candidates, event, refs, candidates)
+            yield event.plain_result(method + "。请核对图片后使用 /查看提示词 六位编号。")
+            for candidate in candidates:
+                label = f"生图编号：{candidate.get('image_code', '')}\n时间：{candidate.get('time', '')}"
+                paths = candidate.get("generated_image_paths") or []
+                try:
+                    path = self._cache_absolute_path(paths[0]) if paths else ""
+                    if path and os.path.isfile(path):
+                        yield event.chain_result([self._create_image_component(path)]).message(label)
+                        continue
+                except (OSError, ValueError):
+                    pass
+                yield event.plain_result(label)
+            return
+        if record is None:
+            yield event.plain_result("未找到可访问的生图记录。可用 /查看提示词 六位编号 或 /查看提示词 最近；需要反推图片时使用 /查看生图提示词。")
+            return
+        prompt = record_final_prompt(record)
+        label = f"生图编号：{record.get('image_code', '')}\n时间：{record.get('time', '')}\n匹配方式：{method}"
+        if not prompt:
+            yield event.plain_result(label + "\n历史记录没有保存提示词。")
+            return
+        yield event.plain_result(label)
+        yield event.plain_result(prompt)
+
+    async def _prompt_lookup_references(self, event: AstrMessageEvent, context_hint: str) -> List[ImageReference]:
         quoted_sources = await self._quoted_original_image_sources(event)
         collect_kwargs: Dict[str, Any] = {
             "include_at_avatar": False,
-            "context_hint": "查看提示词",
+            "context_hint": context_hint,
             "allow_context_fallback": False,
             "include_persona": False,
             # QQ/AstrBot may expose both a transcoded local path and the
@@ -5869,89 +5942,50 @@ class SelfieImagePlugin(
         }
         if quoted_sources:
             collect_kwargs["extra_sources"] = quoted_sources
-        refs = await self._event_reference_images(
-            event,
-            **collect_kwargs,
-        )
-        if not refs:
-            yield event.plain_result("请引用一张图片后再使用 /查看提示词。")
-            return
-
-        ref = refs[0]
-        md5 = hashlib.md5(ref.data).hexdigest()
-        record = None
-        for candidate in refs:
-            candidate_md5 = hashlib.md5(candidate.data).hexdigest()
-            candidate_record = self._find_generation_record_by_md5(candidate_md5)
-            if candidate_record is not None:
-                ref = candidate
-                md5 = candidate_md5
-                record = candidate_record
-                break
-        logger.debug(
-            "[SelfieImage] 查看提示词图片候选 MD5: %s",
-            ", ".join(hashlib.md5(candidate.data).hexdigest() for candidate in refs),
-        )
-        if record is not None:
-            prompt = str(
-                record.get("request_prompt")
-                or record.get("prompt")
-                or record.get("original_prompt")
-                or ""
-            ).strip()
-            if prompt:
-                yield event.plain_result(f"图片 MD5：{md5}\n生图提示词：\n{prompt}")
-            else:
-                yield event.plain_result(f"图片 MD5：{md5}\n这是本插件生成的图片，但历史记录中没有保存提示词。")
-            return
-
-        yield event.plain_result(f"图片 MD5：{md5}\n未找到本插件的生图记录，正在让当前 LLM 反推提示词……")
-        try:
-            prompt = await self._reverse_image_prompt_with_llm(event, ref.data)
-        except Exception as exc:
-            logger.warning("[SelfieImage] 反推图片提示词失败: %s", redact_sensitive_text(str(exc)))
-            yield event.plain_result(f"图片 MD5：{md5}\n暂时无法反推提示词：{redact_sensitive_text(str(exc))[:200]}")
-            return
-        if not prompt:
-            yield event.plain_result(f"图片 MD5：{md5}\n当前 LLM 没有返回有效提示词。")
-            return
-        yield event.plain_result(f"图片 MD5：{md5}\nLLM 反推提示词：\n{prompt}")
+        return await self._event_reference_images(event, **collect_kwargs)
 
     @filter.command("查看生图提示词")
-    async def cmd_reverse_image_prompt(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """引用或附带一张图片，始终由当前聊天 LLM 反推生图提示词。"""
+    async def cmd_reverse_image_prompt(self, event: AstrMessageEvent, code: str = "") -> AsyncGenerator[Any, None]:
+        """引用图片由当前聊天 LLM 反推，或按编号取回已有反推结果。"""
         denied = self._permission_denied_message(event)
         if denied:
             yield event.plain_result(denied)
             return
-        quoted_sources = await self._quoted_original_image_sources(event)
-        collect_kwargs: Dict[str, Any] = {
-            "include_at_avatar": False,
-            "context_hint": "查看生图提示词",
-            "allow_context_fallback": False,
-            "include_persona": False,
-            "include_image_alternates": True,
-        }
-        if quoted_sources:
-            collect_kwargs["extra_sources"] = quoted_sources
-        refs = await self._event_reference_images(event, **collect_kwargs)
+        from .generation.prompt_lookup import CODE_PATTERN
+
+        argument = extract_command_message(event, "查看生图提示词", code).strip().upper()
+        if argument and not CODE_PATTERN.fullmatch(argument):
+            yield event.plain_result("用法：/查看生图提示词 [六位编号]，或引用/附带图片。")
+            return
+        if argument:
+            saved = self._reverse_prompt_by_code(event, argument)
+            if saved:
+                yield event.plain_result(f"反推编号：{saved['image_code']}\nLLM 反推结果，非原始提示词。")
+                yield event.plain_result(saved["prompt"])
+                return
+            generated = self._prompt_record_by_code(event, argument)
+            paths = (generated or {}).get("generated_image_paths") or []
+            loaded = await asyncio.to_thread(self._load_cache_image_bytes, paths[0]) if paths else None
+            refs = [ImageReference(data=loaded[0], mime_type=loaded[1])] if loaded else []
+        else:
+            refs = await self._prompt_lookup_references(event, "查看生图提示词")
         if not refs:
-            yield event.plain_result("请引用或附带一张图片后再使用 /查看生图提示词。")
+            yield event.plain_result("编号不存在或图片缓存已清理，请引用或附带图片。" if argument else "请引用或附带一张图片后再使用 /查看生图提示词。")
             return
 
         ref = refs[0]
-        md5 = hashlib.md5(ref.data).hexdigest()
-        yield event.plain_result(f"图片 MD5：{md5}\n正在让当前 LLM 反推生图提示词……")
         try:
             prompt = await self._reverse_image_prompt_with_llm(event, ref.data)
         except Exception as exc:
             logger.warning("[SelfieImage] 反推图片提示词失败: %s", redact_sensitive_text(str(exc)))
-            yield event.plain_result(f"图片 MD5：{md5}\n暂时无法反推提示词：{redact_sensitive_text(str(exc))[:200]}")
+            yield event.plain_result(f"暂时无法反推提示词：{redact_sensitive_text(str(exc))[:200]}")
             return
         if not prompt:
-            yield event.plain_result(f"图片 MD5：{md5}\n当前 LLM 没有返回有效提示词。")
+            yield event.plain_result("当前 LLM 没有返回有效提示词。")
             return
-        yield event.plain_result(f"图片 MD5：{md5}\nLLM 反推提示词：\n{prompt}")
+        saved = await asyncio.to_thread(self._save_reverse_prompt, event, ref.data, prompt)
+        yield event.plain_result(f"反推编号：{saved['image_code']}\nLLM 反推结果，非原始提示词。")
+        yield event.plain_result(prompt)
 
     @filter.command("生图记录状态")
     async def cmd_image_model_status(

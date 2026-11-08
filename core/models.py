@@ -236,6 +236,8 @@ class ImageChannelConfig:
                 protocol_lock=lock,
             )
             extra = copy.deepcopy(self.extra)
+            if ptype == "novelai" and self.provider_type in {"openai", "openai_chat", "gemini_openai"}:
+                extra["novelai_transport"] = "relay"
             extra["image_to_text_enabled"] = model in self.image_to_text_models
             extra["prompt_en_enabled"] = model in self.prompt_en_models
             # Per-model download-only proxy (result URL fetch). Request still uses channel proxy.
@@ -976,10 +978,12 @@ def _build_image_channel(raw: Any) -> ImageChannelConfig:
 
     from .provider_parser import normalize_image_base_url
 
+    base_url = str(raw.get("base_url") or raw.get("baseUrl") or "").strip()
+    base_url = base_url.rstrip("/") if provider_type == "novelai" else normalize_image_base_url(base_url)
     return ImageChannelConfig(
         name=str(raw.get("name") or raw.get("id") or "default").strip(),
         provider_type=provider_type,
-        base_url=normalize_image_base_url(str(raw.get("base_url") or raw.get("baseUrl") or "").strip()),
+        base_url=base_url,
         api_key=api_key_stored,
         model=model or (enabled_models[0] if enabled_models else ""),
         enabled=to_bool(raw.get("enabled"), True),

@@ -47,6 +47,11 @@ def normalize_gemini_base_url(url: str) -> str:
 
 def build_model_list_urls(base_url: str, provider_type: str = "") -> List[str]:
     provider = normalize_provider_type(provider_type) or str(provider_type or "").strip().lower().replace("-", "_")
+    if provider == "novelai":
+        base = str(base_url or "").strip().rstrip("/")
+        if not base:
+            return []
+        return [base if urlsplit(base).path.rstrip("/").endswith("/models") else f"{base}/models"]
     if provider == "gemini":
         base = normalize_gemini_base_url(base_url)
         suffixes = ("/v1beta/models", "/v1/models", "/models")

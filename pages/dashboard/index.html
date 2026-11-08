@@ -1257,6 +1257,7 @@
         <div><label>指标窗口</label><select id="monitorMetricsWindow"><option value="all">全部保留记录</option><option value="1h">最近 1 小时</option><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select></div>
         <div><label>资产标记</label><select id="monitorAsset"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
         <div><label>标签</label><input id="monitorTag" placeholder="输入标签"></div>
+        <div><label>关键词</label><input id="monitorKeyword" placeholder="编号或提示词"></div>
       </div>
       <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
       <div class="metrics-launcher-header"><strong>运行概览</strong><span id="monitorMetricsWindowLabel" class="muted">统计范围：全部保留记录</span></div>
@@ -1321,7 +1322,7 @@
         </div>
       </div>
       <div class="grid4">
-        <div><label>关键词</label><input id="assetKeyword" placeholder="提示词、备注、来源或模型"></div>
+        <div><label>关键词</label><input id="assetKeyword" placeholder="编号、提示词、备注、来源或模型"></div>
         <div><label>来源</label><input id="assetSource" placeholder="来源关键词"></div>
         <div><label>模型筛选</label><select id="assetModel"><option value="">全部</option></select></div>
         <div><label>媒体类型</label><select id="assetMedia"><option value="">全部</option><option value="image" selected>图片</option></select></div>
@@ -4320,6 +4321,8 @@ Source prompt:
       if (asset === 'pinned') params.set('pinned', 'true');
       const tag = $('monitorTag')?.value.trim() || '';
       if (tag) params.set('tag', tag);
+      const keyword = $('monitorKeyword')?.value.trim() || '';
+      if (keyword) params.set('q', keyword);
       params.set('limit', String(MONITOR_PAGE_SIZE));
       params.set('offset', String((Math.max(1, page) - 1) * MONITOR_PAGE_SIZE));
       return '/api/records?' + params.toString();
@@ -5132,11 +5135,11 @@ Source prompt:
         ['平均耗时', averageLabel],
         ['页码', `${MONITOR_PAGE}/${totalPages}`],
       ].map(([k,v]) => `<div class="stat-card"><div class="k">${k}</div><div class="v">${escapeHtml(String(v))}</div></div>`).join('');
-      $('recordTable').innerHTML = '<thead><tr><th></th><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型/失败原因</th></tr></thead><tbody>' +
+      $('recordTable').innerHTML = '<thead><tr><th></th><th>编号</th><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型/失败原因</th></tr></thead><tbody>' +
         (pageRows.length ? pageRows.map(r => {
           const id = String(r.id || '');
-          return `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td>${escapeHtml(r.time||'')}</td><td>图片</td><td>${escapeHtml(displaySourceLabel(r))}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
-        }).join('') : '<tr><td colspan="7" class="muted">没有匹配的监控记录</td></tr>') +
+          return `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td class="mono">${escapeHtml(r.image_code || '')}</td><td>${escapeHtml(r.time||'')}</td><td>图片</td><td>${escapeHtml(displaySourceLabel(r))}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
+        }).join('') : '<tr><td colspan="8" class="muted">没有匹配的监控记录</td></tr>') +
         '</tbody>';
       $('recordTable').querySelectorAll('input[data-record-select]').forEach(input => input.onchange = event => {
         event.stopPropagation();
@@ -6576,7 +6579,7 @@ Source prompt:
     }
     async function copyRecordField(field) {
       const r = CURRENT_RECORD || {};
-      const text = field === 'request_prompt'
+      const text = field === 'image_code' ? String(r.image_code || '') : field === 'request_prompt'
         ? (r.request_prompt || r.prompt || '')
         : field === 'final_prompt'
           ? (r.final_prompt || r.request_data?.request_prompt_en || r.request_prompt || r.prompt || '')
@@ -6594,6 +6597,31 @@ Source prompt:
       try {
         await copyTextToClipboard(text);
         showToast('已复制到剪贴板', 'ok');
+      } catch (e) {
+        showToast(e.message || '复制失败', 'bad');
+      }
+    }
+    function recordDiagnosticsText(r) {
+      const selection = Object.assign({}, r.prompt_selection || {});
+      for (const key of ['cos', 'cos_pose', 'cos_scene', 'cos_lighting', 'cos_framing', 'cos_composition', 'cos_view']) {
+        if (r[key]) selection[key] = r[key];
+      }
+      return [
+        `生图编号：${r.image_code || ''}`,
+        `时间：${r.time || ''}`,
+        `调用入口：${r.source || ''}`,
+        `模型：${r.used_model || r.model || ''}`,
+        `状态：${r.success ? '成功' : '失败'}`,
+        `随机条目：${JSON.stringify(selection)}`,
+        `原始输入：\n${r.original_prompt || ''}`,
+        `最终实际提示词：\n${r.final_prompt || r.request_data?.request_prompt_en || r.request_prompt || r.prompt || ''}`,
+      ].join('\n');
+    }
+    async function copyRecordDiagnostics() {
+      if (!CURRENT_RECORD) return;
+      try {
+        await copyTextToClipboard(recordDiagnosticsText(CURRENT_RECORD));
+        showToast('排查信息已复制', 'ok');
       } catch (e) {
         showToast(e.message || '复制失败', 'bad');
       }
@@ -6632,6 +6660,7 @@ Source prompt:
       CURRENT_RECORD = r;
       prefetchRecordMediaSources();
       $('recordDetailBody').innerHTML = `
+        <div class="detail-title"><h3 class="mono">${escapeHtml(r.image_code || '')}</h3><div class="actions"><button class="secondary mini" type="button" onclick="copyRecordField('image_code')">复制编号</button><button class="secondary mini" type="button" onclick="copyRecordDiagnostics()">复制排查信息</button></div></div>
         <div class="grid">
           <div><label>时间</label><div class="status">${escapeHtml(r.time || '')}</div></div>
           <div><label>来源</label><div class="status">${escapeHtml(displaySourceLabel(r))}</div></div>
@@ -10167,6 +10196,7 @@ Source prompt:
     });
     if ($('monitorMetricsWindow')) $('monitorMetricsWindow').onchange = () => loadMetrics();
     if ($('monitorTag')) $('monitorTag').oninput = monitorFilterChanged;
+    if ($('monitorKeyword')) $('monitorKeyword').oninput = monitorFilterChanged;
     ['assetKeyword','assetSource','assetTag'].forEach(id => {
       if ($(id)) $(id).oninput = assetFilterChanged;
     });

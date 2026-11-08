@@ -37,29 +37,56 @@ def test_inline_images_do_not_hide_other_image_links(wrapper, prefix):
     assert not any(encoded in value for value in result["urls"] + result["others"])
 
 
-def test_nai_multi_megabyte_markdown_response_finishes_in_bounded_process():
+@pytest.mark.parametrize("transport", ["relay", "native", "native_brotli"])
+def test_nai_multi_megabyte_markdown_response_finishes_in_bounded_process(transport):
     # A subprocess timeout still works if a regression holds the GIL inside re.
     script = textwrap.dedent("""
         import asyncio
         import base64
+        import brotli
         import json
         import runpy
+        import sys
         runpy.run_path('tests/conftest.py')
-        from astrbot_plugin_selfie_image.core.models import ImageModelTarget
+        from astrbot_plugin_selfie_image.core.models import AICatConfig
         from astrbot_plugin_selfie_image.core.providers import ImageGenerateRequest, NovelAIImageAdapter
 
         image = b'\\x89PNG\\r\\n\\x1a\\n' + bytes(range(256)) * 8192
         inline = 'data:image/png;base64,' + base64.b64encode(image).decode('ascii')
         content = '![image](' + inline + ')'
         response = {'choices': [{'message': {'content': content}}]}
+        transport = sys.argv[1]
+
+        class Response:
+            status = 200
+            headers = {'Content-Type': 'application/json'}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def read(self):
+                body = json.dumps({'images': [{'image': inline}]}).encode()
+                return brotli.compress(body) if transport == 'native_brotli' else body
+
+        class Session:
+            def post(self, *_args, **_kwargs):
+                return Response()
 
         class Adapter(NovelAIImageAdapter):
             async def post_json_data_or_error(self, *_args, **_kwargs):
                 return response, ''
 
         async def main():
-            target = ImageModelTarget('relay', 'novelai', 'https://relay.test/v1', 'test', 'nai-diffusion-4-5-full', 5)
-            result = await Adapter(target, None).generate(ImageGenerateRequest(prompt='a blue flower'))
+            config = AICatConfig.from_dict({'image_channels': [{
+                'name': 'nai', 'provider_type': 'openai' if transport == 'relay' else 'novelai',
+                'base_url': 'https://relay.test/v1' if transport == 'relay' else 'https://native.test/image/chami',
+                'api_key': 'test', 'enabled_models': ['nai-diffusion-4-5-full'],
+            }]})
+            target = config.get_enabled_image_targets()[0]
+            result = await Adapter(target, Session()).generate(ImageGenerateRequest(prompt='a blue flower'))
             assert not result.error, result.error
             assert result.images == [image]
             assert result.source_media == [{'type': 'base64', 'value': inline}]
@@ -68,7 +95,7 @@ def test_nai_multi_megabyte_markdown_response_finishes_in_bounded_process():
         asyncio.run(main())
     """)
     completed = subprocess.run(
-        [sys.executable, "-c", script],
+        [sys.executable, "-c", script, transport],
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True,
         text=True,

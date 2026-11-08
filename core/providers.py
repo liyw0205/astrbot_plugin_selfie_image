@@ -8,6 +8,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 import aiohttp
 from astrbot.api import logger
@@ -913,13 +914,40 @@ def _extract_image_bytes_from_nai_body(body: bytes) -> Optional[bytes]:
     return None
 
 
+def _parse_nai_response_body(body: bytes, charset: str, max_response_bytes: int) -> tuple[Optional[Any], str]:
+    def parse(blob: bytes) -> tuple[Optional[Any], str]:
+        image = _extract_image_bytes_from_nai_body(blob)
+        if image:
+            return image, ""
+        return parse_image_response_body(blob, charset)
+
+    data, kind = parse(body)
+    if data is not None or not body:
+        return data, kind
+
+    # Some native relays forward Brotli bytes without a usable Content-Encoding.
+    import brotli
+
+    decoder = brotli.Decompressor()
+    try:
+        decoded = decoder.process(body, output_buffer_limit=max_response_bytes + 1)
+    except brotli.error:
+        return data, kind
+    if len(decoded) > max_response_bytes:
+        raise ValueError(f"NovelAI 解压后的响应超过 {max_response_bytes} bytes")
+    if not decoder.is_finished():
+        return data, kind
+    return parse(decoded)
+
+
 class NovelAIImageAdapter(BaseImageAdapter):
     """NovelAI image channel.
 
     Modes (auto):
-    - official: POST {base}/ai/generate-image  (default base https://api.novelai.net)
-      Bearer token; response zip or raw image.
-    - relay: POST {base}/v1/chat/completions with the full NAI JSON dialect.
+    - official (default): POST the configured native endpoint, or
+      {base}/ai/generate-image for an API root. Bearer token; zip, raw image or JSON.
+    - relay: NAI models selected from OpenAI-compatible channels use
+      {base}/v1/chat/completions with the full NAI JSON dialect.
     - gateway: GET {base}/generate?...  (Nai2API / nai.sta1n.cn style)
       token query param; response raw image bytes.
 
@@ -930,28 +958,32 @@ class NovelAIImageAdapter(BaseImageAdapter):
     default_model = "nai-diffusion-4-5-full"
 
     def _mode(self) -> str:
-        base = (normalize_image_base_url(self.target.base_url) or self.default_base_url).lower()
-        if "novelai.net" in base or base.rstrip("/").endswith("/ai") or "/ai/generate-image" in base:
+        base = str(self.target.base_url or self.default_base_url).strip().rstrip("/")
+        parsed = urlsplit(base)
+        path = parsed.path.lower().rstrip("/")
+        if (self.target.extra or {}).get("novelai_transport") == "relay":
+            return "relay"
+        if path.endswith(("/ai", "/ai/generate-image")):
             return "official"
         # Common gateway hosts / path hints
-        if any(k in base for k in ("sta1n", "nai2api", "loliyc", "/generate")):
+        if any(k in (parsed.hostname or "").lower() for k in ("sta1n", "nai2api", "loliyc")) or path.endswith("/generate"):
             return "gateway"
-        # OpenAI-compatible relays (including custom hosts) use chat first;
-        # this is the protocol used by bestnai_x for Tuercha-like services.
-        return "relay"
+        return "official"
 
     def _endpoint(self, mode: str) -> str:
-        raw = str(self.target.base_url or "").strip()
-        base = normalize_image_base_url(raw) or self.default_base_url
-        lower = raw.lower()
+        raw = str(self.target.base_url or self.default_base_url).strip().rstrip("/")
         if mode == "official":
-            if lower.endswith("/ai/generate-image") or lower.endswith("generate-image"):
-                return raw.rstrip("/")
-            return f"{base.rstrip('/')}/ai/generate-image"
+            path = urlsplit(raw).path.rstrip("/")
+            if not path:
+                return f"{raw}/ai/generate-image"
+            if path.lower().endswith("/ai"):
+                return f"{raw}/generate-image"
+            return raw
+        base = normalize_image_base_url(raw) or self.default_base_url
         if mode == "relay":
             return build_openai_chat_completions_endpoint(base)
         # gateway
-        if lower.rstrip("/").endswith("/generate"):
+        if raw.lower().endswith("/generate"):
             return raw.rstrip("/")
         return f"{base.rstrip('/')}/generate"
 
@@ -1108,13 +1140,24 @@ class NovelAIImageAdapter(BaseImageAdapter):
                 payload = self.build_official_payload(req)
                 headers = self.build_json_headers()
                 async with self.session.post(url, json=payload, headers=headers, timeout=timeout, proxy=proxy) as response:
-                    body = await response.read()
+                    max_response_bytes = max(1024, int(self.target.extra.get("max_response_bytes") or 32 * 1024 * 1024))
+                    body, read_error = await self._read_response_bytes(response, max_response_bytes)
+                    if read_error or body is None:
+                        return ImageGenerateResult(error=read_error or "上游响应未完整接收")
+                    charset = getattr(response, "charset", None) or "utf-8"
+                    data, _kind = await asyncio.to_thread(_parse_nai_response_body, body, charset, max_response_bytes)
                     if response.status >= 400:
-                        preview = body[:400].decode("utf-8", errors="replace")
+                        detail = response_preview(data, 1000) if data is not None else body[:1000].decode(charset, errors="replace")
+                        preview = http_error_preview(detail, 400)
                         return ImageGenerateResult(error=f"HTTP {response.status}: {preview or 'NovelAI 请求失败'}")
-                    image = _extract_image_bytes_from_nai_body(body)
-                    if image:
-                        return ImageGenerateResult(images=[image])
+                    if isinstance(data, bytes):
+                        if len(data) > req.max_image_bytes:
+                            return ImageGenerateResult(error=f"NovelAI 图片超过 {req.max_image_bytes} bytes")
+                        return ImageGenerateResult(images=[data])
+                    if data is not None:
+                        return await self.result_from_response(
+                            data, req, self.target.base_url, provider_name="NovelAI", detailed_error=True
+                        )
                     ctype = response.headers.get("Content-Type", "")
                     return ImageGenerateResult(error=f"NovelAI 未返回可解析图片（Content-Type={ctype}）")
             if mode == "relay":

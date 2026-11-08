@@ -21,6 +21,7 @@ from .generation_records import (
     composition_metadata,
 )
 from .record_database import RecordDatabase
+from .prompt_lookup import PromptLookupMixin, image_fingerprint, prompt_selection_snapshot
 from .storage_consistency import inspect_storage_consistency
 from ..core.providers import ImageReference
 from ..core.utils import (
@@ -64,7 +65,7 @@ CHANNEL_TRANSIENT_ERROR_CATEGORIES = {
 CHANNEL_HEALTH_HISTORY_LIMIT = 5000
 
 
-class GenerationStoreMixin:
+class GenerationStoreMixin(PromptLookupMixin):
     def list_asset_collections(self) -> List[Dict[str, Any]]:
         store = getattr(self, "asset_collections", None)
         return store.list() if store is not None else []
@@ -633,7 +634,7 @@ class GenerationStoreMixin:
         if database is not None and database.has_records():
             loaded = database.load_records(keep_limit)
             self._prune_orphan_media_sidecars(loaded)
-            return loaded
+            return self._backfill_prompt_codes(loaded)
 
         compacted: List[Dict[str, Any]] = []
         for index, item in enumerate(retained):
@@ -659,7 +660,7 @@ class GenerationStoreMixin:
                     collect_unreferenced_record_cache_paths(evicted, compacted),
                 )
         self._prune_orphan_media_sidecars(compacted)
-        return compacted
+        return self._backfill_prompt_codes(compacted)
 
     def _restore_record_sequence(self) -> int:
         """Restore the record counter above every ``seq`` still stored.
@@ -719,6 +720,23 @@ class GenerationStoreMixin:
             self._commit_generation_records(payload)
             return
         commit_task = loop.create_task(asyncio.to_thread(self._commit_generation_records, payload))
+        image_pending = getattr(self, "_pending_image_record_commits", None)
+        if image_pending is None:
+            image_pending = {}
+            self._pending_image_record_commits = image_pending
+        image_paths = list(payload.get("generated_image_paths") or [])
+        for path in image_paths:
+            image_pending.setdefault(path, set()).add(commit_task)
+
+        def remove_image_commit(future: Any) -> None:
+            for path in image_paths:
+                bucket = image_pending.get(path)
+                if bucket is not None:
+                    bucket.discard(future)
+                    if not bucket:
+                        image_pending.pop(path, None)
+
+        commit_task.add_done_callback(remove_image_commit)
         # Keep a short-lived handle for queue tasks.  The web task runner can
         # await these commits before publishing its terminal status, avoiding a
         # visible window where a completed task has no linked record yet.
@@ -740,6 +758,13 @@ class GenerationStoreMixin:
 
             commit_task.add_done_callback(remove_done)
 
+    async def _wait_for_image_record(self, file_path: str) -> None:
+        path = self._cache_relative_path(file_path)
+        pending = getattr(self, "_pending_image_record_commits", {})
+        futures = list(pending.get(path) or ())
+        if futures:
+            await asyncio.shield(asyncio.gather(*futures))
+
     async def _wait_for_record_commits(self, task_id: str, timeout: float = 2.0) -> None:
         """Wait briefly for records produced by one queue task to be persisted."""
         tid = str(task_id or "").strip()
@@ -757,9 +782,11 @@ class GenerationStoreMixin:
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return
+            # A caller's short wait must not cancel writes still running in a
+            # worker thread; image delivery may await the same commit later.
             try:
                 await asyncio.wait_for(
-                    asyncio.gather(*futures, return_exceptions=True),
+                    asyncio.shield(asyncio.gather(*futures, return_exceptions=True)),
                     timeout=remaining,
                 )
             except asyncio.TimeoutError:
@@ -789,6 +816,14 @@ class GenerationStoreMixin:
 
     def _commit_generation_record(self, record: Dict[str, Any]) -> None:
         stale_cache_paths: List[str] = []
+        paths = record.get("generated_image_paths") or []
+        if paths:
+            loaded = self._load_cache_image_bytes(paths[0])
+            if loaded:
+                record["image_fingerprint"] = image_fingerprint(loaded[0])
+        record["prompt_selection"] = prompt_selection_snapshot(" ".join(
+            str(record.get(key) or "") for key in ("original_prompt", "request_prompt", "prompt")
+        ))
         # A generation task can produce more than one retained record (batch
         # images are split below).  Keep the task link on every resulting row
         # and backfill the task with the concrete record IDs after persistence.
@@ -833,6 +868,7 @@ class GenerationStoreMixin:
             pass
         with self._records_lock:
             self._record_seq += 1
+            record["image_code"] = self._new_prompt_code_locked()
             record.setdefault("id", f"{int(time.time() * 1000)}-{self._record_seq}")
             record["time"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             sidecar = self._write_media_sidecar(str(record["id"]), record)
@@ -1316,7 +1352,7 @@ class GenerationStoreMixin:
                     str(record.get(key) or "")
                     for key in (
                         "source", "source_label", "used_model", "error", "failure_reason",
-                        "original_prompt", "request_prompt", "group_id", "user_id", "note",
+                        "original_prompt", "request_prompt", "group_id", "user_id", "note", "image_code",
                     )
                 ).lower()
                 if keyword_text not in haystack:

@@ -4201,9 +4201,11 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_novelai_relay_uses_chat_completions_with_full_payload(self) -> None:
         image = {"data": [{"b64_json": base64.b64encode(PNG_BYTES).decode("ascii")}]}
         session = FakeSession(image)
-        target = make_target("novelai", "nai-diffusion-5-full")
-        target.base_url = "https://hcg.example"
-        target.api_key = "tok"
+        config = AICatConfig.from_dict({"image_channels": [{
+            "name": "relay", "provider_type": "openai", "base_url": "https://hcg.example",
+            "api_key": "tok", "enabled_models": ["nai-diffusion-5-full"],
+        }]})
+        target = config.get_enabled_image_targets()[0]
 
         adapter = NovelAIImageAdapter(target, session)
         result = await adapter.generate(ImageGenerateRequest(prompt="a red cat", aspect_ratio="1:1"))
@@ -10746,6 +10748,9 @@ class StudioStoreTests(unittest.TestCase):
         collected_kwargs = []
 
         class Event:
+            user_id = "lookup-user"
+            group_id = "lookup-group"
+
             def __init__(self, image):
                 self.image = image
 
@@ -10756,13 +10761,14 @@ class StudioStoreTests(unittest.TestCase):
             collected_kwargs.append(kwargs)
             return [event.image]
 
-        def find_record(md5):
-            prompt = prompts.get(md5)
-            return {"request_prompt": prompt} if prompt else None
-
         plugin._permission_denied_message = lambda _event: ""
         plugin._event_reference_images = collect_refs
-        plugin._find_generation_record_by_md5 = find_record
+        plugin._records_lock = threading.RLock()
+        plugin._records = [
+            {"id": str(index), "image_code": code, "md5": md5, "user_id": "lookup-user",
+             "group_id": "lookup-group", "generated_image_paths": [f"{index}.png"], "request_prompt": prompt}
+            for index, ((md5, prompt), code) in enumerate(zip(prompts.items(), ["ABC234", "DEF567"]))
+        ]
         # A prior implementation searched this global session cache when a
         # bot image was quoted, which made every lookup resolve to the latest
         # generated image. Prompt lookup must never touch it.
@@ -10774,8 +10780,12 @@ class StudioStoreTests(unittest.TestCase):
 
         first = asyncio.run(run(Event(quoted_a)))
         second = asyncio.run(run(Event(quoted_b)))
-        self.assertEqual(first, [f"图片 MD5：{hashlib.md5(quoted_a.data).hexdigest()}\n生图提示词：\nprompt for quoted A"])
-        self.assertEqual(second, [f"图片 MD5：{hashlib.md5(quoted_b.data).hexdigest()}\n生图提示词：\nprompt for quoted B"])
+        self.assertEqual(len(first), 2)
+        self.assertEqual(len(second), 2)
+        self.assertIn("ABC234", first[0])
+        self.assertIn("DEF567", second[0])
+        self.assertEqual(first[1], "prompt for quoted A")
+        self.assertEqual(second[1], "prompt for quoted B")
         self.assertEqual(len(collected_kwargs), 2)
         for kwargs in collected_kwargs:
             self.assertTrue(kwargs["include_image_alternates"])
@@ -10803,20 +10813,18 @@ class StudioStoreTests(unittest.TestCase):
         plugin._quoted_original_image_sources = lambda _event: asyncio.sleep(0, result=[])
         plugin._event_reference_images = collect_refs
         plugin._reverse_image_prompt_with_llm = reverse
+        plugin._records_lock = threading.RLock()
+        plugin._records = []
         plugin._find_generation_record_by_md5 = lambda _md5: self.fail("unexpected generation record lookup")
 
         async def run():
             return [item async for item in plugin.cmd_reverse_image_prompt(Event())]
 
-        md5 = hashlib.md5(quoted.data).hexdigest()
         output = asyncio.run(run())
-        self.assertEqual(
-            output,
-            [
-                f"图片 MD5：{md5}\n正在让当前 LLM 反推生图提示词……",
-                f"图片 MD5：{md5}\nLLM 反推提示词：\n一位少女，半身构图，自然光，写实摄影，9:16",
-            ],
-        )
+        self.assertEqual(len(output), 2)
+        self.assertRegex(output[0], r"反推编号：[A-Z0-9]{6}\n")
+        self.assertIn("非原始提示词", output[0])
+        self.assertEqual(output[1], "一位少女，半身构图，自然光，写实摄影，9:16")
         self.assertEqual(reversed_images, [quoted.data])
         self.assertEqual(
             collected_kwargs,
