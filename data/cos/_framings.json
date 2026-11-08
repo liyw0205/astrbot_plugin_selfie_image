@@ -92,6 +92,22 @@
         "selfie"
       ]
     },
+    "front_high_medium": {
+      "title": "斜前高机位近中景",
+      "prompt": "镜头位于人物斜前上方，以约三十至四十度向下拍摄竖幅近中景，从头部取到大腿中段，完整保留双手所在区域；人物占据主要画幅，使用正常焦段保持自然透视，不用正上方顶视、远景或夸张广角",
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "high_angle_close_three_quarter": {
+      "title": "斜前上方近距俯拍",
+      "prompt": "镜头位于人物斜前上方约三十度向下拍摄，竖幅近中景从头部取到大腿中段，人物占据主要画幅；自然保留靠近镜头的单手动作，前景手部略大但不遮住面部，不使用正上方顶视或远景",
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
+    "low_angle_close_three_quarter": {
+      "title": "侧前低机位近距仰拍",
+      "prompt": "镜头位于人物侧前方、膝部至腰部以下的近距离低位，略向上拍摄头部至大腿中段的竖幅近中景；使用正常焦段，人物占据画面主体，突出姿势轮廓与服装线条，不贴近腿部、不使用夸张广角或远景",
+      "random_camera_ids": ["third", "first", "selfie"]
+    },
     "low_angle_full": {
       "title": "低机位全身",
       "prompt": "轻微低机位全身构图，完整展示服装轮廓，透视自然不过度夸张",
@@ -152,6 +168,24 @@
       "random_camera_ids": [
         "third"
       ]
+    },
+    "side_back_low_medium": {
+      "title": "侧后低机位近中景",
+      "prompt": "镜头位于人物侧后方的腰部以下，以正常焦段轻微向上拍摄竖幅近中景；保留头顶与抬臂空间，画面带到膝部附近，侧背轮廓与服装线条清楚；人物占据主要画幅，不用远景或夸张广角",
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "side_low_medium": {
+      "title": "侧面轻仰近中景",
+      "prompt": "镜头从人物侧面、腰部略低的位置轻微向上拍摄竖幅近中景，保留头顶、手臂动作与膝部附近的轮廓；正常焦段呈现自然比例，支撑关系清楚，背景只保留少量环境，不用远景或夸张广角",
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
+    },
+    "side_high_medium": {
+      "title": "侧前上方斜俯近中景",
+      "prompt": "镜头位于人物侧方略偏前的上方，以约三十至四十度斜俯拍摄竖幅近中景；人物头部、双手、双膝与支撑面完整入画，保留侧面躯干轮廓和自然遮挡关系；使用正常焦段，不用正上方顶视、远景或夸张广角",
+      "camera_ids": ["third"],
+      "random_camera_ids": ["third"]
     },
     "rear_three_quarter": {
       "title": "背后偏侧中景",

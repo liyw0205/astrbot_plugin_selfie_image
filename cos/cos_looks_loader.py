@@ -127,6 +127,10 @@ COS_JSON_POSES = _load_vocab("_poses.json")
 COS_JSON_SCENES = _load_vocab("_scenes.json")
 COS_JSON_FRAMINGS = _load_vocab("_framings.json")
 COS_JSON_MAKEUPS = _load_vocab("_makeups.json")
+COS_JSON_LIGHTINGS = _load_vocab("_lightings.json")
+COS_JSON_LIGHTING_RULES = _load_object("_lightings.json", "rules")
+COS_JSON_CONTACT_SHADOW_PROMPTS = _load_object("_lightings.json", "contact_shadow_prompts")
+COS_JSON_LIGHTING_REQUEST_TERMS = _load_terms("_lightings.json", "request_terms")
 COS_JSON_COMPOSITIONS = _load_vocab("_compositions.json")
 COS_JSON_MULTI_VIEW_COLLAGE = _load_object("_compositions.json", "multi_view")
 COS_JSON_COMBINATIONS = _load_vocab("_combinations.json")
@@ -189,6 +193,7 @@ def validate_json_catalog() -> List[str]:
         ("expressions", COS_JSON_EXPRESSIONS),
         ("framings", COS_JSON_FRAMINGS),
         ("makeups", COS_JSON_MAKEUPS),
+        ("lightings", COS_JSON_LIGHTINGS),
     ):
         for item_id, item in vocab.items():
             if not str(item.get("title") or item.get("label") or "").strip() or not str(item.get("prompt") or "").strip():
@@ -199,6 +204,28 @@ def validate_json_catalog() -> List[str]:
     expression_ids = set(COS_JSON_EXPRESSIONS)
     makeup_ids = set(COS_JSON_MAKEUPS)
     camera_ids = {"selfie", "first", "third"}
+    required_lighting_rules = {
+        "source_consistency", "user_lighting", "user_face", "subject_clarity",
+        "face_visible", "face_optional", "contact", "collage",
+    }
+    if set(COS_JSON_LIGHTING_RULES) != required_lighting_rules or any(
+        not isinstance(value, str) or not value.strip()
+        for value in COS_JSON_LIGHTING_RULES.values()
+    ):
+        issues.append("lighting rules are incomplete or invalid")
+    if not COS_JSON_LIGHTING_REQUEST_TERMS:
+        issues.append("lighting request terms must not be empty")
+    if "default" not in COS_JSON_CONTACT_SHADOW_PROMPTS or any(
+        not isinstance(value, str) or not value.strip()
+        for value in COS_JSON_CONTACT_SHADOW_PROMPTS.values()
+    ):
+        issues.append("contact shadow prompts are incomplete or invalid")
+    for lighting_id, lighting in COS_JSON_LIGHTINGS.items():
+        aliases = lighting.get("aliases")
+        if not isinstance(aliases, list) or not aliases or any(
+            not isinstance(value, str) or not value.strip() for value in aliases
+        ):
+            issues.append(f"lighting {lighting_id}: missing valid aliases")
     for expression_id, expression in COS_JSON_EXPRESSIONS.items():
         if set(expression) != {"label", "prompt", "aliases"}:
             issues.append(f"expression {expression_id}: expected label/prompt/aliases")
@@ -279,7 +306,21 @@ def validate_json_catalog() -> List[str]:
             issues.append(f"scene {scene_id}: makeups missing {','.join(missing_makeups[:8])}")
         if not scene.get("prompt") or not scene.get("pose_ids") or not style_ids or not scene_makeups:
             issues.append(f"scene {scene_id}: missing prompt/pose/style/makeup options")
+        lighting_ids = scene.get("lighting_ids")
+        if not isinstance(lighting_ids, list) or not lighting_ids or any(
+            not isinstance(value, str) or value not in COS_JSON_LIGHTINGS for value in lighting_ids
+        ):
+            issues.append(f"scene {scene_id}: missing valid lighting_ids")
+        style_weights = scene.get("style_weights") or {}
+        if not isinstance(style_weights, Mapping) or any(
+            key not in style_ids or not isinstance(value, int) or isinstance(value, bool) or value < 1
+            for key, value in style_weights.items()
+        ):
+            issues.append(f"scene {scene_id}: invalid style_weights")
     for pose_id, pose in COS_JSON_POSES.items():
+        shadow_id = pose.get("contact_shadow_id", "default")
+        if not isinstance(shadow_id, str) or shadow_id not in COS_JSON_CONTACT_SHADOW_PROMPTS:
+            issues.append(f"pose {pose_id}: unknown contact_shadow_id")
         missing = [value for value in pose.get("incompatible_expression_ids") or [] if value not in COS_JSON_EXPRESSIONS]
         if missing:
             issues.append(f"pose {pose_id}: expressions missing {','.join(missing[:8])}")

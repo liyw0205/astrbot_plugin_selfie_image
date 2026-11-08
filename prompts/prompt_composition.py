@@ -55,13 +55,14 @@ def build_prompt_with_reference_instruction(
         or "角色扮演" in raw
     )
     has_cos_contract = bool(is_cos and re.search(r"【cam:(?:selfie|first|third)】", raw, re.I))
-    has_leg_contract = has_leg_focus_contract(raw)
+    if has_leg_focus_contract(raw):
+        if not any(rule in raw for rule in LEGFOCUS_REFERENCE_RULES.values()):
+            rule = LEGFOCUS_REFERENCE_RULES["en" if language == "en" else "zh"]
+            raw = "\n".join((rule, raw))
+        return append_anatomy_constraints(raw, language=language) if enhance else raw
     if language != "en":
         lines = ["使用提供的参考图作为视觉参考。"]
-        if has_leg_contract:
-            if LEGFOCUS_REFERENCE_RULES["zh"] not in raw:
-                lines.append(LEGFOCUS_REFERENCE_RULES["zh"])
-        elif not has_cos_contract:
+        if not has_cos_contract:
             lines.append(
                 (
                     "COS 换装时，参考图只锁定同一人的身份、脸型五官、性别、肤色和身体比例；"
@@ -81,10 +82,7 @@ def build_prompt_with_reference_instruction(
         lines.extend(["", "用户要求：", raw])
         return "\n".join(lines)
     lines = ["Use the provided reference image(s) as visual references."]
-    if has_leg_contract:
-        if LEGFOCUS_REFERENCE_RULES["en"] not in raw:
-            lines.append(LEGFOCUS_REFERENCE_RULES["en"])
-    elif not has_cos_contract:
+    if not has_cos_contract:
         lines.append(
             (
                 "For COS outfit changes, use the reference for the same person's identity, facial structure, gender, skin tone, and body proportions; "

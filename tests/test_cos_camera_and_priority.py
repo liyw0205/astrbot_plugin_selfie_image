@@ -38,6 +38,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     adapt_cos_outfit_for_camera,
     match_cos_look_sets,
     normalize_cos_prompt_negatives,
+    normalize_cos_eye_contract,
     pick_cos_framing,
     pick_cos_camera,
     pick_cos_look_set,
@@ -97,19 +98,65 @@ def test_ninghongye_full_eye_cover_uses_a_dedicated_contract():
     assert "眼带材质厚实且完全不透明" not in action
 
     builtin = build_selfie_builtin_prompt(action, has_reference_image=True)
-    assert "本次套装明确使用不透明眼带遮挡双眼" in builtin
+    assert "本次套装的眼罩遮挡双眼，材质与纹样按套装描述保留" in builtin
     assert "优先保留脸型轮廓、五官比例、眼睛和嘴唇轮廓" not in builtin
 
 
-def test_ninghongye_clear_eye_keeps_visible_eye_contract():
-    look = get_cos_look_by_id("ninghongye_clear_eye")
-    action = build_cos_look_action("姿势：自然站姿展示细节", picker=lambda **_: look)
+def test_all_ninghongye_looks_keep_red_lace_blindfold_in_final_prompt():
+    looks = [look for look in COS_LOOK_SETS if look["id"].startswith("ninghongye_")]
+    assert len(looks) == 12
+    with tempfile.TemporaryDirectory() as directory:
+        persona = PersonaManager(directory)
+        for look in looks:
+            assert look["prompt"].count(COS_FULL_EYE_COVER_PROMPT) == 1
+            assert cos_eye_mode(look["id"]) == "full_cover"
+            for camera in ("third", "first", "selfie"):
+                action = build_cos_look_action(
+                    "摄影棚 自然站姿", force_id=look["id"], camera=camera, has_refs=True,
+                )
+                prompt = persona.build_selfie_prompt(
+                    action, bot_name="", personality="", has_reference_image=True, extra_reference_count=1,
+                )
+                assert "【cos_eye:full_cover】" in prompt
+                assert "【cos_eye:visible】" not in prompt
+                assert prompt.count(COS_FULL_EYE_COVER_PROMPT) == 1
+                assert COS_VISIBLE_EYE_PROMPT not in prompt
+                assert "不透明绸缎眼带" not in prompt
+                assert "无网眼、无镂空、无缝隙" not in prompt
+                assert "不要求复现参考图中可见的双眼" in prompt
 
-    assert cos_eye_mode(look["id"]) == "visible"
-    assert "【cos_eye:visible】" in action
-    assert COS_VISIBLE_EYE_PROMPT in action
-    assert COS_SUBJECT_CLARITY_PROMPT in action
-    assert COS_FULL_EYE_COVER_PROMPT not in action
+
+def test_web_ninghongye_blindfold_keeps_covered_eye_identity_contract():
+    look = get_cos_look_by_id("ninghongye_clear_eye")
+    for raw in (look["prompt"], f"{look['prompt']} 【cos:{look['id']}】"):
+        action = build_cos_third_person_prompt(raw)
+        assert action.count("【cos_eye:full_cover】") == 1
+        assert action.count(COS_FULL_EYE_COVER_PROMPT) == 1
+        for language in ("zh", "en"):
+            prompt = build_selfie_builtin_prompt(action, has_reference_image=True, language=language)
+            assert prompt.count(COS_FULL_EYE_COVER_PROMPT) == 1
+            eye_rule = (
+                "不要求复现参考图中可见的双眼" if language == "zh"
+                else "the eyes follow the costume's blindfold rule"
+            )
+            assert eye_rule in prompt
+
+
+def test_ninghongye_eye_normalization_replaces_stale_satin_and_visible_rules():
+    legacy_satin = (
+        "眼部造型锁定为独立的正红色不透明绸缎眼带：横向贴合面部，无孔洞、无网纱、无透明区域；"
+        "眼带下方不绘制可见眼睛，只保留鼻子、嘴唇和下半脸轮廓。"
+    )
+    legacy_catalog = (
+        "宁红夜的双眼必须被横向红色绸缎仪式眼罩完整覆盖；无网眼、无镂空、无缝隙。"
+        "眼带不是发饰、头巾、透明纱、蕾丝、金属面罩或悬浮装饰。"
+    )
+    for old_rule in (legacy_satin, legacy_catalog, COS_VISIBLE_EYE_PROMPT):
+        prompt = normalize_cos_eye_contract(old_rule + "白色旗袍。", "ninghongye_clear_eye")
+        assert prompt.count(COS_FULL_EYE_COVER_PROMPT) == 1
+        assert old_rule not in prompt
+        assert "白色旗袍。" in prompt
+        assert normalize_cos_eye_contract(prompt, "ninghongye_clear_eye") == prompt
 
 
 def test_cos_catalog_audit_allows_costume_features_and_rejects_identity_locks():
@@ -787,7 +834,11 @@ def test_ccd_sleepwear_cos_look_keeps_camera_and_pose_in_the_shared_random_pools
 
     for orientation in ("正面站姿", "背影"):
         action = build_cos_look_action(orientation, force_id=look["id"], camera="third")
-        assert COS_SUBJECT_CLARITY_PROMPT in action
+        if orientation == "正面站姿":
+            assert COS_SUBJECT_CLARITY_PROMPT in action
+        else:
+            assert "面部按姿势自然呈现，不额外强制露脸或改变动作" in action
+            assert COS_SUBJECT_CLARITY_PROMPT not in action
 
 
 def test_random_picker_never_emits_the_reported_face_blur_pairs():
@@ -1024,17 +1075,22 @@ def test_llm_selfie_double_heart_uses_the_offscreen_timer_builder():
 
 
 def test_random_cos_scene_bundles_include_a_distinct_visual_treatment():
-    japanese_room = pick_cos_variation("test", extra_request="和风室内")
+    from astrbot_plugin_selfie_image.cos.cos_looks_loader import COS_JSON_LIGHTINGS, COS_JSON_STYLES
+
+    japanese_room = pick_cos_variation("test", extra_request="和风室内 自然手机快照")
     assert japanese_room["scene_id"] == "japanese_ink_room"
-    assert "古早DV录像静帧" in japanese_room["prompt"]
-    assert "冷蓝色偏" in japanese_room["prompt"]
-    assert "梦核抓拍的朦胧感仅由背景虚化、边缘柔光和轻微高光晕形成" in japanese_room["prompt"]
-    assert "人物面部保持正常曝光、不柔焦" in japanese_room["prompt"]
+    assert japanese_room["style_id"] == "natural_snapshot"
+    assert COS_JSON_STYLES["natural_snapshot"]["prompt"] in japanese_room["prompt"]
+    assert COS_JSON_LIGHTINGS[japanese_room["lighting_id"]]["prompt"] in japanese_room["prompt"]
+    assert "木格、榻榻米与素色屏风" in japanese_room["prompt"]
+    assert "DV录像" not in japanese_room["prompt"]
     assert "面部和露出皮肤微微过曝" not in japanese_room["prompt"]
 
-    rooftop = pick_cos_variation("test", extra_request="老旧楼群天台")
+    rooftop = pick_cos_variation("test", extra_request="老旧楼群天台 自然手机快照")
     assert rooftop["scene_id"] == "old_city_rooftop"
-    assert "暖色低饱和胶片快照" in rooftop["prompt"]
+    assert rooftop["lighting_id"] == "outdoor_slant"
+    assert COS_JSON_LIGHTINGS["outdoor_slant"]["prompt"] in rooftop["prompt"]
+    assert "胶片快照" not in rooftop["prompt"]
     assert "密密层叠的老旧楼群" in rooftop["prompt"]
     assert "浅景深" not in rooftop["prompt"]
     assert "近景至中景" not in rooftop["prompt"]
@@ -1229,6 +1285,28 @@ def test_special_cos_is_fixed_and_addressable_without_random_staging():
     ):
         assert pick_cos_look_set()["id"] == special["id"]
     assert pick_cos_look_set(query=special["title"])["id"] == special["id"]
+
+
+def test_unmatched_cos_request_keeps_freeform_text_instead_of_a_fixed_preset():
+    query = "未收录造型请求xyz"
+    ordinary = next(item for item in COS_LOOK_SETS if not is_special_cos_look(item))
+    special = COS_SPECIAL_LOOK_SETS[0]
+
+    def choose_item(values):
+        if any(is_special_cos_look(item) for item in values):
+            return special
+        assert ordinary in values
+        return ordinary
+
+    with patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=choose_item,
+    ):
+        chosen = pick_cos_look_set(query=query)
+    assert not is_special_cos_look(chosen)
+    action = build_cos_look_action(query, picker=lambda **_: chosen)
+    assert f"用户补充要求优先：{query}" in action
+    assert "【cos_mode:special】" not in action
 
 
 def test_rooftop_special_cos_is_single_subject_and_keeps_complete_prompt():
@@ -1593,6 +1671,9 @@ def test_llm_leg_route_marker_does_not_force_a_selfie_camera():
                 with patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus.random.choices",
                     side_effect=lambda options, **_kwargs: [next((item for item in options if item.get("camera") == camera), options[0])],
+                ), patch(
+                    "astrbot_plugin_selfie_image.cos.leg_focus.random.choice",
+                    return_value="sofa",
                 ):
                     action, rebuild_extra, _ = plugin._prepare_llm_selfie_action(
                         f"{prefix}看看腿 白丝", False,

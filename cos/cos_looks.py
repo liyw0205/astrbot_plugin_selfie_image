@@ -13,6 +13,7 @@ from .cos_looks_loader import (
     COS_JSON_COMPOSITIONS,
     COS_JSON_COMPOSITION_REQUEST_TERMS,
     COS_JSON_CAMERA_REQUEST_TERMS,
+    COS_JSON_CONTACT_SHADOW_PROMPTS,
     COS_JSON_FACE_RISK_PROMPTS,
     COS_JSON_EXPRESSIONS,
     COS_JSON_FRAMINGS,
@@ -22,6 +23,9 @@ from .cos_looks_loader import (
     COS_JSON_LOOK_SETS,
     COS_JSON_LOOK_THEME_CONFLICTS,
     COS_JSON_LOOK_THEME_MARKERS,
+    COS_JSON_LIGHTINGS,
+    COS_JSON_LIGHTING_RULES,
+    COS_JSON_LIGHTING_REQUEST_TERMS,
     COS_JSON_MAKEUPS,
     COS_JSON_MULTI_VIEW_COLLAGE,
     COS_JSON_MULTI_VIEW_COLLAGE_TERMS,
@@ -233,37 +237,40 @@ COS_LOOK_SCENE_THEME_CONFLICTS = {
 
 COS_SUBJECT_CLARITY_PROMPT = (
     "人物面部、身体轮廓、发型边缘和服装关键结构是画面最高优先级，曝光自然、五官轮廓可辨；"
-    "背景、远处陈设和服装细小纹理允许随真实景深自然柔化，胶片颗粒、色调或柔光只作用于氛围；"
-    "不要把人物主体处理成整体雾化、磨皮、低对比失焦或运动模糊，保留少量生活抓拍的不完美。"
+    "背景、远处陈设和服装细小纹理允许随真实景深自然柔化；"
+    "主体保留正常局部反差与少量生活抓拍的不完美，不做统一磨皮、整体雾化或过度锐化。"
 )
 
 COS_SUBJECT_CLARITY_COVERED_EYES_PROMPT = (
-    "人物面部是画面最高优先级，鼻梁、嘴唇、下颌、眼带边缘、发丝轮廓与服装纹理清晰对焦，曝光自然；"
-    "眼带保持连续、平整、边缘清楚，不因柔光、景深或颗粒出现透明、破洞或重影；"
-    "胶片颗粒、色调、柔光或景深效果只作用于氛围与背景，不得抹平或模糊人物主体。"
+    "人物面部是画面最高优先级，鼻梁、嘴唇、下颌、眼罩边缘、发丝轮廓与服装纹理清晰对焦，曝光自然；"
+    "景深柔化只作用于背景，不得抹平或模糊人物主体。"
 )
 
 COS_EYE_MODE_BY_LOOK_ID: Dict[str, str] = {
-    # These skins use Ning Hongye's opaque red blindfold as a defining costume
-    # element. Keep the eye-covering rule separate from generic face clarity.
+    # All Ning Hongye looks share a red lace blindfold with an opaque lining.
+    # Keep eye coverage separate from generic face clarity.
     "ninghongye_plain_white_snake": "full_cover",
     "ninghongye_dragon_path_baizhi": "full_cover",
+    "ninghongye_original_maiden": "full_cover",
+    "ninghongye_maple_snowfall": "full_cover",
     "ninghongye_underworld_goddess": "full_cover",
     "ninghongye_cloud_fairy": "full_cover",
+    "ninghongye_clear_eye": "full_cover",
+    "ninghongye_crepuscular": "full_cover",
     "ninghongye_red_hao_new_joy": "full_cover",
     "ninghongye_spider_demon": "full_cover",
-    "ninghongye_clear_eye": "visible",
+    "ninghongye_gasviper": "full_cover",
+    "ninghongye_dark_feline": "full_cover",
 }
 
 COS_FULL_EYE_COVER_PROMPT = (
-    "眼部造型锁定为独立的正红色不透明绸缎眼带：横向贴合面部，左端延伸至左太阳穴，"
-    "右端延伸至右太阳穴；带体覆盖双眼所在区域与上鼻梁，完整遮住双眼、眼白、眼睑和睫毛；"
-    "带体是连续平整的实体布面，无孔洞、无网纱、无透明区域、无眼睛图案，"
-    "不是眼妆、发饰、额饰或悬浮装饰；眼带下方不绘制可见眼睛，只保留鼻子、嘴唇和下半脸轮廓。"
+    "佩戴红色蕾丝眼罩，细密花卉蕾丝覆盖双眼，红色内衬遮住眼睛，"
+    "眼罩横向贴合双眼区域与上鼻梁，两端延伸至太阳穴并在脑后固定；保留蕾丝花纹、细密网底与自然起伏。"
 )
 
 COS_VISIBLE_EYE_PROMPT = (
-    "眼部造型锁定为双眼自然可见，眼白、虹膜、眼睑和睫毛清晰；不佩戴横跨双眼的眼罩或眼带。"
+    "眼部造型不佩戴横跨双眼的眼罩或眼带；眼睛自然入画时保留清晰轮廓，"
+    "可随已选视角自然遮挡，不为展示双眼转头。"
 )
 
 
@@ -289,8 +296,10 @@ def normalize_cos_eye_contract(prompt: str, cos_id: str = "") -> str:
     old_contract = re.compile(
         r"宁红夜的双眼必须被横向红色绸缎仪式眼罩完整覆盖；.*?"
         r"眼带不是发饰、头巾、透明纱、蕾丝、金属面罩或悬浮装饰。"
+        r"|眼部造型锁定为独立的正红色不透明绸缎眼带：.*?"
+        r"眼带下方不绘制可见眼睛，只保留鼻子、嘴唇和下半脸轮廓。"
     )
-    text = old_contract.sub(COS_FULL_EYE_COVER_PROMPT, text, count=1)
+    text = old_contract.sub("", text).replace(COS_VISIBLE_EYE_PROMPT, "")
     if COS_FULL_EYE_COVER_PROMPT not in text:
         text = f"{COS_FULL_EYE_COVER_PROMPT}{text}"
     return text
@@ -343,6 +352,12 @@ def _has_positive_request(text: str, term: str) -> bool:
     return False
 
 
+def _cos_orientation_term_pattern(term: str) -> str:
+    lighting_terms = "|".join(re.escape(value) for value in COS_JSON_LIGHTING_REQUEST_TERMS)
+    # Direction words in lighting requests, such as 正面闪光灯, are not poses.
+    return rf"{re.escape(term)}(?![^，,。；;\s]{{0,6}}(?:{lighting_terms}))"
+
+
 def _requested_cos_pose(text: str) -> str:
     raw = re.sub(r"\s+", "", str(text or ""))
     terms = COS_JSON_POSE_CLASSIFICATION_TERMS
@@ -392,12 +407,13 @@ def _is_negated_request(text: str, index: int) -> bool:
 
 def _requested_cos_orientation(text: str) -> str:
     terms = COS_JSON_POSE_CLASSIFICATION_TERMS
-    if any(_has_positive_request(text, term) for term in terms["orientation_back"]):
-        return "back"
-    if any(_has_positive_request(text, term) for term in terms["orientation_side"]):
-        return "side"
-    if any(_has_positive_request(text, term) for term in terms["orientation_front"]):
-        return "front"
+    for orientation in ("back", "side", "front"):
+        if any(
+            not _is_negated_request(text, match.start())
+            for term in terms[f"orientation_{orientation}"]
+            for match in re.finditer(_cos_orientation_term_pattern(term), str(text or ""))
+        ):
+            return orientation
     return ""
 
 
@@ -451,7 +467,7 @@ def _strip_parsed_cos_request_terms(
         orientation_terms = COS_JSON_POSE_CLASSIFICATION_TERMS["orientation_strip"]
         for term in sorted(orientation_terms, key=len, reverse=True):
             if _has_positive_request(text, term):
-                cleaned = re.sub(re.escape(term), " ", cleaned)
+                cleaned = re.sub(_cos_orientation_term_pattern(term), " ", cleaned)
     if requested_camera:
         camera_terms = tuple(
             term
@@ -516,8 +532,13 @@ COS_BODY_CURVE_SUBJECT_PROMPT = (
 
 
 def _cos_subject_clarity_prompt_for_pose(cos_id: str, pose_id: str) -> str:
+    pose = COS_RANDOM_POSE_CLASSES.get(pose_id) or {}
+    if pose.get("face_visibility") == "optional":
+        return str(COS_JSON_LIGHTING_RULES["subject_clarity"])
     if pose_id in COS_BODY_CURVE_POSE_IDS:
         return COS_BODY_CURVE_SUBJECT_PROMPT
+    if _cos_pose_allows_face_shadow(pose_id):
+        return str(COS_JSON_LIGHTING_RULES["subject_clarity"])
     return _cos_subject_clarity_prompt(cos_id)
 
 COS_SCENE_POSE_FRAMING_EXCLUSIONS: Dict[tuple[str, str], frozenset[str]] = {}
@@ -1132,6 +1153,8 @@ def _cos_face_safety_prompt(
     include_base: bool = False,
 ) -> str:
     risk = _cos_face_risk_tags(cos_id, scene_id, pose_id, camera)
+    if _cos_pose_allows_face_shadow(pose_id) or cos_eye_mode(cos_id) == "full_cover":
+        risk.difference_update({"hat_shadow", "hair_shadow"})
     prompts = [COS_FACE_RISK_PROMPTS[tag] for tag in sorted(risk) if tag in COS_FACE_RISK_PROMPTS]
     if "selfie_seated_light" in risk:
         prompts.append("自拍坐姿优先使用三分之二身或三分之四侧前方构图，手机和手部不遮挡眼睛与眉眼。")
@@ -1304,7 +1327,7 @@ def _pick_scene_style(scene_id: str, extra_request: str = "") -> tuple[str, str]
         return "", ""
     if not style_ids:
         return "", str(scene.get("style_prompt") or "")
-    style_id = _pick_weighted_cos_id(style_ids)
+    style_id = _pick_weighted_cos_id(style_ids, weights=scene.get("style_weights"))
     style = COS_JSON_STYLES.get(style_id) or {}
     base = str(scene.get("style_prompt") or "").strip()
     variant = str(style.get("prompt") or "").strip()
@@ -1322,6 +1345,61 @@ def _pick_scene_style(scene_id: str, extra_request: str = "") -> tuple[str, str]
             if base else f"本次采用{label}的轻微媒介变化：{variant}"
         )
     return style_id, prompt
+
+
+def _cos_pose_allows_face_shadow(pose_id: str) -> bool:
+    pose = COS_RANDOM_POSE_CLASSES.get(pose_id) or {}
+    return (
+        pose.get("face_visibility") == "optional"
+        or pose.get("orientation") in {"side", "back"}
+        or pose.get("pose_family") == "sleep"
+    )
+
+
+def _cos_contact_shadow_prompt(pose_id: str) -> str:
+    pose = COS_RANDOM_POSE_CLASSES.get(pose_id) or {}
+    shadow_id = pose.get("contact_shadow_id", "default")
+    return str(COS_JSON_CONTACT_SHADOW_PROMPTS[shadow_id])
+
+
+def _pick_scene_lighting(
+    scene_id: str,
+    pose_id: str,
+    extra_request: str = "",
+    *,
+    panel_pose_ids: Iterable[str] = (),
+) -> tuple[str, str]:
+    """Keep one scene light source while adapting visible faces and contacts."""
+    scene = COS_RANDOM_SCENE_CLASSES.get(scene_id) or {}
+    allowed_ids = scene.get("lighting_ids") or ()
+    residual = _strip_parsed_cos_request_terms(
+        extra_request, requested_scene=scene_id, requested_pose=pose_id,
+    )
+    requested_id = _requested_vocab_id(extra_request, COS_JSON_LIGHTINGS)
+    explicit = any(term in residual for term in COS_JSON_LIGHTING_REQUEST_TERMS)
+    negated_lighting = any(
+        not _has_positive_request(residual, term)
+        for term in COS_JSON_LIGHTING_REQUEST_TERMS if term in residual
+    )
+    if requested_id and requested_id in allowed_ids and not negated_lighting:
+        lighting_id = requested_id
+    elif requested_id or explicit:
+        lighting_id = "user"
+    else:
+        lighting_id = _pick_weighted_cos_id(allowed_ids)
+    panels = tuple(panel_pose_ids)
+    face_optional = any(_cos_pose_allows_face_shadow(item) for item in panels or (pose_id,))
+    parts = [
+        COS_JSON_LIGHTING_RULES["user_lighting"]
+        if lighting_id == "user"
+        else str(COS_JSON_LIGHTINGS.get(lighting_id, {}).get("prompt") or ""),
+        COS_JSON_LIGHTING_RULES["source_consistency"],
+        COS_JSON_LIGHTING_RULES["user_face"] if lighting_id == "user"
+        else COS_JSON_LIGHTING_RULES["face_optional" if face_optional else "face_visible"],
+        COS_JSON_LIGHTING_RULES["contact"],
+        COS_JSON_LIGHTING_RULES["collage"] if panels else _cos_contact_shadow_prompt(pose_id),
+    ]
+    return lighting_id, "".join(part for part in parts if part)
 
 
 def _pick_scene_expression(pose_id: str, extra_request: str = "") -> tuple[str, str]:
@@ -1582,11 +1660,15 @@ def _pick_cos_collage_variation(
     panels = [
         f"{slot_labels[index]}：{collage_framing_prompt(framing_id)}；"
         f"{_cos_pose_prompt_for_camera(pose_id, 'third')}"
+        f"{_cos_contact_shadow_prompt(pose_id)}"
         for index, (pose_id, framing_id) in enumerate(panel_views)
     ]
 
     scene = COS_RANDOM_SCENE_CLASSES[scene_id]
     style_id, scene_style_prompt = _pick_scene_style(scene_id, extra_request)
+    lighting_id, lighting_prompt = _pick_scene_lighting(
+        scene_id, main_pose, extra_request, panel_pose_ids=panel_poses,
+    )
     expression_id, expression_prompt = _pick_scene_expression(main_pose, extra_request)
     if (
         expression_id == "deep_affection"
@@ -1604,8 +1686,9 @@ def _pick_cos_collage_variation(
     )
     if scene_style_prompt:
         prompt_parts.append("本次场景影像风格族保持与环境一致：" + scene_style_prompt)
+    prompt_parts.append("本次场景光照：" + lighting_prompt)
     if not _requests_explicit_soft_focus(extra_request):
-        prompt_parts.append(_cos_subject_clarity_prompt_for_pose(cos_id, main_pose))
+        prompt_parts.append(str(COS_JSON_LIGHTING_RULES["subject_clarity"]))
     if expression_prompt:
         prompt_parts.append("本次兼容神态：" + expression_prompt)
     if makeup_prompt:
@@ -1631,6 +1714,7 @@ def _pick_cos_collage_variation(
         "panel_framing_ids": [framing_id for _, framing_id in panel_views],
         "main_framing_id": main_framing_id,
         "style_id": style_id,
+        "lighting_id": lighting_id,
         "expression_id": expression_id,
         "makeup_id": makeup_id,
         "style_family": str(scene.get("style_family") or ""),
@@ -1807,6 +1891,7 @@ def pick_cos_variation(
 
     scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
     style_id, scene_style_prompt = _pick_scene_style(scene_id, extra_request)
+    lighting_id, lighting_prompt = _pick_scene_lighting(scene_id, pose_id, extra_request)
     expression_id, expression_prompt = _pick_scene_expression(pose_id, extra_request)
     makeup_id, makeup_prompt = _pick_scene_makeup(scene_id, extra_request)
 
@@ -1822,6 +1907,7 @@ def pick_cos_variation(
         )
     if scene_style_prompt:
         prompt_parts.append("本次场景影像风格族保持与环境一致：" + scene_style_prompt)
+    prompt_parts.append("本次场景光照：" + lighting_prompt)
     if scene and not _requests_explicit_soft_focus(extra_request):
         prompt_parts.append(_cos_subject_clarity_prompt_for_pose(cos_id, pose_id))
         safety_prompt = _cos_face_safety_prompt(
@@ -1850,6 +1936,7 @@ def pick_cos_variation(
         "scene_id": scene_id,
         "prompt": "".join(prompt_parts),
         "style_id": style_id,
+        "lighting_id": lighting_id,
         "expression_id": expression_id,
         "makeup_id": makeup_id,
         "style_family": str((scene or {}).get("style_family") or ""),
@@ -1891,6 +1978,8 @@ _COS_LOOK_NAME_ALIASES = {
     "blue_archive_fuuka": ("风香",),
     "blue_archive_toki": ("纺希",),
     "zzz_sunna_private_sportswear": ("千夏", "Sunna", "妄想天使千夏", "绝区零千夏"),
+    # Preserve the historical shorthand used by the command and dashboard.
+    "anime_girl_orange_mint": ("二次元少女",),
 }
 
 # Every outfit is stored in one catalog. ``cos_type`` identifies the source
@@ -2306,9 +2395,14 @@ def pick_cos_look_set(
     # the historical random fallback behavior.
     if not matched and cos_query_has_series_constraint(query):
         return {}
-    # Special looks participate in selection just like ordinary looks. Their
-    # fixed staging contract is preserved later by build_cos_look_action.
-    pool = matched or list(COS_LOOK_SETS)
+    # An unmatched descriptive request is still allowed to use the ordinary
+    # random pool, but a fixed special preset must not swallow the user's
+    # free-form text. Exact or matched special requests are handled above.
+    pool = matched or (
+        [item for item in COS_LOOK_SETS if not is_special_cos_look(item)]
+        if normalized_query
+        else list(COS_LOOK_SETS)
+    )
     if exclude_special:
         compatible_pool = [item for item in pool if not is_special_cos_look(item)]
         if compatible_pool:
@@ -2532,6 +2626,13 @@ def build_cos_third_person_prompt(text: str) -> str:
     )
     if exact_special:
         return build_special_cos_look_action(exact_special, has_refs=False)
+    if (
+        "【他拍 / 看看COS模式】" in raw
+        and "【cam:third】" in raw
+        and re.search(r"【cos_lighting:[a-z0-9_]+】", raw)
+        and re.search(r"【cos_framing:[a-z0-9_]+】", raw)
+    ):
+        return raw
     adapted = adapt_cos_outfit_for_camera(raw, "third")
     adapted = re.sub(r"【cam:(?:selfie|first|third)】", "", adapted, flags=re.I)
     variation = {}
@@ -2539,6 +2640,7 @@ def build_cos_third_person_prompt(text: str) -> str:
         ("cos_scene", "scene_id"),
         ("cos_pose", "pose_id"),
         ("cos_style", "style_id"),
+        ("cos_lighting", "lighting_id"),
         ("cos_expression", "expression_id"),
         ("cos_makeup", "makeup_id"),
     ):
@@ -2547,7 +2649,7 @@ def build_cos_third_person_prompt(text: str) -> str:
             variation[key] = match.group(1)
     look_match = re.search(r"【cos:([a-z0-9_]+)】", raw, flags=re.I)
     has_shared_variation = bool(
-        re.search(r"【cos_(?:pose|scene|style|expression|makeup|framing|view|composition):", raw, flags=re.I)
+        re.search(r"【cos_(?:pose|scene|style|lighting|expression|makeup|framing|view|composition):", raw, flags=re.I)
     )
     if not has_shared_variation:
         variation = pick_cos_variation(
@@ -2555,8 +2657,13 @@ def build_cos_third_person_prompt(text: str) -> str:
             extra_request=raw,
             camera="third",
         )
+    eye_mode = cos_eye_mode(look_match.group(1)) if look_match else "unspecified"
     if look_match:
         adapted = normalize_cos_eye_contract(adapted, look_match.group(1))
+    if eye_mode == "unspecified" and COS_FULL_EYE_COVER_PROMPT in adapted:
+        eye_mode = "full_cover"
+    if eye_mode != "unspecified":
+        adapted = re.sub(r"【cos_eye:(?:full_cover|visible)】", "", adapted, flags=re.I).strip()
     safety_line = ""
     if look_match and has_shared_variation and variation.get("scene_id") and not _requests_explicit_soft_focus(adapted):
         safety_line = _cos_face_safety_prompt(
@@ -2566,6 +2673,17 @@ def build_cos_third_person_prompt(text: str) -> str:
             "third",
             include_base="人物面部是画面最高优先级" not in adapted,
         )
+        if safety_line in adapted:
+            safety_line = ""
+    lighting_line = ""
+    if has_shared_variation and not variation.get("lighting_id"):
+        lighting_id, lighting_prompt = _pick_scene_lighting(
+            str(variation.get("scene_id") or ""),
+            str(variation.get("pose_id") or ""),
+            raw,
+        )
+        variation["lighting_id"] = lighting_id
+        lighting_line = "本次场景光照：" + lighting_prompt
     framing = pick_cos_framing(
         extra_request=adapted,
         scene_id=str(variation.get("scene_id") or ""),
@@ -2590,14 +2708,18 @@ def build_cos_third_person_prompt(text: str) -> str:
     if composition.get("prompt"):
         framing_line += f"附加构图强化：{composition['prompt']}；"
     pose_id = str(variation.get("pose_id") or "")
+    pose_definition = COS_RANDOM_POSE_CLASSES.get(pose_id) or {}
     if pose_id in COS_BODY_CURVE_POSE_IDS or pose_id == "back_to_camera":
         face_rule = "面部按已选姿势自然呈现，可只见侧脸或不露脸；不得为了露脸回头、扭颈或改变肩胯方向。"
+    elif pose_definition.get("face_visibility") == "optional":
+        face_rule = "面部可被手臂或发丝自然局部遮挡；不为露脸改变已选动作或头部方向。"
     else:
         face_rule = "保持自然进入画面的面部、发型、服装与配饰清晰；不强行转头露正脸。"
     shared_prompt = str(variation.get("prompt") or "").strip()
     shared_line = f"通用 COS 词库组合：{shared_prompt}" if shared_prompt else ""
     scene_id = str(variation.get("scene_id") or "")
     style_id = str(variation.get("style_id") or "")
+    lighting_id = str(variation.get("lighting_id") or "")
     expression_id = str(variation.get("expression_id") or "")
     makeup_id = str(variation.get("makeup_id") or "")
     framing_id = str(framing.get("view_id") or "")
@@ -2611,11 +2733,14 @@ def build_cos_third_person_prompt(text: str) -> str:
         + face_rule
         + "发型、服装、姿势和表情按本次 COS 套装或用户要求执行；明确要求的歪头、仰头、低头、闭眼或夸张表情应保留，未指定时保持头部、视线和表情连贯。"
         + safety_line
+        + lighting_line
         + shared_line
         + f" 用户补充要求：{adapted}。"
+        + (f" 【cos_eye:{eye_mode}】" if eye_mode != "unspecified" else "")
         + (f" 【cos_pose:{pose_id}】" if pose_id in COS_RANDOM_POSE_CLASSES else "")
         + (f" 【cos_scene:{scene_id}】" if scene_id in COS_RANDOM_SCENE_CLASSES else "")
         + (f" 【cos_style:{style_id}】" if style_id in COS_JSON_STYLES else "")
+        + (f" 【cos_lighting:{lighting_id}】" if lighting_id else "")
         + (f" 【cos_expression:{expression_id}】" if expression_id in COS_JSON_EXPRESSIONS else "")
         + (f" 【cos_makeup:{makeup_id}】" if makeup_id in COS_JSON_MAKEUPS else "")
         + (f" 【cos_framing:{framing_id}】" if framing_id in COS_FRAMING_CLASSES else "")
@@ -2891,6 +3016,7 @@ def build_cos_look_action(
     if composition.get("prompt"):
         framing_line += f"附加构图强化：{composition['prompt']}；"
     pose_id = variation["pose_id"]
+    pose_allows_face_occlusion = _cos_pose_allows_face_shadow(pose_id)
     handheld_allowed = pose_id == "user" or pose_id in COS_RANDOM_SELFIE_POSE_IDS
     phone_face_cover = phone_face_cover and handheld_allowed
     if camera_kind == "third":
@@ -2910,7 +3036,12 @@ def build_cos_look_action(
             "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或第二台拍摄设备；"
             if phone_face_cover
-            else "主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然；未明确要求遮脸时保持面部、身体轮廓和服装关键结构清楚，细小纹理允许随景深自然柔化；严格遵循已选机位与姿势呈现面部，侧脸按自然透视呈现，不为露出正脸强行扭头或扭颈。"
+            else (
+                "主角双手严格保持已选动作，优先呈现姿势轮廓和服装结构；面部可被手臂或发丝自然局部遮挡，不为露脸改变手臂或头部方向；"
+                "画面只展示主角自身的两条手臂和两只手，连接自然。"
+                if pose_allows_face_occlusion
+                else "主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然；未明确要求遮脸时保持面部、身体轮廓和服装关键结构清楚，细小纹理允许随景深自然柔化；严格遵循已选机位与姿势呈现面部，侧脸按自然透视呈现，不为露出正脸强行扭头或扭颈。"
+            )
         )
         framing = (
             "【他拍 / 看看COS模式】"
@@ -2961,7 +3092,11 @@ def build_cos_look_action(
                 else
                 "双手在肩部至头部附近同时扶住同一条窄侧边，可相邻或轻微上下错开，头部和视线朝向支撑边；不要求露出正脸，可只见侧脸或不露脸，不为露脸扭头。"
                 if variation["pose_id"] == "side_edge_bend"
-                else "保持面部、发型、服装和配饰清晰可见。"
+                else (
+                    "动作与服装结构清楚，面部可被手臂或发丝自然局部遮挡，不为露脸改变姿势。"
+                    if pose_allows_face_occlusion
+                    else "保持面部、发型、服装和配饰清晰可见。"
+                )
             )
         )
         framing = (
@@ -3014,6 +3149,7 @@ def build_cos_look_action(
         + (f" 【cos_pose:{variation['pose_id']}】" if variation["pose_id"] else "")
         + (f" 【cos_scene:{variation['scene_id']}】" if variation["scene_id"] else "")
         + (f" 【cos_style:{variation['style_id']}】" if variation.get("style_id") else "")
+        + (f" 【cos_lighting:{variation['lighting_id']}】" if variation.get("lighting_id") else "")
         + (f" 【cos_expression:{variation['expression_id']}】" if variation.get("expression_id") else "")
         + (f" 【cos_makeup:{variation['makeup_id']}】" if variation.get("makeup_id") else "")
         + (f" 【cos_framing:{framing_id}】" if framing_id else "")

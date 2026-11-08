@@ -39,6 +39,13 @@ def _load_pool() -> Dict[str, Any]:
             raise LegFocusDataError(f"看看腿场景 id 缺失或重复: {scene_id or index + 1}")
         if not str(raw.get("title") or "").strip() or not str(raw.get("prompt") or "").strip():
             raise LegFocusDataError(f"看看腿场景缺少标题或提示词: {scene_id}")
+        cameras = raw.get("cameras", ["selfie", "third"])
+        if (
+            not isinstance(cameras, list) or not cameras
+            or any(camera not in ("selfie", "third") for camera in cameras)
+            or len(set(cameras)) != len(cameras)
+        ):
+            raise LegFocusDataError(f"看看腿场景的相机人称限制无效: {scene_id}")
         supports = raw.get("supports")
         if not isinstance(supports, Mapping) or not supports or any(
             not isinstance(key, str) or not key or not isinstance(value, str) or not value.strip()
@@ -62,7 +69,7 @@ def _load_pool() -> Dict[str, Any]:
             or type(raw.get("weight")) is not int or raw["weight"] < 1
             or camera not in {"selfie", "third"}
             or raw.get("direction") not in ({"front", "left", "right"} if camera == "selfie" else {"front", "oblique", "side"})
-            or raw.get("elevation") not in ({"down"} if camera == "selfie" else {"down", "up", "level", "top"})
+            or raw.get("elevation") not in ({"down", "level"} if camera == "selfie" else {"down", "up", "level", "top"})
             or not isinstance(supports, list) or not supports or not set(supports) <= support_types
             or not isinstance(framings, list) or not framings
             or not set(framings) <= ({"leg_detail"} if camera == "selfie" else {"leg_detail", "full_outfit"})
@@ -96,6 +103,12 @@ def _load_pool() -> Dict[str, Any]:
         for view_id in view_refs:
             if not set(supports) & set(views_by_id[view_id]["support_types"]):
                 raise LegFocusDataError(f"看看腿姿势与机位没有兼容支撑: {pose_id}/{view_id}")
+        crops = raw.get("crop_prompts")
+        cameras = {views_by_id[view_id]["camera"] for view_id in view_refs}
+        if not isinstance(crops, Mapping) or set(crops) != cameras or any(
+            not isinstance(value, str) or not value.strip() for value in crops.values()
+        ):
+            raise LegFocusDataError(f"看看腿姿势缺少对应人称的裁切描述: {pose_id}/crop_prompts")
         legacy_ids.update(aliases)
         pose_ids.add(pose_id)
     if legacy_ids & pose_ids:
@@ -209,31 +222,31 @@ LEGFOCUS_SCENE_TERMS = tuple(
 LEGFOCUS_POSE_ALIASES = {
     "sit": "sofa_ankle_cross",
     "sit_crop": "sofa_ankle_cross",
-    "kneel": "rug_side_fold",
-    "kneel_crop": "rug_side_fold",
-    "side_lie": "bed_side_recline",
-    "side_lie_crop": "bed_side_recline",
+    "kneel": "kneeling_sit_back",
+    "kneel_crop": "kneeling_sit_back",
+    "side_lie": "side_lying_offset_legs",
+    "side_lie_crop": "side_lying_offset_legs",
     "hug_knee": "bed_one_knee_up",
     "hug_knee_crop": "bed_one_knee_up",
     "cross_leg": "chair_crossed_knee",
     "cross_leg_crop": "chair_crossed_knee",
     "windowsill": "gaming_chair_staggered",
     "windowsill_crop": "gaming_chair_staggered",
-    "kneel_up": "rug_side_fold",
-    "kneel_front": "rug_side_fold",
+    "kneel_up": "kneeling_upright",
+    "kneel_front": "kneeling_sit_back",
     "floor_fold": "rug_back_support",
     "one_knee_fix": "bed_one_knee_up",
     "reclined_knees_crop": "bed_side_recline",
     "floor_knees_up_crop": "rug_side_fold",
     "desk_sit_crop": "chair_crossed_knee",
-    "bed_supine_crop": "bed_side_recline",
-    "sofa_front_crop": "sofa_ankle_cross",
+    "bed_supine_crop": "supine_offset_legs",
+    "sofa_front_crop": "seated_knees_together",
     "chair_side_crop": "chair_crossed_knee",
     "sofa_cross_crop": "sofa_side_fold",
     "floor_knees_crop": "rug_side_fold",
     "sofa_occlusion_crop": "sofa_forward_leg",
     "stool_edge_crop": "bed_edge_diagonal",
-    "floor_side_kneel_crop": "rug_back_support",
+    "floor_side_kneel_crop": "kneeling_sit_back",
     "seat_knees_cross_crop": "sofa_ankle_cross",
     "floor_topdown_cross_crop": "rug_back_support",
     "first_person_topdown_legs_crop": "bed_edge_diagonal",
@@ -243,13 +256,13 @@ LEGFOCUS_POSE_ALIASES = {
     "bench_side_sit_crop": "gaming_chair_staggered",
     "toe_touch_step_crop": "bed_one_knee_up",
     "back_staggered_step_crop": "sofa_side_fold",
-    "knees_forward_sit_crop": "bed_edge_diagonal",
+    "knees_forward_sit_crop": "edge_parallel_forward",
     "one_knee_bent_sit_crop": "bed_one_knee_up",
     "side_folded_sit_crop": "sofa_side_fold",
     "reclined_bent_knees_crop": "bed_side_recline",
     "one_leg_extended_sit_crop": "sofa_forward_leg",
     "heels_folded_sit_crop": "rug_side_fold",
-    "edge_dangle_sit_crop": "bed_edge_diagonal",
+    "edge_dangle_sit_crop": "edge_knees_together_dangle",
     "crossed_ankles_sit_crop": "sofa_ankle_cross",
     "crossed_knee_sit_crop": "chair_crossed_knee",
     "over_leg_sit_crop": "chair_crossed_knee",
@@ -303,9 +316,6 @@ LEGFOCUS_OUTFIT_POOL: List[Dict[str, Any]] = [dict(item) for item in _OUTFITS["o
 LEGFOCUS_OUTFIT_BY_ID = {str(item["id"]): item for item in LEGFOCUS_OUTFIT_POOL}
 LEGFOCUS_RISKY_EXTRA_REPLACEMENTS = (
     ("掀衣摆", "整理衣摆"),
-    ("晒腿", "记录穿搭"),
-    ("主要看腿形", "重点看服装版型"),
-    ("看腿形", "看服装版型"),
 )
 
 LEGWEAR_REQUEST_PATTERN = re.compile(
@@ -330,7 +340,7 @@ LEG_DETAIL_REQUEST_PATTERN = re.compile(
 )
 LEG_FACE_REQUEST_PATTERN = re.compile(r"(?:露脸|露头|带脸|看脸|面部入镜|表情|看向镜头|微笑|wink|眨眼)", re.I)
 LEG_FULL_OUTFIT_REQUEST_PATTERN = re.compile(
-    r"(?:全身|从头到脚|头部到鞋履|全身入镜|全身构图|full[- ]?body)", re.I
+    r"(?:全身(?!镜)|从头到脚|头部到鞋履|full[- ]?body)", re.I
 )
 LEGFOCUS_OUTFIT_REQUEST_PATTERN = re.compile(
     r"(?:裙|百褶|A字|裤|鞋|靴|平底|乐福|玛丽珍|帆布鞋|凉鞋|JK|洛丽塔|水手服|套装|T恤|衬衫|针织|卫衣|背心)", re.I
@@ -468,14 +478,18 @@ def compatible_leg_compositions(
             continue
         if scene["id"] in filters.get("excluded_scenes", ()):
             continue
+        # Selection uses the first compatible support for a given scene/view.
+        selected_views: set[str] = set()
         for support in pose["support_types"]:
             if support not in scene["supports"]:
                 continue
             for candidate_id in pose["view_ids"]:
                 view = LEGFOCUS_VIEW_BY_ID[candidate_id]
                 if (
-                    (view_id and candidate_id != view_id)
+                    candidate_id in selected_views
+                    or (view_id and candidate_id != view_id)
                     or (camera and view["camera"] != camera)
+                    or view["camera"] not in scene.get("cameras", ("selfie", "third"))
                     or framing not in view["framings"]
                     or support not in view["support_types"]
                     or (filters.get("direction") and view["direction"] != filters["direction"])
@@ -486,6 +500,7 @@ def compatible_leg_compositions(
                 ):
                     continue
                 combinations.append((scene, support, view))
+                selected_views.add(candidate_id)
     return combinations
 
 
@@ -767,7 +782,7 @@ def build_leg_focus_action(
     framing = str(force_framing or "").strip()
     if framing not in {"full_outfit", "leg_detail"}:
         explicit_full = bool(LEG_FULL_OUTFIT_REQUEST_PATTERN.search(raw_extra)) and not bool(
-            re.search(r"(?:不|不要|无需|不需要)\s*(?:全身|从头到脚)", raw_extra)
+            re.search(r"(?:不|不要|无需|不需要)\s*(?:全身(?!镜)|从头到脚)", raw_extra)
         )
         framing = "full_outfit" if explicit_full else "leg_detail"
     requested_scene = parse_requested_leg_scene(raw_extra)
@@ -901,30 +916,28 @@ def build_leg_focus_action(
             detail_prompt = str(requested_style.get("prompt") or LEGWEAR_PROMPTS[requested_wear])
             outfit_line += LEGFOCUS_PRESERVE_PROMPTS["requested_detail"].format(detail=detail_prompt)
         elif unhandled_wear:
-            outfit_line += f"仅袜装按用户明确要求调整为：{unhandled_wear}；其余服饰不变。"
+            outfit_line += LEGFOCUS_PRESERVE_PROMPTS["requested_detail"].format(detail=unhandled_wear) + "。"
     if re.search(r"(?:不穿|不要|不需要|无需|不加|不用|不带)\s*(?:鞋履|鞋子|鞋|靴子|靴)", raw_extra):
         outfit_line += "不添加鞋履；袜装或赤足按本次已锁定的腿部细节执行。"
 
-    framing_line = (
-        LEGFOCUS_FULL_FRAMING
-        if framing == "full_outfit"
-        else LEGFOCUS_FRAMING + LEGFOCUS_CAMERA_FRAMINGS[camera_kind]
-    )
-    camera_line = str(view["prompt"])
-    scene_prompt = str(scene["prompt"])
-    base = (
-        "成年人物的室内竖屏腿部穿搭照片。"
-        + framing_line
-        + LEGFOCUS_SCENE_RULE
-        + str(pose["prompt"])
-        + f"本张姿势支撑：{scene['supports'][support]}。"
-        + camera_line
-        + f"本张室内场景：{scene_prompt}"
-        + outfit_line
-    )
+    # Each layer owns one constraint: crop, camera, action, setting, or clothing.
+    framing_lines = [LEGFOCUS_FULL_FRAMING] if framing == "full_outfit" else [
+        LEGFOCUS_FRAMING,
+        LEGFOCUS_CAMERA_FRAMINGS[camera_kind],
+        str(pose["crop_prompts"][camera_kind]),
+    ]
+    base = "\n".join((
+        *framing_lines,
+        str(view["prompt"]),
+        str(pose["prompt"]),
+        LEGFOCUS_SCENE_RULE,
+        f"本张室内场景：{scene['prompt']}",
+        f"本张姿势支撑：{scene['supports'][support]}。",
+        outfit_line,
+    ))
     extra = _clean_extra_request(raw_extra)
     if extra:
-        base += f"用户补充要求优先：{extra}。"
+        base += f"\n用户补充要求优先：{extra}。"
 
     wear_tag = {
         "日常裤装": "daily",

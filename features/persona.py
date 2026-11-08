@@ -1971,7 +1971,9 @@ class PersonaManager:
         group_contract = bool(intent.is_group_photo and has_group_composition_contract(act))
         cos_pose_match = re.search(r"【cos_pose:([a-z_]+)】", act, re.I)
         cos_pose_id = str(cos_pose_match.group(1) if cos_pose_match else "")
-        cos_orientation = COS_JSON_POSES.get(cos_pose_id, {}).get("orientation")
+        cos_pose = COS_JSON_POSES.get(cos_pose_id, {})
+        cos_orientation = cos_pose.get("orientation")
+        cos_face_optional = cos_pose.get("face_visibility") == "optional"
         back_facing_shot = shot_id in {"back_view", "rear_rooftop"} or cos_orientation == "back"
         side_facing_shot = shot_id == "side_profile" or cos_orientation == "side"
         feet_cropped = is_leg_calf_crop_action(act)
@@ -2022,21 +2024,28 @@ class PersonaManager:
         if intent.is_cos_look:
             identity_lines.append(COS_HAIR_OVERRIDE_CONTRACT_ZH)
         if intent.is_legs_only:
-            identity_lines = (
-                [
-                    (
-                        "引用图一作为本次主角身份来源；保留其中人物身份和自然体态，服装按本次锁定搭配执行。"
-                        if has_external_reference
-                        else "形象参考图一作为主角身份锚点；保持人物身份特征和自然体态，服装按本次锁定搭配执行。"
-                    ),
-                ]
-                if has_reference_image
-                else [
-                    "按角色设定保持主角身份和自然体态；取景、姿势、视线和穿搭以本次动作合同为准。",
-                ]
-            )
-            if has_reference_image:
-                identity_lines.append(LEGFOCUS_REFERENCE_RULES["zh"])
+            if has_leg_focus_contract(act):
+                identity_lines = (
+                    [LEGFOCUS_REFERENCE_RULES["zh"]]
+                    if has_reference_image
+                    else ["按角色设定保持主角身份和自然体态。"]
+                )
+            else:
+                identity_lines = (
+                    [
+                        (
+                            "引用图一作为本次主角身份来源；保留其中人物身份和自然体态，服装按本次锁定搭配执行。"
+                            if has_external_reference
+                            else "形象参考图一作为主角身份锚点；保持人物身份特征和自然体态，服装按本次锁定搭配执行。"
+                        ),
+                    ]
+                    if has_reference_image
+                    else [
+                        "按角色设定保持主角身份和自然体态；取景、姿势、视线和穿搭以本次动作合同为准。",
+                    ]
+                )
+                if has_reference_image:
+                    identity_lines.append(LEGFOCUS_REFERENCE_RULES["zh"])
         if has_reference_image and not intent.is_legs_only and has_viewpoint_change_request(act):
             identity_lines.append(
                 "本次指定或随机选定的镜头视角优先于参考图投影；保留同一人的身份线索，但不要复制参考图里的头部朝向、脸部透视、肩线和原姿势。按目标视角自然重建面部透视；侧脸或三分之四侧面时，远侧五官允许自然遮挡，不要为保留参考图而强行露出双眼或扭脸。"
@@ -2070,7 +2079,9 @@ class PersonaManager:
                         "额外参考图仅用于服装、姿势、构图、风格、场景、道具、镜头角度或光线；不替换参考图一的主角身份。",
                         "换装 / COS 时只迁移服装、配饰、颜色、材质、印花和造型氛围，不迁移额外参考图人物的脸型、五官、发型发色或体态。",
                         (
-                            "性别跟随参考图一；若当前构图允许面部入镜，面部清晰自然，表情眼神按本次场景重画。"
+                            "性别跟随参考图一；姿势优先，面部可被手臂或发丝自然局部遮挡，不为露脸改变动作。"
+                            if cos_face_optional
+                            else "性别跟随参考图一；若当前构图允许面部入镜，面部清晰自然，表情眼神按本次场景重画。"
                             if back_facing_shot or side_facing_shot
                             else "性别跟随参考图一；除非用户要求遮脸，否则主角面部清晰自然，表情眼神按本次场景重画。"
                         ),
@@ -2079,7 +2090,9 @@ class PersonaManager:
                     else [
                         "额外参考图用于构图、衣服、姿势、场景或光线；主角仍符合角色名称和人设。",
                         (
-                            "若当前构图允许面部入镜，主角面部清晰自然。"
+                            "姿势优先，面部可被手臂或发丝自然局部遮挡，不为露脸改变动作。"
+                            if cos_face_optional
+                            else "若当前构图允许面部入镜，主角面部清晰自然。"
                             if back_facing_shot or side_facing_shot
                             else "除非用户要求遮脸，否则主角面部清晰自然。"
                         ),
@@ -2486,7 +2499,7 @@ class PersonaManager:
             if extra_action and not has_leg_focus_contract(act):
                 action_line = f"用户要求：{extra_action}"
             elif has_leg_focus_contract(act):
-                action_line = "用户要求：严格遵循以上已锁定的看看腿动作合同生成。"
+                action_line = ""
             else:
                 action_line = "用户要求：严格遵循以上看看腿动作合同，默认使用近景下半身裁切且不露脸。"
         elif intent.is_cos_look and cos_contract:
@@ -2498,11 +2511,14 @@ class PersonaManager:
         else:
             action_line = f"用户要求：{act}" if act else "用户要求：看着镜头自然自拍，展示你现在的样子。"
         if intent.is_legs_only:
-            subject_photo_label = (
-                "第三人称腿部穿搭照片" if feet_cropped else "第三人称全身穿搭照片"
-            ) if camera_kind == "third" else (
-                f"第一人称腰线至{foot_target}照片" if feet_cropped else "全身镜自拍照片"
-            )
+            if has_leg_focus_contract(act):
+                subject_photo_label = ""
+            else:
+                subject_photo_label = (
+                    "第三人称腿部穿搭照片" if feet_cropped else "第三人称全身穿搭照片"
+                ) if camera_kind == "third" else (
+                    f"第一人称腰线至{foot_target}照片" if feet_cropped else "全身镜自拍照片"
+                )
         elif intent.is_cos_look:
             subject_photo_label = {
                 "third": "动漫风格他拍画面" if appearance_type == "anime" else "日常他拍照片",
@@ -2556,7 +2572,7 @@ class PersonaManager:
         return "\n".join(
             line
             for line in [
-                f"这是{subject_photo_label}。",
+                f"这是{subject_photo_label}。" if subject_photo_label else "",
                 "" if has_reference_image else (f"角色设定：{personality}\n【角色设定结束】" if personality else ""),
                 *identity_lines,
                 *reference_lines,

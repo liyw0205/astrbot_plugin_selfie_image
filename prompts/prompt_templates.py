@@ -24,7 +24,7 @@ COS_IDENTITY_CONTRACT_ZH = (
 
 COS_COVERED_EYES_IDENTITY_CONTRACT_ZH = (
     "以身份参考图为本人身份来源：保留本人脸型轮廓、鼻唇轮廓、性别、年龄感和肤色；"
-    "眼睛服从本次套装的眼带遮挡规则，不要求复现参考图中可见的双眼。\n"
+    "眼睛服从本次套装的眼罩遮挡规则，不要求复现参考图中可见的双眼。\n"
     "COS 只改变服装、配饰、角色假发/发型和妆容，不把角色原画的脸当作新身份。\n"
     "除非用户明确要求，不固定角色瞳色、脸型或五官比例。"
 )
@@ -285,6 +285,11 @@ def build_selfie_builtin_prompt(
     covered_eyes = "【cos_eye:full_cover】" in str(action).lower()
     is_group = raw_is_group
     is_legs = raw_is_legs
+    leg_reference_rule = ""
+    if is_legs and has_reference_image and not any(
+        rule in rendered_action for rule in LEGFOCUS_REFERENCE_RULES.values()
+    ):
+        leg_reference_rule = LEGFOCUS_REFERENCE_RULES["en" if language == "en" else "zh"]
     is_group_contract = is_group and has_group_composition_contract(str(action))
     feet_cropped = is_legs and is_leg_calf_crop_action(str(action))
     leg_face_context = is_legs and feet_cropped and has_leg_face_context(str(action))
@@ -331,23 +336,19 @@ def build_selfie_builtin_prompt(
                 lines.append(f"User request: {translated_user}")
             return _join(*lines)
         if is_legs:
-            lines.extend([
-                "Follow the generated leg-focus action contract below as the sole source for pose, camera, indoor scene, crop, and complete clothing; do not add another framing or outfit choice.",
+            lines = [
+                leg_reference_rule if has_reference_image
+                else "Use the character settings as the subject's identity anchor.",
                 rendered_action,
-                "Keep the selected indoor setting secondary, with natural perspective and anatomy; framing follows the action contract.",
-            ])
-            if has_reference_image:
-                lines.append(LEGFOCUS_REFERENCE_RULES["en"])
-            else:
-                lines.append("Use the character settings as the stable identity anchor; default to an adult woman when gender is unspecified.")
+            ]
             if extra_reference_count:
                 lines.append("Use extra references only for the specific clothing or visual details requested; do not let them override the selected camera or pose.")
             if translated_user and translated_user not in rendered_action:
                 lines.append(f"User request: {translated_user}")
             if effective_appearance_type == "real":
-                lines.append("Use natural indoor available light, realistic fabric, and ordinary camera perspective; avoid studio polish and 3D-rendered surfaces.")
+                lines.append("Render a cohesive realistic human photograph.")
             elif effective_appearance_type == "anime":
-                lines.append("Keep one cohesive 2D anime medium with natural indoor light and clean, believable fabric folds.")
+                lines.append("Render a cohesive 2D anime illustration.")
             return _join(*lines)
         if is_cos:
             lines.extend([
@@ -453,23 +454,14 @@ def build_selfie_builtin_prompt(
 
     user = translated_user or extract_user_prompt(action)
     if is_legs:
-        camera_match = re.search(r"【cam:(selfie|third)】", str(action))
-        camera_kind = str(camera_match.group(1) if camera_match else "selfie")
-        photo_type_line = "这是第一人称手机视角照片。" if camera_kind == "selfie" else "这是第三人称画外机位照片。"
-        identity_line = (
-            "参考图用于保持主角身份与自然体态；服装、姿势、机位和场景严格按本次动作合同执行。"
-            if has_reference_image
-            else "按角色设定保持主角身份和自然体态；服装、姿势、机位和场景严格按本次动作合同执行。"
-        )
         lines = [
-            photo_type_line,
-            identity_line,
-            LEGFOCUS_REFERENCE_RULES["zh"] if has_reference_image else "",
-            "以下动作合同是本次取景、姿势、机位、室内场景和穿搭的唯一来源；不要增加或替换合同未指定的服饰。",
+            leg_reference_rule if has_reference_image
+            else "按角色设定保持主角身份和自然体态。",
             rendered_action,
-            "保持自然人体比例、真实布料和室内环境光；背景简洁，景别服从动作合同。"
-            if effective_appearance_type != "anime"
-            else "保持统一的 2D 动漫媒介、自然人体比例和室内环境光；背景简洁，不使用远景。",
+            {
+                "real": "成片采用统一的写实真人摄影画风。",
+                "anime": "成片采用统一的 2D 动漫画风。",
+            }.get(effective_appearance_type, ""),
         ]
         if user and user not in rendered_action:
             lines.append(f"用户补充要求：{user}")
@@ -518,8 +510,8 @@ def build_selfie_builtin_prompt(
         else "固定主角身份：脸型五官、发型发色、性别、体态与整体长相保持稳定；表情按本次场景自然变化。"
     )
     eye_line = (
-        "本次套装明确使用不透明眼带遮挡双眼；眼带保持连续贴合，不要求复现参考图中可见的双眼；"
-        "头部、视线和表情按已选姿势保持连贯，鼻唇轮廓和眼带边缘清晰。"
+        "本次套装的眼罩遮挡双眼，材质与纹样按套装描述保留，不要求复现参考图中可见的双眼；"
+        "头部、视线和表情按已选姿势保持连贯，鼻唇轮廓和眼罩边缘清晰。"
         if is_cos and covered_eyes
         else (
             "COS 套装或用户明确要求的歪头、仰头、低头、闭眼或夸张表情应保留；"
@@ -563,7 +555,7 @@ def build_selfie_builtin_prompt(
         )
     elif is_cos:
         photo_style_line = (
-            "真人摄影质感：像自然拍到的 COS 成片；使用窗光或房间环境光，"
+            "真人摄影质感：像自然拍到的 COS 成片；光照遵循本次 COS 场景与用户要求，"
             "保留自然曝光变化、真实布料厚度与细小褶皱、轻微皮肤纹理和接触阴影；避免棚拍精修、塑料皮肤、插画感、3D渲染感和过度虚化。"
             if effective_appearance_type == "real" else ""
         )

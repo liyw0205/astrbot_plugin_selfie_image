@@ -61,6 +61,7 @@ def test_shared_cos_vocabularies_are_separate_from_look_records():
         "_framings.json",
         "_styles.json",
         "_makeups.json",
+        "_lightings.json",
         "_compositions.json",
         "_combinations.json",
         "_legacy_groups.json",
@@ -239,6 +240,72 @@ def test_front_pose_variants_are_reachable_with_compatible_scene_and_framing():
         assert framing_id in pose["framing_ids"]
         assert COS_JSON_FRAMINGS[framing_id]["prompt"] in action
     assert "side_profile" not in COS_JSON_POSES["kneeling_carpet"]["framing_ids"]
+
+
+def test_short_video_reference_poses_survive_the_final_cos_prompt(tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+
+    cases = (
+        ("front_lean_v_sign", "正面前倾比V", "摄影棚"),
+        ("kneeling_side_raised_arm", "侧向单膝跪姿抬臂", "摄影棚"),
+        ("front_arms_raised_arch", "正面双臂抬起轻仰", "摄影棚"),
+    )
+
+    for pose_id, alias, scene_alias in cases:
+        pose = COS_JSON_POSES[pose_id]
+        assert pose["framing_ids"]
+        assert pose_id in COS_JSON_SCENES["photo_studio"]["pose_ids"]
+        action = build_cos_look_action(
+            f"{scene_alias} {alias}",
+            force_id="roxy_cream",
+            camera="third",
+        )
+
+        assert f"【cos_pose:{pose_id}】" in action
+        assert "【cos_scene:photo_studio】" in action
+        assert action.count(pose["prompt"]) == 1
+        framing_id = re.search(r"【cos_framing:([a-z0-9_]+)】", action).group(1)
+        assert framing_id in pose["framing_ids"]
+        assert COS_JSON_FRAMINGS[framing_id]["prompt"] in action
+        if pose.get("face_visibility") == "optional":
+            assert "面部可被手臂或发丝自然局部遮挡" in action
+            assert "保持面部、发型、服装和配饰清晰可见" not in action
+
+        final_prompt = PersonaManager(str(tmp_path)).build_selfie_prompt(
+            action,
+            bot_name="",
+            personality="",
+            has_reference_image=True,
+            extra_reference_count=1,
+        )
+        assert final_prompt.count(pose["prompt"]) == 1
+        if pose.get("face_visibility") == "optional":
+            assert "姿势优先，面部可被手臂或发丝自然局部遮挡，不为露脸改变动作。" in final_prompt
+            assert "除非用户要求遮脸，否则主角面部清晰自然" not in final_prompt
+
+
+def test_reference_pose_views_are_close_and_camera_compatible():
+    assert "high_angle_close_three_quarter" in COS_JSON_POSES["front_lean_v_sign"]["framing_ids"]
+    assert "low_angle_close_three_quarter" in COS_JSON_POSES["kneeling_side_raised_arm"]["framing_ids"]
+    assert "low_angle_close_three_quarter" in COS_JSON_POSES["front_arms_raised_arch"]["framing_ids"]
+
+    for framing_id in (
+        "high_angle_close_three_quarter",
+        "low_angle_close_three_quarter",
+    ):
+        framing = COS_JSON_FRAMINGS[framing_id]
+        assert framing["random_camera_ids"] == ["third", "first", "selfie"]
+        assert "远景" in framing["prompt"]
+
+    for pose_id in ("front_lean_v_sign", "kneeling_side_raised_arm", "front_arms_raised_arch"):
+        for camera in ("third", "first", "selfie"):
+            selected = pick_cos_framing(
+                pose_id=pose_id,
+                scene_id="photo_studio",
+                camera=camera,
+            )
+            assert selected["view_id"] in COS_JSON_POSES[pose_id]["framing_ids"]
+            assert camera in COS_JSON_FRAMINGS[selected["view_id"]]["random_camera_ids"]
 
 
 def test_seductive_expressions_replace_old_entries_without_changing_head_direction():

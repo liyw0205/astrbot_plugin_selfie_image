@@ -26,18 +26,18 @@
     "ice": ["arid", "desert"]
   },
   "face_risk_prompts": {
-    "hat_shadow": "帽檐或头饰不得压住眉眼；双眼、眉毛和鼻梁保持完整可见，帽檐阴影不能覆盖面部，必要时使用镜头侧前方柔和补光。",
-    "hair_shadow": "发丝、刘海和发带不得压住双眼或把眉眼埋入阴影；保持眼睛、眉毛、鼻唇轮廓清楚，暗色头发与脸部之间保留自然分离。",
-    "reflective_costume": "透明、金属、缎面或高反光服装只保留服装自身的材质高光，不把高光反射到脸上；面部使用独立、均匀的柔和曝光。",
-    "glass_reflection": "玻璃反光、折射和散射光只出现在背景与玻璃边缘，不叠加到人物脸部；人物面部使用清晰的侧前方柔光，禁止反光重影、双脸或局部泛白。",
-    "scattered_light": "散射光和梦核光晕只作用于背景，人物脸部保持均匀曝光和清晰微对比，不用白雾覆盖五官。",
-    "low_light": "夜间环境必须保留人物面部的有效亮度和细节；加入不露设备的柔和镜头侧前方补光，暗部不吞没眼睛、眉眼和嘴唇轮廓。",
-    "mixed_light": "冷暖混合灯光以人物肤色和面部清晰度为基准平衡，避免彩色灯直接染黑或冲白脸部。",
-    "visual_noise": "站台、街景等背景线条和灯光保持简洁，不能与脸部重叠或在脸部周围形成杂乱高光。",
-    "backlight": "逆光只勾勒发丝和肩部轮廓；面部必须得到镜头侧前方填光，保持眼睛、五官和肤色自然可辨，不生成黑脸或白脸。",
-    "high_contrast": "高反差舞台光保留面部中间调，避免追光把脸部高光裁切或让眼眶沉入黑影。",
-    "projection_light": "投影或放映光只作为背景氛围，人物面部采用稳定的中性补光，不让投影纹理覆盖眼睛和五官。",
-    "reflective_background": "湿地、玻璃或金属背景的反光保持在人物轮廓之外，不复制人物、不在脸部形成高光斑。"
+    "hat_shadow": "帽檐下自然入画的面部保留可辨轮廓，允许柔和帽檐阴影，不为露脸掀帽或改变头饰位置。",
+    "hair_shadow": "自然入画的面部与发丝有适度明暗分离，保留发丝本身的局部遮挡和投影，不强行拨开发型。",
+    "reflective_costume": "金属、缎面与透明衣料按各自材质响应同一主光，高光随曲面变化，不出现独立发光或大片剪白。",
+    "glass_reflection": "玻璃只保留符合场景光源的环境反射，不复制人物轮廓或制造重影。",
+    "scattered_light": "散射效果保持克制，人物轮廓与服装保留正常局部反差，不覆盖均匀白雾。",
+    "low_light": "保留夜间环境本身的暗部，仅让入画的受光轮廓与衣料层次自然可辨，不把夜景整体提亮成白天。",
+    "mixed_light": "冷暖环境光保持明确主次，人物肤色与衣料颜色自然过渡，不出现突兀色块。",
+    "visual_noise": "背景线条与亮点避开人物关键轮廓，不形成杂乱高光或穿过身体的硬边。",
+    "backlight": "逆光边缘与背光暗部自然衔接，保留人物和衣料的体积层次，不做均匀发光描边。",
+    "high_contrast": "强反差环境中保留受光面的中间调与衣料层次，不把高光剪白或暗部涂黑。",
+    "projection_light": "投影纹理服从已有场景，仅保留合理的环境影响，不把文字或图案叠到人物五官上。",
+    "reflective_background": "湿地、玻璃或金属背景只产生符合空间关系的环境反射，不复制人物或制造额外肢体。"
   },
   "items": {
     "bedroom_carpet": {
@@ -49,9 +49,12 @@
         "卧室"
       ],
       "prompt": "温馨整洁的卧室，木地板上铺柔软浅色地毯，床侧有一面干净墙面或门框，床、床头柜和一张简洁矮凳作为背景，不遮挡人物。",
-      "style_prompt": "古早家用DV静帧质感，暖灰低饱和、明显胶片颗粒和轻微高光泛白；保留妆容与皮肤细节，不做塑料美颜。",
+      "style_prompt": "暖灰与浅木色形成自然生活背景，陈设保持适度层次。",
+      "lighting_ids": ["room_side_soft", "room_diffuse"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "domestic_snapshot",
       "style_ids": [
+        "natural_snapshot",
         "retro_ccd_static",
         "warm_daily_snapshot",
         "soft_creator_static"
@@ -60,17 +63,24 @@
         "standing_detail",
         "front_sleeve_display",
         "front_hem_display",
+        "front_hem_gather",
         "front_raised_arm",
         "front_waist_shift",
+        "front_behind_back_wrist_hold",
         "front_hand_near_face",
         "half_turn",
         "seated_composed",
         "kneeling_carpet",
+        "kneeling_back_support",
         "front_seated_lean",
         "low_kneel_open",
+        "kneeling_side_raised_arm",
+        "front_lean_v_sign",
+        "front_arms_raised_arch",
         "floor_sit_side",
         "leaning_rest",
         "wall_lean_curve",
+        "wall_raised_elbow_lean",
         "seated_side_curve",
         "relaxed_recline",
         "over_shoulder",
@@ -96,10 +106,13 @@
         "睡在床上",
         "床铺卧室"
       ],
-      "prompt": "安静整洁的卧室床铺，柔软床单、枕头和薄被形成自然生活背景，床边只保留少量干净空间，不出现其他人物或拍摄设备。",
-      "style_prompt": "凌晨室内的低照度家用DV快照，床头暖灯与窗外冷色月光形成克制冷暖对照，轻微颗粒和压缩感；人物脸部、闭合眼睑、发丝、四肢连接与衣料褶皱保持清晰，不用过度柔焦或黑暗吞没主体。",
+      "prompt": "夜间安静整洁的卧室床铺，床头有一盏暖灯，窗外是夜色；柔软床单、枕头和薄被形成自然生活背景，床边只保留少量干净空间，不出现其他人物或拍摄设备。",
+      "style_prompt": "夜间卧室保持安静的生活氛围，床品与衣料有自然色彩区分。",
+      "lighting_ids": ["bedside_night"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "domestic_snapshot",
       "style_ids": [
+        "natural_snapshot",
         "retro_ccd_static",
         "cool_quiet_snapshot"
       ],
@@ -129,9 +142,12 @@
         "窗户旁"
       ],
       "prompt": "明亮整洁的室内窗边，柔和自然光进入房间，窗边有简洁坐凳，背景不出现杂乱家具或额外人物。",
-      "style_prompt": "日系生活电影静帧，柔和奶白窗光、淡青灰阴影与细腻胶片颗粒，画面清透但不过度磨皮。",
+      "style_prompt": "浅色室内与窗外背景保留自然层次，画面清透。",
+      "lighting_ids": ["window_lateral", "window_diffuse"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "domestic_snapshot",
       "style_ids": [
+        "natural_snapshot",
         "soft_creator_static",
         "warm_daily_snapshot",
         "retro_ccd_static"
@@ -140,8 +156,10 @@
         "standing_detail",
         "front_sleeve_display",
         "front_hem_display",
+        "front_hem_gather",
         "front_raised_arm",
         "front_waist_shift",
+        "front_behind_back_wrist_hold",
         "front_hand_near_face",
         "half_turn",
         "seated_composed",
@@ -174,10 +192,13 @@
         "棚拍",
         "纯色背景"
       ],
-      "prompt": "简洁的室内人像摄影棚，浅灰或柔白无缝背景墙、柔和补光和一张无装饰矮凳，不出现摄影设备或额外人物。",
-      "style_prompt": "克制的时装编辑影像，冷灰低饱和与柔硬交界的侧光，保留真实布料纹理和自然阴影，不出现摄影器材。",
+      "prompt": "简洁的室内人像摄影棚，浅灰或柔白无缝背景墙和一张无装饰矮凳，不出现摄影设备或额外人物。",
+      "style_prompt": "浅灰背景与服装本色自然区分，突出衣装轮廓。",
+      "lighting_ids": ["studio_side"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "minimal_room",
       "style_ids": [
+        "natural_snapshot",
         "minimal_studio",
         "clean_character_film"
       ],
@@ -185,8 +206,10 @@
         "standing_detail",
         "front_sleeve_display",
         "front_hem_display",
+        "front_hem_gather",
         "front_raised_arm",
         "front_waist_shift",
+        "front_behind_back_wrist_hold",
         "front_hand_near_face",
         "half_turn",
         "seated_composed",
@@ -198,6 +221,9 @@
         "quiet_low_gaze",
         "hands_gathered_at_sternum",
         "lean_forward_hands",
+        "front_lean_v_sign",
+        "kneeling_side_raised_arm",
+        "front_arms_raised_arch",
         "seated_knee_up",
         "side_edge_bend",
         "side_edge_hip_shift",
@@ -205,6 +231,7 @@
         "rear_hip_shift",
         "wall_lean_curve",
         "rear_wall_curve",
+        "wall_raised_elbow_lean",
         "over_shoulder",
         "back_to_camera"
       ],
@@ -228,9 +255,12 @@
         "客厅里"
       ],
       "prompt": "整洁温暖的客厅一角，浅色地毯和沙发作为简洁背景，不遮挡人物主体。",
-      "style_prompt": "暖色家用胶片快照，低饱和棕金色、柔和高光和可见颗粒，保留自然肤色，不做过度复古滤镜。",
+      "style_prompt": "客厅家具和地毯保留自然生活色彩，不抢人物主体。",
+      "lighting_ids": ["room_side_soft", "room_diffuse"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "domestic_snapshot",
       "style_ids": [
+        "natural_snapshot",
         "warm_daily_snapshot",
         "retro_ccd_static",
         "soft_creator_static"
@@ -239,14 +269,20 @@
         "standing_detail",
         "front_sleeve_display",
         "front_hem_display",
+        "front_hem_gather",
         "front_raised_arm",
         "front_waist_shift",
+        "front_behind_back_wrist_hold",
         "front_hand_near_face",
         "half_turn",
         "seated_composed",
         "kneeling_carpet",
+        "kneeling_back_support",
         "front_seated_lean",
         "low_kneel_open",
+        "kneeling_side_raised_arm",
+        "front_lean_v_sign",
+        "front_arms_raised_arch",
         "floor_sit_side",
         "seated_knee_up",
         "leaning_rest",
@@ -275,9 +311,12 @@
         "树下"
       ],
       "prompt": "安静整洁的庭院小径，少量绿植作为自然背景，人物仍是画面主体。",
-      "style_prompt": "自然电影静帧，树叶透光只在背景形成少量清楚的光斑；浅绿与灰白保持层次，明暗反差适中，人物面部、眼睛、发丝和服装纹理准确对焦，不做整体柔焦或褪色雾化。",
+      "style_prompt": "浅绿与灰白环境保留自然色彩区分，植物只作背景层次。",
+      "lighting_ids": ["outdoor_diffuse", "outdoor_slant"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "quiet_nature",
       "style_ids": [
+        "natural_snapshot",
         "soft_creator_static",
         "clean_character_film",
         "retro_ccd_static"
@@ -286,11 +325,15 @@
         "standing_detail",
         "front_sleeve_display",
         "front_hem_display",
+        "front_hem_gather",
         "front_raised_arm",
         "front_waist_shift",
         "front_hand_near_face",
         "half_turn",
         "one_knee_crouch",
+        "front_lean_v_sign",
+        "kneeling_side_raised_arm",
+        "front_arms_raised_arch",
         "reach_light",
         "over_shoulder",
         "back_to_camera"
@@ -314,9 +357,12 @@
         "竹林里"
       ],
       "prompt": "清晨的竹林石径，疏朗竹影和自然绿意形成纵深，光线清透，背景不出现其他人物。",
-      "style_prompt": "冷绿调旧电影静帧，竹影层次清楚、暗部有细颗粒，清冷但不过分压暗人物。",
+      "style_prompt": "竹叶冷绿与石径灰色形成清爽层次，保留服装本色。",
+      "lighting_ids": ["outdoor_diffuse"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "quiet_nature",
       "style_ids": [
+        "natural_snapshot",
         "cool_quiet_snapshot",
         "clean_character_film",
         "retro_ccd_static"
@@ -325,6 +371,9 @@
         "standing_detail",
         "half_turn",
         "one_knee_crouch",
+        "front_lean_v_sign",
+        "kneeling_side_raised_arm",
+        "front_arms_raised_arch",
         "reach_light",
         "over_shoulder",
         "back_to_camera"
@@ -350,9 +399,12 @@
         "樱花林"
       ],
       "prompt": "春日樱花步道，少量花瓣随风飘落，远处花树形成柔和纵深，画面清新自然。",
-      "style_prompt": "淡粉樱花与较深树干、石板步道形成清晰明暗层次，柔和胶片色彩与细颗粒；逆光花瓣可以轻微泛白，但人物白色服装保留边缘、褶皱和蓝色层次，不做整体雾白低对比，不遮挡人物五官。",
+      "style_prompt": "淡粉樱花、深色树干与石板步道保持自然色彩层次，白色服装保留本色。",
+      "lighting_ids": ["outdoor_diffuse", "outdoor_slant"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "quiet_nature",
       "style_ids": [
+        "natural_snapshot",
         "soft_creator_static",
         "warm_daily_snapshot",
         "retro_ccd_static"
@@ -360,6 +412,9 @@
       "pose_ids": [
         "standing_detail",
         "half_turn",
+        "front_lean_v_sign",
+        "kneeling_side_raised_arm",
+        "front_arms_raised_arch",
         "reach_light",
         "over_shoulder",
         "back_to_camera"
@@ -387,9 +442,12 @@
         "沙滩"
       ],
       "prompt": "开阔海边木栈道，远处海平线和轻柔浪花作为背景，带自然海风感，不出现游客或船只主体。",
-      "style_prompt": "冷蓝DV录像静帧，海天略微过曝、颗粒明显，低灰度柔和配色，人物边缘保持清晰。",
+      "style_prompt": "海天蓝色与木栈道自然区分，远处海面只作环境层次。",
+      "lighting_ids": ["coastal_daylight"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "quiet_nature",
       "style_ids": [
+        "natural_snapshot",
         "cool_quiet_snapshot",
         "retro_ccd_static",
         "clean_character_film"
@@ -423,9 +481,12 @@
         "屋顶夜景"
       ],
       "prompt": "日落时分的城市屋顶露台，远处楼群被暖色夕光勾勒，栏杆和天际线保持简洁。",
-      "style_prompt": "暖金色胶片快照，夕阳高光轻微泛白，低饱和、柔光晕和浅浅颗粒，避免橙色滤镜过重。",
+      "style_prompt": "日落楼群保持自然暖色，人物肤色与服装本色不被整体染橙。",
+      "lighting_ids": ["sunset_rim"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "urban_snapshot",
       "style_ids": [
+        "natural_snapshot",
         "warm_daily_snapshot",
         "retro_ccd_static",
         "clean_character_film"
@@ -433,6 +494,9 @@
       "pose_ids": [
         "standing_detail",
         "half_turn",
+        "front_lean_v_sign",
+        "kneeling_side_raised_arm",
+        "front_arms_raised_arch",
         "leaning_rest",
         "side_back_rail_lean",
         "side_edge_hip_shift",
@@ -462,9 +526,12 @@
         "古镇街道"
       ],
       "prompt": "安静的古街石板巷口，木窗、灰瓦和浅色墙面构成有层次的环境人像背景，不出现招牌文字或路人。",
-      "style_prompt": "褪色旅行胶片质感，灰蓝石板与旧木色形成冷暖对比，颗粒明显但人物和服饰纹理仍清楚。",
+      "style_prompt": "灰蓝石板与旧木色保持自然区分，古街背景有克制纵深。",
+      "lighting_ids": ["outdoor_diffuse", "outdoor_slant"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "traditional_lifestyle",
       "style_ids": [
+        "natural_snapshot",
         "retro_ccd_static",
         "clean_character_film",
         "cool_quiet_snapshot"
@@ -473,6 +540,9 @@
         "standing_detail",
         "half_turn",
         "one_knee_crouch",
+        "front_lean_v_sign",
+        "kneeling_side_raised_arm",
+        "front_arms_raised_arch",
         "leaning_rest",
         "wall_lean_curve",
         "rear_wall_curve",
@@ -504,9 +574,12 @@
         "霓虹雨夜"
       ],
       "prompt": "雨后的夜间街巷，地面映出克制的青蓝与玫红霓虹反光，背景虚化且无可读文字、车辆或路人。",
-      "style_prompt": "低照度VHS夜景质感，冷蓝与少量玫红色偏色、暗部录像颗粒和湿地反光，不叠加暖色日光效果。",
+      "style_prompt": "夜间街巷保留青蓝与少量玫红的环境色彩，背景不喧宾夺主。",
+      "lighting_ids": ["neon_ambient"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "night_simple",
       "style_ids": [
+        "natural_snapshot",
         "neon_night",
         "retro_ccd_static",
         "cool_quiet_snapshot"
@@ -538,9 +611,12 @@
         "木质书房"
       ],
       "prompt": "安静的木质阅览室，靠墙的整齐书架、阅读桌和木椅形成温暖纵深，书本不出现可辨识文字或其他人物。",
-      "style_prompt": "低饱和旧电影色调，深木色、柔和窗光与轻微胶片噪点，书架细节清楚但不抢人物主体。",
+      "style_prompt": "深木色书架保持自然材质与克制层次，不抢人物主体。",
+      "lighting_ids": ["room_side_soft", "room_diffuse"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "minimal_room",
       "style_ids": [
+        "natural_snapshot",
         "clean_character_film",
         "warm_daily_snapshot",
         "retro_ccd_static"
@@ -577,9 +653,12 @@
         "古典大厅"
       ],
       "prompt": "挑高的古典展厅，石柱、拱门与柔和天光形成庄重空间感，展品简洁且不出现文字或其他参观者。",
-      "style_prompt": "古典电影静帧，石材灰白与柔和冷光，低饱和、细颗粒和清晰明暗层次，不模拟油画笔触。",
+      "style_prompt": "石材灰白与古典建筑结构保持自然层次，环境质感克制。",
+      "lighting_ids": ["skylight_soft"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "editorial_dark",
       "style_ids": [
+        "natural_snapshot",
         "clean_character_film",
         "minimal_studio",
         "stage_capture"
@@ -588,6 +667,7 @@
         "standing_detail",
         "half_turn",
         "one_knee_crouch",
+        "kneeling_side_raised_arm",
         "leaning_rest",
         "over_shoulder",
         "back_to_camera"
@@ -612,9 +692,12 @@
         "餐厅窗边"
       ],
       "prompt": "有大窗和木质桌椅的安静咖啡馆角落，窗外光线柔和，桌面干净，不出现餐饮道具、文字或其他顾客。",
-      "style_prompt": "傻瓜相机胶片快照，暖窗光、轻微闪光灯高光和清晰颗粒，颜色自然不过度橙黄。",
+      "style_prompt": "木质桌椅和室内背景保留自然暖色，肤色不过度橙黄。",
+      "lighting_ids": ["window_lateral", "window_diffuse"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "seated_lifestyle",
       "style_ids": [
+        "natural_snapshot",
         "warm_daily_snapshot",
         "retro_ccd_static",
         "soft_creator_static"
@@ -623,6 +706,7 @@
         "standing_detail",
         "front_sleeve_display",
         "front_hem_display",
+        "front_hem_gather",
         "front_raised_arm",
         "front_waist_shift",
         "front_hand_near_face",
@@ -659,9 +743,12 @@
         "红灯笼街"
       ],
       "prompt": "夜色中的传统灯会长廊，暖色灯笼层层延伸形成纵深，灯面不含文字，背景不出现人群。",
-      "style_prompt": "旧DV夜间录像感，灯笼高光微微泛白、暗部有明显颗粒，红金色克制且不把人物染成纯红。",
+      "style_prompt": "灯会红金色保持克制，与夜色自然区分，服装保留自身色彩。",
+      "lighting_ids": ["lantern_warm"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "traditional_lifestyle",
       "style_ids": [
+        "natural_snapshot",
         "retro_ccd_static",
         "cool_quiet_snapshot",
         "stage_capture"
@@ -670,6 +757,7 @@
         "standing_detail",
         "front_sleeve_display",
         "front_hem_display",
+        "front_hem_gather",
         "front_raised_arm",
         "front_waist_shift",
         "front_hand_near_face",
@@ -698,9 +786,12 @@
         "台阶"
       ],
       "prompt": "宽阔整洁的石阶回廊，台阶线条形成明显纵深，侧面有柔和自然光，不出现栏杆杂物或其他人物。",
-      "style_prompt": "低饱和黑白胶片风格，石阶明暗几何清晰，轻颗粒和柔和反差，保留服装层次。",
+      "style_prompt": "石阶灰色与服装本色自然区分，保留回廊的几何纵深。",
+      "lighting_ids": ["outdoor_diffuse"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "minimal_room",
       "style_ids": [
+        "natural_snapshot",
         "clean_character_film",
         "retro_ccd_static",
         "minimal_studio"
@@ -733,9 +824,12 @@
         "花房"
       ],
       "prompt": "通透的玻璃花房，层次分明的绿植、玻璃顶棚和一张简洁长椅引入自然光，植物只作背景，不遮挡人物。",
-      "style_prompt": "柔和绿调梦核胶片，玻璃自然反光、浅绿色散射光和细颗粒，不使用浓雾或光斑遮住人物。",
+      "style_prompt": "花房绿植与玻璃结构保持自然层次，绿色环境不覆盖人物肤色。",
+      "lighting_ids": ["skylight_soft"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "quiet_nature",
       "style_ids": [
+        "natural_snapshot",
         "soft_creator_static",
         "dreamcore_soft",
         "clean_character_film"
@@ -769,9 +863,12 @@
         "雪景"
       ],
       "prompt": "雪后安静庭院，薄雪覆在石路和枝头，冷冽天光与少量暖色窗光形成清晰对比，背景无其他人物。",
-      "style_prompt": "冷蓝冬日DV静帧，雪地与深色檐廊、树影形成明暗对比；冷色环境保留黄绿服装和少量暖色窗光的色彩层次，明显细颗粒，雪面局部略微过曝但人物面部、发型和服装纹理清晰。",
+      "style_prompt": "白雪与深色檐廊自然区分，冬日冷色环境中保留服装本色。",
+      "lighting_ids": ["snow_daylight"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "quiet_nature",
       "style_ids": [
+        "natural_snapshot",
         "cool_quiet_snapshot",
         "retro_ccd_static",
         "clean_character_film"
@@ -805,9 +902,12 @@
         "墨花屏风"
       ],
       "prompt": "简洁的和风室内，木格门、榻榻米或素色屏风形成安静背景，点缀一幅水墨花枝装饰，不出现文字或额外人物。",
-      "style_prompt": "古早DV录像静帧，低灰度柔和配色与克制冷蓝色偏，明显但细腻的胶片颗粒；梦核抓拍的朦胧感仅由背景虚化、边缘柔光和轻微高光晕形成。人物面部保持正常曝光、不柔焦。",
+      "style_prompt": "木格、榻榻米与素色屏风保持安静自然的色彩层次，背景适度柔化。",
+      "lighting_ids": ["room_side_soft", "room_diffuse"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "traditional_lifestyle",
       "style_ids": [
+        "natural_snapshot",
         "retro_ccd_static",
         "cool_quiet_snapshot",
         "dreamcore_soft"
@@ -848,9 +948,12 @@
         "城市高处天台"
       ],
       "prompt": "城市高处的旧楼天台，远处密密层叠的老旧楼群清晰形成纵深，近处是朴素水泥栏杆，环境不出现路人或杂乱设备。",
-      "style_prompt": "强烈日光下的暖色低饱和胶片快照，高光轻微过曝，带柔光晕、明显胶片颗粒和边缘泛白；保留人物与服装细节。",
+      "style_prompt": "旧楼群与水泥栏杆保持自然暖灰层次，人物衣装有明确色彩区分。",
+      "lighting_ids": ["outdoor_slant"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "urban_snapshot",
       "style_ids": [
+        "natural_snapshot",
         "warm_daily_snapshot",
         "retro_ccd_static",
         "clean_character_film"
@@ -859,10 +962,14 @@
         "standing_detail",
         "front_sleeve_display",
         "front_hem_display",
+        "front_hem_gather",
         "front_raised_arm",
         "front_waist_shift",
         "front_hand_near_face",
         "half_turn",
+        "front_lean_v_sign",
+        "kneeling_side_raised_arm",
+        "front_arms_raised_arch",
         "leaning_rest",
         "side_profile",
         "side_back_rail_lean",
@@ -891,9 +998,12 @@
         "衣装工作室"
       ],
       "prompt": "安静的服装工作室一角，浅色墙面旁有木质衣架、少量布料、一把木质试衣凳和一盏暖色试衣灯，形成有层次但不拥挤的背景；不出现其他人物、文字、摄影设备或杂乱堆物。",
-      "style_prompt": "克制的时装编辑静帧，暖灰与低饱和色彩、柔和侧光和自然布料纹理，背景适度虚化以突出服装主体。",
+      "style_prompt": "暖灰墙面与少量布料形成自然背景，服装本色与材质层次明确。",
+      "lighting_ids": ["atelier_lamp"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "minimal_room",
       "style_ids": [
+        "natural_snapshot",
         "minimal_studio",
         "clean_character_film",
         "retro_ccd_static"
@@ -902,12 +1012,17 @@
         "standing_detail",
         "front_sleeve_display",
         "front_hem_display",
+        "front_hem_gather",
         "front_raised_arm",
         "front_waist_shift",
         "front_hand_near_face",
         "half_turn",
+        "front_lean_v_sign",
+        "kneeling_side_raised_arm",
+        "front_arms_raised_arch",
         "wall_lean_curve",
         "rear_wall_curve",
+        "wall_raised_elbow_lean",
         "side_edge_bend",
         "side_edge_hip_shift",
         "rear_edge_curve",
@@ -939,9 +1054,12 @@
         "木格内殿"
       ],
       "prompt": "安静的传统神社内殿，深色木格门、红漆柱和一两盏纸灯笼形成纵深，地面整洁并保留稳定墙面或门框支撑；不出现游客、文字、神像特写或额外道具。",
-      "style_prompt": "低饱和暖红与深木色的传统生活电影静帧，纸灯笼只提供柔和氛围光，人物与 COS 服装保持自然曝光和清晰轮廓。",
+      "style_prompt": "暖红与深木色保持传统室内的自然层次，人物衣装与环境有清楚区分。",
+      "lighting_ids": ["lantern_warm"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "traditional_lifestyle",
       "style_ids": [
+        "natural_snapshot",
         "retro_ccd_static",
         "cool_quiet_snapshot",
         "clean_character_film"
@@ -980,9 +1098,12 @@
         "剧院后台室内"
       ],
       "prompt": "老剧院后台的换装间，暗红幕布、木质门框、一把带靠背的化妆椅和一侧柔和化妆灯形成戏剧氛围；只保留少量衣架或梳妆台边缘，不出现镜面倒影、其他人物或摄影设备。",
-      "style_prompt": "暗酒红与暖白侧光的舞台静帧，轻微颗粒和柔和高光，服装层次与人物轮廓清楚，背景不过度锐化。",
+      "style_prompt": "暗酒红幕布与木质门框形成克制层次，服装保持自身材质与色彩。",
+      "lighting_ids": ["dressing_lamp"],
+      "style_weights": {"natural_snapshot": 5},
       "style_family": "editorial_dark",
       "style_ids": [
+        "natural_snapshot",
         "stage_capture",
         "clean_character_film",
         "minimal_studio"

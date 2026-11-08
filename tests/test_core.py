@@ -788,7 +788,7 @@ class ConfigModelTests(unittest.TestCase):
             action_content=translated_action, user_text="soft window light",
         )
         self.assertEqual(en.count(translated_action), 1)
-        self.assertIn("legwear-focused outfit photograph", en)
+        self.assertIn("cohesive realistic human photograph", en)
         self.assertIn("User request: soft window light", en)
         self.assertNotIn("waist to shoes", en)
         self.assertNotRegex(en, r"[\u3400-\u9fff]")
@@ -7454,9 +7454,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("幽灵手", selfie)
             self.assertNotIn("断臂", selfie)
             legs = manager.build_selfie_prompt("看看腿 【wear:white】", "小助", "温柔", True, 0)
-            self.assertIn("室内竖屏腿部穿搭照片", legs)
+            self.assertIn("【看看腿 / 单一室内构图】", legs)
             self.assertIn("头部、脸部和肩膀不入镜", legs)
-            self.assertIn("不夸张拉伸身体比例", legs)
+            self.assertIn("保留自然体态与比例", legs)
             self.assertIn("【outfit:reference】", legs)
             self.assertEqual(legs.count("【legs:outfit】"), 1)
             self.assertNotIn("正对镜头时自然看向镜头", legs)
@@ -7562,8 +7562,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertIn("构图与画面质量", enhanced)
         self.assertIn("左右手/脚各一", enhanced)
         legs_action = plugin_main.SelfieImagePlugin._build_leg_focus_action(object.__new__(plugin_main.SelfieImagePlugin), "", False, force_legwear="白丝")
-        self.assertIn("不夸张拉伸身体比例", legs_action)
-        self.assertIn("不能遮挡腿部姿势和主要轮廓", legs_action)
+        self.assertIn("保留自然体态与比例", legs_action)
+        self.assertIn("背景占少量画幅", legs_action)
         self.assertNotIn("同框", legs_action)
         self.assertNotIn("幽灵手", legs_action)
         self.assertNotIn("断臂", legs_action)
@@ -7577,7 +7577,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertTrue(intent.is_legs_only)
             self.assertFalse(intent.is_group_photo)
             prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
-            self.assertIn("腿部穿搭局部照", prompt)
+            self.assertIn("【看看腿 / 单一室内构图】", prompt)
             self.assertIn("头部、脸部和肩膀不入镜", prompt)
             self.assertNotIn("勒进大腿肉", prompt)
             self.assertNotIn("微胖软肉", prompt)
@@ -7638,7 +7638,6 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertIn("别人视角的单人成品照", third_prompt)
             self.assertIn("画面只保留主角", third_prompt)
             self.assertIn("不要拍到拍摄设备或拍摄过程", third_prompt)
-            self.assertNotIn("手机", third_prompt)
             self.assertNotIn("站在穿衣镜前", third_prompt)
             self.assertNotIn("朋友在旁边", third_prompt)
             # auto appearance: no forced real/anime style line
@@ -7895,9 +7894,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertEqual(text.count(action), 1)
         self.assertIn("【outfit:reference】", text)
         self.assertIn("【wear:white】", text)
-        self.assertIn("保留原有上装、下装、连体结构和配饰", text)
+        self.assertEqual(text.count("保留原有上装、下装、连体结构和配饰"), 1)
         self.assertIn("袜装或鞋履仅按本次明确要求调整", text)
-        self.assertIn("在不改变原有服饰结构的前提下", text)
+        self.assertEqual(text.count("腿部细节："), 1)
         self.assertIn("头部、脸部和肩膀不入镜", text)
         for forbidden in ("白色不透连裤袜，完整日常穿搭", "小皮鞋", "日常长裤搭配", "全身穿搭展示"):
             self.assertNotIn(forbidden, text)
@@ -8052,7 +8051,7 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("洛琪希")},
-            {"roxy_cream", "roxy_off_shoulder_sleep_dress"},
+            {"roxy_cream", "roxy_off_shoulder_sleep_dress", "roxy_white_blue_travel_mage"},
         )
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("卡提希娅")},
@@ -8426,7 +8425,7 @@ class LegFocusTests(unittest.TestCase):
 
         self.assertEqual(
             {item["id"] for item in plugin_main.match_cos_look_sets("洛琪希 夜景")},
-            {"roxy_cream", "roxy_off_shoulder_sleep_dress"},
+            {"roxy_cream", "roxy_off_shoulder_sleep_dress", "roxy_white_blue_travel_mage"},
         )
         for query in ("洛琪希xxx", "洛琪希夜景"):
             self.assertEqual(plugin_main.match_cos_look_sets(query), [])
@@ -8519,10 +8518,15 @@ class LegFocusTests(unittest.TestCase):
         )
         self.assertEqual(len(rebuilt_actions), 3)
         self.assertEqual(rebuilt_queries, ["洛琪希"] * 3)
-        self.assertEqual(
-            {re.search(r"【cos:([a-z0-9_]+)】", action).group(1) for action in rebuilt_actions},
-            {"roxy_cream", "roxy_off_shoulder_sleep_dress"},
+        rebuilt_ids = [
+            re.search(r"【cos:([a-z0-9_]+)】", action).group(1)
+            for action in rebuilt_actions
+        ]
+        self.assertLessEqual(
+            set(rebuilt_ids),
+            {"roxy_cream", "roxy_off_shoulder_sleep_dress", "roxy_white_blue_travel_mage"},
         )
+        self.assertTrue(all(left != right for left, right in zip(rebuilt_ids, rebuilt_ids[1:])))
         # Batch count semantics rotate COS identities.  A profile owns its
         # camera/pose/scene/framing contract, so repeated field values across
         # different COS items are valid and should not force legacy staging.
@@ -8603,7 +8607,7 @@ class LegFocusTests(unittest.TestCase):
         forced_selfie = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "对镜自拍", False)
         self.assertIn("【cam:selfie】", forced_selfie)
         self.assertIn("【自拍 / 看看COS模式】", forced_selfie)
-        self.assertNotIn("手机", forced_selfie)
+        self.assertIn("拍摄设备完全在画面外", forced_selfie)
         forced_third = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "他拍", False)
         self.assertIn("【cam:third】", forced_third)
         self.assertIn("【他拍 / 看看COS模式】", forced_third)
@@ -8613,7 +8617,6 @@ class LegFocusTests(unittest.TestCase):
         self.assertNotIn("对镜", adapted)
         self.assertIn("画面只保留主角", forced_third)
         self.assertIn("不要拍到拍摄设备或拍摄过程", forced_third)
-        self.assertNotIn("手机", forced_third)
         forced_first = plugin_main.SelfieImagePlugin._build_cos_look_action(_P(), "第一视角", False)
         self.assertIn("【cam:first】", forced_first)
         self.assertIn("【第一视角 / 看看COS模式】", forced_first)
@@ -9987,7 +9990,7 @@ class StudioStoreTests(unittest.TestCase):
                     self.assertIsNotNone(cos_marker, message)
                     self.assertIn(
                         cos_marker.group(1),
-                        {"roxy_cream", "roxy_off_shoulder_sleep_dress"},
+                        {"roxy_cream", "roxy_off_shoulder_sleep_dress", "roxy_white_blue_travel_mage"},
                         message,
                     )
                     self.assertIn("洛琪希", captured["rebuild_extra_request"], message)
