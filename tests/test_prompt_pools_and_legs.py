@@ -194,7 +194,10 @@ class PromptPoolJsonTests(unittest.TestCase):
         for pose in LEGFOCUS_POSE_POOL:
             self.assertNotIn("camera_views", pose)
             self.assertNotIn("scene_ids", pose)
-            self.assertGreater(len(pose["view_ids"]), 1)
+            if pose["id"] in {"backed_staggered_legs", "armrest_side_knees", "edge_knees_together_ankles_apart"}:
+                self.assertEqual(len(pose["view_ids"]), 1)
+            else:
+                self.assertGreater(len(pose["view_ids"]), 1)
             self.assertGreater(len({scene["id"] for scene, _, _ in compatible_leg_compositions(pose)}), 1)
             for view_id in pose["view_ids"]:
                 camera = LEGFOCUS_VIEW_BY_ID[view_id]["camera"]

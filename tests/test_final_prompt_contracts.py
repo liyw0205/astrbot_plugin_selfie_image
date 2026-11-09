@@ -18,6 +18,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
 from astrbot_plugin_selfie_image.cos.leg_focus import (
     LEGFOCUS_HOSIERY_STYLES,
     LEGFOCUS_OUTFIT_POOL,
+    LEGFOCUS_ANATOMY_RULE,
     LEGFOCUS_FRAMING,
     LEGFOCUS_CAMERA_FRAMINGS,
     LEGFOCUS_REFERENCE_RULES,
@@ -357,8 +358,9 @@ def test_every_leg_pose_view_reaches_final_request_without_duplicate_instruction
         assert f"【leg_scene:{scene['id']}】" in prompt
         assert f"【leg_support:{support_id}】" in prompt
         assert prompt.count("左右均指人物自身") == 1
-        assert prompt.count("双腿各自沿髋、膝、踝连续连接到同侧脚") == 1
-        assert "下半身整体构图" in prompt
+        assert prompt.count(LEGFOCUS_ANATOMY_RULE) == 1
+        assert "实际可见部位为主" in prompt
+        assert "可见脚与同侧小腿自然衔接" in prompt
         assert not re.search(r"腿部近照|取至小腿或脚端|脚端随(?:画幅|构图)|取至屈膝与部分小腿", prompt)
         for selected in (
             action, LEGFOCUS_FRAMING, LEGFOCUS_CAMERA_FRAMINGS[view["camera"]],
@@ -457,14 +459,16 @@ def test_crossed_leg_final_requests_keep_each_foot_with_its_own_leg(tmp_path, po
 @pytest.mark.parametrize("external_reference", [False, True])
 def test_dangling_foot_variants_keep_their_pose_camera_and_clothing(tmp_path, query, pose_id, external_reference):
     plugin = plugin_for_prompts(tmp_path)
+    view_id = "third_front_low" if pose_id == "edge_knees_together_ankles_apart" else "third_oblique_low"
     action = build_leg_focus_action(
-        f"第三人称 床沿 {query}", has_refs=external_reference, force_view="third_oblique_low",
+        f"第三人称 床沿 {query}", has_refs=external_reference, force_view=view_id,
     )
     refs = [ImageReference(data=b"external", mime_type="image/png")] if external_reference else []
     prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, refs))
     assert f"【pose:{pose_id}】" in prompt
     assert "【leg_support:raised_edge】" in prompt
     assert "【cam:third】" in prompt
+    assert f"【leg_view:{view_id}】" in prompt
     assert prompt.count(LEGFOCUS_POSE_BY_ID[pose_id]["prompt"]) == 1
     assert "双脚离地" in prompt
     assert "脚掌落地" not in prompt
@@ -682,10 +686,49 @@ def test_wider_first_person_framing_keeps_the_subjects_actual_visible_range(tmp_
     prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
     assert prompt.count("第一人称主观视角") == 1
     assert "未放大的手机常规视野" in prompt
-    assert "身后和被腿遮住的部分保持真实遮挡" in prompt
+    assert "脚端依实际视线与遮挡自然入镜" in prompt
     assert "顺自身腿线朝远端脚部展开" in prompt
     assert "腰线至足部照片" not in prompt
     assert "双脚完整入镜" not in prompt
+
+
+def test_suspended_knees_use_front_view_and_avoid_random_stirrup_socks():
+    from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_HOSIERY_STYLES
+
+    pose_id = "edge_knees_together_ankles_apart"
+    pose = LEGFOCUS_POSE_BY_ID[pose_id]
+    assert pose["view_ids"] == ["third_front_low"]
+    assert "stirrup" in pose["disallowed_hosiery_kinds"]
+
+    action = build_leg_focus_action(
+        "黑丝", force_pose=pose_id, force_view="third_front_low",
+    )
+    assert "彼此分开，不交叉、不扭转" in action
+    assert not any(
+        style["kind"] == "stirrup" and style["prompt"] in action
+        for style in LEGFOCUS_HOSIERY_STYLES
+    )
+    with pytest.raises(LegFocusDataError, match="袜型不兼容"):
+        build_leg_focus_action(
+            "白色踩脚袜", force_pose=pose_id, force_view="third_front_low",
+        )
+
+
+@pytest.mark.parametrize("pose_id", ["backed_staggered_legs", "armrest_side_knees"])
+def test_edge_and_armrest_leg_poses_avoid_side_camera_and_stirrup(pose_id):
+    from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_HOSIERY_STYLES
+
+    pose = LEGFOCUS_POSE_BY_ID[pose_id]
+    assert pose["view_ids"] == ["third_oblique_low"]
+    assert "stirrup" in pose["disallowed_hosiery_kinds"]
+    action = build_leg_focus_action(
+        "黑丝", force_pose=pose_id, force_view="third_oblique_low",
+    )
+    assert "【leg_view:third_oblique_low】" in action
+    assert not any(
+        style["kind"] == "stirrup" and style["prompt"] in action
+        for style in LEGFOCUS_HOSIERY_STYLES
+    )
 
 
 @pytest.mark.parametrize("query,expected_aspect", [("", "9:16"), ("方图", "1:1"), ("--ar 3:4", "3:4")])

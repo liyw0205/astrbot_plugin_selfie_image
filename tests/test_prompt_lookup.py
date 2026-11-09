@@ -304,8 +304,11 @@ def test_reverse_codes_are_separate_persistent_and_reusable(plugin):
     assert plugin._reverse_image_prompt_with_llm.await_count == 1
 
 
-def test_send_awaits_current_image_commit_and_records_message_id(plugin):
+@pytest.mark.parametrize("show_generation_info", [False, True])
+@pytest.mark.parametrize("source", ["command-draw", "llm-generate-image", "llm-generate-selfie"])
+def test_send_awaits_current_image_commit_and_records_message_id(plugin, show_generation_info, source):
     event = Event()
+    plugin.config.image_show_generation_info = show_generation_info
     data = sample_image()
     path = Path(plugin.generated_dir) / "delayed.png"
     path.write_bytes(data)
@@ -321,7 +324,11 @@ def test_send_awaits_current_image_commit_and_records_message_id(plugin):
     plugin._commit_generation_records = delayed
 
     async def run():
-        plugin._record_task({"success": True, "task_id": "delayed", "generated_image_paths": [path.name]})
+        plugin._record_task({
+            "success": True, "task_id": "delayed", "generated_image_paths": [path.name],
+            "source": source, "user_id": event.user_id, "group_id": event.group_id,
+            "lookup_scope": event.unified_msg_origin,
+        })
         assert await asyncio.to_thread(entered.wait, 3)
         await plugin._wait_for_record_commits("delayed", timeout=0.01)
         assert all(not task.cancelled() for task in plugin._pending_record_commits["delayed"])
@@ -332,8 +339,15 @@ def test_send_awaits_current_image_commit_and_records_message_id(plugin):
         assert await sending == 1
 
     asyncio.run(run())
-    assert plugin._records[0]["image_code"] in event.sent[0][-1]
+    record = plugin._records[0]
+    expected_message = [("image", str(path))]
+    if show_generation_info:
+        expected_message.append("\n生图编号：" + record["image_code"])
+    assert event.sent == [expected_message]
     assert plugin._records[0]["delivery_messages"][0]["message_id"] == "701"
+    matched, method, candidates = plugin._lookup_prompt_image(event, [], ["701"])
+    assert matched["image_code"] == record["image_code"]
+    assert method == "引用消息" and not candidates
     assert not plugin._pending_image_record_commits
 
 

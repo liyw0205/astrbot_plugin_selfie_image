@@ -381,7 +381,11 @@ class ReferenceMediaMixin:
                 logger.warning("[SelfieImage] image code lookup failed: %s", redact_sensitive_text(str(exc)))
             try:
                 result = event.chain_result([self._create_image_component(file_path)])
-                if record and record.get("image_code"):
+                if (
+                    record
+                    and record.get("image_code")
+                    and getattr(getattr(self, "config", None), "image_show_generation_info", False)
+                ):
                     result.message("\n生图编号：" + record["image_code"])
                 receipt = await event.send(result)
             except Exception as exc:
