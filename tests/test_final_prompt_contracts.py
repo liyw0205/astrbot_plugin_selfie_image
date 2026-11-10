@@ -18,7 +18,9 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
 from astrbot_plugin_selfie_image.cos.leg_focus import (
     LEGFOCUS_HOSIERY_STYLES,
     LEGFOCUS_OUTFIT_POOL,
+    LEGFOCUS_POOL_REFERENCE_PROMPTS,
     LEGFOCUS_ANATOMY_RULE,
+    LEGFOCUS_APPEARANCE_PROMPTS,
     LEGFOCUS_FRAMING,
     LEGFOCUS_CAMERA_FRAMINGS,
     LEGFOCUS_REFERENCE_RULES,
@@ -50,9 +52,11 @@ from astrbot_plugin_selfie_image.prompts.selfie_actions import (
 
 
 COMPLEX_THIRD_POSES = {
-    "supported_bent_knees", "side_folded_legs", "side_seated_front_support",
-    "ground_supported_crossed_shins", "kneeling_back_support",
+    "kneeling_upright",
+    "bed_supine_knees_together",
 }
+
+DIRECT_SELF_SEATED_POSES = {"seated_thigh_gentle_pinch", "seated_self_knees_offset"}
 
 
 def plugin_for_prompts(tmp_path, english=False):
@@ -211,7 +215,7 @@ def test_cos_hair_rules_cover_costumes_and_reference_sources_in_final_request(
 @pytest.mark.parametrize("query", [
     "不要第三人称，第一人称", "非自拍", "notselfie", "不要沙发",
     "不要脚踝交叠", "不要袜子", "不穿鞋和袜子", "不要黑丝", "白色短袜", "白色堆堆袜",
-    "双手撑床", "单手撑地", "第三人称 低机位平拍", "第三人称 斜侧拍",
+    "双手撑床", "单手撑地", "第三人称 低机位仰拍", "第三人称 斜侧拍",
     "晒腿", "主要看腿形", "看腿形",
 ])
 def test_leg_constraints_survive_final_persona_and_reference_selection(tmp_path, query):
@@ -259,6 +263,103 @@ def test_leg_reference_detail_override_does_not_also_preserve_old_socks(tmp_path
     assert prompt.count(query) >= 1
 
 
+@pytest.mark.parametrize("english", [False, True])
+def test_random_leg_outfit_replaces_reference_clothing_but_reference_outfit_does_not(
+    tmp_path, english,
+):
+    outfit = next(item for item in LEGFOCUS_OUTFIT_POOL if item["id"] == "lace_blouse_skirt")
+    plugin = plugin_for_prompts(tmp_path, english)
+    random_action = build_leg_focus_action(has_refs=False, force_outfit=outfit["id"])
+    assert f"【outfit:{outfit['id']}】" in random_action
+
+    random_prompt, refs, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(
+        None, random_action, []
+    ))
+    assert refs[0].data == b"identity"
+    assert outfit["prompt"] in random_prompt
+    assert LEGFOCUS_POOL_REFERENCE_PROMPTS["en" if english else "zh"] in random_prompt
+
+    reference_action = build_leg_focus_action(has_refs=True)
+    assert "【outfit:reference】" in reference_action
+    reference_prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(
+        None, reference_action, []
+    ))
+    assert "保留原有上装、下装、连体结构、袜鞋与配饰。" in reference_prompt
+    assert LEGFOCUS_POOL_REFERENCE_PROMPTS["zh"] not in reference_prompt
+
+
+@pytest.mark.parametrize("english", [False, True])
+@pytest.mark.parametrize("pose_id,outfit_id,scene_id,support_id", [
+    ("edge_single_foot_flex", "blouse_fitted_mini", "bed_edge", "raised_edge"),
+    ("seated_knees_offset", "tweed_short_skirt_set", "gaming_chair", "seat_edge"),
+])
+def test_leg_skirt_camera_and_coverage_survive_final_prompt_assembly(
+    tmp_path, english, pose_id, outfit_id, scene_id, support_id,
+):
+    from astrbot_plugin_selfie_image.cos.leg_focus import (
+        LEGFOCUS_OUTFIT_CAPTURE_PROFILES, get_leg_focus_outfit, has_leg_focus_contract,
+    )
+
+    outfit = get_leg_focus_outfit(outfit_id)
+    assert outfit["capture_profile"] == "skirt"
+    action = build_leg_focus_action(
+        force_pose=pose_id, force_outfit=outfit_id, preferred_scene=scene_id,
+    )
+    plugin = plugin_for_prompts(tmp_path, english)
+    prompt, refs, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    view_id = re.search(r"【leg_view:([a-z_]+)】", prompt).group(1)
+    view = LEGFOCUS_VIEW_BY_ID[view_id]
+    assert view["camera"] == "third"
+    assert view["direction"] in {"oblique", "side"}
+    assert view["elevation"] == "up"
+    assert f"【leg_scene:{scene_id}】" in prompt
+    assert f"【leg_support:{support_id}】" in prompt
+    assert f"【outfit:{outfit_id}】" in prompt
+    assert has_leg_focus_contract(prompt)
+    assert refs[0].data == b"identity"
+    assert prompt.count(outfit["prompt"]) == 1
+    assert prompt.count(LEGFOCUS_OUTFIT_CAPTURE_PROFILES["skirt"]["coverage_prompt"]) == 1
+    assert prompt.count(LEGFOCUS_POSE_BY_ID[pose_id]["prompt"]) == 1
+    assert prompt.count(view["prompt"]) == 1
+    assert sum(item["prompt"] in prompt for item in LEGFOCUS_OUTFIT_POOL) == 1
+    assert LEGFOCUS_VIEW_BY_ID["third_front_low"]["prompt"] not in prompt
+    assert "俯拍" not in prompt
+    for language in ("zh", "en"):
+        builtin = build_selfie_builtin_prompt(action, language=language, has_reference_image=True)
+        assert builtin.count(outfit["prompt"]) == 1
+        assert builtin.count(view["prompt"]) == 1
+        assert builtin.count(LEGFOCUS_OUTFIT_CAPTURE_PROFILES["skirt"]["coverage_prompt"]) == 1
+
+
+@pytest.mark.parametrize("english", [False, True])
+def test_leg_legacy_front_skirt_retry_preserves_clothes_and_changes_camera(tmp_path, english):
+    from astrbot_plugin_selfie_image.cos.leg_focus import (
+        LEGFOCUS_OUTFIT_CAPTURE_PROFILES, get_leg_focus_outfit, has_leg_focus_contract,
+    )
+
+    outfit_id = "blouse_fitted_mini"
+    outfit = get_leg_focus_outfit(outfit_id)
+    legacy = (
+        LEGFOCUS_VIEW_BY_ID["third_front_low"]["prompt"] + outfit["prompt"]
+        + " 【legs:outfit】 【frame:leg_detail】 【pose:edge_single_foot_flex】"
+        " 【leg_view:third_front_low】 【leg_scene:bed_edge】 【leg_support:raised_edge】"
+        f" 【cam:third】 【wear:white】 【outfit:{outfit_id}】"
+    )
+    assert not has_leg_focus_contract(legacy)
+    plugin = plugin_for_prompts(tmp_path, english)
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, legacy, []))
+    assert has_leg_focus_contract(prompt)
+    assert "【pose:edge_single_foot_flex】" in prompt
+    assert "【leg_scene:bed_edge】" in prompt
+    assert "【outfit:blouse_fitted_mini】" in prompt
+    assert "【leg_view:third_oblique_low】" in prompt
+    assert "【wear:white】" in prompt
+    assert LEGFOCUS_VIEW_BY_ID["third_front_low"]["prompt"] not in prompt
+    assert prompt.count(outfit["prompt"]) == 1
+    assert prompt.count(LEGFOCUS_OUTFIT_CAPTURE_PROFILES["skirt"]["coverage_prompt"]) == 1
+    assert prompt.count(LEGFOCUS_FRAMING) == 1
+
+
 @pytest.mark.parametrize("query", ["第三人称 第一人称", "侧拍 正前方", "第一人称 全身"])
 def test_incompatible_leg_requests_are_rejected_before_prompt_generation(query):
     with pytest.raises(LegFocusDataError):
@@ -269,24 +370,18 @@ def test_incompatible_leg_requests_are_rejected_before_prompt_generation(query):
 @pytest.mark.parametrize("english,translation_applied", [(False, False), (True, False), (True, True)])
 @pytest.mark.parametrize("pose_id,view_id", [
     ("edge_knees_together_dangle", "third_front_low"),
-    ("edge_parallel_forward", "third_front_low"),
-    ("seated_forward_leg", "self_forward_down"),
-    ("edge_knees_together_ankles_apart", "third_front_low"),
-    ("edge_single_foot_flex", "third_oblique_low"),
-    ("edge_both_feet_flex", "third_front_low"),
-    ("edge_feet_overlap", "third_oblique_low"),
-    ("surface_extended_foot_flex", "self_left_down"),
-    ("surface_parallel_feet_overlap", "self_steep_down"),
-    ("reclined_offset_legs", "self_forward_down"),
-    ("supported_straight_legs", "self_forward_down"),
-    ("supported_straight_legs", "third_surface_side_low"),
-    ("seated_knees_together", "third_oblique_low"),
     ("edge_knees_together_dangle", "third_side_low"),
-    ("one_knee_side_support", "self_right_down"),
-    ("supine_offset_legs", "self_reclined_forward"),
-    ("side_lying_offset_legs", "self_reclined_left"),
+    ("edge_knees_together_ankles_apart", "third_front_low"),
+    ("edge_ankles_apart_both_flex", "third_oblique_low"),
     ("kneeling_sit_back", "self_forward_down"),
+    ("kneeling_upright", "self_steep_down"),
     ("kneeling_upright", "third_oblique_low"),
+    ("kneeling_sit_back", "self_mirror_front_down"),
+    ("kneeling_upright", "self_mirror_left_down"),
+    ("seated_thigh_gentle_pinch", "self_forward_down"),
+    ("seated_self_knees_offset", "self_right_down"),
+    ("kneeling_relaxed_apart", "third_kneeling_oblique_down"),
+    ("chair_thigh_cross_slant", "third_oblique_low"),
 ])
 def test_reference_leg_silhouettes_keep_their_camera_specific_crop_in_final_request(
     tmp_path, external_reference, english, translation_applied, pose_id, view_id,
@@ -303,22 +398,30 @@ def test_reference_leg_silhouettes_keep_their_camera_specific_crop_in_final_requ
     prompt, selected_refs, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, refs))
     pose = LEGFOCUS_POSE_BY_ID[pose_id]
     camera = LEGFOCUS_VIEW_BY_ID[view_id]["camera"]
+    framing_key = "mirror" if LEGFOCUS_VIEW_BY_ID[view_id].get("capture_mode") == "mirror" else camera
     assert prompt.count(pose["prompt"]) == 1
     assert prompt.count(LEGFOCUS_FRAMING) == 1
     assert prompt.count(LEGFOCUS_SCENE_RULE) == 1
-    assert prompt.count(pose["crop_prompts"][camera]) == 1
-    assert prompt.count(LEGFOCUS_CAMERA_FRAMINGS[camera]) == 1
+    assert prompt.count(pose["crop_prompts"][framing_key]) == 1
+    assert prompt.count(LEGFOCUS_CAMERA_FRAMINGS[framing_key]) == 1
     assert sum(prompt.count(rule) for rule in LEGFOCUS_REFERENCE_RULES.values()) == 1
     assert "严格遵循以上已锁定的看看腿动作合同" not in prompt
+    if pose_id in {"edge_knees_together_dangle", "edge_knees_together_ankles_apart", "edge_ankles_apart_both_flex", "chair_thigh_cross_slant", "kneeling_upright"} and camera == "third":
+        assert camera == "third"
+        assert "第一人称" not in prompt
+        assert "俯拍" not in prompt
+        assert "仰拍" in prompt
     for other_camera, crop in pose["crop_prompts"].items():
-        if other_camera != camera:
+        if other_camera != framing_key:
             assert crop not in prompt
     if camera == "selfie":
         assert "第一人称腰线至足部照片" not in prompt
         assert "从胸下或腰线附近裁" not in prompt
+        assert prompt.count("上缘裁过肩部") == 1
+        assert "胸部可随姿势自然保留" in prompt
     assert "脚端四周留出少量余量" not in prompt
     assert "腰头至双脚完整" not in prompt
-    if "dangle" in pose_id or pose_id in {"edge_one_leg_raised", "edge_parallel_forward"}:
+    if pose_id.startswith("edge_"):
         assert "【leg_support:raised_edge】" in prompt
         assert "双脚落在地面" not in prompt
         assert "不贴近脚端" not in prompt
@@ -349,9 +452,13 @@ def test_every_leg_pose_view_reaches_final_request_without_duplicate_instruction
             assert view["elevation"] in {"down", "level"}
             assert "人物外部" not in prompt
         if support_id in {"seat_edge", "raised_edge", "chair_seat", "armrest", "backrest"}:
-            assert view["camera"] == "third", (pose_id, view_id)
-            assert view["elevation"] == "up", (pose_id, view_id)
-            assert "仰拍" in view["prompt"]
+            if pose_id in DIRECT_SELF_SEATED_POSES:
+                assert view["camera"] == "selfie", (pose_id, view_id)
+                assert view["elevation"] == "down", (pose_id, view_id)
+            else:
+                assert view["camera"] == "third", (pose_id, view_id)
+                assert view["elevation"] == "up", (pose_id, view_id)
+                assert "仰拍" in view["prompt"]
         if support_id in {"ground_surface", "raised_soft_surface", "reclined_surface", "lying_surface"}:
             if pose_id not in COMPLEX_THIRD_POSES and pose_id != "supported_straight_legs":
                 assert view["camera"] == "selfie", (pose_id, support_id, view_id)
@@ -362,71 +469,152 @@ def test_every_leg_pose_view_reaches_final_request_without_duplicate_instruction
         assert "实际可见部位为主" in prompt
         assert "可见脚与同侧小腿自然衔接" in prompt
         assert not re.search(r"腿部近照|取至小腿或脚端|脚端随(?:画幅|构图)|取至屈膝与部分小腿", prompt)
+        framing_key = "mirror" if view.get("capture_mode") == "mirror" else view["camera"]
         for selected in (
-            action, LEGFOCUS_FRAMING, LEGFOCUS_CAMERA_FRAMINGS[view["camera"]],
-            pose["crop_prompts"][view["camera"]], view["prompt"], pose["prompt"],
+            action, LEGFOCUS_FRAMING, LEGFOCUS_CAMERA_FRAMINGS[framing_key],
+            pose["crop_prompts"][framing_key], view["prompt"], pose["prompt"],
             LEGFOCUS_SCENE_RULE, scene["prompt"], scene["supports"][support_id],
         ):
             assert prompt.count(selected) == 1, (pose_id, view_id, selected)
         sentences = [part.strip() for part in re.split(r"[。\n]", prompt) if part.strip()]
         duplicates = [part for part, count in Counter(sentences).items() if count > 1]
         assert not duplicates, (pose_id, view_id, duplicates)
+        assert prompt.count("上缘裁过肩部") == 1
+        assert "胸部可随姿势自然保留" in prompt
+        assert "胸部留在画外" not in prompt
+        assert "从胸下或腰线附近裁" not in prompt
+        if pose_id == "side_seated_front_support":
+            assert "双手与前臂保持连续" in prompt
+            assert "不因裁切而截断手腕" in prompt
+        if pose_id == "side_folded_legs":
+            assert "前后腿自然错层但不堆叠" in prompt
+            assert "不把两条腿融合成一团" in prompt
+        if pose_id == "one_knee_side_support":
+            assert "相机退开保持普通焦段" in prompt
+            assert "近端腿不占满画面" in prompt
+        if pose_id == "side_lying_offset_legs":
+            assert "近侧大腿和膝盖不贴近镜头" in prompt
+            assert "避免夸张近大远小" in prompt
         assert "约与坐姿膝部同高" not in prompt
         assert "腰头至双脚完整" not in prompt
         assert "第一人称腰线至" not in prompt
 
 
 @pytest.mark.parametrize("pose_id", [
-    "seated_diagonal_legs", "armrest_offset_legs", "seated_forward_leg",
-    "seated_crossed_knee", "one_knee_side_support", "seated_ankle_cross",
-    "surface_extended_foot_flex", "surface_parallel_feet_overlap",
+    "edge_ankles_apart_both_flex", "chair_thigh_cross_slant",
+    "edge_single_foot_flex", "edge_knees_together_slant", "seated_knees_offset",
 ])
-def test_flat_leg_actions_use_self_view_and_keep_both_legs_on_a_single_surface(tmp_path, pose_id):
-    plugin = plugin_for_prompts(tmp_path)
-    for scene_query, scene_ids, support_id, view_id in (
-        ("床上", {"bed_surface"}, "raised_soft_surface", "self_forward_down"),
-        ("地毯", {"bedroom_rug", "living_room_rug"}, "ground_surface", "self_left_down"),
-        ("沙发", {"sofa"}, "raised_soft_surface", "self_right_down"),
-    ):
-        action = build_leg_focus_action(
-            f"第一人称 {scene_query} 俯拍", has_refs=True, force_pose=pose_id, force_view=view_id,
-        )
-        prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(
-            None, action, [ImageReference(data=b"external", mime_type="image/png")]
-        ))
-        scene_id = re.search(r"【leg_scene:([a-z_]+)】", prompt).group(1)
-        assert scene_id in scene_ids
-        assert f"【leg_support:{support_id}】" in prompt
-        assert prompt.count(LEGFOCUS_POSE_BY_ID[pose_id]["prompt"]) == 1
-        support_prompt = LEGFOCUS_SCENE_BY_ID[scene_id]["supports"][support_id]
-        if support_id == "ground_surface":
-            assert "同一地面" in support_prompt
-            assert "承托臀部与脚部" in support_prompt
-        else:
-            assert "臀部与双腿" in support_prompt
-            assert re.search(r"不越过(?:床沿|座沿)悬垂", support_prompt)
-        assert "脚掌落地" not in prompt
-        assert "脚掌稳放地面" not in prompt
-        assert "越过座沿自然垂下" not in prompt
-        assert "【outfit:reference】" in prompt
-        assert "【cam:selfie】" in prompt
-        assert "第三人称" not in prompt
+def test_supported_third_person_poses_use_low_views_only(pose_id):
+    pose = LEGFOCUS_POSE_BY_ID[pose_id]
+    combinations = compatible_leg_compositions(pose)
+    assert combinations
+    assert all(
+        view["camera"] == "third"
+        and view["elevation"] == "up"
+        and view["direction"] in {"front", "oblique", "side"}
+        for _, _, view in combinations
+    )
+    with pytest.raises(LegFocusDataError, match="不兼容"):
+        build_leg_focus_action(force_pose=pose_id, force_camera="selfie")
+
+
+@pytest.mark.parametrize("pose_id,scenes,supports,camera", [
+    ("edge_single_foot_flex", {"bed_edge", "bedroom_bench", "gaming_chair", "desk_chair", "indoor_cabinet"}, {"raised_edge"}, "third"),
+    ("edge_knees_together_slant", {"bed_edge", "bedroom_bench", "gaming_chair", "desk_chair", "indoor_cabinet"}, {"raised_edge"}, "third"),
+    ("seated_knees_offset", {"bed_edge", "bedroom_bench", "sofa", "gaming_chair", "desk_chair", "living_room_chair", "indoor_desk", "indoor_cabinet"}, {"seat_edge", "chair_seat"}, "third"),
+    ("reclined_same_side_knees", {"bed_surface", "sofa", "floor_window", "bedroom_chaise"}, {"reclined_surface"}, "selfie"),
+    ("standing_weight_shift", {"indoor_desk", "indoor_cabinet"}, {"standing_edge"}, "third"),
+])
+def test_added_leg_poses_keep_their_required_support_and_camera(pose_id, scenes, supports, camera):
+    pose = LEGFOCUS_POSE_BY_ID[pose_id]
+    combinations = compatible_leg_compositions(pose)
+    assert {scene["id"] for scene, _, _ in combinations} == scenes
+    assert {support for _, support, _ in combinations} <= supports
+    assert {view["camera"] for _, _, view in combinations} == {camera}
+    if camera == "third":
+        assert all(view["elevation"] == "up" for _, _, view in combinations)
+    else:
+        assert {view["id"] for _, _, view in combinations} == {"self_left_down", "self_right_down"}
+    for query in ("卧室地毯", "第三人称 俯拍", "落地镜"):
         with pytest.raises(LegFocusDataError, match="不兼容"):
-            build_leg_focus_action(f"第三人称 {scene_query}", force_pose=pose_id)
-    for scene_query in ("床沿", "电竞椅", "书桌椅", "卧室软凳", "客厅单椅"):
-        for angle in ("", "仰拍", "俯拍", "侧拍", "平拍"):
-            with pytest.raises(LegFocusDataError, match="不兼容"):
-                build_leg_focus_action(f"第一人称 {scene_query} {angle}", force_pose=pose_id)
+            build_leg_focus_action(query, force_pose=pose_id)
+
+
+@pytest.mark.parametrize("appearance_type", ["auto", "real", "anime"])
+@pytest.mark.parametrize("english,translation_applied", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("external_reference", [False, True])
+def test_leg_appearance_details_reach_the_final_request_once(
+    tmp_path, appearance_type, english, translation_applied, external_reference,
+):
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin.persona.set_appearance_type(appearance_type)
+    if translation_applied:
+        plugin._translate_prompt_to_english = AsyncMock(
+            side_effect=lambda text, **_kw: (text, {"applied": True})
+        )
+    action = build_leg_focus_action(force_pose="reclined_same_side_knees", has_refs=external_reference)
+    refs = [ImageReference(data=b"external", mime_type="image/png")] if external_reference else []
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, refs))
+    language = "en" if english else "zh"
+    appearance = LEGFOCUS_APPEARANCE_PROMPTS[appearance_type][language]
+    assert prompt.count(appearance) == 1
+    assert prompt.count(action) == 1
+    assert "【cam:selfie】" in prompt
+    assert "第三人称" not in prompt
+    for other_type, translations in LEGFOCUS_APPEARANCE_PROMPTS.items():
+        for other_language, line in translations.items():
+            if (other_type, other_language) != (appearance_type, language):
+                assert line not in prompt
+
+
+@pytest.mark.parametrize("appearance_type", ["auto", "real", "anime"])
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_leg_builtin_templates_append_appearance_before_return_without_repeating_it(appearance_type, language):
+    action = build_leg_focus_action(force_pose="edge_single_foot_flex", has_refs=True)
+    kwargs = dict(language=language, appearance_type=appearance_type, has_reference_image=True)
+    prompt = build_selfie_builtin_prompt(action, **kwargs)
+    appearance = LEGFOCUS_APPEARANCE_PROMPTS[appearance_type][language]
+    assert prompt.count(appearance) == 1
+    assert prompt.count(action) == 1
+    rebuilt = build_selfie_builtin_prompt(action, action_content=prompt, **kwargs)
+    assert rebuilt.count(appearance) == 1
+    assert rebuilt.count(action) == 1
+    assert "【cam:third】" in rebuilt
+    assert "本人看向自己双腿" not in rebuilt
+
+
+@pytest.mark.parametrize("scene_query,scene_id,view_id", [
+    ("床上", "bed_surface", "self_forward_down"),
+    ("地毯", "bedroom_rug", "self_left_down"),
+    ("沙发", "sofa", "self_right_down"),
+])
+def test_kneeling_leg_actions_keep_both_knees_on_a_supported_surface(tmp_path, scene_query, scene_id, view_id):
+    plugin = plugin_for_prompts(tmp_path)
+    action = build_leg_focus_action(
+        f"第一人称 {scene_query} 俯拍", has_refs=True,
+        force_pose="kneeling_sit_back", force_view=view_id,
+    )
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(
+        None, action, [ImageReference(data=b"external", mime_type="image/png")]
+    ))
+    assert f"【leg_scene:{scene_id}】" in prompt
+    assert "【leg_support:kneeling_surface】" in prompt
+    assert prompt.count(LEGFOCUS_POSE_BY_ID["kneeling_sit_back"]["prompt"]) == 1
+    assert "双膝自然靠近落在柔软平面上" in prompt
+    assert "第三人称" not in prompt
+    with pytest.raises(LegFocusDataError, match="不兼容"):
+        build_leg_focus_action(f"第三人称 {scene_query}", force_pose="kneeling_sit_back")
 
 
 @pytest.mark.parametrize("pose_id", [
-    "seated_ankle_cross", "seated_crossed_knee", "surface_parallel_feet_overlap",
-    "edge_feet_overlap", "chair_thigh_cross_slant", "chair_thigh_cross_drop",
-    "ground_supported_crossed_shins",
+    "chair_thigh_cross_slant",
 ])
 def test_crossed_leg_final_requests_keep_each_foot_with_its_own_leg(tmp_path, pose_id):
     plugin = plugin_for_prompts(tmp_path)
-    for view_id in LEGFOCUS_POSE_BY_ID[pose_id]["view_ids"]:
+    for view_id in (
+        view_id for refs in LEGFOCUS_POSE_BY_ID[pose_id]["camera_views"].values()
+        for view_id in refs
+    ):
         action = build_leg_focus_action(has_refs=True, force_pose=pose_id, force_view=view_id)
         prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(
             None, action, [ImageReference(data=b"external", mime_type="image/png")]
@@ -450,16 +638,13 @@ def test_crossed_leg_final_requests_keep_each_foot_with_its_own_leg(tmp_path, po
 
 @pytest.mark.parametrize("query,pose_id", [
     ("小腿倒V", "edge_knees_together_ankles_apart"),
-    ("倒V单脚轻勾", "edge_ankles_apart_single_flex"),
     ("倒V双脚轻勾", "edge_ankles_apart_both_flex"),
-    ("单脚轻勾", "edge_single_foot_flex"),
-    ("双脚轻勾", "edge_both_feet_flex"),
-    ("脚掌相叠", "edge_feet_overlap"),
+    ("双脚悬垂", "edge_knees_together_dangle"),
 ])
 @pytest.mark.parametrize("external_reference", [False, True])
 def test_dangling_foot_variants_keep_their_pose_camera_and_clothing(tmp_path, query, pose_id, external_reference):
     plugin = plugin_for_prompts(tmp_path)
-    view_id = "third_front_low" if pose_id == "edge_knees_together_ankles_apart" else "third_oblique_low"
+    view_id = "third_front_low" if pose_id in {"edge_knees_together_ankles_apart", "edge_knees_together_dangle"} else "third_oblique_low"
     action = build_leg_focus_action(
         f"第三人称 床沿 {query}", has_refs=external_reference, force_view=view_id,
     )
@@ -477,50 +662,42 @@ def test_dangling_foot_variants_keep_their_pose_camera_and_clothing(tmp_path, qu
         assert "脚尖自然下垂" not in prompt
     if external_reference:
         assert "保留原有上装、下装、连体结构、袜鞋与配饰" in prompt
-    if pose_id == "edge_feet_overlap":
-        assert "膝部与小腿不交叉" in prompt
     if "ankles_apart" in pose_id:
         assert "脚踝间距略大于膝间距" in prompt
         with pytest.raises(LegFocusDataError, match="不兼容"):
             build_leg_focus_action("第三人称 侧拍", force_pose=pose_id)
 
 
-@pytest.mark.parametrize("pose_id", ["seated_diagonal_legs", "one_knee_side_support"])
-@pytest.mark.parametrize("query,view_id,support_id", [
-    ("第一人称 床上 俯拍", "self_forward_down", "raised_soft_surface"),
-    ("第一人称 沙发 偏左 俯拍", "self_left_down", "raised_soft_surface"),
-    ("第一人称 地毯 俯拍", "self_forward_down", "ground_surface"),
-    ("第一人称 地毯 偏右 俯拍", "self_right_down", "ground_surface"),
+@pytest.mark.parametrize("query,scene_id,view_id", [
+    ("第一人称 床上 俯拍", "bed_surface", "self_forward_down"),
+    ("第一人称 沙发 偏左 俯拍", "sofa", "self_left_down"),
+    ("第一人称 卧室地毯 俯拍", "bedroom_rug", "self_forward_down"),
+    ("第一人称 客厅地毯 偏右 俯拍", "living_room_rug", "self_right_down"),
 ])
-def test_bent_leg_final_camera_keeps_a_compatible_support(tmp_path, pose_id, query, view_id, support_id):
+def test_kneeling_self_view_uses_a_compatible_surface(tmp_path, query, scene_id, view_id):
     plugin = plugin_for_prompts(tmp_path)
-    action = build_leg_focus_action(query, has_refs=True, force_pose=pose_id, force_view=view_id)
+    action = build_leg_focus_action(query, has_refs=True, force_pose="kneeling_sit_back", force_view=view_id)
     prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(
         None, action, [ImageReference(data=b"external", mime_type="image/png")]
     ))
-    assert f"【leg_support:{support_id}】" in prompt
+    assert "【leg_scene:" + scene_id + "】" in prompt
+    assert "【leg_support:kneeling_surface】" in prompt
     assert prompt.count(LEGFOCUS_VIEW_BY_ID[view_id]["prompt"]) == 1
-    if support_id == "raised_soft_surface":
-        assert "高于地面" in prompt
-        assert "略高于软面边缘" not in prompt
-        assert "地毯" not in prompt
-    elif support_id == "ground_surface":
-        assert re.search(r"【leg_scene:(?:bedroom_rug|living_room_rug)】", prompt)
-        assert "高于地垫" not in prompt
     assert "第三人称" not in prompt
 
 
 @pytest.mark.parametrize("external_reference", [False, True])
 @pytest.mark.parametrize("query,pose_id,view_id,support_id", [
-    ("落地镜", "kneeling_sit_back", "self_forward_down", "kneeling_surface"),
-    ("穿衣镜", "kneeling_sit_back", "self_left_down", "kneeling_surface"),
-    ("全身镜", "kneeling_sit_back", "self_right_down", "kneeling_surface"),
-    ("镜前", "kneeling_sit_back", "self_steep_down", "kneeling_surface"),
+    ("落地镜", "kneeling_upright", "self_mirror_front_down", "kneeling_surface"),
+    ("穿衣镜", "kneeling_sit_back", "self_mirror_left_down", "kneeling_surface"),
+    ("全身镜", "kneeling_sit_back", "self_mirror_right_down", "kneeling_surface"),
+    ("镜前", "kneeling_upright", "self_mirror_left_down", "kneeling_surface"),
 ])
-def test_floor_mirror_scene_keeps_first_person_crop_in_final_prompt(
-    tmp_path, external_reference, query, pose_id, view_id, support_id,
+@pytest.mark.parametrize("english", [False, True])
+def test_floor_mirror_scene_uses_visible_mirror_and_consistent_selfie_in_final_prompt(
+    tmp_path, external_reference, query, pose_id, view_id, support_id, english,
 ):
-    plugin = plugin_for_prompts(tmp_path)
+    plugin = plugin_for_prompts(tmp_path, english)
     action = build_leg_focus_action(
         query, has_refs=external_reference, force_pose=pose_id, force_view=view_id,
     )
@@ -529,8 +706,15 @@ def test_floor_mirror_scene_keeps_first_person_crop_in_final_prompt(
     assert "【leg_scene:floor_mirror】" in prompt
     assert "【cam:selfie】" in prompt
     assert f"【leg_support:{support_id}】" in prompt
-    assert prompt.count(LEGFOCUS_CAMERA_FRAMINGS["selfie"]) == 1
-    assert prompt.count(LEGFOCUS_POSE_BY_ID[pose_id]["crop_prompts"]["selfie"]) == 1
+    assert prompt.count(LEGFOCUS_CAMERA_FRAMINGS["mirror"]) == 1
+    assert prompt.count(LEGFOCUS_POSE_BY_ID[pose_id]["crop_prompts"]["mirror"]) == 1
+    assert prompt.count(LEGFOCUS_POSE_BY_ID[pose_id]["hand_prompts"]["mirror"]) == 1
+    assert LEGFOCUS_POSE_BY_ID[pose_id]["hand_prompts"]["direct"] not in prompt
+    assert LEGFOCUS_CAMERA_FRAMINGS["selfie"] not in prompt
+    assert "镜面占据主要画幅" in prompt
+    assert "画幅边缘自然入画" not in prompt
+    assert "本人看向自己双腿" not in prompt
+    assert "设备留在画外" not in prompt
     assert prompt.count(LEGFOCUS_SCENE_BY_ID["floor_mirror"]["prompt"]) == 1
     assert "第三人称" not in prompt
     assert "头部到足部完整入镜" not in prompt
@@ -542,6 +726,7 @@ def test_floor_mirror_is_excluded_from_all_third_person_selections():
     for pose in LEGFOCUS_POSE_BY_ID.values():
         combinations = compatible_leg_compositions(pose, scene_ids="floor_mirror")
         assert all(view["camera"] == "selfie" for _, _, view in combinations)
+        assert all(view.get("capture_mode") == "mirror" for _, _, view in combinations)
         assert not compatible_leg_compositions(pose, camera="third", scene_ids="floor_mirror")
     for query, options in (
         ("第三人称 落地镜", {}),
@@ -553,6 +738,75 @@ def test_floor_mirror_is_excluded_from_all_third_person_selections():
             build_leg_focus_action(query, **options)
 
 
+def test_leg_mirror_views_require_a_mirror_and_rebuild_obsolete_edge_only_record(tmp_path):
+    from astrbot_plugin_selfie_image.cos.leg_focus import has_leg_focus_contract
+
+    for view in LEGFOCUS_VIEW_BY_ID.values():
+        if view.get("capture_mode") != "mirror":
+            continue
+        combinations = compatible_leg_compositions(LEGFOCUS_POSE_BY_ID["kneeling_upright"], view_id=view["id"])
+        assert combinations
+        assert {scene["id"] for scene, _, _ in combinations} == {"floor_mirror"}
+        with pytest.raises(LegFocusDataError, match="不兼容"):
+            build_leg_focus_action("床上", force_pose="kneeling_upright", force_view=view["id"])
+    legacy = (
+        "镜框与局部镜面在腿部远端的画幅边缘自然入画。本人看向自己双腿。"
+        " 【legs:outfit】 【frame:leg_detail】 【pose:kneeling_upright】"
+        " 【leg_view:self_forward_down】 【leg_scene:floor_mirror】 【leg_support:kneeling_surface】"
+        " 【cam:selfie】 【wear:black】 【outfit:reference】"
+    )
+    assert not has_leg_focus_contract(legacy)
+    plugin = plugin_for_prompts(tmp_path)
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(
+        None, legacy, [ImageReference(data=b"external", mime_type="image/png")],
+    ))
+    assert has_leg_focus_contract(prompt)
+    assert "【leg_scene:floor_mirror】" in prompt
+    assert "【pose:kneeling_upright】" in prompt
+    assert "【outfit:reference】" in prompt
+    assert prompt.count(LEGFOCUS_CAMERA_FRAMINGS["mirror"]) == 1
+    assert "画幅边缘自然入画" not in prompt
+    assert "本人看向自己双腿" not in prompt
+
+
+@pytest.mark.parametrize("pose_id,query", [
+    ("seated_thigh_gentle_pinch", "室内桌边 并膝轻捏大腿"),
+    ("seated_self_knees_offset", "电竞椅 自视并膝错位"),
+])
+def test_new_leg_self_view_seated_variants_keep_subjective_crop_and_compatible_seat(tmp_path, pose_id, query):
+    plugin = plugin_for_prompts(tmp_path)
+    action = build_leg_focus_action(query)
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert f"【pose:{pose_id}】" in prompt
+    assert "【cam:selfie】" in prompt
+    assert "【leg_support:chair_seat】" in prompt
+    assert prompt.count(LEGFOCUS_CAMERA_FRAMINGS["selfie"]) == 1
+    assert prompt.count(LEGFOCUS_POSE_BY_ID[pose_id]["prompt"]) == 1
+    assert "第三人称" not in prompt
+    assert "镜面自拍" not in prompt
+    with pytest.raises(LegFocusDataError, match="不兼容"):
+        build_leg_focus_action("第三人称", force_pose=pose_id)
+
+
+def test_leg_high_kneeling_camera_stays_off_seats_and_skirts(tmp_path):
+    pose_id, view_id = "kneeling_relaxed_apart", "third_kneeling_oblique_down"
+    for scene, support, view in compatible_leg_compositions(LEGFOCUS_POSE_BY_ID[pose_id], view_id=view_id):
+        assert support == "kneeling_surface"
+        assert scene["id"] not in {"bed_edge", "gaming_chair", "desk_chair"}
+        assert view["camera"] == "third" and view["elevation"] == "down"
+    action = build_leg_focus_action("床面分膝跪姿 俯拍", force_view=view_id)
+    plugin = plugin_for_prompts(tmp_path)
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert "【leg_scene:bed_surface】" in prompt
+    assert f"【pose:{pose_id}】" in prompt
+    assert prompt.count(LEGFOCUS_VIEW_BY_ID[view_id]["prompt"]) == 1
+    assert "第一人称" not in prompt
+    outfit = next(outfit for outfit in LEGFOCUS_OUTFIT_POOL if outfit["prompt"] in prompt)
+    assert outfit["capture_profile"] == "shorts"
+    with pytest.raises(LegFocusDataError, match="不兼容"):
+        build_leg_focus_action(force_pose=pose_id, force_view=view_id, force_outfit="blouse_fitted_mini")
+
+
 def test_full_body_request_is_still_distinct_from_full_length_mirror():
     action = build_leg_focus_action("不要全身镜 全身")
     assert "【frame:full_outfit】" in action
@@ -560,15 +814,20 @@ def test_full_body_request_is_still_distinct_from_full_length_mirror():
     assert "【leg_scene:floor_mirror】" not in action
 
 
-def test_elevated_seats_keep_only_external_low_views():
+def test_elevated_seats_keep_external_low_views_and_explicit_self_view_variants():
     seat_supports = {"seat_edge", "raised_edge", "wide_edge", "armrest", "backrest", "chair_seat"}
     raised_views = set()
     for pose in LEGFOCUS_POSE_BY_ID.values():
         for _, support, view in compatible_leg_compositions(pose):
             if support not in seat_supports:
                 continue
-            assert view["camera"] == "third", (pose["id"], support, view["id"])
-            assert view["elevation"] == "up", (pose["id"], support, view["id"])
+            if pose["id"] in DIRECT_SELF_SEATED_POSES:
+                assert support in {"seat_edge", "chair_seat"}
+                assert view["camera"] == "selfie"
+                assert view["elevation"] == "down"
+            else:
+                assert view["camera"] == "third", (pose["id"], support, view["id"])
+                assert view["elevation"] == "up", (pose["id"], support, view["id"])
             if support == "raised_edge":
                 assert view["elevation"] == "up", (pose["id"], view["id"])
                 raised_views.add(view["direction"])
@@ -576,9 +835,8 @@ def test_elevated_seats_keep_only_external_low_views():
 
 
 @pytest.mark.parametrize("pose_id", [
-    "backed_staggered_legs", "seated_knees_together", "armrest_side_knees",
-    "chair_thigh_cross_slant", "chair_thigh_cross_drop", "edge_knees_together_dangle",
-    "edge_parallel_forward", "edge_feet_overlap",
+    "chair_thigh_cross_slant", "edge_ankles_apart_both_flex",
+    "edge_knees_together_dangle", "edge_knees_together_ankles_apart",
 ])
 @pytest.mark.parametrize("query", ["第一人称", "俯拍", "顶拍"])
 def test_seat_edge_poses_reject_self_view_and_downward_camera_requests(pose_id, query):
@@ -587,10 +845,10 @@ def test_seat_edge_poses_reject_self_view_and_downward_camera_requests(pose_id, 
 
 
 @pytest.mark.parametrize("pose_id,scene_id,view_id,support_id,camera,new_camera", [
-    ("seated_forward_leg", "bed_surface", "third_surface_oblique_low", "raised_soft_surface", "third", "selfie"),
-    ("seated_crossed_knee", "bedroom_rug", "third_ground_oblique_low", "ground_surface", "third", "selfie"),
-    ("backed_staggered_legs", "bedroom_rug", "third_ground_oblique_low", "ground_surface", "third", "third"),
-    ("seated_knees_together", "gaming_chair", "self_right_down", "seat_edge", "selfie", "third"),
+    ("edge_knees_together_dangle", "bed_edge", "self_left_down", "raised_edge", "selfie", "third"),
+    ("chair_thigh_cross_slant", "living_room_chair", "self_right_down", "chair_seat", "selfie", "third"),
+    ("kneeling_sit_back", "floor_window", "third_oblique_low", "kneeling_surface", "third", "selfie"),
+    ("kneeling_upright", "floor_window", "third_oblique_low", "kneeling_surface", "third", "selfie"),
 ])
 @pytest.mark.parametrize("english,translation_applied", [(False, False), (True, False), (True, True)])
 def test_obsolete_leg_requests_are_rebuilt_with_current_support_and_camera(
@@ -619,19 +877,17 @@ def test_obsolete_leg_requests_are_rebuilt_with_current_support_and_camera(
     assert prompt.count("左右均指人物自身") == 1
     if new_camera == "selfie":
         assert "第三人称" not in prompt
-        assert re.search(r"【leg_support:(?:raised_soft_surface|ground_surface)】", prompt)
+        assert "【leg_support:kneeling_surface】" in prompt
     else:
         assert "第一人称" not in prompt
         assert "俯拍" not in prompt
-        assert re.search(r"【leg_support:(?:seat_edge|backrest)】", prompt)
+        assert re.search(r"【leg_support:(?:raised_edge|chair_seat)】", prompt)
 
 
 @pytest.mark.parametrize("query,pose_id,view_id,scene_id", [
-    ("第一人称 床上 仰躺", "supine_offset_legs", "self_reclined_forward", "bed_surface"),
-    ("第一人称 床上 侧躺", "side_lying_offset_legs", "self_reclined_right", "bed_surface"),
-    ("第一人称 床上 侧躺 偏左", "side_lying_offset_legs", "self_reclined_left", "bed_surface"),
     ("第一人称 落地窗前 跪坐", "kneeling_sit_back", "self_forward_down", "floor_window"),
-    ("第三人称 落地窗前 直身跪姿 仰拍", "kneeling_upright", "third_oblique_low", "floor_window"),
+    ("第一人称 落地窗前 直身跪姿 偏左俯拍", "kneeling_upright", "self_left_down", "floor_window"),
+    ("第三人称 床上 直身跪姿 仰拍", "kneeling_upright", "third_oblique_low", "bed_surface"),
 ])
 def test_lying_and_kneeling_keep_support_projection_and_crop_in_final_prompt(
     tmp_path, query, pose_id, view_id, scene_id,
@@ -648,13 +904,6 @@ def test_lying_and_kneeling_keep_support_projection_and_crop_in_final_prompt(
     assert prompt.count(LEGFOCUS_VIEW_BY_ID[view_id]["prompt"]) == 1
     assert prompt.count(f"用户补充要求优先：{query}。") == 1
     assert "【outfit:reference】" in prompt
-    if view_id.startswith("self_reclined_"):
-        assert "【leg_support:lying_surface】" in prompt
-        assert "机位随卧姿放低" in prompt
-        assert "低头" not in prompt
-        assert "俯拍" not in prompt
-        assert "第三人称" not in prompt
-        assert "侧拍" not in prompt
     if pose_id.startswith("kneeling_"):
         assert "【leg_support:kneeling_surface】" in prompt
     if pose_id == "kneeling_sit_back":
@@ -662,12 +911,12 @@ def test_lying_and_kneeling_keep_support_projection_and_crop_in_final_prompt(
 
 
 @pytest.mark.parametrize("pose_id", [
-    "edge_fold_and_drop", "supported_bent_knees", "side_folded_legs",
-    "reclined_one_knee", "edge_one_leg_raised", "edge_parallel_forward",
+    "edge_knees_together_dangle", "edge_ankles_apart_both_flex",
+    "edge_knees_together_ankles_apart", "chair_thigh_cross_slant",
 ])
 def test_folded_and_forward_legs_do_not_randomly_use_head_on_level_camera(pose_id):
     with pytest.raises(LegFocusDataError, match="不兼容"):
-        build_leg_focus_action(force_pose=pose_id, force_view="third_front_level")
+        build_leg_focus_action(force_pose=pose_id, force_view="self_forward_down")
 
 
 def test_random_third_person_selection_keeps_front_views_and_side_variation():
@@ -682,12 +931,12 @@ def test_random_third_person_selection_keeps_front_views_and_side_variation():
 
 def test_wider_first_person_framing_keeps_the_subjects_actual_visible_range(tmp_path):
     plugin = plugin_for_prompts(tmp_path)
-    action = build_leg_focus_action(force_pose="supine_offset_legs", force_view="self_reclined_forward")
+    action = build_leg_focus_action(force_pose="kneeling_sit_back", force_view="self_forward_down")
     prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
     assert prompt.count("第一人称主观视角") == 1
-    assert "未放大的手机常规视野" in prompt
+    assert "普通手机焦段和正常拍摄距离" in prompt
     assert "脚端依实际视线与遮挡自然入镜" in prompt
-    assert "顺自身腿线朝远端脚部展开" in prompt
+    assert "近侧大腿和膝盖不贴近镜头" in prompt
     assert "腰线至足部照片" not in prompt
     assert "双脚完整入镜" not in prompt
 
@@ -697,7 +946,7 @@ def test_suspended_knees_use_front_view_and_avoid_random_stirrup_socks():
 
     pose_id = "edge_knees_together_ankles_apart"
     pose = LEGFOCUS_POSE_BY_ID[pose_id]
-    assert pose["view_ids"] == ["third_front_low"]
+    assert pose["camera_views"] == {"third": ["third_front_low"]}
     assert "stirrup" in pose["disallowed_hosiery_kinds"]
 
     action = build_leg_focus_action(
@@ -714,12 +963,12 @@ def test_suspended_knees_use_front_view_and_avoid_random_stirrup_socks():
         )
 
 
-@pytest.mark.parametrize("pose_id", ["backed_staggered_legs", "armrest_side_knees"])
-def test_edge_and_armrest_leg_poses_avoid_side_camera_and_stirrup(pose_id):
+@pytest.mark.parametrize("pose_id", ["edge_knees_together_dangle", "edge_ankles_apart_both_flex"])
+def test_edge_leg_poses_keep_third_person_views_and_avoid_stirrup(pose_id):
     from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_HOSIERY_STYLES
 
     pose = LEGFOCUS_POSE_BY_ID[pose_id]
-    assert pose["view_ids"] == ["third_oblique_low"]
+    assert set(pose["camera_views"]) == {"third"}
     assert "stirrup" in pose["disallowed_hosiery_kinds"]
     action = build_leg_focus_action(
         "黑丝", force_pose=pose_id, force_view="third_oblique_low",
@@ -739,7 +988,7 @@ def test_leg_batch_initial_square_neck_outfit_keeps_requested_aspect(tmp_path, q
     plugin.presets = SimpleNamespace(resolve=lambda prompt: {"prompt": prompt})
     outfit = next(item for item in LEGFOCUS_OUTFIT_POOL if item["id"] == "sleep_square_neck_slip")
     with patch("astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_outfit", return_value=outfit):
-        action = build_leg_focus_action(query, force_pose="armrest_side_knees", force_view="third_oblique_low")
+        action = build_leg_focus_action(query, force_pose="chair_thigh_cross_slant", force_view="third_oblique_low")
     assert "【outfit:sleep_square_neck_slip】" in action
     _, aspect, _, _, _ = plugin._resolve_image_preset(action)
     assert aspect == expected_aspect
@@ -812,7 +1061,8 @@ def test_batch_keeps_user_supplement_without_locking_random_legwear(tmp_path):
 @pytest.mark.parametrize("mode,query", [
     ("group", "三人侧身合影 黑丝"),
     ("selfie", "背对镜头"),
-    ("selfie", "看看腿 第一人称 白色短袜"),
+    ("selfie", "看看腿 第一人称 电竞椅 白色短袜"),
+    ("selfie", "看看腿 第一人称 落地镜 白色短袜"),
 ])
 def test_canvas_final_requests_use_the_same_mode_contracts(tmp_path, namespace, english, translation_applied, mode, query):
     plugin = plugin_for_prompts(tmp_path, english)
@@ -847,7 +1097,11 @@ def test_canvas_final_requests_use_the_same_mode_contracts(tmp_path, namespace, 
         assert "【legs:outfit】" not in request["prompt"]
         assert "柔光京阿尼" in request["prompt"]
     elif "看看腿" in query:
-        assert LEGFOCUS_CAMERA_FRAMINGS["selfie"] in request["prompt"]
+        framing = "mirror" if "落地镜" in query else "selfie"
+        other_framing = "selfie" if framing == "mirror" else "mirror"
+        assert LEGFOCUS_CAMERA_FRAMINGS[framing] in request["prompt"]
+        assert LEGFOCUS_CAMERA_FRAMINGS[other_framing] not in request["prompt"]
+        assert "【cam:selfie】" in action
         assert "白色短袜" in request["prompt"]
     else:
         assert "主角背对镜头" in request["prompt"]

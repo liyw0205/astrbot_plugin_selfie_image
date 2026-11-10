@@ -17,12 +17,14 @@ from ..cos.cos_looks import (
     requests_phone_face_cover,
 )
 from ..cos.leg_focus import (
+    LEGFOCUS_POOL_REFERENCE_PROMPTS,
     LEGFOCUS_REFERENCE_RULES,
     ensure_leg_focus_action,
     get_leg_focus_outfit,
     has_leg_face_context,
     has_leg_focus_contract,
     is_leg_calf_crop_action,
+    leg_focus_appearance_prompt,
 )
 from ..cos.cos_looks_loader import COS_JSON_POSES
 from ..core.utils import detect_mime_by_bytes, ext_from_mime, load_json_file, save_json_file
@@ -2030,6 +2032,9 @@ class PersonaManager:
                     if has_reference_image
                     else ["按角色设定保持主角身份和自然体态。"]
                 )
+                outfit_match = re.search(r"【outfit:([a-z_]+)】", act)
+                if has_reference_image and outfit_match and get_leg_focus_outfit(outfit_match.group(1)):
+                    identity_lines.append(LEGFOCUS_POOL_REFERENCE_PROMPTS["zh"])
             else:
                 identity_lines = (
                     [
@@ -2220,22 +2225,22 @@ class PersonaManager:
             foot_visibility = "双脚自然赤足并清晰可见" if selected == "赤足" else "袜装与鞋履保持完整可见"
             mode_lines.extend(
                 [
-                    f"【{'腿部穿搭展示' if feet_cropped else '全身穿搭展示'} / {'全身镜自拍' if camera_kind == 'selfie' and not feet_cropped else f'第一人称腰线至{foot_target}构图' if camera_kind == 'selfie' else '第三人称摄影'}】",
+                    f"【{'腿部穿搭展示' if feet_cropped else '全身穿搭展示'} / {'全身镜自拍' if camera_kind == 'selfie' and not feet_cropped else '第一人称腿部构图' if camera_kind == 'selfie' else '第三人称摄影'}】",
                     (
-                        f"第一人称自然视角服装照：腰线至{foot_target}入镜，清楚呈现{lower_outfit_display}。"
+                        f"第一人称自然视角服装照：使用普通手机焦段与正常拍摄距离，清楚呈现{lower_outfit_display}；近侧膝部和大腿不贴近镜头，避免夸张近大远小。"
                         if camera_kind == "selfie" and feet_cropped
                         else f"全身镜前自拍：从头部到{foot_target}完整入镜，手机自然持握且不遮挡主要穿搭。"
                         if camera_kind == "selfie"
-                        else f"第三人称腿部穿搭照片：摄影者完全在画面外，平视拍摄腰线至{foot_target}，保留少量环境。"
+                        else f"第三人称腿部穿搭照片：摄影者完全在画面外，以普通焦段和适中距离拍摄，保留少量环境。"
                         if feet_cropped
                         else f"第三人称全身日常照片：摄影者完全在画面外，从头部到{foot_target}完整入镜。"
                     ),
                     (
-                        f"成年人物腿部穿搭构图：腰线至{foot_target}自然入镜，{foot_visibility}；"
+                        f"成年人物腿部穿搭构图：肩部以上裁出，胸部可自然保留；从肩部裁切线上缘至{foot_target}自然入镜，{foot_visibility}；"
                         "允许上缘带到头部时，必须同时执行已选姿势对应的表情、视线和上肢动作，"
                         "不要把脸单独悬在腿部画面上。"
                         if leg_face_context
-                        else "成年人物腿部穿搭构图：严格从胸下或腰线开始，头部、脸部和肩膀不入镜；"
+                        else "成年人物腿部穿搭构图：上缘裁过肩部，头部、脸部和肩部不入镜，胸部可自然保留；"
                         "不要通过镜面、玻璃倒影、手机屏幕或画中画补出脸部。"
                     )
                     if feet_cropped
@@ -2517,7 +2522,7 @@ class PersonaManager:
                 subject_photo_label = (
                     "第三人称腿部穿搭照片" if feet_cropped else "第三人称全身穿搭照片"
                 ) if camera_kind == "third" else (
-                    f"第一人称腰线至{foot_target}照片" if feet_cropped else "全身镜自拍照片"
+                    "第一人称腿部穿搭照片" if feet_cropped else "全身镜自拍照片"
                 )
         elif intent.is_cos_look:
             subject_photo_label = {
@@ -2565,7 +2570,10 @@ class PersonaManager:
                 ),
                 *anatomy_constraint_lines(style="general"),
             ]
-        final_style_instruction = appearance_type_output_instruction(appearance_type)
+        final_style_instruction = (
+            leg_focus_appearance_prompt(appearance_type, "zh", act)
+            if intent.is_legs_only else appearance_type_output_instruction(appearance_type)
+        )
         if final_style_instruction and not group_contract:
             output_lines.append(final_style_instruction)
 

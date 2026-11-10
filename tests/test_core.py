@@ -777,11 +777,11 @@ class ConfigModelTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.prompts.prompt_templates import build_selfie_builtin_prompt
 
         action = build_leg_focus_action(
-            force_pose="backed_staggered_legs", force_camera="third", has_refs=True,
+            force_pose="chair_thigh_cross_slant", force_camera="third", has_refs=True,
         )
         zh = build_selfie_builtin_prompt(action, has_reference_image=True, appearance_type="real")
         self.assertEqual(zh.count(action), 1)
-        self.assertIn("头部、脸部和肩膀不入镜", zh)
+        self.assertIn("头部、脸部和肩部不入镜", zh)
         translated_action = "Adult indoor lower-body photo. Sit on the bed edge; preserve the referenced clothes."
         en = build_selfie_builtin_prompt(
             action, language="en", has_reference_image=True, appearance_type="real",
@@ -7457,7 +7457,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertNotIn("断臂", selfie)
             legs = manager.build_selfie_prompt("看看腿 【wear:white】", "小助", "温柔", True, 0)
             self.assertIn("【看看腿 / 单一室内构图】", legs)
-            self.assertIn("头部、脸部和肩膀不入镜", legs)
+            self.assertIn("头部、脸部和肩部不入镜", legs)
             self.assertIn("保留自然体态与比例", legs)
             self.assertIn("【outfit:reference】", legs)
             self.assertEqual(legs.count("【legs:outfit】"), 1)
@@ -7580,7 +7580,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
             self.assertFalse(intent.is_group_photo)
             prompt = manager.build_selfie_prompt(legs_action, "小助", "温柔", True, 0)
             self.assertIn("【看看腿 / 单一室内构图】", prompt)
-            self.assertIn("头部、脸部和肩膀不入镜", prompt)
+            self.assertIn("头部、脸部和肩部不入镜", prompt)
             self.assertNotIn("勒进大腿肉", prompt)
             self.assertNotIn("微胖软肉", prompt)
             self.assertNotIn("不要大象腿猪腿", prompt)
@@ -7889,7 +7889,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.features.persona import PersonaManager
 
         action = build_leg_focus_action(
-            "白丝", has_refs=True, force_pose="backed_staggered_legs", force_camera="third",
+            "白丝", has_refs=True, force_pose="chair_thigh_cross_slant", force_camera="third",
         )
         with tempfile.TemporaryDirectory() as tmp:
             text = PersonaManager(tmp).build_selfie_prompt(action, "小助", "温柔", True, 0)
@@ -7899,7 +7899,7 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertEqual(text.count("保留原有上装、下装、连体结构和配饰"), 1)
         self.assertIn("袜装或鞋履仅按本次明确要求调整", text)
         self.assertEqual(text.count("腿部细节："), 1)
-        self.assertIn("头部、脸部和肩膀不入镜", text)
+        self.assertIn("头部、脸部和肩部不入镜", text)
         for forbidden in ("白色不透连裤袜，完整日常穿搭", "小皮鞋", "日常长裤搭配", "全身穿搭展示"):
             self.assertNotIn(forbidden, text)
 
@@ -7945,13 +7945,14 @@ class LegFocusTests(unittest.TestCase):
         )
         for old_id, pose_id in LEGFOCUS_POSE_ALIASES.items():
             with self.subTest(old_id=old_id):
-                first_view = LEGFOCUS_VIEW_BY_ID[LEGFOCUS_POSE_BY_ID[pose_id]["view_ids"][0]]
-                action = ensure_leg_focus_action(f"看看腿 【pose:{old_id}】 【cam:{first_view['camera']}】", True)
+                camera, view_ids = next(iter(LEGFOCUS_POSE_BY_ID[pose_id]["camera_views"].items()))
+                first_view = LEGFOCUS_VIEW_BY_ID[view_ids[0]]
+                action = ensure_leg_focus_action(f"看看腿 【pose:{old_id}】 【cam:{camera}】", True)
                 self.assertIn(f"【pose:{pose_id}】", action)
                 view_id = re.search(r"【leg_view:([a-z_]+)】", action).group(1)
                 self.assertIn(LEGFOCUS_VIEW_BY_ID[view_id]["prompt"], action)
                 self.assertIn("【outfit:reference】", action)
-                self.assertIn("头部、脸部和肩膀不入镜", action)
+                self.assertIn("头部、脸部和肩部不入镜", action)
                 self.assertNotIn("本次随机腿部细节", action)
                 self.assertNotIn("户外小径漫步", action)
 
@@ -9007,7 +9008,7 @@ class LegFocusTests(unittest.TestCase):
             with self.subTest(request=request):
                 self.assertEqual(parse_requested_legwear(request), request)
                 action = build_leg_focus_action(
-                    request, has_refs=True, force_pose="backed_staggered_legs", force_camera="third",
+                    request, has_refs=True, force_pose="chair_thigh_cross_slant", force_camera="third",
                 )
                 self.assertIn(f"【wear:{tag}】", action)
                 self.assertIn("【outfit:reference】", action)
@@ -9047,14 +9048,14 @@ class LegFocusTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.cos.leg_focus import LEGFOCUS_POSE_POOL, LEGFOCUS_VIEW_BY_ID, build_leg_focus_action
 
         for pose in LEGFOCUS_POSE_POOL:
-            for view_id in pose["view_ids"]:
-                view = LEGFOCUS_VIEW_BY_ID[view_id]
-                camera = view["camera"]
-                with self.subTest(pose=pose["id"], view=view_id):
-                    action = build_leg_focus_action(force_pose=pose["id"], force_camera=camera, force_view=view_id)
-                    self.assertIn(f"【cam:{camera}】", action)
-                    self.assertIn(view["prompt"], action)
-                    self.assertEqual(sum(item["prompt"] in action for item in LEGFOCUS_VIEW_BY_ID.values()), 1)
+            for camera, view_ids in pose["camera_views"].items():
+                for view_id in view_ids:
+                    view = LEGFOCUS_VIEW_BY_ID[view_id]
+                    with self.subTest(pose=pose["id"], view=view_id):
+                        action = build_leg_focus_action(force_pose=pose["id"], force_camera=camera, force_view=view_id)
+                        self.assertIn(f"【cam:{camera}】", action)
+                        self.assertIn(view["prompt"], action)
+                        self.assertEqual(sum(item["prompt"] in action for item in LEGFOCUS_VIEW_BY_ID.values()), 1)
 
 
 class StudioStoreTests(unittest.TestCase):

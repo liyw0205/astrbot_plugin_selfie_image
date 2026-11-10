@@ -6,12 +6,14 @@ import re
 from dataclasses import dataclass
 
 from ..cos.leg_focus import (
+    LEGFOCUS_POOL_REFERENCE_PROMPTS,
     LEGFOCUS_REFERENCE_RULES,
     ensure_leg_focus_action,
     get_leg_focus_outfit,
     has_leg_face_context,
     has_leg_focus_contract,
     is_leg_calf_crop_action,
+    leg_focus_appearance_prompt,
 )
 from .group_prompt_pool import has_group_composition_contract
 
@@ -295,6 +297,15 @@ def build_selfie_builtin_prompt(
         rule in rendered_action for rule in LEGFOCUS_REFERENCE_RULES.values()
     ):
         leg_reference_rule = LEGFOCUS_REFERENCE_RULES["en" if language == "en" else "zh"]
+    leg_pool_reference_rule = ""
+    outfit_match = re.search(r"【outfit:([a-z_]+)】", str(action))
+    if (
+        is_legs
+        and has_reference_image
+        and outfit_match
+        and get_leg_focus_outfit(outfit_match.group(1))
+    ):
+        leg_pool_reference_rule = LEGFOCUS_POOL_REFERENCE_PROMPTS["en" if language == "en" else "zh"]
     is_group_contract = is_group and has_group_composition_contract(str(action))
     feet_cropped = is_legs and is_leg_calf_crop_action(str(action))
     leg_face_context = is_legs and feet_cropped and has_leg_face_context(str(action))
@@ -344,16 +355,14 @@ def build_selfie_builtin_prompt(
             lines = [
                 leg_reference_rule if has_reference_image
                 else "Use the character settings as the subject's identity anchor.",
+                leg_pool_reference_rule,
                 rendered_action,
+                leg_focus_appearance_prompt(effective_appearance_type, "en", rendered_action),
             ]
             if extra_reference_count:
                 lines.append("Use extra references only for the specific clothing or visual details requested; do not let them override the selected camera or pose.")
             if translated_user and translated_user not in rendered_action:
                 lines.append(f"User request: {translated_user}")
-            if effective_appearance_type == "real":
-                lines.append("Render a cohesive realistic human photograph.")
-            elif effective_appearance_type == "anime":
-                lines.append("Render a cohesive 2D anime illustration.")
             return _join(*lines)
         if is_cos:
             lines.extend([
@@ -462,11 +471,9 @@ def build_selfie_builtin_prompt(
         lines = [
             leg_reference_rule if has_reference_image
             else "按角色设定保持主角身份和自然体态。",
+            leg_pool_reference_rule,
             rendered_action,
-            {
-                "real": "成片采用统一的写实真人摄影画风。",
-                "anime": "成片采用统一的 2D 动漫画风。",
-            }.get(effective_appearance_type, ""),
+            leg_focus_appearance_prompt(effective_appearance_type, "zh", rendered_action),
         ]
         if user and user not in rendered_action:
             lines.append(f"用户补充要求：{user}")
@@ -479,11 +486,11 @@ def build_selfie_builtin_prompt(
     lower_outfit_display_zh = "下装和赤足双脚" if selected_wear == "barefoot" else "下装、袜装与鞋履"
     foot_visibility_zh = "双脚自然赤足并清晰可见" if selected_wear == "barefoot" else "日常袜装与鞋履清楚可见"
     camera_line_zh = (
-        f"第一人称腿部展示构图：腰线至{foot_target_zh}入镜，头部和脸部默认不入镜。"
+        "第一人称腿部展示构图：本人视线自然朝向腿部，使用普通手机焦段与正常拍摄距离；近侧膝部和大腿不贴近镜头，避免夸张近大远小。"
         if feet_cropped and camera_kind == "selfie"
         else f"全身镜前自拍：人物从头部到{foot_target_zh}完整入镜，手机自然持握且不遮挡主要穿搭。"
         if camera_kind == "selfie"
-        else f"第三人称腿部穿搭照片：摄影者完全在画面外，平视拍摄腰线至{foot_target_zh}，头部和脸部默认不入镜。"
+        else "第三人称腿部穿搭照片：摄影者完全在画面外，以普通焦段和适中距离取景。"
         if feet_cropped
         else f"第三人称全身日常照片：拍摄者完全在画面外，人物从头部到{foot_target_zh}完整入镜。"
     )
@@ -491,8 +498,8 @@ def build_selfie_builtin_prompt(
         legs_line = camera_line_zh + (
             "若头部进入画面，必须同时有与腿部姿势配套的视线、表情和上肢动作；不要把脸单独悬在腿部构图上。"
             if leg_face_context
-            else "画面上缘从胸下或腰线开始，不出现头部、脸部和肩膀，也不通过镜面或倒影补出脸。"
-        ) + f"成年人物腿部穿搭展示：腰线至{foot_target_zh}自然入镜，{foot_visibility_zh}，保持服装完整、比例自然。"
+            else "画面上缘裁过肩部，头部、脸部和肩部不入镜，胸部可自然保留；不通过镜面或倒影补出脸。"
+        ) + f"成年人物腿部穿搭展示：从肩部裁切线上缘至{foot_target_zh}自然入镜，{foot_visibility_zh}，保持服装完整、比例自然。"
     elif is_legs:
         legs_line = camera_line_zh + f"成年人物全身穿搭照片，头部、上衣、下装与{foot_target_zh}完整入镜，以正常拍摄距离自然呈现整体穿搭。"
     else:

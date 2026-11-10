@@ -46,6 +46,13 @@ def _load_pool() -> Dict[str, Any]:
             or len(set(cameras)) != len(cameras)
         ):
             raise LegFocusDataError(f"看看腿场景的相机人称限制无效: {scene_id}")
+        capture_modes = raw.get("capture_modes", ["direct"])
+        if (
+            not isinstance(capture_modes, list) or not capture_modes
+            or any(mode not in {"direct", "mirror"} for mode in capture_modes)
+            or len(set(capture_modes)) != len(capture_modes)
+        ):
+            raise LegFocusDataError(f"看看腿场景的拍摄方式无效: {scene_id}")
         supports = raw.get("supports")
         if not isinstance(supports, Mapping) or not supports or any(
             not isinstance(key, str) or not key or not isinstance(value, str) or not value.strip()
@@ -63,11 +70,14 @@ def _load_pool() -> Dict[str, Any]:
         supports = raw.get("support_types")
         framings = raw.get("framings")
         camera = raw.get("camera")
+        capture_mode = raw.get("capture_mode", "direct")
         if (
             not re.fullmatch(r"[a-z_]+", view_id) or view_id in views_by_id
             or not str(raw.get("title") or "").strip() or not str(raw.get("prompt") or "").strip()
             or type(raw.get("weight")) is not int or raw["weight"] < 1
             or camera not in {"selfie", "third"}
+            or capture_mode not in {"direct", "mirror"}
+            or (capture_mode == "mirror" and camera != "selfie")
             or raw.get("direction") not in ({"front", "left", "right"} if camera == "selfie" else {"front", "oblique", "side"})
             or raw.get("elevation") not in ({"down", "level"} if camera == "selfie" else {"down", "up", "level", "top"})
             or not isinstance(supports, list) or not supports or not set(supports) <= support_types
@@ -85,7 +95,7 @@ def _load_pool() -> Dict[str, Any]:
         pose_id = str(raw.get("id") or "").strip()
         if not pose_id or pose_id in pose_ids:
             raise LegFocusDataError(f"看看腿姿势 id 缺失或重复: {pose_id or index + 1}")
-        view_refs = raw.get("view_ids")
+        camera_views = raw.get("camera_views")
         supports = raw.get("support_types")
         aliases = raw.get("legacy_ids")
         posture = raw.get("posture")
@@ -96,8 +106,15 @@ def _load_pool() -> Dict[str, Any]:
             or posture not in {"seated", "reclined", "lying", "kneeling", "standing"}
             or type(raw.get("weight")) is not int
             or int(raw.get("weight") or 0) < 1
-            or not isinstance(view_refs, list) or not view_refs or len(set(view_refs)) != len(view_refs)
-            or not set(view_refs) <= views_by_id.keys()
+            or not isinstance(camera_views, Mapping) or not camera_views
+            or not set(camera_views) <= {"selfie", "third"}
+            or any(
+                not isinstance(refs, list) or not refs
+                or any(not isinstance(ref, str) or not ref for ref in refs)
+                or len(set(refs)) != len(refs)
+                or not set(refs) <= views_by_id.keys()
+                for refs in camera_views.values()
+            )
             or not isinstance(supports, list) or not supports or not set(supports) <= support_types
             or not isinstance(aliases, list) or any(not isinstance(value, str) or not value for value in aliases)
             or not isinstance(disallowed_hosiery_kinds, list)
@@ -105,15 +122,31 @@ def _load_pool() -> Dict[str, Any]:
             or bool(set(aliases) & legacy_ids)
         ):
             raise LegFocusDataError(f"看看腿姿势字段不完整或引用无效: {pose_id}")
-        for view_id in view_refs:
-            if not set(supports) & set(views_by_id[view_id]["support_types"]):
-                raise LegFocusDataError(f"看看腿姿势与机位没有兼容支撑: {pose_id}/{view_id}")
+        for camera, view_refs in camera_views.items():
+            for view_id in view_refs:
+                if (
+                    views_by_id[view_id]["camera"] != camera
+                    or not set(supports) & set(views_by_id[view_id]["support_types"])
+                ):
+                    raise LegFocusDataError(f"看看腿姿势与机位没有兼容支撑: {pose_id}/{view_id}")
         crops = raw.get("crop_prompts")
-        cameras = {views_by_id[view_id]["camera"] for view_id in view_refs}
-        if not isinstance(crops, Mapping) or set(crops) != cameras or any(
+        crop_keys = set(camera_views)
+        capture_modes = {
+            views_by_id[view_id].get("capture_mode", "direct")
+            for refs in camera_views.values() for view_id in refs
+        }
+        if "mirror" in capture_modes:
+            crop_keys.add("mirror")
+        if not isinstance(crops, Mapping) or set(crops) != crop_keys or any(
             not isinstance(value, str) or not value.strip() for value in crops.values()
         ):
             raise LegFocusDataError(f"看看腿姿势缺少对应人称的裁切描述: {pose_id}/crop_prompts")
+        hand_prompts = raw.get("hand_prompts", {})
+        if not isinstance(hand_prompts, Mapping) or (hand_prompts and (
+            set(hand_prompts) != capture_modes
+            or any(not isinstance(value, str) or not value.strip() for value in hand_prompts.values())
+        )):
+            raise LegFocusDataError(f"看看腿姿势手部动作与拍摄方式不匹配: {pose_id}/hand_prompts")
         legacy_ids.update(aliases)
         pose_ids.add(pose_id)
     if legacy_ids & pose_ids:
@@ -123,7 +156,7 @@ def _load_pool() -> Dict[str, Any]:
         if not str(payload.get(key) or "").strip():
             raise LegFocusDataError(f"看看腿提示词池缺少字段: {key}")
     for key, required in (
-        ("camera_framings", {"selfie", "third"}),
+        ("camera_framings", {"selfie", "third", "mirror"}),
         ("reference_rules", {"zh", "en"}),
     ):
         values = payload.get(key)
@@ -131,6 +164,17 @@ def _load_pool() -> Dict[str, Any]:
             not isinstance(value, str) or not value.strip() for value in values.values()
         ):
             raise LegFocusDataError(f"看看腿提示词池字段不完整或无效: {key}")
+    appearance_prompts = payload.get("appearance_prompts")
+    if (
+        not isinstance(appearance_prompts, Mapping)
+        or set(appearance_prompts) != {"auto", "real", "anime"}
+        or any(
+            not isinstance(values, Mapping) or set(values) != {"zh", "en"}
+            or any(not isinstance(value, str) or not value.strip() for value in values.values())
+            for values in appearance_prompts.values()
+        )
+    ):
+        raise LegFocusDataError("看看腿提示词池字段不完整或无效: appearance_prompts")
     return {**payload, "views": views}
 
 
@@ -162,6 +206,11 @@ def _load_outfit_pool() -> Dict[str, Any]:
         values = payload.get(key)
         if not isinstance(values, Mapping) or not all(str(values.get(name) or "").strip() for name in required):
             raise LegFocusDataError(f"看看腿服饰池缺少字段: {key}")
+    pool_reference_prompts = payload.get("pool_reference_prompts")
+    if not isinstance(pool_reference_prompts, Mapping) or any(
+        not str(pool_reference_prompts.get(language) or "").strip() for language in ("zh", "en")
+    ):
+        raise LegFocusDataError("看看腿服饰池随机换装参考规则缺少中英文提示词")
     for detail in payload["random_leg_details"]:
         if detail.get("wear") not in {"黑丝", "白丝", "光腿", "赤足"}:
             raise LegFocusDataError(f"看看腿腿部细节无效: {detail['id']}")
@@ -177,7 +226,26 @@ def _load_outfit_pool() -> Dict[str, Any]:
         ):
             raise LegFocusDataError(f"看看腿袜装款式无效: {style['id']}")
     families = {style["family"] for style in payload["hosiery_styles"]}
+    capture_profiles = payload.get("capture_profiles")
+    if not isinstance(capture_profiles, Mapping) or not capture_profiles:
+        raise LegFocusDataError("看看腿服饰池缺少有效 capture_profiles")
+    for profile_id, profile in capture_profiles.items():
+        if not isinstance(profile, Mapping) or not str(profile.get("coverage_prompt") or "").strip():
+            raise LegFocusDataError(f"看看腿服饰拍摄规则无效: {profile_id}")
+        for key, allowed_values in (
+            ("third_directions", {"front", "oblique", "side"}),
+            ("third_elevations", {"up", "down", "level", "top"}),
+        ):
+            values = profile.get(key)
+            if (
+                not isinstance(values, list) or not values
+                or any(not isinstance(value, str) or value not in allowed_values for value in values)
+                or len(set(values)) != len(values)
+            ):
+                raise LegFocusDataError(f"看看腿服饰拍摄规则无效: {profile_id}/{key}")
     for outfit in payload["outfits"]:
+        if not isinstance(outfit.get("capture_profile"), str) or outfit["capture_profile"] not in capture_profiles:
+            raise LegFocusDataError(f"看看腿服饰缺少有效拍摄规则: {outfit['id']}/capture_profile")
         allowed = outfit.get("hosiery_families")
         if not isinstance(allowed, list) or not allowed or not set(allowed) <= families:
             raise LegFocusDataError(f"看看腿服饰兼容袜装无效: {outfit['id']}")
@@ -207,10 +275,14 @@ LEGFOCUS_CAMERA_FRAMINGS = dict(_POOL["camera_framings"])
 LEGFOCUS_FULL_FRAMING = str(_POOL["full_framing"])
 LEGFOCUS_REFERENCE_RULES = dict(_POOL["reference_rules"])
 LEGFOCUS_SCENE_RULE = str(_POOL["scene_rule"])
+LEGFOCUS_APPEARANCE_PROMPTS = _POOL["appearance_prompts"]
 LEGFOCUS_PRESERVE_PROMPTS = dict(_OUTFITS["preserve_prompts"])
+LEGFOCUS_POOL_REFERENCE_PROMPTS = dict(_OUTFITS["pool_reference_prompts"])
 LEGFOCUS_WEAR_PROMPTS = dict(_OUTFITS["wear_prompts"])
 LEGFOCUS_WEAR_LABELS = dict(_OUTFITS["wear_labels"])
 LEGFOCUS_HOSIERY_STYLES: List[Dict[str, Any]] = [dict(item) for item in _OUTFITS["hosiery_styles"]]
+LEGFOCUS_OUTFIT_CAPTURE_PROFILES = dict(_OUTFITS["capture_profiles"])
+
 
 LEGFOCUS_POSE_IDS = frozenset(LEGFOCUS_POSE_BY_ID)
 LEGFOCUS_EXPLICIT_ONLY_POSE_IDS = frozenset()
@@ -284,12 +356,13 @@ _DATA_POSE_ALIASES = {
 LEGFOCUS_POSE_ALIASES = {
     alias: _DATA_POSE_ALIASES.get(pose_id, pose_id)
     for alias, pose_id in LEGFOCUS_POSE_ALIASES.items()
+    if _DATA_POSE_ALIASES.get(pose_id, pose_id) in LEGFOCUS_POSE_BY_ID
 }
 LEGFOCUS_POSE_ALIASES.update(_DATA_POSE_ALIASES)
 
 LEGFOCUS_CAMERA_WEIGHTS: Dict[str, Tuple[Tuple[str, int], ...]] = {
     str(item["id"]): tuple(
-        (camera, 1) for camera in dict.fromkeys(LEGFOCUS_VIEW_BY_ID[view_id]["camera"] for view_id in item["view_ids"])
+        (camera, 1) for camera in item["camera_views"]
     )
     for item in LEGFOCUS_POSE_POOL
 }
@@ -358,6 +431,12 @@ LEGFOCUS_COMPLETE_OUTFIT_REQUEST_PATTERN = re.compile(
     re.I,
 )
 LEG_FACE_ACTIONS: Dict[str, str] = {}
+
+
+def leg_focus_appearance_prompt(appearance_type: str, language: str = "zh", existing_text: str = "") -> str:
+    prompts = LEGFOCUS_APPEARANCE_PROMPTS.get(appearance_type, LEGFOCUS_APPEARANCE_PROMPTS["auto"])
+    prompt = prompts["en" if language == "en" else "zh"]
+    return "" if prompt in existing_text else prompt
 
 
 def parse_requested_leg_face(text: str) -> bool:
@@ -449,12 +528,19 @@ def _preserve_unhandled_legwear(text: str) -> str:
 
 def parse_requested_leg_scene(text: str) -> str:
     raw = re.sub(r"场景不变|背景不变|保持场景|保持背景", "", str(text or ""))
-    matches: List[str] = []
+    matches: List[Tuple[int, str]] = []
     for scene in LEGFOCUS_SCENE_POOL:
         terms = (str(scene["id"]), str(scene["title"]), *(scene.get("aliases") or []))
-        if any(_has_positive_term(raw, str(term)) for term in terms if str(term).strip()):
-            matches.append(str(scene["id"]))
-    return " ".join(dict.fromkeys(matches))
+        matching_lengths = [
+            len(str(term)) for term in terms
+            if str(term).strip() and _has_positive_term(raw, str(term))
+        ]
+        if matching_lengths:
+            matches.append((max(matching_lengths), str(scene["id"])))
+    if not matches:
+        return ""
+    longest = max(length for length, _ in matches)
+    return " ".join(dict.fromkeys(scene_id for length, scene_id in matches if length == longest))
 
 
 def parse_excluded_leg_scenes(text: str) -> set[str]:
@@ -491,24 +577,28 @@ def compatible_leg_compositions(
         for support in pose["support_types"]:
             if support not in scene["supports"]:
                 continue
-            for candidate_id in pose["view_ids"]:
-                view = LEGFOCUS_VIEW_BY_ID[candidate_id]
-                if (
-                    candidate_id in selected_views
-                    or (view_id and candidate_id != view_id)
-                    or (camera and view["camera"] != camera)
-                    or view["camera"] not in scene.get("cameras", ("selfie", "third"))
-                    or framing not in view["framings"]
-                    or support not in view["support_types"]
-                    or (filters.get("direction") and view["direction"] != filters["direction"])
-                    or (filters.get("elevations") and view["elevation"] not in filters["elevations"])
-                    or view["direction"] in filters.get("excluded_directions", ())
-                    or view["elevation"] in filters.get("excluded_elevations", ())
-                    or view["camera"] in filters.get("excluded_cameras", ())
-                ):
+            for camera_kind, camera_view_ids in pose["camera_views"].items():
+                if camera and camera_kind != camera:
                     continue
-                combinations.append((scene, support, view))
-                selected_views.add(candidate_id)
+                for candidate_id in camera_view_ids:
+                    view = LEGFOCUS_VIEW_BY_ID[candidate_id]
+                    if (
+                        candidate_id in selected_views
+                        or (view_id and candidate_id != view_id)
+                        or (camera and view["camera"] != camera)
+                        or view["camera"] not in scene.get("cameras", ("selfie", "third"))
+                        or view.get("capture_mode", "direct") not in scene.get("capture_modes", ("direct",))
+                        or framing not in view["framings"]
+                        or support not in view["support_types"]
+                        or (filters.get("direction") and view["direction"] != filters["direction"])
+                        or (filters.get("elevations") and view["elevation"] not in filters["elevations"])
+                        or view["direction"] in filters.get("excluded_directions", ())
+                        or view["elevation"] in filters.get("excluded_elevations", ())
+                        or view["camera"] in filters.get("excluded_cameras", ())
+                    ):
+                        continue
+                    combinations.append((scene, support, view))
+                    selected_views.add(candidate_id)
     return combinations
 
 
@@ -536,16 +626,38 @@ def pick_leg_focus_pose(
     return _weighted_pose_choice(pool)
 
 
-def pick_leg_focus_outfit(*, avoid_id: str = "", hosiery_family: str = "") -> Dict[str, Any]:
-    pool = [
+def _leg_outfit_allows_view(outfit: Dict[str, Any], view: Dict[str, Any]) -> bool:
+    if view["camera"] != "third":
+        return True
+    profile = LEGFOCUS_OUTFIT_CAPTURE_PROFILES[outfit["capture_profile"]]
+    return (
+        view["direction"] in profile["third_directions"]
+        and view["elevation"] in profile["third_elevations"]
+    )
+
+
+def _compatible_leg_outfits(
+    *, hosiery_family: str = "",
+    compositions: List[Tuple[Dict[str, Any], str, Dict[str, Any]]] | None = None,
+) -> List[Dict[str, Any]]:
+    return [
         item for item in LEGFOCUS_OUTFIT_POOL
-        if item["id"] != avoid_id
-        and (not hosiery_family or hosiery_family in item["hosiery_families"])
+        if (not hosiery_family or hosiery_family in item["hosiery_families"])
+        and (compositions is None or any(_leg_outfit_allows_view(item, view) for _, _, view in compositions))
     ]
+
+
+def pick_leg_focus_outfit(
+    *, avoid_id: str = "", hosiery_family: str = "",
+    compositions: List[Tuple[Dict[str, Any], str, Dict[str, Any]]] | None = None,
+) -> Dict[str, Any]:
+    compatible = _compatible_leg_outfits(hosiery_family=hosiery_family, compositions=compositions)
+    pool = [
+        item for item in compatible
+        if item["id"] != avoid_id
+    ] or compatible
     if not pool:
-        pool = [item for item in LEGFOCUS_OUTFIT_POOL if not hosiery_family or hosiery_family in item["hosiery_families"]]
-    if not pool:
-        raise LegFocusDataError(f"看看腿服饰池没有兼容袜装: {hosiery_family}")
+        raise LegFocusDataError("看看腿服饰池没有兼容当前姿势、视角与袜装的搭配")
     return dict(random.choices(pool, weights=[item["weight"] for item in pool], k=1)[0])
 
 
@@ -783,6 +895,7 @@ def build_leg_focus_action(
     force_camera: str = "",
     force_framing: str = "",
     force_view: str = "",
+    force_outfit: str = "",
     avoid_combinations: set[Tuple[str, str]] | None = None,
     preferred_scene: str = "",
 ) -> str:
@@ -819,6 +932,15 @@ def build_leg_focus_action(
         raise LegFocusDataError("看看腿指定的姿势同时被排除，请选择其他姿势")
     avoid_id = _resolve_pose_id(avoid_pose) or str(avoid_pose or "")
     requested_style = _requested_hosiery_style(raw_extra)
+    forced_outfit = get_leg_focus_outfit(force_outfit) if force_outfit else {}
+    if force_outfit and not forced_outfit:
+        raise LegFocusDataError(f"看看腿服饰不存在: {force_outfit}")
+    explicit_outfit = has_explicit_leg_outfit(raw_extra)
+    outfit_source = "pool" if forced_outfit else "custom" if explicit_outfit else "reference" if has_refs else "pool"
+    requested_family = str(requested_style.get("family") or "")
+    outfit_candidates = [forced_outfit] if forced_outfit else _compatible_leg_outfits(hosiery_family=requested_family)
+    if forced_outfit and requested_family and requested_family not in forced_outfit["hosiery_families"]:
+        raise LegFocusDataError("看看腿指定的服饰与袜装不兼容，请调整其中一项")
     requested_style_kind = str(requested_style.get("kind") or "")
     if requested_pose and requested_style_kind in set(
         LEGFOCUS_POSE_BY_ID[requested_pose].get("disallowed_hosiery_kinds") or ()
@@ -840,20 +962,28 @@ def build_leg_focus_action(
         )
         if scene_hint.strip() and not filtered_scene_hint:
             return {}
-        return {
-            pose["id"]: combinations for pose in pose_options
-            if pose["id"] not in excluded_poses
-            if (combinations := compatible_leg_compositions(
+        result = {}
+        for pose in pose_options:
+            if pose["id"] in excluded_poses:
+                continue
+            combinations = compatible_leg_compositions(
                 pose, camera=requested_camera, scene_ids=filtered_scene_hint,
                 view_id=requested_view, framing=framing, angles=selection_angles,
-            ))
-        }
+            )
+            if outfit_source == "pool":
+                combinations = [
+                    item for item in combinations
+                    if any(_leg_outfit_allows_view(outfit, item[2]) for outfit in outfit_candidates)
+                ]
+            if combinations:
+                result[pose["id"]] = combinations
+        return result
 
     eligible = candidates(requested_scene)
     if not eligible and requested_scene and not explicit_scene:
         eligible = candidates("")
     if not eligible:
-        raise LegFocusDataError("看看腿指定的姿势、场景或视角不兼容，请调整其中一项；不会强行改变支撑动作或相机人称")
+        raise LegFocusDataError("看看腿指定的姿势、场景、服饰或视角不兼容，请调整其中一项；不会强行改变支撑动作或相机人称")
     if requested_style_kind and not requested_pose:
         eligible = {
             pose_id: combinations for pose_id, combinations in eligible.items()
@@ -874,16 +1004,26 @@ def build_leg_focus_action(
     pose = _weighted_pose_choice(pose_choices)
     pose_id = pose["id"]
     combinations = eligible[pose_id]
-    scene_ids = list(dict.fromkeys(item[0]["id"] for item in combinations))
-    scene = LEGFOCUS_SCENE_BY_ID[random.choice(scene_ids)]
-    combinations = [item for item in combinations if item[0]["id"] == scene["id"]]
+    outfit: Dict[str, Any] = {}
+    if outfit_source == "pool":
+        outfit = forced_outfit or pick_leg_focus_outfit(
+            hosiery_family=requested_family, compositions=combinations,
+        )
+        combinations = [item for item in combinations if _leg_outfit_allows_view(outfit, item[2])]
+        if not combinations:
+            raise LegFocusDataError("看看腿选定的服饰与姿势机位不兼容，请调整服饰或视角")
+    camera_kinds = list(dict.fromkeys(item[2]["camera"] for item in combinations))
+    camera_kind = random.choice(camera_kinds)
+    combinations = [item for item in combinations if item[2]["camera"] == camera_kind]
     view_ids = list(dict.fromkeys(item[2]["id"] for item in combinations))
     view = random.choices(
         [LEGFOCUS_VIEW_BY_ID[view_id] for view_id in view_ids],
         weights=[LEGFOCUS_VIEW_BY_ID[view_id]["weight"] for view_id in view_ids], k=1,
     )[0]
-    support = next(item[1] for item in combinations if item[2]["id"] == view["id"])
-    camera_kind = view["camera"]
+    combinations = [item for item in combinations if item[2]["id"] == view["id"]]
+    scene_ids = list(dict.fromkeys(item[0]["id"] for item in combinations))
+    scene = LEGFOCUS_SCENE_BY_ID[random.choice(scene_ids)]
+    support = next(item[1] for item in combinations if item[0]["id"] == scene["id"])
 
     excluded_wears = parse_excluded_legwear(raw_extra)
     requested_wear = str(force_legwear or "").strip()
@@ -896,16 +1036,7 @@ def build_leg_focus_action(
         raise LegFocusDataError("看看腿的袜装要求同时被排除，请只保留一个袜装条件")
     if requested_style and requested_style.get("wear") not in {requested_wear, ""}:
         requested_style = {}
-    explicit_outfit = has_explicit_leg_outfit(raw_extra)
-    if explicit_outfit:
-        outfit_source = "custom"
-    elif has_refs:
-        outfit_source = "reference"
-    else:
-        outfit_source = "pool"
-
     detail: Dict[str, Any] = {}
-    outfit: Dict[str, Any] = {}
     style: Dict[str, Any] = {}
     if requested_wear:
         wear = requested_wear
@@ -917,7 +1048,6 @@ def build_leg_focus_action(
         detail = _weighted_detail_choice(excluded_wears)
         wear = _DETAIL_TAGS.get(str(detail.get("id") or ""), "用户指定")
     if outfit_source == "pool":
-        outfit = pick_leg_focus_outfit(hosiery_family=str(requested_style.get("family") or ""))
         style = requested_style or ({} if unhandled_wear else _pick_hosiery_style(
             wear, outfit, raw_extra,
             excluded_kinds=set(pose.get("disallowed_hosiery_kinds") or ()),
@@ -928,7 +1058,8 @@ def build_leg_focus_action(
             raise LegFocusDataError("看看腿没有符合本次要求的袜装款式，请放宽袜型限制")
 
     if outfit_source == "pool":
-        outfit_line = str(outfit["prompt"])
+        profile = LEGFOCUS_OUTFIT_CAPTURE_PROFILES[outfit["capture_profile"]]
+        outfit_line = str(outfit["prompt"]) + str(profile["coverage_prompt"])
         if unhandled_wear:
             outfit_line += f"袜装只按用户明确要求呈现：{unhandled_wear}；不额外随机其他袜装或赤足。"
         elif style:
@@ -952,21 +1083,24 @@ def build_leg_focus_action(
         outfit_line += "不添加鞋履；袜装或赤足按本次已锁定的腿部细节执行。"
 
     # Each layer owns one constraint: crop, camera, action, setting, or clothing.
+    capture_mode = str(view.get("capture_mode", "direct"))
+    framing_key = "mirror" if capture_mode == "mirror" else camera_kind
     framing_lines = [LEGFOCUS_FULL_FRAMING] if framing == "full_outfit" else [
         LEGFOCUS_FRAMING,
-        LEGFOCUS_CAMERA_FRAMINGS[camera_kind],
-        str(pose["crop_prompts"][camera_kind]),
+        LEGFOCUS_CAMERA_FRAMINGS[framing_key],
+        str(pose["crop_prompts"][framing_key]),
     ]
-    base = "\n".join((
+    base = "\n".join(line for line in (
         *framing_lines,
         LEGFOCUS_ANATOMY_RULE,
         str(view["prompt"]),
         str(pose["prompt"]),
+        str(pose.get("hand_prompts", {}).get(capture_mode, "")),
         LEGFOCUS_SCENE_RULE,
         f"本张室内场景：{scene['prompt']}",
         f"本张姿势支撑：{scene['supports'][support]}。",
         outfit_line,
-    ))
+    ) if line)
     extra = _clean_extra_request(raw_extra)
     if extra:
         base += f"\n用户补充要求优先：{extra}。"
@@ -1007,6 +1141,10 @@ def has_leg_focus_contract(text: str) -> bool:
     support = re.search(r"【leg_support:([a-z_]+)】", raw)
     if not pose_id or not scene or not support:
         return False
+    outfit_id = re.search(r"【outfit:([a-z_]+)】", raw).group(1)
+    outfit = get_leg_focus_outfit(outfit_id)
+    if not outfit and outfit_id not in {"reference", "custom"}:
+        return False
     combinations = compatible_leg_compositions(
         LEGFOCUS_POSE_BY_ID[pose_id],
         camera=re.search(r"【cam:(selfie|third)】", raw).group(1),
@@ -1014,7 +1152,11 @@ def has_leg_focus_contract(text: str) -> bool:
         scene_ids=scene.group(1),
         framing=re.search(r"【frame:(full_outfit|leg_detail)】", raw).group(1),
     )
-    return any(selected_support == support.group(1) for _, selected_support, _ in combinations)
+    return any(
+        selected_support == support.group(1)
+        and (not outfit or _leg_outfit_allows_view(outfit, view))
+        for _, selected_support, view in combinations
+    )
 
 
 def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
@@ -1026,6 +1168,8 @@ def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
     wear_match = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", raw)
     frame_match = re.search(r"【frame:(full_outfit|leg_detail)】", raw)
     scene_match = re.search(r"【leg_scene:([a-z_]+)】", raw)
+    outfit_match = re.search(r"【outfit:([a-z_]+)】", raw)
+    outfit = get_leg_focus_outfit(outfit_match.group(1)) if outfit_match else {}
     extra = raw
     if "【legs:outfit】" in raw:
         supplement = re.search(r"用户补充要求优先[:：](.*?)(?=【legs:outfit】|$)", raw, re.S)
@@ -1035,15 +1179,21 @@ def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
     pose_id = _resolve_pose_id(str(pose_match.group(1) if pose_match else ""))
     camera = str(camera_match.group(1) if camera_match else "")
     # An obsolete generated camera tag must not override the current pose rules.
-    if "【legs:outfit】" in raw and pose_id and camera and not compatible_leg_compositions(
-        LEGFOCUS_POSE_BY_ID[pose_id], camera=camera,
-    ):
-        camera = ""
+    if "【legs:outfit】" in raw and pose_id and camera:
+        selected_scene = str(scene_match.group(1) if scene_match else "")
+        selected_view = re.search(r"【leg_view:([a-z_]+)】", raw)
+        if not compatible_leg_compositions(
+            LEGFOCUS_POSE_BY_ID[pose_id], camera=camera, scene_ids=selected_scene,
+            view_id=selected_view.group(1) if selected_view else "",
+            framing=str(frame_match.group(1) if frame_match else "leg_detail"),
+        ):
+            camera = ""
     return build_leg_focus_action(
         extra,
         has_refs,
         force_pose=pose_id,
         force_camera=camera,
+        force_outfit=str(outfit.get("id") or ""),
         force_legwear=parse_requested_legwear(str(wear_match.group(0) if wear_match else "")),
         force_framing=str(frame_match.group(1) if frame_match else ""),
         preferred_scene=str(scene_match.group(1) if scene_match else ""),
