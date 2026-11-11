@@ -7,14 +7,23 @@ one implementation so the adapters cannot silently drift.
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from functools import lru_cache
+from io import BytesIO
 from typing import Any, Optional
 
 from ..generation.generation_records import build_record_scope_stats
 from ..core.utils import redact_sensitive_data
+
+try:
+    from PIL import Image, ImageOps
+except Exception:  # pragma: no cover - Pillow is a plugin dependency
+    Image = None  # type: ignore
+    ImageOps = None  # type: ignore
 
 
 class WebContractError(ValueError):
@@ -27,6 +36,50 @@ class WebContractError(ValueError):
 
 CATALOG_PAGE_SIZE = 30
 MAX_CATALOG_PAGE_SIZE = 100
+THUMBNAIL_MAX_DIMENSION = 480
+THUMBNAIL_QUALITY = 78
+
+
+@lru_cache(maxsize=128)
+def _render_thumbnail_cached(
+    path: str,
+    mtime_ns: int,
+    size: int,
+    max_dimension: int,
+    quality: int,
+) -> bytes:
+    """Render a small cacheable JPEG so galleries never pull full originals."""
+    del mtime_ns, size
+    if Image is None or ImageOps is None:
+        raise RuntimeError("Pillow 未安装，无法生成图片缩略图")
+    with Image.open(path) as opened:
+        image = ImageOps.exif_transpose(opened)
+        image.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+        if image.mode in {"RGBA", "LA", "P"} or "transparency" in image.info:
+            rgba = image.convert("RGBA")
+            flattened = Image.new("RGB", rgba.size, "white")
+            flattened.paste(rgba, mask=rgba.getchannel("A"))
+            image = flattened
+        else:
+            image = image.convert("RGB")
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=quality, optimize=True, progressive=True)
+        return output.getvalue()
+
+
+def render_image_thumbnail(path: str, *, max_dimension: int = THUMBNAIL_MAX_DIMENSION) -> bytes:
+    """Return a bounded JPEG thumbnail keyed by the source file metadata."""
+    source = str(path or "").strip()
+    if not source:
+        raise ValueError("图片路径为空")
+    stat = os.stat(source)
+    return _render_thumbnail_cached(
+        source,
+        int(stat.st_mtime_ns),
+        int(stat.st_size),
+        max(64, min(int(max_dimension or THUMBNAIL_MAX_DIMENSION), 1024)),
+        THUMBNAIL_QUALITY,
+    )
 
 
 def catalog_pagination_requested(params: Mapping[str, Any]) -> bool:

@@ -5333,7 +5333,7 @@ Source prompt:
           const name = media.path.split('/').pop() || '图片';
           const prompt = String(record.original_prompt || record.request_prompt || '').trim();
           const thumb = media.path
-            ? `<div class="status" data-media-placeholder>加载图片…</div><img data-cache-path="${escapeHtml(media.path)}" alt="${escapeHtml(name)}">${media.count > 1 ? `<span class="asset-count-label">图片 ×${media.count}</span>` : ''}`
+            ? `<div class="status" data-media-placeholder>加载缩略图…</div><img data-cache-path="${escapeHtml(media.path)}" data-cache-variant="thumbnail" alt="${escapeHtml(name)}">${media.count > 1 ? `<span class="asset-count-label">图片 ×${media.count}</span>` : ''}`
             : '<div class="status">没有缓存媒体</div>';
           const flags = `${record.pinned ? '<span>置顶</span>' : ''}${record.favorite ? '<span>收藏</span>' : ''}`;
           return `<article class="asset-card" data-record-id="${escapeHtml(id)}">
@@ -5620,6 +5620,9 @@ Source prompt:
     function cacheImagePreviewUrl(path) {
       return `/api/cache-image-preview?path=${encodeURIComponent(path)}`;
     }
+    function cacheImageThumbnailUrl(path) {
+      return `/api/cache-image-thumbnail?path=${encodeURIComponent(path)}`;
+    }
     function protectedMediaScope() {
       return isDashboardPage() ? 'dashboard' : `token:${AUTH_TOKEN || 'anonymous'}`;
     }
@@ -5681,7 +5684,7 @@ Source prompt:
       page.forEach(item => {
         const cell = document.createElement('div');
         cell.className = 'studio-gallery-item';
-        cell.innerHTML = `<div class="studio-gallery-thumb"><div class="status" data-media-placeholder>加载图片…</div><img data-cache-path="${escapeHtml(item.path || '')}" alt=""></div><div class="cap">${escapeHtml(item.prompt || item.model || item.path || '')}</div>`;
+        cell.innerHTML = `<div class="studio-gallery-thumb"><div class="status" data-media-placeholder>加载缩略图…</div><img data-cache-path="${escapeHtml(item.path || '')}" data-cache-variant="thumbnail" alt=""></div><div class="cap">${escapeHtml(item.prompt || item.model || item.path || '')}</div>`;
         cell.onclick = () => onPick(item, cell);
         grid.appendChild(cell);
       });
@@ -5706,11 +5709,21 @@ Source prompt:
       }
       return scope;
     }
-    function protectedMediaKey(path) {
-      return String(path || '').trim();
+    function protectedMediaKey(path, variant = 'full') {
+      const value = String(path || '').trim();
+      if (!value) return '';
+      return variant === 'thumbnail' ? `thumbnail:${value}` : value;
+    }
+    function protectedMediaVariant(key) {
+      return String(key || '').startsWith('thumbnail:') ? 'thumbnail' : 'full';
+    }
+    function protectedMediaPath(key) {
+      const value = String(key || '');
+      return protectedMediaVariant(value) === 'thumbnail' ? value.slice('thumbnail:'.length) : value;
     }
     function protectedMediaPersistentUrl(key) {
-      return cacheImagePreviewUrl(key);
+      const path = protectedMediaPath(key);
+      return protectedMediaVariant(key) === 'thumbnail' ? cacheImageThumbnailUrl(path) : cacheImagePreviewUrl(path);
     }
     function readProtectedMediaMeta() {
       try {
@@ -5850,10 +5863,12 @@ Source prompt:
       return entry;
     }
     function invalidateProtectedMediaPath(path) {
-      const key = protectedMediaKey(path);
-      if (key) {
-        forgetProtectedMedia(key);
-        void deletePersistentProtectedMedia(key);
+      for (const variant of ['full', 'thumbnail']) {
+        const key = protectedMediaKey(path, variant);
+        if (key) {
+          forgetProtectedMedia(key);
+          void deletePersistentProtectedMedia(key);
+        }
       }
     }
     function protectedMediaUrl(entry) {
@@ -5870,6 +5885,7 @@ Source prompt:
           event.preventDefault();
           event.stopPropagation();
           const path = button.getAttribute('data-media-retry') || '';
+          const variant = button.getAttribute('data-media-retry-variant') || 'full';
           const frame = button.closest('.studio-gallery-thumb, .asset-thumb');
           const placeholder = frame?.querySelector('[data-media-placeholder]');
           let img = frame?.querySelector('img');
@@ -5887,25 +5903,25 @@ Source prompt:
             placeholder.hidden = false;
             placeholder.textContent = '正在重试…';
           }
-          await loadProtectedImage(img, path);
+          await loadProtectedImage(img, path, variant);
         };
       });
     }
-    function showProtectedMediaError(img, path, message) {
+    function showProtectedMediaError(img, path, message, variant = 'full') {
       if (/已清理|不存在|无效/.test(String(message || ''))) invalidateProtectedMediaPath(path);
       const frame = img.closest('.studio-gallery-thumb, .asset-thumb');
       const placeholder = frame?.querySelector('[data-media-placeholder]');
       img.hidden = true;
       if (placeholder) {
         placeholder.hidden = false;
-        placeholder.innerHTML = `<span>${escapeHtml(message || '图片加载失败')}</span><button class="secondary mini media-retry" type="button" data-media-retry="${escapeHtml(path)}" title="重新加载图片" aria-label="重新加载图片">${mediaRetryIconSvg()}</button>`;
+        placeholder.innerHTML = `<span>${escapeHtml(message || '图片加载失败')}</span><button class="secondary mini media-retry" type="button" data-media-retry="${escapeHtml(path)}" data-media-retry-variant="${escapeHtml(variant)}" title="重新加载图片" aria-label="重新加载图片">${mediaRetryIconSvg()}</button>`;
         bindProtectedMediaRetry(frame);
         return;
       }
       if (frame) {
         const div = document.createElement('div');
         div.className = 'status';
-        div.innerHTML = `<span>${escapeHtml(message || '图片加载失败')}</span><button class="secondary mini media-retry" type="button" data-media-retry="${escapeHtml(path)}" title="重新加载图片" aria-label="重新加载图片">${mediaRetryIconSvg()}</button>`;
+        div.innerHTML = `<span>${escapeHtml(message || '图片加载失败')}</span><button class="secondary mini media-retry" type="button" data-media-retry="${escapeHtml(path)}" data-media-retry-variant="${escapeHtml(variant)}" title="重新加载图片" aria-label="重新加载图片">${mediaRetryIconSvg()}</button>`;
         frame.appendChild(div);
         bindProtectedMediaRetry(frame);
         return;
@@ -5913,7 +5929,14 @@ Source prompt:
       img.replaceWith(Object.assign(document.createElement('div'), {className: 'status', textContent: message || '图片加载失败'}));
     }
     async function getProtectedMedia(path) {
-      const key = protectedMediaKey(path);
+      return getProtectedMediaVariant(path, 'full');
+    }
+    async function getFullProtectedMedia(path) {
+      const media = await getProtectedMedia(path);
+      return media;
+    }
+    async function getProtectedMediaVariant(path, variant = 'full') {
+      const key = protectedMediaKey(path, variant);
       if (!key) throw new Error('媒体路径为空');
       const scope = ensureProtectedMediaScope();
       const cached = PROTECTED_MEDIA_CACHE.get(key);
@@ -5928,8 +5951,10 @@ Source prompt:
         let entry;
         const persisted = await readPersistentProtectedMedia(key, scope);
         if (persisted) return rememberProtectedMedia(key, persisted);
+        const mediaPath = protectedMediaPath(key);
+        const previewUrl = variant === 'thumbnail' ? cacheImageThumbnailUrl(mediaPath) : cacheImagePreviewUrl(mediaPath);
         if (isDashboardPage()) {
-          const res = await api('/api/cache-image-preview?path=' + encodeURIComponent(key));
+          const res = await api(previewUrl);
           const data = res.data || {};
           if (!data.data_url) throw new Error('媒体已清理');
           entry = {
@@ -5938,7 +5963,9 @@ Source prompt:
             size: Number(data.size || 0),
           };
         } else {
-          const res = await fetch(cacheImagePreviewUrl(key), {headers: headers()});
+          const res = variant === 'thumbnail'
+            ? await fetch(cacheImageThumbnailUrl(mediaPath), {headers: headers()})
+            : await fetch(cacheImagePreviewUrl(key), {headers: headers()});
           let data;
           try { data = await res.json(); } catch (_) { data = null; }
           if (!res.ok) {
@@ -5968,9 +5995,11 @@ Source prompt:
         if (PROTECTED_MEDIA_REQUESTS.get(key) === request) PROTECTED_MEDIA_REQUESTS.delete(key);
       }
     }
-    async function loadProtectedImage(img, path) {
+    async function loadProtectedImage(img, path, variant = 'full') {
       try {
-        const media = await getProtectedMedia(path);
+        const media = variant === 'full'
+          ? await getFullProtectedMedia(path)
+          : await getProtectedMediaVariant(path, variant);
         const url = protectedMediaUrl(media);
         if (!url) throw new Error('图片已清理');
         const thumb = img.closest('.studio-gallery-thumb, .asset-thumb');
@@ -5981,12 +6010,12 @@ Source prompt:
           img.hidden = false;
         }, {once: true});
         img.addEventListener('error', () => {
-          showProtectedMediaError(img, path, '图片加载失败');
+          showProtectedMediaError(img, path, '图片加载失败', variant);
         }, {once: true});
         img.hidden = false;
         img.src = url;
       } catch (e) {
-        showProtectedMediaError(img, path, e.message || '图片已清理');
+        showProtectedMediaError(img, path, e.message || '图片已清理', variant);
       }
     }
     function protectedMediaViewportPriority(element) {
@@ -5999,9 +6028,12 @@ Source prompt:
       }
     }
     function observeProtectedMedia(element, path) {
+      return observeProtectedMediaVariant(element, path, 'full');
+    }
+    function observeProtectedMediaVariant(element, path, variant = 'full') {
       if (!element || !path) return;
       if (typeof window.IntersectionObserver !== 'function') {
-        enqueueProtectedMediaLoad(element, path, protectedMediaViewportPriority(element));
+        enqueueProtectedMediaLoad(element, path, variant, protectedMediaViewportPriority(element));
         return;
       }
       if (!PROTECTED_MEDIA_OBSERVER) {
@@ -6011,14 +6043,17 @@ Source prompt:
             const target = entry.target;
             PROTECTED_MEDIA_OBSERVER?.unobserve(target);
             const deferredPath = target.getAttribute('data-deferred-cache-path') || '';
+            const deferredVariant = target.getAttribute('data-deferred-cache-variant') || 'full';
             target.removeAttribute('data-deferred-cache-path');
+            target.removeAttribute('data-deferred-cache-variant');
             if (target.isConnected && deferredPath) {
-              enqueueProtectedMediaLoad(target, deferredPath, protectedMediaViewportPriority(target));
+              enqueueProtectedMediaLoad(target, deferredPath, deferredVariant, protectedMediaViewportPriority(target));
             }
           });
         }, {rootMargin: '220px 0px', threshold: 0});
       }
       element.setAttribute('data-deferred-cache-path', path);
+      element.setAttribute('data-deferred-cache-variant', variant);
       PROTECTED_MEDIA_OBSERVER.observe(element);
     }
     function drainProtectedMediaLoadQueue() {
@@ -6059,8 +6094,8 @@ Source prompt:
       });
       shell.appendChild(button);
     }
-    function enqueueProtectedMediaLoad(element, path, priority = 0) {
-      PROTECTED_MEDIA_LOAD_QUEUE.push({element, path, priority, loader: () => loadProtectedImage(element, path)});
+    function enqueueProtectedMediaLoad(element, path, variant = 'full', priority = 0) {
+      PROTECTED_MEDIA_LOAD_QUEUE.push({element, path, variant, priority, loader: () => loadProtectedImage(element, path, variant)});
       PROTECTED_MEDIA_LOAD_QUEUE.sort((a, b) => b.priority - a.priority);
       drainProtectedMediaLoadQueue();
     }
@@ -6068,11 +6103,13 @@ Source prompt:
       const queued = root?.id === 'assetGrid' || root?.dataset?.protectedMediaQueued === 'true';
       root.querySelectorAll('img[data-cache-path]').forEach(img => {
         const path = img.getAttribute('data-cache-path') || '';
+        const variant = img.getAttribute('data-cache-variant') || 'full';
         img.removeAttribute('data-cache-path');
+        img.removeAttribute('data-cache-variant');
         if (!path) return;
         attachImageLightbox(img, path);
-        if (queued) observeProtectedMedia(img, path);
-        else loadProtectedImage(img, path);
+        if (queued || variant === 'thumbnail') observeProtectedMediaVariant(img, path, variant);
+        else loadProtectedImage(img, path, variant);
       });
     }
     function normalizeMediaSources(sources) {
@@ -9142,7 +9179,7 @@ Source prompt:
         card.style.left = `${Number(pos.x) || 0}px`;
         card.style.top = `${Number(pos.y) || 0}px`;
         const media = studioNodeMedia(node);
-        card.innerHTML = `<div class="node-media">${media ? `<img data-cache-path="${escapeHtml(media)}" alt="">` : `<span class="node-placeholder">${escapeHtml(node.status === 'draft' ? '等待生成' : '暂无图片')}</span>`}</div>
+        card.innerHTML = `<div class="node-media">${media ? `<img data-cache-path="${escapeHtml(media)}" data-cache-variant="thumbnail" alt="">` : `<span class="node-placeholder">${escapeHtml(node.status === 'draft' ? '等待生成' : '暂无图片')}</span>`}</div>
           <div class="node-copy"><div class="node-title">${escapeHtml(title)}</div><div class="node-meta"><span>${escapeHtml(studioNodeLabel(node))}</span><span>${escapeHtml(String(node.created_at || '').slice(0, 10))}</span></div></div>
           <div class="node-actions">${studioNodeHasMissingParent(node) ? '<button class="studio-node-action connect" data-node-action="connect" title="选择参考画面" aria-label="选择参考画面">+</button>' : ''}<button class="studio-node-action" data-node-action="focus" title="定位" aria-label="定位">⌖</button><button class="studio-node-action" data-node-action="delete" title="删除画面" aria-label="删除画面">×</button></div>`;
         card.addEventListener('click', event => { if (event.target.closest('.studio-node-action')) return; studioSelectNode(node.id); });
@@ -9173,7 +9210,7 @@ Source prompt:
       list.innerHTML = rows.map(node => {
         const media = studioNodeMedia(node);
         return `<button type="button" class="studio-node-list-item${String(node.id) === String(STUDIO.selectedNodeId) ? ' selected' : ''}" data-sidebar-node="${escapeHtml(node.id)}">
-          ${media ? `<img data-cache-path="${escapeHtml(media)}" alt="">` : '<span style="width:42px;height:42px;border-radius:7px;background:#e8edf0"></span>'}
+          ${media ? `<img data-cache-path="${escapeHtml(media)}" data-cache-variant="thumbnail" alt="">` : '<span style="width:42px;height:42px;border-radius:7px;background:#e8edf0"></span>'}
           <span class="node-list-copy"><strong>${escapeHtml(studioNodeTitle(node))}</strong><span>${escapeHtml(studioNodeLabel(node))}</span></span></button>`;
       }).join('') || '<div class="studio-node-empty">没有匹配画面</div>';
       list.querySelectorAll('[data-sidebar-node]').forEach(button => button.onclick = () => studioSelectNode(button.dataset.sidebarNode));

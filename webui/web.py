@@ -36,6 +36,7 @@ from .services import (
     parse_query_bool,
     parse_task_query,
     record_matches_query as shared_record_matches_query,
+    render_image_thumbnail,
     task_status_payload,
     validate_task_id,
 )
@@ -1111,6 +1112,28 @@ class FlaskWebServer:
                 return fail("缓存文件不是有效图片", 400)
             return send_file(info["absolute_path"], mimetype=info.get("mime_type") or "application/octet-stream")
 
+        @app.route("/api/cache-image-thumbnail", methods=["GET"])
+        def cache_image_thumbnail() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                rel_path = str(request.args.get("path") or "")
+                if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
+                    return fail("图片路径过长", 400)
+                info = self.plugin.get_cached_image_info(rel_path)
+                if not info.get("exists"):
+                    return fail("图片已清理", 404)
+                if not info.get("is_image"):
+                    return fail("缓存文件不是有效图片", 400)
+                raw = render_image_thumbnail(info["absolute_path"])
+            except Exception as exc:
+                return fail(str(exc), 400)
+            return ok({
+                "path": rel_path,
+                "mime_type": "image/jpeg",
+                "size": len(raw),
+                "data_url": f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}",
+            })
 
         @app.route("/api/cache-image-preview", methods=["GET"])
         def cache_image_preview() -> Any:

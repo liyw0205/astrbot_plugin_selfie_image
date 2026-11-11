@@ -5620,6 +5620,61 @@ class WebApiTests(unittest.TestCase):
         self.assertFalse(payload["data"]["available"])
         self.assertIn("已清理", payload["message"])
 
+    def test_cache_image_thumbnail_route_returns_bounded_progressive_jpeg(self) -> None:
+        from io import BytesIO
+        from PIL import Image
+
+        plugin = FakeWebPlugin("secret")
+        image_path = os.path.join(plugin.generated_dir, "thumb-source.png")
+        Image.new("RGB", (1200, 800), (80, 140, 220)).save(image_path, format="PNG")
+        original = Path(image_path).read_bytes()
+        client = self.make_client(plugin, host="0.0.0.0")
+        response = client.get(
+            "/api/cache-image-thumbnail?path=thumb-source.png",
+            headers={"X-Selfie-Image-Token": "secret"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()["data"]
+        self.assertEqual(payload["mime_type"], "image/jpeg")
+        self.assertTrue(payload["data_url"].startswith("data:image/jpeg;base64,"))
+        raw = base64.b64decode(payload["data_url"].split(",", 1)[1])
+        self.assertEqual(payload["size"], len(raw))
+        with Image.open(BytesIO(raw)) as image:
+            self.assertEqual(image.size, (480, 320))
+            self.assertEqual(image.format, "JPEG")
+            self.assertTrue(image.info.get("progressive"))
+        self.assertEqual(Path(image_path).read_bytes(), original)
+
+        Image.new("RGBA", (800, 1200), (220, 80, 140, 100)).save(image_path, format="PNG")
+        updated = client.get(
+            "/api/cache-image-thumbnail?path=thumb-source.png",
+            headers={"X-Selfie-Image-Token": "secret"},
+        ).get_json()["data"]
+        updated_raw = base64.b64decode(updated["data_url"].split(",", 1)[1])
+        self.assertNotEqual(raw, updated_raw)
+        with Image.open(BytesIO(updated_raw)) as image:
+            self.assertEqual(image.size, (320, 480))
+            self.assertEqual(image.mode, "RGB")
+
+    def test_cache_image_thumbnail_route_checks_auth_and_path(self) -> None:
+        plugin = FakeWebPlugin("secret")
+        Path(plugin.generated_dir, "not-image.txt").write_text("not an image", encoding="utf-8")
+        client = self.make_client(plugin, host="0.0.0.0")
+        self.assertEqual(client.get("/api/cache-image-thumbnail?path=missing.png").status_code, 401)
+        for path, expected in [
+            ("../secret.png", 400),
+            ("", 400),
+            ("a" * 600 + ".png", 400),
+            ("not-image.txt", 400),
+            ("missing.png", 404),
+        ]:
+            with self.subTest(path=path):
+                response = client.get(
+                    "/api/cache-image-thumbnail", query_string={"path": path},
+                    headers={"X-Selfie-Image-Token": "secret"},
+                )
+                self.assertEqual(response.status_code, expected)
+
     def test_cache_image_route_rejects_non_image_cache_files(self) -> None:
         plugin = FakeWebPlugin("secret")
         text_path = os.path.join(plugin.generated_dir, "not-image.txt")
@@ -7275,6 +7330,24 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertTrue(envelope["success"])
         self.assertFalse(envelope["data"]["available"])
         self.assertIn("已清理", envelope["message"])
+
+    def test_dashboard_cache_image_thumbnail_returns_jpeg_data_url(self) -> None:
+        from io import BytesIO
+        from PIL import Image
+        import astrbot_plugin_selfie_image.webui.dashboard_api as dashboard_api
+
+        plugin = FakeWebPlugin("secret")
+        Image.new("RGB", (800, 1200), "blue").save(Path(plugin.generated_dir, "dashboard-thumb.png"))
+        api = dashboard_api.SelfieImageDashboardAPI(plugin)
+        with patch.object(dashboard_api, "request", types.SimpleNamespace(query={"path": "dashboard-thumb.png"})), \
+                patch.object(dashboard_api, "json_response", lambda payload, **_: payload):
+            result = asyncio.run(api.page_cache_image_thumbnail())
+        payload = result["data"]["data"]
+        self.assertEqual(payload["mime_type"], "image/jpeg")
+        raw = base64.b64decode(payload["data_url"].split(",", 1)[1])
+        self.assertEqual(payload["size"], len(raw))
+        with Image.open(BytesIO(raw)) as image:
+            self.assertEqual(image.size, (320, 480))
 
     def test_openai_fast_path_and_trust_env_false_still_present(self) -> None:
         providers = Path(__file__).resolve().parents[1] / "core/providers.py"

@@ -4,6 +4,7 @@ Dashboard plugin-page APIs registered via ``context.register_web_api``.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from typing import Any, Optional
@@ -45,6 +46,7 @@ from .services import (
     parse_task_query,
     parse_timestamp_query,
     record_matches_query as shared_record_matches_query,
+    render_image_thumbnail,
     task_status_payload,
     validate_task_id,
 )
@@ -140,6 +142,7 @@ class SelfieImageDashboardAPI:
             ("records/clear", self.page_records_clear, ["POST"], "Selfie Image clear records"),
             ("cache/cleanup", self.page_cache_cleanup, ["POST"], "Selfie Image cleanup cache"),
             ("cache-image", self.page_cache_image_file, ["GET"], "Selfie Image cache image download"),
+            ("cache-image-thumbnail", self.page_cache_image_thumbnail, ["GET"], "Selfie Image cache image thumbnail"),
             ("cache-image-preview", self.page_cache_image_preview, ["GET"], "Selfie Image cache image preview"),
             ("auth/check", self.page_auth_check, ["POST", "GET"], "Selfie Image dashboard auth check"),
             ("studio/sessions", self.page_studio_list, ["GET"], "Selfie Image studio list"),
@@ -992,6 +995,28 @@ class SelfieImageDashboardAPI:
                 "mime_type": mime,
                 "size": len(raw),
                 "data_url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
+            }
+        )
+
+    async def page_cache_image_thumbnail(self) -> Any:
+        try:
+            rel_path = self._query_value("path")
+            if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
+                return self._fail("图片路径过长", 400)
+            info = self.plugin.get_cached_image_info(rel_path)
+            if not info.get("exists"):
+                return self._fail("图片已清理", 404)
+            if not info.get("is_image"):
+                return self._fail("缓存文件不是有效图片", 400)
+            raw = await asyncio.to_thread(render_image_thumbnail, info["absolute_path"])
+        except Exception as exc:
+            return self._fail(str(exc), 400)
+        return self._ok(
+            {
+                "path": rel_path,
+                "mime_type": "image/jpeg",
+                "size": len(raw),
+                "data_url": f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}",
             }
         )
 

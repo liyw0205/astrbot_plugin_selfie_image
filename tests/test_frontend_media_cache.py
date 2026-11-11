@@ -12,6 +12,9 @@ def test_protected_media_uses_shared_cache_and_request_deduplication():
     assert "preview.available === false" in PAGE
     assert "const pending = PROTECTED_MEDIA_REQUESTS.get(key);" in PAGE
     assert "return rememberProtectedMedia(key, entry);" in PAGE
+    assert "function cacheImageThumbnailUrl(path)" in PAGE
+    assert "async function getProtectedMediaVariant(path, variant = 'full')" in PAGE
+    assert "cacheImageThumbnailUrl(mediaPath)" in PAGE
 
 
 def test_media_consumers_reuse_cached_response_for_detail_and_download():
@@ -97,6 +100,8 @@ def test_asset_actions_are_delegated_and_media_loading_is_prioritized():
     assert "const PROTECTED_MEDIA_LOAD_CONCURRENCY = 2;" in PAGE
     assert "protectedMediaViewportPriority" in PAGE
     assert "正在加载记录详情" in PAGE
+    assert 'data-cache-variant="thumbnail"' in PAGE
+    assert "加载缩略图" in PAGE
 
 
 def test_record_and_asset_pagers_show_totals_and_ignore_stale_requests():
