@@ -42,6 +42,7 @@ from astrbot_plugin_selfie_image.prompts.prompt_templates import (
     build_selfie_builtin_prompt,
     extract_generated_action_contract,
     extract_user_prompt,
+    resolve_appearance_type,
 )
 from astrbot_plugin_selfie_image.prompts.command_parser import parse_prompt_options
 from astrbot_plugin_selfie_image.prompts.selfie_actions import (
@@ -51,7 +52,9 @@ from astrbot_plugin_selfie_image.prompts.selfie_actions import (
 )
 
 
-DIRECT_SELF_SEATED_POSES = {"seated_thigh_gentle_pinch", "seated_self_knees_offset"}
+DIRECT_SELF_SEATED_POSES = {
+    "seated_thigh_gentle_pinch", "seated_self_knees_offset", "chair_self_parallel_knees_offset",
+}
 
 
 def plugin_for_prompts(tmp_path, english=False):
@@ -65,6 +68,93 @@ def plugin_for_prompts(tmp_path, english=False):
     # Exercise the supported translation-failure fallback without a network LLM.
     plugin._translate_prompt_to_english = AsyncMock(side_effect=lambda text, **_kw: (text, {"applied": False}))
     return plugin
+
+
+def realism_action(mode, medium, request=""):
+    if mode == "legs":
+        return build_leg_focus_action(request, force_pose="kneeling_sit_back")
+    if mode == "cos":
+        return build_cos_look_action(
+            request, appearance_type=medium, force_id="roxy_cream", camera="third",
+        )
+    if mode == "group":
+        return build_group_selfie_action(
+            request, appearance_type=medium, has_identity_reference=True,
+        )
+    builder = build_third_person_look_action if mode == "third" else build_selfie_look_action
+    return builder(
+        ("漏腰 " if mode == "waist" else "") + request,
+        appearance_type=medium,
+        scene_light_provider=lambda _kind: (["书桌旁"], ["暖台灯"]),
+    )
+
+
+@pytest.mark.parametrize("mode", ["selfie", "third", "waist", "group", "cos", "legs"])
+@pytest.mark.parametrize("medium", ["auto", "real", "anime"])
+@pytest.mark.parametrize("english,translation_applied", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("user_text", ["", "沿用参考图的场景与光线"])
+def test_shared_realism_rules_reach_all_final_requests_once(
+    tmp_path, mode, medium, english, translation_applied, user_text,
+):
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin.persona.set_appearance_type(medium)
+    plugin._translate_prompt_to_english = AsyncMock(
+        side_effect=lambda text, **_kw: (text, {"applied": translation_applied})
+    )
+    action = realism_action(mode, medium, user_text)
+    prompt, refs, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert len(refs) == 1
+    use_english = english and (not user_text or translation_applied)
+    detail = "local skin-tone variation" if use_english else "局部肤色差异"
+    reference = "Do not automatically copy its room" if use_english else "不自动沿用其中的房间"
+    assert prompt.count(detail) == int(medium != "anime")
+    assert prompt.count(reference) == int(medium != "anime")
+    if medium == "auto":
+        assert ("only when the primary identity reference" if use_english else "仅在主形象参考图") in prompt
+        assert "真实皮肤，" not in prompt
+    if medium != "anime":
+        assert ("an explicitly requested photographic style takes priority" if use_english else "用户明确指定的摄影风格优先") in prompt
+        assert ("follow an explicit request to reuse its scene" if use_english else "用户明确要求沿用参考图的场景") in prompt
+    contract = extract_generated_action_contract(action)
+    assert prompt.count(contract) == 1
+
+
+@pytest.mark.parametrize("mode", ["selfie", "group", "cos", "legs"])
+@pytest.mark.parametrize("user_text", ["更真实一点", "像真人一样"])
+@pytest.mark.parametrize("english,translation_applied", [(False, False), (True, False), (True, True)])
+def test_per_request_realism_override_survives_final_assembly(
+    tmp_path, mode, user_text, english, translation_applied,
+):
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin.persona.set_appearance_type("anime")
+    plugin._translate_prompt_to_english = AsyncMock(
+        side_effect=lambda text, **_kw: (text, {"applied": translation_applied})
+    )
+    action = realism_action(mode, resolve_appearance_type("anime", user_text), user_text)
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert ("local skin-tone variation" if english and translation_applied else "局部肤色差异") in prompt
+    assert "最终画面统一为 2D" not in prompt
+    assert "Final visual medium: a cohesive 2D" not in prompt
+
+
+@pytest.mark.parametrize("mode", ["selfie", "group", "cos", "legs"])
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_builtin_realism_rules_do_not_require_an_identity_reference(mode, language):
+    action = realism_action(mode, "real")
+    prompt = build_selfie_builtin_prompt(action, language=language, appearance_type="real")
+    assert ("local skin-tone variation" if language == "en" else "局部肤色差异") in prompt
+    assert ("Do not automatically copy its room" if language == "en" else "不自动沿用其中的房间") not in prompt
+
+
+@pytest.mark.parametrize("mode", ["selfie", "group", "cos", "legs"])
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_rebuilding_builtin_prompts_keeps_realism_once(mode, language):
+    action = realism_action(mode, "real")
+    kwargs = dict(language=language, appearance_type="real", has_reference_image=True)
+    prompt = build_selfie_builtin_prompt(action, **kwargs)
+    rebuilt = build_selfie_builtin_prompt(action, action_content=prompt, **kwargs)
+    assert rebuilt.count("local skin-tone variation" if language == "en" else "局部肤色差异") == 1
+    assert rebuilt.count("Do not automatically copy its room" if language == "en" else "不自动沿用其中的房间") == 1
 
 
 @pytest.mark.parametrize("english,translation_applied", [(False, False), (True, False), (True, True)])
@@ -375,6 +465,9 @@ def test_incompatible_leg_requests_are_rejected_before_prompt_generation(query):
     ("kneeling_upright", "self_mirror_left_down"),
     ("seated_thigh_gentle_pinch", "self_forward_down"),
     ("seated_self_knees_offset", "self_right_down"),
+    ("mirror_side_sit_shins_overlap", "self_mirror_left_gentle_down"),
+    ("mirror_seated_knees_apart_feet_together", "self_mirror_front_gentle_down"),
+    ("chair_self_parallel_knees_offset", "self_right_down"),
     ("kneeling_relaxed_apart", "third_kneeling_oblique_down"),
     ("chair_thigh_cross_slant", "third_oblique_low"),
 ])
@@ -742,11 +835,18 @@ def test_leg_mirror_views_require_a_mirror_and_rebuild_obsolete_edge_only_record
     for view in LEGFOCUS_VIEW_BY_ID.values():
         if view.get("capture_mode") != "mirror":
             continue
-        combinations = compatible_leg_compositions(LEGFOCUS_POSE_BY_ID["kneeling_upright"], view_id=view["id"])
+        combinations = [
+            combination for pose in LEGFOCUS_POSE_BY_ID.values()
+            for combination in compatible_leg_compositions(pose, view_id=view["id"])
+        ]
         assert combinations
         assert {scene["id"] for scene, _, _ in combinations} == {"floor_mirror"}
+        pose_id = next(
+            pose["id"] for pose in LEGFOCUS_POSE_BY_ID.values()
+            if view["id"] in pose["camera_views"].get("selfie", [])
+        )
         with pytest.raises(LegFocusDataError, match="不兼容"):
-            build_leg_focus_action("床上", force_pose="kneeling_upright", force_view=view["id"])
+            build_leg_focus_action("床上", force_pose=pose_id, force_view=view["id"])
     legacy = (
         "镜框与局部镜面在腿部远端的画幅边缘自然入画。本人看向自己双腿。"
         " 【legs:outfit】 【frame:leg_detail】 【pose:kneeling_upright】"

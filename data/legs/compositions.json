@@ -15,12 +15,12 @@
   "scene_rule": "只使用选定的单一室内场景与支撑物，背景占少量画幅。",
   "appearance_prompts": {
     "auto": {
-      "zh": "保持参考图或角色设定的画风；光线方向与当前场景及用户要求一致，保留衣料褶皱、材质受力变化与支撑接触阴影，明暗过渡自然。",
-      "en": "Keep the reference or character's visual medium. Follow the scene and requested lighting, with natural tonal transitions, fabric folds, material deformation under weight, and contact shadows at supported areas."
+      "zh": "以主形象参考图或角色设定确定视觉媒介，按当前场景统一画风。",
+      "en": "Use the primary identity reference or character settings to determine the visual medium, with a cohesive style in the selected scene."
     },
     "real": {
-      "zh": "成片采用统一的写实真人摄影画风；光线方向服从当前室内场景与用户要求，保留自然曝光、轻微皮肤纹理、衣料褶皱与支撑接触阴影，受压处呈现符合材质的轻微形变，避免磨皮蜡感、棚拍精修和过度虚化。",
-      "en": "Render a cohesive realistic human photograph. Follow the indoor scene and requested lighting, retaining natural exposure, subtle skin texture, fabric folds, contact shadows, and slight material-appropriate deformation under weight. Avoid waxy skin, studio retouching, and excessive background blur."
+      "zh": "成片采用统一的写实真人摄影画风。",
+      "en": "Render a cohesive realistic human photograph."
     },
     "anime": {
       "zh": "成片采用统一的 2D 柔光京阿尼风格动漫插画；光线方向与场景一致，用连贯明暗表现衣料褶皱和支撑接触阴影，不混入真人皮肤纹理。",
@@ -392,6 +392,65 @@
       "support_types": ["chair_seat", "seat_edge"],
       "camera_views": {
         "selfie": ["self_forward_down", "self_left_down", "self_right_down"]
+      }
+    },
+    {
+      "id": "mirror_side_sit_shins_overlap",
+      "title": "镜前侧坐屈膝叠小腿",
+      "posture": "seated",
+      "legacy_ids": [],
+      "aliases": ["镜前侧坐叠小腿", "镜前屈膝叠小腿", "侧坐屈膝叠小腿"],
+      "weight": 1,
+      "prompt": "臀部坐稳宽软地毯，上身自然直立并略侧转，双腿舒适屈膝收向身前偏一侧。近侧小腿斜横在另一条小腿前上方，交叠处前后层次清楚；两侧脚踝错开，近侧脚底随角度部分朝向镜面，远侧腿脚由近侧小腿自然遮挡。重心留在臀部，不把双膝和小腿收成向身后折叠的跪坐，也不强扭脚踝展示两只脚底。",
+      "hand_prompts": {
+        "mirror": "一手在上身附近持手机朝向镜面，另一手自然轻放身侧，双手不承担坐姿支撑，不遮挡腿部交叠处。"
+      },
+      "crop_prompts": {
+        "selfie": "保留上身、腰胯、屈膝大腿与交叠小腿的连贯轮廓，近侧可见脚端与地毯接触处留在下缘。",
+        "mirror": "镜中从肩下上身取至地毯上的可见脚端，屈膝大腿、近侧斜横小腿与远侧小腿的前后层次清楚；交叠处不裁断，远侧脚被挡住的部分保持遮挡。"
+      },
+      "support_types": ["wide_surface"],
+      "camera_views": {
+        "selfie": ["self_mirror_left_gentle_down", "self_mirror_right_gentle_down"]
+      }
+    },
+    {
+      "id": "mirror_seated_knees_apart_feet_together",
+      "title": "镜前分膝收腿双脚相靠坐",
+      "posture": "seated",
+      "legacy_ids": [],
+      "aliases": ["镜前分膝收腿·双脚相靠坐", "镜前分膝收腿", "镜前双脚相靠坐", "分膝收腿双脚相靠坐"],
+      "weight": 1,
+      "prompt": "臀部坐稳宽软地毯，上身自然直立，双膝舒适弯曲、抬起并向两侧展开，小腿从各自膝部斜向身前中央收拢。双脚内侧靠近并略有前后差，脚部外缘自然接触地毯，脚底斜朝镜面；双腿各自沿同侧膝踝连续，脚踝不交缠。膝部保持抬起，不压成双膝贴地的蝴蝶坐，也不强求两脚掌完全相贴或平踩地面。",
+      "hand_prompts": {
+        "mirror": "双手在上身附近自然握稳同一部手机朝向镜面，手指不重复，不遮挡大腿与双膝，臀部自行坐稳地毯。"
+      },
+      "crop_prompts": {
+        "selfie": "保留上身、腰胯、两侧屈膝与中央收拢的小腿脚部，双膝和脚端均留有自然边距。",
+        "mirror": "镜中从肩下上身取至相靠双脚，双膝分列画面两侧，收拢的小腿与脚部位于下方前景；保留地毯承托与自然近远层次，不把单只脚底放大占满画面。"
+      },
+      "support_types": ["wide_surface"],
+      "camera_views": {
+        "selfie": ["self_mirror_front_gentle_down"]
+      }
+    },
+    {
+      "id": "chair_self_parallel_knees_offset",
+      "title": "椅上并腿微错膝斜俯自拍",
+      "posture": "seated",
+      "legacy_ids": [],
+      "aliases": ["椅上并腿微错膝·斜俯自拍", "椅上并腿微错膝", "椅上并腿斜俯自拍"],
+      "weight": 1,
+      "prompt": "自然坐稳椅面，臀部和大腿后侧由同一座面承托，两条大腿轻轻靠拢并近乎平行，双膝仅小幅前后错开。小腿越过座沿后顺势向下落向地面，双腿不交叉、不翘起叠腿，也不抬膝收到胸前；上身放松，髋部不离开座面。",
+      "hand_prompts": {
+        "direct": "一手在上身一侧持机向下取景，手机与持机手留在画外，另一手自然放松，不要求双手扶住椅面；道具仅按用户明确要求出现。"
+      },
+      "crop_prompts": {
+        "selfie": "从本人上身一侧斜向下取景，保留衣摆、腰胯、完整大腿与轻微错位的双膝，椅面和座沿承托清楚；下缘可保留一小段小腿，脚部自然留在画外，不为拍全双脚改成对面他拍。"
+      },
+      "support_types": ["chair_seat"],
+      "camera_views": {
+        "selfie": ["self_left_down", "self_right_down"]
       }
     },
     {

@@ -48,6 +48,8 @@ class PromptPoolJsonTests(unittest.TestCase):
             "prone_legs_extended", "prone_single_knee_bent", "prone_both_knees_bent",
             "reclined_parallel_extended", "reclined_one_knee_up", "reclined_feet_on_stool",
             "kneeling_side_sit", "kneeling_single_knee_grounded", "kneeling_sit_forward_lean",
+            "mirror_side_sit_shins_overlap", "mirror_seated_knees_apart_feet_together",
+            "chair_self_parallel_knees_offset",
         })
         for pose in LEGFOCUS_POSE_BY_ID.values():
             combinations = compatible_leg_compositions(pose)
@@ -213,7 +215,7 @@ class PromptPoolJsonTests(unittest.TestCase):
             compatible_leg_compositions,
         )
 
-        self.assertEqual(len(LEGFOCUS_POSE_POOL), 39)
+        self.assertEqual(len(LEGFOCUS_POSE_POOL), 42)
         for pose in LEGFOCUS_POSE_POOL:
             self.assertNotIn("scene_ids", pose)
             self.assertIn("camera_views", pose)
@@ -222,6 +224,8 @@ class PromptPoolJsonTests(unittest.TestCase):
                 self.assertEqual(scene_ids, {"chair_footstool"})
             elif pose["id"] == "reclined_feet_on_stool":
                 self.assertEqual(scene_ids, {"sofa_footstool"})
+            elif pose["id"] in {"mirror_side_sit_shins_overlap", "mirror_seated_knees_apart_feet_together"}:
+                self.assertEqual(scene_ids, {"floor_mirror"})
             else:
                 self.assertGreater(len(scene_ids), 1)
             for camera, view_ids in pose["camera_views"].items():
@@ -546,7 +550,11 @@ class PromptPoolJsonTests(unittest.TestCase):
     def test_reference_leg_additions_are_in_default_random_candidates(self) -> None:
         from astrbot_plugin_selfie_image.cos import leg_focus
 
-        for pose_id in ("seated_thigh_gentle_pinch", "seated_self_knees_offset", "kneeling_relaxed_apart"):
+        for pose_id in (
+            "seated_thigh_gentle_pinch", "seated_self_knees_offset", "kneeling_relaxed_apart",
+            "mirror_side_sit_shins_overlap", "mirror_seated_knees_apart_feet_together",
+            "chair_self_parallel_knees_offset",
+        ):
             def select_requested(pool):
                 self.assertIn(pose_id, {pose["id"] for pose in pool})
                 return dict(next(pose for pose in pool if pose["id"] == pose_id))

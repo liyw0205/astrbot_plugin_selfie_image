@@ -138,6 +138,42 @@
       "prompt": "本人持机位置略偏右，镜头朝向面前落地镜并向下倾斜，通过镜面呈现轻微偏侧的大腿与屈膝轮廓；两膝接触面自然可见，不绕到人物背后。"
     },
     {
+      "id": "self_mirror_front_gentle_down",
+      "title": "镜前正向轻俯拍",
+      "camera": "selfie",
+      "capture_mode": "mirror",
+      "direction": "front",
+      "elevation": "down",
+      "weight": 2,
+      "support_types": ["wide_surface"],
+      "framings": ["leg_detail"],
+      "prompt": "本人在坐姿上身附近持手机朝向面前落地镜，镜头仅轻微向下倾斜，以镜中正面倒影呈现地坐姿势；镜中腿脚透视自然，近侧脚部不夸张放大，不改成从自身胸前直接向下看腿的陡俯拍，也不把机位放到地面仰拍。"
+    },
+    {
+      "id": "self_mirror_left_gentle_down",
+      "title": "镜前偏左轻俯拍",
+      "camera": "selfie",
+      "capture_mode": "mirror",
+      "direction": "left",
+      "elevation": "down",
+      "weight": 2,
+      "support_types": ["wide_surface"],
+      "framings": ["leg_detail"],
+      "prompt": "本人在坐姿上身附近持手机朝向面前落地镜，持机位置略偏自身左侧，镜头仅轻微向下倾斜；镜中以接近正面、略偏侧的倒影呈现屈腿层次，镜面反射透视一致，不改成直接自视陡俯拍或贴地仰拍。"
+    },
+    {
+      "id": "self_mirror_right_gentle_down",
+      "title": "镜前偏右轻俯拍",
+      "camera": "selfie",
+      "capture_mode": "mirror",
+      "direction": "right",
+      "elevation": "down",
+      "weight": 2,
+      "support_types": ["wide_surface"],
+      "framings": ["leg_detail"],
+      "prompt": "本人在坐姿上身附近持手机朝向面前落地镜，持机位置略偏自身右侧，镜头仅轻微向下倾斜；镜中以接近正面、略偏侧的倒影呈现屈腿层次，镜面反射透视一致，不改成直接自视陡俯拍或贴地仰拍。"
+    },
+    {
       "id": "third_kneeling_oblique_down",
       "title": "跪姿斜上方俯拍",
       "camera": "third",

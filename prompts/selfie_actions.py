@@ -442,7 +442,7 @@ def build_crop_waist_selfie_action(
         + "保持 AI 身份长相与发色一致，画面干净得体。"
     )
     if appearance_type == "real":
-        base += "真人摄影质感，保留自然皮肤纹理、布料质感与接触阴影。"
+        base += "画面统一为真人摄影质感，不混用插画或渲染媒介。"
     elif appearance_type == "anime":
         base += "统一为柔光京阿尼风格动漫插画，线条、上色、光影与动漫五官保持一致。"
     if has_refs:
@@ -604,7 +604,7 @@ def build_selfie_look_action(
         + "画面干净日常，不要夸张摆拍。"
     )
     if appearance_type == "real":
-        base += "真人摄影质感：保留自然皮肤纹理、真实布料与接触阴影，避免塑料皮肤。"
+        base += "画面统一为真人摄影质感，不混用插画或渲染媒介。"
     elif appearance_type == "anime":
         base += "柔光京阿尼风格动漫插画：线条、上色、光影与动漫五官统一，不生成真人皮肤纹理。"
     if has_refs:
@@ -719,7 +719,7 @@ def build_third_person_look_action(
         + "生活化随手记录感，不要影楼硬摆。"
     )
     if appearance_type == "real":
-        base += "真人摄影质感：保留自然皮肤纹理、真实布料与接触阴影。"
+        base += "画面统一为真人摄影质感，不混用插画或渲染媒介。"
     elif appearance_type == "anime":
         base += "柔光京阿尼风格动漫插画：线条、上色、光影与动漫五官统一，不生成真人皮肤纹理。"
     if has_refs:
@@ -794,7 +794,6 @@ def build_group_selfie_action(
     if appearance_line:
         base += appearance_line
     base += style_blob
-    skin_line = "真实皮肤，" if appearance_type == "auto" else ""
     group_staging = str(composition["prompt"])
     framing_prompt = {
         "near": "竖屏手机近景半身。",
@@ -809,7 +808,7 @@ def build_group_selfie_action(
         "mixed": "同框人物的正面、侧面或背侧朝向自然错开，不要求所有人统一看向镜头；",
     }[group_orientation]
     lighting_prompt = (
-        f"{skin_line}{'' if explicit_light else '窗光或暖灯，'}不要美颜滤镜、不要证件照站排。"
+        f"{'' if explicit_light else '窗光或暖灯，'}不要美颜滤镜、不要证件照站排。"
         if group_orientation == "front"
         else ""
     )
@@ -838,12 +837,12 @@ def build_group_selfie_action(
         )
     else:
         base += " 没有合影对象参考图时，按文字要求生成自然同框完整人物；未指定性别时默认成年女性。"
-    extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
-    if extra:
-        base += f" 用户补充要求：{extra}。"
     final_style_instruction = appearance_type_output_instruction(appearance_type)
     if final_style_instruction:
         base += final_style_instruction
+    extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
+    if extra:
+        base += f" 用户补充要求：{extra}。"
     return base + f" 【shot:{group_shot}】"
 
 

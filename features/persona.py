@@ -55,13 +55,16 @@ from .daily_prompt_pools import (
     SELFIE_SNAPSHOT_PRESETS,
 )
 from ..prompts.prompt_templates import (
+    APPEARANCE_OUTPUT_PROMPTS_ZH,
     COS_COVERED_EYES_IDENTITY_CONTRACT_ZH,
     COS_IDENTITY_CONTRACT_ZH,
     COS_HAIR_OVERRIDE_CONTRACT_ZH,
     explicit_selfie_action_mode,
+    extract_user_prompt,
     has_daily_staging_contract,
     has_explicit_gaze_request,
     has_viewpoint_change_request,
+    photographic_realism_prompt,
     resolve_appearance_type,
 )
 from ..prompts.group_prompt_pool import has_group_composition_contract
@@ -132,7 +135,7 @@ def appearance_type_instruction(
         )
     if has_reference_image:
         return (
-            "形象类型：自动。主角的视觉媒介、质感和人物比例以参考图一为唯一主形象依据；"
+            "形象类型：自动。主角的视觉媒介和人物比例以参考图一为唯一主形象依据；"
             "额外参考图只提供同框对象或用户明确指定的服装、姿势、构图和场景，不得改变主角媒介，不得把主角改成另一种画风。"
             + gender_lock
         )
@@ -141,11 +144,7 @@ def appearance_type_instruction(
 
 def appearance_type_output_instruction(appearance_type: str) -> str:
     kind = normalize_appearance_type(appearance_type)
-    if kind == "real":
-        return "最终画面统一为写实真人照片；如提示词提到动漫或游戏角色，只保留其服装、配色和造型，不生成插画或混合画风。"
-    if kind == "anime":
-        return "最终画面统一为 2D 柔光京阿尼风格动漫插画；自拍、手机、照片、摄影和 COS 仅控制构图与内容，不生成真人摄影或混合画风。"
-    return ""
+    return APPEARANCE_OUTPUT_PROMPTS_ZH.get(kind, "")
 
 
 def group_style_lines(appearance_type: str) -> list[str]:
@@ -265,10 +264,7 @@ def extract_user_extra_text(action: str) -> str:
     match = re.search(r"(?:用户补充要求优先|用户补充要求|用户指定内容|额外要求|用户要求)[:：]\s*(.+)", text, re.S)
     if not match:
         return ""
-    value = match.group(1)
-    value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|legs_face|leg_view|leg_scene|leg_support|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
-    value = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", value)
-    return re.sub(r"\s+", " ", value).strip(" 。")
+    return extract_user_prompt(text)
 
 
 def extract_user_action_text(action: str) -> str:
@@ -290,7 +286,7 @@ def extract_user_action_text(action: str) -> str:
         "【cos:",
         "【姿势池·",
     )
-    if any(marker in text for marker in generated_markers):
+    if explicit_selfie_action_mode(text) or any(marker in text for marker in generated_markers):
         return ""
     return text
 
@@ -2550,6 +2546,13 @@ class PersonaManager:
             leg_focus_appearance_prompt(appearance_type, "zh", act)
             if intent.is_legs_only else appearance_type_output_instruction(appearance_type)
         )
+        realism_instruction = photographic_realism_prompt(
+            appearance_type,
+            has_reference_image=has_reference_image,
+            existing_text=act,
+        )
+        if realism_instruction:
+            output_lines.append(realism_instruction)
         if final_style_instruction and not group_contract:
             output_lines.append(final_style_instruction)
 

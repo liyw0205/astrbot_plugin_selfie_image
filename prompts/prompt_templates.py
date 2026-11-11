@@ -69,6 +69,12 @@ COS_HAIR_OVERRIDE_CONTRACT_EN = (
 )
 
 
+APPEARANCE_OUTPUT_PROMPTS_ZH = {
+    "real": "最终画面统一为写实真人照片；如提示词提到动漫或游戏角色，只保留其服装、配色和造型，不生成插画或混合画风。",
+    "anime": "最终画面统一为 2D 柔光京阿尼风格动漫插画；自拍、手机、照片、摄影和 COS 仅控制构图与内容，不生成真人摄影或混合画风。",
+}
+
+
 @dataclass(frozen=True)
 class BilingualPrompt:
     builtin_zh: str
@@ -143,7 +149,12 @@ def resolve_appearance_type(appearance_type: str, user_text: str = "") -> str:
     explicit_patterns = {
         "real": (
             r"真人(?:风格|照片|摄影|版|形象)|写实(?:风格|照片|摄影)|真实照片|照片写实",
+            r"(?:像|如同)(?:真实的?)?真人(?:一样|一般|似的)?|"
+            r"(?:跟|和)(?:真实的?)?真人(?:一样|一般|似的)|"
+            r"(?:拍成|生成|改成|采用|使用)(?:真人|写实)(?=$|[，,。；;\s])|"
+            r"(?:^|[，,。；;])\s*(?:真人|写实)\s*(?=$|[，,。；;])",
             r"\b(?:photorealistic|realistic\s+(?:photo|photography|image)|real[- ]life\s+photo)\b",
+            r"\b(?:look\s+like\s+(?:a\s+)?real\s+person|real\s+person\s+photo)\b",
         ),
         "anime": (
             r"动漫(?:风格|插画|画风|版|形象)|二次元(?:风格|插画|画风|版|形象)|"
@@ -152,8 +163,9 @@ def resolve_appearance_type(appearance_type: str, user_text: str = "") -> str:
         ),
     }
     negation = re.compile(
-        r"(?:不要|不想要|避免|禁止|拒绝|不使用|不需要|别(?:用|画成|做成)?)"
-        r"(?:生成|绘制|画成|做成|采用|使用)?\s*$",
+        r"(?:不要|不想(?:要)?|避免|禁止|拒绝|不(?:使用|需要|生成|绘制|画成|做成|采用|是)?|别(?:用|画成|做成)?)"
+        r"(?:生成|绘制|画成|做成|采用|使用)?\s*$|"
+        r"\b(?:do\s+not|don't|not|no|avoid|never)\s*(?:use|render|make)?\s*$",
         re.I,
     )
     matches = []
@@ -161,11 +173,70 @@ def resolve_appearance_type(appearance_type: str, user_text: str = "") -> str:
     for kind, patterns in explicit_patterns.items():
         for pattern in patterns:
             for match in re.finditer(pattern, text, re.I):
-                prefix = text[max(0, match.start() - 8) : match.start()]
+                prefix = text[max(0, match.start() - 32) : match.start()]
                 matches.append(
                     (match.start(), opposite[kind] if negation.search(prefix) else kind)
                 )
-    return max(matches)[1] if matches else configured
+    if matches:
+        return max(matches)[1]
+    # A named medium takes priority over a request for more convincing detail.
+    realism_requests = re.compile(
+        r"(?:更|更加|再)(?:真实|写实)(?:一点|一些|点|些)?|"
+        r"(?:真实|写实)(?:一点|一些|点|些)|"
+        r"(?:增强|提高|提升|增加)(?:照片的?)?真实感|"
+        r"\bmore\s+(?:realistic|lifelike|photo[- ]?realistic)\b",
+        re.I,
+    )
+    for match in realism_requests.finditer(text):
+        if not negation.search(text[max(0, match.start() - 32) : match.start()]):
+            return "real"
+    return configured
+
+
+def photographic_realism_prompt(
+    appearance_type: str,
+    *,
+    language: str = "zh",
+    has_reference_image: bool = False,
+    existing_text: str = "",
+) -> str:
+    """Apply one shared photographic finish without changing shot or medium."""
+    kind = resolve_appearance_type(appearance_type)
+    if kind == "anime":
+        return ""
+    if language == "en":
+        scope = (
+            "Apply the following photographic realism rules only when the primary identity reference or character settings use live-action photography. "
+            "Anime and illustration retain their medium without photorealistic skin texture."
+            if kind == "auto" else "Photographic realism: render a natural live-action photograph."
+        )
+        reference = (
+            "Use the identity reference for the same person's identity and natural proportions. Do not automatically copy its room, background objects, lighting, beauty filter, or retouching; "
+            "follow an explicit request to reuse its scene, lighting, or composition."
+            if has_reference_image else ""
+        )
+        finish = (
+            "Use the everyday capture quality of an ordinary phone or camera, following the selected camera, pose, framing, scene, and light; an explicitly requested photographic style takes priority. "
+            "Retain subtle skin texture and local skin-tone variation visible at this distance, with natural folds, slight deformation, and contact shadows where joints bend or weight is supported. "
+            "Fabric detail follows its thickness, tension, and distance. Exposure, white balance, reflections, and depth of field belong to one capture. "
+            "Avoid uniform skin smoothing, waxy highlights, excessive blur, or over-sharpened fabric by default; do not manufacture pores or noise."
+        )
+    else:
+        scope = (
+            "自动媒介下，以下真人摄影质感规则仅在主形象参考图或角色设定为真人摄影时生效；动漫和插画保持原媒介，不套用真人皮肤纹理。"
+            if kind == "auto" else "真人摄影质感：生成自然的真人照片。"
+        )
+        reference = (
+            "身份参考图用于保持同一人的身份特征与自然体态，不自动沿用其中的房间、背景物件、布光、美颜滤镜或精修处理；用户明确要求沿用参考图的场景、光线或构图时按要求执行。"
+            if has_reference_image else ""
+        )
+        finish = (
+            "像普通手机或相机在现场拍摄的生活照片，遵循本次选定的机位、姿势、景别、场景和光源，用户明确指定的摄影风格优先。"
+            "皮肤保留当前取景尺度可见的轻微纹理和局部肤色差异；屈伸、承重与接触处有自然褶皱、轻微形变和接触阴影，织物细节随厚度、受力与距离变化。"
+            "曝光、白平衡、反光与景深像同一次拍摄，默认避免全身均匀磨皮、蜡质高光、过度虚化或过锐的衣料纹理，不刻意添加毛孔和噪点。"
+        )
+    prompt = _join(scope, reference, finish)
+    return "" if prompt in existing_text else prompt
 
 
 def append_daily_context_to_english_prompt(english_prompt: str, source_prompt: str) -> str:
@@ -210,8 +281,13 @@ def extract_user_prompt(action: str) -> str:
         value = match.group(1)
         value = re.sub(r"\s*【(?:pose|shot|cos|cam|legs|legs_face|leg_view|leg_scene|leg_support|wear|outfit|frame):[a-z0-9_]+】\s*", " ", value)
         value = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", value)
+        # Older group actions placed their built-in medium after the supplement.
+        if has_group_composition_contract(text):
+            for output in APPEARANCE_OUTPUT_PROMPTS_ZH.values():
+                if output not in text[:match.start()] and value.rstrip().endswith(output):
+                    value = value.rstrip()[:-len(output)]
         return re.sub(r"\s+", " ", value).strip(" 。")
-    if any(marker in text for marker in ("【自拍 / 看看模式】", "【他拍 / 看看你模式】", "【自拍 / 看看COS模式】", "【他拍 / 看看COS模式】", "【第一视角 / 看看COS模式】", "【合影 / 合照模式】", "看看腿。", "【legs:outfit】", "成年人物日常下半身穿搭展示", "【唯一姿势·不可混用】")):
+    if explicit_selfie_action_mode(text) or any(marker in text for marker in ("【自拍 / 看看模式】", "【他拍 / 看看你模式】", "【自拍 / 看看COS模式】", "【他拍 / 看看COS模式】", "【第一视角 / 看看COS模式】", "【合影 / 合照模式】", "看看腿。", "【legs:outfit】", "成年人物日常下半身穿搭展示", "【唯一姿势·不可混用】")):
         return ""
     return text
 
@@ -289,6 +365,17 @@ def build_selfie_builtin_prompt(
         _join(extract_user_prompt(raw_action), translated_user),
     )
     rendered_action = str(action_content or action or "").strip()
+
+    def finish(*parts: str, final_style: str = "") -> str:
+        prompt = _join(*parts)
+        realism = photographic_realism_prompt(
+            effective_appearance_type,
+            language=language,
+            has_reference_image=has_reference_image,
+            existing_text=prompt,
+        )
+        return _join(prompt, realism, final_style)
+
     is_cos = raw_is_cos
     covered_eyes = "【cos_eye:full_cover】" in str(action).lower()
     is_group = raw_is_group
@@ -358,7 +445,7 @@ def build_selfie_builtin_prompt(
             ]
             if translated_user and translated_user not in rendered_action:
                 lines.append(f"User request: {translated_user}")
-            return _join(*lines)
+            return finish(*lines)
         if is_legs:
             lines = [
                 leg_reference_rule if has_reference_image
@@ -371,7 +458,7 @@ def build_selfie_builtin_prompt(
                 lines.append("Use extra references only for the specific clothing or visual details requested; do not let them override the selected camera or pose.")
             if translated_user and translated_user not in rendered_action:
                 lines.append(f"User request: {translated_user}")
-            return _join(*lines)
+            return finish(*lines)
         if is_cos:
             lines.extend([
                 COS_COVERED_EYES_IDENTITY_CONTRACT_EN
@@ -472,7 +559,7 @@ def build_selfie_builtin_prompt(
             "real": "Final visual medium: a cohesive realistic human photograph. Selfie, phone, camera, and COS wording controls composition and content, not a different visual medium.",
             "anime": "Final visual medium: a cohesive 2D anime illustration. Selfie, phone, camera, photo, and COS wording controls framing and content only; never render photorealistically or mix anime and live-action styles.",
         }.get(effective_appearance_type, "") if not is_group_contract else ""
-        return _join(*lines, user_line, final_style_contract)
+        return finish(*lines, user_line, final_style=final_style_contract)
 
     user = translated_user or extract_user_prompt(action)
     if is_legs:
@@ -485,7 +572,7 @@ def build_selfie_builtin_prompt(
         ]
         if user and user not in rendered_action:
             lines.append(f"用户补充要求：{user}")
-        return _join(*lines)
+        return finish(*lines)
     camera_match = re.search(r"【cam:(selfie|third)】", str(action))
     camera_kind = str(camera_match.group(1) if camera_match else "selfie")
     wear_match = re.search(r"【wear:(daily|custom|white|black|bare|barefoot|pantyhose)】", str(action))
@@ -560,32 +647,7 @@ def build_selfie_builtin_prompt(
             if is_legs and outfit_match
             else ""
         )
-    if is_legs and effective_appearance_type == "anime":
-        photo_style_line = (
-            "动漫插画质感：保持统一的柔光京阿尼风格；"
-            + (f"以自然腰线至{foot_target_zh}构图清楚呈现{lower_outfit_display_zh}，" if feet_cropped else "以自然全身构图清楚呈现整体服装，")
-            + "光线服从用户指定场景，未指定时使用柔和自然光或环境光。"
-        )
-    elif is_legs and effective_appearance_type == "real":
-        photo_style_line = (
-            "真人摄影质感：像普通相机拍摄的竖屏"
-            + (f"腰线至{foot_target_zh}的日常穿搭照片；" if feet_cropped else "全身日常照片；")
-            + "光线服从用户指定场景，未指定时使用柔和自然光或环境光，"
-            "保留真实布料厚度、细小褶皱和自然曝光变化；避免棚拍精修、塑料材质、插画感、3D渲染感和过度虚化。"
-        )
-    elif is_cos:
-        photo_style_line = (
-            "真人摄影质感：像自然拍到的 COS 成片；光照遵循本次 COS 场景与用户要求，"
-            "保留自然曝光变化、真实布料厚度与细小褶皱、轻微皮肤纹理和接触阴影；避免棚拍精修、塑料皮肤、插画感、3D渲染感和过度虚化。"
-            if effective_appearance_type == "real" else ""
-        )
-    else:
-        photo_style_line = (
-            "真人摄影质感：像普通手机竖屏近景随手拍到的日常照片；使用窗光或房间环境光，"
-            "保留自然曝光变化、真实布料厚度与细小褶皱、轻微皮肤纹理和接触阴影；避免棚拍精修、塑料皮肤、插画感、3D渲染感和过度虚化。"
-            if effective_appearance_type == "real" else ""
-        )
-    return _join(
+    return finish(
         photo_type_line,
         identity_line,
         eye_line,
@@ -607,7 +669,6 @@ def build_selfie_builtin_prompt(
         legs_line,
         leg_outfit_line,
         leg_crop_line,
-        photo_style_line,
         "竖屏近景半身，光线、色调、景深和相机透视统一。" if not is_legs else "",
         f"用户要求：{user}" if user else "",
     )

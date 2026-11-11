@@ -101,9 +101,66 @@ def test_exact_pose_name_still_selects_the_requested_pose(pose_id):
 
 def test_expansion_has_the_accepted_posture_distribution():
     assert Counter(pose["posture"] for pose in LEGFOCUS_POSE_BY_ID.values()) == {
-        "standing": 7, "seated": 11, "lying": 5, "side_lying": 3,
+        "standing": 7, "seated": 14, "lying": 5, "side_lying": 3,
         "prone": 3, "reclined": 4, "kneeling": 6,
     }
+
+
+@pytest.mark.parametrize("query,pose_id,support,view_ids", [
+    (
+        "镜前侧坐屈膝叠小腿", "mirror_side_sit_shins_overlap", "wide_surface",
+        {"self_mirror_left_gentle_down", "self_mirror_right_gentle_down"},
+    ),
+    (
+        "镜前分膝收腿·双脚相靠坐", "mirror_seated_knees_apart_feet_together", "wide_surface",
+        {"self_mirror_front_gentle_down"},
+    ),
+    (
+        "椅上并腿微错膝·斜俯自拍", "chair_self_parallel_knees_offset", "chair_seat",
+        {"self_left_down", "self_right_down"},
+    ),
+])
+def test_reference_sitting_poses_keep_mirror_and_direct_cameras_separate(query, pose_id, support, view_ids):
+    from astrbot_plugin_selfie_image.cos.leg_focus import (
+        LEGFOCUS_CAMERA_FRAMINGS, compatible_leg_compositions,
+    )
+
+    pose = LEGFOCUS_POSE_BY_ID[pose_id]
+    assert pose["posture"] == "seated"
+    assert parse_requested_leg_pose(query) == pose_id
+    combinations = compatible_leg_compositions(pose)
+    assert combinations
+    assert {selected for _, selected, _ in combinations} == {support}
+    assert {view["id"] for _, _, view in combinations} == view_ids
+    mirror = pose_id.startswith("mirror_")
+    if mirror:
+        assert {scene["id"] for scene, _, _ in combinations} == {"floor_mirror"}
+    else:
+        assert {scene["id"] for scene, _, _ in combinations} == {
+            "gaming_chair", "desk_chair", "living_room_chair", "indoor_desk", "indoor_cabinet",
+        }
+    for _, _, view in combinations:
+        assert view["camera"] == "selfie"
+        assert view["elevation"] == "down"
+        assert (view.get("capture_mode") == "mirror") == mirror
+        action = build_leg_focus_action(query, has_refs=True, force_view=view["id"])
+        assert f"【pose:{pose_id}】" in action
+        assert f"【leg_support:{support}】" in action
+        assert "【outfit:reference】" in action
+        framing_key = "mirror" if mirror else "selfie"
+        other_key = "selfie" if mirror else "mirror"
+        assert action.count(LEGFOCUS_CAMERA_FRAMINGS[framing_key]) == 1
+        assert LEGFOCUS_CAMERA_FRAMINGS[other_key] not in action
+        assert action.count(pose["crop_prompts"][framing_key]) == 1
+        assert action.count(pose["hand_prompts"]["mirror" if mirror else "direct"]) == 1
+        assert has_leg_focus_contract(action)
+        assert ensure_leg_focus_action(action, has_refs=True) == action
+    for options in ({"force_camera": "third"}, {"force_framing": "full_outfit"}):
+        with pytest.raises(LegFocusDataError, match="不兼容|第一人称自视"):
+            build_leg_focus_action(query, **options)
+    for incompatible_view in ("self_forward_down", "self_mirror_front_down", "self_steep_down"):
+        with pytest.raises(LegFocusDataError, match="不兼容"):
+            build_leg_focus_action(query, force_view=incompatible_view)
 
 
 @pytest.mark.parametrize("pose_id,support,scenes", [

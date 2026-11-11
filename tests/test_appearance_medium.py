@@ -4,6 +4,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -18,13 +20,19 @@ from astrbot_plugin_selfie_image.cos.cos_looks import (
     get_cos_look_by_id,
     normalize_cos_prompt_negatives,
 )
-from astrbot_plugin_selfie_image.features.persona import PersonaManager
+from astrbot_plugin_selfie_image.features.persona import (
+    PersonaManager,
+    appearance_type_output_instruction,
+    extract_user_action_text,
+)
 from astrbot_plugin_selfie_image.prompts.selfie_actions import (
     build_selfie_look_action,
+    build_group_selfie_action,
     build_third_person_look_action,
 )
 from astrbot_plugin_selfie_image.prompts.prompt_templates import (
     build_selfie_builtin_prompt,
+    extract_user_prompt,
     resolve_appearance_type,
 )
 
@@ -36,6 +44,54 @@ def test_explicit_request_medium_overrides_saved_setting():
     assert resolve_appearance_type("anime", "不要生成动漫风格") == "real"
     assert resolve_appearance_type("anime", "自然自拍") == "anime"
     assert resolve_appearance_type("invalid", "自然自拍") == "auto"
+
+
+@pytest.mark.parametrize("configured,user_text,expected", [
+    ("auto", "更真实一点", "real"),
+    ("auto", "更加真实", "real"),
+    ("auto", "提高真实感", "real"),
+    ("auto", "像真人一样", "real"),
+    ("anime", "跟真人一样", "real"),
+    ("auto", "写实", "real"),
+    ("auto", "make it look like a real person", "real"),
+    ("auto", "more realistic", "real"),
+    ("auto", "more lifelike", "real"),
+    ("anime", "更真实一点，但保留动漫风格", "anime"),
+    ("real", "anime style, more realistic lighting", "anime"),
+    ("auto", "不要更真实一点", "auto"),
+    ("auto", "不需要提高真实感", "auto"),
+    ("auto", "do not make more realistic", "auto"),
+    ("real", "don't use anime style", "real"),
+    ("anime", "not realistic photography", "anime"),
+    ("auto", "动漫插画，不生成真人摄影", "anime"),
+    ("anime", "不生成动漫插画", "real"),
+    ("real", "不采用真人", "anime"),
+    ("anime", "和真人合影", "anime"),
+    ("anime", "和 真人 合影", "anime"),
+    ("anime", "真人 COSER 的服装细节", "anime"),
+])
+def test_realism_requests_respect_negation_and_explicit_medium(configured, user_text, expected):
+    assert resolve_appearance_type(configured, user_text) == expected
+
+
+@pytest.mark.parametrize("medium", ["real", "anime"])
+def test_group_medium_scaffolding_is_not_extracted_as_user_text(medium):
+    action = build_group_selfie_action(appearance_type=medium)
+    assert extract_user_prompt(action) == ""
+    assert extract_user_action_text(action) == ""
+    action = build_group_selfie_action("保留红色围巾", appearance_type=medium)
+    assert extract_user_prompt(action) == "保留红色围巾"
+    assert extract_user_action_text(action) == "保留红色围巾"
+    legacy = (
+        "合影 / 合照 / 同框。用户补充要求：保留红色围巾。"
+        + appearance_type_output_instruction(medium)
+        + " 【shot:group_portrait】"
+    )
+    assert extract_user_prompt(legacy) == "保留红色围巾"
+    assert extract_user_action_text(legacy) == "保留红色围巾"
+    explicit_style = appearance_type_output_instruction(medium)
+    action = build_group_selfie_action(explicit_style, appearance_type=medium)
+    assert extract_user_prompt(action) == explicit_style.strip(" 。")
 
 
 def test_cos_negative_contract_matches_selected_medium():
@@ -102,7 +158,7 @@ def test_auto_cos_with_reference_preserves_reference_medium():
     with tempfile.TemporaryDirectory() as tmp:
         persona = PersonaManager(tmp)
         prompt = persona.build_selfie_prompt(action, "bot", "tone", True, 0)
-    assert "视觉媒介、质感和人物比例以参考图一为唯一主形象依据" in prompt
+    assert "视觉媒介和人物比例以参考图一为唯一主形象依据" in prompt
     assert "禁止动漫插画" not in prompt
 
 
