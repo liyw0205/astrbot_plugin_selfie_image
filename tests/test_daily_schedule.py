@@ -363,7 +363,7 @@ def test_leg_focus_uses_dedicated_or_reference_outfit_without_daily_clothes(tmp_
     plugin = SimpleNamespace(persona=manager)
     for has_refs in (False, True):
         action = SelfieImagePlugin._build_leg_focus_action(
-            plugin, "", has_refs, force_pose="sofa_ankle_cross", force_camera="selfie",
+            plugin, "", has_refs, force_pose="bed_supine_knees_together", force_camera="selfie",
         )
         prompt = manager.build_selfie_prompt(
             action, "小助", "温柔", True, int(has_refs), has_external_reference=has_refs,
@@ -375,7 +375,7 @@ def test_leg_focus_uses_dedicated_or_reference_outfit_without_daily_clothes(tmp_
             assert not any(item["prompt"] in prompt for item in LEGFOCUS_OUTFIT_POOL)
         else:
             assert sum(item["prompt"] in prompt for item in LEGFOCUS_OUTFIT_POOL) == 1
-        assert "【pose:seated_ankle_cross】" in prompt
+        assert "【pose:bed_supine_knees_together】" in prompt
         assert "日程动作不得照搬" not in prompt
         assert "城市天台" not in prompt
         assert "本次随机腿部细节" not in prompt

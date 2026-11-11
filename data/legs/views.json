@@ -144,9 +144,9 @@
       "direction": "oblique",
       "elevation": "down",
       "weight": 2,
-      "support_types": ["kneeling_surface"],
+      "support_types": ["kneeling_surface", "half_kneeling_surface"],
       "framings": ["leg_detail", "full_outfit"],
-      "prompt": "相机位于跪姿人物斜前上方，从高于腰胯的位置以明确向下倾角拍摄，呈现腰胯、大腿与双膝接触软面的关系；采用普通焦段和适中距离，不贴近单侧大腿，也不从头顶垂直拍摄。"
+      "prompt": "相机位于跪姿人物斜前上方，从高于腰胯的位置以明确向下倾角拍摄，呈现腰胯、大腿与实际落地膝部的支撑关系；采用普通焦段和适中距离，不贴近单侧大腿，也不从头顶垂直拍摄。"
     },
     {
       "id": "third_front_low",
@@ -239,13 +239,15 @@
       "elevation": "up",
       "weight": 3,
       "support_types": [
-        "standing_edge"
+        "standing_edge",
+        "standing_chair",
+        "standing_stool"
       ],
       "framings": [
         "leg_detail",
         "full_outfit"
       ],
-      "prompt": "相机位于站立人物前侧方，水平方向偏离人物正面约30至45度，从腿部外侧略低于腰胯轻微仰拍，保留承重腿与微屈腿的层次；使用普通焦段和适中距离，不贴近膝脚向上拍摄。"
+      "prompt": "相机位于站立人物前侧方，水平方向偏离人物正面约30至45度，从腿部外侧略低于腰胯轻微仰拍，保留双腿自然层次与实际承托关系；使用普通焦段和适中距离，不贴近膝脚向上拍摄。"
     },
     {
       "id": "third_oblique_level",
@@ -256,13 +258,59 @@
       "weight": 2,
       "support_types": [
         "lying_surface",
-        "kneeling_surface"
+        "reclined_surface",
+        "kneeling_surface",
+        "half_kneeling_surface"
       ],
       "framings": [
         "leg_detail",
         "full_outfit"
       ],
       "prompt": "相机位于人物斜前方，与腿部及支撑面大致同高平视，使用普通焦段和适中距离；自然呈现双腿轮廓与承托关系，不从头顶俯拍，也不从地面极低位置仰拍。"
+    },
+    {
+      "id": "third_standing_side_low",
+      "title": "站姿侧面轻仰拍",
+      "camera": "third",
+      "direction": "side",
+      "elevation": "up",
+      "weight": 2,
+      "support_types": ["standing_edge", "standing_chair", "standing_stool"],
+      "framings": ["leg_detail", "full_outfit"],
+      "prompt": "相机位于站立人物的无遮挡侧方，从略低于腰胯的位置轻微仰拍；保持普通焦段和适中距离，保留腿部侧面轮廓及脚下空间，不从脚边贴近拍摄。"
+    },
+    {
+      "id": "third_lying_side_level",
+      "title": "卧姿侧面平视",
+      "camera": "third",
+      "direction": "side",
+      "elevation": "level",
+      "weight": 2,
+      "support_types": ["lying_surface", "reclined_surface"],
+      "framings": ["leg_detail", "full_outfit"],
+      "prompt": "相机位于卧姿人物的无遮挡侧方，与腿部和软面大致同高平视；使用普通焦段并适当退开，保持侧面轮廓和自然遮挡，取景容纳动作中实际抬起的膝部或脚端，不绕到人物背后。"
+    },
+    {
+      "id": "third_reclined_stool_oblique_level",
+      "title": "脚凳半躺斜前方平视",
+      "camera": "third",
+      "direction": "oblique",
+      "elevation": "level",
+      "weight": 2,
+      "support_types": ["reclined_footstool"],
+      "framings": ["leg_detail", "full_outfit"],
+      "prompt": "相机从半靠人物斜前方平视，镜头与腿部大致同高，使用普通焦段和适中距离；同时呈现沙发与脚凳的位置关系，避免近侧膝脚挡满画面。"
+    },
+    {
+      "id": "third_reclined_stool_side_level",
+      "title": "脚凳半躺侧面平视",
+      "camera": "third",
+      "direction": "side",
+      "elevation": "level",
+      "weight": 2,
+      "support_types": ["reclined_footstool"],
+      "framings": ["leg_detail", "full_outfit"],
+      "prompt": "相机从半靠人物侧方平视，保持与腿线大致同高和普通焦段；沙发座面、伸展双腿及软脚凳依次可辨，取景不贴近脚端，不从地面向上拍摄。"
     }
   ]
 }

@@ -1666,6 +1666,7 @@ def test_leg_focus_selfie_does_not_keep_third_person_pose_wording():
 
 def test_llm_leg_route_marker_does_not_force_a_selfie_camera():
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.cos.leg_focus import get_leg_focus_outfit
 
     with tempfile.TemporaryDirectory() as tmp:
         plugin = object.__new__(SelfieImagePlugin)
@@ -1673,14 +1674,17 @@ def test_llm_leg_route_marker_does_not_force_a_selfie_camera():
         for prefix in ("【LLM 自拍】", "LLM 自拍："):
             for camera in ("selfie", "third"):
                 with patch(
+                    "astrbot_plugin_selfie_image.cos.leg_focus.pick_leg_focus_outfit",
+                    return_value=get_leg_focus_outfit("tee_denim_shorts"),
+                ), patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus._weighted_pose_choice",
-                    side_effect=lambda options: next(item for item in options if item["id"] == "supported_straight_legs"),
+                    side_effect=lambda options: next(item for item in options if item["id"] == "bed_supine_knees_together"),
                 ), patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus.random.choices",
                     side_effect=lambda options, **_kwargs: [next((item for item in options if item.get("camera") == camera), options[0])],
                 ), patch(
                     "astrbot_plugin_selfie_image.cos.leg_focus.random.choice",
-                    return_value="sofa",
+                    side_effect=lambda options: camera if camera in options else options[0],
                 ):
                     action, rebuild_extra, _ = plugin._prepare_llm_selfie_action(
                         f"{prefix}看看腿 白丝", False,

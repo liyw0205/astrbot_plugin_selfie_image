@@ -237,3 +237,25 @@ def test_dashboard_shortcuts_and_priority_pin_cover_all_model_kinds():
     assert "for (const kind of ['image','audit'])" in PAGE
     assert "priorityList').value = (CONFIG.enabled_image_model_priority || []).join('\\n')" in PAGE
     assert "auditPriorityList').value = (CONFIG.enabled_audit_model_priority || []).join('\\n')" in PAGE
+
+
+def test_model_priority_refresh_uses_one_snapshot_and_keeps_selection():
+    refresh_start = PAGE.index("function refreshModelSelectors()")
+    refresh_end = PAGE.index("function refreshTestModels()", refresh_start)
+    refresh = PAGE[refresh_start:refresh_end]
+    assert refresh.count("collectChannels()") == 1
+    assert "prunePriorityList('image', labels)" in refresh
+    assert "prunePriorityList('audit', audits)" in refresh
+    assert "values.includes(previous) ? previous : fallback" in refresh
+    provider_start = PAGE.index("function setModelProviderType(")
+    provider_end = PAGE.index("function addEnabledModel(", provider_start)
+    assert "refreshModelSelectors()" not in PAGE[provider_start:provider_end]
+
+
+def test_priority_autosave_does_not_rebuild_channel_cards_on_success():
+    save_start = PAGE.index("async function persistChannelListSnapshot(")
+    save_end = PAGE.index("async function scheduleChannelListAutoSave(", save_start)
+    save_body = PAGE[save_start:save_end]
+    success_body = save_body.split("} catch (e)", 1)[0]
+    assert "renderAllChannelLists()" not in success_body
+    assert "refreshModelSelectors();" in success_body

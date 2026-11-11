@@ -7172,7 +7172,9 @@ class DashboardEmbedContractTests(unittest.TestCase):
         from astrbot_plugin_selfie_image.webui.web import render_index_html
 
         rendered = render_index_html()
-        self.assertIn("data:image/png;base64,", rendered)
+        self.assertIn('src="logo.png"', rendered)
+        self.assertIn('href="logo.png"', rendered)
+        self.assertNotIn("data:image/png;base64,", rendered)
         self.assertNotIn("__SELFIE_LOGO_SRC__", rendered)
 
     def test_dashboard_api_registers_token_free_routes(self) -> None:

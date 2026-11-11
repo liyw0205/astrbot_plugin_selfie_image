@@ -11,6 +11,7 @@ from ..features.persona import (
     appearance_type_instruction,
     appearance_type_output_instruction,
     current_period,
+    extra_overrides_outfit,
     group_style_lines,
 )
 from .group_prompt_pool import GROUP_COMPOSITIONS, GROUP_COMPOSITIONS_BY_ID
@@ -446,7 +447,12 @@ def build_crop_waist_selfie_action(
         base += "统一为柔光京阿尼风格动漫插画，线条、上色、光影与动漫五官保持一致。"
     if has_refs:
         base = "参考用户附图的氛围或构图，" + base
-    extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
+    from ..studio.studio import default_image_preset_seed
+
+    extra = re.sub(r"\s+", " ", str(extra_request or ""))
+    # Only the exact built-in is owned by this builder; custom presets stay intact.
+    builtin = default_image_preset_seed()["漏腰"]["prompt"]
+    extra = extra.replace(re.sub(r"\s+", " ", builtin), "").strip(" 。，,；;")
     if extra and extra not in base and extra not in {"漏腰", "露腰", "漏腰杀", "小蛮腰"}:
         base += f" 用户补充要求优先：{extra}。"
     return base + " 【shot:crop_waist】"
@@ -603,6 +609,8 @@ def build_selfie_look_action(
         base += "柔光京阿尼风格动漫插画：线条、上色、光影与动漫五官统一，不生成真人皮肤纹理。"
     if has_refs:
         base = "参考用户提供的图片氛围、场景或构图，" + base + " 主角身份仍以 AI 形象为准。"
+    if extra_overrides_outfit(extra):
+        base = base.replace("今日穿搭", "用户指定穿搭").replace("今日上衣", "用户指定上衣")
     if extra:
         # A raw ``/自拍 ... COS ...`` request is still ordinary selfie mode;
         # keep the user's text without the COS contract marker used by the
@@ -737,6 +745,13 @@ def build_group_selfie_action(
         group_shot = "side_profile"
     else:
         shot_options = GROUP_COMPOSITIONS
+        # Detailed staging is a default, not an override of an explicit request.
+        remaining = re.sub(
+            r"(?:[一二三四五六七八九十两\d]+[人位名]|多人|双人|大家|全员|一起|和我|跟我|我们|合影|合照|同框|拍照|拍)",
+            "", str(extra_request or ""),
+        )
+        if re.search(r"[\w\u4e00-\u9fff]", remaining):
+            shot_options = [item for item in shot_options if item["id"] in {"group_portrait", "group_environment"}]
         available_options = [item for item in shot_options if str(item["id"]) != avoid_shot]
         if not available_options:
             available_options = shot_options

@@ -345,8 +345,7 @@ def _has_positive_request(text: str, term: str) -> bool:
         index = compact.find(needle, start)
         if index < 0:
             return False
-        prefix = compact[max(0, index - 6) : index]
-        if not any(prefix.endswith(marker) for marker in ("不要", "不需要", "不必", "不能", "不可", "别", "不", "避免", "禁止")):
+        if not _is_negated_request(compact, index):
             return True
         start = index + len(needle)
     return False
@@ -399,7 +398,7 @@ def _is_negated_request(text: str, index: int) -> bool:
     prefix = str(text or "")[max(0, index - 6) : index]
     return bool(
         re.search(
-            r"(?:不要|不需要|不必|不想|不允许|不能|不会|不可|别|不|避免|禁止|拒绝)(?:再|去|在|用|选择|采用|进行)*$",
+            r"(?:不要|不需要|不必|不想|不允许|不能|不会|不可|别|不|避免|禁止|拒绝)(?:再|去|在|用|使用|选择|采用|进行)*$",
             prefix,
         )
     )
@@ -2480,19 +2479,28 @@ COS_SELFIE_REQUEST_TERMS = tuple(COS_JSON_CAMERA_REQUEST_TERMS["selfie"])
 
 
 def parse_requested_cos_camera(text: str) -> str:
-    raw = str(text or "")
-    compact = re.sub(r"\s+", "", raw).lower()
-    blob = compact + raw.lower()
-    third_keys = tuple(term.lower() for term in COS_JSON_CAMERA_REQUEST_TERMS["third"])
-    first_keys = tuple(term.lower() for term in COS_JSON_CAMERA_REQUEST_TERMS["first"])
-    selfie_keys = tuple(term.lower() for term in COS_SELFIE_REQUEST_TERMS)
-    if any(key in blob for key in third_keys):
-        return "third"
-    if any(key in blob for key in first_keys):
-        return "first"
-    if any(key in blob for key in selfie_keys):
-        return "selfie"
-    return ""
+    compact = re.sub(r"\s+", "", str(text or "")).lower()
+    matches = []
+    for kind in ("third", "first", "selfie"):
+        for value in COS_JSON_CAMERA_REQUEST_TERMS[kind]:
+            term = re.sub(r"\s+", "", value).lower()
+            matches.extend(
+                (match.start(), match.end(), kind, term)
+                for match in re.finditer(re.escape(term), compact)
+            )
+    positive = [
+        (kind, term) for start, end, kind, term in matches
+        if not _is_negated_request(compact, start)
+        and not any(a <= start and end <= b and b - a > end - start for a, b, _, _ in matches)
+    ]
+    # A named viewpoint is more precise than a generic "not a selfie" fallback.
+    negative_aliases = {
+        "不是自拍", "非自拍", "不要自拍", "notselfie", "不要对镜",
+        "不拿手机", "不要拿手机", "不要手持手机",
+    }
+    explicit = [(kind, term) for kind, term in positive if term not in negative_aliases]
+    candidates = explicit or positive
+    return next((kind for kind in ("third", "first", "selfie") if any(k == kind for k, _ in candidates)), "")
 
 
 def requests_phone_face_cover(text: str) -> bool:
@@ -2755,6 +2763,7 @@ def build_special_cos_look_action(
     *,
     has_refs: bool = False,
     appearance_type: str = "auto",
+    extra_request: str = "",
 ) -> str:
     """Build a fixed COS action without injecting shared random staging."""
     item = dict(chosen or {})
@@ -2777,8 +2786,7 @@ def build_special_cos_look_action(
     prompt = str(item.get("special_prompt") or item.get("prompt") or "").strip()
     if not prompt:
         return ""
-    # A special prompt is deliberately kept verbatim.  Only the outer mode
-    # contract and machine-readable tags are added for downstream routing.
+    # Keep the authored special prompt verbatim and append user changes separately.
     medium = {
         "third": "【他拍 / 看看COS模式】",
         "selfie": "【自拍 / 看看COS模式】",
@@ -2788,6 +2796,8 @@ def build_special_cos_look_action(
     coherence_line = ""
     if "未明确的部分保持连贯，不额外改写。" not in prompt:
         coherence_line = "未明确的部分保持连贯，不额外改写。"
+    extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
+    supplement = f" 用户补充要求优先：{extra}。" if extra and extra not in prompt and extra not in title else ""
     return (
         "【特殊 COS / 固定成片模式】"
         + medium
@@ -2798,6 +2808,7 @@ def build_special_cos_look_action(
         + prompt
         + "不要把本条改写成普通随机 COS。"
         + f" 【cos:{look_id}】 【cos_mode:special】 【cam:{camera}】"
+        + supplement
     )
 
 
@@ -2842,6 +2853,7 @@ def build_cos_look_action(
             chosen,
             has_refs=has_refs,
             appearance_type=appearance_type,
+            extra_request=extra_request,
         )
     title = str(chosen.get("title") or "随机COS")
     cos_type = str(chosen.get("cos_type") or "").strip()

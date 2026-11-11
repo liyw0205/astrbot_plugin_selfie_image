@@ -103,7 +103,7 @@ def _load_pool() -> Dict[str, Any]:
         if (
             not str(raw.get("title") or "").strip()
             or not str(raw.get("prompt") or "").strip()
-            or posture not in {"seated", "reclined", "lying", "kneeling", "standing"}
+            or posture not in {"seated", "reclined", "lying", "side_lying", "prone", "kneeling", "standing"}
             or type(raw.get("weight")) is not int
             or int(raw.get("weight") or 0) < 1
             or not isinstance(camera_views, Mapping) or not camera_views
@@ -444,7 +444,10 @@ def parse_requested_leg_face(text: str) -> bool:
     raw = str(text or "")
     if re.search(r"(?:不露脸|不露头|不拍脸|只拍腿|只拍下装|上半身不入镜)", raw):
         return False
-    return bool(LEG_FACE_REQUEST_PATTERN.search(raw))
+    return any(
+        not re.search(r"(?:不要|不需要|无需|不必|不想|别|不|避免|禁止)(?:再|去|用|使用)*$", raw[max(0, match.start() - 12):match.start()])
+        for match in LEG_FACE_REQUEST_PATTERN.finditer(raw)
+    )
 
 
 def has_leg_face_context(text: str) -> bool:
@@ -732,26 +735,71 @@ def parse_excluded_leg_cameras(text: str) -> set[str]:
     return _constraint_kinds(text, LEG_CAMERA_TERMS)[1]
 
 
-def parse_requested_leg_pose(text: str) -> str:
-    compact = re.sub(r"\s+", "", str(text or "")).lower()
-    matches = []
+LEG_POSTURE_TERMS = {
+    "standing": ("站姿", "站立", "站着"),
+    "seated": ("坐姿", "坐着"),
+    "kneeling": ("跪姿", "跪坐", "跪着", "跪立"),
+    "lying": ("仰卧", "仰躺", "平躺", "平卧"),
+    "side_lying": ("侧躺", "侧卧"),
+    "prone": ("俯卧", "趴着", "趴姿", "趴卧"),
+    "reclined": ("半躺", "半卧", "半靠"),
+    "any_lying": ("躺姿", "躺着", "卧姿"),
+}
+
+
+def _leg_pose_mentions(text: str) -> List[Tuple[int, str, str, bool]]:
+    # Consume complete pose names first so a negated pose cannot expose a
+    # shorter positive alias or a category word inside the same phrase.
+    terms = {
+        term: ("posture", kind)
+        for kind, aliases in LEG_POSTURE_TERMS.items() for term in aliases
+    }
     for pose in LEGFOCUS_POSE_POOL:
-        terms = (pose["id"], pose["title"], *pose["legacy_ids"], *pose["aliases"])
-        matches.extend(
-            (len(term), pose["id"]) for term in terms
-            if _has_positive_term(compact, re.sub(r"\s+", "", term).lower())
-        )
+        for term in (pose["id"], pose["title"], *pose["legacy_ids"], *pose["aliases"]):
+            terms.setdefault(re.sub(r"\s+", "", term).lower(), ("pose", pose["id"]))
+    raw = re.sub(r"\s+", "", str(text or "")).lower()
+    pattern = "|".join(re.escape(term) for term in sorted(terms, key=len, reverse=True))
+    matches = []
+    for match in re.finditer(pattern, raw):
+        prefix = raw[max(0, match.start() - 12):match.start()]
+        negated = bool(re.search(
+            LEG_NEGATION_PREFIX + r"(?:再|去|在|用|选择|采用|使用)*$", prefix,
+        ))
+        kind, value = terms[match.group()]
+        matches.append((len(match.group()), kind, value, negated))
+    return matches
+
+
+def parse_requested_leg_pose(text: str) -> str:
+    matches = [
+        (length, value) for length, kind, value, negated in _leg_pose_mentions(text)
+        if kind == "pose" and not negated
+    ]
     return max(matches, key=lambda item: item[0])[1] if matches else ""
 
 
 def parse_excluded_leg_poses(text: str) -> set[str]:
-    raw = str(text or "")
+    return {
+        value for _, kind, value, negated in _leg_pose_mentions(text)
+        if kind == "pose" and negated
+    }
+
+
+def _allowed_leg_postures(text: str) -> set[str]:
+    allowed = set(LEG_POSTURE_TERMS) - {"any_lying"}
     excluded = set()
-    for pose in LEGFOCUS_POSE_POOL:
-        terms = (pose["id"], pose["title"], *pose["legacy_ids"], *pose["aliases"])
-        if any(_has_negative_term(raw, term) for term in terms if str(term).strip()):
-            excluded.add(str(pose["id"]))
-    return excluded
+    for _, kind, value, negated in _leg_pose_mentions(text):
+        if kind != "posture":
+            continue
+        postures = {"lying", "side_lying", "prone", "reclined"} if value == "any_lying" else {value}
+        if negated:
+            excluded.update(postures)
+        else:
+            allowed.intersection_update(postures)
+    allowed.difference_update(excluded)
+    if not allowed:
+        raise LegFocusDataError("看看腿的姿势类别要求冲突，请选择兼容的类别或调整排除条件")
+    return allowed
 
 
 def parse_requested_leg_view(text: str) -> str:
@@ -904,12 +952,15 @@ def build_leg_focus_action(
     if requested_view and requested_view not in LEGFOCUS_VIEW_BY_ID:
         raise LegFocusDataError(f"看看腿机位不存在: {requested_view}")
     angles = parse_requested_leg_angles(raw_extra)
+    include_face = parse_requested_leg_face(raw_extra)
     framing = str(force_framing or "").strip()
     if framing not in {"full_outfit", "leg_detail"}:
         explicit_full = bool(LEG_FULL_OUTFIT_REQUEST_PATTERN.search(raw_extra)) and not bool(
             re.search(r"(?:不|不要|无需|不需要)\s*(?:全身(?!镜)|从头到脚)", raw_extra)
         )
-        framing = "full_outfit" if explicit_full else "leg_detail"
+        framing = "full_outfit" if explicit_full or include_face else "leg_detail"
+    if include_face and framing == "leg_detail":
+        raise LegFocusDataError("看看腿的腿部局部构图不能同时露脸，请选择全身构图或取消露脸要求")
     requested_scene = parse_requested_leg_scene(raw_extra)
     excluded_scenes = parse_excluded_leg_scenes(raw_extra)
     explicit_scene = bool(requested_scene)
@@ -927,6 +978,7 @@ def build_leg_focus_action(
     if requested_camera and requested_camera in excluded_cameras:
         raise LegFocusDataError("看看腿指定的相机人称同时被排除，请选择第一人称或第三人称中的一个")
     requested_pose = _resolve_pose_id(force_pose) or _resolve_pose_id(parse_requested_leg_pose(raw_extra))
+    allowed_postures = _allowed_leg_postures(raw_extra)
     excluded_poses = parse_excluded_leg_poses(raw_extra)
     if requested_pose and requested_pose in excluded_poses:
         raise LegFocusDataError("看看腿指定的姿势同时被排除，请选择其他姿势")
@@ -964,7 +1016,7 @@ def build_leg_focus_action(
             return {}
         result = {}
         for pose in pose_options:
-            if pose["id"] in excluded_poses:
+            if pose["id"] in excluded_poses or pose["posture"] not in allowed_postures:
                 continue
             combinations = compatible_leg_compositions(
                 pose, camera=requested_camera, scene_ids=filtered_scene_hint,
@@ -1118,6 +1170,7 @@ def build_leg_focus_action(
     return (
         base
         + f" 【legs:outfit】 【frame:{framing if framing == 'full_outfit' else 'leg_detail'}】"
+        + (" 【legs_face:context】" if include_face else "")
         + f"【姿势池·{pose['title']}】【场景池·{scene['title']}】"
         + f" 【leg_view:{view['id']}】 【leg_scene:{scene['id']}】 【leg_support:{support}】"
         + f" 【cam:{camera_kind}】 【wear:{wear_tag}】 【pose:{pose_id}】 【outfit:{outfit.get('id') or outfit_source}】"

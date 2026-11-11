@@ -51,11 +51,6 @@ from astrbot_plugin_selfie_image.prompts.selfie_actions import (
 )
 
 
-COMPLEX_THIRD_POSES = {
-    "kneeling_upright",
-    "bed_supine_knees_together",
-}
-
 DIRECT_SELF_SEATED_POSES = {"seated_thigh_gentle_pinch", "seated_self_knees_offset"}
 
 
@@ -459,9 +454,12 @@ def test_every_leg_pose_view_reaches_final_request_without_duplicate_instruction
                 assert view["camera"] == "third", (pose_id, view_id)
                 assert view["elevation"] == "up", (pose_id, view_id)
                 assert "仰拍" in view["prompt"]
-        if support_id in {"ground_surface", "raised_soft_surface", "reclined_surface", "lying_surface"}:
-            if pose_id not in COMPLEX_THIRD_POSES and pose_id != "supported_straight_legs":
-                assert view["camera"] == "selfie", (pose_id, support_id, view_id)
+        if pose_id == "reclined_same_side_knees":
+            assert view["camera"] == "selfie", (pose_id, support_id, view_id)
+        if pose["posture"] in {"lying", "side_lying", "prone", "reclined"} and view["camera"] == "third":
+            assert view["elevation"] == "level", (pose_id, support_id, view_id)
+        if pose["posture"] in {"side_lying", "prone"}:
+            assert view["camera"] == "third", (pose_id, support_id, view_id)
         assert f"【leg_scene:{scene['id']}】" in prompt
         assert f"【leg_support:{support_id}】" in prompt
         assert prompt.count("左右均指人物自身") == 1
@@ -585,7 +583,7 @@ def test_leg_builtin_templates_append_appearance_before_return_without_repeating
 
 @pytest.mark.parametrize("scene_query,scene_id,view_id", [
     ("床上", "bed_surface", "self_forward_down"),
-    ("地毯", "bedroom_rug", "self_left_down"),
+    ("卧室地毯", "bedroom_rug", "self_left_down"),
     ("沙发", "sofa", "self_right_down"),
 ])
 def test_kneeling_leg_actions_keep_both_knees_on_a_supported_surface(tmp_path, scene_query, scene_id, view_id):
@@ -885,7 +883,7 @@ def test_obsolete_leg_requests_are_rebuilt_with_current_support_and_camera(
 
 
 @pytest.mark.parametrize("query,pose_id,view_id,scene_id", [
-    ("第一人称 落地窗前 跪坐", "kneeling_sit_back", "self_forward_down", "floor_window"),
+    ("第一人称 落地窗前 并膝自然跪坐", "kneeling_sit_back", "self_forward_down", "floor_window"),
     ("第一人称 落地窗前 直身跪姿 偏左俯拍", "kneeling_upright", "self_left_down", "floor_window"),
     ("第三人称 床上 直身跪姿 仰拍", "kneeling_upright", "third_oblique_low", "bed_surface"),
 ])
@@ -1112,6 +1110,216 @@ def test_llm_group_contract_is_not_wrapped_again(tmp_path):
     action = build_group_selfie_action("背对镜头合影")
     prepared, _, _ = plugin._prepare_llm_selfie_action(action, False)
     assert prepared == action
+
+
+@pytest.mark.parametrize("english", [False, True])
+def test_group_explicit_identity_outfit_and_scene_survive_random_staging(tmp_path, english):
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin._translate_prompt_to_english = AsyncMock(side_effect=lambda text, **_kw: (text, {"applied": True}))
+    random.seed(5)
+    query = "两位男性，在咖啡馆穿黑色西装合影"
+    action = build_group_selfie_action(query, has_identity_reference=True)
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert query in prompt
+    for conflict in ("城市高处天台", "成年女性穿", "米色运动短裤", "粉色短裤"):
+        assert conflict not in prompt
+
+
+@pytest.mark.parametrize("english", [False, True])
+def test_period_outfit_survives_final_prompt_conversion(tmp_path, english):
+    from astrbot_plugin_selfie_image.features.persona import current_period, local_date_key
+
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin._translate_prompt_to_english = AsyncMock(side_effect=lambda text, **_kw: (text, {"applied": True}))
+    outfit = "DAILY_OUTFIT_SENTINEL 蓝衬衫白长裙"
+    plugin.persona.data["daily_selfie_profile"] = {
+        "date": local_date_key(), "outfit": outfit,
+        "outfit_by_period": {current_period(): outfit}, "source": "fallback",
+    }
+    action = build_selfie_look_action()
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert prompt.count(outfit) == 1
+
+
+@pytest.mark.parametrize("english", [False, True])
+def test_leg_face_request_uses_a_compatible_visible_face_crop(tmp_path, english):
+    from astrbot_plugin_selfie_image.cos.leg_focus import has_leg_face_context, has_leg_focus_contract
+
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin._translate_prompt_to_english = AsyncMock(side_effect=lambda text, **_kw: (text, {"applied": True}))
+    action = build_leg_focus_action("露脸 微笑")
+    assert has_leg_face_context(action)
+    assert has_leg_focus_contract(action)
+    assert "【cam:third】" in action
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert "微笑" in prompt
+    assert "头部、脸部和肩部不入镜" not in prompt
+    assert "头部到足部完整入镜" in prompt
+
+
+@pytest.mark.parametrize("query,expected", [
+    ("不要他拍，自拍", "selfie"),
+    ("不要第三人称，第一视角", "first"),
+    ("不要自拍，第一视角", "first"),
+    ("不要自拍", "third"),
+    ("非自拍", "third"),
+    ("不要使用第三人称，自拍", "selfie"),
+])
+def test_cos_camera_negation_is_not_a_positive_camera_request(query, expected):
+    from astrbot_plugin_selfie_image.cos.cos_looks import parse_requested_cos_camera
+
+    assert parse_requested_cos_camera(query) == expected
+    action = build_cos_look_action(query, force_id="ancient_white_blue_backless_gauze")
+    assert f"【cam:{expected}】" in action
+
+
+@pytest.mark.parametrize("query", ["穿红色连衣裙", "穿上红色连衣裙", "身穿黑色西装"])
+@pytest.mark.parametrize("english", [False, True])
+def test_selfie_outfit_override_does_not_keep_a_daily_outfit_lock(tmp_path, query, english):
+    from astrbot_plugin_selfie_image.features.persona import current_period, local_date_key
+
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin._translate_prompt_to_english = AsyncMock(side_effect=lambda text, **_kw: (text, {"applied": True}))
+    plugin.persona.data["daily_selfie_profile"] = {
+        "date": local_date_key(), "outfit": "OLD_DAILY_OUTFIT",
+        "outfit_by_period": {current_period(): "OLD_DAILY_OUTFIT"}, "source": "fallback",
+    }
+    with patch("astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices", return_value=["mirror_half"]):
+        action = build_selfie_look_action(query)
+    assert plugin.persona.analyze_selfie_intent(action).change_clothes
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert query in prompt
+    for conflict in ("OLD_DAILY_OUTFIT", "今日穿搭", "今日上衣", "resolved daily outfit"):
+        assert conflict not in prompt
+
+
+@pytest.mark.parametrize("command,label", [
+    ("cmd_selfie", "自拍"), ("cmd_look_cos", "看看COS"),
+    ("cmd_look_legs", "看看腿"), ("cmd_group_selfie", "合影"),
+])
+@pytest.mark.parametrize("ratio,resolution,default_ratio", [
+    ("1:1", "2K", "9:16"), ("9:16", "4K", "9:16"), ("3:4", "2K", "自动"),
+])
+@pytest.mark.parametrize("use_preset", [False, True])
+def test_commands_keep_explicit_image_options(tmp_path, command, label, ratio, resolution, default_ratio, use_preset):
+    from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+
+    plugin = plugin_for_prompts(tmp_path)
+    plugin.config = AICatConfig.from_dict({})
+    plugin.config.image_default_aspect_ratio = default_ratio
+    plugin.presets = ImagePresetManager(tmp_path)
+    preset = "OPTION_TEST_PRESET" if use_preset else ""
+    if use_preset:
+        plugin.presets.add(preset, "柔和灯光 16:9 --ar 16:9 --res 4K")
+    plugin._quota_error_message = lambda *_a: ""
+    plugin._rate_limit_error_message = lambda *_a: ""
+    plugin._event_reference_images = AsyncMock(return_value=[])
+    plugin._build_contextual_progress_text = AsyncMock(return_value="progress")
+    plugin._record_bot_text_context = lambda *_a: None
+    plugin._image_batch_queue_expected = lambda *_a: False
+    captured = {}
+    plugin.start_command_image_task = lambda *_a, **kw: captured.update(kw["summary"]) or "task"
+    event = SimpleNamespace(message_str=f"/{label} {preset} 微笑 --ar {ratio} --res {resolution}", plain_result=lambda text: text)
+
+    async def invoke():
+        return [item async for item in getattr(plugin, command)(event)]
+
+    asyncio.run(invoke())
+    assert captured["aspect_ratio"] == ratio
+    assert captured["resolution"] == resolution
+    assert captured["preset_name"] == preset
+
+
+@pytest.mark.parametrize("has_refs", [False, True])
+def test_crop_waist_expansion_deduplicates_builtin_and_retains_extra(tmp_path, has_refs):
+    from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+
+    plugin = plugin_for_prompts(tmp_path)
+    plugin.config = AICatConfig.from_dict({})
+    plugin.presets = ImagePresetManager(tmp_path)
+    expanded, _, _, _ = plugin._expand_user_text_with_preset("露腰，手持红色雨伞")
+    action = build_selfie_look_action(expanded, has_refs)
+    assert action.count("唯一调整是将原有上衣的下摆缩短至露出自然腰线的长度") == 1
+    assert "手持红色雨伞" in action
+    if has_refs:
+        assert "姿势、表情、机位、场景和光线沿用参考图" in action
+        assert "放松地坐着或靠在深色沙发/床边" not in action
+    plugin.presets.add("漏腰", "露腰，自定义青色背景，手持蓝色雨伞")
+    custom, _, _, _ = plugin._expand_user_text_with_preset("露腰")
+    assert "自定义青色背景，手持蓝色雨伞" in build_selfie_look_action(custom, has_refs)
+
+
+@pytest.mark.parametrize("english", [False, True])
+def test_special_cos_keeps_user_supplement_in_final_prompt(tmp_path, english):
+    plugin = plugin_for_prompts(tmp_path, english)
+    plugin._translate_prompt_to_english = AsyncMock(side_effect=lambda text, **_kw: (text, {"applied": True}))
+    look_id = "original_dream_angel_white_wing"
+    action = build_cos_look_action("手持红色雨伞", force_id=look_id)
+    assert extract_user_prompt(action) == "手持红色雨伞"
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+    assert "手持红色雨伞" in prompt
+    assert get_cos_look_by_id(look_id)["prompt"] in prompt
+    for marker in ("【cos_pose:", "【cos_scene:", "【cos_framing:"):
+        assert marker not in prompt
+
+
+def test_llm_cos_contract_is_not_wrapped_again(tmp_path):
+    plugin = plugin_for_prompts(tmp_path)
+    action = build_cos_look_action("手持红色雨伞", force_id="original_dream_angel_white_wing")
+    assert plugin._prepare_llm_selfie_action(action, False)[0] == action
+
+
+@pytest.mark.parametrize("query", ["不要微笑", "不需要露脸", "不要看向镜头", "不露脸 微笑"])
+def test_negated_leg_face_request_keeps_the_default_crop(query):
+    action = build_leg_focus_action(query)
+    assert "【frame:leg_detail】" in action
+    assert "【legs_face:context】" not in action
+
+
+def test_leg_face_request_rejects_an_incompatible_self_view():
+    with pytest.raises(LegFocusDataError, match="第一人称自视"):
+        build_leg_focus_action("露脸 自拍")
+
+
+@pytest.mark.parametrize("source,query", [
+    ("command-selfie", "穿红色连衣裙"),
+    ("command-group-selfie", "两位男性，在咖啡馆穿黑色西装合影"),
+    ("command-look-legs", "露脸 微笑"),
+    ("command-look-cos", "梦境天使白翼 手持红色雨伞"),
+])
+def test_batch_rebuild_preserves_prompt_fixes(tmp_path, source, query):
+    plugin = plugin_for_prompts(tmp_path)
+    builders = {
+        "command-selfie": build_selfie_look_action,
+        "command-group-selfie": build_group_selfie_action,
+        "command-look-legs": build_leg_focus_action,
+        "command-look-cos": build_cos_look_action,
+    }
+    action = builders[source](query)
+    plugin._run_image_generation = AsyncMock(return_value={"success": True})
+
+    async def run_shots(**kwargs):
+        return [await kwargs["run_one"](index) for index in range(kwargs["total"])]
+
+    plugin._run_counted_generation_shots = run_shots
+    asyncio.run(plugin._run_selfie_batches_unlocked(
+        "", None, action, [], source, 3, "9:16", "1K", "失败", rebuild_extra_request=query,
+    ))
+    assert plugin._run_image_generation.call_count == 3
+    for call in plugin._run_image_generation.call_args_list:
+        prompt = call.args[0]
+        if source == "command-selfie":
+            assert "穿红色连衣裙" in prompt
+            assert "今日穿搭" not in prompt
+        elif source == "command-group-selfie":
+            assert query in prompt
+            assert "城市高处天台" not in prompt
+        elif source == "command-look-legs":
+            assert "微笑" in prompt
+            assert "头部、脸部和肩部不入镜" not in prompt
+        else:
+            assert "手持红色雨伞" in prompt
+            assert "【cos_mode:special】" in prompt
 
 
 @pytest.mark.parametrize("builder", [build_selfie_look_action, build_third_person_look_action, build_group_selfie_action])

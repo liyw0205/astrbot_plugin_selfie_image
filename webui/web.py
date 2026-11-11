@@ -6,7 +6,6 @@ import asyncio
 import base64
 import hmac
 import json
-import os
 from pathlib import Path
 import re
 import threading
@@ -62,25 +61,11 @@ MAX_ASSET_PAGE_LIMIT = 100
 MAX_TASK_PAGE_LIMIT = 200
 MAX_TASK_OFFSET = 1_000_000
 PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
-_LOGO_SRC_PLACEHOLDER = "__SELFIE_LOGO_SRC__"
 _INDEX_SOURCE_STATUS: dict[str, str] = {
     "source": "embedded",
     "path": "",
     "error": "",
 }
-
-
-def _bundled_logo_data_url() -> str:
-    """Inline logo so Flask and AstrBot iframe both show the same brand mark."""
-    path = os.path.join(Path(__file__).resolve().parents[1], "logo.png")
-    try:
-        with open(path, "rb") as handle:
-            raw = handle.read()
-        if not raw:
-            return ""
-        return "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
-    except Exception:
-        return ""
 
 
 def render_index_html(html: Optional[str] = None) -> str:
@@ -93,13 +78,9 @@ def render_index_html(html: Optional[str] = None) -> str:
             text = INDEX_HTML
     else:
         text = str(html)
-    logo = _bundled_logo_data_url()
-    if logo:
-        # Standalone Flask pages inline the logo; AstrBot-served plugin pages
-        # keep the relative asset URL so its page token can be appended.
-        return text.replace(_LOGO_SRC_PLACEHOLDER, logo).replace('src="logo.png"', f'src="{logo}"').replace('href="logo.png"', f'href="{logo}"')
-    # Hide broken image slot when logo file is missing.
-    return text.replace(f'src="{_LOGO_SRC_PLACEHOLDER}"', 'src="" style="display:none"')
+    # Keep the logo as a cacheable asset instead of copying hundreds of KB into
+    # every HTML response. The Flask route below serves it with a one-hour cache.
+    return text.replace("__SELFIE_LOGO_SRC__", "logo.png")
 
 
 EMBEDDED_INDEX_HTML = ""

@@ -14,7 +14,7 @@
     {
       "cos_type": "三国杀",
       "file": "三国杀.json",
-      "count": 1
+      "count": 13
     },
     {
       "cos_type": "世界计划 缤纷舞台",
@@ -920,6 +920,19 @@
     "artsee173_022_kalina_fireworks",
     "artsee173_023_m950a_water",
     "artsee173_024_mg4_survival",
-    "artsee173_025_ar15_new_term"
+    "artsee173_025_ar15_new_term",
+    "diaochan_sanguosha",
+    "xuxin_sanguosha",
+    "pang_fengyi_sanguosha",
+    "le_diaochan_sanguosha",
+    "le_zhugeguo_sanguosha",
+    "caohua_sanguosha",
+    "xushi_sanguosha",
+    "teng_gongzhu_sanguosha",
+    "wuguotai_sanguosha",
+    "dongxie_sanguosha",
+    "wufan_sanguosha",
+    "zhangchangpu_sanguosha",
+    "renwan_sanguosha"
   ]
 }

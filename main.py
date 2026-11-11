@@ -1731,13 +1731,14 @@ class SelfieImagePlugin(
             else ""
         )
         cos_rebuild_query = ""
-        if intent.is_cos_look and not re.search(r"【cos:[a-z0-9_]+】", raw_action, re.I):
-            cos_rebuild_query = request_text
-            raw_action = self._build_cos_look_action(
-                request_text,
-                has_refs,
-                match_query=request_text,
-            )
+        if intent.is_cos_look:
+            if not re.search(r"【cos:[a-z0-9_]+】", raw_action, re.I):
+                cos_rebuild_query = request_text
+                raw_action = self._build_cos_look_action(
+                    request_text,
+                    has_refs,
+                    match_query=request_text,
+                )
         elif intent.is_legs_only:
             raw_action = self._normalize_selfie_action(request_text, has_refs)
         elif intent.is_group_photo and not has_group_composition_contract(raw_action):
@@ -5600,7 +5601,7 @@ class SelfieImagePlugin(
             return
 
         # Prefer aspect/resolution resolved from raw user text (before action wrappers).
-        if str(preset_name or "").strip():
+        if any(str(value or "").strip() for value in (preset_name, preset_aspect, preset_resolution)):
             default_aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
             default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
             action, aspect, resolution = self._parse_prompt_options(
@@ -5608,6 +5609,12 @@ class SelfieImagePlugin(
                 str(preset_aspect or "").strip() or default_aspect,
                 str(preset_resolution or "").strip() or default_resolution,
             )
+            if preset_aspect and preset_aspect != default_aspect:
+                aspect = preset_aspect
+            # The wrapper can contain its own ratio. Reapply explicit raw options
+            # even when their value happens to equal the configured default.
+            raw_request = extract_command_message(event, command_name, fallback, include_quote_text=True)
+            _, aspect, resolution = self._parse_prompt_options(raw_request, aspect, resolution)
         else:
             action, aspect, resolution, _, _ = self._resolve_image_preset(message)
         extra_refs = await self._event_reference_images(

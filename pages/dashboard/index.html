@@ -2020,7 +2020,7 @@
   <div id="toastWrap" class="toast-wrap"></div>
 
   <!-- AstrBot rewrites this URL with its short-lived page token when embedded. -->
-  <script src="/api/plugin/page/bridge-sdk.js"></script>
+  <script src="/api/plugin/page/bridge-sdk.js" defer></script>
   <script>
     const $ = id => document.getElementById(id);
     const ASPECTS = ['自动','1:1','2:3','3:2','3:4','4:3','4:3','4:5','5:4','9:16','16:9','21:9'].filter((v,i,a)=>a.indexOf(v)===i);
@@ -3154,6 +3154,7 @@ Source prompt:
     }
     function modalProviderChanged() {
       const ch = currentModalChannel();
+      const previousModels = (ch.enabled_models || []).join('\u0000');
       const prev = String(($('modalProvider').dataset.prevProvider || ch.provider_type || '')).trim();
       const next = $('modalProvider').value || 'openai';
       const curBase = String($('modalBaseUrl').value || ch.base_url || '').trim();
@@ -3172,7 +3173,9 @@ Source prompt:
       CHANNEL_MODAL_DIRTY = true;
       storeModalChannel(ch);
       renderModalModels(ch);
-      refreshModelSelectors();
+      // Provider changes normally do not change the priority candidates. Agnes
+      // is the exception because it supplies a default model for an empty row.
+      if ((ch.enabled_models || []).join('\u0000') !== previousModels) refreshModelSelectors();
     }
     function restoreModalBaseUrlDefault() {
       const provider = $('modalProvider').value || 'openai';
@@ -3318,7 +3321,6 @@ Source prompt:
       storeModalChannel(ch);
       CHANNEL_MODAL_DIRTY = true;
       renderModalModels(ch);
-      refreshModelSelectors();
     }
     function addEnabledModel(name) {
       const ch = currentModalChannel();
@@ -3415,14 +3417,20 @@ Source prompt:
       }
     }
 
-    function allModelLabels() {
-      collectChannels();
+    function modelLabelsFromChannels(channels) {
       const labels = [];
-      for (const ch of CONFIG.image_channels || []) {
+      for (const ch of channels || []) {
         if (ch.enabled === false) continue;
         for (const model of (ch.enabled_models?.length ? ch.enabled_models : [ch.model]).filter(Boolean)) labels.push(`${ch.name}/${model}`);
       }
-      return labels;
+      return uniq(labels);
+    }
+    function allModelLabels(channels = null) {
+      if (!channels) {
+        collectChannels();
+        channels = CONFIG.image_channels;
+      }
+      return modelLabelsFromChannels(channels);
     }
     function activeImageModelKeys() {
       collectChannels();
@@ -3435,30 +3443,37 @@ Source prompt:
       }
       return uniq(keys);
     }
-    function auditModelLabels() {
-      collectChannels();
-      const labels = [];
-      for (const ch of CONFIG.audit_channels || []) {
-        if (ch.enabled === false) continue;
-        for (const model of (ch.enabled_models?.length ? ch.enabled_models : [ch.model]).filter(Boolean)) labels.push(`${ch.name}/${model}`);
+    function auditModelLabels(channels = null) {
+      if (!channels) {
+        collectChannels();
+        channels = CONFIG.audit_channels;
       }
-      return labels;
+      return modelLabelsFromChannels(channels);
     }
     function refreshModelSelectors() {
-      const labels = allModelLabels();
-      setSelectOptions('priorityPicker', labels, labels[0] || '');
-      const audits = auditModelLabels();
-      setSelectOptions('auditPriorityPicker', audits, audits[0] || '');
-      for (const kind of ['image','audit']) prunePriorityList(kind);
-      const auditLabels = [''].concat(auditModelLabels());
-      setSelectOptions('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
-      setSelectOptions('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
-      setSelectOptions('ocrModel', auditLabels, CONFIG.image?.ocr_model || '');
-      setSelectOptions('promptEnModel', auditLabels, CONFIG.image?.prompt_en_model || '');
+      // Normalize once. The previous implementation recalculated every list
+      // through allModelLabels/auditModelLabels while rebuilding each picker.
+      collectChannels();
+      const labels = allModelLabels(CONFIG.image_channels);
+      const audits = auditModelLabels(CONFIG.audit_channels);
+      const preserveSelection = (id, values, fallback = '') => {
+        const el = $(id);
+        const previous = String(el?.value || '');
+        setSelectOptions(id, values, values.includes(previous) ? previous : fallback);
+      };
+      prunePriorityList('image', labels);
+      prunePriorityList('audit', audits);
+      preserveSelection('priorityPicker', labels, labels[0] || '');
+      preserveSelection('auditPriorityPicker', audits, audits[0] || '');
+      const auditLabels = [''].concat(audits);
+      preserveSelection('promptAuditModel', auditLabels, CONFIG.image?.prompt_audit_model || '');
+      preserveSelection('outputAuditModel', auditLabels, CONFIG.image?.output_audit_model || '');
+      preserveSelection('ocrModel', auditLabels, CONFIG.image?.ocr_model || '');
+      preserveSelection('promptEnModel', auditLabels, CONFIG.image?.prompt_en_model || '');
       const testChannels = (CONFIG.image_channels || []).filter(c => c.enabled !== false && c.name);
       const currentTestChannel = $('testChannel').value;
       const selectedTestChannel = testChannels.some(c => c.name === currentTestChannel) ? currentTestChannel : (testChannels[0]?.name || '');
-      setSelectOptions('testChannel', testChannels.map(c => c.name), selectedTestChannel);
+      preserveSelection('testChannel', testChannels.map(c => c.name), selectedTestChannel);
       refreshTestModels();
     }
     function refreshTestModels() {
@@ -3484,10 +3499,13 @@ Source prompt:
       return item === value || item === `${channel}:${model}` || item === model;
     }
     function refreshPriorityPicker(kind = 'image') {
+      return refreshPriorityPickerWithLabels(kind, null);
+    }
+    function refreshPriorityPickerWithLabels(kind = 'image', labels = null) {
       const ui = priorityUi(kind), picker = $(ui.picker);
       if (!picker) return;
       const selected = textList(ui.list);
-      const available = uniq(priorityLabels(kind)).filter(label =>
+      const available = uniq(labels || priorityLabels(kind)).filter(label =>
         !selected.some(item => priorityEntryMatchesLabel(item, label))
       );
       setSelectOptions(ui.picker, available, available[0] || '');
@@ -3524,8 +3542,8 @@ Source prompt:
       refreshPriorityPicker(kind);
       scheduleChannelListAutoSave();
     }
-    function prunePriorityList(kind = 'image') {
-      const ui = priorityUi(kind), allowed = new Set(priorityLabels(kind).flatMap(label => {
+    function prunePriorityList(kind = 'image', labels = null) {
+      const ui = priorityUi(kind), source = labels || priorityLabels(kind), allowed = new Set(source.flatMap(label => {
         const [channel, ...rest] = label.split('/'), model = rest.join('/');
         return [label, `${channel}:${model}`, model];
       }));
@@ -3534,7 +3552,7 @@ Source prompt:
         $(ui.list).value = next.join('\n');
         renderPriorityRows(kind);
       }
-      refreshPriorityPicker(kind);
+      refreshPriorityPickerWithLabels(kind, source);
       return next;
     }
     function movePriority(kind, index, delta) {
@@ -4206,7 +4224,8 @@ Source prompt:
         const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: snapshot})});
         CONFIG = res.data || CONFIG;
         ensureConfig();
-        renderAllChannelLists();
+        // Channel-list mutations already update their local card. Rebuilding
+        // every card after a priority-only autosave makes mobile WebViews hitch.
         refreshModelSelectors();
         return true;
       } catch (e) {

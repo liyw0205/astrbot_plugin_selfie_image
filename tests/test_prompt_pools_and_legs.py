@@ -41,6 +41,13 @@ class PromptPoolJsonTests(unittest.TestCase):
             "edge_single_foot_flex", "edge_knees_together_slant", "seated_knees_offset",
             "reclined_same_side_knees", "standing_weight_shift",
             "seated_thigh_gentle_pinch", "seated_self_knees_offset", "kneeling_relaxed_apart",
+            "standing_ankles_cross", "standing_front_toe_touch", "standing_side_staggered",
+            "standing_chair_single_leg_back", "standing_one_foot_on_stool", "standing_supported_tiptoe",
+            "supine_parallel_extended", "supine_ankles_cross", "supine_one_knee_up", "supine_knees_offset",
+            "side_lying_knees_bent", "side_lying_top_knee_forward", "side_lying_legs_staggered",
+            "prone_legs_extended", "prone_single_knee_bent", "prone_both_knees_bent",
+            "reclined_parallel_extended", "reclined_one_knee_up", "reclined_feet_on_stool",
+            "kneeling_side_sit", "kneeling_single_knee_grounded", "kneeling_sit_forward_lean",
         })
         for pose in LEGFOCUS_POSE_BY_ID.values():
             combinations = compatible_leg_compositions(pose)
@@ -206,13 +213,15 @@ class PromptPoolJsonTests(unittest.TestCase):
             compatible_leg_compositions,
         )
 
-        self.assertEqual(len(LEGFOCUS_POSE_POOL), 17)
+        self.assertEqual(len(LEGFOCUS_POSE_POOL), 39)
         for pose in LEGFOCUS_POSE_POOL:
             self.assertNotIn("scene_ids", pose)
             self.assertIn("camera_views", pose)
             scene_ids = {scene["id"] for scene, _, _ in compatible_leg_compositions(pose)}
-            if pose["id"] == "chair_one_foot_on_stool":
+            if pose["id"] in {"chair_one_foot_on_stool", "standing_one_foot_on_stool"}:
                 self.assertEqual(scene_ids, {"chair_footstool"})
+            elif pose["id"] == "reclined_feet_on_stool":
+                self.assertEqual(scene_ids, {"sofa_footstool"})
             else:
                 self.assertGreater(len(scene_ids), 1)
             for camera, view_ids in pose["camera_views"].items():
@@ -389,7 +398,7 @@ class PromptPoolJsonTests(unittest.TestCase):
 
     def test_leg_angle_requests_select_actual_camera_geometry_without_selecting_a_pose(self) -> None:
         from astrbot_plugin_selfie_image.cos.leg_focus import (
-            LEGFOCUS_VIEW_BY_ID, build_leg_focus_action, parse_requested_leg_pose,
+            LEGFOCUS_POSE_BY_ID, LEGFOCUS_VIEW_BY_ID, build_leg_focus_action, parse_requested_leg_pose,
         )
 
         for query, camera, direction, elevations in (
@@ -410,8 +419,9 @@ class PromptPoolJsonTests(unittest.TestCase):
             view = LEGFOCUS_VIEW_BY_ID[re.search(r"【leg_view:([a-z_]+)】", action).group(1)]
             self.assertNotEqual(view["elevation"], "top")
             if view["elevation"] == "down":
-                self.assertIn("【pose:kneeling_relaxed_apart】", action)
-                self.assertIn("【leg_support:kneeling_surface】", action)
+                pose_id = re.search(r"【pose:([a-z_]+)】", action).group(1)
+                self.assertEqual(LEGFOCUS_POSE_BY_ID[pose_id]["posture"], "kneeling")
+                self.assertRegex(action, r"【leg_support:(?:kneeling_surface|half_kneeling_surface)】")
             self.assertNotEqual(view["direction"], "side")
 
     def test_leg_incompatible_requests_do_not_silently_change_the_scene_pose_or_person(self) -> None:

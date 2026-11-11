@@ -187,7 +187,8 @@ def append_daily_context_to_english_prompt(english_prompt: str, source_prompt: s
     if character:
         source = source[:character.start()] + source[character.end():]
     for source_label, english_label in labels.items():
-        match = re.search(rf"^{re.escape(source_label)}：(.+)$", source, re.M)
+        period = r"(?:（[^）\n]+）|\([^\)\n]+\))?" if source_label == "今日穿搭" else ""
+        match = re.search(rf"^{re.escape(source_label)}{period}：(.+)$", source, re.M)
         if match:
             lines.append(f"{english_label}: {match.group(1).strip()}")
     if re.search(r"^腿部日程约束：", source, re.M):
@@ -341,9 +342,16 @@ def build_selfie_builtin_prompt(
             opening = f"Create one natural {style} vertical smartphone cover photo."
         lines = [opening]
         if has_daily_staging_contract(raw_action):
+            from ..features.persona import extra_overrides_outfit
+
+            outfit_rule = (
+                "Preserve the main subject's identity and follow the user's requested outfit."
+                if extra_overrides_outfit(extract_user_prompt(raw_action))
+                else "Preserve the main subject's identity and the resolved daily outfit."
+            )
             lines = [
                 f"Create one cohesive {style} vertical everyday image following the selected capture contract.",
-                "Preserve the main subject's identity and the resolved daily outfit. The contract below controls camera, framing, pose, gaze, scene, and lighting; do not add another shot or force eye contact.",
+                outfit_rule + " The contract below controls camera, framing, pose, gaze, scene, and lighting; do not add another shot or force eye contact.",
                 "Use the primary identity reference for the same person; extra references only supply explicitly requested details."
                 if has_reference_image else "Use the character settings as the identity anchor; default to an adult woman when gender is unspecified.",
                 rendered_action,
