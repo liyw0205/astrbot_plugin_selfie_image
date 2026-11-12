@@ -2769,6 +2769,7 @@ Source prompt:
       const rawType = ch.provider_type || ch.providerType || ch.api_type || ch.apiType;
       const providerType = normalizeProviderType(rawType) || 'openai';
       const normalized = {
+        id: String(ch.id || ch.channel_id || ch.channelId || '').trim(),
         name: String(ch.name || ch.id || 'new-channel').trim(),
         provider_type: providerType,
         base_url: String(ch.base_url || ch.baseUrl || '').trim(),
@@ -2835,11 +2836,14 @@ Source prompt:
       if (kind === 'audit') return newAuditChannel;
       return newChannel;
     }
+    function newChannelId() {
+      return 'ch_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 12);
+    }
     function newChannel() {
-      return normalizeChannel({name:'new-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
+      return normalizeChannel({id:newChannelId(), name:'new-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
     }
     function newAuditChannel() {
-      return normalizeChannel({name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
+      return normalizeChannel({id:newChannelId(), name:'audit-channel', provider_type:'openai', base_url:'https://api.openai.com', api_key:'', model:'', enabled_models:[], enabled:false, models_cache:[]});
     }
     function applyProviderDefaults(ch, force = false, kind = 'image') {
       ch = ch && typeof ch === 'object' ? ch : {};
@@ -3974,14 +3978,8 @@ Source prompt:
         ensureConfig();
         CONFIG.proxies = Array.isArray(CONFIG.proxies) ? CONFIG.proxies : [];
         const row = collectProxyModal();
-        // If keep password sentinel, reload plain from current config raw if present
         if (row._keep_password) {
-          const cur = CONFIG.proxies[EDITING_PROXY_INDEX] || {};
-          if (cur.password && cur.password !== '******') row.password = cur.password;
-          // else leave ****** — backend normalize will fail; better require re-entry
-          if (row.password === '******') {
-            throw new Error('编辑带认证的代理时请重新输入密码（安全起见前端不回显明文）');
-          }
+          // The server restores the password by the existing proxy ID.
           delete row._keep_password;
         }
         if (EDITING_PROXY_INDEX < 0) CONFIG.proxies.push(row);

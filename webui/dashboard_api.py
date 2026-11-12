@@ -1421,6 +1421,6 @@ class SelfieImageDashboardAPI:
         try:
             prompt = str((payload or {}).get("prompt") or "")
             count = int((payload or {}).get("count") or 1)
-            return self._ok({"variations": self.build_creative_variations(prompt, count, payload or {})})
+            return self._ok({"variations": self.plugin.build_creative_variations(prompt, count, payload or {})})
         except Exception as exc:
             return self._fail(str(exc), 400)

@@ -161,6 +161,23 @@ class PromptLookupMixin:
         with self._records_lock:
             return next((copy.deepcopy(r) for r in self._records if relative in (r.get("generated_image_paths") or [])), None)
 
+    def _redelivery_record_for_file(self, event: Any, file_path: str) -> dict[str, Any] | None:
+        relative = self._cache_relative_path(file_path)
+        scope = self._context_session_key(event)
+        with self._records_lock:
+            matches = [r for r in self._records if relative in (r.get("generated_image_paths") or [])]
+            scoped = [r for r in matches if r.get("lookup_scope") == scope or any(
+                item.get("scope") == scope for item in r.get("delivery_messages", [])
+                if isinstance(item, Mapping)
+            )]
+            # Legacy queues contain paths, not record IDs. Never guess between
+            # records sharing a file or attribute a retry to another session.
+            if scoped:
+                matches = scoped
+            else:
+                matches = [r for r in matches if not r.get("lookup_scope") and not r.get("delivery_messages")]
+            return copy.deepcopy(matches[0]) if len(matches) == 1 else None
+
     def _remember_prompt_delivery(self, event: Any, record: Mapping[str, Any], receipt: Any) -> None:
         def message_id(value: Any) -> str:
             if isinstance(value, Mapping):

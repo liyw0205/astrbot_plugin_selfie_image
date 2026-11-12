@@ -12,6 +12,7 @@ import shutil
 import threading
 import time
 from collections.abc import Mapping
+from contextlib import ExitStack
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .generation_records import (
@@ -232,10 +233,12 @@ class GenerationStoreMixin(PromptLookupMixin):
         """Return a read-only consistency report for records and media."""
         with getattr(self, "_records_lock", threading.RLock()):
             records = copy.deepcopy(getattr(self, "_records", []) or [])
+            protected = [*self._asset_protected_cache_paths(strict=True), *self._inflight_media_paths()]
         return inspect_storage_consistency(
             records,
             cache_root=str(getattr(self, "generated_dir", "") or ""),
             sidecar_root=str(getattr(self, "media_sources_dir", "") or ""),
+            protected_paths=protected,
         )
 
     # Explicit aliases keep the diagnostic API discoverable for integrations
@@ -264,19 +267,32 @@ class GenerationStoreMixin(PromptLookupMixin):
         deleted: List[Dict[str, Any]] = []
         cache_root = os.path.abspath(str(getattr(self, "generated_dir", "") or ""))
         sidecar_root = os.path.abspath(str(getattr(self, "media_sources_dir", "") or ""))
-        for item in candidates:
-            root = cache_root if item.get("kind") == "orphan_cache" else sidecar_root
-            rel = str(item.get("path") or "")
-            if not root or not rel:
-                continue
-            path = os.path.abspath(os.path.join(root, rel))
-            if not path.startswith(root + os.sep) or not os.path.isfile(path):
-                continue
-            try:
-                os.remove(path)
-                deleted.append({"kind": item.get("kind"), "path": rel})
-            except OSError:
-                continue
+        # Freeze every reference owner while rechecking and deleting. Cache
+        # writers hold the reservation mutex through file creation as well.
+        with ExitStack() as locks:
+            locks.enter_context(self._records_lock)
+            locks.enter_context(self._inflight_media_mutex())
+            for store_name in ("studio", "creative_canvas"):
+                store = getattr(self, store_name, None)
+                if store is not None and hasattr(store, "_lock"):
+                    locks.enter_context(store._lock)
+            fresh = self.inspect_storage_consistency()
+            safe_candidates = {(item.get("kind"), item.get("path")) for item in fresh.get("issues", []) if item.get("repairable")}
+            for item in candidates:
+                if (item.get("kind"), item.get("path")) not in safe_candidates:
+                    continue
+                root = cache_root if item.get("kind") == "orphan_cache" else sidecar_root
+                rel = str(item.get("path") or "")
+                if not root or not rel:
+                    continue
+                path = os.path.abspath(os.path.join(root, rel))
+                if not path.startswith(root + os.sep) or not os.path.isfile(path):
+                    continue
+                try:
+                    os.remove(path)
+                    deleted.append({"kind": item.get("kind"), "path": rel})
+                except OSError:
+                    continue
         return {"confirmed": True, "dry_run": False, "deleted": deleted, "report": self.inspect_storage_consistency()}
     @staticmethod
     def _coerce_optional_bool(value: Any) -> Optional[bool]:
@@ -965,9 +981,10 @@ class GenerationStoreMixin(PromptLookupMixin):
         self,
         task_id: str,
         *,
-        delivered: bool,
+        delivered: Optional[bool],
         error: str = "",
         paths: Optional[Iterable[str]] = None,
+        record_id: str = "",
     ) -> int:
         """Mark records produced by a task after the outbound send finishes.
 
@@ -977,7 +994,8 @@ class GenerationStoreMixin(PromptLookupMixin):
         succeeds or fails without rewriting media sidecars.
         """
         tid = str(task_id or "").strip()
-        if not tid:
+        rid = str(record_id or "").strip()
+        if not tid and not rid:
             return 0
         safe_error = redact_sensitive_text(str(error or ""))[:800]
         path_filter = set()
@@ -1003,7 +1021,8 @@ class GenerationStoreMixin(PromptLookupMixin):
                 record
                 for record in self._records
                 if isinstance(record, dict)
-                and str(record.get("task_id") or "").strip() == tid
+                and (not tid or str(record.get("task_id") or "").strip() == tid)
+                and (not rid or str(record.get("id") or "").strip() == rid)
                 and (
                     not path_filter
                     or bool(
@@ -1021,16 +1040,51 @@ class GenerationStoreMixin(PromptLookupMixin):
             if not matches:
                 return 0
             for record in matches:
-                previous_delivery_error = str(record.get("delivery_error") or "")
+                was_delivery_failed = bool(record.get("delivery_failed")) or record.get("status") == "delivery_failed" or (
+                    bool(record.get("generation_success")) and record.get("delivery_success") is False and not record.get("delivery_unknown")
+                )
+                image_paths = list(record.get("generated_image_paths") or [])
+                stored_states = record.get("image_delivery")
+                states = {path: stored_states[path] for path in image_paths
+                          if isinstance(stored_states, Mapping) and stored_states.get(path) in {"sent", "failed", "unknown"}}
+                outcome = "sent" if delivered is True else "failed" if delivered is False else "unknown"
+                for path in image_paths:
+                    if path_filter and path not in path_filter:
+                        continue
+                    # Task-level aggregates must not overwrite a more precise
+                    # per-image receipt (a batch can mix sent and failed files).
+                    if rid or delivered is True or path not in states:
+                        states[path] = outcome
+                record["image_delivery"] = states
+                image_states = [states.get(path, "failed" if was_delivery_failed else "unknown") for path in image_paths]
+                record_failed = "failed" in image_states if image_states else delivered is False
+                record_unknown = not record_failed and ("unknown" in image_states if image_states else delivered is None)
+                delivery_success = False if record_failed else None if record_unknown else True
+                previous_delivery_error = str(record.get("delivery_error") or (record.get("error") if was_delivery_failed else "") or "")
+                if (was_delivery_failed or record.get("delivery_unknown")) and (
+                    record.get("delivery_success") is not delivery_success
+                    or safe_error != previous_delivery_error
+                ):
+                    history = list(record.get("delivery_history") or [])
+                    history.append({
+                        "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                        "status": record.get("status"), "delivery_success": record.get("delivery_success"),
+                        "error": redact_sensitive_text(previous_delivery_error or str(record.get("error") or ""))[:800],
+                    })
+                    record["delivery_history"] = history[-32:]
                 record["generation_success"] = True
-                record["delivery_success"] = bool(delivered)
-                record["delivery_failed"] = not delivered
-                if delivered:
-                    if record.get("status") == "delivery_failed":
-                        record["status"] = "succeeded" if record.get("success") else "failed"
+                record["delivery_success"] = delivery_success
+                record["delivery_failed"] = record_failed
+                record["delivery_unknown"] = record_unknown
+                if not record_failed:
+                    if record.get("status") == "delivery_failed" or record.get("success") is False:
+                        record["status"] = "succeeded"
+                        record["success"] = True
                     record.pop("delivery_error", None)
                     if previous_delivery_error and record.get("error") == previous_delivery_error:
                         record["error"] = ""
+                    if previous_delivery_error and record.get("failure_reason") == previous_delivery_error:
+                        record.pop("failure_reason", None)
                 else:
                     record["status"] = "delivery_failed"
                     record["success"] = False
@@ -1041,15 +1095,21 @@ class GenerationStoreMixin(PromptLookupMixin):
                         record["error"] = safe_error
                 response = record.get("response_data")
                 if isinstance(response, dict):
-                    previous_response_error = str(response.get("delivery_error") or "")
+                    previous_response_error = str(response.get("delivery_error") or (
+                        response.get("error") if was_delivery_failed and response.get("error") == previous_delivery_error else ""
+                    ) or "")
                     response["generation_success"] = True
-                    response["delivery_success"] = bool(delivered)
-                    response["delivery_failed"] = not delivered
-                    if safe_error and not delivered:
+                    response["delivery_success"] = record["delivery_success"]
+                    response["delivery_failed"] = record_failed
+                    response["delivery_unknown"] = record_unknown
+                    response["success"] = record.get("success")
+                    if safe_error and record_failed:
                         response["delivery_error"] = safe_error
                         response["error"] = safe_error
-                    elif delivered and previous_response_error and response.get("error") == previous_response_error:
-                        response["error"] = ""
+                    elif not record_failed:
+                        response.pop("delivery_error", None)
+                        if previous_response_error and response.get("error") == previous_response_error:
+                            response["error"] = ""
                     response["status"] = record.get("status")
                 changed += 1
             database = self._record_database()
@@ -1605,12 +1665,10 @@ class GenerationStoreMixin(PromptLookupMixin):
         }
 
     def _save_cache_image(self, data: bytes, prefix: str, mime: str = "") -> str:
-        path = save_image_bytes(data, self.generated_dir, prefix=prefix, mime=mime or detect_mime_by_bytes(data))
-        rel_path = self._cache_relative_path(path)
-        # Reserve the fresh file until the record that references it is
-        # committed, so a concurrent cleanup or a restart cannot delete a
-        # request image that has no record yet.
-        self._register_inflight_media([rel_path])
+        with self._inflight_media_mutex():
+            path = save_image_bytes(data, self.generated_dir, prefix=prefix, mime=mime or detect_mime_by_bytes(data))
+            rel_path = self._cache_relative_path(path)
+            self._register_inflight_media([rel_path])
         return rel_path
 
     def _load_cache_image_bytes(self, rel_path: str) -> Optional[Tuple[bytes, str]]:
@@ -1684,7 +1742,7 @@ class GenerationStoreMixin(PromptLookupMixin):
         if lock is None:
             lock = threading.RLock()
             self._reference_cache_lock = lock
-        with lock:
+        with lock, self._inflight_media_mutex():
             os.makedirs(self.generated_dir, exist_ok=True)
             target = os.path.join(self.generated_dir, f"request_{digest}.{ext}")
 
@@ -1769,8 +1827,7 @@ class GenerationStoreMixin(PromptLookupMixin):
     def _inflight_media_mutex(self) -> threading.RLock:
         lock = getattr(self, "_inflight_media_lock", None)
         if lock is None:
-            lock = threading.RLock()
-            self._inflight_media_lock = lock
+            lock = self.__dict__.setdefault("_inflight_media_lock", threading.RLock())
         return lock
 
     def _inflight_media_state(self) -> Dict[str, float]:
@@ -1879,7 +1936,7 @@ class GenerationStoreMixin(PromptLookupMixin):
             if removed:
                 self._persist_inflight_media_locked()
 
-    def _asset_protected_cache_paths(self) -> List[str]:
+    def _asset_protected_cache_paths(self, *, strict: bool = False) -> List[str]:
         """Keep pinned assets and live canvas media during cache GC."""
         with self._records_lock:
             protected_records = [
@@ -1898,6 +1955,8 @@ class GenerationStoreMixin(PromptLookupMixin):
             try:
                 protected.extend(getter())
             except Exception:
+                if strict:
+                    raise
                 continue
         return list(dict.fromkeys(str(path).strip() for path in protected if str(path).strip()))
 

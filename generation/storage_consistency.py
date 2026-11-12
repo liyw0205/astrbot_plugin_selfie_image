@@ -12,6 +12,8 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any, Dict, List
 
+from ..core.utils import collect_record_cache_paths
+
 
 def _safe_rel(path: str, root: str) -> str:
     try:
@@ -21,17 +23,7 @@ def _safe_rel(path: str, root: str) -> str:
 
 
 def _record_paths(record: Mapping[str, Any]) -> List[str]:
-    response = record.get("response_data")
-    response = response if isinstance(response, Mapping) else {}
-    paths: List[str] = []
-    for key in ("generated_image_paths",):
-        values = record.get(key)
-        if not isinstance(values, list) or not values:
-            values = response.get(key)
-        if not isinstance(values, list):
-            values = []
-        paths.extend(str(item or "").strip() for item in values if str(item or "").strip())
-    return paths
+    return collect_record_cache_paths(dict(record))
 
 
 def _sidecar_name(record_id: str) -> str:
@@ -48,6 +40,7 @@ def inspect_storage_consistency(
     *,
     cache_root: str,
     sidecar_root: str,
+    protected_paths: Iterable[str] = (),
 ) -> Dict[str, Any]:
     """Inspect retained records, media sidecars, and cache files.
 
@@ -65,6 +58,11 @@ def inspect_storage_consistency(
     referenced: set[str] = set()
     referenced_sidecars: set[str] = set()
     seen_paths: Dict[str, str] = {}
+
+    for raw_path in protected_paths:
+        absolute = os.path.abspath(raw_path if os.path.isabs(raw_path) else os.path.join(cache_root, raw_path))
+        if cache_root and absolute.startswith(cache_root + os.sep):
+            referenced.add(_safe_rel(absolute, cache_root))
 
     for record in rows:
         record_id = str(record.get("id") or "").strip()[:128]

@@ -28,6 +28,9 @@ from ..core.models import (
     strip_channel_timeouts,
     is_masked_secret,
     usable_api_keys,
+    normalize_proxy_entry,
+    normalize_provider_type,
+    public_proxy_row,
 )
 from ..core.utils import load_json_file, redact_sensitive_data, redact_sensitive_text, save_json_file
 
@@ -67,9 +70,22 @@ def _channel_identity(row: Any) -> str:
         row.get("id")
         or row.get("channel_id")
         or row.get("channelId")
-        or row.get("name")
         or ""
     ).strip()
+
+
+def _ensure_channel_ids(config: Dict[str, Any]) -> None:
+    """Assign stable identities to legacy rows and explicit channel copies."""
+    for key in ("image_channels", "audit_channels"):
+        seen = set()
+        for row in config.get(key) or []:
+            if not isinstance(row, dict):
+                continue
+            identity = _channel_identity(row)
+            if not identity or identity in seen:
+                identity = "ch_" + secrets.token_hex(12)
+            row["id"] = identity
+            seen.add(identity)
 
 
 def _mask_web_channel_credentials(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -91,11 +107,14 @@ def _mask_web_channel_credentials(config: Dict[str, Any]) -> Dict[str, Any]:
                 # Keep the field shape so older/custom UIs do not mistake it
                 # for a missing value, but never reveal key count or content.
                 row[field] = ["******"]
+            if row.get("proxy"):
+                row["proxy"] = redact_sensitive_text(str(row["proxy"]))
     proxies = safe.get("proxies")
     if isinstance(proxies, list):
-        for row in proxies:
-            if isinstance(row, dict) and row.get("password"):
-                row["password"] = "******"
+        safe["proxies"] = [
+            public_proxy_row({**(normalize_proxy_entry(row) or {}), **row})
+            for row in proxies if isinstance(row, dict)
+        ]
     return safe
 
 
@@ -112,21 +131,45 @@ def _restore_web_channel_credentials(
         if not isinstance(rows, list) or not isinstance(old_rows, list):
             continue
         old_by_id = {}
-        for index, old in enumerate(old_rows):
+        old_by_name = {}
+        for old in old_rows:
             if not isinstance(old, dict):
                 continue
             identity = _channel_identity(old)
             if identity:
                 old_by_id[identity] = old
-                old_by_id.setdefault(identity.casefold(), old)
-            old_by_id.setdefault(f"__index__:{index}", old)
-        for index, row in enumerate(rows):
+            name = str(old.get("name") or "").strip()
+            if name:
+                old_by_name[name] = old if name not in old_by_name else None
+        for row in rows:
             if not isinstance(row, dict):
                 continue
             identity = _channel_identity(row)
-            old = old_by_id.get(identity) or old_by_id.get(identity.casefold()) or old_by_id.get(f"__index__:{index}")
+            old = old_by_id.get(identity) if identity else old_by_name.get(str(row.get("name") or "").strip())
             if not old:
                 continue
+            if not identity:
+                # Name-only legacy clients may keep secrets only on the same
+                # endpoint; a new explicit identity never falls back by name.
+                endpoint_changed = False
+                for aliases in (("base_url", "baseUrl"), ("provider_type", "providerType", "api_type", "apiType")):
+                    if not any(field in row for field in aliases):
+                        continue
+                    incoming = next((row[field] for field in aliases if row.get(field)), "")
+                    previous = next((old[field] for field in aliases if old.get(field)), "")
+                    if aliases[0] == "provider_type":
+                        incoming = normalize_provider_type(incoming or "openai")
+                        previous = normalize_provider_type(previous or "openai")
+                    else:
+                        incoming = str(incoming).strip().rstrip("/")
+                        previous = str(previous).strip().rstrip("/")
+                    endpoint_changed |= incoming != previous
+                if endpoint_changed:
+                    continue
+                if _channel_identity(old):
+                    row["id"] = _channel_identity(old)
+            if old.get("proxy") and row.get("proxy") == redact_sensitive_text(str(old["proxy"])):
+                row["proxy"] = old["proxy"]
             incoming_key, incoming_keys, has_key, has_keys = _channel_credential_fields(row)
             old_key, old_keys, _, _ = _channel_credential_fields(old)
             old_real_keys = usable_api_keys(old_keys)
@@ -182,13 +225,11 @@ def _restore_web_proxy_credentials(
         for row in old_rows
         if isinstance(row, dict) and str(row.get("id") or "").strip()
     }
-    for index, row in enumerate(rows):
+    for row in rows:
         if not isinstance(row, dict):
             continue
         identity = str(row.get("id") or "").strip()
         old = old_by_id.get(identity)
-        if old is None and index < len(old_rows) and isinstance(old_rows[index], dict):
-            old = old_rows[index]
         if not isinstance(old, dict):
             continue
         incoming = row.get("password")
@@ -517,6 +558,10 @@ class ConfigurationMixin:
             source.setdefault("permission", {})["usable_users_enabled"] = True
         source.setdefault("image", {})["max_concurrent_tasks"] = AICatConfig.from_dict(source).image_max_concurrent_tasks
         source["web"] = copy.deepcopy(self.key_config["web"])
+        _ensure_channel_ids(source)
+        normalized = AICatConfig.from_dict(source)
+        for key in ("proxies", "image_channels", "audit_channels"):
+            source[key] = copy.deepcopy(normalized.raw[key])
         return source
 
     def _persist_config(self) -> None:
@@ -530,8 +575,11 @@ class ConfigurationMixin:
             normalize_legacy_keys(normalize_config_tree(deep_merge(DEFAULT_CONFIG, raw)))
         )
         next_config["web"] = copy.deepcopy(self.key_config["web"])
+        _ensure_channel_ids(next_config)
         self.raw_config = next_config
         self.config = AICatConfig.from_dict(self.raw_config)
+        for key in ("proxies", "image_channels", "audit_channels"):
+            self.raw_config[key] = copy.deepcopy(self.config.raw[key])
         self.raw_config["group_chat_configs"] = copy.deepcopy(self.config.group_chat_configs)
         self.raw_config.setdefault("image", {})["max_concurrent_tasks"] = self.config.image_max_concurrent_tasks
         scheduler = getattr(self, "_image_scheduler", None)

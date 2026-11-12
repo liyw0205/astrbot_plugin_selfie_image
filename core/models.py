@@ -832,9 +832,12 @@ def resolve_proxy_url_from_config(proxies: List[Dict[str, Any]], proxy_id: str =
 
 def public_proxy_row(row: Dict[str, Any], *, mask_password: bool = True) -> Dict[str, Any]:
     data = dict(row or {})
-    if mask_password and data.get("password"):
-        data["password"] = "******"
-        # keep has_auth flag for UI
+    if mask_password:
+        for field in ("password", "pass"):
+            if data.get(field):
+                data[field] = "******"
+        data.pop("url", None)
+        data.pop("proxy", None)
     data["has_auth"] = bool(str(row.get("username") or "").strip())
     return data
 

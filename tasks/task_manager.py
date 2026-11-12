@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import os
 import threading
 import time
 from collections.abc import Mapping
@@ -552,6 +553,69 @@ class WebTaskMixin:
         with self._web_task_lock:
             task = self._web_tasks.get(tid)
             return str(task.get("user_notification_status") or "").strip().lower() if isinstance(task, dict) else ""
+
+    def _reconcile_task_image_delivery(self, task_id: str) -> None:
+        """Refresh a terminal task from its per-image redelivery evidence."""
+        tid = str(task_id or "").strip()
+        if not tid:
+            return
+        # Freeze record evidence until the task snapshot is persisted.
+        with self._records_lock, self._web_task_lock:
+            task = self._web_tasks.get(tid)
+            if not isinstance(task, dict) or task.get("status") not in {"delivery_failed", "succeeded", "partial_success"}:
+                return
+            records = [r for r in self._records if str(r.get("task_id") or "") == tid]
+            result = copy.deepcopy(task.get("result") or {})
+            image_states = {}
+            for record in records:
+                fallback = "failed" if record.get("delivery_failed") else "sent" if record.get("delivery_success") else "unknown"
+                for path in record.get("generated_image_paths") or []:
+                    image_states[path] = (record.get("image_delivery") or {}).get(path, fallback)
+            expected = {
+                self._cache_relative_path(path) if os.path.isabs(path) else path
+                for path in (result.get("files") or result.get("image_paths") or result.get("generated_image_paths") or [])
+            }
+            known_ids = {str(r.get("id") or "") for r in records}
+            linked_ids = {str(rid) for rid in task.get("record_ids") or []}
+            if not image_states or not expected.issubset(image_states) or not linked_ids.issubset(known_ids):
+                return
+            if not expected and len(image_states) < int(task.get("succeeded_count") or result.get("succeeded_count") or 1):
+                return
+            failed = sum(state == "failed" for state in image_states.values())
+            unknown = sum(state == "unknown" for state in image_states.values())
+            previous_error = str(task.get("delivery_error") or task.get("error") or "")
+            if (task.get("delivery_failed") or task.get("status") == "delivery_failed") and not failed:
+                history = list(task.get("delivery_history") or [])
+                history.append({"time": self._web_task_timestamp(), "status": task.get("status"), "error": previous_error[:800]})
+                task["delivery_history"] = history[-32:]
+                for data in (task, result):
+                    data.pop("delivery_error", None)
+                    if not data.get("failed_count") or data.get("error") == previous_error:
+                        data["error"] = ""
+                result.pop("status", None)
+                if result.get("failed_count"):
+                    result["error"] = next((str(record.get("error") or "") for record in records
+                                            if record.get("generation_success") is False and record.get("error")), result.get("error", ""))
+            result.update({
+                "generation_success": True, "delivery_success": False if failed else None if unknown else True,
+                "delivery_failed": bool(failed), "delivery_unknown": bool(unknown and not failed),
+                "delivery_failed_count": failed, "delivery_unknown_count": unknown,
+            })
+            terminal = build_task_terminal_state(
+                result, requested_count=task.get("requested_count") or result.get("requested_count") or 1,
+            )
+            task.update({
+                "result": terminal["result"], "status": terminal["terminal_status"], "success": terminal["success"],
+                "generation_success": terminal["generation_success"], "delivery_success": terminal["result"]["delivery_success"],
+                "delivery_failed": terminal["delivery_failed"], "delivery_unknown": terminal["delivery_unknown"],
+                "delivery_failed_count": failed, "delivery_unknown_count": unknown,
+                "error": terminal["error"], "generation_stage": terminal["terminal_stage"],
+                "generation_stage_label": "部分完成" if terminal["partial_success"] and not failed else "已完成",
+                "user_notification_status": "failed" if failed else "unknown" if unknown else "sent",
+                "user_notification_reason": previous_error[:320] if failed else "消息投递结果未知" if unknown else "",
+                "updated_ts": time.time(), "updated_at": self._web_task_timestamp(),
+            })
+            self._persist_web_tasks_locked()
 
     def _reconcile_task_terminal_evidence_locked(self, task: Dict[str, Any]) -> bool:
         """Promote a stale active snapshot when its result is already final.

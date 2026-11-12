@@ -6233,8 +6233,15 @@ class SelfieImagePlugin(
             yield event.plain_result(denied)
             return
         result = await self.retry_failed_images(event)
-        if result["sent"]:
-            yield event.plain_result(f"已重发 {result['sent']} 张图片。")
+        if result.get("busy"):
+            yield event.plain_result("本会话正在重发图片，请稍后再试。")
+        elif result["sent"] or result.get("unknown"):
+            text = f"已重发 {result['sent']} 张图片。" if result["sent"] else ""
+            if result.get("unknown"):
+                text += f"{result['unknown']} 张图片的投递结果未知，未自动重复发送。"
+            yield event.plain_result(text)
+        elif result.get("remaining"):
+            yield event.plain_result(f"重发失败，仍有 {result['remaining']} 张图片待重发。")
         else:
             yield event.plain_result("没有可重发的图片。")
 

@@ -7,7 +7,7 @@ import os
 import re
 import threading
 from contextlib import asynccontextmanager
-from typing import Any, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 import aiohttp
@@ -388,18 +388,26 @@ class ReferenceMediaMixin:
         ]
 
     async def _send_generated_images(
-        self, event: AstrMessageEvent, files: Iterable[str]
+        self, event: AstrMessageEvent, files: Iterable[str], *,
+        remember_failures: bool = True,
+        on_outcome: Optional[Callable[[str, str], None]] = None,
     ) -> ImageDeliveryOutcome:
         sent = 0
         failed = 0
         unknown = 0
-        for file_path in files:
+        for index, file_path in enumerate(files):
+            if index:
+                await asyncio.sleep(0.4)
             record = None
             try:
                 wait_record = getattr(self, "_wait_for_image_record", None)
                 if callable(wait_record):
                     await wait_record(file_path)
-                    record = self._prompt_record_for_file(file_path)
+                    record = (
+                        self._prompt_record_for_file(file_path)
+                        if remember_failures
+                        else self._redelivery_record_for_file(event, file_path)
+                    )
             except Exception as exc:
                 logger.warning("[SelfieImage] image code lookup failed: %s", redact_sensitive_text(str(exc)))
             try:
@@ -421,44 +429,110 @@ class ReferenceMediaMixin:
                     unknown += 1
                 else:
                     failed += 1
-                if not ambiguous:
+                if on_outcome is not None:
+                    on_outcome(file_path, "unknown" if ambiguous else "failed")
+                if not ambiguous and remember_failures:
                     owner = self._session_key(event)
                     with self._send_failures_lock:
                         self._send_failures.setdefault(owner, []).append(
                             self._cache_relative_path(file_path)
                         )
+                if record:
+                    await self._persist_image_delivery(
+                        event, record, file_path, None,
+                        delivered=None if ambiguous else False,
+                        error=str(exc), reconcile_task=not remember_failures,
+                    )
                 continue
+            sent += 1
+            if on_outcome is not None:
+                on_outcome(file_path, "sent")
             if record:
+                await self._persist_image_delivery(
+                    event, record, file_path, receipt,
+                    delivered=True, reconcile_task=not remember_failures,
+                )
+            self._record_bot_image_context(event, [file_path])
+        return ImageDeliveryOutcome(sent, failed=failed, unknown=unknown)
+
+    async def _persist_image_delivery(
+        self, event: Any, record: dict, file_path: str, receipt: Any, *,
+        delivered: Optional[bool], error: str = "", reconcile_task: bool = False,
+    ) -> None:
+        def persist() -> None:
+            if delivered:
                 try:
-                    await asyncio.to_thread(self._remember_prompt_delivery, event, record, receipt)
+                    self._remember_prompt_delivery(event, record, receipt)
                 except Exception as exc:
                     logger.warning("[SelfieImage] image message link failed: %s", redact_sensitive_text(str(exc)))
-            self._record_bot_image_context(event, [file_path])
-            sent += 1
-            await asyncio.sleep(0.4)
-        return ImageDeliveryOutcome(sent, failed=failed, unknown=unknown)
+            update = getattr(self, "_update_generation_records_delivery", None)
+            if callable(update):
+                update(
+                    str(record.get("task_id") or ""), record_id=str(record.get("id") or ""),
+                    delivered=delivered, error=error, paths=[file_path],
+                )
+            reconcile = getattr(self, "_reconcile_task_image_delivery", None)
+            if reconcile_task and callable(reconcile):
+                reconcile(str(record.get("task_id") or ""))
+
+        write = asyncio.create_task(asyncio.to_thread(persist))
+        try:
+            await asyncio.shield(write)
+        except asyncio.CancelledError:
+            # A confirmed send must not become retryable while its durable
+            # receipt/status write is still running in a worker thread.
+            await asyncio.gather(write, return_exceptions=True)
+            raise
+        except Exception as exc:
+            logger.warning("[SelfieImage] image delivery persistence failed: %s", redact_sensitive_text(str(exc)))
 
     async def retry_failed_images(self, event: AstrMessageEvent) -> dict:
         owner = self._session_key(event)
         with self._send_failures_lock:
-            paths = list(self._send_failures.get(owner) or [])
+            active = getattr(self, "_active_image_retries", None)
+            if active is None:
+                active = {}
+                self._active_image_retries = active
+            if owner in active:
+                return {"success": False, "sent": 0, "remaining": len(active[owner]), "busy": True}
+            pending = list(dict.fromkeys(self._send_failures.pop(owner, []) or []))
+            active[owner] = pending
         sent = 0
-        remaining = []
-        for rel_path in paths:
-            try:
-                abs_path = self._cache_absolute_path(rel_path)
-            except Exception:
-                continue
-            if not os.path.isfile(abs_path):
-                continue
-            outcome = await self._send_generated_images(event, [abs_path])
-            if int(outcome) > 0:
-                sent += 1
-            else:
-                remaining.append(rel_path)
-        with self._send_failures_lock:
-            if remaining:
-                self._send_failures[owner] = remaining
-            else:
-                self._send_failures.pop(owner, None)
-        return {"success": sent > 0, "sent": sent, "remaining": len(remaining)}
+        unknown = 0
+        missing = 0
+        try:
+            for rel_path in list(pending):
+                try:
+                    abs_path = self._cache_absolute_path(rel_path)
+                except (TypeError, ValueError, OSError):
+                    pending.remove(rel_path)
+                    missing += 1
+                    continue
+                if not os.path.isfile(abs_path):
+                    pending.remove(rel_path)
+                    missing += 1
+                    continue
+
+                def accepted(_path: str, state: str) -> None:
+                    nonlocal sent, unknown
+                    if state != "failed" and rel_path in pending:
+                        pending.remove(rel_path)
+                        sent += state == "sent"
+                        unknown += state == "unknown"
+
+                outcome = await self._send_generated_images(
+                    event, [abs_path], remember_failures=False, on_outcome=accepted,
+                )
+                if int(outcome) > 0:
+                    accepted(abs_path, "sent")
+                elif getattr(outcome, "unknown_count", 0):
+                    accepted(abs_path, "unknown")
+        finally:
+            with self._send_failures_lock:
+                remaining = list(dict.fromkeys([*pending, *self._send_failures.get(owner, [])]))
+                if remaining:
+                    self._send_failures[owner] = remaining
+                else:
+                    self._send_failures.pop(owner, None)
+                active.pop(owner, None)
+        return {"success": sent > 0, "sent": sent, "remaining": len(remaining), "unknown": unknown, "missing": missing}
