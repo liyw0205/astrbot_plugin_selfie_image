@@ -65,7 +65,19 @@ _DIMENSION_ASPECT_RATIO_RE = re.compile(
     re.IGNORECASE,
 )
 _ORIENTATION_ASPECT_RE = re.compile(
-    r"(?P<orientation>竖屏|竖图|纵向|人像构图|portrait|vertical|横屏|横图|横向|landscape|horizontal|方图|方形|正方形|square)",
+    r"(?P<orientation>竖屏|竖图|纵向|人像构图|横屏|横图|横向|方图|正方形|方形|"
+    r"(?<![A-Za-z0-9_])(?:portrait|vertical|landscape|horizontal|square)(?![A-Za-z0-9_]))",
+    re.IGNORECASE,
+)
+_CANVAS_ORIENTATION_PREFIX_RE = re.compile(
+    r"(?:画面|画幅|画布|图像|图片|照片|构图|宽高比|比例|尺寸|\b(?:canvas|image|photo|format|orientation))"
+    r"\s*(?:的\s*)?(?:(?:比例|方向|格式)\s*)?"
+    r"(?:(?:为|是|采用|使用|改为|改成|设为|设置为|[:：=]|in|is)\s*)?$",
+    re.IGNORECASE,
+)
+_CANVAS_ORIENTATION_SUFFIX_RE = re.compile(
+    r"^\s*(?:的\s*)?(?:构图|画面|画幅|画布|图片|图像|照片|比例|尺寸|"
+    r"(?:canvas|format|orientation|composition|image|photo)\b)",
     re.IGNORECASE,
 )
 _ASPECT_OVERRIDE_MARKER_RE = re.compile(
@@ -115,6 +127,20 @@ def _is_negated_aspect(text: str, start: int) -> bool:
     return bool(_NEGATED_ASPECT_PREFIX_RE.search(prefix))
 
 
+def _is_canvas_orientation(text: str, match: re.Match[str]) -> bool:
+    orientation = match.group("orientation").lower()
+    if orientation in {"竖屏", "竖图", "人像构图", "横屏", "横图", "方图"}:
+        return True
+    # Ambiguous words also describe clothes, props, or their layout. Accept
+    # them only as a standalone request or next to a canvas/framing term.
+    if text.strip(" \t\r\n。；;，,.!?！？").lower() == orientation:
+        return True
+    return bool(
+        _CANVAS_ORIENTATION_PREFIX_RE.search(text[: match.start()])
+        or _CANVAS_ORIENTATION_SUFFIX_RE.search(text[match.end() :])
+    )
+
+
 def extract_prompt_aspect_ratio(text: str) -> str:
     """Extract a prompt-provided aspect ratio, preferring explicit supplements.
 
@@ -143,7 +169,7 @@ def extract_prompt_aspect_ratio(text: str) -> str:
         orientation_matches = [
             match
             for match in _ORIENTATION_ASPECT_RE.finditer(scope)
-            if not _is_negated_aspect(scope, match.start())
+            if not _is_negated_aspect(scope, match.start()) and _is_canvas_orientation(scope, match)
         ]
         if orientation_matches:
             return _orientation_aspect_ratio(max(orientation_matches, key=lambda item: item.start()).group("orientation"))

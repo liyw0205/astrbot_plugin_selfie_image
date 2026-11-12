@@ -44,7 +44,7 @@ from astrbot_plugin_selfie_image.prompts.prompt_templates import (
     extract_user_prompt,
     resolve_appearance_type,
 )
-from astrbot_plugin_selfie_image.prompts.command_parser import parse_prompt_options
+from astrbot_plugin_selfie_image.prompts.command_parser import extract_prompt_aspect_ratio, parse_prompt_options
 from astrbot_plugin_selfie_image.prompts.selfie_actions import (
     build_group_selfie_action,
     build_selfie_look_action,
@@ -1116,6 +1116,27 @@ def test_close_selfie_has_one_framing_and_crop_waist_keeps_reference_context(tmp
     assert "放松地坐着或靠在深色沙发/床边" not in cropped
 
 
+def test_back_three_quarter_pose_survives_final_persona_prompt_without_hands_down(tmp_path):
+    plugin = plugin_for_prompts(tmp_path)
+    action = build_selfie_look_action(
+        "背面侧身",
+        scene_light_provider=lambda _kind: (["卧室窗边"], ["窗光"]),
+    )
+    prompt, _, _ = asyncio.run(plugin._build_selfie_prompt_and_refs_for_event(None, action, []))
+
+    assert "【shot:back_three_quarter】" in prompt
+    assert "背后三分之四角度" in prompt
+    assert "双手按小动作自然配合" in prompt
+    assert "双手放松垂在身侧" not in prompt
+
+
+def test_back_three_quarter_group_alias_uses_the_matching_composition():
+    action = build_group_selfie_action("两人背面侧身合影")
+
+    assert "【shot:rear_three_quarter_group】" in action
+    assert "背后三分之四角度" in action
+
+
 def test_reference_description_uses_locked_contract_scope(tmp_path):
     plugin = plugin_for_prompts(tmp_path)
     plugin.config = SimpleNamespace(image_ocr_model="")
@@ -1328,6 +1349,110 @@ def test_commands_keep_explicit_image_options(tmp_path, command, label, ratio, r
     assert captured["aspect_ratio"] == ratio
     assert captured["resolution"] == resolution
     assert captured["preset_name"] == preset
+
+
+@pytest.mark.parametrize("text", [
+    "眼罩横向贴合双眼区域与上鼻梁", "佩戴方形耳坠", "衣服有纵向开口",
+    "horizontal stripes on the dress", "square-neck dress", "landscape painting on the wall",
+])
+def test_outfit_and_prop_directions_do_not_change_canvas_aspect(text):
+    assert extract_prompt_aspect_ratio(text) == ""
+    assert parse_prompt_options(text, default_aspect_ratio="3:4")[1] == "3:4"
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("横向", "16:9"), ("画面横向", "16:9"), ("横向构图", "16:9"),
+    ("纵向构图", "9:16"), ("方形画布", "1:1"), ("正方形", "1:1"),
+    ("landscape format", "16:9"), ("portrait orientation", "9:16"),
+    ("square canvas", "1:1"),
+])
+def test_canvas_direction_requests_still_set_aspect(text, expected):
+    assert extract_prompt_aspect_ratio(text) == expected
+
+
+@pytest.mark.parametrize("query,default_ratio,expected,resolution,preset_value", [
+    ("", "9:16", "9:16", "1K", ""),
+    ("", "3:4", "3:4", "1K", ""),
+    ("", "1:1", "1:1", "1K", ""),
+    ("", "16:9", "16:9", "1K", ""),
+    ("", "自动", "自动", "1K", ""),
+    ("眼罩横向贴合双眼", "9:16", "9:16", "1K", ""),
+    ("佩戴方形耳坠", "9:16", "9:16", "1K", ""),
+    ("横屏", "9:16", "16:9", "1K", ""),
+    ("画面横向", "9:16", "16:9", "1K", ""),
+    ("方图", "9:16", "1:1", "1K", ""),
+    ("尺寸 1024x1536", "9:16", "2:3", "1K", ""),
+    ("--ar 16:9 --res 2K", "9:16", "16:9", "2K", ""),
+    ("", "9:16", "3:4", "2K", '{"prompt":"柔和灯光","aspect_ratio":"3:4","resolution":"2K"}'),
+    ("--ar 9:16 --res 1K", "9:16", "9:16", "1K", "柔和灯光 16:9 --ar 16:9 --res 4K"),
+    ("16:9", "9:16", "16:9", "1K", "柔和灯光 9:16"),
+    ("", "3:4", "9:16", "1K", "柔和灯光 9:16"),
+])
+@pytest.mark.parametrize("framing_id", ["", "side_profile_4_5"])
+def test_cos_command_canvas_parameters_reach_every_batch_request(
+    tmp_path, monkeypatch, query, default_ratio, expected, resolution, preset_value, framing_id,
+):
+    from astrbot_plugin_selfie_image.prompts.preset import ImagePresetManager
+
+    plugin = plugin_for_prompts(tmp_path)
+    plugin.config = AICatConfig.from_dict({})
+    plugin.config.image_default_aspect_ratio = default_ratio
+    plugin.presets = ImagePresetManager(tmp_path)
+    preset_name = "CANVAS_TEST_PRESET" if preset_value else ""
+    if preset_value:
+        assert plugin.presets.add(preset_name, preset_value)[0]
+    plugin._quota_error_message = lambda *_a: ""
+    plugin._rate_limit_error_message = lambda *_a: ""
+    plugin._event_reference_images = AsyncMock(return_value=[])
+    plugin._build_contextual_progress_text = AsyncMock(return_value="progress")
+    plugin._record_bot_text_context = lambda *_a: None
+    plugin._image_batch_queue_expected = lambda *_a: False
+    plugin._run_image_generation = AsyncMock(return_value={"success": True})
+    captured = {}
+    plugin.start_command_image_task = lambda *_a, **kw: captured.update(kw) or "task"
+
+    async def run_shots(**kwargs):
+        return [await kwargs["run_one"](index) for index in range(kwargs["total"])]
+
+    plugin._run_counted_generation_shots = run_shots
+    build_action = plugin._build_cos_look_action
+
+    def build_blindfold_action(*args, **kwargs):
+        kwargs.update(force_id="ninghongye_plain_white_snake", camera="third")
+        return build_action(*args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_build_cos_look_action", build_blindfold_action)
+    monkeypatch.setattr("astrbot_plugin_selfie_image.cos.cos_looks.random", random.Random(0))
+    if framing_id:
+        def fixed_framing(**kwargs):
+            return dict(
+                COS_FRAMING_CLASSES[framing_id], view_id=framing_id,
+                outfit_text=kwargs["outfit"], extra_request_text=kwargs["extra_request"],
+                randomized_from_options=False, explicit=False, composition={},
+            )
+
+        monkeypatch.setattr("astrbot_plugin_selfie_image.cos.cos_looks.pick_cos_framing", fixed_framing)
+    event = SimpleNamespace(
+        message_str=f"/看看COS 10 {preset_name} {query}", plain_result=lambda text: text,
+    )
+
+    async def invoke():
+        output = [item async for item in plugin.cmd_look_cos(event)]
+        assert output
+        await captured["runner"]("")
+
+    asyncio.run(invoke())
+    summary = captured["summary"]
+    assert "眼罩横向贴合" in summary["original_prompt"]
+    if framing_id:
+        assert "4:5" in summary["original_prompt"]
+    assert summary["requested_count"] == 10
+    assert summary["aspect_ratio"] == expected
+    assert summary["resolution"] == resolution
+    assert summary["preset_name"] == preset_name
+    assert plugin._run_image_generation.call_count == 10
+    for call in plugin._run_image_generation.call_args_list:
+        assert call.args[1:3] == (expected, resolution)
 
 
 @pytest.mark.parametrize("has_refs", [False, True])

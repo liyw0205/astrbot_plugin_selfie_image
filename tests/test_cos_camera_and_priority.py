@@ -102,6 +102,41 @@ def test_ninghongye_full_eye_cover_uses_a_dedicated_contract():
     assert "优先保留脸型轮廓、五官比例、眼睛和嘴唇轮廓" not in builtin
 
 
+def test_ninghongye_catalog_and_shared_rule_use_thick_opaque_lace():
+    from astrbot_plugin_selfie_image.cos.cos_looks_loader import COS_JSON_LOOK_SETS
+
+    looks = [look for look in COS_JSON_LOOK_SETS if look["id"].startswith("ninghongye_")]
+    assert len(looks) == 12
+    for prompt in [COS_FULL_EYE_COVER_PROMPT, *(look["prompt"] for look in looks)]:
+        assert "厚实不透眼的红色蕾丝眼罩" in prompt
+        assert "整片区域完全不透明" in prompt
+        assert "正常光照和逆光下均不显露眼睛、瞳孔、虹膜或眼睑轮廓" in prompt
+        assert "立体花卉蕾丝纹样与细密织纹" in prompt
+        assert "薄透蕾丝、透明网纱或能透出双眼的镂空网孔" in prompt
+
+
+def test_ninghongye_old_lace_rule_upgrades_without_duplicate_contracts():
+    old_lace = (
+        "佩戴红色蕾丝眼罩，细密花卉蕾丝覆盖双眼，红色内衬遮住眼睛，"
+        "眼罩横向贴合双眼区域与上鼻梁，两端延伸至太阳穴并在脑后固定；保留蕾丝花纹、细密网底与自然起伏。"
+    )
+    for original in (old_lace + "红黑旗袍。", COS_FULL_EYE_COVER_PROMPT + old_lace + "红黑旗袍。"):
+        prompt = normalize_cos_eye_contract(original, "ninghongye_clear_eye")
+        assert "厚实不透眼的红色蕾丝眼罩" in prompt
+        assert old_lace not in prompt
+        assert prompt.count(COS_FULL_EYE_COVER_PROMPT) == 1
+        assert "红黑旗袍。" in prompt
+        assert normalize_cos_eye_contract(prompt, "ninghongye_clear_eye") == prompt
+    action = build_cos_third_person_prompt(f"宁红夜 COS：{old_lace}红黑旗袍。")
+    assert old_lace not in action
+    assert action.count(COS_FULL_EYE_COVER_PROMPT) == 1
+    assert "【cos_eye:full_cover】" in action
+    for language in ("zh", "en"):
+        prompt = build_selfie_builtin_prompt(action, has_reference_image=True, language=language)
+        assert "厚实不透眼的红色蕾丝眼罩" in prompt
+        assert prompt.count(COS_FULL_EYE_COVER_PROMPT) == 1
+
+
 def test_all_ninghongye_looks_keep_red_lace_blindfold_in_final_prompt():
     looks = [look for look in COS_LOOK_SETS if look["id"].startswith("ninghongye_")]
     assert len(looks) == 12

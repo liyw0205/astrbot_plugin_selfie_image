@@ -169,12 +169,71 @@ def test_daily_back_event_drops_turn_back_and_missing_support_prop() -> None:
         scene_light_provider=lambda _kind: (["安静卧室"], ["小夜灯"]),
         preferred_scene="安静卧室",
         preferred_action="背部朝镜头，双手搭在栏杆上并回望镜头",
-        preferred_tags=("back_orientation",),
+        preferred_tags=("supports_back_pose",),
     )
-    assert "【shot:back_view】" in action
+    assert "【shot:back_three_quarter】" in action
     assert "回望镜头" not in action
     assert "搭在栏杆" not in action
-    assert "双手自然垂在身体两侧" in action
+    assert "背后三分之四构图" in action
+    assert "自然承重" in action
+    assert "双手放松垂在身侧" not in action
+
+
+def test_daily_back_action_uses_existing_scene_without_inventing_support() -> None:
+    action = build_selfie_look_action(
+        scene_light_provider=lambda _kind: (["默认场景"], ["窗光"]),
+        preferred_scene="卧室窗边",
+        preferred_gesture="背后三分之四，抬手整理发丝",
+        preferred_tags=("supports_back_pose", "indoor"),
+    )
+    assert "【shot:back_three_quarter】" in action
+    assert "场景倾向：卧室窗边" in action
+    assert "小动作：背后三分之四，抬手整理发丝" in action
+    assert "不凭空增加栏杆" in action
+
+
+def test_daily_back_orientation_survives_a_mirror_scene_filter() -> None:
+    action = build_third_person_look_action(
+        scene_light_provider=lambda _kind: (["镜前", "卧室窗边"], ["窗光"]),
+        preferred_scene="镜前",
+        preferred_action="背身整理发丝",
+        preferred_tags=("back_orientation",),
+    )
+    assert "【shot:back_three_quarter】" in action
+    assert "场景倾向：镜前" not in action
+    assert "场景倾向：卧室窗边" in action
+
+
+def test_explicit_back_side_aliases_and_pure_back_remain_distinct() -> None:
+    scene_light_provider = lambda _kind: (["安静卧室"], ["小夜灯"])
+    back_side = build_selfie_look_action("背面侧身", scene_light_provider=scene_light_provider)
+    pure_back = build_third_person_look_action("背身", scene_light_provider=scene_light_provider)
+
+    assert "【shot:back_three_quarter】" in back_side
+    assert "背后三分之四角度" in back_side
+    assert "【shot:back_view】" in pure_back
+    assert "双手按动作自然配合" in pure_back
+    assert "双手放松垂在身侧" not in pure_back
+
+
+def test_explicit_back_pose_keeps_the_requested_action():
+    scene_light_provider = lambda _kind: (["安静卧室"], ["小夜灯"])
+    seated = build_selfie_look_action(
+        "背身坐在床边整理发丝",
+        scene_light_provider=scene_light_provider,
+        preferred_scene="咖啡馆窗边",
+        preferred_gesture="端杯看向窗外",
+    )
+    hair = build_third_person_look_action(
+        "背面抬手整理发丝",
+        scene_light_provider=scene_light_provider,
+    )
+
+    assert "在用户指定的床沿或座位边自然坐下" in seated
+    assert "整理发丝" in seated
+    assert "端杯看向窗外" not in seated
+    assert "一只手自然整理发丝" in hair
+    assert "双手自然垂在身侧" not in hair
 
 
 def test_daily_side_event_uses_side_camera_without_forcing_face_turn() -> None:

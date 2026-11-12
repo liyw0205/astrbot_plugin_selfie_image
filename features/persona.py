@@ -1948,7 +1948,8 @@ class PersonaManager:
         cos_pose = COS_JSON_POSES.get(cos_pose_id, {})
         cos_orientation = cos_pose.get("orientation")
         cos_face_optional = cos_pose.get("face_visibility") == "optional"
-        back_facing_shot = shot_id in {"back_view", "rear_rooftop"} or cos_orientation == "back"
+        back_three_quarter_shot = shot_id == "back_three_quarter"
+        back_facing_shot = shot_id in {"back_view", "back_three_quarter", "rear_rooftop"} or cos_orientation == "back"
         side_facing_shot = shot_id == "side_profile" or cos_orientation == "side"
         feet_cropped = is_leg_calf_crop_action(act)
         leg_face_context = intent.is_legs_only and feet_cropped and has_leg_face_context(act)
@@ -2345,13 +2346,19 @@ class PersonaManager:
                 [
                     "【今日穿搭 / 普通自拍模式】",
                     (
-                        "本次为主角自行启动的定时自摄；按已选场景完成背面构图，头部与肩胯朝向一致，不回头、不扭颈，不要求露出正脸。"
+                        "本次为主角自行启动的定时自摄；"
+                        + (
+                            "按已选场景完成背后三分之四构图，镜头同时看到后背和一侧肩胯，一条腿自然承重、另一脚轻微错后；"
+                            if back_three_quarter_shot
+                            else "按已选场景完成背面构图；"
+                        )
+                        + "头部与肩胯朝向一致，不回头、不扭颈，不要求露出正脸。"
                         if back_facing_shot
                         else "本次是普通自拍 / 看看你现在的样子（自己举机或镜前自拍，不是别人代拍）。"
                     ),
                     "按当前时段的今日穿搭、状态和心情生成自然自拍；场景与镜头只改变拍摄氛围，不得替换、增添或删减穿搭。",
                     (
-                        "保持竖屏中近景和自然透视；双手放松垂在身侧，只有场景内已有合适支撑物时才自然搭放。"
+                        "保持竖屏中近景和自然透视；双手按已选小动作自然配合，不强制垂放，不凭空增加道具。"
                         if back_facing_shot
                         else snapshot_prompt
                         or "竖屏手机自拍，采用自然的侧身机位和中近景构图；保持当前穿搭清楚可辨，不强迫回头硬露正脸。"

@@ -247,7 +247,7 @@ COS_SUBJECT_CLARITY_COVERED_EYES_PROMPT = (
 )
 
 COS_EYE_MODE_BY_LOOK_ID: Dict[str, str] = {
-    # All Ning Hongye looks share a red lace blindfold with an opaque lining.
+    # All Ning Hongye looks share a thick, fully opaque red lace blindfold.
     # Keep eye coverage separate from generic face clarity.
     "ninghongye_plain_white_snake": "full_cover",
     "ninghongye_dragon_path_baizhi": "full_cover",
@@ -264,6 +264,14 @@ COS_EYE_MODE_BY_LOOK_ID: Dict[str, str] = {
 }
 
 COS_FULL_EYE_COVER_PROMPT = (
+    "佩戴厚实不透眼的红色蕾丝眼罩，蕾丝层厚密叠织，覆盖双眼的整片区域完全不透明；"
+    "表面保留清晰的立体花卉蕾丝纹样与细密织纹，花纹之间也不透视。"
+    "眼罩横向贴合双眼区域与上鼻梁，两端延伸至太阳穴并在脑后固定，边缘与面部自然贴合；"
+    "正常光照和逆光下均不显露眼睛、瞳孔、虹膜或眼睑轮廓，"
+    "不使用薄透蕾丝、透明网纱或能透出双眼的镂空网孔；不是光滑的绸缎眼带。"
+)
+
+_COS_LEGACY_LACE_EYE_COVER_PROMPT = (
     "佩戴红色蕾丝眼罩，细密花卉蕾丝覆盖双眼，红色内衬遮住眼睛，"
     "眼罩横向贴合双眼区域与上鼻梁，两端延伸至太阳穴并在脑后固定；保留蕾丝花纹、细密网底与自然起伏。"
 )
@@ -300,6 +308,7 @@ def normalize_cos_eye_contract(prompt: str, cos_id: str = "") -> str:
         r"眼带下方不绘制可见眼睛，只保留鼻子、嘴唇和下半脸轮廓。"
     )
     text = old_contract.sub("", text).replace(COS_VISIBLE_EYE_PROMPT, "")
+    text = text.replace(_COS_LEGACY_LACE_EYE_COVER_PROMPT, "")
     if COS_FULL_EYE_COVER_PROMPT not in text:
         text = f"{COS_FULL_EYE_COVER_PROMPT}{text}"
     return text
@@ -2616,6 +2625,7 @@ def build_cos_third_person_prompt(text: str) -> str:
     raw = str(text or "").strip()
     if not looks_like_cos_prompt(raw):
         return raw
+    raw = raw.replace(_COS_LEGACY_LACE_EYE_COVER_PROMPT, COS_FULL_EYE_COVER_PROMPT)
     if "【cos_mode:special】" in raw.lower():
         if "【特殊 COS / 固定成片模式】" in raw:
             return raw

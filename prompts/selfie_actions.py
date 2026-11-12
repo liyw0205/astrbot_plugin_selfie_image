@@ -27,7 +27,7 @@ SELFIE_SHOT_POOL = (
     ("sofa_casual", 2),
     ("high_angle", 1),
     ("close_portrait", 1),
-    ("back_view", 1),
+    ("back_three_quarter", 2),
     ("side_profile", 1),
 )
 
@@ -41,7 +41,8 @@ SELFIE_SHOT_LINES = {
     "sofa_casual": "沙发上随手自拍：靠垫只在背景边缘，头部到腰线入镜，穿搭不被抱枕遮挡，姿态放松。",
     "high_angle": "稍高机位自拍：镜头略高于眼，轻微向下拍到腰线，不要过度俯拍变形。",
     "close_portrait": "近景胸像自拍：脸与肩为主，五官清晰，浅景深。",
-    "back_view": "背面自拍构图：主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手自然垂放，只有场景内已有合适支撑物时才自然搭放。",
+    "back_view": "纯背面自拍构图：主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手按当前小动作自然配合，不强制垂放或凭空增加道具。",
+    "back_three_quarter": "背后三分之四自拍构图：镜头同时看到后背和一侧肩胯，重心自然落在一条腿上，另一脚轻微错后；头部顺着身体方向，不回头硬露正脸，双手按当前小动作自然配合。",
     "side_profile": "侧身自拍：身体和头部自然朝向同一侧，肩胯约四十五度侧向镜头，不回头硬露正脸，颈部和肩线保持自然。",
 }
 
@@ -74,7 +75,7 @@ THIRD_PERSON_SHOT_POOL = (
     ("close_smile", 2),
     ("low_over", 1),
     ("lean_wall", 2),
-    ("back_view", 1),
+    ("back_three_quarter", 2),
     ("side_profile", 1),
 )
 
@@ -86,7 +87,8 @@ THIRD_PERSON_SHOT_LINES = {
     "close_smile": "近景胸像：脸与肩，浅景深，五官清晰。",
     "low_over": "轻微低机位侧前方拍摄半身：头颈保持自然，不做过肩回望，不要过度仰拍变形。",
     "lean_wall": "靠墙/门框他拍：肩背轻靠，双手自然，竖构图友好。",
-    "back_view": "背面他拍构图：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手放松垂在身侧，只有场景内已有合适支撑物时才自然搭放。",
+    "back_view": "纯背面他拍构图：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手按动作自然配合，不强制垂放或凭空增加道具。",
+    "back_three_quarter": "背后三分之四他拍构图：镜头同时看到后背和一侧肩胯，重心自然落在一条腿上，另一脚轻微错后；头部顺着身体方向，不回头硬露正脸，双手按动作自然配合。",
     "side_profile": "纯侧身他拍：身体、肩线和面部朝向一致，以自然侧面或侧后三分之四角度呈现，不回头、不为露正脸扭转脖子。",
 }
 
@@ -111,6 +113,7 @@ THIRD_PERSON_SIDE_ACTIONS = (
 
 SELFIE_ENVIRONMENT_TERMS = (
     "窗边", "窗前", "窗户旁", "书桌", "桌前", "阳台", "镜前", "沙发", "床边",
+    "床沿", "椅子", "座位", "栏杆", "护栏", "门框", "墙边", "窗台", "窗框", "立柱",
     "咖啡馆", "咖啡店", "咖啡厅", "街边", "树荫", "书店", "夜灯房间", "厨房",
     "卧室", "客厅", "室内", "室外", "街道", "雨夜", "霓虹", "海边", "沙滩",
     "校园", "教室", "走廊", "车站", "雪地", "樱花", "河边", "天台", "屋顶",
@@ -128,7 +131,17 @@ def _requested_staging_orientation(text: str) -> str:
     compact = re.sub(r"\s+", "", str(text or ""))
     if any(
         _has_positive_staging_term(compact, term)
-        for term in ("背对镜头", "背向镜头", "背影", "背身", "背面合影", "背面构图")
+        for term in (
+            "背后三分之四", "背后三分之三", "背面侧身", "背身侧身", "背身侧面",
+            "背面偏侧", "背侧", "侧后方背身",
+        )
+    ):
+        return "back_three_quarter"
+    if any(
+        _has_positive_staging_term(compact, term)
+        for term in (
+            "背对镜头", "背向镜头", "背影", "背身", "背面", "背面合影", "背面构图",
+        )
     ):
         return "back"
     if any(_has_positive_staging_term(compact, term) for term in ("侧身", "侧面", "侧后方", "侧前方")):
@@ -163,7 +176,7 @@ def _requested_heart_pose(text: str) -> str:
 def _has_explicit_action_override(text: str) -> bool:
     compact = re.sub(r"\s+", "", str(text or ""))
     terms = (
-        "站立", "站着", "坐姿", "坐着", "跪坐", "跪姿", "躺下", "侧躺", "趴着",
+        "站立", "站着", "坐姿", "坐着", "坐在", "床沿", "跪坐", "跪姿", "躺下", "侧躺", "趴着",
         "行走", "走路", "散步", "奔跑", "跳跃", "托腮", "比心", "双手举起",
         "整理发丝", "整理袖口", "拿着花", "拿着书", "抱着", "倚靠", "靠墙",
     )
@@ -212,6 +225,10 @@ def _event_context_tags(
     compact = re.sub(r"\s+", "", text)
     action_compact = re.sub(r"\s+", "", str(action or ""))
     result = {str(item).strip().lower() for item in tags if str(item).strip()}
+    if result.intersection({"back_orientation", "back_pose", "supports_back_pose"}):
+        result.add("back_orientation")
+    if result.intersection({"side_orientation", "side_pose", "supports_side_pose"}):
+        result.add("side_orientation")
     if any(token in text for token in ("家中", "室内", "卧室", "客厅", "书店", "咖啡馆", "剧院", "温室", "餐廊", "厨房")):
         result.add("indoor")
     if any(token in text for token in ("天台", "河岸", "街", "海", "码头", "公园", "露台", "步道", "户外", "城市")):
@@ -235,7 +252,7 @@ def _scene_has_support(scene: str) -> bool:
 
 def _scene_supports_shot(scene: str, shot: str) -> bool:
     """Keep a randomly selected shot grounded in the selected environment."""
-    if shot in {"back_view", "side_profile"} and _scene_contains(scene, "镜前", "镜面", "镜子", "mirror"):
+    if shot in {"back_view", "back_three_quarter", "side_profile"} and _scene_contains(scene, "镜前", "镜面", "镜子", "mirror"):
         return False
     if shot in {"mirror_half", "mirror_full"}:
         return _scene_contains(scene, "镜", "mirror")
@@ -260,7 +277,7 @@ def _scene_supports_shot(scene: str, shot: str) -> bool:
 
 def _pick_staging_scene(scenes: List[str], orientation: str = "", shot: str = "") -> str:
     compatible = [scene for scene in scenes if not shot or _scene_supports_shot(scene, shot)]
-    if orientation == "back":
+    if orientation in {"back", "back_three_quarter"}:
         compatible = [scene for scene in compatible if "镜" not in scene]
     return random.choice(compatible or scenes)
 
@@ -281,7 +298,7 @@ def _shots_supported_by_scenes(
         generic_shots = {
             "arm_half", "high_angle", "close_portrait", "half_front",
             "three_quarter", "env_mid", "close_smile", "low_over",
-            "back_view", "side_profile",
+            "back_view", "back_three_quarter", "side_profile",
         }
         return [item for item in shot_pool if item[0] in generic_shots] or shot_pool
     return shot_pool
@@ -297,8 +314,12 @@ def _event_shot_pool(
     """Restrict a daily event's random camera to its declared orientation."""
     context = _event_context_tags(scene, action, tags)
     if "back_orientation" in context:
-        selected = [item for item in shot_pool if item[0] == "back_view"]
-        return selected or shot_pool
+        selected = [item for item in shot_pool if item[0] == "back_three_quarter"]
+        if selected:
+            return selected
+        if any(item[0] == "back_view" for item in shot_pool):
+            return [item for item in shot_pool if item[0] == "back_view"]
+        return [("back_three_quarter", 1)]
     if "side_orientation" in context:
         selected = [item for item in shot_pool if item[0] == "side_profile"]
         return selected or shot_pool
@@ -310,7 +331,7 @@ def _daily_action_compatible(action: str, scene: str, shot: str) -> bool:
     compact = re.sub(r"\s+", "", str(action or ""))
     if not compact:
         return False
-    if shot == "back_view" and any(token in compact for token in ("回头", "回眸", "回望", "看向镜头", "抬眼", "露出正脸")):
+    if shot in {"back_view", "back_three_quarter"} and any(token in compact for token in ("回头", "回眸", "回望", "看向镜头", "抬眼", "露出正脸")):
         return False
     if shot == "side_profile" and any(token in compact for token in ("背对", "背向", "正面看向镜头", "回头", "回眸", "回望", "看向镜头")):
         return False
@@ -320,6 +341,10 @@ def _daily_action_compatible(action: str, scene: str, shot: str) -> bool:
         return False
     if any(token in compact for token in ("翻书", "书页", "书本")) and not _scene_contains(scene, "书", "阅读", "桌"):
         return False
+    if any(token in compact for token in ("坐在床", "床沿", "坐在椅", "椅子", "沙发上", "座位边")) and not _scene_contains(
+        scene, "床", "椅", "沙发", "座位", "bed", "chair", "sofa",
+    ):
+        return False
     if shot == "walk_candid" and any(token in compact for token in ("坐", "床", "沙发", "桌前")):
         return False
     if shot in {"desk_sit", "sofa_casual"} and any(token in compact for token in ("行走", "走过", "步道")):
@@ -328,10 +353,22 @@ def _daily_action_compatible(action: str, scene: str, shot: str) -> bool:
 
 
 def _safe_daily_action(scene: str, shot: str, *, selfie: bool) -> str:
-    if shot == "back_view":
+    if shot in {"back_view", "back_three_quarter"}:
+        three_quarter = shot == "back_three_quarter"
+        direction = "背后三分之四角度" if three_quarter else "背部朝向镜头"
         if _scene_has_support(scene):
-            return "双手自然搭在场景中已有的支撑物上，背部朝向镜头，头部不回转"
-        return "双手自然垂在身体两侧，背部朝向镜头，头部不回转"
+            return f"一手轻扶场景中已有的支撑物，另一手自然整理衣摆，身体保持{direction}，头部顺着身体方向"
+        if _scene_contains(scene, "床沿", "床边", "椅", "座位", "沙发", "bed", "chair", "sofa"):
+            return f"在场景中已有的床沿或座位边自然坐下，一手搭在腿上，身体保持{direction}，头部顺着身体方向"
+        if _scene_contains(scene, "走", "步道", "街", "走廊", "户外", "公园", "天台", "海边", "河边"):
+            return f"迈步后自然停顿，一脚向前、手臂随步伐放松，身体保持{direction}，头部顺着行进方向"
+        actions = (
+            f"一只手抬到后脑自然整理发丝，另一只手放松，身体保持{direction}，头部顺着身体方向",
+            f"双手在身前自然整理袖口，重心落在一条腿上，身体保持{direction}，头部顺着身体方向",
+            f"若发型和发量允许，双手在后脑轻轻拢发，双肘自然展开；否则改为一手整理发丝，身体保持{direction}，不做夸张拉伸",
+            f"一腿自然承重，另一脚轻轻错后，一手整理腰侧衣摆，身体保持{direction}，头部顺着身体方向",
+        )
+        return random.choice(actions)
     if shot == "side_profile":
         return "身体和头部自然朝向同一侧，手臂放松，不回头硬露正脸"
     if shot == "walk_candid":
@@ -341,6 +378,29 @@ def _safe_daily_action(scene: str, shot: str, *, selfie: bool) -> str:
     if selfie:
         return random.choice(_selfie_gestures_for_scene(scene, shot))
     return random.choice(_third_person_actions_for_scene(scene, shot))
+
+
+def _requested_back_action(text: str, scene: str) -> str:
+    """Translate common explicit back-view gestures into one coherent action line."""
+    compact = re.sub(r"\s+", "", str(text or ""))
+    if any(_has_positive_staging_term(compact, term) for term in ("坐在", "坐姿", "坐着", "床沿")):
+        if not _scene_contains(scene, "床", "椅", "沙发", "座位", "bed", "chair", "sofa"):
+            return ""
+        if any(token in compact for token in ("整理发丝", "整理头发", "整理发尾", "拢发", "梳头")):
+            return "在用户指定的床沿或座位边自然坐下，一只手整理发丝，另一只手轻搭在腿上"
+        return "在用户指定的床沿或座位边自然坐下，双脚轻微错开，一手搭在腿上"
+    if any(_has_positive_staging_term(compact, term) for term in ("行走", "走路", "迈步", "散步", "经过")):
+        return "自然迈步后停顿，一脚向前，手臂随步伐放松"
+    if any(_has_positive_staging_term(compact, term) for term in ("倚靠", "靠墙", "靠在", "扶栏杆", "扶着栏杆", "扶墙")):
+        if _scene_has_support(scene):
+            return "一手轻扶场景中已有的支撑物，另一手自然停在腰侧或衣摆旁"
+    if any(_has_positive_staging_term(compact, term) for term in ("整理发丝", "整理头发", "整理发尾", "拢发", "梳头", "撩头发")):
+        return "一只手自然整理发丝，另一只手放松垂在身侧"
+    if any(_has_positive_staging_term(compact, term) for term in ("整理袖口", "整理衣领", "整理衣摆", "整理衣服", "理顺衣料")):
+        return "双手在身前自然整理当前穿搭的一处衣料，重心落在一条腿上"
+    if _has_positive_staging_term(compact, "抬手"):
+        return "一只手自然抬到耳侧或后脑，另一只手放松，避免夸张拉伸"
+    return ""
 
 
 def _selfie_gestures_for_scene(scene: str, shot: str) -> List[str]:
@@ -506,6 +566,7 @@ def build_selfie_look_action(
     orientation = _requested_staging_orientation(extra)
     shot = (
         "timer_half" if heart_pose
+        else "back_three_quarter" if orientation == "back_three_quarter"
         else "back_view" if orientation == "back"
         else "side_profile" if orientation == "side"
         else random.choices(
@@ -515,11 +576,14 @@ def build_selfie_look_action(
         )[0]
     )
     explicit_light = _has_explicit_staging_light(extra)
-    if shot == "back_view":
+    if shot in {"back_view", "back_three_quarter"}:
         preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
         scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot))
+        requested_gesture = _requested_back_action(extra, extra if explicit_scene else scene)
         gesture = (
-            preferred_gesture
+            requested_gesture
+            if requested_gesture
+            else preferred_gesture
             if preferred_gesture and _daily_action_compatible(preferred_gesture, scene, shot)
             else _safe_daily_action(scene, shot, selfie=True)
         )
@@ -542,7 +606,8 @@ def build_selfie_look_action(
                 else _safe_daily_action(gesture_scene, shot, selfie=True)
             )
         light = "" if explicit_light else random.choice(lights)
-    rear_view = shot == "back_view"
+    rear_view = shot in {"back_view", "back_three_quarter"}
+    rear_three_quarter_view = shot == "back_three_quarter"
     side_view = shot == "side_profile"
     full_mirror_view = shot == "mirror_full"
     gaze_line = (
@@ -577,8 +642,13 @@ def build_selfie_look_action(
             if heart_pose
             else
             "由主角自行启动手机定时拍摄，拍摄者不入画；这是自摄成片，不要求出现手机或自拍手臂。"
-            "主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈，也不要求露出正脸；双手放松垂在身侧，不凭空增加栏杆、手机或其他道具。"
-            "保持竖屏半身中近景与自然透视，重点呈现背面发型和当前穿搭；不要美颜滤镜、不要棚拍精修。"
+            +
+            (
+                "主角采用背后三分之四角度，镜头同时看到后背和一侧肩胯；一条腿自然承重，另一脚轻微错后，头部顺着身体方向，不回头、不回眸、不扭颈，也不要求露出正脸；双手按小动作自然配合，不凭空增加栏杆、手机或其他道具。"
+                if rear_three_quarter_view
+                else "主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈，也不要求露出正脸；双手按小动作自然配合，不强制垂放，不凭空增加栏杆、手机或其他道具。"
+            )
+            + "保持竖屏半身中近景与自然透视，重点呈现背面发型和当前穿搭；不要美颜滤镜、不要棚拍精修。"
             if rear_view
             else (
                 "身体侧向镜头的自拍构图：肩胯和头部朝向自然连贯，不回头硬露正脸；表情放松，保持面部自然可见。"
@@ -656,7 +726,8 @@ def build_third_person_look_action(
     )
     orientation = _requested_staging_orientation(extra_request)
     shot = (
-        "back_view" if orientation == "back"
+        "back_three_quarter" if orientation == "back_three_quarter"
+        else "back_view" if orientation == "back"
         else "side_profile" if orientation == "side"
         else random.choices(
             [name for name, _ in shot_pool],
@@ -665,11 +736,14 @@ def build_third_person_look_action(
         )[0]
     )
     explicit_light = _has_explicit_staging_light(extra_request)
-    if shot == "back_view":
+    if shot in {"back_view", "back_three_quarter"}:
         preferred_compatible = event_context_enabled and _scene_supports_shot(preferred_scene, shot)
         scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot))
+        requested_action = _requested_back_action(extra_request, extra_request if explicit_scene else scene)
         action = (
-            preferred_action
+            requested_action
+            if requested_action
+            else preferred_action
             if preferred_action and _daily_action_compatible(preferred_action, scene, shot)
             else _safe_daily_action(scene, shot, selfie=False)
         )
@@ -688,13 +762,19 @@ def build_third_person_look_action(
         )
         light = "" if explicit_light else random.choice(lights)
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
-    rear_view = shot == "back_view"
+    rear_view = shot in {"back_view", "back_three_quarter"}
+    rear_three_quarter_view = shot == "back_three_quarter"
     side_view = shot == "side_profile"
     base = (
         "【他拍 / 看看你模式】展示 AI 当前样子的自然日常成片。"
         "别人视角的单人成品照：镜头已经对准主角拍下，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角。"
         + (
-            "本次明确采用背面构图：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手放松垂在身侧，不凭空增加支撑物，优先展示发型和服装后侧。"
+            (
+                "本次明确采用背后三分之四构图：镜头同时看到后背和一侧肩胯，一条腿自然承重、另一脚轻微错后；头部顺着身体方向，不回头、不回眸、不扭颈；双手按动作自然配合，不凭空增加支撑物，优先展示发型和服装后侧。"
+                if rear_three_quarter_view
+                else "本次明确采用纯背面构图：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手按动作自然配合，不强制垂放，不凭空增加支撑物，优先展示发型和服装后侧。"
+            )
+            +
             "竖屏半身中近景，透视自然，拍摄者留在画面外；不要美颜滤镜、不要影楼精修。"
             if rear_view
             else (
@@ -739,7 +819,9 @@ def build_group_selfie_action(
     has_identity_reference: bool = False,
 ) -> str:
     orientation = _requested_staging_orientation(extra_request)
-    if orientation == "back":
+    if orientation == "back_three_quarter":
+        group_shot = "rear_three_quarter_group"
+    elif orientation == "back":
         group_shot = "back_view"
     elif orientation == "side":
         group_shot = "side_profile"

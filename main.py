@@ -5690,7 +5690,16 @@ class SelfieImagePlugin(
             return
 
         # Prefer aspect/resolution resolved from raw user text (before action wrappers).
-        if any(str(value or "").strip() for value in (preset_name, preset_aspect, preset_resolution)):
+        if source == "command-look-cos":
+            # Random COS descriptions specify clothes and framing, not request
+            # parameters. Only the user/preset can override the canvas defaults.
+            action, _, _ = self._parse_prompt_options(message)
+            _, aspect, resolution = self._parse_prompt_options(
+                rebuild_extra_request, preset_aspect, preset_resolution,
+            )
+            raw_request = extract_command_message(event, command_name, include_quote_text=True)
+            _, aspect, resolution = self._parse_prompt_options(raw_request, aspect, resolution)
+        elif any(str(value or "").strip() for value in (preset_name, preset_aspect, preset_resolution)):
             default_aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
             default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
             action, aspect, resolution = self._parse_prompt_options(
