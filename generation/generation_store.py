@@ -633,6 +633,9 @@ class GenerationStoreMixin(PromptLookupMixin):
         database = self._record_database()
         if database is not None and database.has_records():
             loaded = database.load_records(keep_limit)
+            database.prune_to_limit(keep_limit)
+            # Canvas stores are loaded later; their media is protected by the
+            # cache cleanup performed after initialization.
             self._prune_orphan_media_sidecars(loaded)
             return self._backfill_prompt_codes(loaded)
 
@@ -720,6 +723,20 @@ class GenerationStoreMixin(PromptLookupMixin):
             self._commit_generation_records(payload)
             return
         commit_task = loop.create_task(asyncio.to_thread(self._commit_generation_records, payload))
+        all_commits = getattr(self, "_record_commit_tasks", None)
+        if all_commits is None:
+            all_commits = set()
+            self._record_commit_tasks = all_commits
+        all_commits.add(commit_task)
+
+        def commit_finished(future: asyncio.Future) -> None:
+            all_commits.discard(future)
+            if not future.cancelled() and future.exception() is not None:
+                from astrbot.api import logger
+
+                logger.error("[SelfieImage] 生成记录写入失败: %s", future.exception())
+
+        commit_task.add_done_callback(commit_finished)
         image_pending = getattr(self, "_pending_image_record_commits", None)
         if image_pending is None:
             image_pending = {}
@@ -1046,7 +1063,8 @@ class GenerationStoreMixin(PromptLookupMixin):
     def get_recent_records(self, *, summary: bool = False) -> List[Dict[str, Any]]:
         with self._records_lock:
             # Avoid deepcopy of fat nested blobs on every list poll.
-            records = [dict(item) if isinstance(item, dict) else item for item in self._records[: self._record_keep_limit()]]
+            retained, _ = self._trim_records_keeping_pinned(self._records, self._record_keep_limit())
+            records = [dict(item) for item in retained if isinstance(item, dict)]
         if summary:
             return [
                 redact_generation_record(summarize_record_for_list(self._enrich_record_for_web(item)))
@@ -1309,9 +1327,21 @@ class GenerationStoreMixin(PromptLookupMixin):
         sort: str = "recent",
     ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
         """Filter the lightweight record index for the asset library."""
-        # The durable record index retains a bounded number of rows; keep the
-        # query contract explicit instead of implying an unbounded scan.
-        records = self.get_recent_records(summary=True)[: self._record_keep_limit()]
+        database = self._record_database()
+        if database is not None:
+            records, meta = database.query_records(
+                keep_limit=self._record_keep_limit(), favorite=favorite, pinned=pinned,
+                tag=tag, source=source, model=model, media_type=media_type, success=success,
+                keyword=keyword, start_time=start_time, end_time=end_time,
+                offset=offset, limit=limit, sort=sort,
+            )
+            return [
+                redact_generation_record(summarize_record_for_list(self._enrich_record_for_web(item)))
+                for item in records
+            ], meta
+        records, _ = self._trim_records_keeping_pinned(
+            self.get_recent_records(), self._record_keep_limit()
+        )
         source_text = str(source or "").strip().lower()
         model_text = str(model or "").strip().lower()
         tag_text = str(tag or "").strip().lower()
@@ -1352,7 +1382,7 @@ class GenerationStoreMixin(PromptLookupMixin):
                     str(record.get(key) or "")
                     for key in (
                         "source", "source_label", "used_model", "error", "failure_reason",
-                        "original_prompt", "request_prompt", "group_id", "user_id", "note", "image_code",
+                        "original_prompt", "request_prompt", "prompt", "group_id", "user_id", "note", "image_code",
                     )
                 ).lower()
                 if keyword_text not in haystack:
@@ -1381,7 +1411,8 @@ class GenerationStoreMixin(PromptLookupMixin):
         filtered_count = len(filtered)
         safe_offset = max(0, int(offset or 0))
         safe_limit = max(1, min(int(limit or self._record_keep_limit()), self._record_keep_limit()))
-        return filtered[safe_offset : safe_offset + safe_limit], {
+        page = filtered[safe_offset : safe_offset + safe_limit]
+        return [redact_generation_record(summarize_record_for_list(item)) for item in page], {
             "total": total,
             "filtered": filtered_count,
             "offset": safe_offset,

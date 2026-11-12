@@ -845,6 +845,8 @@ class StudioMixin:
             },
         }
         with self._web_task_lock:
+            if getattr(self, "_terminating", False):
+                raise RuntimeError("插件正在卸载，无法提交新任务")
             self._web_task_seq += 1
             task_id = f"web-studio-{int(time.time() * 1000)}-{self._web_task_seq}"
             now = time.time()
@@ -873,17 +875,9 @@ class StudioMixin:
             self._persist_web_tasks_locked()
 
         canvas_store.attach_run_start(session_id, task_id, summary)
-        runtime_future = asyncio.run_coroutine_threadsafe(
+        self._start_runtime_generation(
+            task_id,
             self._run_studio_task(task_id, session_id, canvas_namespace=str(canvas_namespace or "studio")),
-            loop,
-        )
-        runtime_tasks = getattr(self, "_runtime_generation_tasks", None)
-        if runtime_tasks is None:
-            runtime_tasks = {}
-            self._runtime_generation_tasks = runtime_tasks
-        runtime_tasks[task_id] = runtime_future
-        runtime_future.add_done_callback(
-            lambda _task, tid=task_id: getattr(self, "_runtime_generation_tasks", {}).pop(tid, None)
         )
         return self.get_web_image_task(task_id)
 

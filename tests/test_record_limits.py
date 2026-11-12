@@ -15,9 +15,8 @@ def test_record_retention_and_web_page_limits_are_1000():
 
 def test_asset_query_scan_limit_is_explicit_and_matches_record_retention():
     store = (ROOT / "generation" / "generation_store.py").read_text(encoding="utf-8")
-    # The asset query must clamp its scan window to the configured record
-    # retention instead of a second hard-coded constant.
-    assert "[: self._record_keep_limit()]" in store
+    assert "keep_limit=self._record_keep_limit()" in store
+    assert "self._trim_records_keeping_pinned(" in store
     assert "ASSET_QUERY_SCAN_LIMIT" not in store
 
 

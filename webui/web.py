@@ -169,7 +169,11 @@ class FlaskWebServer:
         loop = getattr(self.plugin, "loop", None)
         if loop and loop.is_running():
             future = asyncio.run_coroutine_threadsafe(coro, loop)
-            return future.result(timeout)
+            try:
+                return future.result(timeout)
+            except TimeoutError:
+                future.cancel()
+                raise
         return asyncio.run(coro)
 
     def _create_app(self) -> Any:

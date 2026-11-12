@@ -6,6 +6,7 @@ import asyncio
 import os
 import re
 import threading
+from contextlib import asynccontextmanager
 from typing import Any, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
@@ -61,6 +62,28 @@ def _image_delivery_is_ambiguous(error: BaseException) -> bool:
 
 
 class ReferenceMediaMixin:
+    @asynccontextmanager
+    async def _reference_client_session(self):
+        """Reuse reference connections on the plugin loop, never user cookies."""
+        if getattr(self, "_terminating", False):
+            raise asyncio.CancelledError()
+        loop = asyncio.get_running_loop()
+        if getattr(self, "loop", None) is not loop:
+            async with aiohttp.ClientSession(trust_env=False) as session:
+                yield session
+            return
+        session = getattr(self, "_reference_http_session", None)
+        if session is None or session.closed:
+            session = aiohttp.ClientSession(trust_env=False, cookie_jar=aiohttp.DummyCookieJar())
+            self._reference_http_session = session
+        yield session
+
+    async def _close_reference_client_session(self) -> None:
+        session = getattr(self, "_reference_http_session", None)
+        if session is not None:
+            await session.close()
+            self._reference_http_session = None
+
     def _remember_reference_failure_reason(self, event: Any, reasons: Iterable[str]) -> None:
         key = str(self._context_session_key(event) if callable(getattr(self, "_context_session_key", None)) else id(event))
         allowed = {"too_large", "invalid_or_unreadable", "unavailable"}
@@ -255,7 +278,7 @@ class ReferenceMediaMixin:
             extra_sources=extra_sources,
             include_image_alternates=include_image_alternates,
         )
-        async with aiohttp.ClientSession(trust_env=False) as session:
+        async with self._reference_client_session() as session:
             collected = await collector.collect(event, session)
         refs = collected.for_draw(include_persona=include_persona)
         self._remember_reference_failure_reason(event, getattr(collected, "failure_reasons", []))
@@ -287,7 +310,7 @@ class ReferenceMediaMixin:
             extra_sources=extra_sources,
             include_image_alternates=include_image_alternates,
         )
-        async with aiohttp.ClientSession(trust_env=False) as session:
+        async with self._reference_client_session() as session:
             collected = await collector.collect(event, session)
         self._remember_reference_selection(event, collected.selection_summary(include_persona=include_persona))
         return collected

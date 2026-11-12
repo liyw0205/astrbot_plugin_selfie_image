@@ -16,6 +16,7 @@ class _ImageJob:
     task_id: str
     run: Callable[[], Awaitable[Any]]
     future: asyncio.Future[Any]
+    worker: Optional[asyncio.Task[Any]] = None
 
 
 class ImageJobScheduler:
@@ -39,6 +40,7 @@ class ImageJobScheduler:
         self._wake = asyncio.Event()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._dispatcher: Optional[asyncio.Task[None]] = None
+        self._closed = False
 
     def set_limit(self, limit: int) -> None:
         """Update capacity in place so existing jobs retain the same scheduler."""
@@ -46,11 +48,25 @@ class ImageJobScheduler:
             configured = int(limit or 5)
         except (TypeError, ValueError):
             configured = 5
-        self._limit = max(1, min(5, configured))
-        self._wake.set()
+
+        def apply_limit() -> None:
+            self._limit = max(1, min(5, configured))
+            self._wake.set()
+
+        loop = self._loop
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        if loop is not None and loop.is_running() and current_loop is not loop:
+            loop.call_soon_threadsafe(apply_limit)
+        else:
+            apply_limit()
 
     async def submit(self, task_id: str, run: Callable[[], Awaitable[Any]]) -> Any:
         """Queue one shot and return its result when the fair scheduler runs it."""
+        if self._closed:
+            raise RuntimeError("image scheduler is closed")
         loop = asyncio.get_running_loop()
         if self._loop is None:
             self._loop = loop
@@ -60,11 +76,36 @@ class ImageJobScheduler:
         future: asyncio.Future[Any] = loop.create_future()
         key = str(task_id or "").strip() or "anonymous"
         queue = self._pending.setdefault(key, deque())
-        queue.append(_ImageJob(task_id=key, run=run, future=future))
+        job = _ImageJob(task_id=key, run=run, future=future)
+        queue.append(job)
         if key not in self._round_robin:
             self._round_robin.append(key)
         self._wake.set()
-        return await future
+        try:
+            return await future
+        except asyncio.CancelledError:
+            if job.worker is not None and not job.worker.done() and not job.worker.cancelling():
+                job.worker.cancel()
+            self._wake.set()
+            raise
+
+    async def aclose(self) -> None:
+        """Reject new work and await cancellation of every live transport."""
+        self._closed = True
+        for queue in self._pending.values():
+            for job in queue:
+                job.future.cancel()
+        self._pending.clear()
+        self._round_robin.clear()
+        workers = [task for tasks in self._running.values() for task in tasks]
+        for task in workers:
+            if not task.cancelling():
+                task.cancel()
+        self._wake.set()
+        if workers:
+            await asyncio.gather(*workers, return_exceptions=True)
+        if self._dispatcher is not None:
+            await self._dispatcher
 
     async def cancel_task(self, task_id: str) -> None:
         """Cancel all queued and running work owned by one task."""
@@ -76,7 +117,8 @@ class ImageJobScheduler:
                 job.future.cancel()
         self._round_robin = deque(item for item in self._round_robin if item != key)
         for running in list(self._running.get(key, set())):
-            running.cancel()
+            if not running.cancelling():
+                running.cancel()
         self._wake.set()
         await asyncio.sleep(0)
 
@@ -101,7 +143,9 @@ class ImageJobScheduler:
                     break
                 self._active += 1
                 running = asyncio.create_task(self._run(job))
+                job.worker = running
                 self._running.setdefault(job.task_id, set()).add(running)
+                running.add_done_callback(lambda task, job=job: self._finish_job(job, task))
             self._wake.clear()
             if self._active == 0 and not self._round_robin:
                 return
@@ -124,8 +168,19 @@ class ImageJobScheduler:
             return job
         return None
 
+    def _finish_job(self, job: _ImageJob, worker: asyncio.Task[Any]) -> None:
+        # A task cancelled before its first step never enters _run's finally.
+        if worker.cancelled() and not job.future.done():
+            job.future.cancel()
+        running = self._running.get(job.task_id)
+        if running is not None:
+            running.discard(worker)
+            if not running:
+                self._running.pop(job.task_id, None)
+        self._active = max(0, self._active - 1)
+        self._wake.set()
+
     async def _run(self, job: _ImageJob) -> None:
-        current = asyncio.current_task()
         try:
             result = await job.run()
             if not job.future.done():
@@ -137,11 +192,3 @@ class ImageJobScheduler:
         except Exception as exc:
             if not job.future.done():
                 job.future.set_exception(exc)
-        finally:
-            running = self._running.get(job.task_id)
-            if running is not None and current is not None:
-                running.discard(current)
-                if not running:
-                    self._running.pop(job.task_id, None)
-            self._active = max(0, self._active - 1)
-            self._wake.set()

@@ -358,6 +358,12 @@ class SelfieImagePlugin(
         self._context_max_sessions = 100
         self._llm_generation_lock = threading.RLock()
         self._last_llm_generations: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+        native_config = self._config_object_to_dict(config)
+        if not native_config and self._native_config_path:
+            native_config = load_json_file(self._native_config_path)
+        self.key_config = self._extract_native_key_config(native_config)
+        self.raw_config = self._load_initial_config()
+        self.config = AICatConfig.from_dict(self.raw_config)
         self._records: List[Dict[str, Any]] = self._load_records()
         self._record_seq = self._restore_record_sequence()
         self._web_task_lock = threading.RLock()
@@ -368,7 +374,9 @@ class SelfieImagePlugin(
         # request, so the task loader marks it expired and this pass links a
         # single durable record for history/retry visibility.
         self.reconcile_expired_tasks_after_restart()
-        self._runtime_generation_tasks: Dict[str, asyncio.Task] = {}
+        self._runtime_generation_tasks: Dict[str, Any] = {}
+        self._runtime_generation_workers: Dict[str, asyncio.Task] = {}
+        self._terminating = False
         # 模型选择仅作用于当前会话。
         self._session_model_lock = threading.RLock()
         self._session_model_overrides: Dict[str, str] = {}
@@ -379,12 +387,6 @@ class SelfieImagePlugin(
         self._send_failures_lock = threading.RLock()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
 
-        native_config = self._config_object_to_dict(config)
-        if not native_config and self._native_config_path:
-            native_config = load_json_file(self._native_config_path)
-        self.key_config = self._extract_native_key_config(native_config)
-        self.raw_config = self._load_initial_config()
-        self.config = AICatConfig.from_dict(self.raw_config)
         self.qq_group_cache = QQGroupCache(self)
         self._load_persisted_conversation_context()
         self.persona = PersonaManager(self.data_dir)
@@ -429,11 +431,54 @@ class SelfieImagePlugin(
         self._start_web_server()
 
     async def terminate(self) -> None:
-        self.web_server.stop()
+        with self._web_task_lock:
+            self._terminating = True
+            for task in self._web_tasks.values():
+                if task.get("status") in {"queued", "running"}:
+                    task["cancel_requested"] = True
+            handles = list(getattr(self, "_runtime_generation_tasks", {}).values())
+        # Stop Flask without blocking cancellation work on the bot event loop.
+        await asyncio.to_thread(self.web_server.stop)
+        for handle in handles:
+            if isinstance(handle, asyncio.Task):
+                if not handle.done() and not handle.cancelling():
+                    handle.cancel()
+            else:
+                handle.cancel()
+        # A concurrent Future becomes cancelled before its coroutine has
+        # unwound. Await the actual loop workers, not just the proxy handles.
+        await asyncio.sleep(0)
+        workers = set(getattr(self, "_runtime_generation_workers", {}).values())
+        workers.update(handle for handle in handles if isinstance(handle, asyncio.Task))
+        for worker in workers:
+            if not worker.done() and not worker.cancelling():
+                worker.cancel()
         scheduler = getattr(self, "_image_scheduler", None)
         if scheduler is not None:
-            for task_id in list(getattr(self, "_runtime_generation_tasks", {})):
-                await scheduler.cancel_task(task_id)
+            await scheduler.aclose()
+        if workers:
+            await asyncio.gather(*workers, return_exceptions=True)
+        await self._close_reference_client_session()
+        commits = set(getattr(self, "_record_commit_tasks", set()))
+        commits.update(getattr(self, "_usage_commit_tasks", set()))
+        commits.update(future for bucket in getattr(self, "_pending_record_commits", {}).values() for future in bucket)
+        commits.update(future for bucket in getattr(self, "_pending_image_record_commits", {}).values() for future in bucket)
+        if commits:
+            await asyncio.gather(*commits, return_exceptions=True)
+        with self._web_task_lock:
+            unfinished = [tid for tid, task in self._web_tasks.items() if task.get("status") in {"queued", "running"}]
+        for task_id in unfinished:
+            self._release_quota_reservation(task_id)
+            self._set_web_image_task(
+                task_id, status="cancelled", success=False, error="插件卸载，任务已取消",
+                generation_stage="cancelled", generation_stage_label="已取消",
+                finished_ts=time.time(), finished_at=self._web_task_timestamp(),
+            )
+        await asyncio.to_thread(self._flush_web_task_snapshots)
+
+    def _flush_web_task_snapshots(self) -> None:
+        with self._web_task_lock:
+            self._persist_web_tasks_locked()
 
     def _today_key(self) -> str:
         return time.strftime("%Y-%m-%d", time.localtime())
@@ -460,13 +505,32 @@ class SelfieImagePlugin(
         user_id = event_user_id(event)
         if not user_id:
             return
-        stats = self._current_usage_stats()
-        users = stats.setdefault("users", {})
-        record = users.setdefault(user_id, {"count": 0, "last_at": 0})
-        record["count"] = int(record.get("count", 0)) + max(0, int(count))
-        record["last_at"] = int(time.time())
-        record["group_id"] = event_group_id(event)
-        self._persist_usage_stats()
+        with self._usage_lock:
+            stats = self._current_usage_stats()
+            users = stats.setdefault("users", {})
+            record = users.setdefault(user_id, {"count": 0, "last_at": 0})
+            record["count"] = int(record.get("count", 0)) + max(0, int(count))
+            record["last_at"] = int(time.time())
+            record["group_id"] = event_group_id(event)
+            self._persist_usage_stats()
+
+    async def _record_generated_images_async(self, event: AstrMessageEvent, count: int) -> None:
+        task = asyncio.create_task(asyncio.to_thread(self._record_generated_images, event, count))
+        pending = getattr(self, "_usage_commit_tasks", None)
+        if pending is None:
+            pending = set()
+            self._usage_commit_tasks = pending
+        pending.add(task)
+
+        def commit_finished(future: asyncio.Future) -> None:
+            pending.discard(future)
+            if not future.cancelled():
+                exc = future.exception()
+                if exc is not None:
+                    logger.error("[SelfieImage] 额度统计写入失败: %s", exc)
+
+        task.add_done_callback(commit_finished)
+        await asyncio.shield(task)
 
     @optional_event_message_type(priority=100)
     async def on_message_record(self, event: AstrMessageEvent) -> None:
@@ -1815,9 +1879,11 @@ class SelfieImagePlugin(
                 "resolution": resolution,
                 "requested_count": requested_count,
                 "reference_image_count": len(extra_refs),
+                "requested_model": str(model_request or "").strip(),
                 "kind": "LLM 自拍",
             },
             runner=runner,
+            reference_images=self._selfie_reference_images(action, extra_refs, selection),
         )
         result = await self._await_command_image_task(task)
         if not result.get("success") and not result.get("files"):
@@ -1887,6 +1953,8 @@ class SelfieImagePlugin(
         reference_fidelity: str = "",
     ) -> Dict[str, Any]:
         """Run one image shot through the shared fair scheduler."""
+        if getattr(self, "_terminating", False):
+            raise asyncio.CancelledError()
         scheduler = getattr(self, "_image_scheduler", None)
         if scheduler is None or _IMAGE_JOB_ALREADY_SCHEDULED.get():
             return await self._run_image_generation_unscheduled(
@@ -2643,6 +2711,18 @@ class SelfieImagePlugin(
             persona_extra_refs=self._persona_auxiliary_references(action),
             prefer_message_identity=True,
         )
+
+    def _selfie_reference_images(
+        self,
+        action: str,
+        message_refs: List[ImageReference],
+        selection: Optional[CosReferenceSelection] = None,
+    ) -> List[ImageReference]:
+        """Resolve the same identity and auxiliary media used for generation."""
+        if selection is not None:
+            return list(selection.refs)
+        identity = self._persona_identity_reference(allow_logo=not self._is_cos_action(action))
+        return ([identity] if identity else []) + self._persona_auxiliary_references(action) + list(message_refs)
 
     async def _build_selfie_prompt_and_refs(
         self,
@@ -3724,7 +3804,10 @@ class SelfieImagePlugin(
             if scheduler is not None:
                 loop = getattr(self, "loop", None)
                 if loop is not None and loop.is_running():
-                    loop.create_task(scheduler.cancel_task(tid))
+                    def schedule_cancel() -> None:
+                        cancel = loop.create_task(scheduler.cancel_task(tid))
+                        cancel.add_done_callback(self._log_scheduler_cancel_error)
+                    loop.call_soon_threadsafe(schedule_cancel)
             now = time.time()
             runtime_task = getattr(self, "_runtime_generation_tasks", {}).get(tid)
             # Keep active tasks queryable while their cooperative cancellation
@@ -3743,6 +3826,13 @@ class SelfieImagePlugin(
             # cancelled last_run state; their cancellation flag is checked at
             # each generation boundary and before the final commit.
             return "已立即取消 " + tid if runtime_task is None else f"已请求取消 {tid}，任务将在安全边界停止"
+
+    @staticmethod
+    def _log_scheduler_cancel_error(future: asyncio.Future) -> None:
+        if not future.cancelled():
+            exc = future.exception()
+            if exc is not None:
+                logger.error("[SelfieImage] 取消图片请求失败: %s", exc)
 
     def _task_cancel_requested(self, task_id: str) -> bool:
         with self._web_task_lock:
@@ -3795,14 +3885,21 @@ class SelfieImagePlugin(
         source: str,
         summary: Dict[str, Any],
         runner,
+        reference_images: Optional[Iterable[ImageReference]] = None,
     ) -> Dict[str, Any]:
         """Queue a chat-side generation job and return immediately (targets 08/13)."""
-        loop = getattr(self, "loop", None) or asyncio.get_running_loop()
         session_key = self._session_key(event)
         request_summary = dict(summary or {})
+        request_summary.setdefault("source", str(source or "").strip())
+        request_summary["owner_user_id"] = event_user_id(event)
+        if not request_summary.get("requested_model"):
+            request_summary["requested_model"] = self._get_session_model_override(event)
+        request_summary["owner_origin"] = str(getattr(event, "unified_msg_origin", "") or "")
         force_regenerate = bool(request_summary.get("force_regenerate") or request_summary.get("force"))
-        fingerprint = self._request_fingerprint(request_summary, session_key)
+        fingerprint = self._request_fingerprint(request_summary, session_key, reference_images)
         with self._web_task_lock:
+            if getattr(self, "_terminating", False):
+                raise RuntimeError("插件正在卸载，无法提交新任务")
             if not force_regenerate:
                 duplicate = self._find_recent_duplicate_task_locked(fingerprint)
                 if duplicate and duplicate.get("owner_session") == session_key:
@@ -3858,15 +3955,7 @@ class SelfieImagePlugin(
             self._persist_web_tasks_locked()
         if quota_error:
             return self.get_web_image_task(task_id)
-        runtime_task = asyncio.create_task(self._run_command_image_task(task_id, event, runner))
-        runtime_tasks = getattr(self, "_runtime_generation_tasks", None)
-        if runtime_tasks is None:
-            runtime_tasks = {}
-            self._runtime_generation_tasks = runtime_tasks
-        runtime_tasks[task_id] = runtime_task
-        runtime_task.add_done_callback(
-            lambda _task, tid=task_id: getattr(self, "_runtime_generation_tasks", {}).pop(tid, None)
-        )
+        self._start_runtime_generation(task_id, self._run_command_image_task(task_id, event, runner))
         return self.get_web_image_task(task_id)
 
     async def _await_command_image_task(self, task: Mapping[str, Any]) -> Dict[str, Any]:
@@ -4427,7 +4516,7 @@ class SelfieImagePlugin(
                 used_model = str(result.get("used_model") or used_model)
                 last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
                 if files:
-                    self._record_generated_images(event, 1)
+                    await self._record_generated_images_async(event, 1)
                     sent = await self._send_generated_images(event, files)
                     sent_count = int(sent or 0)
                     explicit_failed = max(0, int(getattr(sent, "failed_count", 0) or 0))
@@ -5676,9 +5765,12 @@ class SelfieImagePlugin(
                 "resolution": resolution,
                 "requested_count": requested_count,
                 "kind": progress_label,
+                "reference_image_count": len(extra_refs),
+                "special_preset_variants": rebuild_special_preset_variants,
                 "preset_name": str(preset_name or "").strip(),
             },
             runner=runner,
+            reference_images=self._selfie_reference_images(action, extra_refs, selection),
         )
         yield event.plain_result(progress)
 
@@ -6331,12 +6423,14 @@ class SelfieImagePlugin(
                 "resolution": resolution,
                 "requested_count": requested_count,
                 "reference_image_count": len(refs),
+                "special_preset_variants": rendered_special_variants,
                 "template_values": template_values,
                 "template_randomize": template_randomize,
                 "template_unresolved": rendered.get("unresolved") or [],
                 "preset_name": preset_name,
             },
             runner=runner,
+            reference_images=refs,
         )
         yield event.plain_result(progress)
 
@@ -6419,6 +6513,7 @@ class SelfieImagePlugin(
                 "template_randomize": template_randomize,
                 "template_unresolved": rendered.get("unresolved") or [],
                 "preset_name": preset_name,
+                "special_preset_variants": rendered_special_variants,
             },
             runner=runner,
         )
@@ -6500,9 +6595,11 @@ class SelfieImagePlugin(
                 "resolution": resolution,
                 "requested_count": requested_count,
                 "reference_image_count": len(refs),
+                "special_preset_variants": special_variants,
                 "preset_name": preset_name,
             },
             runner=runner,
+            reference_images=refs,
         )
         yield event.plain_result(progress)
 
@@ -7188,6 +7285,7 @@ class SelfieImagePlugin(
                 "kind": "LLM 生图",
             },
             runner=runner,
+            reference_images=refs,
         )
         result = await self._await_command_image_task(task)
         if not result.get("success") and not result.get("files"):

@@ -28,6 +28,7 @@ class RecordDatabase:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30.0)
         connection.row_factory = sqlite3.Row
+        connection.create_function("text_lower", 1, lambda value: str(value or "").lower(), deterministic=True)
         return connection
 
     def _initialize(self) -> None:
@@ -53,6 +54,9 @@ class RecordDatabase:
                     ON generation_records(pinned DESC, favorite DESC, seq DESC);
                 CREATE INDEX IF NOT EXISTS idx_generation_records_created
                     ON generation_records(time DESC, seq DESC);
+                CREATE INDEX IF NOT EXISTS idx_generation_records_normal
+                    ON generation_records(time DESC, seq DESC, id DESC)
+                    WHERE pinned = 0 AND favorite = 0;
                 """
             )
 
@@ -107,14 +111,27 @@ class RecordDatabase:
             return 0
 
     def load_records(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Load the newest normal rows plus every protected asset.
+
+        ``limit`` is the retention allowance for ordinary rows. Favorites and
+        pinned assets deliberately sit outside that allowance, so loading only
+        the newest ``limit`` rows can otherwise make an old protected asset
+        disappear after restart.
+        """
         safe_limit = max(1, min(int(limit or 1000), 10000))
         with self._lock, self._connect() as connection:
             rows = connection.execute(
                 "SELECT id, seq, time, payload, favorite, pinned, tags, note, created_ts "
                 "FROM generation_records "
-                "ORDER BY time DESC, seq DESC, id DESC LIMIT ?",
+                "WHERE pinned != 0 OR favorite != 0 OR id IN ("
+                "SELECT id FROM generation_records WHERE pinned = 0 AND favorite = 0 "
+                "ORDER BY time DESC, seq DESC, id DESC LIMIT ?) "
+                "ORDER BY time DESC, seq DESC, id DESC",
                 (safe_limit,),
             ).fetchall()
+        return self._decode_rows(rows)
+
+    def _decode_rows(self, rows: Iterable[sqlite3.Row]) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []
         for row in rows:
             try:
@@ -134,6 +151,78 @@ class RecordDatabase:
                 payload.setdefault("created_ts", row["created_ts"])
             records.append(payload)
         return records
+
+    def query_records(
+        self, *, keep_limit: int = 1000, favorite: Optional[bool] = None,
+        pinned: Optional[bool] = None, tag: str = "", source: str = "", model: str = "",
+        media_type: str = "", success: Optional[bool] = None, keyword: str = "",
+        start_time: str = "", end_time: str = "", offset: int = 0,
+        limit: int = 1000, sort: str = "recent",
+    ) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
+        """Filter and page in SQLite before decoding record payloads."""
+        keep = max(1, min(int(keep_limit), 10000))
+        safe_limit = max(1, min(int(limit or keep), keep))
+        safe_offset = max(0, int(offset or 0))
+        retained = (
+            "WITH retained AS (SELECT * FROM generation_records WHERE pinned != 0 OR favorite != 0 "
+            "OR id IN (SELECT id FROM generation_records WHERE pinned = 0 AND favorite = 0 "
+            "ORDER BY time DESC, seq DESC, id DESC LIMIT ?)) "
+        )
+        clauses = ["json_valid(payload)"]
+        params: List[Any] = [keep]
+        for name, value in (("favorite", favorite), ("pinned", pinned)):
+            if value is not None:
+                clauses.append(f"{name} = ?")
+                params.append(int(bool(value)))
+        if tag:
+            clauses.append("EXISTS (SELECT 1 FROM json_each(tags) WHERE text_lower(value) = ?)")
+            params.append(str(tag).strip().lower())
+
+        def joined_fields(keys: Iterable[str]) -> str:
+            return " || ' ' || ".join(f"COALESCE(json_extract(payload, '$.{key}'), '')" for key in keys)
+
+        search_columns = {
+            "source": joined_fields(("source", "source_label", "group_id", "user_id")),
+            "model": "COALESCE(json_extract(payload, '$.used_model'), '')",
+            "keyword": joined_fields((
+                "source", "source_label", "used_model", "error", "failure_reason",
+                "original_prompt", "request_prompt", "prompt", "group_id", "user_id", "image_code",
+            )) + " || ' ' || note",
+        }
+        for name, value in (("source", source), ("model", model), ("keyword", keyword)):
+            if str(value or "").strip():
+                clauses.append(f"instr(text_lower({search_columns[name]}), ?) > 0")
+                params.append(str(value).strip().lower())
+        if media_type:
+            clauses.append("text_lower(COALESCE(NULLIF(json_extract(payload, '$.media_type'), ''), 'image')) = ?")
+            params.append(str(media_type).strip().lower())
+        if success is not None:
+            clauses.append("COALESCE(json_extract(payload, '$.success'), 0) = ?")
+            params.append(int(bool(success)))
+        if start_time:
+            clauses.append("time >= ?")
+            params.append(str(start_time).strip())
+        if end_time:
+            end = str(end_time).strip()
+            clauses.append("time <= ?")
+            params.append(end + " 23:59:59" if len(end) == 10 else end)
+        where = " WHERE " + " AND ".join(clauses)
+        sort_text = str(sort or "recent").strip().lower()
+        if sort_text in {"priority", "pinned", "favorite"}:
+            order = "pinned DESC, favorite DESC, time DESC, seq DESC, id DESC"
+        elif sort_text in {"oldest", "asc"}:
+            order = "time ASC, seq ASC, id ASC"
+        else:
+            order = "time DESC, seq DESC, id DESC"
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN")
+            total = connection.execute(retained + "SELECT COUNT(*) FROM retained", (keep,)).fetchone()[0]
+            count = connection.execute(retained + "SELECT COUNT(*) FROM retained" + where, params).fetchone()[0]
+            rows = connection.execute(
+                retained + "SELECT * FROM retained" + where + f" ORDER BY {order} LIMIT ? OFFSET ?",
+                [*params, safe_limit, safe_offset],
+            ).fetchall()
+        return self._decode_rows(rows), {"total": total, "filtered": count, "offset": safe_offset, "limit": safe_limit}
 
     def replace_records(self, records: Iterable[Mapping[str, Any]]) -> None:
         incoming = [item for item in records if isinstance(item, Mapping)]

@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import threading
 import time
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional
@@ -27,6 +28,7 @@ class WebTaskMixin:
     # record archive. Keep a bounded recent window while never pruning active
     # tasks; terminal records remain available through generation records.
     WEB_TASK_KEEP_LIMIT = 50
+    WEB_TASK_SNAPSHOT_DELAY = 0.2
 
     _TASK_TERMINAL_STATUSES = {
         "succeeded",
@@ -142,9 +144,91 @@ class WebTaskMixin:
         return tasks
 
     def _persist_web_tasks_locked(self) -> None:
+        timer = getattr(self, "_web_task_snapshot_timer", None)
+        if timer is not None:
+            timer.cancel()
+            self._web_task_snapshot_timer = None
+        self._web_task_snapshot_version = getattr(self, "_web_task_snapshot_version", 0) + 1
         path = str(getattr(self, "tasks_path", "") or "").strip()
         if path:
             save_json_file_compact(path, {"tasks": self._web_tasks})
+
+    def _schedule_web_task_snapshot_locked(self) -> None:
+        """Coalesce live progress writes; lifecycle boundaries flush immediately."""
+        if not str(getattr(self, "tasks_path", "") or "").strip():
+            return
+        if getattr(self, "_web_task_snapshot_timer", None) is not None:
+            return
+        version = getattr(self, "_web_task_snapshot_version", 0)
+
+        def flush() -> None:
+            with self._web_task_lock:
+                if version != getattr(self, "_web_task_snapshot_version", 0):
+                    return
+                try:
+                    self._persist_web_tasks_locked()
+                except Exception as exc:
+                    logger.error("[SelfieImage] 任务进度快照写入失败: %s", exc)
+
+        timer = threading.Timer(self.WEB_TASK_SNAPSHOT_DELAY, flush)
+        timer.daemon = True
+        self._web_task_snapshot_timer = timer
+        timer.start()
+
+    def _start_runtime_generation(self, task_id: str, coro: Any) -> Any:
+        """Keep real worker tasks available until their cancellation cleanup ends."""
+        started = False
+
+        async def tracked() -> None:
+            nonlocal started
+            started = True
+            current = asyncio.current_task()
+            with self._web_task_lock:
+                workers = getattr(self, "_runtime_generation_workers", None)
+                if workers is None:
+                    workers = {}
+                    self._runtime_generation_workers = workers
+                workers[task_id] = current
+            try:
+                if getattr(self, "_terminating", False):
+                    coro.close()
+                    return
+                await coro
+            finally:
+                with self._web_task_lock:
+                    workers.pop(task_id, None)
+
+        with self._web_task_lock:
+            if getattr(self, "_terminating", False):
+                coro.close()
+                raise RuntimeError("插件正在卸载，无法提交新任务")
+            loop = getattr(self, "loop", None)
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            if current_loop is not None and (loop is None or current_loop is loop):
+                handle = current_loop.create_task(tracked())
+            else:
+                handle = asyncio.run_coroutine_threadsafe(tracked(), loop)
+            runtime_tasks = getattr(self, "_runtime_generation_tasks", None)
+            if runtime_tasks is None:
+                runtime_tasks = {}
+                self._runtime_generation_tasks = runtime_tasks
+            runtime_tasks[task_id] = handle
+
+            def remove_done(future: Any) -> None:
+                with self._web_task_lock:
+                    runtime_tasks.pop(task_id, None)
+                if not started:
+                    coro.close()
+                if not future.cancelled():
+                    exc = future.exception()
+                    if exc is not None:
+                        logger.error("[SelfieImage] 图片任务 %s 异常退出: %s", task_id, exc)
+
+            handle.add_done_callback(remove_done)
+            return handle
 
     def reconcile_expired_tasks_after_restart(self) -> int:
         """Create one inspectable record for each task abandoned by a restart.
@@ -247,26 +331,92 @@ class WebTaskMixin:
         return reconciled
 
     def _request_fingerprint(
-        self, payload: Mapping[str, Any], owner_session: str = ""
+        self,
+        payload: Mapping[str, Any],
+        owner_session: str = "",
+        reference_images: Optional[Iterable[Any]] = None,
     ) -> str:
         """Build a short-lived dedupe key without persisting request contents."""
+
+        def stable_value(value: Any) -> Any:
+            if isinstance(value, Mapping):
+                return {
+                    str(key): stable_value(value[key])
+                    for key in sorted(value, key=lambda item: str(item))
+                }
+            if isinstance(value, (list, tuple)):
+                return [stable_value(item) for item in value]
+            if isinstance(value, set):
+                return sorted((stable_value(item) for item in value), key=str)
+            if value is None or isinstance(value, (str, int, float, bool)):
+                return value
+            return str(value)
+
         image_values = list(payload.get("images") or [])
         if payload.get("image"):
             image_values.append(payload.get("image"))
-        image_hashes = [
-            hashlib.sha256(str(value or "").encode("utf-8", "ignore")).hexdigest()[:24]
-            for value in image_values
-        ]
+        # Some callers keep references under a semantic name instead of the
+        # transport ``images`` field. Include both without storing the media.
+        image_values.extend(list(payload.get("reference_images") or []))
+        image_hashes = []
+        for value in image_values + list(reference_images or []):
+            raw = getattr(value, "data", None)
+            if raw is None and isinstance(value, Mapping):
+                raw = value.get("data") or value.get("value")
+            if isinstance(raw, (bytes, bytearray, memoryview)):
+                encoded_image = bytes(raw)
+            elif isinstance(raw, str):
+                encoded_image = raw.encode("utf-8", "ignore")
+            else:
+                encoded_image = json.dumps(
+                    stable_value(value),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8", "ignore")
+            image_hashes.append(hashlib.sha256(encoded_image).hexdigest()[:24])
+        image_hashes.extend(str(value)[:64] for value in (payload.get("reference_image_hashes") or []))
+        try:
+            requested_count = max(
+                1,
+                int(payload.get("requested_count") or payload.get("count") or 1),
+            )
+        except (TypeError, ValueError):
+            requested_count = 1
         fields = {
             "owner_session": str(owner_session or ""),
             "media_type": str(payload.get("media_type") or "image").strip().lower(),
-            "prompt": str(payload.get("prompt") or payload.get("original_prompt") or "").strip(),
+            "prompt": str(
+                payload.get("prompt")
+                or payload.get("original_prompt")
+                or payload.get("action")
+                or ""
+            ).strip(),
             "channel": str(payload.get("channel") or "").strip(),
             "model": str(payload.get("model") or "").strip(),
+            "requested_model": str(payload.get("requested_model") or "").strip(),
             "aspect_ratio": str(payload.get("aspect_ratio") or "").strip(),
             "resolution": str(payload.get("resolution") or "").strip(),
-            "count": str(payload.get("count") or 1).strip(),
-            "prompt_enhance": str(payload.get("prompt_enhance") or "").strip().lower(),
+            "count": requested_count,
+            "reference_image_count": payload.get(
+                "raw_reference_image_count",
+                payload.get("reference_image_count", len(image_values)),
+            ),
+            "use_selfie_reference": bool(payload.get("use_selfie_reference")),
+            "prompt_enhance": stable_value(payload.get("prompt_enhance")),
+            "template_values": stable_value(payload.get("template_values")),
+            "template_randomize": stable_value(payload.get("template_randomize")),
+            "variation_enabled": stable_value(payload.get("variation_enabled")),
+            "variation_fields": stable_value(payload.get("variation_fields") or payload.get("vary")),
+            "preset_name": str(payload.get("preset_name") or "").strip(),
+            "unresolved_template_values": stable_value(payload.get("template_unresolved")),
+            "template_pools": stable_value(payload.get("template_pools")),
+            "template_seed": stable_value(payload.get("template_seed")),
+            "special_preset_variants": stable_value(payload.get("special_preset_variants")),
+            "source": str(payload.get("source") or payload.get("kind") or "").strip(),
+            "owner_user_id": str(payload.get("owner_user_id") or "").strip(),
+            "owner_origin": str(payload.get("owner_origin") or "").strip(),
+            "retry_record_id": str(payload.get("_retry_record_id") or payload.get("retry_record_id") or "").strip(),
             "image_hashes": image_hashes,
         }
         encoded = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -354,7 +504,10 @@ class WebTaskMixin:
             task["updated_ts"] = now
             task["updated_at"] = self._web_task_timestamp()
             self._prune_web_tasks_locked()
-            self._persist_web_tasks_locked()
+            if "status" in fields or task.get("status") in self._TASK_TERMINAL_STATUSES or getattr(self, "_terminating", False):
+                self._persist_web_tasks_locked()
+            else:
+                self._schedule_web_task_snapshot_locked()
 
     def _set_task_notification_status(
         self,
@@ -1104,6 +1257,8 @@ class WebTaskMixin:
         }
 
     def start_web_image_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if getattr(self, "_terminating", False):
+            raise RuntimeError("插件正在卸载，无法提交新任务")
         if not isinstance(payload, dict):
             raise RuntimeError("请求体必须是 JSON 对象")
         loop = getattr(self, "loop", None)
@@ -1116,11 +1271,26 @@ class WebTaskMixin:
         self._validate_web_test_selection(payload_copy)
         requested_count = self._normalize_web_image_count(payload_copy.get("count"))
         payload_copy["count"] = requested_count
+        payload_copy["requested_count"] = requested_count
         force_regenerate = bool(
             payload_copy.get("force_regenerate") or payload_copy.get("force")
         )
-        fingerprint = self._request_fingerprint(payload_copy, "web")
+        payload_copy.setdefault("source", "record-retry" if payload_copy.get("_retry_record_id") or payload_copy.get("retry_record_id") else "web-test")
+        selfie_refs = []
+        if payload_copy.get("use_selfie_reference"):
+            identity_getter = getattr(self, "_persona_identity_reference", None)
+            auxiliary_getter = getattr(self, "_persona_auxiliary_references", None)
+            identity = identity_getter() if callable(identity_getter) else None
+            if identity:
+                selfie_refs.append(identity)
+            if callable(auxiliary_getter) and self._summarize_web_test_payload(payload_copy)["prompt_enhance"]:
+                selfie_refs.extend(auxiliary_getter(str(payload_copy.get("prompt") or "")))
+        fingerprint = self._request_fingerprint(
+            payload_copy, str(payload_copy.get("owner_session") or "web"), selfie_refs,
+        )
         with self._web_task_lock:
+            if getattr(self, "_terminating", False):
+                raise RuntimeError("插件正在卸载，无法提交新任务")
             if not force_regenerate:
                 duplicate = self._find_recent_duplicate_task_locked(fingerprint)
                 if duplicate:
@@ -1152,17 +1322,7 @@ class WebTaskMixin:
             }
             self._prune_web_tasks_locked()
             self._persist_web_tasks_locked()
-        runtime_future = asyncio.run_coroutine_threadsafe(
-            self._run_web_image_task(task_id, payload_copy), loop
-        )
-        runtime_tasks = getattr(self, "_runtime_generation_tasks", None)
-        if runtime_tasks is None:
-            runtime_tasks = {}
-            self._runtime_generation_tasks = runtime_tasks
-        runtime_tasks[task_id] = runtime_future
-        runtime_future.add_done_callback(
-            lambda _task, tid=task_id: getattr(self, "_runtime_generation_tasks", {}).pop(tid, None)
-        )
+        self._start_runtime_generation(task_id, self._run_web_image_task(task_id, payload_copy))
         return self.get_web_image_task(task_id)
 
     async def _run_web_image_task(self, task_id: str, payload: Dict[str, Any]) -> None:

@@ -886,27 +886,28 @@ def novelai_model_family(model: str) -> str:
     return "nai4.5"
 
 
-def _extract_image_bytes_from_nai_body(body: bytes) -> Optional[bytes]:
+def _extract_image_bytes_from_nai_body(body: bytes, max_bytes: int = 32 * 1024 * 1024) -> Optional[bytes]:
     """Official NAI returns zip; gateways may return raw image bytes."""
     if not body:
         return None
     if looks_like_binary_image(body):
+        if len(body) > max_bytes:
+            raise ValueError(f"NovelAI 图片超过 {max_bytes} bytes")
         return body
     import io
     import zipfile
 
     try:
         with zipfile.ZipFile(io.BytesIO(body)) as zf:
-            for name in zf.namelist():
-                lower = name.lower()
-                if lower.endswith((".png", ".jpg", ".jpeg", ".webp")):
-                    data = zf.read(name)
-                    if data:
-                        return data
-            # first file fallback
-            names = zf.namelist()
-            if names:
-                data = zf.read(names[0])
+            entries = zf.infolist()
+            images = [entry for entry in entries if entry.filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))]
+            for entry in images or entries[:1]:
+                if entry.file_size > max_bytes:
+                    raise ValueError(f"NovelAI ZIP 解压后的图片超过 {max_bytes} bytes")
+                with zf.open(entry) as stream:
+                    data = stream.read(max_bytes + 1)
+                if len(data) > max_bytes:
+                    raise ValueError(f"NovelAI ZIP 解压后的图片超过 {max_bytes} bytes")
                 if data:
                     return data
     except zipfile.BadZipFile:
@@ -914,9 +915,12 @@ def _extract_image_bytes_from_nai_body(body: bytes) -> Optional[bytes]:
     return None
 
 
-def _parse_nai_response_body(body: bytes, charset: str, max_response_bytes: int) -> tuple[Optional[Any], str]:
+def _parse_nai_response_body(
+    body: bytes, charset: str, max_response_bytes: int, max_image_bytes: Optional[int] = None,
+) -> tuple[Optional[Any], str]:
     def parse(blob: bytes) -> tuple[Optional[Any], str]:
-        image = _extract_image_bytes_from_nai_body(blob)
+        image_limit = min(max_response_bytes, max_image_bytes) if max_image_bytes is not None else max_response_bytes
+        image = _extract_image_bytes_from_nai_body(blob, image_limit)
         if image:
             return image, ""
         return parse_image_response_body(blob, charset)
@@ -1145,7 +1149,9 @@ class NovelAIImageAdapter(BaseImageAdapter):
                     if read_error or body is None:
                         return ImageGenerateResult(error=read_error or "上游响应未完整接收")
                     charset = getattr(response, "charset", None) or "utf-8"
-                    data, _kind = await asyncio.to_thread(_parse_nai_response_body, body, charset, max_response_bytes)
+                    data, _kind = await asyncio.to_thread(
+                        _parse_nai_response_body, body, charset, max_response_bytes, req.max_image_bytes,
+                    )
                     if response.status >= 400:
                         detail = response_preview(data, 1000) if data is not None else body[:1000].decode(charset, errors="replace")
                         preview = http_error_preview(detail, 400)
@@ -1201,11 +1207,16 @@ class NovelAIImageAdapter(BaseImageAdapter):
                 "User-Agent": "AI-Cat/1.0",
             }
             async with self.session.get(url, params=params, headers=headers, timeout=timeout, proxy=proxy) as response:
-                body = await response.read()
+                max_response_bytes = max(1024, int(self.target.extra.get("max_response_bytes") or 32 * 1024 * 1024))
+                body, read_error = await self._read_response_bytes(response, max_response_bytes)
+                if read_error or body is None:
+                    return ImageGenerateResult(error=read_error or "上游响应未完整接收")
                 if response.status >= 400:
                     preview = body[:400].decode("utf-8", errors="replace")
                     return ImageGenerateResult(error=f"HTTP {response.status}: {preview or 'NAI 网关请求失败'}")
-                image = _extract_image_bytes_from_nai_body(body)
+                image = await asyncio.to_thread(
+                    _extract_image_bytes_from_nai_body, body, min(max_response_bytes, req.max_image_bytes)
+                )
                 if image:
                     return ImageGenerateResult(images=[image])
                 # some gateways wrap JSON
