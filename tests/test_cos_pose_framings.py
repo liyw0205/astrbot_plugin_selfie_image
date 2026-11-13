@@ -27,6 +27,8 @@ from astrbot_plugin_selfie_image.cos.cos_looks_loader import (
     COS_JSON_FACE_RISK_PROMPTS,
     COS_JSON_EXPRESSIONS,
     COS_JSON_FRAMINGS,
+    COS_JSON_FRAMING_OPTION_TERMS,
+    COS_JSON_FRAMING_REQUEST_TERMS,
     COS_JSON_FRAMING_OPTION_SUFFIX_TERMS,
     COS_JSON_MAKEUPS,
     COS_JSON_MULTI_VIEW_COLLAGE,
@@ -51,6 +53,80 @@ def test_pose_framing_compatibility_is_owned_by_json_catalog():
         assert tuple(framing_ids) == COS_POSE_FRAMING_COMPATIBILITY[pose_id]
         assert framing_ids
         assert set(framing_ids) <= COS_JSON_FRAMINGS.keys()
+
+
+def test_close_framings_only_pair_with_compatible_pose_directions():
+    compatible_poses = {
+        "face_close_portrait": {
+            "front_hand_near_face", "half_turn", "side_profile", "quiet_low_gaze",
+        },
+        "bust_close_portrait": {
+            "front_sleeve_display", "front_hand_near_face", "quiet_low_gaze",
+            "hands_gathered_at_sternum",
+        },
+        "side_profile_close": {"half_turn", "side_profile"},
+        "rear_hair_close": {"over_shoulder"},
+    }
+    for framing_id, pose_ids in compatible_poses.items():
+        framing = COS_JSON_FRAMINGS[framing_id]
+        assert set(framing["random_camera_ids"]) <= set(framing["camera_ids"])
+        for pose_id in pose_ids:
+            assert framing_id in COS_JSON_POSES[pose_id]["framing_ids"]
+            for camera in set(framing["random_camera_ids"]) & set(COS_JSON_POSES[pose_id]["random_camera_ids"]):
+                selected = pick_cos_framing(
+                    pose_id=pose_id,
+                    camera=camera,
+                    allowed_framings=[framing_id],
+                    forced_framing_id=framing_id,
+                    extra_request="背面发型近景" if framing_id == "rear_hair_close" else "",
+                )
+                assert selected["view_id"] == framing_id
+
+    assert "face_close_portrait" not in COS_JSON_POSES["back_to_camera"]["framing_ids"]
+    assert "rear_hair_close" not in COS_JSON_POSES["back_to_camera"]["framing_ids"]
+    assert "rear_hair_close" not in COS_JSON_POSES["side_profile"]["framing_ids"]
+    assert "rear_hair_close" in COS_JSON_POSES["over_shoulder"]["framing_ids"]
+    assert "发型特写" in COS_JSON_FRAMING_REQUEST_TERMS
+    assert "侧颜近景" in COS_JSON_FRAMING_OPTION_TERMS
+    assert cos_looks.cos_prompt_has_framing("看看COS，面部特写")
+
+
+def test_rear_hair_close_request_selects_side_back_pose_and_matching_crop():
+    action = build_cos_look_action(
+        "背面发型近景",
+        force_id="roxy_cream",
+        camera="third",
+    )
+
+    framing_prompt = COS_JSON_FRAMINGS["rear_hair_close"]["prompt"]
+    assert "【cos_pose:over_shoulder】" in action
+    assert "【cos_framing:rear_hair_close】" in action
+    assert framing_prompt in action
+    assert "人物以背后三分之四角度朝向镜头斜后方" in action
+    assert "展示后背剪裁、腰胯曲线" not in action
+    assert "本次构图优先保证支撑关系" not in action
+
+
+def test_selfie_rear_hair_close_uses_side_back_head_crop_in_final_prompt(tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.prompts.selfie_actions import build_selfie_look_action
+
+    action = build_selfie_look_action("背面发型近景", appearance_type="real")
+    prompt = PersonaManager(str(tmp_path)).build_selfie_prompt(
+        action,
+        bot_name="",
+        personality="",
+        has_reference_image=False,
+        extra_reference_count=0,
+    )
+
+    assert "【shot:back_three_quarter】" in action
+    assert "背后三分之四侧后方头肩近景" in action
+    assert "画面到肩胛上缘为止" in action
+    assert "不回头、不回眸、不扭颈" in action
+    assert "背后三分之四侧后方头肩近景" in prompt
+    assert "头部到腰线入镜" not in prompt
+    assert "镜头同时看到后背和一侧肩胯" not in prompt
 
 
 def test_shared_cos_vocabularies_are_separate_from_look_records():
@@ -130,7 +206,7 @@ def test_back_three_quarter_pose_does_not_request_a_lookback():
     pose = COS_JSON_POSES["over_shoulder"]
 
     assert pose["title"] == "背后三分之四展示"
-    assert pose["framing_ids"] == ["rear_three_quarter", "rear_low_medium"]
+    assert pose["framing_ids"] == ["rear_three_quarter", "rear_low_medium", "rear_hair_close"]
     assert "肩线、胯部与头部朝向保持一致" in pose["prompt"]
     assert "不回头、不回眸、不扭颈" in pose["prompt"]
     assert "不要求露出侧脸或正脸" in pose["prompt"]

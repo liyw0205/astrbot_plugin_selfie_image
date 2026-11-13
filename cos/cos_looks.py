@@ -20,6 +20,7 @@ from .cos_looks_loader import (
     COS_JSON_FRAMING_OPTION_TERMS,
     COS_JSON_FRAMING_OPTION_SUFFIX_TERMS,
     COS_JSON_FRAMING_REQUEST_TERMS,
+    COS_JSON_REAR_HAIR_REQUEST_TERMS,
     COS_JSON_LOOK_SETS,
     COS_JSON_LOOK_THEME_CONFLICTS,
     COS_JSON_LOOK_THEME_MARKERS,
@@ -582,6 +583,12 @@ COS_COMBINATION_PRESETS: Dict[str, Dict[str, Any]] = {
 COS_FRAMING_TERMS = tuple(dict.fromkeys(
     (*COS_JSON_FRAMING_REQUEST_TERMS, *COS_JSON_COMPOSITION_REQUEST_TERMS)
 ))
+
+
+def requests_rear_hair_close(text: str) -> bool:
+    return any(_has_positive_request(text, term) for term in COS_JSON_REAR_HAIR_REQUEST_TERMS)
+
+
 COS_FRAMING_TOKEN = "|".join(
     re.escape(term) for term in sorted(COS_JSON_FRAMING_OPTION_TERMS, key=len, reverse=True)
 )
@@ -758,7 +765,12 @@ def pick_cos_framing(
             requested_pose=pose_id,
             requested_orientation=orientation,
         )
-    explicit_framing = cos_prompt_has_framing(framing_detection_text)
+    rear_hair_requested = (
+        pose_id == "over_shoulder"
+        and camera == "third"
+        and requests_rear_hair_close(extra_request)
+    )
+    explicit_framing = cos_prompt_has_framing(framing_detection_text) and not rear_hair_requested
     if pose_id in COS_BODY_CURVE_POSE_IDS or pose_id == "back_to_camera":
         unsafe_terms = ("平视", "平拍", "俯拍", "高机位", "高位", "远景", "全景")
         safe_terms = ("仰拍", "低机位", "低角度", "轻仰")
@@ -776,9 +788,9 @@ def pick_cos_framing(
             "randomized_from_options": False,
             "explicit": True,
         }
-    forced = str(forced_framing_id or "").strip()
+    forced = "rear_hair_close" if rear_hair_requested else str(forced_framing_id or "").strip()
     if forced in COS_FRAMING_CLASSES and pose_id != "user":
-        forced_allowed = forced not in COS_EXPLICIT_ONLY_FRAMING_IDS
+        forced_allowed = forced not in COS_EXPLICIT_ONLY_FRAMING_IDS or rear_hair_requested
         forced_allowed = forced_allowed and forced in COS_RANDOM_CAMERA_FRAMING_IDS.get(camera, frozenset())
         forced_allowed = forced_allowed and (
             not allowed_framings or forced in _as_id_set(allowed_framings)
@@ -806,11 +818,15 @@ def pick_cos_framing(
             selected["randomized_from_options"] = False
             selected["explicit"] = False
             selected["combination_locked"] = True
-            selected["composition"] = _pick_cos_composition(
-                pose_id=pose_id,
-                scene_id=scene_id,
-                camera=camera,
-                avoid=avoid_compositions,
+            selected["composition"] = (
+                {}
+                if rear_hair_requested
+                else _pick_cos_composition(
+                    pose_id=pose_id,
+                    scene_id=scene_id,
+                    camera=camera,
+                    avoid=avoid_compositions,
+                )
             )
             return selected
     if pose_id == "user":
@@ -1917,7 +1933,11 @@ def pick_cos_variation(
         prompt_parts.append("本次场景影像风格族保持与环境一致：" + scene_style_prompt)
     prompt_parts.append("本次场景光照：" + lighting_prompt)
     if scene and not _requests_explicit_soft_focus(extra_request):
-        prompt_parts.append(_cos_subject_clarity_prompt_for_pose(cos_id, pose_id))
+        prompt_parts.append(
+            str(COS_JSON_LIGHTING_RULES["subject_clarity"])
+            if pose_id == "over_shoulder" and camera == "third" and requests_rear_hair_close(extra_request)
+            else _cos_subject_clarity_prompt_for_pose(cos_id, pose_id)
+        )
         safety_prompt = _cos_face_safety_prompt(
             cos_id,
             scene_id,
@@ -1932,8 +1952,15 @@ def pick_cos_variation(
             if requested_pose
             else "本次随机姿势优先于套装正文中残留的人物姿势描述："
         )
+        pose_prompt = _cos_pose_prompt_for_camera(pose_id, camera)
+        if pose_id == "over_shoulder" and camera == "third" and requests_rear_hair_close(extra_request):
+            pose_prompt = (
+                "人物以背后三分之四角度朝向镜头斜后方，近侧头部与一侧肩线自然可见；"
+                "头部与肩线方向连贯，视线朝向画外，不回头、不回眸、不扭颈，不要求露出正脸；"
+                "肩颈放松、站姿稳定，双手自然留在头肩取景范围之外，不抬手遮挡发型。"
+            )
         prompt_parts.append(
-            pose_prefix + _cos_pose_prompt_for_camera(pose_id, camera)
+            pose_prefix + pose_prompt
         )
     if expression_prompt:
         prompt_parts.append("本次兼容神态：" + expression_prompt)
@@ -3046,7 +3073,12 @@ def build_cos_look_action(
             "双手按已选姿势自然摆放，人物恰好两条手臂和两只手，不额外添加拍摄设备，不要求露出面部。"
             if variation["pose_id"] == "back_to_camera"
             else
-            "背后三分之四展示：人物肩线、胯部与头部朝向一致，面部自然朝向画外；不要求露出侧脸或正脸，不为了露脸回头、回眸或扭颈，优先呈现背部、腰胯曲线和服装侧后方。"
+            (
+                "背面侧后方头肩构图：人物身体以背后三分之四角度朝向镜头，头部随肩线自然朝向画外；"
+                "镜头呈现后侧发型与近侧耳后发束，不要求露出正脸，不回头、不回眸、不扭颈；双手留在画外，不遮挡发型。"
+                if framing_choice.get("view_id") == "rear_hair_close"
+                else "背后三分之四展示：人物肩线、胯部与头部朝向一致，面部自然朝向画外；不要求露出侧脸或正脸，不为了露脸回头、回眸或扭颈，优先呈现背部、腰胯曲线和服装侧后方。"
+            )
             if variation["pose_id"] == "over_shoulder"
             else
             "侧边支撑前倾：不出现手机、镜子或拍摄设备；人物双手在肩部至头部附近同时扶住同一条窄侧边，可相邻或轻微上下错开并共同支撑身体，头部和视线朝向侧边；"

@@ -126,6 +126,11 @@ COS_JSON_EXPRESSIONS = _load_vocab("_expressions.json")
 COS_JSON_POSES = _load_vocab("_poses.json")
 COS_JSON_SCENES = _load_vocab("_scenes.json")
 COS_JSON_FRAMINGS = _load_vocab("_framings.json")
+COS_JSON_REAR_HAIR_REQUEST_TERMS = tuple(
+    str(value).strip()
+    for value in (COS_JSON_FRAMINGS.get("rear_hair_close", {}).get("request_aliases") or [])
+    if str(value).strip()
+)
 COS_JSON_MAKEUPS = _load_vocab("_makeups.json")
 COS_JSON_LIGHTINGS = _load_vocab("_lightings.json")
 COS_JSON_LIGHTING_RULES = _load_object("_lightings.json", "rules")
@@ -367,6 +372,14 @@ def validate_json_catalog() -> List[str]:
                 issues.append(f"framing {framing_id}: invalid {field} {','.join(invalid[:8])}")
         if "random_camera_ids" not in framing:
             issues.append(f"framing {framing_id}: missing random_camera_ids")
+        aliases = framing.get("request_aliases")
+        if aliases is not None and (
+            not isinstance(aliases, list)
+            or any(not isinstance(value, str) or not value.strip() for value in aliases)
+        ):
+            issues.append(f"framing {framing_id}: request_aliases must contain non-empty strings")
+    if not COS_JSON_REAR_HAIR_REQUEST_TERMS:
+        issues.append("rear_hair_close: request_aliases must not be empty")
     for composition_id, composition in COS_JSON_COMPOSITIONS.items():
         missing_scenes = [value for value in composition.get("scenes") or [] if value not in scene_ids]
         missing_poses = [value for value in composition.get("poses") or [] if value not in pose_ids]

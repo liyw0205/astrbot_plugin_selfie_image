@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Optional
 from ..cos.cos_looks import (
     adapt_cos_prompt_for_appearance,
     parse_requested_cos_camera,
+    requests_rear_hair_close,
     requests_phone_face_cover,
 )
 from ..cos.leg_focus import (
@@ -1950,6 +1951,7 @@ class PersonaManager:
         cos_face_optional = cos_pose.get("face_visibility") == "optional"
         back_three_quarter_shot = shot_id == "back_three_quarter"
         back_facing_shot = shot_id in {"back_view", "back_three_quarter", "rear_rooftop"} or cos_orientation == "back"
+        rear_hair_close_shot = back_three_quarter_shot and requests_rear_hair_close(user_text)
         side_facing_shot = shot_id == "side_profile" or cos_orientation == "side"
         feet_cropped = is_leg_calf_crop_action(act)
         leg_face_context = intent.is_legs_only and feet_cropped and has_leg_face_context(act)
@@ -2348,7 +2350,9 @@ class PersonaManager:
                     (
                         "本次为主角自行启动的定时自摄；"
                         + (
-                            "按已选场景完成背后三分之四构图，镜头同时看到后背和一侧肩胯，一条腿自然承重、另一脚轻微错后；"
+                            "采用背后三分之四侧后方头肩近景，头部与肩线方向连贯，不回头、不扭颈，不要求露脸；"
+                            if rear_hair_close_shot
+                            else "按已选场景完成背后三分之四构图，镜头同时看到后背和一侧肩胯，一条腿自然承重、另一脚轻微错后；"
                             if back_three_quarter_shot
                             else "按已选场景完成背面构图；"
                         )
@@ -2358,7 +2362,9 @@ class PersonaManager:
                     ),
                     "按当前时段的今日穿搭、状态和心情生成自然自拍；场景与镜头只改变拍摄氛围，不得替换、增添或删减穿搭。",
                     (
-                        "保持竖屏中近景和自然透视；双手按已选小动作自然配合，不强制垂放，不凭空增加道具。"
+                        "保持竖屏背面侧后方头肩近景，画面到肩胛上缘为止；肩胛以下不入画，双手留在画外，不遮挡发型。"
+                        if rear_hair_close_shot
+                        else "保持竖屏中近景和自然透视；双手按已选小动作自然配合，不强制垂放，不凭空增加道具。"
                         if back_facing_shot
                         else snapshot_prompt
                         or "竖屏手机自拍，采用自然的侧身机位和中近景构图；保持当前穿搭清楚可辨，不强迫回头硬露正脸。"

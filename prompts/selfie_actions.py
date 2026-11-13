@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable
 from typing import Iterable, List, Tuple
 
+from ..cos.cos_looks_loader import COS_JSON_REAR_HAIR_REQUEST_TERMS
 from ..features.persona import (
     appearance_type_instruction,
     appearance_type_output_instruction,
@@ -129,6 +130,8 @@ SELFIE_LIGHT_TERMS = (
 
 def _requested_staging_orientation(text: str) -> str:
     compact = re.sub(r"\s+", "", str(text or ""))
+    if any(_has_positive_staging_term(compact, term) for term in COS_JSON_REAR_HAIR_REQUEST_TERMS):
+        return "back_three_quarter"
     if any(
         _has_positive_staging_term(compact, term)
         for term in (
@@ -564,6 +567,9 @@ def build_selfie_look_action(
         tags=preferred_tags if event_context_enabled else (),
     )
     orientation = _requested_staging_orientation(extra)
+    rear_hair_close_request = any(
+        _has_positive_staging_term(extra, term) for term in COS_JSON_REAR_HAIR_REQUEST_TERMS
+    )
     shot = (
         "timer_half" if heart_pose
         else "back_three_quarter" if orientation == "back_three_quarter"
@@ -581,7 +587,9 @@ def build_selfie_look_action(
         scene = "" if explicit_scene else (preferred_scene if preferred_compatible else _pick_staging_scene(scenes, "back", shot))
         requested_gesture = _requested_back_action(extra, extra if explicit_scene else scene)
         gesture = (
-            requested_gesture
+            "肩颈自然放松，双手留在画外，不遮挡后侧发型"
+            if rear_hair_close_request
+            else requested_gesture
             if requested_gesture
             else preferred_gesture
             if preferred_gesture and _daily_action_compatible(preferred_gesture, scene, shot)
@@ -608,6 +616,7 @@ def build_selfie_look_action(
         light = "" if explicit_light else random.choice(lights)
     rear_view = shot in {"back_view", "back_three_quarter"}
     rear_three_quarter_view = shot == "back_three_quarter"
+    rear_hair_close = rear_three_quarter_view and rear_hair_close_request
     side_view = shot == "side_profile"
     full_mirror_view = shot == "mirror_full"
     gaze_line = (
@@ -644,11 +653,20 @@ def build_selfie_look_action(
             "由主角自行启动手机定时拍摄，拍摄者不入画；这是自摄成片，不要求出现手机或自拍手臂。"
             +
             (
-                "主角采用背后三分之四角度，镜头同时看到后背和一侧肩胯；一条腿自然承重，另一脚轻微错后，头部顺着身体方向，不回头、不回眸、不扭颈，也不要求露出正脸；双手按小动作自然配合，不凭空增加栏杆、手机或其他道具。"
+                (
+                    "主角采用背后三分之四侧后方头肩近景，镜头从斜后侧拍到发顶和肩胛上缘，清楚呈现后侧发型轮廓与近侧发束；"
+                    "头部随肩线自然朝向画外，不回头、不回眸、不扭颈，不要求露出正脸；肩颈放松，双手留在画外，不遮挡发型。"
+                    if rear_hair_close
+                    else "主角采用背后三分之四角度，镜头同时看到后背和一侧肩胯；一条腿自然承重，另一脚轻微错后，头部顺着身体方向，不回头、不回眸、不扭颈，也不要求露出正脸；双手按小动作自然配合，不凭空增加栏杆、手机或其他道具。"
+                )
                 if rear_three_quarter_view
                 else "主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈，也不要求露出正脸；双手按小动作自然配合，不强制垂放，不凭空增加栏杆、手机或其他道具。"
             )
-            + "保持竖屏半身中近景与自然透视，重点呈现背面发型和当前穿搭；不要美颜滤镜、不要棚拍精修。"
+            + (
+                "保持竖屏背面侧后方头肩近景，画面到肩胛上缘为止；不要扩展成腰部或全身构图，重点呈现当前发型和发饰；不要美颜滤镜、不要棚拍精修。"
+                if rear_hair_close
+                else "保持竖屏半身中近景与自然透视，重点呈现背面发型和当前穿搭；不要美颜滤镜、不要棚拍精修。"
+            )
             if rear_view
             else (
                 "身体侧向镜头的自拍构图：肩胯和头部朝向自然连贯，不回头硬露正脸；表情放松，保持面部自然可见。"
@@ -665,7 +683,11 @@ def build_selfie_look_action(
                 + "不要美颜滤镜、不要棚拍精修。"
             )
         )
-        + f"本次机位：{SELFIE_SHOT_LINES.get(shot, SELFIE_SHOT_LINES['arm_half'])}"
+        + (
+            "本次机位：竖幅背后三分之四头肩发型近景，从斜后侧取景，发顶至肩胛上缘入画。"
+            if rear_hair_close
+            else f"本次机位：{SELFIE_SHOT_LINES.get(shot, SELFIE_SHOT_LINES['arm_half'])}"
+        )
         + (f"场景倾向：{scene}。" if scene else "")
         + f"小动作：{gesture}。"
         + (f"光线：{light}。" if light else "")
