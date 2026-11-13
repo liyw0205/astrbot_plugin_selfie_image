@@ -9,7 +9,7 @@ import re
 import secrets
 import time
 from io import BytesIO
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from PIL import Image, ImageOps, ImageStat
 
@@ -179,6 +179,11 @@ class PromptLookupMixin:
             return copy.deepcopy(matches[0]) if len(matches) == 1 else None
 
     def _remember_prompt_delivery(self, event: Any, record: Mapping[str, Any], receipt: Any) -> None:
+        self._remember_prompt_deliveries(event, [(record, receipt)])
+
+    def _remember_prompt_deliveries(
+        self, event: Any, deliveries: Iterable[tuple[Mapping[str, Any], Any]],
+    ) -> None:
         def message_id(value: Any) -> str:
             if isinstance(value, Mapping):
                 found = value.get("message_id") or value.get("msg_id")
@@ -189,17 +194,39 @@ class PromptLookupMixin:
                 return str(value)
             return str(getattr(value, "message_id", "") or "")
 
-        mid = message_id(receipt)
-        if not mid:
+        scope = self._context_session_key(event)
+        by_record: dict[str, list[dict[str, str]]] = {}
+        for record, receipt in deliveries:
+            record_id = str(record.get("id") or "").strip()
+            mid = message_id(receipt)
+            if record_id and mid:
+                by_record.setdefault(record_id, []).append({"scope": scope, "message_id": mid})
+        if not by_record:
             return
         with self._records_lock:
-            current = next((r for r in self._records if r.get("id") == record.get("id")), None)
-            if current is None:
+            changed = []
+            for current in self._records:
+                additions = by_record.get(str(current.get("id") or ""))
+                if not additions:
+                    continue
+                messages = list(current.get("delivery_messages") or [])
+                updated = False
+                for item in additions:
+                    if item not in messages:
+                        messages.append(item)
+                        updated = True
+                if not updated:
+                    continue
+                current["delivery_messages"] = messages[-32:]
+                changed.append(current)
+            if not changed:
                 return
-            messages = list(current.get("delivery_messages") or [])
-            item = {"scope": self._context_session_key(event), "message_id": mid}
-            if item not in messages:
-                self._prompt_record_patch(str(current["id"]), {"delivery_messages": [*messages, item][-32:]})
+            database = self._record_database()
+            if database is not None:
+                for current in changed:
+                    database.upsert_record(current)
+            elif getattr(self, "records_path", ""):
+                save_json_file(self.records_path, {"records": self._records})
 
     def _lookup_prompt_image(self, event: Any, refs: list[Any], reply_ids: list[str]) -> tuple[dict[str, Any] | None, str, list[dict[str, Any]]]:
         records = [r for r in self._prompt_records_for_event(event) if r.get("generated_image_paths")]

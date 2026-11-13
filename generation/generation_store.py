@@ -986,6 +986,7 @@ class GenerationStoreMixin(PromptLookupMixin):
         error: str = "",
         paths: Optional[Iterable[str]] = None,
         record_id: str = "",
+        image_outcomes: Optional[Mapping[str, Tuple[Optional[bool], str]]] = None,
     ) -> int:
         """Mark records produced by a task after the outbound send finishes.
 
@@ -1012,6 +1013,20 @@ class GenerationStoreMixin(PromptLookupMixin):
                 )
             except Exception:
                 path_filter.add(text)
+        normalized_outcomes: Dict[str, Tuple[str, str]] = {}
+        for raw_path, raw_outcome in (image_outcomes or {}).items():
+            text = str(raw_path or "").strip()
+            if not text or not isinstance(raw_outcome, (tuple, list)) or not raw_outcome:
+                continue
+            try:
+                path = self._cache_relative_path(text) if os.path.isabs(text) else os.path.normpath(text)
+            except Exception:
+                path = text
+            state_value = raw_outcome[0]
+            state = "sent" if state_value is True else "failed" if state_value is False else "unknown"
+            outcome_error = redact_sensitive_text(str(raw_outcome[1] or ""))[:800] if len(raw_outcome) > 1 else ""
+            normalized_outcomes[path] = (state, outcome_error)
+        path_filter.update(normalized_outcomes)
         changed = 0
         records_lock = getattr(self, "_records_lock", None)
         records = getattr(self, "_records", None)
@@ -1049,8 +1064,16 @@ class GenerationStoreMixin(PromptLookupMixin):
                 states = {path: stored_states[path] for path in image_paths
                           if isinstance(stored_states, Mapping) and stored_states.get(path) in {"sent", "failed", "unknown"}}
                 outcome = "sent" if delivered is True else "failed" if delivered is False else "unknown"
+                record_errors = []
                 for path in image_paths:
                     if path_filter and path not in path_filter:
+                        continue
+                    explicit_outcome = normalized_outcomes.get(path)
+                    if explicit_outcome is not None:
+                        state, path_error = explicit_outcome
+                        states[path] = state
+                        if state == "failed" and path_error:
+                            record_errors.append(path_error)
                         continue
                     # Task-level aggregates must not overwrite a more precise
                     # per-image receipt (a batch can mix sent and failed files).
@@ -1061,10 +1084,11 @@ class GenerationStoreMixin(PromptLookupMixin):
                 record_failed = "failed" in image_states if image_states else delivered is False
                 record_unknown = not record_failed and ("unknown" in image_states if image_states else delivered is None)
                 delivery_success = False if record_failed else None if record_unknown else True
+                record_error = record_errors[0] if record_errors else safe_error
                 previous_delivery_error = str(record.get("delivery_error") or (record.get("error") if was_delivery_failed else "") or "")
                 if (was_delivery_failed or record.get("delivery_unknown")) and (
                     record.get("delivery_success") is not delivery_success
-                    or safe_error != previous_delivery_error
+                    or record_error != previous_delivery_error
                 ):
                     history = list(record.get("delivery_history") or [])
                     history.append({
@@ -1089,11 +1113,11 @@ class GenerationStoreMixin(PromptLookupMixin):
                 else:
                     record["status"] = "delivery_failed"
                     record["success"] = False
-                    if safe_error:
-                        record["delivery_error"] = safe_error
+                    if record_error:
+                        record["delivery_error"] = record_error
                         # Surface transport failures in list views as well as
                         # the detail-only delivery_error field.
-                        record["error"] = safe_error
+                        record["error"] = record_error
                 response = record.get("response_data")
                 if isinstance(response, dict):
                     previous_response_error = str(response.get("delivery_error") or (
@@ -1104,9 +1128,9 @@ class GenerationStoreMixin(PromptLookupMixin):
                     response["delivery_failed"] = record_failed
                     response["delivery_unknown"] = record_unknown
                     response["success"] = record.get("success")
-                    if safe_error and record_failed:
-                        response["delivery_error"] = safe_error
-                        response["error"] = safe_error
+                    if record_error and record_failed:
+                        response["delivery_error"] = record_error
+                        response["error"] = record_error
                     elif not record_failed:
                         response.pop("delivery_error", None)
                         if previous_response_error and response.get("error") == previous_response_error:

@@ -202,6 +202,32 @@ def test_delivery_receipt_quote_and_confirmed_alias_survive_restart_and_delete(p
     assert plugin._lookup_prompt_image(Event(), [ref], ["123"])[0] is None
 
 
+def test_batch_delivery_receipts_persist_once_and_ignore_duplicates(plugin, monkeypatch):
+    row = commit(plugin, generated_image_paths=["one.png", "two.png"])
+    database = plugin._record_database()
+    writes = []
+    upsert = database.upsert_record
+
+    def counted_upsert(record, **kwargs):
+        writes.append(record["id"])
+        return upsert(record, **kwargs)
+
+    monkeypatch.setattr(database, "upsert_record", counted_upsert)
+    deliveries = [
+        (row, {"message_id": "701"}),
+        (row, {"data": {"message_id": "702"}}),
+    ]
+    plugin._remember_prompt_deliveries(Event(), deliveries)
+
+    assert writes == [row["id"]]
+    assert plugin._records[0]["delivery_messages"] == [
+        {"scope": Event.unified_msg_origin, "message_id": "701"},
+        {"scope": Event.unified_msg_origin, "message_id": "702"},
+    ]
+    plugin._remember_prompt_deliveries(Event(), deliveries)
+    assert writes == [row["id"]]
+
+
 def test_quote_label_works_without_adapter_receipt(plugin):
     row = commit(plugin)
     event = Event()

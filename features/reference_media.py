@@ -26,6 +26,9 @@ from .reference_collector import ReferenceCollector
 from ..core.utils import detect_mime_by_bytes, extract_event_text, redact_sensitive_text
 
 
+IMAGE_DELIVERY_PERSIST_BATCH_SIZE = 4
+
+
 class ImageDeliveryOutcome(int):
     """Count successful sends while retaining ambiguous transport outcomes."""
 
@@ -395,96 +398,149 @@ class ReferenceMediaMixin:
         sent = 0
         failed = 0
         unknown = 0
-        for index, file_path in enumerate(files):
-            if index:
-                await asyncio.sleep(0.4)
-            record = None
-            try:
-                wait_record = getattr(self, "_wait_for_image_record", None)
-                if callable(wait_record):
-                    await wait_record(file_path)
-                    record = (
-                        self._prompt_record_for_file(file_path)
-                        if remember_failures
-                        else self._redelivery_record_for_file(event, file_path)
-                    )
-            except Exception as exc:
-                logger.warning("[SelfieImage] image code lookup failed: %s", redact_sensitive_text(str(exc)))
-            try:
-                result = event.chain_result([self._create_image_component(file_path)])
-                if (
-                    record
-                    and record.get("image_code")
-                    and getattr(getattr(self, "config", None), "image_show_generation_info", False)
-                ):
-                    result.message("\n生图编号：" + record["image_code"])
-                receipt = await event.send(result)
-            except Exception as exc:
-                logger.warning(
-                    "[SelfieImage] image send failed: %s",
-                    redact_sensitive_text(str(exc)),
-                )
-                ambiguous = _image_delivery_is_ambiguous(exc)
-                if ambiguous:
-                    unknown += 1
-                else:
-                    failed += 1
-                if on_outcome is not None:
-                    on_outcome(file_path, "unknown" if ambiguous else "failed")
-                if not ambiguous and remember_failures:
-                    owner = self._session_key(event)
-                    with self._send_failures_lock:
-                        self._send_failures.setdefault(owner, []).append(
-                            self._cache_relative_path(file_path)
+        pending: List[Tuple[dict, str, Any, Optional[bool], str]] = []
+
+        async def flush_pending() -> None:
+            if not pending:
+                return
+            batch = list(pending)
+            pending.clear()
+            await self._persist_image_deliveries(
+                event, batch, reconcile_task=not remember_failures,
+            )
+
+        try:
+            for index, file_path in enumerate(files):
+                if index:
+                    await asyncio.sleep(0.4)
+                record = None
+                try:
+                    wait_record = getattr(self, "_wait_for_image_record", None)
+                    if callable(wait_record):
+                        await wait_record(file_path)
+                        record = (
+                            self._prompt_record_for_file(file_path)
+                            if remember_failures
+                            else self._redelivery_record_for_file(event, file_path)
                         )
-                if record:
-                    await self._persist_image_delivery(
-                        event, record, file_path, None,
-                        delivered=None if ambiguous else False,
-                        error=str(exc), reconcile_task=not remember_failures,
+                except Exception as exc:
+                    logger.warning("[SelfieImage] image code lookup failed: %s", redact_sensitive_text(str(exc)))
+                try:
+                    result = event.chain_result([self._create_image_component(file_path)])
+                    if (
+                        record
+                        and record.get("image_code")
+                        and getattr(getattr(self, "config", None), "image_show_generation_info", False)
+                    ):
+                        result.message("\n生图编号：" + record["image_code"])
+                    receipt = await event.send(result)
+                except Exception as exc:
+                    logger.warning(
+                        "[SelfieImage] image send failed: %s",
+                        redact_sensitive_text(str(exc)),
                     )
-                continue
-            sent += 1
-            if on_outcome is not None:
-                on_outcome(file_path, "sent")
-            if record:
-                await self._persist_image_delivery(
-                    event, record, file_path, receipt,
-                    delivered=True, reconcile_task=not remember_failures,
-                )
-            self._record_bot_image_context(event, [file_path])
+                    ambiguous = _image_delivery_is_ambiguous(exc)
+                    if ambiguous:
+                        unknown += 1
+                    else:
+                        failed += 1
+                    if on_outcome is not None:
+                        on_outcome(file_path, "unknown" if ambiguous else "failed")
+                    if not ambiguous and remember_failures:
+                        owner = self._session_key(event)
+                        with self._send_failures_lock:
+                            self._send_failures.setdefault(owner, []).append(
+                                self._cache_relative_path(file_path)
+                            )
+                    if record:
+                        pending.append((record, file_path, None, None if ambiguous else False, str(exc)))
+                        if len(pending) >= IMAGE_DELIVERY_PERSIST_BATCH_SIZE:
+                            await flush_pending()
+                    continue
+                sent += 1
+                if on_outcome is not None:
+                    on_outcome(file_path, "sent")
+                if record:
+                    pending.append((record, file_path, receipt, True, ""))
+                    if len(pending) >= IMAGE_DELIVERY_PERSIST_BATCH_SIZE:
+                        await flush_pending()
+                self._record_bot_image_context(event, [file_path])
+        finally:
+            await flush_pending()
         return ImageDeliveryOutcome(sent, failed=failed, unknown=unknown)
 
-    async def _persist_image_delivery(
-        self, event: Any, record: dict, file_path: str, receipt: Any, *,
-        delivered: Optional[bool], error: str = "", reconcile_task: bool = False,
+    async def _persist_image_deliveries(
+        self,
+        event: Any,
+        deliveries: List[Tuple[dict, str, Any, Optional[bool], str]],
+        *,
+        reconcile_task: bool = False,
     ) -> None:
+        rows = [row for row in deliveries if row and row[0]]
+        if not rows:
+            return
+
         def persist() -> None:
-            if delivered:
+            delivered = [(record, receipt) for record, _path, receipt, state, _error in rows if state is True]
+            remember_many = getattr(self, "_remember_prompt_deliveries", None)
+            if delivered and callable(remember_many):
                 try:
-                    self._remember_prompt_delivery(event, record, receipt)
+                    remember_many(event, delivered)
                 except Exception as exc:
                     logger.warning("[SelfieImage] image message link failed: %s", redact_sensitive_text(str(exc)))
+            elif delivered:
+                remember_one = getattr(self, "_remember_prompt_delivery", None)
+                if callable(remember_one):
+                    for record, receipt in delivered:
+                        try:
+                            remember_one(event, record, receipt)
+                        except Exception as exc:
+                            logger.warning("[SelfieImage] image message link failed: %s", redact_sensitive_text(str(exc)))
+
+            outcomes_by_record: Dict[Tuple[str, str], Dict[str, Tuple[Optional[bool], str]]] = {}
+            task_ids = set()
+            for record, path, _receipt, state, error in rows:
+                task_id = str(record.get("task_id") or "").strip()
+                record_id = str(record.get("id") or "").strip()
+                key = (task_id, record_id)
+                outcomes_by_record.setdefault(key, {})[path] = (state, error)
+                if task_id:
+                    task_ids.add(task_id)
             update = getattr(self, "_update_generation_records_delivery", None)
             if callable(update):
-                update(
-                    str(record.get("task_id") or ""), record_id=str(record.get("id") or ""),
-                    delivered=delivered, error=error, paths=[file_path],
-                )
-            reconcile = getattr(self, "_reconcile_task_image_delivery", None)
-            if reconcile_task and callable(reconcile):
-                reconcile(str(record.get("task_id") or ""))
+                for (task_id, record_id), image_outcomes in outcomes_by_record.items():
+                    update(
+                        task_id,
+                        record_id=record_id,
+                        delivered=None,
+                        paths=image_outcomes,
+                        image_outcomes=image_outcomes,
+                    )
+            if reconcile_task:
+                reconcile = getattr(self, "_reconcile_task_image_delivery", None)
+                if callable(reconcile):
+                    for task_id in task_ids:
+                        reconcile(task_id)
 
         write = asyncio.create_task(asyncio.to_thread(persist))
         try:
             await asyncio.shield(write)
         except asyncio.CancelledError:
-            # A confirmed send must not become retryable while its durable
-            # receipt/status write is still running in a worker thread.
+            # Confirmed receipts must reach durable storage before cancellation exits.
             await asyncio.gather(write, return_exceptions=True)
             raise
         except Exception as exc:
             logger.warning("[SelfieImage] image delivery persistence failed: %s", redact_sensitive_text(str(exc)))
+
+    async def _persist_image_delivery(
+        self, event: Any, record: dict, file_path: str, receipt: Any, *,
+        delivered: Optional[bool], error: str = "", reconcile_task: bool = False,
+    ) -> None:
+        await self._persist_image_deliveries(
+            event,
+            [(record, file_path, receipt, delivered, error)],
+            reconcile_task=reconcile_task,
+        )
 
     async def retry_failed_images(self, event: AstrMessageEvent) -> dict:
         owner = self._session_key(event)

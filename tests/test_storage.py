@@ -239,6 +239,52 @@ class TestStorage:
             assert detail["delivery_success"] is False
             assert detail["response_data"]["delivery_error"] == "发送失败"
 
+    def test_batch_delivery_outcomes_write_one_record_with_per_image_states(self, monkeypatch) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            plugin._commit_generation_record(
+                {
+                    "id": "delivery-batch",
+                    "task_id": "cmd-batch",
+                    "success": True,
+                    "generation_success": True,
+                    "delivery_success": None,
+                    "generated_image_paths": ["one.png", "two.png", "three.png"],
+                    "response_data": {"success": True},
+                }
+            )
+            database = plugin._record_database()
+            assert database is not None
+            writes = []
+            upsert = database.upsert_record
+
+            def counted_upsert(record, **kwargs):
+                writes.append(record["id"])
+                return upsert(record, **kwargs)
+
+            monkeypatch.setattr(database, "upsert_record", counted_upsert)
+            changed = plugin._update_generation_records_delivery(
+                "cmd-batch",
+                delivered=None,
+                paths=["one.png", "two.png", "three.png"],
+                image_outcomes={
+                    "one.png": (True, ""),
+                    "two.png": (False, "send failed"),
+                    "three.png": (None, "receipt timed out"),
+                },
+            )
+
+            assert changed == 1
+            assert writes == ["delivery-batch"]
+            record = plugin.get_record_for_web("delivery-batch")
+            assert record["image_delivery"] == {
+                "one.png": "sent", "two.png": "failed", "three.png": "unknown",
+            }
+            assert record["delivery_success"] is False
+            assert record["delivery_failed"] is True
+            assert record["delivery_unknown"] is False
+            assert record["delivery_error"] == "send failed"
+
     def test_legacy_record_detail_backfills_channel_and_model(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             plugin = self._plugin(root)
