@@ -18,6 +18,7 @@ from ..core.utils import (
     redact_sensitive_data,
     redact_sensitive_text,
 )
+from ..features.config_manager import ConfigImportValidationError
 from .web import (
     MAX_ASSET_PAGE_LIMIT,
     MAX_CACHE_IMAGE_PATH_LENGTH,
@@ -36,6 +37,7 @@ from .services import (
     WebContractError,
     build_health_payload,
     catalog_pagination_requested,
+    config_patch_payload,
     filter_record_page,
     flatten_cos_pool_rows,
     gallery_pagination,
@@ -214,8 +216,6 @@ class SelfieImageDashboardAPI:
 
     async def _json_object_payload(self) -> tuple[Optional[dict], Any]:
         payload = await request.json(default={})
-        if payload is None:
-            return {}, None
         if not isinstance(payload, dict):
             return None, self._fail("请求体必须是 JSON 对象")
         return payload, None
@@ -358,8 +358,10 @@ class SelfieImageDashboardAPI:
                 proxy=(payload or {}).get("proxy") if isinstance((payload or {}).get("proxy"), dict) else payload,
             )
             return self._ok(data)
+        except ValueError as exc:
+            return self._fail(str(exc), 400)
         except Exception as exc:
-            return self._fail(str(exc))
+            return self._fail(str(exc), 500)
 
     async def page_proxy_quality(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -371,8 +373,10 @@ class SelfieImageDashboardAPI:
                 proxy=(payload or {}).get("proxy") if isinstance((payload or {}).get("proxy"), dict) else payload,
             )
             return self._ok(data)
+        except ValueError as exc:
+            return self._fail(str(exc), 400)
         except Exception as exc:
-            return self._fail(str(exc))
+            return self._fail(str(exc), 500)
 
     async def page_config_get(self) -> Any:
         return self._ok(self.plugin.get_config_for_web())
@@ -382,12 +386,10 @@ class SelfieImageDashboardAPI:
         if error:
             return error
         assert payload is not None
-        if "config" in payload:
-            if not isinstance(payload.get("config"), dict):
-                return self._fail("config 必须是 JSON 对象")
-            patch = payload["config"]
-        else:
-            patch = payload
+        try:
+            patch = config_patch_payload(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         try:
             data = self.plugin.update_config_from_web(patch)
             return self._ok(data)
@@ -396,25 +398,34 @@ class SelfieImageDashboardAPI:
 
     async def page_config_export(self) -> Any:
         raw = self._query_value("mode").strip().lower() in {"raw", "plain", "original"}
-        return self._ok(self.plugin.export_config_for_web(raw=raw))
+        try:
+            return self._ok(self.plugin.export_config_for_web(raw=raw))
+        except Exception as exc:
+            return self._fail(str(exc), 500)
 
     async def page_config_import_preview(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
         try:
-            return self._ok(self.plugin.preview_config_import(payload or {}))
+            patch = config_patch_payload(payload or {})
+            return self._ok(self.plugin.preview_config_import(patch))
+        except (ValueError, ConfigImportValidationError) as exc:
+            return self._fail(str(exc), 400)
         except Exception as exc:
-            return self._fail(str(exc))
+            return self._fail(str(exc), 500)
 
     async def page_config_import(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
         try:
-            return self._ok(self.plugin.import_config_from_web(payload or {}), message="配置导入成功")
-        except Exception as exc:
+            patch = config_patch_payload(payload or {})
+            return self._ok(self.plugin.import_config_from_web(patch), message="配置导入成功")
+        except (ValueError, ConfigImportValidationError) as exc:
             return self._fail(str(exc), 400)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
 
     async def page_qq_groups(self) -> Any:
         try:

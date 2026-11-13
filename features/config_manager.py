@@ -37,6 +37,10 @@ from ..core.utils import load_json_file, redact_sensitive_data, redact_sensitive
 WEB_STARTUP_CONFIG_KEYS = ("web", "webEnable", "webHost", "webPort", "webToken")
 DEFAULT_WEB_TOKEN = str(DEFAULT_CONFIG["web"].get("token") or "changeme").strip().lower()
 
+
+class ConfigImportValidationError(RuntimeError):
+    """A submitted configuration was rejected by the preflight validator."""
+
 # Credentials are never sent to the browser.  The dashboard still submits the
 # complete channel list when saving, so these markers must round-trip without
 # replacing an existing secret.  Keep the set deliberately small and explicit
@@ -544,6 +548,11 @@ class ConfigurationMixin:
         return cleaned
 
     def _load_initial_config(self) -> Dict[str, Any]:
+        source, _ = self._load_initial_config_state()
+        return source
+
+    def _load_initial_config_state(self) -> tuple[Dict[str, Any], AICatConfig]:
+        """Load raw/runtime config together, reusing normalization when safe."""
         persisted = self._strip_web_startup_config(load_json_file(self.config_path))
         normalized_persisted = normalize_legacy_keys(normalize_config_tree(persisted))
         permission_source = normalized_persisted.get("permission") if isinstance(normalized_persisted.get("permission"), dict) else {}
@@ -556,13 +565,23 @@ class ConfigurationMixin:
         )
         if legacy_usable_list:
             source.setdefault("permission", {})["usable_users_enabled"] = True
-        source.setdefault("image", {})["max_concurrent_tasks"] = AICatConfig.from_dict(source).image_max_concurrent_tasks
         source["web"] = copy.deepcopy(self.key_config["web"])
         _ensure_channel_ids(source)
         normalized = AICatConfig.from_dict(source)
+        source.setdefault("image", {})["max_concurrent_tasks"] = normalized.image_max_concurrent_tasks
+        normalized.raw.setdefault("image", {})["max_concurrent_tasks"] = normalized.image_max_concurrent_tasks
         for key in ("proxies", "image_channels", "audit_channels"):
             source[key] = copy.deepcopy(normalized.raw[key])
-        return source
+        for key in ("image_channels", "audit_channels"):
+            channels = getattr(normalized, key)
+            names = [channel.name for channel in channels]
+            if len(names) == len(set(names)):
+                continue
+            # Duplicate names make channel/proxy write-back non-idempotent.
+            # Preserve the former final parse only for this legacy edge case.
+            normalized = AICatConfig.from_dict(source)
+            break
+        return source, normalized
 
     def _persist_config(self) -> None:
         with self._config_lock:
@@ -643,7 +662,7 @@ class ConfigurationMixin:
         try:
             preview = self.preview_config_import(candidate)
             if not preview["ok"]:
-                raise RuntimeError("配置预检未通过")
+                raise ConfigImportValidationError("配置预检未通过")
             return self.update_config_from_web(candidate)
         except Exception:
             self._apply_raw_config(before)

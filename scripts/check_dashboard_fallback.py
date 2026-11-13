@@ -6,6 +6,11 @@ import hashlib
 import importlib.util
 from pathlib import Path
 
+if __package__:
+    from .build_dashboard import build_dashboard_page
+else:
+    from build_dashboard import build_dashboard_page
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "pages" / "dashboard" / "index.html"
@@ -22,6 +27,9 @@ def _load_fallback() -> str:
 
 
 def main() -> int:
+    if not build_dashboard_page(check=True):
+        print("dashboard page out of date: regenerate it from the editable sources")
+        return 1
     source = SOURCE.read_text(encoding="utf-8")
     fallback = _load_fallback()
     source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()

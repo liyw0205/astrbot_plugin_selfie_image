@@ -34,6 +34,14 @@ class WebContractError(ValueError):
         self.status_code = int(status_code or 400)
 
 
+def config_patch_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Accept flat and legacy wrapped config patches, not malformed wrappers."""
+    candidate = payload.get("config") if "config" in payload else payload
+    if not isinstance(candidate, dict):
+        raise WebContractError("config 必须是 JSON 对象")
+    return candidate
+
+
 CATALOG_PAGE_SIZE = 30
 MAX_CATALOG_PAGE_SIZE = 100
 THUMBNAIL_MAX_DIMENSION = 480

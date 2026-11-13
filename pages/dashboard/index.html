@@ -1704,7 +1704,7 @@
       </div>
       <p class="muted" id="modalProviderHint" style="margin-top:8px">渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。</p>
       <label class="checkline"><input id="modalEnabled" type="checkbox"> 启用渠道</label>
-      
+
       <div class="grid" style="margin-top: 12px;">
         <div class="model-panel">
           <div class="between">
@@ -2577,7 +2577,6 @@ Source prompt:
       CONFIG.image_model_call_mode = ($('imageModelCallMode') && $('imageModelCallMode').value) || 'sequence';
       return CONFIG;
     }
-
     function uniq(values) {
       const out = [], seen = new Set();
       for (const value of values || []) {
@@ -3211,7 +3210,7 @@ Source prompt:
       const cacheItems = (ch.models_cache || []).filter(item => !search || item.toLowerCase().includes(search));
       $('cacheCount').textContent = String((ch.models_cache || []).length);
       $('enabledCount').textContent = String(enabled.length);
-      
+
       const cacheModelsEl = $('cacheModels');
       if ((ch.models_cache || []).length > 10) {
         cacheModelsEl.classList.add('collapsed');
@@ -5611,7 +5610,6 @@ Source prompt:
       for (const path of files) await downloadCachePath(path, path.split('/').pop() || 'asset');
       showToast(`已开始下载 ${files.length} 个文件`, 'ok');
     }
-
     function cacheImageUrl(path) {
       return `/api/cache-image?path=${encodeURIComponent(path)}`;
     }
@@ -6853,7 +6851,6 @@ Source prompt:
         showToast(e.message || '重试提交失败', 'bad');
       }
     }
-
     async function readFileDataUrl(file) {
       return await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -7260,7 +7257,6 @@ Source prompt:
       if (clearStatus) $('testStatus').textContent = active ? `任务 ${TEST_TASK_ID} 仍在后台运行，展示已清空。` : '';
       showTestPanel('result');
     }
-
     function renderSelfieDailySchedule(payload) {
       const root = $('selfieDailySchedule');
       if (!root) return;
@@ -7510,7 +7506,6 @@ Source prompt:
       if (STUDIO.current && STUDIO.current.template) return String(STUDIO.current.template);
       return ($('studioTemplateSelect') && $('studioTemplateSelect').value) || 'duo';
     }
-
     const SPECIAL_PRESET_GROUP_LABELS = {action:'动作预设', upper:'上身预设', lower:'下身预设'};
     const SPECIAL_PRESET_GROUP_ORDER = {action:0, upper:1, lower:2};
     function promptPresetGroup(item) {
@@ -8412,7 +8407,6 @@ Source prompt:
       }
       renderCosPanel('testCosPanel', 'testPrompt', !!window.__TEST_COS_OPEN, 'testCosBtn');
     }
-
     function renderStudioPromptChips() {
       const wrap = $('studioPromptChips');
       if (!wrap) return;
@@ -9610,7 +9604,6 @@ Source prompt:
       if (!res.success) return showToast(res.message || '删除失败', 'bad');
       STUDIO.current = null; STUDIO.canvas = null; await loadStudioList('', {force:true}); showToast('画布已删除', 'ok');
     }
-
     function creativeCanvasApi(path, opts = {}) { return api('/api/creative-canvas' + path, opts); }
     function creativeCanvasTemplateList() {
       return CREATIVE_CANVAS.templates?.length ? CREATIVE_CANVAS.templates : [
@@ -9994,7 +9987,6 @@ Source prompt:
       };
       CREATIVE_CANVAS.pollTimer = setTimeout(poll, 900);
     }
-
     function navigateToTab(tab, options = {}) {
       const target = String(tab || '').trim();
       const button = [...document.querySelectorAll('nav.page-nav button[data-tab]')].find(item => item.dataset.tab === target);

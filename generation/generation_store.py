@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import threading
 import time
 from collections.abc import Mapping
@@ -1732,6 +1733,58 @@ class GenerationStoreMixin(PromptLookupMixin):
         except OSError:
             return False
 
+    def _reference_cache_index_entries(self) -> Dict[str, Tuple[Tuple[int, ...], str]]:
+        root = os.path.abspath(self.generated_dir)
+        if getattr(self, "_reference_cache_index_root", None) != root:
+            self._reference_cache_index_root = root
+            self._reference_cache_index = {}
+        return self._reference_cache_index
+
+    def _reference_cache_file_signature(self, path: str) -> Optional[Tuple[int, ...]]:
+        try:
+            info = os.stat(path)
+        except OSError:
+            return None
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_mode)
+
+    def _reference_cache_candidate_paths(self, digest: str) -> Iterable[str]:
+        """Refresh metadata, hashing only new or changed request files."""
+        entries = self._reference_cache_index_entries()
+        seen: set[str] = set()
+        for root, _, names in os.walk(self._reference_cache_index_root):
+            for name in names:
+                if not name.startswith("request_"):
+                    continue
+                path = os.path.join(root, name)
+                signature = self._reference_cache_file_signature(path)
+                if signature is None:
+                    continue
+                seen.add(path)
+                entry = entries.get(path)
+                if entry is None or entry[0] != signature:
+                    try:
+                        hasher = hashlib.sha256()
+                        with open(path, "rb") as handle:
+                            while chunk := handle.read(256 * 1024):
+                                hasher.update(chunk)
+                        # A concurrent external writer must not leave a digest
+                        # associated with metadata from a different file state.
+                        if self._reference_cache_file_signature(path) != signature:
+                            entries.pop(path, None)
+                            continue
+                    except OSError:
+                        entries.pop(path, None)
+                        continue
+                    entry = (signature, hasher.hexdigest())
+                    entries[path] = entry
+                if entry[1] == digest:
+                    yield path
+        for path in list(entries):
+            if path not in seen:
+                entries.pop(path, None)
+
     def _save_or_reuse_reference_image(self, ref: ImageReference) -> str:
         """Reuse a content-addressed request cache file when possible."""
         data = bytes(ref.data or b"")
@@ -1740,11 +1793,12 @@ class GenerationStoreMixin(PromptLookupMixin):
         ext = ext_from_mime(mime)
         lock = getattr(self, "_reference_cache_lock", None)
         if lock is None:
-            lock = threading.RLock()
-            self._reference_cache_lock = lock
+            lock = self.__dict__.setdefault("_reference_cache_lock", threading.RLock())
         with lock, self._inflight_media_mutex():
             os.makedirs(self.generated_dir, exist_ok=True)
-            target = os.path.join(self.generated_dir, f"request_{digest}.{ext}")
+            entries = self._reference_cache_index_entries()
+            deterministic = os.path.join(self._reference_cache_index_root, f"request_{digest}.{ext}")
+            target = deterministic
 
             def matches(path: str) -> bool:
                 try:
@@ -1754,21 +1808,25 @@ class GenerationStoreMixin(PromptLookupMixin):
                     return False
 
             if not os.path.isfile(target) or not matches(target):
-                # Reuse request files written by older plugin versions before
-                # deterministic names were introduced.
+                entries.pop(deterministic, None)
                 target = ""
-                for root, _, names in os.walk(self.generated_dir):
-                    for name in names:
-                        if not name.startswith("request_"):
-                            continue
-                        candidate = os.path.join(root, name)
+                for candidate, (_, candidate_digest) in list(entries.items()):
+                    if candidate_digest != digest:
+                        continue
+                    if matches(candidate):
+                        target = candidate
+                        break
+                    entries.pop(candidate, None)
+                if not target:
+                    # Preserve legacy content reuse without rereading the
+                    # complete cache on every new digest miss.
+                    for candidate in self._reference_cache_candidate_paths(digest):
                         if matches(candidate):
                             target = candidate
                             break
-                    if target:
-                        break
+                        entries.pop(candidate, None)
                 if not target:
-                    target = os.path.join(self.generated_dir, f"request_{digest}.{ext}")
+                    target = deterministic
                     temp = f"{target}.{time.time_ns()}.tmp"
                     try:
                         with open(temp, "wb") as handle:
@@ -1780,6 +1838,9 @@ class GenerationStoreMixin(PromptLookupMixin):
                                 os.unlink(temp)
                         except OSError:
                             pass
+                    signature = self._reference_cache_file_signature(target)
+                    if signature is not None:
+                        entries[target] = (signature, digest)
             rel_path = self._cache_relative_path(target)
             self._register_inflight_media([rel_path])
             return rel_path

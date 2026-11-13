@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="logo.png">
+  <title>Selfie Image 管理面板</title>
+  <style>
+<!-- dashboard-source: styles.css -->
+  </style>
+  <style id="bento-studio-theme">
+<!-- dashboard-source: bento-theme.css -->
+  </style>
+</head>
+<body>
+  <div id="loginPage" class="login-page">
+    <div class="login-box">
+      <p class="header-eyebrow">Selfie Image</p>
+      <h1>管理登录</h1>
+      <p class="muted" id="loginHint">请输入管理口令后进入。</p>
+      <label>管理口令</label>
+      <input id="loginToken" type="password" placeholder="管理口令" autocomplete="current-password">
+      <div class="actions">
+        <button id="loginBtn" class="ok">进入</button>
+      </div>
+      <div id="loginStatus" class="status"></div>
+    </div>
+  </div>
+
+  <header class="app-shell">
+    <div class="header-brand">
+      <img class="header-logo" src="logo.png" alt="" onerror="this.style.display='none'">
+      <div>
+        <p class="header-eyebrow">Selfie Image</p>
+        <h1>生图 · 自拍 管理</h1>
+        <p class="header-sub">渠道、试画、形象与记录</p>
+      </div>
+    </div>
+    <nav id="pageNav" class="page-nav" aria-label="功能分区">
+      <button data-tab="base" class="active" type="button">工作台</button>
+      <button data-tab="channels" type="button">模型渠道</button>
+      <button data-tab="groups" type="button">群聊配置</button>
+      <button data-tab="proxies" type="button">代理设置</button>
+      <button data-tab="monitor" type="button">生成记录</button>
+      <button data-tab="assets" type="button">资产库</button>
+      <button data-tab="studio" type="button">无限画布</button>
+      <button data-tab="creativeCanvas" type="button">创作画布</button>
+      <button data-tab="presets" type="button">预设管理</button>
+      <button data-tab="test" type="button">快速试画</button>
+      <button data-tab="image" type="button">出图设置</button>
+      <button data-tab="selfie" type="button">形象参考</button>
+      <button data-tab="audit" type="button">辅助功能</button>
+      <button data-tab="raw" type="button">高级配置</button>
+    </nav>
+    <div class="topline">
+      <button id="reloadAll" class="secondary">刷新全部</button>
+      <button id="logoutBtn" class="secondary">退出</button>
+    </div>
+  </header>
+  <div id="sidebarBackdrop" class="sidebar-backdrop" aria-hidden="true"></div>
+  <main class="app-shell">
+    <button id="bentoMobileMenu" class="bento-mobile-menu" type="button" style="display:none;margin:0 0 16px;background:var(--panel);border-color:var(--line);color:var(--text);box-shadow:var(--shadow-soft)">☰　Selfie Image</button>
+
+    <section id="base" class="active floating-action-section">
+      <div class="floating-actions" aria-label="工作台操作">
+        <button id="pageSaveAll" class="ok" type="button" data-tooltip="保存配置" aria-label="保存配置" title="保存配置"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5z"></path><path d="M8 3v6h8V3"></path><path d="M8 21v-7h8v7"></path></svg></span></button>
+      </div>
+      <div class="bento-welcome">
+        <div class="bento-hero">
+          <div class="eyebrow">CREATIVE WORKSPACE</div>
+          <h2>把灵感变成可以分享的画面。</h2>
+          <p>从一次试画开始，管理你的模型渠道、形象参考与生成记录。</p>
+          <button type="button" data-nav-target="test">开始一次创作　→</button>
+        </div>
+        <div class="bento-quick">
+          <button class="bento-tile" type="button" data-nav-target="test"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>快速试画</b><span>快速验证一个想法</span></button>
+          <button class="bento-tile" type="button" data-nav-target="studio"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"></path><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"></path></svg></div><b>无限画布</b><span>打开画布，继续创作</span></button>
+          <button class="bento-tile" type="button" data-nav-target="presets"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5z"></path><path d="M8 8h8M8 12h8M8 16h5"></path></svg></div><b>预设管理</b><span>整理提示词和 COS 池</span></button>
+          <button class="bento-tile" type="button" data-nav-target="selfie"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg></div><b>形象参考</b><span>管理固定形象</span></button>
+          <button class="bento-tile" type="button" data-nav-target="channels"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg></div><b>模型渠道</b><span>检查运行状态</span></button>
+          <button class="bento-tile" type="button" data-nav-target="monitor"><div class="bento-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 6h14M5 12h14M5 18h14"></path><circle cx="3" cy="6" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="12" r=".7" fill="currentColor" stroke="none"></circle><circle cx="3" cy="18" r=".7" fill="currentColor" stroke="none"></circle></svg></div><b>生成记录</b><span>查看最近任务</span></button>
+        </div>
+      </div>
+      <div class="between">
+        <h2>基础</h2>
+      </div>
+      <div class="health-header">
+        <div class="health-header-copy"><strong>连接状态</strong><span class="muted">插件接口、缓存和数据文件</span></div>
+        <span id="healthPill" class="pill gray">未连接</span>
+      </div>
+      <div id="health" class="health-grid" aria-live="polite"><div class="health-message">还没连上</div></div>
+      <div class="actions" style="margin-top:8px">
+        <button id="cleanupCacheBtn" class="danger" type="button" title="仅清理未被记录、收藏、置顶或画布会话引用的超限缓存">清理可回收缓存</button>
+      </div>
+      <div class="grid">
+        <div><label>图片缓存上限（MB）</label><input id="cacheLimitMB" type="number" min="10" max="102400"></div>
+        <div><label>图片缓存上限（张）</label><input id="cacheLimitCount" type="number" min="10" max="10000"></div>
+        <div><label>记录保留量（条）</label><input id="recordKeepLimit" type="number" min="10" max="10000"></div>
+        <div><label>说明</label><div class="status">缓存上限建议不小于记录保留量；请求图和生成图共用缓存。自动清理按记录整组移除最旧的媒体，未被记录、收藏、置顶或画布会话引用的文件优先清理。</div></div>
+      </div>
+    </section>
+
+    <section id="channels" class="floating-action-section">
+      <div class="between">
+        <h2>渠道</h2>
+      </div>
+      <p class="muted">模型协议可按模型名自动识别，也可在已启用模型旁手动切换。新建/编辑渠道点「保存渠道」才写入；列表里启停会马上保存，删除、复制和优先级也会自动保存。启用但没选模型时会自动关掉该渠道。</p>
+      <div class="tabs-inline" role="tablist" aria-label="渠道分类">
+        <button id="channelTabImage" class="active" type="button" onclick="switchChannelPane('image')">生图渠道</button>
+        <button id="channelTabAudit" type="button" onclick="switchChannelPane('audit')">辅助渠道</button>
+      </div>
+      <div id="channelPaneImage" class="channel-pane active"><div id="channelList"></div></div>
+      <div id="channelPaneAudit" class="channel-pane"><div id="auditChannelList"></div></div>
+      <div class="priority-block" data-priority-kind="image">
+        <h3>生图模型优先级</h3>
+        <p class="muted">候选范围：有优先级时只用优先级模型，未设置时使用全部启用模型。顺序会依次重试，随机只选一个，固定只用候选模型 1。</p>
+        <div class="grid">
+          <div><label>模型调用模式</label><select id="imageModelCallMode" onchange="onImageModelCallModeChange()"><option value="sequence">顺序</option><option value="random">随机</option><option value="fixed">固定</option></select></div>
+          <div><label>选择生图模型</label><select id="priorityPicker"></select></div>
+          <div><label>操作</label><div class="actions" style="margin-top:0"><button id="addPriorityBtn" class="secondary" type="button" onclick="addPriority('image')">加入</button><button id="clearPriorityBtn" class="secondary" type="button" onclick="clearPriority('image')">清空</button></div></div>
+        </div>
+        <textarea id="priorityList" style="display:none"></textarea>
+        <div id="priorityRows" class="model-list"></div>
+      </div>
+      <div class="priority-block" data-priority-kind="audit">
+        <h3>辅助模型优先级</h3>
+        <p class="muted">只控制辅助渠道；文字审核、成品审核、图转文和翻译按此顺序寻找可用模型。</p>
+        <div class="grid">
+          <div><label>选择辅助模型</label><select id="auditPriorityPicker"></select></div>
+          <div><label>操作</label><div class="actions" style="margin-top:0"><button class="secondary" type="button" onclick="addPriority('audit')">加入</button><button class="secondary" type="button" onclick="clearPriority('audit')">清空</button></div></div>
+        </div>
+        <textarea id="auditPriorityList" style="display:none"></textarea>
+        <div id="auditPriorityRows" class="model-list"></div>
+      </div>
+      <div id="channelStatus" class="status" style="margin-top:12px"></div>
+      <div class="floating-actions" aria-label="添加渠道">
+        <button class="secondary has-label" type="button" data-channel-add="image" onclick="addChannel()" data-tooltip="添加生图渠道" aria-label="添加生图渠道" title="添加生图渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">图</span></button>
+        <button class="secondary has-label" type="button" data-channel-add="audit" onclick="addAuditChannel()" data-tooltip="添加辅助渠道" aria-label="添加辅助渠道" title="添加辅助渠道"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span><span class="floating-label">辅</span></button>
+      </div>
+    </section>
+
+    <section id="groups" class="floating-action-section">
+      <div class="between">
+        <h2>群聊配置</h2>
+        <div class="actions" style="margin-top:0">
+          <button id="refreshGroupsBtn" class="secondary" type="button">刷新群列表</button>
+          <button id="saveGroupsBtn" class="ok" type="button" disabled>保存群配置</button>
+        </div>
+      </div>
+      <div id="groupsStatus" class="status">尚未读取群列表</div>
+      <div class="group-access-panel">
+        <div class="between">
+          <h3>全局可用名单</h3>
+          <label class="group-usable-toggle"><input id="groupUsableEnabled" type="checkbox">启用限制</label>
+        </div>
+        <p class="muted" style="margin:6px 0 0">填写后仅名单内用户可生图；启用时会覆盖用户黑白名单和群聊访问类型。</p>
+        <textarea id="groupUsableUsers" aria-label="全局可用名单" placeholder="例如：10001|10002"></textarea>
+        <div id="groupUsableNote" class="group-policy-note" hidden>全局可用名单正在生效：用户访问名单和群聊类型已禁用；模型模式仍可配置。</div>
+      </div>
+      <div class="group-access-panel" id="groupUserAccessPanel">
+        <div class="between">
+          <h3>用户访问名单</h3>
+          <span class="muted">多个 QQ 号可用 | 或英文逗号分隔</span>
+        </div>
+        <div class="grid">
+          <div><label>用户黑名单</label><textarea id="groupBlockedUsers" placeholder="例如：10001|10002"></textarea></div>
+          <div><label>用户白名单</label><textarea id="groupWhitelistUsers" placeholder="例如：20001,20002"></textarea></div>
+        </div>
+        <div id="groupAccessSummary" class="group-access-summary" aria-live="polite"></div>
+      </div>
+      <div class="group-config-list" id="groupConfigTable" style="margin-top:12px">
+        <div class="group-config-head" role="row"><span>群聊</span><span>类型</span><span>模型模式</span><span>固定模型</span></div>
+        <div id="groupConfigRows"><div class="muted">点击“刷新群列表”读取 QQ 群。</div></div>
+      </div>
+    </section>
+
+
+    <section id="proxies" class="floating-action-section">
+      <div class="between">
+        <h2>代理</h2>
+      </div>
+      <p class="muted">统一管理 HTTP / SOCKS5 代理。渠道只从已启用列表中选择；连通测试看出口，质量测试探测常用生图站点是否可达。</p>
+      <div id="proxyList" class="model-list" style="margin-top:12px"></div>
+      <div id="proxyStatus" class="status" style="margin-top:12px"></div>
+      <div class="floating-actions" aria-label="代理操作">
+        <button class="secondary" type="button" onclick="renderProxyList()" data-tooltip="刷新列表" aria-label="刷新列表" title="刷新列表"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
+        <button class="ok" type="button" onclick="openProxyModal(-1)" data-tooltip="添加代理" aria-label="添加代理" title="添加代理"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
+      </div>
+    </section>
+
+    <section id="monitor" class="floating-action-section">
+      <div class="between">
+        <h2>生成记录</h2>
+        <div class="actions" style="margin-top:0">
+          <button class="danger" onclick="clearRecords()">清空记录</button>
+        </div>
+      </div>
+      <div class="grid4">
+        <div><label>记录类型</label><select id="monitorMedia"><option value="">全部</option><option value="image">图片</option></select></div>
+        <div><label>来源筛选</label><input id="monitorSource" list="monitorSourceList" placeholder="输入来源关键词"><datalist id="monitorSourceList"></datalist></div>
+        <div><label>模型筛选</label><select id="monitorModel"><option value="">全部</option></select></div>
+        <div><label>状态</label><select id="monitorSuccess"><option value="">全部</option><option value="true">成功</option><option value="false">失败</option></select></div>
+        <div><label>指标窗口</label><select id="monitorMetricsWindow"><option value="all">全部保留记录</option><option value="1h">最近 1 小时</option><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select></div>
+        <div><label>资产标记</label><select id="monitorAsset"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
+        <div><label>标签</label><input id="monitorTag" placeholder="输入标签"></div>
+        <div><label>关键词</label><input id="monitorKeyword" placeholder="编号或提示词"></div>
+      </div>
+      <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
+      <div class="metrics-launcher-header"><strong>运行概览</strong><span id="monitorMetricsWindowLabel" class="muted">统计范围：全部保留记录</span></div>
+      <div id="monitorMetricButtons" class="metrics-launcher-grid" aria-label="运行概览分类"></div>
+      <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button></div>
+      <div class="grid" style="margin-top:8px">
+        <div><label>显示范围</label><select id="taskQueueScope" onchange="taskQueueViewChanged()"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
+        <div><label>媒体类型</label><select id="taskQueueMedia" onchange="taskQueueViewChanged()"><option value="">全部</option><option value="image">图片</option></select></div>
+        <div><label>任务状态</label><select id="taskQueueStatus" onchange="taskQueueFilterChanged()"><option value="">全部</option><option value="queued">排队</option><option value="running">进行中</option><option value="succeeded">完成</option><option value="partial_success">部分完成</option><option value="failed">失败</option><option value="delivery_failed">发送失败</option><option value="cancelled">已取消</option><option value="expired">已过期</option></select></div>
+        <div><label>来源筛选</label><input id="taskQueueSource" placeholder="例如：LLM、画布、重试" oninput="taskQueueFilterChanged()"></div>
+        <div><label>模型筛选</label><input id="taskQueueModel" placeholder="输入模型名" oninput="taskQueueFilterChanged()"></div>
+        <div><label>关键词</label><input id="taskQueueKeyword" placeholder="提示词或失败原因" oninput="taskQueueFilterChanged()"></div>
+        <div><label>开始日期</label><input id="taskQueueStartDate" type="date" onchange="taskQueueFilterChanged()"></div>
+        <div><label>结束日期</label><input id="taskQueueEndDate" type="date" onchange="taskQueueFilterChanged()"></div>
+      </div>
+      <div class="between" style="margin-top:10px;gap:8px">
+        <span id="taskSelectionStatus" class="muted">未选择任务</span>
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <select id="taskRetryStrategy" class="mini" title="批量重试策略"><option value="full">完整保留参数</option><option value="model_only">只换模型</option><option value="channel_only">只换渠道</option><option value="lower_resolution">降低分辨率</option></select>
+          <button class="secondary mini" type="button" onclick="selectVisibleTasks()">选择当前页</button>
+          <button class="secondary mini" type="button" onclick="clearTaskSelection()">取消选择</button>
+          <button class="secondary mini" type="button" onclick="exportSelectedTasks()">导出任务</button>
+          <button class="ok mini" type="button" onclick="retrySelectedTasks()">批量重试</button>
+          <button class="danger mini" type="button" onclick="deleteSelectedTasks()">删除任务</button>
+        </div>
+      </div>
+      <div id="taskQueueSummary" class="status"></div>
+      <div style="overflow:auto;margin-top:8px"><table class="table" id="taskQueueTable"></table></div>
+      <div id="taskQueuePager" class="actions" style="margin-top:8px;justify-content:flex-end"></div>
+      <div style="overflow:auto;margin-top:12px"><table class="table" id="recordTable"></table></div>
+      <div class="between" style="margin-top:8px;gap:8px">
+        <span id="recordSelectionStatus" class="muted">未选择记录</span>
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary mini" type="button" onclick="selectVisibleRecords()">选择当前页</button>
+          <button class="secondary mini" type="button" onclick="clearRecordSelection()">取消选择</button>
+          <button class="ok mini" type="button" onclick="compareSelectedRecords()">对比选中记录</button>
+        </div>
+      </div>
+      <div id="monitorPager" class="actions"></div>
+      <div class="floating-actions" aria-label="记录操作">
+        <button class="secondary" type="button" onclick="loadRecords(true)" data-tooltip="刷新记录" aria-label="刷新记录" title="刷新记录"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
+      </div>
+    </section>
+
+    <section id="assets" class="floating-action-section">
+      <div class="between">
+        <div>
+          <h2>资产库</h2>
+          <p class="muted">集中浏览已生成的图片，支持组合筛选与批量整理。</p>
+        </div>
+        <div class="actions" style="margin-top:0">
+          <div class="asset-preset-picker">
+            <input id="assetStudioPresetSearch" class="mini" type="search" placeholder="搜索预设" aria-label="搜索加入画布预设">
+            <select id="assetStudioPreset" class="mini" title="加入画布时附加的预设"><option value="">不套预设</option></select>
+            <button id="assetStudioPresetPrev" class="secondary mini" type="button" title="上一页" aria-label="预设上一页" disabled>‹</button>
+            <button id="assetStudioPresetNext" class="secondary mini" type="button" title="下一页" aria-label="预设下一页" disabled>›</button>
+          </div>
+          <button class="secondary mini" type="button" onclick="addSelectedAssetToStudio()">加入画布</button>
+          <button class="secondary" type="button" onclick="exportAssets()">导出元数据</button>
+          <button class="secondary" type="button" onclick="document.getElementById('assetImportFile').click()">导入元数据</button>
+          <input id="assetImportFile" type="file" accept="application/json,.json" style="display:none">
+        </div>
+      </div>
+      <div class="grid4">
+        <div><label>关键词</label><input id="assetKeyword" placeholder="编号、提示词、备注、来源或模型"></div>
+        <div><label>来源</label><input id="assetSource" placeholder="来源关键词"></div>
+        <div><label>模型筛选</label><select id="assetModel"><option value="">全部</option></select></div>
+        <div><label>媒体类型</label><select id="assetMedia"><option value="">全部</option><option value="image" selected>图片</option></select></div>
+        <div><label>状态</label><select id="assetSuccess"><option value="">全部</option><option value="true" selected>成功</option><option value="false">失败</option></select></div>
+        <div><label>资产标记</label><select id="assetMark"><option value="">全部</option><option value="favorite">收藏</option><option value="pinned">置顶</option></select></div>
+        <div><label>标签</label><input id="assetTag" list="assetTagList" placeholder="精确匹配标签"><datalist id="assetTagList"></datalist></div>
+        <div><label>排序</label><select id="assetSort"><option value="recent">最新生成</option><option value="oldest">最早生成</option><option value="priority">置顶/收藏优先</option></select></div>
+        <div><label>开始日期</label><input id="assetStartTime" type="date"></div>
+        <div><label>结束日期</label><input id="assetEndTime" type="date"></div>
+      </div>
+      <div id="assetStats" class="stat-grid" style="margin-top:12px"></div>
+      <div class="asset-toolbar">
+        <span id="assetSelectionStatus" class="muted">当前页未选择资产</span>
+        <div class="actions">
+          <button class="secondary mini" type="button" onclick="selectAllAssets()">全选当前页</button>
+          <button class="secondary mini" type="button" onclick="clearAssetSelection()">取消选择</button>
+          <button class="ok mini" type="button" onclick="batchAssetMetadata('favorite', true)">批量收藏</button>
+          <button class="secondary mini" type="button" onclick="batchAssetMetadata('favorite', false)">取消收藏</button>
+          <button class="ok mini" type="button" onclick="batchAssetMetadata('pinned', true)">批量置顶</button>
+          <button class="secondary mini" type="button" onclick="batchAssetMetadata('pinned', false)">取消置顶</button>
+          <button class="secondary mini" type="button" onclick="batchDownloadAssets()">批量下载</button>
+          <button class="danger mini" type="button" onclick="deleteSelectedAssets()">删除选中</button>
+        </div>
+        <div class="asset-bulk-form">
+          <input id="assetBatchTags" placeholder="选中项标签（逗号分隔）">
+          <button class="secondary mini" type="button" onclick="applyBatchAssetFields('tags')">应用标签</button>
+          <input id="assetBatchNote" placeholder="选中项备注">
+          <button class="secondary mini" type="button" onclick="applyBatchAssetFields('note')">应用备注</button>
+        </div>
+      </div>
+      <div id="assetGrid" class="asset-grid"></div>
+      <div id="assetPager" class="actions"></div>
+      <div id="assetStatus" class="status" style="margin-top:12px"></div>
+      <div class="floating-actions" aria-label="资产操作">
+        <button class="secondary" type="button" onclick="loadAssets(true)" data-tooltip="刷新资产" aria-label="刷新资产" title="刷新资产"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.8-4L3 10"></path><path d="M3 5v5h5"></path><path d="M4 13a8 8 0 0 0 14.8 4L21 14"></path><path d="M21 19v-5h-5"></path></svg></span></button>
+      </div>
+    </section>
+
+
+    <section id="studio" class="floating-action-section studio-workspace">
+      <div class="studio-topbar">
+        <div>
+          <h2>无限画布</h2>
+          <div id="studioStatus" class="studio-status-line">选择画布后开始创作</div>
+        </div>
+        <div class="studio-session-picker">
+          <label for="studioSessionSelect">画布</label>
+          <select id="studioSessionSelect" aria-label="选择无限画布"></select>
+          <button class="secondary mini" id="studioReloadBtn" type="button" aria-label="刷新画布" title="刷新画布">刷新</button>
+          <button class="danger mini" id="studioDeleteBtn" type="button" disabled>删除画布</button>
+        </div>
+      </div>
+      <div id="studioEmptyState" class="studio-empty">
+        <strong>还没有无限画布</strong>
+        <div class="muted" style="margin-top:6px">点击右下角 + 开始新的创作。</div>
+      </div>
+      <div id="studioEditor" class="studio-canvas-layout" hidden>
+        <aside class="studio-graph-sidebar" aria-label="画面列表">
+          <div class="studio-sidebar-head">
+            <div><b id="studioGraphTitle">未命名画布</b><span id="studioGraphMeta" class="muted">0 个画面</span></div>
+            <button class="icon-button" id="studioSidebarToggle" type="button" title="收起画面列表" aria-label="收起画面列表">‹</button>
+          </div>
+          <input id="studioNodeSearch" class="studio-node-search" type="search" placeholder="搜索画面" aria-label="搜索画面">
+          <div id="studioNodeList" class="studio-node-list"></div>
+        </aside>
+        <div class="studio-canvas-viewport" id="studioCanvasViewport" tabindex="0" aria-label="无限画布">
+          <div class="studio-canvas-grid" id="studioCanvasGrid">
+            <svg id="studioCanvasEdges" class="studio-canvas-edges" aria-hidden="true"></svg>
+            <div id="studioCanvasNodes" class="studio-canvas-nodes"></div>
+          </div>
+          <div id="studioCanvasHint" class="studio-canvas-hint">拖动空白区域平移，滚轮缩放</div>
+          <div class="studio-canvas-controls" aria-label="画布视图">
+            <button class="icon-button mobile-only" id="studioMobileNodes" type="button" title="打开画面列表" aria-label="打开画面列表">☷</button>
+            <button class="icon-button" id="studioZoomOut" type="button" title="缩小" aria-label="缩小">−</button>
+            <span id="studioZoomLabel">100%</span>
+            <button class="icon-button" id="studioZoomIn" type="button" title="放大" aria-label="放大">+</button>
+            <button class="icon-button" id="studioZoomReset" type="button" title="重置视图" aria-label="重置视图">⌂</button>
+          </div>
+        </div>
+        <aside id="studioNodePanel" class="studio-node-panel" aria-label="画面详情" hidden>
+          <div class="studio-node-panel-head">
+            <div><span class="eyebrow">画面详情</span><h3 id="studioNodePanelTitle">选择一个画面</h3></div>
+            <button class="icon-button" id="studioNodePanelClose" type="button" title="关闭画面详情" aria-label="关闭画面详情">×</button>
+          </div>
+          <div id="studioNodePanelBody" class="studio-node-panel-body"></div>
+        </aside>
+      </div>
+      <div class="floating-actions" aria-label="画布操作">
+        <button class="ok" id="studioCreateBtn" type="button" data-tooltip="开始新创作" aria-label="开始新创作" title="开始新创作"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
+      </div>
+      <input id="studioTitle" type="hidden"><input id="studioPrompt" type="hidden"><input id="studioMode" type="hidden"><input id="studioAspect" type="hidden"><input id="studioResolution" type="hidden"><input id="studioCount" type="hidden"><input id="studioUsePersona" type="checkbox" hidden>
+    </section>
+
+    <section id="creativeCanvas" class="floating-action-section creative-canvas-workspace">
+      <div class="studio-topbar">
+        <div>
+          <h2>创作画布</h2>
+          <div id="creativeCanvasStatus" class="studio-status-line">选择画布后开始创作</div>
+        </div>
+        <div class="studio-session-picker">
+          <label for="creativeCanvasSessionSelect">画布</label>
+          <select id="creativeCanvasSessionSelect" aria-label="选择创作画布"></select>
+          <button class="secondary mini" id="creativeCanvasReloadBtn" type="button" aria-label="刷新创作画布" title="刷新创作画布">刷新</button>
+          <button class="danger mini" id="creativeCanvasDeleteBtn" type="button" disabled>删除画布</button>
+        </div>
+      </div>
+      <div id="creativeCanvasEmptyState" class="studio-empty">
+        <strong>还没有创作画布</strong>
+        <div class="muted" style="margin-top:6px">点击右下角 + 选择模板，开始创作。</div>
+      </div>
+      <div id="creativeCanvasEditor" class="creative-canvas-editor" hidden>
+        <div class="grid">
+          <div><label>标题</label><input id="creativeCanvasTitle" placeholder="画布标题"></div>
+          <div><label>模式</label><select id="creativeCanvasMode"><option value="group">合影</option><option value="selfie">自拍</option><option value="i2i">图生图</option><option value="t2i">文生图</option></select></div>
+          <div><label>画面比例</label><select id="creativeCanvasAspect"></select></div>
+          <div><label>清晰度</label><select id="creativeCanvasResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+          <div><label>张数</label><input id="creativeCanvasCount" type="number" min="1" max="4" value="1"></div>
+        </div>
+        <label class="checkline"><input id="creativeCanvasUsePersona" type="checkbox" checked> 缺形象槽时使用当前形象</label>
+        <label>画面描述</label>
+        <textarea id="creativeCanvasPrompt" rows="3" placeholder="自然并肩合影…"></textarea>
+        <div class="actions" style="margin-top:8px"><button class="secondary" id="creativeCanvasPresetBtn" type="button">预设</button><button class="secondary" id="creativeCanvasCosBtn" type="button">COS池</button></div>
+        <div class="preset-panel" id="creativeCanvasPresetPanel"></div>
+        <div class="preset-panel" id="creativeCanvasCosPanel"></div>
+        <div class="between" style="margin-top:8px">
+          <h3>参考图</h3>
+          <div class="actions"><button class="secondary" id="creativeCanvasAddSlotBtn" type="button">添加参考图</button></div>
+        </div>
+        <div class="studio-slots" id="creativeCanvasSlots"></div>
+        <div class="actions">
+          <button class="ok" id="creativeCanvasSaveBtn" type="button">保存</button>
+          <button class="ok" id="creativeCanvasRunBtn" type="button">生成图片</button>
+          <button class="secondary" id="creativeCanvasRerunBtn" type="button">再次生成</button>
+          <button class="danger" id="creativeCanvasCancelBtn" type="button" style="display:none">取消生成</button>
+        </div>
+        <h3>生成结果</h3>
+        <div class="studio-results" id="creativeCanvasResults"></div>
+        <input id="creativeCanvasFilePick" type="file" accept="image/*" style="display:none">
+      </div>
+      <div class="floating-actions" aria-label="创作操作">
+        <button class="ok" id="creativeCanvasCreateBtn" type="button" data-tooltip="选择模板开始创作" aria-label="选择模板开始创作" title="选择模板开始创作"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
+      </div>
+    </section>
+
+    <section id="presets" class="floating-action-section">
+      <div class="between">
+        <div>
+          <h2>预设管理</h2>
+          <p class="muted">管理生图指令里的预设。导入导出使用 JSON 文本，不会下载文件。</p>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="presetImportBtn" type="button">导入文本</button>
+          <button class="secondary" id="presetExportBtn" type="button">导出并复制</button>
+        </div>
+      </div>
+      <div class="tabs-inline" style="margin-top:12px" role="tablist" aria-label="预设类型">
+        <button id="presetKindImage" class="active" type="button" role="tab">生图预设</button>
+        <button id="presetKindCos" type="button" role="tab">COS 池</button>
+        <button id="presetKindNai" type="button" role="tab">NAI 画师串</button>
+      </div>
+      <div class="between" style="margin-top:12px">
+        <span id="presetManagerStatus" class="status">正在读取预设…</span>
+        <button class="secondary" id="presetReloadBtn" type="button">刷新列表</button>
+      </div>
+      <div id="presetManagerViews" class="preset-manager-views">
+        <div id="presetPromptManager" class="preset-manager-view">
+          <input id="presetManagerSearch" type="search" placeholder="搜索预设名或提示词" aria-label="搜索预设名或提示词">
+          <div id="presetManagerList" class="preset-manager-list"></div>
+          <div id="presetManagerPager" class="catalog-pager"></div>
+        </div>
+        <div id="presetCosManager" class="preset-manager-view" hidden>
+          <div class="card soft" style="margin-top:14px">
+            <div class="between">
+              <div>
+                <strong>COS 池</strong>
+                <div class="muted" style="margin-top:4px">管理内置和自定义服饰提示词，收藏项会优先显示。</div>
+              </div>
+              <div class="actions" style="margin-top:0">
+                <button class="secondary mini" id="presetCosMaintainBtn" type="button">维护 COS 池</button>
+                <button class="secondary mini" id="presetCosImportBtn" type="button">导入</button>
+                <button class="secondary mini" id="presetCosExportBtn" type="button">导出</button>
+              </div>
+            </div>
+            <div id="presetCosManagerStatus" class="status" style="margin-top:10px">切换到 COS 池后加载</div>
+            <input id="presetCosManagerSearch" type="search" placeholder="搜索套装名或提示词" aria-label="搜索 COS 套装名或提示词" style="margin-top:10px">
+          </div>
+          <div id="presetCosManagerList" class="preset-manager-list"></div>
+          <div id="presetCosManagerPager" class="catalog-pager"></div>
+        </div>
+      </div>
+      <div class="floating-actions" aria-label="预设操作">
+        <button class="ok" id="presetAddBtn" type="button" data-tooltip="新增预设" aria-label="新增预设" title="新增预设"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></button>
+      </div>
+    </section>
+
+    <section id="test">
+      <div class="between"><h2>试画</h2></div>
+      <div class="grid">
+        <div><label>用哪个渠道</label><select id="testChannel"></select></div>
+        <div><label>模型</label><select id="testModel"></select></div>
+        <div><label>画面比例</label><select id="testAspect"></select></div>
+        <div id="testResolutionWrap"><label>清晰度</label><select id="testResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+        <div id="testCountWrap"><label>生成数量</label><input id="testCount" type="number" min="1" max="100" value="1" title="单次试画最多生成几张"></div>
+      </div>
+      <div class="between">
+        <label id="testPromptLabel">想画什么</label>
+      </div>
+      <textarea id="testPrompt">一只可爱的白色猫咪，坐在樱花树下，柔和光线，精致插画风格</textarea>
+      <div class="actions" style="margin-top:8px">
+        <button class="secondary" id="testPresetBtn" type="button">预设</button>
+        <button class="secondary" id="testCosBtn" type="button">COS池</button>
+      </div>
+      <div class="preset-panel" id="testPresetPanel"></div>
+      <div class="preset-panel" id="testCosPanel"></div>
+      <div class="detail-title"><h3>模板变量</h3><span class="muted">可直接写 {角色}、{场景} 等占位符</span></div>
+      <div class="grid4 creative-template-grid">
+        <div><label>角色</label><input id="testTemplateRole" placeholder="例如：宁红夜"></div>
+        <div><label>服饰</label><input id="testTemplateOutfit" placeholder="例如：红色旗袍"></div>
+        <div><label>场景</label><input id="testTemplateScene" placeholder="例如：庭院廊下"></div>
+        <div><label>姿势</label><input id="testTemplatePose" placeholder="例如：侧身回看"></div>
+        <div><label>镜头</label><input id="testTemplateShot" placeholder="例如：竖屏半身"></div>
+        <div><label>视角</label><input id="testTemplateView" placeholder="例如：他拍视角"></div>
+        <div><label>光线</label><input id="testTemplateLighting" placeholder="例如：窗光"></div>
+        <div class="actions" style="align-items:end;margin-top:0"><button class="secondary mini" id="testTemplatePreviewBtn" type="button">预览模板</button><button class="secondary mini" id="testTemplateRandomBtn" type="button">随机模板</button></div>
+      </div>
+      <div class="grid" style="margin-top:4px">
+        <label class="checkline"><input id="testTemplateRandomize" type="checkbox"> 未填写变量时随机补全</label>
+        <label class="checkline"><input id="testVariationEnabled" type="checkbox"> 批次变化（轮换姿势/场景/镜头）</label>
+      </div>
+      <div id="testVariationFieldsWrap" class="grid4" style="display:none;margin-top:4px">
+        <label class="checkline"><input type="checkbox" value="pose" data-test-vary checked> 姿势</label>
+        <label class="checkline"><input type="checkbox" value="scene" data-test-vary checked> 场景</label>
+        <label class="checkline"><input type="checkbox" value="shot" data-test-vary checked> 镜头</label>
+        <label class="checkline"><input type="checkbox" value="view" data-test-vary> 视角</label>
+      </div>
+      <div id="testTemplatePreview" class="status" style="display:none;margin-top:8px"></div>
+      <div class="grid">
+        <label class="checkline" id="promptEnhanceWrap"><input id="promptEnhance" type="checkbox"> 润色提示词</label>
+        <label class="checkline" id="useSelfieWrap"><input id="useSelfie" type="checkbox"> 带上当前形象参考<span id="useSelfieHint"></span></label>
+        <div><label id="testRefsLabel">额外参考图</label><input id="testRefs" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml" multiple></div>
+      </div>
+      <div class="actions">
+        <button class="ok" id="testImageBtn">开始试画</button>
+        <button class="danger" id="testCancelBtn" type="button" style="display:none">取消任务</button>
+        <button class="secondary" id="testRetryStatusBtn" type="button" style="display:none">重新查询</button>
+        <button class="secondary" onclick="showTestPanel('request')">看请求</button>
+        <button class="secondary" onclick="showTestPanel('response')">看响应</button>
+        <button class="secondary" onclick="showTestPanel('result')">看结果</button>
+        <button class="danger" onclick="clearTestData()">清空</button>
+      </div>
+      <div id="testStatus" class="status"></div>
+      <div id="testRequestPanel" class="test-panel"><h3>请求数据</h3><pre id="testRequestData"></pre></div>
+      <div id="testResponsePanel" class="test-panel"><h3>响应数据</h3><pre id="testResponseData"></pre></div>
+      <div id="testResultPanel" class="test-panel active"><h3>生成结果</h3><div id="testImages" class="images"></div></div>
+    </section>
+
+    <section id="image">
+      <h2>出图习惯</h2>
+      <div class="grid4">
+        <div><label>默认比例</label><select id="defaultAspect"></select></div>
+        <div><label>默认清晰度</label><select id="defaultResolution"><option>1K</option><option>2K</option><option>4K</option></select></div>
+        <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="5" title="同一时间最多几张图一起请求上游；批量 /看看COS 会按这个数并发"></div>
+        <div><label title="全部模型依次请求到结束的最长等待">整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
+        <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
+        <div><label>单条指令最多请求几张</label><input id="maxBatchCount" type="number" min="1" max="100" title="限制单条指令最多请求几张；不同指令之间不共用这个上限"></div>
+        <div><label>连画失败时</label>
+          <select id="batchOnFailure">
+            <option value="skip">跳过失败张，继续后面</option>
+            <option value="stop">一张失败就整批停</option>
+            <option value="skip_max">最多跳过 N 张后停止</option>
+          </select>
+        </div>
+        <div><label>最多跳过张数</label><input id="batchSkipMax" type="number" min="0" max="8" title="仅「最多跳过 N 张」时生效"></div>
+        <div><label>每人冷却（秒）</label><input id="rateLimitSeconds" type="number" min="0"></div>
+        <div><label>每日基础次数</label><input id="dailyLimitCount" type="number" min="1"></div>
+      </div>
+      <div class="grid">
+        <label class="checkline"><input id="enableLLMTool" type="checkbox"> 对话里也能叫我出图/自拍</label>
+        <label class="checkline"><input id="showGenerationInfo" type="checkbox"> 回复里带上生图编号、耗时和张数</label>
+        <label class="checkline"><input id="showModelInfo" type="checkbox"> 回复里带上用了哪个模型</label>
+        <label class="checkline"><input id="enableDailyLimit" type="checkbox"> 开启每日次数上限</label>
+      </div>
+      <div id="imageStatus" class="status"></div>
+    </section>
+
+    <section id="selfie">
+      <h2>形象</h2>
+      <div class="grid">
+        <div><label>默认自拍比例</label><select id="selfieAspect"></select></div>
+      </div>
+      <label class="checkline"><input id="useLogoWhenNoPersona" type="checkbox" checked> 无形象图用 logo</label>
+      <div class="grid">
+        <div>
+          <label>形象类型</label>
+          <select id="selfieAppearanceType">
+            <option value="auto">自动（不追加类型说明）</option>
+            <option value="real">真人（补形象是真人）</option>
+            <option value="anime">动漫（补形象是动漫人物）</option>
+          </select>
+        </div>
+      </div>
+      <h3>形象参考图</h3>
+      <input id="selfieFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml">
+      <img id="selfiePreview" class="preview" alt="selfie reference">
+      <div class="actions selfie-reference-actions">
+        <button id="uploadSelfie">上传并保存</button>
+        <button class="secondary" onclick="refreshSelfie(true)">刷新预览</button>
+        <button class="danger" onclick="clearSelfie()">清除参考图</button>
+        <button class="secondary" onclick="refreshDailySelfieLocal()">本地刷新</button>
+      </div>
+      <div id="selfieStatus" class="selfie-reference-state" aria-live="polite"></div>
+      <div id="selfieDailySchedule" class="daily-schedule" hidden></div>
+    </section>
+
+    <section id="audit">
+      <h2>辅助功能</h2>
+      <div class="grid">
+        <label class="checkline"><input id="enablePromptAudit" type="checkbox"> 出图前审文字</label>
+        <label class="checkline"><input id="enableOutputAudit" type="checkbox"> 出图后审成品</label>
+        <div><label>文字审核模型</label><select id="promptAuditModel"></select></div>
+        <div><label>文字审核拒绝阈值 (%)</label><input id="promptAuditThreshold" type="number" min="0" max="100" step="1"></div>
+        <div><label>成品审核模型</label><select id="outputAuditModel"></select></div>
+        <div><label>成品审核拒绝阈值 (%)</label><input id="outputAuditThreshold" type="number" min="0" max="100" step="1"></div>
+        <div><label>图转文模型</label><select id="ocrModel"></select><div class="muted">留空时使用当前 LLM</div></div>
+      </div>
+      <label>文字屏蔽词</label><textarea id="blockedWords"></textarea>
+      <div class="muted">每行一个词，也可用逗号分隔；按不区分大小写的字面包含匹配，不支持正则。</div>
+      <label>文字审核说明</label><textarea id="promptAuditTemplate"></textarea>
+      <label>成品审核说明</label><textarea id="outputAuditTemplate"></textarea>
+      <h3 style="margin-top:18px">提示词转英文</h3>
+      <p class="muted">部分模型对中文不友好。开启后，在真正请求渠道前把提示词译成英文；原文仍记入记录。走辅助渠道对话模型，失败则保留原文。</p>
+      <div class="grid">
+        <label class="checkline"><input id="enableImagePromptEn" type="checkbox"> 生图提示词转英文</label>
+        <div><label>翻译模式</label>
+          <select id="promptEnMode">
+            <option value="if_cjk">含中文时翻译</option>
+            <option value="always">始终翻译</option>
+          </select>
+        </div>
+        <div><label>翻译模型</label><select id="promptEnModel"></select></div>
+      </div>
+      <label>生图翻译说明</label><textarea id="imagePromptEnTemplate" rows="8" placeholder="将填入默认翻译说明"></textarea>
+      <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核和图转文请选能看图的模型；留空时使用当前 LLM。转英文与辅助功能共用辅助渠道模型。</div>
+    </section>
+
+    <section id="raw" class="floating-action-section">
+      <h2>高级 · 配置原文</h2>
+      <p class="muted">这里改的是插件自己的配置，不包含 AstrBot 启动用的网页地址和口令。</p>
+      <textarea id="configText" style="min-height:360px"></textarea>
+      <div class="actions">
+        <button onclick="loadConfig()">读取 JSON</button>
+        <button class="secondary" type="button" onclick="exportJsonConfig()">导出 JSON</button>
+        <button class="secondary" type="button" onclick="document.getElementById('configImportFile').click()">导入 JSON</button>
+        <input id="configImportFile" type="file" accept="application/json,.json" style="display:none">
+      </div>
+      <div id="configStatus" class="status"></div>
+      <div class="floating-actions" aria-label="配置操作">
+        <button class="ok" type="button" onclick="saveJsonConfig()" data-tooltip="保存 JSON" aria-label="保存 JSON" title="保存 JSON"><span class="floating-icon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5z"></path><path d="M8 3v6h8V3"></path><path d="M8 21v-7h8v7"></path></svg></span></button>
+      </div>
+    </section>
+  </main>
+
+  <div id="channelModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2 id="channelModalTitle">编辑生图渠道</h2>
+        <button class="secondary" type="button" onclick="closeChannelModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+      <div class="grid">
+        <div><label>渠道名</label><input id="modalChannelName"></div>
+        <div style="display:none" id="modalProviderWrap"><label>类型</label><select id="modalProvider"></select></div>
+        <div class="baseurl-row">
+          <div><label>Base URL</label><input id="modalBaseUrl" placeholder="https://..."></div>
+          <button class="secondary restore-btn" id="modalBaseUrlRestore" type="button" title="恢复为当前类型默认 Base URL" aria-label="恢复默认 Base URL">↺</button>
+        </div>
+        <div><label>API Key（可多行，每行一把；鉴权失败或限流会自动换下一把）</label><textarea id="modalApiKey" rows="3" placeholder="sk-xxx&#10;sk-yyy"></textarea></div>
+        <div><label>代理</label><select id="modalProxyId"><option value="">直连（不使用代理）</option></select></div>
+      </div>
+      <p class="muted" id="modalProviderHint" style="margin-top:8px">渠道默认协议会按模型名自动识别；也可在下方已启用模型旁手动切换协议。</p>
+      <label class="checkline"><input id="modalEnabled" type="checkbox"> 启用渠道</label>
+
+      <div class="grid" style="margin-top: 12px;">
+        <div class="model-panel">
+          <div class="between">
+            <h3>缓存模型</h3>
+            <span id="cacheCount" class="pill gray">0</span>
+          </div>
+          <label>搜索缓存</label><input id="cacheSearch" placeholder="输入模型名筛选">
+          <div id="cacheModels" class="model-list"></div>
+        </div>
+        <div class="model-panel">
+          <div class="between">
+            <h3>已启用模型顺序</h3>
+            <span id="enabledCount" class="pill green">0</span>
+          </div>
+          <div class="grid">
+            <div><label>手动添加模型</label><input id="manualModel" placeholder="model-id"></div>
+            <div><label>操作</label><button class="secondary" type="button" id="manualAdd">添加</button></div>
+          </div>
+          <div id="enabledModels" class="model-list"></div>
+        </div>
+      </div>
+
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top: 0; justify-content: flex-end;">
+          <button id="modalRefreshModels" type="button">刷新模型缓存</button>
+          <button class="secondary" id="modalEnableAll" type="button">移除全部启用</button>
+          <button class="ok" id="modalSave" type="button">保存渠道</button>
+        </div>
+        <div id="modalStatus" class="status"></div>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="proxyModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2 id="proxyModalTitle">添加代理</h2>
+        <button class="secondary" type="button" onclick="closeProxyModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid">
+          <div><label>名称</label><input id="proxyName" placeholder="可选，默认用 协议://主机:端口"></div>
+          <div><label>协议</label>
+            <select id="proxyProtocol">
+              <option value="http">HTTP</option>
+              <option value="https">HTTPS</option>
+              <option value="socks5">SOCKS5</option>
+              <option value="socks5h">SOCKS5H</option>
+            </select>
+          </div>
+          <div><label>IP / 主机</label><input id="proxyHost" placeholder="127.0.0.1"></div>
+          <div><label>端口</label><input id="proxyPort" type="number" min="1" max="65535" placeholder="7890"></div>
+          <div><label>账号（可选）</label><input id="proxyUser" placeholder="可空"></div>
+          <div><label>密码（可选）</label><input id="proxyPass" type="password" placeholder="可空；编辑留空表示不改"></div>
+        </div>
+        <label class="checkline" style="margin-top:10px"><input id="proxyEnabled" type="checkbox" checked> 启用</label>
+        <div id="proxyModalStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" type="button" onclick="closeProxyModal()">取消</button>
+          <button class="ok" type="button" onclick="saveProxyModal()">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="recordModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2>监控详情</h2>
+        <button class="secondary" type="button" onclick="closeRecordDetail()">关闭</button>
+      </div>
+      <div class="modal-body"><div id="recordDetailBody"></div></div>
+    </div>
+  </div>
+
+  <div id="compareModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2>结果对比</h2>
+        <button class="secondary" type="button" onclick="closeCompareModal()">关闭</button>
+      </div>
+      <div class="modal-body"><div id="compareBody"></div></div>
+    </div>
+  </div>
+
+  <div id="taskModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2>任务详情</h2>
+        <button class="secondary" type="button" onclick="closeTaskDetail()">关闭</button>
+      </div>
+      <div class="modal-body"><div id="taskDetailBody"></div></div>
+    </div>
+  </div>
+
+  <div id="metricsModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="metricsModalTitle">
+    <div class="modal metrics-dialog">
+      <div class="between">
+        <div>
+          <h2 id="metricsModalTitle">运行概览</h2>
+          <div id="metricsModalScope" class="muted"></div>
+        </div>
+        <button class="secondary" type="button" onclick="closeMetricsModal()">关闭</button>
+      </div>
+      <div class="modal-body"><div id="metricsModalBody"></div></div>
+    </div>
+  </div>
+
+  <div id="mediaSourceModal" class="modal-mask">
+    <div class="modal media-source-modal-dialog">
+      <div class="between">
+        <h2 id="mediaSourceModalTitle">原始来源</h2>
+        <button class="secondary" type="button" onclick="closeMediaSourceModal()">关闭</button>
+      </div>
+      <div id="mediaSourcePreview" class="media-source-preview"></div>
+    </div>
+  </div>
+
+  <div id="mediaLightboxModal" class="modal-mask">
+    <div class="media-lightbox-dialog" role="dialog" aria-modal="true" aria-labelledby="mediaLightboxTitle">
+      <div class="media-lightbox-toolbar">
+        <strong id="mediaLightboxTitle">图片预览</strong>
+        <div>
+          <button id="mediaLightboxDownload" class="icon-button" type="button" title="下载" aria-label="下载"></button>
+          <button id="mediaLightboxClose" class="icon-button" type="button" title="关闭" aria-label="关闭">×</button>
+        </div>
+      </div>
+      <div class="media-lightbox-stage"><div id="mediaLightboxStatus" class="muted">正在加载图片…</div><img id="mediaLightboxImage" alt=""></div>
+    </div>
+  </div>
+
+  <div id="presetEditorModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2 id="presetEditorTitle">新增预设</h2>
+        <button class="secondary" type="button" onclick="closePresetEditor()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid">
+          <div><label>预设名</label><input id="presetName" maxlength="100" placeholder="例如：夜景人像"></div>
+          <div id="presetAspectWrap"><label>画面比例（可选）</label><input id="presetAspect" placeholder="例如：9:16"></div>
+          <div id="presetResolutionWrap"><label>清晰度（可选）</label><input id="presetResolution" placeholder="例如：1K"></div>
+          <div><label>说明（可选）</label><input id="presetDescription" placeholder="给自己看的备注"></div>
+        </div>
+        <label>提示词</label><textarea id="presetPrompt" rows="7" placeholder="输入这个预设要追加的提示词"></textarea>
+        <label>额外提示词（可选）</label><textarea id="presetExtraPrompt" rows="4" placeholder="会和主提示词一起使用"></textarea>
+        <div id="presetEditorStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" type="button" onclick="closePresetEditor()">取消</button>
+          <button class="ok" id="presetEditorSaveBtn" type="button">保存预设</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="presetTransferModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2 id="presetTransferTitle">预设文本</h2>
+        <button class="secondary" type="button" onclick="closePresetTransfer()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p id="presetTransferHint" class="muted">文本可以直接复制或粘贴；这里不会创建文件。</p>
+        <textarea id="presetTransferText" class="preset-transfer-text" spellcheck="false"></textarea>
+        <div id="presetTransferStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" id="presetTransferCopyBtn" type="button">复制到剪贴板</button>
+          <button class="ok" id="presetTransferImportBtn" type="button" style="display:none">导入并合并</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="cosPoolModal" class="modal-mask">
+    <div class="modal">
+      <div class="between">
+        <h2>维护 COS 池</h2>
+        <button class="secondary" type="button" onclick="closeCosPoolModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid">
+          <div><label>ID</label><input id="cosCustomId" maxlength="120" placeholder="例如：my-red-dress"></div>
+          <div><label>名称</label><input id="cosCustomTitle" maxlength="200" placeholder="例如：我的红色礼服"></div>
+        </div>
+        <label>服饰提示词</label><textarea id="cosCustomPrompt" rows="7" placeholder="只填写服饰细节；姿势和环境可留给通用随机池"></textarea>
+        <label>标签（可选，逗号分隔）</label><input id="cosCustomTags" placeholder="汉服,红色">
+        <div id="cosPoolStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer"><div class="actions" style="margin-top:0;justify-content:flex-end">
+        <button class="secondary" type="button" onclick="exportCosPool()">导出池</button>
+        <button class="secondary" type="button" onclick="openCosPoolImport()">导入池</button>
+        <button class="ok" type="button" onclick="saveCustomCos()">保存自定义 COS</button>
+      </div></div>
+    </div>
+  </div>
+
+  <div id="studioCreateModal" class="modal-mask">
+    <div class="modal studio-create-dialog">
+      <div class="between">
+        <h2>开始新的无限画布</h2>
+        <button class="secondary" type="button" onclick="closeStudioCreateModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted">按模板新建画布后，就可以继续调整画面描述、参考图和生成参数。</p>
+        <label>模板</label>
+        <select id="studioTemplateSelect"></select>
+        <label style="margin-top:12px">标题（可选）</label>
+        <input id="studioCreateTitle" placeholder="例如：周末合影">
+        <div id="studioCreateStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" type="button" onclick="closeStudioCreateModal()">取消</button>
+          <button class="ok" id="studioCreateConfirmBtn" type="button">开始创作</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="studioConnectModal" class="modal-mask">
+    <div class="modal studio-create-dialog">
+      <div class="between">
+        <h2>选择参考画面</h2>
+        <button class="secondary" type="button" onclick="closeStudioConnectModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div id="studioConnectHint" class="muted">选择一张已有画面，当前画面会沿用它的图片继续创作。</div>
+        <div id="studioConnectList" class="studio-connect-list"></div>
+        <div id="studioConnectStatus" class="status" style="margin-top:10px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="creativeCanvasCreateModal" class="modal-mask">
+    <div class="modal studio-create-dialog">
+      <div class="between">
+        <h2>开始创作</h2>
+        <button class="secondary" type="button" onclick="closeCreativeCanvasCreateModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted">选择一个模板开始创作。</p>
+        <label>模板</label>
+        <select id="creativeCanvasTemplateSelect"></select>
+        <label style="margin-top:12px">标题（可选）</label>
+        <input id="creativeCanvasCreateTitle" placeholder="例如：周末合影">
+        <div id="creativeCanvasCreateStatus" class="status" style="margin-top:10px"></div>
+      </div>
+      <div class="modal-footer"><div class="actions" style="margin-top:0;justify-content:flex-end">
+        <button class="secondary" type="button" onclick="closeCreativeCanvasCreateModal()">取消</button>
+        <button class="ok" id="creativeCanvasCreateConfirmBtn" type="button">创建画布</button>
+      </div></div>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal confirm-dialog">
+      <div class="between">
+        <h2 id="confirmTitle">请确认操作</h2>
+        <button class="secondary" type="button" id="confirmCloseBtn" aria-label="关闭确认窗口">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirmMessage" class="confirm-message"></p>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" type="button" id="confirmCancelBtn">取消</button>
+          <button class="danger" type="button" id="confirmProceedBtn">确认</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="configExportModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="configExportTitle">
+    <div class="modal confirm-dialog">
+      <div class="between">
+        <h2 id="configExportTitle">导出配置 JSON</h2>
+        <button class="secondary" type="button" id="configExportCloseBtn">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p class="confirm-message">选择导出内容：原文包含 API Key、Token 和代理密码，请妥善保管。</p>
+      </div>
+      <div class="modal-footer">
+        <div class="actions" style="margin-top:0;justify-content:flex-end">
+          <button class="secondary" type="button" id="configExportCancelBtn">取消</button>
+          <button class="secondary" type="button" id="configExportMaskedBtn">脱敏</button>
+          <button class="danger" type="button" id="configExportRawBtn">原文</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="groupConfigModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="groupConfigModalTitle">
+    <div class="modal group-config-dialog">
+      <div class="between">
+        <div><h2 id="groupConfigModalTitle">群聊配置</h2><p id="groupConfigModalHint" class="muted" style="margin:4px 0 0"></p></div>
+        <button class="secondary mini" type="button" onclick="closeGroupConfigModal()" aria-label="关闭窗口">关闭</button>
+      </div>
+      <div class="modal-body" style="margin-top:14px">
+        <div id="groupConfigSearchWrap" class="group-config-search" style="display:none"><input id="groupConfigSearch" type="search" placeholder="搜索已启用模型" aria-label="搜索模型"></div>
+        <div id="groupConfigModalBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastWrap" class="toast-wrap"></div>
+
+  <!-- AstrBot rewrites this URL with its short-lived page token when embedded. -->
+  <script src="/api/plugin/page/bridge-sdk.js" defer></script>
+  <script>
+<!-- dashboard-source: runtime.js -->
+<!-- dashboard-source: channel_editor.js -->
+<!-- dashboard-source: configuration.js -->
+<!-- dashboard-source: monitoring.js -->
+<!-- dashboard-source: records_assets.js -->
+<!-- dashboard-source: protected_media.js -->
+<!-- dashboard-source: record_details.js -->
+<!-- dashboard-source: image_test.js -->
+<!-- dashboard-source: selfie_auth.js -->
+<!-- dashboard-source: prompt_catalogs.js -->
+<!-- dashboard-source: studio_sessions.js -->
+<!-- dashboard-source: studio_graph.js -->
+<!-- dashboard-source: creative_canvas.js -->
+<!-- dashboard-source: bootstrap.js -->
+  </script>
+  <script>
+<!-- dashboard-source: mobile_navigation.js -->
+  </script>
+</body>
+</html>

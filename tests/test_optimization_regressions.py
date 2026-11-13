@@ -1145,6 +1145,12 @@ def test_dashboard_fallback_generation_and_check_scripts_share_canonical_source(
     assert len(source) > 500000
 
 
+def test_dashboard_fallback_build_and_hash_checks_execute() -> None:
+    from scripts.check_dashboard_fallback import main as check_dashboard_fallback
+
+    assert check_dashboard_fallback() == 0
+
+
 def test_web_route_alias_contract_is_shared_by_both_adapters() -> None:
     assert len(TASK_CANCEL_ROUTE_ALIASES) == len(DASHBOARD_TASK_CANCEL_ROUTES) == 3
     assert DASHBOARD_ROUTE_PREFIXES == ("", "page/")

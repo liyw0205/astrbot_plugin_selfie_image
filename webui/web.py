@@ -19,6 +19,7 @@ from ..core.utils import (
     redact_sensitive_data,
     redact_sensitive_text,
 )
+from ..features.config_manager import ConfigImportValidationError
 from ..generation.generation_records import metric_window_seconds
 from .contracts import TASK_CANCEL_ROUTE_ALIASES
 from .services import (
@@ -27,6 +28,7 @@ from .services import (
     WebContractError,
     build_health_payload,
     catalog_pagination_requested,
+    config_patch_payload,
     filter_record_page,
     flatten_cos_pool_rows,
     gallery_pagination,
@@ -510,12 +512,10 @@ class FlaskWebServer:
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            if "config" in payload:
-                if not isinstance(payload.get("config"), dict):
-                    return fail("config 必须是 JSON 对象")
-                patch = payload["config"]
-            else:
-                patch = payload
+            try:
+                patch = config_patch_payload(payload)
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
             try:
                 data = self.plugin.update_config_from_web(patch)
                 return ok(data)
@@ -529,6 +529,36 @@ class FlaskWebServer:
             raw = str(request.args.get("mode") or "").strip().lower() in {"raw", "plain", "original"}
             try:
                 return ok(self.plugin.export_config_for_web(raw=raw))
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/config/import/preview", methods=["POST"])
+        def config_import_preview() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                patch = config_patch_payload(payload)
+                return ok(self.plugin.preview_config_import(patch))
+            except (ValueError, ConfigImportValidationError) as exc:
+                return fail(str(exc), 400)
+            except Exception as exc:
+                return fail(str(exc), 500)
+
+        @app.route("/api/config/import", methods=["POST"])
+        def config_import() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            try:
+                patch = config_patch_payload(payload)
+                return ok(self.plugin.import_config_from_web(patch), message="配置导入成功")
+            except (ValueError, ConfigImportValidationError) as exc:
+                return fail(str(exc), 400)
             except Exception as exc:
                 return fail(str(exc), 500)
 
@@ -690,6 +720,8 @@ class FlaskWebServer:
                     timeout=30,
                 )
                 return ok(data)
+            except ValueError as exc:
+                return fail(str(exc), 400)
             except Exception as exc:
                 return fail(str(exc), 500)
 
@@ -709,6 +741,8 @@ class FlaskWebServer:
                     timeout=90,
                 )
                 return ok(data)
+            except ValueError as exc:
+                return fail(str(exc), 400)
             except Exception as exc:
                 return fail(str(exc), 500)
 
