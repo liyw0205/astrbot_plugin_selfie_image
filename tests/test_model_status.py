@@ -1,5 +1,7 @@
 from astrbot_plugin_selfie_image.generation.generation_records import build_model_status
 
+import pytest
+
 
 def test_model_status_aggregates_models_and_keeps_unused_targets() -> None:
     now = 1_000_000.0
@@ -153,6 +155,61 @@ def test_model_status_report_renders_a_png(tmp_path) -> None:
         assert image.format == "PNG"
         assert image.width == 1080
         assert image.height > 500
+        assert image.getpixel((0, 0)) == (238, 247, 248)
+
+
+@pytest.mark.parametrize("count,page", [(0, 1), (1, 1), (2, 1), (6, 1), (7, 2), (7, 999)])
+def test_model_status_cards_render_empty_odd_and_paginated_models(tmp_path, monkeypatch, count, page) -> None:
+    from PIL import Image, ImageDraw
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    if SelfieImagePlugin._status_report_font(14) is None:
+        pytest.skip("A Chinese TrueType font is not installed in this test environment")
+    drawn = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def record_text(draw, xy, text, *args, **kwargs):
+        drawn.append((xy, text, kwargs.get("font")))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+    plugin.data_dir = str(tmp_path)
+    models = [{"channel": "渠道名称很长" * 10, "model": f"unique-model-{index}",
+               "status": "验证失败", "attempts": 1, "successes": 0,
+               "error_categories": {"auth": 1}, "history": "×" * 24}
+              for index in range(count)]
+    report = plugin._render_model_status_image({"models": models}, page=page)
+    assert report is not None
+    labels = [value for _, value, _ in drawn]
+    if page > 1:
+        assert "unique-model-6" in labels
+        assert "unique-model-0" not in labels
+        assert any("7d 1" in value for value in labels)
+    elif count == 0:
+        assert "暂无模型记录" in labels
+    else:
+        assert "unique-model-0" in labels
+    if count >= 2 and page == 1:
+        first = next(xy for xy, value, _ in drawn if value == "unique-model-0")
+        second = next(xy for xy, value, _ in drawn if value == "unique-model-1")
+        assert first[1] == second[1]
+        assert first[0] < second[0]
+    with Image.open(report) as image:
+        assert image.height <= 1524
+        # Long channel names must leave room for the adjacent status badge.
+        for (x, _), value, face in drawn:
+            if value.startswith("渠道名称很长"):
+                assert x + ImageDraw.Draw(image).textlength(value, font=face) < (368 if x < 500 else 872)
+
+
+def test_model_status_report_keeps_text_fallback_when_font_is_missing(tmp_path, monkeypatch) -> None:
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    plugin = SelfieImagePlugin.__new__(SelfieImagePlugin)
+    plugin.data_dir = str(tmp_path)
+    monkeypatch.setattr(plugin, "_status_report_font", lambda _size: None)
+    assert plugin._render_model_status_image({"models": []}) is None
 
 
 def test_model_status_font_uses_windows_chinese_fonts(monkeypatch) -> None:

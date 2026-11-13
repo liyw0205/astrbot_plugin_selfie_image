@@ -2672,6 +2672,7 @@ class SelfieImagePlugin(
 
         candidates.extend(
             [
+                "/system/fonts/NotoSansCJK-Regular.ttc",
                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
                 "/usr/share/fonts/truetype/source-han/SourceHanSansCN-Regular.otf",
                 "/root/xiu2/data/xiuxian/font/SourceHanSerifCN-Heavy.otf",
@@ -2738,131 +2739,15 @@ class SelfieImagePlugin(
         if PILImage is None or ImageDraw is None or ImageFont is None:
             return None
         try:
-            models = [item for item in status.get("models", []) if isinstance(item, Mapping)]
-            safe_page_size = max(1, int(page_size or 6))
-            page_count = max(1, (len(models) + safe_page_size - 1) // safe_page_size)
-            safe_page = max(1, min(int(page or 1), page_count))
-            start = (safe_page - 1) * safe_page_size
-            current_models = models[start : start + safe_page_size]
-            window_seconds = int(status.get("window_seconds") or 0)
-            window_label = {
-                3600: "最近 1 小时",
-                86400: "最近 24 小时",
-                7 * 86400: "最近 7 天",
-                30 * 86400: "最近 30 天",
-            }.get(window_seconds, f"最近 {max(1, window_seconds // 3600)} 小时")
-            overall = str(status.get("overall_status") or "未知")
-            status_colors = {
-                "正常": (34, 151, 116),
-                "降级": (193, 123, 24),
-                "异常": (205, 72, 76),
-                "断流": (139, 66, 150),
-                "验证失败": (139, 66, 150),
-                "限流": (193, 123, 24),
-                "未使用": (106, 118, 134),
-            }
-            status_color = status_colors.get(overall, (72, 92, 116))
-            width = 1080
-            margin = 42
-            card_width = width - margin * 2
-            title_font = self._status_report_font(38, bold=True)
-            section_font = self._status_report_font(22, bold=True)
-            body_font = self._status_report_font(21)
-            small_font = self._status_report_font(17)
-            tiny_font = self._status_report_font(14)
-            if any(
-                font is None
-                for font in (title_font, section_font, body_font, small_font, tiny_font)
-            ):
-                logger.warning("[SelfieImage] 未找到支持中文的状态图字体，改用文字状态报告")
-                return None
-            header_height = 184
-            kpi_height = 124
-            row_height = 232
-            gap = 18
-            alert_rows = [str(item).strip() for item in status.get("alerts", []) if str(item).strip()][:4]
-            height = header_height + gap + kpi_height + gap + len(current_models) * (row_height + gap) + 76
-            if alert_rows:
-                height += 52 + len(alert_rows) * 34
-            image = PILImage.new("RGB", (width, height), (244, 247, 251))
-            draw = ImageDraw.Draw(image)
+            from .generation.model_status_report import render_model_status_report
 
-            def rounded(box: Tuple[int, int, int, int], fill: Tuple[int, int, int], radius: int = 18, outline: Optional[Tuple[int, int, int]] = None) -> None:
-                draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=2 if outline else 1)
-
-            def write(x: int, y: int, text: str, font: Any, fill: Tuple[int, int, int], max_width: Optional[int] = None, lines: int = 1, spacing: int = 4) -> int:
-                chunks = self._status_report_wrap(draw, text, font, max_width or width, lines)
-                for index, chunk in enumerate(chunks):
-                    draw.text((x, y + index * (font.size + spacing)), chunk, font=font, fill=fill)
-                return len(chunks) * (font.size + spacing)
-
-            draw.rectangle((0, 0, width, header_height), fill=(21, 34, 56))
-            write(margin, 28, "生图模型运行状态", title_font, (245, 249, 255))
-            updated = status.get("updated_at") or time.time()
-            try:
-                updated_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(updated)))
-            except (TypeError, ValueError, OverflowError):
-                updated_text = "未知"
-            write(margin, 86, f"{window_label}  ·  更新于 {updated_text}", body_font, (184, 202, 222))
-            rounded((width - margin - 210, 32, width - margin, 100), status_color, 34)
-            status_box = draw.textbbox((0, 0), overall, font=section_font)
-            draw.text((width - margin - 105 - (status_box[2] - status_box[0]) / 2, 52), overall, font=section_font, fill=(255, 255, 255))
-            write(margin, 132, f"第 {safe_page}/{page_count} 页", small_font, (146, 167, 191))
-
-            kpis = [
-                ("模型", str(int(status.get("model_count") or 0)), (47, 116, 173)),
-                ("渠道", str(int(status.get("channel_count") or 0)), (47, 116, 173)),
-                ("可用", str(int(status.get("available_count") or 0)), (34, 151, 116)),
-                ("告警", str(int(status.get("alert_count") or 0)), (205, 72, 76)),
-            ]
-            kpi_gap = 14
-            kpi_width = (card_width - kpi_gap * 3) // 4
-            kpi_top = header_height + gap
-            for index, (label, value, color) in enumerate(kpis):
-                left = margin + index * (kpi_width + kpi_gap)
-                rounded((left, kpi_top, left + kpi_width, kpi_top + kpi_height), (255, 255, 255), 16, (222, 229, 237))
-                draw.rectangle((left, kpi_top, left + 7, kpi_top + kpi_height), fill=color)
-                write(left + 24, kpi_top + 20, label, small_font, (105, 119, 137))
-                write(left + 24, kpi_top + 50, value, self._status_report_font(32, bold=True), (27, 42, 63))
-
-            top = kpi_top + kpi_height + gap
-            for item in current_models:
-                row_top = top
-                rounded((margin, row_top, width - margin, row_top + row_height), (255, 255, 255), 16, (222, 229, 237))
-                item_status = str(item.get("status") or "未知")
-                item_color = status_colors.get(item_status, (72, 92, 116))
-                draw.rectangle((margin, row_top, margin + 8, row_top + row_height), fill=item_color)
-                label = str(item.get("label") or "未命名模型")
-                write(margin + 28, row_top + 18, label, section_font, (27, 42, 63), card_width - 260, 1)
-                badge_left = width - margin - 180
-                rounded((badge_left, row_top + 16, width - margin - 22, row_top + 58), item_color, 21)
-                badge_box = draw.textbbox((0, 0), item_status, font=small_font)
-                draw.text((badge_left + 90 - (badge_box[2] - badge_box[0]) / 2, row_top + 26), item_status, font=small_font, fill=(255, 255, 255))
-                success_rate = float(item.get("success_rate") or 0) * 100
-                average = float(item.get("average_elapsed_seconds") or 0)
-                recent = "正常" if item.get("last_success") is True else self._model_status_error_label(item.get("last_error_category")) if item.get("last_success") is False else "无请求"
-                metrics = f"成功率 {success_rate:.1f}%   请求 {int(item.get('successes') or 0)}/{int(item.get('attempts') or 0)}   平均 {average:.2f}s   最近 {recent}"
-                write(margin + 28, row_top + 76, metrics, small_font, (78, 95, 116), card_width - 56, 1)
-                history = str(item.get("history") or "-")
-                history_left = margin + 28
-                history_top = row_top + 120
-                for history_index, marker in enumerate(history[:24]):
-                    history_color = {"■": (34, 151, 116), "▲": (193, 123, 24), "×": (205, 72, 76)}.get(marker, (210, 218, 228))
-                    left = history_left + history_index * 37
-                    rounded((left, history_top, left + 27, history_top + 27), history_color, 6)
-                errors = item.get("error_categories") if isinstance(item.get("error_categories"), Mapping) else {}
-                error_text = "、".join(f"{self._model_status_error_label(k)} {int(v)}" for k, v in list(errors.items())[:3]) or "暂无错误"
-                write(margin + 28, row_top + 164, f"错误：{error_text}", tiny_font, (105, 119, 137), card_width - 56, 1)
-                top = row_top + row_height + gap
-
-            if alert_rows:
-                write(margin, top + 4, "告警", section_font, (205, 72, 76))
-                top += 42
-                for alert in alert_rows:
-                    write(margin + 8, top, f"· {alert}", small_font, (105, 71, 72), card_width - 16, 1)
-                    top += 34
-            footer = "下一页：/生图记录状态 " + {3600: "1h", 86400: "24h", 7 * 86400: "7d", 30 * 86400: "30d"}.get(window_seconds, "7d") + f" {safe_page + 1 if safe_page < page_count else 1}" if page_count > 1 else "数据来自最近生图请求记录"
-            write(margin, height - 46, footer, tiny_font, (126, 140, 158), card_width, 1)
+            image = render_model_status_report(
+                status,
+                font_loader=self._status_report_font,
+                error_label=self._model_status_error_label,
+                page=page,
+                page_size=page_size,
+            )
 
             report_dir = os.path.join(self.data_dir, "status_reports")
             os.makedirs(report_dir, exist_ok=True)
