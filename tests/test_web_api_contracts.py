@@ -26,6 +26,7 @@ from astrbot_plugin_selfie_image.webui.contracts import (
 CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
+    HEALTH_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
     RECORD_ROUTE_CONTRACTS,
@@ -1025,6 +1026,81 @@ def test_shared_cache_route_contract_matches_both_live_registries(tmp_path):
     ]
     assert len(actual_dashboard_rows) == len(expected_dashboard)
     assert set(actual_dashboard_rows) == expected_dashboard
+
+
+def test_shared_health_route_contract_matches_both_live_registries(tmp_path):
+    plugin = ContractPlugin(tmp_path)
+    flask_app = FlaskWebServer(plugin)._create_app()
+    expected_flask = {
+        (route.flask_path, method, route.endpoint)
+        for route in HEALTH_ROUTE_CONTRACTS
+        for method in route.methods
+    }
+    actual_flask = {
+        (rule.rule, method, rule.endpoint)
+        for rule in flask_app.url_map.iter_rules()
+        for method in rule.methods - {"HEAD", "OPTIONS"}
+        if rule.rule in {route.flask_path for route in HEALTH_ROUTE_CONTRACTS}
+    }
+    assert actual_flask == expected_flask
+
+    registered = []
+    plugin.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
+    api = dashboard_module.SelfieImageDashboardAPI(plugin)
+    api.register()
+    expected_paths = {
+        f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}"
+        for route in HEALTH_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+    }
+    expected_dashboard = {
+        (
+            f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}",
+            method,
+            getattr(api, route.dashboard_handler),
+        )
+        for route in HEALTH_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+        for method in route.methods
+    }
+    actual_dashboard = {
+        (path, method, handler)
+        for path, handler, methods, _description in registered
+        for method in methods
+        if path in expected_paths
+    }
+    assert actual_dashboard == expected_dashboard
+
+
+def test_health_controller_normalizes_and_redacts_both_adapter_responses(http):
+    calls = []
+
+    def get_history(**kwargs):
+        calls.append(kwargs)
+        return {"filters": kwargs, "api_key": "history-secret"}
+
+    http.plugin.get_channel_health_history = get_history
+    response = http.call("/api/health/history?window=120&media_type=image&export=yes")
+    data = assert_success(response)
+    assert data["filters"] == {"window_seconds": 120, "media_type": "image", "export": True}
+    assert "history-secret" not in json.dumps(response.payload)
+    assert calls == [{"window_seconds": 120, "media_type": "image", "export": True}]
+
+
+def test_health_controller_preserves_legacy_hook_and_missing_capability(http):
+    calls = []
+
+    def legacy_history(*, window_seconds, media_type):
+        calls.append((window_seconds, media_type))
+        return {"window_seconds": window_seconds, "media_type": media_type}
+
+    http.plugin.get_channel_health_history = legacy_history
+    response = http.call("/api/health/history?window=10")
+    assert assert_success(response) == {"window_seconds": 10, "media_type": ""}
+    assert calls == [(10, "")]
+
+    del http.plugin.get_channel_health_history
+    assert_failure(http.call("/api/health/history"), 501, "不支持")
 
 
 def test_cache_cleanup_preserves_confirmation_and_conflict_contract(http):

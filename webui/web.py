@@ -22,6 +22,7 @@ from .contracts import (
     CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
+    HEALTH_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
     RECORD_ROUTE_CONTRACTS,
@@ -38,6 +39,8 @@ from .controllers import (
     CanvasControllerResult,
     ConfigController,
     ConfigControllerResult,
+    HealthController,
+    HealthControllerResult,
     ProxyController,
     ProxyControllerResult,
     RecordController,
@@ -194,6 +197,7 @@ class FlaskWebServer:
         proxy_controller = ProxyController(self.plugin)
         task_controller = TaskController(self.plugin)
         record_controller = RecordController(self.plugin)
+        health_controller = HealthController(self.plugin)
         prompt_catalog_controller = PromptCatalogController(self.plugin)
         auth_failure_lock = threading.RLock()
         auth_failures: dict[str, dict[str, float]] = {}
@@ -281,6 +285,15 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
             return ok(result.data, **result.extra)
+
+        def health_result(call: Any) -> Any:
+            try:
+                result: HealthControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data)
 
         @app.after_request
         def add_response_safety_headers(response: Any) -> Any:
@@ -408,26 +421,19 @@ class FlaskWebServer:
                 return fail("Unauthorized: Token 不正确", 401)
             return ok(build_health_payload(self.plugin, dashboard_page_source_status()))
 
-        @app.route("/api/health/history", methods=["GET"])
         def health_history() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            getter = getattr(self.plugin, "get_channel_health_history", None)
-            if not callable(getter):
-                return fail("当前版本不支持渠道健康历史", 501)
-            try:
-                try:
-                    window = parse_bounded_int(request.args, "window", 86400, 0, 31 * 86400)
-                except WebContractError as exc:
-                    return fail(str(exc), exc.status_code)
-                export = str(request.args.get("export") or "").strip().lower() in {"1", "true", "yes", "on"}
-                try:
-                    data = getter(window_seconds=window, media_type=request.args.get("media_type") or "", export=export)
-                except TypeError:
-                    data = getter(window_seconds=window, media_type=request.args.get("media_type") or "")
-                return ok(redact_sensitive_data(data))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return health_result(lambda: health_controller.history(request.args))
+
+        health_handlers = {"health_history": health_history}
+        for route in HEALTH_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=health_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
 
         @app.route("/api/context", methods=["GET"])
         def context_get() -> Any:

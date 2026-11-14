@@ -1,5 +1,11 @@
 # 更新日志
 
+## 1.7.22 - 2026-11-15
+
+- 将渠道健康历史查询迁入共享 `HealthController`，并使用同一契约表注册 Flask 与 Dashboard 路由；鉴权和响应包装仍由 adapter 负责。
+- 统一窗口范围、媒体类型、导出参数、旧版两参数 hook 兼容及结果脱敏；补充双端路由、参数和能力缺失回归。
+- 全量测试 `3561 passed, 702 subtests passed`；Python 编译、Dashboard 构建/回退与 Node、版本/JSON/制品和差异门禁均通过。
+
 ## 1.7.21 - 2026-11-15
 
 - 将缓存清理、图片校验、预览和缩略图迁入共享 `CacheController`，并以同一契约表注册 Flask 与 Dashboard 的 4 条路由；保留各端认证、JSON 解析和文件响应边界。

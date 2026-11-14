@@ -154,6 +154,25 @@ class CacheRouteContract:
     description: str
 
 
+@dataclass(frozen=True)
+class HealthRouteContract:
+    endpoint: str
+    flask_path: str
+    dashboard_path: str
+    methods: tuple[str, ...]
+    flask_handler: str
+    dashboard_handler: str
+    description: str
+
+
+HEALTH_ROUTE_CONTRACTS = (
+    HealthRouteContract(
+        "health_history", "/api/health/history", "health/history", ("GET",),
+        "health_history", "page_health_history", "Selfie Image channel health history",
+    ),
+)
+
+
 CONFIG_ROUTE_CONTRACTS = (
     ConfigRouteContract(
         "config_get", "/api/config", "config", ("GET",), "config_get",

@@ -26,6 +26,7 @@ from .contracts import (
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
     DASHBOARD_ROUTE_PREFIXES,
+    HEALTH_ROUTE_CONTRACTS,
     MAX_WEB_TASK_ID_LENGTH,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
@@ -43,6 +44,8 @@ from .controllers import (
     CanvasControllerResult,
     ConfigController,
     ConfigControllerResult,
+    HealthController,
+    HealthControllerResult,
     ProxyController,
     ProxyControllerResult,
     RecordController,
@@ -82,6 +85,7 @@ class SelfieImageDashboardAPI:
         self._proxy_controller = ProxyController(plugin)
         self._task_controller = TaskController(plugin)
         self._record_controller = RecordController(plugin)
+        self._health_controller = HealthController(plugin)
         self._prompt_catalog_controller = PromptCatalogController(plugin)
 
     def _config_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
@@ -161,6 +165,17 @@ class SelfieImageDashboardAPI:
             for route in CACHE_ROUTE_CONTRACTS
         ]
 
+    def _health_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in HEALTH_ROUTE_CONTRACTS
+        ]
+
     def _canvas_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
         return [
             (
@@ -191,7 +206,7 @@ class SelfieImageDashboardAPI:
 
         routes = [
             ("health", self.page_health, ["GET"], "Selfie Image health"),
-            ("health/history", self.page_health_history, ["GET"], "Selfie Image channel health history"),
+            *self._health_route_entries(),
             ("health/channels/clear", self.page_channel_health_clear, ["POST"], "Selfie Image clear channel health"),
             ("context", self.page_context_get, ["GET"], "Selfie Image conversation context"),
             ("context/clear", self.page_context_clear, ["POST"], "Selfie Image clear conversation context"),
@@ -359,22 +374,13 @@ class SelfieImageDashboardAPI:
         return self._ok(build_health_payload(self.plugin, dashboard_page_source_status()))
 
     async def page_health_history(self) -> Any:
-        getter = getattr(self.plugin, "get_channel_health_history", None)
-        if not callable(getter):
-            return self._fail("当前版本不支持渠道健康历史", 501)
         try:
-            try:
-                window = parse_bounded_int(request.query, "window", 86400, 0, 31 * 86400)
-            except WebContractError as exc:
-                return self._fail(str(exc), exc.status_code)
-            export = self._query_value("export").strip().lower() in {"1", "true", "yes", "on"}
-            try:
-                data = getter(window_seconds=window, media_type=self._query_value("media_type"), export=export)
-            except TypeError:
-                data = getter(window_seconds=window, media_type=self._query_value("media_type"))
-            return self._ok(redact_sensitive_data(data))
+            result: HealthControllerResult = self._health_controller.history(request.query)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
-            return self._fail(str(exc), 400)
+            return self._fail(str(exc), 500)
+        return self._ok(result.data)
     async def page_context_get(self) -> Any:
         getter = getattr(self.plugin, "get_conversation_context", None)
         if not callable(getter):

@@ -76,6 +76,11 @@ class CacheControllerResult:
 
 
 @dataclass(frozen=True)
+class HealthControllerResult:
+    data: Any
+
+
+@dataclass(frozen=True)
 class CachedImage:
     path: str
     info: dict[str, Any]
@@ -927,3 +932,26 @@ class CacheController:
             "size": len(raw),
             "data_url": f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}",
         })
+
+
+class HealthController:
+    """Shared channel health history query for both Web adapters."""
+
+    def __init__(self, plugin: Any) -> None:
+        self.plugin = plugin
+
+    def history(self, params: Any) -> HealthControllerResult:
+        getter = getattr(self.plugin, "get_channel_health_history", None)
+        if not callable(getter):
+            raise WebContractError("当前版本不支持渠道健康历史", 501)
+        window = parse_bounded_int(params, "window", 86400, 0, 31 * 86400)
+        media_type = query_value(params, "media_type")
+        export = query_value(params, "export").strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            try:
+                data = getter(window_seconds=window, media_type=media_type, export=export)
+            except TypeError:
+                data = getter(window_seconds=window, media_type=media_type)
+        except Exception as exc:
+            raise WebContractError(str(exc), 400) from exc
+        return HealthControllerResult(redact_sensitive_data(data))
