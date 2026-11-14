@@ -61,7 +61,6 @@ from .features.access_policy import (
     access_status,
     blocked_prompt_word,
     permission_denied_message,
-    quota_error_message,
 )
 from .features.qq_group_cache import QQGroupCache
 from .features.context_routing import (
@@ -121,6 +120,7 @@ from .generation.selfie_workflow import SelfieWorkflowService
 from .generation.web_test_workflow import WebTestImageWorkflow
 from .generation.image_scheduler import ImageJobScheduler
 from .generation.model_status_report import ImageStatusService
+from .generation.task_service import GenerationTaskService
 from .features.framework_persona import resolve_framework_persona
 from .generation.generation_records import metric_window_seconds
 from .generation.generation_store import GenerationStoreMixin, RECORD_KEEP_LIMIT
@@ -128,7 +128,6 @@ from .generation.generation_results import (
     batch_failure_policy,
     batch_failure_text,
     batch_success_text,
-    build_task_terminal_state,
     normalize_generation_result,
 )
 from .cos.leg_focus import (
@@ -253,7 +252,6 @@ from .core.utils import (
     extract_image_urls,
     fetch_image_source,
     image_validation_limits,
-    new_trace_id,
     load_json_file,
     looks_like_image_bytes,
     normalize_image_mime,
@@ -802,30 +800,7 @@ class SelfieImagePlugin(
             pass
 
     def _quota_error_message(self, event: AstrMessageEvent, requested_count: int = 1) -> str:
-        permission_error = self._permission_denied_message(event)
-        if permission_error:
-            return permission_error
-        status = self._access_status(event)
-        status["allowed"] = True
-        user_id = event_user_id(event)
-        lock = getattr(self, "_quota_reservation_lock", None)
-        if lock is None:
-            lock = threading.RLock()
-            self._quota_reservation_lock = lock
-        reservations = getattr(self, "_quota_reservations", {})
-        with lock:
-            reserved = sum(
-                int(item.get("count") or 0)
-                for item in reservations.values()
-                if str(item.get("user_id") or "") == user_id
-            )
-        return quota_error_message(
-            status,
-            self._current_usage_stats(),
-            enabled=self.config.image_enable_daily_limit,
-            limit=self.config.image_daily_limit_count,
-            requested_count=max(1, int(requested_count or 1)) + reserved,
-        )
+        return GenerationTaskService(self).quota_error_message(event, requested_count)
 
     def _reserve_quota_for_task(
         self,
@@ -835,78 +810,12 @@ class SelfieImagePlugin(
         *,
         media_type: str = "image",
     ) -> str:
-        """Atomically reserve daily image slots while a queued task runs."""
-        count = max(1, int(requested_count or 1))
-        if not bool(getattr(self.config, "image_enable_daily_limit", False)):
-            return ""
-        status = self._access_status(event)
-        if status.get("unlimited") or not status.get("allowed"):
-            return ""
-        user_id = event_user_id(event)
-        reservation_lock = getattr(self, "_quota_reservation_lock", None)
-        if reservation_lock is None:
-            reservation_lock = threading.RLock()
-            self._quota_reservation_lock = reservation_lock
-        reservations = getattr(self, "_quota_reservations", None)
-        if reservations is None:
-            reservations = {}
-            self._quota_reservations = reservations
-        usage_lock = getattr(self, "_usage_lock", None)
-        if usage_lock is None:
-            usage_lock = threading.RLock()
-            self._usage_lock = usage_lock
-        with reservation_lock, usage_lock:
-            stats = self._current_usage_stats()
-            users = stats.get("users") if isinstance(stats.get("users"), dict) else {}
-            row = users.get(user_id) if isinstance(users.get(user_id), dict) else {}
-            used = int(row.get("count") or 0)
-            reserved = sum(
-                int(item.get("count") or 0)
-                for item in reservations.values()
-                if str(item.get("user_id") or "") == user_id
-            )
-            limit = int(getattr(self.config, "image_daily_limit_count", 0) or 0)
-            if used + reserved + count > limit:
-                return f"今日生图次数已用完：{used + reserved}/{limit}。"
-            reservations[str(task_id)] = {
-                "user_id": user_id,
-                "count": count,
-                "created_ts": time.time(),
-            }
-        return ""
+        return GenerationTaskService(self).reserve_quota_for_task(
+            task_id, event, requested_count, media_type=media_type
+        )
 
     def _release_quota_reservation(self, task_id: str) -> None:
-        lock = getattr(self, "_quota_reservation_lock", None)
-        reservations = getattr(self, "_quota_reservations", None)
-        released = None
-        if lock is not None and reservations is not None:
-            with lock:
-                released = reservations.pop(str(task_id or ""), None)
-        # Keep the durable task snapshot explicit about quota ownership. This
-        # makes terminal state, restart reconciliation, and quota accounting
-        # observable without exposing the in-memory reservation map.
-        task_lock = getattr(self, "_web_task_lock", None)
-        tasks = getattr(self, "_web_tasks", None)
-        if task_lock is None or not isinstance(tasks, dict):
-            return
-        tid = str(task_id or "").strip()
-        if not tid:
-            return
-        with task_lock:
-            task = tasks.get(tid)
-            if not isinstance(task, dict):
-                return
-            if released is None and not task.get("quota_reserved"):
-                # Already reconciled; avoid a needless write on duplicate
-                # callback execution.
-                if task.get("quota_released"):
-                    return
-            task["quota_reserved"] = 0
-            task["quota_released"] = True
-            task["quota_released_ts"] = time.time()
-            task["updated_ts"] = time.time()
-            task["updated_at"] = self._web_task_timestamp()
-            self._persist_web_tasks_locked()
+        GenerationTaskService(self).release_quota_reservation(task_id)
 
     def _rate_limit_error_message(self, event: AstrMessageEvent) -> str:
         if self._is_whitelisted(event):
@@ -2849,128 +2758,19 @@ class SelfieImagePlugin(
         session_key: str = "",
         is_admin: bool = False,
     ) -> str:
-        tid = str(task_id or "").strip()
-        if not tid:
-            raise ValueError("请提供任务ID")
-        with self._web_task_lock:
-            task = self._web_tasks.get(tid)
-            if not task:
-                # allow short numeric index against recent active? handled by caller
-                raise ValueError("任务不存在或已清理")
-            reconcile = getattr(self, "_reconcile_task_terminal_evidence_locked", None)
-            if callable(reconcile):
-                reconcile(task)
-            owner = str(task.get("owner_session") or "")
-            if owner and session_key and owner != session_key and not is_admin:
-                raise PermissionError("不能取消其他会话的生图任务")
-            status = str(task.get("status") or "")
-            # Delivery failures are terminal too: the image already
-            # finished upstream and only the outbound send failed.  Treating
-            # them as active here lets a later ``/生图取消`` overwrite useful
-            # failure evidence with a misleading cancellation status.
-            capabilities = self.task_operation_capabilities(task)
-            if capabilities["is_terminal"]:
-                return f"这单已经结束了（{status}），不用再取消"
-            if not capabilities["can_cancel"] and task.get("cancel_requested"):
-                return f"已请求取消 {tid}，任务将在安全边界停止"
-            task["cancel_requested"] = True
-            scheduler = getattr(self, "_image_scheduler", None)
-            if scheduler is not None:
-                loop = getattr(self, "loop", None)
-                if loop is not None and loop.is_running():
-                    def schedule_cancel() -> None:
-                        cancel = loop.create_task(scheduler.cancel_task(tid))
-                        cancel.add_done_callback(self._log_scheduler_cancel_error)
-                    loop.call_soon_threadsafe(schedule_cancel)
-            now = time.time()
-            runtime_task = getattr(self, "_runtime_generation_tasks", {}).get(tid)
-            # Keep active tasks queryable while their cooperative cancellation
-            # reaches the generation boundary. This prevents a late success or
-            # delivery failure from being overwritten by the cancel request.
-            if runtime_task is None:
-                task["status"] = "cancelled"
-                task["success"] = False
-                task["error"] = "任务已取消"
-                task["finished_ts"] = now
-                task["finished_at"] = self._web_task_timestamp()
-                self._log_task_lifecycle_event(
-                    str(task.get("task_id") or tid),
-                    str(task.get("trace_id") or ""),
-                    self._task_media_type(task),
-                    status.strip().lower(),
-                    "cancelled",
-                )
-            task["updated_ts"] = now
-            task["updated_at"] = self._web_task_timestamp()
-            self._persist_web_tasks_locked()
-            # Studio coroutines must get a chance to persist the session's
-            # cancelled last_run state; their cancellation flag is checked at
-            # each generation boundary and before the final commit.
-            return "已立即取消 " + tid if runtime_task is None else f"已请求取消 {tid}，任务将在安全边界停止"
+        return GenerationTaskService(self).cancel_image_task(
+            task_id, session_key=session_key, is_admin=is_admin
+        )
 
     @staticmethod
     def _log_scheduler_cancel_error(future: asyncio.Future) -> None:
-        if not future.cancelled():
-            exc = future.exception()
-            if exc is not None:
-                logger.error("[SelfieImage] 取消图片请求失败: %s", exc)
+        GenerationTaskService.log_scheduler_cancel_error(future)
 
     def _task_cancel_requested(self, task_id: str) -> bool:
-        with self._web_task_lock:
-            task = self._web_tasks.get(task_id)
-            return bool(task and task.get("cancel_requested"))
+        return GenerationTaskService(self).task_cancel_requested(task_id)
 
     def _mark_task_delivery_failed(self, task_id: str, error: str) -> None:
-        """Mark a generated task whose outbound message could not be sent."""
-        tid = str(task_id or "").strip()
-        if not tid:
-            return
-        message = redact_sensitive_text(str(error or "生成成功但发送失败"))[:800]
-        lifecycle_event = None
-        with self._web_task_lock:
-            task = self._web_tasks.get(tid)
-            if not isinstance(task, dict):
-                return
-            previous_status = str(task.get("status") or "").strip().lower()
-            result = task.get("result") if isinstance(task.get("result"), dict) else {}
-            result = dict(result)
-            result.update(
-                {
-                    "success": False,
-                    "status": "delivery_failed",
-                    "generation_success": True,
-                    "delivery_success": False,
-                    "delivery_failed": True,
-                    "error": message,
-                }
-            )
-            task.update(
-                {
-                    "status": "delivery_failed",
-                    "success": False,
-                    "generation_success": True,
-                    "delivery_success": False,
-                    "delivery_failed": True,
-                    "error": message,
-                    "result": result,
-                    "finished_ts": time.time(),
-                    "finished_at": self._web_task_timestamp(),
-                }
-            )
-            task["updated_ts"] = task["finished_ts"]
-            task["updated_at"] = task["finished_at"]
-            self._persist_web_tasks_locked()
-            current_status = str(task.get("status") or "").strip().lower()
-            if previous_status != current_status:
-                lifecycle_event = (
-                    str(task.get("task_id") or tid),
-                    str(task.get("trace_id") or ""),
-                    self._task_media_type(task),
-                    previous_status,
-                    current_status,
-                )
-        if lifecycle_event:
-            self._log_task_lifecycle_event(*lifecycle_event)
+        GenerationTaskService(self).mark_task_delivery_failed(task_id, error)
 
     def start_command_image_task(
         self,
@@ -2981,106 +2781,16 @@ class SelfieImagePlugin(
         runner,
         reference_images: Optional[Iterable[ImageReference]] = None,
     ) -> Dict[str, Any]:
-        """Queue a chat-side generation job and return immediately (targets 08/13)."""
-        session_key = self._session_key(event)
-        request_summary = dict(summary or {})
-        request_summary.setdefault("source", str(source or "").strip())
-        request_summary["owner_user_id"] = event_user_id(event)
-        if not request_summary.get("requested_model"):
-            request_summary["requested_model"] = self._get_session_model_override(event)
-        request_summary["owner_origin"] = str(getattr(event, "unified_msg_origin", "") or "")
-        force_regenerate = bool(request_summary.get("force_regenerate") or request_summary.get("force"))
-        fingerprint = self._request_fingerprint(request_summary, session_key, reference_images)
-        with self._web_task_lock:
-            if getattr(self, "_terminating", False):
-                raise RuntimeError("插件正在卸载，无法提交新任务")
-            if not force_regenerate:
-                duplicate = self._find_recent_duplicate_task_locked(fingerprint)
-                if duplicate and duplicate.get("owner_session") == session_key:
-                    duplicate["deduplicated"] = True
-                    return redact_sensitive_data(duplicate)
-            self._web_task_seq += 1
-            task_id = f"cmd-{int(time.time() * 1000)}-{self._web_task_seq}"
-            trace_id = new_trace_id("gen")
-            now = time.time()
-            media_type = "image"
-            requested_count = max(1, int(request_summary.get("requested_count") or request_summary.get("count") or 1))
-            quota_error = self._reserve_quota_for_task(
-                task_id,
-                event,
-                requested_count,
-                media_type=media_type,
-            )
-            reservation_lock = getattr(self, "_quota_reservation_lock", None)
-            if reservation_lock is None:
-                reservation_lock = threading.RLock()
-                self._quota_reservation_lock = reservation_lock
-            reservations = getattr(self, "_quota_reservations", {})
-            with reservation_lock:
-                reserved_count = int((reservations.get(task_id) or {}).get("count") or 0)
-            self._web_tasks[task_id] = {
-                "task_id": task_id,
-                "trace_id": trace_id,
-                "status": "failed" if quota_error else "queued",
-                "success": False if quota_error else None,
-                "error": quota_error,
-                "created_ts": now,
-                "updated_ts": now,
-                "created_at": self._web_task_timestamp(),
-                "updated_at": self._web_task_timestamp(),
-                "request_data": redact_sensitive_data(request_summary),
-                "result": None,
-                "source": source,
-                "owner_session": session_key,
-                "owner_user_id": event_user_id(event),
-                "cancel_requested": False,
-                "request_fingerprint": fingerprint,
-                "deduplicated": False,
-                "quota_reserved": reserved_count,
-                "quota_released": not bool(reserved_count),
-                "quota_released_ts": now if not reserved_count else None,
-                "quota_error": quota_error,
-                "user_notification_status": "pending",
-                "user_notification_reason": "",
-                **self._task_runtime_defaults(),
-                **self._task_progress_defaults(requested_count),
-                "generation_stage": "preflight",
-                "generation_stage_label": "准备图片任务",
-            }
-            self._prune_web_tasks_locked()
-            self._persist_web_tasks_locked()
-        initial_status = "failed" if quota_error else "queued"
-        self._log_task_lifecycle_event(task_id, trace_id, media_type, "", initial_status)
-        self._log_task_notification_event(task_id, trace_id, media_type, "message", "", "pending")
-        if quota_error:
-            return self.get_web_image_task(task_id)
-        self._start_runtime_generation(task_id, self._run_command_image_task(task_id, event, runner))
-        return self.get_web_image_task(task_id)
+        return GenerationTaskService(self).start_command_image_task(
+            event,
+            source=source,
+            summary=summary,
+            runner=runner,
+            reference_images=reference_images,
+        )
 
     async def _await_command_image_task(self, task: Mapping[str, Any]) -> Dict[str, Any]:
-        """Wait for a chat task while keeping its live state visible to task commands."""
-        task_id = str(task.get("task_id") or "").strip()
-        if not task_id:
-            return {"success": False, "error": "任务创建失败"}
-        runtime_task = getattr(self, "_runtime_generation_tasks", {}).get(task_id)
-        if runtime_task is not None:
-            try:
-                await asyncio.shield(runtime_task)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning(f"[SelfieImage] 等待任务 {task_id} 失败: {exc}")
-        try:
-            completed = self.get_web_image_task(task_id)
-        except Exception as exc:
-            return {"success": False, "error": redact_sensitive_text(str(exc))}
-        result = completed.get("result")
-        if isinstance(result, dict):
-            return dict(result)
-        return {
-            "success": bool(completed.get("success")),
-            "error": str(completed.get("error") or "任务没有返回结果"),
-        }
+        return await GenerationTaskService(self).await_command_image_task(task)
 
     async def _ensure_task_failure_record(
         self,
@@ -3225,177 +2935,7 @@ class SelfieImagePlugin(
             await wait_commits(tid)
 
     async def _run_command_image_task(self, task_id: str, event: AstrMessageEvent, runner) -> None:
-        if self._task_cancel_requested(task_id):
-            await self._ensure_task_failure_record(
-                task_id,
-                error="任务已取消",
-                cancelled=True,
-                stage="cancelled",
-            )
-            self._release_quota_reservation(task_id)
-            self._set_task_notification_status(task_id, "not_sent", "任务在开始生成前已取消")
-            self._set_web_image_task(
-                task_id,
-                status="cancelled",
-                success=False,
-                generation_stage="cancelled",
-                generation_stage_label="已取消",
-                error="任务已取消",
-                finished_ts=time.time(),
-                finished_at=self._web_task_timestamp(),
-            )
-            return
-        with self._web_task_lock:
-            task_meta = dict(self._web_tasks.get(task_id) or {})
-        self._set_web_image_task(
-            task_id,
-            status="running",
-            started_ts=time.time(),
-            started_at=self._web_task_timestamp(),
-            generation_stage="preflight",
-            generation_stage_label="准备图片任务",
-        )
-        try:
-            if self._task_cancel_requested(task_id):
-                raise RuntimeError("任务已取消")
-            result = await runner(task_id)
-            with self._web_task_lock:
-                requested_count = int((self._web_tasks.get(task_id) or {}).get("requested_count") or 1)
-            result = redact_sensitive_data(result)
-            terminal = build_task_terminal_state(
-                result,
-                requested_count=requested_count,
-                cancel_requested=self._task_cancel_requested(task_id),
-            )
-            result = terminal["result"]
-            success = terminal["success"]
-            cancelled = terminal["cancelled"]
-            generation_success = terminal["generation_success"]
-            delivery_unknown = terminal["delivery_unknown"]
-            delivery_failed = terminal["delivery_failed"]
-            error = redact_sensitive_text(terminal["error"])
-            _cancelled_result = terminal["cancelled_result"]
-            notification_status = self._task_notification_status(task_id)
-            if delivery_unknown:
-                self._set_task_notification_status(task_id, "unknown", "消息投递结果未知")
-            elif _cancelled_result:
-                self._set_task_notification_status(task_id, "not_sent", "任务已取消，未发送生成结果")
-            elif notification_status in {"", "pending"}:
-                # Compatibility runners may finish without owning a message
-                # transport. Do not claim delivery succeeded without a send
-                # result recorded by the runner.
-                self._set_task_notification_status(task_id, "unknown", "任务完成但未收到消息投递回执")
-            # Record writes run in a worker thread. Publish the terminal task
-            # state only after those writes finish so record_ids are visible
-            # immediately when a user opens task details.
-            wait_commits = getattr(self, "_wait_for_record_commits", None)
-            if callable(wait_commits):
-                await wait_commits(task_id)
-            partial_success = terminal["partial_success"]
-            terminal_stage = terminal["terminal_stage"]
-            terminal_stage_label = (
-                "已取消"
-                if terminal_stage == "cancelled"
-                else "部分完成"
-                if partial_success
-                else "已完成"
-                if terminal_stage == "complete"
-                else "已失败"
-            )
-            self._set_web_image_task(
-                task_id,
-                status=terminal["terminal_status"],
-                success=success,
-                generation_stage=terminal_stage,
-                generation_stage_label=terminal_stage_label,
-                generation_success=generation_success,
-                delivery_success=(
-                    False
-                    if delivery_failed
-                    else None
-                    if delivery_unknown
-                    else True
-                    if success
-                    else result.get("delivery_success")
-                ),
-                delivery_failed=delivery_failed,
-                delivery_unknown=delivery_unknown,
-                error=error,
-                requested_count=result.get("requested_count", 1),
-                succeeded_count=result.get("succeeded_count", 0),
-                failed_count=result.get("failed_count", 0),
-                result=result,
-                cancel_requested=False if not _cancelled_result else True,
-                finished_ts=time.time(),
-                finished_at=self._web_task_timestamp(),
-            )
-        except asyncio.CancelledError:
-            await self._ensure_task_failure_record(
-                task_id,
-                error="任务已取消",
-                cancelled=True,
-                stage="cancelled",
-            )
-            self._set_web_image_task(
-                task_id,
-                status="cancelled",
-                success=False,
-                generation_stage="cancelled",
-                generation_stage_label="已取消",
-                error="任务已取消",
-                result={"success": False, "error": "任务已取消", "cancelled": True},
-                finished_ts=time.time(),
-                finished_at=self._web_task_timestamp(),
-            )
-            self._set_task_notification_status(task_id, "not_sent", "任务执行被取消")
-            return
-        except Exception as exc:
-            error = redact_sensitive_text(str(exc))
-            cancelled = "取消" in error
-            task_meta = {}
-            try:
-                with self._web_task_lock:
-                    task_meta = dict((self._web_tasks or {}).get(task_id) or {})
-            except Exception:
-                task_meta = {}
-            source = str(task_meta.get("source") or "command-task")
-            summary = task_meta.get("request_data") or task_meta.get("summary") or {}
-            summary = summary if isinstance(summary, dict) else {}
-            prompt = str(summary.get("prompt") or summary.get("action") or "")
-            await self._ensure_task_failure_record(
-                task_id,
-                error=error,
-                cancelled=cancelled,
-                stage="cancelled" if cancelled else "task_exception",
-                media_type="image",
-                source=source,
-                prompt=prompt,
-                request_data=summary,
-            )
-            # The fallback record above is deliberately written before this
-            # terminal update.  This preserves the task -> record ordering on
-            # runner exceptions just like the normal generation path.
-            self._set_web_image_task(
-                task_id,
-                status="cancelled" if cancelled else "failed",
-                success=False,
-                generation_stage="cancelled" if cancelled else "failed",
-                generation_stage_label="已取消" if cancelled else "已失败",
-                error=error,
-                result={"success": False, "error": error},
-                finished_ts=time.time(),
-                finished_at=self._web_task_timestamp(),
-            )
-            await self._send_task_notification(
-                task_id,
-                event,
-                self._friendly_user_error_message(
-                    error,
-                    "生图没有完成",
-                ),
-            )
-        finally:
-            self._release_quota_reservation(task_id)
+        await GenerationTaskService(self).run_command_image_task(task_id, event, runner)
 
 
 

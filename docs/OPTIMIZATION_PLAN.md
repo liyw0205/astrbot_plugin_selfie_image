@@ -4,11 +4,11 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-最新完整发布验证基线（2026-11-15，1.7.29）：
+最新完整发布验证基线（2026-11-15，1.7.30）：
 
-- 全量 pytest `3584 passed, 702 subtests passed`，耗时 385.53 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3586 passed, 702 subtests passed`，耗时 271.65 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；60 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：147 个文件，2,425,424 bytes；解压后 5,662,947 bytes；SHA-256 `f0723c9570c767f556abdbec1dba3a725c80573d816f7ecbc9f72921d243fa2e`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新增兼容 helper、Prompt、Cache、Health、Context、QQ group、Selfie profile、ImageChannel controller、ImageCommandService、SelfieWorkflowService 与 GenerationRuntimeService 均纳入运行期包。
+- 临时运行期 ZIP 检查：148 个文件，2,425,943 bytes；解压后 5,664,607 bytes；SHA-256 `944b131395206e0d90fbd2cf233d8b1b02aed8ae5328a69a94247c69754ce90e`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证。
 
 主要结构性事实：
@@ -116,7 +116,7 @@
 
 `.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。支持 `--layer all/python/frontend/static`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
 
-上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.29`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担公平调度适配、队列阶段和并发回退；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
+上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.30`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
 
 制品基线和验证结果见上方“最新完整发布验证基线”。该制品仅代表本地当前工作区构建，发布前仍需在目标宿主验证真实通知投递和字体资源。
 
@@ -326,7 +326,7 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --prom
 4. `GenerationRuntimeService`：调度器、并发槽位、阶段更新和关闭；
 5. `ImageStatusService`：模型状态图、指标摘要和状态文字。
 
-迁移时每一步只移动一条完整路径，保留薄代理方法，避免一次性改变 AstrBot 装饰器、事件签名或测试替身。已完成 `web_test_image`、`_run_counted_generation_shots`、`_run_selfie_batches_unlocked`、普通图片命令及普通/特色自拍命令路径；`SelfieWorkflowService` 统一承接自拍、合影、COS、腿部命令、参考选择和公共任务 handler。插件命令、原 helper 签名与 hook 覆盖能力保留。状态报告的格式化与文件保存已迁入现有模块内的 `ImageStatusService`，字体发现保留在插件侧。`GenerationRuntimeService` 现承接单张调度准入、trace/阶段/队列耗时、旧宿主并发回退及 scheduler 关闭；`terminate()` 仍编排宿主生命周期、真实 worker/session/记录清理。下一步拆 `GenerationTaskService` 的创建、去重、配额、取消、投递回执与终态路径。
+迁移时每一步只移动一条完整路径，保留薄代理方法，避免一次性改变 AstrBot 装饰器、事件签名或测试替身。已完成 `web_test_image`、`_run_counted_generation_shots`、`_run_selfie_batches_unlocked`、普通图片命令及普通/特色自拍命令路径；`SelfieWorkflowService` 统一承接自拍、合影、COS、腿部命令、参考选择和公共任务 handler。插件命令、原 helper 签名与 hook 覆盖能力保留。状态报告的格式化与文件保存已迁入现有模块内的 `ImageStatusService`，字体发现保留在插件侧。`GenerationRuntimeService` 现承接单张调度准入、trace/阶段/队列耗时、旧宿主并发回退及 scheduler 关闭；`GenerationTaskService` 承接命令任务创建、额度预留/释放、取消、投递失败处理、等待及终态协调；任务快照、请求指纹/去重和 runtime coroutine 注册继续由 `WebTaskMixin` 实现。`terminate()` 仍编排宿主生命周期、真实 worker/session/记录清理。
 
 本轮回归覆盖多图进度、失败后停止、部分成功、取消、记录提交顺序、投递未知状态、参考图顺序和异常记录，未调整提示词语义。另修复兼容执行器冷却期异常的并发槽位清理边界。
 
@@ -428,7 +428,7 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --prom
 
 ### 第 3 阶段：边界拆分
 
-已按完整业务路径拆出 Web 试画、公共批量执行、自拍批量准备、状态报告、普通图片命令、完整自拍命令/参考选择及单张生成运行期，并提取共享 Web controller 与路由契约切片，覆盖任务、记录、配置、代理、资产/集合、缓存、Canvas、Prompt/COS/Creative、健康历史、会话上下文、QQ 群、自拍资料和图像渠道。下一步按 §5.1 拆 `GenerationTaskService`。每次拆分配套现有回归集和端到端契约测试，禁止在同一个提交中同时改变提示词语义。
+已按完整业务路径拆出 Web 试画、公共批量执行、自拍批量准备、状态报告、普通图片命令、完整自拍命令/参考选择、单张生成运行期及命令任务服务，并提取共享 Web controller 与路由契约切片，覆盖任务、记录、配置、代理、资产/集合、缓存、Canvas、Prompt/COS/Creative、健康历史、会话上下文、QQ 群、自拍资料和图像渠道。命令任务服务保留额度、取消、回执和记录提交竞态语义；任务存储与 Web 创建仍由 `WebTaskMixin` 所有。每次拆分配套现有回归集和端到端契约测试，禁止在同一个提交中同时改变提示词语义。
 
 ### 第 4 阶段：恢复与状态功能
 
