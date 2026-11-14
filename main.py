@@ -113,6 +113,7 @@ from .generation.image_workflow import run_image_generation_workflow
 from .generation.counted_workflow import CountedGenerationWorkflow
 from .generation.image_command_service import ImageCommandService
 from .generation.selfie_batch_workflow import SelfieBatchWorkflow
+from .generation.selfie_workflow import SelfieWorkflowService
 from .generation.web_test_workflow import WebTestImageWorkflow
 from .generation.image_scheduler import ImageJobScheduler
 from .generation.model_status_report import ImageStatusService
@@ -4039,115 +4040,27 @@ class SelfieImagePlugin(
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
     ) -> AsyncGenerator[Any, None]:
-        self._claim_media_command_event(event)
-        message = (
-            message_override.strip()
-            if message_override
-            else extract_command_message(event, command_name, fallback, include_quote_text=True)
-        )
-        if requested_count_override > 0:
-            requested_count = self._normalize_count(requested_count_override)
-        else:
-            message, requested_count = self._extract_command_count(message)
-
-        error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
-        if error:
-            yield event.plain_result(error)
-            return
-
-        # Prefer aspect/resolution resolved from raw user text (before action wrappers).
-        if source == "command-look-cos":
-            # Random COS descriptions specify clothes and framing, not request
-            # parameters. Only the user/preset can override the canvas defaults.
-            action, _, _ = self._parse_prompt_options(message)
-            _, aspect, resolution = self._parse_prompt_options(
-                rebuild_extra_request, preset_aspect, preset_resolution,
-            )
-            raw_request = extract_command_message(event, command_name, include_quote_text=True)
-            _, aspect, resolution = self._parse_prompt_options(raw_request, aspect, resolution)
-        elif any(str(value or "").strip() for value in (preset_name, preset_aspect, preset_resolution)):
-            default_aspect = str(self.config.image_default_aspect_ratio or "9:16").strip() or "9:16"
-            default_resolution = str(self.config.image_default_resolution or "1K").strip() or "1K"
-            action, aspect, resolution = self._parse_prompt_options(
-                message,
-                str(preset_aspect or "").strip() or default_aspect,
-                str(preset_resolution or "").strip() or default_resolution,
-            )
-            if preset_aspect and preset_aspect != default_aspect:
-                aspect = preset_aspect
-            # The wrapper can contain its own ratio. Reapply explicit raw options
-            # even when their value happens to equal the configured default.
-            raw_request = extract_command_message(event, command_name, fallback, include_quote_text=True)
-            _, aspect, resolution = self._parse_prompt_options(raw_request, aspect, resolution)
-        else:
-            action, aspect, resolution, _, _ = self._resolve_image_preset(message)
-        extra_refs = await self._event_reference_images(
-            event,
-            include_at_avatar=include_at_avatar,
-            context_hint=action,
-            allow_context_fallback=allow_context_fallback,
-        )
-        if not action:
-            action = default_action_with_refs if extra_refs else default_action
-        cos_selection = self._select_selfie_references(action, extra_refs)
-        group_selection = (
-            self._select_group_references(extra_refs)
-            if progress_label == "合影" and not self._is_cos_action(action)
-            else None
-        )
-        selection = group_selection or cos_selection
-        hints: List[str] = []
-        if not self.persona.has_reference_image():
-            if bool(getattr(self.config, "image_use_logo_when_no_persona", True)):
-                hints.append("当前还没有设置 AI 形象参考图，将用插件 logo 作为形象回退；关闭「无形象图用 logo」后改为仅按人设生成。")
-            else:
-                hints.append("当前还没有设置 AI 形象参考图，会按人设与今日设定生成主角。")
-        if progress_label == "合影" and not extra_refs:
-            hints.append("没有读取到合影对象参考图，会按文字要求生成同框对象。")
-        progress = await self._build_contextual_progress_text(event, "selfie", action, requested_count)
-        if hints:
-            progress += "\n" + "\n".join(hints)
-        queue_notified = self._image_batch_queue_expected(requested_count)
-        if queue_notified:
-            progress = "当前生图并发已满，本次先排队，空出槽位后继续。\n" + progress
-        self._record_bot_text_context(event, progress)
-
-        async def runner(task_id: str) -> Dict[str, Any]:
-            return await self._background_selfie_batches(
-                task_id,
-                event,
-                action,
-                extra_refs,
-                source,
-                requested_count,
-                aspect,
-                resolution,
-                fail_label,
-                queue_notified=queue_notified,
-                rebuild_extra_request=rebuild_extra_request,
-                rebuild_match_query=rebuild_match_query,
-                rebuild_special_preset_variants=rebuild_special_preset_variants,
-                cos_selection=selection,
-                reference_selection=selection.summary() if selection else None,
-            )
-
-        task = self.start_command_image_task(
-            event,
+        async for item in SelfieWorkflowService(self).handle_command(
+            event=event,
+            command_name=command_name,
+            fallback=fallback,
+            default_action=default_action,
+            default_action_with_refs=default_action_with_refs,
+            progress_label=progress_label,
             source=source,
-            summary={
-                "original_prompt": action,
-                "aspect_ratio": aspect,
-                "resolution": resolution,
-                "requested_count": requested_count,
-                "kind": progress_label,
-                "reference_image_count": len(extra_refs),
-                "special_preset_variants": rebuild_special_preset_variants,
-                "preset_name": str(preset_name or "").strip(),
-            },
-            runner=runner,
-            reference_images=self._selfie_reference_images(action, extra_refs, selection),
-        )
-        yield event.plain_result(progress)
+            fail_label=fail_label,
+            message_override=message_override,
+            include_at_avatar=include_at_avatar,
+            allow_context_fallback=allow_context_fallback,
+            requested_count_override=requested_count_override,
+            preset_aspect=preset_aspect,
+            preset_resolution=preset_resolution,
+            preset_name=preset_name,
+            rebuild_extra_request=rebuild_extra_request,
+            rebuild_match_query=rebuild_match_query,
+            rebuild_special_preset_variants=rebuild_special_preset_variants,
+        ):
+            yield item
 
     @filter.command("生图帮助")
     async def cmd_help(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
@@ -4802,38 +4715,8 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """用当前形象自拍。可写动作、场景、换装；有附图时作服装/场景参考。"""
-        fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        raw_message = extract_command_message(
-            event, ("自拍", "看看"), fallback_args, include_quote_text=True
-        )
-        raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
-        # Resolve presets on raw user words first (e.g. /自拍 捧脸), then wrap action.
-        special_variants, preset_aspect, preset_resolution, preset_name = (
-            self._expand_dynamic_preset_variants(raw_extra, requested_count)
-        )
-        if special_variants:
-            expanded_extra = special_variants[0]
-        else:
-            expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
-        has_refs = bool(extract_image_sources_from_event(event))
-        await self._ensure_daily_selfie_schedule(expanded_extra or "自拍", has_refs)
-        base_action = self._build_selfie_request_action(expanded_extra, has_refs)
-        async for item in self._handle_selfie_command(
-            event=event,
-            command_name=("自拍", "看看"),
-            fallback=base_action,
-            default_action=self._build_selfie_request_action("", False),
-            default_action_with_refs=self._build_selfie_request_action("", True),
-            progress_label="自拍",
-            source="command-selfie",
-            fail_label=self._natural_fail_fallback("selfie"),
-            message_override=base_action,
-            requested_count_override=requested_count,
-            preset_aspect=preset_aspect,
-            preset_resolution=preset_resolution,
-            preset_name=preset_name,
-            rebuild_extra_request=expanded_extra,
-            rebuild_special_preset_variants=special_variants,
+        async for item in SelfieWorkflowService(self).selfie(
+            event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
 

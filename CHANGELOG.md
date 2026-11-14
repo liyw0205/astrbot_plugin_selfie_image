@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.7.27 - 2026-11-15
+
+- 将普通自拍 `/自拍` 的预设/模板解析、日程准备，以及自拍公共 handler 的参考图筛选、队列进度、任务摘要和 runner 委派迁入 `SelfieWorkflowService`。
+- 保留插件命令注册、`cmd_selfie` 和 `_handle_selfie_command` 原签名；其余自拍命令继续经兼容代理使用同一公共 handler。
+- 增加成功路径回归，验证日程调用、队列提示、任务元数据、主形象引用及批处理 runner 委派。
+- 全量测试 `3582 passed, 702 subtests passed`；编译、Dashboard/Node、JSON/版本/制品与差异发布门禁全部通过。
+
 ## 1.7.26 - 2026-11-15
 
 - 将 `/画`、`/文生图`、`/图生图` 的命令解析、预设与模板展开、参考图选择、进度构造和任务启动迁入 `ImageCommandService`。

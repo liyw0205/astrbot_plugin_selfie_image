@@ -10589,6 +10589,85 @@ class StudioStoreTests(unittest.TestCase):
         plugin_main.SelfieImagePlugin._claim_media_command_event(legacy_event)
         self.assertTrue(legacy_event.call_llm)
 
+    def test_selfie_workflow_service_starts_command_task(self) -> None:
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        plugin = SessionModelAndTaskTests()._plugin_stub()
+        event = types.SimpleNamespace(
+            message_str="/自拍 夜景",
+            call_llm=False,
+            should_call_llm=lambda value: setattr(event, "call_llm", value),
+            plain_result=lambda text: text,
+        )
+        started = {}
+        scheduled = []
+        recorded = []
+        background_calls = []
+
+        async def _empty_reference_images(*_args, **_kwargs):
+            return []
+
+        async def _selfie_progress(*_args, **_kwargs):
+            return "progress"
+
+        def _append_schedule(items, action, has_refs):
+            async def record():
+                items.append((action, has_refs))
+
+            return record()
+
+        def _capture_selfie_background(calls):
+            async def capture(*args, **kwargs):
+                calls.append((args, kwargs))
+                return {"success": True}
+
+            return capture
+
+        plugin._expand_dynamic_preset_variants = lambda _text, _count: ([], "", "", "")
+        plugin._expand_user_text_with_preset = lambda text: (text, "", "", "")
+        plugin._ensure_daily_selfie_schedule = lambda action, has_refs: _append_schedule(
+            scheduled, action, has_refs
+        )
+        plugin._build_selfie_request_action = lambda extra, has_refs: f"selfie-action:{extra}:{has_refs}"
+        plugin._natural_fail_fallback = lambda _kind: "generation failed"
+        plugin._quota_error_message = lambda *_args, **_kwargs: ""
+        plugin._rate_limit_error_message = lambda *_args, **_kwargs: ""
+        plugin._resolve_image_preset = lambda message: (message, "9:16", "1K", "", "")
+        plugin._event_reference_images = _empty_reference_images
+        plugin._select_selfie_references = lambda *_args: None
+        plugin.persona = types.SimpleNamespace(has_reference_image=lambda: True)
+        plugin._build_contextual_progress_text = _selfie_progress
+        plugin._image_batch_queue_expected = lambda _count: True
+        plugin._record_bot_text_context = lambda _event, text: recorded.append(text)
+        plugin._selfie_reference_images = lambda *_args: ["persona-reference"]
+        plugin.start_command_image_task = lambda _event, **kwargs: started.update(kwargs)
+        plugin._background_selfie_batches = _capture_selfie_background(background_calls)
+
+        async def invoke() -> list[str]:
+            return [item async for item in plugin_main.SelfieImagePlugin.cmd_selfie(plugin, event)]
+
+        async def invoke_runner() -> dict:
+            return await started["runner"]("task-123")
+
+        output = asyncio.run(invoke())
+        self.assertEqual(
+            output,
+            ["当前生图并发已满，本次先排队，空出槽位后继续。\nprogress"],
+        )
+        self.assertTrue(event.call_llm)
+        self.assertEqual(scheduled, [("夜景", False)])
+        self.assertEqual(recorded, [output[0]])
+        self.assertEqual(started["source"], "command-selfie")
+        self.assertEqual(started["summary"]["requested_count"], 1)
+        self.assertEqual(started["summary"]["original_prompt"], "selfie-action:夜景:False")
+        self.assertEqual(started["reference_images"], ["persona-reference"])
+
+        result = asyncio.run(invoke_runner())
+        self.assertEqual(result, {"success": True})
+        self.assertEqual(background_calls[0][0][0], "task-123")
+        self.assertEqual(background_calls[0][0][4], "command-selfie")
+        self.assertTrue(background_calls[0][1]["queue_notified"])
+
     def test_image_commands_accept_count_before_or_after_prompt(self) -> None:
         """All image/selfie commands accept the common count positions."""
         import tempfile
