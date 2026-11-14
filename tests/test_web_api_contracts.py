@@ -20,6 +20,7 @@ from astrbot_plugin_selfie_image.features.config_manager import ConfigurationMix
 from astrbot_plugin_selfie_image.features.creative_features import CreativeFeaturesMixin
 from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
 from astrbot_plugin_selfie_image.webui import dashboard_api as dashboard_module
+from astrbot_plugin_selfie_image.webui import contracts as contracts_module
 from astrbot_plugin_selfie_image.webui.contracts import (
     ASSET_COLLECTION_ROUTE_CONTRACTS,
     ASSET_ROUTE_CONTRACTS,
@@ -46,6 +47,21 @@ TASK_ID = "web-12345678-1"
 RUNNING_ID = "web-studio-12345678-2"
 FINISHED_ID = "cmd-12345678-3"
 MISSING_BODY = object()
+EXPECTED_DASHBOARD_ROUTE_PREFIXES = ("", "page/")
+
+
+def _all_route_contracts():
+    return tuple(
+        route
+        for name, routes in vars(contracts_module).items()
+        if name.endswith("_ROUTE_CONTRACTS") and isinstance(routes, tuple)
+        for route in routes
+    )
+
+
+def _assert_unique_path_methods(rows):
+    path_methods = [(path, method) for path, method, _target in rows]
+    assert len(path_methods) == len(set(path_methods))
 
 
 class ContractPlugin(ConfigurationMixin, CreativeFeaturesMixin, WebTaskMixin):
@@ -984,6 +1000,72 @@ def test_shared_task_route_contract_matches_both_live_registries(tmp_path):
         if path in expected_paths
     }
     assert actual_dashboard == expected_dashboard
+
+
+def test_complete_flask_route_inventory_matches_live_url_map(tmp_path):
+    flask_app = FlaskWebServer(ContractPlugin(tmp_path))._create_app()
+    expected = [
+        (route.flask_path, method, route.endpoint)
+        for route in _all_route_contracts()
+        for method in route.methods
+    ]
+    expected.extend((
+        ("/", "GET", "index"),
+        ("/index.html", "GET", "index"),
+        ("/logo.png", "GET", "logo"),
+        ("/api/plugin/page/bridge-sdk.js", "GET", "bridge_sdk_fallback"),
+        ("/api/health", "GET", "health"),
+        ("/static/<path:filename>", "GET", "static"),
+    ))
+    actual = [
+        (rule.rule, method, rule.endpoint)
+        for rule in flask_app.url_map.iter_rules()
+        for method in rule.methods - {"HEAD", "OPTIONS"}
+    ]
+
+    _assert_unique_path_methods(expected)
+    _assert_unique_path_methods(actual)
+    assert set(actual) == set(expected)
+
+
+def test_complete_dashboard_route_inventory_matches_live_registration(tmp_path):
+    assert contracts_module.DASHBOARD_ROUTE_PREFIXES == EXPECTED_DASHBOARD_ROUTE_PREFIXES
+    plugin = ContractPlugin(tmp_path)
+    registered = []
+    plugin.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
+    api = dashboard_module.SelfieImageDashboardAPI(plugin)
+    api.register()
+
+    expected = [
+        (
+            f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}",
+            method,
+            getattr(api, route.dashboard_handler),
+        )
+        for route in _all_route_contracts()
+        for prefix in EXPECTED_DASHBOARD_ROUTE_PREFIXES
+        for method in route.methods
+    ]
+    adapter_routes = (
+        ("health", "page_health", ("GET",)),
+        ("health/channels/clear", "page_channel_health_clear", ("POST",)),
+        ("auth/check", "page_auth_check", ("POST", "GET")),
+    )
+    expected.extend(
+        (f"/{PLUGIN_NAME}/{prefix}{path}", method, getattr(api, handler_name))
+        for path, handler_name, methods in adapter_routes
+        for prefix in EXPECTED_DASHBOARD_ROUTE_PREFIXES
+        for method in methods
+    )
+    actual = [
+        (path, method, handler)
+        for path, handler, methods, _description in registered
+        for method in methods
+    ]
+
+    _assert_unique_path_methods(expected)
+    _assert_unique_path_methods(actual)
+    assert set(actual) == set(expected)
 
 
 def test_shared_cache_route_contract_matches_both_live_registries(tmp_path):

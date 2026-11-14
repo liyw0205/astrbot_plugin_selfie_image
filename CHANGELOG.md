@@ -1,5 +1,11 @@
 # 更新日志
 
+## 1.7.31 - 2026-11-15
+
+- 为 Flask 与 AstrBot Dashboard 增加完整路由 inventory，精确核对所有共享契约、adapter 专属端点、HTTP 方法、endpoint/handler 与 Dashboard 双前缀；重复或未登记路由会导致测试失败。
+- 保留逐路由请求/响应行为契约作为接口结构验证；本轮不改变运行时路由、认证、状态码或响应 envelope。
+- 全量 pytest `3588 passed, 702 subtests passed`（292.10 秒）；Python 编译、无操作检查、Dashboard 构建/回退与 Node、版本/JSON/制品及 `git diff --check` 全部门禁通过。
+
 ## 1.7.30 - 2026-11-15
 
 - 新增 `GenerationTaskService`，承接命令任务创建、去重与额度预留/释放、取消、投递失败处理、任务等待和终态发布；WebTaskMixin 继续负责任务存储与请求指纹/去重实现。

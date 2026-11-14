@@ -4,11 +4,11 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-最新完整发布验证基线（2026-11-15，1.7.30）：
+最新完整发布验证基线（2026-11-15，1.7.31）：
 
-- 全量 pytest `3586 passed, 702 subtests passed`，耗时 271.65 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3588 passed, 702 subtests passed`，耗时 292.10 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；60 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：148 个文件，2,425,943 bytes；解压后 5,664,607 bytes；SHA-256 `944b131395206e0d90fbd2cf233d8b1b02aed8ae5328a69a94247c69754ce90e`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
+- 临时运行期 ZIP 检查：148 个文件，2,426,109 bytes；解压后 5,665,001 bytes；SHA-256 `3151efc3dec816fc779c922d570f010b08f12849ea3dc0377e7d52aebfd9e4e0`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证。
 
 主要结构性事实：
@@ -343,7 +343,9 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --prom
 
 记录域全部操作、配置读写/导入导出组、代理查询/探测、资产基础操作、资产集合 API、缓存清理与图片访问、Studio/Creative Canvas 会话与图库 API、Prompt/COS/Creative API、健康历史、会话上下文、QQ 群、自拍资料及图像渠道测试/模型刷新现已使用共享 controller/路由契约。Dashboard-only 的渠道健康清理仍由单端 adapter 提供。缓存缩略图在 Dashboard 仍通过线程池执行；原图下载的 Flask `send_file` 与 Dashboard `file_response` 仍由 adapter 负责；不要把这些切片描述成整个 Web 层已统一。后续转入命令和任务运行期拆分，并从声明表注册新增路由；二进制响应、宿主认证和适配器特有 envelope 继续留在边界层。
 
-本切片验收：任务、记录、配置、代理、资产基础操作、资产集合、画布会话、健康历史、会话上下文、QQ 群、自拍资料及图像渠道业务分别只有一个共享实现；任务 9 条、记录 12 条、配置 5 条、代理 3 条、资产基础操作 8 条、资产集合 10 条、画布 28 个、健康历史 1 个、上下文 2 个、QQ 群 2 个、自拍资料 5 个、图像渠道 4 个契约项的 Flask/Dashboard 实际注册路径与方法由测试核对。整体验收仍需处理新增 route inventory，再验证完整路由集合及接口结构。
+本切片验收：任务、记录、配置、代理、资产基础操作、资产集合、画布会话、健康历史、会话上下文、QQ 群、自拍资料及图像渠道业务分别只有一个共享实现；任务 9 条、记录 12 条、配置 5 条、代理 3 条、资产基础操作 8 条、资产集合 10 条、画布 28 个、健康历史 1 个、上下文 2 个、QQ 群 2 个、自拍资料 5 个、图像渠道 4 个契约项的 Flask/Dashboard 实际注册路径与方法由测试核对。完整路由集合和注册接口结构的 inventory 验收已补齐。
+
+全量路由 inventory 已补齐：测试动态汇总所有共享契约族，对 Flask `url_map` 与 Dashboard `register_web_api` 展开后的完整 path/method/endpoint-or-handler 集合做精确比较，并拒绝重复 path/method。Flask 页面、健康、桥接脚本和默认 static 路由，以及 Dashboard 健康、清理、认证检查端点均显式列入 adapter 清单；Dashboard 的裸路径与 `page/` 双前缀固定验收。请求解析、认证边界、状态码及响应 envelope 仍由既有逐路由行为契约覆盖；本 inventory 不声称定义完整 OpenAPI request/response schema。
 
 ## 6. P2：可观测性、恢复和数据治理
 
