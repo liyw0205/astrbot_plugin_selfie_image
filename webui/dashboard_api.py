@@ -25,6 +25,7 @@ from .contracts import (
     CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
+    CONTEXT_ROUTE_CONTRACTS,
     DASHBOARD_ROUTE_PREFIXES,
     HEALTH_ROUTE_CONTRACTS,
     MAX_WEB_TASK_ID_LENGTH,
@@ -44,6 +45,8 @@ from .controllers import (
     CanvasControllerResult,
     ConfigController,
     ConfigControllerResult,
+    ContextController,
+    ContextControllerResult,
     HealthController,
     HealthControllerResult,
     ProxyController,
@@ -86,6 +89,7 @@ class SelfieImageDashboardAPI:
         self._task_controller = TaskController(plugin)
         self._record_controller = RecordController(plugin)
         self._health_controller = HealthController(plugin)
+        self._context_controller = ContextController(plugin)
         self._prompt_catalog_controller = PromptCatalogController(plugin)
 
     def _config_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
@@ -176,6 +180,17 @@ class SelfieImageDashboardAPI:
             for route in HEALTH_ROUTE_CONTRACTS
         ]
 
+    def _context_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in CONTEXT_ROUTE_CONTRACTS
+        ]
+
     def _canvas_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
         return [
             (
@@ -208,8 +223,7 @@ class SelfieImageDashboardAPI:
             ("health", self.page_health, ["GET"], "Selfie Image health"),
             *self._health_route_entries(),
             ("health/channels/clear", self.page_channel_health_clear, ["POST"], "Selfie Image clear channel health"),
-            ("context", self.page_context_get, ["GET"], "Selfie Image conversation context"),
-            ("context/clear", self.page_context_clear, ["POST"], "Selfie Image clear conversation context"),
+            *self._context_route_entries(),
             *self._config_route_entries(),
             *self._proxy_route_entries(),
             ("qq-groups", self.page_qq_groups, ["GET"], "Selfie Image QQ groups"),
@@ -382,22 +396,22 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
         return self._ok(result.data)
     async def page_context_get(self) -> Any:
-        getter = getattr(self.plugin, "get_conversation_context", None)
-        if not callable(getter):
-            return self._fail("当前版本不支持会话上下文", 501)
         try:
-            return self._ok(redact_sensitive_data(getter(None)))
+            result: ContextControllerResult = self._context_controller.get()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
             return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
 
     async def page_context_clear(self) -> Any:
-        clearer = getattr(self.plugin, "clear_conversation_context", None)
-        if not callable(clearer):
-            return self._fail("当前版本不支持会话上下文", 501)
         try:
-            return self._ok(clearer(None), message="会话上下文已清除")
+            result: ContextControllerResult = self._context_controller.clear()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
             return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
 
     async def page_storage_consistency(self) -> Any:
         return self._record_result(lambda: self._record_controller.consistency())

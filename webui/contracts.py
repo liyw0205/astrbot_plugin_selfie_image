@@ -173,6 +173,29 @@ HEALTH_ROUTE_CONTRACTS = (
 )
 
 
+@dataclass(frozen=True)
+class ContextRouteContract:
+    endpoint: str
+    flask_path: str
+    dashboard_path: str
+    methods: tuple[str, ...]
+    flask_handler: str
+    dashboard_handler: str
+    description: str
+
+
+CONTEXT_ROUTE_CONTRACTS = (
+    ContextRouteContract(
+        "context_get", "/api/context", "context", ("GET",),
+        "context_get", "page_context_get", "Selfie Image conversation context",
+    ),
+    ContextRouteContract(
+        "context_clear", "/api/context/clear", "context/clear", ("POST",),
+        "context_clear", "page_context_clear", "Selfie Image clear conversation context",
+    ),
+)
+
+
 CONFIG_ROUTE_CONTRACTS = (
     ConfigRouteContract(
         "config_get", "/api/config", "config", ("GET",), "config_get",

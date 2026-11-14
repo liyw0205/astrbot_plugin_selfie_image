@@ -26,6 +26,7 @@ from astrbot_plugin_selfie_image.webui.contracts import (
 CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
+    CONTEXT_ROUTE_CONTRACTS,
     HEALTH_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
@@ -1072,6 +1073,50 @@ def test_shared_health_route_contract_matches_both_live_registries(tmp_path):
     assert actual_dashboard == expected_dashboard
 
 
+def test_shared_context_route_contract_matches_both_live_registries(tmp_path):
+    plugin = ContractPlugin(tmp_path)
+    flask_app = FlaskWebServer(plugin)._create_app()
+    expected_flask = {
+        (route.flask_path, method, route.endpoint)
+        for route in CONTEXT_ROUTE_CONTRACTS
+        for method in route.methods
+    }
+    actual_flask = {
+        (rule.rule, method, rule.endpoint)
+        for rule in flask_app.url_map.iter_rules()
+        for method in rule.methods - {"HEAD", "OPTIONS"}
+        if rule.rule in {route.flask_path for route in CONTEXT_ROUTE_CONTRACTS}
+    }
+    assert actual_flask == expected_flask
+
+    registered = []
+    plugin.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
+    api = dashboard_module.SelfieImageDashboardAPI(plugin)
+    api.register()
+    expected_paths = {
+        f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}"
+        for route in CONTEXT_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+    }
+    expected_dashboard = {
+        (
+            f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}",
+            method,
+            getattr(api, route.dashboard_handler),
+        )
+        for route in CONTEXT_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+        for method in route.methods
+    }
+    actual_dashboard = {
+        (path, method, handler)
+        for path, handler, methods, _description in registered
+        for method in methods
+        if path in expected_paths
+    }
+    assert actual_dashboard == expected_dashboard
+
+
 def test_health_controller_normalizes_and_redacts_both_adapter_responses(http):
     calls = []
 
@@ -1101,6 +1146,44 @@ def test_health_controller_preserves_legacy_hook_and_missing_capability(http):
 
     del http.plugin.get_channel_health_history
     assert_failure(http.call("/api/health/history"), 501, "不支持")
+
+
+def test_context_controller_preserves_operations_and_redacts_results(http):
+    calls = []
+
+    def get_context(user_id):
+        calls.append(("get", user_id))
+        return {"context": ["recent message"], "api_key": "context-secret"}
+
+    def clear_context(user_id):
+        calls.append(("clear", user_id))
+        return {"cleared": True, "api_key": "clear-secret"}
+
+    http.plugin.get_conversation_context = get_context
+    http.plugin.clear_conversation_context = clear_context
+    response = http.call("/api/context")
+    context = assert_success(response)
+    assert context == {"context": ["recent message"], "api_key": "[REDACTED]"}
+    assert "context-secret" not in json.dumps(response.payload)
+
+    cleared = http.call("/api/context/clear", method="POST", body={})
+    assert assert_success(cleared) == {"cleared": True, "api_key": "[REDACTED]"}
+    assert cleared.envelope["message"] == "会话上下文已清除"
+    assert "clear-secret" not in json.dumps(cleared.payload)
+    assert calls == [("get", None), ("clear", None)]
+
+
+def test_context_controller_preserves_json_and_capability_errors(http):
+    if http.adapter == "flask":
+        assert_failure(http.call("/api/context/clear", method="POST", body=[]), 400, "JSON 对象")
+    else:
+        http.plugin.clear_conversation_context = lambda _user_id: {"cleared": True}
+        assert assert_success(http.call(
+            "/api/context/clear", method="POST", body=[]
+        )) == {"cleared": True}
+        del http.plugin.clear_conversation_context
+    assert_failure(http.call("/api/context"), 501, "不支持")
+    assert_failure(http.call("/api/context/clear", method="POST", body={}), 501, "不支持")
 
 
 def test_cache_cleanup_preserves_confirmation_and_conflict_contract(http):

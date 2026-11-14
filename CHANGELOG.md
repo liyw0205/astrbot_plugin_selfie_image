@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.7.23 - 2026-11-15
+
+- 将会话上下文读取和清理迁入共享 `ContextController`，并以 `CONTEXT_ROUTE_CONTRACTS` 注册 Flask 与 Dashboard 路由。
+- 统一 hook 调用、缺失能力状态和结果脱敏；保留两端原有认证、响应包装及 Dashboard 未解析清理请求体的行为。
+- 增加双端真实路由、读写结果、脱敏、缺失 hook 和请求体边界回归。
+- 全量测试 `3566 passed, 702 subtests passed`；Python 编译、Dashboard 构建/回退与 Node、版本/JSON/制品和差异门禁均通过。
+
 ## 1.7.22 - 2026-11-15
 
 - 将渠道健康历史查询迁入共享 `HealthController`，并使用同一契约表注册 Flask 与 Dashboard 路由；鉴权和响应包装仍由 adapter 负责。

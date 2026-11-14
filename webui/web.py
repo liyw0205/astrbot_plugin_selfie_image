@@ -22,6 +22,7 @@ from .contracts import (
     CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
+    CONTEXT_ROUTE_CONTRACTS,
     HEALTH_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
@@ -39,6 +40,8 @@ from .controllers import (
     CanvasControllerResult,
     ConfigController,
     ConfigControllerResult,
+    ContextController,
+    ContextControllerResult,
     HealthController,
     HealthControllerResult,
     ProxyController,
@@ -198,6 +201,7 @@ class FlaskWebServer:
         task_controller = TaskController(self.plugin)
         record_controller = RecordController(self.plugin)
         health_controller = HealthController(self.plugin)
+        context_controller = ContextController(self.plugin)
         prompt_catalog_controller = PromptCatalogController(self.plugin)
         auth_failure_lock = threading.RLock()
         auth_failures: dict[str, dict[str, float]] = {}
@@ -294,6 +298,15 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
             return ok(result.data)
+
+        def context_result(call: Any) -> Any:
+            try:
+                result: ContextControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data, **result.extra)
 
         @app.after_request
         def add_response_safety_headers(response: Any) -> Any:
@@ -435,32 +448,30 @@ class FlaskWebServer:
                 methods=list(route.methods),
             )
 
-        @app.route("/api/context", methods=["GET"])
         def context_get() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            getter = getattr(self.plugin, "get_conversation_context", None)
-            if not callable(getter):
-                return fail("当前版本不支持会话上下文", 501)
-            try:
-                return ok(redact_sensitive_data(getter(None)))
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return context_result(context_controller.get)
 
-        @app.route("/api/context/clear", methods=["POST"])
         def context_clear() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             _, error_response = json_object_payload()
             if error_response:
                 return error_response
-            clearer = getattr(self.plugin, "clear_conversation_context", None)
-            if not callable(clearer):
-                return fail("当前版本不支持会话上下文", 501)
-            try:
-                return ok(clearer(None), message="会话上下文已清除")
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return context_result(context_controller.clear)
+
+        context_handlers = {
+            "context_get": context_get,
+            "context_clear": context_clear,
+        }
+        for route in CONTEXT_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=context_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
 
         def tasks() -> Any:
             if not check_auth():
