@@ -87,6 +87,17 @@ class ContextControllerResult:
 
 
 @dataclass(frozen=True)
+class QQGroupControllerResult:
+    data: Any
+
+
+@dataclass(frozen=True)
+class SelfieProfileControllerResult:
+    data: Any
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CachedImage:
     path: str
     info: dict[str, Any]
@@ -990,3 +1001,77 @@ class ContextController:
         return ContextControllerResult(
             redact_sensitive_data(data), {"message": "会话上下文已清除"},
         )
+
+
+class QQGroupController:
+    """Shared QQ group operations for both Web adapters."""
+
+    def __init__(self, plugin: Any) -> None:
+        self.plugin = plugin
+
+    async def list(self, params: Any) -> QQGroupControllerResult:
+        getter = getattr(self.plugin, "list_qq_groups_for_web", None)
+        if not callable(getter):
+            raise WebContractError("当前版本不支持 QQ 群列表", 501)
+        refresh = query_value(params, "refresh").strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            data = await getter(force=refresh)
+        except Exception as exc:
+            raise WebContractError(str(exc), 500) from exc
+        return QQGroupControllerResult(redact_sensitive_data(data))
+
+    def update(self, payload: Any) -> QQGroupControllerResult:
+        updater = getattr(self.plugin, "update_group_chat_configs_from_web", None)
+        if not callable(updater):
+            raise WebContractError("当前版本不支持 QQ 群配置", 501)
+        try:
+            data = updater(payload)
+        except Exception as exc:
+            raise WebContractError(str(exc), 400) from exc
+        return QQGroupControllerResult(redact_sensitive_data(data))
+
+
+class SelfieProfileController:
+    """Shared selfie-reference and profile operations for both Web adapters."""
+
+    def __init__(self, plugin: Any) -> None:
+        self.plugin = plugin
+
+    def _call(self, hook_name: str, *args: Any, error_status: int = 500) -> Any:
+        hook = getattr(self.plugin, hook_name, None)
+        if not callable(hook):
+            raise WebContractError("当前版本不支持自拍资料操作", 501)
+        try:
+            return hook(*args)
+        except Exception as exc:
+            raise WebContractError(str(exc), error_status) from exc
+
+    @staticmethod
+    def _result(data: Any, message: str | None = None) -> SelfieProfileControllerResult:
+        extra = {"message": message} if message else {}
+        return SelfieProfileControllerResult(redact_sensitive_data(data), extra)
+
+    def get_reference(self) -> SelfieProfileControllerResult:
+        return self._result(self._call("get_selfie_reference_payload"))
+
+    def save_reference(self, payload: Any) -> SelfieProfileControllerResult:
+        data = self._call("save_selfie_reference_from_web", payload, error_status=400)
+        return self._result(data, "自拍参考图已保存")
+
+    def clear_reference(self) -> SelfieProfileControllerResult:
+        data = self._call("clear_selfie_reference_from_web")
+        return self._result(data, "自拍参考图已清除")
+
+    def set_appearance_type(self, payload: Any) -> SelfieProfileControllerResult:
+        data = self._call("set_selfie_appearance_type_from_web", payload, error_status=400)
+        return self._result(data, "形象类型已保存")
+
+    async def refresh_local(self) -> SelfieProfileControllerResult:
+        hook = getattr(self.plugin, "refresh_selfie_profile_local_from_web", None)
+        if not callable(hook):
+            raise WebContractError("当前版本不支持自拍资料操作", 501)
+        try:
+            data = await hook()
+        except Exception as exc:
+            raise WebContractError(str(exc), 500) from exc
+        return self._result(data, "本地今日穿搭已刷新")

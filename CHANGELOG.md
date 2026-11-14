@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.7.24 - 2026-11-15
+
+- 将 QQ 群列表/配置保存及自拍参考图、形象类型和本地资料刷新迁入共享 controller 与路由契约表。
+- 统一 refresh 参数、hook 错误映射和结果脱敏；保留 Flask 的异步桥接超时，以及各 adapter 的认证、JSON 和响应包装边界。
+- 补充双端实际路由、操作消息、异步刷新、缺失 hook、错误状态和敏感字段回归。
+- 全量测试 `3576 passed, 702 subtests passed`；Python 编译、Dashboard 构建/回退与 Node、版本/JSON/制品和差异门禁均通过。
+
 ## 1.7.23 - 2026-11-15
 
 - 将会话上下文读取和清理迁入共享 `ContextController`，并以 `CONTEXT_ROUTE_CONTRACTS` 注册 Flask 与 Dashboard 路由。

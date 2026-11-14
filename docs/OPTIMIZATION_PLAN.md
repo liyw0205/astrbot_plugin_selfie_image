@@ -4,11 +4,11 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-最新完整发布验证基线（2026-11-15，1.7.23）：
+最新完整发布验证基线（2026-11-15，1.7.24）：
 
-- 全量 pytest `3566 passed, 702 subtests passed`，耗时 412.00 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3576 passed, 702 subtests passed`，耗时 268.99 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；60 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：144 个文件，2,419,689 bytes；解压后 5,635,405 bytes；SHA-256 `865cccf766458f9728f0f785a97df62cf0be4cb44d520c676d13d8935f843757`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新增兼容 helper、Prompt、Cache、Health 与 Context controller 均纳入运行期包。
+- 临时运行期 ZIP 检查：144 个文件，2,420,432 bytes；解压后 5,644,119 bytes；SHA-256 `f1d9cf13359bbc52ccd40ef212a382a5dc6c5aef1f267c3aea3687f9adec938d`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新增兼容 helper、Prompt、Cache、Health、Context、QQ group 与 Selfie profile controller 均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证。
 
 主要结构性事实：
@@ -79,6 +79,8 @@
 - 本轮继续拆分缓存 API：清理、原图、预览和缩略图 4 条路由共用 `CacheController` 与 `CACHE_ROUTE_CONTRACTS`；路径/媒体校验、清理确认、预览读取上限和缩略图输出由共享层裁决。认证、JSON 解析、二进制文件响应仍留在 adapter；Dashboard 缩略图继续在线程池解码。真实 Flask/Dashboard 注册数量、确认冲突、预览限额和异步线程行为均有回归覆盖。
 - 渠道健康历史查询迁入 `HealthController` 与 `HEALTH_ROUTE_CONTRACTS`；窗口范围、媒体类型、导出参数、旧版两参数 hook 兼容和结果脱敏统一，两端认证与响应 envelope 仍由 adapter 负责。双端实际路由注册及参数/能力边界有回归覆盖。
 - 会话上下文读取/清理迁入 `ContextController` 与 `CONTEXT_ROUTE_CONTRACTS`；hook 调用、结果脱敏、缺失能力状态和清理消息共用实现。Flask JSON 对象校验与 Dashboard 不解析未使用请求体的原行为、各自认证和响应 envelope 保留。
+- QQ 群列表/配置保存迁入 `QQGroupController` 与 `QQ_GROUP_ROUTE_CONTRACTS`；refresh 归一化、异步列表 hook、保存错误映射及结果脱敏共用。Flask 仍经 20 秒异步桥接，Dashboard 直接 await。
+- 自拍资料 5 个方法路由（参考图读取/保存/清理、形象类型、本地资料刷新）迁入 `SelfieProfileController` 与 `SELFIE_PROFILE_ROUTE_CONTRACTS`；操作消息、错误映射和脱敏统一，两端 JSON 对象校验、认证与响应 envelope 留在 adapter。
 
 ## 2. 优先级总览
 
@@ -335,9 +337,9 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --prom
 - Flask 仍在 Token 鉴权和对象 JSON 解析后调用 controller；Dashboard 仍依赖宿主鉴权。两者成功 envelope、错误封装和状态响应方式不合并。
 - 任务返回值统一递归脱敏，覆盖过去直接透传的导出、删除、重试结果与取消消息。双 adapter 回归验证路由/方法、状态码、导出 ID 历史行为、缺少能力 501、异常脱敏和 JSON 对象限制。
 
-记录域全部操作、配置读写/导入导出组、代理查询/探测、资产基础操作、资产集合 API、缓存清理与图片访问、Studio/Creative Canvas 会话与图库 API、Prompt/COS/Creative API、健康历史及会话上下文查询现已使用共享 controller/路由契约。缓存缩略图在 Dashboard 仍通过线程池执行；原图下载的 Flask `send_file` 与 Dashboard `file_response` 仍由 adapter 负责。QQ 群配置、自拍资料和图像渠道操作等重复 API 尚未迁移；不要把这些切片描述成整个 Web 层已统一。后续逐组将重复业务逻辑迁入 controller，并从声明表注册路由；二进制响应、宿主认证和适配器特有 envelope 继续留在边界层。
+记录域全部操作、配置读写/导入导出组、代理查询/探测、资产基础操作、资产集合 API、缓存清理与图片访问、Studio/Creative Canvas 会话与图库 API、Prompt/COS/Creative API、健康历史、会话上下文、QQ 群及自拍资料查询/操作现已使用共享 controller/路由契约。缓存缩略图在 Dashboard 仍通过线程池执行；原图下载的 Flask `send_file` 与 Dashboard `file_response` 仍由 adapter 负责。图像渠道操作等重复 API 尚未迁移；不要把这些切片描述成整个 Web 层已统一。后续逐组将重复业务逻辑迁入 controller，并从声明表注册路由；二进制响应、宿主认证和适配器特有 envelope 继续留在边界层。
 
-本切片验收：任务、记录、配置、代理、资产基础操作、资产集合、画布会话及会话上下文业务分别只有一个共享实现；任务 9 条、记录 12 条、配置 5 条、代理 3 条、资产基础操作 8 条、资产集合 10 条、画布 28 个、健康历史 1 个、上下文 2 个契约项的 Flask/Dashboard 实际注册路径与方法由测试核对。整体验收仍需迁移其他重复 API 后，再验证完整路由集合及接口结构。
+本切片验收：任务、记录、配置、代理、资产基础操作、资产集合、画布会话、健康历史、会话上下文、QQ 群及自拍资料业务分别只有一个共享实现；任务 9 条、记录 12 条、配置 5 条、代理 3 条、资产基础操作 8 条、资产集合 10 条、画布 28 个、健康历史 1 个、上下文 2 个、QQ 群 2 个、自拍资料 5 个契约项的 Flask/Dashboard 实际注册路径与方法由测试核对。整体验收仍需迁移图像渠道操作等重复 API 后，再验证完整路由集合及接口结构。
 
 ## 6. P2：可观测性、恢复和数据治理
 
@@ -422,7 +424,7 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --prom
 
 ### 第 3 阶段：边界拆分
 
-已按完整业务路径拆出 Web 试画、公共批量执行和自拍批量准备，并提取状态报告服务；Web 任务管理、记录域全部操作、配置 API、代理 API、资产基础操作、资产集合 API、缓存 API、Studio/Creative Canvas 会话与图库 API、Prompt/COS/Creative API、健康历史和会话上下文查询均已完成双 adapter 共享 controller 与路由契约切片。下一步盘点 QQ 群、自拍资料和图像渠道等重复 API，再拆命令与任务运行期。每次拆分配套现有回归集和端到端契约测试，禁止在同一个提交中同时改变提示词语义。
+已按完整业务路径拆出 Web 试画、公共批量执行和自拍批量准备，并提取状态报告服务；Web 任务管理、记录域全部操作、配置 API、代理 API、资产基础操作、资产集合 API、缓存 API、Studio/Creative Canvas 会话与图库 API、Prompt/COS/Creative API、健康历史、会话上下文、QQ 群和自拍资料均已完成双 adapter 共享 controller 与路由契约切片。下一步盘点图像渠道操作，再拆命令与任务运行期。每次拆分配套现有回归集和端到端契约测试，禁止在同一个提交中同时改变提示词语义。
 
 ### 第 4 阶段：恢复与状态功能
 

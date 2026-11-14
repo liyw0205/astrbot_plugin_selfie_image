@@ -26,7 +26,9 @@ from .contracts import (
     HEALTH_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
+    QQ_GROUP_ROUTE_CONTRACTS,
     RECORD_ROUTE_CONTRACTS,
+    SELFIE_PROFILE_ROUTE_CONTRACTS,
     TASK_ROUTE_CONTRACTS,
     WEB_TASK_ID_RE,
 )
@@ -46,6 +48,10 @@ from .controllers import (
     HealthControllerResult,
     ProxyController,
     ProxyControllerResult,
+    QQGroupController,
+    QQGroupControllerResult,
+    SelfieProfileController,
+    SelfieProfileControllerResult,
     RecordController,
     RecordControllerResult,
     TaskController,
@@ -202,6 +208,8 @@ class FlaskWebServer:
         record_controller = RecordController(self.plugin)
         health_controller = HealthController(self.plugin)
         context_controller = ContextController(self.plugin)
+        qq_group_controller = QQGroupController(self.plugin)
+        selfie_profile_controller = SelfieProfileController(self.plugin)
         prompt_catalog_controller = PromptCatalogController(self.plugin)
         auth_failure_lock = threading.RLock()
         auth_failures: dict[str, dict[str, float]] = {}
@@ -302,6 +310,24 @@ class FlaskWebServer:
         def context_result(call: Any) -> Any:
             try:
                 result: ContextControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data, **result.extra)
+
+        def qq_group_result(call: Any) -> Any:
+            try:
+                result: QQGroupControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data)
+
+        def selfie_profile_result(call: Any) -> Any:
+            try:
+                result: SelfieProfileControllerResult = call()
             except WebContractError as exc:
                 return fail(str(exc), exc.status_code)
             except Exception as exc:
@@ -626,77 +652,90 @@ class FlaskWebServer:
                 return error_response
             return asset_result(lambda: asset_controller.studio_many(payload))
 
-        @app.route("/api/qq-groups", methods=["GET"])
         def qq_groups() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            force = str(request.args.get("refresh") or "").strip().lower() in {"1", "true", "yes", "on"}
-            try:
-                return ok(self._run_async(self.plugin.list_qq_groups_for_web(force=force), timeout=20))
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return qq_group_result(
+                lambda: self._run_async(qq_group_controller.list(request.args), timeout=20)
+            )
 
-        @app.route("/api/qq-groups/config", methods=["POST"])
         def qq_groups_config() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.update_group_chat_configs_from_web(payload))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return qq_group_result(lambda: qq_group_controller.update(payload))
 
-        @app.route("/api/selfie-reference", methods=["GET", "POST"])
-        def selfie_reference() -> Any:
+        qq_group_handlers = {
+            "qq_groups": qq_groups,
+            "qq_groups_config": qq_groups_config,
+        }
+        for route in QQ_GROUP_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=qq_group_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
+
+        def selfie_reference_get() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            if request.method == "GET":
-                return ok(self.plugin.get_selfie_reference_payload())
+            return selfie_profile_result(selfie_profile_controller.get_reference)
+
+        def selfie_reference_post() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                data = self.plugin.save_selfie_reference_from_web(payload)
-                return ok(data, message="自拍参考图已保存")
-            except Exception as exc:
-                return fail(str(exc))
+            return selfie_profile_result(
+                lambda: selfie_profile_controller.save_reference(payload)
+            )
 
-        @app.route("/api/selfie-reference/clear", methods=["POST"])
         def selfie_reference_clear() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             _, error_response = json_object_payload()
             if error_response:
                 return error_response
-            return ok(self.plugin.clear_selfie_reference_from_web(), message="自拍参考图已清除")
+            return selfie_profile_result(selfie_profile_controller.clear_reference)
 
-        @app.route("/api/selfie-appearance-type", methods=["POST"])
         def selfie_appearance_type() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                data = self.plugin.set_selfie_appearance_type_from_web(payload)
-                return ok(data, message="形象类型已保存")
-            except Exception as exc:
-                return fail(str(exc))
+            return selfie_profile_result(
+                lambda: selfie_profile_controller.set_appearance_type(payload)
+            )
 
-        @app.route("/api/selfie-profile/refresh-local", methods=["POST"])
         def selfie_profile_refresh_local() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             _, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                data = self._run_async(self.plugin.refresh_selfie_profile_local_from_web(), timeout=20)
-                return ok(data, message="本地今日穿搭已刷新")
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return selfie_profile_result(lambda: self._run_async(
+                selfie_profile_controller.refresh_local(), timeout=20,
+            ))
+
+        selfie_profile_handlers = {
+            "selfie_reference_get": selfie_reference_get,
+            "selfie_reference_post": selfie_reference_post,
+            "selfie_reference_clear": selfie_reference_clear,
+            "selfie_appearance_type": selfie_appearance_type,
+            "selfie_profile_refresh_local": selfie_profile_refresh_local,
+        }
+        for route in SELFIE_PROFILE_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=selfie_profile_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
 
         @app.route("/api/test-image-channel", methods=["POST"])
         def test_image_channel() -> Any:

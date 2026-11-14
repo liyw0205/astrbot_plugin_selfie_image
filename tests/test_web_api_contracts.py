@@ -30,7 +30,9 @@ CACHE_ROUTE_CONTRACTS,
     HEALTH_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
+    QQ_GROUP_ROUTE_CONTRACTS,
     RECORD_ROUTE_CONTRACTS,
+    SELFIE_PROFILE_ROUTE_CONTRACTS,
     TASK_CANCEL_ROUTE_ALIASES,
     TASK_ROUTE_CONTRACTS,
 )
@@ -1117,6 +1119,94 @@ def test_shared_context_route_contract_matches_both_live_registries(tmp_path):
     assert actual_dashboard == expected_dashboard
 
 
+def test_shared_qq_group_route_contract_matches_both_live_registries(tmp_path):
+    plugin = ContractPlugin(tmp_path)
+    flask_app = FlaskWebServer(plugin)._create_app()
+    expected_flask = {
+        (route.flask_path, method, route.endpoint)
+        for route in QQ_GROUP_ROUTE_CONTRACTS
+        for method in route.methods
+    }
+    actual_flask = {
+        (rule.rule, method, rule.endpoint)
+        for rule in flask_app.url_map.iter_rules()
+        for method in rule.methods - {"HEAD", "OPTIONS"}
+        if rule.rule in {route.flask_path for route in QQ_GROUP_ROUTE_CONTRACTS}
+    }
+    assert actual_flask == expected_flask
+
+    registered = []
+    plugin.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
+    api = dashboard_module.SelfieImageDashboardAPI(plugin)
+    api.register()
+    expected_paths = {
+        f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}"
+        for route in QQ_GROUP_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+    }
+    expected_dashboard = {
+        (
+            f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}",
+            method,
+            getattr(api, route.dashboard_handler),
+        )
+        for route in QQ_GROUP_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+        for method in route.methods
+    }
+    actual_dashboard = {
+        (path, method, handler)
+        for path, handler, methods, _description in registered
+        for method in methods
+        if path in expected_paths
+    }
+    assert actual_dashboard == expected_dashboard
+
+
+def test_shared_selfie_profile_route_contract_matches_both_live_registries(tmp_path):
+    plugin = ContractPlugin(tmp_path)
+    flask_app = FlaskWebServer(plugin)._create_app()
+    expected_flask = {
+        (route.flask_path, method, route.endpoint)
+        for route in SELFIE_PROFILE_ROUTE_CONTRACTS
+        for method in route.methods
+    }
+    actual_flask = {
+        (rule.rule, method, rule.endpoint)
+        for rule in flask_app.url_map.iter_rules()
+        for method in rule.methods - {"HEAD", "OPTIONS"}
+        if rule.rule in {route.flask_path for route in SELFIE_PROFILE_ROUTE_CONTRACTS}
+    }
+    assert actual_flask == expected_flask
+
+    registered = []
+    plugin.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
+    api = dashboard_module.SelfieImageDashboardAPI(plugin)
+    api.register()
+    expected_paths = {
+        f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}"
+        for route in SELFIE_PROFILE_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+    }
+    expected_dashboard = {
+        (
+            f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}",
+            method,
+            getattr(api, route.dashboard_handler),
+        )
+        for route in SELFIE_PROFILE_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+        for method in route.methods
+    }
+    actual_dashboard = {
+        (path, method, handler)
+        for path, handler, methods, _description in registered
+        for method in methods
+        if path in expected_paths
+    }
+    assert actual_dashboard == expected_dashboard
+
+
 def test_health_controller_normalizes_and_redacts_both_adapter_responses(http):
     calls = []
 
@@ -1184,6 +1274,119 @@ def test_context_controller_preserves_json_and_capability_errors(http):
         del http.plugin.clear_conversation_context
     assert_failure(http.call("/api/context"), 501, "不支持")
     assert_failure(http.call("/api/context/clear", method="POST", body={}), 501, "不支持")
+
+
+def test_qq_group_controller_normalizes_refresh_and_saves_config(http):
+    calls = []
+
+    async def list_groups(*, force=False):
+        calls.append(("list", force))
+        return {"groups": [{"group_id": "123"}], "api_key": "group-list-secret"}
+
+    def update_groups(payload):
+        calls.append(("update", payload))
+        return {"group_chat_configs": payload["groups"], "api_key": "group-config-secret"}
+
+    http.plugin.list_qq_groups_for_web = list_groups
+    http.plugin.update_group_chat_configs_from_web = update_groups
+    response = http.call("/api/qq-groups?refresh=YES")
+    assert assert_success(response) == {
+        "groups": [{"group_id": "123"}], "api_key": "[REDACTED]",
+    }
+    assert "group-list-secret" not in json.dumps(response.payload)
+
+    payload = {"groups": [{"group_id": "123", "config": {"chat_type": "white"}}]}
+    saved = http.call("/api/qq-groups/config", method="POST", body=payload)
+    assert assert_success(saved) == {
+        "group_chat_configs": payload["groups"], "api_key": "[REDACTED]",
+    }
+    assert "group-config-secret" not in json.dumps(saved.payload)
+    assert calls == [("list", True), ("update", payload)]
+
+
+def test_qq_group_controller_preserves_input_and_hook_errors(http):
+    assert_failure(http.call("/api/qq-groups/config", method="POST", body=[]), 400, "JSON 对象")
+    assert_failure(http.call("/api/qq-groups?refresh=invalid"), 501, "不支持")
+    assert_failure(http.call("/api/qq-groups/config", method="POST", body={}), 501, "不支持")
+
+
+def test_selfie_profile_controller_preserves_operations_messages_and_redaction(http):
+    calls = []
+
+    def get_reference():
+        calls.append(("get",))
+        return {"has_image": True, "api_key": "reference-get-secret"}
+
+    def save_reference(payload):
+        calls.append(("save", payload))
+        return {"has_image": True, "api_key": "reference-save-secret"}
+
+    def clear_reference():
+        calls.append(("clear",))
+        return {"has_image": False, "api_key": "reference-clear-secret"}
+
+    def set_appearance(payload):
+        calls.append(("appearance", payload))
+        return {"appearance_type": "auto", "api_key": "appearance-secret"}
+
+    async def refresh_local():
+        calls.append(("refresh",))
+        return {"status": "ok", "api_key": "profile-secret"}
+
+    http.plugin.get_selfie_reference_payload = get_reference
+    http.plugin.save_selfie_reference_from_web = save_reference
+    http.plugin.clear_selfie_reference_from_web = clear_reference
+    http.plugin.set_selfie_appearance_type_from_web = set_appearance
+    http.plugin.refresh_selfie_profile_local_from_web = refresh_local
+
+    result = http.call("/api/selfie-reference")
+    assert assert_success(result) == {"has_image": True, "api_key": "[REDACTED]"}
+    assert "reference-get-secret" not in json.dumps(result.payload)
+
+    payload = {"image": "data:image/png;base64,AA=="}
+    saved = http.call("/api/selfie-reference", method="POST", body=payload)
+    assert assert_success(saved) == {"has_image": True, "api_key": "[REDACTED]"}
+    assert saved.envelope["message"] == "自拍参考图已保存"
+    assert "reference-save-secret" not in json.dumps(saved.payload)
+
+    cleared = http.call("/api/selfie-reference/clear", method="POST", body={})
+    assert assert_success(cleared) == {"has_image": False, "api_key": "[REDACTED]"}
+    assert cleared.envelope["message"] == "自拍参考图已清除"
+    assert "reference-clear-secret" not in json.dumps(cleared.payload)
+
+    appearance = http.call(
+        "/api/selfie-appearance-type", method="POST", body={"appearance_type": "auto"}
+    )
+    assert assert_success(appearance) == {
+        "appearance_type": "auto", "api_key": "[REDACTED]",
+    }
+    assert appearance.envelope["message"] == "形象类型已保存"
+    assert "appearance-secret" not in json.dumps(appearance.payload)
+
+    refreshed = http.call("/api/selfie-profile/refresh-local", method="POST", body={})
+    assert assert_success(refreshed) == {"status": "ok", "api_key": "[REDACTED]"}
+    assert refreshed.envelope["message"] == "本地今日穿搭已刷新"
+    assert "profile-secret" not in json.dumps(refreshed.payload)
+    assert calls == [
+        ("get",), ("save", payload), ("clear",),
+        ("appearance", {"appearance_type": "auto"}), ("refresh",),
+    ]
+
+
+def test_selfie_profile_controller_preserves_mutation_input_and_missing_hooks(http):
+    for path in (
+        "/api/selfie-reference",
+        "/api/selfie-reference/clear",
+        "/api/selfie-appearance-type",
+        "/api/selfie-profile/refresh-local",
+    ):
+        assert_failure(http.call(path, method="POST", body=[]), 400, "JSON 对象")
+
+    assert_failure(http.call("/api/selfie-reference"), 501, "不支持")
+    assert_failure(http.call("/api/selfie-reference", method="POST", body={}), 501, "不支持")
+    assert_failure(http.call("/api/selfie-reference/clear", method="POST", body={}), 501, "不支持")
+    assert_failure(http.call("/api/selfie-appearance-type", method="POST", body={}), 501, "不支持")
+    assert_failure(http.call("/api/selfie-profile/refresh-local", method="POST", body={}), 501, "不支持")
 
 
 def test_cache_cleanup_preserves_confirmation_and_conflict_contract(http):

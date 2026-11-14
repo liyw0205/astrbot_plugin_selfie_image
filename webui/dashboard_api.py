@@ -31,7 +31,9 @@ from .contracts import (
     MAX_WEB_TASK_ID_LENGTH,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
+    QQ_GROUP_ROUTE_CONTRACTS,
     RECORD_ROUTE_CONTRACTS,
+    SELFIE_PROFILE_ROUTE_CONTRACTS,
     TASK_ROUTE_CONTRACTS,
     WEB_TASK_ID_RE,
 )
@@ -51,6 +53,10 @@ from .controllers import (
     HealthControllerResult,
     ProxyController,
     ProxyControllerResult,
+    QQGroupController,
+    QQGroupControllerResult,
+    SelfieProfileController,
+    SelfieProfileControllerResult,
     RecordController,
     RecordControllerResult,
     TaskController,
@@ -90,6 +96,8 @@ class SelfieImageDashboardAPI:
         self._record_controller = RecordController(plugin)
         self._health_controller = HealthController(plugin)
         self._context_controller = ContextController(plugin)
+        self._qq_group_controller = QQGroupController(plugin)
+        self._selfie_profile_controller = SelfieProfileController(plugin)
         self._prompt_catalog_controller = PromptCatalogController(plugin)
 
     def _config_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
@@ -191,6 +199,28 @@ class SelfieImageDashboardAPI:
             for route in CONTEXT_ROUTE_CONTRACTS
         ]
 
+    def _qq_group_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in QQ_GROUP_ROUTE_CONTRACTS
+        ]
+
+    def _selfie_profile_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in SELFIE_PROFILE_ROUTE_CONTRACTS
+        ]
+
     def _canvas_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
         return [
             (
@@ -226,13 +256,8 @@ class SelfieImageDashboardAPI:
             *self._context_route_entries(),
             *self._config_route_entries(),
             *self._proxy_route_entries(),
-            ("qq-groups", self.page_qq_groups, ["GET"], "Selfie Image QQ groups"),
-            ("qq-groups/config", self.page_qq_groups_config, ["POST"], "Selfie Image QQ group config"),
-            ("selfie-reference", self.page_selfie_reference_get, ["GET"], "Selfie Image get reference"),
-            ("selfie-reference", self.page_selfie_reference_post, ["POST"], "Selfie Image save reference"),
-            ("selfie-reference/clear", self.page_selfie_reference_clear, ["POST"], "Selfie Image clear reference"),
-            ("selfie-appearance-type", self.page_selfie_appearance_type, ["POST"], "Selfie Image appearance type"),
-            ("selfie-profile/refresh-local", self.page_selfie_profile_refresh_local, ["POST"], "Selfie Image local refresh profile"),
+            *self._qq_group_route_entries(),
+            *self._selfie_profile_route_entries(),
             ("test-image-channel", self.page_test_image_channel, ["POST"], "Selfie Image sync channel test"),
             ("test-image-channel/tasks", self.page_test_image_task_start, ["POST"], "Selfie Image start channel test task"),
             (
@@ -472,22 +497,33 @@ class SelfieImageDashboardAPI:
 
     async def page_qq_groups(self) -> Any:
         try:
-            refresh = str(self._query_value("refresh") or "").strip().lower() in {"1", "true", "yes", "on"}
-            return self._ok(await self.plugin.list_qq_groups_for_web(force=refresh))
+            result: QQGroupControllerResult = await self._qq_group_controller.list(request.query)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
-            return self._fail(str(exc))
+            return self._fail(str(exc), 500)
+        return self._ok(result.data)
 
     async def page_qq_groups_config(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
         try:
-            return self._ok(self.plugin.update_group_chat_configs_from_web(payload))
+            result: QQGroupControllerResult = self._qq_group_controller.update(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
-            return self._fail(str(exc))
+            return self._fail(str(exc), 500)
+        return self._ok(result.data)
 
     async def page_selfie_reference_get(self) -> Any:
-        return self._ok(self.plugin.get_selfie_reference_payload())
+        try:
+            result: SelfieProfileControllerResult = self._selfie_profile_controller.get_reference()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
 
     async def page_selfie_reference_post(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -495,16 +531,24 @@ class SelfieImageDashboardAPI:
             return error
         assert payload is not None
         try:
-            data = self.plugin.save_selfie_reference_from_web(payload)
-            return self._ok(data, message="自拍参考图已保存")
+            result: SelfieProfileControllerResult = self._selfie_profile_controller.save_reference(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
-            return self._fail(str(exc))
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
 
     async def page_selfie_reference_clear(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        return self._ok(self.plugin.clear_selfie_reference_from_web(), message="自拍参考图已清除")
+        try:
+            result: SelfieProfileControllerResult = self._selfie_profile_controller.clear_reference()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
 
     async def page_selfie_appearance_type(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -512,20 +556,24 @@ class SelfieImageDashboardAPI:
             return error
         assert payload is not None
         try:
-            data = self.plugin.set_selfie_appearance_type_from_web(payload)
-            return self._ok(data, message="形象类型已保存")
+            result: SelfieProfileControllerResult = self._selfie_profile_controller.set_appearance_type(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
-            return self._fail(str(exc))
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
 
     async def page_selfie_profile_refresh_local(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
         try:
-            data = await self.plugin.refresh_selfie_profile_local_from_web()
-            return self._ok(data, message="本地今日穿搭已刷新")
+            result: SelfieProfileControllerResult = await self._selfie_profile_controller.refresh_local()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
             return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
 
     async def page_test_image_channel(self) -> Any:
         payload, error = await self._json_object_payload()

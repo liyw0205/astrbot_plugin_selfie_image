@@ -196,6 +196,65 @@ CONTEXT_ROUTE_CONTRACTS = (
 )
 
 
+@dataclass(frozen=True)
+class QQGroupRouteContract:
+    endpoint: str
+    flask_path: str
+    dashboard_path: str
+    methods: tuple[str, ...]
+    flask_handler: str
+    dashboard_handler: str
+    description: str
+
+
+QQ_GROUP_ROUTE_CONTRACTS = (
+    QQGroupRouteContract(
+        "qq_groups", "/api/qq-groups", "qq-groups", ("GET",),
+        "qq_groups", "page_qq_groups", "Selfie Image QQ groups",
+    ),
+    QQGroupRouteContract(
+        "qq_groups_config", "/api/qq-groups/config", "qq-groups/config", ("POST",),
+        "qq_groups_config", "page_qq_groups_config", "Selfie Image QQ group config",
+    ),
+)
+
+
+@dataclass(frozen=True)
+class SelfieProfileRouteContract:
+    endpoint: str
+    flask_path: str
+    dashboard_path: str
+    methods: tuple[str, ...]
+    flask_handler: str
+    dashboard_handler: str
+    description: str
+
+
+SELFIE_PROFILE_ROUTE_CONTRACTS = (
+    SelfieProfileRouteContract(
+        "selfie_reference_get", "/api/selfie-reference", "selfie-reference", ("GET",),
+        "selfie_reference_get", "page_selfie_reference_get", "Selfie Image get reference",
+    ),
+    SelfieProfileRouteContract(
+        "selfie_reference_post", "/api/selfie-reference", "selfie-reference", ("POST",),
+        "selfie_reference_post", "page_selfie_reference_post", "Selfie Image save reference",
+    ),
+    SelfieProfileRouteContract(
+        "selfie_reference_clear", "/api/selfie-reference/clear", "selfie-reference/clear", ("POST",),
+        "selfie_reference_clear", "page_selfie_reference_clear", "Selfie Image clear reference",
+    ),
+    SelfieProfileRouteContract(
+        "selfie_appearance_type", "/api/selfie-appearance-type", "selfie-appearance-type", ("POST",),
+        "selfie_appearance_type", "page_selfie_appearance_type", "Selfie Image appearance type",
+    ),
+    SelfieProfileRouteContract(
+        "selfie_profile_refresh_local", "/api/selfie-profile/refresh-local",
+        "selfie-profile/refresh-local", ("POST",), "selfie_profile_refresh_local",
+        "page_selfie_profile_refresh_local", "Selfie Image local refresh profile",
+    ),
+)
+
+
 CONFIG_ROUTE_CONTRACTS = (
     ConfigRouteContract(
         "config_get", "/api/config", "config", ("GET",), "config_get",
