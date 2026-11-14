@@ -386,7 +386,7 @@ def test_flask_async_timeout_cancels_the_submitted_coroutine(tmp_path):
                 cleaned.set()
 
         with pytest.raises(TimeoutError):
-            await asyncio.to_thread(server._run_async, worker(), 0.02)
+            await asyncio.to_thread(server._run_async, worker(), 0.5)
         await asyncio.wait_for(cleaned.wait(), 1)
         await plugin.terminate()
 
@@ -483,7 +483,13 @@ def test_scheduler_close_before_worker_first_step_releases_slot():
         await asyncio.sleep(0)
         assert scheduler._active == 1
         assert calls == []
-        await asyncio.wait_for(scheduler.aclose(), timeout=1)
+        close_timeout = asyncio.get_running_loop().call_later(
+            1, asyncio.current_task().cancel
+        )
+        try:
+            await scheduler.aclose()
+        finally:
+            close_timeout.cancel()
         assert submitter.cancelled()
         assert calls == []
         assert not scheduler._running
