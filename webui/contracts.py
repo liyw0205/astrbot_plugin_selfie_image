@@ -255,6 +255,41 @@ SELFIE_PROFILE_ROUTE_CONTRACTS = (
 )
 
 
+@dataclass(frozen=True)
+class ImageChannelRouteContract:
+    endpoint: str
+    flask_path: str
+    dashboard_path: str
+    methods: tuple[str, ...]
+    flask_handler: str
+    dashboard_handler: str
+    description: str
+
+
+IMAGE_CHANNEL_ROUTE_CONTRACTS = (
+    ImageChannelRouteContract(
+        "test_image_channel", "/api/test-image-channel", "test-image-channel", ("POST",),
+        "test_image_channel", "page_test_image_channel", "Selfie Image sync channel test",
+    ),
+    ImageChannelRouteContract(
+        "test_image_channel_task_start", "/api/test-image-channel/tasks",
+        "test-image-channel/tasks", ("POST",), "test_image_channel_task_start",
+        "page_test_image_task_start", "Selfie Image start channel test task",
+    ),
+    ImageChannelRouteContract(
+        "test_image_channel_task_status", "/api/test-image-channel/tasks/<task_id>",
+        "test-image-channel/tasks/<task_id>", ("GET",),
+        "test_image_channel_task_status", "page_test_image_task_status",
+        "Selfie Image channel test task status",
+    ),
+    ImageChannelRouteContract(
+        "refresh_image_models", "/api/refresh-image-models", "refresh-image-models",
+        ("POST",), "refresh_image_models", "page_refresh_image_models",
+        "Selfie Image refresh models",
+    ),
+)
+
+
 CONFIG_ROUTE_CONTRACTS = (
     ConfigRouteContract(
         "config_get", "/api/config", "config", ("GET",), "config_get",

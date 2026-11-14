@@ -98,6 +98,12 @@ class SelfieProfileControllerResult:
 
 
 @dataclass(frozen=True)
+class ImageChannelControllerResult:
+    data: Any
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CachedImage:
     path: str
     info: dict[str, Any]
@@ -1075,3 +1081,41 @@ class SelfieProfileController:
         except Exception as exc:
             raise WebContractError(str(exc), 500) from exc
         return self._result(data, "本地今日穿搭已刷新")
+
+
+class ImageChannelController:
+    """Shared channel-test and model-refresh operations for both Web adapters."""
+
+    def __init__(self, plugin: Any) -> None:
+        self.plugin = plugin
+
+    async def test(self, payload: Any) -> ImageChannelControllerResult:
+        hook = getattr(self.plugin, "web_test_image", None)
+        if not callable(hook):
+            raise WebContractError("当前版本不支持渠道测试", 501)
+        try:
+            data = await hook(payload)
+        except Exception as exc:
+            raise WebContractError(str(exc), 500) from exc
+        return ImageChannelControllerResult(redact_sensitive_data(data))
+
+    def start_task(self, payload: Any) -> ImageChannelControllerResult:
+        hook = getattr(self.plugin, "start_web_image_task", None)
+        if not callable(hook):
+            raise WebContractError("当前版本不支持渠道测试任务", 501)
+        try:
+            data = hook(payload)
+        except Exception as exc:
+            raise WebContractError(str(exc), 500) from exc
+        return ImageChannelControllerResult(redact_sensitive_data(data))
+
+    async def refresh_models(self, payload: Any) -> ImageChannelControllerResult:
+        hook = getattr(self.plugin, "web_refresh_image_models", None)
+        if not callable(hook):
+            raise WebContractError("当前版本不支持刷新图像模型", 501)
+        try:
+            data = await hook(payload)
+            count = len(data)
+        except Exception as exc:
+            raise WebContractError(str(exc), 500) from exc
+        return ImageChannelControllerResult(redact_sensitive_data(data), {"count": count})

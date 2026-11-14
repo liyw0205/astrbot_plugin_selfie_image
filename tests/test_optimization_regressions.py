@@ -1182,6 +1182,10 @@ def test_web_contract_matrix_documents_shared_envelopes_and_host_auth_boundary()
     assert "PromptCatalogController" in dashboard
     assert "PROMPT_CATALOG_ROUTE_CONTRACTS" in flask
     assert "PROMPT_CATALOG_ROUTE_CONTRACTS" in dashboard
+    assert "ImageChannelController" in flask
+    assert "ImageChannelController" in dashboard
+    assert "IMAGE_CHANNEL_ROUTE_CONTRACTS" in flask
+    assert "IMAGE_CHANNEL_ROUTE_CONTRACTS" in dashboard
     assert "class ConfigController" in controllers
     assert "class AssetController" in controllers
     assert "class AssetCollectionController" in controllers
@@ -1193,8 +1197,7 @@ def test_web_contract_matrix_documents_shared_envelopes_and_host_auth_boundary()
     assert "filter_record_page" in controllers
     assert "def filter_record_page" in services
     assert "def parse_task_query" in services
-    assert "redact_sensitive_data(data)" in flask
-    assert "redact_sensitive_data(data)" in dashboard
+    assert "redact_sensitive_data(data)" in controllers
     assert 'raise WebContractError("当前版本不支持资产导出", 501)' in controllers
     assert "prompt_catalog_controller.list_presets" in flask
     assert "self._prompt_catalog_controller.list_presets" in dashboard

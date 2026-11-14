@@ -4,11 +4,11 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-最新完整发布验证基线（2026-11-15，1.7.24）：
+最新完整发布验证基线（2026-11-15，1.7.25）：
 
-- 全量 pytest `3576 passed, 702 subtests passed`，耗时 268.99 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3581 passed, 702 subtests passed`，耗时 425.46 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；60 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：144 个文件，2,420,432 bytes；解压后 5,644,119 bytes；SHA-256 `f1d9cf13359bbc52ccd40ef212a382a5dc6c5aef1f267c3aea3687f9adec938d`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新增兼容 helper、Prompt、Cache、Health、Context、QQ group 与 Selfie profile controller 均纳入运行期包。
+- 临时运行期 ZIP 检查：144 个文件，2,420,828 bytes；解压后 5,648,759 bytes；SHA-256 `972429810c2be1b8150d12ed47f23c13cadc4d8291d90129c8961e2cf66bf1f5`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新增兼容 helper、Prompt、Cache、Health、Context、QQ group、Selfie profile 与 ImageChannel controller 均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证。
 
 主要结构性事实：
@@ -81,6 +81,7 @@
 - 会话上下文读取/清理迁入 `ContextController` 与 `CONTEXT_ROUTE_CONTRACTS`；hook 调用、结果脱敏、缺失能力状态和清理消息共用实现。Flask JSON 对象校验与 Dashboard 不解析未使用请求体的原行为、各自认证和响应 envelope 保留。
 - QQ 群列表/配置保存迁入 `QQGroupController` 与 `QQ_GROUP_ROUTE_CONTRACTS`；refresh 归一化、异步列表 hook、保存错误映射及结果脱敏共用。Flask 仍经 20 秒异步桥接，Dashboard 直接 await。
 - 自拍资料 5 个方法路由（参考图读取/保存/清理、形象类型、本地资料刷新）迁入 `SelfieProfileController` 与 `SELFIE_PROFILE_ROUTE_CONTRACTS`；操作消息、错误映射和脱敏统一，两端 JSON 对象校验、认证与响应 envelope 留在 adapter。
+- 手动图像渠道测试、测试任务启动/状态和模型刷新共 4 个路由组合迁入 `ImageChannelController` 与 `IMAGE_CHANNEL_ROUTE_CONTRACTS`；任务状态继续委派 `TaskController`，Flask 异步桥接超时和 Dashboard 原生 await 保留。
 
 ## 2. 优先级总览
 
@@ -337,9 +338,9 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --prom
 - Flask 仍在 Token 鉴权和对象 JSON 解析后调用 controller；Dashboard 仍依赖宿主鉴权。两者成功 envelope、错误封装和状态响应方式不合并。
 - 任务返回值统一递归脱敏，覆盖过去直接透传的导出、删除、重试结果与取消消息。双 adapter 回归验证路由/方法、状态码、导出 ID 历史行为、缺少能力 501、异常脱敏和 JSON 对象限制。
 
-记录域全部操作、配置读写/导入导出组、代理查询/探测、资产基础操作、资产集合 API、缓存清理与图片访问、Studio/Creative Canvas 会话与图库 API、Prompt/COS/Creative API、健康历史、会话上下文、QQ 群及自拍资料查询/操作现已使用共享 controller/路由契约。缓存缩略图在 Dashboard 仍通过线程池执行；原图下载的 Flask `send_file` 与 Dashboard `file_response` 仍由 adapter 负责。图像渠道操作等重复 API 尚未迁移；不要把这些切片描述成整个 Web 层已统一。后续逐组将重复业务逻辑迁入 controller，并从声明表注册路由；二进制响应、宿主认证和适配器特有 envelope 继续留在边界层。
+记录域全部操作、配置读写/导入导出组、代理查询/探测、资产基础操作、资产集合 API、缓存清理与图片访问、Studio/Creative Canvas 会话与图库 API、Prompt/COS/Creative API、健康历史、会话上下文、QQ 群、自拍资料及图像渠道测试/模型刷新现已使用共享 controller/路由契约。Dashboard-only 的渠道健康清理仍由单端 adapter 提供。缓存缩略图在 Dashboard 仍通过线程池执行；原图下载的 Flask `send_file` 与 Dashboard `file_response` 仍由 adapter 负责；不要把这些切片描述成整个 Web 层已统一。后续转入命令和任务运行期拆分，并从声明表注册新增路由；二进制响应、宿主认证和适配器特有 envelope 继续留在边界层。
 
-本切片验收：任务、记录、配置、代理、资产基础操作、资产集合、画布会话、健康历史、会话上下文、QQ 群及自拍资料业务分别只有一个共享实现；任务 9 条、记录 12 条、配置 5 条、代理 3 条、资产基础操作 8 条、资产集合 10 条、画布 28 个、健康历史 1 个、上下文 2 个、QQ 群 2 个、自拍资料 5 个契约项的 Flask/Dashboard 实际注册路径与方法由测试核对。整体验收仍需迁移图像渠道操作等重复 API 后，再验证完整路由集合及接口结构。
+本切片验收：任务、记录、配置、代理、资产基础操作、资产集合、画布会话、健康历史、会话上下文、QQ 群、自拍资料及图像渠道业务分别只有一个共享实现；任务 9 条、记录 12 条、配置 5 条、代理 3 条、资产基础操作 8 条、资产集合 10 条、画布 28 个、健康历史 1 个、上下文 2 个、QQ 群 2 个、自拍资料 5 个、图像渠道 4 个契约项的 Flask/Dashboard 实际注册路径与方法由测试核对。整体验收仍需处理新增 route inventory，再验证完整路由集合及接口结构。
 
 ## 6. P2：可观测性、恢复和数据治理
 
@@ -424,7 +425,7 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --prom
 
 ### 第 3 阶段：边界拆分
 
-已按完整业务路径拆出 Web 试画、公共批量执行和自拍批量准备，并提取状态报告服务；Web 任务管理、记录域全部操作、配置 API、代理 API、资产基础操作、资产集合 API、缓存 API、Studio/Creative Canvas 会话与图库 API、Prompt/COS/Creative API、健康历史、会话上下文、QQ 群和自拍资料均已完成双 adapter 共享 controller 与路由契约切片。下一步盘点图像渠道操作，再拆命令与任务运行期。每次拆分配套现有回归集和端到端契约测试，禁止在同一个提交中同时改变提示词语义。
+已按完整业务路径拆出 Web 试画、公共批量执行和自拍批量准备，并提取状态报告服务；Web 任务管理、记录域全部操作、配置 API、代理 API、资产基础操作、资产集合 API、缓存 API、Studio/Creative Canvas 会话与图库 API、Prompt/COS/Creative API、健康历史、会话上下文、QQ 群、自拍资料，以及渠道手动测试/任务启动/状态/模型刷新均已完成双 adapter 共享 controller 与路由契约切片。下一步按 §5.1 拆命令与任务运行期。每次拆分配套现有回归集和端到端契约测试，禁止在同一个提交中同时改变提示词语义。
 
 ### 第 4 阶段：恢复与状态功能
 

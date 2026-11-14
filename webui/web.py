@@ -13,7 +13,6 @@ from typing import Any, Optional
 from astrbot.api import logger
 
 from ..core.utils import (
-    redact_sensitive_data,
     redact_sensitive_text,
 )
 from .contracts import (
@@ -24,6 +23,7 @@ from .contracts import (
     CONFIG_ROUTE_CONTRACTS,
     CONTEXT_ROUTE_CONTRACTS,
     HEALTH_ROUTE_CONTRACTS,
+    IMAGE_CHANNEL_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
     QQ_GROUP_ROUTE_CONTRACTS,
@@ -46,6 +46,8 @@ from .controllers import (
     ContextControllerResult,
     HealthController,
     HealthControllerResult,
+    ImageChannelController,
+    ImageChannelControllerResult,
     ProxyController,
     ProxyControllerResult,
     QQGroupController,
@@ -210,6 +212,7 @@ class FlaskWebServer:
         context_controller = ContextController(self.plugin)
         qq_group_controller = QQGroupController(self.plugin)
         selfie_profile_controller = SelfieProfileController(self.plugin)
+        image_channel_controller = ImageChannelController(self.plugin)
         prompt_catalog_controller = PromptCatalogController(self.plugin)
         auth_failure_lock = threading.RLock()
         auth_failures: dict[str, dict[str, float]] = {}
@@ -328,6 +331,15 @@ class FlaskWebServer:
         def selfie_profile_result(call: Any) -> Any:
             try:
                 result: SelfieProfileControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data, **result.extra)
+
+        def image_channel_result(call: Any) -> Any:
+            try:
+                result: ImageChannelControllerResult = call()
             except WebContractError as exc:
                 return fail(str(exc), exc.status_code)
             except Exception as exc:
@@ -737,37 +749,55 @@ class FlaskWebServer:
                 methods=list(route.methods),
             )
 
-        @app.route("/api/test-image-channel", methods=["POST"])
         def test_image_channel() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                data = self._run_async(self.plugin.web_test_image(payload), timeout=max(30, self.plugin.config.image_global_timeout + 30))
-                return ok(redact_sensitive_data(data))
-            except Exception as exc:
-                return fail(str(exc), 500)
+            timeout = max(30, self.plugin.config.image_global_timeout + 30)
+            return image_channel_result(lambda: self._run_async(
+                image_channel_controller.test(payload), timeout=timeout,
+            ))
 
-        @app.route("/api/test-image-channel/tasks", methods=["POST"])
         def test_image_channel_task_start() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                data = self.plugin.start_web_image_task(payload)
-                return ok(redact_sensitive_data(data))
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return image_channel_result(
+                lambda: image_channel_controller.start_task(payload)
+            )
 
-        @app.route("/api/test-image-channel/tasks/<task_id>", methods=["GET"])
         def test_image_channel_task_status(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             return generation_task_status(task_id)
+
+        def refresh_image_models() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return image_channel_result(lambda: self._run_async(
+                image_channel_controller.refresh_models(payload), timeout=30,
+            ))
+
+        image_channel_handlers = {
+            "test_image_channel": test_image_channel,
+            "test_image_channel_task_start": test_image_channel_task_start,
+            "test_image_channel_task_status": test_image_channel_task_status,
+            "refresh_image_models": refresh_image_models,
+        }
+        for route in IMAGE_CHANNEL_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=image_channel_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
 
         def cancel_generation_task(task_id: str) -> Any:
             if not check_auth():
@@ -933,19 +963,6 @@ class FlaskWebServer:
                 view_func=record_handlers[route.flask_handler],
                 methods=list(route.methods),
             )
-
-        @app.route("/api/refresh-image-models", methods=["POST"])
-        def refresh_image_models() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            try:
-                data = self._run_async(self.plugin.web_refresh_image_models(payload), timeout=30)
-                return ok(data, count=len(data))
-            except Exception as exc:
-                return fail(str(exc), 500)
 
         def asset_collections() -> Any:
             if not check_auth():

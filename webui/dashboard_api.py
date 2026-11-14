@@ -11,7 +11,6 @@ from typing import Any, Optional
 
 from ..core.constants import PLUGIN_NAME
 from ..core.utils import (
-    redact_sensitive_data,
     redact_sensitive_text,
 )
 from .web import (
@@ -28,6 +27,7 @@ from .contracts import (
     CONTEXT_ROUTE_CONTRACTS,
     DASHBOARD_ROUTE_PREFIXES,
     HEALTH_ROUTE_CONTRACTS,
+    IMAGE_CHANNEL_ROUTE_CONTRACTS,
     MAX_WEB_TASK_ID_LENGTH,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
@@ -51,6 +51,8 @@ from .controllers import (
     ContextControllerResult,
     HealthController,
     HealthControllerResult,
+    ImageChannelController,
+    ImageChannelControllerResult,
     ProxyController,
     ProxyControllerResult,
     QQGroupController,
@@ -98,6 +100,7 @@ class SelfieImageDashboardAPI:
         self._context_controller = ContextController(plugin)
         self._qq_group_controller = QQGroupController(plugin)
         self._selfie_profile_controller = SelfieProfileController(plugin)
+        self._image_channel_controller = ImageChannelController(plugin)
         self._prompt_catalog_controller = PromptCatalogController(plugin)
 
     def _config_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
@@ -221,6 +224,17 @@ class SelfieImageDashboardAPI:
             for route in SELFIE_PROFILE_ROUTE_CONTRACTS
         ]
 
+    def _image_channel_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in IMAGE_CHANNEL_ROUTE_CONTRACTS
+        ]
+
     def _canvas_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
         return [
             (
@@ -258,16 +272,8 @@ class SelfieImageDashboardAPI:
             *self._proxy_route_entries(),
             *self._qq_group_route_entries(),
             *self._selfie_profile_route_entries(),
-            ("test-image-channel", self.page_test_image_channel, ["POST"], "Selfie Image sync channel test"),
-            ("test-image-channel/tasks", self.page_test_image_task_start, ["POST"], "Selfie Image start channel test task"),
-            (
-                "test-image-channel/tasks/<task_id>",
-                self.page_test_image_task_status,
-                ["GET"],
-                "Selfie Image channel test task status",
-            ),
+            *self._image_channel_route_entries(),
             *self._task_route_entries(),
-            ("refresh-image-models", self.page_refresh_image_models, ["POST"], "Selfie Image refresh models"),
             *self._record_route_entries(),
             *self._asset_route_entries(),
             *self._asset_collection_route_entries(),
@@ -581,10 +587,12 @@ class SelfieImageDashboardAPI:
             return error
         assert payload is not None
         try:
-            data = await self.plugin.web_test_image(payload)
-            return self._ok(redact_sensitive_data(data))
+            result: ImageChannelControllerResult = await self._image_channel_controller.test(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
             return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
 
     async def page_test_image_task_start(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -592,10 +600,12 @@ class SelfieImageDashboardAPI:
             return error
         assert payload is not None
         try:
-            data = self.plugin.start_web_image_task(payload)
-            return self._ok(redact_sensitive_data(data))
+            result: ImageChannelControllerResult = self._image_channel_controller.start_task(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
             return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
 
     async def page_test_image_task_status(self, task_id: str) -> Any:
         return self._task_status(task_id)
@@ -609,10 +619,12 @@ class SelfieImageDashboardAPI:
             return error
         assert payload is not None
         try:
-            data = await self.plugin.web_refresh_image_models(payload)
-            return self._ok(data, count=len(data))
+            result: ImageChannelControllerResult = await self._image_channel_controller.refresh_models(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
             return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
 
     async def page_records(self) -> Any:
         return self._record_result(lambda: self._record_controller.list(request.query))

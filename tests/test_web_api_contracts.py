@@ -28,6 +28,7 @@ CACHE_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
     CONTEXT_ROUTE_CONTRACTS,
     HEALTH_ROUTE_CONTRACTS,
+    IMAGE_CHANNEL_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
     QQ_GROUP_ROUTE_CONTRACTS,
@@ -1207,6 +1208,50 @@ def test_shared_selfie_profile_route_contract_matches_both_live_registries(tmp_p
     assert actual_dashboard == expected_dashboard
 
 
+def test_shared_image_channel_route_contract_matches_both_live_registries(tmp_path):
+    plugin = ContractPlugin(tmp_path)
+    flask_app = FlaskWebServer(plugin)._create_app()
+    expected_flask = {
+        (route.flask_path, method, route.endpoint)
+        for route in IMAGE_CHANNEL_ROUTE_CONTRACTS
+        for method in route.methods
+    }
+    actual_flask = {
+        (rule.rule, method, rule.endpoint)
+        for rule in flask_app.url_map.iter_rules()
+        for method in rule.methods - {"HEAD", "OPTIONS"}
+        if rule.rule in {route.flask_path for route in IMAGE_CHANNEL_ROUTE_CONTRACTS}
+    }
+    assert actual_flask == expected_flask
+
+    registered = []
+    plugin.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
+    api = dashboard_module.SelfieImageDashboardAPI(plugin)
+    api.register()
+    expected_paths = {
+        f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}"
+        for route in IMAGE_CHANNEL_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+    }
+    expected_dashboard = {
+        (
+            f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}",
+            method,
+            getattr(api, route.dashboard_handler),
+        )
+        for route in IMAGE_CHANNEL_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+        for method in route.methods
+    }
+    actual_dashboard = {
+        (path, method, handler)
+        for path, handler, methods, _description in registered
+        for method in methods
+        if path in expected_paths
+    }
+    assert actual_dashboard == expected_dashboard
+
+
 def test_health_controller_normalizes_and_redacts_both_adapter_responses(http):
     calls = []
 
@@ -1387,6 +1432,59 @@ def test_selfie_profile_controller_preserves_mutation_input_and_missing_hooks(ht
     assert_failure(http.call("/api/selfie-reference/clear", method="POST", body={}), 501, "不支持")
     assert_failure(http.call("/api/selfie-appearance-type", method="POST", body={}), 501, "不支持")
     assert_failure(http.call("/api/selfie-profile/refresh-local", method="POST", body={}), 501, "不支持")
+
+
+def test_image_channel_controller_shares_tests_refresh_and_task_status(http):
+    calls = []
+
+    async def test_image(payload):
+        calls.append(("test", payload))
+        return {"success": True, "api_key": "test-channel-secret"}
+
+    def start_task(payload):
+        calls.append(("start", payload))
+        return {"task_id": TASK_ID, "status": "queued", "token": "task-channel-secret"}
+
+    async def refresh_models(payload):
+        calls.append(("refresh", payload))
+        return ["model-a", "model-b"]
+
+    http.plugin.web_test_image = test_image
+    http.plugin.start_web_image_task = start_task
+    http.plugin.web_refresh_image_models = refresh_models
+    payload = {"prompt": "test"}
+
+    tested = http.call("/api/test-image-channel", method="POST", body=payload)
+    assert assert_success(tested) == {"success": True, "api_key": "[REDACTED]"}
+    assert "test-channel-secret" not in json.dumps(tested.payload)
+
+    started = http.call("/api/test-image-channel/tasks", method="POST", body=payload)
+    assert assert_success(started) == {
+        "task_id": TASK_ID, "status": "queued", "token": "[REDACTED]",
+    }
+    assert "task-channel-secret" not in json.dumps(started.payload)
+
+    status = http.call(f"/api/test-image-channel/tasks/{TASK_ID}")
+    assert assert_success(status)["task_id"] == TASK_ID
+
+    refreshed = http.call("/api/refresh-image-models", method="POST", body=payload)
+    assert assert_success(refreshed) == ["model-a", "model-b"]
+    assert refreshed.envelope["count"] == 2
+    assert calls == [("test", payload), ("start", payload), ("refresh", payload)]
+
+
+def test_image_channel_controller_preserves_input_and_missing_capabilities(http, monkeypatch):
+    for path in (
+        "/api/test-image-channel",
+        "/api/test-image-channel/tasks",
+        "/api/refresh-image-models",
+    ):
+        assert_failure(http.call(path, method="POST", body=[]), 400, "JSON 对象")
+
+    assert_failure(http.call("/api/test-image-channel", method="POST", body={}), 501, "不支持")
+    monkeypatch.setattr(http.plugin, "start_web_image_task", None, raising=False)
+    assert_failure(http.call("/api/test-image-channel/tasks", method="POST", body={}), 501, "不支持")
+    assert_failure(http.call("/api/refresh-image-models", method="POST", body={}), 501, "不支持")
 
 
 def test_cache_cleanup_preserves_confirmation_and_conflict_contract(http):
