@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.7.29 - 2026-11-15
+
+- 新增 `GenerationRuntimeService`，承接单张生图的公平调度准入、trace 回填、阶段更新和排队耗时测量；提示词审核、provider fallback 与记录工作流仍由原实现负责。
+- 将并发上限、队列快照、排队提示、旧宿主 Semaphore/cooldown 回退和 scheduler 关闭迁入运行期服务；插件原 helper 签名保留为动态代理，卸载时现有 worker/session/记录清理顺序不变。
+- 保留 `ImageJobScheduler` 的队列算法边界和 ContextVar 重入保护；新增服务代理回归，验证 trace、queue/generating 阶段、队列耗时及旧 hook 覆盖。
+- 全量测试 `3584 passed, 702 subtests passed`（385.53 秒）；编译、Dashboard/Node、JSON/版本/制品与差异发布门禁全部通过。
+
 ## 1.7.28 - 2026-11-15
 
 - 将 `/看看腿`、`/看看COS`、`/看看你` 和 `/合影` 的参数、预设、套装约束、日程和任务派发迁入 `SelfieWorkflowService`；AstrBot 原装饰器及命令签名保持不变。

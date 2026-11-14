@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import contextvars
 import hashlib
 from io import BytesIO
 import json
@@ -112,6 +111,11 @@ from .generation.generator import generate_image_with_fallback
 from .generation.image_workflow import run_image_generation_workflow
 from .generation.counted_workflow import CountedGenerationWorkflow
 from .generation.image_command_service import ImageCommandService
+from .generation.runtime_service import (
+    GenerationRuntimeService,
+    IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS,
+    _IMAGE_JOB_ALREADY_SCHEDULED,
+)
 from .generation.selfie_batch_workflow import SelfieBatchWorkflow
 from .generation.selfie_workflow import SelfieWorkflowService
 from .generation.web_test_workflow import WebTestImageWorkflow
@@ -266,10 +270,6 @@ from .webui.dashboard_api import SelfieImageDashboardAPI
 from .webui.web import FlaskWebServer
 
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
-IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS = 2.0
-_IMAGE_JOB_ALREADY_SCHEDULED: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "image_job_already_scheduled", default=False
-)
 
 
 def optional_event_message_type(priority: int = 100):
@@ -476,9 +476,7 @@ class SelfieImagePlugin(
                 cancel_task_once(worker)
         for worker in workers.difference(workers_by_id.values()):
             cancel_task_once(worker)
-        scheduler = getattr(self, "_image_scheduler", None)
-        if scheduler is not None:
-            await scheduler.aclose()
+        await GenerationRuntimeService(self).close_scheduler()
         if workers:
             await asyncio.gather(*workers, return_exceptions=True)
         session_registry = getattr(self, "_image_session_registry", None)
@@ -1943,22 +1941,7 @@ class SelfieImagePlugin(
         label: str,
     ) -> None:
         """Publish a live task stage when a generation record has a task link."""
-        if not isinstance(record_context, Mapping):
-            return
-        task_id = str(record_context.get("task_id") or "").strip()
-        setter = getattr(self, "_set_web_image_task", None)
-        if not task_id or not callable(setter):
-            return
-        try:
-            setter(
-                task_id,
-                generation_stage=str(stage or "").strip(),
-                generation_stage_label=str(label or "").strip(),
-            )
-        except Exception:
-            # Stage updates are observability only; generation must continue if
-            # an older host has no compatible task store.
-            return
+        GenerationRuntimeService(self).set_generation_stage(record_context, stage, label)
 
     async def _run_image_generation(
         self,
@@ -1979,59 +1962,23 @@ class SelfieImagePlugin(
         reference_fidelity: str = "",
     ) -> Dict[str, Any]:
         """Run one image shot through the shared fair scheduler."""
-        if getattr(self, "_terminating", False):
-            raise asyncio.CancelledError()
-        context = dict(record_context) if isinstance(record_context, Mapping) else {}
-        task_id = str(context.get("task_id") or "").strip()
-        if task_id and not str(context.get("trace_id") or "").strip():
-            task_getter = getattr(self, "get_web_image_task", None)
-            if callable(task_getter):
-                try:
-                    task_snapshot = task_getter(task_id)
-                except Exception:
-                    task_snapshot = None
-                if isinstance(task_snapshot, Mapping):
-                    trace_id = str(task_snapshot.get("trace_id") or "").strip()
-                    if trace_id:
-                        context["trace_id"] = trace_id
-        record_context = context or record_context
-        scheduler = getattr(self, "_image_scheduler", None)
-        if scheduler is None or _IMAGE_JOB_ALREADY_SCHEDULED.get():
-            return await self._run_image_generation_unscheduled(
-                prompt, aspect_ratio, resolution, refs, targets, source, audit_user_id,
-                event, original_prompt, max_attempts, allow_compat_retry, prompt_en_meta,
-                record_context, reference_selection, reference_fidelity,
-            )
-        context = record_context if isinstance(record_context, Mapping) else {}
-        task_id = str(context.get("task_id") or "").strip()
-        if not task_id:
-            task_id = f"direct-{id(asyncio.current_task())}"
-
-        self._set_generation_stage(
-            record_context,
-            "queue",
-            "等待画布并发槽位" if source == "studio-run" else "等待图片并发槽位",
+        return await GenerationRuntimeService(self).run_image_generation(
+            prompt,
+            aspect_ratio,
+            resolution,
+            refs,
+            targets=targets,
+            source=source,
+            audit_user_id=audit_user_id,
+            event=event,
+            original_prompt=original_prompt,
+            max_attempts=max_attempts,
+            allow_compat_retry=allow_compat_retry,
+            prompt_en_meta=prompt_en_meta,
+            record_context=record_context,
+            reference_selection=reference_selection,
+            reference_fidelity=reference_fidelity,
         )
-        submitted_at = time.monotonic()
-
-        async def run() -> Dict[str, Any]:
-            slot_token = _IMAGE_JOB_ALREADY_SCHEDULED.set(True)
-            try:
-                self._set_generation_stage(
-                    record_context,
-                    "generating",
-                    "生成画布结果" if source == "studio-run" else "生成图片结果",
-                )
-                return await self._run_image_generation_unscheduled(
-                    prompt, aspect_ratio, resolution, refs, targets, source, audit_user_id,
-                    event, original_prompt, max_attempts, allow_compat_retry, prompt_en_meta,
-                    record_context, reference_selection, reference_fidelity,
-                    queue_wait_seconds=max(0.0, time.monotonic() - submitted_at),
-                )
-            finally:
-                _IMAGE_JOB_ALREADY_SCHEDULED.reset(slot_token)
-
-        return await scheduler.submit(task_id, run)
 
     async def _run_image_generation_unscheduled(
         self,
@@ -3453,73 +3400,31 @@ class SelfieImagePlugin(
 
 
     def _image_inflight_limit(self) -> int:
-        scheduler = getattr(self, "_image_scheduler", None)
-        if scheduler is None:
-            try:
-                configured = int(getattr(self.config, "image_max_concurrent_tasks", 5) or 5)
-            except (TypeError, ValueError):
-                configured = 5
-            return max(1, min(5, configured))
-        return max(1, min(5, int((scheduler._limit if hasattr(scheduler, "_limit") else 1) or 1)))
+        return GenerationRuntimeService(self).image_inflight_limit()
 
     def _image_scheduler_snapshot(self) -> Dict[str, int]:
-        scheduler = getattr(self, "_image_scheduler", None)
-        if scheduler is None:
-            return {"limit": self._image_inflight_limit(), "active": 0, "pending": 0, "queued_tasks": 0}
-        return {
-            "limit": int(getattr(scheduler, "_limit", self._image_inflight_limit()) or 1),
-            "active": int(getattr(scheduler, "_active", 0) or 0),
-            "pending": sum(len(queue) for queue in getattr(scheduler, "_pending", {}).values()),
-            "queued_tasks": len(getattr(scheduler, "_round_robin", ())),
-        }
+        return GenerationRuntimeService(self).image_scheduler_snapshot()
 
     def _image_batch_queue_expected(self, total: int = 1) -> bool:
         """Whether the shared scheduler already has no physical image slot."""
-        scheduler = getattr(self, "_image_scheduler", None)
-        if scheduler is not None:
-            snapshot = self._image_scheduler_snapshot()
-            if snapshot["active"] >= snapshot["limit"]:
-                return True
-        gate = getattr(self, "_image_batch_gate", None)
-        if gate is not None:
-            return int(getattr(gate, "_value", 0)) <= 0
-        return False
+        return GenerationRuntimeService(self).image_batch_queue_expected(total)
 
     def _ensure_image_batch_gate(self) -> asyncio.Semaphore:
         """Keep compatibility with older hosts that have no image scheduler."""
-        gate = getattr(self, "_image_batch_gate", None)
-        if gate is None or not isinstance(gate, asyncio.Semaphore):
-            gate = asyncio.Semaphore(self._image_inflight_limit())
-            self._image_batch_gate = gate
-        self._selfie_batch_gate = gate
-        return gate
+        return GenerationRuntimeService(self).ensure_image_batch_gate()
 
     async def _acquire_image_slot(self, task_id: str) -> Optional[asyncio.Semaphore]:
         """Acquire the legacy image slot when running without the scheduler."""
-        gate = self._ensure_image_batch_gate()
-        while not self._task_cancel_requested(task_id):
-            try:
-                await asyncio.wait_for(gate.acquire(), timeout=1.0)
-                return gate
-            except asyncio.TimeoutError:
-                continue
-        return None
+        return await GenerationRuntimeService(self).acquire_image_slot(task_id)
 
     def _ensure_image_batch_cooldown_lock(self) -> asyncio.Lock:
-        lock = getattr(self, "_image_batch_cooldown_lock", None)
-        if lock is None or not isinstance(lock, asyncio.Lock):
-            self._image_batch_cooldown_lock = asyncio.Lock()
-            lock = self._image_batch_cooldown_lock
-        return lock
+        return GenerationRuntimeService(self).ensure_image_batch_cooldown_lock()
 
     async def _wait_for_image_batch_cooldown(self, task_id: str) -> bool:
         """Stagger actual upstream starts, including shots released from the queue."""
-        lock = self._ensure_image_batch_cooldown_lock()
-        async with lock:
-            if self._task_cancel_requested(task_id):
-                return False
-            await asyncio.sleep(IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS)
-            return not self._task_cancel_requested(task_id)
+        return await GenerationRuntimeService(self).wait_for_image_batch_cooldown(
+            task_id, IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS
+        )
 
     async def _run_counted_generation_shots(
         self,

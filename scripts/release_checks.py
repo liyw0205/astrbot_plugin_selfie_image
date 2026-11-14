@@ -31,6 +31,7 @@ APPROVED_RUNTIME_ADDITIONS = frozenset({
     "generation/web_test_workflow.py",
     "generation/counted_workflow.py",
     "generation/image_command_service.py",
+    "generation/runtime_service.py",
     "generation/selfie_batch_workflow.py",
     "generation/selfie_workflow.py",
     "core/async_compat.py",
