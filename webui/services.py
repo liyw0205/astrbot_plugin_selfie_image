@@ -412,9 +412,24 @@ def gallery_pagination(limit: Any, offset: Any, *, default_limit: int = 24) -> t
 def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """Build the non-transport health payload used by both API adapters."""
     stats = getattr(plugin, "_cache_stats", None)
-    cache_bytes, cache_count = stats() if callable(stats) else (plugin._cache_size_bytes(), 0)
-    get_health = getattr(plugin, "get_channel_health", None)
     get_preview = getattr(plugin, "get_cache_cleanup_preview", None)
+    if callable(get_preview):
+        try:
+            cache_preview = get_preview()
+        except Exception:
+            cache_preview = {}
+    else:
+        cache_preview = {}
+    if isinstance(cache_preview, Mapping) and "total_bytes" in cache_preview:
+        cache_bytes = max(0, int(cache_preview.get("total_bytes") or 0))
+        cache_count = max(0, int(cache_preview.get("total_count") or 0))
+    else:
+        cache_bytes, cache_count = stats() if callable(stats) else (plugin._cache_size_bytes(), 0)
+    get_health = getattr(plugin, "get_channel_health", None)
+    get_task_snapshot_health = getattr(plugin, "get_task_snapshot_health", None)
+    get_record_storage_health = getattr(plugin, "get_record_storage_health", None)
+    get_record_commit_health = getattr(plugin, "get_record_commit_health", None)
+    get_cache_metrics = getattr(plugin, "get_cache_metrics", None)
     get_preflight = getattr(plugin, "get_config_preflight_for_web", None)
     if callable(get_preflight):
         try:
@@ -432,8 +447,49 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
         config_preflight = {}
     if isinstance(config_preflight, Mapping):
         config_preflight = redact_sensitive_data(dict(config_preflight))
+    if callable(get_task_snapshot_health):
+        try:
+            task_snapshot_health = redact_sensitive_data(dict(get_task_snapshot_health() or {}))
+        except Exception:
+            task_snapshot_health = {
+                "status": "error",
+                "last_failure_reason": "任务快照健康信息读取失败",
+            }
+    else:
+        task_snapshot_health = {}
+    if callable(get_record_storage_health):
+        try:
+            record_storage_health = redact_sensitive_data(dict(get_record_storage_health() or {}))
+        except Exception:
+            record_storage_health = {
+                "status": "error",
+                "read_only": True,
+                "last_failure_reason": "记录数据库健康信息读取失败",
+            }
+    else:
+        record_storage_health = {}
+    if callable(get_record_commit_health):
+        try:
+            record_commit_health = redact_sensitive_data(dict(get_record_commit_health() or {}))
+        except Exception:
+            record_commit_health = {"status": "error", "last_failure_reason": "记录提交指标读取失败"}
+    else:
+        record_commit_health = {}
+    if callable(get_cache_metrics):
+        try:
+            cache_metrics = redact_sensitive_data(dict(get_cache_metrics() or {}))
+        except Exception:
+            cache_metrics = {"status": "error"}
+    else:
+        cache_metrics = {}
     overall_status = "ok"
     if isinstance(config_preflight, Mapping) and str(config_preflight.get("status") or "ok") != "ok":
+        overall_status = "degraded"
+    if task_snapshot_health.get("over_budget") or task_snapshot_health.get("status") == "error":
+        overall_status = "degraded"
+    if record_storage_health.get("status") == "error" or record_storage_health.get("read_only"):
+        overall_status = "degraded"
+    if record_commit_health.get("status") == "error":
         overall_status = "degraded"
     cache_limit_count = int(getattr(plugin.config, "image_cache_limit_count", 1000) or 1000)
     record_keep_limit = int(getattr(plugin.config, "image_record_keep_limit", 1000) or 1000)
@@ -457,7 +513,11 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
         "record_keep_limit": record_keep_limit,
         "cache_limit_warning": cache_limit_warning,
         "channel_health": get_health() if callable(get_health) else {},
+        "task_snapshot_health": task_snapshot_health,
+        "record_storage_health": record_storage_health,
+        "record_commit_health": record_commit_health,
         "config_preflight": config_preflight,
-        "cache_cleanup_preview": get_preview() if callable(get_preview) else {},
+        "cache_cleanup_preview": cache_preview,
+        "cache_metrics": cache_metrics,
         "dashboard_page": dict(page_status or {}),
     }

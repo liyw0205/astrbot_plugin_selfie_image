@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from functools import lru_cache
 import math
+import os
 import time
 from typing import Any, Callable
 
@@ -170,3 +171,207 @@ def render_model_status_report(
         text(1032, footer_y + 64, f"下一页：/生图记录状态 {token} {safe_page % page_count + 1}",
              18, muted, right=True)
     return image
+
+
+class ImageStatusService:
+    """Format model status for text fallback and persist rendered reports."""
+
+    ERROR_LABELS = {
+        "auth": "鉴权失败",
+        "authentication": "鉴权失败",
+        "unauthorized": "鉴权失败",
+        "forbidden": "鉴权失败",
+        "rate_limit": "限流",
+        "quota": "额度/限流",
+        "timeout": "超时",
+        "timeout_create": "创建超时",
+        "timeout_poll": "轮询超时",
+        "network": "网络错误",
+        "server": "上游错误",
+        "safety": "安全审核",
+        "param": "参数错误",
+        "not_found": "模型不存在",
+    }
+
+    @staticmethod
+    def format_age(timestamp: Any, now: Any = None) -> str:
+        try:
+            value = float(timestamp or 0)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value <= 0:
+            return "无请求"
+        age = max(0, int(float(now if now is not None else time.time()) - value))
+        if age < 60:
+            return f"{age} 秒前"
+        if age < 3600:
+            return f"{age // 60} 分钟前"
+        if age < 86400:
+            return f"{age // 3600} 小时前"
+        return f"{age // 86400} 天前"
+
+    @classmethod
+    def error_label(cls, category: Any) -> str:
+        value = str(category or "").strip().lower()
+        return cls.ERROR_LABELS.get(value, str(category or "未知错误"))
+
+    def format_text(
+        self,
+        status: Mapping[str, Any],
+        *,
+        page: int = 1,
+        page_size: int = 6,
+        error_label: Callable[[str], str] | None = None,
+        age_formatter: Callable[[Any, Any], str] | None = None,
+    ) -> str:
+        label = error_label or self.error_label
+        format_age = age_formatter or self.format_age
+        models = [item for item in status.get("models", []) if isinstance(item, Mapping)]
+        safe_page_size = max(1, int(page_size or 6))
+        page_count = max(1, (len(models) + safe_page_size - 1) // safe_page_size)
+        safe_page = max(1, min(int(page or 1), page_count))
+        start = (safe_page - 1) * safe_page_size
+        current_models = models[start : start + safe_page_size]
+        window_seconds = int(status.get("window_seconds") or 0)
+        window_label = {
+            3600: "最近 1 小时",
+            86400: "最近 24 小时",
+            7 * 86400: "最近 7 天",
+            30 * 86400: "最近 30 天",
+        }.get(window_seconds, f"最近 {window_seconds // 3600} 小时")
+        updated = status.get("updated_at") or time.time()
+        try:
+            updated_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(updated)))
+        except (TypeError, ValueError, OverflowError, OSError):
+            updated_text = "未知"
+        lines = [
+            "生图模型运行状态",
+            f"统计窗口：{window_label}",
+            f"更新时间：{updated_text}",
+            f"整体状态：{status.get('overall_status') or '未知'}",
+            "",
+            f"模型总数：{int(status.get('model_count') or 0)}　渠道总数：{int(status.get('channel_count') or 0)}",
+            f"可用模型：{int(status.get('available_count') or 0)}　告警模型：{int(status.get('alert_count') or 0)}　未使用：{int(status.get('unused_count') or 0)}",
+            "",
+            f"第 {safe_page}/{page_count} 页",
+        ]
+        now = time.time()
+        for index, item in enumerate(current_models, start=start + 1):
+            attempts = int(item.get("attempts") or 0)
+            successes = int(item.get("successes") or 0)
+            success_rate = float(item.get("success_rate") or 0) * 100
+            average = float(item.get("average_elapsed_seconds") or 0)
+            average_text = f"{average:.2f} 秒" if average > 0 else "-"
+            last_success = item.get("last_success")
+            if last_success is True:
+                recent = "正常"
+            elif last_success is False:
+                recent = label(item.get("last_error_category"))
+            else:
+                recent = "无请求"
+            error_counts = item.get("error_categories")
+            error_counts = error_counts if isinstance(error_counts, Mapping) else {}
+            error_text = "、".join(
+                f"{label(key)} {int(value)}"
+                for key, value in list(error_counts.items())[:3]
+            )
+            lines.extend(
+                [
+                    "",
+                    f"{index}. {item.get('label') or '未命名模型'}",
+                    f"   状态：{item.get('status') or '未知'}",
+                    f"   请求：成功 {successes} / 总计 {attempts}",
+                    f"   可用性：{success_rate:.2f}%",
+                    f"   平均耗时：{average_text}",
+                    f"   最近请求：{format_age(item.get('last_timestamp'), now)}",
+                    f"   最近状态：{recent}",
+                    f"   历史：{item.get('history') or '-'}",
+                ]
+            )
+            if error_text:
+                lines.append(f"   主要错误：{error_text}")
+            if int(item.get("consecutive_failures") or 0) > 0:
+                lines.append(f"   连续失败：{int(item.get('consecutive_failures') or 0)} 次")
+        alerts = [str(item).strip() for item in status.get("alerts", []) if str(item).strip()]
+        if alerts:
+            lines.extend(["", "告警："])
+            lines.extend(f"- {item}" for item in alerts[:8])
+        if page_count > 1:
+            window_token = {
+                3600: "1h",
+                86400: "24h",
+                7 * 86400: "7d",
+                30 * 86400: "30d",
+            }.get(window_seconds, "7d")
+            next_page = safe_page + 1 if safe_page < page_count else 1
+            lines.extend(["", f"下一页：/生图记录状态 {window_token} {next_page}"])
+        return "\n".join(lines)
+
+    @staticmethod
+    def wrap_text(
+        draw: Any,
+        text: str,
+        font: Any,
+        max_width: int,
+        max_lines: int = 2,
+    ) -> list[str]:
+        raw = str(text or "").strip()
+        if not raw:
+            return [""]
+        lines: list[str] = []
+        current = ""
+        for char in raw:
+            candidate = current + char
+            if current and draw.textbbox((0, 0), candidate, font=font)[2] > max_width:
+                lines.append(current)
+                current = char
+                if len(lines) >= max_lines:
+                    break
+            else:
+                current = candidate
+        if len(lines) < max_lines and current:
+            lines.append(current)
+        if len(lines) == max_lines and draw.textbbox((0, 0), lines[-1], font=font)[2] > max_width:
+            while lines[-1] and draw.textbbox((0, 0), lines[-1] + "…", font=font)[2] > max_width:
+                lines[-1] = lines[-1][:-1]
+            lines[-1] = lines[-1].rstrip() + "…"
+        return lines[:max_lines]
+
+    def render_to_file(
+        self,
+        status: Mapping[str, Any],
+        *,
+        data_dir: str,
+        font_loader: Callable[[int], Any],
+        error_label: Callable[[str], str] | None = None,
+        page: int = 1,
+        page_size: int = 6,
+    ) -> str:
+        image = render_model_status_report(
+            status,
+            font_loader=font_loader,
+            error_label=error_label or self.error_label,
+            page=page,
+            page_size=page_size,
+        )
+        report_dir = os.path.join(data_dir, "status_reports")
+        os.makedirs(report_dir, exist_ok=True)
+        try:
+            old_reports = sorted(
+                (
+                    os.path.join(report_dir, name)
+                    for name in os.listdir(report_dir)
+                    if name.startswith("model_status_") and name.endswith(".png")
+                ),
+                key=os.path.getmtime,
+            )
+            for stale in old_reports[:-20]:
+                try:
+                    os.unlink(stale)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        path = os.path.join(report_dir, f"model_status_{time.time_ns()}.png")
+        image.save(path, format="PNG", optimize=True)
+        return path

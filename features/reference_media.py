@@ -23,7 +23,12 @@ except ImportError:  # Compatibility with older AstrBot layouts
 
 from ..core.providers import ImageReference
 from .reference_collector import ReferenceCollector
-from ..core.utils import detect_mime_by_bytes, extract_event_text, redact_sensitive_text
+from ..core.utils import (
+    detect_mime_by_bytes,
+    extract_event_text,
+    image_validation_limits,
+    redact_sensitive_text,
+)
 
 
 IMAGE_DELIVERY_PERSIST_BATCH_SIZE = 4
@@ -228,6 +233,7 @@ class ReferenceMediaMixin:
         include_image_alternates: bool,
     ) -> ReferenceCollector:
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+        max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
         persona_path = ""
         if include_persona:
             if self.persona.has_reference_image():
@@ -259,6 +265,9 @@ class ReferenceMediaMixin:
             context_hint=hint,
             looks_like_context_ref=self._looks_like_context_image_reference,
             include_image_alternates=include_image_alternates,
+            max_dimension=max_dimension,
+            max_pixels=max_pixels,
+            max_frames=max_frames,
         )
 
     async def _event_reference_images_with_stats(

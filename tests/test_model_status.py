@@ -280,3 +280,54 @@ def test_model_status_font_rejects_missing_glyph_boxes(monkeypatch) -> None:
     monkeypatch.setattr(main_module, "ImageFont", FontLoader)
 
     assert main_module.SelfieImagePlugin._status_report_font(20) is None
+
+
+def test_image_status_service_formats_text_and_pages_without_plugin_runtime() -> None:
+    from astrbot_plugin_selfie_image.generation.model_status_report import ImageStatusService
+
+    service = ImageStatusService()
+    assert service.format_age(1000, now=1060) == "1 分钟前"
+    assert service.format_age(0, now=1060) == "无请求"
+    assert service.error_label("timeout_poll") == "轮询超时"
+    assert service.error_label("custom") == "custom"
+
+    status = {
+        "window_seconds": 3600,
+        "updated_at": 1_700_000_000,
+        "overall_status": "降级",
+        "model_count": 2,
+        "channel_count": 2,
+        "available_count": 1,
+        "alert_count": 1,
+        "unused_count": 0,
+        "models": [
+            {
+                "label": "channel/model-a",
+                "status": "异常",
+                "attempts": 2,
+                "successes": 1,
+                "success_rate": 0.5,
+                "average_elapsed_seconds": 2.5,
+                "last_success": False,
+                "last_error_category": "timeout_poll",
+                "last_timestamp": 1000,
+                "history": "■×",
+                "error_categories": {"timeout_poll": 1},
+                "consecutive_failures": 1,
+            },
+            {"label": "channel/model-b", "status": "正常"},
+        ],
+        "alerts": ["渠道最近发生超时"],
+    }
+    text = service.format_text(status, page=1, page_size=1)
+    assert "统计窗口：最近 1 小时" in text
+    assert "channel/model-a" in text
+    assert "最近状态：轮询超时" in text
+    assert "主要错误：轮询超时 1" in text
+    assert "连续失败：1 次" in text
+    assert "下一页：/生图记录状态 1h 2" in text
+
+    last_page = service.format_text(status, page=999, page_size=1)
+    assert "第 2/2 页" in last_page
+    assert "channel/model-b" in last_page
+    assert "下一页：/生图记录状态 1h 1" in last_page

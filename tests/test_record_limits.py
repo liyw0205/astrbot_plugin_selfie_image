@@ -51,9 +51,13 @@ def test_asset_query_does_not_scan_beyond_retained_record_window():
 def test_web_entrypoints_share_asset_redaction_and_compatibility_status_contract():
     flask = (ROOT / "webui" / "web.py").read_text(encoding="utf-8")
     dashboard = (ROOT / "webui" / "dashboard_api.py").read_text(encoding="utf-8")
-    assert flask.count("return ok(redact_sensitive_data(data), count=len(data)") == 2
-    assert dashboard.count("return self._ok(redact_sensitive_data(data), count=len(data)") == 2
-    assert 'return self._fail("当前版本不支持资产导出", 501)' in dashboard
-    assert 'return fail("当前版本不支持资产导出", 501)' in flask
+    controllers = (ROOT / "webui" / "controllers.py").read_text(encoding="utf-8")
+    asset_controller = controllers.split("class AssetController:", 1)[1].split(
+        "class RecordController:", 1
+    )[0]
+    assert "AssetController" in flask
+    assert "AssetController" in dashboard
+    assert asset_controller.count("redact_sensitive_data(data)") == 2
+    assert 'raise WebContractError("当前版本不支持资产导出", 501)' in asset_controller
     health_block = dashboard.split("async def page_health", 1)[1].split("async def page_proxies_list", 1)[0]
     assert '"source": "dashboard"' not in health_block

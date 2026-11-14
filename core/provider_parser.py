@@ -369,7 +369,7 @@ async def fetch_generated_image_url(
     headers = {
         "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Connection": "close",
+        "Connection": "keep-alive",
         # Match the client identity used by generation requests. Some relay
         # CDNs reject the default aiohttp identity when serving result URLs.
         "User-Agent": "AI-Cat/1.0",

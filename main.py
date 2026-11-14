@@ -99,7 +99,6 @@ from .cos.cos_looks import (
     finalize_cos_prompt_for_request,
     format_cos_look_list,
     is_special_cos_look,
-    keep_cos_outfit_requested,
     list_cos_look_sets,
     looks_like_cos_prompt,
     match_cos_look_sets,
@@ -110,7 +109,11 @@ from .cos.cos_looks import (
 )
 from .generation.generator import generate_image_with_fallback
 from .generation.image_workflow import run_image_generation_workflow
+from .generation.counted_workflow import CountedGenerationWorkflow
+from .generation.selfie_batch_workflow import SelfieBatchWorkflow
+from .generation.web_test_workflow import WebTestImageWorkflow
 from .generation.image_scheduler import ImageJobScheduler
+from .generation.model_status_report import ImageStatusService
 from .features.framework_persona import resolve_framework_persona
 from .generation.generation_records import metric_window_seconds
 from .generation.generation_store import GenerationStoreMixin, RECORD_KEEP_LIMIT
@@ -126,9 +129,6 @@ from .cos.leg_focus import (
     build_leg_focus_action,
     ensure_leg_focus_action,
     has_leg_focus_contract,
-    parse_requested_leg_camera,
-    parse_requested_leg_pose,
-    parse_requested_legwear,
 )
 from .features.model_selection import (
     available_model_labels,
@@ -182,7 +182,6 @@ from .prompts.prompt_composition import (
     append_anatomy_constraints,
     build_prompt_with_reference_instruction,
 )
-from .prompts.prompt_templates import has_viewpoint_change_request
 from .prompts.prompt_translation import parse_prompt_en_response
 from .features.audit_pipeline import AuditMixin
 from .features.creative_features import (
@@ -222,7 +221,14 @@ from .prompts.selfie_actions import (
     period_scene_light_pools,
 )
 from .prompts.group_prompt_pool import has_group_composition_contract
-from .core.proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, http_proxy_url, image_client_timeout, target_session_proxy
+from .core.proxy import (
+    LOCAL_IMAGE_WAIT_SECONDS,
+    ClientSessionRegistry,
+    channel_client_session,
+    http_proxy_url,
+    image_client_timeout,
+    target_session_proxy,
+)
 from .core.utils import (
     bytes_to_data_url,
     collect_record_cache_paths,
@@ -239,6 +245,8 @@ from .core.utils import (
     extract_image_sources_from_event,
     extract_image_urls,
     fetch_image_source,
+    image_validation_limits,
+    new_trace_id,
     load_json_file,
     looks_like_image_bytes,
     normalize_image_mime,
@@ -314,6 +322,7 @@ class SelfieImagePlugin(
         super().__init__(context)
         plugin_data_dir = os.path.join(str(get_astrbot_data_path()), "plugin_data")
         self.data_dir = os.path.join(plugin_data_dir, PLUGIN_NAME)
+        self._image_status_service = ImageStatusService()
         self._migrate_legacy_data_dir(plugin_data_dir)
         os.makedirs(self.data_dir, exist_ok=True)
         self.config_path = os.path.join(self.data_dir, PLUGIN_CONFIG_FILENAME)
@@ -406,6 +415,7 @@ class SelfieImagePlugin(
         self.asset_collections = AssetCollectionStore(self.data_dir)
         self._usage_stats = self._load_usage_stats()
         self._image_scheduler = ImageJobScheduler(self.config.image_max_concurrent_tasks)
+        self._image_session_registry = ClientSessionRegistry()
         self._image_batch_cooldown_lock = asyncio.Lock()
         self.web_server = FlaskWebServer(self)
         self.dashboard_api = SelfieImageDashboardAPI(self)
@@ -458,6 +468,9 @@ class SelfieImagePlugin(
             await scheduler.aclose()
         if workers:
             await asyncio.gather(*workers, return_exceptions=True)
+        session_registry = getattr(self, "_image_session_registry", None)
+        if session_registry is not None:
+            await session_registry.close()
         await self._close_reference_client_session()
         commits = set(getattr(self, "_record_commit_tasks", set()))
         commits.update(getattr(self, "_usage_commit_tasks", set()))
@@ -1238,7 +1251,7 @@ class SelfieImagePlugin(
             setter = getattr(self, "_set_task_notification_status", None)
             if callable(setter):
                 setter(task_id, "failed", reason)
-            logger.warning(f"[SelfieImage] 任务 {task_id} 通知发送失败: {exc}")
+            logger.warning(f"[SelfieImage] 任务 {task_id} 通知发送失败: {reason}")
             return False
         setter = getattr(self, "_set_task_notification_status", None)
         if callable(setter):
@@ -1955,6 +1968,20 @@ class SelfieImagePlugin(
         """Run one image shot through the shared fair scheduler."""
         if getattr(self, "_terminating", False):
             raise asyncio.CancelledError()
+        context = dict(record_context) if isinstance(record_context, Mapping) else {}
+        task_id = str(context.get("task_id") or "").strip()
+        if task_id and not str(context.get("trace_id") or "").strip():
+            task_getter = getattr(self, "get_web_image_task", None)
+            if callable(task_getter):
+                try:
+                    task_snapshot = task_getter(task_id)
+                except Exception:
+                    task_snapshot = None
+                if isinstance(task_snapshot, Mapping):
+                    trace_id = str(task_snapshot.get("trace_id") or "").strip()
+                    if trace_id:
+                        context["trace_id"] = trace_id
+        record_context = context or record_context
         scheduler = getattr(self, "_image_scheduler", None)
         if scheduler is None or _IMAGE_JOB_ALREADY_SCHEDULED.get():
             return await self._run_image_generation_unscheduled(
@@ -1972,6 +1999,7 @@ class SelfieImagePlugin(
             "queue",
             "等待画布并发槽位" if source == "studio-run" else "等待图片并发槽位",
         )
+        submitted_at = time.monotonic()
 
         async def run() -> Dict[str, Any]:
             slot_token = _IMAGE_JOB_ALREADY_SCHEDULED.set(True)
@@ -1985,6 +2013,7 @@ class SelfieImagePlugin(
                     prompt, aspect_ratio, resolution, refs, targets, source, audit_user_id,
                     event, original_prompt, max_attempts, allow_compat_retry, prompt_en_meta,
                     record_context, reference_selection, reference_fidelity,
+                    queue_wait_seconds=max(0.0, time.monotonic() - submitted_at),
                 )
             finally:
                 _IMAGE_JOB_ALREADY_SCHEDULED.reset(slot_token)
@@ -2008,11 +2037,14 @@ class SelfieImagePlugin(
         record_context: Optional[Mapping[str, Any]] = None,
         reference_selection: Optional[Mapping[str, Any]] = None,
         reference_fidelity: str = "",
+        *,
+        queue_wait_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
         return await run_image_generation_workflow(
             self, prompt, aspect_ratio, resolution, refs, targets, source, audit_user_id,
             event, original_prompt, max_attempts, allow_compat_retry, prompt_en_meta,
             record_context, reference_selection, reference_fidelity,
+            queue_wait_seconds=queue_wait_seconds,
             generate_images=generate_image_with_fallback,
         )
 
@@ -2238,9 +2270,15 @@ class SelfieImagePlugin(
         raw_image = str(payload.get("image") or payload.get("data") or "").strip()
         if not raw_image:
             raise ValueError("缺少 image 字段，支持 data:image/...;base64,... 或纯 base64")
-        data, mime = data_url_to_bytes(raw_image)
+        max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
+        data, mime = data_url_to_bytes(
+            raw_image,
+            max_dimension=max_dimension,
+            max_pixels=max_pixels,
+            max_frames=max_frames,
+        )
         if not data:
-            raise ValueError("上传图片为空")
+            raise ValueError("上传图片为空或尺寸/动画帧数超限")
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
         if len(data) > max_bytes:
             raise ValueError(f"图片过大，最大允许 {self.config.image_max_image_size_mb}MB")
@@ -2519,40 +2557,11 @@ class SelfieImagePlugin(
 
     @staticmethod
     def _format_model_status_age(timestamp: Any, now: Optional[float] = None) -> str:
-        try:
-            value = float(timestamp or 0)
-        except (TypeError, ValueError):
-            value = 0.0
-        if value <= 0:
-            return "无请求"
-        age = max(0, int(float(now if now is not None else time.time()) - value))
-        if age < 60:
-            return f"{age} 秒前"
-        if age < 3600:
-            return f"{age // 60} 分钟前"
-        if age < 86400:
-            return f"{age // 3600} 小时前"
-        return f"{age // 86400} 天前"
+        return ImageStatusService.format_age(timestamp, now)
 
     @staticmethod
     def _model_status_error_label(category: str) -> str:
-        labels = {
-            "auth": "鉴权失败",
-            "authentication": "鉴权失败",
-            "unauthorized": "鉴权失败",
-            "forbidden": "鉴权失败",
-            "rate_limit": "限流",
-            "quota": "额度/限流",
-            "timeout": "超时",
-            "timeout_create": "创建超时",
-            "timeout_poll": "轮询超时",
-            "network": "网络错误",
-            "server": "上游错误",
-            "safety": "安全审核",
-            "param": "参数错误",
-            "not_found": "模型不存在",
-        }
-        return labels.get(str(category or "").strip().lower(), str(category or "未知错误"))
+        return ImageStatusService.error_label(category)
 
     def _format_model_status_text(
         self,
@@ -2561,84 +2570,14 @@ class SelfieImagePlugin(
         page: int = 1,
         page_size: int = 6,
     ) -> str:
-        models = [item for item in status.get("models", []) if isinstance(item, Mapping)]
-        safe_page_size = max(1, int(page_size or 6))
-        page_count = max(1, (len(models) + safe_page_size - 1) // safe_page_size)
-        safe_page = max(1, min(int(page or 1), page_count))
-        start = (safe_page - 1) * safe_page_size
-        current_models = models[start : start + safe_page_size]
-        window_seconds = int(status.get("window_seconds") or 0)
-        window_label = {
-            3600: "最近 1 小时",
-            86400: "最近 24 小时",
-            7 * 86400: "最近 7 天",
-            30 * 86400: "最近 30 天",
-        }.get(window_seconds, f"最近 {window_seconds // 3600} 小时")
-        updated = status.get("updated_at") or time.time()
-        try:
-            updated_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(updated)))
-        except (TypeError, ValueError, OverflowError):
-            updated_text = "未知"
-        lines = [
-            "生图模型运行状态",
-            f"统计窗口：{window_label}",
-            f"更新时间：{updated_text}",
-            f"整体状态：{status.get('overall_status') or '未知'}",
-            "",
-            f"模型总数：{int(status.get('model_count') or 0)}　渠道总数：{int(status.get('channel_count') or 0)}",
-            f"可用模型：{int(status.get('available_count') or 0)}　告警模型：{int(status.get('alert_count') or 0)}　未使用：{int(status.get('unused_count') or 0)}",
-            "",
-            f"第 {safe_page}/{page_count} 页",
-        ]
-        now = time.time()
-        for index, item in enumerate(current_models, start=start + 1):
-            attempts = int(item.get("attempts") or 0)
-            successes = int(item.get("successes") or 0)
-            success_rate = float(item.get("success_rate") or 0) * 100
-            average = float(item.get("average_elapsed_seconds") or 0)
-            average_text = f"{average:.2f} 秒" if average > 0 else "-"
-            last_success = item.get("last_success")
-            if last_success is True:
-                recent = "正常"
-            elif last_success is False:
-                recent = self._model_status_error_label(item.get("last_error_category"))
-            else:
-                recent = "无请求"
-            error_counts = item.get("error_categories") if isinstance(item.get("error_categories"), Mapping) else {}
-            error_text = "、".join(
-                f"{self._model_status_error_label(key)} {int(value)}"
-                for key, value in list(error_counts.items())[:3]
-            )
-            lines.extend(
-                [
-                    "",
-                    f"{index}. {item.get('label') or '未命名模型'}",
-                    f"   状态：{item.get('status') or '未知'}",
-                    f"   请求：成功 {successes} / 总计 {attempts}",
-                    f"   可用性：{success_rate:.2f}%",
-                    f"   平均耗时：{average_text}",
-                    f"   最近请求：{self._format_model_status_age(item.get('last_timestamp'), now)}",
-                    f"   最近状态：{recent}",
-                    f"   历史：{item.get('history') or '-'}",
-                ]
-            )
-            if error_text:
-                lines.append(f"   主要错误：{error_text}")
-            if int(item.get("consecutive_failures") or 0) > 0:
-                lines.append(f"   连续失败：{int(item.get('consecutive_failures') or 0)} 次")
-        alerts = [str(item).strip() for item in status.get("alerts", []) if str(item).strip()]
-        if alerts:
-            lines.extend(["", "告警："])
-            lines.extend(f"- {item}" for item in alerts[:8])
-        if page_count > 1:
-            window_token = {
-                3600: "1h",
-                86400: "24h",
-                7 * 86400: "7d",
-                30 * 86400: "30d",
-            }.get(window_seconds, "7d")
-            lines.extend(["", f"下一页：/生图记录状态 {window_token} {safe_page + 1 if safe_page < page_count else 1}"])
-        return "\n".join(lines)
+        service = getattr(self, "_image_status_service", None) or ImageStatusService()
+        return service.format_text(
+            status,
+            page=page,
+            page_size=page_size,
+            error_label=self._model_status_error_label,
+            age_formatter=self._format_model_status_age,
+        )
 
     @staticmethod
     def _status_report_font(size: int, *, bold: bool = False) -> Any:
@@ -2706,27 +2645,7 @@ class SelfieImagePlugin(
 
     @staticmethod
     def _status_report_wrap(draw: Any, text: str, font: Any, max_width: int, max_lines: int = 2) -> List[str]:
-        raw = str(text or "").strip()
-        if not raw:
-            return [""]
-        lines: List[str] = []
-        current = ""
-        for char in raw:
-            candidate = current + char
-            if current and draw.textbbox((0, 0), candidate, font=font)[2] > max_width:
-                lines.append(current)
-                current = char
-                if len(lines) >= max_lines:
-                    break
-            else:
-                current = candidate
-        if len(lines) < max_lines and current:
-            lines.append(current)
-        if len(lines) == max_lines and draw.textbbox((0, 0), lines[-1], font=font)[2] > max_width:
-            while lines[-1] and draw.textbbox((0, 0), lines[-1] + "…", font=font)[2] > max_width:
-                lines[-1] = lines[-1][:-1]
-            lines[-1] = lines[-1].rstrip() + "…"
-        return lines[:max_lines]
+        return ImageStatusService.wrap_text(draw, text, font, max_width, max_lines)
 
     def _render_model_status_image(
         self,
@@ -2739,33 +2658,15 @@ class SelfieImagePlugin(
         if PILImage is None or ImageDraw is None or ImageFont is None:
             return None
         try:
-            from .generation.model_status_report import render_model_status_report
-
-            image = render_model_status_report(
+            service = getattr(self, "_image_status_service", None) or ImageStatusService()
+            return service.render_to_file(
                 status,
+                data_dir=self.data_dir,
                 font_loader=self._status_report_font,
                 error_label=self._model_status_error_label,
                 page=page,
                 page_size=page_size,
             )
-
-            report_dir = os.path.join(self.data_dir, "status_reports")
-            os.makedirs(report_dir, exist_ok=True)
-            try:
-                old_reports = sorted(
-                    (os.path.join(report_dir, name) for name in os.listdir(report_dir) if name.startswith("model_status_") and name.endswith(".png")),
-                    key=lambda path: os.path.getmtime(path),
-                )
-                for stale in old_reports[:-20]:
-                    try:
-                        os.unlink(stale)
-                    except OSError:
-                        pass
-            except OSError:
-                pass
-            path = os.path.join(report_dir, f"model_status_{time.time_ns()}.png")
-            image.save(path, format="PNG", optimize=True)
-            return path
         except Exception as exc:
             logger.warning("[SelfieImage] 生图模型状态图片渲染失败: %s", redact_sensitive_text(str(exc)))
             return None
@@ -3061,6 +2962,13 @@ class SelfieImagePlugin(
                 task["error"] = "任务已取消"
                 task["finished_ts"] = now
                 task["finished_at"] = self._web_task_timestamp()
+                self._log_task_lifecycle_event(
+                    str(task.get("task_id") or tid),
+                    str(task.get("trace_id") or ""),
+                    self._task_media_type(task),
+                    status.strip().lower(),
+                    "cancelled",
+                )
             task["updated_ts"] = now
             task["updated_at"] = self._web_task_timestamp()
             self._persist_web_tasks_locked()
@@ -3087,10 +2995,12 @@ class SelfieImagePlugin(
         if not tid:
             return
         message = redact_sensitive_text(str(error or "生成成功但发送失败"))[:800]
+        lifecycle_event = None
         with self._web_task_lock:
             task = self._web_tasks.get(tid)
             if not isinstance(task, dict):
                 return
+            previous_status = str(task.get("status") or "").strip().lower()
             result = task.get("result") if isinstance(task.get("result"), dict) else {}
             result = dict(result)
             result.update(
@@ -3119,6 +3029,17 @@ class SelfieImagePlugin(
             task["updated_ts"] = task["finished_ts"]
             task["updated_at"] = task["finished_at"]
             self._persist_web_tasks_locked()
+            current_status = str(task.get("status") or "").strip().lower()
+            if previous_status != current_status:
+                lifecycle_event = (
+                    str(task.get("task_id") or tid),
+                    str(task.get("trace_id") or ""),
+                    self._task_media_type(task),
+                    previous_status,
+                    current_status,
+                )
+        if lifecycle_event:
+            self._log_task_lifecycle_event(*lifecycle_event)
 
     def start_command_image_task(
         self,
@@ -3149,6 +3070,7 @@ class SelfieImagePlugin(
                     return redact_sensitive_data(duplicate)
             self._web_task_seq += 1
             task_id = f"cmd-{int(time.time() * 1000)}-{self._web_task_seq}"
+            trace_id = new_trace_id("gen")
             now = time.time()
             media_type = "image"
             requested_count = max(1, int(request_summary.get("requested_count") or request_summary.get("count") or 1))
@@ -3167,6 +3089,7 @@ class SelfieImagePlugin(
                 reserved_count = int((reservations.get(task_id) or {}).get("count") or 0)
             self._web_tasks[task_id] = {
                 "task_id": task_id,
+                "trace_id": trace_id,
                 "status": "failed" if quota_error else "queued",
                 "success": False if quota_error else None,
                 "error": quota_error,
@@ -3195,6 +3118,9 @@ class SelfieImagePlugin(
             }
             self._prune_web_tasks_locked()
             self._persist_web_tasks_locked()
+        initial_status = "failed" if quota_error else "queued"
+        self._log_task_lifecycle_event(task_id, trace_id, media_type, "", initial_status)
+        self._log_task_notification_event(task_id, trace_id, media_type, "message", "", "pending")
         if quota_error:
             return self.get_web_image_task(task_id)
         self._start_runtime_generation(task_id, self._run_command_image_task(task_id, event, runner))
@@ -3291,6 +3217,7 @@ class SelfieImagePlugin(
 
         request = dict(request_data) if isinstance(request_data, Mapping) else {}
         task_request = task.get("request_data") if isinstance(task, Mapping) else {}
+        trace_id = str(task.get("trace_id") or "").strip() if isinstance(task, Mapping) else ""
         if isinstance(task_request, Mapping):
             request = {**dict(task_request), **request}
         # Queue payloads may carry full reference-image data URLs. Keep the
@@ -3309,6 +3236,8 @@ class SelfieImagePlugin(
         safe_error = redact_sensitive_text(str(error or ("任务已取消" if cancelled else "任务失败")))[:2000]
         request["stage"] = str(stage or "task_exception")
         request["task_id"] = tid
+        if trace_id:
+            request["trace_id"] = trace_id
         try:
             reference_images = max(
                 0,
@@ -3352,7 +3281,10 @@ class SelfieImagePlugin(
             "retry_count": 0,
             "retry_exhausted": False,
             "task_id": tid,
+            "trace_id": trace_id,
         }
+        if trace_id:
+            record["response_data"]["trace_id"] = trace_id
         try:
             self._record_task(record)
         except Exception as exc:
@@ -3615,275 +3547,16 @@ class SelfieImagePlugin(
         run_one,
         log_prefix: str,
     ) -> Dict[str, Any]:
-        """Queue-friendly batch: at most inflight shots generating; send as each finishes."""
-        total = max(1, int(total))
-        inflight = min(self._image_inflight_limit(), total)
-        sem = asyncio.Semaphore(inflight)
-        send_lock = asyncio.Lock()
-        stop = False
-        skipped_shots = 0
-        all_files: List[str] = []
-        used_model = ""
-        last_elapsed = 0.0
-        failed_at = 0
-        last_failure_error = ""
-        cancelled = False
-        succeeded_shots = 0
-        cancelled_shots = 0
-        delivery_failed_shots = 0
-        delivery_unknown_shots = 0
-        delivery_error = ""
-        all_attempts: List[Dict[str, Any]] = []
-        final_prompt = ""
-        original_prompt = ""
-        last_request_data: Dict[str, Any] = {}
-
-        def persist_progress(index: int = 0) -> None:
-            completed = min(total, succeeded_shots + skipped_shots + cancelled_shots)
-            self._set_web_image_task(
-                task_id,
-                requested_count=total,
-                completed_count=completed,
-                succeeded_count=succeeded_shots,
-                failed_count=skipped_shots,
-                progress_percent=int(round(completed * 100 / max(1, total))),
-                current_index=max(0, int(index or 0)),
-            )
-
-        async def one(index: int) -> None:
-            nonlocal stop, skipped_shots, used_model, last_elapsed, failed_at, cancelled, succeeded_shots, cancelled_shots, last_failure_error, delivery_failed_shots, delivery_unknown_shots, delivery_error, all_attempts, final_prompt, original_prompt, last_request_data
-            async with sem:
-                if stop or self._task_cancel_requested(task_id):
-                    if self._task_cancel_requested(task_id):
-                        async with send_lock:
-                            cancelled = True
-                            cancelled_shots += 1
-                            persist_progress(index + 1)
-                    return
-                logger.info(f"[SelfieImage] {log_prefix} {index + 1}/{total} inflight={inflight} task={task_id}")
-                with self._web_task_lock:
-                    task_snapshot = dict(self._web_tasks.get(task_id) or {})
-                if "requested_count" in task_snapshot:
-                    self._set_web_image_task(
-                        task_id,
-                        generation_stage="queue",
-                        generation_stage_label="等待图片并发槽位",
-                        requested_count=total,
-                        completed_count=int(task_snapshot.get("completed_count") or 0),
-                    )
-                legacy_slot = None
-                scheduler = getattr(self, "_image_scheduler", None)
-                if scheduler is None:
-                    legacy_slot = await self._acquire_image_slot(task_id)
-                    if legacy_slot is None:
-                        async with send_lock:
-                            cancelled = True
-                            cancelled_shots += 1
-                            persist_progress(index + 1)
-                        return
-                    if total > 1 and not await self._wait_for_image_batch_cooldown(task_id):
-                        legacy_slot.release()
-                        async with send_lock:
-                            cancelled = True
-                            cancelled_shots += 1
-                            persist_progress(index + 1)
-                        return
-                try:
-                    result = await run_one(index)
-                finally:
-                    if legacy_slot is not None:
-                        legacy_slot.release()
-            # Records are committed in a worker thread. Wait for this shot's
-            # commit before publishing failure/success progress so a terminal
-            # task snapshot cannot briefly expose an empty record_ids list.
-            wait_commits = getattr(self, "_wait_for_record_commits", None)
-            if callable(wait_commits):
-                await wait_commits(task_id)
-            if isinstance(result, dict):
-                final_prompt = str(result.get("final_prompt") or final_prompt)
-                original_prompt = str(result.get("original_prompt") or original_prompt)
-                if isinstance(result.get("request_data"), dict):
-                    last_request_data = dict(result["request_data"])
-            async with send_lock:
-                raw_attempts = result.get("attempts") if isinstance(result, dict) else None
-                if isinstance(raw_attempts, list):
-                    all_attempts.extend(item for item in raw_attempts if isinstance(item, dict))
-                # ``stop`` only prevents shots that have not acquired a
-                # generation slot yet. This shot already entered ``run_one``
-                # and its result must still be committed even if another
-                # in-flight shot failed first.
-                if self._task_cancel_requested(task_id):
-                    cancelled = True
-                    stop = True
-                    cancelled_shots += 1
-                    persist_progress(index + 1)
-                    return
-                if not result.get("success"):
-                    raw_err = str(result.get("failure_reason") or result.get("error") or "")
-                    if not raw_err:
-                        attempts = result.get("attempts") or []
-                        if isinstance(attempts, list) and attempts:
-                            last = attempts[-1] if isinstance(attempts[-1], dict) else {}
-                            raw_err = str(last.get("error_user_message") or last.get("error") or "")
-                    last_failure_error = raw_err
-                    error = self._friendly_user_error_message(raw_err, fail_label)
-                    skipped_shots += 1
-                    persist_progress(index + 1)
-                    mode, skip_max = self._batch_failure_policy()
-                    # Completion order is independent of shot index when
-                    # requests run concurrently. A late-index failure can
-                    # arrive while lower-index shots are still queued or
-                    # in-flight, so derive this from terminal shot counts.
-                    completed_shots = succeeded_shots + skipped_shots + cancelled_shots
-                    has_remaining = completed_shots < total
-                    will_continue = has_remaining and (
-                        mode == "skip" or (mode == "skip_max" and skipped_shots <= skip_max)
-                    )
-                    msg = self._batch_shot_fail_text(
-                        index=index + 1,
-                        total=total,
-                        done_files=len(all_files),
-                        error=error,
-                        mode=mode,
-                        skipped=skipped_shots,
-                        skip_max=skip_max,
-                        will_continue=will_continue,
-                    )
-                    await self._send_task_notification(task_id, event, msg)
-                    if not will_continue:
-                        stop = True
-                        failed_at = index + 1
-                    return
-                files = list(result.get("files") or [])
-                used_model = str(result.get("used_model") or used_model)
-                last_elapsed = float(result.get("elapsed_seconds") or last_elapsed)
-                if files:
-                    await self._record_generated_images_async(event, 1)
-                    sent = await self._send_generated_images(event, files)
-                    sent_count = int(sent or 0)
-                    explicit_failed = max(0, int(getattr(sent, "failed_count", 0) or 0))
-                    unknown = max(0, int(getattr(sent, "unknown_count", 0) or 0))
-                    # A transport timeout is not proof that QQ rejected the
-                    # message: the adapter can time out while waiting for its
-                    # receipt after the message has already appeared.
-                    if sent is None:
-                        delivered = True
-                        delivery_unknown = False
-                    elif explicit_failed:
-                        delivered = False
-                        delivery_unknown = False
-                        delivery_failed_shots += explicit_failed
-                        delivery_error = "部分生成结果发送失败，请在记录或失败图片入口重试"
-                    elif unknown:
-                        delivered = False
-                        delivery_unknown = True
-                        delivery_unknown_shots += unknown
-                    elif sent_count >= len(files):
-                        delivered = True
-                        delivery_unknown = False
-                    else:
-                        delivered = False
-                        delivery_unknown = False
-                        delivery_failed_shots += len(files) - sent_count
-                        delivery_error = "部分生成结果发送失败，请在记录或失败图片入口重试"
-                    self._set_task_notification_status(
-                        task_id,
-                        "unknown" if delivery_unknown else "sent" if delivered else "failed",
-                        "消息投递结果未知" if delivery_unknown else delivery_error if not delivered else "",
-                    )
-                    wait_commits = getattr(self, "_wait_for_record_commits", None)
-                    update_delivery = getattr(self, "_update_generation_records_delivery", None)
-                    if callable(wait_commits):
-                        await wait_commits(task_id)
-                    if callable(update_delivery) and not delivery_unknown:
-                        update_delivery(
-                            task_id,
-                            delivered=delivered,
-                            error="图片发送失败" if not delivered else "",
-                            paths=files,
-                        )
-                    all_files.extend(files)
-                    succeeded_shots += 1
-                persist_progress(index + 1)
-                info = self._batch_success_text(
-                    self._build_success_text(last_elapsed, len(files), used_model, event),
-                    index + 1,
-                    total,
-                )
-                if info:
-                    await self._send_task_notification(task_id, event, info)
-
-        await asyncio.gather(*(one(i) for i in range(total)))
-        if cancelled:
-            return self._normalize_generation_result(
-                {
-                    "success": False,
-                    "error": "任务已取消",
-                    "cancelled": True,
-                    "files": all_files,
-                    "original_prompt": original_prompt,
-                    "final_prompt": final_prompt,
-                    "batch_total": total,
-                    "completed_count": min(total, succeeded_shots + skipped_shots + cancelled_shots),
-                    "succeeded_count": succeeded_shots,
-                    "failed_count": skipped_shots,
-                    "attempts": all_attempts,
-                },
-                total,
-            )
-        if failed_at:
-            return self._normalize_generation_result({
-                "success": False,
-                "error": last_failure_error or fail_label or "生图没有完成",
-                "files": all_files,
-                "original_prompt": original_prompt,
-                "final_prompt": final_prompt,
-                "request_data": last_request_data,
-                "batch_total": total,
-                "batch_failed_at": failed_at,
-                "batch_skipped": skipped_shots,
-                "completed_count": min(total, succeeded_shots + skipped_shots),
-                "succeeded_count": succeeded_shots,
-                "failed_count": skipped_shots,
-                "attempts": all_attempts,
-            }, total)
-        result = {
-            "success": skipped_shots == 0 and delivery_failed_shots == 0,
-            "files": all_files,
-            "original_prompt": original_prompt,
-            "final_prompt": final_prompt,
-            "request_data": last_request_data,
-            "used_model": used_model,
-            "elapsed_seconds": last_elapsed,
-            "batch_total": total,
-            "batch_skipped": skipped_shots,
-            "completed_count": min(total, succeeded_shots + skipped_shots),
-            "succeeded_count": succeeded_shots,
-            "failed_count": skipped_shots,
-            "attempts": all_attempts,
-        }
-        if delivery_failed_shots:
-            result.update(
-                {
-                    "status": "delivery_failed",
-                    "generation_success": True,
-                    "delivery_success": False,
-                    "delivery_failed_count": delivery_failed_shots,
-                    "error": delivery_error or "生成成功但发送失败",
-                }
-            )
-        elif delivery_unknown_shots:
-            result.update(
-                {
-                    "generation_success": succeeded_shots > 0,
-                    "delivery_success": None,
-                    "delivery_unknown": True,
-                    "delivery_unknown_count": delivery_unknown_shots,
-                }
-            )
-        else:
-            result.update({"generation_success": succeeded_shots > 0, "delivery_success": True})
-        return self._normalize_generation_result(result, total)
+        return await CountedGenerationWorkflow(
+            self,
+            task_id=task_id,
+            event=event,
+            total=total,
+            fail_label=fail_label,
+            run_one=run_one,
+            log_prefix=log_prefix,
+            log_info=logger.info,
+        ).run()
 
     def _batch_failure_policy(self) -> tuple[str, int]:
         return batch_failure_policy(self.config)
@@ -4081,230 +3754,24 @@ class SelfieImagePlugin(
         reference_selection: Optional[Mapping[str, Any]] = None,
         model_request: str = "",
     ) -> Dict[str, Any]:
-        total = self._normalize_count(requested_count)
-        # 多张拍摄时逐张更换机位或姿势。
-        rebuild_each = source in {
-            "command-look-legs",
-            "command-selfie",
-            "command-look-you",
-            "command-look-cos",
-        } or (
-            source == "command-group-selfie" and bool(rebuild_special_preset_variants)
-        ) or (
-            "看看腿" in str(action or "")
-            or "【legs:outfit】" in str(action or "")
-            or "看看COS" in str(action or "")
-            or "【shot:" in str(action or "")
-            or "【pose:" in str(action or "")
-            or "【cos:" in str(action or "")
-        )
-        last_pose = ""
-        last_shot = ""
-        last_cos = ""
-        last_cam = ""
-        last_cos_pose = ""
-        used_cos_poses: set[str] = set()
-        used_cos_scenes: set[str] = set()
-        used_cos_framings: set[str] = set()
-        used_cos_compositions: set[str] = set()
-        used_cos_cameras: set[str] = set()
-        used_leg_combinations: set[Tuple[str, str]] = set()
-
-        extra_keep = ""
-        force_legwear = ""
-        force_leg_pose = ""
-        force_leg_camera = ""
-        keep_cos_outfit = False
-        if rebuild_each:
-            # Extra may contain full preset text with many periods — take rest of line, then strip pose/shot tags.
-            m_extra = re.search(r"(?:用户补充要求优先|用户补充要求|用户指定内容|额外要求)[:：]\s*(.+)", str(action or ""), flags=re.S)
-            if m_extra:
-                extra_keep = str(m_extra.group(1) or "").strip()
-                extra_keep = re.sub(r"\s*【(?:pose|shot|cos|cam|cos_mode|cos_profile|cos_eye|cos_pose|cos_scene|cos_style|cos_expression|cos_makeup|cos_framing|cos_composition|cos_view|legs|leg_view|leg_scene|leg_support|wear|outfit|frame):[a-z0-9_]+】\s*", " ", extra_keep)
-                extra_keep = re.sub(r"\s*【(?:姿势池|场景池)·[^】]+】\s*", " ", extra_keep)
-                extra_keep = re.sub(r"\s+", " ", extra_keep).strip(" 。")
-            # Keep the original command query even when it is already present
-            # in the selected outfit title/prompt and therefore has no user
-            # supplement marker in the wrapped action.
-            if rebuild_extra_request:
-                extra_keep = str(rebuild_extra_request).strip()
-            if source == "command-look-legs" or has_leg_focus_contract(action):
-                # Only user choices persist; a random first shot must not lock
-                # the entire batch's hosiery or camera.
-                force_legwear = parse_requested_legwear(extra_keep)
-                force_leg_pose = parse_requested_leg_pose(extra_keep)
-                force_leg_camera = parse_requested_leg_camera(extra_keep)
-            m_pose = re.search(r"【pose:([a-z_]+)】", str(action or ""))
-            if m_pose:
-                last_pose = str(m_pose.group(1) or "")
-            m_shot = re.search(r"【shot:([a-z_]+)】", str(action or ""))
-            if m_shot:
-                last_shot = str(m_shot.group(1) or "")
-            m_cos = re.search(r"【cos:([a-z0-9_]+)】", str(action or ""))
-            if m_cos:
-                last_cos = str(m_cos.group(1) or "")
-            m_cam = re.search(r"【cam:(selfie|first|third)】", str(action or ""))
-            if m_cam:
-                last_cam = str(m_cam.group(1) or "")
-            m_cos_pose = re.search(r"【cos_pose:([a-z_]+)】", str(action or ""))
-            if m_cos_pose:
-                last_cos_pose = str(m_cos_pose.group(1) or "")
-            # A special look fixes one shot's full prompt, not every shot in a random batch.
-            keep_cos_outfit = source == "command-look-cos" and keep_cos_outfit_requested(extra_keep)
-        round_actions: List[str] = []
-        for index in range(total):
-            round_action = action
-            if rebuild_each and total > 1:
-                variant_extra = (
-                    rebuild_special_preset_variants[index]
-                    if rebuild_special_preset_variants and index < len(rebuild_special_preset_variants)
-                    else extra_keep
-                )
-                if source == "command-group-selfie" or (
-                    self._looks_like_group_selfie_intent(action)
-                    and not self._is_cos_action(action)
-                ):
-                    round_action = self._build_group_selfie_action(
-                        variant_extra,
-                        bool(extra_refs),
-                        avoid_shot=last_shot,
-                    )
-                    m_shot = re.search(r"【shot:([a-z_]+)】", round_action)
-                    if m_shot:
-                        last_shot = str(m_shot.group(1) or last_shot)
-                elif source == "command-look-legs" or "看看腿" in str(action or "") or "【legs:outfit】" in str(action or "") or "【pose:" in str(action or ""):
-                    round_action = self._build_leg_focus_action(
-                        variant_extra,
-                        bool(extra_refs),
-                        avoid_pose=last_pose,
-                        force_legwear=force_legwear,
-                        force_pose=force_leg_pose,
-                        force_camera=force_leg_camera,
-                        avoid_combinations=used_leg_combinations,
-                    )
-                    m_pose = re.search(r"【pose:([a-z_]+)】", round_action)
-                    if m_pose:
-                        last_pose = str(m_pose.group(1) or last_pose)
-                elif source == "command-look-cos" or (
-                    source == "llm-generate-selfie" and self._is_cos_action(action)
-                ):
-                    round_action = self._build_cos_look_action(
-                        variant_extra,
-                        bool(extra_refs),
-                        avoid_id=last_cos,
-                        avoid_camera=last_cam,
-                        avoid_pose=last_cos_pose,
-                        avoid_poses=used_cos_poses,
-                        avoid_scenes=used_cos_scenes,
-                        avoid_framings=used_cos_framings,
-                        avoid_compositions=used_cos_compositions,
-                        avoid_cameras=used_cos_cameras,
-                        match_query=rebuild_match_query or extra_keep,
-                        force_id=last_cos if keep_cos_outfit else "",
-                        force_multi_view_collage="【cos_view:multi_view_collage】" in str(action or ""),
-                    )
-                    m_cos = re.search(r"【cos:([a-z0-9_]+)】", round_action)
-                    if m_cos:
-                        last_cos = str(m_cos.group(1) or last_cos)
-                    m_cam = re.search(r"【cam:(selfie|first|third)】", round_action)
-                    if m_cam:
-                        last_cam = str(m_cam.group(1) or last_cam)
-                        used_cos_cameras.add(last_cam)
-                    m_cos_pose = re.search(r"【cos_pose:([a-z_]+)】", round_action)
-                    if m_cos_pose:
-                        last_cos_pose = str(m_cos_pose.group(1) or last_cos_pose)
-                        used_cos_poses.add(last_cos_pose)
-                    m_cos_scene = re.search(r"【cos_scene:([a-z_]+)】", round_action)
-                    if m_cos_scene:
-                        used_cos_scenes.add(str(m_cos_scene.group(1) or ""))
-                    m_cos_framing = re.search(r"【cos_framing:([a-z0-9_]+)】", round_action)
-                    if m_cos_framing:
-                        used_cos_framings.add(str(m_cos_framing.group(1) or ""))
-                    m_cos_composition = re.search(r"【cos_composition:([a-z0-9_]+)】", round_action)
-                    if m_cos_composition:
-                        used_cos_compositions.add(str(m_cos_composition.group(1) or ""))
-
-                elif source == "command-look-you" or "看看你模式" in str(action or ""):
-                    round_action = self._build_third_person_look_action(
-                        variant_extra,
-                        bool(extra_refs),
-                        avoid_shot=last_shot,
-                    )
-                    m_shot = re.search(r"【shot:([a-z_]+)】", round_action)
-                    if m_shot:
-                        last_shot = str(m_shot.group(1) or last_shot)
-                else:
-                    round_action = self._build_selfie_look_action(
-                        variant_extra,
-                        bool(extra_refs),
-                        avoid_shot=last_shot,
-                    )
-                    m_shot = re.search(r"【shot:([a-z_]+)】", round_action)
-                    if m_shot:
-                        last_shot = str(m_shot.group(1) or last_shot)
-            leg_pose = re.search(r"【pose:([a-z_]+)】", round_action)
-            leg_view = re.search(r"【leg_view:([a-z_]+)】", round_action)
-            if leg_pose and leg_view:
-                used_leg_combinations.add((leg_pose.group(1), leg_view.group(1)))
-            round_actions.append(round_action)
-
-        async def run_one(index: int) -> Dict[str, Any]:
-            round_action = round_actions[index]
-            if cos_selection is None:
-                # Preserve the small legacy call contract used by older host
-                # integrations and test doubles when no COS selection exists.
-                prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(
-                    event,
-                    round_action,
-                    extra_refs,
-                )
-            else:
-                prompt, refs, prompt_en_meta = await self._build_selfie_prompt_and_refs_for_event(
-                    event,
-                    round_action,
-                    extra_refs,
-                    cos_selection=cos_selection,
-                )
-            reference_fidelity = (
-                "low"
-                if refs and has_viewpoint_change_request(round_action)
-                else ""
-            )
-            return await self._run_image_generation(
-                prompt,
-                aspect,
-                resolution,
-                refs,
-                targets=(
-                    self._prioritize_targets_by_model_request(
-                        self._resolve_generation_targets(event), model_request
-                    )
-                    if str(model_request or "").strip()
-                    else None
-                ),
-                source=source,
-                audit_user_id=event_user_id(event),
-                event=event,
-                original_prompt=round_action,
-                prompt_en_meta=prompt_en_meta,
-                record_context={
-                    "task_id": task_id,
-                    "requested_count": total,
-                    "raw_reference_image_count": len(extra_refs),
-                    "reference_fidelity": reference_fidelity,
-                },
-                reference_selection=reference_selection or (cos_selection.summary() if cos_selection else None),
-                reference_fidelity=reference_fidelity,
-            )
-
-        return await self._run_counted_generation_shots(
-            task_id=task_id,
-            event=event,
-            total=total,
-            fail_label=fail_label,
-            run_one=run_one,
-            log_prefix="selfie batch",
-        )
+        return await SelfieBatchWorkflow(
+            self,
+            task_id,
+            event,
+            action,
+            extra_refs,
+            source,
+            requested_count,
+            aspect,
+            resolution,
+            fail_label,
+            rebuild_extra_request,
+            rebuild_match_query,
+            rebuild_special_preset_variants,
+            cos_selection,
+            reference_selection,
+            model_request,
+        ).run()
 
     def _validate_web_test_selection(self, payload: Dict[str, Any]) -> None:
         channel_name = str(payload.get("channel") or "").strip()
@@ -4342,366 +3809,11 @@ class SelfieImagePlugin(
             raise RuntimeError(f"渠道 {channel_name} 未启用模型 {model_name}，请先在渠道管理中启用并保存")
 
     async def web_test_image(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        # The task manager injects this transient link so the eventual
-        # generation record can be associated with its queue task. It is not
-        # included in the persisted request summary.
-        task_id = str(payload.get("_task_id") or "").strip()
-        channel_name = str(payload.get("channel") or "").strip()
-        model_name = str(payload.get("model") or "").strip()
-        raw_images = list(payload.get("images") or [])
-        if payload.get("image"):
-            raw_images.append(payload.get("image"))
-
-        raw_prompt = str(payload.get("prompt") or "").strip() or "看着镜头自然自拍"
-        template_values = payload.get("template_values") if isinstance(payload.get("template_values"), Mapping) else {}
-        template_randomize = payload.get("template_randomize") in {True, 1, "1", "true", "yes", "on", "是", "开启"}
-        template_result = self.render_creative_prompt(
-            raw_prompt,
-            {
-                "template_values": template_values,
-                "template_randomize": template_randomize,
-                "template_pools": payload.get("template_pools"),
-                "template_seed": payload.get("template_seed"),
-            },
-        )
-        original_prompt = str(template_result.get("prompt") or raw_prompt).strip()
-        configured_aspect = str(
-            payload.get("aspect_ratio") or self.config.image_default_aspect_ratio or "9:16"
-        ).strip() or "9:16"
-        configured_resolution = str(
-            payload.get("resolution") or self.config.image_default_resolution or "1K"
-        ).strip() or "1K"
-        # Apply prompt-level framing after template expansion so COS/templates
-        # and user supplements can override the Web setting consistently.
-        original_prompt, aspect, resolution = self._parse_prompt_options(
-            original_prompt,
-            configured_aspect,
-            configured_resolution,
-        )
-        if looks_like_cos_prompt(original_prompt):
-            original_prompt = build_cos_third_person_prompt(original_prompt)
-        original_prompt, parsed_variation_enabled, parsed_variation_field = parse_variation_request(original_prompt)
-        raw_variation_enabled = payload.get("variation_enabled")
-        variation_enabled = (
-            raw_variation_enabled is True
-            or raw_variation_enabled in {1, "1", "true", "yes", "on", "是", "开启"}
-            or parsed_variation_enabled
-        )
-        raw_variation_fields = payload.get("variation_fields") or payload.get("vary")
-        if isinstance(raw_variation_fields, str):
-            variation_fields = [item.strip() for item in re.split(r"[,，\s]+", raw_variation_fields) if item.strip()]
-        elif isinstance(raw_variation_fields, (list, tuple, set)):
-            variation_fields = [str(item).strip() for item in raw_variation_fields if str(item).strip()]
-        else:
-            variation_fields = []
-        variation_field = parsed_variation_field or (variation_fields[0] if len(variation_fields) == 1 else "")
-        normalize_web_count = getattr(self, "_normalize_web_image_count", None)
-        if callable(normalize_web_count):
-            requested_count = normalize_web_count(payload.get("count"))
-        else:
-            try:
-                requested_count = max(1, min(100, int(payload.get("count") or 1)))
-            except (TypeError, ValueError):
-                requested_count = 1
-        variation_rows = []
-        if variation_enabled:
-            fields = variation_fields or ([variation_field] if variation_field else ["pose", "scene", "shot"])
-        prompt_enhance_raw = payload.get("prompt_enhance", True)
-        prompt_enhance = not (
-            prompt_enhance_raw is False
-            or str(prompt_enhance_raw).strip().lower() in {"false", "0", "no", "off", "关闭", "否"}
-        )
-        request_summary = {
-            "original_prompt": original_prompt,
-            "channel": channel_name,
-            "model": model_name,
-            "aspect_ratio": aspect,
-            "resolution": resolution,
-            "prompt_enhance": prompt_enhance,
-            "use_selfie_reference": bool(payload.get("use_selfie_reference")),
-            "raw_reference_image_count": len(raw_images),
-            "variation_enabled": variation_enabled,
-            "variation_fields": fields if variation_enabled else [],
-            "template": {
-                "raw_prompt": raw_prompt,
-                "values": {str(key): str(value) for key, value in template_values.items()},
-                "randomize_missing": template_randomize,
-                "randomized": template_result.get("randomized") or {},
-                "unresolved": template_result.get("unresolved") or [],
-            },
-        }
-        request_summary["requested_count"] = requested_count
-        request_summary["count"] = requested_count
-        retry_record_id = str(payload.get("_retry_record_id") or payload.get("retry_record_id") or "").strip()
-        if retry_record_id:
-            request_summary["retry_record_id"] = retry_record_id[:128]
-        prompt_en_meta: Optional[Dict[str, Any]] = None
-        # Declared before the try so the exception path can still report which
-        # request images were already written for this attempt.
-        all_request_paths: List[str] = []
-
-        try:
-            self._validate_web_test_selection(payload)
-            target = self._find_web_retry_target(payload, media_type="image")
-            if not target:
-                raise RuntimeError("未找到指定生图模型")
-
-            max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
-            refs: List[ImageReference] = []
-            extra_refs: List[ImageReference] = []
-            for raw in raw_images:
-                data, mime = data_url_to_bytes(str(raw or ""))
-                if not data:
-                    continue
-                if len(data) > max_bytes:
-                    raise RuntimeError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
-                extra_refs.append(ImageReference(data=data, mime_type=normalize_image_mime(mime or detect_mime_by_bytes(data))))
-
-            original_prompt = finalize_cos_prompt_for_request(
-                original_prompt,
-                appearance_type=_appearance_type_for_request(getattr(self, "persona", None), raw_prompt),
-                has_refs=bool(extra_refs) or bool(payload.get("use_selfie_reference")),
-            )
-            request_summary["original_prompt"] = original_prompt
-            if variation_enabled:
-                variation_rows = self.build_creative_variations(
-                    original_prompt,
-                    requested_count,
-                    {"variation_fields": fields},
-                )
-
-            async def compose_web_prompt(
-                action_text: str,
-            ) -> Tuple[str, List[ImageReference], Optional[Dict[str, Any]]]:
-                if not prompt_enhance:
-                    selected_refs = list(extra_refs)
-                    if payload.get("use_selfie_reference"):
-                        persona_ref = self._persona_identity_reference()
-                        if not persona_ref:
-                            raise RuntimeError("当前未设置 AI 自拍形象参考图，且未启用 logo 回退；请先上传形象图、开启「无形象图用 logo」，或取消使用自拍形象参考图")
-                        selected_refs.insert(0, persona_ref)
-                    return action_text, selected_refs, None
-                if payload.get("use_selfie_reference"):
-                    prepared, selected_refs, translation_meta = await self._build_selfie_prompt_and_refs_for_event(
-                        None, action_text, extra_refs,
-                    )
-                    if not selected_refs:
-                        raise RuntimeError("当前未设置 AI 自拍形象参考图，请先上传形象图，或取消使用自拍形象参考图")
-                    return prepared, selected_refs, translation_meta
-                user_prompt = action_text
-                translation_meta = {"enabled": False, "applied": False, "scope": "user_text_only"}
-                if self._prompt_en_needed(user_prompt, media="image"):
-                    translated, translation_meta = await self._translate_prompt_to_english(
-                        user_prompt, media="image", event=None,
-                    )
-                    if translation_meta.get("applied") and translated:
-                        user_prompt = translated
-                prepared = build_prompt_with_reference_instruction(
-                    user_prompt,
-                    extra_refs,
-                    language="en" if self.config.image_enable_image_prompt_en else "zh",
-                )
-                return prepared, extra_refs, translation_meta
-
-            prompt, refs, prompt_en_meta = await compose_web_prompt(original_prompt)
-
-            all_paths: List[str] = []
-            all_request_paths.clear()
-            all_attempts: List[Dict[str, Any]] = []
-            last_result: Dict[str, Any] = {}
-            last_error = ""
-            used_model = ""
-            final_prompt = prompt
-            total_elapsed = 0.0
-            succeeded_count = 0
-            failed_count = 0
-            completed_count = 0
-            for index in range(requested_count):
-                # A queued web task can be cancelled while a previous shot is
-                # still in flight.  Stop before starting another shot; the
-                # task manager will publish the terminal cancelled state.
-                if task_id and self._task_cancel_requested(task_id):
-                    break
-                shot_prompt = prompt
-                shot_refs = refs
-                shot_translation_meta = prompt_en_meta
-                if variation_rows:
-                    variant_action = str(variation_rows[min(index, len(variation_rows) - 1)].get("prompt") or original_prompt)
-                    shot_prompt, shot_refs, shot_translation_meta = await compose_web_prompt(variant_action)
-                one = await self._run_image_generation(
-                    prompt=shot_prompt,
-                    aspect_ratio=aspect,
-                    resolution=resolution,
-                    refs=shot_refs,
-                    targets=[target],
-                    source="web-test",
-                    original_prompt=shot_prompt,
-                    event=None,
-                    max_attempts=1,
-                    allow_compat_retry=False,
-                    prompt_en_meta=shot_translation_meta,
-                    record_context={
-                        key: value
-                        for key, value in {
-                            "retry_record_id": retry_record_id,
-                            "task_id": task_id,
-                            "requested_count": requested_count,
-                            "raw_reference_image_count": len(raw_images),
-                        }.items()
-                        if value
-                    }
-                    or None,
-                )
-                last_result = one if isinstance(one, dict) else {}
-                try:
-                    total_elapsed += float(last_result.get("elapsed_seconds") or 0)
-                except (TypeError, ValueError):
-                    pass
-                used_model = str(last_result.get("used_model") or used_model)
-                final_prompt = str(last_result.get("final_prompt") or final_prompt)
-                paths = [
-                    str(path).strip()
-                    for path in (
-                        last_result.get("image_paths")
-                        or last_result.get("generated_image_paths")
-                        or []
-                    )
-                    if str(path).strip()
-                ]
-                request_paths = [
-                    str(path).strip()
-                    for path in (last_result.get("request_image_paths") or [])
-                    if str(path).strip()
-                ]
-                all_paths.extend(paths)
-                all_request_paths.extend(request_paths)
-                raw_attempts = last_result.get("attempts")
-                if isinstance(raw_attempts, list):
-                    all_attempts.extend(item for item in raw_attempts if isinstance(item, dict))
-                completed_count += 1
-                if last_result.get("success"):
-                    succeeded_count += 1
-                else:
-                    failed_count += 1
-                    last_error = str(last_result.get("error") or "这次没顺好")
-                if task_id:
-                    self._set_web_image_task(
-                        task_id,
-                        requested_count=requested_count,
-                        completed_count=completed_count,
-                        succeeded_count=succeeded_count,
-                        failed_count=failed_count,
-                        progress_percent=int(round(completed_count * 100 / max(1, requested_count))),
-                        current_index=index + 1,
-                    )
-                # Channel tests should not hammer the same endpoint after the
-                # first failed shot.  Successful shots continue until count.
-                if not last_result.get("success"):
-                    break
-
-            request_data = dict(last_result.get("request_data") or request_summary)
-            request_data.update(
-                {
-                    key: value
-                    for key, value in request_summary.items()
-                    if key not in set()
-                }
-            )
-            request_data.update(
-                {
-                    "original_prompt": original_prompt,
-                    "requested_count": requested_count,
-                    "count": requested_count,
-                }
-            )
-            response_data = dict(last_result.get("response_data") or {})
-            response_data.update(
-                {
-                    "success": failed_count == 0 and succeeded_count == requested_count,
-                    "count": len(all_paths),
-                    "requested_count": requested_count,
-                    "completed_count": completed_count,
-                    "succeeded_count": succeeded_count,
-                    "failed_count": failed_count,
-                    "generated_image_paths": all_paths,
-                    "attempts": all_attempts,
-                }
-            )
-            success = succeeded_count == requested_count and failed_count == 0
-            generation_success = bool(all_paths) or succeeded_count > 0
-        except Exception as exc:
-            error = str(exc)
-            response_data = {"success": False, "stage": "web_test_preflight", "error": error}
-            self._record_task(
-                {
-                    **self._source_context(None, "web-test"),
-                    "source_label": "Web/快速试画",
-                    "success": False,
-                    "generation_success": False,
-                    "delivery_success": None,
-                    "error": error,
-                    "prompt": original_prompt,
-                    "original_prompt": original_prompt,
-                    "request_prompt": original_prompt,
-                    "final_prompt": original_prompt,
-                    "used_model": model_name,
-                    "elapsed_seconds": 0,
-                    "reference_images": len(raw_images),
-                    "request_data": request_summary,
-                    "response_data": response_data,
-                    "request_image_paths": all_request_paths,
-                    "generated_image_paths": [],
-                    "retry_record_id": retry_record_id,
-                    "task_id": task_id,
-                }
-            )
-            raise
-
-        if not success:
-            return {
-                "success": False,
-                "status": (
-                    "partial_success"
-                    if succeeded_count and failed_count
-                    else "failed"
-                ),
-                "error": last_error or ("任务已取消" if task_id and self._task_cancel_requested(task_id) else "这次没顺好"),
-                "used_model": used_model,
-                "elapsed_seconds": round(total_elapsed, 2),
-                "reference_images": len(refs),
-                "original_prompt": original_prompt,
-                "final_prompt": final_prompt,
-                "request_data": request_data,
-                "response_data": response_data,
-                "request_image_paths": all_request_paths,
-                "generated_image_paths": all_paths,
-                "attempts": all_attempts,
-                "requested_count": requested_count,
-                "completed_count": completed_count,
-                "succeeded_count": succeeded_count,
-                "failed_count": failed_count,
-                "generation_success": generation_success,
-            }
-
-        return {
-            "success": True,
-            "status": "succeeded",
-            "used_model": used_model,
-            "elapsed_seconds": round(total_elapsed, 2),
-            "reference_images": len(refs),
-            "original_prompt": original_prompt,
-            "final_prompt": final_prompt,
-            "request_data": request_data,
-            "response_data": response_data,
-            "request_image_paths": all_request_paths,
-            "generated_image_paths": all_paths,
-            "attempts": all_attempts,
-            "requested_count": requested_count,
-            "completed_count": completed_count,
-            "succeeded_count": succeeded_count,
-            "failed_count": failed_count,
-            "generation_success": generation_success,
-        }
+        return await WebTestImageWorkflow(
+            self,
+            payload,
+            appearance_type_for_request=_appearance_type_for_request,
+        ).run()
 
     async def web_refresh_image_models(self, payload: Dict[str, Any]) -> List[str]:
         raw_payload = payload if isinstance(payload, dict) else {}
@@ -4716,7 +3828,7 @@ class SelfieImagePlugin(
             raise RuntimeError("base_url 为空")
         headers = {
             "Accept": "application/json",
-            "Connection": "close",
+            "Connection": "keep-alive",
             "User-Agent": "AI-Cat/1.0",
         }
         if provider_type == "gemini" and api_key:
@@ -5377,10 +4489,20 @@ class SelfieImagePlugin(
             logger.warning("[SelfieImage] 生图模型状态读取失败: %s", redact_sensitive_text(str(exc)))
             yield event.plain_result("生图模型状态暂时无法读取，请稍后再试。")
             return
-        report_path = self._render_model_status_image(status, page=page)
+        try:
+            report_path = self._render_model_status_image(status, page=page)
+        except Exception as exc:
+            logger.warning("[SelfieImage] 生图模型状态图片渲染失败: %s", redact_sensitive_text(str(exc)))
+            report_path = None
         if report_path:
-            yield event.image_result(report_path)
-            return
+            try:
+                image_result = event.image_result(report_path)
+            except Exception as exc:
+                logger.warning("[SelfieImage] 生图模型状态图片发送失败: %s", redact_sensitive_text(str(exc)))
+                image_result = None
+            if image_result is not None:
+                yield image_result
+                return
         yield event.plain_result(self._format_model_status_text(status, page=page))
 
     @filter.command("生图模型")
@@ -6176,9 +5298,17 @@ class SelfieImagePlugin(
             )
             return
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+        max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
         async with aiohttp.ClientSession(trust_env=False) as session:
             for source in sources:
-                fetched = await fetch_image_source(source, session, max_bytes=max_bytes)
+                fetched = await fetch_image_source(
+                    source,
+                    session,
+                    max_bytes=max_bytes,
+                    max_dimension=max_dimension,
+                    max_pixels=max_pixels,
+                    max_frames=max_frames,
+                )
                 if not fetched:
                     continue
                 data, mime = fetched
@@ -6225,6 +5355,7 @@ class SelfieImagePlugin(
             return
 
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+        max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
         saved = 0
         failed = 0
         async with aiohttp.ClientSession(trust_env=False) as session:
@@ -6232,7 +5363,14 @@ class SelfieImagePlugin(
                 if current_count + saved >= 3:
                     break
                 try:
-                    fetched = await fetch_image_source(source, session, max_bytes=max_bytes)
+                    fetched = await fetch_image_source(
+                        source,
+                        session,
+                        max_bytes=max_bytes,
+                        max_dimension=max_dimension,
+                        max_pixels=max_pixels,
+                        max_frames=max_frames,
+                    )
                 except Exception:
                     fetched = None
                 if not fetched:

@@ -197,6 +197,11 @@
     .metrics-recommendation { padding: 7px 9px; border-left: 2px solid var(--primary); border-radius: 3px; background: var(--panel-soft); color: var(--text-secondary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
     .metrics-error { margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--text-secondary); overflow-wrap: anywhere; }
     .metrics-launcher-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin: 12px 0 8px; }
+    .metrics-alert-settings { margin-top: 12px; padding: 8px 2px 12px; border-top: 1px solid var(--line); }
+    .metrics-alert-settings .grid4 { gap: 8px 12px; }
+    .metrics-alert-toggle { display: flex; align-items: end; min-width: 0; }
+    .metrics-alert-toggle label { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; margin: 0; }
+    .metrics-alert-toggle input { width: auto; margin: 0; }
     .metrics-launcher-header strong { font-size: 14px; }
     .metrics-launcher-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
     .metrics-launcher { display: grid; align-content: center; justify-items: start; gap: 4px; min-width: 0; min-height: 62px; padding: 9px 11px; text-align: left; }
@@ -1262,6 +1267,25 @@
       <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
       <div class="metrics-launcher-header"><strong>运行概览</strong><span id="monitorMetricsWindowLabel" class="muted">统计范围：全部保留记录</span></div>
       <div id="monitorMetricButtons" class="metrics-launcher-grid" aria-label="运行概览分类"></div>
+      <div id="metricAlertSettings" class="metrics-alert-settings">
+        <div class="metrics-launcher-header"><strong>运行建议阈值</strong><button id="saveMetricAlertSettings" class="secondary mini" type="button">保存阈值</button></div>
+        <div class="grid4">
+          <div class="metrics-alert-toggle"><label><input id="generationAlertsEnabled" type="checkbox"> 启用运行建议</label></div>
+          <div><label for="alertRecordSuccessRate">窗口记录成功率低于（%）</label><input id="alertRecordSuccessRate" type="number" min="0" max="100" step="0.1" required></div>
+          <div><label for="alertRecordSuccessMinRecords">成功率最少记录数</label><input id="alertRecordSuccessMinRecords" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertConsecutiveFailures">连续生成失败告警数</label><input id="alertConsecutiveFailures" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertChannelSuccessRate">渠道成功率低于（%）</label><input id="alertChannelSuccessRate" type="number" min="0" max="100" step="0.1" required></div>
+          <div><label for="alertChannelMinAttempts">渠道最少尝试数</label><input id="alertChannelMinAttempts" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertRateLimitRate">限流占比达到（%）</label><input id="alertRateLimitRate" type="number" min="0" max="100" step="0.1" required></div>
+          <div><label for="alertRateLimitMinAttempts">限流最少尝试数</label><input id="alertRateLimitMinAttempts" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertRateLimitMinFailures">限流最少失败数</label><input id="alertRateLimitMinFailures" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertRetryRate">重试率达到（%）</label><input id="alertRetryRate" type="number" min="0" max="100" step="0.1" required></div>
+          <div><label for="alertRetryMinRecords">重试最少记录数</label><input id="alertRetryMinRecords" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertGenerationP95">生成 P95 达到（秒）</label><input id="alertGenerationP95" type="number" min="0" max="86400" step="0.1" required></div>
+          <div><label for="alertGenerationMinRecords">耗时最少记录数</label><input id="alertGenerationMinRecords" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertCacheOrphanGrowth">缓存孤儿增长告警数</label><input id="alertCacheOrphanGrowth" type="number" min="1" max="100000" step="1" required></div>
+        </div>
+      </div>
       <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button></div>
       <div class="grid" style="margin-top:8px">
         <div><label>显示范围</label><select id="taskQueueScope" onchange="taskQueueViewChanged()"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
@@ -1587,6 +1611,9 @@
         <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="5" title="同一时间最多几张图一起请求上游；批量 /看看COS 会按这个数并发"></div>
         <div><label title="全部模型依次请求到结束的最长等待">整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
         <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
+        <div><label>图片最大单边（像素）</label><input id="maxImageDimension" type="number" min="256" max="65536"></div>
+        <div><label>图片总像素上限</label><input id="maxImagePixels" type="number" min="1048576" max="536870912"></div>
+        <div><label>动画最大帧数</label><input id="maxAnimationFrames" type="number" min="1" max="64"></div>
         <div><label>单条指令最多请求几张</label><input id="maxBatchCount" type="number" min="1" max="100" title="限制单条指令最多请求几张；不同指令之间不共用这个上限"></div>
         <div><label>连画失败时</label>
           <select id="batchOnFailure">
@@ -2431,6 +2458,9 @@ Source prompt:
       img.max_concurrent_tasks = Number.isInteger(configuredConcurrent) && configuredConcurrent >= 1 && configuredConcurrent <= 5 ? configuredConcurrent : 5;
       img.global_timeout ??= 280;
       img.max_image_size_mb ??= 10;
+      img.max_image_dimension ??= 16384;
+      img.max_image_pixels ??= 64 * 1024 * 1024;
+      img.max_animation_frames ??= 8;
       img.cache_limit_mb ??= 200;
       img.cache_limit_count ??= 100;
       img.max_batch_count ??= 10;
@@ -2486,6 +2516,9 @@ Source prompt:
         $('maxConcurrent').value = img.max_concurrent_tasks;
         $('globalTimeout').value = img.global_timeout;
         $('maxImageSize').value = img.max_image_size_mb;
+        if ($('maxImageDimension')) $('maxImageDimension').value = img.max_image_dimension;
+        if ($('maxImagePixels')) $('maxImagePixels').value = img.max_image_pixels;
+        if ($('maxAnimationFrames')) $('maxAnimationFrames').value = img.max_animation_frames;
         $('cacheLimitMB').value = img.cache_limit_mb;
         $('cacheLimitCount').value = img.cache_limit_count;
         if ($('recordKeepLimit')) $('recordKeepLimit').value = img.record_keep_limit ?? 1000;
@@ -2538,6 +2571,9 @@ Source prompt:
       CONFIG.image.max_concurrent_tasks = Number.isInteger(maxConcurrent) && maxConcurrent >= 1 && maxConcurrent <= 5 ? maxConcurrent : 5;
       CONFIG.image.global_timeout = Number($('globalTimeout').value || 280);
       CONFIG.image.max_image_size_mb = Number($('maxImageSize').value || 10);
+      if ($('maxImageDimension')) CONFIG.image.max_image_dimension = Number($('maxImageDimension').value || 16384);
+      if ($('maxImagePixels')) CONFIG.image.max_image_pixels = Number($('maxImagePixels').value || (64 * 1024 * 1024));
+      if ($('maxAnimationFrames')) CONFIG.image.max_animation_frames = Number($('maxAnimationFrames').value || 8);
       CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 2048);
       CONFIG.image.cache_limit_count = Number($('cacheLimitCount').value || 1000);
       if ($('recordKeepLimit')) CONFIG.image.record_keep_limit = Number($('recordKeepLimit').value || 1000);
@@ -4263,7 +4299,14 @@ Source prompt:
         const res = await api('/api/health');
         const d = res.data || {};
         const cachePreview = d.cache_cleanup_preview || {};
-        const statusText = d.status === 'ok' ? '运行正常' : d.status === 'degraded' ? '配置需要检查' : String(d.status || '状态未知');
+        const taskSnapshot = d.task_snapshot_health || {};
+        const recordStorage = d.record_storage_health || {};
+        const recordCommit = d.record_commit_health || {};
+        const cacheMetrics = d.cache_metrics || {};
+        const referenceCache = cacheMetrics.reference_cache || {};
+        const cleanupMetrics = cacheMetrics.cleanup || {};
+        const cleanupScan = cleanupMetrics.last_scan || {};
+        const statusText = d.status === 'ok' ? '运行正常' : d.status === 'degraded' ? '运行需要检查' : String(d.status || '状态未知');
         const healthItems = [
           ['插件状态', statusText],
           ['缓存占用', `${String(d.cache_file_count ?? 0)} / ${String(d.cache_limit_count ?? 1000)} 张 · ${String(d.cache_size_mb ?? 0)} / ${String(d.cache_limit_mb ?? 2048)} MB`],
@@ -4272,8 +4315,50 @@ Source prompt:
           ['记录文件', d.records_path || '-'],
           ['配置文件', d.config_path || '-'],
         ];
+        if (referenceCache.lookups !== undefined) {
+          const hitRate = referenceCache.hit_rate === null ? '暂无样本' : `${(Number(referenceCache.hit_rate || 0) * 100).toFixed(1)}%`;
+          healthItems.push(['参考图缓存命中', `${String(referenceCache.hits ?? 0)} / ${String(referenceCache.lookups ?? 0)} 次 · ${hitRate}`]);
+        }
+        if (cleanupScan.scanned_at) {
+          healthItems.push(
+            ['缓存扫描', `${String(cleanupScan.scanned_at)} · 孤儿 ${String(cleanupScan.orphan_count ?? 0)} 张 · 候选 ${String(cleanupScan.candidate_count ?? 0)} 张`],
+            ['缓存引用保护', `记录引用 ${String(cleanupScan.referenced_count ?? 0)} 张 · 运行保护 ${String(cleanupScan.protected_count ?? 0)} 张`],
+          );
+        }
+        if (cleanupMetrics.runs !== undefined) {
+          healthItems.push(['缓存清理累计', `${String(cleanupMetrics.deleted_files ?? 0)} 张 · ${String(Math.round(Number(cleanupMetrics.deleted_bytes || 0) / 1024 / 1024))} MB · 失败 ${String(cleanupMetrics.failed_delete_count ?? 0)} 次`]);
+        }
+        if (taskSnapshot.snapshot_version !== undefined) {
+          healthItems.push(
+            ['任务快照', `版本 ${String(taskSnapshot.snapshot_version)} · 写入 ${String(taskSnapshot.write_count ?? 0)} 次 · 失败 ${String(taskSnapshot.failure_count ?? 0)} 次`],
+            ['最近快照写入', `${String(taskSnapshot.last_write_at || '-')} · ${String(taskSnapshot.last_write_duration_ms ?? 0)} ms`],
+          );
+        }
+        if (taskSnapshot.max_bytes !== undefined) {
+          healthItems.push(['快照占用', `${(Number(taskSnapshot.size_bytes || 0) / 1024 / 1024).toFixed(2)} / ${(Number(taskSnapshot.max_bytes || 0) / 1024 / 1024).toFixed(2)} MiB`]);
+        }
+        if (recordStorage.status) {
+          const migrationState = recordStorage.status === 'error' ? '只读降级' : recordStorage.status === 'not_initialized' ? '未初始化' : recordStorage.migration_applied ? '迁移完成' : '正常';
+          healthItems.push(['记录数据库', `${migrationState} · ${String(recordStorage.duration_ms ?? 0)} ms`]);
+          if (recordStorage.read_only_source) healthItems.push(['记录读取来源', String(recordStorage.read_only_source)]);
+        }
+        if (recordCommit.completed_count !== undefined) {
+          healthItems.push(['记录提交（本进程）', `成功 ${String(recordCommit.success_count ?? 0)} 次 · 失败 ${String(recordCommit.failure_count ?? 0)} 次`]);
+          for (const [group, title] of [['success_latency_ms', '成功提交'], ['failure_latency_ms', '失败提交']]) {
+            const durations = recordCommit[group] || {};
+            const total = durations.total || {};
+            if (Number(total.samples) > 0) {
+              healthItems.push([`${title}延迟`, `${String(total.samples)} 个样本 · P50 ${String(total.p50 ?? 0)} ms · P95 ${String(total.p95 ?? 0)} ms`]);
+              healthItems.push([`${title}阶段 P95`, `线程等待 ${String(durations.queue_wait?.p95 ?? 0)} ms · 提交处理 ${String(durations.write?.p95 ?? 0)} ms`]);
+            }
+          }
+        }
         const healthWarnings = [
           d.cache_limit_warning,
+          taskSnapshot.warning,
+          taskSnapshot.last_failure_reason ? `最近快照写入失败：${String(taskSnapshot.last_failure_reason)}` : '',
+          recordStorage.last_failure_reason ? `记录数据库迁移失败：${String(recordStorage.last_failure_reason)}` : '',
+          recordCommit.last_failure_reason ? `最近记录提交失败：${String(recordCommit.last_failure_reason)}` : '',
           ...(Array.isArray(d.config_preflight?.errors) ? d.config_preflight.errors.map(item => item?.message) : []),
         ].map(value => String(value || '').trim()).filter(Boolean);
         $('health').innerHTML = `
@@ -4343,6 +4428,68 @@ Source prompt:
       params.set('offset', String((Math.max(1, page) - 1) * MONITOR_PAGE_SIZE));
       return '/api/records?' + params.toString();
     }
+    function syncMetricAlertForm(force = false) {
+      const root = $('metricAlertSettings');
+      if (!root || (root.dataset.dirty === 'true' && !force)) return;
+      const settings = CONFIG.monitoring?.generation_alerts || {};
+      $('generationAlertsEnabled').checked = settings.enabled !== false;
+      $('alertRecordSuccessRate').value = String(Number(settings.record_success_rate_below ?? 0.8) * 100);
+      $('alertRecordSuccessMinRecords').value = String(settings.record_success_min_records ?? 5);
+      $('alertConsecutiveFailures').value = String(settings.consecutive_failure_count_at_least ?? 3);
+      $('alertChannelSuccessRate').value = String(Number(settings.channel_success_rate_below ?? 0.8) * 100);
+      $('alertChannelMinAttempts').value = String(settings.channel_min_attempts ?? 3);
+      $('alertRateLimitRate').value = String(Number(settings.rate_limit_rate_at_least ?? 0.3) * 100);
+      $('alertRateLimitMinAttempts').value = String(settings.rate_limit_min_attempts ?? 3);
+      $('alertRateLimitMinFailures').value = String(settings.rate_limit_min_failures ?? 2);
+      $('alertRetryRate').value = String(Number(settings.retry_rate_at_least ?? 0.5) * 100);
+      $('alertRetryMinRecords').value = String(settings.retry_min_records ?? 3);
+      $('alertGenerationP95').value = String(settings.generation_p95_seconds_at_least ?? 60);
+      $('alertGenerationMinRecords').value = String(settings.generation_min_records ?? 3);
+      $('alertCacheOrphanGrowth').value = String(settings.cache_orphan_growth_at_least ?? 10);
+    }
+    async function saveMetricAlertSettings() {
+      const root = $('metricAlertSettings');
+      const button = $('saveMetricAlertSettings');
+      const fields = [...(root?.querySelectorAll('input[type="number"]') || [])];
+      const invalid = fields.find(field => !field.checkValidity());
+      if (invalid) {
+        invalid.reportValidity();
+        return;
+      }
+      const number = id => Number($(id).value);
+      collectForms();
+      CONFIG.monitoring = {...(CONFIG.monitoring || {})};
+      CONFIG.monitoring.generation_alerts = {
+        enabled: $('generationAlertsEnabled').checked,
+        record_success_rate_below: number('alertRecordSuccessRate') / 100,
+        record_success_min_records: number('alertRecordSuccessMinRecords'),
+        consecutive_failure_count_at_least: number('alertConsecutiveFailures'),
+        channel_success_rate_below: number('alertChannelSuccessRate') / 100,
+        channel_min_attempts: number('alertChannelMinAttempts'),
+        rate_limit_rate_at_least: number('alertRateLimitRate') / 100,
+        rate_limit_min_attempts: number('alertRateLimitMinAttempts'),
+        rate_limit_min_failures: number('alertRateLimitMinFailures'),
+        retry_rate_at_least: number('alertRetryRate') / 100,
+        retry_min_records: number('alertRetryMinRecords'),
+        generation_p95_seconds_at_least: number('alertGenerationP95'),
+        generation_min_records: number('alertGenerationMinRecords'),
+        cache_orphan_growth_at_least: number('alertCacheOrphanGrowth'),
+      };
+      if (root) root.dataset.dirty = 'true';
+      if (button) button.disabled = true;
+      try {
+        const saved = await persistConfig(false, '', {toast: false, quiet: true, toastError: false});
+        if (!saved) throw new Error('告警阈值保存失败');
+        if (root) root.dataset.dirty = '';
+        syncMetricAlertForm(true);
+        showToast('告警阈值已保存', 'ok');
+        await loadMetrics();
+      } catch (error) {
+        showToast(error.message || '告警阈值保存失败', 'bad');
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
     async function loadMetricsNow() {
       const root = $('monitorMetricButtons');
       if (!root) return;
@@ -4350,6 +4497,7 @@ Source prompt:
         const windowKey = $('monitorMetricsWindow')?.value || 'all';
         const res = await api('/api/metrics?window=' + encodeURIComponent(windowKey));
         const d = res.data || {};
+        syncMetricAlertForm();
         const windowLabel = $('monitorMetricsWindow')?.selectedOptions?.[0]?.textContent || '全部保留记录';
         const statusLabels = {succeeded:'成功', failed:'失败', partial_success:'部分成功', cancelled:'已取消', delivery_failed:'发送失败', queued:'排队中', running:'进行中', expired:'已过期'};
         const errorLabels = {auth:'鉴权失败', not_found:'接口或模型不存在', safety:'审核拦截', quota:'额度不足', param:'参数不兼容', timeout:'超时', network:'网络错误', server:'上游服务错误', rate_limit:'请求限流', unknown:'无法分类', fatal:'不可重试'};
@@ -4363,8 +4511,12 @@ Source prompt:
           return `<div class="metrics-breakdown">${rows.map(([name, value]) => `<div class="metrics-breakdown-row"><strong>${escapeHtml(name)}</strong><span>${formatter(value)}</span></div>`).join('')}</div>`;
         };
         const e = d.elapsed_seconds || {};
+        const q = d.queue_wait_seconds || {};
+        const stageLabels = {reference_fetch:'参考图读取', image_to_text:'图转文', prompt_audit:'提示词审核', output_audit:'图片审核', delivery_receipt:'发送回执'};
+        const stageRows = Object.entries(stageLabels).map(([key, label]) => [label, d.stage_timings?.[key] || {}]);
         const channelRows = Object.entries(d.channels || {});
         const modelRows = Object.entries(d.models || {});
+        const modelAttemptRows = Object.entries(d.model_attempts || {});
         const retries = d.retries || {};
         const quality = d.quality || {};
         const recommendations = Array.isArray(d.recommendations) ? d.recommendations : [];
@@ -4389,12 +4541,20 @@ Source prompt:
               ${metric('图片成功率', escapeHtml(percent(quality.image_success_rate)), '按图片数量统计')}
               ${metric('重试率', escapeHtml(percent(quality.retry_rate)), '发生过重试的记录')}
               ${metric('回退率', escapeHtml(percent(quality.fallback_rate)), '切换到后备渠道')}
+              ${metric('首次尝试成功率', escapeHtml(percent(quality.first_attempt_success_rate)), `${escapeHtml(String(quality.first_attempt_successes ?? 0))} / ${escapeHtml(String(quality.attempted_records ?? 0))} 条有上游尝试`)}
+              ${metric('有尝试记录最终成功率', escapeHtml(percent(quality.final_attempt_success_rate)), `${escapeHtml(String(quality.final_attempt_successes ?? 0))} / ${escapeHtml(String(quality.attempted_records ?? 0))} 条有上游尝试`)}
             </div></div><div class="metrics-section"><h3 class="metrics-section-title">重试与耗时</h3><div class="metrics-kpi-grid">
               ${metric('重试总数', escapeHtml(String(retries.total ?? 0)), `涉及 ${escapeHtml(String(retries.records_with_retries ?? 0))} 条记录`)}
+              ${metric('队列 P50', `${escapeHtml(String(q.p50 ?? 0))}s`, `${escapeHtml(String(q.samples ?? 0))} 条可观测记录`)}
+              ${metric('队列 P95', `${escapeHtml(String(q.p95 ?? 0))}s`, '调度器等待时长')}
               ${metric('P50 耗时', `${escapeHtml(String(e.p50 ?? 0))}s`, '中位数')}
               ${metric('P95 耗时', `${escapeHtml(String(e.p95 ?? 0))}s`, '长耗时参考')}
               ${metric('最长耗时', `${escapeHtml(String(e.max ?? 0))}s`)}
-            </div></div>`,
+            </div></div><div class="metrics-section"><h3 class="metrics-section-title">阶段耗时</h3>
+              ${renderBreakdown(stageRows, value => Number(value.samples) > 0
+                ? `${escapeHtml(String(value.samples))} 个样本 · P50 ${escapeHtml(String(value.p50 ?? 0))}s · P95 ${escapeHtml(String(value.p95 ?? 0))}s`
+                : '暂无样本')}
+            </div>`,
           },
           {
             key: 'errors', title: '状态与错误', summary: `${Object.keys(d.error_categories || {}).length} 类错误`,
@@ -4402,12 +4562,23 @@ Source prompt:
               <div class="metrics-section"><h3 class="metrics-section-title">错误类型</h3>${renderCountChips(d.error_categories, errorLabels)}</div></div>`,
           },
           {
-            key: 'providers', title: '渠道与模型', summary: `${channelRows.length} 渠道 · ${modelRows.length} 模型`,
+            key: 'providers', title: '渠道与模型', summary: `${channelRows.length} 渠道 · ${modelAttemptRows.length || modelRows.length} 模型`,
             html: `<div class="metrics-split"><div class="metrics-section"><h3 class="metrics-section-title">渠道表现</h3>
               ${renderBreakdown(channelRows, value => `${escapeHtml(String(value.success ?? 0))} / ${escapeHtml(String(value.attempts ?? 0))} 次成功 · 回退 ${escapeHtml(String(value.fallbacks ?? 0))} · 成功率 ${escapeHtml(percent(value.success_rate))}`)}
               </div><div class="metrics-section"><h3 class="metrics-section-title">模型表现</h3>
               ${renderBreakdown(modelRows, value => `成功率 ${escapeHtml(percent(value.success_rate))}`)}
-              </div></div>`,
+              </div></div><div class="metrics-section"><h3 class="metrics-section-title">模型上游错误占比</h3>
+              ${renderBreakdown(modelAttemptRows, value => {
+                const errors = Object.entries(value.error_categories || {}).map(([category, count]) =>
+                  `${escapeHtml(errorLabels[category] || category)} ${escapeHtml(String(count))}（${escapeHtml(percent(value.error_rates?.[category]))}）`
+                );
+                const statuses = Object.entries(value.http_statuses || {}).map(([status, count]) =>
+                  `HTTP ${escapeHtml(status)} ${escapeHtml(String(count))}（${escapeHtml(percent(value.http_status_rates?.[status]))}）`
+                );
+                const details = [...errors, ...statuses].join(' · ') || '无失败尝试';
+                return `${escapeHtml(String(value.success ?? 0))} / ${escapeHtml(String(value.attempts ?? 0))} 次成功 · ${details}`;
+              })}
+            </div>`,
           },
           {
             key: 'recommendations', title: '运行建议', summary: `${recommendations.length} 条建议`,
@@ -10239,6 +10410,11 @@ Source prompt:
     if ($('monitorMetricButtons')) $('monitorMetricButtons').addEventListener('click', event => {
       const button = event.target.closest('[data-metrics-category]');
       if (button) openMetricsCategory(button.dataset.metricsCategory);
+    });
+    $('saveMetricAlertSettings')?.addEventListener('click', saveMetricAlertSettings);
+    $('metricAlertSettings')?.querySelectorAll('input').forEach(input => {
+      input.addEventListener('input', () => { $('metricAlertSettings').dataset.dirty = 'true'; });
+      input.addEventListener('change', () => { $('metricAlertSettings').dataset.dirty = 'true'; });
     });
     if ($('monitorMetricsWindow')) $('monitorMetricsWindow').onchange = () => loadMetrics();
     if ($('monitorTag')) $('monitorTag').oninput = monitorFilterChanged;

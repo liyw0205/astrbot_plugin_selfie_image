@@ -208,6 +208,25 @@
       <div id="monitorStats" class="stat-grid" style="margin-top:12px"></div>
       <div class="metrics-launcher-header"><strong>运行概览</strong><span id="monitorMetricsWindowLabel" class="muted">统计范围：全部保留记录</span></div>
       <div id="monitorMetricButtons" class="metrics-launcher-grid" aria-label="运行概览分类"></div>
+      <div id="metricAlertSettings" class="metrics-alert-settings">
+        <div class="metrics-launcher-header"><strong>运行建议阈值</strong><button id="saveMetricAlertSettings" class="secondary mini" type="button">保存阈值</button></div>
+        <div class="grid4">
+          <div class="metrics-alert-toggle"><label><input id="generationAlertsEnabled" type="checkbox"> 启用运行建议</label></div>
+          <div><label for="alertRecordSuccessRate">窗口记录成功率低于（%）</label><input id="alertRecordSuccessRate" type="number" min="0" max="100" step="0.1" required></div>
+          <div><label for="alertRecordSuccessMinRecords">成功率最少记录数</label><input id="alertRecordSuccessMinRecords" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertConsecutiveFailures">连续生成失败告警数</label><input id="alertConsecutiveFailures" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertChannelSuccessRate">渠道成功率低于（%）</label><input id="alertChannelSuccessRate" type="number" min="0" max="100" step="0.1" required></div>
+          <div><label for="alertChannelMinAttempts">渠道最少尝试数</label><input id="alertChannelMinAttempts" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertRateLimitRate">限流占比达到（%）</label><input id="alertRateLimitRate" type="number" min="0" max="100" step="0.1" required></div>
+          <div><label for="alertRateLimitMinAttempts">限流最少尝试数</label><input id="alertRateLimitMinAttempts" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertRateLimitMinFailures">限流最少失败数</label><input id="alertRateLimitMinFailures" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertRetryRate">重试率达到（%）</label><input id="alertRetryRate" type="number" min="0" max="100" step="0.1" required></div>
+          <div><label for="alertRetryMinRecords">重试最少记录数</label><input id="alertRetryMinRecords" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertGenerationP95">生成 P95 达到（秒）</label><input id="alertGenerationP95" type="number" min="0" max="86400" step="0.1" required></div>
+          <div><label for="alertGenerationMinRecords">耗时最少记录数</label><input id="alertGenerationMinRecords" type="number" min="1" max="100000" step="1" required></div>
+          <div><label for="alertCacheOrphanGrowth">缓存孤儿增长告警数</label><input id="alertCacheOrphanGrowth" type="number" min="1" max="100000" step="1" required></div>
+        </div>
+      </div>
       <div class="detail-title"><h3>任务队列</h3><button class="secondary mini" type="button" onclick="loadTasks(false)">刷新队列</button></div>
       <div class="grid" style="margin-top:8px">
         <div><label>显示范围</label><select id="taskQueueScope" onchange="taskQueueViewChanged()"><option value="active">活动任务</option><option value="recent">最近任务</option></select></div>
@@ -533,6 +552,9 @@
         <div><label>同时画几张上限</label><input id="maxConcurrent" type="number" min="1" max="5" title="同一时间最多几张图一起请求上游；批量 /看看COS 会按这个数并发"></div>
         <div><label title="全部模型依次请求到结束的最长等待">整次最长等待（秒）</label><input id="globalTimeout" type="number" min="10" max="900"></div>
         <div><label>参考图最大 MB</label><input id="maxImageSize" type="number" min="1" max="100"></div>
+        <div><label>图片最大单边（像素）</label><input id="maxImageDimension" type="number" min="256" max="65536"></div>
+        <div><label>图片总像素上限</label><input id="maxImagePixels" type="number" min="1048576" max="536870912"></div>
+        <div><label>动画最大帧数</label><input id="maxAnimationFrames" type="number" min="1" max="64"></div>
         <div><label>单条指令最多请求几张</label><input id="maxBatchCount" type="number" min="1" max="100" title="限制单条指令最多请求几张；不同指令之间不共用这个上限"></div>
         <div><label>连画失败时</label>
           <select id="batchOnFailure">

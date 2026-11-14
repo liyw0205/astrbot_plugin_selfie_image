@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional
+
+from ..core.constants import GENERATION_TIMING_STAGES
+from ..core.models import normalize_generation_alert_settings
 
 
 METRIC_WINDOW_SECONDS = {
@@ -285,12 +289,65 @@ def _metric_recommendations(
     error_categories: Mapping[str, int],
     quality: Mapping[str, Any],
     elapsed: Mapping[str, Any],
+    alert_settings: Optional[Mapping[str, Any]] = None,
+    consecutive_failures: int = 0,
+    cache_orphan_growth: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     recommendations: List[Dict[str, Any]] = []
+    settings = normalize_generation_alert_settings(dict(alert_settings or {}))
+    if not settings["enabled"]:
+        return recommendations
+    records = int(quality.get("records") or 0)
+    record_success_rate = float(quality.get("record_success_rate") or 0)
+    if (
+        records >= settings["record_success_min_records"]
+        and record_success_rate < settings["record_success_rate_below"]
+    ):
+        recommendations.append(
+            {
+                "code": "record_success_rate_low",
+                "severity": "warning",
+                "scope": "system",
+                "target": "record_success_rate",
+                "value": round(record_success_rate, 4),
+                "message": "当前时间窗口内的生成记录成功率偏低，建议检查失败原因分布和上游状态",
+            }
+        )
+    if consecutive_failures >= settings["consecutive_failure_count_at_least"]:
+        recommendations.append(
+            {
+                "code": "consecutive_generation_failures",
+                "severity": "warning",
+                "scope": "system",
+                "target": "consecutive_failures",
+                "value": consecutive_failures,
+                "message": f"最近连续 {consecutive_failures} 条生成记录失败，建议检查当前上游可用性",
+            }
+        )
+    orphan_growth = cache_orphan_growth if isinstance(cache_orphan_growth, Mapping) else {}
+    try:
+        orphan_increase = max(0, int(orphan_growth.get("increase") or 0))
+    except (TypeError, ValueError, OverflowError):
+        orphan_increase = 0
+    if orphan_growth.get("available") and orphan_increase >= settings["cache_orphan_growth_at_least"]:
+        recommendations.append(
+            {
+                "code": "cache_orphan_growth",
+                "severity": "info",
+                "scope": "system",
+                "target": "cache_orphans",
+                "value": orphan_increase,
+                "message": f"进程内观察到缓存孤儿较基线增加 {orphan_increase} 个，建议检查缓存引用和清理情况",
+            }
+        )
     for channel, bucket in channels.items():
         attempts = int(bucket.get("attempts") or 0)
-        success_rate = float(bucket.get("success_rate") or 0)
-        if attempts >= 3 and success_rate < 0.8:
+        success_rate = (
+            float(bucket.get("success_rate"))
+            if bucket.get("success_rate") is not None
+            else (int(bucket.get("success") or 0) / attempts if attempts else 0.0)
+        )
+        if attempts >= settings["channel_min_attempts"] and success_rate < settings["channel_success_rate_below"]:
             recommendations.append(
                 {
                     "code": "channel_low_success",
@@ -303,7 +360,11 @@ def _metric_recommendations(
             )
     attempts_total = sum(int(bucket.get("attempts") or 0) for bucket in channels.values())
     rate_limit_failures = int(error_categories.get("rate_limit") or 0)
-    if attempts_total >= 3 and rate_limit_failures >= 2 and rate_limit_failures / attempts_total >= 0.3:
+    if (
+        attempts_total >= settings["rate_limit_min_attempts"]
+        and rate_limit_failures >= settings["rate_limit_min_failures"]
+        and rate_limit_failures / attempts_total >= settings["rate_limit_rate_at_least"]
+    ):
         recommendations.append(
             {
                 "code": "rate_limit_pressure",
@@ -315,7 +376,7 @@ def _metric_recommendations(
             }
         )
     retry_rate = float(quality.get("retry_rate") or 0)
-    if int(quality.get("records") or 0) >= 3 and retry_rate >= 0.5:
+    if records >= settings["retry_min_records"] and retry_rate >= settings["retry_rate_at_least"]:
         recommendations.append(
             {
                 "code": "retry_heavy",
@@ -327,7 +388,10 @@ def _metric_recommendations(
             }
         )
     p95 = float(elapsed.get("p95") or 0)
-    if int(quality.get("records") or 0) >= 3 and p95 >= 60:
+    if (
+        int(quality.get("records") or 0) >= settings["generation_min_records"]
+        and p95 >= settings["generation_p95_seconds_at_least"]
+    ):
         recommendations.append(
             {
                 "code": "slow_generation",
@@ -346,6 +410,8 @@ def build_generation_metrics(
     *,
     window_seconds: Optional[int] = None,
     now: Optional[float] = None,
+    alert_settings: Optional[Mapping[str, Any]] = None,
+    cache_metrics: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Aggregate retained generation records without returning prompt content."""
     all_items = [dict(record) for record in records if isinstance(record, Mapping)]
@@ -359,11 +425,21 @@ def build_generation_metrics(
     else:
         safe_window = None
         items = all_items
+    normalized_alert_settings = normalize_generation_alert_settings(dict(alert_settings or {}))
+    cleanup_metrics = cache_metrics.get("cleanup") if isinstance(cache_metrics, Mapping) else {}
+    cache_orphan_growth = (
+        cleanup_metrics.get("orphan_growth") if isinstance(cleanup_metrics, Mapping) else {}
+    )
+    if not isinstance(cache_orphan_growth, Mapping):
+        cache_orphan_growth = {}
     status_counts: Dict[str, int] = {}
     category_counts: Dict[str, int] = {}
     model_counts: Dict[str, Dict[str, int]] = {}
+    model_attempt_counts: Dict[str, Dict[str, Any]] = {}
     channel_counts: Dict[str, Dict[str, Any]] = {}
     elapsed_values: List[float] = []
+    queue_wait_values: List[float] = []
+    stage_values: Dict[str, List[float]] = {stage: [] for stage in GENERATION_TIMING_STAGES}
     requested = succeeded = failed = 0
     retries_total = 0
     records_with_retries = 0
@@ -372,6 +448,9 @@ def build_generation_metrics(
     partial_records = 0
     cancelled_records = 0
     fallback_total = 0
+    attempted_records = 0
+    first_attempt_successes = 0
+    final_attempt_successes = 0
 
     for record in items:
         response = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
@@ -420,6 +499,25 @@ def build_generation_metrics(
                 elapsed_values.append(elapsed)
         except (TypeError, ValueError):
             pass
+        try:
+            queue_wait = float(record.get("queue_wait_seconds"))
+            if math.isfinite(queue_wait) and queue_wait >= 0:
+                queue_wait_values.append(queue_wait)
+        except (TypeError, ValueError):
+            pass
+
+        timings = record.get("stage_timings")
+        if isinstance(timings, Mapping):
+            for stage, values in stage_values.items():
+                value = timings.get(stage)
+                if isinstance(value, bool):
+                    continue
+                try:
+                    duration = float(value)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if math.isfinite(duration) and duration >= 0:
+                    values.append(min(86400.0, duration))
 
         model = str(record.get("used_model") or response.get("used_model") or "未知").strip() or "未知"
         model_bucket = model_counts.setdefault(model, {"records": 0, "success": 0, "failed": 0, "partial": 0})
@@ -428,7 +526,58 @@ def build_generation_metrics(
         model_bucket["failed"] += int(status in {"failed", "partial_success"})
         model_bucket["partial"] += int(status == "partial_success")
 
-        attempts = list(record.get("attempts") or response.get("attempts") or [])
+        raw_attempts = record.get("attempts") or response.get("attempts") or []
+        attempts = list(raw_attempts) if isinstance(raw_attempts, list) else []
+        actual_attempts = [
+            item
+            for item in attempts
+            if isinstance(item, Mapping)
+            and "success" in item
+            and str(item.get("error_category") or "").strip().lower() != "cooldown"
+            and not item.get("cooldown_remaining_seconds")
+        ]
+        if actual_attempts:
+            attempted_records += 1
+            first_attempt_successes += int(bool(actual_attempts[0].get("success")))
+            final_attempt_successes += int(status == "succeeded")
+        for attempt in actual_attempts:
+            model_name = str(attempt.get("model") or "").strip()
+            channel_name = str(attempt.get("channel") or "").strip()
+            label = str(attempt.get("label") or "").strip()
+            if label:
+                model_identity = label
+            elif model_name and channel_name:
+                model_identity = f"{channel_name}/{model_name}"
+            else:
+                model_identity = model_name or channel_name
+            if not model_identity:
+                continue
+            model_bucket = model_attempt_counts.setdefault(
+                model_identity,
+                {
+                    "attempts": 0,
+                    "success": 0,
+                    "failed": 0,
+                    "error_categories": {},
+                    "http_statuses": {},
+                },
+            )
+            model_bucket["attempts"] += 1
+            attempt_success = bool(attempt.get("success"))
+            model_bucket["success"] += int(attempt_success)
+            model_bucket["failed"] += int(not attempt_success)
+            if not attempt_success:
+                category = str(attempt.get("error_category") or "unknown").strip() or "unknown"
+                categories = model_bucket["error_categories"]
+                categories[category] = categories.get(category, 0) + 1
+                try:
+                    http_status = int(attempt.get("http_status") or 0)
+                except (TypeError, ValueError):
+                    http_status = 0
+                if 400 <= http_status <= 599:
+                    status_key = str(http_status)
+                    statuses = model_bucket["http_statuses"]
+                    statuses[status_key] = statuses.get(status_key, 0) + 1
         failed_attempts = [item for item in attempts if isinstance(item, Mapping) and not item.get("success")]
         try:
             retry_count = max(0, int(record.get("retry_count") or response.get("retry_count") or len(failed_attempts)))
@@ -480,22 +629,49 @@ def build_generation_metrics(
                 fallback_total += 1
 
     elapsed_values.sort()
+    queue_wait_values.sort()
 
-    def percentile(percent: float) -> float:
-        if not elapsed_values:
+    def percentile(values: List[float], percent: float) -> float:
+        if not values:
             return 0.0
-        index = min(len(elapsed_values) - 1, int(round((len(elapsed_values) - 1) * percent)))
-        return round(elapsed_values[index], 2)
+        index = min(len(values) - 1, int(round((len(values) - 1) * percent)))
+        return round(values[index], 2)
 
     elapsed_summary = {
-        "p50": percentile(0.50),
-        "p95": percentile(0.95),
+        "p50": percentile(elapsed_values, 0.50),
+        "p95": percentile(elapsed_values, 0.95),
         "max": round(max(elapsed_values), 2) if elapsed_values else 0.0,
     }
+    queue_wait_summary = {
+        "samples": len(queue_wait_values),
+        "p50": percentile(queue_wait_values, 0.50),
+        "p95": percentile(queue_wait_values, 0.95),
+        "max": round(max(queue_wait_values), 2) if queue_wait_values else 0.0,
+    }
+    stage_summaries = {}
+    for stage, values in stage_values.items():
+        values.sort()
+        stage_summaries[stage] = {
+            "samples": len(values),
+            "p50": percentile(values, 0.50),
+            "p95": percentile(values, 0.95),
+            "max": round(values[-1], 2) if values else 0.0,
+        }
     for bucket in model_counts.values():
         records_count = int(bucket.get("records") or 0)
         bucket["success_rate"] = round(bucket["success"] / records_count, 4) if records_count else 0.0
         bucket["failure_rate"] = round(bucket["failed"] / records_count, 4) if records_count else 0.0
+    for bucket in model_attempt_counts.values():
+        attempts_count = int(bucket.get("attempts") or 0)
+        bucket["success_rate"] = round(bucket["success"] / attempts_count, 4) if attempts_count else 0.0
+        bucket["error_rates"] = {
+            category: round(count / attempts_count, 4)
+            for category, count in bucket["error_categories"].items()
+        }
+        bucket["http_status_rates"] = {
+            status: round(count / attempts_count, 4)
+            for status, count in bucket["http_statuses"].items()
+        }
     total_records = len(items)
     total_attempts = sum(int(bucket.get("attempts") or 0) for bucket in channel_counts.values())
     quality = {
@@ -505,9 +681,34 @@ def build_generation_metrics(
         "partial_success_records": partial_records,
         "cancelled_records": cancelled_records,
         "retry_rate": round(records_with_retries / total_records, 4) if total_records else 0.0,
+        "attempted_records": attempted_records,
+        "first_attempt_successes": first_attempt_successes,
+        "first_attempt_success_rate": round(first_attempt_successes / attempted_records, 4)
+        if attempted_records
+        else 0.0,
+        "final_attempt_successes": final_attempt_successes,
+        "final_attempt_success_rate": round(final_attempt_successes / attempted_records, 4)
+        if attempted_records
+        else 0.0,
         "fallback_rate": round(fallback_total / total_attempts, 4) if total_attempts else 0.0,
         "average_elapsed_seconds": round(sum(elapsed_values) / len(elapsed_values), 2) if elapsed_values else 0.0,
     }
+    ordered_records = sorted(
+        enumerate(items),
+        key=lambda pair: (-_record_timestamp(pair[1]), pair[0]),
+    )
+    consecutive_failures = 0
+    for _, record in ordered_records:
+        response = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
+        status = str(
+            record.get("status")
+            or response.get("status")
+            or ("succeeded" if record.get("success") else "failed")
+        )
+        if status in {"succeeded", "delivery_failed"}:
+            break
+        if status in {"failed", "partial_success"}:
+            consecutive_failures += 1
     return {
         "retained_records": total_records,
         "total_retained_records": len(all_items),
@@ -518,6 +719,7 @@ def build_generation_metrics(
         "status_counts": status_counts,
         "error_categories": category_counts,
         "models": model_counts,
+        "model_attempts": model_attempt_counts,
         "channels": {
             channel: {
                 **values,
@@ -529,13 +731,25 @@ def build_generation_metrics(
             for channel, values in channel_counts.items()
         },
         "elapsed_seconds": elapsed_summary,
+        "queue_wait_seconds": queue_wait_summary,
+        "stage_timings": stage_summaries,
         "quality": quality,
         "retries": {
             "total": retries_total,
             "records_with_retries": records_with_retries,
             "actions": retry_action_counts,
         },
-        "recommendations": _metric_recommendations(channel_counts, category_counts, quality, elapsed_summary),
+        "alert_settings": normalized_alert_settings,
+        "cache_orphan_growth": dict(cache_orphan_growth),
+        "recommendations": _metric_recommendations(
+            channel_counts,
+            category_counts,
+            quality,
+            elapsed_summary,
+            normalized_alert_settings,
+            consecutive_failures,
+            cache_orphan_growth,
+        ),
     }
 
 

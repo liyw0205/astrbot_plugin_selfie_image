@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import Any, AsyncIterator, Dict, Optional
@@ -53,6 +54,76 @@ class ChannelProxy:
             auth = f"{quote(self.username, safe='')}:{quote(self.password, safe='')}@"
         host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
         return f"{self.scheme}://{auth}{host}:{self.port}"
+
+
+class ClientSessionRegistry:
+    """Reuse image HTTP transports while keeping proxy connectors isolated.
+
+    HTTP proxy URLs are request-level aiohttp options, but they still get a
+    separate session key here so connector pools are never shared across
+    proxy identities. SOCKS URLs require a connector-level route and therefore
+    always receive their own ``ProxyConnector`` session. The registry owns all
+    sessions and is closed with the plugin lifecycle.
+    """
+
+    def __init__(self) -> None:
+        self._sessions: Dict[tuple[str, str], aiohttp.ClientSession] = {}
+        self._closed = False
+
+    @staticmethod
+    def _session_key(proxy_value: str) -> tuple[str, str]:
+        proxy = parse_channel_proxy(proxy_value)
+        if not proxy:
+            return ("direct", "")
+        if proxy.is_socks:
+            return ("socks", proxy.url)
+        return ("http", proxy.url)
+
+    async def get_session(
+        self,
+        proxy_value: str = "",
+        timeout_seconds: Optional[int] = None,
+    ) -> aiohttp.ClientSession:
+        """Return a persistent session for one proxy identity.
+
+        Session construction is intentionally synchronous from the event
+        loop's perspective; aiohttp opens sockets lazily on the first
+        request, so concurrent callers can safely share the resulting object.
+        """
+        if self._closed:
+            raise RuntimeError("HTTP session registry is closed")
+        key = self._session_key(proxy_value)
+        session = self._sessions.get(key)
+        if session is not None and not session.closed:
+            return session
+
+        proxy = parse_channel_proxy(proxy_value)
+        kwargs: Dict[str, Any] = {
+            "trust_env": False,
+            "cookie_jar": aiohttp.DummyCookieJar(),
+        }
+        if timeout_seconds is not None:
+            kwargs["timeout"] = image_client_timeout(timeout_seconds)
+        if proxy and proxy.is_socks:
+            try:
+                from aiohttp_socks import ProxyConnector
+            except ImportError as exc:
+                raise RuntimeError("SOCKS5 代理需要安装 aiohttp-socks") from exc
+            kwargs["connector"] = ProxyConnector.from_url(proxy.url)
+        session = aiohttp.ClientSession(**kwargs)
+        self._sessions[key] = session
+        return session
+
+    async def close(self) -> None:
+        """Close every owned session and make the registry unusable."""
+        sessions = list(self._sessions.values())
+        self._sessions.clear()
+        self._closed = True
+        if sessions:
+            await asyncio.gather(
+                *(session.close() for session in sessions if not session.closed),
+                return_exceptions=True,
+            )
 
 
 def parse_channel_proxy(value: str) -> Optional[ChannelProxy]:

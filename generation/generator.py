@@ -25,7 +25,13 @@ from ..core.error_classify import (
     retry_after_seconds,
 )
 from ..core.models import ImageModelTarget
-from ..core.proxy import LOCAL_IMAGE_WAIT_SECONDS, channel_client_session, image_client_timeout, target_session_proxy
+from ..core.proxy import (
+    LOCAL_IMAGE_WAIT_SECONDS,
+    ClientSessionRegistry,
+    channel_client_session,
+    image_client_timeout,
+    target_session_proxy,
+)
 from ..core.providers import ImageGenerateRequest, ImageGenerateResult, create_adapter
 from ..core.utils import redact_channel_attempts, redact_sensitive_text
 
@@ -140,11 +146,13 @@ async def _try_model(
     target: ImageModelTarget,
     req: ImageGenerateRequest,
     budget: int,
-    session: Optional[aiohttp.ClientSession],
+    session: Optional[Any],
 ) -> ImageGenerateResult:
     """Run one cancellable model attempt and wait for cleanup on timeout."""
 
     async def run() -> ImageGenerateResult:
+        if isinstance(session, ClientSessionRegistry):
+            return await _try_on_registry(target, req, session, budget)
         if session is not None:
             return await _try_on_session(target, req, session, budget)
         timeout = image_client_timeout(budget)
@@ -173,10 +181,25 @@ async def _try_on_session(
         return await adapter.generate(req)
 
 
+async def _try_on_registry(
+    target: ImageModelTarget,
+    req: ImageGenerateRequest,
+    registry: ClientSessionRegistry,
+    budget: int,
+) -> ImageGenerateResult:
+    """Run an attempt using a plugin-owned persistent transport."""
+    request_target = copy.deepcopy(target)
+    request_target.timeout = int(budget)
+    proxy_value = getattr(request_target, "proxy", "") or ""
+    owned = await registry.get_session(proxy_value, budget)
+    adapter = create_adapter(target_session_proxy(request_target), owned)
+    return await adapter.generate(req)
+
+
 async def generate_image_with_fallback(
     targets: List[ImageModelTarget],
     req: ImageGenerateRequest,
-    session: Optional[aiohttp.ClientSession] = None,
+    session: Optional[Any] = None,
     max_attempts: Optional[int] = None,
     global_timeout: Optional[int] = None,
     request_factory: Optional[Callable[[ImageModelTarget], ImageGenerateRequest]] = None,
@@ -261,6 +284,8 @@ async def generate_image_with_fallback(
                 str(class_info.get("category") or ""),
             )
             attempt_info["error_category"] = class_info.get("category")
+            if class_info.get("http_status") is not None:
+                attempt_info["http_status"] = class_info["http_status"]
             attempt_info["retryable"] = bool(class_info.get("retryable"))
             attempt_info["image_count"] = len(result.images or [])
             attempt_info["retry_count"] = sum(1 for item in attempts if not item.get("success"))

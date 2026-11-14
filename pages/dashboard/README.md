@@ -14,7 +14,12 @@ Check both generated artifacts without changing files:
 ```sh
 python scripts/build_dashboard.py --check
 python scripts/check_dashboard_fallback.py
+python scripts/check_dashboard_javascript.py
 ```
+
+The JavaScript check uses Node.js when it is installed and reports a successful
+skip when Node.js is unavailable. CI runs both paths; the Node-enabled job
+passes `--require-node` so the syntax check cannot silently be skipped there.
 
 AstrBot still loads `index.html`, and Flask still serves the same self-contained
 page. JavaScript fragments are assembled into the original classic script

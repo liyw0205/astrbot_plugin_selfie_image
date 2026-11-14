@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
 import sqlite3
 import tempfile
 import threading
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from astrbot.api import logger
 
 from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
+from astrbot_plugin_selfie_image.generation.record_database import RecordDatabase, RecordStorageUnavailableError
+from astrbot_plugin_selfie_image.core.providers import ImageReference
 
 
 class TestStorage:
@@ -61,6 +66,113 @@ class TestStorage:
             detail = plugin.get_record_for_web("legacy-1")
             assert detail["generated_image_sources"][0]["value"] == inline
             assert list((Path(root) / "media_sources").glob("*.json"))
+
+    def test_failed_record_migration_loads_readonly_and_never_overwrites_legacy_marker(self, monkeypatch) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            payload = {"id": "legacy-db-record", "time": "2026-11-14 10:00:00", "success": True}
+            db_path = Path(plugin.records_db_path)
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE generation_records (
+                        id TEXT PRIMARY KEY, seq INTEGER NOT NULL, time TEXT NOT NULL DEFAULT '',
+                        payload TEXT NOT NULL, favorite INTEGER NOT NULL DEFAULT 0,
+                        pinned INTEGER NOT NULL DEFAULT 0, tags TEXT NOT NULL DEFAULT '[]',
+                        note TEXT NOT NULL DEFAULT '', created_ts REAL NOT NULL DEFAULT 0
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO generation_records (id, seq, time, payload) VALUES (?, ?, ?, ?)",
+                    (payload["id"], 1, payload["time"], json.dumps(payload)),
+                )
+            marker = {"migrated_to": "generation_records.sqlite3", "backup": "generation_records.json.bak"}
+            Path(plugin.records_path).write_text(json.dumps(marker), encoding="utf-8")
+
+            def fail_backfill(_cls, _connection):
+                raise sqlite3.OperationalError("simulated schema migration failure")
+
+            monkeypatch.setattr(RecordDatabase, "_backfill_materialized_fields", classmethod(fail_backfill))
+            plugin._records = plugin._load_records()
+
+            assert [record["id"] for record in plugin._records] == [payload["id"]]
+            health = plugin.get_record_storage_health()
+            assert health["status"] == "error"
+            assert health["read_only"] is True
+            assert health["read_only_source"] == "sqlite"
+            assert "migration failure" in health["last_failure_reason"]
+
+            mutations = [
+                lambda: plugin._commit_generation_record({"id": "new", "success": True}),
+                lambda: plugin.update_record_asset_metadata(payload["id"], {"favorite": True}),
+                lambda: plugin.delete_records([payload["id"]]),
+                plugin.clear_recent_records,
+                lambda: plugin._prompt_record_patch(payload["id"], {"prompt": "changed"}),
+            ]
+            for mutate in mutations:
+                with pytest.raises(RecordStorageUnavailableError, match="只读降级"):
+                    mutate()
+
+            plugin._channel_health_lock = threading.RLock()
+            plugin._channel_health = {}
+            from astrbot_plugin_selfie_image.webui.services import build_health_payload
+
+            health_payload = build_health_payload(plugin)
+            assert health_payload["status"] == "degraded"
+            storage_health = health_payload["record_storage_health"]
+            assert storage_health["status"] == "error"
+            assert storage_health["read_only"] is True
+            assert storage_health["read_only_source"] == "sqlite"
+            assert storage_health["error_type"] == "OperationalError"
+            assert storage_health["started_at"]
+            assert storage_health["finished_at"]
+            assert storage_health["duration_ms"] >= 0
+            assert "migration failure" in storage_health["last_failure_reason"]
+            assert json.loads(Path(plugin.records_path).read_text(encoding="utf-8")) == marker
+            with sqlite3.connect(db_path) as connection:
+                assert connection.execute("SELECT id, payload FROM generation_records").fetchone() == (
+                    payload["id"], json.dumps(payload)
+                )
+
+    def test_failed_migration_reports_empty_readonly_sqlite_as_available(self, monkeypatch) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+            with sqlite3.connect(plugin.records_db_path) as connection:
+                connection.execute(
+                    "CREATE TABLE generation_records ("
+                    "id TEXT PRIMARY KEY, seq INTEGER NOT NULL, time TEXT NOT NULL DEFAULT '', "
+                    "payload TEXT NOT NULL, favorite INTEGER NOT NULL DEFAULT 0, "
+                    "pinned INTEGER NOT NULL DEFAULT 0, tags TEXT NOT NULL DEFAULT '[]', "
+                    "note TEXT NOT NULL DEFAULT '', created_ts REAL NOT NULL DEFAULT 0)"
+                )
+
+            def fail_backfill(_cls, _connection):
+                raise sqlite3.OperationalError("simulated schema migration failure")
+
+            monkeypatch.setattr(RecordDatabase, "_backfill_materialized_fields", classmethod(fail_backfill))
+            plugin._records = plugin._load_records()
+
+            assert plugin._records == []
+            assert plugin.get_record_storage_health()["read_only_source"] == "sqlite"
+
+    def test_async_record_commit_failure_does_not_escape_task_wait(self, monkeypatch) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            plugin = self._plugin(root)
+
+            def fail_initialize(_self):
+                raise sqlite3.OperationalError("simulated schema migration failure")
+
+            monkeypatch.setattr(RecordDatabase, "_initialize", fail_initialize)
+
+            async def exercise() -> int:
+                plugin._record_task({"task_id": "async-task", "success": True})
+                await plugin._wait_for_record_commits("async-task")
+                return await plugin._mark_task_records_delivery("async-task", delivered=True)
+
+            assert asyncio.run(exercise()) == 0
+            assert plugin.get_record_storage_health()["read_only"] is True
+            assert plugin._records == []
 
     def test_incremental_commit_upserts_only_new_record_without_replacing_history(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -284,6 +396,67 @@ class TestStorage:
             assert record["delivery_failed"] is True
             assert record["delivery_unknown"] is False
             assert record["delivery_error"] == "send failed"
+
+    @pytest.mark.parametrize("delivered", [True, False])
+    def test_confirmed_delivery_timing_survives_restart(self, tmp_path, delivered, monkeypatch) -> None:
+        plugin = self._plugin(str(tmp_path))
+        plugin._commit_generation_record({
+            "id": "timed", "task_id": "task", "trace_id": "gen-12345678", "success": True,
+            "generated_image_paths": ["image.png"], "stage_timings": {"prompt_audit": 1.5},
+        })
+        messages = []
+        monkeypatch.setattr(logger, "info", lambda message: messages.append(message))
+        assert plugin._update_generation_records_delivery(
+            "task", delivered=delivered, paths=["image.png"], delivery_elapsed_seconds=2.5,
+        ) == 1
+        events = [json.loads(message.removeprefix("[SelfieImage] ")) for message in messages]
+        assert events[0]["event"] == "generation.stage"
+        assert events[0]["stage"] == "delivery_receipt"
+        assert events[0]["elapsed_seconds"] == 2.5
+        assert events[0]["trace_id"] == "gen-12345678"
+        reloaded = self._plugin(str(tmp_path))._load_records()[0]
+        assert reloaded["delivery_success"] is delivered
+        assert reloaded["stage_timings"] == {"prompt_audit": 1.5, "delivery_receipt": 2.5}
+
+    def test_ambiguous_delivery_timing_preserves_state_and_filters_task_and_paths(self, tmp_path, monkeypatch) -> None:
+        plugin = self._plugin(str(tmp_path))
+        for record_id, task_id, image_path in (("a", "task", "a.png"), ("b", "task", "b.png"), ("c", "other", "a.png")):
+            plugin._commit_generation_record({
+                "id": record_id, "task_id": task_id, "trace_id": "gen-12345678", "success": True, "generation_success": True,
+                "delivery_success": None, "delivery_unknown": True, "generated_image_paths": [image_path],
+                "response_data": {"success": True, "delivery_unknown": True},
+                "stage_timings": {"output_audit": 1.0},
+            })
+        plugin._records = plugin._load_records()
+        before = {record["id"]: deepcopy(record) for record in plugin._records}
+        messages = []
+        monkeypatch.setattr(logger, "info", lambda message: messages.append(message))
+        assert plugin._update_generation_records_delivery_timing(
+            "task", elapsed_seconds=3.75, paths=[str(Path(plugin.generated_dir) / "a.png")],
+        ) == 1
+        events = [json.loads(message.removeprefix("[SelfieImage] ")) for message in messages]
+        assert events == [{
+            "event": "generation.stage",
+            "timestamp": events[0]["timestamp"],
+            "trace_id": "gen-12345678",
+            "task_id": "task",
+            "media_type": "image",
+            "stage": "delivery_receipt",
+            "elapsed_seconds": 3.75,
+            "record_count": 1,
+        }]
+        after = {record["id"]: record for record in self._plugin(str(tmp_path))._load_records()}
+        assert after["a"].pop("stage_timings") == {"output_audit": 1.0, "delivery_receipt": 3.75}
+        before["a"].pop("stage_timings")
+        assert after == before
+
+    @pytest.mark.parametrize("elapsed", [None, True, "bad", -1, float("inf"), float("nan"), 10 ** 1000])
+    def test_invalid_delivery_timing_does_not_mutate_records(self, tmp_path, elapsed) -> None:
+        plugin = self._plugin(str(tmp_path))
+        plugin._commit_generation_record({"id": "a", "task_id": "task", "success": True})
+        before = dict(plugin._records[0])
+        assert plugin._update_generation_records_delivery_timing("task", elapsed_seconds=elapsed) == 0
+        assert plugin._records[0] == before
 
     def test_legacy_record_detail_backfills_channel_and_model(self) -> None:
         with tempfile.TemporaryDirectory() as root:

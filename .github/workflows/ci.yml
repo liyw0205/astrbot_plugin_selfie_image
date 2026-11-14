@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-tests:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: Run Python release layer
+        run: python scripts/verify_release.py --layer python
+
+  frontend:
+    name: Dashboard with Node.js
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: Run Dashboard release layer
+        run: python scripts/verify_release.py --layer frontend --require-node
+      - name: Run Node-backed Dashboard contracts
+        run: python -m pytest -q tests/test_audit_followups.py tests/test_prompt_lookup.py
+
+  frontend-no-node:
+    name: Dashboard without Node.js
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Exercise optional Node skip path
+        shell: bash
+        run: |
+          python_path="$(command -v python)"
+          isolated_path="$(mktemp -d)"
+          ln -s "$python_path" "$isolated_path/python"
+          PATH="$isolated_path" "$isolated_path/python" scripts/verify_release.py --layer frontend
+
+  release-static:
+    name: Verified release package
+    needs: [python-tests, frontend, frontend-no-node]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install release dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: Build release after every gate
+        run: python scripts/build_release.py --output "${RUNNER_TEMP}/astrbot_plugin_selfie_image.zip"
+      - name: Preserve verified runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: astrbot_plugin_selfie_image
+          path: ${{ runner.temp }}/astrbot_plugin_selfie_image.zip
+          if-no-files-found: error

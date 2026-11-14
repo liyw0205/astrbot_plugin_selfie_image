@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -22,7 +23,8 @@ from .generation_records import (
     build_model_status,
     composition_metadata,
 )
-from .record_database import RecordDatabase
+from .record_database import RecordDatabase, RecordStorageUnavailableError
+from .record_metrics import CacheMetrics, RecordCommitMetrics
 from .prompt_lookup import PromptLookupMixin, image_fingerprint, prompt_selection_snapshot
 from .storage_consistency import inspect_storage_consistency
 from ..core.providers import ImageReference
@@ -313,15 +315,51 @@ class GenerationStoreMixin(PromptLookupMixin):
         path = str(getattr(self, "records_db_path", "") or "").strip()
         if not path:
             return None
-        database = getattr(self, "_record_db", None)
-        if database is not None:
-            return database
+        if getattr(self, "_record_db_initialization_attempted", False):
+            return getattr(self, "_record_db", None)
+        self._record_db_initialization_attempted = True
+        started = time.monotonic()
+        started_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         try:
             database = RecordDatabase(path)
-        except Exception:
+        except Exception as error:
+            reason = redact_sensitive_text(str(error))[:400] or "记录数据库初始化失败"
+            self._record_db = None
+            self._record_db_initialization_failed = True
+            self._record_storage_health = {
+                "status": "error",
+                "started_at": started_at,
+                "finished_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                "duration_ms": round((time.monotonic() - started) * 1000, 2),
+                "migration_applied": False,
+                "error_type": type(error).__name__,
+                "last_failure_reason": reason,
+                "read_only": True,
+                "read_only_source": "pending",
+            }
             return None
         self._record_db = database
+        self._record_db_initialization_failed = False
+        self._record_storage_health = database.schema_health()
         return database
+
+    def _record_database_degraded(self) -> bool:
+        self._record_database()
+        return bool(getattr(self, "_record_db_initialization_failed", False))
+
+    def _require_record_store_writable(self) -> None:
+        if self._record_database_degraded():
+            raise RecordStorageUnavailableError("记录数据库初始化失败，当前处于只读降级状态")
+
+    def get_record_storage_health(self) -> Dict[str, Any]:
+        if not getattr(self, "_record_db_initialization_attempted", False):
+            return {"status": "not_initialized", "read_only": False}
+        health = dict(getattr(self, "_record_storage_health", {}) or {})
+        if not health:
+            health = {"status": "ok", "read_only": False}
+        if getattr(self, "_record_db_initialization_failed", False):
+            health["read_only"] = True
+        return health
 
     def _media_sources_root(self) -> str:
         root = str(getattr(self, "media_sources_dir", "") or "").strip()
@@ -656,6 +694,19 @@ class GenerationStoreMixin(PromptLookupMixin):
             self._prune_orphan_media_sidecars(loaded)
             return self._backfill_prompt_codes(loaded)
 
+        if getattr(self, "_record_db_initialization_failed", False):
+            readonly_records = RecordDatabase.load_records_readonly(
+                str(getattr(self, "records_db_path", "") or ""), keep_limit
+            )
+            if readonly_records is not None:
+                self._record_storage_health["read_only_source"] = "sqlite"
+                return readonly_records
+            if records:
+                self._record_storage_health["read_only_source"] = "legacy_json"
+                return retained
+            self._record_storage_health["read_only_source"] = "unavailable"
+            return []
+
         compacted: List[Dict[str, Any]] = []
         for index, item in enumerate(retained):
             prepared = copy.deepcopy(item)
@@ -708,6 +759,7 @@ class GenerationStoreMixin(PromptLookupMixin):
         return max(count, highest)
 
     def _persist_records(self) -> None:
+        self._require_record_store_writable()
         keep_limit = self._record_keep_limit()
         with self._records_lock:
             retained, evicted_records = self._trim_records_keeping_pinned(
@@ -732,14 +784,44 @@ class GenerationStoreMixin(PromptLookupMixin):
         self._schedule_media_sources_prune(retained_records)
 
 
+    def _record_commit_metrics(self) -> RecordCommitMetrics:
+        metrics = getattr(self, "_record_commit_metrics_state", None)
+        if metrics is None:
+            metrics = self.__dict__.setdefault("_record_commit_metrics_state", RecordCommitMetrics())
+        return metrics
+
+    def get_record_commit_health(self) -> Dict[str, Any]:
+        return self._record_commit_metrics().snapshot()
+
+    def _cache_metrics(self) -> CacheMetrics:
+        metrics = getattr(self, "_cache_metrics_state", None)
+        if metrics is None:
+            metrics = self.__dict__.setdefault("_cache_metrics_state", CacheMetrics())
+        return metrics
+
+    def get_cache_metrics(self) -> Dict[str, Any]:
+        return self._cache_metrics().snapshot()
+
+    def _commit_generation_records_measured(self, record: Dict[str, Any], submitted: float) -> None:
+        metrics = self._record_commit_metrics()
+        started = time.perf_counter()
+        try:
+            self._commit_generation_records(record)
+        except Exception as error:
+            metrics.observe(submitted, started, time.perf_counter(), error)
+            raise
+        else:
+            metrics.observe(submitted, started, time.perf_counter())
+
     def _record_task(self, record: Dict[str, Any]) -> None:
         payload = copy.deepcopy(record)
+        submitted = time.perf_counter()
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            self._commit_generation_records(payload)
+            self._commit_generation_records_measured(payload, submitted)
             return
-        commit_task = loop.create_task(asyncio.to_thread(self._commit_generation_records, payload))
+        commit_task = loop.create_task(asyncio.to_thread(self._commit_generation_records_measured, payload, submitted))
         all_commits = getattr(self, "_record_commit_tasks", None)
         if all_commits is None:
             all_commits = set()
@@ -849,6 +931,7 @@ class GenerationStoreMixin(PromptLookupMixin):
             self._commit_generation_record(piece)
 
     def _commit_generation_record(self, record: Dict[str, Any]) -> None:
+        self._require_record_store_writable()
         stale_cache_paths: List[str] = []
         paths = record.get("generated_image_paths") or []
         if paths:
@@ -987,6 +1070,7 @@ class GenerationStoreMixin(PromptLookupMixin):
         paths: Optional[Iterable[str]] = None,
         record_id: str = "",
         image_outcomes: Optional[Mapping[str, Tuple[Optional[bool], str]]] = None,
+        delivery_elapsed_seconds: Optional[float] = None,
     ) -> int:
         """Mark records produced by a task after the outbound send finishes.
 
@@ -999,7 +1083,17 @@ class GenerationStoreMixin(PromptLookupMixin):
         rid = str(record_id or "").strip()
         if not tid and not rid:
             return 0
+        if self._record_database_degraded():
+            return 0
         safe_error = redact_sensitive_text(str(error or ""))[:800]
+        try:
+            delivery_elapsed = float(delivery_elapsed_seconds) if not isinstance(delivery_elapsed_seconds, bool) else -1.0
+        except (TypeError, ValueError, OverflowError):
+            delivery_elapsed = -1.0
+        if not math.isfinite(delivery_elapsed) or delivery_elapsed < 0:
+            delivery_elapsed = -1.0
+        else:
+            delivery_elapsed = round(min(86400.0, delivery_elapsed), 3)
         path_filter = set()
         for raw_path in paths or ():
             text = str(raw_path or "").strip()
@@ -1056,6 +1150,10 @@ class GenerationStoreMixin(PromptLookupMixin):
             if not matches:
                 return 0
             for record in matches:
+                if delivery_elapsed >= 0:
+                    timings = dict(record.get("stage_timings") or {})
+                    timings["delivery_receipt"] = delivery_elapsed
+                    record["stage_timings"] = timings
                 was_delivery_failed = bool(record.get("delivery_failed")) or record.get("status") == "delivery_failed" or (
                     bool(record.get("generation_success")) and record.get("delivery_success") is False and not record.get("delivery_unknown")
                 )
@@ -1143,7 +1241,115 @@ class GenerationStoreMixin(PromptLookupMixin):
                     database.upsert_record(record)
             else:
                 self._persist_records()
+        if delivery_elapsed >= 0:
+            self._log_delivery_receipt_timing(tid or rid, matches, delivery_elapsed)
         return changed
+
+    def _log_delivery_receipt_timing(
+        self,
+        task_id: str,
+        records: Iterable[Mapping[str, Any]],
+        elapsed_seconds: float,
+    ) -> None:
+        """Log only the bounded receipt duration and safe correlation IDs."""
+        try:
+            safe_id = re.compile(r"[A-Za-z0-9_.-]{1,96}\Z")
+            tid = str(task_id or "").strip()
+            if not safe_id.fullmatch(tid):
+                tid = ""
+            trace_id = ""
+            record_count = 0
+            for record in records:
+                if not isinstance(record, Mapping):
+                    continue
+                record_count += 1
+                candidate = str(record.get("trace_id") or "").strip()
+                if not trace_id and safe_id.fullmatch(candidate):
+                    trace_id = candidate
+            if isinstance(elapsed_seconds, bool):
+                return
+            elapsed = float(elapsed_seconds)
+            if not math.isfinite(elapsed) or elapsed < 0 or elapsed > 86400:
+                return
+            from astrbot.api import logger
+
+            event = {
+                "event": "generation.stage",
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                "trace_id": trace_id,
+                "task_id": tid,
+                "media_type": "image",
+                "stage": "delivery_receipt",
+                "elapsed_seconds": round(elapsed, 3),
+                "record_count": record_count,
+            }
+            logger.info("[SelfieImage] " + json.dumps(event, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
+        except Exception:
+            return
+
+    def _update_generation_records_delivery_timing(
+        self,
+        task_id: str,
+        *,
+        elapsed_seconds: float,
+        paths: Optional[Iterable[str]] = None,
+    ) -> int:
+        """Persist receipt latency without changing an ambiguous delivery state."""
+        tid = str(task_id or "").strip()
+        if not tid or self._record_database_degraded():
+            return 0
+        if isinstance(elapsed_seconds, bool):
+            return 0
+        try:
+            elapsed = float(elapsed_seconds)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        if not math.isfinite(elapsed) or elapsed < 0:
+            return 0
+        elapsed = round(min(86400.0, elapsed), 3)
+        path_filter = set()
+        for raw_path in paths or ():
+            text = str(raw_path or "").strip()
+            if not text:
+                continue
+            try:
+                path_filter.add(
+                    self._cache_relative_path(text)
+                    if os.path.isabs(text)
+                    else os.path.normpath(text)
+                )
+            except Exception:
+                path_filter.add(text)
+        records_lock = getattr(self, "_records_lock", None)
+        records = getattr(self, "_records", None)
+        if records_lock is None or not isinstance(records, list):
+            return 0
+        changed_records = []
+        with records_lock:
+            for record in records:
+                if not isinstance(record, dict) or str(record.get("task_id") or "").strip() != tid:
+                    continue
+                image_paths = {
+                    str(item).strip()
+                    for item in (record.get("generated_image_paths") if isinstance(record.get("generated_image_paths"), list) else [])
+                    if str(item).strip()
+                }
+                if path_filter and not path_filter.intersection(image_paths):
+                    continue
+                timings = dict(record.get("stage_timings") or {})
+                timings["delivery_receipt"] = elapsed
+                record["stage_timings"] = timings
+                changed_records.append(record)
+            if not changed_records:
+                return 0
+            database = self._record_database()
+            if database is not None:
+                for record in changed_records:
+                    database.upsert_record(record)
+            else:
+                self._persist_records()
+        self._log_delivery_receipt_timing(tid, changed_records, elapsed)
+        return len(changed_records)
 
     def get_recent_records(self, *, summary: bool = False) -> List[Dict[str, Any]]:
         with self._records_lock:
@@ -1166,7 +1372,16 @@ class GenerationStoreMixin(PromptLookupMixin):
         """Return redacted aggregate metrics from retained generation records."""
         with self._records_lock:
             records = [dict(item) for item in self._records if isinstance(item, dict)]
-        return build_generation_metrics(records, window_seconds=window_seconds)
+        raw_config = getattr(self, "raw_config", {})
+        monitoring = raw_config.get("monitoring") if isinstance(raw_config, Mapping) else {}
+        alerts = monitoring.get("generation_alerts") if isinstance(monitoring, Mapping) else None
+        get_cache_metrics = getattr(self, "get_cache_metrics", None)
+        return build_generation_metrics(
+            records,
+            window_seconds=window_seconds,
+            alert_settings=alerts if isinstance(alerts, Mapping) else None,
+            cache_metrics=get_cache_metrics() if callable(get_cache_metrics) else None,
+        )
 
     def _composition_metadata(self, prompt: str, source: str, aspect_ratio: str, resolution: str, reference_count: int) -> Dict[str, Any]:
         return composition_metadata(
@@ -1319,6 +1534,7 @@ class GenerationStoreMixin(PromptLookupMixin):
         return record
 
     def clear_recent_records(self) -> int:
+        self._require_record_store_writable()
         with self._records_lock:
             count = len(self._records)
             records = copy.deepcopy(self._records)
@@ -1332,6 +1548,7 @@ class GenerationStoreMixin(PromptLookupMixin):
 
     def update_record_asset_metadata(self, record_id: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         """Update favorite/pin/tags/note without rewriting media sidecars."""
+        self._require_record_store_writable()
         target_id = str(record_id or "").strip()
         if not target_id:
             raise ValueError("记录 ID 不能为空")
@@ -1624,6 +1841,7 @@ class GenerationStoreMixin(PromptLookupMixin):
 
     def delete_records(self, record_ids: Iterable[Any]) -> Dict[str, Any]:
         """Delete selected records and only their now-unreferenced cache files."""
+        self._require_record_store_writable()
         ids = self._normalize_record_ids(record_ids)
         if not ids:
             raise ValueError("至少选择一条资产")
@@ -1823,6 +2041,7 @@ class GenerationStoreMixin(PromptLookupMixin):
             entries = self._reference_cache_index_entries()
             deterministic = os.path.join(self._reference_cache_index_root, f"request_{digest}.{ext}")
             target = deterministic
+            cache_hit = False
 
             def matches(path: str) -> bool:
                 try:
@@ -1831,7 +2050,9 @@ class GenerationStoreMixin(PromptLookupMixin):
                 except OSError:
                     return False
 
-            if not os.path.isfile(target) or not matches(target):
+            if os.path.isfile(target) and matches(target):
+                cache_hit = True
+            else:
                 entries.pop(deterministic, None)
                 target = ""
                 for candidate, (_, candidate_digest) in list(entries.items()):
@@ -1839,6 +2060,7 @@ class GenerationStoreMixin(PromptLookupMixin):
                         continue
                     if matches(candidate):
                         target = candidate
+                        cache_hit = True
                         break
                     entries.pop(candidate, None)
                 if not target:
@@ -1847,6 +2069,7 @@ class GenerationStoreMixin(PromptLookupMixin):
                     for candidate in self._reference_cache_candidate_paths(digest):
                         if matches(candidate):
                             target = candidate
+                            cache_hit = True
                             break
                         entries.pop(candidate, None)
                 if not target:
@@ -1865,6 +2088,7 @@ class GenerationStoreMixin(PromptLookupMixin):
                     signature = self._reference_cache_file_signature(target)
                     if signature is not None:
                         entries[target] = (signature, digest)
+            self._cache_metrics().reference_lookup(hit=cache_hit)
             rel_path = self._cache_relative_path(target)
             self._register_inflight_media([rel_path])
             return rel_path
@@ -2158,6 +2382,25 @@ class GenerationStoreMixin(PromptLookupMixin):
             file_entries=file_entries,
         )
         groups = group_cache_cleanup_candidates(candidates, self._cache_group_keys(raw_groups))
+        base = os.path.abspath(str(getattr(self, "generated_dir", "") or ""))
+
+        def cache_paths(values: Iterable[Any]) -> set[str]:
+            result = set()
+            for value in values:
+                text = str(value or "").strip()
+                if not text:
+                    continue
+                path = os.path.abspath(text if os.path.isabs(text) else os.path.join(base, text))
+                if path != base and path.startswith(base + os.sep):
+                    result.add(path)
+            return result
+
+        actual_paths = cache_paths(path for path, _, _ in file_entries)
+        referenced_actual = cache_paths(referenced_paths)
+        protected_actual = cache_paths(protected)
+        orphan_paths = actual_paths - referenced_actual - protected_actual
+        entry_sizes = {os.path.abspath(path): max(0, int(size or 0)) for path, size, _ in file_entries}
+        candidate_paths = cache_paths(candidates)
         planned: List[Dict[str, Any]] = []
         remaining_bytes = total_bytes
         remaining_count = total_count
@@ -2191,6 +2434,21 @@ class GenerationStoreMixin(PromptLookupMixin):
         plan_token = hashlib.sha256(
             json.dumps(token_payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()[:32]
+        scan_metrics = {
+            "total_count": total_count,
+            "total_bytes": total_bytes,
+            "referenced_count": len(actual_paths & referenced_actual),
+            "referenced_bytes": sum(entry_sizes.get(path, 0) for path in actual_paths & referenced_actual),
+            "protected_count": len(actual_paths & protected_actual),
+            "protected_bytes": sum(entry_sizes.get(path, 0) for path in actual_paths & protected_actual),
+            "orphan_count": len(orphan_paths),
+            "orphan_bytes": sum(entry_sizes.get(path, 0) for path in orphan_paths),
+            "candidate_count": len(candidate_paths),
+            "candidate_bytes": sum(entry_sizes.get(path, 0) for path in candidate_paths),
+            "would_delete_count": len(planned),
+            "would_delete_bytes": sum(max(0, int(item.get("size_bytes") or 0)) for item in planned),
+        }
+        self._cache_metrics().cleanup_scan(scan_metrics)
         return {
             "limit_bytes": limit_bytes,
             "limit_count": limit_count,
@@ -2202,6 +2460,7 @@ class GenerationStoreMixin(PromptLookupMixin):
             "would_delete_count": total_count - remaining_count,
             "would_delete": planned,
             "plan_token": plan_token,
+            **scan_metrics,
         }
 
     def _cleanup_image_cache_if_needed(
@@ -2255,7 +2514,7 @@ class GenerationStoreMixin(PromptLookupMixin):
                     raise ValueError("缓存内容已变化，请重新预览后再确认清理") from None
                 continue
         total_bytes, total_count = self._cache_stats()
-        return {
+        result = {
             "limit_bytes": cleanup_plan.get("limit_bytes", 0),
             "limit_count": cleanup_plan.get("limit_count", 0),
             "initial_total_bytes": cleanup_plan.get("total_bytes", total_bytes),
@@ -2274,7 +2533,10 @@ class GenerationStoreMixin(PromptLookupMixin):
                     if isinstance(item, Mapping)
                 ),
             ),
+            "failed_delete_count": max(0, len(planned_items) - len(deleted)),
         }
+        self._cache_metrics().cleanup_result(result)
+        return result
 
     def get_cache_cleanup_preview(self, protected_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
         """Return a dry-run cache cleanup plan without deleting files."""
@@ -2391,8 +2653,15 @@ class GenerationStoreMixin(PromptLookupMixin):
             )
         return selected, skipped
 
-    def _record_channel_health(self, attempts: Iterable[Mapping[str, Any]], *, media_type: str = "image") -> None:
+    def _record_channel_health(
+        self,
+        attempts: Iterable[Mapping[str, Any]],
+        *,
+        media_type: str = "image",
+        trace_id: str = "",
+    ) -> None:
         now = time.time()
+        safe_trace_id = redact_sensitive_text(str(trace_id or "").strip())[:80]
         history = self._load_channel_health_history()
         for attempt in attempts:
             channel = str(attempt.get("channel") or "").strip()
@@ -2437,8 +2706,7 @@ class GenerationStoreMixin(PromptLookupMixin):
                         state["consecutive_failures"] = int(state.get("consecutive_failures") or 0) + 1
                         if state["consecutive_failures"] >= CHANNEL_COOLDOWN_FAILURE_THRESHOLD:
                             state["cooldown_until"] = now + CHANNEL_COOLDOWN_SECONDS
-            history.append(
-                {
+            history_row = {
                     "timestamp": now,
                     "channel": redact_sensitive_text(channel)[:160],
                     "model": redact_sensitive_text(str(attempt.get("model") or ""))[:180],
@@ -2449,7 +2717,9 @@ class GenerationStoreMixin(PromptLookupMixin):
                     "elapsed_seconds": round(max(0.0, float(attempt.get("elapsed_seconds") or 0)), 2),
                     "error_category": category[:64],
                 }
-            )
+            if safe_trace_id:
+                history_row["trace_id"] = safe_trace_id
+            history.append(history_row)
         if len(history) > CHANNEL_HEALTH_HISTORY_LIMIT:
             history = history[-CHANNEL_HEALTH_HISTORY_LIMIT:]
         path = self._channel_health_history_path()

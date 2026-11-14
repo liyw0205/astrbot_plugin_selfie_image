@@ -3,13 +3,159 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import math
+import re
 import time
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
+from astrbot.api import logger
+
 from ..core.models import ImageModelTarget
+from ..core.constants import GENERATION_TIMING_STAGES, PROVIDER_TYPES
+from ..core.error_classify import classify_generation_error
 from ..core.providers import ImageGenerateRequest, ImageReference
-from ..core.utils import detect_mime_by_bytes, redact_sensitive_text
+from ..core.utils import (
+    detect_mime_by_bytes,
+    image_geometry_error,
+    image_validation_limits,
+    redact_sensitive_text,
+)
+
+
+_LOG_ERROR_CATEGORIES = frozenset({
+    "auth", "cooldown", "fatal", "network", "not_found", "param", "quota",
+    "rate_limit", "safety", "server", "timeout", "unknown",
+})
+_LOG_RETRY_ACTIONS = frozenset({"next_key", "next_model", "stop"})
+_SAFE_LOG_IDENTIFIER = re.compile(r"[A-Za-z0-9_.-]{1,96}\Z")
+
+
+def _safe_log_identifier(value: Any, *, fallback: str = "") -> str:
+    text = redact_sensitive_text(str(value or "").strip())
+    return text if _SAFE_LOG_IDENTIFIER.fullmatch(text) else fallback
+
+
+def _safe_log_duration(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    try:
+        duration = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(duration) or duration < 0 or duration > 86400:
+        return None
+    return round(duration, 3)
+
+
+def _emit_generation_observability(
+    record: Mapping[str, Any],
+    *,
+    trace_id: str = "",
+    task_id: str = "",
+) -> None:
+    """Log bounded generation timings and attempt outcomes, never payloads."""
+    safe_trace_id = _safe_log_identifier(trace_id, fallback="")
+    safe_task_id = _safe_log_identifier(task_id, fallback="")
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    base = {
+        "timestamp": timestamp,
+        "trace_id": safe_trace_id,
+        "task_id": safe_task_id,
+        "media_type": "image",
+    }
+
+    timings = record.get("stage_timings")
+    safe_timings = {}
+    if isinstance(timings, Mapping):
+        for stage in GENERATION_TIMING_STAGES:
+            duration = _safe_log_duration(timings.get(stage))
+            if duration is not None:
+                safe_timings[stage] = duration
+    generation_elapsed = _safe_log_duration(record.get("elapsed_seconds"))
+    queue_wait = _safe_log_duration(record.get("queue_wait_seconds"))
+    if safe_timings or generation_elapsed is not None or queue_wait is not None:
+        response = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
+        outcome = record.get("success")
+        if not isinstance(outcome, bool) and isinstance(response.get("success"), bool):
+            outcome = response["success"]
+        event = {
+            **base,
+            "event": "generation.stages",
+            "stage_timings": safe_timings,
+        }
+        if isinstance(outcome, bool):
+            event["success"] = outcome
+        failure_stage = str(response.get("stage") or "").strip().lower()
+        allowed_failure_stages = {
+            "image_to_text", "output_audit", "prompt_audit", "select_model", "generate",
+        }
+        if outcome is False and failure_stage in allowed_failure_stages:
+            event["failure_stage"] = failure_stage
+            if failure_stage in {"output_audit", "prompt_audit"}:
+                event["error_category"] = "safety"
+            else:
+                reason = str(record.get("error") or response.get("error") or "")
+                category = classify_generation_error(redact_sensitive_text(reason)).get("category")
+                if category in _LOG_ERROR_CATEGORIES:
+                    event["error_category"] = category
+        if generation_elapsed is not None:
+            event["generation_elapsed_seconds"] = generation_elapsed
+        if queue_wait is not None:
+            event["queue_wait_seconds"] = queue_wait
+        try:
+            logger.info("[SelfieImage] " + json.dumps(event, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
+        except Exception:
+            pass
+
+    response = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
+    attempts = record.get("attempts")
+    if not isinstance(attempts, list):
+        attempts = response.get("attempts") if isinstance(response.get("attempts"), list) else []
+    for ordinal, attempt in enumerate(attempts, start=1):
+        if not isinstance(attempt, Mapping):
+            continue
+        event = {
+            **base,
+            "event": "generation.channel_attempt",
+            "attempt_index": ordinal,
+            "channel": _safe_log_identifier(attempt.get("channel"), fallback="custom"),
+            "model": _safe_log_identifier(attempt.get("model"), fallback="custom"),
+            "provider_type": (
+                attempt.get("provider_type")
+                if attempt.get("provider_type") in PROVIDER_TYPES
+                else "unknown"
+            ),
+            "success": attempt.get("success") if isinstance(attempt.get("success"), bool) else None,
+        }
+        category = str(attempt.get("error_category") or "").strip().lower()
+        if category in _LOG_ERROR_CATEGORIES:
+            event["error_category"] = category
+        action = str(attempt.get("retry_action") or "").strip().lower()
+        if action in _LOG_RETRY_ACTIONS:
+            event["retry_action"] = action
+        for source, target in (
+            ("attempt", "channel_attempt"),
+            ("key_index", "key_index"),
+            ("retry_count", "retry_count"),
+        ):
+            value = attempt.get(source)
+            if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 10000:
+                event[target] = value
+        if isinstance(attempt.get("retryable"), bool):
+            event["retryable"] = attempt["retryable"]
+        status = attempt.get("http_status")
+        if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599:
+            event["http_status"] = status
+        duration = _safe_log_duration(attempt.get("elapsed_seconds"))
+        if duration is not None:
+            event["elapsed_seconds"] = duration
+        try:
+            logger.info("[SelfieImage] " + json.dumps(event, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
+        except Exception:
+            continue
 
 
 async def run_image_generation_workflow(
@@ -29,6 +175,7 @@ async def run_image_generation_workflow(
     record_context: Optional[Mapping[str, Any]] = None,
     reference_selection: Optional[Mapping[str, Any]] = None,
     reference_fidelity: str = "",
+    queue_wait_seconds: Optional[float] = None,
     *,
     generate_images: Callable[..., Any],
 ) -> Dict[str, Any]:
@@ -38,10 +185,39 @@ async def run_image_generation_workflow(
     candidate_targets = (
         self._resolve_generation_targets(event) if targets is None else list(targets)
     )
-    if reference_selection is None and event is not None:
+    if event is not None:
         consume_selection = getattr(self, "_consume_reference_selection", None)
         if callable(consume_selection):
-            reference_selection = consume_selection(event)
+            collected_selection = consume_selection(event)
+            if reference_selection is None:
+                reference_selection = collected_selection
+            elif (
+                isinstance(reference_selection, Mapping)
+                and isinstance(collected_selection, Mapping)
+                and "download_elapsed_seconds" not in reference_selection
+                and "download_elapsed_seconds" in collected_selection
+            ):
+                # COS/group role selection is explicit; collection latency is
+                # consumed once even when a batch reuses those references.
+                reference_selection = {
+                    **reference_selection,
+                    "download_elapsed_seconds": collected_selection["download_elapsed_seconds"],
+                }
+    stage_timings: Dict[str, float] = {}
+    if isinstance(reference_selection, Mapping):
+        try:
+            value = reference_selection.get("download_elapsed_seconds")
+            reference_download = float(value) if not isinstance(value, bool) else -1.0
+            if math.isfinite(reference_download) and reference_download >= 0:
+                stage_timings["reference_fetch"] = round(min(86400.0, reference_download), 3)
+        except (TypeError, ValueError, OverflowError):
+            pass
+
+    def finish_stage(name: str, started: float) -> None:
+        elapsed = time.monotonic() - started
+        if math.isfinite(elapsed):
+            stage_timings[name] = round(max(0.0, min(86400.0, elapsed)), 3)
+
     selected_targets, cooldown_attempts = self._select_healthy_generation_targets(
         candidate_targets
     )
@@ -68,6 +244,58 @@ async def run_image_generation_workflow(
     )
     audit_prompt_text = request_prompt if is_leg_focus_request else (original_prompt or request_prompt)
     source_meta = self._source_context(event, source, audit_user_id)
+    trace_id = str(record_context.get("trace_id") or "").strip() if isinstance(record_context, Mapping) else ""
+    if not trace_id and isinstance(record_context, Mapping):
+        task_id_hint = str(record_context.get("task_id") or "").strip()
+        task_getter = getattr(self, "get_web_image_task", None)
+        if task_id_hint and callable(task_getter):
+            try:
+                task_snapshot = task_getter(task_id_hint)
+            except Exception:
+                task_snapshot = None
+            if isinstance(task_snapshot, Mapping):
+                trace_id = str(task_snapshot.get("trace_id") or "").strip()
+    if trace_id:
+        source_meta["trace_id"] = trace_id
+
+    def record_task(record: Dict[str, Any]) -> None:
+        """Attach observed timings and correlation IDs to durable records."""
+        if stage_timings:
+            record["stage_timings"] = dict(stage_timings)
+        if queue_wait_seconds is not None:
+            try:
+                queue_wait = float(queue_wait_seconds)
+                if math.isfinite(queue_wait):
+                    record["queue_wait_seconds"] = round(max(0.0, min(86400.0, queue_wait)), 3)
+            except (TypeError, ValueError):
+                pass
+        if trace_id:
+            record["trace_id"] = trace_id
+            request_data = record.get("request_data")
+            if isinstance(request_data, dict):
+                request_data.setdefault("trace_id", trace_id)
+            response_data = record.get("response_data")
+            if isinstance(response_data, dict):
+                response_data.setdefault("trace_id", trace_id)
+            attempts = record.get("attempts")
+            if isinstance(attempts, list):
+                for attempt in attempts:
+                    if isinstance(attempt, dict):
+                        attempt.setdefault("trace_id", trace_id)
+        self._record_task(record)
+        context_task_id = (
+            str(record_context.get("task_id") or "")
+            if isinstance(record_context, Mapping)
+            else ""
+        )
+        try:
+            _emit_generation_observability(
+                record,
+                trace_id=trace_id,
+                task_id=str(record.get("task_id") or context_task_id),
+            )
+        except Exception:
+            pass
     is_studio_run = source == "studio-run"
     if is_studio_run and isinstance(record_context, Mapping):
         studio_title = str(record_context.get("studio_session_title") or "画布").strip() or "画布"
@@ -192,6 +420,7 @@ async def run_image_generation_workflow(
         "target_count": len(image_to_text_targets),
     }
     if refs and image_to_text_targets:
+        image_to_text_started = time.monotonic()
         try:
             from ..prompts.prompt_templates import explicit_selfie_action_mode
 
@@ -224,6 +453,7 @@ async def run_image_generation_workflow(
             )
             audit_prompt_text = request_prompt
         except Exception as exc:
+            finish_stage("image_to_text", image_to_text_started)
             error = f"图转文失败：{redact_sensitive_text(str(exc))}"
             image_to_text_meta = {
                 **image_to_text_meta,
@@ -252,7 +482,7 @@ async def run_image_generation_workflow(
                     "image_to_text": image_to_text_meta,
                 }
                 add_selection_metadata(request_data)
-                self._record_task(
+                record_task(
                     {
                         **source_meta,
                         "success": False,
@@ -280,6 +510,8 @@ async def run_image_generation_workflow(
                     "request_data": request_data,
                     "response_data": response_data,
                 }
+        if "image_to_text" not in stage_timings:
+            finish_stage("image_to_text", image_to_text_started)
     request_data = {
         "original_prompt": original_prompt,
         "request_prompt": request_prompt,
@@ -328,10 +560,18 @@ async def run_image_generation_workflow(
     if request_cleanup.get("deleted"):
         request_data["cache_cleanup_before_generation"] = request_cleanup
 
-    audit_ok, audit_reason = await self._audit_prompt(audit_prompt_text, audit_user_id, event)
+    prompt_audit_enabled = bool(getattr(self.config, "image_enable_prompt_audit", False))
+    prompt_audit_started = (
+        time.monotonic() if prompt_audit_enabled and not self._is_audit_exempt(event, audit_user_id) else None
+    )
+    try:
+        audit_ok, audit_reason = await self._audit_prompt(audit_prompt_text, audit_user_id, event)
+    finally:
+        if prompt_audit_started is not None:
+            finish_stage("prompt_audit", prompt_audit_started)
     if not audit_ok:
         response_data = {"success": False, "stage": "prompt_audit", "error": f"提示词审核未通过：{audit_reason}"}
-        self._record_task(
+        record_task(
             {
                 **source_meta,
                 "success": False,
@@ -381,7 +621,7 @@ async def run_image_generation_workflow(
             "stage": "select_model",
             "error": "当前没有可用的出图模型，请先在管理页启用渠道和模型。",
         }
-        self._record_task(
+        record_task(
             {
                 **source_meta,
                 "success": False,
@@ -479,7 +719,9 @@ async def run_image_generation_workflow(
     result = await generate_images(
         selected_targets,
         request,
-        None,
+        # The plugin-owned registry keeps connection pools alive across
+        # fallback attempts while preserving per-proxy SOCKS connectors.
+        getattr(self, "_image_session_registry", None),
         max_attempts=max_attempts,
         global_timeout=self.config.image_global_timeout,
         request_factory=request_for_target,
@@ -487,9 +729,16 @@ async def run_image_generation_workflow(
     if cooldown_attempts:
         result.attempts = [*cooldown_attempts, *(result.attempts or [])]
     elapsed = time.monotonic() - started
+    if trace_id:
+        for attempt in result.attempts or []:
+            if isinstance(attempt, dict):
+                attempt.setdefault("trace_id", trace_id)
     record_channel_health = getattr(self, "_record_channel_health", None)
     if callable(record_channel_health):
-        record_channel_health(result.attempts)
+        try:
+            record_channel_health(result.attempts, trace_id=trace_id)
+        except TypeError:
+            record_channel_health(result.attempts)
 
     if not result.error and result.images:
         used_target = next(
@@ -525,7 +774,7 @@ async def run_image_generation_workflow(
             "retry_count": int(getattr(result, "retry_count", 0) or 0),
             "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
         }
-        self._record_task(
+        record_task(
             {
                 **source_meta,
                 "success": False,
@@ -564,6 +813,63 @@ async def run_image_generation_workflow(
         }
 
     generated_images = [image for image in result.images if image]
+    max_dimension, max_pixels, max_frames = image_validation_limits(getattr(self, "config", None))
+    geometry_error = ""
+    for image in generated_images:
+        geometry_error = image_geometry_error(
+            image,
+            max_dimension=max_dimension,
+            max_pixels=max_pixels,
+            max_frames=max_frames,
+        )
+        if geometry_error:
+            break
+    if geometry_error:
+        error = "上游返回的图片尺寸、像素或动画帧数超过限制"
+        response_data = {
+            "success": False,
+            "stage": "generate",
+            "error": error,
+            "used_model": result.used_model,
+            "elapsed_seconds": round(elapsed, 2),
+            "attempts": result.attempts,
+            "retry_count": int(getattr(result, "retry_count", 0) or 0),
+            "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
+        }
+        record_task(
+            {
+                **source_meta,
+                "success": False,
+                "generation_success": False,
+                "delivery_success": None,
+                "error": error,
+                "prompt": request_prompt,
+                "original_prompt": original_prompt,
+                "request_prompt": request_prompt,
+                "final_prompt": request_prompt,
+                "used_model": result.used_model,
+                "elapsed_seconds": round(elapsed, 2),
+                "reference_images": len(refs),
+                "request_data": request_data,
+                "response_data": response_data,
+                "retry_count": int(getattr(result, "retry_count", 0) or 0),
+                "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
+                "request_image_paths": request_image_paths,
+                "generated_image_paths": [],
+            }
+        )
+        return {
+            "success": False,
+            "error": error,
+            "original_prompt": original_prompt,
+            "final_prompt": request_prompt,
+            "elapsed_seconds": elapsed,
+            "used_model": result.used_model,
+            "request_data": request_data,
+            "response_data": response_data,
+            "request_image_paths": request_image_paths,
+            "attempts": result.attempts,
+        }
     generated_image_paths = [
         self._save_cache_image(image, "generated", detect_mime_by_bytes(image))
         for image in generated_images
@@ -575,7 +881,15 @@ async def run_image_generation_workflow(
         "output_audit",
         "检查画布结果" if is_studio_run else "检查图片结果",
     )
-    output_ok, output_reason = await self._audit_output_images(files, audit_user_id, prompt, event=event)
+    output_audit_enabled = bool(getattr(self.config, "image_enable_output_audit", False))
+    output_audit_started = (
+        time.monotonic() if output_audit_enabled and not self._is_audit_exempt(event, audit_user_id) else None
+    )
+    try:
+        output_ok, output_reason = await self._audit_output_images(files, audit_user_id, prompt, event=event)
+    finally:
+        if output_audit_started is not None:
+            finish_stage("output_audit", output_audit_started)
     if not output_ok:
         response_data = {
             "success": False,
@@ -590,7 +904,7 @@ async def run_image_generation_workflow(
             "retry_count": int(getattr(result, "retry_count", 0) or 0),
             "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
         }
-        self._record_task(
+        record_task(
             {
                 **source_meta,
                 "success": False,
@@ -640,7 +954,7 @@ async def run_image_generation_workflow(
         "retry_count": int(getattr(result, "retry_count", 0) or 0),
         "retry_exhausted": bool(getattr(result, "retry_exhausted", False)),
     }
-    self._record_task(
+    record_task(
         {
             **source_meta,
             "success": True,

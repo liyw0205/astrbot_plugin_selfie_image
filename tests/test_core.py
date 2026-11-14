@@ -666,23 +666,35 @@ class ConfigModelTests(unittest.TestCase):
     def test_target_cache_reuses_stable_targets_and_invalidates_on_config_change(self) -> None:
         from astrbot_plugin_selfie_image.core.models import AICatConfig
 
-        cfg = AICatConfig.from_dict(
-            {
-                "image_channels": [
-                    {
-                        "name": "main",
-                        "provider_type": "openai",
-                        "base_url": "https://example.test/v1",
-                        "api_key": "key",
-                        "model": "model-a",
-                    }
-                ]
-            }
-        )
+        source = {
+            "image_channels": [
+                {
+                    "name": "main",
+                    "provider_type": "openai",
+                    "base_url": "https://example.test/v1",
+                    "api_key": "key",
+                    "model": "model-a",
+                }
+            ]
+        }
+        cfg = AICatConfig.from_dict(source)
         first = cfg.get_prioritized_targets()
         second = cfg.get_prioritized_targets()
         self.assertEqual([target.label for target in first], [target.label for target in second])
         self.assertEqual(len(cfg._target_cache), 1)
+        cache_key = next(iter(cfg._target_cache))
+        self.assertIn('"revision":', cache_key)
+        self.assertNotIn('"raw":', cache_key)
+
+        # Priority changes are part of the key even when callers mutate a
+        # normalized config before rebuilding it through the usual save path.
+        cfg.enabled_image_model_priority = ["missing"]
+        self.assertEqual(cfg.get_prioritized_targets(), [])
+        self.assertEqual(len(cfg._target_cache), 2)
+
+        reloaded_cfg = AICatConfig.from_dict(source)
+        self.assertGreater(reloaded_cfg.config_revision, cfg.config_revision)
+        self.assertNotEqual(reloaded_cfg._target_cache_key("image"), cfg._target_cache_key("image"))
 
         changed_cfg = AICatConfig.from_dict(
             {
@@ -1111,6 +1123,94 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("slow_generation", codes)
         with self.assertRaises(ValueError):
             metric_window_seconds("2h")
+
+    def test_generation_metrics_reports_queue_wait_and_attempt_success_rates(self) -> None:
+        from astrbot_plugin_selfie_image.generation.generation_records import build_generation_metrics
+
+        metrics = build_generation_metrics(
+            [
+                {
+                    "status": "succeeded",
+                    "queue_wait_seconds": 3.0,
+                    "attempts": [
+                        {"success": False, "error_category": "cooldown", "cooldown_remaining_seconds": 4},
+                        {"success": True, "channel": "primary"},
+                    ],
+                },
+                {
+                    "status": "failed",
+                    "queue_wait_seconds": 5.0,
+                    "attempts": [{"success": False, "channel": "primary"}],
+                },
+                {"status": "succeeded", "queue_wait_seconds": float("inf"), "attempts": []},
+            ]
+        )
+
+        self.assertEqual(metrics["queue_wait_seconds"], {"samples": 2, "p50": 3.0, "p95": 5.0, "max": 5.0})
+        self.assertEqual(metrics["quality"]["attempted_records"], 2)
+        self.assertEqual(metrics["quality"]["first_attempt_successes"], 1)
+        self.assertEqual(metrics["quality"]["first_attempt_success_rate"], 0.5)
+        self.assertEqual(metrics["quality"]["final_attempt_successes"], 1)
+        self.assertEqual(metrics["quality"]["final_attempt_success_rate"], 0.5)
+
+    def test_generation_metrics_aggregates_errors_by_upstream_model(self) -> None:
+        from astrbot_plugin_selfie_image.generation.generation_records import build_generation_metrics
+
+        metrics = build_generation_metrics(
+            [
+                {
+                    "status": "succeeded",
+                    "used_model": "backup/model-b",
+                    "attempts": [
+                        {
+                            "channel": "primary",
+                            "model": "model-a",
+                            "label": "primary/model-a",
+                            "success": False,
+                            "error_category": "auth",
+                            "http_status": 401,
+                        },
+                        {
+                            "channel": "backup",
+                            "model": "model-b",
+                            "label": "backup/model-b",
+                            "success": True,
+                        },
+                    ],
+                },
+                {
+                    "status": "failed",
+                    "attempts": [
+                        {
+                            "channel": "primary",
+                            "model": "model-a",
+                            "label": "primary/model-a",
+                            "success": False,
+                            "error_category": "rate_limit",
+                            "http_status": 429,
+                        },
+                        {
+                            "channel": "cooling",
+                            "model": "model-c",
+                            "label": "cooling/model-c",
+                            "success": False,
+                            "error_category": "cooldown",
+                            "cooldown_remaining_seconds": 30,
+                        },
+                    ],
+                },
+            ]
+        )
+
+        model_a = metrics["model_attempts"]["primary/model-a"]
+        self.assertEqual(model_a["attempts"], 2)
+        self.assertEqual(model_a["failed"], 2)
+        self.assertEqual(model_a["error_categories"], {"auth": 1, "rate_limit": 1})
+        self.assertEqual(model_a["error_rates"], {"auth": 0.5, "rate_limit": 0.5})
+        self.assertEqual(model_a["http_statuses"], {"401": 1, "429": 1})
+        self.assertEqual(model_a["http_status_rates"], {"401": 0.5, "429": 0.5})
+        self.assertEqual(metrics["model_attempts"]["backup/model-b"]["success_rate"], 1.0)
+        self.assertNotIn("cooling/model-c", metrics["model_attempts"])
 
     def test_record_timestamp_prefers_durable_record_time_over_bulk_created_ts(self) -> None:
         from astrbot_plugin_selfie_image.generation.generation_records import _record_timestamp
@@ -1730,6 +1830,7 @@ class ConfigModelTests(unittest.TestCase):
         fat = {
             "success": False,
             "md5": "A" * 32,
+            "queue_wait_seconds": 1.25,
             "prompt": "P" * 9000,
             "original_prompt": "COS 【cos:hutao_dragon_path_zhichun】 【cos_pose:half_turn】 【cos_scene:studio】 【cos_view:selfie】",
             "request_prompt": "R" * 9000,
@@ -1784,13 +1885,15 @@ class ConfigModelTests(unittest.TestCase):
                 },
                 "attempts": [{"label": "m1", "success": False, "error": "x" * 2000}],
             },
-            "attempts": [{"label": "m1", "success": False, "error": "x" * 2000, "error_category": "safety"}],
+            "attempts": [{"label": "m1", "success": False, "error": "x" * 2000, "error_category": "safety", "http_status": 403}],
         }
         slim = compact_generation_record(fat)
         self.assertLessEqual(len(slim["prompt"]), 6001)
         self.assertNotIn("original_prompt", slim.get("request_data") or {})
         self.assertLessEqual(len(slim["attempts"][0]["error"]), 801)
+        self.assertEqual(slim["attempts"][0]["http_status"], 403)
         self.assertEqual(slim["md5"], "a" * 32)
+        self.assertEqual(slim["queue_wait_seconds"], 1.25)
         self.assertEqual(slim["requested_count"], 4)
         self.assertNotIn("duration", slim)
         self.assertEqual(slim["raw_reference_image_count"], 2)
@@ -3191,7 +3294,7 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(image, PNG_BYTES)
         self.assertEqual(session.requests[0]["timeout"].total, IMAGE_DOWNLOAD_WAIT_SECONDS)
         self.assertEqual(session.requests[0]["headers"]["User-Agent"], "AI-Cat/1.0")
-        self.assertEqual(session.requests[0]["headers"]["Connection"], "close")
+        self.assertEqual(session.requests[0]["headers"]["Connection"], "keep-alive")
         with patch("astrbot_plugin_selfie_image.core.proxy.aiohttp.ClientTimeout", side_effect=timeout_factory):
             self.assertEqual(image_download_timeout(180).total, IMAGE_DOWNLOAD_WAIT_SECONDS)
 
@@ -4489,6 +4592,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(upstream_detail, result.error)
         self.assertIn(upstream_detail, result.attempts[0]["error_user_message"])
         self.assertEqual(result.attempts[0]["error_category"], "server")
+        self.assertEqual(result.attempts[0]["http_status"], 502)
         self.assertTrue(result.attempts[0]["retryable"])
 
 
@@ -4516,6 +4620,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls["n"], 2)
         self.assertEqual(result.used_model, second.label)
         self.assertEqual(result.attempts[0].get("error_category"), "auth")
+        self.assertEqual(result.attempts[0].get("http_status"), 401)
         self.assertTrue(result.attempts[1].get("success"))
 
     async def test_fallback_advances_on_param_error_to_next_channel(self) -> None:
@@ -6166,6 +6271,52 @@ class SessionModelAndTaskTests(unittest.TestCase):
         self.assertEqual(plugin.audit_record["retry_count"], 0)
         self.assertFalse(plugin.audit_record["generation_success"])
 
+    def test_scheduled_image_record_includes_measured_queue_wait(self) -> None:
+        plugin = self._plugin_stub()
+
+        class DelayedScheduler:
+            async def submit(self, _task_id, run):
+                await asyncio.sleep(0.02)
+                return await run()
+
+        plugin._image_scheduler = DelayedScheduler()
+        plugin._save_reference_images_to_cache = lambda _refs: []
+        plugin._source_context = lambda *_args, **_kwargs: {}
+        plugin._cleanup_image_cache_if_needed = lambda _paths: {}
+        plugin._composition_metadata = lambda *_args, **_kwargs: {}
+        plugin._record_channel_health = lambda *_args, **_kwargs: None
+        plugin._recorded = []
+        plugin._record_task = plugin._recorded.append
+        plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+
+        async def audit(*_args, **_kwargs):
+            return True, ""
+
+        async def fake_generate(*_args, **_kwargs):
+            return ImageGenerateResult(
+                error="scheduled stop",
+                attempts=[{"channel": "primary", "success": False, "error_category": "server"}],
+            )
+
+        plugin._audit_prompt = audit
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        with patch.object(plugin_main, "generate_image_with_fallback", side_effect=fake_generate):
+            result = asyncio.run(
+                plugin._run_image_generation(
+                    "queue metric test",
+                    "1:1",
+                    "1K",
+                    [],
+                    targets=[make_target()],
+                    event=object(),
+                    record_context={"task_id": "queue-metric-test"},
+                )
+            )
+
+        self.assertFalse(result["success"])
+        self.assertGreaterEqual(plugin._recorded[-1]["queue_wait_seconds"], 0.015)
+
     def test_cos_generation_records_reference_selection_summary_on_provider_failure(self) -> None:
         plugin = self._plugin_stub()
         plugin._save_reference_images_to_cache = lambda _refs: ["request/identity.png", "request/outfit.png"]
@@ -6276,6 +6427,49 @@ class SessionModelAndTaskTests(unittest.TestCase):
                 ("generating", "生成图片结果"),
             ],
         )
+
+    def test_image_generation_propagates_trace_id_to_record_and_attempts(self) -> None:
+        plugin = self._plugin_stub()
+        plugin._save_reference_images_to_cache = lambda _refs: []
+        plugin._source_context = lambda *_args, **_kwargs: {}
+        plugin._cleanup_image_cache_if_needed = lambda _paths: {}
+        plugin._record_channel_health = lambda *_args, **_kwargs: None
+        plugin._recorded = []
+        plugin._record_task = plugin._recorded.append
+        plugin.get_web_image_task = lambda _task_id: {"trace_id": "gen-test123"}
+
+        async def audit(*_args, **_kwargs):
+            return True, ""
+
+        async def fake_generate(*_args, **_kwargs):
+            return ImageGenerateResult(
+                error="test stop",
+                attempts=[{"channel": "channel-a", "success": False, "error_category": "network"}],
+            )
+
+        plugin._audit_prompt = audit
+        plugin._prompt_en_needed = lambda *_args, **_kwargs: False
+        from astrbot_plugin_selfie_image import main as plugin_main
+
+        with patch.object(plugin_main, "generate_image_with_fallback", side_effect=fake_generate):
+            result = asyncio.run(
+                plugin._run_image_generation(
+                    "trace test",
+                    "1:1",
+                    "1K",
+                    [],
+                    targets=[make_target()],
+                    event=object(),
+                    record_context={"task_id": "web-trace-image"},
+                )
+            )
+
+        assert result["success"] is False
+        assert plugin._recorded
+        record = plugin._recorded[-1]
+        assert record["trace_id"] == "gen-test123"
+        assert record["response_data"]["trace_id"] == "gen-test123"
+        assert record["response_data"]["attempts"][0]["trace_id"] == "gen-test123"
 
     def test_cancel_image_task_session_isolation(self) -> None:
         plugin = self._plugin_stub()
@@ -7215,6 +7409,10 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("function bridgeEndpoint", self.html)
         self.assertIn("waitForDashboardBridge", self.html)
         self.assertIn("bridge-sdk.js", self.html)
+        self.assertIn("recordStorage.status === 'error' ? '只读降级'", self.html)
+        self.assertIn("recordStorage.duration_ms", self.html)
+        self.assertIn("recordStorage.read_only_source", self.html)
+        self.assertIn("recordStorage.last_failure_reason", self.html)
         # Must strip /api/ prefix like telegram forwarder
         compact = re.sub(r"\s+", "", self.html)
         self.assertIn("noQuery.startsWith('/api/')", compact)
@@ -7298,6 +7496,9 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("quality.record_success_rate", self.html)
         self.assertIn("const models =", self.html)
         self.assertIn("recommendations", self.html)
+        self.assertIn('id="metricAlertSettings"', self.html)
+        self.assertIn('id="saveMetricAlertSettings"', self.html)
+        self.assertIn("function saveMetricAlertSettings()", self.html)
         self.assertIn("generation_stage_label", self.html)
         self.assertIn("taskStageText", self.html)
         page_html = Path(__file__).resolve().parents[1].joinpath("pages", "dashboard", "index.html").read_text(encoding="utf-8")
@@ -7584,8 +7785,10 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         llm_image = main_src.split("async def tool_generate_image", 1)[1].split("async def tool_generate_selfie", 1)[0]
         self.assertIn("_background_draw_batches", llm_image)
         selfie_batch = main_src.split("async def _background_selfie_batches", 1)[1].split("def _validate_web_test_selection", 1)[0]
-        self.assertIn("for index in range(total)", selfie_batch)
-        self.assertIn("_run_counted_generation_shots", selfie_batch)
+        batch_workflow = (Path(__file__).resolve().parents[1] / "generation" / "selfie_batch_workflow.py").read_text(encoding="utf-8")
+        self.assertIn("for index in range(self.total)", batch_workflow)
+        self.assertIn("_run_counted_generation_shots", batch_workflow)
+        self.assertIn("SelfieBatchWorkflow", selfie_batch)
         self.assertIn("_run_selfie_batches_unlocked", selfie_batch)
         self.assertNotIn("_run_generation_jobs_parallel", main_src)
         self.assertIn("_run_counted_generation_shots", main_src)
@@ -8802,14 +9005,24 @@ class LegFocusTests(unittest.TestCase):
         self.assertNotIn("真实皮肤", look_you)
         self.assertNotIn("真人摄影质感", look_you)
         self.assertIn("不要美颜滤镜", look_you)
-        selfie_cover = plugin_main.SelfieImagePlugin._build_selfie_look_action(_P(), "", False)
-        self.assertIn("竖屏", selfie_cover)
-        self.assertTrue("半身" in selfie_cover or "全身" in selfie_cover)
-        self.assertIn("光线：", selfie_cover)
-        self.assertNotIn("真实皮肤", selfie_cover)
-        self.assertNotIn("真人摄影质感", selfie_cover)
-        self.assertIn("不要美颜滤镜", selfie_cover)
-        self.assertNotIn("过度美颜磨皮", selfie_cover)
+        from astrbot_plugin_selfie_image.prompts.selfie_actions import SELFIE_SHOT_POOL
+        for shot, _ in SELFIE_SHOT_POOL:
+            with self.subTest(selfie_shot=shot), patch(
+                "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
+                return_value=[shot],
+            ):
+                selfie_cover = plugin_main.SelfieImagePlugin._build_selfie_look_action(_P(), "", False)
+                self.assertIn(f"【shot:{shot}】", selfie_cover)
+                self.assertIn("竖屏", selfie_cover)
+                if shot == "close_portrait":
+                    self.assertIn("近景胸像", selfie_cover)
+                else:
+                    self.assertTrue("半身" in selfie_cover or "全身" in selfie_cover)
+                self.assertIn("光线：", selfie_cover)
+                self.assertNotIn("真实皮肤", selfie_cover)
+                self.assertNotIn("真人摄影质感", selfie_cover)
+                self.assertIn("不要美颜滤镜", selfie_cover)
+                self.assertNotIn("过度美颜磨皮", selfie_cover)
         with patch(
             "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
             return_value=["group_portrait"],
@@ -9199,17 +9412,17 @@ class LegFocusTests(unittest.TestCase):
                 self.assertNotIn("本次随机腿部细节", action)
 
     def test_multi_image_commands_rebuild_each_shot(self) -> None:
-        main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
-        self.assertIn("rebuild_each", main_src)
-        self.assertIn("avoid_pose", main_src)
-        self.assertIn("_build_selfie_look_action", main_src)
+        workflow_src = (Path(__file__).resolve().parents[1] / "generation" / "selfie_batch_workflow.py").read_text(encoding="utf-8")
+        self.assertIn("rebuild_each", workflow_src)
+        self.assertIn("avoid_pose", workflow_src)
+        self.assertIn("_build_selfie_look_action", workflow_src)
         from astrbot_plugin_selfie_image.prompts.selfie_actions import (
             SELFIE_SHOT_LINES,
             THIRD_PERSON_SHOT_LINES,
         )
         self.assertIn("arm_half", SELFIE_SHOT_LINES)
         self.assertIn("half_front", THIRD_PERSON_SHOT_LINES)
-        self.assertIn("command-look-you", main_src)
+        self.assertIn("command-look-you", workflow_src)
 
 
     def test_leg_focus_explicit_camera_uses_the_selected_pose_view(self) -> None:

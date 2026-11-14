@@ -1,0 +1,213 @@
+{
+  "environment": {
+    "python": "3.13.13",
+    "sqlite": "3.53.2",
+    "platform": "Android-16-aarch64-64bit-ELF"
+  },
+  "fixture": {
+    "records": 10000,
+    "samples": 10,
+    "keep_limit": 10000,
+    "favorite_fraction": 0.9,
+    "prompt_chars": 2048,
+    "actual_prompt_chars": {
+      "min": 2048,
+      "max": 2060
+    },
+    "prompt_distribution": "low-entropy repeated filler; rare-needle every 997 records; long marker matches all extended prompts",
+    "fts_enabled": true,
+    "setup_seconds": 1.373,
+    "storage": {
+      "database_bytes": 112726016,
+      "wal_bytes": 0,
+      "shm_bytes": 0,
+      "fts_table_bytes": 67661824
+    }
+  },
+  "methodology": {
+    "connection_lifetime": "each operation commits/rolls back and closes; no anchor connection",
+    "cache_evict": "checkpoint and close, then POSIX_FADV_DONTNEED best-effort hint; does not prove cold storage",
+    "statistics": "nearest-rank p95 is the maximum with fewer than 20 samples; synthetic device-local evidence only",
+    "concurrency": "shared instance models runtime RLock; independent instances model additional WAL contention; inspect overlap per query"
+  },
+  "queries": {
+    "recent": {
+      "samples": 10,
+      "percentile_method": "nearest-rank",
+      "p50_ms": 31.685,
+      "p95_ms": 32.99,
+      "durations_ms": [
+        31.858,
+        31.517,
+        32.091,
+        32.001,
+        31.707,
+        31.029,
+        31.114,
+        30.982,
+        32.99,
+        31.663
+      ],
+      "retained": 10000,
+      "matched": 10000,
+      "returned": 30,
+      "candidate_mode": "adaptive"
+    },
+    "favorite": {
+      "samples": 10,
+      "percentile_method": "nearest-rank",
+      "p50_ms": 28.578,
+      "p95_ms": 30.002,
+      "durations_ms": [
+        29.107,
+        30.002,
+        29.234,
+        27.817,
+        28.122,
+        28.169,
+        28.169,
+        28.469,
+        29.746,
+        28.688
+      ],
+      "retained": 10000,
+      "matched": 9000,
+      "returned": 30,
+      "candidate_mode": "adaptive"
+    },
+    "model": {
+      "samples": 10,
+      "percentile_method": "nearest-rank",
+      "p50_ms": 37.524,
+      "p95_ms": 39.446,
+      "durations_ms": [
+        37.961,
+        39.446,
+        37.596,
+        36.599,
+        37.015,
+        38.519,
+        38.791,
+        37.452,
+        37.176,
+        36.56
+      ],
+      "retained": 10000,
+      "matched": 500,
+      "returned": 30,
+      "candidate_mode": "adaptive"
+    },
+    "keyword": {
+      "samples": 10,
+      "percentile_method": "nearest-rank",
+      "p50_ms": 13.767,
+      "p95_ms": 13.933,
+      "durations_ms": [
+        13.831,
+        13.883,
+        13.71,
+        13.656,
+        13.786,
+        13.545,
+        13.748,
+        13.721,
+        13.933,
+        13.811
+      ],
+      "retained": 10000,
+      "matched": 11,
+      "returned": 11,
+      "candidate_mode": "adaptive"
+    },
+    "keyword_scalar": {
+      "samples": 10,
+      "percentile_method": "nearest-rank",
+      "p50_ms": 191.864,
+      "p95_ms": 201.103,
+      "durations_ms": [
+        201.103,
+        195.595,
+        198.964,
+        194.577,
+        190.992,
+        188.427,
+        192.737,
+        189.092,
+        188.661,
+        188.937
+      ],
+      "retained": 10000,
+      "matched": 11,
+      "returned": 11,
+      "candidate_mode": "scalar"
+    },
+    "long_prompt_keyword": {
+      "samples": 10,
+      "percentile_method": "nearest-rank",
+      "p50_ms": 85.882,
+      "p95_ms": 88.148,
+      "durations_ms": [
+        86.956,
+        84.606,
+        86.302,
+        84.873,
+        85.654,
+        85.838,
+        88.148,
+        85.927,
+        86.908,
+        84.864
+      ],
+      "retained": 10000,
+      "matched": 10000,
+      "returned": 30,
+      "candidate_mode": "adaptive"
+    },
+    "long_prompt_keyword_scalar": {
+      "samples": 10,
+      "percentile_method": "nearest-rank",
+      "p50_ms": 83.912,
+      "p95_ms": 85.238,
+      "durations_ms": [
+        83.937,
+        82.913,
+        84.414,
+        83.44,
+        84.959,
+        83.499,
+        83.887,
+        83.718,
+        85.238,
+        84.634
+      ],
+      "retained": 10000,
+      "matched": 10000,
+      "returned": 30,
+      "candidate_mode": "scalar"
+    },
+    "long_prompt_keyword_phrase": {
+      "samples": 10,
+      "percentile_method": "nearest-rank",
+      "p50_ms": 476.83,
+      "p95_ms": 486.695,
+      "durations_ms": [
+        376.99,
+        375.627,
+        375.517,
+        410.729,
+        477.607,
+        482.911,
+        482.616,
+        476.052,
+        484.887,
+        486.695
+      ],
+      "retained": 10000,
+      "matched": 10000,
+      "returned": 30,
+      "candidate_mode": "phrase"
+    }
+  },
+  "cache_scenarios": {},
+  "concurrent_writes": {}
+}

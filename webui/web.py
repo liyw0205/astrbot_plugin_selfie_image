@@ -7,40 +7,51 @@ import base64
 import hmac
 import json
 from pathlib import Path
-import re
 import threading
+import time
 from typing import Any, Optional
 from astrbot.api import logger
 
 from ..core.utils import (
-    generation_record_media_sources,
-    redact_generation_record,
-    redact_generation_record_for_detail,
     redact_sensitive_data,
     redact_sensitive_text,
 )
-from ..features.config_manager import ConfigImportValidationError
-from ..generation.generation_records import metric_window_seconds
-from .contracts import TASK_CANCEL_ROUTE_ALIASES
+from .contracts import (
+    ASSET_COLLECTION_ROUTE_CONTRACTS,
+    ASSET_ROUTE_CONTRACTS,
+    CANVAS_ROUTE_CONTRACTS,
+    CONFIG_ROUTE_CONTRACTS,
+    PROXY_ROUTE_CONTRACTS,
+    RECORD_ROUTE_CONTRACTS,
+    TASK_ROUTE_CONTRACTS,
+    WEB_TASK_ID_RE,
+)
+from .controllers import (
+    AssetCollectionController,
+    AssetController,
+    AssetControllerResult,
+    CanvasController,
+    CanvasControllerResult,
+    ConfigController,
+    ConfigControllerResult,
+    ProxyController,
+    ProxyControllerResult,
+    RecordController,
+    RecordControllerResult,
+    TaskController,
+    TaskControllerResult,
+)
 from .services import (
     CATALOG_PAGE_SIZE,
     MAX_CATALOG_PAGE_SIZE,
     WebContractError,
     build_health_payload,
     catalog_pagination_requested,
-    config_patch_payload,
-    filter_record_page,
     flatten_cos_pool_rows,
     gallery_pagination,
-    normalize_task_ids,
     paginate_catalog_rows,
     parse_bounded_int,
-    parse_query_bool,
-    parse_task_query,
-    record_matches_query as shared_record_matches_query,
     render_image_thumbnail,
-    task_status_payload,
-    validate_task_id,
 )
 
 
@@ -55,10 +66,7 @@ except Exception:  # pragma: no cover - handled at runtime in AstrBot env
     make_server = None  # type: ignore
 
 
-WEB_TASK_ID_RE = re.compile(r"^(?:web|web-studio|cmd)-\d{8,}-\d+$")
-MAX_WEB_TASK_ID_LENGTH = 64
 MAX_CACHE_IMAGE_PATH_LENGTH = 512
-MAX_WEB_RECORD_ID_LENGTH = 128
 MAX_RECORD_PAGE_LIMIT = 1000
 MAX_ASSET_PAGE_LIMIT = 100
 MAX_TASK_PAGE_LIMIT = 200
@@ -181,6 +189,18 @@ class FlaskWebServer:
     def _create_app(self) -> Any:
         app = Flask("astrbot_plugin_selfie_image")
         app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
+        asset_collection_controller = AssetCollectionController(self.plugin)
+        asset_controller = AssetController(self.plugin)
+        canvas_controller = CanvasController(self.plugin)
+        config_controller = ConfigController(self.plugin)
+        proxy_controller = ProxyController(self.plugin)
+        task_controller = TaskController(self.plugin)
+        record_controller = RecordController(self.plugin)
+        auth_failure_lock = threading.RLock()
+        auth_failures: dict[str, dict[str, float]] = {}
+        auth_failure_limit = 8
+        auth_failure_window = 60.0
+        auth_block_seconds = 60.0
 
         def ok(data: Any = None, **extra: Any) -> Any:
             payload = {"success": True, "data": data}
@@ -188,7 +208,56 @@ class FlaskWebServer:
             return jsonify(payload)
 
         def fail(message: str, status: int = 400) -> Any:
+            rate_limited = bool(getattr(request, "environ", {}).get("_selfie_auth_rate_limited"))
+            if rate_limited and status == 401:
+                response = jsonify({"success": False, "error": "请求过于频繁，请稍后重试"})
+                response.headers["Retry-After"] = str(int(auth_block_seconds))
+                return response, 429
             return jsonify({"success": False, "error": redact_sensitive_text(message)}), status
+
+        def task_result(call: Any, *, include_message: bool = False) -> Any:
+            try:
+                result: TaskControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            extra = {"message": result.message} if include_message else {}
+            return ok(result.data, **extra)
+
+        def config_result(call: Any) -> Any:
+            try:
+                result: ConfigControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data, **result.extra)
+
+        def proxy_result(call: Any) -> Any:
+            try:
+                result: ProxyControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data, **result.extra)
+
+        def asset_result(call: Any) -> Any:
+            try:
+                result: AssetControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data, **result.extra)
+
+        def canvas_result(call: Any) -> Any:
+            try:
+                result: CanvasControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data, **result.extra)
 
         @app.after_request
         def add_response_safety_headers(response: Any) -> Any:
@@ -224,42 +293,28 @@ class FlaskWebServer:
                 return None, fail(f"{name} 不能小于 {minimum}", 400)
             return min(value, maximum), None
 
-        def record_matches_query(record: Any, source: str, model: str, success: str, keyword: str, media_type: str = "") -> bool:
-            return shared_record_matches_query(record, source, model, success, keyword, media_type)
-
         def generation_task_status(task_id: str) -> Any:
-            try:
-                return ok(
-                    task_status_payload(
-                        self.plugin,
-                        task_id,
-                        WEB_TASK_ID_RE,
-                        max_length=MAX_WEB_TASK_ID_LENGTH,
-                    )
-                )
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            except Exception as exc:
-                return fail(str(exc), 404)
+            return task_result(lambda: task_controller.status(task_id))
+
+        def studio_task_status(task_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return generation_task_status(task_id)
 
         def gallery_payload() -> Any:
             limit, offset = gallery_pagination(
                 request.args.get("limit"), request.args.get("offset")
             )
-            try:
-                return ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return canvas_result(lambda: canvas_controller.gallery(limit, offset))
 
-        def query_bool(value: Any) -> Optional[bool]:
-            return parse_query_bool(value)
-
-        def filtered_record_payload(records: list[Any]) -> Any:
+        def record_result(call: Any) -> Any:
             try:
-                page, meta = filter_record_page(records, request.args)
-                return page, meta, None
+                result: RecordControllerResult = call()
             except WebContractError as exc:
-                return None, None, fail(str(exc), exc.status_code)
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data, **result.extra)
 
         def token_candidates_from_request() -> list[str]:
             tokens: list[str] = []
@@ -280,9 +335,26 @@ class FlaskWebServer:
             for token in token_candidates_from_request():
                 try:
                     if hmac.compare_digest(token.encode("utf-8"), configured_bytes):
+                        source = str(request.remote_addr or "unknown")[:128]
+                        with auth_failure_lock:
+                            auth_failures.pop(source, None)
                         return True
                 except Exception:
                     continue
+            source = str(request.remote_addr or "unknown")[:128]
+            now = time.monotonic()
+            with auth_failure_lock:
+                state = auth_failures.get(source)
+                if state and float(state.get("blocked_until") or 0.0) > now:
+                    request.environ["_selfie_auth_rate_limited"] = True
+                    return False
+                if not state or now - float(state["first_ts"]) >= auth_failure_window:
+                    state = {"first_ts": now, "count": 0.0, "blocked_until": 0.0}
+                    auth_failures[source] = state
+                state["count"] = float(state.get("count") or 0.0) + 1.0
+                if state["count"] >= auth_failure_limit:
+                    state["blocked_until"] = now + auth_block_seconds
+                    request.environ["_selfie_auth_rate_limited"] = True
             return False
 
         @app.route("/", methods=["GET"])
@@ -361,206 +433,158 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
 
-        @app.route("/api/metrics", methods=["GET"])
-        def metrics() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            try:
-                try:
-                    window_seconds = metric_window_seconds(request.args.get("window"))
-                except ValueError as exc:
-                    return fail(str(exc), 400)
-                if window_seconds is None:
-                    metrics_data = self.plugin.get_generation_metrics()
-                else:
-                    metrics_data = self.plugin.get_generation_metrics(window_seconds=window_seconds)
-                return ok(redact_sensitive_data(metrics_data))
-            except Exception as exc:
-                return fail(str(exc), 500)
-
-        @app.route("/api/records/consistency", methods=["GET"])
-        def records_consistency() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            checker = getattr(self.plugin, "inspect_storage_consistency", None)
-            if not callable(checker):
-                return fail("当前版本不支持存储一致性检查", 501)
-            try:
-                return ok(redact_sensitive_data(checker()))
-            except Exception as exc:
-                return fail(str(exc), 500)
-
-        @app.route("/api/records/consistency/repair", methods=["POST"])
-        def records_consistency_repair() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            repair = getattr(self.plugin, "repair_storage_consistency", None)
-            if not callable(repair):
-                return fail("当前版本不支持存储一致性修复", 501)
-            raw_confirm = (payload or {}).get("confirm", False)
-            confirm = raw_confirm if isinstance(raw_confirm, bool) else str(raw_confirm).strip().lower() in {"1", "true", "yes", "on"}
-            try:
-                result = repair(confirm=confirm, kinds=(payload or {}).get("kinds"))
-                return ok(redact_sensitive_data(result), message="一致性修复完成" if confirm else "已生成修复预览")
-            except Exception as exc:
-                return fail(str(exc), 409 if confirm else 400)
-
-        @app.route("/api/tasks", methods=["GET"])
         def tasks() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                task_kwargs = parse_task_query(request.args)
-                data = self.plugin.list_web_tasks(**task_kwargs)
-                return ok(redact_sensitive_data(data))
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return task_result(lambda: task_controller.list_tasks(request.args))
 
-        @app.route("/api/tasks/<task_id>", methods=["GET"])
         def task_detail(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            try:
-                getter = getattr(self.plugin, "get_web_task_detail", None)
-                data = getter(task_id_text) if callable(getter) else self.plugin.get_web_image_task(task_id_text)
-                return ok(redact_sensitive_data(data))
-            except Exception as exc:
-                return fail(str(exc), 404)
+            return task_result(lambda: task_controller.detail(task_id))
 
-        def task_ids_from_payload(payload: Any) -> tuple[Optional[list[str]], Optional[str]]:
-            return normalize_task_ids(payload, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-
-        @app.route("/api/tasks/export", methods=["GET"])
         def tasks_export() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            raw_ids = str(request.args.get("ids") or "").strip()
-            ids = [item.strip() for item in raw_ids.split(",") if item.strip()] if raw_ids else None
-            if ids is not None:
-                if len(ids) > 200:
-                    return fail("包含非法任务 ID", 400)
-                try:
-                    for task_id in ids:
-                        validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-                except WebContractError as exc:
-                    return fail("包含非法任务 ID", exc.status_code)
-            exporter = getattr(self.plugin, "export_web_tasks", None)
-            if not callable(exporter):
-                return fail("当前版本不支持任务导出", 501)
-            try:
-                return ok(exporter(ids))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return task_result(lambda: task_controller.export(request.args.get("ids")))
 
-        @app.route("/api/tasks/delete", methods=["POST"])
         def tasks_delete() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            ids, validation_error = task_ids_from_payload(payload)
-            if validation_error:
-                return fail(validation_error, 400)
-            deleter = getattr(self.plugin, "delete_web_tasks", None)
-            if not callable(deleter):
-                return fail("当前版本不支持任务删除", 501)
-            try:
-                return ok(deleter(ids or []), message="任务记录已删除")
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return task_result(lambda: task_controller.delete(payload), include_message=True)
 
-        @app.route("/api/tasks/retry", methods=["POST"])
         def tasks_retry() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            ids, validation_error = task_ids_from_payload(payload)
-            if validation_error:
-                return fail(validation_error, 400)
-            retrier = getattr(self.plugin, "retry_web_tasks", None)
-            if not callable(retrier):
-                return fail("当前版本不支持任务重试", 501)
-            try:
-                feedback = str((payload or {}).get("feedback") or "").strip()[:2000]
-                strategy = str((payload or {}).get("strategy") or (payload or {}).get("retry_strategy") or "full")
-                try:
-                    result = retrier(ids or [], feedback, strategy)
-                except TypeError:
-                    result = retrier(ids or [], feedback)
-                return ok(result, message="已提交任务重试")
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return task_result(lambda: task_controller.retry(payload), include_message=True)
 
-        @app.route("/api/config", methods=["GET", "POST"])
-        def config_route() -> Any:
+        def config_get() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            if request.method == "GET":
-                return ok(self.plugin.get_config_for_web())
+            return config_result(lambda: config_controller.get())
+
+        def config_update() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                patch = config_patch_payload(payload)
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            try:
-                data = self.plugin.update_config_from_web(patch)
-                return ok(data)
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return config_result(lambda: config_controller.update(payload))
 
-        @app.route("/api/config/export", methods=["GET"])
         def config_export() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            raw = str(request.args.get("mode") or "").strip().lower() in {"raw", "plain", "original"}
-            try:
-                return ok(self.plugin.export_config_for_web(raw=raw))
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return config_result(
+                lambda: config_controller.export(request.args.get("mode"))
+            )
 
-        @app.route("/api/config/import/preview", methods=["POST"])
         def config_import_preview() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                patch = config_patch_payload(payload)
-                return ok(self.plugin.preview_config_import(patch))
-            except (ValueError, ConfigImportValidationError) as exc:
-                return fail(str(exc), 400)
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return config_result(
+                lambda: config_controller.preview_import(payload)
+            )
 
-        @app.route("/api/config/import", methods=["POST"])
         def config_import() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                patch = config_patch_payload(payload)
-                return ok(self.plugin.import_config_from_web(patch), message="配置导入成功")
-            except (ValueError, ConfigImportValidationError) as exc:
-                return fail(str(exc), 400)
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return config_result(lambda: config_controller.import_config(payload))
+
+        def proxies_list() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return proxy_result(lambda: proxy_controller.list())
+
+        def proxies_test() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return proxy_result(
+                lambda: self._run_async(proxy_controller.test(payload), timeout=30)
+            )
+
+        def proxies_quality() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return proxy_result(
+                lambda: self._run_async(proxy_controller.quality(payload), timeout=90)
+            )
+
+        def assets() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return asset_result(lambda: asset_controller.list(request.args))
+
+        def assets_tags() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return asset_result(lambda: asset_controller.tags())
+
+        def assets_export() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return asset_result(
+                lambda: asset_controller.export(request.args.get("ids"))
+            )
+
+        def assets_import() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return asset_result(lambda: asset_controller.import_metadata(payload))
+
+        def assets_metadata() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return asset_result(lambda: asset_controller.update_metadata(payload))
+
+        def assets_delete() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return asset_result(lambda: asset_controller.delete(payload))
+
+        def asset_studio(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return asset_result(
+                lambda: asset_controller.studio_one(record_id, payload)
+            )
+
+        def assets_studio() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return asset_result(lambda: asset_controller.studio_many(payload))
 
         @app.route("/api/qq-groups", methods=["GET"])
         def qq_groups() -> Any:
@@ -669,82 +693,167 @@ class FlaskWebServer:
         def cancel_generation_task(task_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            try:
-                task = self.plugin.get_web_image_task(task_id_text)
-                if str(task.get("status") or "") not in {"queued", "running"}:
-                    return fail("任务已经结束，不能取消", 409)
-                message = self.plugin.cancel_image_task(task_id_text, is_admin=True)
-                updated = self.plugin.get_web_image_task(task_id_text)
-                if str(updated.get("status") or "") not in {"cancelled"} and not updated.get("cancel_requested"):
-                    return fail("任务已经结束，不能取消", 409)
-                return ok(redact_sensitive_data(updated), message=message)
-            except PermissionError as exc:
-                return fail(str(exc), 403)
-            except Exception as exc:
-                return fail(str(exc), 404)
+            return task_result(lambda: task_controller.cancel(task_id), include_message=True)
 
-        for route in TASK_CANCEL_ROUTE_ALIASES:
-            app.add_url_rule(
-                route.replace("{task_id}", "<task_id>"),
-                endpoint="cancel_generation_task_" + route.split("/")[2].replace("-", "_"),
-                view_func=cancel_generation_task,
-                methods=["POST"],
+        def records() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return record_result(lambda: record_controller.list(request.args))
+
+        def metrics() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return record_result(lambda: record_controller.metrics(request.args.get("window")))
+
+        def record_detail(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return record_result(lambda: record_controller.detail(record_id))
+
+        def record_media_sources(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return record_result(lambda: record_controller.media_sources(record_id))
+
+        def record_metadata(record_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return record_result(
+                lambda: record_controller.update_metadata(record_id, payload)
             )
 
-        @app.route("/api/proxies", methods=["GET"])
-        def proxies_list() -> Any:
+        def record_reuse(record_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                return ok(self.plugin.list_proxies_for_web(mask_password=True))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return record_result(lambda: record_controller.reuse(record_id))
 
-        @app.route("/api/proxies/test", methods=["POST"])
-        def proxies_test() -> Any:
+        def record_retry(record_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                data = self._run_async(
-                    self.plugin.test_proxy_connectivity(
-                        proxy_id=str((payload or {}).get("id") or (payload or {}).get("proxy_id") or ""),
-                        proxy=(payload or {}).get("proxy") if isinstance((payload or {}).get("proxy"), dict) else payload,
-                    ),
-                    timeout=30,
-                )
-                return ok(data)
-            except ValueError as exc:
-                return fail(str(exc), 400)
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return record_result(
+                lambda: record_controller.retry(record_id, payload)
+            )
 
-        @app.route("/api/proxies/quality-check", methods=["POST"])
-        def proxies_quality() -> Any:
+        def records_consistency() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return record_result(lambda: record_controller.consistency())
+
+        def records_consistency_repair() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                data = self._run_async(
-                    self.plugin.test_proxy_quality(
-                        proxy_id=str((payload or {}).get("id") or (payload or {}).get("proxy_id") or ""),
-                        proxy=(payload or {}).get("proxy") if isinstance((payload or {}).get("proxy"), dict) else payload,
-                    ),
-                    timeout=90,
-                )
-                return ok(data)
-            except ValueError as exc:
-                return fail(str(exc), 400)
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return record_result(
+                lambda: record_controller.repair_consistency(payload)
+            )
+
+        def records_compare() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return record_result(lambda: record_controller.compare(payload))
+
+        def records_clear() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return record_result(lambda: record_controller.clear())
+
+        task_handlers = {
+            "tasks": tasks,
+            "task_detail": task_detail,
+            "tasks_export": tasks_export,
+            "tasks_delete": tasks_delete,
+            "tasks_retry": tasks_retry,
+            "cancel_generation_task": cancel_generation_task,
+            "task_status": studio_task_status,
+        }
+        for route in TASK_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=task_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
+
+        config_handlers = {
+            "config_get": config_get,
+            "config_update": config_update,
+            "config_export": config_export,
+            "config_import_preview": config_import_preview,
+            "config_import": config_import,
+        }
+        for route in CONFIG_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=config_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
+
+        proxy_handlers = {
+            "proxies_list": proxies_list,
+            "proxies_test": proxies_test,
+            "proxies_quality": proxies_quality,
+        }
+        for route in PROXY_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=proxy_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
+
+        asset_handlers = {
+            "assets": assets,
+            "assets_tags": assets_tags,
+            "assets_export": assets_export,
+            "assets_import": assets_import,
+            "assets_metadata": assets_metadata,
+            "assets_delete": assets_delete,
+            "asset_studio": asset_studio,
+            "assets_studio": assets_studio,
+        }
+        for route in ASSET_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=asset_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
+
+        record_handlers = {
+            "records": records,
+            "metrics": metrics,
+            "record_detail": record_detail,
+            "record_media_sources": record_media_sources,
+            "record_metadata": record_metadata,
+            "record_reuse": record_reuse,
+            "record_retry": record_retry,
+            "records_consistency": records_consistency,
+            "records_consistency_repair": records_consistency_repair,
+            "records_compare": records_compare,
+            "records_clear": records_clear,
+        }
+        for route in RECORD_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=record_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
 
         @app.route("/api/refresh-image-models", methods=["POST"])
         def refresh_image_models() -> Any:
@@ -759,354 +868,111 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
 
-        @app.route("/api/records", methods=["GET"])
-        def records() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            data = [
-                redact_generation_record(item)
-                for item in self.plugin.get_recent_records(summary=True)
-                if isinstance(item, dict)
-            ]
-            page, meta, error_response = filtered_record_payload(data)
-            if error_response:
-                return error_response
-            return ok(page, **meta)
-
-        @app.route("/api/records/<record_id>", methods=["GET"])
-        def record_detail(record_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            record_id_text = str(record_id or "").strip()
-            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
-                return fail("非法记录 ID", 400)
-            try:
-                return ok(redact_generation_record_for_detail(self.plugin.get_record_for_web(record_id_text)))
-            except Exception as exc:
-                return fail(str(exc), 404)
-
-        @app.route("/api/records/<record_id>/media-sources", methods=["GET"])
-        def record_media_sources(record_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            record_id_text = str(record_id or "").strip()
-            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
-                return fail("非法记录 ID", 400)
-            try:
-                return ok(generation_record_media_sources(self.plugin.get_record_for_web(record_id_text)))
-            except Exception as exc:
-                return fail(str(exc), 404)
-
-        @app.route("/api/records/<record_id>/metadata", methods=["POST"])
-        @app.route("/api/records/<record_id>/asset", methods=["POST"])
-        def record_metadata(record_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            record_id_text = str(record_id or "").strip()
-            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
-                return fail("非法记录 ID", 400)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            try:
-                return ok(self.plugin.update_record_asset_metadata(record_id_text, payload or {}), message="资产标记已保存")
-            except Exception as exc:
-                return fail(str(exc), 404)
-
-        @app.route("/api/records/<record_id>/reuse", methods=["GET", "POST"])
-        def record_reuse(record_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            record_id_text = str(record_id or "").strip()
-            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
-                return fail("非法记录 ID", 400)
-            try:
-                return ok(self.plugin.get_record_reuse_payload(record_id_text))
-            except Exception as exc:
-                return fail(str(exc), 404)
-
-        @app.route("/api/records/<record_id>/retry", methods=["POST"])
-        def record_retry(record_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            record_id_text = str(record_id or "").strip()
-            if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
-                return fail("非法记录 ID", 400)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            retry = getattr(self.plugin, "start_record_retry_task", None)
-            if not callable(retry):
-                return fail("当前版本不支持记录重试", 501)
-            try:
-                feedback = str((payload or {}).get("feedback") or "")
-                strategy = str((payload or {}).get("strategy") or (payload or {}).get("retry_strategy") or "full")
-                try:
-                    task = retry(record_id_text, feedback, strategy)
-                except TypeError:
-                    # Keep compatibility with third-party/test plugin shims
-                    # that still expose the original two-argument method.
-                    task = retry(record_id_text, feedback)
-                return ok(redact_sensitive_data(task), message="已提交重试任务")
-            except ValueError as exc:
-                return fail(str(exc), 400)
-            except Exception as exc:
-                return fail(str(exc), 500)
-
-        @app.route("/api/assets", methods=["GET"])
-        def assets() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            favorite = query_bool(request.args.get("favorite"))
-            pinned = query_bool(request.args.get("pinned"))
-            try:
-                media_type = str(request.args.get("media_type") or "").strip().lower()
-                if media_type not in {"", "image"}:
-                    return fail("当前仅支持图片媒体", 400)
-                raw_success = str(request.args.get("success") or "").strip().lower()
-                success = query_bool(raw_success)
-                if raw_success and success is None:
-                    return fail("success 必须是 true 或 false", 400)
-                raw_limit = str(request.args.get("limit") or "48").strip()
-                raw_offset = str(request.args.get("offset") or "0").strip()
-                try:
-                    limit = int(raw_limit)
-                    offset = int(raw_offset)
-                except ValueError:
-                    return fail("limit 和 offset 必须是整数", 400)
-                if limit < 1:
-                    return fail("limit 不能小于 1", 400)
-                if limit > MAX_ASSET_PAGE_LIMIT:
-                    return fail(f"limit 不能大于 {MAX_ASSET_PAGE_LIMIT}", 400)
-                if offset < 0:
-                    return fail("offset 不能小于 0", 400)
-                sort = str(request.args.get("sort") or "recent").strip().lower()
-                if sort not in {"recent", "oldest", "priority", "pinned", "favorite", "asc"}:
-                    return fail("sort 必须是 recent、oldest、priority、pinned、favorite 或 asc", 400)
-                query = getattr(self.plugin, "query_asset_records", None)
-                if callable(query):
-                    data, meta = query(
-                        favorite=favorite,
-                        pinned=pinned,
-                        tag=str(request.args.get("tag") or ""),
-                        source=str(request.args.get("source") or ""),
-                        model=str(request.args.get("model") or ""),
-                        media_type=media_type,
-                        success=success,
-                        keyword=str(request.args.get("q") or request.args.get("keyword") or ""),
-                        start_time=str(request.args.get("start_time") or ""),
-                        end_time=str(request.args.get("end_time") or ""),
-                        offset=offset,
-                        limit=limit,
-                        sort=sort,
-                    )
-                    return ok(redact_sensitive_data(data), count=len(data), **meta)
-                data = self.plugin.get_asset_records(
-                    favorite=favorite,
-                    pinned=pinned,
-                    tag=str(request.args.get("tag") or ""),
-                )
-                return ok(redact_sensitive_data(data), count=len(data), total=len(data), filtered=len(data), offset=0, limit=len(data))
-            except Exception as exc:
-                return fail(str(exc), 500)
-
-        @app.route("/api/assets/collections", methods=["GET", "POST"])
         def asset_collections() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                if request.method == "POST":
-                    payload, error_response = json_object_payload()
-                    if error_response:
-                        return error_response
-                    return ok(self.plugin.create_asset_collection((payload or {}).get("name", ""), payload or {}), message="资产集合已创建")
-                return ok(self.plugin.list_asset_collections())
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return asset_result(lambda: asset_collection_controller.list())
 
-        @app.route("/api/assets/collections/export", methods=["GET"])
+        def asset_collection_create() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return asset_result(
+                lambda: asset_collection_controller.create(payload)
+            )
+
         def asset_collections_export() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                return ok(self.plugin.export_asset_collections())
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return asset_result(lambda: asset_collection_controller.export())
 
-        @app.route("/api/assets/collections/import", methods=["POST"])
         def asset_collections_import() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                preview = bool((payload or {}).get("preview")) or str((payload or {}).get("mode") or "").lower() == "preview"
-                return ok(self.plugin.import_asset_collections(payload or {}, preview=preview), message="导入预览完成" if preview else "资产集合已导入")
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return asset_result(
+                lambda: asset_collection_controller.import_data(payload)
+            )
 
-        @app.route("/api/assets/collections/<collection_id>", methods=["GET", "POST"])
+        def asset_collection_detail(collection_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return asset_result(
+                lambda: asset_collection_controller.detail(collection_id)
+            )
+
         def asset_collection_update(collection_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            if request.method == "GET":
-                try:
-                    return ok(self.plugin.get_asset_collection(collection_id))
-                except Exception as exc:
-                    return fail(str(exc), 404)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.update_asset_collection(collection_id, payload or {}), message="资产集合已更新")
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return asset_result(
+                lambda: asset_collection_controller.update(collection_id, payload)
+            )
 
-        @app.route("/api/assets/collections/<collection_id>/delete", methods=["POST"])
         def asset_collection_delete(collection_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                return ok(self.plugin.delete_asset_collection(collection_id), message="资产集合已删除")
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return asset_result(lambda: asset_collection_controller.delete(collection_id))
 
-        @app.route("/api/assets/collections/<collection_id>/studio", methods=["POST"])
         def asset_collection_studio(collection_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.asset_collection_studio(collection_id, payload or {}), message="集合已加入画布")
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return asset_result(
+                lambda: asset_collection_controller.studio(collection_id, payload)
+            )
 
-        @app.route("/api/assets/collections/<collection_id>/<action>", methods=["POST"])
-        def asset_collection_records(collection_id: str, action: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            if action not in {"add", "remove"}:
-                return fail("不支持的集合操作", 404)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            try:
-                data = self.plugin.update_asset_collection_records(collection_id, payload or {}, remove=action == "remove")
-                return ok(data, message="集合内容已更新")
-            except Exception as exc:
-                return fail(str(exc), 400)
-
-        @app.route("/api/assets/tags", methods=["GET"])
-        def assets_tags() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            try:
-                getter = getattr(self.plugin, "list_asset_tags", None)
-                if not callable(getter):
-                    return fail("当前版本不支持资产标签列表", 501)
-                return ok(getter())
-            except Exception as exc:
-                return fail(str(exc), 500)
-
-        @app.route("/api/assets/export", methods=["GET"])
-        def assets_export() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            try:
-                exporter = getattr(self.plugin, "export_asset_metadata", None)
-                if not callable(exporter):
-                    return fail("当前版本不支持资产导出", 501)
-                raw_ids = str(request.args.get("ids") or "").strip()
-                ids = [item.strip() for item in raw_ids.split(",") if item.strip()] if raw_ids else None
-                if ids is not None and len(ids) > MAX_RECORD_PAGE_LIMIT:
-                    return fail(f"单次最多导出 {MAX_RECORD_PAGE_LIMIT} 条资产", 400)
-                return ok(exporter(ids))
-            except Exception as exc:
-                return fail(str(exc), 400)
-
-        @app.route("/api/assets/import", methods=["POST"])
-        def assets_import() -> Any:
+        def asset_collection_add(collection_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                importer = getattr(self.plugin, "import_asset_metadata", None)
-                if not callable(importer):
-                    return fail("当前版本不支持资产导入", 501)
-                return ok(importer(payload or {}), message="资产元数据已导入")
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return asset_result(
+                lambda: asset_collection_controller.update_records(
+                    collection_id, payload, remove=False
+                )
+            )
 
-        @app.route("/api/assets/metadata", methods=["POST"])
-        def assets_metadata() -> Any:
+        def asset_collection_remove(collection_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
-            if not isinstance(ids, list):
-                return fail("ids 必须是数组", 400)
-            try:
-                return ok(self.plugin.update_records_asset_metadata(ids, payload or {}), message="批量资产标记已保存")
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return asset_result(
+                lambda: asset_collection_controller.update_records(
+                    collection_id, payload, remove=True
+                )
+            )
 
-        @app.route("/api/assets/delete", methods=["POST"])
-        def assets_delete() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
-            if not isinstance(ids, list):
-                return fail("ids 必须是数组", 400)
-            try:
-                return ok(self.plugin.delete_records(ids), message="资产已删除")
-            except Exception as exc:
-                return fail(str(exc), 400)
-
-        @app.route("/api/assets/<record_id>/studio", methods=["POST"])
-        def asset_studio(record_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            try:
-                return ok(self.plugin.studio_add_asset(record_id, payload or {}), message="资产已加入画布")
-            except Exception as exc:
-                return fail(str(exc), 400)
-
-        @app.route("/api/assets/studio", methods=["POST"])
-        def assets_studio() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
-            if not isinstance(ids, list):
-                return fail("ids 必须是数组", 400)
-            try:
-                return ok(self.plugin.studio_add_assets(ids, payload or {}), message="资产已加入画布")
-            except Exception as exc:
-                return fail(str(exc), 400)
-
-        @app.route("/api/records/clear", methods=["POST"])
-        def records_clear() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            _, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            return ok({"deleted": self.plugin.clear_recent_records()})
+        asset_collection_handlers = {
+            "asset_collections": asset_collections,
+            "asset_collection_create": asset_collection_create,
+            "asset_collections_export": asset_collections_export,
+            "asset_collections_import": asset_collections_import,
+            "asset_collection_detail": asset_collection_detail,
+            "asset_collection_update": asset_collection_update,
+            "asset_collection_delete": asset_collection_delete,
+            "asset_collection_add": asset_collection_add,
+            "asset_collection_remove": asset_collection_remove,
+            "asset_collection_studio": asset_collection_studio,
+        }
+        for route in ASSET_COLLECTION_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=asset_collection_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
 
         @app.route("/api/cache/cleanup", methods=["POST"])
         def cache_cleanup() -> Any:
@@ -1208,298 +1074,295 @@ class FlaskWebServer:
                 "data_url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
             })
 
-        @app.route("/api/studio/sessions", methods=["GET", "POST"])
-        def studio_sessions() -> Any:
+        def studio_sessions_list() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            if request.method == "GET":
-                include_metadata = str(request.args.get("metadata") or "").strip().lower() in {"1", "true", "yes", "all"}
-                return ok(self.plugin.studio_list(include_metadata=include_metadata))
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            try:
-                return ok(self.plugin.studio_create(payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            include_metadata = str(request.args.get("metadata") or "").strip().lower() in {"1", "true", "yes", "all"}
+            return canvas_result(
+                lambda: canvas_controller.studio_list(include_metadata=include_metadata)
+            )
 
-        @app.route("/api/studio/sessions/<session_id>", methods=["GET", "POST"])
-        def studio_session_detail(session_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            if request.method == "GET":
-                try:
-                    return ok(self.plugin.studio_get(session_id))
-                except Exception as exc:
-                    return fail(str(exc), 404)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            try:
-                return ok(self.plugin.studio_update(session_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
-
-        @app.route("/api/studio/sessions/<session_id>/canvas", methods=["GET", "POST"])
-        def studio_session_canvas(session_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            if request.method == "GET":
-                try:
-                    return ok(self.plugin.studio_canvas(session_id))
-                except Exception as exc:
-                    return fail(str(exc), 404)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            try:
-                return ok(self.plugin.studio_canvas_update(session_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
-
-        @app.route("/api/studio/sessions/<session_id>/canvas/nodes", methods=["POST"])
-        def studio_canvas_node_create(session_id: str) -> Any:
+        def studio_sessions_create() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.studio_canvas_node_create(session_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(lambda: canvas_controller.studio_create(payload))
 
-        @app.route("/api/studio/sessions/<session_id>/canvas/nodes/<node_id>", methods=["DELETE", "POST"])
-        def studio_canvas_node_delete(session_id: str, node_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            try:
-                return ok(self.plugin.studio_canvas_node_delete(session_id, node_id))
-            except Exception as exc:
-                return fail(str(exc), 404)
-
-        @app.route("/api/studio/sessions/<session_id>/canvas/nodes/<node_id>/connect", methods=["POST"])
-        def studio_canvas_node_connect(session_id: str, node_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            try:
-                return ok(self.plugin.studio_canvas_node_connect(session_id, node_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc), 400)
-
-        @app.route("/api/studio/sessions/<session_id>/copy", methods=["POST"])
         def studio_session_copy(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            copier = getattr(self.plugin, "studio_copy", None)
-            if not callable(copier):
-                return fail("当前版本不支持复制画布会话", 501)
-            try:
-                return ok(copier(session_id, payload or {}), message="画布会话已复制")
-            except ValueError as exc:
-                return fail(str(exc), 409)
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return canvas_result(
+                lambda: canvas_controller.studio_copy(session_id, payload)
+            )
 
-        @app.route("/api/studio/sessions/<session_id>/delete", methods=["POST"])
+        def studio_session_get(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return canvas_result(lambda: canvas_controller.studio_get(session_id))
+
+        def studio_session_update(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return canvas_result(
+                lambda: canvas_controller.studio_update(session_id, payload)
+            )
+
+        def studio_session_canvas_get(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return canvas_result(lambda: canvas_controller.studio_canvas(session_id))
+
+        def studio_session_canvas_update(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return canvas_result(
+                lambda: canvas_controller.studio_canvas_update(session_id, payload)
+            )
+
+        def studio_canvas_node_create(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return canvas_result(
+                lambda: canvas_controller.studio_canvas_node_create(session_id, payload)
+            )
+
+        def studio_canvas_node_delete(session_id: str, node_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return canvas_result(
+                lambda: canvas_controller.studio_canvas_node_delete(session_id, node_id)
+            )
+
+        def studio_canvas_node_connect(session_id: str, node_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return canvas_result(
+                lambda: canvas_controller.studio_canvas_node_connect(
+                    session_id, node_id, payload
+                )
+            )
+
         def studio_session_delete(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             _, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.studio_delete(session_id))
-            except Exception as exc:
-                return fail(str(exc), 404)
+            return canvas_result(lambda: canvas_controller.studio_delete(session_id))
 
-        @app.route("/api/studio/sessions/<session_id>/slots/<slot_id>", methods=["POST"])
         def studio_session_slot(session_id: str, slot_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.studio_set_slot(session_id, slot_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(
+                lambda: canvas_controller.studio_set_slot(session_id, slot_id, payload)
+            )
 
-        @app.route("/api/studio/sessions/<session_id>/slots", methods=["POST"])
         def studio_session_add_slot(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.studio_add_slot(session_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(
+                lambda: canvas_controller.studio_add_slot(session_id, payload)
+            )
 
-        @app.route("/api/studio/sessions/<session_id>/reorder", methods=["POST"])
         def studio_session_reorder(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.studio_reorder(session_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(
+                lambda: canvas_controller.studio_reorder(session_id, payload)
+            )
 
-        @app.route("/api/studio/sessions/<session_id>/promote", methods=["POST"])
         def studio_session_promote(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.studio_promote(session_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(
+                lambda: canvas_controller.studio_promote(session_id, payload)
+            )
 
-        @app.route("/api/studio/sessions/<session_id>/run", methods=["POST"])
         def studio_session_run(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(redact_sensitive_data(self.plugin.start_studio_run(session_id, payload or {})))
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return canvas_result(
+                lambda: canvas_controller.studio_run(session_id, payload)
+            )
 
-        @app.route("/api/studio/tasks/<task_id>", methods=["GET"])
-        def studio_task_status(task_id: str) -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            return generation_task_status(task_id)
-
-        @app.route("/api/studio/gallery", methods=["GET"])
         def studio_gallery() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             return gallery_payload()
 
-        @app.route("/api/creative-canvas/sessions", methods=["GET", "POST"])
-        def creative_canvas_sessions() -> Any:
+        def creative_canvas_sessions_list() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            if request.method == "GET":
-                include_metadata = str(request.args.get("metadata") or "").strip().lower() in {"1", "true", "yes", "all"}
-                return ok(self.plugin.creative_canvas_list(include_metadata=include_metadata))
+            include_metadata = str(request.args.get("metadata") or "").strip().lower() in {"1", "true", "yes", "all"}
+            return canvas_result(
+                lambda: canvas_controller.creative_canvas_list(
+                    include_metadata=include_metadata
+                )
+            )
+
+        def creative_canvas_sessions_create() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.creative_canvas_create(payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(
+                lambda: canvas_controller.creative_canvas_create(payload)
+            )
 
-        @app.route("/api/creative-canvas/sessions/<session_id>", methods=["GET", "POST"])
-        def creative_canvas_session_detail(session_id: str) -> Any:
+        def creative_canvas_session_get(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            if request.method == "GET":
-                try:
-                    return ok(self.plugin.creative_canvas_get(session_id))
-                except Exception as exc:
-                    return fail(str(exc), 404)
+            return canvas_result(
+                lambda: canvas_controller.creative_canvas_get(session_id)
+            )
+
+        def creative_canvas_session_update(session_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.creative_canvas_update(session_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(
+                lambda: canvas_controller.creative_canvas_update(session_id, payload)
+            )
 
-        @app.route("/api/creative-canvas/sessions/<session_id>/delete", methods=["POST"])
         def creative_canvas_session_delete(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             _, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.creative_canvas_delete(session_id))
-            except Exception as exc:
-                return fail(str(exc), 404)
+            return canvas_result(
+                lambda: canvas_controller.creative_canvas_delete(session_id)
+            )
 
-        @app.route("/api/creative-canvas/sessions/<session_id>/slots/<slot_id>", methods=["POST"])
         def creative_canvas_slot(session_id: str, slot_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.creative_canvas_set_slot(session_id, slot_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(
+                lambda: canvas_controller.creative_canvas_set_slot(
+                    session_id, slot_id, payload
+                )
+            )
 
-        @app.route("/api/creative-canvas/sessions/<session_id>/slots", methods=["POST"])
         def creative_canvas_add_slot(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.creative_canvas_add_slot(session_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(
+                lambda: canvas_controller.creative_canvas_add_slot(session_id, payload)
+            )
 
-        @app.route("/api/creative-canvas/sessions/<session_id>/reorder", methods=["POST"])
         def creative_canvas_reorder(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.creative_canvas_reorder(session_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(
+                lambda: canvas_controller.creative_canvas_reorder(session_id, payload)
+            )
 
-        @app.route("/api/creative-canvas/sessions/<session_id>/promote", methods=["POST"])
         def creative_canvas_promote(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.creative_canvas_promote(session_id, payload or {}))
-            except Exception as exc:
-                return fail(str(exc))
+            return canvas_result(
+                lambda: canvas_controller.creative_canvas_promote(session_id, payload)
+            )
 
-        @app.route("/api/creative-canvas/sessions/<session_id>/run", methods=["POST"])
         def creative_canvas_run(session_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(redact_sensitive_data(self.plugin.start_creative_canvas_run(session_id, payload or {})))
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return canvas_result(
+                lambda: canvas_controller.creative_canvas_run(session_id, payload)
+            )
 
-        @app.route("/api/creative-canvas/gallery", methods=["GET"])
         def creative_canvas_gallery() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             return gallery_payload()
+
+        canvas_handlers = {
+            "studio_sessions_list": studio_sessions_list,
+            "studio_sessions_create": studio_sessions_create,
+            "studio_session_copy": studio_session_copy,
+            "studio_session_get": studio_session_get,
+            "studio_session_update": studio_session_update,
+            "studio_session_canvas_get": studio_session_canvas_get,
+            "studio_session_canvas_update": studio_session_canvas_update,
+            "studio_canvas_node_create": studio_canvas_node_create,
+            "studio_canvas_node_delete": studio_canvas_node_delete,
+            "studio_canvas_node_connect": studio_canvas_node_connect,
+            "studio_session_delete": studio_session_delete,
+            "studio_session_slot": studio_session_slot,
+            "studio_session_add_slot": studio_session_add_slot,
+            "studio_session_reorder": studio_session_reorder,
+            "studio_session_promote": studio_session_promote,
+            "studio_session_run": studio_session_run,
+            "creative_canvas_sessions_list": creative_canvas_sessions_list,
+            "creative_canvas_sessions_create": creative_canvas_sessions_create,
+            "creative_canvas_session_get": creative_canvas_session_get,
+            "creative_canvas_session_update": creative_canvas_session_update,
+            "creative_canvas_session_delete": creative_canvas_session_delete,
+            "creative_canvas_session_slot": creative_canvas_slot,
+            "creative_canvas_session_add_slot": creative_canvas_add_slot,
+            "creative_canvas_session_reorder": creative_canvas_reorder,
+            "creative_canvas_session_promote": creative_canvas_promote,
+            "creative_canvas_session_run": creative_canvas_run,
+            "studio_gallery": studio_gallery,
+            "creative_canvas_gallery": creative_canvas_gallery,
+        }
+        for route in CANVAS_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=canvas_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
 
         @app.route("/api/prompt-presets", methods=["GET"])
         def prompt_presets() -> Any:
@@ -1713,21 +1576,6 @@ class FlaskWebServer:
                 prompt = str((payload or {}).get("prompt") or "")
                 count = int((payload or {}).get("count") or 1)
                 return ok({"variations": self.plugin.build_creative_variations(prompt, count, payload or {})})
-            except Exception as exc:
-                return fail(str(exc), 400)
-
-        @app.route("/api/records/compare", methods=["POST"])
-        def records_compare() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
-            if not isinstance(ids, list):
-                return fail("ids 必须是数组", 400)
-            try:
-                return ok(self.plugin.compare_records_for_web(ids, int((payload or {}).get("limit") or 8)))
             except Exception as exc:
                 return fail(str(exc), 400)
 

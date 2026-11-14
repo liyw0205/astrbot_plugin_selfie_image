@@ -7,50 +7,60 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import inspect
 from typing import Any, Optional
 
 from ..core.constants import PLUGIN_NAME
-from ..generation.generation_records import metric_window_seconds
 from ..core.utils import (
-    generation_record_media_sources,
-    redact_generation_record,
-    redact_generation_record_for_detail,
     redact_sensitive_data,
     redact_sensitive_text,
 )
-from ..features.config_manager import ConfigImportValidationError
 from .web import (
-    MAX_ASSET_PAGE_LIMIT,
     MAX_CACHE_IMAGE_PATH_LENGTH,
-    MAX_RECORD_PAGE_LIMIT,
     MAX_TASK_PAGE_LIMIT,
     MAX_TASK_OFFSET,
-    MAX_WEB_RECORD_ID_LENGTH,
-    MAX_WEB_TASK_ID_LENGTH,
-    WEB_TASK_ID_RE,
     dashboard_page_source_status,
 )
-from .contracts import DASHBOARD_ROUTE_PREFIXES, DASHBOARD_TASK_CANCEL_ROUTES
+from .contracts import (
+    ASSET_COLLECTION_ROUTE_CONTRACTS,
+    ASSET_ROUTE_CONTRACTS,
+    CANVAS_ROUTE_CONTRACTS,
+    CONFIG_ROUTE_CONTRACTS,
+    DASHBOARD_ROUTE_PREFIXES,
+    MAX_WEB_TASK_ID_LENGTH,
+    PROXY_ROUTE_CONTRACTS,
+    RECORD_ROUTE_CONTRACTS,
+    TASK_ROUTE_CONTRACTS,
+    WEB_TASK_ID_RE,
+)
+from .controllers import (
+    AssetCollectionController,
+    AssetController,
+    AssetControllerResult,
+    CanvasController,
+    CanvasControllerResult,
+    ConfigController,
+    ConfigControllerResult,
+    ProxyController,
+    ProxyControllerResult,
+    RecordController,
+    RecordControllerResult,
+    TaskController,
+    TaskControllerResult,
+)
 from .services import (
     CATALOG_PAGE_SIZE,
     MAX_CATALOG_PAGE_SIZE,
     WebContractError,
     build_health_payload,
     catalog_pagination_requested,
-    config_patch_payload,
-    filter_record_page,
     flatten_cos_pool_rows,
     gallery_pagination,
     normalize_task_ids,
     paginate_catalog_rows,
     parse_bounded_int,
-    parse_query_bool,
-    parse_task_query,
     parse_timestamp_query,
-    record_matches_query as shared_record_matches_query,
     render_image_thumbnail,
-    task_status_payload,
-    validate_task_id,
 )
 
 try:
@@ -70,6 +80,90 @@ class SelfieImageDashboardAPI:
 
     def __init__(self, plugin: Any) -> None:
         self.plugin = plugin
+        self._asset_collection_controller = AssetCollectionController(plugin)
+        self._asset_controller = AssetController(plugin)
+        self._canvas_controller = CanvasController(plugin)
+        self._config_controller = ConfigController(plugin)
+        self._proxy_controller = ProxyController(plugin)
+        self._task_controller = TaskController(plugin)
+        self._record_controller = RecordController(plugin)
+
+    def _config_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in CONFIG_ROUTE_CONTRACTS
+        ]
+
+    def _task_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in TASK_ROUTE_CONTRACTS
+        ]
+
+    def _record_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in RECORD_ROUTE_CONTRACTS
+        ]
+
+    def _proxy_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in PROXY_ROUTE_CONTRACTS
+        ]
+
+    def _asset_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in ASSET_ROUTE_CONTRACTS
+        ]
+
+    def _asset_collection_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in ASSET_COLLECTION_ROUTE_CONTRACTS
+        ]
+
+    def _canvas_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in CANVAS_ROUTE_CONTRACTS
+        ]
 
     def register(self) -> None:
         context = getattr(self.plugin, "context", None)
@@ -83,11 +177,8 @@ class SelfieImageDashboardAPI:
             ("health/channels/clear", self.page_channel_health_clear, ["POST"], "Selfie Image clear channel health"),
             ("context", self.page_context_get, ["GET"], "Selfie Image conversation context"),
             ("context/clear", self.page_context_clear, ["POST"], "Selfie Image clear conversation context"),
-            ("config", self.page_config_get, ["GET"], "Selfie Image get config"),
-            ("config", self.page_config_post, ["POST"], "Selfie Image save config"),
-            ("config/export", self.page_config_export, ["GET"], "Selfie Image export config"),
-            ("config/import/preview", self.page_config_import_preview, ["POST"], "Selfie Image preview config import"),
-            ("config/import", self.page_config_import, ["POST"], "Selfie Image import config"),
+            *self._config_route_entries(),
+            *self._proxy_route_entries(),
             ("qq-groups", self.page_qq_groups, ["GET"], "Selfie Image QQ groups"),
             ("qq-groups/config", self.page_qq_groups_config, ["POST"], "Selfie Image QQ group config"),
             ("selfie-reference", self.page_selfie_reference_get, ["GET"], "Selfie Image get reference"),
@@ -103,78 +194,17 @@ class SelfieImageDashboardAPI:
                 ["GET"],
                 "Selfie Image channel test task status",
             ),
-            *[
-                (route, self.page_task_cancel, ["POST"], "Selfie Image cancel task")
-                for route in DASHBOARD_TASK_CANCEL_ROUTES
-            ],
+            *self._task_route_entries(),
             ("refresh-image-models", self.page_refresh_image_models, ["POST"], "Selfie Image refresh models"),
-            ("records", self.page_records, ["GET"], "Selfie Image generation records"),
-            ("records/consistency", self.page_storage_consistency, ["GET"], "Selfie Image storage consistency"),
-            ("records/consistency/repair", self.page_storage_consistency_repair, ["POST"], "Selfie Image repair storage consistency"),
-            ("metrics", self.page_metrics, ["GET"], "Selfie Image generation metrics"),
-            ("tasks", self.page_tasks, ["GET"], "Selfie Image task queue"),
-            ("tasks/export", self.page_tasks_export, ["GET"], "Selfie Image export tasks"),
-            ("tasks/delete", self.page_tasks_delete, ["POST"], "Selfie Image delete tasks"),
-            ("tasks/retry", self.page_tasks_retry, ["POST"], "Selfie Image retry tasks"),
-            ("tasks/<task_id>", self.page_task_detail, ["GET"], "Selfie Image task detail"),
-            ("records/<record_id>/media-sources", self.page_record_media_sources, ["GET"], "Selfie Image record media sources"),
-            ("records/<record_id>", self.page_record_detail, ["GET"], "Selfie Image record detail"),
-            ("records/<record_id>/metadata", self.page_record_metadata, ["POST"], "Selfie Image record metadata"),
-            ("records/<record_id>/asset", self.page_record_metadata, ["POST"], "Selfie Image record asset metadata"),
-            ("records/<record_id>/reuse", self.page_record_reuse, ["GET", "POST"], "Selfie Image reuse record"),
-            ("records/<record_id>/retry", self.page_record_retry, ["POST"], "Selfie Image retry record generation"),
-            ("records/compare", self.page_records_compare, ["POST"], "Selfie Image compare records"),
-            ("assets", self.page_assets, ["GET"], "Selfie Image asset library"),
-            ("assets/collections", self.page_asset_collections, ["GET", "POST"], "Selfie Image asset collections"),
-            ("assets/collections/import", self.page_asset_collections_import, ["POST"], "Selfie Image import asset collections"),
-            ("assets/collections/export", self.page_asset_collections_export, ["GET"], "Selfie Image export asset collections"),
-            ("assets/collections/<collection_id>", self.page_asset_collection_detail, ["GET"], "Selfie Image asset collection detail"),
-            ("assets/collections/<collection_id>", self.page_asset_collection_update, ["POST"], "Selfie Image update asset collection"),
-            ("assets/collections/<collection_id>/delete", self.page_asset_collection_delete, ["POST"], "Selfie Image delete asset collection"),
-            ("assets/collections/<collection_id>/add", self.page_asset_collection_add, ["POST"], "Selfie Image add assets to collection"),
-            ("assets/collections/<collection_id>/remove", self.page_asset_collection_remove, ["POST"], "Selfie Image remove assets from collection"),
-            ("assets/collections/<collection_id>/studio", self.page_asset_collection_studio, ["POST"], "Selfie Image send collection to studio"),
-            ("assets/tags", self.page_assets_tags, ["GET"], "Selfie Image asset tags"),
-            ("assets/export", self.page_assets_export, ["GET"], "Selfie Image asset metadata export"),
-            ("assets/import", self.page_assets_import, ["POST"], "Selfie Image asset metadata import"),
-            ("assets/metadata", self.page_assets_metadata, ["POST"], "Selfie Image batch asset metadata"),
-            ("assets/delete", self.page_assets_delete, ["POST"], "Selfie Image batch asset delete"),
-            ("assets/studio", self.page_assets_studio, ["POST"], "Selfie Image batch add assets to studio"),
-            ("assets/<record_id>/studio", self.page_asset_studio, ["POST"], "Selfie Image add asset to studio"),
-            ("records/clear", self.page_records_clear, ["POST"], "Selfie Image clear records"),
+            *self._record_route_entries(),
+            *self._asset_route_entries(),
+            *self._asset_collection_route_entries(),
+            *self._canvas_route_entries(),
             ("cache/cleanup", self.page_cache_cleanup, ["POST"], "Selfie Image cleanup cache"),
             ("cache-image", self.page_cache_image_file, ["GET"], "Selfie Image cache image download"),
             ("cache-image-thumbnail", self.page_cache_image_thumbnail, ["GET"], "Selfie Image cache image thumbnail"),
             ("cache-image-preview", self.page_cache_image_preview, ["GET"], "Selfie Image cache image preview"),
             ("auth/check", self.page_auth_check, ["POST", "GET"], "Selfie Image dashboard auth check"),
-            ("studio/sessions", self.page_studio_list, ["GET"], "Selfie Image studio list"),
-            ("studio/sessions", self.page_studio_create, ["POST"], "Selfie Image studio create"),
-            ("studio/sessions/<session_id>/copy", self.page_studio_copy, ["POST"], "Selfie Image copy studio session"),
-            ("studio/sessions/<session_id>", self.page_studio_get, ["GET"], "Selfie Image studio get"),
-            ("studio/sessions/<session_id>", self.page_studio_update, ["POST"], "Selfie Image studio update"),
-            ("studio/sessions/<session_id>/canvas", self.page_studio_canvas, ["GET", "POST"], "Selfie Image studio canvas"),
-            ("studio/sessions/<session_id>/canvas/nodes", self.page_studio_canvas_node_create, ["POST"], "Selfie Image studio canvas node create"),
-            ("studio/sessions/<session_id>/canvas/nodes/<node_id>", self.page_studio_canvas_node_delete, ["DELETE", "POST"], "Selfie Image studio canvas node delete"),
-            ("studio/sessions/<session_id>/canvas/nodes/<node_id>/connect", self.page_studio_canvas_node_connect, ["POST"], "Selfie Image studio canvas node connect"),
-            ("studio/sessions/<session_id>/delete", self.page_studio_delete, ["POST"], "Selfie Image studio delete"),
-            ("studio/sessions/<session_id>/slots/<slot_id>", self.page_studio_set_slot, ["POST"], "Selfie Image studio slot"),
-            ("studio/sessions/<session_id>/slots", self.page_studio_add_slot, ["POST"], "Selfie Image studio add slot"),
-            ("studio/sessions/<session_id>/reorder", self.page_studio_reorder, ["POST"], "Selfie Image studio reorder"),
-            ("studio/sessions/<session_id>/promote", self.page_studio_promote, ["POST"], "Selfie Image studio promote"),
-            ("studio/sessions/<session_id>/run", self.page_studio_run, ["POST"], "Selfie Image studio run"),
-            ("studio/tasks/<task_id>", self.page_studio_task, ["GET"], "Selfie Image studio task"),
-            ("studio/gallery", self.page_studio_gallery, ["GET"], "Selfie Image studio gallery from records"),
-            ("creative-canvas/sessions", self.page_creative_canvas_list, ["GET"], "Selfie Image creation canvas list"),
-            ("creative-canvas/sessions", self.page_creative_canvas_create, ["POST"], "Selfie Image creation canvas create"),
-            ("creative-canvas/sessions/<session_id>", self.page_creative_canvas_get, ["GET"], "Selfie Image creation canvas get"),
-            ("creative-canvas/sessions/<session_id>", self.page_creative_canvas_update, ["POST"], "Selfie Image creation canvas update"),
-            ("creative-canvas/sessions/<session_id>/delete", self.page_creative_canvas_delete, ["POST"], "Selfie Image creation canvas delete"),
-            ("creative-canvas/sessions/<session_id>/slots/<slot_id>", self.page_creative_canvas_set_slot, ["POST"], "Selfie Image creation canvas slot"),
-            ("creative-canvas/sessions/<session_id>/slots", self.page_creative_canvas_add_slot, ["POST"], "Selfie Image creation canvas add slot"),
-            ("creative-canvas/sessions/<session_id>/reorder", self.page_creative_canvas_reorder, ["POST"], "Selfie Image creation canvas reorder"),
-            ("creative-canvas/sessions/<session_id>/promote", self.page_creative_canvas_promote, ["POST"], "Selfie Image creation canvas promote"),
-            ("creative-canvas/sessions/<session_id>/run", self.page_creative_canvas_run, ["POST"], "Selfie Image creation canvas run"),
-            ("creative-canvas/gallery", self.page_creative_canvas_gallery, ["GET"], "Selfie Image creation canvas gallery"),
             ("prompt-presets", self.page_prompt_presets, ["GET"], "Selfie Image prompt presets"),
             ("prompt-presets/manage", self.page_prompt_presets_manage, ["GET"], "Selfie Image managed prompt presets"),
             ("prompt-presets/manage/save", self.page_prompt_preset_save, ["POST"], "Selfie Image save prompt preset"),
@@ -189,9 +219,6 @@ class SelfieImageDashboardAPI:
             ("cos-pools/import", self.page_cos_pool_import, ["POST"], "Selfie Image import COS pools"),
             ("creative/template/render", self.page_creative_template_render, ["POST"], "Selfie Image render prompt template"),
             ("creative/variations", self.page_creative_variations, ["POST"], "Selfie Image build prompt variations"),
-            ("proxies", self.page_proxies_list, ["GET"], "Selfie Image proxy list"),
-            ("proxies/test", self.page_proxy_test, ["POST"], "Selfie Image proxy connectivity test"),
-            ("proxies/quality-check", self.page_proxy_quality, ["POST"], "Selfie Image proxy quality test"),
         ]
         for route, handler, methods, desc in routes:
             # Register both bare and /page/ endpoints for Dashboard routing.
@@ -239,43 +266,72 @@ class SelfieImageDashboardAPI:
         except WebContractError as exc:
             return None, self._fail(str(exc), exc.status_code)
 
-    def _record_matches(self, record: Any, source: str, model: str, success: str, keyword: str, media_type: str = "") -> bool:
-        return shared_record_matches_query(record, source, model, success, keyword, media_type)
-
-    @staticmethod
-    def _query_bool(value: str) -> Optional[bool]:
-        return parse_query_bool(value)
-
-    def _filtered_records(self, records: list[Any]) -> tuple[Optional[list], Optional[dict], Any]:
+    def _record_result(self, call: Any) -> Any:
         try:
-            page, meta = filter_record_page(records, request.query)
-            return page, meta, None
-        except WebContractError as exc:
-            return None, None, self._fail(str(exc), exc.status_code)
-
-    def _task_status(self, task_id: str) -> Any:
-        try:
-            return self._ok(
-                task_status_payload(
-                    self.plugin,
-                    task_id,
-                    WEB_TASK_ID_RE,
-                    max_length=MAX_WEB_TASK_ID_LENGTH,
-                )
-            )
+            result: RecordControllerResult = call()
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         except Exception as exc:
-            return self._fail(str(exc), 404)
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
+    def _asset_result(self, call: Any) -> Any:
+        try:
+            result: AssetControllerResult = call()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
+    def _canvas_result(self, call: Any) -> Any:
+        try:
+            result: CanvasControllerResult = call()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
+    def _config_result(self, call: Any) -> Any:
+        try:
+            result: ConfigControllerResult = call()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
+    async def _proxy_result(self, call: Any) -> Any:
+        try:
+            result = call()
+            if inspect.isawaitable(result):
+                result = await result
+            result: ProxyControllerResult
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
+    def _task_result(self, call: Any, *, include_message: bool = False) -> Any:
+        try:
+            result: TaskControllerResult = call()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        extra = {"message": result.message} if include_message else {}
+        return self._ok(result.data, **extra)
+
+    def _task_status(self, task_id: str) -> Any:
+        return self._task_result(lambda: self._task_controller.status(task_id))
 
     def _gallery(self) -> Any:
         limit, offset = gallery_pagination(
             self._query_value("limit"), self._query_value("offset")
         )
-        try:
-            return self._ok(self.plugin.studio_gallery_images(limit=limit, offset=offset))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._canvas_result(
+            lambda: self._canvas_controller.gallery(limit, offset)
+        )
     async def page_auth_check(self) -> Any:
         return self._ok({"authorized": True, "source": "dashboard"})
 
@@ -318,114 +374,61 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
 
     async def page_storage_consistency(self) -> Any:
-        checker = getattr(self.plugin, "inspect_storage_consistency", None)
-        if not callable(checker):
-            return self._fail("当前版本不支持存储一致性检查", 501)
-        try:
-            return self._ok(redact_sensitive_data(checker()))
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._record_result(lambda: self._record_controller.consistency())
 
     async def page_storage_consistency_repair(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        repair = getattr(self.plugin, "repair_storage_consistency", None)
-        if not callable(repair):
-            return self._fail("当前版本不支持存储一致性修复", 501)
-        raw_confirm = (payload or {}).get("confirm", False)
-        confirm = raw_confirm if isinstance(raw_confirm, bool) else str(raw_confirm).strip().lower() in {"1", "true", "yes", "on"}
-        kinds = (payload or {}).get("kinds")
-        try:
-            return self._ok(redact_sensitive_data(repair(confirm=confirm, kinds=kinds)), message="一致性修复完成" if confirm else "已生成修复预览")
-        except Exception as exc:
-            return self._fail(str(exc), 409 if confirm else 400)
+        return self._record_result(
+            lambda: self._record_controller.repair_consistency(payload)
+        )
 
 
     async def page_proxies_list(self) -> Any:
-        try:
-            return self._ok(self.plugin.list_proxies_for_web(mask_password=True))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return await self._proxy_result(lambda: self._proxy_controller.list())
 
     async def page_proxy_test(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            data = await self.plugin.test_proxy_connectivity(
-                proxy_id=str((payload or {}).get("id") or (payload or {}).get("proxy_id") or ""),
-                proxy=(payload or {}).get("proxy") if isinstance((payload or {}).get("proxy"), dict) else payload,
-            )
-            return self._ok(data)
-        except ValueError as exc:
-            return self._fail(str(exc), 400)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return await self._proxy_result(lambda: self._proxy_controller.test(payload))
 
     async def page_proxy_quality(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            data = await self.plugin.test_proxy_quality(
-                proxy_id=str((payload or {}).get("id") or (payload or {}).get("proxy_id") or ""),
-                proxy=(payload or {}).get("proxy") if isinstance((payload or {}).get("proxy"), dict) else payload,
-            )
-            return self._ok(data)
-        except ValueError as exc:
-            return self._fail(str(exc), 400)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return await self._proxy_result(lambda: self._proxy_controller.quality(payload))
 
     async def page_config_get(self) -> Any:
-        return self._ok(self.plugin.get_config_for_web())
+        return self._config_result(lambda: self._config_controller.get())
 
     async def page_config_post(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        assert payload is not None
-        try:
-            patch = config_patch_payload(payload)
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        try:
-            data = self.plugin.update_config_from_web(patch)
-            return self._ok(data)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._config_result(lambda: self._config_controller.update(payload))
 
     async def page_config_export(self) -> Any:
-        raw = self._query_value("mode").strip().lower() in {"raw", "plain", "original"}
-        try:
-            return self._ok(self.plugin.export_config_for_web(raw=raw))
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._config_result(
+            lambda: self._config_controller.export(self._query_value("mode"))
+        )
 
     async def page_config_import_preview(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            patch = config_patch_payload(payload or {})
-            return self._ok(self.plugin.preview_config_import(patch))
-        except (ValueError, ConfigImportValidationError) as exc:
-            return self._fail(str(exc), 400)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._config_result(
+            lambda: self._config_controller.preview_import(payload)
+        )
 
     async def page_config_import(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            patch = config_patch_payload(payload or {})
-            return self._ok(self.plugin.import_config_from_web(patch), message="配置导入成功")
-        except (ValueError, ConfigImportValidationError) as exc:
-            return self._fail(str(exc), 400)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._config_result(
+            lambda: self._config_controller.import_config(payload)
+        )
 
     async def page_qq_groups(self) -> Any:
         try:
@@ -510,26 +513,7 @@ class SelfieImageDashboardAPI:
         return self._task_status(task_id)
 
     async def page_task_cancel(self, task_id: str) -> Any:
-        try:
-            task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        try:
-            task = self.plugin.get_web_image_task(task_id_text)
-            if str(task.get("status") or "") not in {"queued", "running"}:
-                return self._fail("任务已经结束，不能取消", 409)
-            message = self.plugin.cancel_image_task(task_id_text, is_admin=True)
-            updated = self.plugin.get_web_image_task(task_id_text)
-            if str(updated.get("status") or "") not in {"cancelled"} and not updated.get("cancel_requested"):
-                return self._fail("任务已经结束，不能取消", 409)
-            return self._ok(
-                redact_sensitive_data(updated),
-                message=message,
-            )
-        except PermissionError as exc:
-            return self._fail(str(exc), 403)
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._task_result(lambda: self._task_controller.cancel(task_id), include_message=True)
 
     async def page_refresh_image_models(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -543,16 +527,7 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
 
     async def page_records(self) -> Any:
-        data = [
-            redact_generation_record(item)
-            for item in self.plugin.get_recent_records(summary=True)
-            if isinstance(item, dict)
-        ]
-        page, meta, error = self._filtered_records(data if isinstance(data, list) else [])
-        if error:
-            return error
-        assert page is not None and meta is not None
-        return self._ok(page, **meta)
+        return self._record_result(lambda: self._record_controller.list(request.query))
 
     async def page_channel_health_clear(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -563,278 +538,121 @@ class SelfieImageDashboardAPI:
         return self._ok(self.plugin.clear_channel_health(channel), message="渠道健康状态已清除")
 
     async def page_metrics(self) -> Any:
-        try:
-            try:
-                window_seconds = metric_window_seconds(self._query_value("window"))
-            except ValueError as exc:
-                return self._fail(str(exc), 400)
-            if window_seconds is None:
-                metrics_data = self.plugin.get_generation_metrics()
-            else:
-                metrics_data = self.plugin.get_generation_metrics(window_seconds=window_seconds)
-            return self._ok(redact_sensitive_data(metrics_data))
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._record_result(
+            lambda: self._record_controller.metrics(self._query_value("window"))
+        )
 
     async def page_tasks(self) -> Any:
-        try:
-            task_kwargs = parse_task_query(request.query)
-            return self._ok(
-                redact_sensitive_data(
-                    self.plugin.list_web_tasks(**task_kwargs)
-                )
-            )
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._task_result(lambda: self._task_controller.list_tasks(request.query))
 
     async def page_task_detail(self, task_id: str) -> Any:
         """Return the redacted task detail used by the embedded dashboard."""
-        try:
-            task_id_text = validate_task_id(task_id, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        try:
-            getter = getattr(self.plugin, "get_web_task_detail", None)
-            data = getter(task_id_text) if callable(getter) else self.plugin.get_web_image_task(task_id_text)
-            return self._ok(redact_sensitive_data(data))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._task_result(lambda: self._task_controller.detail(task_id))
 
     @staticmethod
     def _task_ids_from_payload(payload: Any) -> tuple[Optional[list[str]], Any]:
         return normalize_task_ids(payload, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
 
     async def page_tasks_export(self) -> Any:
-        raw_ids = self._query_value("ids").strip()
-        ids = [item.strip() for item in raw_ids.split(",") if item.strip()] if raw_ids else None
-        if ids is not None:
-            if len(ids) > 200:
-                return self._fail("包含非法任务 ID", 400)
-            try:
-                for item in ids:
-                    validate_task_id(item, WEB_TASK_ID_RE, max_length=MAX_WEB_TASK_ID_LENGTH)
-            except WebContractError as exc:
-                return self._fail("包含非法任务 ID", exc.status_code)
-        try:
-            exporter = getattr(self.plugin, "export_web_tasks", None)
-            if not callable(exporter):
-                return self._fail("当前版本不支持任务导出", 501)
-            return self._ok(exporter(ids))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._task_result(lambda: self._task_controller.export(self._query_value("ids")))
 
     async def page_tasks_delete(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        ids, validation_error = self._task_ids_from_payload(payload)
-        if validation_error:
-            return self._fail(validation_error, 400)
-        try:
-            deleter = getattr(self.plugin, "delete_web_tasks", None)
-            if not callable(deleter):
-                return self._fail("当前版本不支持任务删除", 501)
-            return self._ok(deleter(ids or []), message="任务记录已删除")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._task_result(lambda: self._task_controller.delete(payload), include_message=True)
 
     async def page_tasks_retry(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        ids, validation_error = self._task_ids_from_payload(payload)
-        if validation_error:
-            return self._fail(validation_error, 400)
-        try:
-            retrier = getattr(self.plugin, "retry_web_tasks", None)
-            if not callable(retrier):
-                return self._fail("当前版本不支持任务重试", 501)
-            feedback = str((payload or {}).get("feedback") or "").strip()[:2000]
-            strategy = str((payload or {}).get("strategy") or (payload or {}).get("retry_strategy") or "full")
-            try:
-                result = retrier(ids or [], feedback, strategy)
-            except TypeError:
-                result = retrier(ids or [], feedback)
-            return self._ok(result, message="已提交任务重试")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._task_result(lambda: self._task_controller.retry(payload), include_message=True)
 
     async def page_record_detail(self, record_id: str) -> Any:
-        record_id_text = str(record_id or "").strip()
-        if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
-            return self._fail("非法记录 ID", 400)
-        try:
-            return self._ok(redact_generation_record_for_detail(self.plugin.get_record_for_web(record_id_text)))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._record_result(lambda: self._record_controller.detail(record_id))
 
     async def page_record_media_sources(self, record_id: str) -> Any:
-        record_id_text = str(record_id or "").strip()
-        if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
-            return self._fail("非法记录 ID", 400)
-        try:
-            return self._ok(generation_record_media_sources(self.plugin.get_record_for_web(record_id_text)))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._record_result(lambda: self._record_controller.media_sources(record_id))
 
     async def page_record_metadata(self, record_id: str) -> Any:
-        record_id_text = str(record_id or "").strip()
-        if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
-            return self._fail("非法记录 ID", 400)
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.update_record_asset_metadata(record_id_text, payload or {}), message="资产标记已保存")
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._record_result(
+            lambda: self._record_controller.update_metadata(record_id, payload)
+        )
 
     async def page_record_reuse(self, record_id: str) -> Any:
-        record_id_text = str(record_id or "").strip()
-        if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
-            return self._fail("非法记录 ID", 400)
-        try:
-            return self._ok(self.plugin.get_record_reuse_payload(record_id_text))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._record_result(lambda: self._record_controller.reuse(record_id))
 
     async def page_record_retry(self, record_id: str) -> Any:
-        record_id_text = str(record_id or "").strip()
-        if not record_id_text or len(record_id_text) > MAX_WEB_RECORD_ID_LENGTH:
-            return self._fail("非法记录 ID", 400)
         payload, error = await self._json_object_payload()
         if error:
             return error
-        retry = getattr(self.plugin, "start_record_retry_task", None)
-        if not callable(retry):
-            return self._fail("当前版本不支持记录重试", 501)
-        try:
-            feedback = str((payload or {}).get("feedback") or "")
-            strategy = str((payload or {}).get("strategy") or (payload or {}).get("retry_strategy") or "full")
-            try:
-                task = retry(record_id_text, feedback, strategy)
-            except TypeError:
-                task = retry(record_id_text, feedback)
-            return self._ok(redact_sensitive_data(task), message="已提交重试任务")
-        except ValueError as exc:
-            return self._fail(str(exc), 400)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._record_result(
+            lambda: self._record_controller.retry(record_id, payload)
+        )
 
     async def page_records_compare(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
-        if not isinstance(ids, list):
-            return self._fail("ids 必须是数组", 400)
-        try:
-            data = self.plugin.compare_records_for_web(ids, int((payload or {}).get("limit") or 8))
-            return self._ok(data)
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._record_result(lambda: self._record_controller.compare(payload))
 
     async def page_assets(self) -> Any:
-        favorite = self._query_bool(self._query_value("favorite"))
-        pinned = self._query_bool(self._query_value("pinned"))
-        try:
-            media_type = self._query_value("media_type").strip().lower()
-            if media_type not in {"", "image"}:
-                return self._fail("当前仅支持图片媒体", 400)
-            raw_success = self._query_value("success").strip().lower()
-            success = self._query_bool(raw_success)
-            if raw_success and success is None:
-                return self._fail("success 必须是 true 或 false", 400)
-            offset, error = self._int_query("offset", 0, 0, 10000)
-            if error:
-                return error
-            limit, error = self._int_query("limit", 48, 1, MAX_ASSET_PAGE_LIMIT)
-            if error:
-                return error
-            sort = self._query_value("sort", "recent").strip().lower()
-            if sort not in {"recent", "oldest", "priority", "pinned", "favorite", "asc"}:
-                return self._fail("sort 必须是 recent、oldest、priority、pinned、favorite 或 asc", 400)
-            query = getattr(self.plugin, "query_asset_records", None)
-            if callable(query):
-                data, meta = query(
-                    favorite=favorite,
-                    pinned=pinned,
-                    tag=self._query_value("tag"),
-                    source=self._query_value("source"),
-                    model=self._query_value("model"),
-                    media_type=media_type,
-                    success=success,
-                    keyword=self._query_value("q") or self._query_value("keyword"),
-                    start_time=self._query_value("start_time"),
-                    end_time=self._query_value("end_time"),
-                    offset=int(offset or 0),
-                    limit=int(limit or 48),
-                    sort=sort,
-                )
-                return self._ok(redact_sensitive_data(data), count=len(data), **meta)
-            data = self.plugin.get_asset_records(favorite=favorite, pinned=pinned, tag=self._query_value("tag"))
-            return self._ok(redact_sensitive_data(data), count=len(data), total=len(data), filtered=len(data), offset=0, limit=len(data))
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._asset_result(lambda: self._asset_controller.list(request.query))
 
     async def page_asset_collections(self) -> Any:
-        try:
-            if getattr(request, "method", "GET") == "POST":
-                payload, error = await self._json_object_payload()
-                if error:
-                    return error
-                return self._ok(self.plugin.create_asset_collection((payload or {}).get("name", ""), payload or {}), message="资产集合已创建")
-            return self._ok(self.plugin.list_asset_collections())
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(lambda: self._asset_collection_controller.list())
+
+    async def page_asset_collection_create(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        return self._asset_result(
+            lambda: self._asset_collection_controller.create(payload)
+        )
 
     async def page_asset_collections_export(self) -> Any:
-        try:
-            return self._ok(self.plugin.export_asset_collections())
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._asset_result(
+            lambda: self._asset_collection_controller.export()
+        )
 
     async def page_asset_collections_import(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            preview = str((payload or {}).get("mode") or "").lower() == "preview" or bool((payload or {}).get("preview"))
-            return self._ok(self.plugin.import_asset_collections(payload or {}, preview=preview), message="导入预览完成" if preview else "资产集合已导入")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(
+            lambda: self._asset_collection_controller.import_data(payload)
+        )
 
     async def page_asset_collection_update(self, collection_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.update_asset_collection(collection_id, payload or {}), message="资产集合已更新")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(
+            lambda: self._asset_collection_controller.update(collection_id, payload)
+        )
 
     async def page_asset_collection_detail(self, collection_id: str) -> Any:
-        try:
-            return self._ok(self.plugin.get_asset_collection(collection_id))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._asset_result(
+            lambda: self._asset_collection_controller.detail(collection_id)
+        )
 
     async def page_asset_collection_delete(self, collection_id: str) -> Any:
-        try:
-            return self._ok(self.plugin.delete_asset_collection(collection_id), message="资产集合已删除")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(
+            lambda: self._asset_collection_controller.delete(collection_id)
+        )
 
     async def _asset_collection_records(self, collection_id: str, *, remove: bool) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.update_asset_collection_records(collection_id, payload or {}, remove=remove), message="集合内容已更新")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(
+            lambda: self._asset_collection_controller.update_records(
+                collection_id, payload, remove=remove
+            )
+        )
 
     async def page_asset_collection_add(self, collection_id: str) -> Any:
         return await self._asset_collection_records(collection_id, remove=False)
@@ -846,95 +664,61 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.asset_collection_studio(collection_id, payload or {}), message="集合已加入画布")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(
+            lambda: self._asset_collection_controller.studio(collection_id, payload)
+        )
 
     async def page_assets_metadata(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
-        if not isinstance(ids, list):
-            return self._fail("ids 必须是数组", 400)
-        try:
-            return self._ok(self.plugin.update_records_asset_metadata(ids, payload or {}), message="批量资产标记已保存")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(
+            lambda: self._asset_controller.update_metadata(payload)
+        )
 
     async def page_assets_tags(self) -> Any:
-        try:
-            getter = getattr(self.plugin, "list_asset_tags", None)
-            if not callable(getter):
-                return self._fail("当前版本不支持资产标签列表", 501)
-            return self._ok(getter())
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._asset_result(lambda: self._asset_controller.tags())
 
     async def page_assets_export(self) -> Any:
-        try:
-            exporter = getattr(self.plugin, "export_asset_metadata", None)
-            if not callable(exporter):
-                return self._fail("当前版本不支持资产导出", 501)
-            raw_ids = self._query_value("ids").strip()
-            ids = [item.strip() for item in raw_ids.split(",") if item.strip()] if raw_ids else None
-            if ids is not None and len(ids) > MAX_RECORD_PAGE_LIMIT:
-                return self._fail(f"单次最多导出 {MAX_RECORD_PAGE_LIMIT} 条资产", 400)
-            return self._ok(exporter(ids))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(
+            lambda: self._asset_controller.export(self._query_value("ids"))
+        )
 
     async def page_assets_import(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            importer = getattr(self.plugin, "import_asset_metadata", None)
-            if not callable(importer):
-                return self._fail("当前版本不支持资产导入", 501)
-            return self._ok(importer(payload or {}), message="资产元数据已导入")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(
+            lambda: self._asset_controller.import_metadata(payload)
+        )
 
     async def page_assets_delete(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
-        if not isinstance(ids, list):
-            return self._fail("ids 必须是数组", 400)
-        try:
-            return self._ok(self.plugin.delete_records(ids), message="资产已删除")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(lambda: self._asset_controller.delete(payload))
 
     async def page_asset_studio(self, record_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.studio_add_asset(record_id, payload or {}), message="资产已加入画布")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(
+            lambda: self._asset_controller.studio_one(record_id, payload)
+        )
 
     async def page_assets_studio(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        ids = (payload or {}).get("ids", (payload or {}).get("record_ids"))
-        if not isinstance(ids, list):
-            return self._fail("ids 必须是数组", 400)
-        try:
-            return self._ok(self.plugin.studio_add_assets(ids, payload or {}), message="资产已加入画布")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._asset_result(
+            lambda: self._asset_controller.studio_many(payload)
+        )
 
     async def page_records_clear(self) -> Any:
-        payload, error = await self._json_object_payload()
+        _, error = await self._json_object_payload()
         if error:
             return error
-        return self._ok({"deleted": self.plugin.clear_recent_records()})
+        return self._record_result(lambda: self._record_controller.clear())
 
     async def page_cache_cleanup(self) -> Any:
         payload, error = await self._json_object_payload()
@@ -1032,134 +816,122 @@ class SelfieImageDashboardAPI:
         )
 
     async def page_studio_list(self) -> Any:
-        return self._ok(self.plugin.studio_list(include_metadata=False))
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_list(include_metadata=False)
+        )
 
     async def page_studio_create(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.studio_create(payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_create(payload)
+        )
 
     async def page_studio_copy(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        copier = getattr(self.plugin, "studio_copy", None)
-        if not callable(copier):
-            return self._fail("当前版本不支持复制画布会话", 501)
-        try:
-            return self._ok(copier(session_id, payload or {}), message="画布会话已复制")
-        except ValueError as exc:
-            return self._fail(str(exc), 409)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_copy(session_id, payload)
+        )
 
     async def page_studio_get(self, session_id: str) -> Any:
-        try:
-            return self._ok(self.plugin.studio_get(session_id))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_get(session_id)
+        )
 
     async def page_studio_update(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.studio_update(session_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_update(session_id, payload)
+        )
 
-    async def page_studio_canvas(self, session_id: str) -> Any:
-        try:
-            if getattr(request, "method", "GET") == "GET":
-                return self._ok(self.plugin.studio_canvas(session_id))
-            payload, error = await self._json_object_payload()
-            if error:
-                return error
-            return self._ok(self.plugin.studio_canvas_update(session_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc), 404 if getattr(request, "method", "GET") == "GET" else 400)
+    async def page_studio_canvas_get(self, session_id: str) -> Any:
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_canvas(session_id)
+        )
+
+    async def page_studio_canvas_update(self, session_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_canvas_update(session_id, payload)
+        )
 
     async def page_studio_canvas_node_create(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.studio_canvas_node_create(session_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_canvas_node_create(session_id, payload)
+        )
 
     async def page_studio_canvas_node_delete(self, session_id: str, node_id: str) -> Any:
-        try:
-            return self._ok(self.plugin.studio_canvas_node_delete(session_id, node_id))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_canvas_node_delete(session_id, node_id)
+        )
 
     async def page_studio_canvas_node_connect(self, session_id: str, node_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.studio_canvas_node_connect(session_id, node_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_canvas_node_connect(
+                session_id, node_id, payload
+            )
+        )
 
     async def page_studio_delete(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.studio_delete(session_id))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_delete(session_id)
+        )
 
     async def page_studio_set_slot(self, session_id: str, slot_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.studio_set_slot(session_id, slot_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_set_slot(session_id, slot_id, payload)
+        )
 
     async def page_studio_add_slot(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.studio_add_slot(session_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_add_slot(session_id, payload)
+        )
 
     async def page_studio_reorder(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.studio_reorder(session_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_reorder(session_id, payload)
+        )
 
     async def page_studio_promote(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.studio_promote(session_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_promote(session_id, payload)
+        )
 
     async def page_studio_run(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(redact_sensitive_data(self.plugin.start_studio_run(session_id, payload or {})))
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._canvas_result(
+            lambda: self._canvas_controller.studio_run(session_id, payload)
+        )
 
     async def page_studio_task(self, task_id: str) -> Any:
         return self._task_status(task_id)
@@ -1168,88 +940,80 @@ class SelfieImageDashboardAPI:
         return self._gallery()
 
     async def page_creative_canvas_list(self) -> Any:
-        try:
-            return self._ok(self.plugin.creative_canvas_list(include_metadata=False))
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._canvas_result(
+            lambda: self._canvas_controller.creative_canvas_list(include_metadata=False)
+        )
 
     async def page_creative_canvas_create(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.creative_canvas_create(payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.creative_canvas_create(payload)
+        )
 
     async def page_creative_canvas_get(self, session_id: str) -> Any:
-        try:
-            return self._ok(self.plugin.creative_canvas_get(session_id))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._canvas_result(
+            lambda: self._canvas_controller.creative_canvas_get(session_id)
+        )
 
     async def page_creative_canvas_update(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.creative_canvas_update(session_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.creative_canvas_update(session_id, payload)
+        )
 
     async def page_creative_canvas_delete(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.creative_canvas_delete(session_id))
-        except Exception as exc:
-            return self._fail(str(exc), 404)
+        return self._canvas_result(
+            lambda: self._canvas_controller.creative_canvas_delete(session_id)
+        )
 
     async def page_creative_canvas_set_slot(self, session_id: str, slot_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.creative_canvas_set_slot(session_id, slot_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.creative_canvas_set_slot(
+                session_id, slot_id, payload
+            )
+        )
 
     async def page_creative_canvas_add_slot(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.creative_canvas_add_slot(session_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.creative_canvas_add_slot(session_id, payload)
+        )
 
     async def page_creative_canvas_reorder(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.creative_canvas_reorder(session_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.creative_canvas_reorder(session_id, payload)
+        )
 
     async def page_creative_canvas_promote(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.creative_canvas_promote(session_id, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc))
+        return self._canvas_result(
+            lambda: self._canvas_controller.creative_canvas_promote(session_id, payload)
+        )
 
     async def page_creative_canvas_run(self, session_id: str) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(redact_sensitive_data(self.plugin.start_creative_canvas_run(session_id, payload or {})))
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._canvas_result(
+            lambda: self._canvas_controller.creative_canvas_run(session_id, payload)
+        )
 
     async def page_creative_canvas_gallery(self) -> Any:
         return self._gallery()

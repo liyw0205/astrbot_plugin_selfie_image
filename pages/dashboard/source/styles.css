@@ -189,6 +189,11 @@
     .metrics-recommendation { padding: 7px 9px; border-left: 2px solid var(--primary); border-radius: 3px; background: var(--panel-soft); color: var(--text-secondary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
     .metrics-error { margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--text-secondary); overflow-wrap: anywhere; }
     .metrics-launcher-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin: 12px 0 8px; }
+    .metrics-alert-settings { margin-top: 12px; padding: 8px 2px 12px; border-top: 1px solid var(--line); }
+    .metrics-alert-settings .grid4 { gap: 8px 12px; }
+    .metrics-alert-toggle { display: flex; align-items: end; min-width: 0; }
+    .metrics-alert-toggle label { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; margin: 0; }
+    .metrics-alert-toggle input { width: auto; margin: 0; }
     .metrics-launcher-header strong { font-size: 14px; }
     .metrics-launcher-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
     .metrics-launcher { display: grid; align-content: center; justify-items: start; gap: 4px; min-width: 0; min-height: 62px; padding: 9px 11px; text-align: left; }

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 from dataclasses import dataclass, field
+from itertools import count
+import threading
 from typing import Any, Dict, Iterable, List, Optional
 
 from .constants import PROVIDER_TYPES
@@ -57,6 +60,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max_concurrent_tasks": 5,
         "global_timeout": 280,
         "max_image_size_mb": 10,
+        # Geometry limits protect Pillow and downstream image processors from
+        # oversized-but-compressed or unexpectedly animated inputs.
+        "max_image_dimension": 16_384,
+        "max_image_pixels": 64 * 1024 * 1024,
+        "max_animation_frames": 8,
         # Cache headroom must cover the retained record window; otherwise the
         # cache evicts files that records still point at ("已被清理").
         "cache_limit_mb": 2048,
@@ -126,12 +134,40 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "enabled_image_model_priority": [],
     "enabled_audit_model_priority": [],
     "group_chat_configs": {},
+    "monitoring": {
+        "generation_alerts": {
+            "enabled": True,
+            "record_success_rate_below": 0.8,
+            "record_success_min_records": 5,
+            "consecutive_failure_count_at_least": 3,
+            "channel_success_rate_below": 0.8,
+            "channel_min_attempts": 3,
+            "rate_limit_rate_at_least": 0.3,
+            "rate_limit_min_attempts": 3,
+            "rate_limit_min_failures": 2,
+            "retry_rate_at_least": 0.5,
+            "retry_min_records": 3,
+            "generation_p95_seconds_at_least": 60,
+            "generation_min_records": 3,
+            "cache_orphan_growth_at_least": 10,
+        },
+    },
     # sequence: priority list only, or enabled order when empty; random: one from priority; fixed: priority 1 or enabled 1.
     "image_model_call_mode": "sequence",
 }
 
 
 CONFIG_SCHEMA_VERSION = 2
+
+
+_CONFIG_REVISION_COUNTER = count(1)
+_CONFIG_REVISION_LOCK = threading.Lock()
+
+
+def _next_config_revision() -> int:
+    """Return a process-local monotonic revision for normalized config objects."""
+    with _CONFIG_REVISION_LOCK:
+        return next(_CONFIG_REVISION_COUNTER)
 
 
 def migrate_config(data: Any) -> Dict[str, Any]:
@@ -273,6 +309,9 @@ class AICatConfig:
     image_max_concurrent_tasks: int
     image_global_timeout: int
     image_max_image_size_mb: int
+    image_max_image_dimension: int
+    image_max_image_pixels: int
+    image_max_animation_frames: int
     image_cache_limit_mb: int
     image_cache_limit_count: int
     image_record_keep_limit: int
@@ -311,14 +350,33 @@ class AICatConfig:
     enabled_image_model_priority: List[str]
     enabled_audit_model_priority: List[str]
     image_model_call_mode: str
+    # Every normalized config object gets a fresh revision.  Exclude it from
+    # dataclass equality so callers comparing normalized config values retain
+    # the historical value-based behavior.
+    config_revision: int = field(default_factory=_next_config_revision, compare=False)
     _target_cache: Dict[str, List[ImageModelTarget]] = field(default_factory=dict, init=False, repr=False)
 
-    def _target_cache_key(self, kind: str) -> str:
+    def _target_cache_key(
+        self,
+        kind: str,
+        *,
+        mode: str = "",
+        fixed_model: str = "",
+        respect_global_priority: Optional[bool] = None,
+        priority: Optional[Iterable[str]] = None,
+    ) -> str:
+        """Build a stable key without serializing the complete config tree."""
         return json.dumps(
-            {"kind": kind, "raw": self.raw},
+            {
+                "kind": kind,
+                "revision": self.config_revision,
+                "mode": mode,
+                "fixed_model": fixed_model,
+                "respect_global_priority": respect_global_priority,
+                "priority": [str(item) for item in (priority or [])],
+            },
             ensure_ascii=False,
             sort_keys=True,
-            default=str,
             separators=(",", ":"),
         )
 
@@ -359,6 +417,10 @@ class AICatConfig:
         image_raw.pop("video_prompt_en_template", None)
         image_raw.pop("videoPromptEnTemplate", None)
         permission = ensure_dict(raw, "permission")
+        monitoring = ensure_dict(raw, "monitoring")
+        monitoring["generation_alerts"] = normalize_generation_alert_settings(
+            monitoring.get("generation_alerts")
+        )
         group_chat_configs = normalize_group_chat_configs(raw.get("group_chat_configs"))
         raw["group_chat_configs"] = group_chat_configs
 
@@ -465,6 +527,9 @@ class AICatConfig:
             image_max_concurrent_tasks=normalize_concurrent_count(image.get("max_concurrent_tasks")),
             image_global_timeout=to_int(image.get("global_timeout"), 180, minimum=10, maximum=900),
             image_max_image_size_mb=to_int(image.get("max_image_size_mb"), 10, minimum=1, maximum=100),
+            image_max_image_dimension=to_int(image.get("max_image_dimension"), 16_384, minimum=256, maximum=65_536),
+            image_max_image_pixels=to_int(image.get("max_image_pixels"), 64 * 1024 * 1024, minimum=1_048_576, maximum=512 * 1024 * 1024),
+            image_max_animation_frames=to_int(image.get("max_animation_frames"), 8, minimum=1, maximum=64),
             image_cache_limit_mb=to_int(image.get("cache_limit_mb"), 2048, minimum=10, maximum=102400),
             image_cache_limit_count=to_int(image.get("cache_limit_count"), 1000, minimum=10, maximum=10000),
             image_record_keep_limit=to_int(image.get("record_keep_limit"), 1000, minimum=10, maximum=10000),
@@ -597,7 +662,13 @@ class AICatConfig:
         mode = str(mode or "sequence").strip().lower()
         if mode not in {"sequence", "random", "fixed"}:
             mode = "sequence"
-        key = self._target_cache_key(f"image:{mode}:{fixed_model}:{respect_global_priority}")
+        key = self._target_cache_key(
+            "image",
+            mode=mode,
+            fixed_model=fixed_model,
+            respect_global_priority=respect_global_priority,
+            priority=self.enabled_image_model_priority if respect_global_priority else [],
+        )
         cached = self._cached_targets(key) if mode != "random" else None
         if cached is not None:
             return cached
@@ -653,7 +724,7 @@ class AICatConfig:
         return self._store_targets(key, self._bind_download_proxies(targets))
 
     def get_audit_targets(self) -> List[ImageModelTarget]:
-        key = self._target_cache_key("audit")
+        key = self._target_cache_key("audit", priority=self.enabled_audit_model_priority)
         cached = self._cached_targets(key)
         if cached is not None:
             return cached
@@ -1338,6 +1409,49 @@ def to_int(value: Any, default: int, minimum: Optional[int] = None, maximum: Opt
         result = max(minimum, result)
     if maximum is not None:
         result = min(maximum, result)
+    return result
+
+
+def normalize_generation_alert_settings(value: Any) -> Dict[str, Any]:
+    """Clamp persisted generation alert settings and ignore unknown fields."""
+    source = value if isinstance(value, dict) else {}
+    defaults = DEFAULT_CONFIG["monitoring"]["generation_alerts"]
+    result: Dict[str, Any] = {"enabled": to_bool(source.get("enabled"), defaults["enabled"])}
+    for key in (
+        "record_success_rate_below",
+        "channel_success_rate_below",
+        "rate_limit_rate_at_least",
+        "retry_rate_at_least",
+    ):
+        raw = source.get(key, defaults[key])
+        try:
+            parsed = float(raw) if not isinstance(raw, bool) else float("nan")
+        except (TypeError, ValueError, OverflowError):
+            parsed = float("nan")
+        if not math.isfinite(parsed):
+            parsed = float(defaults[key])
+        result[key] = min(1.0, max(0.0, parsed))
+    for key in (
+        "channel_min_attempts",
+        "rate_limit_min_attempts",
+        "rate_limit_min_failures",
+        "retry_min_records",
+        "generation_min_records",
+        "record_success_min_records",
+        "consecutive_failure_count_at_least",
+        "cache_orphan_growth_at_least",
+    ):
+        result[key] = to_int(source.get(key), int(defaults[key]), minimum=1, maximum=100_000)
+    raw_p95 = source.get(
+        "generation_p95_seconds_at_least", defaults["generation_p95_seconds_at_least"]
+    )
+    try:
+        parsed_p95 = float(raw_p95) if not isinstance(raw_p95, bool) else float("nan")
+    except (TypeError, ValueError, OverflowError):
+        parsed_p95 = float("nan")
+    if not math.isfinite(parsed_p95):
+        parsed_p95 = float(defaults["generation_p95_seconds_at_least"])
+    result["generation_p95_seconds_at_least"] = min(86_400.0, max(0.0, parsed_p95))
     return result
 
 

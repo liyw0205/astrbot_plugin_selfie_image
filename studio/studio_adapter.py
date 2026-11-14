@@ -27,6 +27,9 @@ from .studio import (
 from ..core.utils import (
     data_url_to_bytes,
     detect_mime_by_bytes,
+    image_geometry_error,
+    image_validation_limits,
+    new_trace_id,
     normalize_image_mime,
     redact_sensitive_data,
     redact_sensitive_text,
@@ -453,6 +456,22 @@ class StudioMixin:
             info = self.get_cached_image_info(from_path)
             if not info.get("exists") or info.get("is_image") is False:
                 raise ValueError("图片不存在或不是有效图片")
+            max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+            max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
+            try:
+                with open(str(info.get("absolute_path") or ""), "rb") as handle:
+                    data = handle.read(max_bytes + 1)
+            except OSError as exc:
+                raise ValueError("图片无法读取") from exc
+            if len(data) > max_bytes:
+                raise ValueError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
+            if image_geometry_error(
+                data,
+                max_dimension=max_dimension,
+                max_pixels=max_pixels,
+                max_frames=max_frames,
+            ):
+                raise ValueError("参考图尺寸、像素或动画帧数超过限制")
             return canvas_store.set_slot_image(
                 session_id,
                 slot_id,
@@ -463,9 +482,15 @@ class StudioMixin:
                 source_record_id=str(payload.get("source_record_id") or "").strip(),
             )
         raw = payload.get("image") or payload.get("data_url") or ""
-        data, mime = data_url_to_bytes(str(raw or ""))
+        max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
+        data, mime = data_url_to_bytes(
+            str(raw or ""),
+            max_dimension=max_dimension,
+            max_pixels=max_pixels,
+            max_frames=max_frames,
+        )
         if not data:
-            raise ValueError("请提供图片 data_url 或 image_path")
+            raise ValueError("请提供图片 data_url 或 image_path，且图片尺寸/动画帧数不能超限")
         max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
         if len(data) > max_bytes:
             raise ValueError(f"参考图过大，最大允许 {self.config.image_max_image_size_mb}MB")
@@ -849,9 +874,11 @@ class StudioMixin:
                 raise RuntimeError("插件正在卸载，无法提交新任务")
             self._web_task_seq += 1
             task_id = f"web-studio-{int(time.time() * 1000)}-{self._web_task_seq}"
+            trace_id = new_trace_id("gen")
             now = time.time()
             self._web_tasks[task_id] = {
                 "task_id": task_id,
+                "trace_id": trace_id,
                 "status": "queued",
                 "success": None,
                 "error": "",

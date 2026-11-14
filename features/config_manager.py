@@ -572,6 +572,7 @@ class ConfigurationMixin:
         normalized.raw.setdefault("image", {})["max_concurrent_tasks"] = normalized.image_max_concurrent_tasks
         for key in ("proxies", "image_channels", "audit_channels"):
             source[key] = copy.deepcopy(normalized.raw[key])
+        source["monitoring"] = copy.deepcopy(normalized.raw["monitoring"])
         for key in ("image_channels", "audit_channels"):
             channels = getattr(normalized, key)
             names = [channel.name for channel in channels]
@@ -599,6 +600,7 @@ class ConfigurationMixin:
         self.config = AICatConfig.from_dict(self.raw_config)
         for key in ("proxies", "image_channels", "audit_channels"):
             self.raw_config[key] = copy.deepcopy(self.config.raw[key])
+        self.raw_config["monitoring"] = copy.deepcopy(self.config.raw["monitoring"])
         self.raw_config["group_chat_configs"] = copy.deepcopy(self.config.group_chat_configs)
         self.raw_config.setdefault("image", {})["max_concurrent_tasks"] = self.config.image_max_concurrent_tasks
         scheduler = getattr(self, "_image_scheduler", None)

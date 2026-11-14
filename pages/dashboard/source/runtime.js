@@ -407,6 +407,9 @@ Source prompt:
       img.max_concurrent_tasks = Number.isInteger(configuredConcurrent) && configuredConcurrent >= 1 && configuredConcurrent <= 5 ? configuredConcurrent : 5;
       img.global_timeout ??= 280;
       img.max_image_size_mb ??= 10;
+      img.max_image_dimension ??= 16384;
+      img.max_image_pixels ??= 64 * 1024 * 1024;
+      img.max_animation_frames ??= 8;
       img.cache_limit_mb ??= 200;
       img.cache_limit_count ??= 100;
       img.max_batch_count ??= 10;
@@ -462,6 +465,9 @@ Source prompt:
         $('maxConcurrent').value = img.max_concurrent_tasks;
         $('globalTimeout').value = img.global_timeout;
         $('maxImageSize').value = img.max_image_size_mb;
+        if ($('maxImageDimension')) $('maxImageDimension').value = img.max_image_dimension;
+        if ($('maxImagePixels')) $('maxImagePixels').value = img.max_image_pixels;
+        if ($('maxAnimationFrames')) $('maxAnimationFrames').value = img.max_animation_frames;
         $('cacheLimitMB').value = img.cache_limit_mb;
         $('cacheLimitCount').value = img.cache_limit_count;
         if ($('recordKeepLimit')) $('recordKeepLimit').value = img.record_keep_limit ?? 1000;
@@ -514,6 +520,9 @@ Source prompt:
       CONFIG.image.max_concurrent_tasks = Number.isInteger(maxConcurrent) && maxConcurrent >= 1 && maxConcurrent <= 5 ? maxConcurrent : 5;
       CONFIG.image.global_timeout = Number($('globalTimeout').value || 280);
       CONFIG.image.max_image_size_mb = Number($('maxImageSize').value || 10);
+      if ($('maxImageDimension')) CONFIG.image.max_image_dimension = Number($('maxImageDimension').value || 16384);
+      if ($('maxImagePixels')) CONFIG.image.max_image_pixels = Number($('maxImagePixels').value || (64 * 1024 * 1024));
+      if ($('maxAnimationFrames')) CONFIG.image.max_animation_frames = Number($('maxAnimationFrames').value || 8);
       CONFIG.image.cache_limit_mb = Number($('cacheLimitMB').value || 2048);
       CONFIG.image.cache_limit_count = Number($('cacheLimitCount').value || 1000);
       if ($('recordKeepLimit')) CONFIG.image.record_keep_limit = Number($('recordKeepLimit').value || 1000);

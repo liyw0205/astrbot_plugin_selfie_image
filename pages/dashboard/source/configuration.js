@@ -655,7 +655,14 @@
         const res = await api('/api/health');
         const d = res.data || {};
         const cachePreview = d.cache_cleanup_preview || {};
-        const statusText = d.status === 'ok' ? '运行正常' : d.status === 'degraded' ? '配置需要检查' : String(d.status || '状态未知');
+        const taskSnapshot = d.task_snapshot_health || {};
+        const recordStorage = d.record_storage_health || {};
+        const recordCommit = d.record_commit_health || {};
+        const cacheMetrics = d.cache_metrics || {};
+        const referenceCache = cacheMetrics.reference_cache || {};
+        const cleanupMetrics = cacheMetrics.cleanup || {};
+        const cleanupScan = cleanupMetrics.last_scan || {};
+        const statusText = d.status === 'ok' ? '运行正常' : d.status === 'degraded' ? '运行需要检查' : String(d.status || '状态未知');
         const healthItems = [
           ['插件状态', statusText],
           ['缓存占用', `${String(d.cache_file_count ?? 0)} / ${String(d.cache_limit_count ?? 1000)} 张 · ${String(d.cache_size_mb ?? 0)} / ${String(d.cache_limit_mb ?? 2048)} MB`],
@@ -664,8 +671,50 @@
           ['记录文件', d.records_path || '-'],
           ['配置文件', d.config_path || '-'],
         ];
+        if (referenceCache.lookups !== undefined) {
+          const hitRate = referenceCache.hit_rate === null ? '暂无样本' : `${(Number(referenceCache.hit_rate || 0) * 100).toFixed(1)}%`;
+          healthItems.push(['参考图缓存命中', `${String(referenceCache.hits ?? 0)} / ${String(referenceCache.lookups ?? 0)} 次 · ${hitRate}`]);
+        }
+        if (cleanupScan.scanned_at) {
+          healthItems.push(
+            ['缓存扫描', `${String(cleanupScan.scanned_at)} · 孤儿 ${String(cleanupScan.orphan_count ?? 0)} 张 · 候选 ${String(cleanupScan.candidate_count ?? 0)} 张`],
+            ['缓存引用保护', `记录引用 ${String(cleanupScan.referenced_count ?? 0)} 张 · 运行保护 ${String(cleanupScan.protected_count ?? 0)} 张`],
+          );
+        }
+        if (cleanupMetrics.runs !== undefined) {
+          healthItems.push(['缓存清理累计', `${String(cleanupMetrics.deleted_files ?? 0)} 张 · ${String(Math.round(Number(cleanupMetrics.deleted_bytes || 0) / 1024 / 1024))} MB · 失败 ${String(cleanupMetrics.failed_delete_count ?? 0)} 次`]);
+        }
+        if (taskSnapshot.snapshot_version !== undefined) {
+          healthItems.push(
+            ['任务快照', `版本 ${String(taskSnapshot.snapshot_version)} · 写入 ${String(taskSnapshot.write_count ?? 0)} 次 · 失败 ${String(taskSnapshot.failure_count ?? 0)} 次`],
+            ['最近快照写入', `${String(taskSnapshot.last_write_at || '-')} · ${String(taskSnapshot.last_write_duration_ms ?? 0)} ms`],
+          );
+        }
+        if (taskSnapshot.max_bytes !== undefined) {
+          healthItems.push(['快照占用', `${(Number(taskSnapshot.size_bytes || 0) / 1024 / 1024).toFixed(2)} / ${(Number(taskSnapshot.max_bytes || 0) / 1024 / 1024).toFixed(2)} MiB`]);
+        }
+        if (recordStorage.status) {
+          const migrationState = recordStorage.status === 'error' ? '只读降级' : recordStorage.status === 'not_initialized' ? '未初始化' : recordStorage.migration_applied ? '迁移完成' : '正常';
+          healthItems.push(['记录数据库', `${migrationState} · ${String(recordStorage.duration_ms ?? 0)} ms`]);
+          if (recordStorage.read_only_source) healthItems.push(['记录读取来源', String(recordStorage.read_only_source)]);
+        }
+        if (recordCommit.completed_count !== undefined) {
+          healthItems.push(['记录提交（本进程）', `成功 ${String(recordCommit.success_count ?? 0)} 次 · 失败 ${String(recordCommit.failure_count ?? 0)} 次`]);
+          for (const [group, title] of [['success_latency_ms', '成功提交'], ['failure_latency_ms', '失败提交']]) {
+            const durations = recordCommit[group] || {};
+            const total = durations.total || {};
+            if (Number(total.samples) > 0) {
+              healthItems.push([`${title}延迟`, `${String(total.samples)} 个样本 · P50 ${String(total.p50 ?? 0)} ms · P95 ${String(total.p95 ?? 0)} ms`]);
+              healthItems.push([`${title}阶段 P95`, `线程等待 ${String(durations.queue_wait?.p95 ?? 0)} ms · 提交处理 ${String(durations.write?.p95 ?? 0)} ms`]);
+            }
+          }
+        }
         const healthWarnings = [
           d.cache_limit_warning,
+          taskSnapshot.warning,
+          taskSnapshot.last_failure_reason ? `最近快照写入失败：${String(taskSnapshot.last_failure_reason)}` : '',
+          recordStorage.last_failure_reason ? `记录数据库迁移失败：${String(recordStorage.last_failure_reason)}` : '',
+          recordCommit.last_failure_reason ? `最近记录提交失败：${String(recordCommit.last_failure_reason)}` : '',
           ...(Array.isArray(d.config_preflight?.errors) ? d.config_preflight.errors.map(item => item?.message) : []),
         ].map(value => String(value || '').trim()).filter(Boolean);
         $('health').innerHTML = `

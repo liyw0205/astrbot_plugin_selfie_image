@@ -96,7 +96,7 @@ class BaseImageAdapter:
         request_headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "Connection": "close",
+            "Connection": "keep-alive",
             "User-Agent": "AI-Cat/1.0",
         }
         if bearer_auth and self.target.api_key:
@@ -523,7 +523,7 @@ class OpenAIImageAdapter(BaseImageAdapter):
     ) -> tuple[Optional[Any], str]:
         headers = {
             "Accept": "application/json",
-            "Connection": "close",
+            "Connection": "keep-alive",
             "User-Agent": "AI-Cat/1.0",
         }
         if self.target.api_key:
@@ -1203,7 +1203,7 @@ class NovelAIImageAdapter(BaseImageAdapter):
             # token in query — do not also send Authorization unless host wants both
             headers = {
                 "Accept": "image/*,application/zip,application/json,*/*",
-                "Connection": "close",
+                "Connection": "keep-alive",
                 "User-Agent": "AI-Cat/1.0",
             }
             async with self.session.get(url, params=params, headers=headers, timeout=timeout, proxy=proxy) as response:

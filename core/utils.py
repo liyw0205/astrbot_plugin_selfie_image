@@ -8,15 +8,20 @@ import binascii
 import hashlib
 import inspect
 import json
+import math
 import mimetypes
 import os
 import re
+import secrets
 import time
 from collections.abc import Mapping
+from io import BytesIO
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
 import aiohttp
+
+from .constants import GENERATION_TIMING_STAGES
 
 
 IMAGE_EXTENSIONS = {
@@ -34,6 +39,19 @@ IMAGE_EXTENSIONS = {
     ".jfif",
     ".svg",
 }
+
+# These limits are checked from image headers before Pillow expands pixels.
+# They are deliberately conservative defaults and can be overridden by the
+# normalized plugin configuration at call sites.
+DEFAULT_MAX_IMAGE_DIMENSION = 16_384
+DEFAULT_MAX_IMAGE_PIXELS = 64 * 1024 * 1024
+DEFAULT_MAX_ANIMATION_FRAMES = 8
+
+
+def new_trace_id(prefix: str = "gen") -> str:
+    """Return a short opaque identifier suitable for correlating one request."""
+    safe_prefix = re.sub(r"[^a-z0-9_-]+", "-", str(prefix or "gen").strip().lower()).strip("-_")
+    return f"{safe_prefix or 'gen'}-{secrets.token_hex(6)}"
 
 
 async def resolve_awaitable(value: Any) -> Any:
@@ -129,6 +147,59 @@ def looks_like_image_bytes(data: bytes) -> bool:
     )
 
 
+def image_validation_limits(config: Any = None) -> Tuple[int, int, int]:
+    """Return bounded image geometry limits from a plugin config-like object."""
+    def bounded(name: str, default: int, minimum: int, maximum: int) -> int:
+        try:
+            value = int(getattr(config, name, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    return (
+        bounded("image_max_image_dimension", DEFAULT_MAX_IMAGE_DIMENSION, 256, 65_536),
+        bounded("image_max_image_pixels", DEFAULT_MAX_IMAGE_PIXELS, 1_048_576, 512 * 1024 * 1024),
+        bounded("image_max_animation_frames", DEFAULT_MAX_ANIMATION_FRAMES, 1, 64),
+    )
+
+
+def image_geometry_error(
+    data: bytes,
+    *,
+    max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
+    max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+    max_frames: int = DEFAULT_MAX_ANIMATION_FRAMES,
+) -> str:
+    """Inspect image headers without decoding pixel data.
+
+    Signature-only compatibility fixtures and formats unsupported by the local
+    Pillow build return an empty result so existing transport validation keeps
+    working. A recognized image exceeding a limit returns a stable reason.
+    """
+    if not data or not looks_like_image_bytes(data):
+        return ""
+    try:
+        from PIL import Image
+    except Exception:
+        return ""
+    try:
+        with Image.open(BytesIO(data)) as opened:
+            width, height = (int(opened.width), int(opened.height))
+            if width <= 0 or height <= 0:
+                return "invalid_dimensions"
+            if width > int(max_dimension) or height > int(max_dimension):
+                return "too_large_dimensions"
+            if width * height > int(max_pixels):
+                return "too_many_pixels"
+            frames = int(getattr(opened, "n_frames", 1) or 1)
+            if frames > int(max_frames):
+                return "too_many_frames"
+    except Exception:
+        # Keep legacy signature checks for unsupported/mocked image payloads.
+        return ""
+    return ""
+
+
 def normalize_image_mime(mime: str, fallback: str = "image/png") -> str:
     text = str(mime or "").split(";", 1)[0].strip().lower()
     if text in {"image/jpg", "image/pjpeg"}:
@@ -215,7 +286,13 @@ def decode_base64_payload(value: str) -> bytes:
             return b""
 
 
-def data_url_to_bytes(input_text: str) -> Tuple[bytes, str]:
+def data_url_to_bytes(
+    input_text: str,
+    *,
+    max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
+    max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+    max_frames: int = DEFAULT_MAX_ANIMATION_FRAMES,
+) -> Tuple[bytes, str]:
     text = str(input_text or "").strip()
     if not text:
         return b"", "image/png"
@@ -223,6 +300,13 @@ def data_url_to_bytes(input_text: str) -> Tuple[bytes, str]:
     def valid_image_or_empty(data: bytes, mime: str = "") -> Tuple[bytes, str]:
         if not data or not looks_like_image_bytes(data):
             return b"", normalize_image_mime(mime or "image/png")
+        if image_geometry_error(
+            data,
+            max_dimension=max_dimension,
+            max_pixels=max_pixels,
+            max_frames=max_frames,
+        ):
+            return b"", normalize_image_mime(mime or detect_mime_by_bytes(data))
         return data, detect_mime_by_bytes(data)
 
     match = re.match(r"^data:([^;,]+)(?:;[^,;]*)*;base64,([\s\S]+)$", text, flags=re.I)
@@ -756,6 +840,25 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(record, dict):
         return {}
     out = dict(record)
+    raw_timings = out.get("stage_timings")
+    if isinstance(raw_timings, Mapping):
+        safe_timings: Dict[str, float] = {}
+        for key in GENERATION_TIMING_STAGES:
+            value = raw_timings.get(key)
+            if isinstance(value, bool):
+                continue
+            try:
+                elapsed = float(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if math.isfinite(elapsed) and elapsed >= 0:
+                safe_timings[key] = round(min(86400.0, elapsed), 3)
+        if safe_timings:
+            out["stage_timings"] = safe_timings
+        else:
+            out.pop("stage_timings", None)
+    else:
+        out.pop("stage_timings", None)
     # Older records only persisted ``success``.  Materialize the lifecycle
     # status during compaction so list/detail consumers can distinguish a
     # delivery failure from a generation failure without re-deriving it.
@@ -1121,6 +1224,9 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
                     "error_user_message": _truncate_text(item.get("error_user_message"), 300),
                     "upstream_detail": _truncate_text(item.get("upstream_detail"), 300),
                     "error_category": item.get("error_category") or "",
+                    "http_status": item.get("http_status")
+                    if isinstance(item.get("http_status"), int) and not isinstance(item.get("http_status"), bool)
+                    else None,
                     "elapsed_seconds": item.get("elapsed_seconds"),
                     "timeout": item.get("timeout"),
                     "retry_count": item.get("retry_count"),
@@ -1397,6 +1503,9 @@ async def fetch_image_source(
     max_bytes: int,
     timeout: int = 30,
     failure_reasons: Optional[List[str]] = None,
+    max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
+    max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+    max_frames: int = DEFAULT_MAX_ANIMATION_FRAMES,
 ) -> Optional[Tuple[bytes, str]]:
     def fail(reason: str) -> Optional[Tuple[bytes, str]]:
         if failure_reasons is not None and reason not in failure_reasons:
@@ -1420,7 +1529,12 @@ async def fetch_image_source(
                 return fail("unavailable")
         lowered = text.lower()
         if lowered.startswith(("data:image/", "base64://")):
-            data, mime = data_url_to_bytes(text)
+            data, mime = data_url_to_bytes(
+                text,
+                max_dimension=max_dimension,
+                max_pixels=max_pixels,
+                max_frames=max_frames,
+            )
             if data and len(data) > max_bytes:
                 return fail("too_large")
             if data:
@@ -1434,6 +1548,13 @@ async def fetch_image_source(
                 data = file.read()
             if not data or not looks_like_image_bytes(data):
                 return fail("invalid_or_unreadable")
+            if image_geometry_error(
+                data,
+                max_dimension=max_dimension,
+                max_pixels=max_pixels,
+                max_frames=max_frames,
+            ):
+                return fail("too_large")
             return data, detect_mime_by_bytes(data)
 
         if not lowered.startswith(("http://", "https://")):
@@ -1471,6 +1592,13 @@ async def fetch_image_source(
                 return fail("invalid_or_unreadable")
             if not looks_like_image_bytes(data):
                 return fail("invalid_or_unreadable")
+            if image_geometry_error(
+                data,
+                max_dimension=max_dimension,
+                max_pixels=max_pixels,
+                max_frames=max_frames,
+            ):
+                return fail("too_large")
             return data, detect_mime_by_bytes(data)
     except (asyncio.TimeoutError, aiohttp.ClientError, OSError, binascii.Error, ValueError):
         return fail("unavailable")

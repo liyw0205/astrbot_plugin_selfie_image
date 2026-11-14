@@ -92,6 +92,8 @@ class PromptLookupMixin:
         return new_image_code({str(r.get("image_code") or "") for r in rows})
 
     def _backfill_prompt_codes(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self._record_database_degraded():
+            return records
         seen = {str(r.get("image_code") or "").upper() for r in self._reverse_prompt_rows()}
         used = seen | {str(r.get("image_code") or "").upper() for r in records}
         changed = []
@@ -114,6 +116,7 @@ class PromptLookupMixin:
         return records
 
     def _prompt_record_patch(self, record_id: str, changes: Mapping[str, Any]) -> dict[str, Any] | None:
+        self._require_record_store_writable()
         with self._records_lock:
             record = next((r for r in self._records if str(r.get("id")) == str(record_id)), None)
             if record is None:
@@ -202,6 +205,8 @@ class PromptLookupMixin:
             if record_id and mid:
                 by_record.setdefault(record_id, []).append({"scope": scope, "message_id": mid})
         if not by_record:
+            return
+        if self._record_database_degraded():
             return
         with self._records_lock:
             changed = []

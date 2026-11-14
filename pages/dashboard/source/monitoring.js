@@ -19,6 +19,68 @@
       params.set('offset', String((Math.max(1, page) - 1) * MONITOR_PAGE_SIZE));
       return '/api/records?' + params.toString();
     }
+    function syncMetricAlertForm(force = false) {
+      const root = $('metricAlertSettings');
+      if (!root || (root.dataset.dirty === 'true' && !force)) return;
+      const settings = CONFIG.monitoring?.generation_alerts || {};
+      $('generationAlertsEnabled').checked = settings.enabled !== false;
+      $('alertRecordSuccessRate').value = String(Number(settings.record_success_rate_below ?? 0.8) * 100);
+      $('alertRecordSuccessMinRecords').value = String(settings.record_success_min_records ?? 5);
+      $('alertConsecutiveFailures').value = String(settings.consecutive_failure_count_at_least ?? 3);
+      $('alertChannelSuccessRate').value = String(Number(settings.channel_success_rate_below ?? 0.8) * 100);
+      $('alertChannelMinAttempts').value = String(settings.channel_min_attempts ?? 3);
+      $('alertRateLimitRate').value = String(Number(settings.rate_limit_rate_at_least ?? 0.3) * 100);
+      $('alertRateLimitMinAttempts').value = String(settings.rate_limit_min_attempts ?? 3);
+      $('alertRateLimitMinFailures').value = String(settings.rate_limit_min_failures ?? 2);
+      $('alertRetryRate').value = String(Number(settings.retry_rate_at_least ?? 0.5) * 100);
+      $('alertRetryMinRecords').value = String(settings.retry_min_records ?? 3);
+      $('alertGenerationP95').value = String(settings.generation_p95_seconds_at_least ?? 60);
+      $('alertGenerationMinRecords').value = String(settings.generation_min_records ?? 3);
+      $('alertCacheOrphanGrowth').value = String(settings.cache_orphan_growth_at_least ?? 10);
+    }
+    async function saveMetricAlertSettings() {
+      const root = $('metricAlertSettings');
+      const button = $('saveMetricAlertSettings');
+      const fields = [...(root?.querySelectorAll('input[type="number"]') || [])];
+      const invalid = fields.find(field => !field.checkValidity());
+      if (invalid) {
+        invalid.reportValidity();
+        return;
+      }
+      const number = id => Number($(id).value);
+      collectForms();
+      CONFIG.monitoring = {...(CONFIG.monitoring || {})};
+      CONFIG.monitoring.generation_alerts = {
+        enabled: $('generationAlertsEnabled').checked,
+        record_success_rate_below: number('alertRecordSuccessRate') / 100,
+        record_success_min_records: number('alertRecordSuccessMinRecords'),
+        consecutive_failure_count_at_least: number('alertConsecutiveFailures'),
+        channel_success_rate_below: number('alertChannelSuccessRate') / 100,
+        channel_min_attempts: number('alertChannelMinAttempts'),
+        rate_limit_rate_at_least: number('alertRateLimitRate') / 100,
+        rate_limit_min_attempts: number('alertRateLimitMinAttempts'),
+        rate_limit_min_failures: number('alertRateLimitMinFailures'),
+        retry_rate_at_least: number('alertRetryRate') / 100,
+        retry_min_records: number('alertRetryMinRecords'),
+        generation_p95_seconds_at_least: number('alertGenerationP95'),
+        generation_min_records: number('alertGenerationMinRecords'),
+        cache_orphan_growth_at_least: number('alertCacheOrphanGrowth'),
+      };
+      if (root) root.dataset.dirty = 'true';
+      if (button) button.disabled = true;
+      try {
+        const saved = await persistConfig(false, '', {toast: false, quiet: true, toastError: false});
+        if (!saved) throw new Error('告警阈值保存失败');
+        if (root) root.dataset.dirty = '';
+        syncMetricAlertForm(true);
+        showToast('告警阈值已保存', 'ok');
+        await loadMetrics();
+      } catch (error) {
+        showToast(error.message || '告警阈值保存失败', 'bad');
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
     async function loadMetricsNow() {
       const root = $('monitorMetricButtons');
       if (!root) return;
@@ -26,6 +88,7 @@
         const windowKey = $('monitorMetricsWindow')?.value || 'all';
         const res = await api('/api/metrics?window=' + encodeURIComponent(windowKey));
         const d = res.data || {};
+        syncMetricAlertForm();
         const windowLabel = $('monitorMetricsWindow')?.selectedOptions?.[0]?.textContent || '全部保留记录';
         const statusLabels = {succeeded:'成功', failed:'失败', partial_success:'部分成功', cancelled:'已取消', delivery_failed:'发送失败', queued:'排队中', running:'进行中', expired:'已过期'};
         const errorLabels = {auth:'鉴权失败', not_found:'接口或模型不存在', safety:'审核拦截', quota:'额度不足', param:'参数不兼容', timeout:'超时', network:'网络错误', server:'上游服务错误', rate_limit:'请求限流', unknown:'无法分类', fatal:'不可重试'};
@@ -39,8 +102,12 @@
           return `<div class="metrics-breakdown">${rows.map(([name, value]) => `<div class="metrics-breakdown-row"><strong>${escapeHtml(name)}</strong><span>${formatter(value)}</span></div>`).join('')}</div>`;
         };
         const e = d.elapsed_seconds || {};
+        const q = d.queue_wait_seconds || {};
+        const stageLabels = {reference_fetch:'参考图读取', image_to_text:'图转文', prompt_audit:'提示词审核', output_audit:'图片审核', delivery_receipt:'发送回执'};
+        const stageRows = Object.entries(stageLabels).map(([key, label]) => [label, d.stage_timings?.[key] || {}]);
         const channelRows = Object.entries(d.channels || {});
         const modelRows = Object.entries(d.models || {});
+        const modelAttemptRows = Object.entries(d.model_attempts || {});
         const retries = d.retries || {};
         const quality = d.quality || {};
         const recommendations = Array.isArray(d.recommendations) ? d.recommendations : [];
@@ -65,12 +132,20 @@
               ${metric('图片成功率', escapeHtml(percent(quality.image_success_rate)), '按图片数量统计')}
               ${metric('重试率', escapeHtml(percent(quality.retry_rate)), '发生过重试的记录')}
               ${metric('回退率', escapeHtml(percent(quality.fallback_rate)), '切换到后备渠道')}
+              ${metric('首次尝试成功率', escapeHtml(percent(quality.first_attempt_success_rate)), `${escapeHtml(String(quality.first_attempt_successes ?? 0))} / ${escapeHtml(String(quality.attempted_records ?? 0))} 条有上游尝试`)}
+              ${metric('有尝试记录最终成功率', escapeHtml(percent(quality.final_attempt_success_rate)), `${escapeHtml(String(quality.final_attempt_successes ?? 0))} / ${escapeHtml(String(quality.attempted_records ?? 0))} 条有上游尝试`)}
             </div></div><div class="metrics-section"><h3 class="metrics-section-title">重试与耗时</h3><div class="metrics-kpi-grid">
               ${metric('重试总数', escapeHtml(String(retries.total ?? 0)), `涉及 ${escapeHtml(String(retries.records_with_retries ?? 0))} 条记录`)}
+              ${metric('队列 P50', `${escapeHtml(String(q.p50 ?? 0))}s`, `${escapeHtml(String(q.samples ?? 0))} 条可观测记录`)}
+              ${metric('队列 P95', `${escapeHtml(String(q.p95 ?? 0))}s`, '调度器等待时长')}
               ${metric('P50 耗时', `${escapeHtml(String(e.p50 ?? 0))}s`, '中位数')}
               ${metric('P95 耗时', `${escapeHtml(String(e.p95 ?? 0))}s`, '长耗时参考')}
               ${metric('最长耗时', `${escapeHtml(String(e.max ?? 0))}s`)}
-            </div></div>`,
+            </div></div><div class="metrics-section"><h3 class="metrics-section-title">阶段耗时</h3>
+              ${renderBreakdown(stageRows, value => Number(value.samples) > 0
+                ? `${escapeHtml(String(value.samples))} 个样本 · P50 ${escapeHtml(String(value.p50 ?? 0))}s · P95 ${escapeHtml(String(value.p95 ?? 0))}s`
+                : '暂无样本')}
+            </div>`,
           },
           {
             key: 'errors', title: '状态与错误', summary: `${Object.keys(d.error_categories || {}).length} 类错误`,
@@ -78,12 +153,23 @@
               <div class="metrics-section"><h3 class="metrics-section-title">错误类型</h3>${renderCountChips(d.error_categories, errorLabels)}</div></div>`,
           },
           {
-            key: 'providers', title: '渠道与模型', summary: `${channelRows.length} 渠道 · ${modelRows.length} 模型`,
+            key: 'providers', title: '渠道与模型', summary: `${channelRows.length} 渠道 · ${modelAttemptRows.length || modelRows.length} 模型`,
             html: `<div class="metrics-split"><div class="metrics-section"><h3 class="metrics-section-title">渠道表现</h3>
               ${renderBreakdown(channelRows, value => `${escapeHtml(String(value.success ?? 0))} / ${escapeHtml(String(value.attempts ?? 0))} 次成功 · 回退 ${escapeHtml(String(value.fallbacks ?? 0))} · 成功率 ${escapeHtml(percent(value.success_rate))}`)}
               </div><div class="metrics-section"><h3 class="metrics-section-title">模型表现</h3>
               ${renderBreakdown(modelRows, value => `成功率 ${escapeHtml(percent(value.success_rate))}`)}
-              </div></div>`,
+              </div></div><div class="metrics-section"><h3 class="metrics-section-title">模型上游错误占比</h3>
+              ${renderBreakdown(modelAttemptRows, value => {
+                const errors = Object.entries(value.error_categories || {}).map(([category, count]) =>
+                  `${escapeHtml(errorLabels[category] || category)} ${escapeHtml(String(count))}（${escapeHtml(percent(value.error_rates?.[category]))}）`
+                );
+                const statuses = Object.entries(value.http_statuses || {}).map(([status, count]) =>
+                  `HTTP ${escapeHtml(status)} ${escapeHtml(String(count))}（${escapeHtml(percent(value.http_status_rates?.[status]))}）`
+                );
+                const details = [...errors, ...statuses].join(' · ') || '无失败尝试';
+                return `${escapeHtml(String(value.success ?? 0))} / ${escapeHtml(String(value.attempts ?? 0))} 次成功 · ${details}`;
+              })}
+            </div>`,
           },
           {
             key: 'recommendations', title: '运行建议', summary: `${recommendations.length} 条建议`,

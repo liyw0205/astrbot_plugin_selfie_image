@@ -1161,15 +1161,33 @@ def test_web_route_alias_contract_is_shared_by_both_adapters() -> None:
 def test_web_contract_matrix_documents_shared_envelopes_and_host_auth_boundary() -> None:
     flask = (ROOT / "webui" / "web.py").read_text(encoding="utf-8")
     dashboard = (ROOT / "webui" / "dashboard_api.py").read_text(encoding="utf-8")
+    controllers = (ROOT / "webui" / "controllers.py").read_text(encoding="utf-8")
     services = (ROOT / "webui" / "services.py").read_text(encoding="utf-8")
-    assert "filter_record_page" in flask
-    assert "filter_record_page" in dashboard
+    assert "ConfigController" in flask
+    assert "ConfigController" in dashboard
+    assert "AssetController" in flask
+    assert "AssetController" in dashboard
+    assert "AssetCollectionController" in flask
+    assert "AssetCollectionController" in dashboard
+    assert "CanvasController" in flask
+    assert "CanvasController" in dashboard
+    assert "ImageStatusService" in (ROOT / "generation" / "model_status_report.py").read_text(encoding="utf-8")
+    assert "ProxyController" in flask
+    assert "ProxyController" in dashboard
+    assert "RecordController" in flask
+    assert "RecordController" in dashboard
+    assert "class ConfigController" in controllers
+    assert "class AssetController" in controllers
+    assert "class AssetCollectionController" in controllers
+    assert "class CanvasController" in controllers
+    assert "class ProxyController" in controllers
+    assert "config_patch_payload" in controllers
+    assert "filter_record_page" in controllers
     assert "def filter_record_page" in services
     assert "def parse_task_query" in services
     assert "redact_sensitive_data(data)" in flask
     assert "redact_sensitive_data(data)" in dashboard
-    assert 'return fail("当前版本不支持资产导出", 501)' in flask
-    assert 'return self._fail("当前版本不支持资产导出", 501)' in dashboard
+    assert 'raise WebContractError("当前版本不支持资产导出", 501)' in controllers
     assert 'return ok(data, count=len(data), load_status=status)' in flask
     assert 'return self._ok(data, count=len(data), load_status=status)' in dashboard
     # The embedded host owns authentication; standalone Flask owns its token.

@@ -14,7 +14,9 @@ from typing import Any, Dict, Iterable, List, Optional
 from astrbot.api import logger
 
 from ..core.utils import (
+    collect_record_cache_paths,
     load_json_file,
+    new_trace_id,
     redact_sensitive_data,
     redact_sensitive_text,
     save_json_file,
@@ -30,6 +32,23 @@ class WebTaskMixin:
     # tasks; terminal records remain available through generation records.
     WEB_TASK_KEEP_LIMIT = 50
     WEB_TASK_SNAPSHOT_DELAY = 0.2
+    WEB_TASK_SNAPSHOT_MAX_BYTES = 10 * 1024 * 1024
+
+    # These values are useful while a task is being polled, but are not
+    # needed to recover a task after restart.  Keeping them in memory avoids
+    # rewriting the JSON snapshot for every scheduler tick.
+    _TASK_VOLATILE_FIELDS = frozenset(
+        {
+            "queue_position",
+            "queue_wait_seconds",
+            "running_seconds",
+            "active_slots",
+            "max_concurrent_tasks",
+            "timeout_warning",
+            "timeout_warning_code",
+        }
+    )
+    TASK_SNAPSHOT_METADATA_VERSION = 1
 
     _TASK_TERMINAL_STATUSES = {
         "succeeded",
@@ -99,8 +118,47 @@ class WebTaskMixin:
         data = load_json_file(self.tasks_path)
         if not isinstance(data, dict):
             return {}
+        snapshot = data.get("snapshot") if isinstance(data.get("snapshot"), dict) else {}
+        # Snapshot metadata was added after the original ``{"tasks": ...}``
+        # format.  All fields are optional so old files remain readable.
+        try:
+            self._web_task_snapshot_version = max(0, int(snapshot.get("snapshot_version") or 0))
+        except (TypeError, ValueError):
+            self._web_task_snapshot_version = 0
+        try:
+            self._web_task_snapshot_write_count = max(0, int(snapshot.get("write_count") or 0))
+        except (TypeError, ValueError):
+            self._web_task_snapshot_write_count = 0
+        try:
+            self._web_task_snapshot_failure_count = max(0, int(snapshot.get("failure_count") or 0))
+        except (TypeError, ValueError):
+            self._web_task_snapshot_failure_count = 0
+        self._web_task_snapshot_last_write_duration_ms = self._coerce_snapshot_duration(
+            snapshot.get("last_write_duration_ms")
+        )
+        self._web_task_snapshot_last_write_at = str(snapshot.get("last_write_at") or "")[:64]
+        self._web_task_snapshot_last_failure_reason = redact_sensitive_text(
+            str(snapshot.get("last_failure_reason") or "")
+        )[:320]
+        self._web_task_snapshot_last_failure_at = str(snapshot.get("last_failure_at") or "")[:64]
+        self._web_task_last_failure_reason = redact_sensitive_text(
+            str(snapshot.get("recent_task_failure_reason") or "")
+        )[:320]
+        self._web_task_last_failure_at = str(snapshot.get("recent_task_failure_at") or "")[:64]
+        try:
+            self._web_task_snapshot_size_bytes = os.path.getsize(self.tasks_path)
+        except OSError:
+            self._web_task_snapshot_size_bytes = 0
+        for field in ("evicted_task_count", "compacted_task_count"):
+            try:
+                value = max(0, int(snapshot.get(field) or 0))
+            except (TypeError, ValueError, OverflowError):
+                value = 0
+            setattr(self, "_web_task_snapshot_" + field, value)
+        self._web_task_snapshot_timer = None
         raw_tasks = data.get("tasks") if isinstance(data.get("tasks"), dict) else {}
         tasks: Dict[str, Dict[str, Any]] = {}
+        lifecycle_events = []
         changed_on_start = False
         for task_id, raw in raw_tasks.items():
             if not isinstance(raw, dict):
@@ -118,6 +176,7 @@ class WebTaskMixin:
                 task["quota_released_ts"] = time.time()
                 changed_on_start = True
             if task.get("status") in {"queued", "running"}:
+                previous_status = str(task.get("status") or "").strip().lower()
                 task["status"] = "expired"
                 task["success"] = False
                 task["error"] = "插件重启后未恢复该任务，请重新提交"
@@ -131,6 +190,7 @@ class WebTaskMixin:
                 task["quota_released"] = True
                 task["quota_released_ts"] = task["finished_ts"]
                 changed_on_start = True
+                lifecycle_events.append((task["task_id"], task.get("trace_id") or "", self._task_media_type(task), previous_status, "expired"))
             elif quota_reserved > 0:
                 # Older versions could leave a reservation marker on a
                 # terminal task after a process crash.  It must not block a
@@ -141,18 +201,281 @@ class WebTaskMixin:
                 changed_on_start = True
             tasks[task["task_id"]] = task
         if changed_on_start:
-            save_json_file_compact(self.tasks_path, {"tasks": tasks})
+            self._persist_web_tasks_locked(tasks=tasks)
+        for event in lifecycle_events:
+            self._log_task_lifecycle_event(*event)
         return tasks
 
-    def _persist_web_tasks_locked(self) -> None:
+    @staticmethod
+    def _coerce_snapshot_duration(value: Any) -> float:
+        try:
+            return round(max(0.0, float(value or 0.0)), 3)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _snapshot_health_locked(self) -> Dict[str, Any]:
+        """Return bounded operational metadata for the health endpoint."""
+        return {
+            "version": int(getattr(self, "_web_task_snapshot_version", 0) or 0),
+            "snapshot_version": int(getattr(self, "_web_task_snapshot_version", 0) or 0),
+            "metadata_version": self.TASK_SNAPSHOT_METADATA_VERSION,
+            "write_count": int(getattr(self, "_web_task_snapshot_write_count", 0) or 0),
+            "failure_count": int(getattr(self, "_web_task_snapshot_failure_count", 0) or 0),
+            "last_write_duration_ms": self._coerce_snapshot_duration(
+                getattr(self, "_web_task_snapshot_last_write_duration_ms", 0.0)
+            ),
+            "last_write_at": str(getattr(self, "_web_task_snapshot_last_write_at", "") or "")[:64],
+            "last_failure_reason": redact_sensitive_text(
+                str(getattr(self, "_web_task_snapshot_last_failure_reason", "") or "")
+            )[:320],
+            "last_failure_at": str(getattr(self, "_web_task_snapshot_last_failure_at", "") or "")[:64],
+            "recent_task_failure_reason": redact_sensitive_text(
+                str(getattr(self, "_web_task_last_failure_reason", "") or "")
+            )[:320],
+            "recent_task_failure_at": str(getattr(self, "_web_task_last_failure_at", "") or "")[:64],
+            "pending": getattr(self, "_web_task_snapshot_timer", None) is not None,
+            "volatile_fields": sorted(self._TASK_VOLATILE_FIELDS),
+            **self._task_snapshot_budget_health(),
+        }
+
+    def _task_snapshot_byte_limit(self) -> int:
+        try:
+            return max(1, int(self.WEB_TASK_SNAPSHOT_MAX_BYTES))
+        except (TypeError, ValueError, OverflowError):
+            return 10 * 1024 * 1024
+
+    def _task_snapshot_budget_health(self) -> Dict[str, Any]:
+        size_bytes = int(getattr(self, "_web_task_snapshot_size_bytes", 0) or 0)
+        max_bytes = self._task_snapshot_byte_limit()
+        over_budget = size_bytes > max_bytes
+        return {
+            "size_bytes": size_bytes,
+            "max_bytes": max_bytes,
+            "over_budget": over_budget,
+            "warning": self._task_snapshot_budget_warning() if over_budget else "",
+            "evicted_task_count": int(getattr(self, "_web_task_snapshot_evicted_task_count", 0) or 0),
+            "compacted_task_count": int(getattr(self, "_web_task_snapshot_compacted_task_count", 0) or 0),
+        }
+
+    @staticmethod
+    def _task_snapshot_budget_warning() -> str:
+        return "任务快照超过字节预算；已保留任务必要信息，请检查并发量或迁移任务存储"
+
+    def get_task_snapshot_health(self) -> Dict[str, Any]:
+        """Expose task snapshot write health without returning task contents."""
+        lock = getattr(self, "_web_task_lock", None)
+        if lock is None:
+            return self._snapshot_health_locked()
+        with lock:
+            return self._snapshot_health_locked()
+
+    def _persistent_web_tasks_locked(
+        self, tasks: Optional[Mapping[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Copy tasks while omitting volatile fields from active snapshots."""
+        persisted: Dict[str, Dict[str, Any]] = {}
+        for task_id, task in (self._web_tasks if tasks is None else tasks).items():
+            if not isinstance(task, dict):
+                continue
+            row = dict(task)
+            if str(row.get("status") or "").strip().lower() in {"queued", "running"}:
+                for key in self._TASK_VOLATILE_FIELDS:
+                    row.pop(key, None)
+            persisted[str(task_id)] = row
+        return persisted
+
+    @staticmethod
+    def _compact_task_snapshot_diagnostics(task: Dict[str, Any]) -> Dict[str, Any]:
+        """Drop provider diagnostics while preserving task decisions and media."""
+        def has_media_evidence(value: Any) -> bool:
+            if collect_record_cache_paths(value):
+                return True
+
+            # The cache collector follows three path fields. Older provider
+            # results also use files/images and singular media or URL fields;
+            # keep their entire container when its semantics are uncertain.
+            def has_other_media_fields(node: Any) -> bool:
+                if isinstance(node, dict):
+                    for key, child in node.items():
+                        if child and key in {
+                            "files", "images", "image", "image_path", "image_url", "image_urls",
+                            "media_path", "media_paths", "video_path", "video_paths",
+                            "thumbnail_path", "thumbnail_paths", "generated_image_sources",
+                            "request_image_sources", "path", "paths", "url", "urls",
+                        }:
+                            return True
+                        if has_other_media_fields(child):
+                            return True
+                elif isinstance(node, (list, tuple)):
+                    return any(has_other_media_fields(child) for child in node)
+                return False
+
+            return has_other_media_fields(value)
+
+        result = task.get("result")
+        if not isinstance(result, dict):
+            return task
+        reduced = dict(result)
+        fields = []
+        if "response_data" in reduced:
+            response = reduced["response_data"]
+            # These values can be used to explain a task's outcome. Provider
+            # echoes and detailed attempts are archived in generation records.
+            if isinstance(response, dict) and not has_media_evidence(response):
+                reduced["response_data"] = {
+                    key: value
+                    for key, value in response.items()
+                    if key in {
+                        "error", "success", "status", "generation_success", "delivery_success",
+                        "delivery_failed", "delivery_unknown", "cancelled", "trace_id",
+                    }
+                }
+                fields.append("result.response_data")
+        if isinstance(reduced.get("attempts"), (list, tuple)) and not has_media_evidence(reduced["attempts"]):
+            reduced.pop("attempts")
+            fields.append("result.attempts")
+        if not fields:
+            return task
+        row = dict(task)
+        row["result"] = reduced
+        row["snapshot_compacted_fields"] = fields
+        return row
+
+    def _prepare_task_snapshot(
+        self, tasks: Dict[str, Dict[str, Any]], metadata: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Apply the disk budget without changing live tasks or dropping active work."""
+        def encoded_size(value: Any) -> int:
+            return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+        # Measure each entry once, so evicting a terminal window does not
+        # repeatedly serialize every large active task.
+        entry_sizes = {key: encoded_size({key: task}) - 2 for key, task in tasks.items()}
+        entries_bytes = sum(entry_sizes.values())
+        metadata.update({
+            "size_bytes": 0,
+            "max_bytes": self._task_snapshot_byte_limit(),
+            "over_budget": False,
+            "warning": "",
+            "evicted_task_count": 0,
+            "compacted_task_count": 0,
+        })
+
+        def measure() -> int:
+            # size_bytes contributes its own decimal width to the JSON file.
+            # Iterate only the small envelope until that width is stable.
+            while True:
+                size_bytes = (
+                    encoded_size({"tasks": {}, "snapshot": metadata})
+                    + entries_bytes + max(0, len(tasks) - 1)
+                )
+                if metadata["size_bytes"] == size_bytes:
+                    return size_bytes
+                metadata["size_bytes"] = size_bytes
+
+        max_bytes = metadata["max_bytes"]
+        size_bytes = measure()
+        terminal_ids = []
+        for key, task in tasks.items():
+            status = str(task.get("status") or "").strip().lower()
+            # Startup first marks abandoned work expired, then reconciles it
+            # into generation records. Keep that evidence until reconciliation.
+            if status in self._TASK_TERMINAL_STATUSES and (status != "expired" or task.get("restart_reconciled")):
+                terminal_ids.append(key)
+
+        def terminal_age(task_id: str) -> float:
+            task = tasks[task_id]
+            try:
+                return float(task.get("updated_ts") or task.get("created_ts") or 0)
+            except (TypeError, ValueError, OverflowError):
+                return 0.0
+
+        for task_id in sorted(terminal_ids, key=terminal_age):
+            if size_bytes <= max_bytes:
+                break
+            tasks.pop(task_id)
+            entries_bytes -= entry_sizes.pop(task_id)
+            metadata["evicted_task_count"] += 1
+            size_bytes = measure()
+        if size_bytes > max_bytes:
+            for task_id in sorted(tasks, key=entry_sizes.get, reverse=True):
+                row = self._compact_task_snapshot_diagnostics(tasks[task_id])
+                new_size = encoded_size({task_id: row}) - 2
+                if new_size >= entry_sizes[task_id]:
+                    continue
+                entries_bytes += new_size - entry_sizes[task_id]
+                entry_sizes[task_id] = new_size
+                tasks[task_id] = row
+                metadata["compacted_task_count"] += 1
+                size_bytes = measure()
+                if size_bytes <= max_bytes:
+                    break
+        if size_bytes > max_bytes:
+            # A byte budget cannot justify losing ownership, quota, prompts,
+            # paths, or entire active tasks. Persist them and surface the breach.
+            metadata["over_budget"] = True
+            metadata["warning"] = self._task_snapshot_budget_warning()
+            measure()
+        return {"tasks": tasks, "snapshot": metadata}
+
+    def _persist_web_tasks_locked(
+        self, *, tasks: Optional[Mapping[str, Dict[str, Any]]] = None,
+    ) -> None:
         timer = getattr(self, "_web_task_snapshot_timer", None)
         if timer is not None:
             timer.cancel()
             self._web_task_snapshot_timer = None
-        self._web_task_snapshot_version = getattr(self, "_web_task_snapshot_version", 0) + 1
         path = str(getattr(self, "tasks_path", "") or "").strip()
-        if path:
-            save_json_file_compact(path, {"tasks": self._web_tasks})
+        if not path:
+            return
+        next_version = int(getattr(self, "_web_task_snapshot_version", 0) or 0) + 1
+        metadata = {
+            "metadata_version": self.TASK_SNAPSHOT_METADATA_VERSION,
+            "snapshot_version": next_version,
+            "write_count": int(getattr(self, "_web_task_snapshot_write_count", 0) or 0) + 1,
+            "failure_count": int(getattr(self, "_web_task_snapshot_failure_count", 0) or 0),
+            # The current write duration is recorded in memory immediately
+            # after save; this value represents the previous successful write
+            # in the file and is refreshed on the next lifecycle flush.
+            "last_write_duration_ms": self._coerce_snapshot_duration(
+                getattr(self, "_web_task_snapshot_last_write_duration_ms", 0.0)
+            ),
+            "last_write_at": self._web_task_timestamp(),
+            "last_failure_reason": redact_sensitive_text(
+                str(getattr(self, "_web_task_snapshot_last_failure_reason", "") or "")
+            )[:320],
+            "last_failure_at": str(getattr(self, "_web_task_snapshot_last_failure_at", "") or "")[:64],
+            "recent_task_failure_reason": redact_sensitive_text(
+                str(getattr(self, "_web_task_last_failure_reason", "") or "")
+            )[:320],
+            "recent_task_failure_at": str(getattr(self, "_web_task_last_failure_at", "") or "")[:64],
+        }
+        started = time.perf_counter()
+        try:
+            payload = self._prepare_task_snapshot(
+                self._persistent_web_tasks_locked(tasks), metadata,
+            )
+            save_json_file_compact(path, payload)
+        except Exception as exc:
+            self._web_task_snapshot_failure_count = int(
+                getattr(self, "_web_task_snapshot_failure_count", 0) or 0
+            ) + 1
+            self._web_task_snapshot_last_failure_reason = redact_sensitive_text(str(exc))[:320]
+            self._web_task_snapshot_last_failure_at = self._web_task_timestamp()
+            raise
+        duration_ms = round(max(0.0, time.perf_counter() - started) * 1000.0, 3)
+        self._web_task_snapshot_version = next_version
+        self._web_task_snapshot_write_count = metadata["write_count"]
+        self._web_task_snapshot_last_write_duration_ms = duration_ms
+        self._web_task_snapshot_last_write_at = metadata["last_write_at"]
+        was_over_budget = self._task_snapshot_budget_health()["over_budget"]
+        for field in ("size_bytes", "evicted_task_count", "compacted_task_count"):
+            setattr(self, "_web_task_snapshot_" + field, metadata[field])
+        if metadata["over_budget"] and not was_over_budget:
+            logger.warning(
+                "[SelfieImage] 任务快照超过字节预算: %s > %s；保留全部活动任务",
+                metadata["size_bytes"], metadata["max_bytes"],
+            )
 
     def _schedule_web_task_snapshot_locked(self) -> None:
         """Coalesce live progress writes; lifecycle boundaries flush immediately."""
@@ -488,27 +811,130 @@ class WebTaskMixin:
             _, task_id = finished.pop(0)
             self._web_tasks.pop(task_id, None)
 
+    def _log_task_lifecycle_event(
+        self,
+        task_id: str,
+        trace_id: str,
+        media_type: str,
+        from_status: str,
+        to_status: str,
+    ) -> None:
+        """Emit a bounded lifecycle event without user or provider payloads."""
+        valid_statuses = {
+            "queued", "running", "succeeded", "partial_success", "failed",
+            "delivery_failed", "cancelled", "expired",
+        }
+        try:
+            def safe_text(value: str, limit: int) -> str:
+                return "".join(
+                    char for char in str(value or "")
+                    if char.isascii() and (char.isalnum() or char in "-_")
+                )[:limit]
+
+            event = {
+                "event": "task.lifecycle",
+                "timestamp": self._web_task_timestamp(),
+                "task_id": safe_text(task_id, 64),
+                "trace_id": safe_text(trace_id, 80),
+                "media_type": "image" if str(media_type or "").lower() == "image" else "unknown",
+                "from_status": from_status if from_status in valid_statuses else "unknown",
+                "to_status": to_status if to_status in valid_statuses else "unknown",
+            }
+            logger.info("[SelfieImage] " + json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        except Exception:
+            # Observability must not change the task state transition outcome.
+            return
+
+    def _log_task_notification_event(
+        self,
+        task_id: str,
+        trace_id: str,
+        media_type: str,
+        channel: str,
+        from_status: str,
+        to_status: str,
+    ) -> None:
+        """Emit a bounded delivery-state event without message or error text."""
+        try:
+            def safe_text(value: str, limit: int) -> str:
+                return "".join(
+                    char for char in str(value or "")
+                    if char.isascii() and (char.isalnum() or char in "-_")
+                )[:limit]
+
+            statuses = self._TASK_NOTIFICATION_STATUSES
+            event = {
+                "event": "task.notification",
+                "timestamp": self._web_task_timestamp(),
+                "task_id": safe_text(task_id, 64),
+                "trace_id": safe_text(trace_id, 80),
+                "media_type": "image" if str(media_type or "").lower() == "image" else "unknown",
+                "channel": channel if channel in {"message", "image_delivery"} else "unknown",
+                "from_status": from_status if from_status in statuses else "unknown",
+                "to_status": to_status if to_status in statuses else "unknown",
+            }
+            logger.info("[SelfieImage] " + json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        except Exception:
+            return
+
     def _set_web_image_task(self, task_id: str, **fields: Any) -> None:
-        with self._web_task_lock:
-            task = self._web_tasks.get(task_id)
-            if not task:
-                return
-            now = time.time()
-            if "current_index" in fields:
-                try:
-                    fields["current_index"] = max(
-                        int(task.get("current_index") or 0), int(fields["current_index"] or 0)
+        lifecycle_event = None
+        notification_event = None
+        try:
+            with self._web_task_lock:
+                task = self._web_tasks.get(task_id)
+                if not task:
+                    return
+                previous_status = str(task.get("status") or "").strip().lower()
+                previous_notification_status = str(task.get("user_notification_status") or "").strip().lower()
+                now = time.time()
+                if "current_index" in fields:
+                    try:
+                        fields["current_index"] = max(
+                            int(task.get("current_index") or 0), int(fields["current_index"] or 0)
+                        )
+                    except (TypeError, ValueError):
+                        pass
+                task.update(fields)
+                status = str(task.get("status") or "").strip().lower()
+                if previous_status != status:
+                    lifecycle_event = (
+                        str(task.get("task_id") or task_id),
+                        str(task.get("trace_id") or ""),
+                        self._task_media_type(task),
+                        previous_status,
+                        status,
                     )
-                except (TypeError, ValueError):
-                    pass
-            task.update(fields)
-            task["updated_ts"] = now
-            task["updated_at"] = self._web_task_timestamp()
-            self._prune_web_tasks_locked()
-            if "status" in fields or task.get("status") in self._TASK_TERMINAL_STATUSES or getattr(self, "_terminating", False):
-                self._persist_web_tasks_locked()
-            else:
-                self._schedule_web_task_snapshot_locked()
+                current_notification_status = str(task.get("user_notification_status") or "").strip().lower()
+                if "user_notification_status" in fields and previous_notification_status != current_notification_status:
+                    notification_event = (
+                        str(task.get("task_id") or task_id),
+                        str(task.get("trace_id") or ""),
+                        self._task_media_type(task),
+                        "message",
+                        previous_notification_status,
+                        current_notification_status,
+                    )
+                if status in {"failed", "delivery_failed", "expired"}:
+                    reason = str(fields.get("error") or task.get("error") or "").strip()
+                    if reason:
+                        sanitized_reason = redact_sensitive_text(reason)[:320]
+                        task["last_failure_reason"] = sanitized_reason
+                        self._web_task_last_failure_reason = sanitized_reason
+                        self._web_task_last_failure_at = self._web_task_timestamp()
+                task["updated_ts"] = now
+                task["updated_at"] = self._web_task_timestamp()
+                self._prune_web_tasks_locked()
+                durable_fields = set(fields) - self._TASK_VOLATILE_FIELDS
+                if "status" in durable_fields or task.get("status") in self._TASK_TERMINAL_STATUSES or getattr(self, "_terminating", False):
+                    self._persist_web_tasks_locked()
+                elif durable_fields:
+                    self._schedule_web_task_snapshot_locked()
+        finally:
+            if lifecycle_event:
+                self._log_task_lifecycle_event(*lifecycle_event)
+            if notification_event:
+                self._log_task_notification_event(*notification_event)
 
     def _set_task_notification_status(
         self,
@@ -529,6 +955,7 @@ class WebTaskMixin:
         tid = str(task_id or "").strip()
         if not tid:
             return
+        notification_event = None
         with self._web_task_lock:
             task = self._web_tasks.get(tid)
             if not isinstance(task, dict):
@@ -540,10 +967,21 @@ class WebTaskMixin:
                 return
             task["user_notification_status"] = normalized
             task["user_notification_reason"] = redact_sensitive_text(str(reason or ""))[:320]
+            if previous != normalized:
+                notification_event = (
+                    str(task.get("task_id") or tid),
+                    str(task.get("trace_id") or ""),
+                    self._task_media_type(task),
+                    "message",
+                    previous,
+                    normalized,
+                )
             now = time.time()
             task["updated_ts"] = now
             task["updated_at"] = self._web_task_timestamp()
             self._persist_web_tasks_locked()
+        if notification_event:
+            self._log_task_notification_event(*notification_event)
 
     def _task_notification_status(self, task_id: str) -> str:
         """Read the persisted notification marker without exposing task data."""
@@ -559,11 +997,15 @@ class WebTaskMixin:
         tid = str(task_id or "").strip()
         if not tid:
             return
+        lifecycle_event = None
+        notification_event = None
         # Freeze record evidence until the task snapshot is persisted.
         with self._records_lock, self._web_task_lock:
             task = self._web_tasks.get(tid)
             if not isinstance(task, dict) or task.get("status") not in {"delivery_failed", "succeeded", "partial_success"}:
                 return
+            previous_status = str(task.get("status") or "").strip().lower()
+            previous_notification_status = str(task.get("user_notification_status") or "").strip().lower()
             records = [r for r in self._records if str(r.get("task_id") or "") == tid]
             result = copy.deepcopy(task.get("result") or {})
             image_states = {}
@@ -616,6 +1058,22 @@ class WebTaskMixin:
                 "updated_ts": time.time(), "updated_at": self._web_task_timestamp(),
             })
             self._persist_web_tasks_locked()
+            current_status = str(task.get("status") or "").strip().lower()
+            current_notification_status = str(task.get("user_notification_status") or "").strip().lower()
+            task_id_value = str(task.get("task_id") or tid)
+            trace_id = str(task.get("trace_id") or "")
+            media_type = self._task_media_type(task)
+            if previous_status != current_status:
+                lifecycle_event = (task_id_value, trace_id, media_type, previous_status, current_status)
+            if previous_notification_status != current_notification_status:
+                notification_event = (
+                    task_id_value, trace_id, media_type, "image_delivery",
+                    previous_notification_status, current_notification_status,
+                )
+        if lifecycle_event:
+            self._log_task_lifecycle_event(*lifecycle_event)
+        if notification_event:
+            self._log_task_notification_event(*notification_event)
 
     def _reconcile_task_terminal_evidence_locked(self, task: Dict[str, Any]) -> bool:
         """Promote a stale active snapshot when its result is already final.
@@ -640,6 +1098,7 @@ class WebTaskMixin:
         if not terminal["terminal_stage"] in {"complete"} and not terminal["delivery_failed"] and not terminal["partial_success"]:
             return False
         now = time.time()
+        previous_status = str(task.get("status") or "").strip().lower()
         task.update(
             {
                 "status": terminal["terminal_status"],
@@ -664,6 +1123,15 @@ class WebTaskMixin:
             }
         )
         self._persist_web_tasks_locked()
+        current_status = str(task.get("status") or "").strip().lower()
+        if previous_status != current_status:
+            self._log_task_lifecycle_event(
+                str(task.get("task_id") or ""),
+                str(task.get("trace_id") or ""),
+                self._task_media_type(task),
+                previous_status,
+                current_status,
+            )
         return True
 
     def get_web_image_task(self, task_id: str) -> Dict[str, Any]:
@@ -840,6 +1308,7 @@ class WebTaskMixin:
         )[:50000]
         public_keys = (
             "task_id",
+            "trace_id",
             "status",
             "success",
             "created_ts",
@@ -879,6 +1348,7 @@ class WebTaskMixin:
             "restart_reconciled",
             "user_notification_status",
             "user_notification_reason",
+            "last_failure_reason",
         )
         row = {key: task.get(key) for key in public_keys if key in task}
         row.update(
@@ -1362,9 +1832,11 @@ class WebTaskMixin:
                     return redact_sensitive_data(duplicate)
             self._web_task_seq += 1
             task_id = f"web-{int(time.time() * 1000)}-{self._web_task_seq}"
+            trace_id = new_trace_id("gen")
             now = time.time()
             self._web_tasks[task_id] = {
                 "task_id": task_id,
+                "trace_id": trace_id,
                 "status": "queued",
                 "success": None,
                 "error": "",
@@ -1386,6 +1858,8 @@ class WebTaskMixin:
             }
             self._prune_web_tasks_locked()
             self._persist_web_tasks_locked()
+        self._log_task_lifecycle_event(task_id, trace_id, media_type, "", "queued")
+        payload_copy["_trace_id"] = trace_id
         self._start_runtime_generation(task_id, self._run_web_image_task(task_id, payload_copy))
         return self.get_web_image_task(task_id)
 

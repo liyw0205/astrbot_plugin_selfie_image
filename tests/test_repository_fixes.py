@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -517,6 +518,143 @@ def test_progress_snapshot_coalesces_and_terminal_flushes(tmp_path, monkeypatch)
     assert writes == [19, 21]
     assert load_json_file(plugin.tasks_path)["tasks"]["task"]["status"] == "succeeded"
     assert plugin._web_task_snapshot_timer is None
+
+
+def test_volatile_task_progress_does_not_write_snapshot(tmp_path, monkeypatch):
+    from astrbot_plugin_selfie_image.tasks import task_manager
+
+    plugin = runtime_plugin(tmp_path)
+    plugin.WEB_TASK_SNAPSHOT_DELAY = 0.02
+    plugin._web_tasks["task"] = {"task_id": "task", "status": "running"}
+    writes = []
+    original = task_manager.save_json_file_compact
+
+    def save(path, data):
+        original(path, data)
+        writes.append(data)
+
+    monkeypatch.setattr(task_manager, "save_json_file_compact", save)
+    plugin._set_web_image_task(
+        "task",
+        queue_position=2,
+        queue_wait_seconds=1.5,
+        running_seconds=3.2,
+        active_slots=1,
+        max_concurrent_tasks=2,
+        timeout_warning="即将超时",
+        timeout_warning_code="near_timeout",
+    )
+    assert not threading.Event().wait(0.08)
+    assert writes == []
+
+    plugin._set_web_image_task("task", generation_stage="provider")
+    deadline = time.monotonic() + 1
+    while not writes and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(writes) == 1
+    persisted = writes[0]["tasks"]["task"]
+    assert "generation_stage" in persisted
+    for field in plugin._TASK_VOLATILE_FIELDS:
+        assert field not in persisted
+
+
+def test_task_snapshot_metadata_persists_and_reloads(tmp_path):
+    plugin = runtime_plugin(tmp_path)
+    plugin._web_tasks["task"] = {"task_id": "task", "status": "succeeded", "success": True}
+    plugin._persist_web_tasks_locked()
+    stored = load_json_file(plugin.tasks_path)
+    assert stored["snapshot"]["metadata_version"] == plugin.TASK_SNAPSHOT_METADATA_VERSION
+    assert stored["snapshot"]["snapshot_version"] == 1
+    assert stored["snapshot"]["write_count"] == 1
+    assert stored["snapshot"]["last_write_at"] == plugin.get_task_snapshot_health()["last_write_at"]
+    assert stored["snapshot"]["last_write_at"]
+
+    reloaded = runtime_plugin(tmp_path)
+    tasks = reloaded._load_web_tasks()
+    assert tasks["task"]["status"] == "succeeded"
+    health = reloaded.get_task_snapshot_health()
+    assert health["snapshot_version"] == 1
+    assert health["write_count"] == 1
+    assert health["metadata_version"] == plugin.TASK_SNAPSHOT_METADATA_VERSION
+
+
+def test_task_snapshot_failure_and_task_failure_reasons_are_health_visible(tmp_path, monkeypatch):
+    from astrbot_plugin_selfie_image.tasks import task_manager
+
+    plugin = runtime_plugin(tmp_path)
+    plugin._web_tasks["task"] = {"task_id": "task", "status": "running"}
+    original = task_manager.save_json_file_compact
+
+    def fail(_path, _data):
+        raise OSError("Authorization: Bearer super-secret-token")
+
+    monkeypatch.setattr(task_manager, "save_json_file_compact", fail)
+    with pytest.raises(OSError):
+        plugin._set_web_image_task("task", status="failed", error="provider failed")
+    health = plugin.get_task_snapshot_health()
+    assert health["failure_count"] == 1
+    assert health["last_failure_reason"] == "Authorization: Bearer [REDACTED]"
+    assert health["recent_task_failure_reason"] == "provider failed"
+
+    monkeypatch.setattr(task_manager, "save_json_file_compact", original)
+    plugin._persist_web_tasks_locked()
+    stored = load_json_file(plugin.tasks_path)
+    assert stored["snapshot"]["last_failure_reason"] == "Authorization: Bearer [REDACTED]"
+    assert stored["snapshot"]["recent_task_failure_reason"] == "provider failed"
+
+
+def test_old_task_snapshot_format_remains_readable(tmp_path):
+    path = tmp_path / "tasks.json"
+    save_json_file(str(path), {"tasks": {"legacy": {"task_id": "legacy", "status": "succeeded"}}})
+    plugin = runtime_plugin(tmp_path)
+    tasks = plugin._load_web_tasks()
+    plugin._web_tasks = tasks
+    assert tasks["legacy"]["status"] == "succeeded"
+    health = plugin.get_task_snapshot_health()
+    assert health["snapshot_version"] == 0
+    assert health["write_count"] == 0
+
+    plugin._persist_web_tasks_locked()
+    stored = load_json_file(str(path))
+    assert stored["tasks"]["legacy"]["status"] == "succeeded"
+    assert stored["snapshot"]["snapshot_version"] == 1
+
+
+def test_restart_normalization_updates_task_snapshot_metadata(tmp_path):
+    plugin = runtime_plugin(tmp_path)
+    save_json_file(plugin.tasks_path, {
+        "tasks": {"active": {"task_id": "active", "status": "running"}},
+        "snapshot": {"snapshot_version": 4, "write_count": 7, "failure_count": 2},
+    })
+
+    tasks = plugin._load_web_tasks()
+    assert tasks["active"]["status"] == "expired"
+    stored = load_json_file(plugin.tasks_path)
+    assert stored["snapshot"]["snapshot_version"] == 5
+    assert stored["snapshot"]["write_count"] == 8
+    assert stored["snapshot"]["failure_count"] == 2
+    assert stored["snapshot"]["last_write_at"]
+
+
+def test_health_payload_includes_task_snapshot_health_and_degrades_hook_errors():
+    from astrbot_plugin_selfie_image.webui.services import build_health_payload
+
+    class Plugin:
+        config = SimpleNamespace(image_cache_limit_mb=200, image_cache_limit_count=100)
+        config_path = records_path = records_db_path = media_sources_dir = generated_dir = ""
+
+        def _cache_stats(self):
+            return 0, 0
+
+        def get_task_snapshot_health(self):
+            return {"snapshot_version": 3, "failure_count": 1}
+
+    payload = build_health_payload(Plugin())
+    assert payload["task_snapshot_health"] == {"snapshot_version": 3, "failure_count": 1}
+
+    Plugin.get_task_snapshot_health = lambda self: (_ for _ in ()).throw(RuntimeError("broken"))
+    degraded = build_health_payload(Plugin())
+    assert degraded["task_snapshot_health"]["status"] == "error"
 
 
 def test_asset_query_decodes_only_requested_page(tmp_path, monkeypatch):

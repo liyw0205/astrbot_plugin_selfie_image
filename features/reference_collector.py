@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -23,6 +24,9 @@ from ..core.utils import (
     extract_image_sources_from_event,
     extract_image_urls,
     fetch_image_source,
+    DEFAULT_MAX_ANIMATION_FRAMES,
+    DEFAULT_MAX_IMAGE_DIMENSION,
+    DEFAULT_MAX_IMAGE_PIXELS,
     normalize_image_mime,
     unique,
 )
@@ -54,6 +58,7 @@ class CollectedReferences:
     failed_count: int = 0
     roles: Dict[str, int] = field(default_factory=dict)
     failure_reasons: List[str] = field(default_factory=list)
+    download_elapsed_seconds: Optional[float] = None
 
     def selection_summary(self, *, include_persona: bool = False) -> Dict[str, Any]:
         """Return a credential-free explanation of the selected references."""
@@ -86,7 +91,7 @@ class CollectedReferences:
             # role counters were available and no image objects were retained.
             raw_selected_count = sum(selected_roles.values())
             selected_count = raw_selected_count
-        return {
+        summary = {
             "roles": selected_roles,
             "source_count": max(0, int(self.source_count or 0)),
             "raw_selected_count": raw_selected_count,
@@ -97,6 +102,9 @@ class CollectedReferences:
             "used_persona": bool(include_persona and roles.get("persona")),
             "used_context_fallback": bool(roles.get("context")),
         }
+        if self.source_count and self.download_elapsed_seconds is not None:
+            summary["download_elapsed_seconds"] = max(0.0, float(self.download_elapsed_seconds or 0))
+        return summary
 
     def all_object_refs(self) -> List[ImageReference]:
         """Non-persona references suitable as draw / group-photo objects."""
@@ -584,6 +592,9 @@ async def download_sources_as_references(
     *,
     max_bytes: int,
     failure_reasons: Optional[List[str]] = None,
+    max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
+    max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+    max_frames: int = DEFAULT_MAX_ANIMATION_FRAMES,
 ) -> Tuple[List[ImageReference], int]:
     refs: List[ImageReference] = []
     failed = 0
@@ -594,6 +605,9 @@ async def download_sources_as_references(
             session,
             max_bytes=max_bytes,
             failure_reasons=failure_reasons,
+            max_dimension=max_dimension,
+            max_pixels=max_pixels,
+            max_frames=max_frames,
         )
         if not fetched:
             failed += 1
@@ -637,6 +651,9 @@ class ReferenceCollector:
         context_hint: str = "",
         looks_like_context_ref=None,
         include_image_alternates: bool = False,
+        max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
+        max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+        max_frames: int = DEFAULT_MAX_ANIMATION_FRAMES,
     ) -> None:
         self.max_bytes = max(1024, int(max_bytes or 10 * 1024 * 1024))
         self.bot_ids = list(bot_ids or [])
@@ -649,6 +666,9 @@ class ReferenceCollector:
         self.context_hint = str(context_hint or "")
         self.looks_like_context_ref = looks_like_context_ref
         self.include_image_alternates = bool(include_image_alternates)
+        self.max_dimension = max(256, int(max_dimension or DEFAULT_MAX_IMAGE_DIMENSION))
+        self.max_pixels = max(1_048_576, int(max_pixels or DEFAULT_MAX_IMAGE_PIXELS))
+        self.max_frames = max(1, int(max_frames or DEFAULT_MAX_ANIMATION_FRAMES))
 
     def collect_source_buckets(self, event: Any) -> Dict[str, List[str]]:
         buckets = extract_structured_image_sources(
@@ -681,9 +701,13 @@ class ReferenceCollector:
         buckets = self.collect_source_buckets(event)
         collected = CollectedReferences()
         failure_reasons: List[str] = []
+        download_elapsed = 0.0
         role_order = ("message", "quote", "forward", "at_avatar", "context", "extra", "persona")
         for role in role_order:
             sources = list(buckets.get(role) or [])
+            if not sources:
+                continue
+            download_started = time.monotonic()
             if self.include_image_alternates:
                 expanded: List[str] = []
                 for source in sources:
@@ -691,12 +715,18 @@ class ReferenceCollector:
                     expanded.extend(await resolve_onebot_image_source(event, source))
                 sources = unique(expanded)
             collected.source_count += len(sources)
-            refs, failed = await download_sources_as_references(
-                sources,
-                session,
-                max_bytes=self.max_bytes,
-                failure_reasons=failure_reasons,
-            )
+            try:
+                refs, failed = await download_sources_as_references(
+                    sources,
+                    session,
+                    max_bytes=self.max_bytes,
+                    failure_reasons=failure_reasons,
+                    max_dimension=self.max_dimension,
+                    max_pixels=self.max_pixels,
+                    max_frames=self.max_frames,
+                )
+            finally:
+                download_elapsed += max(0.0, time.monotonic() - download_started)
             collected.failed_count += failed
             setattr(collected, role if hasattr(collected, role) else "extra", refs)
             collected.roles[role] = len(refs)
@@ -709,4 +739,5 @@ class ReferenceCollector:
         collected.extra = list(collected.extra)
         collected.persona = list(collected.persona)
         collected.failure_reasons = failure_reasons
+        collected.download_elapsed_seconds = round(download_elapsed, 3)
         return collected

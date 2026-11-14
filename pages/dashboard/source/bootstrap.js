@@ -251,6 +251,11 @@
       const button = event.target.closest('[data-metrics-category]');
       if (button) openMetricsCategory(button.dataset.metricsCategory);
     });
+    $('saveMetricAlertSettings')?.addEventListener('click', saveMetricAlertSettings);
+    $('metricAlertSettings')?.querySelectorAll('input').forEach(input => {
+      input.addEventListener('input', () => { $('metricAlertSettings').dataset.dirty = 'true'; });
+      input.addEventListener('change', () => { $('metricAlertSettings').dataset.dirty = 'true'; });
+    });
     if ($('monitorMetricsWindow')) $('monitorMetricsWindow').onchange = () => loadMetrics();
     if ($('monitorTag')) $('monitorTag').oninput = monitorFilterChanged;
     if ($('monitorKeyword')) $('monitorKeyword').oninput = monitorFilterChanged;
