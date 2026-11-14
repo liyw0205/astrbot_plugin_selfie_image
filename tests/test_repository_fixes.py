@@ -371,7 +371,7 @@ def test_reference_session_outside_plugin_loop_is_short_lived(tmp_path):
 
 
 def test_flask_async_timeout_cancels_the_submitted_coroutine(tmp_path):
-    from astrbot_plugin_selfie_image.webui.web import FlaskWebServer
+    from astrbot_plugin_selfie_image.webui.web import FlaskWebServer, FutureTimeoutError
 
     async def run():
         plugin = runtime_plugin(tmp_path)
@@ -385,7 +385,7 @@ def test_flask_async_timeout_cancels_the_submitted_coroutine(tmp_path):
             finally:
                 cleaned.set()
 
-        with pytest.raises(TimeoutError):
+        with pytest.raises(FutureTimeoutError):
             await asyncio.to_thread(server._run_async, worker(), 0.5)
         await asyncio.wait_for(cleaned.wait(), 1)
         await plugin.terminate()
