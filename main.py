@@ -111,6 +111,7 @@ from .cos.cos_looks import (
 from .generation.generator import generate_image_with_fallback
 from .generation.image_workflow import run_image_generation_workflow
 from .generation.counted_workflow import CountedGenerationWorkflow
+from .generation.image_command_service import ImageCommandService
 from .generation.selfie_batch_workflow import SelfieBatchWorkflow
 from .generation.web_test_workflow import WebTestImageWorkflow
 from .generation.image_scheduler import ImageJobScheduler
@@ -4738,92 +4739,10 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """写想要的画面出图。有附图/引用图时按图改；没图时按文字出。不会自动带入形象图。"""
-        self._claim_media_command_event(event)
-        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        message = extract_command_message(event, ("画", "生图"), fallback, include_quote_text=True)
-        message, requested_count = self._extract_command_count(message, allow_trailing=True)
-        message, template_values, template_randomize, _ = self._render_command_template(message)
-        error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
-        if error:
-            yield event.plain_result(error)
-            return
-
-        special_variants, preset_aspect, preset_resolution, preset_name = (
-            self._expand_dynamic_preset_variants(message, requested_count)
-        )
-        if special_variants:
-            prompt = special_variants[0]
-            aspect = preset_aspect
-            resolution = preset_resolution
-        else:
-            prompt, aspect, resolution, preset_name = self._expand_user_text_with_preset(message)
-        render_payload = {"template_values": template_values, "template_randomize": template_randomize}
-        rendered = self.render_creative_prompt(prompt, render_payload)
-        prompt = str(rendered.get("prompt") or prompt).strip()
-        rendered_special_variants: Optional[List[str]] = None
-        if special_variants:
-            rendered_special_variants = [prompt]
-            for variant in special_variants[1:]:
-                variant_rendered = self.render_creative_prompt(variant, render_payload)
-                rendered_special_variants.append(
-                    str(variant_rendered.get("prompt") or variant).strip()
-                )
-        # Plain LLM image generation may use the explicitly attached image or
-        # a clear "use the previous image" follow-up, but must not silently
-        # borrow the bot persona image.  Persona references belong to the
-        # dedicated generate_selfie path.
-        refs, source_count, failed_count = await self._event_reference_images_with_stats(
-            event,
-            include_at_avatar=True,
-            context_hint=prompt,
-            allow_context_fallback=True,
-            include_persona=False,
-        )
-        if not refs and source_count and failed_count:
-            yield event.plain_result(self._reference_failure_message(event))
-            return
-        if not prompt and refs:
-            prompt = "根据参考图生成一张自然、清晰、符合原图语义的图片。"
-        if not prompt:
-            yield event.plain_result("请输入提示词或附带参考图。")
-            return
-
-        progress = await self._build_contextual_progress_text(event, "image", prompt, requested_count)
-        self._record_bot_text_context(event, progress)
-
-        async def runner(task_id: str) -> Dict[str, Any]:
-            return await self._background_draw_batches(
-                task_id,
-                event,
-                prompt,
-                aspect,
-                resolution,
-                refs,
-                "command-draw",
-                requested_count,
-                passthrough=True,
-                special_preset_variants=rendered_special_variants,
-            )
-
-        task = self.start_command_image_task(
-            event,
-            source="command-draw",
-            summary={
-                "original_prompt": prompt,
-                "aspect_ratio": aspect,
-                "resolution": resolution,
-                "requested_count": requested_count,
-                "reference_image_count": len(refs),
-                "special_preset_variants": rendered_special_variants,
-                "template_values": template_values,
-                "template_randomize": template_randomize,
-                "template_unresolved": rendered.get("unresolved") or [],
-                "preset_name": preset_name,
-            },
-            runner=runner,
-            reference_images=refs,
-        )
-        yield event.plain_result(progress)
+        async for result in ImageCommandService(self).draw(
+            event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
+        ):
+            yield result
 
     @filter.command("文生图")
     async def cmd_raw_text_to_image(
@@ -4841,74 +4760,10 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """按你写的原文出图，不走自拍人设包装，也不使用形象图。"""
-        self._claim_media_command_event(event)
-        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        message = extract_command_message(event, "文生图", fallback, include_quote_text=True)
-        message, requested_count = self._extract_command_count(message, allow_trailing=True)
-        message, template_values, template_randomize, _ = self._render_command_template(message)
-        error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
-        if error:
-            yield event.plain_result(error)
-            return
-
-        special_variants, preset_aspect, preset_resolution, preset_name = (
-            self._expand_dynamic_preset_variants(message, requested_count)
-        )
-        if special_variants:
-            prompt = special_variants[0]
-            aspect = preset_aspect
-            resolution = preset_resolution
-        else:
-            prompt, aspect, resolution, preset_name = self._expand_user_text_with_preset(message)
-        render_payload = {"template_values": template_values, "template_randomize": template_randomize}
-        rendered = self.render_creative_prompt(prompt, render_payload)
-        prompt = str(rendered.get("prompt") or prompt).strip()
-        rendered_special_variants: Optional[List[str]] = None
-        if special_variants:
-            rendered_special_variants = [prompt]
-            for variant in special_variants[1:]:
-                variant_rendered = self.render_creative_prompt(variant, render_payload)
-                rendered_special_variants.append(
-                    str(variant_rendered.get("prompt") or variant).strip()
-                )
-        if not prompt:
-            yield event.plain_result("请输入文生图提示词。")
-            return
-
-        progress = await self._build_contextual_progress_text(event, "image", prompt, requested_count)
-        self._record_bot_text_context(event, progress)
-
-        async def runner(task_id: str) -> Dict[str, Any]:
-            return await self._background_draw_batches(
-                task_id,
-                event,
-                prompt,
-                aspect,
-                resolution,
-                [],
-                "command-raw-text-to-image",
-                requested_count,
-                passthrough=True,
-                special_preset_variants=rendered_special_variants,
-            )
-
-        task = self.start_command_image_task(
-            event,
-            source="command-raw-text-to-image",
-            summary={
-                "original_prompt": prompt,
-                "aspect_ratio": aspect,
-                "resolution": resolution,
-                "requested_count": requested_count,
-                "template_values": template_values,
-                "template_randomize": template_randomize,
-                "template_unresolved": rendered.get("unresolved") or [],
-                "preset_name": preset_name,
-                "special_preset_variants": rendered_special_variants,
-            },
-            runner=runner,
-        )
-        yield event.plain_result(progress)
+        async for result in ImageCommandService(self).raw_text_to_image(
+            event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
+        ):
+            yield result
 
     @filter.command("图生图")
     async def cmd_raw_image_to_image(
@@ -4926,73 +4781,10 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """带图或引用图，按原文改图。需要附图，不会自动使用形象图。"""
-        self._claim_media_command_event(event)
-        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        message = extract_command_message(event, "图生图", fallback, include_quote_text=True)
-        message, requested_count = self._extract_command_count(message, allow_trailing=True)
-        error = self._quota_error_message(event, requested_count) or self._rate_limit_error_message(event)
-        if error:
-            yield event.plain_result(error)
-            return
-
-        special_variants, preset_aspect, preset_resolution, preset_name = (
-            self._expand_dynamic_preset_variants(message, requested_count)
-        )
-        if special_variants:
-            prompt = special_variants[0]
-            aspect = preset_aspect
-            resolution = preset_resolution
-        else:
-            prompt, aspect, resolution, preset_name = self._expand_user_text_with_preset(message)
-        refs, source_count, failed_count = await self._event_reference_images_with_stats(
-            event,
-            include_at_avatar=True,
-            context_hint=prompt,
-            allow_context_fallback=True,
-        )
-        if not refs:
-            if source_count and failed_count:
-                yield event.plain_result(self._reference_failure_message(event))
-                return
-            yield event.plain_result("请附带、引用图片，或艾特要作为参考的对象。")
-            return
-        if not prompt:
-            yield event.plain_result("请输入图生图提示词。")
-            return
-
-        progress = await self._build_contextual_progress_text(event, "image", prompt, requested_count)
-        self._record_bot_text_context(event, progress)
-
-        async def runner(task_id: str) -> Dict[str, Any]:
-            return await self._background_draw_batches(
-                task_id,
-                event,
-                prompt,
-                aspect,
-                resolution,
-                refs,
-                "command-raw-image-to-image",
-                requested_count,
-                passthrough=True,
-                special_preset_variants=special_variants,
-            )
-
-        task = self.start_command_image_task(
-            event,
-            source="command-raw-image-to-image",
-            summary={
-                "original_prompt": prompt,
-                "aspect_ratio": aspect,
-                "resolution": resolution,
-                "requested_count": requested_count,
-                "reference_image_count": len(refs),
-                "special_preset_variants": special_variants,
-                "preset_name": preset_name,
-            },
-            runner=runner,
-            reference_images=refs,
-        )
-        yield event.plain_result(progress)
+        async for result in ImageCommandService(self).raw_image_to_image(
+            event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
+        ):
+            yield result
 
     @filter.command("自拍", alias={"看看"})
     async def cmd_selfie(

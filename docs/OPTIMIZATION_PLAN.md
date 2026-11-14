@@ -4,18 +4,18 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-最新完整发布验证基线（2026-11-15，1.7.25）：
+最新完整发布验证基线（2026-11-15，1.7.26）：
 
-- 全量 pytest `3581 passed, 702 subtests passed`，耗时 425.46 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3581 passed, 702 subtests passed`，耗时 288.76 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；60 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：144 个文件，2,420,828 bytes；解压后 5,648,759 bytes；SHA-256 `972429810c2be1b8150d12ed47f23c13cadc4d8291d90129c8961e2cf66bf1f5`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新增兼容 helper、Prompt、Cache、Health、Context、QQ group、Selfie profile 与 ImageChannel controller 均纳入运行期包。
+- 临时运行期 ZIP 检查：145 个文件，2,421,935 bytes；解压后 5,650,800 bytes；SHA-256 `3beb5ef93f2c73f2a965057f7864f11ecd0d1f66be9d1d0f4edda8d0f45428d7`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新增兼容 helper、Prompt、Cache、Health、Context、QQ group、Selfie profile、ImageChannel controller 与 ImageCommandService 均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证。
 
 主要结构性事实：
 
 | 领域 | 当前情况 | 对后续迭代的影响 |
 | --- | --- | --- |
-| 主插件 | `main.py` 当前约 5761 行；快速试画、批量执行、自拍批量准备与状态报告已拆分，原入口保留薄代理 | 后续按命令和任务运行期边界继续拆分 |
+| 主插件 | `main.py` 当前约 5564 行；快速试画、批量执行、自拍批量准备、状态报告和普通图片命令均已拆分，AstrBot 原入口保留薄代理 | 后续按自拍命令与任务运行期边界继续拆分 |
 | Web 层 | `webui/web.py` 约 1582 行，Dashboard API 约 1201 行；已共用主要业务 controller | Flask 与内嵌 Dashboard 需要持续保持契约一致 |
 | 生成链路 | 已有公平调度器、模型/密钥回退、超时、渠道健康状态和取消清理 | 重点变成网络连接复用、回退策略可观测性和边界测试 |
 | 持久化 | 生成记录已经使用 SQLite；任务快照仍是 JSON，状态变化时通过锁和延迟快照写入 | 记录查询可继续扩展索引；任务快照在高并发下有写放大风险 |
@@ -82,6 +82,7 @@
 - QQ 群列表/配置保存迁入 `QQGroupController` 与 `QQ_GROUP_ROUTE_CONTRACTS`；refresh 归一化、异步列表 hook、保存错误映射及结果脱敏共用。Flask 仍经 20 秒异步桥接，Dashboard 直接 await。
 - 自拍资料 5 个方法路由（参考图读取/保存/清理、形象类型、本地资料刷新）迁入 `SelfieProfileController` 与 `SELFIE_PROFILE_ROUTE_CONTRACTS`；操作消息、错误映射和脱敏统一，两端 JSON 对象校验、认证与响应 envelope 留在 adapter。
 - 手动图像渠道测试、测试任务启动/状态和模型刷新共 4 个路由组合迁入 `ImageChannelController` 与 `IMAGE_CHANNEL_ROUTE_CONTRACTS`；任务状态继续委派 `TaskController`，Flask 异步桥接超时和 Dashboard 原生 await 保留。
+- 普通图片命令 `/画`、`/文生图`、`/图生图` 的解析、提示词预设/模板展开、引用图选择、进度及任务启动移入 `ImageCommandService`；原 AstrBot 装饰器、入口签名、额度与限流检查、任务元数据和 persona 引用边界保留，现有数量位置及动态预设回归通过。
 
 ## 2. 优先级总览
 
@@ -113,7 +114,7 @@
 
 `.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。支持 `--layer all/python/frontend/static`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
 
-上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前候选版本为 `1.7.21`；本地全量测试、静态门禁与运行期制品构建已通过，远端 CI 仍需在推送后执行。
+上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.26`，包含新增的 `generation/image_command_service.py`；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
 
 制品基线和验证结果见上方“最新完整发布验证基线”。该制品仅代表本地当前工作区构建，发布前仍需在目标宿主验证真实通知投递和字体资源。
 
@@ -425,7 +426,7 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --prom
 
 ### 第 3 阶段：边界拆分
 
-已按完整业务路径拆出 Web 试画、公共批量执行和自拍批量准备，并提取状态报告服务；Web 任务管理、记录域全部操作、配置 API、代理 API、资产基础操作、资产集合 API、缓存 API、Studio/Creative Canvas 会话与图库 API、Prompt/COS/Creative API、健康历史、会话上下文、QQ 群、自拍资料，以及渠道手动测试/任务启动/状态/模型刷新均已完成双 adapter 共享 controller 与路由契约切片。下一步按 §5.1 拆命令与任务运行期。每次拆分配套现有回归集和端到端契约测试，禁止在同一个提交中同时改变提示词语义。
+已按完整业务路径拆出 Web 试画、公共批量执行、自拍批量准备、状态报告及普通图片命令，并提取共享 Web controller 与路由契约切片，覆盖任务、记录、配置、代理、资产/集合、缓存、Canvas、Prompt/COS/Creative、健康历史、会话上下文、QQ 群、自拍资料和图像渠道。下一步按 §5.1 拆自拍命令与任务运行期。每次拆分配套现有回归集和端到端契约测试，禁止在同一个提交中同时改变提示词语义。
 
 ### 第 4 阶段：恢复与状态功能
 
