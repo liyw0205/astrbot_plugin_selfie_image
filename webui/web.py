@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import hmac
 import json
 from pathlib import Path
@@ -21,6 +22,7 @@ from .contracts import (
     ASSET_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
+    PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
     RECORD_ROUTE_CONTRACTS,
     TASK_ROUTE_CONTRACTS,
@@ -41,15 +43,11 @@ from .controllers import (
     TaskController,
     TaskControllerResult,
 )
+from .prompt_controller import PromptCatalogController, PromptCatalogControllerResult
 from .services import (
-    CATALOG_PAGE_SIZE,
-    MAX_CATALOG_PAGE_SIZE,
     WebContractError,
     build_health_payload,
-    catalog_pagination_requested,
-    flatten_cos_pool_rows,
     gallery_pagination,
-    paginate_catalog_rows,
     parse_bounded_int,
     render_image_thumbnail,
 )
@@ -181,7 +179,7 @@ class FlaskWebServer:
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             try:
                 return future.result(timeout)
-            except TimeoutError:
+            except FutureTimeoutError:
                 future.cancel()
                 raise
         return asyncio.run(coro)
@@ -196,6 +194,7 @@ class FlaskWebServer:
         proxy_controller = ProxyController(self.plugin)
         task_controller = TaskController(self.plugin)
         record_controller = RecordController(self.plugin)
+        prompt_catalog_controller = PromptCatalogController(self.plugin)
         auth_failure_lock = threading.RLock()
         auth_failures: dict[str, dict[str, float]] = {}
         auth_failure_limit = 8
@@ -258,6 +257,21 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
             return ok(result.data, **result.extra)
+
+        def prompt_catalog_result(
+            call: Any, *, omit_extras: tuple[str, ...] = ("message",)
+        ) -> Any:
+            try:
+                result: PromptCatalogControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            extra = {
+                key: value for key, value in result.extra.items()
+                if key not in omit_extras
+            }
+            return ok(result.data, **extra)
 
         @app.after_request
         def add_response_safety_headers(response: Any) -> Any:
@@ -1364,219 +1378,152 @@ class FlaskWebServer:
                 methods=list(route.methods),
             )
 
-        @app.route("/api/prompt-presets", methods=["GET"])
         def prompt_presets() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                kind = request.args.get("kind") or request.args.get("media_type") or "image"
-                data = self.plugin.list_prompt_presets_for_web(kind)
-                status_getter = getattr(self.plugin, "get_prompt_preset_status_for_web", None)
-                status = status_getter(kind) if callable(status_getter) else {"ok": True, "source": "legacy", "error": ""}
-                if catalog_pagination_requested(request.args):
-                    limit = parse_bounded_int(request.args, "limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
-                    offset = parse_bounded_int(request.args, "offset", 0, 0, 1_000_000)
-                    page = paginate_catalog_rows(
-                        data,
-                        offset=offset,
-                        limit=limit,
-                        query=request.args.get("search") or "",
-                        fields=("name", "title", "prompt", "description"),
-                    )
-                    page["load_status"] = status
-                    return ok(page, count=page["total"], load_status=status)
-                return ok(data, count=len(data), load_status=status)
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.list_presets(request.args)
+            )
 
-        @app.route("/api/prompt-presets/manage", methods=["GET"])
         def prompt_presets_manage() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                kind = request.args.get("kind") or request.args.get("media_type") or "image"
-                data = self.plugin.list_managed_prompt_presets_for_web(kind)
-                status_getter = getattr(self.plugin, "get_prompt_preset_status_for_web", None)
-                status = status_getter(kind) if callable(status_getter) else {"ok": True, "source": "legacy", "error": ""}
-                if catalog_pagination_requested(request.args):
-                    limit = parse_bounded_int(request.args, "limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
-                    offset = parse_bounded_int(request.args, "offset", 0, 0, 1_000_000)
-                    page = paginate_catalog_rows(
-                        data,
-                        offset=offset,
-                        limit=limit,
-                        query=request.args.get("search") or "",
-                        fields=("name", "title", "prompt", "description"),
-                    )
-                    page["load_status"] = status
-                    return ok(page, count=page["total"], load_status=status)
-                return ok(data, load_status=status)
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.list_presets(request.args, managed=True)
+            )
 
-        @app.route("/api/prompt-presets/manage/save", methods=["POST"])
         def prompt_preset_save() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.save_prompt_preset_from_web(payload or {}))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.save_preset(payload)
+            )
 
-        @app.route("/api/prompt-presets/manage/delete", methods=["POST"])
         def prompt_preset_delete() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            name = str((payload or {}).get("name") or "").strip()
-            kind = str((payload or {}).get("kind") or (payload or {}).get("media_type") or "image")
-            if not name:
-                return fail("缺少预设名", 400)
-            try:
-                return ok(self.plugin.delete_prompt_preset_from_web(name, kind))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.delete_preset(payload)
+            )
 
-        @app.route("/api/prompt-presets/manage/import", methods=["POST"])
         def prompt_presets_import() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.import_prompt_presets_from_web(payload or {}))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.import_presets(payload)
+            )
 
-        @app.route("/api/cos-look-sets", methods=["GET"])
         def cos_look_sets() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                return ok(self.plugin.list_cos_look_sets_for_web())
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return prompt_catalog_result(
+                prompt_catalog_controller.list_cos_look_sets,
+                omit_extras=("message", "count"),
+            )
 
-        @app.route("/api/cos-pools", methods=["GET"])
         def cos_pools() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                data = self.plugin.list_cos_pools_for_web()
-                if catalog_pagination_requested(request.args):
-                    limit = parse_bounded_int(request.args, "limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
-                    offset = parse_bounded_int(request.args, "offset", 0, 0, 1_000_000)
-                    page = paginate_catalog_rows(
-                        flatten_cos_pool_rows(data),
-                        offset=offset,
-                        limit=limit,
-                        query=request.args.get("search") or "",
-                        fields=("title", "id", "prompt", "tags"),
-                    )
-                    return ok(page, count=page["total"])
-                return ok(data)
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.list_cos_pools(request.args)
+            )
 
-        @app.route("/api/cos-pools/favorite", methods=["POST"])
         def cos_pool_favorite() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                look_id = str((payload or {}).get("id") or (payload or {}).get("look_id") or "").strip()
-                enabled = (payload or {}).get("enabled", (payload or {}).get("favorite", True))
-                if not isinstance(enabled, bool):
-                    enabled = str(enabled).lower() in {"1", "true", "yes", "on", "是", "开启"}
-                return ok(self.plugin.set_cos_favorite_for_web(look_id, enabled))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.favorite_cos(payload)
+            )
 
-        @app.route("/api/cos-pools/custom/save", methods=["POST"])
         def cos_custom_save() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.save_custom_cos_for_web(payload or {}))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.save_custom_cos(payload)
+            )
 
-        @app.route("/api/cos-pools/custom/delete", methods=["POST"])
         def cos_custom_delete() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                look_id = str((payload or {}).get("id") or (payload or {}).get("look_id") or "").strip()
-                return ok(self.plugin.delete_custom_cos_for_web(look_id))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.delete_custom_cos(payload)
+            )
 
-        @app.route("/api/cos-pools/export", methods=["GET"])
         def cos_pool_export() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                return ok(self.plugin.export_cos_pool_for_web())
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return prompt_catalog_result(prompt_catalog_controller.export_cos)
 
-        @app.route("/api/cos-pools/import", methods=["POST"])
         def cos_pool_import() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                return ok(self.plugin.import_cos_pool_for_web(payload or {}))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.import_cos(payload)
+            )
 
-        @app.route("/api/creative/template/render", methods=["POST"])
         def creative_template_render() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                prompt = str((payload or {}).get("prompt") or (payload or {}).get("template") or "")
-                return ok(self.plugin.render_creative_prompt(prompt, payload or {}))
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.render_template(payload)
+            )
 
-        @app.route("/api/creative/variations", methods=["POST"])
         def creative_variations() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            try:
-                prompt = str((payload or {}).get("prompt") or "")
-                count = int((payload or {}).get("count") or 1)
-                return ok({"variations": self.plugin.build_creative_variations(prompt, count, payload or {})})
-            except Exception as exc:
-                return fail(str(exc), 400)
+            return prompt_catalog_result(
+                lambda: prompt_catalog_controller.variations(payload)
+            )
+
+        prompt_handlers = {
+            "prompt_presets": prompt_presets,
+            "prompt_presets_manage": prompt_presets_manage,
+            "prompt_preset_save": prompt_preset_save,
+            "prompt_preset_delete": prompt_preset_delete,
+            "prompt_presets_import": prompt_presets_import,
+            "cos_look_sets": cos_look_sets,
+            "cos_pools": cos_pools,
+            "cos_pool_favorite": cos_pool_favorite,
+            "cos_custom_save": cos_custom_save,
+            "cos_custom_delete": cos_custom_delete,
+            "cos_pool_export": cos_pool_export,
+            "cos_pool_import": cos_pool_import,
+            "creative_template_render": creative_template_render,
+            "creative_variations": creative_variations,
+        }
+        for route in PROMPT_CATALOG_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=prompt_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
 
         return app

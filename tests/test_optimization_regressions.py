@@ -1162,6 +1162,8 @@ def test_web_contract_matrix_documents_shared_envelopes_and_host_auth_boundary()
     flask = (ROOT / "webui" / "web.py").read_text(encoding="utf-8")
     dashboard = (ROOT / "webui" / "dashboard_api.py").read_text(encoding="utf-8")
     controllers = (ROOT / "webui" / "controllers.py").read_text(encoding="utf-8")
+    prompt_controller = (ROOT / "webui" / "prompt_controller.py").read_text(encoding="utf-8")
+    contracts = (ROOT / "webui" / "contracts.py").read_text(encoding="utf-8")
     services = (ROOT / "webui" / "services.py").read_text(encoding="utf-8")
     assert "ConfigController" in flask
     assert "ConfigController" in dashboard
@@ -1176,11 +1178,17 @@ def test_web_contract_matrix_documents_shared_envelopes_and_host_auth_boundary()
     assert "ProxyController" in dashboard
     assert "RecordController" in flask
     assert "RecordController" in dashboard
+    assert "PromptCatalogController" in flask
+    assert "PromptCatalogController" in dashboard
+    assert "PROMPT_CATALOG_ROUTE_CONTRACTS" in flask
+    assert "PROMPT_CATALOG_ROUTE_CONTRACTS" in dashboard
     assert "class ConfigController" in controllers
     assert "class AssetController" in controllers
     assert "class AssetCollectionController" in controllers
     assert "class CanvasController" in controllers
     assert "class ProxyController" in controllers
+    assert "class PromptCatalogController" in prompt_controller
+    assert "PROMPT_CATALOG_ROUTE_CONTRACTS" in contracts
     assert "config_patch_payload" in controllers
     assert "filter_record_page" in controllers
     assert "def filter_record_page" in services
@@ -1188,8 +1196,8 @@ def test_web_contract_matrix_documents_shared_envelopes_and_host_auth_boundary()
     assert "redact_sensitive_data(data)" in flask
     assert "redact_sensitive_data(data)" in dashboard
     assert 'raise WebContractError("当前版本不支持资产导出", 501)' in controllers
-    assert 'return ok(data, count=len(data), load_status=status)' in flask
-    assert 'return self._ok(data, count=len(data), load_status=status)' in dashboard
+    assert "prompt_catalog_controller.list_presets" in flask
+    assert "self._prompt_catalog_controller.list_presets" in dashboard
     # The embedded host owns authentication; standalone Flask owns its token.
     assert 'return self._ok({"authorized": True, "source": "dashboard"})' in dashboard
     assert 'if not check_auth():' in flask

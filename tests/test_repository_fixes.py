@@ -483,8 +483,7 @@ def test_scheduler_close_before_worker_first_step_releases_slot():
         await asyncio.sleep(0)
         assert scheduler._active == 1
         assert calls == []
-        async with asyncio.timeout(1):
-            await scheduler.aclose()
+        await asyncio.wait_for(scheduler.aclose(), timeout=1)
         assert submitter.cancelled()
         assert calls == []
         assert not scheduler._running

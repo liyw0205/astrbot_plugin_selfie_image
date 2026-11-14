@@ -57,6 +57,7 @@ from .core.constants import (
     PLUGIN_NAME,
     PLUGIN_VERSION,
 )
+from .core.async_compat import cancel_task_once
 from .features.access_policy import (
     access_status,
     blocked_prompt_word,
@@ -446,23 +447,33 @@ class SelfieImagePlugin(
             for task in self._web_tasks.values():
                 if task.get("status") in {"queued", "running"}:
                     task["cancel_requested"] = True
-            handles = list(getattr(self, "_runtime_generation_tasks", {}).values())
+            runtime_tasks = dict(getattr(self, "_runtime_generation_tasks", {}))
+            handles = list(runtime_tasks.values())
         # Stop Flask without blocking cancellation work on the bot event loop.
         await asyncio.to_thread(self.web_server.stop)
         for handle in handles:
             if isinstance(handle, asyncio.Task):
-                if not handle.done() and not handle.cancelling():
-                    handle.cancel()
-            else:
+                cancel_task_once(handle)
+            elif not handle.done():
                 handle.cancel()
         # A concurrent Future becomes cancelled before its coroutine has
         # unwound. Await the actual loop workers, not just the proxy handles.
         await asyncio.sleep(0)
-        workers = set(getattr(self, "_runtime_generation_workers", {}).values())
+        workers_by_id = dict(getattr(self, "_runtime_generation_workers", {}))
+        workers = set(workers_by_id.values())
         workers.update(handle for handle in handles if isinstance(handle, asyncio.Task))
-        for worker in workers:
-            if not worker.done() and not worker.cancelling():
-                worker.cancel()
+        cancelled_proxies = {
+            task_id
+            for task_id, handle in runtime_tasks.items()
+            if not isinstance(handle, asyncio.Task)
+            and callable(getattr(handle, "cancelled", None))
+            and handle.cancelled()
+        }
+        for task_id, worker in workers_by_id.items():
+            if task_id not in cancelled_proxies:
+                cancel_task_once(worker)
+        for worker in workers.difference(workers_by_id.values()):
+            cancel_task_once(worker)
         scheduler = getattr(self, "_image_scheduler", None)
         if scheduler is not None:
             await scheduler.aclose()

@@ -8,6 +8,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, Optional
 
+from ..core.async_compat import cancel_task_once
+
 
 @dataclass
 class _ImageJob:
@@ -84,8 +86,7 @@ class ImageJobScheduler:
         try:
             return await future
         except asyncio.CancelledError:
-            if job.worker is not None and not job.worker.done() and not job.worker.cancelling():
-                job.worker.cancel()
+            cancel_task_once(job.worker)
             self._wake.set()
             raise
 
@@ -99,8 +100,7 @@ class ImageJobScheduler:
         self._round_robin.clear()
         workers = [task for tasks in self._running.values() for task in tasks]
         for task in workers:
-            if not task.cancelling():
-                task.cancel()
+            cancel_task_once(task)
         self._wake.set()
         if workers:
             await asyncio.gather(*workers, return_exceptions=True)
@@ -117,8 +117,7 @@ class ImageJobScheduler:
                 job.future.cancel()
         self._round_robin = deque(item for item in self._round_robin if item != key)
         for running in list(self._running.get(key, set())):
-            if not running.cancelling():
-                running.cancel()
+            cancel_task_once(running)
         self._wake.set()
         await asyncio.sleep(0)
 

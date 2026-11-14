@@ -132,6 +132,17 @@ class CanvasRouteContract:
     description: str
 
 
+@dataclass(frozen=True)
+class PromptCatalogRouteContract:
+    endpoint: str
+    flask_path: str
+    dashboard_path: str
+    methods: tuple[str, ...]
+    flask_handler: str
+    dashboard_handler: str
+    description: str
+
+
 CONFIG_ROUTE_CONTRACTS = (
     ConfigRouteContract(
         "config_get", "/api/config", "config", ("GET",), "config_get",
@@ -413,6 +424,75 @@ CANVAS_ROUTE_CONTRACTS = (
         "creative_canvas_gallery", "/api/creative-canvas/gallery",
         "creative-canvas/gallery", ("GET",), "creative_canvas_gallery",
         "page_creative_canvas_gallery", "Selfie Image creation canvas gallery",
+    ),
+)
+
+
+PROMPT_CATALOG_ROUTE_CONTRACTS = (
+    PromptCatalogRouteContract(
+        "prompt_presets", "/api/prompt-presets", "prompt-presets", ("GET",),
+        "prompt_presets", "page_prompt_presets", "Selfie Image prompt presets",
+    ),
+    PromptCatalogRouteContract(
+        "prompt_presets_manage", "/api/prompt-presets/manage", "prompt-presets/manage",
+        ("GET",), "prompt_presets_manage", "page_prompt_presets_manage",
+        "Selfie Image managed prompt presets",
+    ),
+    PromptCatalogRouteContract(
+        "prompt_preset_save", "/api/prompt-presets/manage/save", "prompt-presets/manage/save",
+        ("POST",), "prompt_preset_save", "page_prompt_preset_save",
+        "Selfie Image save prompt preset",
+    ),
+    PromptCatalogRouteContract(
+        "prompt_preset_delete", "/api/prompt-presets/manage/delete", "prompt-presets/manage/delete",
+        ("POST",), "prompt_preset_delete", "page_prompt_preset_delete",
+        "Selfie Image delete prompt preset",
+    ),
+    PromptCatalogRouteContract(
+        "prompt_presets_import", "/api/prompt-presets/manage/import",
+        "prompt-presets/manage/import", ("POST",), "prompt_presets_import",
+        "page_prompt_presets_import", "Selfie Image import prompt presets",
+    ),
+    PromptCatalogRouteContract(
+        "cos_look_sets", "/api/cos-look-sets", "cos-look-sets", ("GET",),
+        "cos_look_sets", "page_cos_look_sets", "Selfie Image COS look sets",
+    ),
+    PromptCatalogRouteContract(
+        "cos_pools", "/api/cos-pools", "cos-pools", ("GET",), "cos_pools",
+        "page_cos_pools", "Selfie Image COS pools",
+    ),
+    PromptCatalogRouteContract(
+        "cos_pool_favorite", "/api/cos-pools/favorite", "cos-pools/favorite",
+        ("POST",), "cos_pool_favorite", "page_cos_pool_favorite",
+        "Selfie Image favorite COS",
+    ),
+    PromptCatalogRouteContract(
+        "cos_custom_save", "/api/cos-pools/custom/save", "cos-pools/custom/save",
+        ("POST",), "cos_custom_save", "page_cos_custom_save",
+        "Selfie Image save custom COS",
+    ),
+    PromptCatalogRouteContract(
+        "cos_custom_delete", "/api/cos-pools/custom/delete", "cos-pools/custom/delete",
+        ("POST",), "cos_custom_delete", "page_cos_custom_delete",
+        "Selfie Image delete custom COS",
+    ),
+    PromptCatalogRouteContract(
+        "cos_pool_export", "/api/cos-pools/export", "cos-pools/export", ("GET",),
+        "cos_pool_export", "page_cos_pool_export", "Selfie Image export COS pools",
+    ),
+    PromptCatalogRouteContract(
+        "cos_pool_import", "/api/cos-pools/import", "cos-pools/import", ("POST",),
+        "cos_pool_import", "page_cos_pool_import", "Selfie Image import COS pools",
+    ),
+    PromptCatalogRouteContract(
+        "creative_template_render", "/api/creative/template/render",
+        "creative/template/render", ("POST",), "creative_template_render",
+        "page_creative_template_render", "Selfie Image render prompt template",
+    ),
+    PromptCatalogRouteContract(
+        "creative_variations", "/api/creative/variations", "creative/variations",
+        ("POST",), "creative_variations", "page_creative_variations",
+        "Selfie Image build prompt variations",
     ),
 )
 

@@ -160,9 +160,8 @@ async def _try_model(
             return await _try_on_session(target, req, base, budget)
 
     try:
-        async with asyncio.timeout(max(1, int(budget))):
-            return await run()
-    except TimeoutError:
+        return await asyncio.wait_for(run(), timeout=max(1, int(budget)))
+    except asyncio.TimeoutError:
         return ImageGenerateResult(error=format_timeout_user_message("local", budget))
     except Exception as exc:
         return ImageGenerateResult(error=str(exc))

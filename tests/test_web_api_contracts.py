@@ -25,6 +25,7 @@ from astrbot_plugin_selfie_image.webui.contracts import (
     ASSET_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
+    PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
     RECORD_ROUTE_CONTRACTS,
     TASK_CANCEL_ROUTE_ALIASES,
@@ -1282,6 +1283,397 @@ def test_shared_canvas_route_contract_matches_both_live_registries(tmp_path):
         if path in expected_paths
     }
     assert actual_dashboard == expected_dashboard
+
+
+PROMPT_CATALOG_ROUTE_EXPECTATIONS = (
+    ("prompt_presets", "/api/prompt-presets", "prompt-presets", ("GET",), "prompt_presets", "page_prompt_presets"),
+    ("prompt_presets_manage", "/api/prompt-presets/manage", "prompt-presets/manage", ("GET",), "prompt_presets_manage", "page_prompt_presets_manage"),
+    ("prompt_preset_save", "/api/prompt-presets/manage/save", "prompt-presets/manage/save", ("POST",), "prompt_preset_save", "page_prompt_preset_save"),
+    ("prompt_preset_delete", "/api/prompt-presets/manage/delete", "prompt-presets/manage/delete", ("POST",), "prompt_preset_delete", "page_prompt_preset_delete"),
+    ("prompt_presets_import", "/api/prompt-presets/manage/import", "prompt-presets/manage/import", ("POST",), "prompt_presets_import", "page_prompt_presets_import"),
+    ("cos_look_sets", "/api/cos-look-sets", "cos-look-sets", ("GET",), "cos_look_sets", "page_cos_look_sets"),
+    ("cos_pools", "/api/cos-pools", "cos-pools", ("GET",), "cos_pools", "page_cos_pools"),
+    ("cos_pool_favorite", "/api/cos-pools/favorite", "cos-pools/favorite", ("POST",), "cos_pool_favorite", "page_cos_pool_favorite"),
+    ("cos_custom_save", "/api/cos-pools/custom/save", "cos-pools/custom/save", ("POST",), "cos_custom_save", "page_cos_custom_save"),
+    ("cos_custom_delete", "/api/cos-pools/custom/delete", "cos-pools/custom/delete", ("POST",), "cos_custom_delete", "page_cos_custom_delete"),
+    ("cos_pool_export", "/api/cos-pools/export", "cos-pools/export", ("GET",), "cos_pool_export", "page_cos_pool_export"),
+    ("cos_pool_import", "/api/cos-pools/import", "cos-pools/import", ("POST",), "cos_pool_import", "page_cos_pool_import"),
+    ("creative_template_render", "/api/creative/template/render", "creative/template/render", ("POST",), "creative_template_render", "page_creative_template_render"),
+    ("creative_variations", "/api/creative/variations", "creative/variations", ("POST",), "creative_variations", "page_creative_variations"),
+)
+
+
+def test_prompt_catalog_route_contract_matches_both_live_registries(tmp_path):
+    expected = set(PROMPT_CATALOG_ROUTE_EXPECTATIONS)
+    actual_contracts = {
+        (
+            route.endpoint, route.flask_path, route.dashboard_path, route.methods,
+            route.flask_handler, route.dashboard_handler,
+        )
+        for route in PROMPT_CATALOG_ROUTE_CONTRACTS
+    }
+    assert len(PROMPT_CATALOG_ROUTE_CONTRACTS) == 14
+    assert actual_contracts == expected
+
+    plugin = ContractPlugin(tmp_path)
+    flask_app = FlaskWebServer(plugin)._create_app()
+    expected_flask = {
+        (flask_path, method, endpoint)
+        for endpoint, flask_path, _dashboard_path, methods, _flask_handler, _dashboard_handler in expected
+        for method in methods
+    }
+    actual_flask = {
+        (rule.rule, method, rule.endpoint)
+        for rule in flask_app.url_map.iter_rules()
+        for method in rule.methods - {"HEAD", "OPTIONS"}
+        if rule.rule in {route[1] for route in PROMPT_CATALOG_ROUTE_EXPECTATIONS}
+    }
+    assert actual_flask == expected_flask
+
+    registered = []
+    plugin.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
+    api = dashboard_module.SelfieImageDashboardAPI(plugin)
+    api.register()
+    expected_paths = {
+        f"/{PLUGIN_NAME}/{prefix}{dashboard_path}"
+        for _endpoint, _flask_path, dashboard_path, _methods, _flask_handler, _dashboard_handler in expected
+        for prefix in ("", "page/")
+    }
+    expected_dashboard = {
+        (f"/{PLUGIN_NAME}/{prefix}{dashboard_path}", method, getattr(api, dashboard_handler))
+        for _endpoint, _flask_path, dashboard_path, methods, _flask_handler, dashboard_handler in expected
+        for prefix in ("", "page/")
+        for method in methods
+    }
+    actual_dashboard = {
+        (path, method, handler)
+        for path, handler, methods, _description in registered
+        for method in methods
+        if path in expected_paths
+    }
+    assert actual_dashboard == expected_dashboard
+
+
+PROMPT_CATALOG_POST_PATHS = (
+    "/api/prompt-presets/manage/save", "/api/prompt-presets/manage/delete",
+    "/api/prompt-presets/manage/import", "/api/cos-pools/favorite",
+    "/api/cos-pools/custom/save", "/api/cos-pools/custom/delete",
+    "/api/cos-pools/import", "/api/creative/template/render", "/api/creative/variations",
+)
+
+
+@pytest.mark.parametrize("path", PROMPT_CATALOG_POST_PATHS)
+@pytest.mark.parametrize("body", [None, [], "scalar", 7])
+def test_prompt_catalog_post_routes_reject_non_object_json(http, path, body):
+    assert_failure(http.call(path, method="POST", body=body), 400, "JSON")
+
+
+PROMPT_CATALOG_HOOKS = (
+    "list_prompt_presets_for_web", "list_managed_prompt_presets_for_web",
+    "get_prompt_preset_status_for_web", "save_prompt_preset_from_web",
+    "delete_prompt_preset_from_web", "import_prompt_presets_from_web",
+    "list_cos_look_sets_for_web", "list_cos_pools_for_web",
+    "set_cos_favorite_for_web", "save_custom_cos_for_web",
+    "delete_custom_cos_for_web", "export_cos_pool_for_web",
+    "import_cos_pool_for_web", "render_creative_prompt", "build_creative_variations",
+)
+
+
+PROMPT_CATALOG_AUTH_CASES = (
+    ("/api/prompt-presets?limit=bad", "GET", MISSING_BODY),
+    ("/api/prompt-presets/manage?offset=bad", "GET", MISSING_BODY),
+    ("/api/prompt-presets/manage/save", "POST", []),
+    ("/api/prompt-presets/manage/delete", "POST", []),
+    ("/api/prompt-presets/manage/import", "POST", []),
+    ("/api/cos-look-sets", "GET", MISSING_BODY),
+    ("/api/cos-pools?limit=bad", "GET", MISSING_BODY),
+    ("/api/cos-pools/favorite", "POST", []),
+    ("/api/cos-pools/custom/save", "POST", []),
+    ("/api/cos-pools/custom/delete", "POST", []),
+    ("/api/cos-pools/export", "GET", MISSING_BODY),
+    ("/api/cos-pools/import", "POST", []),
+    ("/api/creative/template/render", "POST", []),
+    ("/api/creative/variations", "POST", []),
+)
+
+
+@pytest.mark.parametrize("path,method,body", PROMPT_CATALOG_AUTH_CASES)
+def test_prompt_catalog_flask_auth_precedes_validation_and_hooks(standalone, monkeypatch, path, method, body):
+    client, plugin = standalone
+    calls = []
+
+    def touched(name):
+        def hook(*args, **kwargs):
+            calls.append((name, args, kwargs))
+            return []
+        return hook
+
+    for name in PROMPT_CATALOG_HOOKS:
+        monkeypatch.setattr(plugin, name, touched(name), raising=False)
+
+    options = {}
+    if body is not MISSING_BODY:
+        options.update(json=body)
+    response = client.open(path, method=method, **options)
+    assert_failure(HttpResult(response.status_code, response.get_json()), 401, "Unauthorized")
+    assert calls == []
+
+
+@pytest.mark.parametrize("route,hook", [
+    ("/api/prompt-presets", "list_prompt_presets_for_web"),
+    ("/api/prompt-presets/manage", "list_managed_prompt_presets_for_web"),
+    ("/api/prompt-presets", "get_prompt_preset_status_for_web"),
+    ("/api/prompt-presets/manage", "get_prompt_preset_status_for_web"),
+    ("/api/cos-look-sets", "list_cos_look_sets_for_web"),
+    ("/api/cos-pools", "list_cos_pools_for_web"),
+    ("/api/cos-pools/export", "export_cos_pool_for_web"),
+])
+def test_prompt_catalog_read_hook_failures_are_server_errors_and_redacted(http, monkeypatch, route, hook):
+    calls = []
+    monkeypatch.setattr(http.plugin, "list_prompt_presets_for_web", lambda _kind: [], raising=False)
+    monkeypatch.setattr(http.plugin, "list_managed_prompt_presets_for_web", lambda _kind: [], raising=False)
+
+    def fail(*_args, **_kwargs):
+        calls.append(True)
+        raise RuntimeError("api_key=prompt-catalog-secret")
+
+    monkeypatch.setattr(http.plugin, hook, fail, raising=False)
+    result = http.call(route)
+    assert_failure(result, 500)
+    assert calls == [True]
+    assert "prompt-catalog-secret" not in json.dumps(result.payload)
+
+
+@pytest.mark.parametrize("path,hook,body", [
+    ("/api/prompt-presets/manage/save", "save_prompt_preset_from_web", {"name": "preset"}),
+    ("/api/prompt-presets/manage/delete", "delete_prompt_preset_from_web", {"name": "preset"}),
+    ("/api/prompt-presets/manage/import", "import_prompt_presets_from_web", {"items": []}),
+    ("/api/cos-pools/favorite", "set_cos_favorite_for_web", {"id": "look-1"}),
+    ("/api/cos-pools/custom/save", "save_custom_cos_for_web", {"id": "custom-1"}),
+    ("/api/cos-pools/custom/delete", "delete_custom_cos_for_web", {"id": "custom-1"}),
+    ("/api/cos-pools/import", "import_cos_pool_for_web", {"custom": []}),
+    ("/api/creative/template/render", "render_creative_prompt", {"template": "portrait"}),
+    ("/api/creative/variations", "build_creative_variations", {"prompt": "portrait"}),
+])
+def test_prompt_catalog_write_hook_failures_are_client_errors_and_redacted(http, monkeypatch, path, hook, body):
+    calls = []
+
+    def fail(*_args, **_kwargs):
+        calls.append(True)
+        raise ValueError("api_key=prompt-catalog-secret")
+
+    monkeypatch.setattr(http.plugin, hook, fail, raising=False)
+    result = http.call(path, method="POST", body=body)
+    assert_failure(result, 400)
+    assert calls == [True]
+    assert "prompt-catalog-secret" not in json.dumps(result.payload)
+
+
+@pytest.mark.parametrize("path,hook", [
+    ("/api/prompt-presets", "list_prompt_presets_for_web"),
+    ("/api/prompt-presets/manage", "list_managed_prompt_presets_for_web"),
+])
+def test_prompt_catalog_paging_kind_aliases_and_load_status_compatibility(http, monkeypatch, path, hook):
+    rows = [
+        {"name": "moon portrait", "prompt": "first moon", "kind": "image"},
+        {"name": "moon video", "prompt": "second moon", "kind": "video"},
+        {"name": "sun video", "prompt": "sunset", "kind": "video"},
+    ]
+    requested_kinds = []
+
+    def list_rows(kind):
+        requested_kinds.append(kind)
+        return rows
+
+    monkeypatch.setattr(http.plugin, hook, list_rows, raising=False)
+    monkeypatch.setattr(http.plugin, "get_prompt_preset_status_for_web", lambda kind: {"ok": True, "kind": kind}, raising=False)
+    result = http.call(path + "?limit=1&offset=1&search=moon&media_type=video")
+    data = assert_success(result)
+    assert requested_kinds == ["video"]
+    assert data["items"] == [rows[1]]
+    assert (data["total"], data["limit"], data["offset"]) == (2, 1, 1)
+    assert data["load_status"] == {"ok": True, "kind": "video"}
+    assert result.envelope["load_status"] == {"ok": True, "kind": "video"}
+    assert result.envelope["count"] == 2
+
+
+@pytest.mark.parametrize("path,hook", [
+    ("/api/prompt-presets", "list_prompt_presets_for_web"),
+    ("/api/prompt-presets/manage", "list_managed_prompt_presets_for_web"),
+    ("/api/cos-pools", "list_cos_pools_for_web"),
+])
+@pytest.mark.parametrize("query", ["limit=0", "limit=invalid", "offset=-1", "offset=1000001"])
+def test_prompt_catalog_invalid_pagination_returns_client_errors(http, monkeypatch, path, hook, query):
+    monkeypatch.setattr(http.plugin, hook, lambda *_args: [], raising=False)
+    assert_failure(http.call(path + "?" + query), 400)
+
+
+def test_prompt_catalog_kind_precedence_and_nonpaged_legacy_status(http, monkeypatch):
+    seen = []
+    monkeypatch.setattr(http.plugin, "list_prompt_presets_for_web", lambda kind: seen.append(kind) or [{"name": "one"}], raising=False)
+    monkeypatch.setattr(http.plugin, "get_prompt_preset_status_for_web", None, raising=False)
+    first = http.call("/api/prompt-presets?media_type=video&kind=image")
+    data = assert_success(first)
+    assert data == [{"name": "one"}]
+    assert seen == ["image"]
+    assert first.envelope["count"] == 1
+    assert http.call("/api/prompt-presets").envelope["load_status"] == {
+        "ok": True, "source": "legacy", "error": "",
+    }
+    assert seen == ["image", "image"]
+
+
+def test_prompt_catalog_failed_load_status_remains_visible_and_managed_list_omits_count(http, monkeypatch):
+    failed = {"ok": False, "source": "file", "error": "catalog unavailable"}
+    monkeypatch.setattr(http.plugin, "list_managed_prompt_presets_for_web", lambda _kind: [{"name": "one"}], raising=False)
+    monkeypatch.setattr(http.plugin, "get_prompt_preset_status_for_web", lambda _kind: failed, raising=False)
+    result = http.call("/api/prompt-presets/manage")
+    assert assert_success(result) == [{"name": "one"}]
+    assert result.envelope["load_status"] == failed
+    assert "count" not in result.envelope
+
+
+@pytest.mark.parametrize("payload,expected_id,expected_enabled", [
+    ({"id": " builtin-1 ", "enabled": False}, "builtin-1", False),
+    ({"look_id": "custom-1", "enabled": "ON"}, "custom-1", True),
+    ({"id": "builtin-1", "favorite": "no"}, "builtin-1", False),
+    ({"look_id": "custom-1", "favorite": "yes"}, "custom-1", True),
+    ({"id": "builtin-1", "look_id": "other", "enabled": "false", "favorite": True}, "builtin-1", False),
+    ({"look_id": "custom-1"}, "custom-1", True),
+])
+def test_cos_favorite_accepts_id_aliases_and_boolean_compatibility(
+    http, monkeypatch, payload, expected_id, expected_enabled,
+):
+    calls = []
+    monkeypatch.setattr(http.plugin, "set_cos_favorite_for_web", lambda look_id, active: calls.append((look_id, active)) or {"id": look_id, "favorite": active}, raising=False)
+    data = assert_success(http.call(
+        "/api/cos-pools/favorite", method="POST", body=payload,
+    ))
+    assert calls == [(expected_id, expected_enabled)]
+    assert data == {"id": expected_id, "favorite": expected_enabled}
+
+
+def test_cos_pools_paginated_rows_are_deduplicated_and_stably_sorted(http, monkeypatch):
+    source = {
+        "favorites": [],
+        "builtin": [
+            {"id": "b-2", "title": "Zulu", "prompt": "z", "favorite": False, "source": "builtin"},
+            {"id": "shared", "title": "Delta", "prompt": "canonical", "tags": ["portrait"], "favorite": True, "source": "builtin"},
+            {"id": "b-1", "title": "Alpha", "prompt": "a", "favorite": False, "source": "builtin"},
+        ],
+        "custom": [
+            {"id": "c-2", "title": "Beta", "prompt": "b", "favorite": True, "source": "custom"},
+            {"id": "c-1", "title": "Alpha", "prompt": "a", "favorite": True, "source": "custom"},
+            {"id": "c-3", "title": "Aardvark", "prompt": "a", "tags": ["portrait"], "favorite": False, "source": "custom"},
+            {"id": "shared", "title": "Shadow", "prompt": "duplicate", "favorite": False, "source": "custom"},
+            {"id": "missing-prompt", "title": "Ignored", "favorite": True, "source": "custom"},
+            {"title": "No id", "prompt": "ignored", "favorite": True, "source": "custom"},
+        ],
+    }
+    seen = []
+    monkeypatch.setattr(http.plugin, "list_cos_pools_for_web", lambda: seen.append(True) or source, raising=False)
+    data = assert_success(http.call("/api/cos-pools?limit=20&offset=0"))
+    assert seen == [True]
+    assert [row["id"] for row in data["items"]] == ["c-1", "c-2", "shared", "c-3", "b-1", "b-2"]
+    assert data["items"][2]["prompt"] == "canonical"
+    assert data["total"] == 6
+    filtered = http.call("/api/cos-pools?limit=1&offset=1&search=portrait")
+    assert [row["id"] for row in assert_success(filtered)["items"]] == ["c-3"]
+    assert filtered.envelope["count"] == 2
+    legacy = http.call("/api/cos-pools?search=does-not-match")
+    assert assert_success(legacy) == source
+    assert "count" not in legacy.envelope
+
+
+def test_prompt_catalog_writes_forward_payloads_and_keep_adapter_messages(http, monkeypatch):
+    calls = []
+
+    def capture(name):
+        def hook(*args):
+            calls.append((name, args))
+            return {"operation": name}
+        return hook
+
+    for name in (
+        "save_prompt_preset_from_web", "delete_prompt_preset_from_web",
+        "import_prompt_presets_from_web", "set_cos_favorite_for_web",
+        "save_custom_cos_for_web", "delete_custom_cos_for_web", "import_cos_pool_for_web",
+    ):
+        monkeypatch.setattr(http.plugin, name, capture(name), raising=False)
+
+    save_payload = {"name": "portrait", "kind": "video", "prompt": "a {scene}"}
+    assert_success(http.call("/api/prompt-presets/manage/save", method="POST", body=save_payload))
+    assert calls[-1] == ("save_prompt_preset_from_web", (save_payload,))
+
+    missing_delete = http.call("/api/prompt-presets/manage/delete", method="POST", body={"kind": "image"})
+    assert_failure(missing_delete, 400, "预设名")
+    assert calls[-1] == ("save_prompt_preset_from_web", (save_payload,))
+    delete_payload = {"name": " portrait ", "media_type": "video"}
+    assert_success(http.call("/api/prompt-presets/manage/delete", method="POST", body=delete_payload))
+    assert calls[-1] == ("delete_prompt_preset_from_web", ("portrait", "video"))
+
+    import_payload = {"presets": [{"name": "one"}], "replace": True}
+    assert_success(http.call("/api/prompt-presets/manage/import", method="POST", body=import_payload))
+    assert calls[-1] == ("import_prompt_presets_from_web", (import_payload,))
+
+    favorite_payload = {"look_id": "look-9", "favorite": "yes"}
+    assert_success(http.call("/api/cos-pools/favorite", method="POST", body=favorite_payload))
+    assert calls[-1] == ("set_cos_favorite_for_web", ("look-9", True))
+    cos_payload = {"id": "custom-9", "title": "Night", "prompt": "night scene"}
+    saved = http.call("/api/cos-pools/custom/save", method="POST", body=cos_payload)
+    assert_success(saved)
+    assert calls[-1] == ("save_custom_cos_for_web", (cos_payload,))
+    assert saved.envelope.get("message", MISSING_BODY) == ("自定义 COS 已保存" if http.adapter == "dashboard" else MISSING_BODY)
+
+    assert_success(http.call("/api/cos-pools/custom/delete", method="POST", body={"look_id": "custom-9"}))
+    assert calls[-1] == ("delete_custom_cos_for_web", ("custom-9",))
+    deleted = http.call("/api/cos-pools/custom/delete", method="POST", body={"id": "custom-9"})
+    assert_success(deleted)
+    assert calls[-1] == ("delete_custom_cos_for_web", ("custom-9",))
+    assert deleted.envelope.get("message", MISSING_BODY) == ("自定义 COS 已删除" if http.adapter == "dashboard" else MISSING_BODY)
+    assert_success(http.call("/api/cos-pools/import", method="POST", body={"custom": [cos_payload]}))
+    assert calls[-1] == ("import_cos_pool_for_web", ({"custom": [cos_payload]},))
+    imported = http.call("/api/cos-pools/import", method="POST", body={"custom": []})
+    assert_success(imported)
+    assert imported.envelope.get("message", MISSING_BODY) == ("COS 池已导入" if http.adapter == "dashboard" else MISSING_BODY)
+
+
+def test_cos_look_set_count_remains_dashboard_only(http, monkeypatch):
+    monkeypatch.setattr(http.plugin, "list_cos_look_sets_for_web", lambda: [{"id": "look-1"}, {"id": "look-2"}], raising=False)
+    result = http.call("/api/cos-look-sets")
+    assert assert_success(result) == [{"id": "look-1"}, {"id": "look-2"}]
+    assert ("count" in result.envelope) is (http.adapter == "dashboard")
+    if http.adapter == "dashboard":
+        assert result.envelope["count"] == 2
+
+
+def test_cos_pool_export_preserves_hook_payload_without_adapter_extras(http, monkeypatch):
+    data = {"version": 1, "custom": [{"id": "custom-1"}], "favorites": ["custom-1"]}
+    monkeypatch.setattr(http.plugin, "export_cos_pool_for_web", lambda: data, raising=False)
+    result = http.call("/api/cos-pools/export")
+    assert assert_success(result) == data
+    assert set(result.envelope) == {"success", "data"}
+
+
+@pytest.mark.parametrize("body,expected_prompt", [
+    ({"template": "Hello {character}", "template_values": {"character": "Mika"}}, "Hello {character}"),
+    ({"prompt": "", "template": "Hello {character}", "template_values": {"character": "Mika"}}, "Hello {character}"),
+    ({"prompt": "Primary {scene}", "template": "Legacy {scene}", "template_values": {"scene": "garden"}}, "Primary {scene}"),
+])
+def test_creative_template_route_accepts_prompt_template_aliases(http, body, expected_prompt):
+    data = assert_success(http.call("/api/creative/template/render", method="POST", body=body))
+    assert data["template"] == expected_prompt
+    assert data["prompt"] == expected_prompt.format(**{
+        "character": "Mika", "scene": "garden",
+    })
+
+
+def test_creative_template_route_forwards_complete_payload(http, monkeypatch):
+    calls = []
+    payload = {"template": "A {scene}", "template_values": {"scene": "garden"}, "template_seed": "stable"}
+    monkeypatch.setattr(http.plugin, "render_creative_prompt", lambda prompt, body: calls.append((prompt, body)) or {"prompt": prompt}, raising=False)
+    assert assert_success(http.call("/api/creative/template/render", method="POST", body=payload)) == {"prompt": "A {scene}"}
+    assert calls == [("A {scene}", payload)]
 
 
 def test_canvas_controller_preserves_studio_and_creation_canvas_operations(http):

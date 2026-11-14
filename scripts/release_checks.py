@@ -31,7 +31,9 @@ APPROVED_RUNTIME_ADDITIONS = frozenset({
     "generation/web_test_workflow.py",
     "generation/counted_workflow.py",
     "generation/selfie_batch_workflow.py",
+    "core/async_compat.py",
     "webui/controllers.py",
+    "webui/prompt_controller.py",
 })
 REQUIRED_FILES = frozenset({
     "__init__.py", "main.py", "metadata.yaml", "_conf_schema.json", "requirements.txt",

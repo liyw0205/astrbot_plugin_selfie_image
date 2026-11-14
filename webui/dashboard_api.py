@@ -28,6 +28,7 @@ from .contracts import (
     CONFIG_ROUTE_CONTRACTS,
     DASHBOARD_ROUTE_PREFIXES,
     MAX_WEB_TASK_ID_LENGTH,
+    PROMPT_CATALOG_ROUTE_CONTRACTS,
     PROXY_ROUTE_CONTRACTS,
     RECORD_ROUTE_CONTRACTS,
     TASK_ROUTE_CONTRACTS,
@@ -48,16 +49,12 @@ from .controllers import (
     TaskController,
     TaskControllerResult,
 )
+from .prompt_controller import PromptCatalogController, PromptCatalogControllerResult
 from .services import (
-    CATALOG_PAGE_SIZE,
-    MAX_CATALOG_PAGE_SIZE,
     WebContractError,
     build_health_payload,
-    catalog_pagination_requested,
-    flatten_cos_pool_rows,
     gallery_pagination,
     normalize_task_ids,
-    paginate_catalog_rows,
     parse_bounded_int,
     parse_timestamp_query,
     render_image_thumbnail,
@@ -87,6 +84,7 @@ class SelfieImageDashboardAPI:
         self._proxy_controller = ProxyController(plugin)
         self._task_controller = TaskController(plugin)
         self._record_controller = RecordController(plugin)
+        self._prompt_catalog_controller = PromptCatalogController(plugin)
 
     def _config_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
         return [
@@ -165,6 +163,17 @@ class SelfieImageDashboardAPI:
             for route in CANVAS_ROUTE_CONTRACTS
         ]
 
+    def _prompt_catalog_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in PROMPT_CATALOG_ROUTE_CONTRACTS
+        ]
+
     def register(self) -> None:
         context = getattr(self.plugin, "context", None)
         register_web_api = getattr(context, "register_web_api", None)
@@ -205,20 +214,7 @@ class SelfieImageDashboardAPI:
             ("cache-image-thumbnail", self.page_cache_image_thumbnail, ["GET"], "Selfie Image cache image thumbnail"),
             ("cache-image-preview", self.page_cache_image_preview, ["GET"], "Selfie Image cache image preview"),
             ("auth/check", self.page_auth_check, ["POST", "GET"], "Selfie Image dashboard auth check"),
-            ("prompt-presets", self.page_prompt_presets, ["GET"], "Selfie Image prompt presets"),
-            ("prompt-presets/manage", self.page_prompt_presets_manage, ["GET"], "Selfie Image managed prompt presets"),
-            ("prompt-presets/manage/save", self.page_prompt_preset_save, ["POST"], "Selfie Image save prompt preset"),
-            ("prompt-presets/manage/delete", self.page_prompt_preset_delete, ["POST"], "Selfie Image delete prompt preset"),
-            ("prompt-presets/manage/import", self.page_prompt_presets_import, ["POST"], "Selfie Image import prompt presets"),
-            ("cos-look-sets", self.page_cos_look_sets, ["GET"], "Selfie Image COS look sets"),
-            ("cos-pools", self.page_cos_pools, ["GET"], "Selfie Image COS pools"),
-            ("cos-pools/favorite", self.page_cos_pool_favorite, ["POST"], "Selfie Image favorite COS"),
-            ("cos-pools/custom/save", self.page_cos_custom_save, ["POST"], "Selfie Image save custom COS"),
-            ("cos-pools/custom/delete", self.page_cos_custom_delete, ["POST"], "Selfie Image delete custom COS"),
-            ("cos-pools/export", self.page_cos_pool_export, ["GET"], "Selfie Image export COS pools"),
-            ("cos-pools/import", self.page_cos_pool_import, ["POST"], "Selfie Image import COS pools"),
-            ("creative/template/render", self.page_creative_template_render, ["POST"], "Selfie Image render prompt template"),
-            ("creative/variations", self.page_creative_variations, ["POST"], "Selfie Image build prompt variations"),
+            *self._prompt_catalog_route_entries(),
         ]
         for route, handler, methods, desc in routes:
             # Register both bare and /page/ endpoints for Dashboard routing.
@@ -287,6 +283,15 @@ class SelfieImageDashboardAPI:
     def _canvas_result(self, call: Any) -> Any:
         try:
             result: CanvasControllerResult = call()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
+    def _prompt_catalog_result(self, call: Any) -> Any:
+        try:
+            result: PromptCatalogControllerResult = call()
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         except Exception as exc:
@@ -1019,183 +1024,99 @@ class SelfieImageDashboardAPI:
         return self._gallery()
 
     async def page_prompt_presets(self) -> Any:
-        try:
-            kind = self._query_value("kind") or self._query_value("media_type") or "image"
-            data = self.plugin.list_prompt_presets_for_web(kind)
-            status_getter = getattr(self.plugin, "get_prompt_preset_status_for_web", None)
-            status = status_getter(kind) if callable(status_getter) else {"ok": True, "source": "legacy", "error": ""}
-            query = getattr(request, "query", {}) or {}
-            if catalog_pagination_requested(query):
-                limit, error = self._int_query("limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
-                if error:
-                    return error
-                offset, error = self._int_query("offset", 0, 0, 1_000_000)
-                if error:
-                    return error
-                page = paginate_catalog_rows(
-                    data,
-                    offset=offset or 0,
-                    limit=limit or CATALOG_PAGE_SIZE,
-                    query=self._query_value("search"),
-                    fields=("name", "title", "prompt", "description"),
-                )
-                page["load_status"] = status
-                return self._ok(page, count=page["total"], load_status=status)
-            return self._ok(data, count=len(data), load_status=status)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        query = getattr(request, "query", {}) or {}
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.list_presets(query)
+        )
 
     async def page_prompt_presets_manage(self) -> Any:
-        try:
-            kind = self._query_value("kind") or self._query_value("media_type") or "image"
-            data = self.plugin.list_managed_prompt_presets_for_web(kind)
-            status_getter = getattr(self.plugin, "get_prompt_preset_status_for_web", None)
-            status = status_getter(kind) if callable(status_getter) else {"ok": True, "source": "legacy", "error": ""}
-            query = getattr(request, "query", {}) or {}
-            if catalog_pagination_requested(query):
-                limit, error = self._int_query("limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
-                if error:
-                    return error
-                offset, error = self._int_query("offset", 0, 0, 1_000_000)
-                if error:
-                    return error
-                page = paginate_catalog_rows(
-                    data,
-                    offset=offset or 0,
-                    limit=limit or CATALOG_PAGE_SIZE,
-                    query=self._query_value("search"),
-                    fields=("name", "title", "prompt", "description"),
-                )
-                page["load_status"] = status
-                return self._ok(page, count=page["total"], load_status=status)
-            return self._ok(data, load_status=status)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        query = getattr(request, "query", {}) or {}
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.list_presets(query, managed=True)
+        )
 
     async def page_prompt_preset_save(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.save_prompt_preset_from_web(payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.save_preset(payload)
+        )
 
     async def page_prompt_preset_delete(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            name = str((payload or {}).get("name") or "").strip()
-            if not name:
-                return self._fail("缺少预设名", 400)
-            kind = str((payload or {}).get("kind") or (payload or {}).get("media_type") or "image")
-            return self._ok(self.plugin.delete_prompt_preset_from_web(name, kind))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.delete_preset(payload)
+        )
 
     async def page_prompt_presets_import(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.import_prompt_presets_from_web(payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.import_presets(payload)
+        )
 
     async def page_cos_look_sets(self) -> Any:
-        try:
-            data = self.plugin.list_cos_look_sets_for_web()
-            return self._ok(data, count=len(data))
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._prompt_catalog_result(
+            self._prompt_catalog_controller.list_cos_look_sets
+        )
 
     async def page_cos_pools(self) -> Any:
-        try:
-            data = self.plugin.list_cos_pools_for_web()
-            query = getattr(request, "query", {}) or {}
-            if catalog_pagination_requested(query):
-                limit, error = self._int_query("limit", CATALOG_PAGE_SIZE, 1, MAX_CATALOG_PAGE_SIZE)
-                if error:
-                    return error
-                offset, error = self._int_query("offset", 0, 0, 1_000_000)
-                if error:
-                    return error
-                page = paginate_catalog_rows(
-                    flatten_cos_pool_rows(data),
-                    offset=offset or 0,
-                    limit=limit or CATALOG_PAGE_SIZE,
-                    query=self._query_value("search"),
-                    fields=("title", "id", "prompt", "tags"),
-                )
-                return self._ok(page, count=page["total"])
-            return self._ok(data)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        query = getattr(request, "query", {}) or {}
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.list_cos_pools(query)
+        )
 
     async def page_cos_pool_favorite(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            look_id = str((payload or {}).get("id") or (payload or {}).get("look_id") or "").strip()
-            enabled = (payload or {}).get("enabled", (payload or {}).get("favorite", True))
-            enabled = enabled if isinstance(enabled, bool) else str(enabled).lower() in {"1", "true", "yes", "on", "是", "开启"}
-            return self._ok(self.plugin.set_cos_favorite_for_web(look_id, enabled))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.favorite_cos(payload)
+        )
 
     async def page_cos_custom_save(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.save_custom_cos_for_web(payload or {}), message="自定义 COS 已保存")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.save_custom_cos(payload)
+        )
 
     async def page_cos_custom_delete(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            look_id = str((payload or {}).get("id") or (payload or {}).get("look_id") or "").strip()
-            return self._ok(self.plugin.delete_custom_cos_for_web(look_id), message="自定义 COS 已删除")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.delete_custom_cos(payload)
+        )
 
     async def page_cos_pool_export(self) -> Any:
-        try:
-            return self._ok(self.plugin.export_cos_pool_for_web())
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._prompt_catalog_result(self._prompt_catalog_controller.export_cos)
 
     async def page_cos_pool_import(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            return self._ok(self.plugin.import_cos_pool_for_web(payload or {}), message="COS 池已导入")
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.import_cos(payload)
+        )
 
     async def page_creative_template_render(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            prompt = str((payload or {}).get("prompt") or (payload or {}).get("template") or "")
-            return self._ok(self.plugin.render_creative_prompt(prompt, payload or {}))
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.render_template(payload)
+        )
 
     async def page_creative_variations(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        try:
-            prompt = str((payload or {}).get("prompt") or "")
-            count = int((payload or {}).get("count") or 1)
-            return self._ok({"variations": self.plugin.build_creative_variations(prompt, count, payload or {})})
-        except Exception as exc:
-            return self._fail(str(exc), 400)
+        return self._prompt_catalog_result(
+            lambda: self._prompt_catalog_controller.variations(payload)
+        )

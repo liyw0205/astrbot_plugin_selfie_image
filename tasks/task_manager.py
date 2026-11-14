@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional
 from astrbot.api import logger
 
+from ..core.async_compat import mark_task_cancelling
 from ..core.utils import (
     collect_record_cache_paths,
     load_json_file,
@@ -544,6 +545,10 @@ class WebTaskMixin:
             def remove_done(future: Any) -> None:
                 with self._web_task_lock:
                     runtime_tasks.pop(task_id, None)
+                    if future.cancelled():
+                        worker = getattr(self, "_runtime_generation_workers", {}).get(task_id)
+                        if worker is not None:
+                            mark_task_cancelling(worker)
                 if not started:
                     coro.close()
                 if not future.cancelled():
