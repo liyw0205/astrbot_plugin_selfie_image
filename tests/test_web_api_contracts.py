@@ -23,6 +23,7 @@ from astrbot_plugin_selfie_image.webui import dashboard_api as dashboard_module
 from astrbot_plugin_selfie_image.webui.contracts import (
     ASSET_COLLECTION_ROUTE_CONTRACTS,
     ASSET_ROUTE_CONTRACTS,
+CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
@@ -978,6 +979,185 @@ def test_shared_task_route_contract_matches_both_live_registries(tmp_path):
         if path in expected_paths
     }
     assert actual_dashboard == expected_dashboard
+
+
+def test_shared_cache_route_contract_matches_both_live_registries(tmp_path):
+    plugin = ContractPlugin(tmp_path)
+    flask_app = FlaskWebServer(plugin)._create_app()
+    expected_flask = {
+        (route.flask_path, method, route.endpoint)
+        for route in CACHE_ROUTE_CONTRACTS
+        for method in route.methods
+    }
+    actual_flask_rows = [
+        (rule.rule, method, rule.endpoint)
+        for rule in flask_app.url_map.iter_rules()
+        for method in rule.methods - {"HEAD", "OPTIONS"}
+        if rule.rule in {route.flask_path for route in CACHE_ROUTE_CONTRACTS}
+    ]
+    assert len(actual_flask_rows) == len(expected_flask)
+    assert set(actual_flask_rows) == expected_flask
+
+    registered = []
+    plugin.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
+    api = dashboard_module.SelfieImageDashboardAPI(plugin)
+    api.register()
+    expected_paths = {
+        f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}"
+        for route in CACHE_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+    }
+    expected_dashboard = {
+        (
+            f"/{PLUGIN_NAME}/{prefix}{route.dashboard_path}",
+            method,
+            getattr(api, route.dashboard_handler),
+        )
+        for route in CACHE_ROUTE_CONTRACTS
+        for prefix in ("", "page/")
+        for method in route.methods
+    }
+    actual_dashboard_rows = [
+        (path, method, handler)
+        for path, handler, methods, _description in registered
+        for method in methods
+        if path in expected_paths
+    ]
+    assert len(actual_dashboard_rows) == len(expected_dashboard)
+    assert set(actual_dashboard_rows) == expected_dashboard
+
+
+def test_cache_cleanup_preserves_confirmation_and_conflict_contract(http):
+    calls = []
+
+    def cleanup(**kwargs):
+        calls.append(kwargs)
+        if kwargs["confirm"] and kwargs["plan_token"] != "current-plan":
+            raise ValueError("缓存内容已变化，请重新预览")
+        return {"confirmed": kwargs["confirm"]}
+
+    http.plugin.cleanup_image_cache_from_web = cleanup
+    preview = http.call("/api/cache/cleanup", method="POST", body={})
+    assert_success(preview)
+    assert preview.envelope["message"] == "请确认缓存清理"
+    assert calls[-1] == {"confirm": False, "plan_token": ""}
+
+    confirmed = http.call(
+        "/api/cache/cleanup", method="POST",
+        body={"confirm": " YES ", "plan_token": " current-plan "},
+    )
+    assert assert_success(confirmed) == {"confirmed": True}
+    assert calls[-1] == {"confirm": True, "plan_token": "current-plan"}
+    assert confirmed.envelope["message"] == "缓存清理完成"
+
+    conflict = http.call(
+        "/api/cache/cleanup", method="POST",
+        body={"confirm": True, "plan_token": "stale"},
+    )
+    assert_failure(conflict, 409, "重新预览")
+
+    http.plugin.cleanup_image_cache_from_web = None
+    unsupported = http.call("/api/cache/cleanup", method="POST", body={})
+    assert_failure(unsupported, 501, "不支持")
+
+
+def test_cache_media_contract_shares_validation_and_preserves_thumbnail_offload(
+    http, monkeypatch, tmp_path,
+):
+    from astrbot_plugin_selfie_image.webui import controllers as controller_module
+
+    image_path = tmp_path / "cache.png"
+    image_path.write_bytes(b"png")
+    info_calls = []
+
+    def get_info(path):
+        info_calls.append(path)
+        if path == "missing.png":
+            return {"exists": False}
+        if path == "not-image.txt":
+            return {"exists": True, "is_image": False}
+        return {
+            "exists": True,
+            "is_image": True,
+            "absolute_path": str(image_path),
+            "mime_type": None,
+            "name": "cache.png",
+        }
+
+    http.plugin.get_cached_image_info = get_info
+    monkeypatch.setattr(controller_module, "PAGE_PREVIEW_MAX_BYTES", 3)
+    main_thread = threading.get_ident()
+    thumbnail_threads = []
+    monkeypatch.setattr(
+        controller_module,
+        "render_image_thumbnail",
+        lambda _path: (thumbnail_threads.append(threading.get_ident()) or b"jpeg"),
+    )
+
+    preview = assert_success(http.call("/api/cache-image-preview?path=cache.png"))
+    expected_mime = "image/png" if http.adapter == "dashboard" else "application/octet-stream"
+    assert preview["mime_type"] == expected_mime
+    assert preview["size"] == 3
+    assert preview["data_url"].startswith(f"data:{expected_mime};base64,")
+
+    thumbnail = assert_success(http.call("/api/cache-image-thumbnail?path=cache.png"))
+    assert thumbnail["mime_type"] == "image/jpeg"
+    assert thumbnail["size"] == 4
+    assert thumbnail["data_url"] == "data:image/jpeg;base64,anBlZw=="
+    if http.adapter == "dashboard":
+        assert thumbnail_threads and thumbnail_threads[0] != main_thread
+    else:
+        assert thumbnail_threads == [main_thread]
+
+    missing = assert_success(http.call("/api/cache-image-preview?path=missing.png"))
+    assert missing["available"] is False
+    assert missing["message"] == "图片已清理"
+
+    assert_failure(http.call("/api/cache-image-thumbnail?path=missing.png"), 404)
+    assert_failure(http.call("/api/cache-image-preview?path=not-image.txt"), 400)
+    calls_before_long_path = len(info_calls)
+    assert_failure(http.call("/api/cache-image-preview?path=" + "x" * 513), 400)
+    assert len(info_calls) == calls_before_long_path
+
+    image_path.write_bytes(b"toolong")
+    assert_failure(http.call("/api/cache-image-preview?path=cache.png"), 413, "过大")
+
+
+def test_cache_file_download_remains_adapter_owned(tmp_path, monkeypatch):
+    image_path = tmp_path / "cache.png"
+    image_path.write_bytes(b"image-bytes")
+    plugin = ContractPlugin(tmp_path)
+    plugin.get_cached_image_info = lambda path: {
+        "exists": path == "cache.png",
+        "is_image": path == "cache.png",
+        "absolute_path": str(image_path),
+        "mime_type": "image/png",
+        "name": "cache.png",
+    }
+    client = FlaskWebServer(plugin)._create_app().test_client()
+    response = client.get(
+        "/api/cache-image?path=cache.png",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+    assert response.status_code == 200
+    assert response.data == b"image-bytes"
+    response.close()
+
+    class FakeRequest:
+        query = {"path": "cache.png"}
+
+    monkeypatch.setattr(dashboard_module, "request", FakeRequest())
+    monkeypatch.setattr(
+        dashboard_module,
+        "file_response",
+        lambda path, **kwargs: (path, kwargs),
+    )
+    api = dashboard_module.SelfieImageDashboardAPI(plugin)
+    result = asyncio.run(api.page_cache_image_file())
+    assert result == (
+        str(image_path),
+        {"filename": "cache.png", "content_type": "image/png"},
+    )
 
 
 def test_shared_config_route_contract_matches_both_live_registries(tmp_path):

@@ -143,6 +143,17 @@ class PromptCatalogRouteContract:
     description: str
 
 
+@dataclass(frozen=True)
+class CacheRouteContract:
+    endpoint: str
+    flask_path: str
+    dashboard_path: str
+    methods: tuple[str, ...]
+    flask_handler: str
+    dashboard_handler: str
+    description: str
+
+
 CONFIG_ROUTE_CONTRACTS = (
     ConfigRouteContract(
         "config_get", "/api/config", "config", ("GET",), "config_get",
@@ -272,6 +283,28 @@ ASSET_COLLECTION_ROUTE_CONTRACTS = (
         "asset_collection_studio", "/api/assets/collections/<collection_id>/studio",
         "assets/collections/<collection_id>/studio", ("POST",), "asset_collection_studio",
         "page_asset_collection_studio", "Selfie Image send collection to studio",
+    ),
+)
+
+
+CACHE_ROUTE_CONTRACTS = (
+    CacheRouteContract(
+        "cache_cleanup", "/api/cache/cleanup", "cache/cleanup", ("POST",),
+        "cache_cleanup", "page_cache_cleanup", "Selfie Image cleanup cache",
+    ),
+    CacheRouteContract(
+        "cache_image", "/api/cache-image", "cache-image", ("GET",),
+        "cache_image", "page_cache_image_file", "Selfie Image cache image download",
+    ),
+    CacheRouteContract(
+        "cache_image_thumbnail", "/api/cache-image-thumbnail", "cache-image-thumbnail",
+        ("GET",), "cache_image_thumbnail", "page_cache_image_thumbnail",
+        "Selfie Image cache image thumbnail",
+    ),
+    CacheRouteContract(
+        "cache_image_preview", "/api/cache-image-preview", "cache-image-preview",
+        ("GET",), "cache_image_preview", "page_cache_image_preview",
+        "Selfie Image cache image preview",
     ),
 )
 

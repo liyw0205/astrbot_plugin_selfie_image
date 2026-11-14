@@ -5,7 +5,6 @@ Dashboard plugin-page APIs registered via ``context.register_web_api``.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import inspect
 from typing import Any, Optional
@@ -16,7 +15,6 @@ from ..core.utils import (
     redact_sensitive_text,
 )
 from .web import (
-    MAX_CACHE_IMAGE_PATH_LENGTH,
     MAX_TASK_PAGE_LIMIT,
     MAX_TASK_OFFSET,
     dashboard_page_source_status,
@@ -24,6 +22,7 @@ from .web import (
 from .contracts import (
     ASSET_COLLECTION_ROUTE_CONTRACTS,
     ASSET_ROUTE_CONTRACTS,
+    CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
     DASHBOARD_ROUTE_PREFIXES,
@@ -38,6 +37,8 @@ from .controllers import (
     AssetCollectionController,
     AssetController,
     AssetControllerResult,
+    CacheController,
+    CacheControllerResult,
     CanvasController,
     CanvasControllerResult,
     ConfigController,
@@ -57,7 +58,6 @@ from .services import (
     normalize_task_ids,
     parse_bounded_int,
     parse_timestamp_query,
-    render_image_thumbnail,
 )
 
 try:
@@ -69,9 +69,6 @@ except Exception:  # pragma: no cover - unit tests / offline import
     request = None  # type: ignore
 
 
-PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
-
-
 class SelfieImageDashboardAPI:
     """Register and handle Dashboard plugin-page APIs."""
 
@@ -80,6 +77,7 @@ class SelfieImageDashboardAPI:
         self._asset_collection_controller = AssetCollectionController(plugin)
         self._asset_controller = AssetController(plugin)
         self._canvas_controller = CanvasController(plugin)
+        self._cache_controller = CacheController(plugin)
         self._config_controller = ConfigController(plugin)
         self._proxy_controller = ProxyController(plugin)
         self._task_controller = TaskController(plugin)
@@ -152,6 +150,17 @@ class SelfieImageDashboardAPI:
             for route in ASSET_COLLECTION_ROUTE_CONTRACTS
         ]
 
+    def _cache_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (
+                route.dashboard_path,
+                getattr(self, route.dashboard_handler),
+                list(route.methods),
+                route.description,
+            )
+            for route in CACHE_ROUTE_CONTRACTS
+        ]
+
     def _canvas_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
         return [
             (
@@ -208,11 +217,8 @@ class SelfieImageDashboardAPI:
             *self._record_route_entries(),
             *self._asset_route_entries(),
             *self._asset_collection_route_entries(),
+            *self._cache_route_entries(),
             *self._canvas_route_entries(),
-            ("cache/cleanup", self.page_cache_cleanup, ["POST"], "Selfie Image cleanup cache"),
-            ("cache-image", self.page_cache_image_file, ["GET"], "Selfie Image cache image download"),
-            ("cache-image-thumbnail", self.page_cache_image_thumbnail, ["GET"], "Selfie Image cache image thumbnail"),
-            ("cache-image-preview", self.page_cache_image_preview, ["GET"], "Selfie Image cache image preview"),
             ("auth/check", self.page_auth_check, ["POST", "GET"], "Selfie Image dashboard auth check"),
             *self._prompt_catalog_route_entries(),
         ]
@@ -265,6 +271,15 @@ class SelfieImageDashboardAPI:
     def _record_result(self, call: Any) -> Any:
         try:
             result: RecordControllerResult = call()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
+    def _cache_result(self, call: Any) -> Any:
+        try:
+            result: CacheControllerResult = call()
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         except Exception as exc:
@@ -729,96 +744,34 @@ class SelfieImageDashboardAPI:
         payload, error = await self._json_object_payload()
         if error:
             return error
-        cleanup = getattr(self.plugin, "cleanup_image_cache_from_web", None)
-        if not callable(cleanup):
-            return self._fail("当前版本不支持手动缓存清理", 501)
-        raw_confirm = (payload or {}).get("confirm", False)
-        confirm = bool(raw_confirm) if not isinstance(raw_confirm, str) else raw_confirm.strip().lower() in {"1", "true", "yes", "on"}
-        token = str((payload or {}).get("plan_token") or "").strip()
-        try:
-            data = cleanup(confirm=confirm, plan_token=token)
-            return self._ok(data, message="缓存清理完成" if confirm else "请确认缓存清理")
-        except ValueError as exc:
-            return self._fail(str(exc), 409)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
+        return self._cache_result(lambda: self._cache_controller.cleanup(payload))
 
     async def page_cache_image_file(self) -> Any:
         try:
-            rel_path = self._query_value("path")
-            if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
-                return self._fail("图片路径过长", 400)
-            info = self.plugin.get_cached_image_info(rel_path)
-        except Exception as exc:
-            return self._fail(str(exc), 400)
-        if not info.get("exists"):
-            return self._fail("图片已清理", 404)
-        if not info.get("is_image"):
-            return self._fail("缓存文件不是有效图片", 400)
+            cached = self._cache_controller.image_info(self._query_value("path"))
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         return file_response(
-            info["absolute_path"],
-            filename=str(info.get("name") or "media.bin"),
-            content_type=info.get("mime_type") or "application/octet-stream",
+            cached.info["absolute_path"],
+            filename=str(cached.info.get("name") or "media.bin"),
+            content_type=cached.info.get("mime_type") or "application/octet-stream",
         )
 
     async def page_cache_image_preview(self) -> Any:
-        try:
-            rel_path = self._query_value("path")
-            if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
-                return self._fail("图片路径过长", 400)
-            info = self.plugin.get_cached_image_info(rel_path)
-        except Exception as exc:
-            return self._fail(str(exc), 400)
-        if not info.get("exists"):
-            return self._ok(
-                {
-                    "path": rel_path,
-                    "available": False,
-                    "message": "图片已清理",
-                },
-                message="图片已清理",
-            )
-        if not info.get("is_image"):
-            return self._fail("缓存文件不是有效图片", 400)
-        path = str(info.get("absolute_path") or "")
-        try:
-            with open(path, "rb") as handle:
-                raw = handle.read(PAGE_PREVIEW_MAX_BYTES + 1)
-        except Exception as exc:
-            return self._fail(str(exc), 400)
-        if len(raw) > PAGE_PREVIEW_MAX_BYTES:
-            return self._fail("图片过大，请改用下载查看", 413)
-        mime = info.get("mime_type") or "image/png"
-        return self._ok(
-            {
-                "path": rel_path,
-                "mime_type": mime,
-                "size": len(raw),
-                "data_url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
-            }
-        )
+        return self._cache_result(lambda: self._cache_controller.preview(
+            self._query_value("path"), fallback_mime="image/png",
+        ))
 
     async def page_cache_image_thumbnail(self) -> Any:
         try:
-            rel_path = self._query_value("path")
-            if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
-                return self._fail("图片路径过长", 400)
-            info = self.plugin.get_cached_image_info(rel_path)
-            if not info.get("exists"):
-                return self._fail("图片已清理", 404)
-            if not info.get("is_image"):
-                return self._fail("缓存文件不是有效图片", 400)
-            raw = await asyncio.to_thread(render_image_thumbnail, info["absolute_path"])
+            result: CacheControllerResult = await asyncio.to_thread(
+                self._cache_controller.thumbnail, self._query_value("path")
+            )
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
         except Exception as exc:
             return self._fail(str(exc), 400)
-        return self._ok(
-            {
-                "path": rel_path,
-                "mime_type": "image/jpeg",
-                "size": len(raw),
-                "data_url": f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}",
-            }
-        )
+        return self._ok(result.data, **result.extra)
 
     async def page_studio_list(self) -> Any:
         return self._canvas_result(

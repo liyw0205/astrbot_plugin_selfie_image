@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from concurrent.futures import TimeoutError as FutureTimeoutError
 import hmac
 import json
@@ -20,6 +19,7 @@ from ..core.utils import (
 from .contracts import (
     ASSET_COLLECTION_ROUTE_CONTRACTS,
     ASSET_ROUTE_CONTRACTS,
+    CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
@@ -32,6 +32,8 @@ from .controllers import (
     AssetCollectionController,
     AssetController,
     AssetControllerResult,
+    CacheController,
+    CacheControllerResult,
     CanvasController,
     CanvasControllerResult,
     ConfigController,
@@ -49,7 +51,6 @@ from .services import (
     build_health_payload,
     gallery_pagination,
     parse_bounded_int,
-    render_image_thumbnail,
 )
 
 
@@ -64,12 +65,10 @@ except Exception:  # pragma: no cover - handled at runtime in AstrBot env
     make_server = None  # type: ignore
 
 
-MAX_CACHE_IMAGE_PATH_LENGTH = 512
 MAX_RECORD_PAGE_LIMIT = 1000
 MAX_ASSET_PAGE_LIMIT = 100
 MAX_TASK_PAGE_LIMIT = 200
 MAX_TASK_OFFSET = 1_000_000
-PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 _INDEX_SOURCE_STATUS: dict[str, str] = {
     "source": "embedded",
     "path": "",
@@ -191,6 +190,7 @@ class FlaskWebServer:
         asset_controller = AssetController(self.plugin)
         canvas_controller = CanvasController(self.plugin)
         config_controller = ConfigController(self.plugin)
+        cache_controller = CacheController(self.plugin)
         proxy_controller = ProxyController(self.plugin)
         task_controller = TaskController(self.plugin)
         record_controller = RecordController(self.plugin)
@@ -272,6 +272,15 @@ class FlaskWebServer:
                 if key not in omit_extras
             }
             return ok(result.data, **extra)
+
+        def cache_result(call: Any) -> Any:
+            try:
+                result: CacheControllerResult = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result.data, **result.extra)
 
         @app.after_request
         def add_response_safety_headers(response: Any) -> Any:
@@ -988,105 +997,53 @@ class FlaskWebServer:
                 methods=list(route.methods),
             )
 
-        @app.route("/api/cache/cleanup", methods=["POST"])
         def cache_cleanup() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            cleanup = getattr(self.plugin, "cleanup_image_cache_from_web", None)
-            if not callable(cleanup):
-                return fail("当前版本不支持手动缓存清理", 501)
-            raw_confirm = (payload or {}).get("confirm", False)
-            confirm = (
-                bool(raw_confirm)
-                if not isinstance(raw_confirm, str)
-                else str(raw_confirm).strip().lower() in {"1", "true", "yes", "on"}
-            )
-            token = str((payload or {}).get("plan_token") or "").strip()
-            try:
-                data = cleanup(confirm=confirm, plan_token=token)
-                return ok(data, message="缓存清理完成" if confirm else "请确认缓存清理")
-            except ValueError as exc:
-                return fail(str(exc), 409)
-            except Exception as exc:
-                return fail(str(exc), 500)
+            return cache_result(lambda: cache_controller.cleanup(payload))
 
-        @app.route("/api/cache-image", methods=["GET"])
         def cache_image() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             try:
-                rel_path = str(request.args.get("path") or "")
-                if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
-                    return fail("图片路径过长", 400)
-                info = self.plugin.get_cached_image_info(rel_path)
-            except Exception as exc:
-                return fail(str(exc), 400)
-            if not info.get("exists"):
-                return fail("图片已清理", 404)
-            if not info.get("is_image"):
-                return fail("缓存文件不是有效图片", 400)
-            return send_file(info["absolute_path"], mimetype=info.get("mime_type") or "application/octet-stream")
+                cached = cache_controller.image_info(request.args.get("path"))
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            return send_file(
+                cached.info["absolute_path"],
+                mimetype=cached.info.get("mime_type") or "application/octet-stream",
+            )
 
-        @app.route("/api/cache-image-thumbnail", methods=["GET"])
         def cache_image_thumbnail() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                rel_path = str(request.args.get("path") or "")
-                if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
-                    return fail("图片路径过长", 400)
-                info = self.plugin.get_cached_image_info(rel_path)
-                if not info.get("exists"):
-                    return fail("图片已清理", 404)
-                if not info.get("is_image"):
-                    return fail("缓存文件不是有效图片", 400)
-                raw = render_image_thumbnail(info["absolute_path"])
-            except Exception as exc:
-                return fail(str(exc), 400)
-            return ok({
-                "path": rel_path,
-                "mime_type": "image/jpeg",
-                "size": len(raw),
-                "data_url": f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}",
-            })
+            return cache_result(
+                lambda: cache_controller.thumbnail(request.args.get("path"))
+            )
 
-        @app.route("/api/cache-image-preview", methods=["GET"])
         def cache_image_preview() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            try:
-                rel_path = str(request.args.get("path") or "")
-                if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
-                    return fail("缓存路径过长", 400)
-                info = self.plugin.get_cached_image_info(rel_path)
-            except Exception as exc:
-                return fail(str(exc), 400)
-            if not info.get("exists"):
-                return ok({
-                    "path": rel_path,
-                    "available": False,
-                    "message": "缓存文件已清理",
-                }, message="缓存文件已清理")
-            if not info.get("is_image"):
-                return fail("缓存文件不是有效图片", 400)
-            path = str(info.get("absolute_path") or "")
-            try:
-                with open(path, "rb") as handle:
-                    raw = handle.read(PAGE_PREVIEW_MAX_BYTES + 1)
-            except Exception as exc:
-                return fail(str(exc), 400)
-            if len(raw) > PAGE_PREVIEW_MAX_BYTES:
-                return fail("媒体文件过大，请改用下载查看", 413)
-            mime = info.get("mime_type") or "application/octet-stream"
-            return ok({
-                "path": rel_path,
-                "mime_type": mime,
-                "size": len(raw),
-                "data_url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
-            })
+            return cache_result(lambda: cache_controller.preview(
+                request.args.get("path"), fallback_mime="application/octet-stream",
+            ))
+
+        cache_handlers = {
+            "cache_cleanup": cache_cleanup,
+            "cache_image": cache_image,
+            "cache_image_thumbnail": cache_image_thumbnail,
+            "cache_image_preview": cache_image_preview,
+        }
+        for route in CACHE_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=cache_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
 
         def studio_sessions_list() -> Any:
             if not check_auth():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,8 +24,13 @@ from .services import (
     parse_query_bool,
     parse_task_query,
     query_value,
+    render_image_thumbnail,
     validate_task_id,
 )
+
+
+MAX_CACHE_IMAGE_PATH_LENGTH = 512
+PAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -61,6 +67,18 @@ class CanvasControllerResult:
 class ConfigControllerResult:
     data: Any
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CacheControllerResult:
+    data: Any
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CachedImage:
+    path: str
+    info: dict[str, Any]
 
 
 class ConfigController:
@@ -820,3 +838,92 @@ class TaskController:
         if not is_cancelled:
             raise WebContractError("任务已经结束，不能取消", 409)
         return TaskControllerResult(redact_sensitive_data(updated), redact_sensitive_data(message))
+
+
+class CacheController:
+    """Shared cache cleanup and image validation for both Web adapters."""
+
+    def __init__(self, plugin: Any) -> None:
+        self.plugin = plugin
+
+    def cleanup(self, payload: Any) -> CacheControllerResult:
+        body = payload if isinstance(payload, dict) else {}
+        cleanup = getattr(self.plugin, "cleanup_image_cache_from_web", None)
+        if not callable(cleanup):
+            raise WebContractError("当前版本不支持手动缓存清理", 501)
+        raw_confirm = body.get("confirm", False)
+        confirm = (
+            bool(raw_confirm)
+            if not isinstance(raw_confirm, str)
+            else raw_confirm.strip().lower() in {"1", "true", "yes", "on"}
+        )
+        token = str(body.get("plan_token") or "").strip()
+        try:
+            data = cleanup(confirm=confirm, plan_token=token)
+        except ValueError as exc:
+            raise WebContractError(str(exc), 409) from exc
+        except Exception as exc:
+            raise WebContractError(str(exc), 500) from exc
+        message = "缓存清理完成" if confirm else "请确认缓存清理"
+        return CacheControllerResult(data, {"message": message})
+
+    def image_info(self, path: Any) -> CachedImage:
+        rel_path = str(path or "")
+        if len(rel_path) > MAX_CACHE_IMAGE_PATH_LENGTH:
+            raise WebContractError("图片路径过长", 400)
+        try:
+            info = self.plugin.get_cached_image_info(rel_path)
+            if not isinstance(info, dict):
+                raise TypeError("缓存图片信息格式无效")
+            if not info.get("exists"):
+                raise WebContractError("图片已清理", 404)
+            if not info.get("is_image"):
+                raise WebContractError("缓存文件不是有效图片", 400)
+        except WebContractError:
+            raise
+        except Exception as exc:
+            raise WebContractError(str(exc), 400) from exc
+        return CachedImage(rel_path, info)
+
+    def preview(
+        self, path: Any, *, fallback_mime: str = "application/octet-stream",
+    ) -> CacheControllerResult:
+        rel_path = str(path or "")
+        try:
+            cached = self.image_info(rel_path)
+        except WebContractError as exc:
+            if exc.status_code != 404:
+                raise
+            message = "图片已清理"
+            return CacheControllerResult(
+                {"path": rel_path, "available": False, "message": message},
+                {"message": message},
+            )
+
+        try:
+            with open(str(cached.info.get("absolute_path") or ""), "rb") as handle:
+                raw = handle.read(PAGE_PREVIEW_MAX_BYTES + 1)
+        except Exception as exc:
+            raise WebContractError(str(exc), 400) from exc
+        if len(raw) > PAGE_PREVIEW_MAX_BYTES:
+            raise WebContractError("图片过大，请改用下载查看", 413)
+        mime = str(cached.info.get("mime_type") or fallback_mime)
+        return CacheControllerResult({
+            "path": cached.path,
+            "mime_type": mime,
+            "size": len(raw),
+            "data_url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
+        })
+
+    def thumbnail(self, path: Any) -> CacheControllerResult:
+        cached = self.image_info(path)
+        try:
+            raw = render_image_thumbnail(str(cached.info.get("absolute_path") or ""))
+        except Exception as exc:
+            raise WebContractError(str(exc), 400) from exc
+        return CacheControllerResult({
+            "path": cached.path,
+            "mime_type": "image/jpeg",
+            "size": len(raw),
+            "data_url": f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}",
+        })
