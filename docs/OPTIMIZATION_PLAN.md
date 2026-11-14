@@ -4,18 +4,18 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-最新完整发布验证基线（2026-11-15，1.7.27）：
+最新完整发布验证基线（2026-11-15，1.7.28）：
 
-- 全量 pytest `3582 passed, 702 subtests passed`，耗时 390.18 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3582 passed, 702 subtests passed`，耗时 352.97 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；60 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：146 个文件，2,423,494 bytes；解压后 5,654,217 bytes；SHA-256 `843c28660e5be032f1e49f77b13036f740bbec32e598dcdebbc20f8626146ec8`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新增兼容 helper、Prompt、Cache、Health、Context、QQ group、Selfie profile、ImageChannel controller、ImageCommandService 与 SelfieWorkflowService 均纳入运行期包。
+- 临时运行期 ZIP 检查：146 个文件，2,423,723 bytes；解压后 5,658,485 bytes；SHA-256 `95ea2567f1df8bdd814e421d3198fa59709e728b90a48ef3123b599224ccfbf4`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新增兼容 helper、Prompt、Cache、Health、Context、QQ group、Selfie profile、ImageChannel controller、ImageCommandService 与 SelfieWorkflowService 均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证。
 
 主要结构性事实：
 
 | 领域 | 当前情况 | 对后续迭代的影响 |
 | --- | --- | --- |
-| 主插件 | `main.py` 当前约 5447 行；快速试画、批量执行、自拍批量准备、状态报告、普通图片命令和普通自拍流程均已拆分，AstrBot 原入口保留薄代理 | 后续按特色自拍命令与任务运行期边界继续拆分 |
+| 主插件 | `main.py` 当前约 5299 行；快速试画、批量执行、自拍批量准备、状态报告、普通图片命令及自拍/合影/COS/腿部路径均已拆分，AstrBot 原入口保留薄代理 | 后续按任务和生成运行期边界继续拆分 |
 | Web 层 | `webui/web.py` 约 1582 行，Dashboard API 约 1201 行；已共用主要业务 controller | Flask 与内嵌 Dashboard 需要持续保持契约一致 |
 | 生成链路 | 已有公平调度器、模型/密钥回退、超时、渠道健康状态和取消清理 | 重点变成网络连接复用、回退策略可观测性和边界测试 |
 | 持久化 | 生成记录已经使用 SQLite；任务快照仍是 JSON，状态变化时通过锁和延迟快照写入 | 记录查询可继续扩展索引；任务快照在高并发下有写放大风险 |
@@ -84,6 +84,7 @@
 - 手动图像渠道测试、测试任务启动/状态和模型刷新共 4 个路由组合迁入 `ImageChannelController` 与 `IMAGE_CHANNEL_ROUTE_CONTRACTS`；任务状态继续委派 `TaskController`，Flask 异步桥接超时和 Dashboard 原生 await 保留。
 - 普通图片命令 `/画`、`/文生图`、`/图生图` 的解析、提示词预设/模板展开、引用图选择、进度及任务启动移入 `ImageCommandService`；原 AstrBot 装饰器、入口签名、额度与限流检查、任务元数据和 persona 引用边界保留，现有数量位置及动态预设回归通过。
 - `/自拍` 的原始消息/数量/预设解析与日程准备，以及共享 handler 的额度/限流、画幅解析、引用图筛选、进度和任务创建移入 `SelfieWorkflowService`；插件侧 `cmd_selfie`、`_handle_selfie_command` 的公开/内部签名保留为薄代理，COS/腿部/合影命令仍调用相同公共实现。新成功路径测试覆盖任务元数据、主形象引用、队列提示和批处理 runner。
+- `/看看腿`、`/看看COS`、`/看看你`、`/合影` 的特色解析、预设和任务派发，以及 COS/自拍/合影引用选择逻辑也迁入 `SelfieWorkflowService`；插件侧所有命令与 reference helper 保留原签名的薄代理。对命令解析、套装硬约束、引用选择、persona fallback 和旧 hook 覆盖路径的定向回归通过。
 
 ## 2. 优先级总览
 
@@ -115,7 +116,7 @@
 
 `.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。支持 `--layer all/python/frontend/static`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
 
-上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.27`，新增的 `generation/image_command_service.py` 与 `generation/selfie_workflow.py` 均纳入运行期包；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
+上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.28`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
 
 制品基线和验证结果见上方“最新完整发布验证基线”。该制品仅代表本地当前工作区构建，发布前仍需在目标宿主验证真实通知投递和字体资源。
 
@@ -325,7 +326,7 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --prom
 4. `GenerationRuntimeService`：调度器、并发槽位、阶段更新和关闭；
 5. `ImageStatusService`：模型状态图、指标摘要和状态文字。
 
-迁移时每一步只移动一条完整路径，保留薄代理方法，避免一次性改变 AstrBot 装饰器、事件签名或测试替身。已完成 `web_test_image`、`_run_counted_generation_shots`、`_run_selfie_batches_unlocked`、普通图片命令和 `/自拍` 公共路径；`SelfieWorkflowService` 同时承接 COS/腿部/合影命令调用的公共 handler。保留原插件命令与 handler 签名。状态报告的格式化与文件保存已迁入现有模块内的 `ImageStatusService`，字体发现保留在插件侧。后续继续拆特色自拍命令解析和任务/运行期边界。
+迁移时每一步只移动一条完整路径，保留薄代理方法，避免一次性改变 AstrBot 装饰器、事件签名或测试替身。已完成 `web_test_image`、`_run_counted_generation_shots`、`_run_selfie_batches_unlocked`、普通图片命令及普通/特色自拍命令路径；`SelfieWorkflowService` 统一承接自拍、合影、COS、腿部命令、参考选择和公共任务 handler。插件命令、原 helper 签名与 hook 覆盖能力保留。状态报告的格式化与文件保存已迁入现有模块内的 `ImageStatusService`，字体发现保留在插件侧。下一步拆任务与生成运行期边界。
 
 本轮回归覆盖多图进度、失败后停止、部分成功、取消、记录提交顺序、投递未知状态、参考图顺序和异常记录，未调整提示词语义。另修复兼容执行器冷却期异常的并发槽位清理边界。
 
@@ -427,7 +428,7 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --prom
 
 ### 第 3 阶段：边界拆分
 
-已按完整业务路径拆出 Web 试画、公共批量执行、自拍批量准备、状态报告、普通图片命令和普通自拍流程，并提取共享 Web controller 与路由契约切片，覆盖任务、记录、配置、代理、资产/集合、缓存、Canvas、Prompt/COS/Creative、健康历史、会话上下文、QQ 群、自拍资料和图像渠道。下一步按 §5.1 继续迁移特色自拍命令，再拆任务与运行期。每次拆分配套现有回归集和端到端契约测试，禁止在同一个提交中同时改变提示词语义。
+已按完整业务路径拆出 Web 试画、公共批量执行、自拍批量准备、状态报告、普通图片命令和完整自拍命令/参考选择流程，并提取共享 Web controller 与路由契约切片，覆盖任务、记录、配置、代理、资产/集合、缓存、Canvas、Prompt/COS/Creative、健康历史、会话上下文、QQ 群、自拍资料和图像渠道。下一步按 §5.1 拆任务与生成运行期。每次拆分配套现有回归集和端到端契约测试，禁止在同一个提交中同时改变提示词语义。
 
 ### 第 4 阶段：恢复与状态功能
 

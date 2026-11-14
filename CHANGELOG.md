@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.7.28 - 2026-11-15
+
+- 将 `/看看腿`、`/看看COS`、`/看看你` 和 `/合影` 的参数、预设、套装约束、日程和任务派发迁入 `SelfieWorkflowService`；AstrBot 原装饰器及命令签名保持不变。
+- 将 COS、合影、自拍的参考图选择逻辑迁入同一 service；插件原 helper 签名保留为代理，并继续尊重调用方对这些 hook 的替换。
+- 保留 `main.py` 中既有 COS 查询 helper 的模块级导出，兼容现有集成和调用方。
+- 运行 COS 参考选择和仓库 helper 回归时发现并修复 service 绕过 `_is_cos_action` hook 的兼容性问题。
+- 全量测试 `3582 passed, 702 subtests passed`（352.97 秒）；编译、Dashboard/Node、JSON/版本/制品与差异发布门禁全部通过。
+
 ## 1.7.27 - 2026-11-15
 
 - 将普通自拍 `/自拍` 的预设/模板解析、日程准备，以及自拍公共 handler 的参考图筛选、队列进度、任务摘要和 runner 委派迁入 `SelfieWorkflowService`。

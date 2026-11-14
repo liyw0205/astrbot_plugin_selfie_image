@@ -2062,7 +2062,7 @@ class SelfieImagePlugin(
         )
 
     def _is_cos_action(self, action: str) -> bool:
-        return self.persona.analyze_selfie_intent(str(action or "")).is_cos_look
+        return SelfieWorkflowService(self).is_cos_action(action)
 
     def _reference_failure_message(self, event: Any) -> str:
         getter = getattr(self, "_reference_failure_reason", None)
@@ -2077,42 +2077,17 @@ class SelfieImagePlugin(
     def _select_group_references(
         self, message_refs: List[ImageReference]
     ) -> CosReferenceSelection:
-        return select_group_references(
-            self._persona_identity_reference(allow_logo=False),
-            message_refs,
-        )
+        return SelfieWorkflowService(self).select_group_references(message_refs)
 
     def _select_cos_references(
         self, action: str, message_refs: List[ImageReference]
     ) -> CosReferenceSelection:
-        persona_ref = self._persona_identity_reference(allow_logo=False)
-        return select_cos_references(
-            persona_ref,
-            message_refs,
-            action=action,
-            persona_extra_refs=self._persona_auxiliary_references(action),
-        )
+        return SelfieWorkflowService(self).select_cos_references(action, message_refs)
 
     def _select_selfie_references(
         self, action: str, message_refs: List[ImageReference]
     ) -> Optional[CosReferenceSelection]:
-        """Use user images as identity only for the two reference-driven look modes."""
-        intent = self.persona.analyze_selfie_intent(str(action or ""))
-        compact = re.sub(r"\s+", "", str(action or "")).lower()
-        look_cos = bool(intent.is_cos_look and "看看cos" in compact)
-        if not look_cos and not intent.is_legs_only:
-            if intent.is_cos_look:
-                return self._select_cos_references(action, message_refs)
-            return None
-
-        is_cos = bool(intent.is_cos_look)
-        return select_cos_references(
-            self._persona_identity_reference(allow_logo=not is_cos),
-            message_refs,
-            action=action,
-            persona_extra_refs=self._persona_auxiliary_references(action),
-            prefer_message_identity=True,
-        )
+        return SelfieWorkflowService(self).select_selfie_references(action, message_refs)
 
     def _selfie_reference_images(
         self,
@@ -2120,11 +2095,7 @@ class SelfieImagePlugin(
         message_refs: List[ImageReference],
         selection: Optional[CosReferenceSelection] = None,
     ) -> List[ImageReference]:
-        """Resolve the same identity and auxiliary media used for generation."""
-        if selection is not None:
-            return list(selection.refs)
-        identity = self._persona_identity_reference(allow_logo=not self._is_cos_action(action))
-        return ([identity] if identity else []) + self._persona_auxiliary_references(action) + list(message_refs)
+        return SelfieWorkflowService(self).selfie_reference_images(action, message_refs, selection)
 
     async def _build_selfie_prompt_and_refs(
         self,
@@ -4040,7 +4011,9 @@ class SelfieImagePlugin(
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
     ) -> AsyncGenerator[Any, None]:
-        async for item in SelfieWorkflowService(self).handle_command(
+        async for item in SelfieWorkflowService(
+            self, extract_command_message, extract_image_sources_from_event
+        ).handle_command(
             event=event,
             command_name=command_name,
             fallback=fallback,
@@ -4715,7 +4688,9 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """用当前形象自拍。可写动作、场景、换装；有附图时作服装/场景参考。"""
-        async for item in SelfieWorkflowService(self).selfie(
+        async for item in SelfieWorkflowService(
+            self, extract_command_message, extract_image_sources_from_event
+        ).selfie(
             event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
@@ -4736,38 +4711,10 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """生成日常袜装穿搭展示；可指定服装、姿势、自拍或全身构图。"""
-        fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        raw_message = extract_command_message(event, "看看腿", fallback_args, include_quote_text=True)
-        raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
-        special_variants, preset_aspect, preset_resolution, preset_name = (
-            self._expand_dynamic_preset_variants(raw_extra, requested_count)
-        )
-        if special_variants:
-            expanded_extra = special_variants[0]
-        else:
-            expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
-        has_refs = bool(extract_image_sources_from_event(event))
-        try:
-            fallback = self._build_leg_focus_action(expanded_extra, has_refs)
-        except LegFocusDataError as exc:
-            yield event.plain_result(str(exc))
-            return
-        async for item in self._handle_selfie_command(
-            event=event,
-            command_name="看看腿",
-            fallback=fallback,
-            default_action=self._build_leg_focus_action("", False),
-            default_action_with_refs=self._build_leg_focus_action("", True),
-            progress_label="自拍",
-            source="command-look-legs",
-            fail_label=self._natural_fail_fallback("legs"),
-            message_override=fallback,
-            requested_count_override=requested_count,
-            preset_aspect=preset_aspect,
-            preset_resolution=preset_resolution,
-            preset_name=preset_name,
-            rebuild_extra_request=expanded_extra,
-            rebuild_special_preset_variants=special_variants,
+        async for item in SelfieWorkflowService(
+            self, extract_command_message, extract_image_sources_from_event
+        ).look_legs(
+            event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
 
@@ -4787,51 +4734,10 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """随机一套内置 COS 换装；可用列表/全部/查看浏览标题，或按标题分段指定套装并附加数量。"""
-        fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        raw_message = extract_command_message(event, "看看COS", fallback_args, include_quote_text=True)
-        # Also accept lowercase command text extraction fallbacks.
-        if not raw_message:
-            raw_message = extract_command_message(event, "看看cos", fallback_args, include_quote_text=True)
-        list_page = parse_cos_look_list_request(raw_message)
-        if list_page is not None:
-            yield event.plain_result(format_cos_look_list(page=list_page))
-            return
-        raw_extra, requested_count = self._extract_command_count(raw_message, allow_attached=True)
-        # A declared series is a hard narrowing constraint.  Do not let an
-        # unknown or conflicting series fall through as an ordinary selfie
-        # request after COS matching returns no candidates.
-        if cos_query_has_series_constraint(raw_extra) and not match_cos_look_sets(raw_extra):
-            yield event.plain_result("未找到匹配的 COS 作品系列或套装，请检查作品名称后重试。")
-            return
-        special_preset_variants, preset_aspect, preset_resolution, preset_name = (
-            self._expand_cos_special_preset_variants(raw_extra, requested_count)
-        )
-        if special_preset_variants:
-            expanded_extra = special_preset_variants[0]
-        else:
-            expanded_extra, preset_aspect, preset_resolution, preset_name = (
-                self._expand_cos_user_text_with_preset(raw_extra)
-            )
-        has_refs = bool(extract_image_sources_from_event(event))
-        fallback = self._build_cos_look_action(expanded_extra, has_refs, match_query=raw_extra)
-        async for item in self._handle_selfie_command(
-            event=event,
-            command_name="看看COS",
-            fallback=fallback,
-            default_action=self._build_cos_look_action("", False),
-            default_action_with_refs=self._build_cos_look_action("", True),
-            progress_label="自拍",
-            source="command-look-cos",
-            fail_label=self._natural_fail_fallback("selfie"),
-            message_override=fallback,
-            allow_context_fallback=False,
-            requested_count_override=requested_count,
-            preset_aspect=preset_aspect,
-            preset_resolution=preset_resolution,
-            preset_name=preset_name,
-            rebuild_extra_request=expanded_extra,
-            rebuild_match_query=raw_extra,
-            rebuild_special_preset_variants=special_preset_variants,
+        async for item in SelfieWorkflowService(
+            self, extract_command_message, extract_image_sources_from_event
+        ).look_cos(
+            event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
 
@@ -4851,35 +4757,10 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """像别人随手拍你，带一点日常他拍感。使用当前形象。"""
-        fallback_args = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        raw_message = extract_command_message(event, "看看你", fallback_args, include_quote_text=True)
-        raw_extra, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
-        special_variants, preset_aspect, preset_resolution, preset_name = (
-            self._expand_dynamic_preset_variants(raw_extra, requested_count)
-        )
-        if special_variants:
-            expanded_extra = special_variants[0]
-        else:
-            expanded_extra, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_extra)
-        has_refs = bool(extract_image_sources_from_event(event))
-        await self._ensure_daily_selfie_schedule(expanded_extra or "看看你", has_refs)
-        fallback = self._build_third_person_look_action(expanded_extra, has_refs)
-        async for item in self._handle_selfie_command(
-            event=event,
-            command_name="看看你",
-            fallback=fallback,
-            default_action=self._build_third_person_look_action("", False),
-            default_action_with_refs=self._build_third_person_look_action("", True),
-            progress_label="自拍",
-            source="command-look-you",
-            fail_label=self._natural_fail_fallback("selfie"),
-            message_override=fallback,
-            requested_count_override=requested_count,
-            preset_aspect=preset_aspect,
-            preset_resolution=preset_resolution,
-            preset_name=preset_name,
-            rebuild_extra_request=expanded_extra,
-            rebuild_special_preset_variants=special_variants,
+        async for item in SelfieWorkflowService(
+            self, extract_command_message, extract_image_sources_from_event
+        ).look_you(
+            event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
 
@@ -4899,39 +4780,10 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """和对象同框合影。可附图或@对方；自己使用当前形象。"""
-        fallback = " ".join(item for item in [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10] if item).strip()
-        raw_message = extract_command_message(
-            event, ("合影", "合照"), fallback, include_quote_text=True
-        )
-        raw_message, requested_count = self._extract_command_count(raw_message, allow_trailing=True)
-        special_variants, preset_aspect, preset_resolution, preset_name = (
-            self._expand_dynamic_preset_variants(raw_message, requested_count)
-        )
-        if special_variants:
-            expanded_message = special_variants[0]
-        else:
-            expanded_message, preset_aspect, preset_resolution, preset_name = self._expand_user_text_with_preset(raw_message)
-        action = self._build_group_selfie_action(
-            expanded_message,
-            bool(extract_image_sources_from_event(event, include_at_avatar=True)),
-        )
-        async for item in self._handle_selfie_command(
-            event=event,
-            command_name=("合影", "合照"),
-            fallback=fallback,
-            default_action=self._build_group_selfie_action("", False),
-            default_action_with_refs=self._build_group_selfie_action("", True),
-            progress_label="合影",
-            source="command-group-selfie",
-            fail_label=self._natural_fail_fallback("group"),
-            message_override=action,
-            include_at_avatar=True,
-            requested_count_override=requested_count,
-            preset_aspect=preset_aspect,
-            preset_resolution=preset_resolution,
-            preset_name=preset_name,
-            rebuild_extra_request=expanded_message,
-            rebuild_special_preset_variants=special_variants,
+        async for item in SelfieWorkflowService(
+            self, extract_command_message, extract_image_sources_from_event
+        ).group_selfie(
+            event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
 
