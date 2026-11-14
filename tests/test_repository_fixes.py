@@ -385,7 +385,7 @@ def test_flask_async_timeout_cancels_the_submitted_coroutine(tmp_path):
             finally:
                 cleaned.set()
 
-        with pytest.raises(FutureTimeoutError):
+        with pytest.raises((FutureTimeoutError, asyncio.TimeoutError, TimeoutError)):
             await asyncio.to_thread(server._run_async, worker(), 0.5)
         await asyncio.wait_for(cleaned.wait(), 1)
         await plugin.terminate()

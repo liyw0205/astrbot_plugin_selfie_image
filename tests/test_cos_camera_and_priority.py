@@ -1636,7 +1636,10 @@ def test_cos_action_replaces_outfit_view_alternatives():
         "title": "视角测试",
         "prompt": "严格换装为测试COS：人物正面或三分之四侧身站立，采用近景至全身构图。",
     }
-    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
+    with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
+        "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
+        side_effect=lambda values: values[0],
+    ):
         action = build_cos_look_action("", picker=lambda **_: item)
     assert "本次未指定视角，随机采用" in action
     assert "该随机机位优先于套装正文中的通用景别和机位描述" in action
