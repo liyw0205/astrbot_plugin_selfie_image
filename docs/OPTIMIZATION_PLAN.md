@@ -4,11 +4,11 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-最新完整发布验证基线（2026-11-15，1.7.32）：
+最新完整发布验证基线（2026-11-15，1.7.33）：
 
-- 全量 pytest `3590 passed, 702 subtests passed`，耗时 330.70 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
-- Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；60 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：148 个文件，2,426,513 bytes；解压后 5,666,061 bytes；SHA-256 `7593d3948a5fed2e0b4a64304785b9e4c16ea0e71ed2f5ca47ee1b0b056c7c07`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
+- 全量 pytest `3592 passed, 702 subtests passed`，耗时 294.95 秒；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；62 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
+- 临时运行期 ZIP 检查：148 个文件，2,426,875 bytes；解压后 5,667,258 bytes；SHA-256 `cb608dec47256e5ffc22e699f011589004f5db50c7f1b6da0b5ee453c8fb6a57`。单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证。
 
 主要结构性事实：
@@ -116,7 +116,7 @@
 
 `.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。支持 `--layer all/python/frontend/static`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
 
-上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.32`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
+上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.33`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
 
 制品基线和验证结果见上方“最新完整发布验证基线”。该制品仅代表本地当前工作区构建，发布前仍需在目标宿主验证真实通知投递和字体资源。
 
@@ -335,6 +335,21 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --keep
 
 原始样本见 [10k 报告](benchmarks/record-query-10k-bundled-20261115.json) 和 [100k 报告](benchmarks/record-query-100k-bundled-20261115.json)。自适应与标量对照的返回值及分页元数据在本轮均一致。结果说明应继续优化高选择性部分命中与短词回退，并优先取得授权脱敏后的真实文本长度/重复率/关键词命中率统计；在此之前，不能把静态资产合成结果外推为生产性能承诺。
 
+#### 4.3.5 FTS 候选内精确确认复测
+
+4.3.4 的瓶颈来自 FTS 只筛候选、随后又对候选行解析主表 JSON 做完整确认。本轮将选择性候选改为单个 FTS 子查询内的 `MATCH` 与 `instr(search_text, ?)` 联合确认，并让关键词查询复用窗口计数，避免成功的 FTS 路径重复执行总数与分页查询；`search_text` 与原关键词拼接表达式同源，仍保留完整 substring 语义。宽候选、短词、NUL、FTS 不可用或索引异常时继续走旧标量路径，并在异常时移除两个 FTS 参数后回退。
+
+复现命令：
+
+```sh
+python scripts/benchmark_record_database.py --records 10000 --samples 10 --keep-limit 10000 --prompt-profile bundled-assets --cold-cache-samples 3 --concurrent-samples 10 --output docs/benchmarks/record-query-10k-fts-window-20261115.json
+python scripts/benchmark_record_database.py --records 100000 --samples 10 --keep-limit 10000 --prompt-profile bundled-assets --cold-cache-samples 3 --concurrent-samples 10 --output docs/benchmarks/record-query-100k-fts-window-20261115.json
+```
+
+同环境下 100k 热查询 p95（nearest-rank，10 个样本）为：稀有词 `66.5 ms`（4.3.4 为 `250.6 ms`）、前缀内部分命中 `157.5 ms`（旧 `438.6 ms`）、前 128 字符后的部分命中 `139.7 ms`（旧 `594.5 ms`）、自然窄词 `68.4 ms`（旧 `279.1 ms`）、自然宽词 `104.0 ms`（旧 `391.8 ms`）。最近、收藏、模型查询分别为 `115.4/49.5/167.8 ms`；短词 `自然` 因无法生成 trigram 仍为标量回退，p95 `2,342.1 ms`。冷缓存下前缀内/外部分命中约 `1,780.7/2,123.6 ms`，共享实例并发下约 `725.2/4,070.4 ms`，不能据此宣称任意关键词达到 200 ms。
+
+原始样本见 [10k 优化报告](benchmarks/record-query-10k-fts-window-20261115.json) 和 [100k 优化报告](benchmarks/record-query-100k-fts-window-20261115.json)。测试覆盖 FTS 与标量返回值/分页元数据一致、跨 `original_prompt`/`request_prompt`/`prompt`、legacy 字段、跨字段拼接、采样 trigram 假阳性过滤及 FTS 失败回退。下一步仍是授权脱敏分布统计、短词候选策略评估，以及目标宿主网络连接复用指标与握手基准。
+
 ### 4.4 任务快照暂不立即换库，先降低写放大
 
 `tasks/task_manager.py` 已有延迟快照和生命周期边界强制刷盘，当前设计对小规模部署是合理的。当前已补齐以下三项：
@@ -457,7 +472,7 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --keep
 
 ### 第 2 阶段：网络和查询性能
 
-已完成 HTTP session pool、连接复用、目标缓存 revision、SQLite 物化字段/FTS5，以及长提示词/缓存驱逐/同实例和独立实例写入基准。已修复连接未确定关闭，并以 ID-only 保留集、有效 JSON partial index 和提示词前缀投影优化查询。此前低熵/前缀全量命中夹具中的常用查询低于 200 ms；4.3.4 仓库资产派生 100k 夹具显示稀有词约 251 ms，部分命中约 439～594 ms，自然词约 279～392 ms，短词回退约 2.23 s，尽力驱逐和并发压力下还会更慢。该证据不是用户生产分布，不能宣称 200 ms 目标全面达成；后续应取得授权脱敏分布并针对部分命中和短词回退优化，同时补模拟上游握手基准。
+已完成 HTTP session pool、连接复用、目标缓存 revision、SQLite 物化字段/FTS5，以及长提示词/缓存驱逐/同实例和独立实例写入基准。已修复连接未确定关闭，并以 ID-only 保留集、有效 JSON partial index、提示词前缀投影、FTS 候选内精确确认和窗口计数优化查询。4.3.5 的 100k 仓库资产派生夹具热缓存下除短词外均低于 200 ms；短词回退约 2.34 s，冷缓存和并发压力下还会更慢。该证据不是用户生产分布，不能宣称 200 ms 目标全面达成；后续应取得授权脱敏分布并针对短词回退、冷/并发场景和 session registry 可观测性优化，同时补模拟上游握手基准。
 
 ### 第 3 阶段：边界拆分
 

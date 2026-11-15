@@ -725,9 +725,6 @@ class RecordDatabase:
                 params.append(str(value).strip().lower())
         fts_clause = ""
         fts_param_index: Optional[int] = None
-        if keyword_text:
-            clauses.append(self._keyword_search_predicate())
-            params.extend((keyword_lower, keyword_lower, keyword_lower))
         if media_type:
             clauses.append(f"text_lower({media_type_field}) = ?")
             params.append(str(media_type).strip().lower())
@@ -763,11 +760,18 @@ class RecordDatabase:
                     fts_keyword = self._fts_match_query(keyword_lower)
                 if fts_keyword:
                     fts_clause = (
-                        f"id IN (SELECT record_id FROM {self._FTS_TABLE} WHERE {self._FTS_TABLE} MATCH ?)"
+                        f"id IN (SELECT record_id FROM {self._FTS_TABLE} "
+                        f"WHERE {self._FTS_TABLE} MATCH ? AND instr(search_text, ?) > 0)"
                     )
                     clauses.append(fts_clause)
                     fts_param_index = len(params)
-                    params.append(fts_keyword)
+                    params.extend((fts_keyword, keyword_lower))
+                else:
+                    clauses.append(self._keyword_search_predicate())
+                    params.extend((keyword_lower, keyword_lower, keyword_lower))
+            elif keyword_text:
+                clauses.append(self._keyword_search_predicate())
+                params.extend((keyword_lower, keyword_lower, keyword_lower))
             if keyword_text and not fts_clause and len(clauses) == 2:
                 record_count = int(
                     connection.execute("SELECT COUNT(*) FROM generation_records").fetchone()[0]
@@ -790,7 +794,7 @@ class RecordDatabase:
                         }
             where = " WHERE " + " AND ".join(clauses)
             try:
-                if keyword_text and not fts_clause:
+                if keyword_text:
                     page_query = (
                         retained
                         + ", filtered AS (SELECT id, time, seq, pinned, favorite, "
@@ -824,9 +828,12 @@ class RecordDatabase:
                 # Disable this instance for subsequent calls, then rerun the
                 # same transaction using the pre-FTS scalar expression.
                 self._invalidate_fts(connection)
-                fallback_where = " WHERE " + " AND ".join(clause for clause in clauses if clause != fts_clause)
+                fallback_clauses = [clause for clause in clauses if clause != fts_clause]
+                fallback_clauses.append(self._keyword_search_predicate())
+                fallback_where = " WHERE " + " AND ".join(fallback_clauses)
                 fallback_params = list(params)
-                del fallback_params[fts_param_index]
+                del fallback_params[fts_param_index:fts_param_index + 2]
+                fallback_params.extend((keyword_lower, keyword_lower, keyword_lower))
                 count = connection.execute(
                     retained + "SELECT COUNT(*) FROM retained" + fallback_where,
                     fallback_params,

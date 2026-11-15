@@ -393,7 +393,39 @@ def test_keyword_search_uses_match_candidates_and_scalar_confirmation(tmp_path, 
     assert [row["id"] for row in database.query_records(keyword="ounta")[0]] == ["candidate"]
     candidate_queries = [sql for sql in statements if " MATCH " in sql and not sql.startswith("--")]
     assert candidate_queries
-    assert all("instr(text_lower(" in sql for sql in candidate_queries)
+    assert all("instr(search_text," in sql for sql in candidate_queries)
+    assert all("instr(text_lower(" not in sql for sql in candidate_queries)
+
+
+def test_fts_search_text_confirmation_preserves_legacy_fields_and_prompt_fallback(tmp_path):
+    database = RecordDatabase(str(tmp_path / "records.sqlite3"))
+    if not database._fts5_enabled:
+        pytest.skip("SQLite build has no trigram FTS5")
+    database.replace_records([
+        {"id": "original", "original_prompt": "quiet mountain", "source": "legacy-source"},
+        {"id": "request", "request_prompt": "quiet mountain", "note": "legacy-note"},
+        {"id": "prompt", "prompt": "quiet mountain", "error": "legacy-error"},
+        {"id": "disjoint", "source": "quiet", "note": "mountain"},
+    ])
+    indexed = database.query_records(keyword="mountain")[0]
+    database._fts5_enabled = False
+    scalar = database.query_records(keyword="mountain")[0]
+    assert [row["id"] for row in indexed] == [row["id"] for row in scalar]
+    assert {row["id"] for row in indexed} == {"original", "request", "prompt", "disjoint"}
+
+
+def test_fts_keyword_window_count_preserves_filtered_count_on_empty_page(tmp_path):
+    database = RecordDatabase(str(tmp_path / "records.sqlite3"))
+    if not database._fts5_enabled:
+        pytest.skip("SQLite build has no trigram FTS5")
+    database.replace_records([
+        {"id": "new", "time": "2026-11-14 12:00:00", "prompt": "common marker"},
+        {"id": "old", "time": "2026-11-13 12:00:00", "prompt": "common marker"},
+        {"id": "other", "time": "2026-11-12 12:00:00", "prompt": "unrelated"},
+    ])
+    rows, metadata = database.query_records(keyword="common marker", limit=1, offset=5)
+    assert rows == []
+    assert metadata["filtered"] == 2
 
 
 @pytest.mark.parametrize("keyword", [
