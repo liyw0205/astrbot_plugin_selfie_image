@@ -686,6 +686,53 @@ assert.equal(new Set([one.id, two.id, audit.id]).size, 3);
     subprocess.run([node, "-e", script], check=True, text=True, capture_output=True)
 
 
+def test_dashboard_page_cancelled_requests_abort_fetch_and_clear_page_maps():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for dashboard JavaScript verification")
+    root = Path(__file__).resolve().parents[1]
+    runtime = (root / "pages/dashboard/source/runtime.js").read_text()
+    records = (root / "pages/dashboard/source/records_assets.js").read_text()
+    is_abort = "    function isAbortError(error) {" + runtime.split("    function isAbortError(error) {", 1)[1].split("    async function api", 1)[0]
+    api = "    async function api" + runtime.split("    async function api", 1)[1].split("    function textList", 1)[0]
+    cached = "    function abortPageRequests" + records.split("    function abortPageRequests", 1)[1].split("    function pagePathAt", 1)[0]
+    script = """
+import assert from 'node:assert/strict';
+const document = {querySelector() { return null; }, body: {classList: {remove() {}}}};
+const STUDIO = {current: null};
+const CREATIVE_CANVAS = {current: null};
+const AUTH_TOKEN = '';
+const bridgeEndpoint = path => path;
+const isDashboardPage = () => false;
+const clearProtectedMediaCache = () => {};
+const traceRequest = entry => entry;
+const headers = () => ({'Content-Type': 'application/json'});
+let fetchOptions;
+globalThis.fetch = async (_path, options) => {
+  fetchOptions = options;
+  await new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+  });
+};
+""" + is_abort + api + cached + """
+const controller = new AbortController();
+const pending = api('/api/records', {signal: controller.signal});
+controller.abort();
+await pending.then(() => assert.fail('request should be cancelled'), error => assert.equal(error.name, 'AbortError'));
+assert.equal(fetchOptions.signal, controller.signal);
+assert.equal(fetchOptions.signal.aborted, true);
+
+const requests = new Map(), controllers = new Map();
+const request = requestCachedPage('/api/records?offset=0', requests, controllers);
+abortPageRequests(requests, controllers);
+assert.equal(controllers.size, 0);
+assert.equal(requests.size, 0);
+await request.catch(error => assert.equal(error.name, 'AbortError'));
+"""
+    completed = subprocess.run([node, "--input-type=module", "-e", script], text=True, capture_output=True)
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_dashboard_proxy_edit_keeps_masked_password_and_existing_identity():
     node = shutil.which("node")
     if not node:

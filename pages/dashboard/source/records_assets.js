@@ -37,19 +37,42 @@
       cache.set(key, value);
       return value;
     }
-    function clearPageCache(cache, requests) {
+    function abortPageRequests(requests, controllers, keepPath = '') {
+      for (const [path, controller] of controllers.entries()) {
+        if (path === keepPath) continue;
+        try { controller.abort(); } catch (_) {}
+        controllers.delete(path);
+        requests.delete(path);
+      }
+    }
+    function clearPageCache(cache, requests, controllers) {
+      abortPageRequests(requests, controllers);
       cache.clear();
       requests.clear();
+      controllers.clear();
     }
-    function requestCachedPage(path, requests, force = false) {
-      if (force) requests.delete(path);
+    function requestCachedPage(path, requests, controllers, force = false) {
+      if (force) {
+        const previous = controllers.get(path);
+        if (previous) {
+          try { previous.abort(); } catch (_) {}
+          controllers.delete(path);
+        }
+        requests.delete(path);
+      }
       const existing = requests.get(path);
       if (existing) return existing;
-      const request = api(path);
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const request = api(path, controller ? {signal: controller.signal} : {});
       requests.set(path, request);
+      if (controller) controllers.set(path, controller);
+      const cleanup = () => {
+        if (requests.get(path) === request) requests.delete(path);
+        if (controllers.get(path) === controller) controllers.delete(path);
+      };
       request.then(
-        () => { if (requests.get(path) === request) requests.delete(path); },
-        () => { if (requests.get(path) === request) requests.delete(path); }
+        cleanup,
+        cleanup
       );
       return request;
     }
@@ -92,7 +115,7 @@
       ASSET_RECORDS = payload.rows;
       ASSET_META = payload.meta;
     }
-    function prefetchPages(path, page, totalPages, pageSize, cache, requests, normalize, isValid = () => true, onPage = null) {
+    function prefetchPages(path, page, totalPages, pageSize, cache, requests, controllers, normalize, isValid = () => true, onPage = null) {
       const targets = Array.from({length: PAGE_PREFETCH_AHEAD}, (_, index) => page + index + 1)
         .filter(item => item >= 1 && item <= totalPages);
       targets.forEach(target => {
@@ -102,7 +125,7 @@
           if (typeof onPage === 'function') onPage(existing);
           return;
         }
-        requestCachedPage(targetPath, requests)
+        requestCachedPage(targetPath, requests, controllers)
           .then(res => {
             if (!isValid()) return;
             const payload = rememberPageCache(cache, targetPath, normalize(res));
@@ -113,11 +136,11 @@
     }
     function clearRecordPageCache() {
       RECORD_PAGE_CACHE_VERSION += 1;
-      clearPageCache(RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS);
+      clearPageCache(RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS);
     }
     function clearAssetPageCache() {
       ASSET_PAGE_CACHE_VERSION += 1;
-      clearPageCache(ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS);
+      clearPageCache(ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS);
     }
 
     async function loadRecords(showRefreshToast = false) {
@@ -125,6 +148,7 @@
       const requestSeq = ++RECORD_LOAD_SEQ;
       const cacheVersion = RECORD_PAGE_CACHE_VERSION;
       const requestPath = monitorQueryPath(MONITOR_PAGE);
+      abortPageRequests(RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, requestPath);
       const cached = showRefreshToast ? null : usablePageCache(RECORD_PAGE_CACHE, requestPath);
       if (showRefreshToast) RECORD_PAGE_CACHE.delete(requestPath);
       if (cached) {
@@ -133,7 +157,7 @@
         setPagerLoading('monitorPager', false);
         renderRecords();
         const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / MONITOR_PAGE_SIZE));
-        prefetchPages(requestPath, MONITOR_PAGE, cachedPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, MONITOR_PAGE, cachedPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
         return;
       } else {
         RECORD_LOADING = true;
@@ -141,7 +165,7 @@
       }
       try {
         // The cached equivalent of api(monitorQueryPath(MONITOR_PAGE)).
-        const res = await requestCachedPage(requestPath, RECORD_PAGE_REQUESTS, showRefreshToast);
+        const res = await requestCachedPage(requestPath, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, showRefreshToast);
         if (requestSeq !== RECORD_LOAD_SEQ) return;
         if (cacheVersion !== RECORD_PAGE_CACHE_VERSION) return;
         const payload = recordPagePayload(res);
@@ -154,9 +178,10 @@
         }
         RECORD_LOADING = false;
         renderRecords();
-        prefetchPages(requestPath, MONITOR_PAGE, totalPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, MONITOR_PAGE, totalPages, MONITOR_PAGE_SIZE, RECORD_PAGE_CACHE, RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS, recordPagePayload, () => cacheVersion === RECORD_PAGE_CACHE_VERSION);
         if (showRefreshToast) showToast('记录已刷新', 'ok');
       } catch (e) {
+        if (isAbortError(e)) return;
         if (requestSeq === RECORD_LOAD_SEQ && !cached) $('monitorStats').textContent = e.message;
       } finally {
         if (requestSeq === RECORD_LOAD_SEQ) {
@@ -204,6 +229,8 @@
     }
     function monitorFilterChanged() {
       MONITOR_PAGE = 1;
+      RECORD_LOAD_SEQ += 1;
+      abortPageRequests(RECORD_PAGE_REQUESTS, RECORD_PAGE_CONTROLLERS);
       clearTimeout(MONITOR_LOAD_TIMER);
       MONITOR_LOAD_TIMER = setTimeout(() => loadRecords(false), 260);
     }
@@ -614,6 +641,7 @@
       const requestSeq = ++ASSET_LOAD_SEQ;
       const cacheVersion = ASSET_PAGE_CACHE_VERSION;
       const requestPath = assetQueryPath(ASSET_PAGE);
+      abortPageRequests(ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, requestPath);
       const cached = showRefreshToast ? null : usablePageCache(ASSET_PAGE_CACHE, requestPath);
       if (showRefreshToast) ASSET_PAGE_CACHE.delete(requestPath);
       if (cached) {
@@ -622,14 +650,14 @@
         setPagerLoading('assetPager', false);
         renderAssets();
         const cachedPages = Math.max(1, Math.ceil((cached.meta.filtered || 0) / ASSET_PAGE_SIZE));
-        prefetchPages(requestPath, ASSET_PAGE, cachedPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, ASSET_PAGE, cachedPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
         return;
       } else {
         ASSET_LOADING = true;
         setPagerLoading('assetPager', true);
       }
       try {
-        const res = await requestCachedPage(requestPath, ASSET_PAGE_REQUESTS, showRefreshToast);
+        const res = await requestCachedPage(requestPath, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, showRefreshToast);
         if (requestSeq !== ASSET_LOAD_SEQ) return;
         if (cacheVersion !== ASSET_PAGE_CACHE_VERSION) return;
         const payload = assetPagePayload(res);
@@ -642,9 +670,10 @@
         }
         ASSET_LOADING = false;
         renderAssets();
-        prefetchPages(requestPath, ASSET_PAGE, totalPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
+        prefetchPages(requestPath, ASSET_PAGE, totalPages, ASSET_PAGE_SIZE, ASSET_PAGE_CACHE, ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS, assetPagePayload, () => cacheVersion === ASSET_PAGE_CACHE_VERSION);
         if (showRefreshToast) showToast('资产库已刷新', 'ok');
       } catch (e) {
+        if (isAbortError(e)) return;
         if (requestSeq === ASSET_LOAD_SEQ && !cached && $('assetStatus')) $('assetStatus').textContent = e.message || '资产读取失败';
       } finally {
         if (requestSeq === ASSET_LOAD_SEQ) {
@@ -659,6 +688,8 @@
     }
     function assetFilterChanged() {
       ASSET_PAGE = 1;
+      ASSET_LOAD_SEQ += 1;
+      abortPageRequests(ASSET_PAGE_REQUESTS, ASSET_PAGE_CONTROLLERS);
       clearTimeout(ASSET_LOAD_TIMER);
       ASSET_LOAD_TIMER = setTimeout(() => loadAssets(false), 260);
     }

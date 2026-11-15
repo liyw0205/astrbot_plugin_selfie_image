@@ -102,6 +102,8 @@
     const ASSET_PAGE_CACHE = new Map();
     const RECORD_PAGE_REQUESTS = new Map();
     const ASSET_PAGE_REQUESTS = new Map();
+    const RECORD_PAGE_CONTROLLERS = new Map();
+    const ASSET_PAGE_CONTROLLERS = new Map();
     let RECORD_PAGE_CACHE_VERSION = 0;
     let ASSET_PAGE_CACHE_VERSION = 0;
     let ASSET_STUDIO_PRESETS = [];
@@ -237,6 +239,9 @@
     function apiErrorMessage(status, data) {
       return String(data?.error || ("HTTP " + status));
     }
+    function isAbortError(error) {
+      return error?.name === 'AbortError';
+    }
     async function api(path, options = {}) {
       const method = String(options.method || 'GET').toUpperCase();
       const endpoint = bridgeEndpoint(path);
@@ -269,7 +274,11 @@
         let res;
         try {
           res = await fetch(path, opts);
-        } catch (_) {
+        } catch (error) {
+          if (isAbortError(error) || options.signal?.aborted) {
+            finish('cancelled');
+            throw error;
+          }
           finish('network_error');
           throw new Error("网络请求失败，请检查 Web 服务连接");
         }
