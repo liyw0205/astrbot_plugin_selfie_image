@@ -436,6 +436,50 @@ def test_duplicate_generation_record_link_is_skipped_without_rewrite(tmp_path):
     assert plugin.get_task_snapshot_health()["skipped_write_count"] == 1
 
 
+def test_repeated_task_fields_skip_snapshot_write(tmp_path):
+    plugin = snapshot_plugin(tmp_path)
+    plugin._web_tasks = {
+        "task": {
+            "task_id": "task",
+            "status": "running",
+            "generation_stage": "provider",
+        }
+    }
+    plugin._persist_web_tasks_locked()
+    before = plugin.get_task_snapshot_health()
+
+    plugin._set_web_image_task("task", generation_stage="provider")
+    plugin._set_web_image_task("task", status="running")
+    plugin._set_web_image_task("task", status="succeeded", success=True)
+    plugin._set_web_image_task("task", status="succeeded", success=True)
+
+    health = plugin.get_task_snapshot_health()
+    assert health["write_count"] == before["write_count"] + 1
+    assert health["forced_flush_count"] == before["forced_flush_count"] + 1
+    assert health["skipped_write_count"] == 3
+    persisted = load_json_file(plugin.tasks_path)
+    assert persisted["tasks"]["task"]["status"] == "succeeded"
+
+
+def test_repeated_status_still_persists_terminal_retention_pruning(tmp_path):
+    plugin = snapshot_plugin(tmp_path)
+    plugin.WEB_TASK_KEEP_LIMIT = 1
+    plugin._web_tasks = {
+        "old": {"task_id": "old", "status": "succeeded", "updated_ts": 1},
+        "new": {"task_id": "new", "status": "succeeded", "updated_ts": 2},
+        "active": {"task_id": "active", "status": "running", "updated_ts": 3},
+    }
+    plugin._persist_web_tasks_locked()
+
+    plugin._set_web_image_task("active", status="running")
+
+    health = plugin.get_task_snapshot_health()
+    assert health["write_count"] == 2
+    assert health["skipped_write_count"] == 0
+    persisted = load_json_file(plugin.tasks_path)
+    assert set(persisted["tasks"]) == {"new", "active"}
+
+
 def test_concurrent_terminal_flushes_are_immediately_reloadable(tmp_path, monkeypatch):
     from astrbot_plugin_selfie_image.tasks import task_manager
 

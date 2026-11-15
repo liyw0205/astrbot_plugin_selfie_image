@@ -1171,6 +1171,18 @@ class WebTaskMixin:
                         )
                     except (TypeError, ValueError):
                         pass
+                changed_fields = {
+                    key for key, value in fields.items()
+                    if key not in task or task.get(key) != value
+                }
+                if not changed_fields:
+                    task_count_before_prune = len(self._web_tasks)
+                    self._prune_web_tasks_locked()
+                    if len(self._web_tasks) != task_count_before_prune:
+                        self._persist_web_tasks_locked()
+                        return
+                    self._mark_snapshot_write_skipped_locked()
+                    return
                 task.update(fields)
                 status = str(task.get("status") or "").strip().lower()
                 if previous_status != status:
@@ -1201,6 +1213,9 @@ class WebTaskMixin:
                 task["updated_ts"] = now
                 task["updated_at"] = self._web_task_timestamp()
                 self._prune_web_tasks_locked()
+                # Preserve the lifecycle-boundary contract: an explicit
+                # ``status`` field still forces a write when another field
+                # changed, even if the status value itself is unchanged.
                 durable_fields = set(fields) - self._TASK_VOLATILE_FIELDS
                 if "status" in durable_fields or task.get("status") in self._TASK_TERMINAL_STATUSES or getattr(self, "_terminating", False):
                     self._persist_web_tasks_locked()

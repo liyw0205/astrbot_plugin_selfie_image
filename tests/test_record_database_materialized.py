@@ -179,6 +179,45 @@ def test_retained_total_and_filtering_preserve_invalid_payload_boundaries(tmp_pa
     assert [item["id"] for item in rows] == ["newest-valid"]
 
 
+def test_retained_total_uses_index_counts_and_preserves_empty_and_keep_boundaries(tmp_path, monkeypatch):
+    database = RecordDatabase(str(tmp_path / "records.sqlite3"))
+    database.replace_records([
+        {"id": "normal-new", "time": "2026-11-14 14:00:00", "prompt": "new"},
+        {"id": "normal-old", "time": "2026-11-14 13:00:00", "prompt": "old"},
+        {"id": "protected", "time": "2026-11-14 12:00:00", "favorite": True, "prompt": "saved"},
+    ])
+    statements = []
+    original_connect = database._connect
+
+    def connect():
+        connection = original_connect()
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(database, "_connect", connect)
+    rows, metadata = database.query_records(keep_limit=1, limit=2)
+    assert metadata["total"] == 2
+    assert metadata["filtered"] == 2
+    assert [item["id"] for item in rows] == ["normal-new"]
+    total_queries = [sql for sql in statements if "SELECT (SELECT COUNT(*)" in sql]
+    assert total_queries
+    assert all("MIN(1" in sql for sql in total_queries)
+    assert not any("retained_ids" in sql for sql in statements)
+
+    rows, metadata = database.query_records(keep_limit=2, limit=10, offset=2)
+    assert metadata["total"] == 3
+    assert metadata["filtered"] == 3
+    assert [item["id"] for item in rows] == ["protected"]
+
+    statements.clear()
+    database.clear()
+    rows, metadata = database.query_records(keep_limit=100000, limit=10)
+    assert rows == []
+    assert metadata["total"] == 0
+    assert metadata["filtered"] == 0
+    assert any("SELECT (SELECT COUNT(*)" in sql for sql in statements)
+
+
 def test_fts5_projection_is_migrated_and_tracks_replace_update_and_delete(tmp_path):
     path = tmp_path / "records.sqlite3"
     database = RecordDatabase(str(path))

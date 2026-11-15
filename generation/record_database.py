@@ -681,11 +681,6 @@ class RecordDatabase:
             "OR id IN (SELECT id FROM generation_records WHERE pinned = 0 AND favorite = 0 "
             "ORDER BY time DESC, seq DESC, id DESC LIMIT ?)) "
         )
-        retained_ids = (
-            "WITH retained_ids AS (SELECT id FROM generation_records WHERE pinned != 0 OR favorite != 0 "
-            "UNION ALL SELECT id FROM (SELECT id FROM generation_records WHERE pinned = 0 AND favorite = 0 "
-            "ORDER BY time DESC, seq DESC, id DESC LIMIT ?)) "
-        )
         clauses = ["json_valid(payload)"]
         params: List[Any] = [keep]
         for name, value in (("favorite", favorite), ("pinned", pinned)):
@@ -749,7 +744,14 @@ class RecordDatabase:
         with self._lock, self._connection() as connection:
             connection.execute("BEGIN")
             total = connection.execute(
-                retained_ids + "SELECT COUNT(*) FROM retained_ids", (keep,)
+                "SELECT ("
+                "SELECT COUNT(*) FROM generation_records "
+                "WHERE pinned != 0 OR favorite != 0"
+                ") + MIN(?, ("
+                "SELECT COUNT(*) FROM generation_records "
+                "WHERE pinned = 0 AND favorite = 0"
+                "))",
+                (keep,),
             ).fetchone()[0]
             if keyword_text and self._fts5_enabled:
                 if not self._fts_trigrams(keyword_lower):
