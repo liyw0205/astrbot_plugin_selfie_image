@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import platform
+import random
 import sqlite3
 import statistics
 import sys
@@ -26,6 +28,13 @@ from astrbot_plugin_selfie_image.generation.record_database import RecordDatabas
 
 LONG_PROMPT_MARKER = "extended prompt section"
 _PROMPT_FILLER = f"{LONG_PROMPT_MARKER}, layered lighting, detailed environment, "
+BUNDLED_PREFIX_MARKER = "bundle-prefix-probe"
+BUNDLED_TAIL_MARKER = "bundle-tail-probe"
+BUNDLED_ABSENT_MARKER = "bundle-absent-probe"
+_PROMPT_CORPUS_DIRS = (
+    "data/common", "data/cos", "data/group", "data/legs", "data/nai",
+    "data/schedule", "data/studio",
+)
 
 
 def _prompt_for(index: int, target_chars: int) -> str:
@@ -36,6 +45,179 @@ def _prompt_for(index: int, target_chars: int) -> str:
     if index % 997 == 0:
         prompt += " rare-needle"
     return prompt
+
+
+def _collect_prompt_entries(value, source: str, entries: list[tuple[str, str]]) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _collect_prompt_entries(item, source, entries)
+        return
+    if not isinstance(value, dict):
+        return
+    prompt = value.get("prompt")
+    if isinstance(prompt, str) and prompt.strip():
+        entries.append((prompt.strip(), source))
+    if all(isinstance(value.get(key), str) for key in ("status", "scene", "action")):
+        entries.append((" ".join(value[key].strip() for key in ("status", "scene", "action")), source))
+    for item in value.values():
+        _collect_prompt_entries(item, source, entries)
+
+
+def _load_bundled_prompt_corpus(root: Path = ROOT) -> tuple[list[tuple[str, str]], dict]:
+    entries = []
+    files = sorted(
+        path
+        for directory in _PROMPT_CORPUS_DIRS
+        for path in (root / directory).rglob("*.json")
+    )
+    for path in files:
+        relative = str(path.relative_to(root))
+        _collect_prompt_entries(json.loads(path.read_text(encoding="utf-8")), relative, entries)
+        if relative == "data/common/selfie_snapshots.json":
+            snapshots = json.loads(path.read_text(encoding="utf-8"))
+            entries.extend(
+                (item.strip(), relative)
+                for item in snapshots.get("items", [])
+                if isinstance(item, str) and item.strip()
+            )
+    if not entries:
+        raise RuntimeError("bundled prompt corpus is empty")
+    digest_input = json.dumps(entries, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    texts = [text for text, _source in entries]
+    unique_texts = sorted(set(texts))
+    return entries, {
+        "source": "bundled prompt fields and schedule status/scene/action from repository data JSON",
+        "files": len(files),
+        "entries": len(entries),
+        "unique_entries": len(unique_texts),
+        "sha256": hashlib.sha256(digest_input).hexdigest(),
+        "source_files": len({source for _text, source in entries}),
+        "text_length_chars": _length_distribution([len(text) for text in texts]),
+    }
+
+
+def _length_distribution(values: list[int]) -> dict:
+    ordered = sorted(values)
+    if not ordered:
+        return {"count": 0}
+    return {
+        "count": len(ordered),
+        "min": ordered[0],
+        "p50": ordered[math.ceil(len(ordered) * 0.50) - 1],
+        "p90": ordered[math.ceil(len(ordered) * 0.90) - 1],
+        "p95": ordered[math.ceil(len(ordered) * 0.95) - 1],
+        "p99": ordered[math.ceil(len(ordered) * 0.99) - 1],
+        "max": ordered[-1],
+    }
+
+
+def _bundled_prompt_fields(index: int, corpus: list[str], rng: random.Random) -> dict[str, str]:
+    original = rng.choice(corpus)
+    request = original
+    if rng.random() < 0.35:
+        request = f"{request}，{rng.choice(corpus)}"
+
+    fields = {"original_prompt": original, "request_prompt": request}
+    if index % 10 == 0:
+        fields["original_prompt"] = f"{BUNDLED_PREFIX_MARKER} {original}"
+    elif index % 10 == 1:
+        padding = ""
+        while len(fields["original_prompt"]) + len(padding) <= 160:
+            padding += f"{rng.choice(corpus)}，"
+        fields["request_prompt"] = f"{padding}{BUNDLED_TAIL_MARKER}，{request}"
+    if index % 997 == 0:
+        fields["request_prompt"] = f"{fields['request_prompt']} rare-needle"
+    if index % 7 == 0:
+        fields["prompt"] = fields["request_prompt"]
+    return fields
+
+
+def _build_fixture(
+    record_count: int,
+    prompt_chars: int,
+    prompt_profile: str,
+    seed: int,
+    root: Path = ROOT,
+) -> tuple[list[dict], dict]:
+    corpus_entries = []
+    corpus_metadata = None
+    rng = random.Random(seed)
+    if prompt_profile == "bundled-assets":
+        corpus_entries, corpus_metadata = _load_bundled_prompt_corpus(root)
+        corpus = [text for text, _source in corpus_entries]
+    else:
+        corpus = []
+
+    records = []
+    prompt_lengths = []
+    prompt_payloads = set()
+    epoch = datetime(2026, 1, 1)
+    for index in range(record_count):
+        prompt_fields = (
+            _bundled_prompt_fields(index, corpus, rng)
+            if prompt_profile == "bundled-assets"
+            else {"original_prompt": _prompt_for(index, prompt_chars)}
+        )
+        prompt_payload = tuple(prompt_fields.get(key, "") for key in ("original_prompt", "request_prompt", "prompt"))
+        prompt_payloads.add(prompt_payload)
+        prompt_lengths.append(sum(map(len, prompt_payload)))
+        records.append({
+            "id": f"record-{index}",
+            "time": (epoch + timedelta(seconds=index)).strftime("%Y-%m-%d %H:%M:%S"),
+            "source": f"group-{index % 50}",
+            "source_label": f"Group {index % 50}",
+            "used_model": f"model-{index % 20}",
+            "success": index % 7 != 0,
+            "favorite": index % 10 != 0,
+            **prompt_fields,
+        })
+
+    metadata = {
+        "records": record_count,
+        "prompt_profile": prompt_profile,
+        "seed": seed,
+        "prompt_payload_lengths_chars": _length_distribution(prompt_lengths),
+        "distinct_prompt_payloads": len(prompt_payloads),
+        "distinct_prompt_payload_fraction": round(len(prompt_payloads) / record_count, 6),
+    }
+    if prompt_profile == "filler":
+        metadata.update({
+            "keep_limit_default": 10000,
+            "favorite_fraction": 0.9,
+            "prompt_chars": prompt_chars,
+            "prompt_distribution": "low-entropy repeated filler; rare-needle every 997 records; long marker matches all extended prompts",
+        })
+    else:
+        metadata.update({
+            "favorite_fraction": 0.9,
+            "corpus": corpus_metadata,
+            "prompt_distribution": (
+                "seeded repository-asset-derived synthetic prompts; 35% append a second corpus phrase; "
+                "original_prompt/request_prompt are both indexed and prompt is duplicated every seventh record; "
+                "controlled 10% prefix and 10% post-prefix marker probes"
+            ),
+            "controlled_marker_match_fraction": {"prefix": 0.1, "post_prefix": 0.1},
+        })
+    return records, metadata
+
+
+def _bundled_natural_keywords(corpus: list[tuple[str, str]]) -> dict[str, str]:
+    candidates = ("自然光", "看向镜头", "成年女性", "高质量", "保持身份", "服装细节", "光线", "自然")
+    texts = [text.lower() for text, _source in corpus]
+    counts = {
+        keyword: sum(keyword.lower() in text for text in texts)
+        for keyword in candidates
+    }
+    available = [keyword for keyword, count in counts.items() if 0 < count < len(texts)]
+    fts_terms = [keyword for keyword in available if len(keyword) >= 3]
+    selected = {}
+    if fts_terms:
+        selected["narrow"] = min(fts_terms, key=lambda keyword: counts[keyword])
+        selected["broad"] = max(fts_terms, key=lambda keyword: counts[keyword])
+    short_terms = [keyword for keyword in available if len(keyword) < 3]
+    if short_terms:
+        selected["short"] = max(short_terms, key=lambda keyword: counts[keyword])
+    return selected
 
 
 def _drop_os_file_cache(path: str) -> str:
@@ -208,7 +390,7 @@ def _measure_concurrent_writes(
                 "writes_after": writes_after,
                 "writes_completed_during_window": writes_after - writes_before,
                 "write_latency": _latencies(write_durations) if write_durations else None,
-                "overlap_observed": writes_after > writes_before,
+                "write_progress_observed": writes_after > writes_before,
             })
             query_results[name] = result
     finally:
@@ -233,8 +415,11 @@ def main() -> int:
     parser.add_argument("--samples", type=int, default=10)
     parser.add_argument("--keep-limit", type=int, default=10000)
     parser.add_argument("--prompt-chars", type=int, default=96)
+    parser.add_argument("--prompt-profile", choices=("filler", "bundled-assets"), default="filler")
+    parser.add_argument("--seed", type=int, default=73131)
     parser.add_argument("--cold-cache-samples", type=int, default=0)
     parser.add_argument("--concurrent-samples", type=int, default=0)
+    parser.add_argument("--output", default="", help="write the JSON report to this path instead of stdout")
     parser.add_argument("--compare-phrase", action="store_true", help="also time the previous full-phrase FTS candidate query")
     args = parser.parse_args()
     if (
@@ -243,20 +428,11 @@ def main() -> int:
     ):
         parser.error("records/prompt-chars must be positive, samples >= 3, keep-limit in 1..10000, optional sample counts non-negative")
 
-    epoch = datetime(2026, 1, 1)
     # Protected records can exceed normal retention. At the default size,
     # 90,000 favorites plus 10,000 normal records exercise the full corpus.
-    records = [{
-        "id": f"record-{index}",
-        "time": (epoch + timedelta(seconds=index)).strftime("%Y-%m-%d %H:%M:%S"),
-        "source": f"group-{index % 50}",
-        "source_label": f"Group {index % 50}",
-        "used_model": f"model-{index % 20}",
-        "success": index % 7 != 0,
-        "favorite": index % 10 != 0,
-        "original_prompt": _prompt_for(index, args.prompt_chars),
-    } for index in range(args.records)]
-    prompt_lengths = [len(record["original_prompt"]) for record in records]
+    records, fixture = _build_fixture(
+        args.records, args.prompt_chars, args.prompt_profile, args.seed,
+    )
     with tempfile.TemporaryDirectory(prefix="selfie-record-bench-") as temporary:
         database = RecordDatabase(str(Path(temporary) / "records.sqlite3"))
         started = time.perf_counter()
@@ -271,11 +447,27 @@ def main() -> int:
             "keyword": ({"keyword": "rare-needle"}, "adaptive"),
             "keyword_scalar": ({"keyword": "rare-needle"}, "scalar"),
         }
-        if args.prompt_chars >= 256:
+        if args.prompt_profile == "filler" and args.prompt_chars >= 256:
             queries["long_prompt_keyword"] = ({"keyword": LONG_PROMPT_MARKER}, "adaptive")
             queries["long_prompt_keyword_scalar"] = ({"keyword": LONG_PROMPT_MARKER}, "scalar")
             if args.compare_phrase:
                 queries["long_prompt_keyword_phrase"] = ({"keyword": LONG_PROMPT_MARKER}, "phrase")
+        bundled_keywords = {}
+        if args.prompt_profile == "bundled-assets":
+            corpus, _corpus_metadata = _load_bundled_prompt_corpus()
+            bundled_keywords = _bundled_natural_keywords(corpus)
+            bundled_queries = {
+                "bundled_prefix_partial": BUNDLED_PREFIX_MARKER,
+                "bundled_tail_partial": BUNDLED_TAIL_MARKER,
+                "bundled_absent": BUNDLED_ABSENT_MARKER,
+            }
+            bundled_queries.update({
+                f"bundled_natural_{name}": keyword
+                for name, keyword in bundled_keywords.items()
+            })
+            for name, keyword in bundled_queries.items():
+                queries[name] = ({"keyword": keyword}, "adaptive")
+                queries[f"{name}_scalar"] = ({"keyword": keyword}, "scalar")
         results = {}
         keyword_results = {}
         for label, (filters, mode) in queries.items():
@@ -296,8 +488,15 @@ def main() -> int:
         cache_results = {}
         if args.cold_cache_samples:
             cache_queries = {"recent": {}, "keyword": {"keyword": "rare-needle"}}
-            if args.prompt_chars >= 256:
+            if args.prompt_profile == "filler" and args.prompt_chars >= 256:
                 cache_queries["long_prompt_keyword"] = {"keyword": LONG_PROMPT_MARKER}
+            if args.prompt_profile == "bundled-assets":
+                cache_queries["bundled_prefix_partial"] = {"keyword": BUNDLED_PREFIX_MARKER}
+                cache_queries["bundled_tail_partial"] = {"keyword": BUNDLED_TAIL_MARKER}
+                if "broad" in bundled_keywords:
+                    cache_queries["bundled_natural_broad"] = {
+                        "keyword": bundled_keywords["broad"],
+                    }
             for name, filters in cache_queries.items():
                 options = {"keep_limit": args.keep_limit, "limit": 30, **filters}
                 database.query_records(**options)
@@ -323,10 +522,14 @@ def main() -> int:
 
         concurrent_results = {}
         if args.concurrent_samples:
+            concurrent_names = {
+                "recent", "favorite", "model", "keyword", "bundled_prefix_partial",
+                "bundled_tail_partial", "bundled_natural_broad",
+            }
             concurrent_queries = {
                 name: {"keep_limit": args.keep_limit, "limit": 30, **filters}
                 for name, (filters, mode) in queries.items()
-                if mode == "adaptive"
+                if mode == "adaptive" and (args.prompt_profile == "filler" or name in concurrent_names)
             }
             for shared in (True, False):
                 name = "shared_instance" if shared else "independent_instances"
@@ -340,17 +543,16 @@ def main() -> int:
                 )
                 database.delete_records(["benchmark-writer-probe"])
         _checkpoint(database.path)
-        print(json.dumps({
+        report = json.dumps({
             "environment": {
                 "python": platform.python_version(), "sqlite": sqlite3.sqlite_version,
                 "platform": platform.platform(),
             },
             "fixture": {
-                "records": args.records, "samples": args.samples,
+                **fixture,
+                "samples": args.samples,
                 "keep_limit": args.keep_limit, "favorite_fraction": 0.9,
-                "prompt_chars": args.prompt_chars,
-                "actual_prompt_chars": {"min": min(prompt_lengths), "max": max(prompt_lengths)},
-                "prompt_distribution": "low-entropy repeated filler; rare-needle every 997 records; long marker matches all extended prompts",
+                "natural_keyword_candidates": bundled_keywords,
                 "fts_enabled": fts_enabled, "setup_seconds": setup_seconds,
                 "storage_after_setup": setup_storage,
             },
@@ -359,12 +561,19 @@ def main() -> int:
                 "connection_lifetime": "each operation commits/rolls back and closes; no anchor connection",
                 "cache_evict": "checkpoint and close, then POSIX_FADV_DONTNEED best-effort hint; does not prove cold storage",
                 "statistics": "nearest-rank p95 is the maximum with fewer than 20 samples; synthetic device-local evidence only",
-                "concurrency": "shared instance models runtime RLock; independent instances model additional WAL contention; inspect overlap per query",
+                "concurrency": "shared instance RLock serializes query/write calls; write_progress_observed means writes completed in the query window, not simultaneous SQL execution; independent instances model additional WAL contention",
             },
             "queries": results,
             "cache_scenarios": cache_results,
             "concurrent_writes": concurrent_results,
-        }, indent=2))
+        }, indent=2)
+        if args.output:
+            destination = Path(args.output)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(report + "\n", encoding="utf-8")
+            print(f"benchmark report written: {destination}")
+        else:
+            print(report)
     return 0
 
 
