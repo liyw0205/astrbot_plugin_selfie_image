@@ -344,6 +344,66 @@ def test_source_change_is_detected_and_no_snapshot_is_published(tmp_path, offlin
     assert not backup.exists()
 
 
+@pytest.mark.parametrize("operation", ["backup", "restore"])
+def test_target_created_during_publish_is_never_overwritten(tmp_path, offline_data, monkeypatch, operation):
+    root, _ = offline_data
+    backup = tmp_path / "snapshot"
+    if operation == "restore":
+        recovery.create_backup(root, backup, stopped=True)
+    target = backup if operation == "backup" else tmp_path / "restored"
+    original_copy = recovery._copy_file
+    changed = False
+
+    def copy_and_create_target(source, destination):
+        nonlocal changed
+        original_copy(source, destination)
+        if changed:
+            return
+        changed = True
+        # The implementation owns an empty target directory while staging.
+        # Simulate an external process removing that reservation and taking
+        # the path before publication.
+        target.rmdir()
+        target.mkdir(mode=0o700)
+        owned = target / "operator-owned.txt"
+        owned.write_text("keep this tree", encoding="ascii")
+        owned.chmod(0o600)
+
+    monkeypatch.setattr(recovery, "_copy_file", copy_and_create_target)
+    with pytest.raises(recovery.BackupError):
+        if operation == "backup":
+            recovery.create_backup(root, backup, stopped=True)
+        else:
+            recovery.restore_backup(backup, target, stopped=True)
+    assert (target / "operator-owned.txt").read_text(encoding="ascii") == "keep this tree"
+    assert not list(tmp_path.glob(f".{target.name}.staging-*"))
+    if operation == "restore":
+        assert recovery.verify_backup(backup)["files"]
+
+
+def test_live_destination_reservation_blocks_competing_publish(tmp_path, offline_data):
+    root, _ = offline_data
+    backup = tmp_path / "snapshot"
+    reservation = tmp_path / f".{backup.name}{recovery.RESERVATION_SUFFIX}"
+    reservation.write_text(
+        json.dumps(
+            {
+                "format": recovery.FORMAT,
+                "version": recovery.VERSION,
+                "purpose": "destination-reservation",
+                "pid": os.getpid(),
+                "token": "a" * 32,
+            }
+        ),
+        encoding="ascii",
+    )
+    reservation.chmod(0o600)
+    with pytest.raises(recovery.BackupError, match="reservation"):
+        recovery.create_backup(root, backup, stopped=True)
+    assert reservation.is_file()
+    assert not list(tmp_path.glob(f".{backup.name}.staging-*"))
+
+
 def test_sqlite_kind_cannot_be_mislabeled_to_skip_integrity_checks(tmp_path, offline_data):
     root, _ = offline_data
     backup = tmp_path / "snapshot"

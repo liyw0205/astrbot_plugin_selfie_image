@@ -5,7 +5,12 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
+import signal
+import subprocess
+import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -200,3 +205,81 @@ def test_consistency_rejects_sidecar_cache_path_escape(tmp_path: Path) -> None:
         sidecar_root=str(sidecars),
     )
     assert any(item["kind"] == "invalid_path" for item in report["issues"])
+
+
+def test_sigkill_during_restore_never_publishes_partial_tree(tmp_path: Path) -> None:
+    """A killed process leaves no published data and does not block retry.
+
+    This is a local process-interruption simulation, not a claim about power
+    loss or filesystem durability.  An interrupted run leaves only a staging
+    tree, which the host can inspect and remove before retrying.
+    """
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "first.json").write_text(json.dumps({"first": True}), encoding="utf-8")
+    (source / "second.json").write_text(json.dumps({"second": True}), encoding="utf-8")
+    backup = tmp_path / "backup"
+    recovery.create_backup(source, backup, stopped=True)
+
+    destination = tmp_path / "restored"
+    ready = tmp_path / "copy-started"
+    child = r'''
+import os
+import signal
+import sys
+from pathlib import Path
+
+from astrbot_plugin_selfie_image.scripts import backup_restore
+
+ready = Path(os.environ["RESTORE_READY"])
+original = backup_restore._copy_file
+
+def pause_after_first_copy(source, destination):
+    original(source, destination)
+    if not ready.exists():
+        ready.write_text("staging has a partial copy", encoding="ascii")
+        os.kill(os.getpid(), signal.SIGSTOP)
+
+backup_restore._copy_file = pause_after_first_copy
+backup_restore.restore_backup(sys.argv[1], sys.argv[2], stopped=True)
+'''
+    environment = dict(os.environ)
+    environment["RESTORE_READY"] = str(ready)
+    project_parent = Path(__file__).resolve().parents[2]
+    environment["PYTHONPATH"] = os.pathsep.join(
+        item for item in (str(project_parent), environment.get("PYTHONPATH", "")) if item
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", child, str(backup), str(destination)],
+        cwd=str(project_parent),
+        env=environment,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists(), "child did not reach the staging copy boundary"
+        assert process.poll() is None
+        process.kill()
+        assert process.wait(timeout=5) == -signal.SIGKILL
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+    staging = sorted(tmp_path.glob(f".{destination.name}.staging-*"))
+    reservation = tmp_path / f".{destination.name}{recovery.RESERVATION_SUFFIX}"
+    assert destination.is_dir()
+    assert not any(destination.iterdir())
+    assert reservation.is_file()
+    assert staging and any((path / "first.json").is_file() for path in staging)
+    assert recovery.verify_backup(backup)["files"]
+
+    # A stale sibling staging tree does not reserve the target or block a
+    # subsequent restore.  The host can remove it after inspecting the crash.
+    recovery.restore_backup(backup, destination, stopped=True)
+    assert (destination / "first.json").read_text(encoding="utf-8") == '{"first": true}'
+    assert (destination / "second.json").read_text(encoding="utf-8") == '{"second": true}'
+    for path in staging:
+        shutil.rmtree(path)
+    assert not reservation.exists()

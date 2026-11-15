@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import closing, contextmanager, suppress
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import secrets
 import shutil
 import sqlite3
 import stat
@@ -21,6 +22,7 @@ FORMAT = "selfie-image-offline-backup"
 VERSION = 1
 SQLITE_HEADER = b"SQLite format 3\x00"
 CHUNK_SIZE = 1024 * 1024
+RESERVATION_SUFFIX = ".selfie-image-offline-reservation"
 
 
 class BackupError(ValueError):
@@ -159,35 +161,234 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _reservation_path(destination: Path) -> Path:
+    return destination.parent / f".{destination.name}{RESERVATION_SUFFIX}"
+
+
+def _read_reservation(path: Path) -> tuple[os.stat_result, dict] | None:
+    """Read a private reservation marker without following links."""
+    descriptor = None
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+            return None
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+            return None
+        if not stat.S_ISREG(opened.st_mode) or opened.st_mode & 0o077:
+            return None
+        incoming = os.fdopen(descriptor, "r", encoding="ascii")
+        descriptor = None
+        with incoming:
+            payload = json.load(incoming)
+    except (FileNotFoundError, OSError, UnicodeError, ValueError, TypeError):
+        return None
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if not isinstance(payload, dict):
+        return None
+    if (
+        payload.get("format") != FORMAT
+        or type(payload.get("version")) is not int
+        or payload.get("version") != VERSION
+        or payload.get("purpose") != "destination-reservation"
+        or type(payload.get("pid")) is not int
+        or payload["pid"] <= 0
+        or not isinstance(payload.get("token"), str)
+        or not re.fullmatch(r"[0-9a-f]{32}", payload["token"])
+    ):
+        return None
+    return info, payload
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _unlink_owned_reservation(
+    path: Path,
+    token: str,
+    expected_info: os.stat_result | None = None,
+) -> None:
+    marker = _read_reservation(path)
+    if marker is None or marker[1].get("token") != token or marker[1].get("pid") != os.getpid():
+        return
+    if expected_info is not None and (
+        marker[0].st_dev,
+        marker[0].st_ino,
+    ) != (expected_info.st_dev, expected_info.st_ino):
+        return
+    try:
+        path.unlink()
+        _fsync_directory(path.parent)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        # A published tree is still valid if cleanup of its advisory lock is
+        # interrupted; the next invocation will see the live destination.
+        pass
+
+
+def _unlink_reservation_inode(path: Path, expected_info: os.stat_result | None) -> None:
+    """Remove a partially written marker only when its inode is unchanged."""
+    if expected_info is None:
+        return
+    try:
+        current = path.lstat()
+        if (current.st_dev, current.st_ino) != (expected_info.st_dev, expected_info.st_ino):
+            return
+        path.unlink()
+        _fsync_directory(path.parent)
+    except (FileNotFoundError, OSError):
+        pass
+
+
+def _remove_empty_owned_destination(destination: Path, expected_info: os.stat_result | None) -> None:
+    if expected_info is None:
+        return
+    try:
+        current = destination.lstat()
+        if (
+            (current.st_dev, current.st_ino) != (expected_info.st_dev, expected_info.st_ino)
+            or not stat.S_ISDIR(current.st_mode)
+            or next(destination.iterdir(), None) is not None
+        ):
+            return
+        destination.rmdir()
+        _fsync_directory(destination.parent)
+    except (FileNotFoundError, OSError):
+        pass
+
+
+def _acquire_reservation(destination: Path) -> tuple[Path, os.stat_result, str, os.stat_result]:
+    """Reserve both a sibling lock and an empty target directory atomically."""
+    path = _reservation_path(destination)
+    for _ in range(2):
+        try:
+            destination.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            marker = _read_reservation(path)
+            if marker is None or _pid_is_alive(int(marker[1]["pid"])):
+                raise BackupError("Destination already exists; existing data is never overwritten")
+            try:
+                current = path.lstat()
+                if (current.st_dev, current.st_ino) != (marker[0].st_dev, marker[0].st_ino):
+                    continue
+                if not destination.is_dir() or next(destination.iterdir(), None) is not None:
+                    raise BackupError("Destination already exists; existing data is never overwritten")
+                destination.rmdir()
+                _fsync_directory(path.parent)
+                _unlink_reservation_inode(path, marker[0])
+            except FileNotFoundError:
+                continue
+            # The stale marker is removed only after its empty reservation
+            # directory has been removed.  A target changed by another writer
+            # remains untouched and retains its marker for manual inspection.
+
+        token = secrets.token_hex(16)
+        payload = {
+            "format": FORMAT,
+            "version": VERSION,
+            "purpose": "destination-reservation",
+            "pid": os.getpid(),
+            "token": token,
+        }
+        try:
+            descriptor = os.open(
+                path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+        except FileExistsError:
+            marker = _read_reservation(path)
+            if marker is None or _pid_is_alive(int(marker[1]["pid"])):
+                raise BackupError("Destination reservation already exists")
+            try:
+                current = path.lstat()
+                if (current.st_dev, current.st_ino) != (marker[0].st_dev, marker[0].st_ino):
+                    continue
+                _unlink_reservation_inode(path, marker[0])
+            except FileNotFoundError:
+                continue
+            continue
+        marker_info = None
+        try:
+            marker_info = os.fstat(descriptor)
+            with os.fdopen(descriptor, "w", encoding="ascii") as output:
+                json.dump(payload, output, ensure_ascii=True, separators=(",", ":"))
+                output.flush()
+                os.fsync(output.fileno())
+            _fsync_directory(path.parent)
+            try:
+                destination.mkdir(mode=0o700)
+            except FileExistsError as error:
+                raise BackupError("Destination already exists; existing data is never overwritten") from error
+            destination_info = destination.lstat()
+            return path, marker_info, token, destination_info
+        except Exception:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            _unlink_reservation_inode(path, marker_info)
+            raise
+    raise BackupError("Destination reservation changed during maintenance")
+
+
 @contextmanager
 def _new_destination(destination: Path):
-    """Publish a complete tree over an empty reservation owned by this call."""
-    try:
-        destination.mkdir(mode=0o700)
-    except FileExistsError as error:
-        raise BackupError("Destination already exists; existing data is never overwritten") from error
-    reserved = destination.stat()
+    """Publish a complete tree behind crash-detectable target reservations."""
+    reservation = None
+    reservation_info = None
+    reservation_token = ""
+    destination_info = None
     staging = None
-    published = False
     try:
+        reservation, reservation_info, reservation_token, destination_info = _acquire_reservation(destination)
         staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent))
         yield staging
         for current, _, _ in os.walk(staging, topdown=False):
             _fsync_directory(Path(current))
-        current = destination.lstat()
-        if (current.st_dev, current.st_ino) != (reserved.st_dev, reserved.st_ino) or next(destination.iterdir(), None):
+        current_reservation = _read_reservation(reservation)
+        if (
+            current_reservation is None
+            or current_reservation[1].get("token") != reservation_token
+            or current_reservation[1].get("pid") != os.getpid()
+            or (current_reservation[0].st_dev, current_reservation[0].st_ino)
+            != (reservation_info.st_dev, reservation_info.st_ino)
+        ):
+            raise BackupError("Destination reservation changed during maintenance")
+        current_destination = destination.lstat()
+        if (
+            (current_destination.st_dev, current_destination.st_ino)
+            != (destination_info.st_dev, destination_info.st_ino)
+            or not stat.S_ISDIR(current_destination.st_mode)
+            or next(destination.iterdir(), None) is not None
+        ):
             raise BackupError("Destination changed during maintenance")
         os.replace(staging, destination)
-        published = True
         _fsync_directory(destination.parent)
     finally:
         if staging is not None and staging.exists():
             shutil.rmtree(staging)
-        if not published:
-            with suppress(OSError):
-                current = destination.lstat()
-                if (current.st_dev, current.st_ino) == (reserved.st_dev, reserved.st_ino):
-                    destination.rmdir()
+        _remove_empty_owned_destination(destination, destination_info)
+        if reservation is not None:
+            _unlink_owned_reservation(reservation, reservation_token, reservation_info)
 
 
 def _separate(first: Path, second: Path) -> None:
