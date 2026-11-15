@@ -1043,21 +1043,40 @@ class GenerationStoreMixin(PromptLookupMixin):
                 record_ids = task.get("record_ids")
                 if not isinstance(record_ids, list):
                     record_ids = []
+                original_record_ids = list(record_ids)
                 record_ids = [str(item).strip() for item in record_ids if str(item).strip()]
+                changed = record_ids != original_record_ids
                 if rid not in record_ids:
                     record_ids.append(rid)
-                task["record_ids"] = record_ids[:200]
+                    changed = True
+                previous_record_id = task.get("record_id")
+                persisted_record_ids = record_ids[:200]
+                changed = changed or persisted_record_ids != original_record_ids
+                task["record_ids"] = persisted_record_ids
                 task.setdefault("record_id", record_ids[0] if record_ids else rid)
+                changed = changed or task.get("record_id") != previous_record_id
                 result = task.get("result")
                 if isinstance(result, dict):
                     result_ids = result.get("record_ids")
                     if not isinstance(result_ids, list):
                         result_ids = []
+                    original_result_ids = list(result_ids)
                     result_ids = [str(item).strip() for item in result_ids if str(item).strip()]
+                    changed = changed or result_ids != original_result_ids
                     if rid not in result_ids:
                         result_ids.append(rid)
-                    result["record_ids"] = result_ids[:200]
+                        changed = True
+                    previous_result_id = result.get("record_id")
+                    persisted_result_ids = result_ids[:200]
+                    changed = changed or persisted_result_ids != original_result_ids
+                    result["record_ids"] = persisted_result_ids
                     result.setdefault("record_id", result_ids[0] if result_ids else rid)
+                    changed = changed or result.get("record_id") != previous_result_id
+                if not changed:
+                    mark_skipped = getattr(self, "_mark_snapshot_write_skipped_locked", None)
+                    if callable(mark_skipped):
+                        mark_skipped()
+                    return
                 now = time.time()
                 task["updated_ts"] = now
                 task["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))

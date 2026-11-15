@@ -58,33 +58,55 @@ def inspect_storage_consistency(
     referenced: set[str] = set()
     referenced_sidecars: set[str] = set()
     seen_paths: Dict[str, str] = {}
+    missing_paths: set[tuple[str, str]] = set()
+
+    def add_cache_reference(raw_path: Any, record_id: str = "", *, protected: bool = False) -> None:
+        """Register a record/sidecar/protected path and verify its target."""
+        if not cache_root:
+            return
+        try:
+            raw = str(raw_path or "").strip()
+            absolute = os.path.abspath(raw if os.path.isabs(raw) else os.path.join(cache_root, raw))
+            if absolute == cache_root or not absolute.startswith(cache_root + os.sep):
+                raise ValueError("path escapes cache root")
+        except (TypeError, ValueError):
+            issue = {"kind": "invalid_path", "path": str(raw_path or ""), "repairable": False}
+            if record_id:
+                issue["record_id"] = record_id
+            if protected:
+                issue["protected"] = True
+            issues.append(issue)
+            return
+        rel = _safe_rel(absolute, cache_root)
+        referenced.add(rel)
+        previous = seen_paths.get(rel)
+        if previous and previous != record_id:
+            issues.append({
+                "kind": "duplicate_reference",
+                "record_id": record_id,
+                "other_record_id": previous,
+                "path": rel,
+                "repairable": False,
+            })
+        elif not previous:
+            seen_paths[rel] = record_id
+        missing_key = (record_id, rel)
+        if not os.path.isfile(absolute) and missing_key not in missing_paths:
+            missing_paths.add(missing_key)
+            issue = {"kind": "missing_cache", "path": rel, "repairable": False}
+            if record_id:
+                issue["record_id"] = record_id
+            if protected:
+                issue["protected"] = True
+            issues.append(issue)
 
     for raw_path in protected_paths:
-        absolute = os.path.abspath(raw_path if os.path.isabs(raw_path) else os.path.join(cache_root, raw_path))
-        if cache_root and absolute.startswith(cache_root + os.sep):
-            referenced.add(_safe_rel(absolute, cache_root))
+        add_cache_reference(raw_path, protected=True)
 
     for record in rows:
         record_id = str(record.get("id") or "").strip()[:128]
         for raw_path in _record_paths(record):
-            try:
-                absolute = raw_path if os.path.isabs(raw_path) else os.path.join(cache_root, raw_path)
-                absolute = os.path.abspath(absolute)
-                if cache_root and not absolute.startswith(cache_root + os.sep):
-                    issues.append({"kind": "invalid_path", "record_id": record_id, "path": raw_path, "repairable": False})
-                    continue
-            except (TypeError, ValueError):
-                issues.append({"kind": "invalid_path", "record_id": record_id, "path": raw_path, "repairable": False})
-                continue
-            rel = _safe_rel(absolute, cache_root) if cache_root else raw_path
-            referenced.add(rel)
-            previous = seen_paths.get(rel)
-            if previous and previous != record_id:
-                issues.append({"kind": "duplicate_reference", "record_id": record_id, "other_record_id": previous, "path": rel, "repairable": False})
-            else:
-                seen_paths[rel] = record_id
-            if not os.path.isfile(absolute):
-                issues.append({"kind": "missing_cache", "record_id": record_id, "path": rel, "repairable": False})
+            add_cache_reference(raw_path, record_id)
 
         declared = str(record.get("media_sources_file") or "").strip()
         response = record.get("response_data")
@@ -106,6 +128,23 @@ def inspect_storage_consistency(
                             sidecar = json.load(handle)
                         if not isinstance(sidecar, Mapping):
                             raise ValueError("sidecar must be an object")
+                        declared_record_id = str(sidecar.get("record_id") or "").strip()
+                        if declared_record_id and declared_record_id != record_id:
+                            issues.append({
+                                "kind": "sidecar_record_mismatch",
+                                "record_id": record_id,
+                                "sidecar_record_id": declared_record_id[:128],
+                                "path": name,
+                                "repairable": False,
+                            })
+                        sources = sidecar.get("generated_image_sources")
+                        if not isinstance(sources, list):
+                            raise ValueError("generated_image_sources must be a list")
+                        for source in sources:
+                            if not isinstance(source, Mapping):
+                                continue
+                            if str(source.get("type") or "").strip().lower() == "cache_path":
+                                add_cache_reference(source.get("value"), record_id)
                     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
                         issues.append({"kind": "invalid_sidecar", "record_id": record_id, "path": name, "repairable": False})
 

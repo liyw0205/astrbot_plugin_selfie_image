@@ -380,3 +380,113 @@ def test_blocked_snapshot_does_not_abort_final_shutdown_flush(tmp_path, monkeypa
 
     assert Path(plugin.tasks_path).read_bytes() == original
     assert errors
+
+
+def _wait_for_snapshot_timer(plugin: WebTaskMixin, timeout: float = 1.0) -> None:
+    deadline = time.monotonic() + timeout
+    while plugin.get_task_snapshot_health()["pending"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert plugin.get_task_snapshot_health()["pending"] is False
+
+
+def test_snapshot_health_tracks_merge_bytes_and_flush_duration(tmp_path):
+    plugin = snapshot_plugin(tmp_path)
+    plugin.WEB_TASK_SNAPSHOT_DELAY = 0.02
+    plugin._web_tasks = {"task": {"task_id": "task", "status": "running"}}
+
+    plugin._set_web_image_task("task", generation_stage="provider")
+    plugin._set_web_image_task("task", generation_stage_label="调用模型")
+    _wait_for_snapshot_timer(plugin)
+
+    health = plugin.get_task_snapshot_health()
+    assert health["write_count"] == 1
+    assert health["scheduled_flush_count"] == 1
+    assert health["coalesced_update_count"] == 1
+    assert health["timer_flush_count"] == 1
+    assert health["forced_flush_count"] == 0
+    assert health["skipped_write_count"] == 0
+    assert health["write_bytes_total"] == health["size_bytes"]
+    assert health["write_duration_ms"]["samples"] == 1
+    assert health["write_duration_ms"]["p95"] >= health["write_duration_ms"]["p50"]
+
+    plugin._set_web_image_task("task", status="succeeded", success=True)
+    health = plugin.get_task_snapshot_health()
+    assert health["write_count"] == 2
+    assert health["forced_flush_count"] == 1
+    assert health["write_bytes_total"] > health["size_bytes"]
+    assert health["write_duration_ms"]["samples"] == 2
+    persisted = load_json_file(plugin.tasks_path)
+    assert persisted["snapshot"]["write_bytes_total"] == health["write_bytes_total"]
+    assert persisted["snapshot"]["timer_flush_count"] == 1
+    assert persisted["snapshot"]["forced_flush_count"] == 1
+
+
+def test_duplicate_generation_record_link_is_skipped_without_rewrite(tmp_path):
+    from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
+
+    plugin = snapshot_plugin(tmp_path)
+    plugin._web_tasks = {"task": {"task_id": "task", "status": "running", "result": {}}}
+    GenerationStoreMixin._link_generation_record_to_task(plugin, "task", "record-1")
+    first = load_json_file(plugin.tasks_path)
+    GenerationStoreMixin._link_generation_record_to_task(plugin, "task", "record-1")
+    second = load_json_file(plugin.tasks_path)
+
+    assert second["tasks"] == first["tasks"]
+    assert plugin.get_task_snapshot_health()["write_count"] == 1
+    assert plugin.get_task_snapshot_health()["skipped_write_count"] == 1
+
+
+def test_concurrent_terminal_flushes_are_immediately_reloadable(tmp_path, monkeypatch):
+    from astrbot_plugin_selfie_image.tasks import task_manager
+
+    count = 12
+    plugin = snapshot_plugin(tmp_path)
+    plugin._web_tasks = {
+        f"task-{index}": {
+            "task_id": f"task-{index}",
+            "status": "running",
+            "request_data": {"prompt": f"prompt-{index}"},
+        }
+        for index in range(count)
+    }
+    writes = []
+    original_save = task_manager.save_json_file_compact
+
+    def save(path, data):
+        original_save(path, data)
+        writes.append(Path(path).stat().st_size)
+
+    monkeypatch.setattr(task_manager, "save_json_file_compact", save)
+    barrier = threading.Barrier(count)
+    errors = []
+
+    def finish(task_id):
+        try:
+            barrier.wait(timeout=2)
+            plugin._set_web_image_task(
+                task_id,
+                status="succeeded",
+                success=True,
+                result={"success": True, "task_id": task_id},
+            )
+        except BaseException as exc:  # pragma: no cover - assertion below reports it
+            errors.append(exc)
+
+    threads = [threading.Thread(target=finish, args=(f"task-{index}",)) for index in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=3)
+
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    persisted = load_json_file(plugin.tasks_path)
+    assert set(persisted["tasks"]) == {f"task-{index}" for index in range(count)}
+    assert all(row["status"] == "succeeded" for row in persisted["tasks"].values())
+    health = plugin.get_task_snapshot_health()
+    assert len(writes) == count
+    assert health["write_count"] == count
+    assert health["forced_flush_count"] == count
+    assert health["write_duration_ms"]["samples"] == count
+    assert health["write_bytes_total"] == sum(writes)
+    assert health["size_bytes"] == len(Path(plugin.tasks_path).read_bytes())

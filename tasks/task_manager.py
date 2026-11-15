@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import math
 import os
 import shutil
 import stat
@@ -36,6 +37,7 @@ class WebTaskMixin:
     WEB_TASK_KEEP_LIMIT = 50
     WEB_TASK_SNAPSHOT_DELAY = 0.2
     WEB_TASK_SNAPSHOT_MAX_BYTES = 10 * 1024 * 1024
+    TASK_SNAPSHOT_DURATION_SAMPLE_LIMIT = 128
 
     # These values are useful while a task is being polled, but are not
     # needed to recover a task after restart.  Keeping them in memory avoids
@@ -247,6 +249,19 @@ class WebTaskMixin:
             self._web_task_snapshot_failure_count = max(0, int(snapshot.get("failure_count") or 0))
         except (TypeError, ValueError):
             self._web_task_snapshot_failure_count = 0
+        for field in (
+            "write_bytes_total",
+            "scheduled_flush_count",
+            "coalesced_update_count",
+            "timer_flush_count",
+            "forced_flush_count",
+            "skipped_write_count",
+        ):
+            try:
+                value = max(0, int(snapshot.get(field) or 0))
+            except (TypeError, ValueError, OverflowError):
+                value = 0
+            setattr(self, "_web_task_snapshot_" + field, value)
         self._web_task_snapshot_last_write_duration_ms = self._coerce_snapshot_duration(
             snapshot.get("last_write_duration_ms")
         )
@@ -337,21 +352,83 @@ class WebTaskMixin:
         except (TypeError, ValueError):
             return 0.0
 
+    def _increment_snapshot_metric_locked(self, name: str, amount: int = 1) -> int:
+        """Increment a bounded integer counter used by snapshot health."""
+        attribute = "_web_task_snapshot_" + str(name or "")
+        try:
+            current = max(0, int(getattr(self, attribute, 0) or 0))
+        except (TypeError, ValueError, OverflowError):
+            current = 0
+        try:
+            increment = max(0, int(amount or 0))
+        except (TypeError, ValueError, OverflowError):
+            increment = 0
+        value = current + increment
+        setattr(self, attribute, value)
+        return value
+
+    def _mark_snapshot_write_skipped_locked(self) -> None:
+        self._increment_snapshot_metric_locked("skipped_write_count")
+
+    def _record_snapshot_duration_locked(self, duration_ms: float) -> None:
+        duration = self._coerce_snapshot_duration(duration_ms)
+        if not math.isfinite(duration):
+            return
+        samples = list(getattr(self, "_web_task_snapshot_duration_samples_ms", ()) or ())
+        samples.append(duration)
+        try:
+            limit = max(1, int(self.TASK_SNAPSHOT_DURATION_SAMPLE_LIMIT))
+        except (TypeError, ValueError, OverflowError):
+            limit = 128
+        self._web_task_snapshot_duration_samples_ms = samples[-limit:]
+
+    def _snapshot_duration_health_locked(self) -> Dict[str, Any]:
+        samples = []
+        for value in list(getattr(self, "_web_task_snapshot_duration_samples_ms", ()) or ()):
+            try:
+                duration = float(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if math.isfinite(duration) and duration >= 0:
+                samples.append(duration)
+        if not samples:
+            return {"samples": 0, "p50": 0.0, "p95": 0.0, "max": 0.0}
+        ordered = sorted(samples)
+        p50 = ordered[max(0, math.ceil(len(ordered) * 0.50) - 1)]
+        p95 = ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)]
+        return {
+            "samples": len(ordered),
+            "p50": round(p50, 3),
+            "p95": round(p95, 3),
+            "max": round(ordered[-1], 3),
+        }
+
     def _snapshot_health_locked(self) -> Dict[str, Any]:
         """Return bounded operational metadata for the health endpoint."""
         load_error = redact_sensitive_text(
             str(getattr(self, "_web_task_snapshot_load_error", "") or "")
         )[:320]
+        write_count = int(getattr(self, "_web_task_snapshot_write_count", 0) or 0)
+        failure_count = int(getattr(self, "_web_task_snapshot_failure_count", 0) or 0)
+        attempts = write_count + failure_count
         return {
             "status": "error" if load_error or getattr(self, "_web_task_snapshot_load_blocked", False) else "ok",
             "version": int(getattr(self, "_web_task_snapshot_version", 0) or 0),
             "snapshot_version": int(getattr(self, "_web_task_snapshot_version", 0) or 0),
             "metadata_version": self.TASK_SNAPSHOT_METADATA_VERSION,
-            "write_count": int(getattr(self, "_web_task_snapshot_write_count", 0) or 0),
-            "failure_count": int(getattr(self, "_web_task_snapshot_failure_count", 0) or 0),
+            "write_count": write_count,
+            "failure_count": failure_count,
+            "write_failure_rate": round(failure_count / attempts, 6) if attempts else None,
+            "write_bytes_total": int(getattr(self, "_web_task_snapshot_write_bytes_total", 0) or 0),
+            "scheduled_flush_count": int(getattr(self, "_web_task_snapshot_scheduled_flush_count", 0) or 0),
+            "coalesced_update_count": int(getattr(self, "_web_task_snapshot_coalesced_update_count", 0) or 0),
+            "timer_flush_count": int(getattr(self, "_web_task_snapshot_timer_flush_count", 0) or 0),
+            "forced_flush_count": int(getattr(self, "_web_task_snapshot_forced_flush_count", 0) or 0),
+            "skipped_write_count": int(getattr(self, "_web_task_snapshot_skipped_write_count", 0) or 0),
             "last_write_duration_ms": self._coerce_snapshot_duration(
                 getattr(self, "_web_task_snapshot_last_write_duration_ms", 0.0)
             ),
+            "write_duration_ms": self._snapshot_duration_health_locked(),
             "last_write_at": str(getattr(self, "_web_task_snapshot_last_write_at", "") or "")[:64],
             "last_failure_reason": redact_sensitive_text(
                 str(getattr(self, "_web_task_snapshot_last_failure_reason", "") or "")
@@ -570,11 +647,27 @@ class WebTaskMixin:
         if not path:
             return
         next_version = int(getattr(self, "_web_task_snapshot_version", 0) or 0) + 1
+        current_write_count = int(getattr(self, "_web_task_snapshot_write_count", 0) or 0)
+        current_failure_count = int(getattr(self, "_web_task_snapshot_failure_count", 0) or 0)
+        current_bytes_total = int(getattr(self, "_web_task_snapshot_write_bytes_total", 0) or 0)
+        flush_mode = "timer" if getattr(self, "_web_task_snapshot_flush_mode", "") == "timer" else "forced"
+        next_timer_flush_count = int(getattr(self, "_web_task_snapshot_timer_flush_count", 0) or 0)
+        next_forced_flush_count = int(getattr(self, "_web_task_snapshot_forced_flush_count", 0) or 0)
+        if flush_mode == "timer":
+            next_timer_flush_count += 1
+        else:
+            next_forced_flush_count += 1
         metadata = {
             "metadata_version": self.TASK_SNAPSHOT_METADATA_VERSION,
             "snapshot_version": next_version,
-            "write_count": int(getattr(self, "_web_task_snapshot_write_count", 0) or 0) + 1,
-            "failure_count": int(getattr(self, "_web_task_snapshot_failure_count", 0) or 0),
+            "write_count": current_write_count + 1,
+            "failure_count": current_failure_count,
+            "write_bytes_total": current_bytes_total,
+            "scheduled_flush_count": int(getattr(self, "_web_task_snapshot_scheduled_flush_count", 0) or 0),
+            "coalesced_update_count": int(getattr(self, "_web_task_snapshot_coalesced_update_count", 0) or 0),
+            "timer_flush_count": next_timer_flush_count,
+            "forced_flush_count": next_forced_flush_count,
+            "skipped_write_count": int(getattr(self, "_web_task_snapshot_skipped_write_count", 0) or 0),
             # The current write duration is recorded in memory immediately
             # after save; this value represents the previous successful write
             # in the file and is refreshed on the next lifecycle flush.
@@ -599,9 +692,29 @@ class WebTaskMixin:
         }
         started = time.perf_counter()
         try:
-            payload = self._prepare_task_snapshot(
-                self._persistent_web_tasks_locked(tasks), metadata,
-            )
+            # ``size_bytes`` and the cumulative byte counter are part of the
+            # JSON envelope itself. Iterate until both values describe the
+            # exact UTF-8 payload that will be atomically replaced.
+            encoded_size = -1
+            payload = None
+            for _ in range(12):
+                metadata["write_bytes_total"] = current_bytes_total + max(0, encoded_size)
+                payload = self._prepare_task_snapshot(
+                    self._persistent_web_tasks_locked(tasks), metadata,
+                )
+                encoded = json.dumps(
+                    payload, ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8")
+                actual_size = len(encoded)
+                if (
+                    actual_size == encoded_size
+                    and int(payload["snapshot"].get("size_bytes") or 0) == actual_size
+                    and int(metadata.get("write_bytes_total") or 0) == current_bytes_total + actual_size
+                ):
+                    break
+                encoded_size = actual_size
+            if payload is None or encoded_size < 0:
+                raise RuntimeError("任务快照序列化失败")
             save_json_file_compact(path, payload)
         except Exception as exc:
             self._web_task_snapshot_failure_count = int(
@@ -613,8 +726,13 @@ class WebTaskMixin:
         duration_ms = round(max(0.0, time.perf_counter() - started) * 1000.0, 3)
         self._web_task_snapshot_version = next_version
         self._web_task_snapshot_write_count = metadata["write_count"]
+        self._web_task_snapshot_write_bytes_total = metadata["write_bytes_total"]
+        self._web_task_snapshot_timer_flush_count = next_timer_flush_count
+        self._web_task_snapshot_forced_flush_count = next_forced_flush_count
         self._web_task_snapshot_last_write_duration_ms = duration_ms
         self._web_task_snapshot_last_write_at = metadata["last_write_at"]
+        self._web_task_snapshot_last_write_bytes = encoded_size
+        self._record_snapshot_duration_locked(duration_ms)
         was_over_budget = self._task_snapshot_budget_health()["over_budget"]
         for field in ("size_bytes", "evicted_task_count", "compacted_task_count"):
             setattr(self, "_web_task_snapshot_" + field, metadata[field])
@@ -629,7 +747,9 @@ class WebTaskMixin:
         if not str(getattr(self, "tasks_path", "") or "").strip():
             return
         if getattr(self, "_web_task_snapshot_timer", None) is not None:
+            self._increment_snapshot_metric_locked("coalesced_update_count")
             return
+        self._increment_snapshot_metric_locked("scheduled_flush_count")
         version = getattr(self, "_web_task_snapshot_version", 0)
 
         def flush() -> None:
@@ -637,10 +757,12 @@ class WebTaskMixin:
                 try:
                     if version != getattr(self, "_web_task_snapshot_version", 0):
                         return
+                    self._web_task_snapshot_flush_mode = "timer"
                     self._persist_web_tasks_locked()
                 except Exception as exc:
                     logger.error("[SelfieImage] 任务进度快照写入失败: %s", exc)
                 finally:
+                    self._web_task_snapshot_flush_mode = ""
                     if self._web_task_snapshot_timer is timer:
                         self._web_task_snapshot_timer = None
 
@@ -1118,9 +1240,14 @@ class WebTaskMixin:
             # A late fallback message must not turn an already recorded
             # transport failure into an indeterminate state.
             if normalized == "unknown" and previous in {"failed", "not_sent"}:
+                self._mark_snapshot_write_skipped_locked()
+                return
+            reason_text = redact_sensitive_text(str(reason or ""))[:320]
+            if previous == normalized and str(task.get("user_notification_reason") or "") == reason_text:
+                self._mark_snapshot_write_skipped_locked()
                 return
             task["user_notification_status"] = normalized
-            task["user_notification_reason"] = redact_sensitive_text(str(reason or ""))[:320]
+            task["user_notification_reason"] = reason_text
             if previous != normalized:
                 notification_event = (
                     str(task.get("task_id") or tid),

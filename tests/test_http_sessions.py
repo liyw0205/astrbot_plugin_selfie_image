@@ -439,6 +439,73 @@ class ClientSessionRegistryTests(unittest.IsolatedAsyncioTestCase):
             await target_runner.cleanup()
         self.assertEqual(registry.get_stats()["active_sessions"], 0)
 
+    async def test_generated_url_http_proxy_routes_real_download(self) -> None:
+        """Exercise aiohttp's request-level HTTP proxy path with a local relay."""
+        from urllib.parse import urlsplit
+
+        from aiohttp import ClientSession, web
+
+        png = b"\x89PNG\r\n\x1a\n" + b"1" * 128
+        requests = []
+
+        async def handle(_request):
+            return web.Response(body=png, content_type="image/png")
+
+        app = web.Application()
+        app.router.add_get("/image", handle)
+        target_runner = web.AppRunner(app)
+        await target_runner.setup()
+        target_site = web.TCPSite(target_runner, "127.0.0.1", 0)
+        await target_site.start()
+        target_port = target_site._server.sockets[0].getsockname()[1]
+
+        async def http_proxy(reader, writer):
+            upstream_writer = None
+            try:
+                header = await reader.readuntil(b"\r\n\r\n")
+                lines = header.split(b"\r\n")
+                method, absolute_url, version = lines[0].decode("latin-1").split(" ", 2)
+                parsed = urlsplit(absolute_url)
+                requests.append((method, absolute_url))
+                upstream_reader, upstream_writer = await asyncio.open_connection(parsed.hostname, parsed.port)
+                rewritten = f"{method} {parsed.path or '/'}{('?' + parsed.query) if parsed.query else ''} {version}".encode("latin-1")
+                upstream_writer.write(b"\r\n".join([rewritten, *lines[1:]]) + b"\r\n\r\n")
+                await upstream_writer.drain()
+                response_header = await upstream_reader.readuntil(b"\r\n\r\n")
+                response_lines = response_header.split(b"\r\n")
+                content_length = 0
+                for line in response_lines[1:]:
+                    if line.lower().startswith(b"content-length:"):
+                        content_length = int(line.split(b":", 1)[1].strip())
+                        break
+                body = await upstream_reader.readexactly(content_length)
+                writer.write(response_header + body)
+                await writer.drain()
+            finally:
+                if upstream_writer is not None:
+                    upstream_writer.close()
+                    await upstream_writer.wait_closed()
+                writer.close()
+                await writer.wait_closed()
+
+        proxy_server = await asyncio.start_server(http_proxy, "127.0.0.1", 0)
+        proxy_port = proxy_server.sockets[0].getsockname()[1]
+        try:
+            async with ClientSession(trust_env=False) as session:
+                downloaded = await fetch_generated_image_url(
+                    session,
+                    f"http://127.0.0.1:{target_port}/image",
+                    timeout=5,
+                    proxy=f"http://127.0.0.1:{proxy_port}",
+                )
+            self.assertEqual(downloaded, png)
+            self.assertEqual(requests[0][0], "GET")
+            self.assertTrue(requests[0][1].startswith(f"http://127.0.0.1:{target_port}/image"))
+        finally:
+            proxy_server.close()
+            await proxy_server.wait_closed()
+            await target_runner.cleanup()
+
     async def test_registry_failure_diagnostics_are_bounded_and_credential_free(self) -> None:
         registry = ClientSessionRegistry()
         with self.assertRaises(ValueError):

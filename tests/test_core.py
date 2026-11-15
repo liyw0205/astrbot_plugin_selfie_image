@@ -4611,7 +4611,7 @@ class GeneratorFallbackTests(unittest.IsolatedAsyncioTestCase):
         task = store._web_tasks["cmd-link"]
         self.assertEqual(task["record_ids"], ["record-1"])
         self.assertEqual(task["result"]["record_ids"], ["record-1"])
-        self.assertEqual(len(persisted), 2)
+        self.assertEqual(len(persisted), 1)
 
     async def test_fallback_preserves_server_error_detail(self) -> None:
         target = make_target("openai", "gpt-image-2")
