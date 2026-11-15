@@ -14,12 +14,14 @@ if __package__:
     from .release_checks import (
         ROOT, MAX_ARCHIVE_BYTES, MAX_FILE_BYTES, MAX_UNCOMPRESSED_BYTES,
         ReleaseCheckError, build_artifact, git_files, release_files,
+        validate_tag_version,
         validate_json_files, validate_versions,
     )
 else:
     from release_checks import (
         ROOT, MAX_ARCHIVE_BYTES, MAX_FILE_BYTES, MAX_UNCOMPRESSED_BYTES,
         ReleaseCheckError, build_artifact, git_files, release_files,
+        validate_tag_version,
         validate_json_files, validate_versions,
     )
 
@@ -31,10 +33,18 @@ def main() -> int:
         action="store_true",
         help="validate versions, JSON and the release manifest without building a temporary ZIP",
     )
+    parser.add_argument(
+        "--expected-tag",
+        help="require a bare vMAJOR.MINOR.PATCH tag matching the current plugin version",
+    )
     args = parser.parse_args()
     try:
         tracked = git_files(ROOT)
-        version = validate_versions(ROOT)
+        version = (
+            validate_tag_version(ROOT, args.expected_tag)
+            if args.expected_tag is not None
+            else validate_versions(ROOT)
+        )
         print(f"[release] plugin version: {version}", flush=True)
         checked = validate_json_files(ROOT, tracked=tracked)
         print(f"[release] JSON parse and required fields: {checked} files", flush=True)

@@ -12,7 +12,7 @@ remain available for focused checks. The Python layer accepts
 interpreters in the CI matrix, and `--skip-static` omits compile/no-op checks
 already covered by a separate release job. The static layer includes version
 consistency, bundled JSON contracts, a temporary runtime ZIP, compilation,
-Dashboard checks, and `git diff --check`. The package layer validates the
+Dashboard checks, and `git diff --check HEAD`. The package layer validates the
 version, JSON and runtime manifest without creating a throwaway ZIP; the
 builder performs the one final archive round-trip immediately afterwards. Both
 static and package layers do not run pytest. Local frontend checks may skip
@@ -32,6 +32,11 @@ builder still validates the manifest and performs the final archive round-trip.
 The skip is intended for that already-gated CI composition, not as a local
 replacement for the full command. Creating or editing the workflow locally
 does not execute it.
+
+Tag-triggered CI starts with a `release-tag` job. It requires the ref to match
+`vMAJOR.MINOR.PATCH` and to equal the current version declarations before the
+Python, Dashboard, or package jobs can start. Ordinary commits, branch pushes,
+and pull requests do not trigger this workflow.
 
 ## Input Contracts
 

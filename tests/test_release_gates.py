@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from astrbot_plugin_selfie_image.scripts import build_release, release_checks as checks
+from astrbot_plugin_selfie_image.scripts import verify_release
 
 
 def write(root: Path, name: str, content: str) -> None:
@@ -28,6 +29,10 @@ def version_fixture(root: Path) -> None:
 def test_ci_workflow_runs_only_for_version_tags():
     workflow = (checks.ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "on:\n  push:\n    tags:\n      - 'v*'" in workflow
+    assert "release-tag:" in workflow
+    assert "check_release.py --expected-tag \"${GITHUB_REF_NAME}\" --skip-artifact" in workflow
+    assert workflow.count("needs: release-tag") == 3
+    assert "needs: [release-tag, python-tests, frontend, frontend-no-node]" in workflow
     assert "pull_request" not in workflow
     assert "branches:" not in workflow
     assert "test-scope: full" in workflow
@@ -37,9 +42,56 @@ def test_ci_workflow_runs_only_for_version_tags():
     assert "build_release.py --skip-tests" in workflow
 
 
+def test_python_compatibility_test_manifest_is_valid():
+    assert verify_release.validate_python_compatibility_tests() == verify_release.PYTHON_COMPATIBILITY_TESTS
+    assert "tests/test_release_gates.py" not in verify_release.PYTHON_COMPATIBILITY_TESTS
+
+
+@pytest.mark.parametrize("manifest,expected", [
+    (("tests/missing.py",), "missing paths"),
+    (("tests/test_model_request.py", "tests/test_model_request.py"), "duplicate paths"),
+    (("tests/test_release_gates.py",), "static release-gate tests"),
+])
+def test_python_compatibility_test_manifest_rejects_invalid_entries(tmp_path, manifest, expected):
+    with pytest.raises(RuntimeError, match=expected):
+        verify_release.validate_python_compatibility_tests(manifest, root=tmp_path)
+
+
+def test_python_gate_validates_current_compatibility_manifest_before_pytest(monkeypatch):
+    monkeypatch.setattr(verify_release, "PYTHON_COMPATIBILITY_TESTS", ("tests/missing.py",))
+    monkeypatch.setattr(
+        verify_release.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("pytest must not start for an invalid manifest"),
+    )
+    with pytest.raises(RuntimeError, match="missing paths"):
+        verify_release.run_python_gates(
+            "python", include_tests=True, test_scope="compatibility", include_static=False,
+        )
+
+
 def test_versions_read_current_declarations_and_ignore_history(tmp_path):
     version_fixture(tmp_path)
     assert checks.validate_versions(tmp_path) == "1.2.3"
+
+
+def test_release_tag_must_match_current_version(tmp_path):
+    version_fixture(tmp_path)
+    assert checks.validate_tag_version(tmp_path, "v1.2.3") == "1.2.3"
+
+
+def test_release_tag_check_includes_metadata_version(tmp_path):
+    version_fixture(tmp_path)
+    write(tmp_path, "metadata.yaml", "name: astrbot_plugin_selfie_image\nversion: 1.2.4\n")
+    with pytest.raises(checks.ReleaseCheckError, match="version mismatch"):
+        checks.validate_tag_version(tmp_path, "v1.2.3")
+
+
+@pytest.mark.parametrize("tag", ["1.2.3", "v1.2", "v1.2.4", "v1.2.3-rc1"])
+def test_release_tag_rejects_invalid_or_mismatched_values(tmp_path, tag):
+    version_fixture(tmp_path)
+    with pytest.raises(checks.ReleaseCheckError, match="release tag"):
+        checks.validate_tag_version(tmp_path, tag)
 
 
 @pytest.mark.parametrize("name,content", [

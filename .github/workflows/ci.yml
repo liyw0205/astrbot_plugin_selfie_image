@@ -13,8 +13,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Match tag to plugin version
+        run: python scripts/check_release.py --expected-tag "${GITHUB_REF_NAME}" --skip-artifact
+
   python-tests:
     name: Python ${{ matrix.python-version }} (${{ matrix.test-scope }})
+    needs: release-tag
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -45,6 +60,7 @@ jobs:
 
   frontend:
     name: Dashboard with Node.js
+    needs: release-tag
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -67,6 +83,7 @@ jobs:
 
   frontend-no-node:
     name: Dashboard without Node.js
+    needs: release-tag
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -86,7 +103,7 @@ jobs:
 
   release-static:
     name: Verified release package
-    needs: [python-tests, frontend, frontend-no-node]
+    needs: [release-tag, python-tests, frontend, frontend-no-node]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

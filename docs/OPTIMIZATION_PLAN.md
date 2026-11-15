@@ -4,11 +4,11 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-本轮完整发布验证基线（2026-11-16，1.7.48）：
+本轮完整发布验证基线（2026-11-16，1.7.49）：
 
-- 全量 pytest `3654 passed, 1 skipped, 702 subtests passed`，耗时 239.78 秒；Python、Dashboard 和静态发布层门禁均通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3665 passed, 1 skipped, 702 subtests passed`，耗时 158.60 秒；Python、Dashboard 和静态发布层门禁均通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check HEAD`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；64 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：148 个文件，ZIP 2,451,736 字节、解压 5,785,060 字节；单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
+- 临时运行期 ZIP 检查：148 个文件，ZIP 2,451,986 字节、解压 5,785,739 字节，SHA256 为 `dde7560bc94557662a532151d622c0ed82db02889cf1a82f833d32ccd005f6b7`；单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证；本轮 SIGKILL 仅为本机进程中断演练，不等同真实断电。
 
 主要结构性事实：
@@ -37,6 +37,9 @@
 - 继续减少发布流水线重复：兼容性 Python job 通过 `--skip-static` 只运行兼容测试；制品 job 使用 `--layer package` 校验版本、JSON 和运行期清单，最终 ZIP 仅由构建器往返校验一次。
 - COS 目录匹配索引按内容签名惰性缓存，避免每次匹配重建约 770 套服装的术语和分词索引；记录收藏/置顶/标签更新在备注未变化时跳过 FTS 投影刷新。
 - COS 多视角拼贴回归改为全量轻量兼容性检查加 5 套代表服装深检，特殊套装仍逐项验证，避免测试重复生成 770 份七格提示词。
+- 兼容性测试清单移除静态发布门禁，执行前校验路径存在、无重复且不越界；错误清单在 pytest 启动前失败，3.10/3.11/3.13 子集当前为 135 项。
+- 新增独立 `release-tag` 门禁，严格校验 `vMAJOR.MINOR.PATCH` 与当前版本一致；Python、Dashboard 和制品 job 依赖该门禁，错误 tag 不会消耗完整矩阵资源。
+- 发布差异检查改为 `git diff --check HEAD`，同时覆盖相对当前提交的已暂存和未暂存改动。
 
 完整发布验证结果统一记录在上方验证基线中。
 
@@ -128,7 +131,7 @@
 
 `.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。Python 3.12 执行完整 pytest，其余版本执行兼容性子集且跳过重复的 compile/no-op；Dashboard job 不再重复 Python 测试，制品 job 使用 `--layer package` 复用前置静态门禁。支持 `--layer all/python/frontend/static/package`、`--test-scope full/compatibility` 和 `--skip-static`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
 
-上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.48`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，CI 仅在推送 `v*` 版本 tag 后运行。
+上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.49`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，CI 仅在推送 `v*` 版本 tag 后运行。
 
 制品基线和验证结果见上方“最新完整发布验证基线”。该制品仅代表本地当前工作区构建，发布前仍需在目标宿主验证真实通知投递和字体资源。
 

@@ -349,6 +349,23 @@ def validate_versions(root: Path = ROOT) -> str:
     return version
 
 
+def validate_tag_version(root: Path, tag: str) -> str:
+    """Require a bare ``vMAJOR.MINOR.PATCH`` tag matching the release version."""
+
+    match = re.fullmatch(r"v(\d+\.\d+\.\d+)", tag)
+    if not match:
+        raise ReleaseCheckError(
+            f"release tag must match vMAJOR.MINOR.PATCH: {tag!r}"
+        )
+    version = validate_versions(root)
+    tag_version = match.group(1)
+    if tag_version != version:
+        raise ReleaseCheckError(
+            f"release tag/version mismatch: tag={tag!r}, plugin={version!r}"
+        )
+    return version
+
+
 def build_artifact(root: Path, output: Path, names: Iterable[str]) -> dict[str, Any]:
     """Create and read back a deterministic ZIP from an already-approved list."""
 

@@ -15,7 +15,6 @@ ROOT = Path(__file__).resolve().parents[1]
 # versions still exercise the release contracts and compatibility-sensitive
 # runtime paths without repeating the slowest integration cases.
 PYTHON_COMPATIBILITY_TESTS = (
-    "tests/test_release_gates.py",
     "tests/test_model_request.py",
     "tests/test_image_limits.py",
     "tests/test_http_sessions.py",
@@ -25,6 +24,58 @@ PYTHON_COMPATIBILITY_TESTS = (
     "tests/test_task_snapshot_budget.py",
     "tests/test_reference_cache_index.py",
 )
+
+# These checks validate the release manifest and generated artifact rather
+# than Python-version compatibility. They run in the canonical release job.
+PYTHON_STATIC_GATE_TESTS = frozenset({"tests/test_release_gates.py"})
+
+
+def validate_python_compatibility_tests(
+    tests: tuple[str, ...] | None = None,
+    *,
+    root: Path = ROOT,
+) -> tuple[str, ...]:
+    """Validate the explicit cross-version pytest manifest before execution."""
+
+    manifest = PYTHON_COMPATIBILITY_TESTS if tests is None else tests
+    seen: set[str] = set()
+    duplicate: list[str] = []
+    missing: list[str] = []
+    static_gates: list[str] = []
+    normalized: list[str] = []
+    root = root.resolve()
+    for value in manifest:
+        relative = Path(str(value))
+        name = relative.as_posix()
+        if name in seen:
+            duplicate.append(name)
+        else:
+            seen.add(name)
+        normalized.append(name)
+        if name in PYTHON_STATIC_GATE_TESTS:
+            static_gates.append(name)
+        candidate = (root / relative).resolve()
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or not candidate.is_relative_to(root)
+            or not candidate.is_file()
+        ):
+            missing.append(name)
+
+    problems: list[str] = []
+    if missing:
+        problems.append("missing paths: " + ", ".join(sorted(set(missing))))
+    if duplicate:
+        problems.append("duplicate paths: " + ", ".join(sorted(set(duplicate))))
+    if static_gates:
+        problems.append(
+            "static release-gate tests are not compatibility tests: "
+            + ", ".join(sorted(set(static_gates)))
+        )
+    if problems:
+        raise RuntimeError("invalid Python compatibility test manifest; " + "; ".join(problems))
+    return tuple(normalized)
 
 
 def run_gate(label: str, command: list[str]) -> None:
@@ -38,10 +89,11 @@ def run_python_gates(
 ) -> None:
     """Run gates that exercise Python code and the offline test suite."""
 
+    compatibility_tests = validate_python_compatibility_tests()
     if include_tests:
         command = [python, "-m", "pytest", "-q"]
         if test_scope == "compatibility":
-            command.extend(PYTHON_COMPATIBILITY_TESTS)
+            command.extend(compatibility_tests)
         elif test_scope != "full":
             raise ValueError(f"unsupported Python test scope: {test_scope}")
         run_gate("tests", command)
@@ -137,7 +189,7 @@ def main() -> int:
         )
         run_frontend_gates(python, require_node=args.require_node)
         run_release_asset_gates(python)
-        run_gate("diff check", ["git", "diff", "--check"])
+        run_gate("diff check", ["git", "diff", "--check", "HEAD"])
     elif args.layer == "python":
         run_python_gates(
             python,
@@ -151,10 +203,10 @@ def main() -> int:
         run_python_gates(python, include_tests=False, include_static=not args.skip_static)
         run_frontend_gates(python, require_node=args.require_node)
         run_release_asset_gates(python)
-        run_gate("diff check", ["git", "diff", "--check"])
+        run_gate("diff check", ["git", "diff", "--check", "HEAD"])
     else:  # package
         run_package_gates(python)
-        run_gate("diff check", ["git", "diff", "--check"])
+        run_gate("diff check", ["git", "diff", "--check", "HEAD"])
     print("[release] all gates passed")
     return 0
 
