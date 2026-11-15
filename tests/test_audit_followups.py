@@ -733,6 +733,52 @@ await request.catch(error => assert.equal(error.name, 'AbortError'));
     assert completed.returncode == 0, completed.stderr
 
 
+def test_dashboard_task_copy_request_excludes_sensitive_values_and_paths():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for dashboard JavaScript verification")
+    source = (Path(__file__).resolve().parents[1] / "pages/dashboard/source/monitoring.js").read_text()
+    payload = source.split("    const TASK_REQUEST_BLOCKED_KEY", 1)[1].split("    function taskUsesPersonaReference", 1)[0]
+    script = """
+import assert from 'node:assert/strict';
+let copied = '';
+const toasts = [];
+const copyTextToClipboard = async value => { copied = String(value); };
+const showToast = (message, type) => toasts.push([message, type]);
+""" + "    const TASK_REQUEST_BLOCKED_KEY" + payload + """
+const task = {
+  original_prompt: '原始提示词',
+  final_prompt: 'final prompt',
+  parameters: {
+    model: 'vision-a',
+    count: 2,
+    reference_selection: {roles: {persona: 1}, request_image_paths: ['/private/ref.png']},
+    api_key: 'must-not-copy',
+    request_image_paths: ['generated/ref.png'],
+    nested: {access_token: 'must-not-copy', image_path: 'local/file.png', keep: 'ok'},
+  },
+};
+const payloadValue = taskRequestPayload(task);
+assert.equal(payloadValue.original_prompt, '原始提示词');
+assert.equal(payloadValue.final_prompt, 'final prompt');
+assert.equal(payloadValue.parameters.model, 'vision-a');
+assert.equal(payloadValue.parameters.count, 2);
+assert.equal(payloadValue.parameters.reference_selection.roles.persona, 1);
+assert.equal(payloadValue.parameters.reference_selection.request_image_paths, undefined);
+assert.equal(payloadValue.parameters.api_key, undefined);
+assert.equal(payloadValue.parameters.request_image_paths, undefined);
+assert.deepEqual(payloadValue.parameters.nested, {keep: 'ok'});
+await copyTaskRequest(task);
+assert.match(copied, /"final_prompt": "final prompt"/);
+assert.doesNotMatch(copied, /must-not-copy|private|generated|local/);
+assert.deepEqual(toasts, [['请求参数已复制', 'ok']]);
+await copyTaskRequest({parameters: {api_key: 'only-secret', request_image_paths: ['/tmp/a.png']}});
+assert.deepEqual(toasts.at(-1), ['请求参数为空', 'bad']);
+"""
+    completed = subprocess.run([node, "--input-type=module", "-e", script], text=True, capture_output=True)
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_dashboard_proxy_edit_keeps_masked_password_and_existing_identity():
     node = shutil.which("node")
     if not node:

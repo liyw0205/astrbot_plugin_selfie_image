@@ -94,6 +94,8 @@
     let METRICS_CONTENTS = {};
     let ACTIVE_METRICS_CATEGORY = '';
     const TASK_REQUESTS = new Map();
+    // Invalidate slower task-detail responses when the user switches or closes a detail view.
+    let TASK_DETAIL_REQUEST_SEQ = 0;
     let RECORD_LOADING = false;
     let ASSET_LOADING = false;
     const PAGE_CACHE_MAX_ENTRIES = 12;

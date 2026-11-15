@@ -725,6 +725,7 @@ class RecordDatabase:
                 params.append(str(value).strip().lower())
         fts_clause = ""
         fts_param_index: Optional[int] = None
+        fts_param_count = 0
         if media_type:
             clauses.append(f"text_lower({media_type_field}) = ?")
             params.append(str(media_type).strip().lower())
@@ -751,24 +752,40 @@ class RecordDatabase:
                 retained_ids + "SELECT COUNT(*) FROM retained_ids", (keep,)
             ).fetchone()[0]
             if keyword_text and self._fts5_enabled:
-                try:
-                    fts_keyword = self._fts_selective_match_query(
-                        connection, keyword_lower, int(total)
-                    )
-                except sqlite3.DatabaseError:
-                    # Missing vocabulary support only affects query planning.
-                    fts_keyword = self._fts_match_query(keyword_lower)
-                if fts_keyword:
+                if not self._fts_trigrams(keyword_lower):
+                    # Trigram tokenizers cannot answer one- or two-character
+                    # terms (nor NUL-containing terms).  The FTS projection
+                    # still stores the exact lower-cased legacy search text,
+                    # so scan that materialized column instead of reparsing
+                    # every JSON payload in the scalar fallback.
                     fts_clause = (
                         f"id IN (SELECT record_id FROM {self._FTS_TABLE} "
-                        f"WHERE {self._FTS_TABLE} MATCH ? AND instr(search_text, ?) > 0)"
+                        "WHERE instr(search_text, ?) > 0)"
                     )
                     clauses.append(fts_clause)
                     fts_param_index = len(params)
-                    params.extend((fts_keyword, keyword_lower))
+                    fts_param_count = 1
+                    params.append(keyword_lower)
                 else:
-                    clauses.append(self._keyword_search_predicate())
-                    params.extend((keyword_lower, keyword_lower, keyword_lower))
+                    try:
+                        fts_keyword = self._fts_selective_match_query(
+                            connection, keyword_lower, int(total)
+                        )
+                    except sqlite3.DatabaseError:
+                        # Missing vocabulary support only affects query planning.
+                        fts_keyword = self._fts_match_query(keyword_lower)
+                    if fts_keyword:
+                        fts_clause = (
+                            f"id IN (SELECT record_id FROM {self._FTS_TABLE} "
+                            f"WHERE {self._FTS_TABLE} MATCH ? AND instr(search_text, ?) > 0)"
+                        )
+                        clauses.append(fts_clause)
+                        fts_param_index = len(params)
+                        fts_param_count = 2
+                        params.extend((fts_keyword, keyword_lower))
+                    else:
+                        clauses.append(self._keyword_search_predicate())
+                        params.extend((keyword_lower, keyword_lower, keyword_lower))
             elif keyword_text:
                 clauses.append(self._keyword_search_predicate())
                 params.extend((keyword_lower, keyword_lower, keyword_lower))
@@ -832,7 +849,7 @@ class RecordDatabase:
                 fallback_clauses.append(self._keyword_search_predicate())
                 fallback_where = " WHERE " + " AND ".join(fallback_clauses)
                 fallback_params = list(params)
-                del fallback_params[fts_param_index:fts_param_index + 2]
+                del fallback_params[fts_param_index:fts_param_index + fts_param_count]
                 fallback_params.extend((keyword_lower, keyword_lower, keyword_lower))
                 count = connection.execute(
                     retained + "SELECT COUNT(*) FROM retained" + fallback_where,

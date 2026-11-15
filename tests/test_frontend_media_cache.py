@@ -1,4 +1,8 @@
 from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
 
 
 PAGE = (Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
@@ -230,6 +234,92 @@ def test_task_queue_defers_request_image_loading_until_detail_modal():
     assert 'personaReferenceThumb()' in detail
     assert 'loadProtectedImages(body);' in detail
     assert 'loadPersonaReferenceThumbs(body);' in detail
+
+
+def test_task_queue_renders_wait_and_running_timing():
+    timing_start = PAGE.index("    function taskQueueTiming(task) {")
+    timing_end = PAGE.index("    function taskQueueScope()", timing_start)
+    timing = PAGE[timing_start:timing_end]
+    assert "const queueSeconds = Number(task?.queue_wait_seconds || 0);" in timing
+    assert "const runningSeconds = Number(task?.running_seconds || 0);" in timing
+    assert "已等 ${queueSeconds.toFixed(1)}s" in timing
+    assert "已用 ${runningSeconds.toFixed(1)}s" in timing
+    assert "return '';" not in timing
+
+
+def test_task_detail_ignores_stale_or_closed_mobile_modal_responses():
+    """A slow detail response must not replace the task currently shown on mobile."""
+    assert "let TASK_DETAIL_REQUEST_SEQ = 0;" in PAGE
+    detail_start = PAGE.index("    function closeTaskDetail()")
+    detail_end = PAGE.index("    async function loadTasksNow", detail_start)
+    detail = PAGE[detail_start:detail_end]
+    assert "TASK_DETAIL_REQUEST_SEQ += 1;" in detail
+    assert "const requestSeq = ++TASK_DETAIL_REQUEST_SEQ;" in detail
+    assert detail.count("requestSeq !== TASK_DETAIL_REQUEST_SEQ || !modal.classList.contains('show')") == 2
+
+
+def test_task_detail_sequence_guard_preserves_the_newest_mobile_modal_response():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for dashboard JavaScript verification")
+    sequence = "let TASK_DETAIL_REQUEST_SEQ = 0;"
+    detail_start = PAGE.index("    function closeTaskDetail()")
+    detail_end = PAGE.index("    async function loadTasksNow", detail_start)
+    detail = PAGE[detail_start:detail_end]
+    script = """
+import assert from 'node:assert/strict';
+const classes = new Set();
+const modal = {classList: {
+  add(name) { classes.add(name); },
+  remove(name) { classes.delete(name); },
+  contains(name) { return classes.has(name); },
+}};
+const body = {
+  innerHTML: '',
+  querySelectorAll() { return []; },
+  querySelector() { return null; },
+};
+const elements = {taskModal: modal, taskDetailBody: body, taskRetryStrategy: {value: 'full'}};
+const $ = id => elements[id];
+const pending = [];
+const api = path => new Promise(resolve => pending.push({path, resolve}));
+const escapeHtml = value => String(value ?? '');
+const displaySourceLabel = task => String(task?.source || '');
+const taskQueueStatusLabel = status => String(status || '');
+const taskQueueProgress = () => '';
+const taskQueueTiming = () => '';
+const taskQueueStage = () => '';
+const taskQueueDeliveryLabel = () => '';
+const personaReferenceThumb = () => '';
+const imageThumbs = () => '';
+const loadProtectedImages = () => {};
+const loadPersonaReferenceThumbs = () => {};
+const copyTextToClipboard = async () => {};
+const showToast = () => {};
+""" + sequence + "\n" + detail + """
+const first = openTaskDetail('first');
+await Promise.resolve();
+assert.equal(pending.length, 1);
+const second = openTaskDetail('second');
+await Promise.resolve();
+assert.equal(pending.length, 2);
+pending[1].resolve({data: {task_id: 'second', parameters: {}}});
+await second;
+assert.match(body.innerHTML, /second/);
+pending[0].resolve({data: {task_id: 'first', parameters: {}}});
+await first;
+assert.match(body.innerHTML, /second/);
+assert.doesNotMatch(body.innerHTML, /first/);
+
+const closed = openTaskDetail('closed');
+await Promise.resolve();
+closeTaskDetail();
+pending[2].resolve({data: {task_id: 'closed', parameters: {}}});
+await closed;
+assert.equal(body.innerHTML, '<div class="muted">正在读取任务详情…</div>');
+"""
+    completed = subprocess.run([node, "--input-type=module", "-e", script], text=True, capture_output=True)
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_dashboard_shortcuts_and_priority_pin_cover_all_model_kinds():

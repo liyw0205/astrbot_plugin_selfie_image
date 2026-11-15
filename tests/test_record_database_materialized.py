@@ -397,6 +397,40 @@ def test_keyword_search_uses_match_candidates_and_scalar_confirmation(tmp_path, 
     assert all("instr(text_lower(" not in sql for sql in candidate_queries)
 
 
+def test_short_keyword_uses_materialized_fts_text_and_preserves_scalar_results(tmp_path, monkeypatch):
+    database = RecordDatabase(str(tmp_path / "records.sqlite3"))
+    if not database._fts5_enabled:
+        pytest.skip("SQLite build has no trigram FTS5")
+    database.replace_records([
+        {"id": "match", "time": "2026-11-14", "prompt": "自然光 portrait"},
+        {"id": "field", "time": "2026-11-13", "source": "自然来源", "prompt": "unrelated"},
+        {"id": "other", "time": "2026-11-12", "prompt": "unrelated"},
+    ])
+    statements = []
+    original_connect = database._connect
+
+    def connect():
+        connection = original_connect()
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(database, "_connect", connect)
+    indexed_rows, indexed_metadata = database.query_records(keyword="自然", limit=10)
+    assert [row["id"] for row in indexed_rows] == ["match", "field"]
+    assert indexed_metadata["filtered"] == 2
+    assert any(
+        "generation_records_fts" in sql and "instr(search_text" in sql
+        for sql in statements if not sql.startswith("--")
+    )
+    assert not any(
+        " MATCH " in sql for sql in statements if not sql.startswith("--")
+    )
+
+    database._fts5_enabled = False
+    scalar_rows, scalar_metadata = database.query_records(keyword="自然", limit=10)
+    assert (indexed_rows, indexed_metadata) == (scalar_rows, scalar_metadata)
+
+
 def test_fts_search_text_confirmation_preserves_legacy_fields_and_prompt_fallback(tmp_path):
     database = RecordDatabase(str(tmp_path / "records.sqlite3"))
     if not database._fts5_enabled:

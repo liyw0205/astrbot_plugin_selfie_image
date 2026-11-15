@@ -236,7 +236,6 @@
       return '';
     }
     function taskQueueTiming(task) {
-      return '';
       const queueSeconds = Number(task?.queue_wait_seconds || 0);
       const runningSeconds = Number(task?.running_seconds || 0);
       const parts = [];
@@ -357,11 +356,44 @@
       } catch (e) { showToast(e.message || '任务导出失败', 'bad'); }
     }
     function closeTaskDetail() {
+      TASK_DETAIL_REQUEST_SEQ += 1;
       $('taskModal')?.classList.remove('show');
     }
     function taskDetailPrompt(label, value) {
       const text = String(value || '').trim();
       return text ? `<div><label>${escapeHtml(label)}</label><pre class="status" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(text)}</pre></div>` : '';
+    }
+    const TASK_REQUEST_BLOCKED_KEY = /(?:^|_)(?:api[_-]?key|token|password|secret|cookie|authorization|headers?|base64|paths?)(?:$|_)/i;
+    function sanitizeTaskRequestValue(value) {
+      if (Array.isArray(value)) return value.map(item => sanitizeTaskRequestValue(item));
+      if (!value || typeof value !== 'object') return value;
+      return Object.fromEntries(Object.entries(value)
+        .filter(([key]) => !TASK_REQUEST_BLOCKED_KEY.test(String(key)))
+        .map(([key, item]) => [key, sanitizeTaskRequestValue(item)]));
+    }
+    function taskRequestPayload(task) {
+      const rawParams = task?.parameters && typeof task.parameters === 'object' ? task.parameters : {};
+      const params = sanitizeTaskRequestValue(rawParams);
+      const payload = {};
+      const originalPrompt = String(task?.original_prompt || '').trim();
+      const finalPrompt = String(task?.final_prompt || '').trim();
+      if (originalPrompt) payload.original_prompt = originalPrompt;
+      if (finalPrompt) payload.final_prompt = finalPrompt;
+      if (Object.keys(params).length) payload.parameters = params;
+      return payload;
+    }
+    async function copyTaskRequest(task) {
+      const payload = taskRequestPayload(task);
+      if (!Object.keys(payload).length) {
+        showToast('请求参数为空', 'bad');
+        return;
+      }
+      try {
+        await copyTextToClipboard(JSON.stringify(payload, null, 2));
+        showToast('请求参数已复制', 'ok');
+      } catch (e) {
+        showToast(e.message || '复制请求失败', 'bad');
+      }
     }
     function taskUsesPersonaReference(task) {
       const params = task?.parameters && typeof task.parameters === 'object' ? task.parameters : {};
@@ -389,10 +421,12 @@
       const modal = $('taskModal');
       const body = $('taskDetailBody');
       if (!modal || !body || !taskId) return;
+      const requestSeq = ++TASK_DETAIL_REQUEST_SEQ;
       body.innerHTML = '<div class="muted">正在读取任务详情…</div>';
       modal.classList.add('show');
       try {
         const res = await api('/api/tasks/' + encodeURIComponent(taskId));
+        if (requestSeq !== TASK_DETAIL_REQUEST_SEQ || !modal.classList.contains('show')) return;
         const task = res.data || {};
         const params = task.parameters || {};
         const requestImagePaths = Array.isArray(task.request_image_paths) ? task.request_image_paths : [];
@@ -425,6 +459,7 @@
           ${deliveryNote}
           ${taskDetailPrompt('原始提示词', task.original_prompt)}
           ${taskDetailPrompt('最终提示词', task.final_prompt)}
+          <div class="actions" style="margin-top:12px"><button class="secondary mini task-copy-request" type="button">复制请求</button></div>
           ${personaReference}
           ${requestImagePaths.length ? `<div style="margin-top:14px">${imageThumbs(requestImagePaths, '请求图')}</div>` : ''}
           ${parameterRows ? `<div class="grid" style="margin-top:12px">${parameterRows}</div>` : ''}
@@ -432,9 +467,11 @@
           ${attemptRows}`;
         body.querySelectorAll('.task-record-open').forEach(button => button.addEventListener('click', () => { closeTaskDetail(); openRecordDetail(button.dataset.recordId || ''); }));
         body.querySelector('.task-record-retry')?.addEventListener('click', () => retryTaskFromRecord(recordId, String($('taskRetryStrategy')?.value || 'full')));
+        body.querySelector('.task-copy-request')?.addEventListener('click', () => copyTaskRequest(task));
         loadProtectedImages(body);
         loadPersonaReferenceThumbs(body);
       } catch (e) {
+        if (requestSeq !== TASK_DETAIL_REQUEST_SEQ || !modal.classList.contains('show')) return;
         body.innerHTML = `<div class="status">${escapeHtml(e.message || '任务详情读取失败')}</div>`;
       }
     }
