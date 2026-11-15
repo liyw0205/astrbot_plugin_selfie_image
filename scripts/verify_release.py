@@ -34,6 +34,7 @@ def run_gate(label: str, command: list[str]) -> None:
 
 def run_python_gates(
     python: str, *, include_tests: bool, test_scope: str = "full",
+    include_static: bool = True,
 ) -> None:
     """Run gates that exercise Python code and the offline test suite."""
 
@@ -44,26 +45,27 @@ def run_python_gates(
         elif test_scope != "full":
             raise ValueError(f"unsupported Python test scope: {test_scope}")
         run_gate("tests", command)
-    run_gate(
-        "compileall",
-        [
-            python,
-            "-m",
+    if include_static:
+        run_gate(
             "compileall",
-            "-q",
-            "core",
-            "features",
-            "generation",
-            "prompts",
-            "cos",
-            "nai",
-            "studio",
-            "tasks",
-            "webui",
-            "main.py",
-        ],
-    )
-    run_gate("noop check", [python, "scripts/check_noop_implementations.py"])
+            [
+                python,
+                "-m",
+                "compileall",
+                "-q",
+                "core",
+                "features",
+                "generation",
+                "prompts",
+                "cos",
+                "nai",
+                "studio",
+                "tasks",
+                "webui",
+                "main.py",
+            ],
+        )
+        run_gate("noop check", [python, "scripts/check_noop_implementations.py"])
 
 
 def run_frontend_gates(python: str, *, require_node: bool = False) -> None:
@@ -81,12 +83,26 @@ def run_release_asset_gates(python: str) -> None:
     run_gate("version, bundled data and artifact", [python, "scripts/check_release.py"])
 
 
+def run_package_gates(python: str) -> None:
+    """Validate the package inputs without rebuilding a throwaway archive.
+
+    ``build_release.py`` performs the final archive round-trip immediately
+    after this gate.  Rebuilding the same temporary ZIP here only duplicated
+    work in the CI package job.
+    """
+
+    run_gate(
+        "version, bundled data and manifest",
+        [python, "scripts/check_release.py", "--skip-artifact"],
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-tests", action="store_true", help="skip pytest for fast local checks")
     parser.add_argument(
         "--layer",
-        choices=("all", "python", "frontend", "static"),
+        choices=("all", "python", "frontend", "static", "package"),
         default="all",
         help=(
             "run one release-gate layer; all keeps the historical full check, "
@@ -104,26 +120,40 @@ def main() -> int:
         default="full",
         help="pytest scope for the Python layer; compatibility skips repeated slow integration cases",
     )
+    parser.add_argument(
+        "--skip-static",
+        action="store_true",
+        help="skip compileall/noop checks when a separate release job already covers them",
+    )
     args = parser.parse_args()
 
     python = sys.executable
     if args.layer == "all":
         run_python_gates(
-            python, include_tests=not args.skip_tests, test_scope=args.test_scope,
+            python,
+            include_tests=not args.skip_tests,
+            test_scope=args.test_scope,
+            include_static=not args.skip_static,
         )
         run_frontend_gates(python, require_node=args.require_node)
         run_release_asset_gates(python)
         run_gate("diff check", ["git", "diff", "--check"])
     elif args.layer == "python":
         run_python_gates(
-            python, include_tests=not args.skip_tests, test_scope=args.test_scope,
+            python,
+            include_tests=not args.skip_tests,
+            test_scope=args.test_scope,
+            include_static=not args.skip_static,
         )
     elif args.layer == "frontend":
         run_frontend_gates(python, require_node=args.require_node)
-    else:  # static
-        run_python_gates(python, include_tests=False)
+    elif args.layer == "static":
+        run_python_gates(python, include_tests=False, include_static=not args.skip_static)
         run_frontend_gates(python, require_node=args.require_node)
         run_release_asset_gates(python)
+        run_gate("diff check", ["git", "diff", "--check"])
+    else:  # package
+        run_package_gates(python)
         run_gate("diff check", ["git", "diff", "--check"])
     print("[release] all gates passed")
     return 0

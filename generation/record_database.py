@@ -1032,6 +1032,7 @@ class RecordDatabase:
             if row is None:
                 raise ValueError("记录不存在或已清理")
             current_tags = self._decode_tags(row["tags"])
+            current_note = str(row["note"] or "")
             next_favorite = int(row["favorite"] if favorite is None else bool(favorite))
             next_pinned = int(row["pinned"] if pinned is None else bool(pinned))
             if tags is None:
@@ -1041,7 +1042,7 @@ class RecordDatabase:
             else:
                 next_tags = [str(item).strip() for item in tags if str(item).strip()]
             next_tags = list(dict.fromkeys(next_tags))[:30]
-            next_note = str(row["note"] or "") if note is None else str(note or "").strip()[:2000]
+            next_note = current_note if note is None else str(note or "").strip()[:2000]
             connection.execute(
                 "UPDATE generation_records SET favorite = ?, pinned = ?, tags = ?, note = ? WHERE id = ?",
                 (
@@ -1052,7 +1053,11 @@ class RecordDatabase:
                     target,
                 ),
             )
-            self._sync_fts_record(connection, target)
+            # FTS search text contains the note and payload only. Favorite,
+            # pinned and tags are ordinary metadata, so avoid rebuilding the
+            # projection for those high-frequency toggles.
+            if next_note != current_note:
+                self._sync_fts_record(connection, target)
             return {
                 "id": target,
                 "favorite": bool(next_favorite),

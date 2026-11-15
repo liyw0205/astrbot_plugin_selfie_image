@@ -2260,30 +2260,40 @@ def _cos_item_terms(item: Mapping[str, Any]) -> List[str]:
     )
 
 
-def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
-    """Match by full title, character, or outfit category."""
-    raw_query = re.sub(r"\s+", " ", str(text or "")).strip().lower()
-    if not raw_query:
-        return []
-    all_items = [dict(item) for item in COS_LOOK_SETS]
-    separators = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+"
+_COS_MATCH_SEPARATORS = r"[\s·/／、，,：:（）()\[\]【】;；。.!！？?]+"
+_COS_LOOK_MATCH_INDEX: Optional[Dict[str, Any]] = None
+_COS_LOOK_MATCH_SIGNATURE: tuple[tuple[str, str, str, str], ...] = ()
 
-    def normalize_dotted_initials(value: str) -> str:
-        # Keep abbreviations such as C.C. together while retaining other punctuation as separators.
-        return re.sub(r"(?<=[a-z])\.(?=[a-z])", "", value)
+
+def _cos_look_match_index() -> Dict[str, Any]:
+    """Build the immutable catalog index once and refresh it if the list changes."""
+    global _COS_LOOK_MATCH_INDEX, _COS_LOOK_MATCH_SIGNATURE
+    signature = tuple(
+        (
+            str(item.get("id") or ""),
+            str(item.get("title") or ""),
+            str(item.get("cos_type") or item.get("series") or ""),
+            str(item.get("prompt") or ""),
+        )
+        for item in COS_LOOK_SETS
+    )
+    if _COS_LOOK_MATCH_INDEX is not None and signature == _COS_LOOK_MATCH_SIGNATURE:
+        return _COS_LOOK_MATCH_INDEX
+
+    all_items = tuple(dict(item) for item in COS_LOOK_SETS)
+    separators = _COS_MATCH_SEPARATORS
 
     def compact(value: str) -> str:
-        normalized = normalize_dotted_initials(str(value or "").lower())
-        return re.sub(separators, "", normalized)
+        return _compact_cos_match(value, separators)
 
     item_terms: Dict[str, set[str]] = {}
     item_series: Dict[str, str] = {}
     term_items: Dict[str, set[str]] = {}
     series_alias_to_key = {
-        _compact_cos_match(alias, separators): series
+        compact(alias): series
         for series, aliases in COS_LOOK_SERIES_ALIASES.items()
         for alias in aliases
-        if _compact_cos_match(alias, separators)
+        if compact(alias)
     }
     category_term_set = {compact(term) for term in COS_LOOK_CATEGORY_TERMS}
     for item in all_items:
@@ -2296,7 +2306,41 @@ def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
             term_items.setdefault(term, set()).add(item_id)
         for alias in _cos_item_series_aliases(item, separators):
             term_items.setdefault(alias, set()).add(item_id)
-    known_terms = sorted(term_items, key=lambda term: (-len(term), term))
+
+    _COS_LOOK_MATCH_SIGNATURE = signature
+    _COS_LOOK_MATCH_INDEX = {
+        "all_items": all_items,
+        "item_terms": item_terms,
+        "item_series": item_series,
+        "series_alias_to_key": series_alias_to_key,
+        "category_term_set": category_term_set,
+        "known_terms": tuple(sorted(term_items, key=lambda term: (-len(term), term))),
+    }
+    return _COS_LOOK_MATCH_INDEX
+
+
+def match_cos_look_sets(text: str) -> List[Dict[str, str]]:
+    """Match by full title, character, or outfit category."""
+    raw_query = re.sub(r"\s+", " ", str(text or "")).strip().lower()
+    if not raw_query:
+        return []
+    index = _cos_look_match_index()
+    all_items = index["all_items"]
+    separators = _COS_MATCH_SEPARATORS
+
+    def normalize_dotted_initials(value: str) -> str:
+        # Keep abbreviations such as C.C. together while retaining other punctuation as separators.
+        return re.sub(r"(?<=[a-z])\.(?=[a-z])", "", value)
+
+    def compact(value: str) -> str:
+        normalized = normalize_dotted_initials(str(value or "").lower())
+        return re.sub(separators, "", normalized)
+
+    item_terms = index["item_terms"]
+    item_series = index["item_series"]
+    series_alias_to_key = index["series_alias_to_key"]
+    category_term_set = index["category_term_set"]
+    known_terms = index["known_terms"]
 
     def segment_token(token: str) -> List[str]:
         value = compact(token)

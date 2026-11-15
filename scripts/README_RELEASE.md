@@ -6,13 +6,17 @@ Run every release gate before publishing:
 python scripts/verify_release.py --require-node
 ```
 
-`--layer python`, `--layer frontend`, and `--layer static` remain available for
-focused checks. The Python layer accepts `--test-scope full|compatibility`;
-the latter is intended for non-canonical interpreters in the CI matrix. The
-static layer includes version consistency, bundled JSON contracts, a temporary
-runtime ZIP, compilation, Dashboard checks, and `git diff --check`. It does
-not run pytest. Local frontend checks may skip Node when it is unavailable;
-release builds require Node explicitly.
+`--layer python`, `--layer frontend`, `--layer static`, and `--layer package`
+remain available for focused checks. The Python layer accepts
+`--test-scope full|compatibility`; the latter is intended for non-canonical
+interpreters in the CI matrix, and `--skip-static` omits compile/no-op checks
+already covered by a separate release job. The static layer includes version
+consistency, bundled JSON contracts, a temporary runtime ZIP, compilation,
+Dashboard checks, and `git diff --check`. The package layer validates the
+version, JSON and runtime manifest without creating a throwaway ZIP; the
+builder performs the one final archive round-trip immediately afterwards. Both
+static and package layers do not run pytest. Local frontend checks may skip
+Node when it is unavailable; release builds require Node explicitly.
 
 To create an installable artifact locally, including the full pytest gate:
 
@@ -22,8 +26,9 @@ python scripts/build_release.py --output dist/astrbot_plugin_selfie_image.zip
 
 The command runs the full gate by default and never overwrites an existing
 output file. CI runs the Python and frontend gates first, then calls the same
-builder with `--skip-tests` so pytest is not repeated in the artifact job;
-compile, Dashboard, version, JSON, artifact and diff checks still run there.
+builder with `--skip-tests`; this selects package-only validation so pytest,
+compile/no-op, Dashboard checks and a throwaway ZIP are not repeated. The
+builder still validates the manifest and performs the final archive round-trip.
 The skip is intended for that already-gated CI composition, not as a local
 replacement for the full command. Creating or editing the workflow locally
 does not execute it.

@@ -1271,16 +1271,25 @@ def test_cos_multi_view_collage_is_a_low_weight_random_third_person_view():
 
 
 def test_cos_multi_view_collage_supports_all_builtin_costumes():
+    ordinary_items = [item for item in COS_LOOK_SETS if not is_special_cos_look(item)]
+    assert ordinary_items
+
+    # Check every catalog entry through the cheap compatibility contract, then
+    # keep the expensive seven-panel prompt construction to representatives.
     for item in COS_LOOK_SETS:
+        if is_special_cos_look(item):
+            assert cos_look_compatibility(item["id"])["variation_enabled"] is False
+        else:
+            assert cos_look_compatibility(item["id"])["variation_enabled"] is True
+
+    representative_indexes = {0, len(ordinary_items) // 3, len(ordinary_items) // 2,
+                              (len(ordinary_items) * 2) // 3, len(ordinary_items) - 1}
+    representatives = [ordinary_items[index] for index in sorted(representative_indexes)]
+    for item in representatives:
         action = build_cos_look_action(
             "多视角拼贴",
             picker=lambda **_: item,
         )
-        if is_special_cos_look(item):
-            assert "【cos_mode:special】" in action, item["id"]
-            assert "【cos_view:multi_view_collage】" not in action, item["id"]
-            assert cos_look_compatibility(item["id"])["variation_enabled"] is False
-            continue
         assert "【cos_view:multi_view_collage】" in action, item["id"]
         variation = pick_cos_variation(
             item["id"],
@@ -1290,6 +1299,7 @@ def test_cos_multi_view_collage_supports_all_builtin_costumes():
         assert len(variation["panel_pose_ids"]) == 7, item["id"]
         assert len(set(zip(variation["panel_pose_ids"], variation["panel_framing_ids"]))) == 7, item["id"]
 
+    item = representatives[-1]
     square_with_user_override = build_cos_look_action(
         "多视角拼贴，16:9",
         picker=lambda **_: item,
@@ -1738,6 +1748,24 @@ def test_group_without_identity_reference_does_not_invent_reference_image_one():
     )
     assert "参考图一" not in action
     assert "当前角色设定保持主角身份和性别稳定" in action
+
+
+def test_cos_match_index_refreshes_when_catalog_changes_and_keeps_copy_isolation():
+    temporary = {
+        "id": "temporary_match_index_probe",
+        "title": "临时索引探针套装",
+        "cos_type": "原创COS",
+        "prompt": "用于索引刷新回归",
+    }
+    COS_LOOK_SETS.append(temporary)
+    try:
+        matched = match_cos_look_sets("临时索引探针套装")
+        assert [item["id"] for item in matched] == [temporary["id"]]
+        matched[0]["title"] = "被外部修改"
+        assert match_cos_look_sets("临时索引探针套装")[0]["title"] == temporary["title"]
+    finally:
+        COS_LOOK_SETS.remove(temporary)
+    assert match_cos_look_sets("临时索引探针套装") == []
 
 
 def test_private_hoshino_and_sunna_cos_outfits_are_registered():

@@ -58,6 +58,28 @@ def test_failed_record_write_rolls_back_and_closes_connection(tmp_path, monkeypa
     assert database.query_records()[0][0]["prompt"] == "original"
 
 
+def test_metadata_only_updates_skip_fts_refresh_until_note_changes(tmp_path, monkeypatch):
+    database = RecordDatabase(str(tmp_path / "records.sqlite3"))
+    database.upsert_record({"id": "metadata", "prompt": "stable", "note": "old note"}, sequence=1)
+    refreshed = []
+    original_sync = database._sync_fts_record
+    monkeypatch.setattr(database, "_sync_fts_record", lambda connection, record_id: refreshed.append(record_id))
+
+    database.update_metadata("metadata", favorite=True)
+    database.update_metadata("metadata", pinned=True)
+    database.update_metadata("metadata", tags=["reviewed"])
+    assert refreshed == []
+
+    database.update_metadata("metadata", note="new searchable note")
+    assert refreshed == ["metadata"]
+    # Restore the real projection for the contract assertion below.
+    monkeypatch.setattr(database, "_sync_fts_record", original_sync)
+    database.update_metadata("metadata", note="searchable note v2")
+    rows, metadata = database.query_records(keyword="searchable")
+    assert [item["id"] for item in rows] == ["metadata"]
+    assert metadata["filtered"] == 1
+
+
 def test_materialized_fields_are_written_and_used_for_queries(tmp_path):
     path = tmp_path / "records.sqlite3"
     database = RecordDatabase(str(path))

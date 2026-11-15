@@ -29,9 +29,14 @@ def build_verified_release(
     output = output.resolve()
     if output.exists():
         raise ReleaseCheckError(f"refusing to overwrite an existing release artifact: {output}")
-    command = [sys.executable, "scripts/verify_release.py", "--require-node"]
+    command = [sys.executable, "scripts/verify_release.py"]
     if skip_tests:
-        command.append("--skip-tests")
+        # CI has already run the Python and Dashboard jobs.  Package mode
+        # keeps only source/manifest checks here; build_artifact below is the
+        # single final ZIP round-trip for this job.
+        command.extend(["--layer", "package"])
+    else:
+        command.append("--require-node")
     subprocess.run(command, cwd=root, check=True)
     version = validate_versions(root)
     validate_json_files(root)

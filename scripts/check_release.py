@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,13 @@ else:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--skip-artifact",
+        action="store_true",
+        help="validate versions, JSON and the release manifest without building a temporary ZIP",
+    )
+    args = parser.parse_args()
     try:
         tracked = git_files(ROOT)
         version = validate_versions(ROOT)
@@ -31,6 +39,9 @@ def main() -> int:
         checked = validate_json_files(ROOT, tracked=tracked)
         print(f"[release] JSON parse and required fields: {checked} files", flush=True)
         names = release_files(ROOT, tracked=tracked)
+        if args.skip_artifact:
+            print(f"[release] release manifest: {len(names)} files", flush=True)
+            return 0
         with tempfile.TemporaryDirectory(prefix="selfie-release-check-") as directory:
             report = build_artifact(ROOT, Path(directory) / "release.zip", names)
         report["version"] = version
