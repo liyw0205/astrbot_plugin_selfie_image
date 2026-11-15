@@ -288,7 +288,8 @@
       .media-lightbox-stage { padding:8px; }
     }
     .toast-wrap { position: fixed; right: 16px; top: 16px; z-index: 100; display: grid; justify-items: end; gap: 8px; pointer-events: none; }
-    .toast { width: max-content; min-width: 0; max-width: min(360px, calc(100vw - 32px)); padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--text); box-shadow: 0 10px 24px rgba(0,0,0,.12); white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
+    .toast { width: max-content; min-width: 0; max-width: min(360px, calc(100vw - 32px)); padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--text); box-shadow: 0 10px 24px rgba(0,0,0,.12); white-space: normal; overflow-wrap: anywhere; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+    .toast-action { flex: 0 0 auto; }
     .toast.ok { background: #fff; color: var(--text); border-color: #dfe3ea; }
     .toast.bad { background: rgba(244,67,54,.94); }
     .detail-title { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
@@ -2370,14 +2371,39 @@
         el.appendChild(opt);
       }
     }
-    function showToast(text, type = 'info') {
+    function showToast(text, type = 'info', options = {}) {
       const wrap = $('toastWrap');
       if (!wrap || !text) return;
       const node = document.createElement('div');
       node.className = 'toast' + (type === 'ok' ? ' ok' : type === 'bad' ? ' bad' : '');
-      node.textContent = text;
+      node.style.pointerEvents = 'auto';
+      const message = document.createElement('span');
+      message.textContent = text;
+      node.appendChild(message);
+      const action = typeof options?.onAction === 'function' ? options.onAction : null;
+      let timer = null;
+      const remove = () => {
+        if (timer) clearTimeout(timer);
+        node.remove();
+      };
+      if (action && String(options.actionText || '').trim()) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'secondary mini toast-action';
+        button.textContent = String(options.actionText).trim();
+        button.addEventListener('click', () => {
+          button.disabled = true;
+          remove();
+          try {
+            const result = action();
+            if (result && typeof result.catch === 'function') result.catch(() => {});
+          } catch (_) {}
+        });
+        node.appendChild(button);
+      }
       wrap.appendChild(node);
-      setTimeout(() => node.remove(), 2600);
+      timer = setTimeout(remove, Math.max(1000, Number(options?.duration) || 2600));
+      return {dismiss: remove, element: node};
     }
     let CONFIRM_RESOLVER = null;
     let CONFIRM_PREVIOUS_FOCUS = null;
@@ -4655,6 +4681,18 @@ Source prompt:
       if (task?.delivery_success === false) return '发送失败';
       return '';
     }
+    function taskImageDeliveryLabel(item) {
+      return ({sent:'已发送', failed:'发送失败', unknown:'状态未知', pending:'等待回执'})[String(item?.delivery_state || '').trim()] || '未记录';
+    }
+    function taskImageResultsMarkup(items) {
+      const rows = Array.isArray(items) ? items : [];
+      if (!rows.length) return '';
+      return `<div style="margin-top:14px"><div class="detail-title"><h3>逐图结果</h3><span class="muted">${rows.length} 张</span></div><div style="overflow:auto"><table class="table"><thead><tr><th>#</th><th>阶段</th><th>模型</th><th>生成</th><th>投递</th><th>耗时</th><th>原因</th></tr></thead><tbody>${rows.map(item => {
+        const generation = item?.generation_success === true ? '成功' : item?.generation_success === false ? '失败' : '处理中';
+        const elapsed = item?.elapsed_seconds == null ? '-' : `${escapeHtml(String(item.elapsed_seconds))}s`;
+        return `<tr><td>${escapeHtml(String(item?.index || ''))}</td><td>${escapeHtml(String(item?.generation_stage_label || item?.generation_stage || '等待结果'))}</td><td>${escapeHtml(String(item?.used_model || '未记录'))}</td><td>${generation}</td><td>${escapeHtml(taskImageDeliveryLabel(item))}</td><td>${elapsed}</td><td>${escapeHtml(String(item?.error || ''))}</td></tr>`;
+      }).join('')}</tbody></table></div></div>`;
+    }
     function taskQueueTiming(task) {
       const queueSeconds = Number(task?.queue_wait_seconds || 0);
       const runningSeconds = Number(task?.running_seconds || 0);
@@ -4747,9 +4785,11 @@ Source prompt:
       const ids = selectedTaskIds();
       if (!ids.length) return showToast('请先选择任务', 'bad');
       const strategy = String($('taskRetryStrategy')?.value || 'full');
-      if (!await confirmAction(`确定重试选中的 ${ids.length} 项任务？\n策略：${retryStrategyLabel(strategy)}\n只有已关联生成记录的任务可以重试。`, {title:'批量重试任务', confirmText:'开始重试', danger:false})) return;
+      const scope = String($('taskRetryScope')?.value || 'all');
+      const scopeLabel = scope === 'failed' ? '仅重试失败记录' : '重试全部关联记录';
+      if (!await confirmAction(`确定重试选中的 ${ids.length} 项任务？\n策略：${retryStrategyLabel(strategy)}\n范围：${scopeLabel}\n只有已关联生成记录的任务可以重试。`, {title:'批量重试任务', confirmText:'开始重试', danger:false})) return;
       try {
-        const res = await api('/api/tasks/retry', {method:'POST', body: JSON.stringify({ids, strategy})});
+        const res = await api('/api/tasks/retry', {method:'POST', body: JSON.stringify({ids, strategy, scope})});
         const data = res.data || {};
         showToast(`已提交 ${Number(data.submitted_count || 0)} 项重试`, data.submitted_count ? 'ok' : 'bad');
         clearTaskSelection();
@@ -4854,6 +4894,9 @@ Source prompt:
           ? `<div style="margin-top:14px"><div class="detail-title"><h3>形象图</h3></div><div class="images">${personaReferenceThumb()}</div></div>`
           : '';
         const attempts = Array.isArray(task.attempts) ? task.attempts : [];
+        const imageResultsMarkup = typeof taskImageResultsMarkup === 'function'
+          ? taskImageResultsMarkup(task.image_results)
+          : '';
         const attemptRows = attempts.length
           ? `<div style="overflow:auto;margin-top:12px"><table class="table"><thead><tr><th>#</th><th>渠道/模型</th><th>结果</th><th>耗时</th><th>原因</th></tr></thead><tbody>${attempts.map(item => `<tr><td>${escapeHtml(String(item.attempt || ''))}</td><td>${escapeHtml(String(item.model || item.channel || ''))}</td><td>${item.success ? '成功' : '失败'}</td><td>${escapeHtml(String(item.elapsed_seconds ?? '-'))}s</td><td>${escapeHtml(String(item.error || item.error_category || ''))}</td></tr>`).join('')}</tbody></table></div>`
           : '<div class="muted" style="margin-top:12px">尚无渠道尝试明细</div>';
@@ -4879,6 +4922,7 @@ Source prompt:
           ${deliveryNote}
           ${taskDetailPrompt('原始提示词', task.original_prompt)}
           ${taskDetailPrompt('最终提示词', task.final_prompt)}
+          ${imageResultsMarkup}
           <div class="actions" style="margin-top:12px"><button class="secondary mini task-copy-request" type="button">复制请求</button></div>
           ${personaReference}
           ${requestImagePaths.length ? `<div style="margin-top:14px">${imageThumbs(requestImagePaths, '请求图')}</div>` : ''}
@@ -5769,16 +5813,63 @@ Source prompt:
     function selectedAssetIds() {
       return Array.from(ASSET_SELECTION).filter(Boolean);
     }
+    function assetMetadataSnapshotRows(payload, field, ids) {
+      const allowed = new Set((ids || []).map(value => String(value || '').trim()).filter(Boolean));
+      const rows = Array.isArray(payload?.records) ? payload.records : [];
+      return rows.filter(row => allowed.has(String(row?.id || '').trim())).map(row => {
+        const id = String(row.id || '').trim();
+        if (field === 'tags') return {id, tags: Array.isArray(row.tags) ? row.tags.slice() : []};
+        if (field === 'note') return {id, note: String(row.note || '')};
+        if (field === 'favorite' || field === 'pinned') return {id, [field]: Boolean(row[field])};
+        return {id};
+      });
+    }
+    async function captureAssetMetadataSnapshot(ids, field) {
+      const suffix = `?ids=${encodeURIComponent(ids.join(','))}`;
+      const res = await api('/api/assets/export' + suffix);
+      return assetMetadataSnapshotRows(res.data, field, ids);
+    }
+    async function undoAssetMetadataSnapshot(rows) {
+      if (!Array.isArray(rows) || !rows.length) throw new Error('没有可撤销的资产变更');
+      const res = await api('/api/assets/import', {
+        method: 'POST',
+        body: JSON.stringify({version: 1, records: rows})
+      });
+      clearAssetPageCache();
+      clearRecordPageCache();
+      clearPickerCache('tags');
+      await Promise.all([loadAssets(false), loadRecords(false), loadAssetTags()]);
+      return res;
+    }
     async function batchAssetMetadata(field, value) {
       const ids = selectedAssetIds();
       if (!ids.length) return showToast('请先选择资产', 'bad');
+      let snapshot = [];
+      try {
+        snapshot = await captureAssetMetadataSnapshot(ids, field);
+      } catch (_) {
+        // Metadata update remains available when an older host lacks export.
+      }
       try {
         const res = await api('/api/assets/metadata', {method: 'POST', body: JSON.stringify({ids, [field]: value})});
         clearAssetPageCache();
         clearRecordPageCache();
+        if (field === 'tags') clearPickerCache('tags');
         (res.data?.missing || []).forEach(id => ASSET_SELECTION.delete(String(id)));
-        await loadAssets(false);
-        showToast(res.message || '批量标记已保存', 'ok');
+        await Promise.all([loadAssets(false), field === 'tags' ? loadAssetTags() : Promise.resolve()]);
+        const updated = Array.isArray(res.data?.updated) ? new Set(res.data.updated.map(id => String(id))) : null;
+        const undoRows = updated ? snapshot.filter(row => updated.has(String(row.id))) : snapshot;
+        const updatedCount = Number(res.data?.updated_count || undoRows.length);
+        showToast(res.message || '批量标记已保存', 'ok', undoRows.length ? {
+          actionText: '撤销',
+          duration: 8000,
+          onAction: async () => {
+            try {
+              const restored = await undoAssetMetadataSnapshot(undoRows);
+              showToast(`已撤销 ${Number(restored.data?.updated_count || undoRows.length)} 项资产变更`, 'ok');
+            } catch (e) { showToast(e.message || '撤销失败', 'bad'); }
+          }
+        } : {});
       } catch (e) { showToast(e.message || '批量标记失败', 'bad'); }
     }
     async function applyBatchAssetFields(field) {

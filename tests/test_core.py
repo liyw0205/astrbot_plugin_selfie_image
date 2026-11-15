@@ -11664,6 +11664,55 @@ class StudioStoreTests(unittest.TestCase):
         self.assertEqual(exported["count"], 1)
         self.assertEqual(exported["tasks"][0]["task_id"], "cmd-12345678-2")
 
+    def test_web_task_retry_failed_scope_only_submits_failed_records(self) -> None:
+        from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
+
+        stub = object.__new__(WebTaskMixin)
+        stub._web_task_lock = threading.RLock()
+        stub._web_tasks = {
+            "web-12345678-9": {
+                "task_id": "web-12345678-9",
+                "status": "partial_success",
+                "record_ids": ["record-ok", "record-failed", "record-delivery"],
+            }
+        }
+        records = {
+            "record-ok": {"id": "record-ok", "success": True, "delivery_success": True},
+            "record-failed": {"id": "record-failed", "success": False},
+            "record-delivery": {"id": "record-delivery", "success": True, "delivery_success": False},
+        }
+        stub.get_record_for_web = records.__getitem__
+        calls = []
+        stub.start_record_retry_task = lambda record_id, feedback, strategy: calls.append(
+            (record_id, feedback, strategy)
+        ) or {"task_id": "web-99999999-1"}
+
+        result = stub.retry_web_tasks(
+            ["web-12345678-9"], "try again", "model_only", scope="failed"
+        )
+
+        self.assertEqual(result["scope"], "failed")
+        self.assertEqual(result["submitted_count"], 2)
+        self.assertEqual(
+            calls,
+            [
+                ("record-failed", "try again", "model_only"),
+                ("record-delivery", "try again", "model_only"),
+            ],
+        )
+        self.assertEqual(
+            [item["record_id"] for item in result["skipped"]], ["record-ok"]
+        )
+
+    def test_web_task_retry_rejects_unknown_scope(self) -> None:
+        from astrbot_plugin_selfie_image.tasks.task_manager import WebTaskMixin
+
+        stub = object.__new__(WebTaskMixin)
+        stub._web_task_lock = threading.RLock()
+        stub._web_tasks = {}
+        with self.assertRaises(ValueError):
+            stub.retry_web_tasks(["web-12345678-1"], scope="unknown")
+
     def test_dashboard_has_studio_tab(self) -> None:
         from astrbot_plugin_selfie_image.webui.web import INDEX_HTML, WEB_TASK_ID_RE
 

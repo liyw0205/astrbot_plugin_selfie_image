@@ -996,6 +996,78 @@ def test_task_operation_matrix_covers_unknown_delivery_and_partial_batch_states(
     assert partial["can_retry"] is True
 
 
+def test_task_detail_exposes_bounded_per_image_generation_and_delivery_results() -> None:
+    import threading
+
+    class TaskProbe(WebTaskMixin):
+        pass
+
+    probe = object.__new__(TaskProbe)
+    probe._web_task_lock = threading.RLock()
+    probe._records_lock = threading.RLock()
+    probe._persist_web_tasks_locked = lambda: None
+    probe._records = [
+        {
+            "id": "record-1",
+            "task_id": "batch-1",
+            "success": True,
+            "generation_success": True,
+            "delivery_success": True,
+            "used_model": "primary/model-a",
+            "elapsed_seconds": 1.25,
+            "generated_image_paths": ["generated/a.png"],
+            "image_delivery": {"generated/a.png": "sent"},
+        },
+        {
+            "id": "record-2",
+            "task_id": "batch-1",
+            "success": True,
+            "generation_success": True,
+            "delivery_success": False,
+            "delivery_failed": True,
+            "used_model": "backup/model-b",
+            "error": "发送失败",
+            "generated_image_paths": ["generated/b.png"],
+            "image_delivery": {"generated/b.png": "failed"},
+        },
+        {
+            "id": "record-3",
+            "task_id": "batch-1",
+            "success": False,
+            "generation_success": False,
+            "delivery_success": None,
+            "response_data": {"stage": "output_audit", "error": "审核失败"},
+            "generated_image_paths": [],
+        },
+    ]
+    probe._web_tasks = {
+        "batch-1": {
+            "task_id": "batch-1",
+            "status": "partial_success",
+            "success": False,
+            "requested_count": 3,
+            "record_ids": ["record-1", "record-2", "record-3"],
+            "result": {"requested_count": 3},
+        }
+    }
+
+    detail = probe.get_web_task_detail("batch-1")
+    rows = detail["image_results"]
+    assert [row["record_id"] for row in rows] == ["record-1", "record-2", "record-3"]
+    assert rows[0]["generation_stage"] == "complete"
+    assert rows[0]["delivery_state"] == "sent"
+    assert rows[1]["generation_stage"] == "delivery"
+    assert rows[1]["delivery_state"] == "failed"
+    assert rows[2]["generation_stage"] == "output_audit"
+    assert rows[2]["generation_stage_label"] == "审核图片结果"
+    assert all("generated_image_paths" not in row for row in rows)
+    assert all("generated/a.png" not in str(row) for row in rows)
+
+    listed = probe.list_web_tasks(include_finished=True)
+    assert listed["tasks"]
+    assert "image_results" not in listed["tasks"][0]
+
+
 def test_cancel_resolution_preserves_all_completion_evidence_classes() -> None:
     assert result_has_completion_evidence({"success": True})
     assert result_has_completion_evidence({"delivery_failed": True, "generation_success": True})

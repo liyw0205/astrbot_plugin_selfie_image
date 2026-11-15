@@ -1263,6 +1263,170 @@ class WebTaskMixin:
                     return paths
         return paths
 
+    @staticmethod
+    def _task_image_stage(record: Mapping[str, Any]) -> tuple[str, str]:
+        """Normalize the generation stage shown for one retained image."""
+        response = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
+        stage = str(record.get("generation_stage") or response.get("stage") or "").strip().lower()[:80]
+        labels = {
+            "preflight": "准备图片请求",
+            "prompt_translation": "处理图片提示词",
+            "image_to_text": "图转文",
+            "prompt_audit": "审核提示词",
+            "select_model": "选择模型",
+            "queue": "等待并发槽位",
+            "generating": "生成图片",
+            "generate": "生成图片",
+            "output_audit": "审核图片结果",
+            "delivery": "发送图片",
+            "complete": "生成完成",
+            "failed": "生成失败",
+            "cancelled": "已取消",
+            "unknown": "未记录阶段",
+        }
+        generation_success = record.get("generation_success")
+        if generation_success is None and "success" in record:
+            generation_success = bool(record.get("success"))
+        if generation_success not in (True, False, None):
+            generation_success = None
+        delivery_success = record.get("delivery_success")
+        if delivery_success not in (True, False, None):
+            delivery_success = None
+        delivery_failed = bool(record.get("delivery_failed")) or delivery_success is False
+        delivery_unknown = bool(record.get("delivery_unknown")) or delivery_success is None and bool(
+            record.get("generation_success")
+        )
+        if delivery_failed or delivery_unknown:
+            stage = "delivery"
+        elif not stage:
+            stage = "complete" if generation_success is True else "failed" if generation_success is False else ""
+        elif stage not in labels:
+            stage = "unknown"
+        return stage, labels.get(stage, stage or "等待结果")
+
+    def _task_image_summaries(self, task: Mapping[str, Any]) -> list[Dict[str, Any]]:
+        """Build a bounded per-image view from records linked to a task.
+
+        Records are already split to one image during persistence. The
+        fallback expansion below keeps legacy multi-image rows readable while
+        deliberately omitting cache paths and other media-bearing fields.
+        """
+        result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+        linked_ids = task.get("record_ids")
+        if not isinstance(linked_ids, list):
+            linked_ids = result.get("record_ids") if isinstance(result.get("record_ids"), list) else []
+        linked_ids = list(dict.fromkeys(str(item).strip() for item in linked_ids if str(item).strip()))
+        records = getattr(self, "_records", None)
+        records_lock = getattr(self, "_records_lock", None)
+        raw_records: list[Mapping[str, Any]] = []
+        if isinstance(records, list):
+            if records_lock is None:
+                snapshot = list(records)
+            else:
+                with records_lock:
+                    snapshot = list(records)
+            by_id = {
+                str(item.get("id") or "").strip(): item
+                for item in snapshot
+                if isinstance(item, Mapping) and str(item.get("id") or "").strip()
+            }
+            seen: set[str] = set()
+            for record_id in linked_ids:
+                record = by_id.get(record_id)
+                if record is not None:
+                    raw_records.append(record)
+                    seen.add(record_id)
+            task_id = str(task.get("task_id") or "").strip()
+            for record in snapshot:
+                if not isinstance(record, Mapping):
+                    continue
+                record_id = str(record.get("id") or "").strip()
+                if record_id in seen:
+                    continue
+                if task_id and str(record.get("task_id") or "").strip() == task_id:
+                    raw_records.append(record)
+                    seen.add(record_id)
+
+        rows: list[Dict[str, Any]] = []
+
+        def clean_paths(value: Any) -> list[str]:
+            if not isinstance(value, (list, tuple)):
+                return []
+            return [str(path).strip() for path in value if str(path).strip()]
+
+        def add_record(record: Mapping[str, Any], paths: list[str]) -> None:
+            response = record.get("response_data") if isinstance(record.get("response_data"), Mapping) else {}
+            used_model = str(
+                record.get("used_model")
+                or response.get("used_model")
+                or (record.get("request_data", {}).get("model") if isinstance(record.get("request_data"), Mapping) else "")
+                or ""
+            ).strip()
+            generation_success = record.get("generation_success")
+            if generation_success is None and "success" in record:
+                generation_success = bool(record.get("success"))
+            if generation_success not in (True, False, None):
+                generation_success = None
+            delivery_success = record.get("delivery_success")
+            if delivery_success not in (True, False, None):
+                delivery_success = None
+            delivery_failed = bool(record.get("delivery_failed")) or delivery_success is False
+            delivery_unknown = bool(record.get("delivery_unknown")) or delivery_success is None and bool(
+                generation_success
+            )
+            image_states = record.get("image_delivery") if isinstance(record.get("image_delivery"), Mapping) else {}
+            stage, stage_label = self._task_image_stage(record)
+            error = str(
+                record.get("delivery_error")
+                or record.get("error")
+                or response.get("delivery_error")
+                or response.get("error")
+                or ""
+            ).strip()
+            try:
+                elapsed = float(record.get("elapsed_seconds"))
+                elapsed = round(max(0.0, min(86400.0, elapsed)), 3)
+            except (TypeError, ValueError, OverflowError):
+                elapsed = None
+            for path in paths or [""]:
+                state = str(image_states.get(path) or "").strip().lower()
+                if state not in {"sent", "failed", "unknown"}:
+                    state = "failed" if delivery_failed else "unknown" if delivery_unknown else "sent" if delivery_success is True else "pending"
+                rows.append(
+                    {
+                        "index": len(rows) + 1,
+                        "record_id": str(record.get("id") or "")[:128],
+                        "generation_stage": stage,
+                        "generation_stage_label": stage_label,
+                        "used_model": redact_sensitive_text(used_model)[:180],
+                        "generation_success": generation_success,
+                        "delivery_state": state,
+                        "delivery_success": delivery_success,
+                        "delivery_unknown": delivery_unknown,
+                        "delivery_failed": delivery_failed,
+                        "elapsed_seconds": elapsed,
+                        "error": redact_sensitive_text(error)[:320],
+                    }
+                )
+
+        for record in raw_records:
+            paths = clean_paths(record.get("generated_image_paths"))
+            add_record(record, paths)
+            if len(rows) >= 200:
+                return rows[:200]
+
+        # A task can be observed between generation completion and record
+        # commit. Use terminal result files as a short-lived, path-free view.
+        if not rows:
+            fallback_paths = clean_paths(
+                result.get("files")
+                or result.get("image_paths")
+                or result.get("generated_image_paths")
+            )
+            if fallback_paths:
+                add_record(result, fallback_paths[:200])
+        return rows[:200]
+
     @classmethod
     def task_operation_capabilities(cls, task: Mapping[str, Any]) -> Dict[str, bool]:
         """Single state matrix shared by task list/detail and cancel guards."""
@@ -1461,6 +1625,7 @@ class WebTaskMixin:
                     "delivery_success": result.get("delivery_success"),
                     "delivery_unknown": result.get("delivery_unknown"),
                 },
+                "image_results": self._task_image_summaries(task),
             }
         )
         return redact_sensitive_data(detail)
@@ -1691,22 +1856,30 @@ class WebTaskMixin:
         task_ids: Iterable[Any],
         feedback: str = "",
         strategy: str = "full",
+        scope: str = "all",
     ) -> Dict[str, Any]:
         """Submit retries for records linked to selected terminal tasks.
 
         Task payloads intentionally omit request bodies, so a retry is only
         possible when the task has at least one retained generation record.
         Each linked record is retried independently and receives the optional
-        feedback string.
+        feedback string. ``scope=failed`` limits the operation to records whose
+        generation or delivery state is known to be unsuccessful.
         """
         ids = self._normalize_task_ids(task_ids)
         if not ids:
             raise ValueError("至少选择一条任务")
         if len(ids) > 200:
             raise ValueError("单次最多重试 200 条任务")
+        normalized_scope = str(scope or "all").strip().lower().replace("-", "_")
+        if normalized_scope in {"failed_only", "only_failed", "失败", "仅失败"}:
+            normalized_scope = "failed"
+        if normalized_scope not in {"all", "failed"}:
+            raise ValueError("不支持的重试范围，可选：all、failed")
         retry = getattr(self, "start_record_retry_task", None)
         if not callable(retry):
             raise RuntimeError("当前版本不支持任务重试")
+        record_getter = getattr(self, "get_record_for_web", None)
         submitted: List[Dict[str, Any]] = []
         missing: List[str] = []
         skipped: List[Dict[str, str]] = []
@@ -1734,6 +1907,34 @@ class WebTaskMixin:
                 continue
             for record_id in record_ids:
                 seen_records.add(record_id)
+                if normalized_scope == "failed":
+                    if not callable(record_getter):
+                        skipped.append({"task_id": task_id, "record_id": record_id, "reason": "无法读取生成记录状态"})
+                        continue
+                    try:
+                        record = record_getter(record_id)
+                    except Exception:
+                        skipped.append({"task_id": task_id, "record_id": record_id, "reason": "生成记录不存在或已清理"})
+                        continue
+                    response = record.get("response_data") if isinstance(record, Mapping) else {}
+                    if not isinstance(response, Mapping):
+                        response = {}
+                    status = str(record.get("status") or response.get("status") or "").strip().lower() if isinstance(record, Mapping) else ""
+                    generation_failed = (
+                        isinstance(record, Mapping)
+                        and (record.get("success") is False or record.get("generation_success") is False)
+                    ) or response.get("success") is False
+                    delivery_failed = (
+                        isinstance(record, Mapping)
+                        and (
+                            record.get("delivery_success") is False
+                            or bool(record.get("delivery_failed"))
+                            or bool(record.get("delivery_unknown"))
+                        )
+                    ) or status in {"failed", "delivery_failed", "partial_success"}
+                    if not generation_failed and not delivery_failed:
+                        skipped.append({"task_id": task_id, "record_id": record_id, "reason": "生成记录未失败"})
+                        continue
                 try:
                     try:
                         retry_task = retry(record_id, str(feedback or "").strip()[:2000], strategy)
@@ -1756,6 +1957,7 @@ class WebTaskMixin:
                         }
                     )
         return {
+            "scope": normalized_scope,
             "submitted": submitted,
             "missing": missing,
             "skipped": skipped,

@@ -247,6 +247,18 @@ def test_task_queue_renders_wait_and_running_timing():
     assert "return '';" not in timing
 
 
+def test_task_detail_renders_per_image_stage_model_and_delivery_results():
+    detail_start = PAGE.index("    function taskImageResultsMarkup(items)")
+    detail_end = PAGE.index("    function taskQueueTiming(task)", detail_start)
+    markup = PAGE[detail_start:detail_end]
+    assert "逐图结果" in markup
+    assert "generation_stage_label" in markup
+    assert "used_model" in markup
+    assert "taskImageDeliveryLabel(item)" in markup
+    assert "delivery_state" in PAGE
+    assert "taskImageResultsMarkup(task.image_results)" in PAGE
+
+
 def test_task_detail_ignores_stale_or_closed_mobile_modal_responses():
     """A slow detail response must not replace the task currently shown on mobile."""
     assert "let TASK_DETAIL_REQUEST_SEQ = 0;" in PAGE

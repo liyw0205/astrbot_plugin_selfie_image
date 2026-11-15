@@ -235,6 +235,18 @@
       if (task?.delivery_success === false) return '发送失败';
       return '';
     }
+    function taskImageDeliveryLabel(item) {
+      return ({sent:'已发送', failed:'发送失败', unknown:'状态未知', pending:'等待回执'})[String(item?.delivery_state || '').trim()] || '未记录';
+    }
+    function taskImageResultsMarkup(items) {
+      const rows = Array.isArray(items) ? items : [];
+      if (!rows.length) return '';
+      return `<div style="margin-top:14px"><div class="detail-title"><h3>逐图结果</h3><span class="muted">${rows.length} 张</span></div><div style="overflow:auto"><table class="table"><thead><tr><th>#</th><th>阶段</th><th>模型</th><th>生成</th><th>投递</th><th>耗时</th><th>原因</th></tr></thead><tbody>${rows.map(item => {
+        const generation = item?.generation_success === true ? '成功' : item?.generation_success === false ? '失败' : '处理中';
+        const elapsed = item?.elapsed_seconds == null ? '-' : `${escapeHtml(String(item.elapsed_seconds))}s`;
+        return `<tr><td>${escapeHtml(String(item?.index || ''))}</td><td>${escapeHtml(String(item?.generation_stage_label || item?.generation_stage || '等待结果'))}</td><td>${escapeHtml(String(item?.used_model || '未记录'))}</td><td>${generation}</td><td>${escapeHtml(taskImageDeliveryLabel(item))}</td><td>${elapsed}</td><td>${escapeHtml(String(item?.error || ''))}</td></tr>`;
+      }).join('')}</tbody></table></div></div>`;
+    }
     function taskQueueTiming(task) {
       const queueSeconds = Number(task?.queue_wait_seconds || 0);
       const runningSeconds = Number(task?.running_seconds || 0);
@@ -327,9 +339,11 @@
       const ids = selectedTaskIds();
       if (!ids.length) return showToast('请先选择任务', 'bad');
       const strategy = String($('taskRetryStrategy')?.value || 'full');
-      if (!await confirmAction(`确定重试选中的 ${ids.length} 项任务？\n策略：${retryStrategyLabel(strategy)}\n只有已关联生成记录的任务可以重试。`, {title:'批量重试任务', confirmText:'开始重试', danger:false})) return;
+      const scope = String($('taskRetryScope')?.value || 'all');
+      const scopeLabel = scope === 'failed' ? '仅重试失败记录' : '重试全部关联记录';
+      if (!await confirmAction(`确定重试选中的 ${ids.length} 项任务？\n策略：${retryStrategyLabel(strategy)}\n范围：${scopeLabel}\n只有已关联生成记录的任务可以重试。`, {title:'批量重试任务', confirmText:'开始重试', danger:false})) return;
       try {
-        const res = await api('/api/tasks/retry', {method:'POST', body: JSON.stringify({ids, strategy})});
+        const res = await api('/api/tasks/retry', {method:'POST', body: JSON.stringify({ids, strategy, scope})});
         const data = res.data || {};
         showToast(`已提交 ${Number(data.submitted_count || 0)} 项重试`, data.submitted_count ? 'ok' : 'bad');
         clearTaskSelection();
@@ -434,6 +448,9 @@
           ? `<div style="margin-top:14px"><div class="detail-title"><h3>形象图</h3></div><div class="images">${personaReferenceThumb()}</div></div>`
           : '';
         const attempts = Array.isArray(task.attempts) ? task.attempts : [];
+        const imageResultsMarkup = typeof taskImageResultsMarkup === 'function'
+          ? taskImageResultsMarkup(task.image_results)
+          : '';
         const attemptRows = attempts.length
           ? `<div style="overflow:auto;margin-top:12px"><table class="table"><thead><tr><th>#</th><th>渠道/模型</th><th>结果</th><th>耗时</th><th>原因</th></tr></thead><tbody>${attempts.map(item => `<tr><td>${escapeHtml(String(item.attempt || ''))}</td><td>${escapeHtml(String(item.model || item.channel || ''))}</td><td>${item.success ? '成功' : '失败'}</td><td>${escapeHtml(String(item.elapsed_seconds ?? '-'))}s</td><td>${escapeHtml(String(item.error || item.error_category || ''))}</td></tr>`).join('')}</tbody></table></div>`
           : '<div class="muted" style="margin-top:12px">尚无渠道尝试明细</div>';
@@ -459,6 +476,7 @@
           ${deliveryNote}
           ${taskDetailPrompt('原始提示词', task.original_prompt)}
           ${taskDetailPrompt('最终提示词', task.final_prompt)}
+          ${imageResultsMarkup}
           <div class="actions" style="margin-top:12px"><button class="secondary mini task-copy-request" type="button">复制请求</button></div>
           ${personaReference}
           ${requestImagePaths.length ? `<div style="margin-top:14px">${imageThumbs(requestImagePaths, '请求图')}</div>` : ''}

@@ -796,16 +796,63 @@
     function selectedAssetIds() {
       return Array.from(ASSET_SELECTION).filter(Boolean);
     }
+    function assetMetadataSnapshotRows(payload, field, ids) {
+      const allowed = new Set((ids || []).map(value => String(value || '').trim()).filter(Boolean));
+      const rows = Array.isArray(payload?.records) ? payload.records : [];
+      return rows.filter(row => allowed.has(String(row?.id || '').trim())).map(row => {
+        const id = String(row.id || '').trim();
+        if (field === 'tags') return {id, tags: Array.isArray(row.tags) ? row.tags.slice() : []};
+        if (field === 'note') return {id, note: String(row.note || '')};
+        if (field === 'favorite' || field === 'pinned') return {id, [field]: Boolean(row[field])};
+        return {id};
+      });
+    }
+    async function captureAssetMetadataSnapshot(ids, field) {
+      const suffix = `?ids=${encodeURIComponent(ids.join(','))}`;
+      const res = await api('/api/assets/export' + suffix);
+      return assetMetadataSnapshotRows(res.data, field, ids);
+    }
+    async function undoAssetMetadataSnapshot(rows) {
+      if (!Array.isArray(rows) || !rows.length) throw new Error('没有可撤销的资产变更');
+      const res = await api('/api/assets/import', {
+        method: 'POST',
+        body: JSON.stringify({version: 1, records: rows})
+      });
+      clearAssetPageCache();
+      clearRecordPageCache();
+      clearPickerCache('tags');
+      await Promise.all([loadAssets(false), loadRecords(false), loadAssetTags()]);
+      return res;
+    }
     async function batchAssetMetadata(field, value) {
       const ids = selectedAssetIds();
       if (!ids.length) return showToast('请先选择资产', 'bad');
+      let snapshot = [];
+      try {
+        snapshot = await captureAssetMetadataSnapshot(ids, field);
+      } catch (_) {
+        // Metadata update remains available when an older host lacks export.
+      }
       try {
         const res = await api('/api/assets/metadata', {method: 'POST', body: JSON.stringify({ids, [field]: value})});
         clearAssetPageCache();
         clearRecordPageCache();
+        if (field === 'tags') clearPickerCache('tags');
         (res.data?.missing || []).forEach(id => ASSET_SELECTION.delete(String(id)));
-        await loadAssets(false);
-        showToast(res.message || '批量标记已保存', 'ok');
+        await Promise.all([loadAssets(false), field === 'tags' ? loadAssetTags() : Promise.resolve()]);
+        const updated = Array.isArray(res.data?.updated) ? new Set(res.data.updated.map(id => String(id))) : null;
+        const undoRows = updated ? snapshot.filter(row => updated.has(String(row.id))) : snapshot;
+        const updatedCount = Number(res.data?.updated_count || undoRows.length);
+        showToast(res.message || '批量标记已保存', 'ok', undoRows.length ? {
+          actionText: '撤销',
+          duration: 8000,
+          onAction: async () => {
+            try {
+              const restored = await undoAssetMetadataSnapshot(undoRows);
+              showToast(`已撤销 ${Number(restored.data?.updated_count || undoRows.length)} 项资产变更`, 'ok');
+            } catch (e) { showToast(e.message || '撤销失败', 'bad'); }
+          }
+        } : {});
       } catch (e) { showToast(e.message || '批量标记失败', 'bad'); }
     }
     async function applyBatchAssetFields(field) {

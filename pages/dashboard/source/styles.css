@@ -280,7 +280,8 @@
       .media-lightbox-stage { padding:8px; }
     }
     .toast-wrap { position: fixed; right: 16px; top: 16px; z-index: 100; display: grid; justify-items: end; gap: 8px; pointer-events: none; }
-    .toast { width: max-content; min-width: 0; max-width: min(360px, calc(100vw - 32px)); padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--text); box-shadow: 0 10px 24px rgba(0,0,0,.12); white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
+    .toast { width: max-content; min-width: 0; max-width: min(360px, calc(100vw - 32px)); padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--text); box-shadow: 0 10px 24px rgba(0,0,0,.12); white-space: normal; overflow-wrap: anywhere; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+    .toast-action { flex: 0 0 auto; }
     .toast.ok { background: #fff; color: var(--text); border-color: #dfe3ea; }
     .toast.bad { background: rgba(244,67,54,.94); }
     .detail-title { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }

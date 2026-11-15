@@ -319,14 +319,39 @@
         el.appendChild(opt);
       }
     }
-    function showToast(text, type = 'info') {
+    function showToast(text, type = 'info', options = {}) {
       const wrap = $('toastWrap');
       if (!wrap || !text) return;
       const node = document.createElement('div');
       node.className = 'toast' + (type === 'ok' ? ' ok' : type === 'bad' ? ' bad' : '');
-      node.textContent = text;
+      node.style.pointerEvents = 'auto';
+      const message = document.createElement('span');
+      message.textContent = text;
+      node.appendChild(message);
+      const action = typeof options?.onAction === 'function' ? options.onAction : null;
+      let timer = null;
+      const remove = () => {
+        if (timer) clearTimeout(timer);
+        node.remove();
+      };
+      if (action && String(options.actionText || '').trim()) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'secondary mini toast-action';
+        button.textContent = String(options.actionText).trim();
+        button.addEventListener('click', () => {
+          button.disabled = true;
+          remove();
+          try {
+            const result = action();
+            if (result && typeof result.catch === 'function') result.catch(() => {});
+          } catch (_) {}
+        });
+        node.appendChild(button);
+      }
       wrap.appendChild(node);
-      setTimeout(() => node.remove(), 2600);
+      timer = setTimeout(remove, Math.max(1000, Number(options?.duration) || 2600));
+      return {dismiss: remove, element: node};
     }
     let CONFIRM_RESOLVER = null;
     let CONFIRM_PREVIOUS_FOCUS = null;

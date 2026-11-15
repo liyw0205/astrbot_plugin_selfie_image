@@ -830,6 +830,8 @@ class TaskController:
         body = payload if isinstance(payload, dict) else {}
         feedback = str(body.get("feedback") or "").strip()[:2000]
         strategy = str(body.get("strategy") or body.get("retry_strategy") or "full")
+        scope_supplied = "scope" in body or "retry_scope" in body
+        scope = str(body.get("scope") or body.get("retry_scope") or "all")
         try:
             retrier = getattr(self.plugin, "retry_web_tasks", None)
         except Exception as exc:
@@ -837,10 +839,19 @@ class TaskController:
         if not callable(retrier):
             raise WebContractError("当前版本不支持任务重试", 501)
         try:
-            try:
-                data = retrier(ids or [], feedback, strategy)
-            except TypeError:
-                data = retrier(ids or [], feedback)
+            if scope_supplied:
+                try:
+                    data = retrier(ids or [], feedback, strategy, scope)
+                except TypeError:
+                    try:
+                        data = retrier(ids or [], feedback, strategy)
+                    except TypeError:
+                        data = retrier(ids or [], feedback)
+            else:
+                try:
+                    data = retrier(ids or [], feedback, strategy)
+                except TypeError:
+                    data = retrier(ids or [], feedback)
         except Exception as exc:
             raise WebContractError(str(exc), 400) from exc
         return TaskControllerResult(redact_sensitive_data(data), "已提交任务重试")
