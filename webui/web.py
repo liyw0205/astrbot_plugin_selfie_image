@@ -1016,6 +1016,16 @@ class FlaskWebServer:
                 return fail("Unauthorized: Token 不正确", 401)
             return asset_result(lambda: asset_collection_controller.delete(collection_id))
 
+        def asset_collection_restore() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return asset_result(
+                lambda: asset_collection_controller.restore(payload)
+            )
+
         def asset_collection_studio(collection_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
@@ -1058,6 +1068,7 @@ class FlaskWebServer:
             "asset_collection_detail": asset_collection_detail,
             "asset_collection_update": asset_collection_update,
             "asset_collection_delete": asset_collection_delete,
+            "asset_collection_restore": asset_collection_restore,
             "asset_collection_add": asset_collection_add,
             "asset_collection_remove": asset_collection_remove,
             "asset_collection_studio": asset_collection_studio,

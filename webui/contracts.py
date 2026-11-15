@@ -381,6 +381,11 @@ ASSET_COLLECTION_ROUTE_CONTRACTS = (
         "Selfie Image create asset collection",
     ),
     AssetCollectionRouteContract(
+        "asset_collection_restore", "/api/assets/collections/restore",
+        "assets/collections/restore", ("POST",), "asset_collection_restore",
+        "page_asset_collection_restore", "Selfie Image restore deleted asset collection",
+    ),
+    AssetCollectionRouteContract(
         "asset_collections_import", "/api/assets/collections/import",
         "assets/collections/import", ("POST",), "asset_collections_import",
         "page_asset_collections_import", "Selfie Image import asset collections",

@@ -415,6 +415,17 @@ class AssetCollectionController:
             raise WebContractError(str(exc), 400) from exc
         return AssetControllerResult(data, {"message": "资产集合已删除"})
 
+    def restore(self, payload: Any) -> AssetControllerResult:
+        body = payload if isinstance(payload, dict) else {}
+        token = str(body.get("token") or body.get("undo_token") or "").strip()
+        if not token:
+            raise WebContractError("token 不能为空", 400)
+        try:
+            data = self.plugin.restore_asset_collection(token)
+        except Exception as exc:
+            raise WebContractError(str(exc), 400) from exc
+        return AssetControllerResult(data, {"message": "资产集合已恢复"})
+
     def update_records(
         self, collection_id: Any, payload: Any, *, remove: bool
     ) -> AssetControllerResult:

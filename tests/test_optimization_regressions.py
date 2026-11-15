@@ -789,6 +789,61 @@ def test_asset_collection_delete_does_not_touch_record_ids() -> None:
         assert not (Path(directory) / "generation_records.sqlite3").exists()
 
 
+def test_asset_collection_delete_snapshot_survives_restart_and_token_is_one_time() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = AssetCollectionStore(directory)
+        collection = store.create("可恢复", note="保留备注", record_ids=["r1", "r2"])
+        result = store.delete(collection["id"])
+        token = result["undo"]["token"]
+        persisted = json.loads((Path(directory) / "asset_collections.json").read_text(encoding="utf-8"))
+        assert token not in json.dumps(persisted, ensure_ascii=False)
+        assert persisted["deleted_snapshots"][0]["collection"]["id"] == collection["id"]
+
+        restarted = AssetCollectionStore(directory)
+        restored = restarted.restore(token)
+        assert restored["restored"] is True
+        assert restored["collection"]["record_ids"] == ["r1", "r2"]
+        assert restarted.get(collection["id"])["name"] == "可恢复"
+        with pytest.raises(ValueError, match="无效或已过期"):
+            restarted.restore(token)
+
+
+def test_asset_collection_restore_rejects_capacity_limit_without_consuming_snapshot(monkeypatch) -> None:
+    import astrbot_plugin_selfie_image.generation.asset_collections as asset_collections
+
+    monkeypatch.setattr(asset_collections, "MAX_COLLECTIONS", 1)
+    with tempfile.TemporaryDirectory() as directory:
+        store = AssetCollectionStore(directory)
+        deleted = store.create("待恢复")
+        token = store.delete(deleted["id"])["undo"]["token"]
+        store.create("现有集合")
+
+        with pytest.raises(ValueError, match="最多 1 个"):
+            store.restore(token)
+
+        assert [item["name"] for item in store.list()] == ["现有集合"]
+        persisted = json.loads((Path(directory) / "asset_collections.json").read_text(encoding="utf-8"))
+        assert len(persisted["collections"]) == 1
+        assert persisted["deleted_snapshots"][0]["collection"]["id"] == deleted["id"]
+
+
+def test_asset_collection_delete_is_atomic_when_snapshot_persist_fails(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = AssetCollectionStore(directory)
+        collection = store.create("原子删除")
+        original_persist = store._persist
+
+        def fail_once(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(store, "_persist", fail_once)
+        with pytest.raises(OSError, match="disk full"):
+            store.delete(collection["id"])
+        assert store.get(collection["id"])["name"] == "原子删除"
+        monkeypatch.setattr(store, "_persist", original_persist)
+        assert store.delete(collection["id"])["deleted"] is True
+
+
 def test_reference_selection_summary_is_credential_free() -> None:
     collected = CollectedReferences(source_count=4, failed_count=1, roles={"message": 1, "context": 2, "persona": 1})
     summary = collected.selection_summary(include_persona=True)

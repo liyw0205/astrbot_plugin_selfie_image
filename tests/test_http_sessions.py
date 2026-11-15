@@ -128,6 +128,116 @@ class ClientSessionRegistryTests(unittest.IsolatedAsyncioTestCase):
             await registry.close()
             await runner.cleanup()
 
+    async def test_registry_routes_real_requests_through_socks5_and_reuses_tunnel(self) -> None:
+        """Exercise the connector against a local SOCKS5 server, not a mock."""
+        import contextlib
+        import ipaddress
+        import struct
+
+        from aiohttp import web
+
+        peer_ports = set()
+
+        async def handle(request):
+            peer = request.transport.get_extra_info("peername")
+            if peer:
+                peer_ports.add(peer[1])
+            return web.Response(text="socks-ok")
+
+        app = web.Application()
+        app.router.add_get("/health", handle)
+        target_runner = web.AppRunner(app)
+        await target_runner.setup()
+        target_site = web.TCPSite(target_runner, "127.0.0.1", 0)
+        await target_site.start()
+        target_port = target_site._server.sockets[0].getsockname()[1]
+        handshake_count = 0
+
+        async def forward(source, destination):
+            try:
+                while True:
+                    chunk = await source.read(64 * 1024)
+                    if not chunk:
+                        break
+                    destination.write(chunk)
+                    await destination.drain()
+            except (ConnectionError, asyncio.IncompleteReadError):
+                pass
+
+        async def socks_client(reader, writer):
+            nonlocal handshake_count
+            remote_writer = None
+            tasks = ()
+            try:
+                version, method_count = await reader.readexactly(2)
+                if version != 5:
+                    raise ValueError("unexpected SOCKS version")
+                methods = await reader.readexactly(method_count)
+                if 0 not in methods:
+                    writer.write(b"\x05\xff")
+                    await writer.drain()
+                    return
+                writer.write(b"\x05\x00")
+                await writer.drain()
+
+                version, command, _reserved, address_type = await reader.readexactly(4)
+                if version != 5 or command != 1:
+                    raise ValueError("unsupported SOCKS request")
+                if address_type == 1:
+                    host = str(ipaddress.ip_address(await reader.readexactly(4)))
+                elif address_type == 3:
+                    length = (await reader.readexactly(1))[0]
+                    host = (await reader.readexactly(length)).decode("idna")
+                elif address_type == 4:
+                    host = str(ipaddress.ip_address(await reader.readexactly(16)))
+                else:
+                    raise ValueError("unsupported SOCKS address type")
+                port = struct.unpack("!H", await reader.readexactly(2))[0]
+                remote_reader, remote_writer = await asyncio.open_connection(host, port)
+                writer.write(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
+                await writer.drain()
+                handshake_count += 1
+                tasks = (
+                    asyncio.create_task(forward(reader, remote_writer)),
+                    asyncio.create_task(forward(remote_reader, writer)),
+                )
+                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            except (asyncio.IncompleteReadError, ConnectionError, ValueError):
+                pass
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                if remote_writer is not None:
+                    remote_writer.close()
+                    with contextlib.suppress(Exception):
+                        await remote_writer.wait_closed()
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+
+        proxy_server = await asyncio.start_server(socks_client, "127.0.0.1", 0)
+        proxy_port = proxy_server.sockets[0].getsockname()[1]
+        registry = ClientSessionRegistry()
+        try:
+            session = await registry.get_session(f"socks5://127.0.0.1:{proxy_port}")
+            self.assertIs(session, await registry.get_session(f"socks5://127.0.0.1:{proxy_port}"))
+            for _ in range(2):
+                async with session.get(f"http://127.0.0.1:{target_port}/health") as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(await response.text(), "socks-ok")
+            self.assertEqual(handshake_count, 1)
+            self.assertEqual(len(peer_ports), 1)
+            self.assertEqual(registry.get_stats()["active_by_transport"]["socks"], 1)
+        finally:
+            await registry.close()
+            proxy_server.close()
+            await proxy_server.wait_closed()
+            await target_runner.cleanup()
+        self.assertEqual(registry.get_stats()["active_sessions"], 0)
+
     async def test_registry_failure_diagnostics_are_bounded_and_credential_free(self) -> None:
         registry = ClientSessionRegistry()
         with self.assertRaises(ValueError):

@@ -4,11 +4,11 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-最新完整发布验证基线（2026-11-15，1.7.38）：
+最新完整发布验证基线（2026-11-15，1.7.39）：
 
-- 全量 pytest `3611 passed, 702 subtests passed`，耗时 262.15 秒（发布门禁运行）；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3619 passed, 1 skipped, 702 subtests passed`，耗时 368.69 秒（发布门禁运行）；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；64 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：148 个文件；单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。制品摘要以最终提交后的发布门禁输出为准。
+- 临时运行期 ZIP 检查：148 个文件，ZIP 2,442,209 字节、解压 5,743,097 字节；单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证。
 
 主要结构性事实：
@@ -21,7 +21,7 @@
 | 持久化 | 生成记录已经使用 SQLite；任务快照仍是 JSON，状态变化时通过锁和延迟快照写入 | 记录查询可继续扩展索引；任务快照在高并发下有写放大风险 |
 | 缓存 | 参考图有内容寻址和运行期索引，记录/收藏/画布引用有保护；已有单次扫描的清理指标、增长告警和图片几何限制 | 按进程内已有扫描观察孤儿变化，不额外遍历目录；进程重启会重置增长基线 |
 | 测试 | Python 回归覆盖很广；已新增多 Python 版本 CI，以及有 Node 和无 Node 的独立检查 | 本地门禁已验证；多版本实际运行结果仍需首次 CI 执行确认 |
-| 状态图与开发预览 | 正式双栏渲染器、命令和基础回归已存在；`pages/status-preview/` 作为开发工具纳入仓库，包含 5 套对比排版 | 保持预览一致性验证，开发工具不进入运行期 ZIP |
+| 状态图与开发预览 | 正式双栏渲染器、命令和基础回归已存在；`pages/status-preview/` 作为开发工具纳入仓库，包含 5 套对比排版；移动端 Chromium 烟测覆盖 320x568 与 390x844 | 保持预览一致性验证，开发工具不进入运行期 ZIP |
 
 ## 1.1 本轮已落地
 
@@ -70,7 +70,7 @@
 - 配置读取/保存、导出、导入预览和导入共 5 个操作已迁入 `ConfigController` 与 `CONFIG_ROUTE_CONTRACTS`；flat/wrapped patch 兼容、raw 导出别名和导入错误映射由共享层裁决。Token/宿主认证、JSON 对象解析和响应 envelope 继续由 adapter 负责。
 - 代理列表、连通性测试和质量检测已迁入 `ProxyController` 与 `PROXY_ROUTE_CONTRACTS`；`id`/`proxy_id` 别名、嵌套代理选择和 ValueError/运行错误映射统一。Dashboard 原生 await，Flask 保留 30/90 秒同步桥接超时；代理列表继续通过 `mask_password=True` 产出安全数据，不重写探测钩子的返回结构。
 - 资产查询、标签、元数据导入/导出、批量标记/删除、单条/批量加入画布共 8 个操作已迁入 `AssetController` 与 `ASSET_ROUTE_CONTRACTS`；筛选参数、legacy query fallback、消息、能力缺失及错误状态统一。分页上限采用 Dashboard 现有契约（单页 100、offset 10,000），并覆盖 query/keyword 与 ids/record_ids 别名。
-- 资产集合列表/创建、导入/导出、详情/更新/删除、成员增删和加入画布共 10 个方法路由已迁入 `AssetCollectionController` 与 `ASSET_COLLECTION_ROUTE_CONTRACTS`；两端共用预览判定、操作消息和错误映射，认证、JSON 对象解析与响应 envelope 仍归 adapter 所有。双 adapter 契约覆盖注册路径、确认/预览及集合操作。
+- 资产集合列表/创建、导入/导出、详情/更新/删除、成员增删、加入画布和短时删除撤销/恢复共 11 个方法路由已迁入 `AssetCollectionController` 与 `ASSET_COLLECTION_ROUTE_CONTRACTS`；删除与恢复通过服务端一次性 SHA-256 摘要令牌、TTL、容量/名称冲突校验和原子持久化保护状态，认证、JSON 对象解析与响应 envelope 仍归 adapter 所有。双 adapter 契约覆盖注册路径、确认/预览及集合操作。
 - Studio 与 Creative Canvas 会话的列表、创建、读取、更新、删除、画布节点/槽位操作、复制和运行已迁入 `CanvasController` 与 `CANVAS_ROUTE_CONTRACTS`；图库也使用该 controller，Studio task-status 复用 `TaskController` 并声明在 `TASK_ROUTE_CONTRACTS`。Canvas 28 个契约项覆盖 29 个路径/方法组合；列表元数据参数、图库分页、错误状态映射、复制冲突状态及运行结果脱敏均有回归。
 - 生成运行建议使用独立 `monitoring.generation_alerts` 配置，渠道成功率、限流占比、重试率和生成 P95 阈值及各自最小样本数均可从监控页保存；默认值与旧规则一致。后端对越界、非有限和错误类型配置进行归一化，新增回归并修正渠道成功率建议误读未物化字段的问题。
 - 运行建议新增窗口记录成功率、按时间倒序的连续生成失败和缓存孤儿增长阈值；窗口成功率复用现有记录成功率口径，连续失败排除取消并把 `delivery_failed` 视为生成已成功。缓存增长只复用清理预览中的 `orphan_count`，按进程首次观察或清理后的首个扫描建立基线，并通过测试确认取指标不触发目录扫描。
@@ -117,7 +117,7 @@
 
 `.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。支持 `--layer all/python/frontend/static`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
 
-上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.38`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
+上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.39`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
 
 制品基线和验证结果见上方“最新完整发布验证基线”。该制品仅代表本地当前工作区构建，发布前仍需在目标宿主验证真实通知投递和字体资源。
 
@@ -469,9 +469,9 @@ trigram 无法为 1～2 字符或包含 NUL 的关键词生成候选。短词现
 - 任务详情已增加脱敏后的“复制请求”快捷操作，并明确生成成功与发送成功的差异；批量任务已显示每张图的阶段、模型和投递结果，减少只看整批状态的等待感；
 - 批量重试支持按 `all`/`failed` 范围筛选，失败范围覆盖生成失败、投递失败和未知投递状态；仍不把同一请求内缺少失败占位的图片虚构成可单独重试项；
 - 模型状态页增加基于近期失败分类、成功率和连续失败的排序和推荐，标记样本不足/建议优先/备选/暂不推荐；推荐只作为提示，不自动修改用户优先级，也不透传上游错误原文；
-- 资产库支持批量标签、备注、收藏和置顶操作的撤销提示，保持服务端分页；集合删除/恢复仍需服务端恢复事务后再开放撤销；
+- 资产库支持批量标签、备注、收藏和置顶操作的撤销提示，保持服务端分页；集合删除也已支持短时服务端撤销/恢复，恢复令牌一次性消费并在容量、名称冲突时保持原状态。
 - Dashboard 记录与资产分页请求已增加 `AbortController`，页面、筛选和刷新变化时取消过期请求；任务详情在移动端切换或关闭后以请求序号拒绝迟到响应，分页请求与控制器映射在完成、失败和取消后清理。
-- 对移动端画布、任务详情和状态图片进行真实设备尺寸回归，不以桌面截图代替验证。
+- 已补充 Chromium 移动 viewport 烟测，覆盖状态预览和未认证 Dashboard 的 DOM、viewport、水平溢出和 PNG 尺寸；后续仍需目标宿主真实设备字体、画布和投递验证。
 
 ## 9. 分阶段实施顺序
 

@@ -10,4 +10,14 @@ python pages/status-preview/server.py --port 8765
 
 提供混合状态、全部正常、暂无记录、长名称和多页预览，支持原尺寸查看、翻页及 PNG 下载。所有方案使用同一份状态结构，宽度统一为 1080 像素。
 
+### Chromium 移动尺寸烟测
+
+仓库提供不依赖 Playwright/Puppeteer 的 Chromium headless 尺寸回归。它会启动本地状态预览服务，并以 `320x568`、`390x844` 两个浏览器 viewport 检查状态预览和未认证 Dashboard 登录入口的关键元素、水平溢出与截图尺寸：
+
+```sh
+node scripts/mobile_smoke.js
+```
+
+可用 `--chromium PATH` 指定 Chromium，或用 `--output DIR` 保存四张回归截图。该检查只代表 Chromium headless 的 CSS viewport 行为，不等价于真实 Android/iOS 设备、系统字体、触摸输入或通知投递验证。
+
 `renderer.render_status_report(status, design="1", page=1, page_size=6)` 接收当前模型状态数据并返回 Pillow Image，选定后可接入现有命令。中文字体自动寻找 Android、Linux 或 Windows 的常见字体，也可通过 `ASTRBOT_STATUS_FONT` 指定。

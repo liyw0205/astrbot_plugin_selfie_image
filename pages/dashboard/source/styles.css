@@ -395,6 +395,19 @@
     .asset-bulk-form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; width: 100%; }
     .asset-bulk-form input { flex: 1 1 180px; min-width: 140px; padding: 6px 8px; font-size: 12px; }
     .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-top: 14px; }
+    .asset-collection-panel { margin-top: 14px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-soft); }
+    .asset-collection-panel h3 { margin: 0; }
+    .asset-collection-form { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(160px, 1fr) auto minmax(160px, .9fr) auto auto; gap: 6px; align-items: center; margin-top: 10px; }
+    .asset-collection-form input, .asset-collection-form select { min-width: 0; padding: 6px 8px; font-size: 12px; }
+    .asset-collection-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-top: 10px; }
+    .asset-collection-card { min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); }
+    .asset-collection-card-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .asset-collection-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+    .asset-collection-card-note { margin-top: 4px; color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+    .asset-collection-card-actions { display: flex; justify-content: flex-end; gap: 5px; margin-top: 7px; }
+    .asset-collection-card-actions button { padding: 4px 7px; font-size: 11px; }
+    @media (max-width: 980px) { .asset-collection-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .asset-collection-form button { width: 100%; } }
+    @media (max-width: 560px) { .asset-collection-form { grid-template-columns: minmax(0, 1fr); } }
     .asset-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
     .asset-card:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--line)); transform: translateY(-1px); box-shadow: 0 12px 26px rgba(27,28,29,.1); }
     .asset-thumb { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #f1f4f7; }

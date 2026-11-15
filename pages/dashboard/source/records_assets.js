@@ -934,3 +934,113 @@
       for (const path of files) await downloadCachePath(path, path.split('/').pop() || 'asset');
       showToast(`已开始下载 ${files.length} 个文件`, 'ok');
     }
+
+    let ASSET_COLLECTIONS = [];
+    let ASSET_COLLECTION_LOAD_SEQ = 0;
+
+    function selectedAssetCollectionId() {
+      return String($('assetCollectionSelect')?.value || '').trim();
+    }
+
+    function renderAssetCollections() {
+      const select = $('assetCollectionSelect');
+      const list = $('assetCollectionList');
+      if (select) {
+        const selected = selectedAssetCollectionId();
+        select.innerHTML = '<option value="">选择集合</option>' + ASSET_COLLECTIONS.map(item =>
+          `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.name || '未命名集合'))} · ${Number((item.record_ids || []).length)} 项</option>`
+        ).join('');
+        if (ASSET_COLLECTIONS.some(item => String(item.id || '') === selected)) select.value = selected;
+      }
+      if (list) {
+        list.innerHTML = ASSET_COLLECTIONS.length ? ASSET_COLLECTIONS.map(item => {
+          const id = String(item.id || '');
+          const name = String(item.name || '未命名集合');
+          const count = Array.isArray(item.record_ids) ? item.record_ids.length : 0;
+          return `<article class="asset-collection-card">
+            <div class="asset-collection-card-head"><span class="asset-collection-card-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span><span class="pill gray">${count} 项</span></div>
+            <div class="asset-collection-card-note">${escapeHtml(String(item.note || '无备注'))}</div>
+            <div class="asset-collection-card-actions"><button class="danger mini" type="button" data-collection-delete="${escapeHtml(id)}">删除</button></div>
+          </article>`;
+        }).join('') : '<div class="muted">还没有资产集合。</div>';
+        if (list.dataset.bound !== '1') {
+          list.dataset.bound = '1';
+          list.addEventListener('click', event => {
+            const button = event.target.closest('button[data-collection-delete]');
+            if (button) void deleteAssetCollection(button.dataset.collectionDelete || '');
+          });
+        }
+      }
+    }
+
+    async function loadAssetCollections(showRefreshToast = false) {
+      const requestSeq = ++ASSET_COLLECTION_LOAD_SEQ;
+      try {
+        const res = await api('/api/assets/collections');
+        if (requestSeq !== ASSET_COLLECTION_LOAD_SEQ) return;
+        ASSET_COLLECTIONS = Array.isArray(res.data) ? res.data : [];
+        renderAssetCollections();
+        if (showRefreshToast) showToast('资产集合已刷新', 'ok');
+      } catch (e) {
+        if (requestSeq === ASSET_COLLECTION_LOAD_SEQ && $('assetCollectionStatus')) $('assetCollectionStatus').textContent = e.message || '资产集合读取失败';
+      }
+    }
+
+    async function createAssetCollection() {
+      const name = String($('assetCollectionName')?.value || '').trim();
+      const note = String($('assetCollectionNote')?.value || '').trim();
+      if (!name) return showToast('请输入集合名称', 'bad');
+      try {
+        const res = await api('/api/assets/collections', {method: 'POST', body: JSON.stringify({name, note})});
+        if (!res.success) throw new Error(res.message || '集合创建失败');
+        if ($('assetCollectionName')) $('assetCollectionName').value = '';
+        if ($('assetCollectionNote')) $('assetCollectionNote').value = '';
+        await loadAssetCollections();
+        const id = String(res.data?.id || '');
+        if (id && $('assetCollectionSelect')) $('assetCollectionSelect').value = id;
+        showToast(res.message || '资产集合已创建', 'ok');
+      } catch (e) { showToast(e.message || '集合创建失败', 'bad'); }
+    }
+
+    async function deleteAssetCollection(collectionId) {
+      const id = String(collectionId || '').trim();
+      if (!id) return;
+      const item = ASSET_COLLECTIONS.find(row => String(row.id || '') === id);
+      if (!await confirmAction(`确定删除集合“${item?.name || id}”？集合内记录和媒体不会删除。`, {title: '删除资产集合', confirmText: '删除集合'})) return;
+      try {
+        const res = await api('/api/assets/collections/' + encodeURIComponent(id) + '/delete', {method: 'POST'});
+        if (!res.success) throw new Error(res.message || '集合删除失败');
+        await loadAssetCollections();
+        const token = String(res.data?.undo?.token || '');
+        const ttl = Math.min(10000, Math.max(1000, Number(res.data?.undo?.ttl_seconds || 600) * 1000));
+        showToast(res.message || '资产集合已删除', 'ok', token ? {
+          actionText: '撤销', duration: ttl,
+          onAction: async () => {
+            try {
+              const restored = await api('/api/assets/collections/restore', {method: 'POST', body: JSON.stringify({token})});
+              if (!restored.success) throw new Error(restored.message || '集合恢复失败');
+              await loadAssetCollections();
+              showToast(restored.message || '资产集合已恢复', 'ok');
+            } catch (e) { showToast(e.message || '集合恢复失败', 'bad'); }
+          }
+        } : {});
+      } catch (e) { showToast(e.message || '集合删除失败', 'bad'); }
+    }
+
+    async function updateSelectedAssetCollectionRecords(remove = false) {
+      const collectionId = selectedAssetCollectionId();
+      const ids = selectedAssetIds();
+      if (!collectionId) return showToast('请先选择资产集合', 'bad');
+      if (!ids.length) return showToast('请先选择资产', 'bad');
+      try {
+        const path = '/api/assets/collections/' + encodeURIComponent(collectionId) + (remove ? '/remove' : '/add');
+        const res = await api(path, {method: 'POST', body: JSON.stringify({record_ids: ids})});
+        if (!res.success) throw new Error(res.message || '集合内容更新失败');
+        ASSET_COLLECTIONS = ASSET_COLLECTIONS.map(item => String(item.id || '') === collectionId ? (res.data || item) : item);
+        renderAssetCollections();
+        showToast(res.message || '集合内容已更新', 'ok');
+      } catch (e) { showToast(e.message || '集合内容更新失败', 'bad'); }
+    }
+
+    function addSelectedAssetsToCollection() { return updateSelectedAssetCollectionRecords(false); }
+    function removeSelectedAssetsFromCollection() { return updateSelectedAssetCollectionRecords(true); }

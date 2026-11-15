@@ -209,7 +209,11 @@ class ContractPlugin(ConfigurationMixin, CreativeFeaturesMixin, WebTaskMixin):
 
     def delete_asset_collection(self, collection_id):
         self.asset_collection_calls.append(("delete", collection_id))
-        return {"id": collection_id, "deleted": True}
+        return {"id": collection_id, "deleted": True, "undo": {"token": "undo-token"}}
+
+    def restore_asset_collection(self, token):
+        self.asset_collection_calls.append(("restore", token))
+        return {"restored": True, "collection": {"id": "collection-1", "name": "Portraits"}}
 
     def update_asset_collection_records(self, collection_id, payload, *, remove=False):
         self.asset_collection_calls.append(("remove" if remove else "add", collection_id, payload))
@@ -449,6 +453,7 @@ PROTECTED_ROUTES = [
     ("/api/assets/delete", "POST"), ("/api/assets/studio", "POST"),
     ("/api/assets/record-1/studio", "POST"),
     ("/api/assets/collections", "GET"), ("/api/assets/collections", "POST"),
+    ("/api/assets/collections/restore", "POST"),
     ("/api/assets/collections/export", "GET"), ("/api/assets/collections/import", "POST"),
     ("/api/assets/collections/collection-1", "GET"),
     ("/api/assets/collections/collection-1", "POST"),
@@ -1943,6 +1948,12 @@ def test_asset_collection_controller_operations_preserve_both_adapter_contracts(
     )
     assert_success(deleted)
     assert deleted.envelope["message"] == "资产集合已删除"
+    restored = http.call(
+        "/api/assets/collections/restore", method="POST", body={"token": "undo-token"}
+    )
+    assert_success(restored)
+    assert restored.envelope["message"] == "资产集合已恢复"
+    assert http.plugin.asset_collection_calls[-1] == ("restore", "undo-token")
 
 
 @pytest.mark.parametrize("hook,path,method,body,status", [
@@ -1951,6 +1962,7 @@ def test_asset_collection_controller_operations_preserve_both_adapter_contracts(
     ("import_asset_collections", "/api/assets/collections/import", "POST", {}, 400),
     ("update_asset_collection", "/api/assets/collections/collection-1", "POST", {}, 400),
     ("delete_asset_collection", "/api/assets/collections/collection-1/delete", "POST", MISSING_BODY, 400),
+    ("restore_asset_collection", "/api/assets/collections/restore", "POST", {}, 400),
     ("asset_collection_studio", "/api/assets/collections/collection-1/studio", "POST", {}, 400),
 ])
 def test_asset_collection_controller_preserves_operation_error_statuses(

@@ -403,6 +403,19 @@
     .asset-bulk-form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; width: 100%; }
     .asset-bulk-form input { flex: 1 1 180px; min-width: 140px; padding: 6px 8px; font-size: 12px; }
     .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-top: 14px; }
+    .asset-collection-panel { margin-top: 14px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-soft); }
+    .asset-collection-panel h3 { margin: 0; }
+    .asset-collection-form { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(160px, 1fr) auto minmax(160px, .9fr) auto auto; gap: 6px; align-items: center; margin-top: 10px; }
+    .asset-collection-form input, .asset-collection-form select { min-width: 0; padding: 6px 8px; font-size: 12px; }
+    .asset-collection-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-top: 10px; }
+    .asset-collection-card { min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); }
+    .asset-collection-card-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .asset-collection-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+    .asset-collection-card-note { margin-top: 4px; color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+    .asset-collection-card-actions { display: flex; justify-content: flex-end; gap: 5px; margin-top: 7px; }
+    .asset-collection-card-actions button { padding: 4px 7px; font-size: 11px; }
+    @media (max-width: 980px) { .asset-collection-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .asset-collection-form button { width: 100%; } }
+    @media (max-width: 560px) { .asset-collection-form { grid-template-columns: minmax(0, 1fr); } }
     .asset-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
     .asset-card:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--line)); transform: translateY(-1px); box-shadow: 0 12px 26px rgba(27,28,29,.1); }
     .asset-thumb { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #f1f4f7; }
@@ -1359,6 +1372,25 @@
         <div><label>结束日期</label><input id="assetEndTime" type="date"></div>
       </div>
       <div id="assetStats" class="stat-grid" style="margin-top:12px"></div>
+      <div class="asset-collection-panel">
+        <div class="between">
+          <div>
+            <h3>资产集合</h3>
+            <p class="muted">把当前选中的资产加入集合；删除集合后可在短时间内撤销。</p>
+          </div>
+          <button class="secondary mini" type="button" onclick="loadAssetCollections(true)" title="刷新集合">刷新集合</button>
+        </div>
+        <div class="asset-collection-form">
+          <input id="assetCollectionName" placeholder="新集合名称" aria-label="新集合名称">
+          <input id="assetCollectionNote" placeholder="集合备注（可选）" aria-label="集合备注">
+          <button class="secondary mini" type="button" onclick="createAssetCollection()">创建集合</button>
+          <select id="assetCollectionSelect" aria-label="选择资产集合"><option value="">选择集合</option></select>
+          <button class="secondary mini" type="button" onclick="addSelectedAssetsToCollection()">加入选中集合</button>
+          <button class="secondary mini" type="button" onclick="removeSelectedAssetsFromCollection()">从集合移除</button>
+        </div>
+        <div id="assetCollectionList" class="asset-collection-list"></div>
+        <div id="assetCollectionStatus" class="muted" role="status"></div>
+      </div>
       <div class="asset-toolbar">
         <span id="assetSelectionStatus" class="muted">当前页未选择资产</span>
         <div class="actions">
@@ -5951,6 +5983,116 @@ Source prompt:
       for (const path of files) await downloadCachePath(path, path.split('/').pop() || 'asset');
       showToast(`已开始下载 ${files.length} 个文件`, 'ok');
     }
+
+    let ASSET_COLLECTIONS = [];
+    let ASSET_COLLECTION_LOAD_SEQ = 0;
+
+    function selectedAssetCollectionId() {
+      return String($('assetCollectionSelect')?.value || '').trim();
+    }
+
+    function renderAssetCollections() {
+      const select = $('assetCollectionSelect');
+      const list = $('assetCollectionList');
+      if (select) {
+        const selected = selectedAssetCollectionId();
+        select.innerHTML = '<option value="">选择集合</option>' + ASSET_COLLECTIONS.map(item =>
+          `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.name || '未命名集合'))} · ${Number((item.record_ids || []).length)} 项</option>`
+        ).join('');
+        if (ASSET_COLLECTIONS.some(item => String(item.id || '') === selected)) select.value = selected;
+      }
+      if (list) {
+        list.innerHTML = ASSET_COLLECTIONS.length ? ASSET_COLLECTIONS.map(item => {
+          const id = String(item.id || '');
+          const name = String(item.name || '未命名集合');
+          const count = Array.isArray(item.record_ids) ? item.record_ids.length : 0;
+          return `<article class="asset-collection-card">
+            <div class="asset-collection-card-head"><span class="asset-collection-card-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span><span class="pill gray">${count} 项</span></div>
+            <div class="asset-collection-card-note">${escapeHtml(String(item.note || '无备注'))}</div>
+            <div class="asset-collection-card-actions"><button class="danger mini" type="button" data-collection-delete="${escapeHtml(id)}">删除</button></div>
+          </article>`;
+        }).join('') : '<div class="muted">还没有资产集合。</div>';
+        if (list.dataset.bound !== '1') {
+          list.dataset.bound = '1';
+          list.addEventListener('click', event => {
+            const button = event.target.closest('button[data-collection-delete]');
+            if (button) void deleteAssetCollection(button.dataset.collectionDelete || '');
+          });
+        }
+      }
+    }
+
+    async function loadAssetCollections(showRefreshToast = false) {
+      const requestSeq = ++ASSET_COLLECTION_LOAD_SEQ;
+      try {
+        const res = await api('/api/assets/collections');
+        if (requestSeq !== ASSET_COLLECTION_LOAD_SEQ) return;
+        ASSET_COLLECTIONS = Array.isArray(res.data) ? res.data : [];
+        renderAssetCollections();
+        if (showRefreshToast) showToast('资产集合已刷新', 'ok');
+      } catch (e) {
+        if (requestSeq === ASSET_COLLECTION_LOAD_SEQ && $('assetCollectionStatus')) $('assetCollectionStatus').textContent = e.message || '资产集合读取失败';
+      }
+    }
+
+    async function createAssetCollection() {
+      const name = String($('assetCollectionName')?.value || '').trim();
+      const note = String($('assetCollectionNote')?.value || '').trim();
+      if (!name) return showToast('请输入集合名称', 'bad');
+      try {
+        const res = await api('/api/assets/collections', {method: 'POST', body: JSON.stringify({name, note})});
+        if (!res.success) throw new Error(res.message || '集合创建失败');
+        if ($('assetCollectionName')) $('assetCollectionName').value = '';
+        if ($('assetCollectionNote')) $('assetCollectionNote').value = '';
+        await loadAssetCollections();
+        const id = String(res.data?.id || '');
+        if (id && $('assetCollectionSelect')) $('assetCollectionSelect').value = id;
+        showToast(res.message || '资产集合已创建', 'ok');
+      } catch (e) { showToast(e.message || '集合创建失败', 'bad'); }
+    }
+
+    async function deleteAssetCollection(collectionId) {
+      const id = String(collectionId || '').trim();
+      if (!id) return;
+      const item = ASSET_COLLECTIONS.find(row => String(row.id || '') === id);
+      if (!await confirmAction(`确定删除集合“${item?.name || id}”？集合内记录和媒体不会删除。`, {title: '删除资产集合', confirmText: '删除集合'})) return;
+      try {
+        const res = await api('/api/assets/collections/' + encodeURIComponent(id) + '/delete', {method: 'POST'});
+        if (!res.success) throw new Error(res.message || '集合删除失败');
+        await loadAssetCollections();
+        const token = String(res.data?.undo?.token || '');
+        const ttl = Math.min(10000, Math.max(1000, Number(res.data?.undo?.ttl_seconds || 600) * 1000));
+        showToast(res.message || '资产集合已删除', 'ok', token ? {
+          actionText: '撤销', duration: ttl,
+          onAction: async () => {
+            try {
+              const restored = await api('/api/assets/collections/restore', {method: 'POST', body: JSON.stringify({token})});
+              if (!restored.success) throw new Error(restored.message || '集合恢复失败');
+              await loadAssetCollections();
+              showToast(restored.message || '资产集合已恢复', 'ok');
+            } catch (e) { showToast(e.message || '集合恢复失败', 'bad'); }
+          }
+        } : {});
+      } catch (e) { showToast(e.message || '集合删除失败', 'bad'); }
+    }
+
+    async function updateSelectedAssetCollectionRecords(remove = false) {
+      const collectionId = selectedAssetCollectionId();
+      const ids = selectedAssetIds();
+      if (!collectionId) return showToast('请先选择资产集合', 'bad');
+      if (!ids.length) return showToast('请先选择资产', 'bad');
+      try {
+        const path = '/api/assets/collections/' + encodeURIComponent(collectionId) + (remove ? '/remove' : '/add');
+        const res = await api(path, {method: 'POST', body: JSON.stringify({record_ids: ids})});
+        if (!res.success) throw new Error(res.message || '集合内容更新失败');
+        ASSET_COLLECTIONS = ASSET_COLLECTIONS.map(item => String(item.id || '') === collectionId ? (res.data || item) : item);
+        renderAssetCollections();
+        showToast(res.message || '集合内容已更新', 'ok');
+      } catch (e) { showToast(e.message || '集合内容更新失败', 'bad'); }
+    }
+
+    function addSelectedAssetsToCollection() { return updateSelectedAssetCollectionRecords(false); }
+    function removeSelectedAssetsFromCollection() { return updateSelectedAssetCollectionRecords(true); }
     function cacheImageUrl(path) {
       return `/api/cache-image?path=${encodeURIComponent(path)}`;
     }
@@ -10338,7 +10480,7 @@ Source prompt:
       document.querySelectorAll('nav.page-nav button').forEach(item => item.classList.toggle('active', item === button));
       document.querySelectorAll('main.app-shell > section').forEach(item => item.classList.toggle('active', item === section));
       if (target === 'monitor') { loadRecords(false); loadMetrics(); loadTasks(); }
-      if (target === 'assets') { loadAssets(); loadAssetTags(); loadAssetStudioPresets(); }
+      if (target === 'assets') { loadAssets(); loadAssetTags(); loadAssetStudioPresets(); loadAssetCollections(); }
       if (target === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
       if (target === 'creativeCanvas') loadCreativeCanvasList(CREATIVE_CANVAS.current && CREATIVE_CANVAS.current.id);
       if (target === 'presets') loadManagedPromptPresets(PRESET_KIND);
@@ -10442,7 +10584,7 @@ Source prompt:
     $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
     $('presetTransferCopyBtn').onclick = copyPresetTransfer;
     $('presetTransferImportBtn').onclick = importPresetTransfer;
-    $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); };
+    $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); await loadAssetCollections(true); };
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;

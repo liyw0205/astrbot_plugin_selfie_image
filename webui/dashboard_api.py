@@ -744,6 +744,14 @@ class SelfieImageDashboardAPI:
             lambda: self._asset_collection_controller.delete(collection_id)
         )
 
+    async def page_asset_collection_restore(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        return self._asset_result(
+            lambda: self._asset_collection_controller.restore(payload)
+        )
+
     async def _asset_collection_records(self, collection_id: str, *, remove: bool) -> Any:
         payload, error = await self._json_object_payload()
         if error:

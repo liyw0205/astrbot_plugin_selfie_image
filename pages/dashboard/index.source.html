@@ -299,6 +299,25 @@
         <div><label>结束日期</label><input id="assetEndTime" type="date"></div>
       </div>
       <div id="assetStats" class="stat-grid" style="margin-top:12px"></div>
+      <div class="asset-collection-panel">
+        <div class="between">
+          <div>
+            <h3>资产集合</h3>
+            <p class="muted">把当前选中的资产加入集合；删除集合后可在短时间内撤销。</p>
+          </div>
+          <button class="secondary mini" type="button" onclick="loadAssetCollections(true)" title="刷新集合">刷新集合</button>
+        </div>
+        <div class="asset-collection-form">
+          <input id="assetCollectionName" placeholder="新集合名称" aria-label="新集合名称">
+          <input id="assetCollectionNote" placeholder="集合备注（可选）" aria-label="集合备注">
+          <button class="secondary mini" type="button" onclick="createAssetCollection()">创建集合</button>
+          <select id="assetCollectionSelect" aria-label="选择资产集合"><option value="">选择集合</option></select>
+          <button class="secondary mini" type="button" onclick="addSelectedAssetsToCollection()">加入选中集合</button>
+          <button class="secondary mini" type="button" onclick="removeSelectedAssetsFromCollection()">从集合移除</button>
+        </div>
+        <div id="assetCollectionList" class="asset-collection-list"></div>
+        <div id="assetCollectionStatus" class="muted" role="status"></div>
+      </div>
       <div class="asset-toolbar">
         <span id="assetSelectionStatus" class="muted">当前页未选择资产</span>
         <div class="actions">

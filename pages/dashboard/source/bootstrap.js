@@ -8,7 +8,7 @@
       document.querySelectorAll('nav.page-nav button').forEach(item => item.classList.toggle('active', item === button));
       document.querySelectorAll('main.app-shell > section').forEach(item => item.classList.toggle('active', item === section));
       if (target === 'monitor') { loadRecords(false); loadMetrics(); loadTasks(); }
-      if (target === 'assets') { loadAssets(); loadAssetTags(); loadAssetStudioPresets(); }
+      if (target === 'assets') { loadAssets(); loadAssetTags(); loadAssetStudioPresets(); loadAssetCollections(); }
       if (target === 'studio') loadStudioList(STUDIO.current && STUDIO.current.id);
       if (target === 'creativeCanvas') loadCreativeCanvasList(CREATIVE_CANVAS.current && CREATIVE_CANVAS.current.id);
       if (target === 'presets') loadManagedPromptPresets(PRESET_KIND);
@@ -112,7 +112,7 @@
     $('presetEditorSaveBtn').onclick = saveManagedPromptPreset;
     $('presetTransferCopyBtn').onclick = copyPresetTransfer;
     $('presetTransferImportBtn').onclick = importPresetTransfer;
-    $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); };
+    $('reloadAll').onclick = async () => { clearPickerCache(); clearGalleryPickerCache(); await checkHealth(); await loadConfig(); await refreshSelfie(); await loadRecords(true); await loadMetrics(); await loadTasks(false); await loadAssets(true); await loadAssetTags(true); await loadAssetStudioPresets(); await loadAssetCollections(true); };
     $('pageSaveAll').onclick = saveAll;
     $('modalBaseUrlRestore') && ($('modalBaseUrlRestore').onclick = restoreModalBaseUrlDefault);
     $('modalSave').onclick = saveChannelModal;

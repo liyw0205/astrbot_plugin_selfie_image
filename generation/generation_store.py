@@ -109,6 +109,12 @@ class GenerationStoreMixin(PromptLookupMixin):
             raise ValueError("资产集合存储不可用")
         return store.delete(collection_id)
 
+    def restore_asset_collection(self, token: str) -> Dict[str, Any]:
+        store = getattr(self, "asset_collections", None)
+        if store is None:
+            raise ValueError("资产集合存储不可用")
+        return store.restore(token)
+
     def update_asset_collection_records(self, collection_id: str, payload: Mapping[str, Any], *, remove: bool = False) -> Dict[str, Any]:
         store = getattr(self, "asset_collections", None)
         if store is None:
