@@ -7,8 +7,11 @@ import copy
 import hashlib
 import json
 import os
+import shutil
+import stat
 import threading
 import time
+from contextlib import suppress
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional
 from astrbot.api import logger
@@ -16,7 +19,6 @@ from astrbot.api import logger
 from ..core.async_compat import mark_task_cancelling
 from ..core.utils import (
     collect_record_cache_paths,
-    load_json_file,
     new_trace_id,
     redact_sensitive_data,
     redact_sensitive_text,
@@ -83,6 +85,109 @@ class WebTaskMixin:
     def _web_task_timestamp(self) -> str:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
+    def _snapshot_load_failure(
+        self,
+        reason: str,
+        *,
+        blocked: bool,
+        recovery_path: str = "",
+    ) -> None:
+        """Keep task snapshot read failures visible without retaining raw input."""
+        self._web_task_snapshot_read_failed = True
+        self._web_task_snapshot_load_error = redact_sensitive_text(str(reason or "任务快照读取失败"))[:320]
+        self._web_task_snapshot_load_blocked = bool(blocked)
+        self._web_task_snapshot_recovery_file = os.path.basename(str(recovery_path or ""))[:160]
+
+    @staticmethod
+    def _quarantine_task_snapshot(path: str) -> str:
+        """Copy malformed JSON aside while keeping the original for manual recovery."""
+        source = str(path or "").strip()
+        if not source:
+            return ""
+        for _ in range(3):
+            target = f"{source}.corrupt-{time.time_ns()}"
+            try:
+                descriptor = os.open(
+                    target,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                with os.fdopen(descriptor, "wb") as output, open(source, "rb") as incoming:
+                    shutil.copyfileobj(incoming, output)
+                    output.flush()
+                    os.fsync(output.fileno())
+                return target
+            except FileNotFoundError:
+                with suppress(OSError):
+                    os.unlink(target)
+                return ""
+            except FileExistsError:
+                continue
+            except OSError:
+                with suppress(OSError):
+                    os.unlink(target)
+                return ""
+        return ""
+
+    def _read_web_task_snapshot(self) -> Dict[str, Any]:
+        """Read a task snapshot while preserving corrupt or unsafe source files."""
+        path = str(getattr(self, "tasks_path", "") or "").strip()
+        self._web_task_snapshot_load_error = ""
+        self._web_task_snapshot_load_blocked = False
+        self._web_task_snapshot_recovery_file = ""
+        self._web_task_snapshot_file_present = False
+        self._web_task_snapshot_read_failed = False
+        if not path:
+            return {}
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            return {}
+        except OSError:
+            self._snapshot_load_failure("任务快照读取失败，拒绝覆盖原文件", blocked=True)
+            return {}
+        self._web_task_snapshot_file_present = True
+        self._web_task_snapshot_size_bytes = int(getattr(info, "st_size", 0) or 0)
+        if stat.S_ISLNK(info.st_mode):
+            self._snapshot_load_failure("任务快照是符号链接，拒绝读取和覆盖", blocked=True)
+            return {}
+        if not stat.S_ISREG(info.st_mode):
+            self._snapshot_load_failure("任务快照不是普通文件，拒绝读取和覆盖", blocked=True)
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8-sig") as incoming:
+                data = json.load(incoming)
+        except (json.JSONDecodeError, UnicodeError, ValueError, TypeError, OverflowError, RecursionError):
+            recovery_path = self._quarantine_task_snapshot(path)
+            if recovery_path:
+                self._snapshot_load_failure("任务快照 JSON 损坏，原文件已隔离；请人工恢复", blocked=True, recovery_path=recovery_path)
+            else:
+                self._snapshot_load_failure("任务快照 JSON 损坏，原文件无法隔离", blocked=True)
+            return {}
+        except OSError:
+            self._snapshot_load_failure("任务快照读取失败，拒绝覆盖原文件", blocked=True)
+            return {}
+        if not isinstance(data, dict):
+            recovery_path = self._quarantine_task_snapshot(path)
+            if recovery_path:
+                self._snapshot_load_failure("任务快照结构无效，原文件已隔离；请人工恢复", blocked=True, recovery_path=recovery_path)
+            else:
+                self._snapshot_load_failure("任务快照结构无效，原文件无法隔离", blocked=True)
+            return {}
+        return data
+
+    def _reject_loaded_task_snapshot(self, reason: str) -> Dict[str, Any]:
+        """Quarantine a structurally invalid object before any write can prune it."""
+        path = str(getattr(self, "tasks_path", "") or "").strip()
+        recovery_path = self._quarantine_task_snapshot(path)
+        if recovery_path:
+            self._snapshot_load_failure(
+                f"{reason}，原文件已隔离；请人工恢复", blocked=True, recovery_path=recovery_path,
+            )
+        else:
+            self._snapshot_load_failure(f"{reason}，原文件无法隔离", blocked=True)
+        return {}
+
     @staticmethod
     def _task_progress_defaults(requested_count: Any = 1) -> Dict[str, Any]:
         """Return stable progress fields for newly persisted generation tasks."""
@@ -116,9 +221,17 @@ class WebTaskMixin:
         }
 
     def _load_web_tasks(self) -> Dict[str, Dict[str, Any]]:
-        data = load_json_file(self.tasks_path)
+        data = self._read_web_task_snapshot()
         if not isinstance(data, dict):
             return {}
+        if getattr(self, "_web_task_snapshot_read_failed", False):
+            return {}
+        if getattr(self, "_web_task_snapshot_file_present", False) and "tasks" not in data:
+            return self._reject_loaded_task_snapshot("任务快照缺少 tasks 字段")
+        if "tasks" in data and not isinstance(data.get("tasks"), dict):
+            return self._reject_loaded_task_snapshot("任务快照 tasks 字段结构无效")
+        if "snapshot" in data and not isinstance(data.get("snapshot"), dict):
+            return self._reject_loaded_task_snapshot("任务快照 snapshot 字段结构无效")
         snapshot = data.get("snapshot") if isinstance(data.get("snapshot"), dict) else {}
         # Snapshot metadata was added after the original ``{"tasks": ...}``
         # format.  All fields are optional so old files remain readable.
@@ -146,6 +259,16 @@ class WebTaskMixin:
             str(snapshot.get("recent_task_failure_reason") or "")
         )[:320]
         self._web_task_last_failure_at = str(snapshot.get("recent_task_failure_at") or "")[:64]
+        if not self._web_task_snapshot_load_error:
+            self._web_task_snapshot_load_error = redact_sensitive_text(
+                str(snapshot.get("load_error") or "")
+            )[:320]
+        self._web_task_snapshot_recovery_file = os.path.basename(
+            str(snapshot.get("load_recovery_file") or getattr(self, "_web_task_snapshot_recovery_file", ""))
+        )[:160]
+        self._web_task_snapshot_load_blocked = bool(
+            getattr(self, "_web_task_snapshot_load_blocked", False)
+        )
         try:
             self._web_task_snapshot_size_bytes = os.path.getsize(self.tasks_path)
         except OSError:
@@ -163,7 +286,7 @@ class WebTaskMixin:
         changed_on_start = False
         for task_id, raw in raw_tasks.items():
             if not isinstance(raw, dict):
-                continue
+                return self._reject_loaded_task_snapshot("任务快照任务条目结构无效")
             task = copy.deepcopy(raw)
             task["task_id"] = str(task.get("task_id") or task_id)
             for key, value in self._task_runtime_defaults().items():
@@ -216,7 +339,11 @@ class WebTaskMixin:
 
     def _snapshot_health_locked(self) -> Dict[str, Any]:
         """Return bounded operational metadata for the health endpoint."""
+        load_error = redact_sensitive_text(
+            str(getattr(self, "_web_task_snapshot_load_error", "") or "")
+        )[:320]
         return {
+            "status": "error" if load_error or getattr(self, "_web_task_snapshot_load_blocked", False) else "ok",
             "version": int(getattr(self, "_web_task_snapshot_version", 0) or 0),
             "snapshot_version": int(getattr(self, "_web_task_snapshot_version", 0) or 0),
             "metadata_version": self.TASK_SNAPSHOT_METADATA_VERSION,
@@ -230,6 +357,11 @@ class WebTaskMixin:
                 str(getattr(self, "_web_task_snapshot_last_failure_reason", "") or "")
             )[:320],
             "last_failure_at": str(getattr(self, "_web_task_snapshot_last_failure_at", "") or "")[:64],
+            "load_error": load_error,
+            "load_recovery_file": os.path.basename(
+                str(getattr(self, "_web_task_snapshot_recovery_file", "") or "")
+            )[:160],
+            "load_blocked": bool(getattr(self, "_web_task_snapshot_load_blocked", False)),
             "recent_task_failure_reason": redact_sensitive_text(
                 str(getattr(self, "_web_task_last_failure_reason", "") or "")
             )[:320],
@@ -249,11 +381,17 @@ class WebTaskMixin:
         size_bytes = int(getattr(self, "_web_task_snapshot_size_bytes", 0) or 0)
         max_bytes = self._task_snapshot_byte_limit()
         over_budget = size_bytes > max_bytes
+        load_error = redact_sensitive_text(
+            str(getattr(self, "_web_task_snapshot_load_error", "") or "")
+        )[:320]
+        warning = self._task_snapshot_budget_warning() if over_budget else ""
+        if load_error:
+            warning = f"{warning}；{load_error}" if warning else load_error
         return {
             "size_bytes": size_bytes,
             "max_bytes": max_bytes,
             "over_budget": over_budget,
-            "warning": self._task_snapshot_budget_warning() if over_budget else "",
+            "warning": warning,
             "evicted_task_count": int(getattr(self, "_web_task_snapshot_evicted_task_count", 0) or 0),
             "compacted_task_count": int(getattr(self, "_web_task_snapshot_compacted_task_count", 0) or 0),
         }
@@ -426,6 +564,8 @@ class WebTaskMixin:
         if timer is not None:
             timer.cancel()
             self._web_task_snapshot_timer = None
+        if getattr(self, "_web_task_snapshot_load_blocked", False):
+            raise OSError("任务快照读取失败，拒绝覆盖原文件")
         path = str(getattr(self, "tasks_path", "") or "").strip()
         if not path:
             return
@@ -446,6 +586,12 @@ class WebTaskMixin:
                 str(getattr(self, "_web_task_snapshot_last_failure_reason", "") or "")
             )[:320],
             "last_failure_at": str(getattr(self, "_web_task_snapshot_last_failure_at", "") or "")[:64],
+            "load_error": redact_sensitive_text(
+                str(getattr(self, "_web_task_snapshot_load_error", "") or "")
+            )[:320],
+            "load_recovery_file": os.path.basename(
+                str(getattr(self, "_web_task_snapshot_recovery_file", "") or "")
+            )[:160],
             "recent_task_failure_reason": redact_sensitive_text(
                 str(getattr(self, "_web_task_last_failure_reason", "") or "")
             )[:320],
@@ -488,12 +634,15 @@ class WebTaskMixin:
 
         def flush() -> None:
             with self._web_task_lock:
-                if version != getattr(self, "_web_task_snapshot_version", 0):
-                    return
                 try:
+                    if version != getattr(self, "_web_task_snapshot_version", 0):
+                        return
                     self._persist_web_tasks_locked()
                 except Exception as exc:
                     logger.error("[SelfieImage] 任务进度快照写入失败: %s", exc)
+                finally:
+                    if self._web_task_snapshot_timer is timer:
+                        self._web_task_snapshot_timer = None
 
         timer = threading.Timer(self.WEB_TASK_SNAPSHOT_DELAY, flush)
         timer.daemon = True

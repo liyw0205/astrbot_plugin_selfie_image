@@ -4,11 +4,11 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-最新完整发布验证基线（2026-11-15，1.7.39）：
+最新完整发布验证基线（2026-11-16，1.7.40）：
 
-- 全量 pytest `3619 passed, 1 skipped, 702 subtests passed`，耗时 368.69 秒（发布门禁运行）；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3630 passed, 1 skipped, 702 subtests passed`，耗时 301.13 秒（发布门禁运行）；完整发布门禁通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；64 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：148 个文件，ZIP 2,442,209 字节、解压 5,743,097 字节；单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
+- 临时运行期 ZIP 检查：148 个文件，ZIP 2,445,192 字节、解压 5,758,387 字节；单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证。
 
 主要结构性事实：
@@ -86,6 +86,8 @@
 - `/自拍` 的原始消息/数量/预设解析与日程准备，以及共享 handler 的额度/限流、画幅解析、引用图筛选、进度和任务创建移入 `SelfieWorkflowService`；插件侧 `cmd_selfie`、`_handle_selfie_command` 的公开/内部签名保留为薄代理，COS/腿部/合影命令仍调用相同公共实现。新成功路径测试覆盖任务元数据、主形象引用、队列提示和批处理 runner。
 - `/看看腿`、`/看看COS`、`/看看你`、`/合影` 的特色解析、预设和任务派发，以及 COS/自拍/合影引用选择逻辑也迁入 `SelfieWorkflowService`；插件侧所有命令与 reference helper 保留原签名的薄代理。对命令解析、套装硬约束、引用选择、persona fallback 和旧 hook 覆盖路径的定向回归通过。
 - P3 任务体验切片已落地：任务详情新增有界脱敏的逐图阶段/模型/生成/投递/耗时结果，任务列表继续保持轻量；批量重试支持 `all` 与 `failed` 范围，失败范围排除已成功记录；资产批量标签、备注、收藏和置顶成功后通过现有元数据导出/导入提供短时撤销。Dashboard 源页、生成页和 Flask fallback 已同步，并补充任务状态、脱敏、撤销提示及 Node 回归。
+- 本轮将 HTTP 会话池健康统计扩展到请求、连接创建、连接复用和请求失败，并按直连/HTTP/SOCKS 分类；同步健康接口读取与事件循环计数更新，连接池字段不可用时安全降级。
+- 本轮为任务快照增加损坏 JSON、错误结构、非普通文件和符号链接保护；原文件保留并隔离为 `.corrupt-*`，阻断覆盖并在健康接口标记加载错误；最终卸载刷盘失败只记录日志，不阻断插件退出。
 
 ## 2. 优先级总览
 
@@ -117,7 +119,7 @@
 
 `.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。支持 `--layer all/python/frontend/static`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
 
-上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.39`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
+上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.40`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，多 Python 版本与 Node CI 结果以本次推送后的工作流为准。
 
 制品基线和验证结果见上方“最新完整发布验证基线”。该制品仅代表本地当前工作区构建，发布前仍需在目标宿主验证真实通知投递和字体资源。
 

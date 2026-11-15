@@ -123,7 +123,88 @@ class ClientSessionRegistryTests(unittest.IsolatedAsyncioTestCase):
                 async with session.get(f"http://127.0.0.1:{port}/health") as response:
                     self.assertEqual(await response.text(), "ok")
             self.assertEqual(len(peer_ports), 1)
-            self.assertEqual(registry.get_stats()["hits"], 1)
+            stats = registry.get_stats()
+            self.assertEqual(stats["hits"], 1)
+            self.assertEqual(stats["requests"], 2)
+            self.assertEqual(stats["connection_created"], 1)
+            self.assertGreaterEqual(stats["connection_reused"], 1)
+            self.assertEqual(stats["request_failures"], 0)
+            self.assertEqual(stats["requests_by_transport"]["direct"], 2)
+            self.assertEqual(stats["connection_created_by_transport"]["direct"], 1)
+            self.assertGreaterEqual(stats["connection_reused_by_transport"]["direct"], 1)
+            self.assertGreaterEqual(stats["idle_connections"], 1)
+            self.assertGreaterEqual(stats["pool_connections"], 1)
+            self.assertGreaterEqual(stats["idle_connections_by_transport"]["direct"], 1)
+        finally:
+            await registry.close()
+            await runner.cleanup()
+
+    async def test_registry_reports_connections_acquired_during_request(self) -> None:
+        from aiohttp import web
+
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def handle(_request):
+            entered.set()
+            await release.wait()
+            return web.Response(text="held")
+
+        app = web.Application()
+        app.router.add_get("/held", handle)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        registry = ClientSessionRegistry()
+        try:
+            session = await registry.get_session()
+
+            async def fetch():
+                async with session.get(f"http://127.0.0.1:{port}/held") as response:
+                    return await response.text()
+
+            request = asyncio.create_task(fetch())
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            stats = registry.get_stats()
+            thread_snapshot = await asyncio.to_thread(registry.get_stats)
+            self.assertGreaterEqual(stats["active_connections"], 1)
+            self.assertGreaterEqual(stats["pool_connections"], 1)
+            self.assertGreaterEqual(stats["active_connections_by_transport"]["direct"], 1)
+            self.assertEqual(thread_snapshot["requests"], 1)
+            self.assertEqual(thread_snapshot["request_failures"], 0)
+            release.set()
+            self.assertEqual(await request, "held")
+        finally:
+            if not release.is_set():
+                release.set()
+            await registry.close()
+            await runner.cleanup()
+
+    async def test_registry_counts_http_failure_responses(self) -> None:
+        from aiohttp import web
+
+        async def handle(_request):
+            return web.Response(status=503, text="upstream unavailable")
+
+        app = web.Application()
+        app.router.add_get("/failure", handle)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        registry = ClientSessionRegistry()
+        try:
+            session = await registry.get_session()
+            async with session.get(f"http://127.0.0.1:{port}/failure") as response:
+                self.assertEqual(response.status, 503)
+                await response.read()
+            stats = registry.get_stats()
+            self.assertEqual(stats["requests"], 1)
+            self.assertEqual(stats["request_failures"], 1)
+            self.assertEqual(stats["request_failures_by_transport"]["direct"], 1)
         finally:
             await registry.close()
             await runner.cleanup()

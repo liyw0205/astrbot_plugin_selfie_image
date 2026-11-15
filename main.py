@@ -515,7 +515,12 @@ class SelfieImagePlugin(
 
     def _flush_web_task_snapshots(self) -> None:
         with self._web_task_lock:
-            self._persist_web_tasks_locked()
+            try:
+                self._persist_web_tasks_locked()
+            except Exception as exc:
+                # A quarantined or otherwise unreadable snapshot must not
+                # prevent the rest of plugin shutdown from completing.
+                logger.error("[SelfieImage] 任务快照最终写入失败: %s", exc)
 
     def _today_key(self) -> str:
         return time.strftime("%Y-%m-%d", time.localtime())

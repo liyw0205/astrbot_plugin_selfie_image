@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
@@ -79,6 +80,10 @@ class ClientSessionRegistry:
             else max(0.0, float(idle_timeout_seconds))
         )
         self._state_lock = asyncio.Lock()
+        # Health is read by synchronous Flask handlers while aiohttp updates
+        # counters on the event loop.  Keep the snapshot path independent of
+        # the asyncio lock so cross-thread reads cannot observe partial state.
+        self._health_lock = threading.RLock()
         self._stats: Dict[str, Any] = {
             "lookups": 0,
             "hits": 0,
@@ -89,6 +94,14 @@ class ClientSessionRegistry:
             "close_failures": 0,
             "failures": 0,
             "failure_reasons": {},
+            "requests": 0,
+            "connection_created": 0,
+            "connection_reused": 0,
+            "request_failures": 0,
+            "requests_by_transport": {"direct": 0, "http": 0, "socks": 0},
+            "connection_created_by_transport": {"direct": 0, "http": 0, "socks": 0},
+            "connection_reused_by_transport": {"direct": 0, "http": 0, "socks": 0},
+            "request_failures_by_transport": {"direct": 0, "http": 0, "socks": 0},
         }
 
     @staticmethod
@@ -101,28 +114,32 @@ class ClientSessionRegistry:
         return acquired is not None and not acquired
 
     async def _reap_idle_sessions(self, idle_timeout_seconds: Optional[float] = None) -> int:
-        if self._closed:
-            return 0
+        with self._health_lock:
+            if self._closed:
+                return 0
         timeout = self._idle_timeout_seconds if idle_timeout_seconds is None else max(0.0, float(idle_timeout_seconds))
         if timeout is None:
             return 0
         now = time.monotonic()
         stale = []
-        for key, session in list(self._sessions.items()):
-            last_used = self._last_used.get(key, now)
-            if not session.closed and now - last_used >= timeout and self._connector_is_idle(session):
-                stale.append((key, session))
+        with self._health_lock:
+            for key, session in list(self._sessions.items()):
+                last_used = self._last_used.get(key, now)
+                if not session.closed and now - last_used >= timeout and self._connector_is_idle(session):
+                    stale.append((key, session))
         for key, session in stale:
-            if self._sessions.get(key) is not session:
-                continue
-            self._sessions.pop(key, None)
-            self._last_used.pop(key, None)
-            self._stats["recycled"] += 1
-            self._stats["closed"] += 1
+            with self._health_lock:
+                if self._sessions.get(key) is not session:
+                    continue
+                self._sessions.pop(key, None)
+                self._last_used.pop(key, None)
+                self._stats["recycled"] += 1
+                self._stats["closed"] += 1
             try:
                 await session.close()
             except Exception as exc:
-                self._stats["close_failures"] += 1
+                with self._health_lock:
+                    self._stats["close_failures"] += 1
                 self._record_failure(exc)
         return len(stale)
 
@@ -143,44 +160,144 @@ class ClientSessionRegistry:
         return type(exc).__name__
 
     def _record_failure(self, exc: BaseException) -> None:
-        self._stats["failures"] += 1
-        reasons = self._stats["failure_reasons"]
-        reason = self._failure_reason(exc)
-        # A malformed upstream error must not create an unbounded health map.
-        if reason not in reasons and len(reasons) >= 16:
-            reason = "OtherError"
-            if reason not in reasons:
-                oldest = next(iter(reasons), None)
-                if oldest is not None:
-                    del reasons[oldest]
-        reasons[reason] = int(reasons.get(reason, 0)) + 1
+        with self._health_lock:
+            self._stats["failures"] += 1
+            reasons = self._stats["failure_reasons"]
+            reason = self._failure_reason(exc)
+            # A malformed upstream error must not create an unbounded health map.
+            if reason not in reasons and len(reasons) >= 16:
+                reason = "OtherError"
+                if reason not in reasons:
+                    oldest = next(iter(reasons), None)
+                    if oldest is not None:
+                        del reasons[oldest]
+            reasons[reason] = int(reasons.get(reason, 0)) + 1
+
+    def _record_transport_metric(self, transport: str, metric: str) -> None:
+        """Record a bounded request/connection event from aiohttp tracing."""
+        if metric not in {
+            "requests", "connection_created", "connection_reused", "request_failures",
+        }:
+            return
+        transport_key = transport if transport in {"direct", "http", "socks"} else "direct"
+        with self._health_lock:
+            self._stats[metric] += 1
+            by_transport = self._stats[f"{metric}_by_transport"]
+            by_transport[transport_key] = int(by_transport.get(transport_key, 0)) + 1
+
+    def _trace_config(self, transport: str) -> aiohttp.TraceConfig:
+        """Build request tracing bound to one registry transport identity."""
+        trace = aiohttp.TraceConfig()
+
+        async def request_start(_session, _ctx, _params):
+            self._record_transport_metric(transport, "requests")
+
+        async def connection_created(_session, _ctx, _params):
+            self._record_transport_metric(transport, "connection_created")
+
+        async def connection_reused(_session, _ctx, _params):
+            self._record_transport_metric(transport, "connection_reused")
+
+        async def request_end(_session, _ctx, params):
+            response = getattr(params, "response", None)
+            try:
+                failed = response is not None and int(getattr(response, "status", 0)) >= 400
+            except (TypeError, ValueError):
+                failed = False
+            if failed:
+                self._record_transport_metric(transport, "request_failures")
+
+        async def request_exception(_session, _ctx, _params):
+            self._record_transport_metric(transport, "request_failures")
+
+        trace.on_request_start.append(request_start)
+        trace.on_connection_create_end.append(connection_created)
+        trace.on_connection_reuseconn.append(connection_reused)
+        trace.on_request_end.append(request_end)
+        trace.on_request_exception.append(request_exception)
+        return trace
+
+    @staticmethod
+    def _connector_pool_counts(session: aiohttp.ClientSession) -> tuple[int, int]:
+        """Read connector pool sizes without depending on one aiohttp version.
+
+        ``_acquired`` and ``_conns`` are private aiohttp attributes, but their
+        shape has remained stable across the supported releases.  Health
+        reporting must degrade to zero when a replacement connector does not
+        expose them; it must never affect request handling.
+        """
+        connector = getattr(session, "connector", None)
+        if connector is None:
+            return 0, 0
+        try:
+            active = len(getattr(connector, "_acquired", ()) or ())
+        except (TypeError, AttributeError, RuntimeError):
+            active = 0
+        idle = 0
+        pools = getattr(connector, "_conns", {}) or {}
+        try:
+            # Copy the values first: a response can return a connection to the
+            # pool while a synchronous health endpoint is taking its snapshot.
+            values = list(pools.values())
+        except (AttributeError, RuntimeError):
+            values = ()
+        for entries in values:
+            try:
+                idle += len(entries)
+            except (TypeError, AttributeError, RuntimeError):
+                continue
+        return int(active), int(idle)
 
     def get_stats(self) -> Dict[str, Any]:
         """Return bounded, credential-free session-pool health counters."""
-        active_by_transport = {"direct": 0, "http": 0, "socks": 0}
-        for key, session in self._sessions.items():
-            if session.closed:
-                continue
-            transport = key[0] if key and key[0] in active_by_transport else "direct"
-            active_by_transport[transport] += 1
-        active_sessions = sum(active_by_transport.values())
-        return {
-            "status": "closed" if self._closed else "ok",
-            "registry_closed": self._closed,
-            "idle_timeout_seconds": self._idle_timeout_seconds,
-            "lookups": int(self._stats["lookups"]),
-            "hits": int(self._stats["hits"]),
-            "reuse_hits": int(self._stats["hits"]),
-            "misses": int(self._stats["misses"]),
-            "created": int(self._stats["created"]),
-            "recycled": int(self._stats["recycled"]),
-            "closed": int(self._stats["closed"]),
-            "close_failures": int(self._stats["close_failures"]),
-            "failures": int(self._stats["failures"]),
-            "failure_reasons": dict(self._stats["failure_reasons"]),
-            "active_sessions": active_sessions,
-            "active_by_transport": active_by_transport,
-        }
+        with self._health_lock:
+            active_by_transport = {"direct": 0, "http": 0, "socks": 0}
+            active_connections_by_transport = {"direct": 0, "http": 0, "socks": 0}
+            idle_connections_by_transport = {"direct": 0, "http": 0, "socks": 0}
+            for key, session in list(self._sessions.items()):
+                if session.closed:
+                    continue
+                transport = key[0] if key and key[0] in active_by_transport else "direct"
+                active_by_transport[transport] += 1
+                active_connections, idle_connections = self._connector_pool_counts(session)
+                active_connections_by_transport[transport] += active_connections
+                idle_connections_by_transport[transport] += idle_connections
+            active_sessions = sum(active_by_transport.values())
+            active_connections = sum(active_connections_by_transport.values())
+            idle_connections = sum(idle_connections_by_transport.values())
+            return {
+                "status": "closed" if self._closed else "ok",
+                "registry_closed": self._closed,
+                "idle_timeout_seconds": self._idle_timeout_seconds,
+                "lookups": int(self._stats["lookups"]),
+                "hits": int(self._stats["hits"]),
+                "reuse_hits": int(self._stats["hits"]),
+                "misses": int(self._stats["misses"]),
+                "created": int(self._stats["created"]),
+                "recycled": int(self._stats["recycled"]),
+                "closed": int(self._stats["closed"]),
+                "close_failures": int(self._stats["close_failures"]),
+                "failures": int(self._stats["failures"]),
+                "failure_reasons": dict(self._stats["failure_reasons"]),
+                "active_sessions": active_sessions,
+                "active_by_transport": active_by_transport,
+                # Session count only describes registry ownership.  These pool
+                # counters expose whether keep-alive sockets are actually active
+                # or available for reuse.
+                "active_connections": active_connections,
+                "idle_connections": idle_connections,
+                "pool_connections": active_connections + idle_connections,
+                "active_connections_by_transport": active_connections_by_transport,
+                "idle_connections_by_transport": idle_connections_by_transport,
+                "requests": int(self._stats["requests"]),
+                "connection_created": int(self._stats["connection_created"]),
+                "connection_reused": int(self._stats["connection_reused"]),
+                "request_failures": int(self._stats["request_failures"]),
+                "requests_by_transport": dict(self._stats["requests_by_transport"]),
+                "connection_created_by_transport": dict(self._stats["connection_created_by_transport"]),
+                "connection_reused_by_transport": dict(self._stats["connection_reused_by_transport"]),
+                "request_failures_by_transport": dict(self._stats["request_failures_by_transport"]),
+            }
 
     @staticmethod
     def _session_key(proxy_value: str) -> tuple[str, str]:
@@ -202,35 +319,40 @@ class ClientSessionRegistry:
         loop's perspective; aiohttp opens sockets lazily on the first
         request, so concurrent callers can safely share the resulting object.
         """
-        self._stats["lookups"] += 1
+        with self._health_lock:
+            self._stats["lookups"] += 1
         async with self._state_lock:
-            if self._closed:
-                error = RuntimeError("HTTP session registry is closed")
-                self._record_failure(error)
-                raise error
+            with self._health_lock:
+                if self._closed:
+                    error = RuntimeError("HTTP session registry is closed")
+                    self._record_failure(error)
+                    raise error
             await self._reap_idle_sessions()
             try:
                 key = self._session_key(proxy_value)
             except Exception as exc:
-                self._stats["misses"] += 1
+                with self._health_lock:
+                    self._stats["misses"] += 1
                 self._record_failure(exc)
                 raise
-            session = self._sessions.get(key)
-            if session is not None and not session.closed:
-                self._stats["hits"] += 1
-                self._last_used[key] = time.monotonic()
-                return session
-            self._stats["misses"] += 1
-            if session is not None:
-                self._stats["recycled"] += 1
-                self._sessions.pop(key, None)
-                self._last_used.pop(key, None)
+            with self._health_lock:
+                session = self._sessions.get(key)
+                if session is not None and not session.closed:
+                    self._stats["hits"] += 1
+                    self._last_used[key] = time.monotonic()
+                    return session
+                self._stats["misses"] += 1
+                if session is not None:
+                    self._stats["recycled"] += 1
+                    self._sessions.pop(key, None)
+                    self._last_used.pop(key, None)
 
             try:
                 proxy = parse_channel_proxy(proxy_value)
                 kwargs: Dict[str, Any] = {
                     "trust_env": False,
                     "cookie_jar": aiohttp.DummyCookieJar(),
+                    "trace_configs": [self._trace_config(key[0])],
                 }
                 if timeout_seconds is not None:
                     kwargs["timeout"] = image_client_timeout(timeout_seconds)
@@ -244,20 +366,22 @@ class ClientSessionRegistry:
             except Exception as exc:
                 self._record_failure(exc)
                 raise
-            self._sessions[key] = session
-            self._last_used[key] = time.monotonic()
-            self._stats["created"] += 1
+            with self._health_lock:
+                self._sessions[key] = session
+                self._last_used[key] = time.monotonic()
+                self._stats["created"] += 1
             return session
 
     async def close(self) -> None:
         """Close every owned session and make the registry unusable."""
         async with self._state_lock:
-            sessions = list(self._sessions.values())
-            self._sessions.clear()
-            self._last_used.clear()
-            self._closed = True
-            open_sessions = [session for session in sessions if not session.closed]
-            self._stats["closed"] += len(open_sessions)
+            with self._health_lock:
+                sessions = list(self._sessions.values())
+                self._sessions.clear()
+                self._last_used.clear()
+                self._closed = True
+                open_sessions = [session for session in sessions if not session.closed]
+                self._stats["closed"] += len(open_sessions)
             if open_sessions:
                 results = await asyncio.gather(
                     *(session.close() for session in open_sessions),
@@ -265,7 +389,8 @@ class ClientSessionRegistry:
                 )
                 for result in results:
                     if isinstance(result, BaseException):
-                        self._stats["close_failures"] += 1
+                        with self._health_lock:
+                            self._stats["close_failures"] += 1
                         self._record_failure(result)
 
 

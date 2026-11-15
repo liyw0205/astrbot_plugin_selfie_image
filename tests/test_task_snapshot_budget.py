@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -305,3 +306,77 @@ def test_legacy_terminal_snapshot_health_measures_file_including_whitespace(tmp_
     assert health["evicted_task_count"] == health["compacted_task_count"] == 0
     assert health["write_count"] == 0
     assert "snapshot" not in load_json_file(plugin.tasks_path)
+
+
+@pytest.mark.parametrize("payload", [
+    "{\"tasks\":",
+    "[]",
+    '{}',
+    '{"unexpected": true}',
+    '{"tasks": []}',
+    '{"tasks": {"broken": []}}',
+    '{"tasks": {}, "snapshot": []}',
+])
+def test_corrupt_task_snapshot_is_quarantined_and_health_stays_degraded(tmp_path, payload):
+    plugin = snapshot_plugin(tmp_path)
+    original = payload.encode("utf-8")
+    Path(plugin.tasks_path).write_bytes(original)
+
+    assert plugin._load_web_tasks() == {}
+    health = plugin.get_task_snapshot_health()
+    assert health["status"] == "error"
+    assert health["load_blocked"] is True
+    assert health["size_bytes"] == len(original)
+    assert any(marker in health["load_error"] for marker in ("损坏", "结构无效", "缺少"))
+    aggregate = build_health_payload(plugin)
+    assert aggregate["status"] == "degraded"
+    assert aggregate["task_snapshot_health"]["warning"] == health["load_error"]
+    quarantined = list(tmp_path.glob("tasks.json.corrupt-*"))
+    assert len(quarantined) == 1
+    assert Path(plugin.tasks_path).read_bytes() == original
+    assert quarantined[0].read_bytes() == original
+
+    # The original remains untouched until an operator restores or removes it;
+    # automatic lifecycle writes must not replace the only recovery artifact.
+    with pytest.raises(OSError, match="拒绝覆盖"):
+        plugin._persist_web_tasks_locked()
+    assert Path(plugin.tasks_path).read_bytes() == original
+
+    plugin._schedule_web_task_snapshot_locked()
+    deadline = time.monotonic() + 1
+    while plugin.get_task_snapshot_health()["pending"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert plugin.get_task_snapshot_health()["pending"] is False
+
+
+def test_unsafe_task_snapshot_is_never_read_or_overwritten(tmp_path):
+    plugin = snapshot_plugin(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"tasks":{"keep":{"status":"succeeded"}}}', encoding="utf-8")
+    Path(plugin.tasks_path).symlink_to(outside)
+
+    assert plugin._load_web_tasks() == {}
+    health = plugin.get_task_snapshot_health()
+    assert health["status"] == "error"
+    assert health["load_blocked"] is True
+    assert "符号链接" in health["load_error"]
+    with pytest.raises(OSError, match="拒绝覆盖"):
+        plugin._persist_web_tasks_locked()
+    assert Path(plugin.tasks_path).is_symlink()
+    assert outside.read_text(encoding="utf-8") == '{"tasks":{"keep":{"status":"succeeded"}}}'
+
+
+def test_blocked_snapshot_does_not_abort_final_shutdown_flush(tmp_path, monkeypatch):
+    from astrbot_plugin_selfie_image import main as plugin_main
+
+    plugin = snapshot_plugin(tmp_path)
+    original = b'{"tasks":'
+    Path(plugin.tasks_path).write_bytes(original)
+    plugin._load_web_tasks()
+    errors = []
+    monkeypatch.setattr(plugin_main.logger, "error", lambda *args: errors.append(args))
+
+    plugin_main.SelfieImagePlugin._flush_web_task_snapshots(plugin)
+
+    assert Path(plugin.tasks_path).read_bytes() == original
+    assert errors
