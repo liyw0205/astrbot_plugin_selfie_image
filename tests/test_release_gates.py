@@ -25,6 +25,13 @@ def version_fixture(root: Path) -> None:
     write(root, "CHANGELOG.md", "# Changes\n\n## 1.2.3 - 2026-11-14\n\n## 1.2.2 - 2026-11-13\n")
 
 
+def test_ci_workflow_runs_only_for_version_tags():
+    workflow = (checks.ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "on:\n  push:\n    tags:\n      - 'v*'" in workflow
+    assert "pull_request" not in workflow
+    assert "branches:" not in workflow
+
+
 def test_versions_read_current_declarations_and_ignore_history(tmp_path):
     version_fixture(tmp_path)
     assert checks.validate_versions(tmp_path) == "1.2.3"

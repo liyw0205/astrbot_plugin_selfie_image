@@ -350,6 +350,33 @@ def test_scalar_keyword_page_uses_one_filtered_scan_and_preserves_empty_page_cou
     assert metadata["filtered"] == 2
 
 
+def test_regular_page_uses_window_count_and_preserves_empty_page_count(tmp_path, monkeypatch):
+    database = RecordDatabase(str(tmp_path / "records.sqlite3"))
+    database.replace_records([
+        {"id": "new", "time": "2026-11-14 12:00:00", "prompt": "common marker"},
+        {"id": "old", "time": "2026-11-13 12:00:00", "prompt": "common marker"},
+        {"id": "other", "time": "2026-11-12 12:00:00", "prompt": "unrelated"},
+    ])
+    statements = []
+    original_connect = database._connect
+
+    def connect():
+        connection = original_connect()
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(database, "_connect", connect)
+    rows, metadata = database.query_records(model="", limit=1)
+    assert [row["id"] for row in rows] == ["new"]
+    assert metadata["filtered"] == 3
+    assert any("COUNT(*) OVER() AS filtered_count" in sql for sql in statements)
+    assert not any("SELECT COUNT(*) FROM retained WHERE" in sql for sql in statements)
+
+    rows, metadata = database.query_records(model="", limit=1, offset=5)
+    assert rows == []
+    assert metadata["filtered"] == 3
+
+
 def test_all_prefix_match_shortcut_returns_complete_filtered_count(tmp_path, monkeypatch):
     database = RecordDatabase(str(tmp_path / "records.sqlite3"))
     database.replace_records([

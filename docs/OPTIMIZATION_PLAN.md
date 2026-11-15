@@ -4,11 +4,11 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-本轮完整发布验证基线（2026-11-16，1.7.44）：
+本轮完整发布验证基线（2026-11-16，1.7.45）：
 
-- 全量 pytest `3647 passed, 1 skipped, 702 subtests passed`，耗时 395.61 秒；Python、Dashboard 和静态发布层门禁均通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3649 passed, 1 skipped, 702 subtests passed`，耗时 385.23 秒；Python、Dashboard 和静态发布层门禁均通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；64 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：148 个文件，ZIP 2,448,897 字节、解压 5,774,214 字节；单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
+- 临时运行期 ZIP 检查：148 个文件，ZIP 2,449,208 字节、解压 5,774,673 字节；单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证；本轮 SIGKILL 仅为本机进程中断演练，不等同真实断电。
 
 主要结构性事实：
@@ -122,7 +122,7 @@
 
 `.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。支持 `--layer all/python/frontend/static`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
 
-上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.44`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，CI 仅在推送 `v*` 版本 tag 后运行。
+上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.45`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，CI 仅在推送 `v*` 版本 tag 后运行。
 
 制品基线和验证结果见上方“最新完整发布验证基线”。该制品仅代表本地当前工作区构建，发布前仍需在目标宿主验证真实通知投递和字体资源。
 
@@ -372,6 +372,12 @@ python scripts/benchmark_record_database.py --records 100000 --samples 10 --keep
 trigram 无法为 1～2 字符或包含 NUL 的关键词生成候选。短词现在复用同一份 `generation_records_fts.search_text` 物化投影，仅执行 `instr(search_text, ?)` 精确确认，不再回退到逐行解析主表 JSON；FTS 表异常仍关闭该路径并回到原标量谓词。新增回归验证跨提示词/来源字段、结果元数据和 FTS 禁用后的等价结果。
 
 在 10k `bundled-assets` 仓库资产派生语料热查询中，关键词“自然”匹配 2,863 条记录，p50/p95 从标量路径约 `180.5/180.6 ms` 降至约 `38.4/38.6 ms`。该数据仍是合成语料和热缓存证据，不代表用户生产分布；冷缓存、并发写入和目标宿主环境仍需单独测量。
+
+#### 4.3.7 普通筛选窗口计数
+
+普通列表筛选此前先执行一次 `COUNT(*)`，再执行一次排序分页；最近、收藏和模型筛选会重复扫描同一保留集。现在所有筛选形状都在分页 CTE 中携带 `COUNT(*) OVER()`，有结果时由首行提供精确 `filtered` 数量；offset 超出结果范围时才回退到原精确计数查询。关键词的 FTS/标量候选、损坏 JSON 过滤、排序和 `total` 保留集口径均未改变。
+
+新增回归确认普通筛选使用窗口计数、空页仍返回完整数量，并保留普通/关键词结果契约一致。10k `bundled-assets` 热缓存基准（5 次样本，页面 30 条）中，最近、收藏、模型分页 p95 分别为 `14.2/11.5/12.7 ms`；短词精确扫描 p95 为 `38.6 ms`。这是本机合成热缓存数据，不代表冷缓存、并发写入或目标宿主的稳定上界。
 
 ### 4.4 任务快照暂不立即换库，先降低写放大
 

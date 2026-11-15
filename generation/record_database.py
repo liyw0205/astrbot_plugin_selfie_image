@@ -811,34 +811,30 @@ class RecordDatabase:
                         }
             where = " WHERE " + " AND ".join(clauses)
             try:
-                if keyword_text:
-                    page_query = (
-                        retained
-                        + ", filtered AS (SELECT id, time, seq, pinned, favorite, "
-                        "COUNT(*) OVER() AS filtered_count FROM retained"
-                        + where
-                        + f" ORDER BY {order} LIMIT ? OFFSET ?) "
-                        "SELECT generation_records.*, filtered.filtered_count "
-                        "FROM filtered JOIN generation_records ON generation_records.id = filtered.id "
-                        f"ORDER BY {order}"
-                    )
-                    rows = connection.execute(
-                        page_query, [*params, safe_limit, safe_offset]
-                    ).fetchall()
-                    if rows:
-                        count = int(rows[0]["filtered_count"])
-                    else:
-                        count = connection.execute(
-                            retained + "SELECT COUNT(*) FROM retained" + where, params
-                        ).fetchone()[0]
+                # Carry the filtered count with the page query for every filter
+                # shape.  Previously non-keyword pages scanned the retained set
+                # once for COUNT(*) and again for the ordered page.
+                page_query = (
+                    retained
+                    + ", filtered AS (SELECT id, time, seq, pinned, favorite, "
+                    "COUNT(*) OVER() AS filtered_count FROM retained"
+                    + where
+                    + f" ORDER BY {order} LIMIT ? OFFSET ?) "
+                    "SELECT generation_records.*, filtered.filtered_count "
+                    "FROM filtered JOIN generation_records ON generation_records.id = filtered.id "
+                    f"ORDER BY {order}"
+                )
+                rows = connection.execute(
+                    page_query, [*params, safe_limit, safe_offset]
+                ).fetchall()
+                if rows:
+                    count = int(rows[0]["filtered_count"])
                 else:
+                    # An offset past the end has no window row to carry the
+                    # count, so retain the exact-count fallback for empty pages.
                     count = connection.execute(
                         retained + "SELECT COUNT(*) FROM retained" + where, params
                     ).fetchone()[0]
-                    rows = connection.execute(
-                        retained + "SELECT * FROM retained" + where + f" ORDER BY {order} LIMIT ? OFFSET ?",
-                        [*params, safe_limit, safe_offset],
-                    ).fetchall()
             except sqlite3.DatabaseError:
                 if fts_param_index is None:
                     raise
