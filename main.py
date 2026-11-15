@@ -441,6 +441,21 @@ class SelfieImagePlugin(
             logger.warning(f"[SelfieImage] 启动缓存清理失败：{exc}")
         self._start_web_server()
 
+    def get_http_session_health(self) -> Dict[str, Any]:
+        """Expose credential-free image transport-pool counters to health APIs."""
+        registry = getattr(self, "_image_session_registry", None)
+        getter = getattr(registry, "get_stats", None)
+        if not callable(getter):
+            return {"status": "unavailable", "active_sessions": 0}
+        try:
+            return dict(getter() or {})
+        except Exception:
+            return {
+                "status": "error",
+                "active_sessions": 0,
+                "last_failure_reason": "HTTP 会话池健康信息读取失败",
+            }
+
     async def terminate(self) -> None:
         with self._web_task_lock:
             self._terminating = True

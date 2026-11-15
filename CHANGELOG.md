@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.7.34 - 2026-11-15
+
+- HTTP session registry 增加按直连/HTTP/SOCKS 分类的命中、创建、回收、关闭、失败原因和活动 session 健康统计；失败诊断只保留有限类别，不记录代理主机、凭据、完整 URL 或 Token。
+- 增加默认 15 分钟的惰性空闲 session 回收，插件卸载仍统一关闭；回收会避开 aiohttp 当前有活动连接的 connector，并保留按请求创建和同步兼容路径。
+- 健康接口和 Dashboard 同时暴露脱敏的 HTTP 会话池状态；新增真实本机回环连接复用、idle 回收和失败诊断回归。
+- 全量 pytest `3598 passed, 702 subtests passed`（291.99 秒）；compileall、无操作检查、Dashboard 构建/回退与 Node、版本/JSON/制品及 `git diff --check` 全部门禁通过。
+
 ## 1.7.33 - 2026-11-15
 
 - 记录查询的选择性 FTS 候选现在直接在 `generation_records_fts.search_text` 内完成精确子串确认，避免候选行再次解析主表 JSON；无 FTS、短词、宽候选及异常场景继续使用原标量回退。

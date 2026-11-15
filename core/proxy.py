@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import Any, AsyncIterator, Dict, Optional
@@ -66,9 +67,120 @@ class ClientSessionRegistry:
     sessions and is closed with the plugin lifecycle.
     """
 
-    def __init__(self) -> None:
+    DEFAULT_IDLE_TIMEOUT_SECONDS = 15 * 60
+
+    def __init__(self, idle_timeout_seconds: Optional[float] = DEFAULT_IDLE_TIMEOUT_SECONDS) -> None:
         self._sessions: Dict[tuple[str, str], aiohttp.ClientSession] = {}
+        self._last_used: Dict[tuple[str, str], float] = {}
         self._closed = False
+        self._idle_timeout_seconds = (
+            None
+            if idle_timeout_seconds is None
+            else max(0.0, float(idle_timeout_seconds))
+        )
+        self._state_lock = asyncio.Lock()
+        self._stats: Dict[str, Any] = {
+            "lookups": 0,
+            "hits": 0,
+            "misses": 0,
+            "created": 0,
+            "recycled": 0,
+            "closed": 0,
+            "close_failures": 0,
+            "failures": 0,
+            "failure_reasons": {},
+        }
+
+    @staticmethod
+    def _connector_is_idle(session: aiohttp.ClientSession) -> bool:
+        """Avoid reaping a session while aiohttp has an acquired connection."""
+        connector = getattr(session, "connector", None)
+        acquired = getattr(connector, "_acquired", None)
+        # aiohttp connectors expose this private set across supported versions.
+        # If a replacement connector does not, retain the session conservatively.
+        return acquired is not None and not acquired
+
+    async def _reap_idle_sessions(self, idle_timeout_seconds: Optional[float] = None) -> int:
+        if self._closed:
+            return 0
+        timeout = self._idle_timeout_seconds if idle_timeout_seconds is None else max(0.0, float(idle_timeout_seconds))
+        if timeout is None:
+            return 0
+        now = time.monotonic()
+        stale = []
+        for key, session in list(self._sessions.items()):
+            last_used = self._last_used.get(key, now)
+            if not session.closed and now - last_used >= timeout and self._connector_is_idle(session):
+                stale.append((key, session))
+        for key, session in stale:
+            if self._sessions.get(key) is not session:
+                continue
+            self._sessions.pop(key, None)
+            self._last_used.pop(key, None)
+            self._stats["recycled"] += 1
+            self._stats["closed"] += 1
+            try:
+                await session.close()
+            except Exception as exc:
+                self._stats["close_failures"] += 1
+                self._record_failure(exc)
+        return len(stale)
+
+    async def reap_idle_sessions(self, idle_timeout_seconds: Optional[float] = None) -> int:
+        """Lazily close idle pools without interrupting active requests."""
+        async with self._state_lock:
+            return await self._reap_idle_sessions(idle_timeout_seconds)
+
+    @staticmethod
+    def _failure_reason(exc: BaseException) -> str:
+        """Return a bounded category without retaining proxy or upstream details."""
+        if isinstance(exc, ValueError):
+            return "invalid_proxy"
+        if isinstance(exc, ImportError):
+            return "dependency_missing"
+        if isinstance(exc, RuntimeError) and "registry is closed" in str(exc).lower():
+            return "registry_closed"
+        return type(exc).__name__
+
+    def _record_failure(self, exc: BaseException) -> None:
+        self._stats["failures"] += 1
+        reasons = self._stats["failure_reasons"]
+        reason = self._failure_reason(exc)
+        # A malformed upstream error must not create an unbounded health map.
+        if reason not in reasons and len(reasons) >= 16:
+            reason = "OtherError"
+            if reason not in reasons:
+                oldest = next(iter(reasons), None)
+                if oldest is not None:
+                    del reasons[oldest]
+        reasons[reason] = int(reasons.get(reason, 0)) + 1
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Return bounded, credential-free session-pool health counters."""
+        active_by_transport = {"direct": 0, "http": 0, "socks": 0}
+        for key, session in self._sessions.items():
+            if session.closed:
+                continue
+            transport = key[0] if key and key[0] in active_by_transport else "direct"
+            active_by_transport[transport] += 1
+        active_sessions = sum(active_by_transport.values())
+        return {
+            "status": "closed" if self._closed else "ok",
+            "registry_closed": self._closed,
+            "idle_timeout_seconds": self._idle_timeout_seconds,
+            "lookups": int(self._stats["lookups"]),
+            "hits": int(self._stats["hits"]),
+            "reuse_hits": int(self._stats["hits"]),
+            "misses": int(self._stats["misses"]),
+            "created": int(self._stats["created"]),
+            "recycled": int(self._stats["recycled"]),
+            "closed": int(self._stats["closed"]),
+            "close_failures": int(self._stats["close_failures"]),
+            "failures": int(self._stats["failures"]),
+            "failure_reasons": dict(self._stats["failure_reasons"]),
+            "active_sessions": active_sessions,
+            "active_by_transport": active_by_transport,
+        }
 
     @staticmethod
     def _session_key(proxy_value: str) -> tuple[str, str]:
@@ -90,40 +202,71 @@ class ClientSessionRegistry:
         loop's perspective; aiohttp opens sockets lazily on the first
         request, so concurrent callers can safely share the resulting object.
         """
-        if self._closed:
-            raise RuntimeError("HTTP session registry is closed")
-        key = self._session_key(proxy_value)
-        session = self._sessions.get(key)
-        if session is not None and not session.closed:
-            return session
-
-        proxy = parse_channel_proxy(proxy_value)
-        kwargs: Dict[str, Any] = {
-            "trust_env": False,
-            "cookie_jar": aiohttp.DummyCookieJar(),
-        }
-        if timeout_seconds is not None:
-            kwargs["timeout"] = image_client_timeout(timeout_seconds)
-        if proxy and proxy.is_socks:
+        self._stats["lookups"] += 1
+        async with self._state_lock:
+            if self._closed:
+                error = RuntimeError("HTTP session registry is closed")
+                self._record_failure(error)
+                raise error
+            await self._reap_idle_sessions()
             try:
-                from aiohttp_socks import ProxyConnector
-            except ImportError as exc:
-                raise RuntimeError("SOCKS5 代理需要安装 aiohttp-socks") from exc
-            kwargs["connector"] = ProxyConnector.from_url(proxy.url)
-        session = aiohttp.ClientSession(**kwargs)
-        self._sessions[key] = session
-        return session
+                key = self._session_key(proxy_value)
+            except Exception as exc:
+                self._stats["misses"] += 1
+                self._record_failure(exc)
+                raise
+            session = self._sessions.get(key)
+            if session is not None and not session.closed:
+                self._stats["hits"] += 1
+                self._last_used[key] = time.monotonic()
+                return session
+            self._stats["misses"] += 1
+            if session is not None:
+                self._stats["recycled"] += 1
+                self._sessions.pop(key, None)
+                self._last_used.pop(key, None)
+
+            try:
+                proxy = parse_channel_proxy(proxy_value)
+                kwargs: Dict[str, Any] = {
+                    "trust_env": False,
+                    "cookie_jar": aiohttp.DummyCookieJar(),
+                }
+                if timeout_seconds is not None:
+                    kwargs["timeout"] = image_client_timeout(timeout_seconds)
+                if proxy and proxy.is_socks:
+                    try:
+                        from aiohttp_socks import ProxyConnector
+                    except ImportError as exc:
+                        raise RuntimeError("SOCKS5 代理需要安装 aiohttp-socks") from exc
+                    kwargs["connector"] = ProxyConnector.from_url(proxy.url)
+                session = aiohttp.ClientSession(**kwargs)
+            except Exception as exc:
+                self._record_failure(exc)
+                raise
+            self._sessions[key] = session
+            self._last_used[key] = time.monotonic()
+            self._stats["created"] += 1
+            return session
 
     async def close(self) -> None:
         """Close every owned session and make the registry unusable."""
-        sessions = list(self._sessions.values())
-        self._sessions.clear()
-        self._closed = True
-        if sessions:
-            await asyncio.gather(
-                *(session.close() for session in sessions if not session.closed),
-                return_exceptions=True,
-            )
+        async with self._state_lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+            self._last_used.clear()
+            self._closed = True
+            open_sessions = [session for session in sessions if not session.closed]
+            self._stats["closed"] += len(open_sessions)
+            if open_sessions:
+                results = await asyncio.gather(
+                    *(session.close() for session in open_sessions),
+                    return_exceptions=True,
+                )
+                for result in results:
+                    if isinstance(result, BaseException):
+                        self._stats["close_failures"] += 1
+                        self._record_failure(result)
 
 
 def parse_channel_proxy(value: str) -> Optional[ChannelProxy]:

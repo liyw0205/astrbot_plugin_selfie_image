@@ -430,6 +430,7 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
     get_record_storage_health = getattr(plugin, "get_record_storage_health", None)
     get_record_commit_health = getattr(plugin, "get_record_commit_health", None)
     get_cache_metrics = getattr(plugin, "get_cache_metrics", None)
+    get_http_session_health = getattr(plugin, "get_http_session_health", None)
     get_preflight = getattr(plugin, "get_config_preflight_for_web", None)
     if callable(get_preflight):
         try:
@@ -482,6 +483,16 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
             cache_metrics = {"status": "error"}
     else:
         cache_metrics = {}
+    if callable(get_http_session_health):
+        try:
+            http_session_health = redact_sensitive_data(dict(get_http_session_health() or {}))
+        except Exception:
+            http_session_health = {
+                "status": "error",
+                "last_failure_reason": "HTTP 会话池健康信息读取失败",
+            }
+    else:
+        http_session_health = {}
     overall_status = "ok"
     if isinstance(config_preflight, Mapping) and str(config_preflight.get("status") or "ok") != "ok":
         overall_status = "degraded"
@@ -490,6 +501,8 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
     if record_storage_health.get("status") == "error" or record_storage_health.get("read_only"):
         overall_status = "degraded"
     if record_commit_health.get("status") == "error":
+        overall_status = "degraded"
+    if http_session_health.get("status") == "error":
         overall_status = "degraded"
     cache_limit_count = int(getattr(plugin.config, "image_cache_limit_count", 1000) or 1000)
     record_keep_limit = int(getattr(plugin.config, "image_record_keep_limit", 1000) or 1000)
@@ -516,6 +529,7 @@ def build_health_payload(plugin: Any, page_status: Optional[Mapping[str, Any]] =
         "task_snapshot_health": task_snapshot_health,
         "record_storage_health": record_storage_health,
         "record_commit_health": record_commit_health,
+        "http_session_health": http_session_health,
         "config_preflight": config_preflight,
         "cache_cleanup_preview": cache_preview,
         "cache_metrics": cache_metrics,
