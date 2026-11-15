@@ -228,6 +228,7 @@ class GenerationStoreMixin(PromptLookupMixin):
         return build_model_status(
             events,
             enabled_targets=targets,
+            model_priority=getattr(config, "enabled_image_model_priority", ()) if config is not None else (),
             runtime_health=runtime_health,
             window_seconds=window_seconds,
         )

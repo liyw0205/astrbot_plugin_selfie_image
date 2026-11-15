@@ -20,6 +20,18 @@ METRIC_WINDOW_SECONDS = {
 }
 
 MODEL_STATUS_BUCKETS = 24
+MODEL_RECOMMENDATION_MIN_ATTEMPTS = 3
+_PERMANENT_MODEL_ERRORS = {
+    "auth",
+    "authentication",
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "param",
+    "safety",
+    "quota",
+    "fatal",
+}
 
 
 def _status_target_identity(target: Any) -> tuple[str, str, str, str]:
@@ -58,6 +70,7 @@ def build_model_status(
     events: Iterable[Mapping[str, Any]],
     *,
     enabled_targets: Iterable[Any] = (),
+    model_priority: Iterable[str] = (),
     runtime_health: Optional[Mapping[str, Mapping[str, Any]]] = None,
     window_seconds: int = 7 * 24 * 60 * 60,
     now: Optional[float] = None,
@@ -151,6 +164,19 @@ def build_model_status(
         ensure(identity)
 
     health_by_channel = runtime_health if isinstance(runtime_health, Mapping) else {}
+    priority_keys = [str(item or "").strip() for item in (model_priority or ()) if str(item or "").strip()]
+    priority_indexes: Dict[str, int] = {}
+    for index, key in enumerate(priority_keys):
+        priority_indexes.setdefault(key, index)
+
+    def priority_index(row: Mapping[str, Any]) -> int:
+        keys = (
+            str(row.get("label") or "").strip(),
+            f"{row.get('channel', '')}:{row.get('model', '')}".strip(":"),
+            str(row.get("model") or "").strip(),
+        )
+        return min((priority_indexes[key] for key in keys if key in priority_indexes), default=len(priority_keys))
+
     models: List[Dict[str, Any]] = []
     for identity, row in aggregates.items():
         attempts = int(row["attempts"])
@@ -202,6 +228,33 @@ def build_model_status(
             else:
                 history.append("■")
         category_counts = dict(sorted(row["error_categories"].items(), key=lambda item: (-item[1], item[0])))
+        latest_category = str(row.get("last_error_category") or "").strip().lower()
+        if attempts < MODEL_RECOMMENDATION_MIN_ATTEMPTS:
+            recommendation = "样本不足"
+            recommendation_rank = 2
+            recommendation_reason = f"近期仅 {attempts} 次请求，至少需要 {MODEL_RECOMMENDATION_MIN_ATTEMPTS} 次样本"
+        elif (
+            status in {"验证失败", "限流"}
+            or (status == "断流" and failures == attempts)
+            or (latest_category in _PERMANENT_MODEL_ERRORS and row.get("last_success") is False)
+        ):
+            recommendation = "暂不推荐"
+            recommendation_rank = 3
+            reason_category = latest_category or (next(iter(category_counts), "unknown"))
+            recommendation_reason = f"近期主要错误：{reason_category}"
+        elif success_rate >= 0.9 and consecutive_failures < 3:
+            recommendation = "建议优先"
+            recommendation_rank = 0
+            recommendation_reason = f"成功率 {success_rate * 100:.1f}%"
+        elif success_rate >= 0.7:
+            recommendation = "可作备选"
+            recommendation_rank = 1
+            recommendation_reason = f"成功率 {success_rate * 100:.1f}%，仍有少量失败"
+        else:
+            recommendation = "暂不推荐"
+            recommendation_rank = 3
+            reason_category = latest_category or (next(iter(category_counts), "unknown"))
+            recommendation_reason = f"成功率 {success_rate * 100:.1f}%，主要错误：{reason_category}"
         models.append(
             {
                 "channel": row["channel"],
@@ -222,9 +275,21 @@ def build_model_status(
                 "cooling_down": cooling_down,
                 "history": "".join(history),
                 "configured": identity in configured,
+                "priority_index": priority_index(row),
+                "recommendation": recommendation,
+                "recommendation_rank": recommendation_rank,
+                "recommendation_reason": recommendation_reason,
             }
         )
-    models.sort(key=lambda item: (not item["configured"], item["channel"], item["model"]))
+    models.sort(
+        key=lambda item: (
+            item["recommendation_rank"],
+            item["priority_index"],
+            not item["configured"],
+            item["channel"],
+            item["model"],
+        )
+    )
     if any(item["status"] in {"异常", "断流", "验证失败", "限流"} for item in models):
         overall_status = "异常"
     elif any(item["status"] == "降级" for item in models):
@@ -250,6 +315,9 @@ def build_model_status(
         "alert_count": sum(1 for item in models if item["status"] not in {"正常", "未使用"}),
         "unused_count": sum(1 for item in models if item["status"] == "未使用"),
         "alerts": alerts,
+        "recommended_models": [
+            item["label"] for item in models if item["recommendation"] == "建议优先"
+        ],
     }
 
 

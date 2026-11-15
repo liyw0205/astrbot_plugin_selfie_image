@@ -113,6 +113,84 @@ def test_model_status_uses_latest_event_for_recent_state_and_old_rows_are_visibl
     assert rows["新渠道/model-a"]["last_error_category"] == ""
 
 
+def test_model_status_recommends_from_recent_evidence_without_exposing_error_text() -> None:
+    now = 3_000_000.0
+    events = []
+    for index in range(3):
+        events.append({
+            "timestamp": now - index - 1,
+            "channel": "主渠道",
+            "model": "优先模型",
+            "label": "主渠道/优先模型",
+            "success": True,
+            "elapsed_seconds": 1.0,
+        })
+    for index in range(4):
+        events.append({
+            "timestamp": now - index - 10,
+            "channel": "主渠道",
+            "model": "备选模型",
+            "label": "主渠道/备选模型",
+            "success": index != 0,
+            "elapsed_seconds": 2.0,
+            "error_category": "timeout_poll" if index == 0 else "",
+        })
+    for index in range(3):
+        events.append({
+            "timestamp": now - index - 20,
+            "channel": "主渠道",
+            "model": "鉴权模型",
+            "label": "主渠道/鉴权模型",
+            "success": False,
+            "error_category": "auth",
+        })
+    events.append({
+        "timestamp": now - 30,
+        "channel": "主渠道",
+        "model": "新模型",
+        "label": "主渠道/新模型",
+        "success": True,
+    })
+
+    status = build_model_status(
+        events,
+        model_priority=["主渠道/备选模型", "主渠道/优先模型"],
+        now=now,
+        window_seconds=86400,
+    )
+    rows = {row["label"]: row for row in status["models"]}
+    assert rows["主渠道/优先模型"]["recommendation"] == "建议优先"
+    assert rows["主渠道/备选模型"]["recommendation"] == "可作备选"
+    assert rows["主渠道/鉴权模型"]["recommendation"] == "暂不推荐"
+    assert rows["主渠道/新模型"]["recommendation"] == "样本不足"
+    assert status["recommended_models"] == ["主渠道/优先模型"]
+    assert status["models"][0]["label"] == "主渠道/优先模型"
+    assert "私密" not in rows["主渠道/鉴权模型"]["recommendation_reason"]
+
+
+def test_model_status_priority_is_stable_for_equal_recommendations() -> None:
+    now = 4_000_000.0
+    events = []
+    for model in ("model-a", "model-b"):
+        events.extend(
+            {
+                "timestamp": now - index - (1 if model == "model-a" else 10),
+                "channel": "渠道",
+                "model": model,
+                "label": f"渠道/{model}",
+                "success": True,
+            }
+            for index in range(3)
+        )
+    status = build_model_status(
+        events,
+        model_priority=["渠道/model-b", "渠道/model-a"],
+        now=now,
+        window_seconds=86400,
+    )
+    assert [item["label"] for item in status["models"]] == ["渠道/model-b", "渠道/model-a"]
+
+
 def test_model_status_report_renders_a_png(tmp_path) -> None:
     import pytest
     from PIL import Image
@@ -331,3 +409,34 @@ def test_image_status_service_formats_text_and_pages_without_plugin_runtime() ->
     assert "第 2/2 页" in last_page
     assert "channel/model-b" in last_page
     assert "下一页：/生图记录状态 1h 1" in last_page
+
+
+def test_image_status_service_displays_model_recommendation_as_advice() -> None:
+    from astrbot_plugin_selfie_image.generation.model_status_report import ImageStatusService
+
+    text = ImageStatusService().format_text(
+        {
+            "window_seconds": 3600,
+            "updated_at": 1_700_000_000,
+            "overall_status": "正常",
+            "model_count": 1,
+            "channel_count": 1,
+            "available_count": 1,
+            "alert_count": 0,
+            "unused_count": 0,
+            "recommended_models": ["channel/model-a"],
+            "models": [
+                {
+                    "label": "channel/model-a",
+                    "status": "正常",
+                    "attempts": 3,
+                    "successes": 3,
+                    "success_rate": 1.0,
+                    "recommendation": "建议优先",
+                    "history": "■" * 24,
+                }
+            ],
+        }
+    )
+    assert "建议优先模型（仅供参考，不会修改配置）" in text
+    assert "建议：建议优先（仅供参考，不会修改配置）" in text

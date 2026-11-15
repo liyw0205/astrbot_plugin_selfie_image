@@ -17,6 +17,13 @@ STATUS_COLORS = {
     "验证失败": ("#cd4346", "#fff0ef"),
 }
 
+RECOMMENDATION_COLORS = {
+    "建议优先": ("#087f5b", "#e8f6ef"),
+    "可作备选": ("#936b0b", "#fbf1dc"),
+    "样本不足": ("#66737a", "#edf0f1"),
+    "暂不推荐": ("#b33d42", "#fff0ef"),
+}
+
 
 def render_model_status_report(
     status: Mapping[str, Any],
@@ -70,6 +77,12 @@ def render_model_status_report(
         draw.ellipse((left + 12, y + 17, left + 18, y + 23), fill=color)
         text(left + 26, y + 6, label, 24, color)
 
+    def recommendation_badge(x, y, label):
+        color, fill = RECOMMENDATION_COLORS.get(label, ("#66737a", "#edf0f1"))
+        width = int(draw.textlength(label, font=font(18))) + 24
+        box(x, y, width, 30, fill, radius=4)
+        text(x + 12, y + 5, label, 18, color)
+
     def history(x, y, value):
         markers = str(value or "-")[:24].ljust(24, "-")
         palette = {"■": "#2ba88a", "▲": "#e3b149", "×": "#dc7272"}
@@ -117,15 +130,18 @@ def render_model_status_report(
         badge(x + 456, y + 16, state)
         text(x + 24, y + 64, item.get("model") or item.get("label") or "未命名模型",
              30, bold=True, width=432)
+        recommendation = str(item.get("recommendation") or "").strip()
+        if recommendation:
+            recommendation_badge(x + 24, y + 102, recommendation)
         attempts = int(item.get("attempts") or 0)
         successes = int(item.get("successes") or 0)
         rate = f"{float(item.get('success_rate') or 0) * 100:.1f}%" if attempts else "—"
         elapsed = float(item.get("average_elapsed_seconds") or 0)
-        text(x + 24, y + 120, rate, 48, bold=True)
-        text(x + 456, y + 128, f"{elapsed:.2f}s" if elapsed > 0 else "—", 30, right=True)
-        text(x + 24, y + 184, f"成功率 · {successes}/{attempts} 次", 20, muted, width=296)
-        text(x + 456, y + 184, "平均耗时", 20, muted, right=True)
-        history(x + 24, y + 224, item.get("history"))
+        text(x + 24, y + 136, rate, 48, bold=True)
+        text(x + 456, y + 144, f"{elapsed:.2f}s" if elapsed > 0 else "—", 30, right=True)
+        text(x + 24, y + 196, f"成功率 · {successes}/{attempts} 次", 20, muted, width=296)
+        text(x + 456, y + 196, "平均耗时", 20, muted, right=True)
+        history(x + 24, y + 232, item.get("history"))
         errors = item.get("error_categories")
         errors = errors if isinstance(errors, Mapping) else {}
         parts = [f"{error_label(str(key))} {int(value)}" for key, value in list(errors.items())[:3]]
@@ -133,7 +149,7 @@ def render_model_status_report(
         if streak:
             parts.append(f"连续失败 {streak} 次")
         error_text = " · ".join(parts) or ("尚无请求记录" if not attempts else "暂无错误")
-        text(x + 24, y + 252, error_text, 20, muted, width=432)
+        text(x + 24, y + 260, error_text, 20, muted, width=432)
         timestamp = float(item.get("last_timestamp") or 0)
         if timestamp:
             age = max(0, int(updated - timestamp))
@@ -149,7 +165,7 @@ def render_model_status_report(
             recent_text = f"{age_text} · {outcome}"
         else:
             recent_text = "尚无请求"
-        text(x + 24, y + 284, recent_text, 18, muted, width=432)
+        text(x + 24, y + 288, recent_text, 18, muted, width=432)
 
     if not rows:
         draw.line((48, 384, 1032, 384), fill="#e3e9e8")
@@ -255,6 +271,15 @@ class ImageStatusService:
             "",
             f"第 {safe_page}/{page_count} 页",
         ]
+        recommended = [
+            str(item).strip()
+            for item in status.get("recommended_models", [])
+            if str(item).strip()
+        ]
+        if recommended:
+            lines.extend(["", "建议优先模型（仅供参考，不会修改配置）：", "、".join(recommended[:6])])
+        elif any(str(item.get("recommendation") or "").strip() for item in current_models):
+            lines.extend(["", "模型建议：当前没有达到建议优先门槛的模型。"])
         now = time.time()
         for index, item in enumerate(current_models, start=start + 1):
             attempts = int(item.get("attempts") or 0)
@@ -288,6 +313,9 @@ class ImageStatusService:
                     f"   历史：{item.get('history') or '-'}",
                 ]
             )
+            recommendation = str(item.get("recommendation") or "").strip()
+            if recommendation:
+                lines.append(f"   建议：{recommendation}（仅供参考，不会修改配置）")
             if error_text:
                 lines.append(f"   主要错误：{error_text}")
             if int(item.get("consecutive_failures") or 0) > 0:
