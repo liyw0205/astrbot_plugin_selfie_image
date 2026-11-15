@@ -7,21 +7,26 @@ python scripts/verify_release.py --require-node
 ```
 
 `--layer python`, `--layer frontend`, and `--layer static` remain available for
-focused checks. The static layer includes version consistency, bundled JSON
-contracts, a temporary runtime ZIP, compilation, Dashboard checks, and
-`git diff --check`. It does not run pytest. Local frontend checks may skip Node
-when it is unavailable; release builds require Node explicitly.
+focused checks. The Python layer accepts `--test-scope full|compatibility`;
+the latter is intended for non-canonical interpreters in the CI matrix. The
+static layer includes version consistency, bundled JSON contracts, a temporary
+runtime ZIP, compilation, Dashboard checks, and `git diff --check`. It does
+not run pytest. Local frontend checks may skip Node when it is unavailable;
+release builds require Node explicitly.
 
-To create an installable artifact after all gates pass:
+To create an installable artifact locally, including the full pytest gate:
 
 ```sh
 python scripts/build_release.py --output dist/astrbot_plugin_selfie_image.zip
 ```
 
-The command always runs the full gate, including pytest. There is no skip or
-force option, and an existing output file is never overwritten. CI runs this
-same command after its Python and frontend jobs pass, then retains the ZIP as a
-workflow artifact. Creating or editing the workflow locally does not execute it.
+The command runs the full gate by default and never overwrites an existing
+output file. CI runs the Python and frontend gates first, then calls the same
+builder with `--skip-tests` so pytest is not repeated in the artifact job;
+compile, Dashboard, version, JSON, artifact and diff checks still run there.
+The skip is intended for that already-gated CI composition, not as a local
+replacement for the full command. Creating or editing the workflow locally
+does not execute it.
 
 ## Input Contracts
 

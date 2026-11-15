@@ -4,11 +4,11 @@
 
 本方案基于当前工作区代码、测试和构建检查整理，目标是为后续迭代提供可执行的优先级和验收标准。当前版本的功能完整度已经较高，优化重点应放在稳定性、性能、可维护性和发布质量，不建议继续无边界增加入口或重写现有提示词系统。
 
-本轮完整发布验证基线（2026-11-16，1.7.46）：
+本轮完整发布验证基线（2026-11-16，1.7.47）：
 
-- 全量 pytest `3652 passed, 1 skipped, 702 subtests passed`，耗时 379.01 秒；Python、Dashboard 和静态发布层门禁均通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
+- 全量 pytest `3652 passed, 1 skipped, 702 subtests passed`，耗时 370.81 秒；Python、Dashboard 和静态发布层门禁均通过 compileall、无操作检查、Dashboard 构建/回退/Node、版本/JSON/制品与 `git diff --check`。
 - Dashboard JavaScript 使用 Node 验证 15 个源脚本和 2 个生成脚本；64 个 Git 跟踪 JSON 文件解析与必填字段检查通过。
-- 临时运行期 ZIP 检查：148 个文件，ZIP 2,449,654 字节、解压 5,776,342 字节；单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
+- 临时运行期 ZIP 检查：148 个文件，ZIP 2,450,785 字节、解压 5,782,020 字节；单文件 2 MiB、解压 12 MiB、ZIP 6 MiB 预算均满足；新拆分的命令任务服务及既有工作流、controller 模块均纳入运行期包。
 - 本地验证使用 Python 3.13.13；Python 3.10～3.12 的 CI 矩阵及 Python 3.13 的远端结果需推送后确认。未进行目标宿主字体及真实投递验证；本轮 SIGKILL 仅为本机进程中断演练，不等同真实断电。
 
 主要结构性事实：
@@ -32,6 +32,8 @@
 - 生图、编辑、模型列表和结果下载请求默认使用 `Connection: keep-alive`，降低重复握手开销。
 - 新增 `scripts/verify_release.py` 发布门禁，覆盖测试、编译、无操作检查、Dashboard 构建/回退一致性、JSON 解析和 `git diff --check`。
 - 新增 `scripts/check_dashboard_javascript.py` 与 `.github/workflows/ci.yml`：发布门禁按 Python、Dashboard、静态层拆分；CI 覆盖 Python 3.10～3.13、Node.js 前端语法检查，以及无 Node 时的可选跳过路径。
+- 参考图内容寻址缓存索引增加目录项快照和文件签名增量刷新：连续的新内容 miss 不再重复递归扫描目录，外部新增/删除、嵌套目录变化和签名未变化的文件替换仍会触发重新发现或哈希校验。256 个旧缓存文件、16 次 warm miss 的本机合成基准中位数由约 28.1 ms 降至 18.3 ms；该结果不外推为生产上界。
+- 发布测试流程按职责去重：Python 3.12 跑一次完整 pytest，3.10/3.11/3.13 跑兼容性子集；Dashboard job 仅负责 Node/页面门禁，制品 job 使用 `build_release.py --skip-tests` 复用前置测试结果，但仍执行编译、无操作、Dashboard、版本、JSON、制品和 diff 检查。默认本地 `verify_release.py` 与 `build_release.py` 仍保留完整 pytest。
 
 完整发布验证结果统一记录在上方验证基线中。
 
@@ -110,7 +112,7 @@
 
 已增加不依赖 AstrBot 运行环境的检查入口 `scripts/verify_release.py`，统一执行：
 
-1. `pytest -q`；
+1. 完整发布命令默认运行 `pytest -q`；CI 将完整测试固定在 Python 3.12，其他版本使用 `verify_release.py --test-scope compatibility` 运行兼容性子集；
 2. `compileall`；
 3. `scripts/check_noop_implementations.py`；
 4. `scripts/build_dashboard.py --check`；
@@ -121,9 +123,9 @@
 9. 运行期 ZIP 文件清单、本地模块导入完整性、内容/CRC 校验与大小预算；
 10. `git diff --check`。
 
-`.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。支持 `--layer all/python/frontend/static`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
+`.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。Python 3.12 执行完整 pytest，其余版本执行兼容性子集；Dashboard job 不再重复 Python 测试。支持 `--layer all/python/frontend/static` 和 `--test-scope full/compatibility`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
 
-上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.46`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，CI 仅在推送 `v*` 版本 tag 后运行。
+上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.47`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，CI 仅在推送 `v*` 版本 tag 后运行。
 
 制品基线和验证结果见上方“最新完整发布验证基线”。该制品仅代表本地当前工作区构建，发布前仍需在目标宿主验证真实通知投递和字体资源。
 

@@ -37,16 +37,25 @@ def test_warm_unique_misses_do_not_reread_unchanged_cache(tmp_path, monkeypatch)
     save(store, b"initial" * 512)
     original_open = builtins.open
     reads = []
+    walks = []
 
     def counted_open(path, mode="r", *args, **kwargs):
         if mode == "rb" and Path(path).name.startswith("request_"):
             reads.append(str(path))
         return original_open(path, mode, *args, **kwargs)
 
+    original_walk = os.walk
+
+    def counted_walk(path):
+        walks.append(str(path))
+        return original_walk(path)
+
     monkeypatch.setattr(builtins, "open", counted_open)
+    monkeypatch.setattr(os, "walk", counted_walk)
     for index in range(4):
         save(store, b"new" + bytes([index]) * 4096)
     assert reads == []
+    assert len(walks) == 0
 
 
 def test_legacy_content_reuse_in_nested_directory_with_different_extension(tmp_path):

@@ -2006,6 +2006,8 @@ class GenerationStoreMixin(PromptLookupMixin):
         if getattr(self, "_reference_cache_index_root", None) != root:
             self._reference_cache_index_root = root
             self._reference_cache_index = {}
+            self._reference_cache_directory_signatures = {}
+            self._reference_cache_directory_entries = {}
         return self._reference_cache_index
 
     def _reference_cache_file_signature(self, path: str) -> Optional[Tuple[int, ...]]:
@@ -2017,41 +2019,109 @@ class GenerationStoreMixin(PromptLookupMixin):
             return None
         return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_mode)
 
+    @staticmethod
+    def _reference_cache_directory_signature(path: str) -> Optional[Tuple[int, ...]]:
+        try:
+            info = os.stat(path)
+        except OSError:
+            return None
+        if not stat.S_ISDIR(info.st_mode):
+            return None
+        return (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns, info.st_mode)
+
     def _reference_cache_candidate_paths(self, digest: str) -> Iterable[str]:
-        """Refresh metadata, hashing only new or changed request files."""
+        """Refresh metadata, hashing only new or changed request files.
+
+        Once the request-file tree is indexed, checking known directory
+        signatures avoids walking the entire cache for every unique miss. File
+        signatures are still refreshed on the fast path so external content
+        changes remain visible; a changed directory triggers a full discovery
+        pass for additions and removals.
+        """
         entries = self._reference_cache_index_entries()
-        seen: set[str] = set()
-        for root, _, names in os.walk(self._reference_cache_index_root):
-            for name in names:
-                if not name.startswith("request_"):
-                    continue
-                path = os.path.join(root, name)
-                signature = self._reference_cache_file_signature(path)
-                if signature is None:
-                    continue
-                seen.add(path)
-                entry = entries.get(path)
-                if entry is None or entry[0] != signature:
-                    try:
-                        hasher = hashlib.sha256()
-                        with open(path, "rb") as handle:
-                            while chunk := handle.read(256 * 1024):
-                                hasher.update(chunk)
-                        # A concurrent external writer must not leave a digest
-                        # associated with metadata from a different file state.
-                        if self._reference_cache_file_signature(path) != signature:
-                            entries.pop(path, None)
-                            continue
-                    except OSError:
-                        entries.pop(path, None)
-                        continue
-                    entry = (signature, hasher.hexdigest())
-                    entries[path] = entry
-                if entry[1] == digest:
-                    yield path
-        for path in list(entries):
-            if path not in seen:
+        directory_signatures = getattr(self, "_reference_cache_directory_signatures", None)
+        if not isinstance(directory_signatures, dict):
+            directory_signatures = {}
+            self._reference_cache_directory_signatures = directory_signatures
+        directory_entries = getattr(self, "_reference_cache_directory_entries", None)
+        if not isinstance(directory_entries, dict):
+            directory_entries = {}
+            self._reference_cache_directory_entries = directory_entries
+
+        def refresh_file(path: str) -> Optional[str]:
+            signature = self._reference_cache_file_signature(path)
+            if signature is None:
                 entries.pop(path, None)
+                return None
+            entry = entries.get(path)
+            if entry is None or entry[0] != signature:
+                try:
+                    hasher = hashlib.sha256()
+                    with open(path, "rb") as handle:
+                        while chunk := handle.read(256 * 1024):
+                            hasher.update(chunk)
+                    # A concurrent external writer must not leave a digest
+                    # associated with metadata from a different file state.
+                    if self._reference_cache_file_signature(path) != signature:
+                        entries.pop(path, None)
+                        return None
+                except OSError:
+                    entries.pop(path, None)
+                    return None
+                entry = (signature, hasher.hexdigest())
+                entries[path] = entry
+            return path if entry[1] == digest else None
+
+        root = self._reference_cache_index_root
+        tree_changed = not directory_signatures
+        if not tree_changed:
+            for directory, previous in list(directory_signatures.items()):
+                if self._reference_cache_directory_signature(directory) != previous:
+                    tree_changed = True
+                    break
+                try:
+                    names = tuple(sorted(os.listdir(directory)))
+                except OSError:
+                    tree_changed = True
+                    break
+                if names != directory_entries.get(directory, ()):
+                    tree_changed = True
+                    break
+
+        if tree_changed:
+            seen: set[str] = set()
+            current_directories: Dict[str, Tuple[int, ...]] = {}
+            current_entries: Dict[str, Tuple[str, ...]] = {}
+            for directory, dirnames, names in os.walk(root):
+                signature = self._reference_cache_directory_signature(directory)
+                if signature is not None:
+                    current_directories[directory] = signature
+                current_entries[directory] = tuple(sorted((*dirnames, *names)))
+                for name in names:
+                    if not name.startswith("request_"):
+                        continue
+                    path = os.path.join(directory, name)
+                    if self._reference_cache_file_signature(path) is None:
+                        continue
+                    seen.add(path)
+                    candidate = refresh_file(path)
+                    if candidate is not None:
+                        yield candidate
+            for path in list(entries):
+                if path not in seen:
+                    entries.pop(path, None)
+            directory_signatures.clear()
+            directory_signatures.update(current_directories)
+            directory_entries.clear()
+            directory_entries.update(current_entries)
+            return
+
+        for path in list(entries):
+            if not os.path.basename(path).startswith("request_"):
+                continue
+            candidate = refresh_file(path)
+            if candidate is not None:
+                yield candidate
 
     def _save_or_reuse_reference_image(self, ref: ImageReference) -> str:
         """Reuse a content-addressed request cache file when possible."""
@@ -2089,6 +2159,11 @@ class GenerationStoreMixin(PromptLookupMixin):
                         cache_hit = True
                         break
                     entries.pop(candidate, None)
+                    # The file may have been replaced without a detectable
+                    # stat change (seen on some Android filesystems). Force a
+                    # discovery pass before the next lookup.
+                    getattr(self, "_reference_cache_directory_signatures", {}).clear()
+                    getattr(self, "_reference_cache_directory_entries", {}).clear()
                 if not target:
                     # Preserve legacy content reuse without rereading the
                     # complete cache on every new digest miss.
@@ -2098,6 +2173,8 @@ class GenerationStoreMixin(PromptLookupMixin):
                             cache_hit = True
                             break
                         entries.pop(candidate, None)
+                    getattr(self, "_reference_cache_directory_signatures", {}).clear()
+                    getattr(self, "_reference_cache_directory_entries", {}).clear()
                 if not target:
                     target = deterministic
                     temp = f"{target}.{time.time_ns()}.tmp"
@@ -2114,6 +2191,18 @@ class GenerationStoreMixin(PromptLookupMixin):
                     signature = self._reference_cache_file_signature(target)
                     if signature is not None:
                         entries[target] = (signature, digest)
+                    directory_signatures = getattr(self, "_reference_cache_directory_signatures", {})
+                    directory_entries = getattr(self, "_reference_cache_directory_entries", {})
+                    root_signature = self._reference_cache_directory_signature(self._reference_cache_index_root)
+                    if root_signature is not None:
+                        directory_signatures[self._reference_cache_index_root] = root_signature
+                        try:
+                            directory_entries[self._reference_cache_index_root] = tuple(
+                                sorted(os.listdir(self._reference_cache_index_root))
+                            )
+                        except OSError:
+                            directory_signatures.clear()
+                            directory_entries.clear()
             self._cache_metrics().reference_lookup(hit=cache_hit)
             rel_path = self._cache_relative_path(target)
             self._register_inflight_media([rel_path])

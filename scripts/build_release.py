@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every release gate before writing a reviewed runtime ZIP to --output."""
+"""Run release gates before writing a reviewed runtime ZIP to --output."""
 
 from __future__ import annotations
 
@@ -23,13 +23,16 @@ else:
     )
 
 
-def build_verified_release(output: Path, *, root: Path = ROOT) -> dict:
+def build_verified_release(
+    output: Path, *, root: Path = ROOT, skip_tests: bool = False,
+) -> dict:
     output = output.resolve()
     if output.exists():
         raise ReleaseCheckError(f"refusing to overwrite an existing release artifact: {output}")
-    subprocess.run(
-        [sys.executable, "scripts/verify_release.py", "--require-node"], cwd=root, check=True,
-    )
+    command = [sys.executable, "scripts/verify_release.py", "--require-node"]
+    if skip_tests:
+        command.append("--skip-tests")
+    subprocess.run(command, cwd=root, check=True)
     version = validate_versions(root)
     validate_json_files(root)
     names = release_files(root)
@@ -47,9 +50,14 @@ def build_verified_release(output: Path, *, root: Path = ROOT) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path, help="destination ZIP; existing files are never overwritten")
+    parser.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="skip pytest when an earlier CI job already passed the Python test layer",
+    )
     args = parser.parse_args()
     try:
-        report = build_verified_release(args.output)
+        report = build_verified_release(args.output, skip_tests=args.skip_tests)
     except (OSError, UnicodeError, ValueError, subprocess.CalledProcessError, ReleaseCheckError) as exc:
         print(f"[release] {exc}", file=sys.stderr)
         return 1

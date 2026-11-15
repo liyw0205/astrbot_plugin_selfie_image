@@ -11,17 +11,39 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# The full suite runs once on the canonical CI interpreter. Other Python
+# versions still exercise the release contracts and compatibility-sensitive
+# runtime paths without repeating the slowest integration cases.
+PYTHON_COMPATIBILITY_TESTS = (
+    "tests/test_release_gates.py",
+    "tests/test_model_request.py",
+    "tests/test_image_limits.py",
+    "tests/test_http_sessions.py",
+    "tests/test_record_database_materialized.py",
+    "tests/test_generation_runtime_service.py",
+    "tests/test_generation_task_service.py",
+    "tests/test_task_snapshot_budget.py",
+    "tests/test_reference_cache_index.py",
+)
+
 
 def run_gate(label: str, command: list[str]) -> None:
     print(f"[release] {label}: {' '.join(command)}", flush=True)
     subprocess.run(command, cwd=ROOT, check=True)
 
 
-def run_python_gates(python: str, *, include_tests: bool) -> None:
+def run_python_gates(
+    python: str, *, include_tests: bool, test_scope: str = "full",
+) -> None:
     """Run gates that exercise Python code and the offline test suite."""
 
     if include_tests:
-        run_gate("tests", [python, "-m", "pytest", "-q"])
+        command = [python, "-m", "pytest", "-q"]
+        if test_scope == "compatibility":
+            command.extend(PYTHON_COMPATIBILITY_TESTS)
+        elif test_scope != "full":
+            raise ValueError(f"unsupported Python test scope: {test_scope}")
+        run_gate("tests", command)
     run_gate(
         "compileall",
         [
@@ -76,16 +98,26 @@ def main() -> int:
         action="store_true",
         help="require Node.js for the frontend layer instead of allowing a skip",
     )
+    parser.add_argument(
+        "--test-scope",
+        choices=("full", "compatibility"),
+        default="full",
+        help="pytest scope for the Python layer; compatibility skips repeated slow integration cases",
+    )
     args = parser.parse_args()
 
     python = sys.executable
     if args.layer == "all":
-        run_python_gates(python, include_tests=not args.skip_tests)
+        run_python_gates(
+            python, include_tests=not args.skip_tests, test_scope=args.test_scope,
+        )
         run_frontend_gates(python, require_node=args.require_node)
         run_release_asset_gates(python)
         run_gate("diff check", ["git", "diff", "--check"])
     elif args.layer == "python":
-        run_python_gates(python, include_tests=not args.skip_tests)
+        run_python_gates(
+            python, include_tests=not args.skip_tests, test_scope=args.test_scope,
+        )
     elif args.layer == "frontend":
         run_frontend_gates(python, require_node=args.require_node)
     else:  # static

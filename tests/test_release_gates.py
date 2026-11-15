@@ -30,6 +30,10 @@ def test_ci_workflow_runs_only_for_version_tags():
     assert "on:\n  push:\n    tags:\n      - 'v*'" in workflow
     assert "pull_request" not in workflow
     assert "branches:" not in workflow
+    assert "test-scope: full" in workflow
+    assert workflow.count("test-scope: compatibility") == 3
+    assert "Run Node-backed Dashboard contracts" not in workflow
+    assert "build_release.py --skip-tests" in workflow
 
 
 def test_versions_read_current_declarations_and_ignore_history(tmp_path):
@@ -198,8 +202,8 @@ def test_build_command_preserves_checked_archive_after_successful_gates(tmp_path
     calls = []
     monkeypatch.setattr(build_release.subprocess, "run", lambda command, **kwargs: calls.append(command))
     output = tmp_path / "artifacts/release.zip"
-    report = build_release.build_verified_release(output, root=root)
-    assert calls[0][1:] == ["scripts/verify_release.py", "--require-node"]
+    report = build_release.build_verified_release(output, root=root, skip_tests=True)
+    assert calls[0][1:] == ["scripts/verify_release.py", "--require-node", "--skip-tests"]
     assert report["version"] == "1.2.3"
     assert report["archive_bytes"] == output.stat().st_size
     with zipfile.ZipFile(output) as archive:
