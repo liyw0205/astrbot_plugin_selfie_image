@@ -30,6 +30,7 @@ from ..core.proxy import (
     ClientSessionRegistry,
     channel_client_session,
     image_client_timeout,
+    parse_channel_proxy,
     target_session_proxy,
 )
 from ..core.providers import ImageGenerateRequest, ImageGenerateResult, create_adapter
@@ -59,6 +60,24 @@ def _target_with_api_key(target: ImageModelTarget, api_key: str) -> ImageModelTa
     cloned = copy.deepcopy(target)
     cloned.api_key = str(api_key or "").strip()
     return cloned
+
+
+def _target_download_proxy(target: ImageModelTarget) -> str:
+    """Resolve the result-URL proxy before SOCKS request targets are normalized."""
+    extra = getattr(target, "extra", {}) or {}
+    return str(extra.get("download_proxy") or getattr(target, "proxy", "") or "").strip()
+
+
+def _proxy_identity(value: str) -> str:
+    """Canonicalize proxy values for deciding whether one session can be reused."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = parse_channel_proxy(raw)
+    except Exception:
+        return raw
+    return parsed.url if parsed is not None else ""
 
 
 def _should_rotate_api_key(class_info: Dict[str, Any]) -> bool:
@@ -129,10 +148,18 @@ def _sync_try_model(target: ImageModelTarget, req: ImageGenerateRequest, budget:
         timeout = image_client_timeout(budget)
         request_target = copy.deepcopy(target)
         request_target.timeout = int(budget)
+        request_proxy = str(getattr(request_target, "proxy", "") or "").strip()
+        download_proxy = _target_download_proxy(request_target)
         async with aiohttp.ClientSession(trust_env=False, timeout=timeout) as base:
-            async with channel_client_session(getattr(request_target, "proxy", "") or "", base, budget) as owned:
-                adapter = create_adapter(target_session_proxy(request_target), owned)
-                return await adapter.generate(req)
+            async with channel_client_session(request_proxy, base, budget) as owned:
+                if _proxy_identity(download_proxy) == _proxy_identity(request_proxy):
+                    adapter = create_adapter(target_session_proxy(request_target), owned)
+                    return await adapter.generate(req)
+                # Keep HTTP downloads on the direct fallback session when the
+                # generation request uses a SOCKS connector.
+                async with channel_client_session(download_proxy, base, budget) as download_owned:
+                    adapter = create_adapter(target_session_proxy(request_target), owned, download_owned)
+                    return await adapter.generate(req)
 
     try:
         return asyncio.run(asyncio.wait_for(_go(), timeout=max(1, int(budget))))
@@ -175,9 +202,15 @@ async def _try_on_session(
 ) -> ImageGenerateResult:
     request_target = copy.deepcopy(target)
     request_target.timeout = int(budget)
-    async with channel_client_session(getattr(request_target, "proxy", "") or "", session, budget) as owned:
-        adapter = create_adapter(target_session_proxy(request_target), owned)
-        return await adapter.generate(req)
+    request_proxy = str(getattr(request_target, "proxy", "") or "").strip()
+    download_proxy = _target_download_proxy(request_target)
+    async with channel_client_session(request_proxy, session, budget) as owned:
+        if _proxy_identity(download_proxy) == _proxy_identity(request_proxy):
+            adapter = create_adapter(target_session_proxy(request_target), owned)
+            return await adapter.generate(req)
+        async with channel_client_session(download_proxy, session, budget) as download_owned:
+            adapter = create_adapter(target_session_proxy(request_target), owned, download_owned)
+            return await adapter.generate(req)
 
 
 async def _try_on_registry(
@@ -191,7 +224,13 @@ async def _try_on_registry(
     request_target.timeout = int(budget)
     proxy_value = getattr(request_target, "proxy", "") or ""
     owned = await registry.get_session(proxy_value, budget)
-    adapter = create_adapter(target_session_proxy(request_target), owned)
+    download_proxy = _target_download_proxy(request_target)
+    download_owned = await registry.get_session(download_proxy, budget)
+    normalized_target = target_session_proxy(request_target)
+    if download_owned is owned:
+        adapter = create_adapter(normalized_target, owned)
+    else:
+        adapter = create_adapter(normalized_target, owned, download_owned)
     return await adapter.generate(req)
 
 

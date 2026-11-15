@@ -119,7 +119,7 @@
 
 `.github/workflows/ci.yml` 已配置 Python 3.10、3.11、3.12、3.13，以及有无 Node 的两种前端检查路径。支持 `--layer all/python/frontend/static`；本地 Node 缺失时允许跳过，CI 的 Node 作业使用 `--require-node` 强制实际执行。
 
-上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.41`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，CI 仅在推送 `v*` 版本 tag 后运行。
+上述本地门禁与制品构建入口已完成。制品仅包含已跟踪且获准发布的运行期内容，以及显式列出的新工作流、记录指标与共享 controller 模块；研究、状态预览、测试、脚本与缓存不随运行期 ZIP 发布。默认大小预算为单文件 2 MiB、解压后 12 MiB、ZIP 6 MiB，完整规则见 [发布说明](../scripts/README_RELEASE.md)。当前稳定版本为 `1.7.42`，`generation/selfie_workflow.py` 承担自拍及特色自拍命令和参考选择，`generation/runtime_service.py` 承担生成调度适配，`generation/task_service.py` 承担命令任务生命周期协调；本地完整门禁结果见上方验证基线，CI 仅在推送 `v*` 版本 tag 后运行。
 
 制品基线和验证结果见上方“最新完整发布验证基线”。该制品仅代表本地当前工作区构建，发布前仍需在目标宿主验证真实通知投递和字体资源。
 
@@ -184,7 +184,16 @@
 
 已落地：直连/HTTP 代理按身份复用，SOCKS 使用独立 connector；增加默认 15 分钟惰性空闲回收，回收前检查 connector 无活动连接；注册表记录命中、创建、回收、关闭、失败类别和按传输类型的活动数量；插件卸载统一关闭；保留按请求创建和同步兼容路径。健康接口和 Dashboard 只暴露脱敏统计。
 
+本轮继续完成结果图片 URL 的下载代理边界：
+
+- `BaseImageAdapter` 支持独立的结果下载 session；目标配置可通过 `extra.download_proxy` 指定与生图请求不同的代理。
+- 生成代理和下载代理按规范化身份复用注册表 session；代理不同则隔离连接池，临时 SOCKS 下载 session 在单次生成结束后关闭。
+- HTTP/HTTPS 代理仍使用 aiohttp request-level `proxy`；SOCKS5/SOCKS5H 仅使用 session connector，避免把 SOCKS 握手误发给 HTTP 目标。
+- 结果下载异常只保留脱敏的主机/路径标签和异常类型，不记录签名查询参数、完整 URL 或代理凭据。
+
 本轮验收：本机 aiohttp 回环服务的连续两次请求只建立一个客户端连接；idle 回收、显式关闭、失败分类和健康接口已有回归。HTTP 代理、SOCKS、TLS、双渠道回退、取消/超时和目标宿主真实握手仍需独立夹具或目标环境验证，不能由回环测试外推。
+
+结果下载代理验收：独立 HTTP 下载 session、生成 SOCKS/下载 HTTP 隔离、临时 SOCKS session 关闭、SOCKS connector 真实本机回环下载和敏感诊断回归均已覆盖。HTTPS proxy 的 TLS-in-TLS 行为、跨网络目标的真实握手、双渠道回退及取消/超时组合仍需独立夹具或目标宿主验证，不能由本机回环测试外推。
 
 验收标准：批量 10 张、双渠道回退和 SOCKS 渠道的功能结果与现有测试一致；同一渠道连续请求的握手次数下降；取消、超时和插件卸载后无未关闭 session 或活动连接。
 

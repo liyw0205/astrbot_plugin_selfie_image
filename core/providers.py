@@ -88,9 +88,18 @@ class BaseImageAdapter:
 
     is_adapter_contract = True
 
-    def __init__(self, target: ImageModelTarget, session: aiohttp.ClientSession):
+    def __init__(
+        self,
+        target: ImageModelTarget,
+        session: aiohttp.ClientSession,
+        download_session: Optional[aiohttp.ClientSession] = None,
+    ):
         self.target = target
         self.session = session
+        # Result URLs may use a model-specific proxy. Keep that transport
+        # isolated from the generation session so SOCKS and HTTP routing do
+        # not get mixed on one aiohttp connector.
+        self.download_session = download_session if download_session is not None else session
 
     def build_json_headers(self, headers: Optional[Dict[str, str]] = None, *, bearer_auth: bool = True) -> Dict[str, str]:
         request_headers = {
@@ -219,7 +228,7 @@ class BaseImageAdapter:
         download_diagnostics: List[str] = []
         source_media = image_sources_from_response(data, base_url)
         images = await images_from_response_unknown(
-            self.session,
+            self.download_session,
             data,
             self.target.timeout,
             req.max_image_bytes,
@@ -1247,11 +1256,20 @@ IMAGE_ADAPTER_TYPES: Dict[str, type[BaseImageAdapter]] = {
 }
 
 
-def create_adapter(target: ImageModelTarget, session: aiohttp.ClientSession) -> BaseImageAdapter:
+def create_adapter(
+    target: ImageModelTarget,
+    session: aiohttp.ClientSession,
+    download_session: Optional[aiohttp.ClientSession] = None,
+) -> BaseImageAdapter:
     adapter_type = IMAGE_ADAPTER_TYPES.get(target.provider_type)
     if adapter_type is None:
         raise ValueError(f"未知生图渠道类型: {target.provider_type}")
-    adapter = adapter_type(target, session)
+    if download_session is None:
+        # Keep third-party adapters with the historical two-argument
+        # constructor compatible when no separate download transport is used.
+        adapter = adapter_type(target, session)
+    else:
+        adapter = adapter_type(target, session, download_session)
     # Fail at the factory boundary if a provider was registered without a
     # concrete generation implementation, rather than much later in a task.
     if adapter.__class__.generate is BaseImageAdapter.generate:

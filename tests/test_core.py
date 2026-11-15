@@ -3205,6 +3205,29 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("cdn.example.test/result.png", result.error)
         self.assertNotIn("secret-token-value", result.error)
 
+    async def test_result_from_response_uses_independent_download_proxy_session(self) -> None:
+        generation_session = FakeSession(
+            data={"data": [{"url": "https://cdn.example.test/result.png?token=secret-token-value"}]},
+        )
+        download_session = FakeSession(get_data=PNG_BYTES)
+        target = make_target()
+        target.extra = {"download_proxy": "http://download-user:download-pass@proxy.example.test:8080"}
+        adapter = BaseImageAdapter(target, generation_session, download_session)
+
+        result = await adapter.result_from_response(
+            generation_session.data,
+            ImageGenerateRequest(prompt="cat"),
+            "https://example.test",
+        )
+
+        self.assertEqual(result.images, [PNG_BYTES])
+        self.assertFalse(generation_session.requests)
+        self.assertEqual(download_session.requests[0]["method"], "GET")
+        self.assertEqual(
+            download_session.requests[0]["proxy"],
+            "http://download-user:download-pass@proxy.example.test:8080",
+        )
+
     async def test_gemini_json_post_uses_api_key_header_without_bearer_auth(self) -> None:
         payload = {"candidates": [{"content": {"parts": [{"inlineData": {"data": base64.b64encode(PNG_BYTES).decode("ascii")}}]}}]}
         session = FakeSession(payload)
@@ -3313,6 +3336,22 @@ class ProviderAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(diagnostics)
         self.assertIn("cdn.example.test/generated.png", diagnostics[0])
         self.assertNotIn("secret-token", diagnostics[0])
+
+    async def test_generated_url_transport_exception_diagnostics_do_not_echo_url(self) -> None:
+        class ExplodingSession:
+            def get(self, *_args, **_kwargs):
+                raise RuntimeError("request failed for https://cdn.example.test/result.png?token=secret-token")
+
+        diagnostics = []
+        image = await fetch_generated_image_url(
+            ExplodingSession(),
+            "https://cdn.example.test/result.png?token=secret-token",
+            timeout=180,
+            diagnostics=diagnostics,
+        )
+
+        self.assertIsNone(image)
+        self.assertEqual(diagnostics, ["cdn.example.test/result.png: RuntimeError"])
 
     async def test_unknown_response_parser_accepts_uppercase_inline_image_prefixes(self) -> None:
         encoded = base64.b64encode(PNG_BYTES).decode("ascii")

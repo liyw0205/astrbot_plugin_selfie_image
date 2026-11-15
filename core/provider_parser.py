@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlsplit
 import aiohttp
 
 from .models import normalize_provider_type
-from .proxy import IMAGE_DOWNLOAD_WAIT_SECONDS, image_download_timeout
+from .proxy import IMAGE_DOWNLOAD_WAIT_SECONDS, http_proxy_url, image_download_timeout
 from .utils import (
     IMAGE_EXTENSIONS,
     decode_base64_payload,
@@ -382,12 +382,16 @@ async def fetch_generated_image_url(
     except ValueError:
         url_label = "invalid-url"
     try:
+        # HTTP(S) proxies are request-level aiohttp options. SOCKS proxies
+        # must be represented by the session connector; passing a socks URL
+        # here makes aiohttp send a SOCKS handshake to an HTTP endpoint.
+        request_proxy = http_proxy_url(proxy) if str(proxy or "").strip() else None
         async with session.get(
             text,
             headers=headers,
             timeout=image_download_timeout(timeout),
             allow_redirects=True,
-            proxy=str(proxy or "").strip() or None,
+            proxy=request_proxy,
         ) as response:
             if response.status >= 400:
                 if diagnostics is not None:
@@ -432,8 +436,10 @@ async def fetch_generated_image_url(
         return None
     except Exception as exc:
         if diagnostics is not None:
-            reason = str(exc).strip() or type(exc).__name__
-            diagnostics.append(f"{url_label}: {reason[:160]}")
+            # Exception text from aiohttp can echo the signed URL or proxy
+            # credentials. Keep the diagnostic category, while exposing only
+            # the already-sanitized host/path label above.
+            diagnostics.append(f"{url_label}: {type(exc).__name__}")
         return None
 
 

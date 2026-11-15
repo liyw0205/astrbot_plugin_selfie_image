@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
 
 from astrbot_plugin_selfie_image.core.proxy import ClientSessionRegistry
+from astrbot_plugin_selfie_image.core.provider_parser import fetch_generated_image_url
 from astrbot_plugin_selfie_image.core.models import ImageModelTarget
 from astrbot_plugin_selfie_image.core.providers import ImageGenerateRequest, ImageGenerateResult
 from astrbot_plugin_selfie_image.generation import generator
@@ -14,6 +15,114 @@ from astrbot_plugin_selfie_image.webui.services import build_health_payload
 
 
 class ClientSessionRegistryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generated_url_socks_proxy_is_connector_level_only(self) -> None:
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 128
+
+        class Content:
+            async def iter_chunked(self, _size):
+                yield png
+
+        class Response:
+            status = 200
+            headers = {"content-type": "image/png", "content-length": str(len(png))}
+            content = Content()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+        class Session:
+            def __init__(self):
+                self.requests = []
+
+            def get(self, url, **kwargs):
+                self.requests.append((url, kwargs))
+                return Response()
+
+        session = Session()
+        image = await fetch_generated_image_url(
+            session,
+            "http://cdn.example.test/result.png",
+            timeout=5,
+            proxy="socks5://proxy.example.test:1080",
+        )
+
+        self.assertEqual(image, png)
+        self.assertIsNone(session.requests[0][1]["proxy"])
+
+
+    async def test_registry_allocates_independent_download_proxy_session(self) -> None:
+        registry = ClientSessionRegistry()
+        target = ImageModelTarget(
+            "test",
+            "openai",
+            "https://example.test",
+            "",
+            "model",
+            10,
+            proxy="socks5://request.example.test:1080",
+            extra={"download_proxy": "http://download.example.test:8080"},
+        )
+        expected = ImageGenerateResult(images=[b"image"])
+
+        class Adapter:
+            async def generate(self, _request):
+                return expected
+
+        try:
+            with patch.object(generator, "create_adapter", return_value=Adapter()) as factory:
+                result = await generator._try_on_registry(
+                    target,
+                    ImageGenerateRequest(prompt="test"),
+                    registry,
+                    10,
+                )
+            self.assertIs(result, expected)
+            self.assertEqual(len(factory.call_args.args), 3)
+            self.assertIsNot(factory.call_args.args[1], factory.call_args.args[2])
+            stats = registry.get_stats()
+            self.assertEqual(stats["active_by_transport"], {"direct": 0, "http": 1, "socks": 1})
+        finally:
+            await registry.close()
+
+
+    async def test_temporary_download_socks_session_closes_after_generation(self) -> None:
+        target = ImageModelTarget(
+            "test",
+            "openai",
+            "https://example.test",
+            "",
+            "model",
+            10,
+            extra={"download_proxy": "socks5://download.example.test:1080"},
+        )
+        captured = {}
+        expected = ImageGenerateResult(images=[b"image"])
+
+        class Adapter:
+            async def generate(self, _request):
+                captured["download_session_open"] = not captured["download_session"].closed
+                return expected
+
+        def factory(_target, _request_session, download_session):
+            captured["download_session"] = download_session
+            return Adapter()
+
+        with patch.object(generator, "create_adapter", side_effect=factory):
+            result = await generator._try_on_session(
+                target,
+                ImageGenerateRequest(prompt="test"),
+                object(),
+                10,
+            )
+
+        self.assertIs(result, expected)
+        self.assertTrue(captured["download_session_open"])
+        self.assertTrue(captured["download_session"].closed)
+
+
     async def test_registry_reuses_direct_and_http_proxy_sessions(self) -> None:
         registry = ClientSessionRegistry()
         try:
@@ -218,15 +327,19 @@ class ClientSessionRegistryTests(unittest.IsolatedAsyncioTestCase):
         from aiohttp import web
 
         peer_ports = set()
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 128
 
         async def handle(request):
             peer = request.transport.get_extra_info("peername")
             if peer:
                 peer_ports.add(peer[1])
+            if request.path == "/image":
+                return web.Response(body=png, content_type="image/png")
             return web.Response(text="socks-ok")
 
         app = web.Application()
         app.router.add_get("/health", handle)
+        app.router.add_get("/image", handle)
         target_runner = web.AppRunner(app)
         await target_runner.setup()
         target_site = web.TCPSite(target_runner, "127.0.0.1", 0)
@@ -309,6 +422,13 @@ class ClientSessionRegistryTests(unittest.IsolatedAsyncioTestCase):
                 async with session.get(f"http://127.0.0.1:{target_port}/health") as response:
                     self.assertEqual(response.status, 200)
                     self.assertEqual(await response.text(), "socks-ok")
+            downloaded = await fetch_generated_image_url(
+                session,
+                f"http://127.0.0.1:{target_port}/image",
+                timeout=5,
+                proxy=f"socks5://127.0.0.1:{proxy_port}",
+            )
+            self.assertEqual(downloaded, png)
             self.assertEqual(handshake_count, 1)
             self.assertEqual(len(peer_ports), 1)
             self.assertEqual(registry.get_stats()["active_by_transport"]["socks"], 1)
