@@ -1941,8 +1941,30 @@ class SelfieImagePlugin(
             generate_images=generate_image_with_fallback,
         )
 
+    def _get_image_command_service(self) -> ImageCommandService:
+        """Reuse the stateless regular-image command adapter for this plugin."""
+        service = getattr(self, "_image_command_service", None)
+        if getattr(service, "plugin", None) is not self:
+            service = ImageCommandService(self)
+            self._image_command_service = service
+        return service
+
+    def _get_selfie_workflow_service(self) -> SelfieWorkflowService:
+        """Reuse the selfie adapter while preserving patchable parser hooks."""
+        service = getattr(self, "_selfie_workflow_service", None)
+        if getattr(service, "plugin", None) is not self:
+            service = SelfieWorkflowService(
+                self, extract_command_message, extract_image_sources_from_event
+            )
+            self._selfie_workflow_service = service
+        else:
+            # Keep compatibility with tests and hosts that replace these hooks.
+            service.extract_command_message = extract_command_message
+            service.extract_image_sources = extract_image_sources_from_event
+        return service
+
     def _is_cos_action(self, action: str) -> bool:
-        return SelfieWorkflowService(self).is_cos_action(action)
+        return self._get_selfie_workflow_service().is_cos_action(action)
 
     def _reference_failure_message(self, event: Any) -> str:
         getter = getattr(self, "_reference_failure_reason", None)
@@ -1957,17 +1979,17 @@ class SelfieImagePlugin(
     def _select_group_references(
         self, message_refs: List[ImageReference]
     ) -> CosReferenceSelection:
-        return SelfieWorkflowService(self).select_group_references(message_refs)
+        return self._get_selfie_workflow_service().select_group_references(message_refs)
 
     def _select_cos_references(
         self, action: str, message_refs: List[ImageReference]
     ) -> CosReferenceSelection:
-        return SelfieWorkflowService(self).select_cos_references(action, message_refs)
+        return self._get_selfie_workflow_service().select_cos_references(action, message_refs)
 
     def _select_selfie_references(
         self, action: str, message_refs: List[ImageReference]
     ) -> Optional[CosReferenceSelection]:
-        return SelfieWorkflowService(self).select_selfie_references(action, message_refs)
+        return self._get_selfie_workflow_service().select_selfie_references(action, message_refs)
 
     def _selfie_reference_images(
         self,
@@ -1975,7 +1997,7 @@ class SelfieImagePlugin(
         message_refs: List[ImageReference],
         selection: Optional[CosReferenceSelection] = None,
     ) -> List[ImageReference]:
-        return SelfieWorkflowService(self).selfie_reference_images(action, message_refs, selection)
+        return self._get_selfie_workflow_service().selfie_reference_images(action, message_refs, selection)
 
     async def _build_selfie_prompt_and_refs(
         self,
@@ -3501,9 +3523,7 @@ class SelfieImagePlugin(
         rebuild_match_query: str = "",
         rebuild_special_preset_variants: Optional[List[str]] = None,
     ) -> AsyncGenerator[Any, None]:
-        async for item in SelfieWorkflowService(
-            self, extract_command_message, extract_image_sources_from_event
-        ).handle_command(
+        async for item in self._get_selfie_workflow_service().handle_command(
             event=event,
             command_name=command_name,
             fallback=fallback,
@@ -4120,7 +4140,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """写想要的画面出图。有附图/引用图时按图改；没图时按文字出。不会自动带入形象图。"""
-        async for result in ImageCommandService(self).draw(
+        async for result in self._get_image_command_service().draw(
             event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield result
@@ -4141,7 +4161,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """按你写的原文出图，不走自拍人设包装，也不使用形象图。"""
-        async for result in ImageCommandService(self).raw_text_to_image(
+        async for result in self._get_image_command_service().raw_text_to_image(
             event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield result
@@ -4162,7 +4182,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """带图或引用图，按原文改图。需要附图，不会自动使用形象图。"""
-        async for result in ImageCommandService(self).raw_image_to_image(
+        async for result in self._get_image_command_service().raw_image_to_image(
             event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield result
@@ -4183,9 +4203,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """用当前形象自拍。可写动作、场景、换装；有附图时作服装/场景参考。"""
-        async for item in SelfieWorkflowService(
-            self, extract_command_message, extract_image_sources_from_event
-        ).selfie(
+        async for item in self._get_selfie_workflow_service().selfie(
             event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
@@ -4206,9 +4224,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """生成日常袜装穿搭展示；可指定服装、姿势、自拍或全身构图。"""
-        async for item in SelfieWorkflowService(
-            self, extract_command_message, extract_image_sources_from_event
-        ).look_legs(
+        async for item in self._get_selfie_workflow_service().look_legs(
             event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
@@ -4229,9 +4245,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """随机一套内置 COS 换装；可用列表/全部/查看浏览标题，或按标题分段指定套装并附加数量。"""
-        async for item in SelfieWorkflowService(
-            self, extract_command_message, extract_image_sources_from_event
-        ).look_cos(
+        async for item in self._get_selfie_workflow_service().look_cos(
             event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
@@ -4252,9 +4266,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """像别人随手拍你，带一点日常他拍感。使用当前形象。"""
-        async for item in SelfieWorkflowService(
-            self, extract_command_message, extract_image_sources_from_event
-        ).look_you(
+        async for item in self._get_selfie_workflow_service().look_you(
             event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
@@ -4275,9 +4287,7 @@ class SelfieImagePlugin(
         p10: str = "",
     ) -> AsyncGenerator[Any, None]:
         """和对象同框合影。可附图或@对方；自己使用当前形象。"""
-        async for item in SelfieWorkflowService(
-            self, extract_command_message, extract_image_sources_from_event
-        ).group_selfie(
+        async for item in self._get_selfie_workflow_service().group_selfie(
             event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item

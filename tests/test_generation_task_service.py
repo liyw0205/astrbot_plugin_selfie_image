@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
+from astrbot_plugin_selfie_image import main as main_module
+from astrbot_plugin_selfie_image.generation.image_command_service import ImageCommandService
+from astrbot_plugin_selfie_image.generation.selfie_workflow import SelfieWorkflowService
 from astrbot_plugin_selfie_image.generation.task_service import GenerationTaskService
 from astrbot_plugin_selfie_image.main import SelfieImagePlugin
 
@@ -60,3 +63,24 @@ def test_cancel_facade_uses_service_and_preserves_keyword_contract(monkeypatch):
 
     assert plugin.cancel_image_task("task-1", session_key="session-1", is_admin=True) == "已请求取消"
     assert calls == [(plugin, "task-1", {"session_key": "session-1", "is_admin": True})]
+
+
+def test_command_adapters_are_reused_and_refresh_parser_hooks(monkeypatch):
+    plugin = object.__new__(SelfieImagePlugin)
+
+    image_service = plugin._get_image_command_service()
+    assert isinstance(image_service, ImageCommandService)
+    assert plugin._get_image_command_service() is image_service
+
+    selfie_service = plugin._get_selfie_workflow_service()
+    assert isinstance(selfie_service, SelfieWorkflowService)
+    assert plugin._get_selfie_workflow_service() is selfie_service
+
+    parser = lambda *_args, **_kwargs: "patched"
+    extractor = lambda *_args, **_kwargs: []
+    monkeypatch.setattr(main_module, "extract_command_message", parser)
+    monkeypatch.setattr(main_module, "extract_image_sources_from_event", extractor)
+
+    assert plugin._get_selfie_workflow_service() is selfie_service
+    assert selfie_service.extract_command_message is parser
+    assert selfie_service.extract_image_sources is extractor
