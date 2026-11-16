@@ -308,6 +308,28 @@ def _appearance_type_for_request(persona: Any, text: str = "") -> str:
         return "auto"
 
 
+def _cached_plugin_service(plugin: Any, attribute: str, factory) -> Any:
+    """Cache stateless adapters without requiring a full plugin subclass."""
+    service = getattr(plugin, attribute, None)
+    if getattr(service, "plugin", None) is plugin:
+        return service
+    service = factory(plugin)
+    try:
+        setattr(plugin, attribute, service)
+    except Exception:
+        # Legacy mixins and lightweight host probes may not allow attributes.
+        pass
+    return service
+
+
+def _generation_task_service_for(plugin: Any) -> GenerationTaskService:
+    return _cached_plugin_service(plugin, "_generation_task_service", GenerationTaskService)
+
+
+def _generation_runtime_service_for(plugin: Any) -> GenerationRuntimeService:
+    return _cached_plugin_service(plugin, "_generation_runtime_service", GenerationRuntimeService)
+
+
 @register(PLUGIN_NAME, PLUGIN_AUTHOR, f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}", PLUGIN_VERSION)
 class SelfieImagePlugin(
     StudioMixin,
@@ -493,7 +515,7 @@ class SelfieImagePlugin(
                 cancel_task_once(worker)
         for worker in workers.difference(workers_by_id.values()):
             cancel_task_once(worker)
-        await GenerationRuntimeService(self).close_scheduler()
+        await _generation_runtime_service_for(self).close_scheduler()
         if workers:
             await asyncio.gather(*workers, return_exceptions=True)
         session_registry = getattr(self, "_image_session_registry", None)
@@ -824,7 +846,7 @@ class SelfieImagePlugin(
             pass
 
     def _quota_error_message(self, event: AstrMessageEvent, requested_count: int = 1) -> str:
-        return GenerationTaskService(self).quota_error_message(event, requested_count)
+        return _generation_task_service_for(self).quota_error_message(event, requested_count)
 
     def _reserve_quota_for_task(
         self,
@@ -834,12 +856,12 @@ class SelfieImagePlugin(
         *,
         media_type: str = "image",
     ) -> str:
-        return GenerationTaskService(self).reserve_quota_for_task(
+        return _generation_task_service_for(self).reserve_quota_for_task(
             task_id, event, requested_count, media_type=media_type
         )
 
     def _release_quota_reservation(self, task_id: str) -> None:
-        GenerationTaskService(self).release_quota_reservation(task_id)
+        _generation_task_service_for(self).release_quota_reservation(task_id)
 
     def _rate_limit_error_message(self, event: AstrMessageEvent) -> str:
         if self._is_whitelisted(event):
@@ -1874,7 +1896,7 @@ class SelfieImagePlugin(
         label: str,
     ) -> None:
         """Publish a live task stage when a generation record has a task link."""
-        GenerationRuntimeService(self).set_generation_stage(record_context, stage, label)
+        _generation_runtime_service_for(self).set_generation_stage(record_context, stage, label)
 
     async def _run_image_generation(
         self,
@@ -1895,7 +1917,7 @@ class SelfieImagePlugin(
         reference_fidelity: str = "",
     ) -> Dict[str, Any]:
         """Run one image shot through the shared fair scheduler."""
-        return await GenerationRuntimeService(self).run_image_generation(
+        return await _generation_runtime_service_for(self).run_image_generation(
             prompt,
             aspect_ratio,
             resolution,
@@ -1962,6 +1984,14 @@ class SelfieImagePlugin(
             service.extract_command_message = extract_command_message
             service.extract_image_sources = extract_image_sources_from_event
         return service
+
+    def _get_generation_task_service(self) -> GenerationTaskService:
+        """Reuse the task lifecycle adapter for quota and delivery hooks."""
+        return _generation_task_service_for(self)
+
+    def _get_generation_runtime_service(self) -> GenerationRuntimeService:
+        """Reuse the runtime adapter for scheduler and stage hooks."""
+        return _generation_runtime_service_for(self)
 
     def _is_cos_action(self, action: str) -> bool:
         return self._get_selfie_workflow_service().is_cos_action(action)
@@ -2825,7 +2855,7 @@ class SelfieImagePlugin(
         session_key: str = "",
         is_admin: bool = False,
     ) -> str:
-        return GenerationTaskService(self).cancel_image_task(
+        return _generation_task_service_for(self).cancel_image_task(
             task_id, session_key=session_key, is_admin=is_admin
         )
 
@@ -2834,10 +2864,10 @@ class SelfieImagePlugin(
         GenerationTaskService.log_scheduler_cancel_error(future)
 
     def _task_cancel_requested(self, task_id: str) -> bool:
-        return GenerationTaskService(self).task_cancel_requested(task_id)
+        return _generation_task_service_for(self).task_cancel_requested(task_id)
 
     def _mark_task_delivery_failed(self, task_id: str, error: str) -> None:
-        GenerationTaskService(self).mark_task_delivery_failed(task_id, error)
+        _generation_task_service_for(self).mark_task_delivery_failed(task_id, error)
 
     def start_command_image_task(
         self,
@@ -2848,7 +2878,7 @@ class SelfieImagePlugin(
         runner,
         reference_images: Optional[Iterable[ImageReference]] = None,
     ) -> Dict[str, Any]:
-        return GenerationTaskService(self).start_command_image_task(
+        return _generation_task_service_for(self).start_command_image_task(
             event,
             source=source,
             summary=summary,
@@ -2857,7 +2887,7 @@ class SelfieImagePlugin(
         )
 
     async def _await_command_image_task(self, task: Mapping[str, Any]) -> Dict[str, Any]:
-        return await GenerationTaskService(self).await_command_image_task(task)
+        return await _generation_task_service_for(self).await_command_image_task(task)
 
     async def _ensure_task_failure_record(
         self,
@@ -3002,34 +3032,34 @@ class SelfieImagePlugin(
             await wait_commits(tid)
 
     async def _run_command_image_task(self, task_id: str, event: AstrMessageEvent, runner) -> None:
-        await GenerationTaskService(self).run_command_image_task(task_id, event, runner)
+        await _generation_task_service_for(self).run_command_image_task(task_id, event, runner)
 
 
 
     def _image_inflight_limit(self) -> int:
-        return GenerationRuntimeService(self).image_inflight_limit()
+        return _generation_runtime_service_for(self).image_inflight_limit()
 
     def _image_scheduler_snapshot(self) -> Dict[str, int]:
-        return GenerationRuntimeService(self).image_scheduler_snapshot()
+        return _generation_runtime_service_for(self).image_scheduler_snapshot()
 
     def _image_batch_queue_expected(self, total: int = 1) -> bool:
         """Whether the shared scheduler already has no physical image slot."""
-        return GenerationRuntimeService(self).image_batch_queue_expected(total)
+        return _generation_runtime_service_for(self).image_batch_queue_expected(total)
 
     def _ensure_image_batch_gate(self) -> asyncio.Semaphore:
         """Keep compatibility with older hosts that have no image scheduler."""
-        return GenerationRuntimeService(self).ensure_image_batch_gate()
+        return _generation_runtime_service_for(self).ensure_image_batch_gate()
 
     async def _acquire_image_slot(self, task_id: str) -> Optional[asyncio.Semaphore]:
         """Acquire the legacy image slot when running without the scheduler."""
-        return await GenerationRuntimeService(self).acquire_image_slot(task_id)
+        return await _generation_runtime_service_for(self).acquire_image_slot(task_id)
 
     def _ensure_image_batch_cooldown_lock(self) -> asyncio.Lock:
-        return GenerationRuntimeService(self).ensure_image_batch_cooldown_lock()
+        return _generation_runtime_service_for(self).ensure_image_batch_cooldown_lock()
 
     async def _wait_for_image_batch_cooldown(self, task_id: str) -> bool:
         """Stagger actual upstream starts, including shots released from the queue."""
-        return await GenerationRuntimeService(self).wait_for_image_batch_cooldown(
+        return await _generation_runtime_service_for(self).wait_for_image_batch_cooldown(
             task_id, IMAGE_BATCH_REQUEST_COOLDOWN_SECONDS
         )
 

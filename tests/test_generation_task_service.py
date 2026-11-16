@@ -4,6 +4,7 @@ import asyncio
 
 from astrbot_plugin_selfie_image import main as main_module
 from astrbot_plugin_selfie_image.generation.image_command_service import ImageCommandService
+from astrbot_plugin_selfie_image.generation.runtime_service import GenerationRuntimeService
 from astrbot_plugin_selfie_image.generation.selfie_workflow import SelfieWorkflowService
 from astrbot_plugin_selfie_image.generation.task_service import GenerationTaskService
 from astrbot_plugin_selfie_image.main import SelfieImagePlugin
@@ -84,3 +85,10 @@ def test_command_adapters_are_reused_and_refresh_parser_hooks(monkeypatch):
     assert plugin._get_selfie_workflow_service() is selfie_service
     assert selfie_service.extract_command_message is parser
     assert selfie_service.extract_image_sources is extractor
+
+    task_service = plugin._get_generation_task_service()
+    runtime_service = plugin._get_generation_runtime_service()
+    assert isinstance(task_service, GenerationTaskService)
+    assert isinstance(runtime_service, GenerationRuntimeService)
+    assert plugin._get_generation_task_service() is task_service
+    assert plugin._get_generation_runtime_service() is runtime_service
