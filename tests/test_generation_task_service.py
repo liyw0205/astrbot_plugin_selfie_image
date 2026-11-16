@@ -4,6 +4,7 @@ import asyncio
 
 from astrbot_plugin_selfie_image import main as main_module
 from astrbot_plugin_selfie_image.generation.image_command_service import ImageCommandService
+from astrbot_plugin_selfie_image.generation.image_prompt_service import ImagePromptService
 from astrbot_plugin_selfie_image.generation.runtime_service import GenerationRuntimeService
 from astrbot_plugin_selfie_image.generation.selfie_workflow import SelfieWorkflowService
 from astrbot_plugin_selfie_image.generation.task_service import GenerationTaskService
@@ -92,3 +93,23 @@ def test_command_adapters_are_reused_and_refresh_parser_hooks(monkeypatch):
     assert isinstance(runtime_service, GenerationRuntimeService)
     assert plugin._get_generation_task_service() is task_service
     assert plugin._get_generation_runtime_service() is runtime_service
+
+
+def test_image_prompt_adapter_is_reused_and_preserves_plugin_parser_contract():
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.config = type(
+        "Config",
+        (),
+        {
+            "image_default_aspect_ratio": "3:4",
+            "image_default_resolution": "2K",
+            "image_max_batch_count": 4,
+        },
+    )()
+
+    service = plugin._get_image_prompt_service()
+
+    assert isinstance(service, ImagePromptService)
+    assert plugin._get_image_prompt_service() is service
+    assert plugin._image_parser_defaults() == ("3:4", "2K")
+    assert plugin._extract_command_count("2 测试", allow_trailing=True) == ("测试", 2)
