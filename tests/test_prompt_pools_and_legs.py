@@ -712,7 +712,7 @@ class PromptPoolJsonTests(unittest.TestCase):
         self.assertTrue(all(
             style.get("explicit_only")
             for style in LEGFOCUS_HOSIERY_STYLES
-            if style["kind"] == "stirrup"
+            if style["kind"] != "tights"
         ))
         for outfit in LEGFOCUS_OUTFIT_POOL:
             for wear in ("黑丝", "白丝"):
@@ -729,6 +729,11 @@ class PromptPoolJsonTests(unittest.TestCase):
         barefoot = build_leg_focus_action("赤足", force_pose="kneeling_sit_back", force_camera="selfie")
         self.assertIn("脚趾数量正确", barefoot)
         self.assertIn("【wear:barefoot】", barefoot)
+
+    def test_leg_prompt_pool_deep_compatibility_lint_is_clean(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import validate_leg_focus_catalog
+
+        self.assertEqual(validate_leg_focus_catalog(), [])
 
     def test_outfit_pool_is_json_owned_and_contains_no_source_policy_prompt(self) -> None:
         from astrbot_plugin_selfie_image.core.prompt_data import read_versioned_json
@@ -791,7 +796,10 @@ class PromptPoolJsonTests(unittest.TestCase):
     def test_leg_outfit_schema_rejects_invalid_capture_rules(self) -> None:
         from astrbot_plugin_selfie_image.cos import leg_focus
 
-        for error in ("missing_profile", "unknown_profile", "missing_coverage", "invalid_direction", "invalid_elevation"):
+        for error in (
+            "missing_profile", "unknown_profile", "missing_coverage", "invalid_direction",
+            "invalid_elevation", "non_tights_random",
+        ):
             with self.subTest(error=error):
                 payload = copy.deepcopy(leg_focus._OUTFITS)
                 if error == "missing_profile":
@@ -802,8 +810,10 @@ class PromptPoolJsonTests(unittest.TestCase):
                     payload["capture_profiles"]["skirt"].pop("coverage_prompt")
                 elif error == "invalid_direction":
                     payload["capture_profiles"]["skirt"]["third_directions"] = ["rear"]
-                else:
+                elif error == "invalid_elevation":
                     payload["capture_profiles"]["skirt"]["third_elevations"] = ["unknown"]
+                else:
+                    payload["hosiery_styles"][1].pop("explicit_only", None)
                 with patch.object(leg_focus, "read_versioned_json", return_value=payload):
                     with self.assertRaises(leg_focus.LegFocusDataError):
                         leg_focus._load_outfit_pool()

@@ -221,11 +221,12 @@ def _load_outfit_pool() -> Dict[str, Any]:
             or not str(style.get("family") or "").strip()
             or style.get("kind") not in {"tights", "thigh_high", "stirrup", "ankle"}
             or type(style.get("explicit_only", False)) is not bool
+            or (style.get("kind") != "tights" and not style.get("explicit_only", False))
             or not isinstance(style.get("aliases"), list)
             or not style["aliases"]
             or any(not isinstance(alias, str) or not alias.strip() for alias in style["aliases"])
         ):
-            raise LegFocusDataError(f"看看腿袜装款式无效: {style['id']}")
+            raise LegFocusDataError(f"看看腿袜装款式无效或需显式请求: {style['id']}")
     families = {style["family"] for style in payload["hosiery_styles"]}
     capture_profiles = payload.get("capture_profiles")
     if not isinstance(capture_profiles, Mapping) or not capture_profiles:
@@ -1253,4 +1254,177 @@ def ensure_leg_focus_action(text: str, has_refs: bool = False) -> str:
         force_legwear=parse_requested_legwear(str(wear_match.group(0) if wear_match else "")),
         force_framing=str(frame_match.group(1) if frame_match else ""),
         preferred_scene=str(scene_match.group(1) if scene_match else ""),
+    )
+
+
+def validate_leg_focus_catalog() -> List[str]:
+    """Return deep compatibility and prompt-contract issues for the leg pool.
+
+    The loader validates individual records, while this pass validates the
+    cross-product that random selection can actually traverse. It deliberately
+    stays data-only so release checks can run without an AstrBot instance.
+    """
+    issues: List[str] = []
+
+    def duplicate_prompt_issues(items: List[Dict[str, Any]], category: str) -> None:
+        by_prompt: Dict[str, List[str]] = {}
+        for item in items:
+            prompt = re.sub(r"\s+", "", str(item.get("prompt") or "")).strip("。；;，,")
+            item_id = str(item.get("id") or "<missing>")
+            if prompt:
+                by_prompt.setdefault(prompt, []).append(item_id)
+        for prompt, item_ids in by_prompt.items():
+            if len(item_ids) > 1:
+                issues.append(f"{category}: duplicate prompt ids {','.join(item_ids[:8])}")
+
+    def has_unnegated_term(text: str, term: str) -> bool:
+        for match in re.finditer(re.escape(term), text):
+            prefix = text[max(0, match.start() - 14):match.start()]
+            if not re.search(
+                r"(?:不|避免|禁止|不能|不得|不让|不画成|不变成|不呈现)"
+                r"[^。；，,]{0,12}$",
+                prefix,
+            ):
+                return True
+        return False
+
+    # A pose, every declared view, and every scene must have a reachable
+    # support/camera path. This catches dead ends hidden by valid references.
+    for pose in LEGFOCUS_POSE_POOL:
+        pose_id = str(pose["id"])
+        all_combinations = compatible_leg_compositions(pose)
+        if not all_combinations:
+            issues.append(f"pose {pose_id}: no compatible scene/camera/view path")
+        for camera, view_ids in pose["camera_views"].items():
+            camera_combinations = compatible_leg_compositions(pose, camera=camera)
+            if not camera_combinations:
+                issues.append(f"pose {pose_id}: camera {camera} has no compatible path")
+            for view_id in view_ids:
+                if not compatible_leg_compositions(pose, camera=camera, view_id=view_id):
+                    issues.append(f"pose {pose_id}: view {view_id} has no compatible scene/support")
+
+    for scene in LEGFOCUS_SCENE_POOL:
+        if not any(
+            compatible_leg_compositions(pose, scene_ids=scene["id"])
+            for pose in LEGFOCUS_POSE_POOL
+        ):
+            issues.append(f"scene {scene['id']}: no compatible pose/camera/view path")
+
+    for view in LEGFOCUS_VIEW_POOL:
+        if not any(
+            compatible_leg_compositions(pose, view_id=view["id"])
+            for pose in LEGFOCUS_POSE_POOL
+        ):
+            issues.append(f"view {view['id']}: no compatible pose/scene/support path")
+
+    # Every random wear and pose must retain at least one outfit/style/view
+    # combination after capture and hosiery restrictions are applied.
+    random_styles = [
+        style for style in LEGFOCUS_HOSIERY_STYLES
+        if style["kind"] == "tights" and not style.get("explicit_only", False)
+    ]
+    for pose in LEGFOCUS_POSE_POOL:
+        combinations = compatible_leg_compositions(pose)
+        for wear in ("黑丝", "白丝"):
+            if not any(
+                style["wear"] == wear
+                and style["family"] in outfit["hosiery_families"]
+                and style["kind"] not in set(pose.get("disallowed_hosiery_kinds") or ())
+                and _leg_outfit_allows_view(outfit, view)
+                for _, _, view in combinations
+                for outfit in LEGFOCUS_OUTFIT_POOL
+                for style in random_styles
+            ):
+                issues.append(f"pose {pose['id']}: no random {wear} outfit/style/view path")
+
+    for outfit in LEGFOCUS_OUTFIT_POOL:
+        outfit_id = str(outfit["id"])
+        if not any(_leg_outfit_allows_view(outfit, view) for view in LEGFOCUS_VIEW_POOL):
+            issues.append(f"outfit {outfit_id}: capture profile has no compatible view")
+        if re.search(r"(?:袜装|连裤袜|丝袜|过膝袜|赤足|裸足|光脚)", str(outfit["prompt"])):
+            issues.append(f"outfit {outfit_id}: clothing prompt must not choose hosiery or bare feet")
+        for wear in ("黑丝", "白丝"):
+            if not any(
+                style["wear"] == wear
+                and style["kind"] == "tights"
+                and not style.get("explicit_only", False)
+                and style["family"] in outfit["hosiery_families"]
+                for style in LEGFOCUS_HOSIERY_STYLES
+            ):
+                issues.append(f"outfit {outfit_id}: no random {wear} tights style")
+
+    for profile_id, profile in LEGFOCUS_OUTFIT_CAPTURE_PROFILES.items():
+        if not any(
+            view["camera"] == "third"
+            and view["direction"] in profile["third_directions"]
+            and view["elevation"] in profile["third_elevations"]
+            for view in LEGFOCUS_VIEW_POOL
+        ):
+            issues.append(f"capture profile {profile_id}: no usable third-person view")
+
+    families = {str(style["family"]) for style in LEGFOCUS_HOSIERY_STYLES}
+    referenced_families = {
+        family for outfit in LEGFOCUS_OUTFIT_POOL for family in outfit["hosiery_families"]
+    }
+    for family in sorted(families - referenced_families):
+        issues.append(f"hosiery family {family}: not referenced by any outfit")
+    for style in LEGFOCUS_HOSIERY_STYLES:
+        kind = str(style["kind"])
+        prompt = str(style["prompt"])
+        style_id = str(style["id"])
+        if kind == "tights":
+            if "连裤袜" not in prompt or not re.search(r"(?:纤维|织物|袜尖|袜跟|脚背)", prompt):
+                issues.append(f"hosiery {style_id}: tights prompt lacks continuous fabric/foot detail")
+            if any(has_unnegated_term(prompt, term) for term in ("赤足", "裸足", "光脚")):
+                issues.append(f"hosiery {style_id}: tights prompt conflicts with bare-foot state")
+        elif kind == "thigh_high" and not re.search(r"(?:过膝|长筒|丝袜)", prompt):
+            issues.append(f"hosiery {style_id}: thigh-high prompt lacks length detail")
+        elif kind == "stirrup" and not all(term in prompt for term in ("踩脚", "脚弓")):
+            issues.append(f"hosiery {style_id}: stirrup prompt lacks foot-strap detail")
+        elif kind == "ankle" and not re.search(r"(?:短袜|踝袜)", prompt):
+            issues.append(f"hosiery {style_id}: ankle prompt lacks ankle-length detail")
+        if kind != "tights" and not style.get("explicit_only", False):
+            issues.append(f"hosiery {style_id}: non-tights style must be explicit_only")
+
+    for detail in LEGFOCUS_RANDOM_LEG_DETAILS:
+        wear = str(detail["wear"])
+        prompt = str(detail["prompt"])
+        detail_id = str(detail["id"])
+        if wear == "光腿" and "不增加袜装" not in prompt:
+            issues.append(f"leg detail {detail_id}: bare-leg prompt must forbid extra hosiery")
+        if wear == "赤足" and not all(term in prompt for term in ("赤足", "不添加袜装", "鞋履")):
+            issues.append(f"leg detail {detail_id}: barefoot prompt lacks sock/shoe/foot contract")
+        if wear in {"黑丝", "白丝"} and any(
+            has_unnegated_term(prompt, term) for term in ("赤足", "裸足", "光脚")
+        ):
+            issues.append(f"leg detail {detail_id}: hosiery detail conflicts with bare-foot state")
+        if wear == "赤足" and not detail.get("explicit_only", False):
+            issues.append(f"leg detail {detail_id}: barefoot detail must be explicit_only")
+
+    framing_contracts = {
+        "selfie": ("本人看向自己双腿", ("第三人称画外相机",)),
+        "third": ("第三人称画外相机", ("本人看向自己双腿", "镜面中同一人的穿搭倒影")),
+        "mirror": ("镜面中同一人的穿搭倒影", ("第三人称画外相机", "本人看向自己双腿")),
+    }
+    for camera, (required, forbidden) in framing_contracts.items():
+        prompt = str(LEGFOCUS_CAMERA_FRAMINGS.get(camera) or "")
+        if required not in prompt:
+            issues.append(f"camera framing {camera}: missing person contract")
+        for term in forbidden:
+            if term in prompt:
+                issues.append(f"camera framing {camera}: conflicting person term {term}")
+
+    duplicate_prompt_issues(LEGFOCUS_POSE_POOL, "poses")
+    duplicate_prompt_issues(LEGFOCUS_SCENE_POOL, "scenes")
+    duplicate_prompt_issues(LEGFOCUS_VIEW_POOL, "views")
+    duplicate_prompt_issues(LEGFOCUS_OUTFIT_POOL, "outfits")
+    duplicate_prompt_issues(LEGFOCUS_HOSIERY_STYLES, "hosiery")
+    duplicate_prompt_issues(LEGFOCUS_RANDOM_LEG_DETAILS, "leg-details")
+    return issues
+
+
+_LEGFOCUS_CATALOG_ISSUES = validate_leg_focus_catalog()
+if _LEGFOCUS_CATALOG_ISSUES:
+    raise LegFocusDataError(
+        "看看腿提示词池深检失败: " + "; ".join(_LEGFOCUS_CATALOG_ISSUES[:12])
     )

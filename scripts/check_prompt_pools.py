@@ -22,11 +22,12 @@ from astrbot_plugin_selfie_image.cos.leg_focus import (
     LEGFOCUS_HOSIERY_STYLES,
     LEGFOCUS_OUTFIT_POOL,
     LEGFOCUS_POSE_POOL,
+    validate_leg_focus_catalog,
 )
 
 
 def main() -> int:
-    issues = validate_json_catalog()
+    issues = [*validate_json_catalog(), *validate_leg_focus_catalog()]
     if issues:
         for issue in issues:
             print(f"[prompt-pools] {issue}", file=sys.stderr)
