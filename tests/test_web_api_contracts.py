@@ -346,6 +346,28 @@ class ContractPlugin(ConfigurationMixin, CreativeFeaturesMixin, WebTaskMixin):
         return "cancel requested"
 
 
+class _PluginProxy:
+    """Keep registered Dashboard handlers reusable without sharing test state."""
+
+    def __init__(self, target=None):
+        object.__setattr__(self, "_target", target)
+
+    def set_target(self, target):
+        object.__setattr__(self, "_target", target)
+
+    def __getattr__(self, name):
+        target = object.__getattribute__(self, "_target")
+        if target is None:
+            raise AttributeError(name)
+        return getattr(target, name)
+
+    def __setattr__(self, name, value):
+        target = object.__getattribute__(self, "_target")
+        if target is None:
+            raise AttributeError(name)
+        setattr(target, name, value)
+
+
 @dataclass
 class HttpResult:
     status: int
@@ -366,8 +388,19 @@ def standalone(tmp_path):
     return FlaskWebServer(plugin)._create_app().test_client(), plugin
 
 
+@pytest.fixture(scope="module")
+def dashboard_harness(tmp_path_factory):
+    proxy = _PluginProxy(ContractPlugin(tmp_path_factory.mktemp("dashboard-contract")))
+    registered = []
+    proxy.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
+    api = dashboard_module.SelfieImageDashboardAPI(proxy)
+    api.register()
+    routes = Map([Rule(path, endpoint=handler, methods=methods) for path, handler, methods, _desc in registered])
+    return SimpleNamespace(proxy=proxy, registered=registered, routes=routes)
+
+
 @pytest.fixture(params=["flask", "dashboard"])
-def http(request, monkeypatch, tmp_path):
+def http(request, monkeypatch, tmp_path, dashboard_harness):
     plugin = ContractPlugin(tmp_path)
     adapter = request.param
 
@@ -392,16 +425,14 @@ def http(request, monkeypatch, tmp_path):
                 return default if self.body is MISSING_BODY else self.body
 
         host_request = HostRequest()
-        registered = []
-        plugin.context = SimpleNamespace(register_web_api=lambda *args: registered.append(args))
-        api = dashboard_module.SelfieImageDashboardAPI(plugin)
+        dashboard_harness.proxy.set_target(plugin)
+        registered = dashboard_harness.registered
         monkeypatch.setattr(dashboard_module, "request", host_request)
         monkeypatch.setattr(dashboard_module, "json_response", lambda payload, status_code=200: HttpResult(status_code, payload))
         monkeypatch.setattr(dashboard_module, "error_response", lambda message, status_code=400: HttpResult(
             status_code, {"status": "error", "message": message, "data": {}},
         ))
-        api.register()
-        routes = Map([Rule(path, endpoint=handler, methods=methods) for path, handler, methods, _desc in registered])
+        routes = dashboard_harness.routes
 
         def call(path, *, method="GET", body=MISSING_BODY, headers=None, page_prefix=""):
             parsed = urlsplit(path)
