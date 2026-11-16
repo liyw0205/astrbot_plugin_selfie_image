@@ -81,12 +81,6 @@ class HealthControllerResult:
 
 
 @dataclass(frozen=True)
-class ContextControllerResult:
-    data: Any
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
 class QQGroupControllerResult:
     data: Any
 
@@ -1000,35 +994,6 @@ class HealthController:
         except Exception as exc:
             raise WebContractError(str(exc), 400) from exc
         return HealthControllerResult(redact_sensitive_data(data))
-
-
-class ContextController:
-    """Shared conversation-context operations for both Web adapters."""
-
-    def __init__(self, plugin: Any) -> None:
-        self.plugin = plugin
-
-    def get(self) -> ContextControllerResult:
-        getter = getattr(self.plugin, "get_conversation_context", None)
-        if not callable(getter):
-            raise WebContractError("当前版本不支持会话上下文", 501)
-        try:
-            data = getter(None)
-        except Exception as exc:
-            raise WebContractError(str(exc), 500) from exc
-        return ContextControllerResult(redact_sensitive_data(data))
-
-    def clear(self) -> ContextControllerResult:
-        clearer = getattr(self.plugin, "clear_conversation_context", None)
-        if not callable(clearer):
-            raise WebContractError("当前版本不支持会话上下文", 501)
-        try:
-            data = clearer(None)
-        except Exception as exc:
-            raise WebContractError(str(exc), 500) from exc
-        return ContextControllerResult(
-            redact_sensitive_data(data), {"message": "会话上下文已清除"},
-        )
 
 
 class QQGroupController:

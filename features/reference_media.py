@@ -221,7 +221,7 @@ class ReferenceMediaMixin:
             if not self._reference_source_is_bot_avatar(source, bot_ids)
         ]
 
-    def _reference_collector(
+    async def _reference_collector(
         self,
         event: AstrMessageEvent,
         *,
@@ -252,7 +252,7 @@ class ReferenceMediaMixin:
             max_bytes=max_bytes,
             bot_ids=self._bot_account_ids(event),
             persona_path=persona_path,
-            context_sources=self._recent_context_image_sources(
+            context_sources=await self._recent_context_image_sources_async(
                 event,
                 prefer_user=not edit_bot,
                 user_only=user_only,
@@ -281,7 +281,7 @@ class ReferenceMediaMixin:
         include_image_alternates: bool = False,
     ) -> Tuple[List[ImageReference], int, int]:
         """Collect event references and preserve historical result semantics."""
-        collector = self._reference_collector(
+        collector = await self._reference_collector(
             event,
             include_at_avatar=include_at_avatar,
             context_hint=context_hint,
@@ -313,7 +313,7 @@ class ReferenceMediaMixin:
         extra_sources: Optional[List[str]] = None,
         include_image_alternates: bool = False,
     ):
-        collector = self._reference_collector(
+        collector = await self._reference_collector(
             event,
             include_at_avatar=include_at_avatar,
             context_hint=context_hint,
@@ -473,7 +473,6 @@ class ReferenceMediaMixin:
                     pending.append((record, file_path, receipt, True, ""))
                     if len(pending) >= IMAGE_DELIVERY_PERSIST_BATCH_SIZE:
                         await flush_pending()
-                self._record_bot_image_context(event, [file_path])
         finally:
             await flush_pending()
         return ImageDeliveryOutcome(sent, failed=failed, unknown=unknown)

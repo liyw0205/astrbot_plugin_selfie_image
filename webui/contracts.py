@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+from typing import Any
 
 
 WEB_TASK_ID_RE = re.compile(r"^(?:web|web-studio|cmd)-\d{8,}-\d+$")
@@ -183,28 +184,9 @@ HEALTH_ROUTE_CONTRACTS = (
     ),
 )
 
-
-@dataclass(frozen=True)
-class ContextRouteContract:
-    endpoint: str
-    flask_path: str
-    dashboard_path: str
-    methods: tuple[str, ...]
-    flask_handler: str
-    dashboard_handler: str
-    description: str
-
-
-CONTEXT_ROUTE_CONTRACTS = (
-    ContextRouteContract(
-        "context_get", "/api/context", "context", ("GET",),
-        "context_get", "page_context_get", "Selfie Image conversation context",
-    ),
-    ContextRouteContract(
-        "context_clear", "/api/context/clear", "context/clear", ("POST",),
-        "context_clear", "page_context_clear", "Selfie Image clear conversation context",
-    ),
-)
+# Kept as an empty import compatibility surface for older integrations. The
+# conversation endpoints themselves were removed with the local context store.
+CONTEXT_ROUTE_CONTRACTS: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True)

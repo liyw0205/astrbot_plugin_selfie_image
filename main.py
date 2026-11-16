@@ -40,12 +40,6 @@ except ImportError:  # Compatibility with older AstrBot layouts
     from astrbot.api.utils import logger
 
 try:
-    from astrbot.api.provider import LLMResponse, ProviderRequest
-except ImportError:  # Older AstrBot versions do not expose provider hook types.
-    LLMResponse = Any
-    ProviderRequest = Any
-
-try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 except Exception:
     def get_astrbot_data_path() -> str:
@@ -68,11 +62,9 @@ from .features.qq_group_cache import QQGroupCache
 from .features.backup_manager import BackupManager
 from .features.context_routing import (
     compact_followup_text,
-    format_context_for_llm,
     looks_like_clothes_followup,
     looks_like_context_image_reference,
     looks_like_edit_bot_result_followup,
-    recent_context_image_sources,
 )
 from .cos.cos_looks import (
     COS_LOOK_CATEGORY_TERMS,
@@ -260,33 +252,6 @@ from .webui.web import FlaskWebServer
 LLM_TOOL = getattr(filter, "llm_tool", llm_tool)
 
 
-def optional_event_message_type(priority: int = 100):
-    decorator = getattr(filter, "event_message_type", None)
-    event_type = getattr(getattr(filter, "EventMessageType", None), "ALL", None)
-    if callable(decorator) and event_type is not None:
-        return decorator(event_type, priority=priority)
-
-    def passthrough(func):
-        return func
-
-    return passthrough
-
-
-def optional_filter_hook(name: str):
-    """Use a lifecycle hook when the host supports it, otherwise stay loadable."""
-    decorator = getattr(filter, str(name or ""), None)
-    if callable(decorator):
-        try:
-            return decorator()
-        except TypeError:
-            return decorator
-
-    def passthrough(func):
-        return func
-
-    return passthrough
-
-
 def _appearance_type_for_request(persona: Any, text: str = "") -> str:
     try:
         from .prompts.prompt_templates import resolve_appearance_type
@@ -366,10 +331,6 @@ class SelfieImagePlugin(
         self._records_lock = threading.RLock()
         self._progress_lock = threading.RLock()
         self._progress_last_sent: Dict[str, float] = {}
-        self._context_lock = threading.RLock()
-        self._conversation_context: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
-        self._context_max_messages = 40
-        self._context_max_sessions = 100
         self._llm_generation_lock = threading.RLock()
         self._last_llm_generations: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
         native_config = self._config_object_to_dict(config)
@@ -401,7 +362,6 @@ class SelfieImagePlugin(
         self.loop: Optional[asyncio.AbstractEventLoop] = None
 
         self.qq_group_cache = QQGroupCache(self)
-        self._load_persisted_conversation_context()
         self.persona = PersonaManager(self.data_dir)
         self.backup_manager = BackupManager(self.data_dir)
         _wardrobe_dimension, _wardrobe_pixels, _wardrobe_frames = image_validation_limits(self.config)
@@ -595,63 +555,6 @@ class SelfieImagePlugin(
 
         task.add_done_callback(commit_finished)
         await asyncio.shield(task)
-
-    @optional_event_message_type(priority=100)
-    async def on_message_record(self, event: AstrMessageEvent) -> None:
-        try:
-            msg = self._extract_context_message_info(event)
-            sender_id = event_user_id(event)
-            bot_ids = set(self._bot_account_ids(event))
-            is_bot = bool(sender_id and sender_id in bot_ids)
-            self._add_context_message(
-                session_key=self._context_session_key(event),
-                sender_id=sender_id,
-                sender_name=self._event_sender_name(event, is_bot=is_bot),
-                content=str(msg.get("content") or ""),
-                is_bot=is_bot,
-                image_sources=list(msg.get("image_sources") or []),
-                msg_id=self._event_message_id(event),
-                source="event",
-            )
-        except Exception as exc:
-            logger.debug(f"[SelfieImage] 记录上下文失败: {exc}")
-        return None
-
-    @optional_filter_hook("on_llm_request")
-    async def on_llm_request_context(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ) -> None:
-        """同步 AstrBot 官方会话上下文，补齐未经过消息记录钩子的当前消息。"""
-        try:
-            self._sync_provider_context(event, req)
-            if event is None:
-                return
-            msg = self._extract_context_message_info(event)
-            sender_id = event_user_id(event)
-            bot_ids = set(self._bot_account_ids(event))
-            is_bot = bool(sender_id and sender_id in bot_ids)
-            self._add_context_message(
-                session_key=self._provider_context_session_key(event, req),
-                sender_id=sender_id,
-                sender_name=self._event_sender_name(event, is_bot=is_bot),
-                content=str(msg.get("content") or ""),
-                is_bot=is_bot,
-                image_sources=list(msg.get("image_sources") or []),
-                msg_id=self._event_message_id(event),
-                source="llm_request",
-            )
-        except Exception as exc:
-            logger.debug(f"[SelfieImage] 同步 AstrBot 请求上下文失败: {exc}")
-
-    @optional_filter_hook("on_llm_response")
-    async def on_llm_response_context(
-        self, event: AstrMessageEvent, resp: LLMResponse
-    ) -> None:
-        """记录完成的 assistant 回复，跳过工具调用中间轮和流式分片。"""
-        try:
-            self._record_llm_response_context(event, resp)
-        except Exception as exc:
-            logger.debug(f"[SelfieImage] 记录 AstrBot 回复上下文失败: {exc}")
 
     def _access_status(self, event: AstrMessageEvent) -> Dict[str, Any]:
         user_id = event_user_id(event)
@@ -1045,7 +948,6 @@ class SelfieImagePlugin(
             return
         try:
             await event.send(event.plain_result(text))
-            self._record_bot_text_context(event, text)
         except Exception as exc:
             logger.warning(f"[SelfieImage] 发送进度消息失败: {exc}")
 
@@ -1148,8 +1050,8 @@ class SelfieImagePlugin(
         value = value.strip(" 「」『』“”\"'`")
         return re.sub(r"\s+", " ", value).strip()
 
-    def _build_ack_prompt_for_llm(self, event: AstrMessageEvent, kind: str, user_request: str, count: int) -> str:
-        context_text = self._format_context_for_llm(event, count=12, max_chars=1400)
+    async def _build_ack_prompt_for_llm(self, event: AstrMessageEvent, kind: str, user_request: str, count: int) -> str:
+        context_text = await self._format_context_for_llm_async(event, count=12, max_chars=1400)
         request = str(user_request or "").strip()
         kind_text = "自拍/拍照" if kind == "selfie" else "图片请求"
         count_text = "多张" if count > 1 else "一张"
@@ -1179,40 +1081,10 @@ class SelfieImagePlugin(
         fallback = self._build_progress_text(kind, user_request, count, ack_message)
         if ack_message:
             return fallback
-        prompt = self._build_ack_prompt_for_llm(event, kind, user_request, count)
+        prompt = await self._build_ack_prompt_for_llm(event, kind, user_request, count)
         text = self._strip_llm_short_reply(await self._call_text_llm(event, prompt, timeout=7, use_persona=True))
         custom = self._clean_ack_message(text, user_request)
         return custom or fallback
-
-    def _record_bot_text_context(self, event: Optional[AstrMessageEvent], text: str) -> None:
-        if not event or not str(text or "").strip():
-            return
-        self._add_context_message(
-            session_key=self._context_session_key(event),
-            sender_id="bot",
-            sender_name=self._bot_display_name(),
-            content=text,
-            is_bot=True,
-            msg_id=f"bot:{time.time_ns()}",
-            source="plugin",
-        )
-
-    def _record_bot_image_context(self, event: Optional[AstrMessageEvent], files: Iterable[str]) -> None:
-        if not event:
-            return
-        for file_path in files:
-            if not str(file_path or "").strip():
-                continue
-            self._add_context_message(
-                session_key=self._context_session_key(event),
-                sender_id="bot",
-                sender_name=self._bot_display_name(),
-                content="[图片]",
-                is_bot=True,
-                image_sources=[os.path.abspath(str(file_path))],
-                msg_id=f"bot-image:{time.time_ns()}",
-                source="plugin",
-            )
 
     def _is_admin_event(self, event: AstrMessageEvent) -> bool:
         role = str(getattr(event, "role", "") or "").lower().strip()
@@ -4058,42 +3930,6 @@ class SelfieImagePlugin(
             yield event.plain_result(f"重发失败，仍有 {result['remaining']} 张图片待重发。")
         else:
             yield event.plain_result("没有可重发的图片。")
-
-    @filter.command("上下文")
-    async def cmd_context_view(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """查看当前会话的截断上下文摘要。"""
-        denied = self._permission_denied_message(event)
-        if denied:
-            yield event.plain_result(denied)
-            return
-        data = self.get_conversation_context(event, 12)
-        messages = data.get("messages") if isinstance(data, dict) else []
-        lines = [f"当前会话上下文：{len(messages)} 条（持久化{'已开启' if data.get('enabled') else '未开启'}）"]
-        for item in messages[-12:]:
-            if not isinstance(item, dict):
-                continue
-            content = " ".join(str(item.get("content") or "").split())[:100]
-            if content:
-                source_labels = {
-                    "astrbot": "框架上下文",
-                    "llm_response": "助手回复",
-                    "plugin": "插件消息",
-                    "llm_request": "LLM请求",
-                }
-                source = source_labels.get(str(item.get("source") or ""), "消息")
-                lines.append(
-                    f"[{source}] {'我' if item.get('is_bot') else item.get('sender_name') or '用户'}：{content}"
-                )
-        yield event.plain_result("\n".join(lines))
-
-    @filter.command("上下文清除")
-    async def cmd_context_clear(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        denied = self._permission_denied_message(event)
-        if denied:
-            yield event.plain_result(denied)
-            return
-        result = self.clear_conversation_context(event)
-        yield event.plain_result(f"已清除当前会话上下文 {result.get('cleared', 0)} 条。")
 
     @filter.command("记录复用", alias={"记录重生"})
     async def cmd_record_reuse(

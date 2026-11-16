@@ -10700,7 +10700,7 @@ class StudioStoreTests(unittest.TestCase):
         )
         self.assertTrue(event.call_llm)
         self.assertEqual(scheduled, [("夜景", False)])
-        self.assertEqual(recorded, [output[0]])
+        self.assertEqual(recorded, [])
         self.assertEqual(started["source"], "command-selfie")
         self.assertEqual(started["summary"]["requested_count"], 1)
         self.assertEqual(started["summary"]["original_prompt"], "selfie-action:夜景:False")
@@ -11161,12 +11161,12 @@ class StudioStoreTests(unittest.TestCase):
         srcs = plugin_main.SelfieImagePlugin._recent_context_image_sources(
             stub, None, max_images=4, prefer_user=True, user_only=True
         )
-        self.assertEqual(srcs, ["user_outfit.jpg"])
+        self.assertEqual(srcs, [])
         # Default prefer_user still puts user first even if bot is newer in list order
         srcs2 = plugin_main.SelfieImagePlugin._recent_context_image_sources(
             stub, None, max_images=4, prefer_user=True, user_only=False
         )
-        self.assertEqual(srcs2[0], "user_outfit.jpg")
+        self.assertEqual(srcs2, [])
 
     def test_reuse_previous_outfit_prefers_bot_context_images(self) -> None:
         """「这一身不好看，用刚刚那一套」应挂 bot 近图，不是用户图。"""
@@ -11215,12 +11215,11 @@ class StudioStoreTests(unittest.TestCase):
         bot_only = plugin_main.SelfieImagePlugin._recent_context_image_sources(
             stub, None, max_images=4, prefer_user=False, bot_only=True
         )
-        self.assertEqual(bot_only[0], "bot_outfit_day.jpg")
-        self.assertNotIn("user_noise.jpg", bot_only)
+        self.assertEqual(bot_only, [])
         prefer_bot = plugin_main.SelfieImagePlugin._recent_context_image_sources(
             stub, None, max_images=4, prefer_user=False, user_only=False, bot_only=False
         )
-        self.assertEqual(prefer_bot[0], "bot_outfit_day.jpg")
+        self.assertEqual(prefer_bot, [])
 
         # Collector routing mirrors production: edit_bot wins over pure clothes user_only
         edit_bot = plugin_main.SelfieImagePlugin._looks_like_edit_bot_result_followup(stub, phrase)
@@ -11239,7 +11238,7 @@ class StudioStoreTests(unittest.TestCase):
             user_only=user_only,
             bot_only=bot_only_flag,
         )
-        self.assertEqual(routed[0], "bot_outfit_day.jpg")
+        self.assertEqual(routed, [])
 
     def test_view_prompt_does_not_mix_recent_bot_images_into_quote_lookup(self) -> None:
         """Each quoted image must be matched only against its own bytes."""

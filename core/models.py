@@ -82,8 +82,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # stop: 一张全失败整批停（旧行为）；skip: 跳过失败张继续凑满；skip_max: 最多跳过 N 张
         "batch_on_failure": "skip",
         "batch_skip_max": 2,
-        # Conversation context remains in memory unless explicitly enabled.
-        "persist_context": False,
         "blocked_words": [],
         "enable_prompt_audit": False,
         "enable_output_audit": False,
@@ -412,6 +410,8 @@ class AICatConfig:
         raw.pop("videoOnly", None)
         raw.pop("video", None)
         image_raw = ensure_dict(raw, "image")
+        image_raw.pop("persist_context", None)
+        image_raw.pop("persistContext", None)
         image_raw.pop("enable_video_prompt_en", None)
         image_raw.pop("enableVideoPromptEn", None)
         image_raw.pop("video_prompt_en_template", None)

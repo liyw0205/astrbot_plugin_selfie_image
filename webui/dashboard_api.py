@@ -25,7 +25,6 @@ from .contracts import (
     CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
-    CONTEXT_ROUTE_CONTRACTS,
     DASHBOARD_ROUTE_PREFIXES,
     HEALTH_ROUTE_CONTRACTS,
     IMAGE_CHANNEL_ROUTE_CONTRACTS,
@@ -49,8 +48,6 @@ from .controllers import (
     CanvasControllerResult,
     ConfigController,
     ConfigControllerResult,
-    ContextController,
-    ContextControllerResult,
     HealthController,
     HealthControllerResult,
     ImageChannelController,
@@ -99,7 +96,6 @@ class SelfieImageDashboardAPI:
         self._task_controller = TaskController(plugin)
         self._record_controller = RecordController(plugin)
         self._health_controller = HealthController(plugin)
-        self._context_controller = ContextController(plugin)
         self._qq_group_controller = QQGroupController(plugin)
         self._selfie_profile_controller = SelfieProfileController(plugin)
         self._image_channel_controller = ImageChannelController(plugin)
@@ -194,17 +190,6 @@ class SelfieImageDashboardAPI:
             for route in HEALTH_ROUTE_CONTRACTS
         ]
 
-    def _context_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
-        return [
-            (
-                route.dashboard_path,
-                getattr(self, route.dashboard_handler),
-                list(route.methods),
-                route.description,
-            )
-            for route in CONTEXT_ROUTE_CONTRACTS
-        ]
-
     def _qq_group_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
         return [
             (
@@ -276,7 +261,6 @@ class SelfieImageDashboardAPI:
             ("health", self.page_health, ["GET"], "Selfie Image health"),
             *self._health_route_entries(),
             ("health/channels/clear", self.page_channel_health_clear, ["POST"], "Selfie Image clear channel health"),
-            *self._context_route_entries(),
             *self._config_route_entries(),
             *self._proxy_route_entries(),
             *self._qq_group_route_entries(),
@@ -436,24 +420,6 @@ class SelfieImageDashboardAPI:
         except Exception as exc:
             return self._fail(str(exc), 500)
         return self._ok(result.data)
-    async def page_context_get(self) -> Any:
-        try:
-            result: ContextControllerResult = self._context_controller.get()
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
-        return self._ok(result.data, **result.extra)
-
-    async def page_context_clear(self) -> Any:
-        try:
-            result: ContextControllerResult = self._context_controller.clear()
-        except WebContractError as exc:
-            return self._fail(str(exc), exc.status_code)
-        except Exception as exc:
-            return self._fail(str(exc), 500)
-        return self._ok(result.data, **result.extra)
-
     async def page_storage_consistency(self) -> Any:
         return self._record_result(lambda: self._record_controller.consistency())
 

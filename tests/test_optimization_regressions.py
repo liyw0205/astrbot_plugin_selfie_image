@@ -720,23 +720,13 @@ def test_studio_copy_clears_results_and_remaps_slots() -> None:
         assert store.get(source["id"])["graph"]["prompt"] == "keep"
 
 
-def test_context_persistence_is_opt_in_and_never_writes_image_sources() -> None:
+def test_context_storage_is_removed() -> None:
     with tempfile.TemporaryDirectory() as directory:
         context = object.__new__(ConversationContextMixin)
         context.data_dir = directory
-        context.raw_config = {"image": {"persist_context": True}}
-        context._context_lock = __import__("threading").RLock()
-        context._conversation_context = OrderedDict()
-        context._context_max_messages = 40
-        context._context_max_sessions = 100
-        context._add_context_message("group:1", "u", "用户", "hello", image_sources=["https://secret.invalid/a.png"])
-        path = Path(directory) / "conversation_context.json"
-        stored = json.loads(path.read_text(encoding="utf-8"))
-        assert stored["sessions"]["group:1"][0]["image_count"] == 1
-        assert "secret.invalid" not in path.read_text(encoding="utf-8")
-        view = context.get_conversation_context(SimpleNamespace(unified_msg_origin="group:1"))
-        assert view["messages"][0]["image_sources"] == []
-        assert context.clear_conversation_context(SimpleNamespace(unified_msg_origin="group:1"))["cleared"] == 1
+        assert not hasattr(context, "_conversation_context")
+        assert not hasattr(context, "get_conversation_context")
+        assert not (Path(directory) / "conversation_context.json").exists()
 
 
 def test_channel_health_history_aggregates_empty_and_media_scopes() -> None:

@@ -129,15 +129,6 @@ class BackupManager:
             "default_selected": False,
         },
         {
-            "id": "context",
-            "label": "会话上下文",
-            "description": "持久化的对话上下文",
-            "reason": "可选的会话记忆，可能包含敏感内容",
-            "paths": ("conversation_context.json",),
-            "required": False,
-            "default_selected": False,
-        },
-        {
             "id": "records",
             "label": "生成记录",
             "description": "生成记录 JSON/SQLite，数据量可能较大",

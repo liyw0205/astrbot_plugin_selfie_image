@@ -1,16 +1,20 @@
-"""Conversation context and last-generation request helpers."""
+"""AstrBot framework conversation adapter and transient generation helpers.
+
+The host owns conversation history. This module deliberately does not keep a
+second message store, register context hooks, or persist conversation data.
+"""
 
 from __future__ import annotations
 
 import copy
-import hashlib
+import inspect
 import json
-import os
 import re
 import time
-import tempfile
+from contextlib import nullcontext
+from collections import OrderedDict
 from collections.abc import Mapping
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 try:
     from astrbot.api.event import AstrMessageEvent
@@ -25,143 +29,14 @@ from .context_routing import (
     looks_like_edit_bot_result_followup,
     recent_context_image_sources,
 )
-from ..core.utils import event_group_id, event_user_id, extract_event_text, extract_image_sources_from_event
+from ..core.utils import event_group_id, event_user_id
 
 
 class ConversationContextMixin:
-    def _context_persistence_enabled(self) -> bool:
-        raw = getattr(self, "raw_config", {})
-        image = raw.get("image") if isinstance(raw, dict) else {}
-        value = image.get("persist_context") if isinstance(image, dict) else False
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "yes", "on", "是", "开启"}
-        return bool(value)
-
-    def _context_store_path(self) -> str:
-        data_dir = str(getattr(self, "data_dir", "") or "").strip()
-        return os.path.join(data_dir, "conversation_context.json") if data_dir else ""
-
-    def _load_persisted_conversation_context(self) -> None:
-        if not self._context_persistence_enabled():
-            return
-        path = self._context_store_path()
-        if not path:
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-            raw_sessions = payload.get("sessions") if isinstance(payload, dict) else {}
-            if not isinstance(raw_sessions, dict):
-                return
-            with self._context_lock:
-                self._conversation_context.clear()
-                for key, items in raw_sessions.items():
-                    if not isinstance(items, list):
-                        continue
-                    rows = [self._normalize_persisted_context_row(item) for item in items]
-                    rows = [item for item in rows if item]
-                    if rows:
-                        self._conversation_context[str(key)] = rows[-self._context_max_messages :]
-                while len(self._conversation_context) > self._context_max_sessions:
-                    self._conversation_context.popitem(last=False)
-        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
-            # A corrupt optional store must not prevent plugin startup.
-            return
-
-    @staticmethod
-    def _normalize_persisted_context_row(item: Any) -> Dict[str, Any]:
-        if not isinstance(item, dict):
-            return {}
-        try:
-            image_count = int(item.get("image_count") or (1 if item.get("has_image") else 0))
-        except (TypeError, ValueError):
-            image_count = 1 if item.get("has_image") else 0
-        try:
-            timestamp = float(item.get("timestamp") or 0)
-        except (TypeError, ValueError):
-            timestamp = 0.0
-        return {
-            "msg_id": str(item.get("msg_id") or "")[:160],
-            "sender_id": str(item.get("sender_id") or "")[:160],
-            "sender_name": str(item.get("sender_name") or "用户")[:80],
-            "content": str(item.get("content") or "")[:500],
-            "is_bot": bool(item.get("is_bot")),
-            "source": str(item.get("source") or "event")[:40],
-            "has_image": bool(item.get("has_image")),
-            "image_sources": [],
-            "image_count": max(0, min(8, image_count)),
-            "timestamp": timestamp,
-        }
-
-    def _persist_conversation_context(self) -> None:
-        if not self._context_persistence_enabled():
-            return
-        path = self._context_store_path()
-        if not path:
-            return
-        with self._context_lock:
-            sessions = {
-                key: [
-                    {
-                        "msg_id": str(row.get("msg_id") or "")[:160],
-                        "sender_id": str(row.get("sender_id") or "")[:160],
-                        "sender_name": str(row.get("sender_name") or "用户")[:80],
-                        "content": str(row.get("content") or "")[:500],
-                        "is_bot": bool(row.get("is_bot")),
-                        "source": str(row.get("source") or "event")[:40],
-                        "has_image": bool(row.get("has_image")),
-                        "image_count": max(
-                            0,
-                            min(
-                                8,
-                                int(row.get("image_count") or 0)
-                                or len(row.get("image_sources") or [])
-                                or (1 if row.get("has_image") else 0),
-                            ),
-                        ),
-                        "timestamp": float(row.get("timestamp") or 0),
-                    }
-                    for row in rows[-self._context_max_messages :]
-                    if isinstance(row, dict)
-                ]
-                for key, rows in self._conversation_context.items()
-            }
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            fd, temp_path = tempfile.mkstemp(prefix="conversation_context.", suffix=".tmp", dir=os.path.dirname(path))
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump({"version": 1, "sessions": sessions}, handle, ensure_ascii=False, separators=(",", ":"))
-            os.replace(temp_path, path)
-        except OSError:
-            try:
-                if 'temp_path' in locals() and os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except OSError:
-                pass
-
-    def get_conversation_context(self, event: Optional[AstrMessageEvent] = None, count: int = 40) -> Dict[str, Any]:
-        key = self._context_session_key(event)
-        with self._context_lock:
-            rows = copy.deepcopy(self._conversation_context.get(key, []))[-max(1, min(40, int(count or 40))) :]
-        for row in rows:
-            row["image_sources"] = []
-            row["image_count"] = max(0, min(8, int(row.get("image_count") or (1 if row.get("has_image") else 0))))
-        return {"session_key": key, "enabled": self._context_persistence_enabled(), "count": len(rows), "messages": rows}
-
-    def clear_conversation_context(self, event: Optional[AstrMessageEvent] = None) -> Dict[str, Any]:
-        key = self._context_session_key(event)
-        with self._context_lock:
-            removed = len(self._conversation_context.pop(key, []) or [])
-        self._persist_conversation_context()
-        return {"session_key": key, "cleared": removed}
-
-    def get_context(self, event: Optional[AstrMessageEvent] = None, count: int = 40) -> Dict[str, Any]:
-        return self.get_conversation_context(event, count)
-
-    def clear_context(self, event: Optional[AstrMessageEvent] = None) -> Dict[str, Any]:
-        return self.clear_conversation_context(event)
+    """Read the current AstrBot conversation without duplicating its storage."""
 
     def _session_key(self, event: Optional[AstrMessageEvent] = None) -> str:
+        """Return the plugin's transient scope key for non-conversation state."""
         if event is None:
             return "web"
         group_id = event_group_id(event)
@@ -181,248 +56,207 @@ class ConversationContextMixin:
         origin = str(getattr(event, "unified_msg_origin", "") or "").strip()
         return origin or self._session_key(event)
 
-    def _event_sender_name(self, event: Optional[AstrMessageEvent], is_bot: bool = False) -> str:
-        if is_bot:
-            return self._bot_display_name()
-        if event is None:
-            return "用户"
-        for method_name in ("get_sender_name", "get_sender_nickname", "get_user_name"):
-            method = getattr(event, method_name, None)
-            if callable(method):
-                try:
-                    value = str(method() or "").strip()
-                    if value:
-                        return value
-                except Exception:
-                    continue
-        sender = getattr(event, "sender", None)
-        for key in ("nickname", "name", "card", "display_name"):
-            value = getattr(sender, key, None)
-            if value:
-                return str(value).strip()
-        return event_user_id(event) or "用户"
+    @staticmethod
+    async def _maybe_await(value: Any) -> Any:
+        return await value if inspect.isawaitable(value) else value
 
-    def _event_message_id(self, event: Optional[AstrMessageEvent]) -> str:
-        if event is None:
-            return f"web:{time.time_ns()}"
-        message_obj = getattr(event, "message_obj", None)
-        for obj in (message_obj, event):
-            for key in ("message_id", "msg_id", "id"):
-                value = getattr(obj, key, None)
-                if value:
-                    return str(value)
-        return f"event:{id(event)}:{time.time_ns()}"
-
-    def _add_context_message(
+    async def _call_context_method(
         self,
-        session_key: str,
-        sender_id: str,
-        sender_name: str,
-        content: str,
-        is_bot: bool = False,
-        image_sources: Optional[List[str]] = None,
-        msg_id: str = "",
-        image_count: int = 0,
-        source: str = "event",
-        persist: bool = True,
-    ) -> bool:
-        key = str(session_key or "").strip() or "unknown"
-        text = re.sub(r"\s+", " ", str(content or "")).strip()
-        sources = [str(item).strip() for item in (image_sources or []) if str(item).strip()]
-        try:
-            declared_image_count = max(0, min(8, int(image_count or 0)))
-        except (TypeError, ValueError):
-            declared_image_count = 0
-        actual_image_count = max(declared_image_count, len(sources))
-        if not text and actual_image_count:
-            text = "[图片]"
-        if not text and not actual_image_count:
-            return False
-        record = {
-            "msg_id": msg_id or f"{time.time_ns()}",
-            "sender_id": str(sender_id or "").strip(),
-            "sender_name": str(sender_name or "").strip() or ("[Bot]" if is_bot else "用户"),
-            "content": text[:500],
-            "is_bot": bool(is_bot),
-            "source": str(source or "event").strip()[:40] or "event",
-            "has_image": bool(actual_image_count),
-            "image_sources": sources[:8],
-            "image_count": actual_image_count,
-            "timestamp": time.time(),
-        }
-        with self._context_lock:
-            messages = self._conversation_context.setdefault(key, [])
-            if any(item.get("msg_id") == record["msg_id"] for item in messages):
-                return False
-            messages.append(record)
-            if len(messages) > self._context_max_messages:
-                del messages[: len(messages) - self._context_max_messages]
-            self._conversation_context.move_to_end(key)
-            while len(self._conversation_context) > self._context_max_sessions:
-                self._conversation_context.popitem(last=False)
-        if persist:
-            self._persist_conversation_context()
-        return True
+        method: Any,
+        attempts: Iterable[tuple[tuple[Any, ...], dict[str, Any]]],
+    ) -> Any:
+        if not callable(method):
+            return None
+        for args, kwargs in attempts:
+            try:
+                return await self._maybe_await(method(*args, **kwargs))
+            except (TypeError, AttributeError):
+                continue
+            except Exception:
+                return None
+        return None
+
+    def _framework_conversation_manager(self) -> Any:
+        context = getattr(self, "context", None)
+        return getattr(context, "conversations", None) or getattr(context, "conversation_manager", None)
 
     @staticmethod
-    def _provider_message_parts(content: Any) -> tuple[str, int]:
-        """Extract text and media count from an OpenAI-style context message."""
-        if isinstance(content, str):
-            return re.sub(r"\s+", " ", content).strip(), 0
-        if isinstance(content, Mapping):
-            content_type = str(content.get("type") or "").strip().lower()
-            if content_type in {"image_url", "image", "input_image"}:
-                return "", 1
-            value = content.get("text") or content.get("content") or ""
-            return re.sub(r"\s+", " ", str(value)).strip(), 0
-        if not isinstance(content, (list, tuple)):
-            text = str(getattr(content, "text", "") or "").strip()
-            return re.sub(r"\s+", " ", text).strip(), 0
+    def _history_payload(history: Any) -> list[Any]:
+        if isinstance(history, str):
+            try:
+                history = json.loads(history)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return []
+        if isinstance(history, Mapping):
+            for key in ("messages", "history", "contexts", "items"):
+                value = history.get(key)
+                if isinstance(value, list):
+                    return value
+            return []
+        return list(history) if isinstance(history, (list, tuple)) else []
 
-        texts: List[str] = []
+    @staticmethod
+    def _media_source(value: Any) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, Mapping):
+            for key in ("url", "path", "file", "source"):
+                candidate = value.get(key)
+                if candidate:
+                    return str(candidate).strip()
+            return ConversationContextMixin._media_source(value.get("image_url"))
+        for key in ("url", "path", "file", "source"):
+            candidate = getattr(value, key, None)
+            if candidate:
+                return str(candidate).strip()
+        return ConversationContextMixin._media_source(getattr(value, "image_url", None))
+
+    @classmethod
+    def _message_parts(cls, content: Any) -> tuple[str, int, list[str]]:
+        if isinstance(content, str):
+            return re.sub(r"\s+", " ", content).strip(), 0, []
+        if isinstance(content, Mapping):
+            part_type = str(content.get("type") or "").strip().lower()
+            if part_type in {"image_url", "image", "input_image"}:
+                source = cls._media_source(content)
+                return "", 1, [source] if source else []
+            value = content.get("text") or content.get("content") or ""
+            return re.sub(r"\s+", " ", str(value)).strip(), 0, []
+        if not isinstance(content, (list, tuple)):
+            text = getattr(content, "text", "") or getattr(content, "content", "") or ""
+            return re.sub(r"\s+", " ", str(text)).strip(), 0, []
+
+        texts: list[str] = []
         image_count = 0
+        sources: list[str] = []
         for part in content:
-            if isinstance(part, Mapping):
-                part_type = str(part.get("type") or "").strip().lower()
-                if part_type in {"image_url", "image", "input_image"}:
-                    image_count += 1
-                elif part_type in {"text", "input_text"}:
-                    value = part.get("text") or part.get("content") or ""
-                    if value:
-                        texts.append(str(value))
-                continue
-            part_type = str(getattr(part, "type", "") or "").strip().lower()
+            part_type = str(
+                part.get("type") if isinstance(part, Mapping) else getattr(part, "type", "")
+            ).strip().lower()
             if part_type in {"image_url", "image", "input_image"}:
                 image_count += 1
-            else:
-                value = getattr(part, "text", "") or getattr(part, "content", "") or ""
-                if value:
-                    texts.append(str(value))
-        return re.sub(r"\s+", " ", " ".join(texts)).strip(), image_count
+                source = cls._media_source(part)
+                if source:
+                    sources.append(source)
+                continue
+            value = (
+                (part.get("text") or part.get("content") or "")
+                if isinstance(part, Mapping)
+                else (getattr(part, "text", "") or getattr(part, "content", ""))
+            )
+            if value:
+                texts.append(str(value))
+        return re.sub(r"\s+", " ", " ".join(texts)).strip(), image_count, sources[:8]
 
-    def _provider_context_session_key(self, event: Optional[AstrMessageEvent], request: Any = None) -> str:
-        """Use AstrBot's event origin first, then ProviderRequest.session_id."""
-        if event is not None:
-            origin = str(getattr(event, "unified_msg_origin", "") or "").strip()
-            if origin:
-                return origin
-        session_id = str(getattr(request, "session_id", "") or "").strip()
-        return session_id or self._context_session_key(event)
-
-    def _sync_provider_context(self, event: Optional[AstrMessageEvent], request: Any) -> int:
-        """Mirror a bounded, sanitized view of AstrBot's official context."""
-        contexts = getattr(request, "contexts", None)
-        if not isinstance(contexts, (list, tuple)):
-            return 0
-        session_key = self._provider_context_session_key(event, request)
-        provider_rows: List[Dict[str, Any]] = []
-        provider_ids = set()
-        for item in list(contexts)[-self._context_max_messages :]:
+    async def _framework_context_records(
+        self, event: Optional[AstrMessageEvent], count: int = 24
+    ) -> list[dict[str, Any]]:
+        """Load recent messages from AstrBot's current conversation."""
+        if event is None:
+            return []
+        origin = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        manager = self._framework_conversation_manager()
+        if not origin or manager is None:
+            return []
+        conversation_id = await self._call_context_method(
+            getattr(manager, "get_curr_conversation_id", None),
+            [((origin,), {}), ((), {"umo": origin}), ((), {"unified_msg_origin": origin})],
+        )
+        if conversation_id is None:
+            return []
+        conversation = await self._call_context_method(
+            getattr(manager, "get_conversation", None),
+            [
+                ((origin, conversation_id), {}),
+                ((), {"umo": origin, "conversation_id": conversation_id}),
+                ((), {"umo": origin, "cid": conversation_id}),
+                ((conversation_id,), {}),
+            ],
+        )
+        if conversation is None:
+            return []
+        history = (
+            conversation.get("history")
+            if isinstance(conversation, Mapping)
+            else getattr(conversation, "history", None)
+        )
+        rows = self._history_payload(history)
+        output: list[dict[str, Any]] = []
+        for item in rows[-max(1, min(80, int(count or 24))) :]:
             if not isinstance(item, Mapping):
                 continue
             role = str(item.get("role") or "").strip().lower()
             if role not in {"user", "assistant"}:
                 continue
-            text, image_count = self._provider_message_parts(item.get("content"))
+            text, image_count, sources = self._message_parts(item.get("content"))
             if not text and not image_count:
                 continue
-            digest = hashlib.sha1(
-                f"{role}\0{text}\0{image_count}".encode("utf-8", "ignore")
-            ).hexdigest()[:24]
-            msg_id = f"astrbot:{role}:{digest}"
-            provider_ids.add(msg_id)
-            provider_rows.append(
+            try:
+                timestamp = float(item.get("timestamp") or item.get("created_at") or 0)
+            except (TypeError, ValueError):
+                timestamp = 0.0
+            bot_name_getter = getattr(self, "_bot_display_name", None)
+            bot_name = str(bot_name_getter() if callable(bot_name_getter) else "Bot")
+            output.append(
                 {
-                    "role": role,
-                    "text": text,
-                    "image_count": image_count,
-                    "msg_id": msg_id,
+                    "msg_id": str(item.get("id") or item.get("message_id") or ""),
+                    "sender_id": "astrbot",
+                    "sender_name": "用户" if role == "user" else bot_name,
+                    "content": text[:500] or "[图片]",
+                    "is_bot": role == "assistant",
+                    "source": "astrbot",
+                    "has_image": bool(image_count),
+                    "image_count": max(0, min(8, image_count)),
+                    "image_sources": sources,
+                    "timestamp": timestamp,
                 }
             )
-        removed = 0
-        with self._context_lock:
-            messages = self._conversation_context.get(session_key, [])
-            if messages:
-                kept = [
-                    row
-                    for row in messages
-                    if str(row.get("source") or "") != "astrbot"
-                    or row.get("msg_id") in provider_ids
-                ]
-                removed = len(messages) - len(kept)
-                if removed:
-                    self._conversation_context[session_key] = kept
-        added = 0
-        # The host owns the full history; the plugin only needs a small recent view
-        # for follow-up routing and its own acknowledgement prompt.
-        for row in provider_rows:
-            role = row["role"]
-            added += int(
-                self._add_context_message(
-                    session_key=session_key,
-                    sender_id="astrbot",
-                    sender_name=(
-                        "用户"
-                        if role == "user"
-                        else (
-                            self._bot_display_name()
-                            if callable(getattr(self, "_bot_display_name", None))
-                            else "Bot"
-                        )
-                    ),
-                    content=row["text"],
-                    is_bot=role == "assistant",
-                    image_count=row["image_count"],
-                    msg_id=row["msg_id"],
-                    source="astrbot",
-                    persist=False,
-                )
-            )
-        if added or removed:
-            self._persist_conversation_context()
-        return added
+        return output[-max(1, min(40, int(count or 24))) :]
 
-    def _record_llm_response_context(self, event: Optional[AstrMessageEvent], response: Any) -> bool:
-        """Record a completed assistant response from AstrBot's response hook."""
-        if response is None or str(getattr(response, "role", "") or "").lower() != "assistant":
-            return False
-        if bool(getattr(response, "is_chunk", False)):
-            return False
-        if getattr(response, "tools_call_name", None) or getattr(response, "tools_call_extra_content", None):
-            return False
-        text = str(getattr(response, "completion_text", "") or "").strip()
-        if not text:
-            return False
-        if event is None and not str(getattr(response, "id", "") or "").strip():
-            return False
-        key = self._provider_context_session_key(event)
-        recent = self._recent_context_records(event, count=6)
-        now = time.time()
-        if any(
-            bool(row.get("is_bot"))
-            and str(row.get("content") or "").strip() == text
-            and now - float(row.get("timestamp") or 0) <= 8
-            for row in recent
-        ):
-            return False
-        response_id = str(getattr(response, "id", "") or "").strip()
-        event_id = self._event_message_id(event) if event is not None else ""
-        digest = hashlib.sha1(f"{key}\0{event_id}\0{text}".encode("utf-8", "ignore")).hexdigest()[:24]
-        return self._add_context_message(
-            session_key=key,
-            sender_id="bot",
-            sender_name=self._bot_display_name() if callable(getattr(self, "_bot_display_name", None)) else "Bot",
-            content=text,
-            is_bot=True,
-            msg_id=f"llm-response:{response_id or digest}",
-            source="llm_response",
-        )
+    async def _recent_context_records_async(
+        self, event: Optional[AstrMessageEvent], count: int = 12
+    ) -> list[dict[str, Any]]:
+        return await self._framework_context_records(event, count)
 
     def _recent_context_records(self, event: Optional[AstrMessageEvent], count: int = 12) -> List[Dict[str, Any]]:
-        key = self._context_session_key(event)
-        with self._context_lock:
-            records = list(self._conversation_context.get(key, []))
-        return records[-max(1, int(count or 1)) :]
+        """Compatibility shim; synchronous callers must not invent local history."""
+        return []
+
+    async def _format_context_for_llm_async(
+        self, event: Optional[AstrMessageEvent], count: int = 12, max_chars: int = 1400
+    ) -> str:
+        return format_context_for_llm(await self._recent_context_records_async(event, count), max_chars)
+
+    def _format_context_for_llm(self, event: Optional[AstrMessageEvent], count: int = 12, max_chars: int = 1400) -> str:
+        return ""
+
+    async def _recent_context_image_sources_async(
+        self,
+        event: Optional[AstrMessageEvent],
+        max_images: int = 4,
+        *,
+        prefer_user: bool = True,
+        user_only: bool = False,
+        bot_only: bool = False,
+    ) -> List[str]:
+        return recent_context_image_sources(
+            await self._recent_context_records_async(event, count=24),
+            max_images,
+            prefer_user=prefer_user,
+            user_only=user_only,
+            bot_only=bot_only,
+        )
+
+    def _recent_context_image_sources(
+        self,
+        event: Optional[AstrMessageEvent],
+        max_images: int = 4,
+        *,
+        prefer_user: bool = True,
+        user_only: bool = False,
+        bot_only: bool = False,
+    ) -> List[str]:
+        return []
 
     def _remember_llm_generation(self, event: Optional[AstrMessageEvent], kind: str, params: Dict[str, Any]) -> None:
         """保存本会话最近一次 LLM 生图请求，供重复生成使用。"""
@@ -432,17 +266,26 @@ class ConversationContextMixin:
             "params": copy.deepcopy(params if isinstance(params, dict) else {}),
             "timestamp": time.time(),
         }
-        with self._llm_generation_lock:
-            self._last_llm_generations[key] = record
-            self._last_llm_generations.move_to_end(key)
-            while len(self._last_llm_generations) > self._context_max_sessions:
-                self._last_llm_generations.popitem(last=False)
+        lock = getattr(self, "_llm_generation_lock", None)
+        if lock is None:
+            return
+        with lock:
+            records = getattr(self, "_last_llm_generations", None)
+            if not isinstance(records, OrderedDict):
+                records = OrderedDict()
+                self._last_llm_generations = records
+            records[key] = record
+            records.move_to_end(key)
+            while len(records) > 100:
+                records.popitem(last=False)
 
     def _last_llm_generation(self, event: Optional[AstrMessageEvent], feedback: str = "") -> Dict[str, Any]:
-        """获取最近一次 LLM 生图请求，并将用户修正要求附加到内容中。"""
+        """获取最近一次 LLM 生图请求；这不是会话历史存储。"""
         key = self._context_session_key(event)
-        with self._llm_generation_lock:
-            record = copy.deepcopy(self._last_llm_generations.get(key) or {})
+        lock = getattr(self, "_llm_generation_lock", None)
+        with lock if lock is not None else nullcontext():
+            records = getattr(self, "_last_llm_generations", {})
+            record = copy.deepcopy(records.get(key) or {})
         params = record.get("params") if isinstance(record.get("params"), dict) else {}
         comment = str(feedback or "").strip()
         if comment:
@@ -451,14 +294,6 @@ class ConversationContextMixin:
             params[field] = "\n".join(item for item in (original, f"优先修正用户反馈：{comment}") if item)
         record["params"] = params
         return record
-
-    def _format_context_for_llm(self, event: Optional[AstrMessageEvent], count: int = 12, max_chars: int = 1400) -> str:
-        return format_context_for_llm(self._recent_context_records(event, count), max_chars)
-
-    def _extract_context_message_info(self, event: AstrMessageEvent) -> Dict[str, Any]:
-        content = extract_event_text(event)
-        sources = self._filter_reference_images(event, extract_image_sources_from_event(event, include_at_avatar=False))
-        return {"content": content or ("[图片]" if sources else ""), "image_sources": sources}
 
     def _compact_followup_text(self, text: str) -> str:
         return compact_followup_text(text)
@@ -471,20 +306,3 @@ class ConversationContextMixin:
 
     def _looks_like_edit_bot_result_followup(self, text: str) -> bool:
         return looks_like_edit_bot_result_followup(text)
-
-    def _recent_context_image_sources(
-        self,
-        event: Optional[AstrMessageEvent],
-        max_images: int = 4,
-        *,
-        prefer_user: bool = True,
-        user_only: bool = False,
-        bot_only: bool = False,
-    ) -> List[str]:
-        return recent_context_image_sources(
-            self._recent_context_records(event, count=24),
-            max_images,
-            prefer_user=prefer_user,
-            user_only=user_only,
-            bot_only=bot_only,
-        )

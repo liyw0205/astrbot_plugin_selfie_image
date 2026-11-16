@@ -153,5 +153,4 @@ class NaiCommandMixin:
             progress = f"NAI 正在反推参考图并准备生成 {requested_count} 张图片，模型：{targets[0].model}"
         if selected_artist:
             progress += f"，画师串：{selected_artist}"
-        self._record_bot_text_context(event, progress)
         yield event.plain_result(progress + "。")

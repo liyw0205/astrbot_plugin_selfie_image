@@ -223,7 +223,6 @@ class SelfieWorkflowService:
         queue_notified = plugin._image_batch_queue_expected(requested_count)
         if queue_notified:
             progress = "当前生图并发已满，本次先排队，空出槽位后继续。\n" + progress
-        plugin._record_bot_text_context(event, progress)
 
         async def runner(task_id: str) -> Dict[str, Any]:
             return await plugin._background_selfie_batches(

@@ -22,7 +22,6 @@ from .contracts import (
     CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
-    CONTEXT_ROUTE_CONTRACTS,
     HEALTH_ROUTE_CONTRACTS,
     IMAGE_CHANNEL_ROUTE_CONTRACTS,
     PROMPT_CATALOG_ROUTE_CONTRACTS,
@@ -44,8 +43,6 @@ from .controllers import (
     CanvasControllerResult,
     ConfigController,
     ConfigControllerResult,
-    ContextController,
-    ContextControllerResult,
     HealthController,
     HealthControllerResult,
     ImageChannelController,
@@ -213,7 +210,6 @@ class FlaskWebServer:
         task_controller = TaskController(self.plugin)
         record_controller = RecordController(self.plugin)
         health_controller = HealthController(self.plugin)
-        context_controller = ContextController(self.plugin)
         qq_group_controller = QQGroupController(self.plugin)
         selfie_profile_controller = SelfieProfileController(self.plugin)
         image_channel_controller = ImageChannelController(self.plugin)
@@ -314,15 +310,6 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
             return ok(result.data)
-
-        def context_result(call: Any) -> Any:
-            try:
-                result: ContextControllerResult = call()
-            except WebContractError as exc:
-                return fail(str(exc), exc.status_code)
-            except Exception as exc:
-                return fail(str(exc), 500)
-            return ok(result.data, **result.extra)
 
         def qq_group_result(call: Any) -> Any:
             try:
@@ -497,31 +484,6 @@ class FlaskWebServer:
                 route.flask_path,
                 endpoint=route.endpoint,
                 view_func=health_handlers[route.flask_handler],
-                methods=list(route.methods),
-            )
-
-        def context_get() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            return context_result(context_controller.get)
-
-        def context_clear() -> Any:
-            if not check_auth():
-                return fail("Unauthorized: Token 不正确", 401)
-            _, error_response = json_object_payload()
-            if error_response:
-                return error_response
-            return context_result(context_controller.clear)
-
-        context_handlers = {
-            "context_get": context_get,
-            "context_clear": context_clear,
-        }
-        for route in CONTEXT_ROUTE_CONTRACTS:
-            app.add_url_rule(
-                route.flask_path,
-                endpoint=route.endpoint,
-                view_func=context_handlers[route.flask_handler],
                 methods=list(route.methods),
             )
 

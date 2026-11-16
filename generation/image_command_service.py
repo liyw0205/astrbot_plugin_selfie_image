@@ -66,7 +66,6 @@ class ImageCommandService:
             return
 
         progress = await plugin._build_contextual_progress_text(event, "image", prompt, requested_count)
-        plugin._record_bot_text_context(event, progress)
 
         async def runner(task_id: str) -> Dict[str, Any]:
             return await plugin._background_draw_batches(
@@ -140,7 +139,6 @@ class ImageCommandService:
             return
 
         progress = await plugin._build_contextual_progress_text(event, "image", prompt, requested_count)
-        plugin._record_bot_text_context(event, progress)
 
         async def runner(task_id: str) -> Dict[str, Any]:
             return await plugin._background_draw_batches(
@@ -212,7 +210,6 @@ class ImageCommandService:
             return
 
         progress = await plugin._build_contextual_progress_text(event, "image", prompt, requested_count)
-        plugin._record_bot_text_context(event, progress)
 
         async def runner(task_id: str) -> Dict[str, Any]:
             return await plugin._background_draw_batches(

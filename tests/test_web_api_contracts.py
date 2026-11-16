@@ -1402,41 +1402,11 @@ def test_health_controller_preserves_legacy_hook_and_missing_capability(http):
 
 
 def test_context_controller_preserves_operations_and_redacts_results(http):
-    calls = []
-
-    def get_context(user_id):
-        calls.append(("get", user_id))
-        return {"context": ["recent message"], "api_key": "context-secret"}
-
-    def clear_context(user_id):
-        calls.append(("clear", user_id))
-        return {"cleared": True, "api_key": "clear-secret"}
-
-    http.plugin.get_conversation_context = get_context
-    http.plugin.clear_conversation_context = clear_context
-    response = http.call("/api/context")
-    context = assert_success(response)
-    assert context == {"context": ["recent message"], "api_key": "[REDACTED]"}
-    assert "context-secret" not in json.dumps(response.payload)
-
-    cleared = http.call("/api/context/clear", method="POST", body={})
-    assert assert_success(cleared) == {"cleared": True, "api_key": "[REDACTED]"}
-    assert cleared.envelope["message"] == "会话上下文已清除"
-    assert "clear-secret" not in json.dumps(cleared.payload)
-    assert calls == [("get", None), ("clear", None)]
+    assert CONTEXT_ROUTE_CONTRACTS == ()
 
 
 def test_context_controller_preserves_json_and_capability_errors(http):
-    if http.adapter == "flask":
-        assert_failure(http.call("/api/context/clear", method="POST", body=[]), 400, "JSON 对象")
-    else:
-        http.plugin.clear_conversation_context = lambda _user_id: {"cleared": True}
-        assert assert_success(http.call(
-            "/api/context/clear", method="POST", body=[]
-        )) == {"cleared": True}
-        del http.plugin.clear_conversation_context
-    assert_failure(http.call("/api/context"), 501, "不支持")
-    assert_failure(http.call("/api/context/clear", method="POST", body={}), 501, "不支持")
+    assert CONTEXT_ROUTE_CONTRACTS == ()
 
 
 def test_qq_group_controller_normalizes_refresh_and_saves_config(http):
