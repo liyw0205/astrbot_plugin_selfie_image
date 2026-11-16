@@ -27,27 +27,43 @@ def _root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_selectable_backup_has_required_wardrobe_and_progress(tmp_path):
+def test_selectable_backup_uses_storage_requirements_and_wardrobe_is_optional(tmp_path):
     manager = BackupManager(_root(tmp_path))
-    with pytest.raises(BackupManagerError, match="衣橱"):
-        manager.start_backup(["config"])
+    options = {item["id"]: item for item in manager.options()}
+    assert options["config"]["required"] is True
+    assert options["config"]["default_selected"] is True
+    assert options["wardrobe"]["required"] is False
+    assert options["wardrobe"]["default_selected"] is True
+    with pytest.raises(BackupManagerError, match="核心"):
+        manager.start_backup(["wardrobe"])
 
-    task = manager.start_backup(["config", "wardrobe"])
+    task = manager.start_backup(["config"])
     finished = _wait(manager, task["task_id"])
     assert finished["status"] == "completed"
     assert finished["percent"] == 100
     listing = manager.list_backups()
     assert listing["count"] == 1
-    assert listing["items"][0]["selected"] == ["config", "wardrobe"]
+    assert listing["items"][0]["selected"] == ["config"]
 
 
 def test_backup_limit_is_enforced_before_background_work(tmp_path):
     manager = BackupManager(_root(tmp_path))
     for _ in range(MAX_BACKUPS):
-        task = manager.start_backup(["wardrobe"])
+        task = manager.start_backup(["config"])
         assert _wait(manager, task["task_id"])["status"] == "completed"
     with pytest.raises(BackupManagerError, match="最多保留"):
-        manager.start_backup(["wardrobe"])
+        manager.start_backup(["config"])
+
+
+def test_backup_uses_actual_cos_pool_storage_path(tmp_path):
+    root = _root(tmp_path)
+    (root / "cos_pools.json").write_text('{"favorites": ["miku"]}', encoding="utf-8")
+    manager = BackupManager(root)
+    task = manager.start_backup(["config", "presets"])
+    assert _wait(manager, task["task_id"])["status"] == "completed"
+    archive = next((root / "backups").glob("*.zip"))
+    with zipfile.ZipFile(archive) as incoming:
+        assert "data/cos_pools.json" in incoming.namelist()
 
 
 def test_wardrobe_export_import_round_trip(tmp_path):
@@ -63,7 +79,7 @@ def test_wardrobe_export_import_round_trip(tmp_path):
 
 def test_tampered_backup_is_rejected(tmp_path):
     manager = BackupManager(_root(tmp_path))
-    task = manager.start_backup(["wardrobe"])
+    task = manager.start_backup(["config"])
     assert _wait(manager, task["task_id"])["status"] == "completed"
     archive = next((tmp_path / "backups").glob("*.zip"))
     temporary = archive.with_suffix(".tampered")

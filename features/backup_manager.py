@@ -22,6 +22,8 @@ import uuid
 import zipfile
 from typing import Any, Callable, Iterable
 
+from ..core.constants import PLUGIN_CONFIG_FILENAME
+
 
 BACKUP_FORMAT = "selfie-image-dashboard-backup"
 BACKUP_VERSION = 1
@@ -39,18 +41,133 @@ class BackupManagerError(ValueError):
 class BackupManager:
     """Manage bounded, selectable snapshots under a plugin data directory."""
 
+    # Keep this list aligned with the stores created by ``main.py``.  The
+    # flags describe storage semantics, rather than special-casing an option
+    # ID in validation or the dashboard:
+    #   required       must be present in a complete plugin backup;
+    #   default_selected is selected for a normal user-created backup.
     OPTIONS = (
-        {"id": "config", "label": "配置", "description": "插件配置文件", "paths": ("selfie_image_config.json", "config.json")},
-        {"id": "persona", "label": "形象资料", "description": "形象图、辅助形象和日程资料", "paths": ("image_persona.json", "image-persona")},
-        {"id": "wardrobe", "label": "衣橱", "description": "衣橱元数据与服装图片（必选）", "paths": ("wardrobe",)},
-        {"id": "schedule", "label": "今日日程", "description": "日程状态与提示词池", "paths": ("daily_schedule.json",)},
-        {"id": "presets", "label": "预设与 COS", "description": "图片预设、NAI 预设和自定义池", "paths": ("image_presets.json", "nai_artist_presets.json", "cos_pool.json")},
-        {"id": "studio", "label": "画布与资产集合", "description": "无限画布、创作画布和资产集合", "paths": ("studio_sessions.json", "creative_canvas", "asset_collections.json")},
-        {"id": "tasks", "label": "任务状态", "description": "任务队列和渠道健康记录", "paths": ("generation_tasks.json", "channel_health_history.json")},
-        {"id": "usage", "label": "用量统计", "description": "配额和用量统计", "paths": ("usage_stats.json",)},
-        {"id": "records", "label": "生成记录", "description": "生成记录 JSON/SQLite，数据量可能较大", "paths": ("generation_records.json", "generation_records.sqlite3")},
-        {"id": "cache", "label": "图片缓存", "description": "生成图片缓存，通常不需要备份", "paths": ("image_cache",)},
-        {"id": "media_sources", "label": "引用媒体", "description": "生成记录引用的原始媒体", "paths": ("media_sources",)},
+        {
+            "id": "config",
+            "label": "配置",
+            "description": "插件运行所需的完整业务配置",
+            "reason": "核心配置，恢复插件行为必须保留",
+            "paths": (PLUGIN_CONFIG_FILENAME,),
+            "required": True,
+            "default_selected": True,
+        },
+        {
+            "id": "persona",
+            "label": "形象资料",
+            "description": "主形象、辅助形象和形象元数据",
+            "reason": "用户资料，缺失时仍可启动但会丢失形象",
+            "paths": ("image_persona.json", "image-persona"),
+            "required": False,
+            "default_selected": True,
+        },
+        {
+            "id": "wardrobe",
+            "label": "衣橱",
+            "description": "衣橱元数据与服装图片",
+            "reason": "可选的服装参考资料，可单独导入导出",
+            "paths": ("wardrobe",),
+            "required": False,
+            "default_selected": True,
+        },
+        {
+            "id": "schedule",
+            "label": "今日日程",
+            "description": "日程状态与当天提示词池",
+            "reason": "运行状态，可在缺失时重新生成",
+            "paths": ("daily_schedule.json",),
+            "required": False,
+            "default_selected": True,
+        },
+        {
+            "id": "presets",
+            "label": "预设与 COS",
+            "description": "图片预设、NAI 预设、会话画师和自定义 COS 池",
+            "reason": "用户维护的创作资料",
+            "paths": (
+                "image_presets.json",
+                "nai_artist_presets.json",
+                "nai_artists_by_session.json",
+                "cos_pools.json",
+            ),
+            "required": False,
+            "default_selected": True,
+        },
+        {
+            "id": "studio",
+            "label": "画布与资产集合",
+            "description": "关系画布、创作画布和资产集合",
+            "reason": "用户维护的创作资料",
+            "paths": ("studio_sessions.json", "creative_canvas", "asset_collections.json"),
+            "required": False,
+            "default_selected": True,
+        },
+        {
+            "id": "tasks",
+            "label": "任务状态",
+            "description": "任务快照、渠道健康和请求媒体日志",
+            "reason": "可恢复的运行状态，体积小但不是启动必需",
+            "paths": (
+                "generation_tasks.json",
+                "channel_health_history.json",
+                "pending_request_media.json",
+            ),
+            "required": False,
+            "default_selected": False,
+        },
+        {
+            "id": "usage",
+            "label": "用量统计",
+            "description": "每日额度和用量统计",
+            "reason": "可重建的统计状态",
+            "paths": ("usage_stats.json",),
+            "required": False,
+            "default_selected": False,
+        },
+        {
+            "id": "context",
+            "label": "会话上下文",
+            "description": "持久化的对话上下文",
+            "reason": "可选的会话记忆，可能包含敏感内容",
+            "paths": ("conversation_context.json",),
+            "required": False,
+            "default_selected": False,
+        },
+        {
+            "id": "records",
+            "label": "生成记录",
+            "description": "生成记录 JSON/SQLite，数据量可能较大",
+            "reason": "长期历史，可按需备份",
+            "paths": (
+                "generation_records.json",
+                "generation_records.json.bak",
+                "generation_records.sqlite3",
+            ),
+            "required": False,
+            "default_selected": False,
+        },
+        {
+            "id": "cache",
+            "label": "图片缓存",
+            "description": "生成图片缓存，通常可重新生成",
+            "reason": "派生数据，默认不备份以节省空间",
+            "paths": ("image_cache",),
+            "required": False,
+            "default_selected": False,
+        },
+        {
+            "id": "media_sources",
+            "label": "引用媒体",
+            "description": "生成记录引用的原始媒体",
+            "reason": "记录关联的可选媒体，体积可能较大",
+            "paths": ("media_sources",),
+            "required": False,
+            "default_selected": False,
+        },
     )
     _OPTION_MAP = {item["id"]: item for item in OPTIONS}
 
@@ -66,7 +183,7 @@ class BackupManager:
         self._reserved_slots = 0
 
     def options(self) -> list[dict[str, Any]]:
-        return [dict(item, required=item["id"] == "wardrobe") for item in self.OPTIONS]
+        return [dict(item) for item in self.OPTIONS]
 
     def _new_task(self, kind: str) -> dict[str, Any]:
         task_id = f"backup-{uuid.uuid4().hex[:20]}"
@@ -133,8 +250,17 @@ class BackupManager:
         unknown = names - set(self._OPTION_MAP)
         if unknown:
             raise BackupManagerError("包含不支持的备份数据项")
-        if "wardrobe" not in names:
-            raise BackupManagerError("衣橱是必要数据，必须选择")
+        required = {
+            item["id"] for item in self.OPTIONS if item.get("required") is True
+        }
+        missing = required - names
+        if missing:
+            labels = [
+                str(self._OPTION_MAP[item].get("label") or item)
+                for item in self._OPTION_MAP
+                if item in missing
+            ]
+            raise BackupManagerError(f"必须选择核心数据：{'、'.join(labels)}")
         return [self._OPTION_MAP[name] for name in self._OPTION_MAP if name in names]
 
     def _roots(self, options: Iterable[dict[str, Any]]) -> list[tuple[str, Path, str]]:
@@ -300,8 +426,13 @@ class BackupManager:
         selected = manifest.get("selected")
         if not isinstance(selected, list) or any(str(item) not in self._OPTION_MAP for item in selected):
             raise BackupManagerError("备份数据项无效")
-        if kind == "backup" and "wardrobe" not in selected:
-            raise BackupManagerError("备份缺少衣橱必要数据")
+        if kind == "backup":
+            required = {
+                item["id"] for item in self.OPTIONS if item.get("required") is True
+            }
+            missing = required - {str(item) for item in selected}
+            if missing:
+                raise BackupManagerError("备份缺少核心必选数据")
         if kind == "wardrobe-export" and selected != ["wardrobe"]:
             raise BackupManagerError("衣橱归档数据项无效")
         roots = manifest.get("roots")

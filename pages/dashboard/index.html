@@ -1748,7 +1748,7 @@
 
     <section id="backup" class="floating-action-section">
       <div class="between">
-        <div><h2>备份管理</h2><p class="muted">备份最多保留 5 个。衣橱为必要数据，生成记录和图片缓存可按需选择。</p></div>
+        <div><h2>备份管理</h2><p class="muted">备份最多保留 5 个。核心配置必须保留，其他数据按项目存储用途提供默认选择；衣橱不是必选项，也可在形象页单独导入导出。</p></div>
         <button class="secondary" type="button" onclick="navigateToTab('raw')">高级 JSON</button>
       </div>
       <div id="backupLimitStatus" class="status" aria-live="polite"></div>
@@ -8125,9 +8125,10 @@ Source prompt:
       const root = $('backupOptions');
       if (!root) return;
       root.innerHTML = BACKUP_OPTIONS.map(item => {
-        const required = item.required === true || item.id === 'wardrobe';
-        const checked = required || !['records', 'cache', 'media_sources'].includes(item.id);
-        return `<label class="backup-option"><input type="checkbox" value="${escapeHtml(item.id)}" ${checked ? 'checked' : ''} ${required ? 'disabled' : ''}><span><strong>${escapeHtml(item.label || item.id)}${required ? '（必要）' : ''}</strong><small>${escapeHtml(item.description || '')}</small></span></label>`;
+        const required = item.required === true;
+        const checked = required || item.default_selected !== false;
+        const reason = item.reason ? ` · ${escapeHtml(item.reason)}` : '';
+        return `<label class="backup-option"><input type="checkbox" value="${escapeHtml(item.id)}" ${checked ? 'checked' : ''} ${required ? 'disabled' : ''}><span><strong>${escapeHtml(item.label || item.id)}${required ? '（必选）' : ''}</strong><small>${escapeHtml(item.description || '')}${reason}</small></span></label>`;
       }).join('');
     }
 

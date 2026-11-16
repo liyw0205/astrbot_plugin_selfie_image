@@ -37,9 +37,10 @@
       const root = $('backupOptions');
       if (!root) return;
       root.innerHTML = BACKUP_OPTIONS.map(item => {
-        const required = item.required === true || item.id === 'wardrobe';
-        const checked = required || !['records', 'cache', 'media_sources'].includes(item.id);
-        return `<label class="backup-option"><input type="checkbox" value="${escapeHtml(item.id)}" ${checked ? 'checked' : ''} ${required ? 'disabled' : ''}><span><strong>${escapeHtml(item.label || item.id)}${required ? '（必要）' : ''}</strong><small>${escapeHtml(item.description || '')}</small></span></label>`;
+        const required = item.required === true;
+        const checked = required || item.default_selected !== false;
+        const reason = item.reason ? ` · ${escapeHtml(item.reason)}` : '';
+        return `<label class="backup-option"><input type="checkbox" value="${escapeHtml(item.id)}" ${checked ? 'checked' : ''} ${required ? 'disabled' : ''}><span><strong>${escapeHtml(item.label || item.id)}${required ? '（必选）' : ''}</strong><small>${escapeHtml(item.description || '')}${reason}</small></span></label>`;
       }).join('');
     }
 
