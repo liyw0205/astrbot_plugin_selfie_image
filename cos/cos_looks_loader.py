@@ -180,6 +180,57 @@ def get_json_legacy_group(group_name: str) -> List[Dict[str, Any]]:
     return [dict(COS_JSON_LOOKS_BY_ID[look_id]) for look_id in look_ids]
 
 
+def validate_random_compatibility(
+    poses: Mapping[str, Mapping[str, Any]],
+    scenes: Mapping[str, Mapping[str, Any]],
+    framings: Mapping[str, Mapping[str, Any]],
+) -> List[str]:
+    """Return dead-end paths from random pose selection to a concrete framing.
+
+    A pose can be structurally valid while every random camera/framing pair is
+    rejected by the framing's camera or scene constraints. Keep this check
+    data-only so it can run in release gates without importing the full plugin.
+    Explicit-only poses are intentionally excluded: they are selected only
+    after a user request and may have narrower staging contracts.
+    """
+    issues: List[str] = []
+    scene_ids_by_pose: Dict[str, List[str]] = {}
+    for scene_id, scene in scenes.items():
+        for pose_id in scene.get("pose_ids") or ():
+            scene_ids_by_pose.setdefault(str(pose_id), []).append(str(scene_id))
+
+    for pose_id, pose in poses.items():
+        if pose.get("explicit_only"):
+            continue
+        pose_id = str(pose_id)
+        pose_cameras = set(pose.get("camera_ids") or ())
+        random_cameras = set(pose.get("random_camera_ids") or ())
+        framing_ids = set(pose.get("framing_ids") or ())
+        viable_paths = 0
+        for scene_id in scene_ids_by_pose.get(pose_id, ()):
+            for camera in random_cameras:
+                if pose_cameras and camera not in pose_cameras:
+                    continue
+                for framing_id in framing_ids:
+                    framing = framings.get(framing_id)
+                    if not framing or framing.get("explicit_only"):
+                        continue
+                    if camera not in set(framing.get("random_camera_ids") or ()):
+                        continue
+                    framing_cameras = set(framing.get("camera_ids") or ())
+                    if framing_cameras and camera not in framing_cameras:
+                        continue
+                    framing_scenes = set(framing.get("scene_ids") or ())
+                    if framing_scenes and scene_id not in framing_scenes:
+                        continue
+                    viable_paths += 1
+        if not viable_paths:
+            issues.append(
+                f"pose {pose_id}: no random scene/camera/framing path"
+            )
+    return issues
+
+
 def validate_json_catalog() -> List[str]:
     """Return human-readable image COS catalog issues."""
     issues: List[str] = []
@@ -400,6 +451,7 @@ def validate_json_catalog() -> List[str]:
             issues.append(f"combination {combination_id}: pose missing {pose_id}")
         elif pose_id not in (scene.get("pose_ids") or []):
             issues.append(f"combination {combination_id}: pose {pose_id} incompatible with scene {scene_id}")
+    issues.extend(validate_random_compatibility(COS_JSON_POSES, COS_JSON_SCENES, COS_JSON_FRAMINGS))
     return issues
 
 

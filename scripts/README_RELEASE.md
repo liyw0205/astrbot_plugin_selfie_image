@@ -11,7 +11,7 @@ remain available for focused checks. The Python layer accepts
 `--test-scope full|compatibility`; the latter is intended for non-canonical
 interpreters in the CI matrix, and `--skip-static` omits compile/no-op checks
 already covered by a separate release job. The static layer includes version
-consistency, bundled JSON contracts, a temporary runtime ZIP, compilation,
+consistency, prompt-pool compatibility, bundled JSON contracts, a temporary runtime ZIP, compilation,
 Dashboard checks, and `git diff --check HEAD`. The package layer validates the
 version, JSON and runtime manifest without creating a throwaway ZIP; the
 builder performs the one final archive round-trip immediately afterwards. Both

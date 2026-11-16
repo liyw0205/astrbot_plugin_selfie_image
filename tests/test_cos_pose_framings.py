@@ -42,6 +42,7 @@ from astrbot_plugin_selfie_image.cos.cos_looks_loader import (
     COS_JSON_SCENE_REQUEST_SYNTAX_TERMS,
     COS_JSON_STYLES,
     validate_json_catalog,
+    validate_random_compatibility,
 )
 
 
@@ -53,6 +54,33 @@ def test_pose_framing_compatibility_is_owned_by_json_catalog():
         assert tuple(framing_ids) == COS_POSE_FRAMING_COMPATIBILITY[pose_id]
         assert framing_ids
         assert set(framing_ids) <= COS_JSON_FRAMINGS.keys()
+
+
+def test_random_compatibility_lint_rejects_a_dead_pose_path():
+    poses = {
+        "pose": {
+            "random_camera_ids": ["third"],
+            "framing_ids": ["frame"],
+        }
+    }
+    scenes = {"scene": {"pose_ids": ["pose"]}}
+    framings = {"frame": {"random_camera_ids": ["selfie"]}}
+
+    assert validate_random_compatibility(poses, scenes, framings) == [
+        "pose pose: no random scene/camera/framing path"
+    ]
+
+
+def test_random_compatibility_lint_allows_explicit_only_dead_end():
+    poses = {
+        "pose": {
+            "explicit_only": True,
+            "random_camera_ids": [],
+            "framing_ids": [],
+        }
+    }
+
+    assert validate_random_compatibility(poses, {"scene": {"pose_ids": ["pose"]}}, {}) == []
 
 
 def test_close_framings_only_pair_with_compatible_pose_directions():

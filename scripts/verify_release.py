@@ -118,6 +118,7 @@ def run_python_gates(
             ],
         )
         run_gate("noop check", [python, "scripts/check_noop_implementations.py"])
+        run_gate("prompt-pool compatibility", [python, "scripts/check_prompt_pools.py"])
 
 
 def run_frontend_gates(python: str, *, require_node: bool = False) -> None:
