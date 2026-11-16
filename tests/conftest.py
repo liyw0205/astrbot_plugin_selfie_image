@@ -9,8 +9,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT.parent) not in sys.path:
-    sys.path.insert(0, str(ROOT.parent))
+for import_root in (ROOT.parent, ROOT):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
 
 
 def _install_astrbot_stub() -> None:

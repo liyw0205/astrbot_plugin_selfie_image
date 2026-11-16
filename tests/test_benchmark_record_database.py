@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import sys
 
 
 _SPEC = spec_from_file_location(
@@ -77,3 +79,52 @@ def test_bundled_keyword_scenarios_match_scalar_results(tmp_path):
         assert adaptive == scalar
         if expected_matches is not None:
             assert adaptive[1]["filtered"] == expected_matches
+
+
+def test_latency_and_connection_summaries_cover_tail_and_empty_samples():
+    latency = _BENCHMARK._latencies([5.0, 1.0, 3.0, 10.0])
+
+    assert latency["samples"] == 4
+    assert latency["p50_ms"] == 4.0
+    assert latency["p95_ms"] == 10.0
+    assert latency["p99_ms"] == 10.0
+    assert latency["max_ms"] == 10.0
+    assert _BENCHMARK._latencies([]) == {
+        "samples": 0,
+        "percentile_method": "nearest-rank",
+    }
+    assert _BENCHMARK._connection_summary(2, 5) == {
+        "operations": 5,
+        "connections_opened": 2,
+        "connections_reused": 3,
+        "connection_reuse_rate": 0.6,
+    }
+    assert _BENCHMARK._connection_summary(0, 0)["connection_reuse_rate"] is None
+
+
+def test_benchmark_report_includes_resource_and_connection_metrics(monkeypatch, tmp_path):
+    report_path = tmp_path / "record-db.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "benchmark_record_database.py",
+            "--records",
+            "20",
+            "--samples",
+            "3",
+            "--output",
+            str(report_path),
+        ],
+    )
+
+    assert _BENCHMARK.main() == 0
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    recent = report["queries"]["recent"]
+
+    assert "max_rss_bytes" in report["environment"]
+    assert recent["p99_ms"] >= recent["p95_ms"]
+    assert recent["max_ms"] >= recent["p99_ms"]
+    assert recent["operations"] == 3
+    assert recent["connections_opened"] >= 1
+    assert 0 <= recent["connection_reuse_rate"] <= 1

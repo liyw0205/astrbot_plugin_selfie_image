@@ -19,6 +19,11 @@ import tempfile
 import threading
 import time
 
+try:
+    import resource
+except ImportError:  # pragma: no cover - platform-dependent stdlib module
+    resource = None
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
@@ -243,13 +248,63 @@ def _drop_os_file_cache(path: str) -> str:
 
 
 def _latencies(durations: list[float]) -> dict:
+    ordered = sorted(durations)
+    if not ordered:
+        return {"samples": 0, "percentile_method": "nearest-rank"}
+
+    def percentile(fraction: float) -> float:
+        return ordered[math.ceil(len(ordered) * fraction) - 1]
+
     return {
-        "samples": len(durations),
+        "samples": len(ordered),
         "percentile_method": "nearest-rank",
-        "p50_ms": round(statistics.median(durations), 3),
-        "p95_ms": round(sorted(durations)[math.ceil(len(durations) * 0.95) - 1], 3),
+        "p50_ms": round(statistics.median(ordered), 3),
+        "p95_ms": round(percentile(0.95), 3),
+        "p99_ms": round(percentile(0.99), 3),
+        "max_ms": round(ordered[-1], 3),
         "durations_ms": [round(value, 3) for value in durations],
     }
+
+
+@contextmanager
+def _connection_meter(database: RecordDatabase):
+    """Count connection creation without changing the production class."""
+    original = database._connect
+    state = {"opened": 0}
+
+    def counted_connect():
+        state["opened"] += 1
+        return original()
+
+    database._connect = counted_connect
+    try:
+        yield state
+    finally:
+        database._connect = original
+
+
+def _connection_summary(opened: int, operations: int) -> dict:
+    operations = max(0, int(operations))
+    opened = max(0, int(opened))
+    reused = max(0, operations - opened)
+    return {
+        "operations": operations,
+        "connections_opened": opened,
+        "connections_reused": reused,
+        "connection_reuse_rate": round(reused / operations, 6) if operations else None,
+    }
+
+
+def _max_rss_bytes() -> int | None:
+    """Return a process peak-RSS reading with platform units normalized."""
+    if resource is None:
+        return None
+    try:
+        value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    except (AttributeError, OSError, ValueError):
+        return None
+    # Linux/Android expose KiB; macOS exposes bytes.
+    return value if sys.platform == "darwin" else value * 1024
 
 
 def _latency_summary(durations: list[float], rows: list[dict], metadata: dict) -> dict:
@@ -332,6 +387,7 @@ def _measure_concurrent_writes(
     next_sequence: int,
     shared_instance: bool,
 ) -> dict:
+    storage_before = _file_sizes(reader.path)
     writer = reader if shared_instance else RecordDatabase(reader.path)
     writer_started = threading.Event()
     stop_writer = threading.Event()
@@ -400,9 +456,20 @@ def _measure_concurrent_writes(
         thread.join()
     if state["errors"]:
         raise RuntimeError(f"concurrent benchmark writer failed: {state['errors']}")
+    storage_after = _file_sizes(reader.path)
+    storage_delta = max(
+        0,
+        sum(storage_after.values()) - sum(storage_before.values()),
+    )
     return {
         "queries": query_results, "successful_writes": state["writes"],
         "write_latency": _latencies(state["durations"]),
+        "storage_bytes_before": sum(storage_before.values()),
+        "storage_bytes_after": sum(storage_after.values()),
+        "storage_delta_bytes": storage_delta,
+        "write_amplification_bytes_per_write": round(
+            storage_delta / state["writes"], 3
+        ) if state["writes"] else None,
         "measurement_seconds": round(time.perf_counter() - measurement_started, 6),
         "writer_pause_seconds": 0.001, "errors": state["errors"],
         "model": "shared_instance_rlock" if shared_instance else "independent_instances_wal_stress",
@@ -474,10 +541,12 @@ def main() -> int:
             options = {"keep_limit": args.keep_limit, "limit": 30, **filters}
             with _search_mode(database, mode):
                 database.query_records(**options)
-                summary = _measure_queries(database, options, args.samples)
+                with _connection_meter(database) as connection_meter:
+                    summary = _measure_queries(database, options, args.samples)
                 rows, metadata = database.query_records(**options)
                 if mode != "scalar" and fts_enabled and not database._fts5_enabled:
                     raise RuntimeError(f"FTS unexpectedly fell back during {label}")
+            summary.update(_connection_summary(connection_meter["opened"], args.samples))
             if "keyword" in filters:
                 previous = keyword_results.setdefault(filters["keyword"], (rows, metadata))
                 if previous != (rows, metadata):
@@ -510,11 +579,15 @@ def main() -> int:
                     file_states.append(_file_sizes(database.path))
                     eviction_modes.append(_drop_os_file_cache(database.path))
                     started = time.perf_counter()
-                    rows, metadata = database.query_records(**options)
+                    with _connection_meter(database) as connection_meter:
+                        rows, metadata = database.query_records(**options)
                     cold_durations.append((time.perf_counter() - started) * 1000)
                 cache_results[name] = {
                     "warm_queries": warm,
                     "best_effort_file_cache_evict": _latency_summary(cold_durations, rows, metadata),
+                    "connection_metrics": _connection_summary(
+                        connection_meter["opened"], args.cold_cache_samples
+                    ),
                     "eviction_requests": eviction_modes,
                     "checkpoint_status": checkpoints,
                     "files_before_evict": file_states,
@@ -546,7 +619,7 @@ def main() -> int:
         report = json.dumps({
             "environment": {
                 "python": platform.python_version(), "sqlite": sqlite3.sqlite_version,
-                "platform": platform.platform(),
+                "platform": platform.platform(), "max_rss_bytes": _max_rss_bytes(),
             },
             "fixture": {
                 **fixture,
@@ -559,8 +632,10 @@ def main() -> int:
             "storage_after_benchmark": _storage_summary(database.path),
             "methodology": {
                 "connection_lifetime": "each operation commits/rolls back and closes; no anchor connection",
+                "connection_reuse": "counted around measured query samples; current implementation opens one SQLite connection per operation",
+                "write_amplification": "database/WAL/SHM size delta divided by successful concurrent writes; approximate storage-level indicator",
                 "cache_evict": "checkpoint and close, then POSIX_FADV_DONTNEED best-effort hint; does not prove cold storage",
-                "statistics": "nearest-rank p95 is the maximum with fewer than 20 samples; synthetic device-local evidence only",
+                "statistics": "nearest-rank p95/p99 are maxima with fewer than 20 samples; synthetic device-local evidence only",
                 "concurrency": "shared instance RLock serializes query/write calls; write_progress_observed means writes completed in the query window, not simultaneous SQL execution; independent instances model additional WAL contention",
             },
             "queries": results,
