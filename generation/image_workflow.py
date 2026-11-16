@@ -337,6 +337,9 @@ async def run_image_generation_workflow(
             "deduplicated_reference_image_count_total": deduplicated_count,
             "duplicate_reference_image_count_total": max(0, raw_count - deduplicated_count),
             "roles": dict(normalized_selection_roles),
+            "wardrobe_item_id": str(reference_selection.get("wardrobe_item_id") or ""),
+            "wardrobe_item_name": str(reference_selection.get("wardrobe_item_name") or ""),
+            "wardrobe_reference_count": max(0, int(reference_selection.get("wardrobe_reference_count") or 0)),
         }
         source_meta.update(selection_metadata)
 
@@ -370,6 +373,9 @@ async def run_image_generation_workflow(
             "failed_count": max(0, int(reference_selection.get("failed_count") or 0)),
             "used_persona": bool(reference_selection.get("used_persona")),
             "used_context_fallback": bool(reference_selection.get("used_context_fallback")),
+            "wardrobe_item_id": str(reference_selection.get("wardrobe_item_id") or ""),
+            "wardrobe_item_name": str(reference_selection.get("wardrobe_item_name") or ""),
+            "wardrobe_reference_count": max(0, int(reference_selection.get("wardrobe_reference_count") or 0)),
         }
         return request
 

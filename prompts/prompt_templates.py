@@ -344,6 +344,8 @@ def build_selfie_builtin_prompt(
     appearance_type: str = "auto",
     user_text: str = "",
     action_content: str = "",
+    has_wardrobe_reference: bool = False,
+    wardrobe_item_name: str = "",
 ) -> str:
     """Build a compact central built-in prompt; user text is appended separately."""
     raw_action = str(action or "").strip()
@@ -495,6 +497,12 @@ def build_selfie_builtin_prompt(
             lines.append(
                 "Use extra references only for independent companions or explicitly requested clothing, pose, composition, lighting, or scene. Extra references must not override the primary subject's visual medium."
             )
+        if has_wardrobe_reference and not (is_cos or is_group_contract or is_legs):
+            lines.append(
+                "Reference image 2 is the custom wardrobe clothing reference. Transfer only the clothing, material, color, cut, pattern, and accessories; never transfer its person's identity, face, hair, body, gender, expression, or background. Reference image 1 remains the identity anchor."
+            )
+            if str(wardrobe_item_name or "").strip():
+                lines.append(f"Wardrobe item name: {str(wardrobe_item_name).strip()}.")
         if is_group:
             if is_group_contract:
                 lines.extend([
@@ -671,6 +679,13 @@ def build_selfie_builtin_prompt(
         legs_line,
         leg_outfit_line,
         leg_crop_line,
+        (
+            "参考图二是自定义衣橱服装参考图，只迁移衣服、材质、颜色、版型、印花和配饰；"
+            "禁止迁移其中人物的脸型、五官、发型发色、体态、性别、表情或背景，人物身份始终以参考图一为准。"
+            + (f"衣橱服装名称：{str(wardrobe_item_name).strip()}。" if str(wardrobe_item_name or "").strip() else "")
+            if has_wardrobe_reference and not (is_cos or is_group or is_legs)
+            else ""
+        ),
         "竖屏近景半身，光线、色调、景深和相机透视统一。" if not is_legs else "",
         f"用户要求：{user}" if user else "",
     )

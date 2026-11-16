@@ -401,6 +401,13 @@ class SelfieImagePlugin(
         self.qq_group_cache = QQGroupCache(self)
         self._load_persisted_conversation_context()
         self.persona = PersonaManager(self.data_dir)
+        _wardrobe_dimension, _wardrobe_pixels, _wardrobe_frames = image_validation_limits(self.config)
+        self.persona.configure_wardrobe_limits(
+            max_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
+            max_dimension=_wardrobe_dimension,
+            max_pixels=_wardrobe_pixels,
+            max_frames=_wardrobe_frames,
+        )
         self.presets = ImagePresetManager(self.data_dir)
         self.nai_artist_presets = NaiArtistPresetManager(self.data_dir)
         from .cos.cos_pool import CosPoolStore
@@ -1892,6 +1899,8 @@ class SelfieImagePlugin(
             refs.extend(extra_refs)
             identity_ref = persona_ref
         framework_persona = await resolve_framework_persona(getattr(self, "context", None), event)
+        has_wardrobe_reference = bool(cos_selection and cos_selection.wardrobe_ref)
+        wardrobe_item_name = str(cos_selection.wardrobe_item_name or "") if cos_selection else ""
         prompt = self.persona.build_selfie_prompt(
             action=action or "看着镜头自然自拍，展示你现在的样子",
             bot_name=framework_persona.name,
@@ -1899,6 +1908,8 @@ class SelfieImagePlugin(
             has_reference_image=bool(identity_ref),
             extra_reference_count=(cos_selection.extra_reference_image_count if cos_selection else len(extra_refs)),
             has_external_reference=bool(extra_refs),
+            has_wardrobe_reference=has_wardrobe_reference,
+            wardrobe_item_name=wardrobe_item_name,
         )
         return prompt, refs
 
@@ -1968,6 +1979,8 @@ class SelfieImagePlugin(
                 extra_reference_count=extra_reference_count,
                 appearance_type=self.persona.get_appearance_type(),
                 action_content=translated_action,
+                has_wardrobe_reference=bool(cos_selection and cos_selection.wardrobe_ref),
+                wardrobe_item_name=str(cos_selection.wardrobe_item_name or "") if cos_selection else "",
             )
             english = append_daily_context_to_english_prompt(english, prompt)
             meta.update({"enabled": True, "applied": True, "scope": "builtin_only"})
@@ -1989,6 +2002,8 @@ class SelfieImagePlugin(
             appearance_type=self.persona.get_appearance_type(),
             user_text=translated,
             action_content=translated_action,
+            has_wardrobe_reference=bool(cos_selection and cos_selection.wardrobe_ref),
+            wardrobe_item_name=str(cos_selection.wardrobe_item_name or "") if cos_selection else "",
         )
         english = append_daily_context_to_english_prompt(english, prompt)
         return english, refs, meta
@@ -1997,6 +2012,7 @@ class SelfieImagePlugin(
         data = self.persona.get()
         ref = self.persona.get_reference_image()
         appearance_type = self.persona.get_appearance_type()
+        wardrobe = self.get_wardrobe_payload()
         base = {
             "appearance_type": appearance_type,
             "appearance_type_label": self.persona.appearance_type_label(),
@@ -2004,6 +2020,7 @@ class SelfieImagePlugin(
             "updated_at": data.get("updated_at") or "",
             "status": self.persona.status_text(),
             "daily_schedule": self.persona.daily_schedule_payload(),
+            "wardrobe": wardrobe,
         }
         if not ref:
             return {
@@ -2016,6 +2033,70 @@ class SelfieImagePlugin(
             "ref_mime_type": ref["mime_type"],
             "image": bytes_to_data_url(ref["data"], ref["mime_type"]),
         }
+
+    def get_wardrobe_payload(self) -> Dict[str, Any]:
+        current = self.persona.current_wardrobe_item()
+        return {
+            "items": [item.to_dict() for item in self.persona.list_wardrobe()],
+            "enabled_count": sum(1 for item in self.persona.list_wardrobe() if item.enabled),
+            "current_item_id": current.id if current else "",
+            "current_item_name": current.name if current else "",
+        }
+
+    def save_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw_image = str(payload.get("image") or payload.get("data") or "").strip()
+        if not raw_image:
+            raise ValueError("缺少 image 字段，支持 data:image/...;base64,... 或纯 base64")
+        max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
+        data, mime = data_url_to_bytes(
+            raw_image,
+            max_dimension=max_dimension,
+            max_pixels=max_pixels,
+            max_frames=max_frames,
+        )
+        if not data:
+            raise ValueError("上传图片为空或尺寸/动画帧数超限")
+        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+        if len(data) > max_bytes:
+            raise ValueError(f"图片过大，最大允许 {self.config.image_max_image_size_mb}MB")
+        self.persona.add_wardrobe_item(
+            data,
+            normalize_image_mime(mime or str(payload.get("mime_type") or "") or detect_mime_by_bytes(data)),
+            name=str(payload.get("name") or payload.get("title") or "").strip(),
+            description=str(payload.get("description") or "").strip(),
+            tags=payload.get("tags"),
+        )
+        return self.get_wardrobe_payload()
+
+    def update_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        item_id = str(payload.get("id") or payload.get("item_id") or "").strip()
+        if not item_id:
+            raise ValueError("缺少衣橱服装 id")
+        self.persona.update_wardrobe_item(
+            item_id,
+            name=payload.get("name") if "name" in payload else None,
+            description=payload.get("description") if "description" in payload else None,
+            tags=payload.get("tags") if "tags" in payload else None,
+            enabled=payload.get("enabled") if "enabled" in payload else None,
+        )
+        return self.get_wardrobe_payload()
+
+    def delete_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        item_id = str(payload.get("id") or payload.get("item_id") or "").strip()
+        if not item_id:
+            raise ValueError("缺少衣橱服装 id")
+        self.persona.remove_wardrobe_item(item_id)
+        return self.get_wardrobe_payload()
+
+    def toggle_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        item_id = str(payload.get("id") or payload.get("item_id") or "").strip()
+        if not item_id:
+            raise ValueError("缺少衣橱服装 id")
+        enabled = payload.get("enabled")
+        if isinstance(enabled, str):
+            enabled = enabled.strip().lower() in {"1", "true", "yes", "on", "启用"}
+        self.persona.set_wardrobe_enabled(item_id, bool(enabled))
+        return self.get_wardrobe_payload()
 
     def set_selfie_appearance_type_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         value = payload.get("appearance_type", payload.get("type", "auto"))
@@ -4161,6 +4242,142 @@ class SelfieImagePlugin(
             event, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10
         ):
             yield item
+
+    def _wardrobe_item_by_token(self, token: str):
+        wanted = str(token or "").strip()
+        items = self.persona.list_wardrobe()
+        if wanted.isdigit():
+            index = int(wanted) - 1
+            return items[index] if 0 <= index < len(items) else None
+        return next((item for item in items if item.id == wanted), None)
+
+    def _wardrobe_list_text(self) -> str:
+        current = self.persona.current_wardrobe_item()
+        items = self.persona.list_wardrobe()
+        if not items:
+            return "衣橱还是空的。请使用 衣橱添加 并附上一张服装图。"
+        lines = [
+            f"自定义衣橱：{len(items)} 套，已启用 {sum(1 for item in items if item.enabled)} 套。",
+            (
+                f"今日服装：{current.name}（{current.id}）"
+                if current
+                else "今日服装：尚未从衣橱选择，下一次普通自拍时会自动选择。"
+            ),
+        ]
+        for index, item in enumerate(items, 1):
+            state = "启用" if item.enabled else "停用"
+            tags = f"；标签={','.join(item.tags)}" if item.tags else ""
+            lines.append(f"{index}. [{state}] {item.name}（{item.id}）{tags}")
+        return "\n".join(lines)
+
+    async def _add_wardrobe_from_event(self, event: AstrMessageEvent, command_name: str, fallback: str):
+        text = extract_command_message(event, command_name, fallback, include_quote_text=True)
+        sources = extract_image_sources_from_event(event, include_at_avatar=False)
+        sources.extend(extract_image_urls(text))
+        sources = list(dict.fromkeys(sources))
+        if not sources:
+            return 0, 0
+        name = ""
+        description = ""
+        tags = ""
+        for key, target in (("名称", "name"), ("名字", "name"), ("name", "name"), ("描述", "description"), ("description", "description"), ("标签", "tags"), ("tags", "tags")):
+            match = re.search(rf"(?:^|[\s,，;；]){re.escape(key)}\s*[=:：]\s*([^,，;；\n]+)", text, re.I)
+            if not match:
+                continue
+            value = match.group(1).strip()
+            if target == "name":
+                name = value
+            elif target == "description":
+                description = value
+            else:
+                tags = value
+        if not name:
+            plain = re.sub(r"(?:名称|名字|name|描述|description|标签|tags)\s*[=:：]\s*[^,，;；\n]+", "", text, flags=re.I)
+            plain = re.sub(r"https?://\S+", "", plain).strip(" \t,，;；")
+            name = plain[:120]
+        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
+        max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
+        saved = 0
+        failed = 0
+        async with aiohttp.ClientSession(trust_env=False) as session:
+            for source in sources:
+                try:
+                    fetched = await fetch_image_source(
+                        source,
+                        session,
+                        max_bytes=max_bytes,
+                        max_dimension=max_dimension,
+                        max_pixels=max_pixels,
+                        max_frames=max_frames,
+                    )
+                    if not fetched:
+                        failed += 1
+                        continue
+                    data, mime = fetched
+                    self.persona.add_wardrobe_item(
+                        data,
+                        mime,
+                        name=name,
+                        description=description,
+                        tags=tags,
+                    )
+                    saved += 1
+                except (OSError, ValueError):
+                    failed += 1
+        if saved:
+            await self.persona.ensure_daily_selfie_profile("衣橱添加")
+        return saved, failed
+
+    @filter.command("衣橱")
+    async def cmd_wardrobe(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        """查看自定义衣橱；今日服装仍由今日日程统一显示。"""
+        fallback = " ".join(item for item in (p1, p2, p3) if item).strip()
+        yield event.plain_result(self._wardrobe_list_text())
+
+    @filter.command("衣橱添加")
+    async def cmd_wardrobe_add(self, event: AstrMessageEvent, p1: str = "", p2: str = "", p3: str = "") -> AsyncGenerator[Any, None]:
+        fallback = " ".join(item for item in (p1, p2, p3) if item).strip()
+        saved, failed = await self._add_wardrobe_from_event(event, "衣橱添加", fallback)
+        if not saved and not failed:
+            yield event.plain_result("请发送服装图片，可附加 名称=白色连衣裙 描述=夏日连衣裙 标签=夏季,连衣裙。")
+            return
+        message = f"已添加 {saved} 套衣橱服装。" if saved else "没有添加可用的衣橱服装。"
+        if failed:
+            message += f"另有 {failed} 张图片读取失败。"
+        yield event.plain_result(message + "\n" + self._wardrobe_list_text())
+
+    @filter.command("衣橱删除")
+    async def cmd_wardrobe_delete(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
+        token = " ".join(item for item in (p1, p2) if item).strip()
+        item = self._wardrobe_item_by_token(token)
+        if item is None:
+            yield event.plain_result("请提供正确的衣橱编号或 id。\n" + self._wardrobe_list_text())
+            return
+        self.persona.remove_wardrobe_item(item.id)
+        await self.persona.ensure_daily_selfie_profile("衣橱删除")
+        yield event.plain_result(f"已删除衣橱服装：{item.name}。\n" + self._wardrobe_list_text())
+
+    @filter.command("衣橱启用")
+    async def cmd_wardrobe_enable(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
+        token = " ".join(item for item in (p1, p2) if item).strip()
+        item = self._wardrobe_item_by_token(token)
+        if item is None:
+            yield event.plain_result("请提供正确的衣橱编号或 id。\n" + self._wardrobe_list_text())
+            return
+        self.persona.set_wardrobe_enabled(item.id, True)
+        await self.persona.ensure_daily_selfie_profile("衣橱启用")
+        yield event.plain_result(f"已启用衣橱服装：{item.name}。\n" + self._wardrobe_list_text())
+
+    @filter.command("衣橱停用")
+    async def cmd_wardrobe_disable(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
+        token = " ".join(item for item in (p1, p2) if item).strip()
+        item = self._wardrobe_item_by_token(token)
+        if item is None:
+            yield event.plain_result("请提供正确的衣橱编号或 id。\n" + self._wardrobe_list_text())
+            return
+        self.persona.set_wardrobe_enabled(item.id, False)
+        await self.persona.ensure_daily_selfie_profile("衣橱停用")
+        yield event.plain_result(f"已停用衣橱服装：{item.name}。\n" + self._wardrobe_list_text())
 
     @filter.command("形象查看")
     async def cmd_persona_status(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:

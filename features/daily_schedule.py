@@ -101,6 +101,8 @@ class ScheduleEvent:
     allowed_camera: list[str] = field(default_factory=list)
     allowed_pose: list[str] = field(default_factory=list)
     forbidden_pose: list[str] = field(default_factory=list)
+    outfit_source: str = ""
+    wardrobe_item_id: str = ""
 
     @classmethod
     def from_dict(cls, value: Any, *, fallback_id: str = "event") -> Optional["ScheduleEvent"]:
@@ -133,6 +135,8 @@ class ScheduleEvent:
             allowed_camera=_clean_list(value.get("allowed_camera")),
             allowed_pose=_clean_list(value.get("allowed_pose")),
             forbidden_pose=_clean_list(value.get("forbidden_pose")),
+            outfit_source=_clean_text(value.get("outfit_source"), limit=40),
+            wardrobe_item_id=_clean_text(value.get("wardrobe_item_id"), limit=80),
         )
 
     def start_minute(self) -> int:
@@ -178,6 +182,8 @@ class DailySchedule:
     source: str = "local"
     schema_version: int = SCHEDULE_SCHEMA_VERSION
     updated_at: str = ""
+    outfit_source: str = ""
+    wardrobe_item_id: str = ""
 
     @classmethod
     def from_dict(cls, value: Any) -> Optional["DailySchedule"]:
@@ -218,6 +224,8 @@ class DailySchedule:
             source=_clean_text(value.get("source") or "local", limit=40) or "local",
             schema_version=int(value.get("schema_version") or SCHEDULE_SCHEMA_VERSION),
             updated_at=_clean_text(value.get("updated_at"), limit=40),
+            outfit_source=_clean_text(value.get("outfit_source"), limit=40),
+            wardrobe_item_id=_clean_text(value.get("wardrobe_item_id"), limit=80),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -278,6 +286,8 @@ def schedule_signature(schedule: DailySchedule) -> str:
         [
             schedule.route_id,
             schedule.theme,
+            schedule.outfit_source,
+            schedule.wardrobe_item_id,
             *[f"{event.scene}:{event.action}" for event in schedule.events],
             *schedule.outfits.values(),
         ]
@@ -472,6 +482,8 @@ def project_schedule_to_period_maps(
             "action": event.action,
             "outfit_ref": event.outfit_ref,
             "outfit_change": event.outfit_change,
+            "outfit_source": event.outfit_source,
+            "wardrobe_item_id": event.wardrobe_item_id,
         }
     return statuses, outfits, scenes, actions, nodes
 

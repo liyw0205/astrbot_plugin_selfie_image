@@ -138,10 +138,19 @@ class CosReferenceSelection:
     duplicate_count: int = 0
     roles: Dict[str, int] = field(default_factory=dict)
     failed_count: int = 0
+    wardrobe_ref: Optional[ImageReference] = None
+    wardrobe_item_id: str = ""
+    wardrobe_item_name: str = ""
 
     @property
     def refs(self) -> List[ImageReference]:
-        return ([self.identity_ref] if self.identity_ref else []) + list(self.extra_refs)
+        refs = [self.identity_ref] if self.identity_ref else []
+        # Ordinary wardrobe selfies have a strict two-image contract:
+        # identity first, clothing second. Auxiliary references follow.
+        if self.wardrobe_ref is not None and all(self.wardrobe_ref is not item for item in refs):
+            refs.append(self.wardrobe_ref)
+        refs.extend(item for item in self.extra_refs if all(item is not ref for ref in refs))
+        return refs
 
     @property
     def identity_reference_count(self) -> int:
@@ -149,11 +158,11 @@ class CosReferenceSelection:
 
     @property
     def extra_reference_image_count(self) -> int:
-        return len(self.extra_refs)
+        return len(self.extra_refs) + (1 if self.wardrobe_ref is not None else 0)
 
     def summary(self) -> Dict[str, Any]:
         """Return the non-sensitive fields persisted with a generation."""
-        return {
+        result = {
             "identity_reference_source": self.identity_source,
             "identity_reference_count": self.identity_reference_count,
             "extra_reference_image_count": self.extra_reference_image_count,
@@ -168,6 +177,65 @@ class CosReferenceSelection:
             "used_persona": self.identity_source == "persona",
             "used_context_fallback": False,
         }
+        if self.wardrobe_ref is not None:
+            result["wardrobe_item_id"] = str(self.wardrobe_item_id or "")
+            result["wardrobe_item_name"] = str(self.wardrobe_item_name or "")
+            result["wardrobe_reference_count"] = 1
+        else:
+            result["wardrobe_reference_count"] = 0
+        return result
+
+
+def select_wardrobe_selfie_references(
+    persona_ref: Optional[ImageReference],
+    wardrobe_ref: Optional[ImageReference],
+    *,
+    wardrobe_item_id: str = "",
+    wardrobe_item_name: str = "",
+    persona_extra_refs: Optional[Sequence[ImageReference]] = None,
+) -> Optional[CosReferenceSelection]:
+    """Build the stable identity + wardrobe order for ordinary selfies."""
+    if wardrobe_ref is None:
+        return None
+    identity = persona_ref if persona_ref and getattr(persona_ref, "data", None) else None
+    extras = [
+        ref for ref in (persona_extra_refs or [])
+        if ref and getattr(ref, "data", None)
+    ]
+    raw_refs = ([identity] if identity else []) + extras + [wardrobe_ref]
+    ordered = dedupe_image_references(raw_refs)
+    if identity is not None:
+        ordered = [identity] + [
+            ref for ref in ordered if content_digest(ref.data) != content_digest(identity.data)
+        ]
+    selected_identity = ordered[0] if identity is not None and ordered else None
+    rest = ordered[1:] if selected_identity is not None else ordered
+    wardrobe_digest = content_digest(wardrobe_ref.data)
+    wardrobe_selected = next((ref for ref in rest if content_digest(ref.data) == wardrobe_digest), None)
+    if wardrobe_selected is None and selected_identity is None and ordered:
+        wardrobe_selected = next((ref for ref in ordered if content_digest(ref.data) == wardrobe_digest), None)
+    extras_without_wardrobe = [
+        ref for ref in rest if wardrobe_selected is None or content_digest(ref.data) != content_digest(wardrobe_selected.data)
+    ]
+    roles: Dict[str, int] = {}
+    if selected_identity is not None:
+        roles["persona"] = 1
+    if extras:
+        roles["persona_extra"] = len(extras)
+    if wardrobe_selected is not None:
+        roles["wardrobe"] = 1
+    return CosReferenceSelection(
+        identity_ref=selected_identity,
+        extra_refs=extras_without_wardrobe,
+        identity_source="persona" if selected_identity is not None else "none",
+        raw_total_count=len(raw_refs),
+        deduplicated_total_count=len(ordered),
+        duplicate_count=max(0, len(raw_refs) - len(ordered)),
+        roles=roles,
+        wardrobe_ref=wardrobe_selected,
+        wardrobe_item_id=str(wardrobe_item_id or "").strip(),
+        wardrobe_item_name=str(wardrobe_item_name or "").strip(),
+    )
 
 
 def content_digest(data: bytes) -> str:

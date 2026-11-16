@@ -252,6 +252,26 @@ SELFIE_PROFILE_ROUTE_CONTRACTS = (
         "selfie-profile/refresh-local", ("POST",), "selfie_profile_refresh_local",
         "page_selfie_profile_refresh_local", "Selfie Image local refresh profile",
     ),
+    SelfieProfileRouteContract(
+        "selfie_wardrobe_get", "/api/selfie-wardrobe", "selfie-wardrobe", ("GET",),
+        "selfie_wardrobe_get", "page_selfie_wardrobe_get", "Selfie Image wardrobe list",
+    ),
+    SelfieProfileRouteContract(
+        "selfie_wardrobe_add", "/api/selfie-wardrobe/add", "selfie-wardrobe/add", ("POST",),
+        "selfie_wardrobe_add", "page_selfie_wardrobe_add", "Selfie Image add wardrobe item",
+    ),
+    SelfieProfileRouteContract(
+        "selfie_wardrobe_update", "/api/selfie-wardrobe/update", "selfie-wardrobe/update", ("POST",),
+        "selfie_wardrobe_update", "page_selfie_wardrobe_update", "Selfie Image update wardrobe item",
+    ),
+    SelfieProfileRouteContract(
+        "selfie_wardrobe_delete", "/api/selfie-wardrobe/delete", "selfie-wardrobe/delete", ("POST",),
+        "selfie_wardrobe_delete", "page_selfie_wardrobe_delete", "Selfie Image delete wardrobe item",
+    ),
+    SelfieProfileRouteContract(
+        "selfie_wardrobe_toggle", "/api/selfie-wardrobe/toggle", "selfie-wardrobe/toggle", ("POST",),
+        "selfie_wardrobe_toggle", "page_selfie_wardrobe_toggle", "Selfie Image toggle wardrobe item",
+    ),
 )
 
 

@@ -43,6 +43,27 @@
       root.hidden = false;
     }
 
+    function renderWardrobe(payload) {
+      const root = $('selfieWardrobeList');
+      if (!root) return;
+      const items = payload && Array.isArray(payload.items) ? payload.items : [];
+      window.__selfieWardrobeItems = items;
+      if (!items.length) {
+        root.innerHTML = '<div class="muted">衣橱为空，添加服装图后普通自拍会优先使用。</div>';
+        return;
+      }
+      root.innerHTML = items.map(item => `<div class="daily-event wardrobe-item" data-wardrobe-id="${escapeHtml(item.id || '')}">
+        <div class="daily-event-body">
+          <div class="daily-event-heading"><input class="wardrobe-name" value="${escapeHtml(item.name || '')}" aria-label="衣橱名称"><span class="daily-event-status">${item.enabled ? '启用' : '停用'}</span></div>
+          <div class="daily-event-fields"><span class="muted">${escapeHtml((item.tags || []).join(', '))}</span><span class="muted">${escapeHtml(item.id || '')}</span></div>
+        </div>
+        <div class="actions" style="margin-top:8px"><button type="button" class="secondary wardrobe-save">保存</button><button type="button" class="secondary wardrobe-toggle">${item.enabled ? '停用' : '启用'}</button><button type="button" class="danger wardrobe-delete">删除</button></div>
+      </div>`).join('');
+      root.querySelectorAll('.wardrobe-save').forEach(button => button.onclick = () => updateWardrobe(button.closest('[data-wardrobe-id]').dataset.wardrobeId));
+      root.querySelectorAll('.wardrobe-toggle').forEach(button => button.onclick = () => toggleWardrobe(button.closest('[data-wardrobe-id]').dataset.wardrobeId));
+      root.querySelectorAll('.wardrobe-delete').forEach(button => button.onclick = () => deleteWardrobe(button.closest('[data-wardrobe-id]').dataset.wardrobeId));
+    }
+
     async function refreshSelfie(notify = false) {
       try {
         const res = await api('/api/selfie-reference');
@@ -60,6 +81,7 @@
         const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || 'auto'] || '自动';
         $('selfieStatus').textContent = `${data.has_image ? '形象参考图已设置' : '尚未设置形象参考图'} · 类型：${appearanceLabel}`;
         renderSelfieDailySchedule(data.daily_schedule);
+        renderWardrobe(data.wardrobe);
         if ($('selfieAppearanceType')) {
           $('selfieAppearanceType').value = data.appearance_type || 'auto';
         }
@@ -68,6 +90,45 @@
         $('selfieStatus').textContent = '形象信息暂不可用';
         showToast(e.message || '形象信息读取失败', 'bad');
       }
+    }
+    async function uploadWardrobe() {
+      const file = $('wardrobeFile') && $('wardrobeFile').files[0];
+      if (!file) { showToast('请选择服装图片', 'bad'); return; }
+      try {
+        await api('/api/selfie-wardrobe/add', {method:'POST', body: JSON.stringify({
+          image: await readFileDataUrl(file), mime_type: file.type,
+          name: ($('wardrobeName')?.value || '').trim(),
+          description: ($('wardrobeDescription')?.value || '').trim(),
+          tags: ($('wardrobeTags')?.value || '').trim(),
+        })});
+        if ($('wardrobeFile')) $('wardrobeFile').value = '';
+        await refreshSelfie();
+        showToast('衣橱服装已添加', 'ok');
+      } catch (e) { showToast(e.message || '衣橱服装添加失败', 'bad'); }
+    }
+    async function updateWardrobe(id) {
+      const row = document.querySelector(`[data-wardrobe-id="${CSS.escape(id)}"]`);
+      if (!row) return;
+      try {
+        await api('/api/selfie-wardrobe/update', {method:'POST', body: JSON.stringify({id, name: row.querySelector('.wardrobe-name')?.value || ''})});
+        await refreshSelfie();
+        showToast('衣橱服装已更新', 'ok');
+      } catch (e) { showToast(e.message || '衣橱服装更新失败', 'bad'); }
+    }
+    async function toggleWardrobe(id) {
+      const item = (window.__selfieWardrobeItems || []).find(value => String(value.id) === String(id));
+      try {
+        await api('/api/selfie-wardrobe/toggle', {method:'POST', body: JSON.stringify({id, enabled: !(item && item.enabled)})});
+        await refreshSelfie();
+      } catch (e) { showToast(e.message || '衣橱服装状态更新失败', 'bad'); }
+    }
+    async function deleteWardrobe(id) {
+      if (!await confirmAction('确定删除这套衣橱服装吗？', {title:'删除衣橱服装', confirmText:'删除'})) return;
+      try {
+        await api('/api/selfie-wardrobe/delete', {method:'POST', body: JSON.stringify({id})});
+        await refreshSelfie();
+        showToast('衣橱服装已删除', 'ok');
+      } catch (e) { showToast(e.message || '衣橱服装删除失败', 'bad'); }
     }
     async function refreshDailySelfieLocal() {
       try {

@@ -234,6 +234,8 @@
     };
 
     $('uploadSelfie').onclick = uploadSelfie;
+    if ($('uploadWardrobe')) $('uploadWardrobe').onclick = uploadWardrobe;
+    if ($('refreshWardrobe')) $('refreshWardrobe').onclick = () => refreshSelfie(true);
     if ($('selfieAppearanceType')) $('selfieAppearanceType').onchange = saveAppearanceType;
     $('testChannel').onchange = refreshTestModels;
     function mirrorValue(a, b) {

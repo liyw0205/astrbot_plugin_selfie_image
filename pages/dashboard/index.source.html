@@ -622,6 +622,15 @@
       </div>
       <div id="selfieStatus" class="selfie-reference-state" aria-live="polite"></div>
       <div id="selfieDailySchedule" class="daily-schedule" hidden></div>
+      <h3 style="margin-top:18px">自定义衣橱</h3>
+      <div class="grid">
+        <div><label>服装图片</label><input id="wardrobeFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml"></div>
+        <div><label>名称</label><input id="wardrobeName" type="text" maxlength="120" placeholder="白色夏日连衣裙"></div>
+        <div><label>描述</label><input id="wardrobeDescription" type="text" maxlength="600" placeholder="材质、版型或必须保留的细节"></div>
+        <div><label>标签</label><input id="wardrobeTags" type="text" maxlength="300" placeholder="夏季,连衣裙"></div>
+      </div>
+      <div class="actions"><button id="uploadWardrobe" type="button">添加到衣橱</button><button class="secondary" id="refreshWardrobe" type="button">刷新衣橱</button></div>
+      <div id="selfieWardrobeList" class="daily-schedule" aria-live="polite"></div>
     </section>
 
     <section id="audit">

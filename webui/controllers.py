@@ -1104,6 +1104,25 @@ class SelfieProfileController:
             raise WebContractError(str(exc), 500) from exc
         return self._result(data, "本地今日穿搭已刷新")
 
+    def wardrobe_get(self) -> SelfieProfileControllerResult:
+        return self._result(self._call("get_wardrobe_payload"))
+
+    def wardrobe_add(self, payload: Any) -> SelfieProfileControllerResult:
+        data = self._call("save_wardrobe_item_from_web", payload, error_status=400)
+        return self._result(data, "衣橱服装已添加")
+
+    def wardrobe_update(self, payload: Any) -> SelfieProfileControllerResult:
+        data = self._call("update_wardrobe_item_from_web", payload, error_status=400)
+        return self._result(data, "衣橱服装已更新")
+
+    def wardrobe_delete(self, payload: Any) -> SelfieProfileControllerResult:
+        data = self._call("delete_wardrobe_item_from_web", payload, error_status=400)
+        return self._result(data, "衣橱服装已删除")
+
+    def wardrobe_toggle(self, payload: Any) -> SelfieProfileControllerResult:
+        data = self._call("toggle_wardrobe_item_from_web", payload, error_status=400)
+        return self._result(data, "衣橱服装状态已更新")
+
 
 class ImageChannelController:
     """Shared channel-test and model-refresh operations for both Web adapters."""

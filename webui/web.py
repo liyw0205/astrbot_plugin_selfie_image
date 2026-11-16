@@ -734,12 +734,32 @@ class FlaskWebServer:
                 selfie_profile_controller.refresh_local(), timeout=20,
             ))
 
+        def selfie_wardrobe_get() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return selfie_profile_result(selfie_profile_controller.wardrobe_get)
+
+        def selfie_wardrobe_mutation(method: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return selfie_profile_result(
+                lambda: getattr(selfie_profile_controller, method)(payload)
+            )
+
         selfie_profile_handlers = {
             "selfie_reference_get": selfie_reference_get,
             "selfie_reference_post": selfie_reference_post,
             "selfie_reference_clear": selfie_reference_clear,
             "selfie_appearance_type": selfie_appearance_type,
             "selfie_profile_refresh_local": selfie_profile_refresh_local,
+            "selfie_wardrobe_get": selfie_wardrobe_get,
+            "selfie_wardrobe_add": lambda: selfie_wardrobe_mutation("wardrobe_add"),
+            "selfie_wardrobe_update": lambda: selfie_wardrobe_mutation("wardrobe_update"),
+            "selfie_wardrobe_delete": lambda: selfie_wardrobe_mutation("wardrobe_delete"),
+            "selfie_wardrobe_toggle": lambda: selfie_wardrobe_mutation("wardrobe_toggle"),
         }
         for route in SELFIE_PROFILE_ROUTE_CONTRACTS:
             app.add_url_rule(

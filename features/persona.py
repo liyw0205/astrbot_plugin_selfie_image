@@ -39,6 +39,7 @@ from .daily_schedule import (
     resolve_business_date,
     timeline_from_period_route,
 )
+from .wardrobe import WardrobeItem, WardrobeStore
 from .daily_prompt_pools import (
     DAILY_ACTION_VARIANTS,
     DAILY_EXTRA_OUTFIT_POOL,
@@ -227,6 +228,9 @@ class DailySelfieProfile:
     occasion: str = ""
     llm_attempted: bool = False
     timeline: Optional[DailySchedule] = None
+    outfit_source: str = ""
+    wardrobe_item_id: str = ""
+    wardrobe_item_name: str = ""
 
 
 @dataclass
@@ -1060,6 +1064,7 @@ class PersonaManager:
         self.daily_schedule_store = DailyScheduleStore(
             os.path.join(data_dir, "daily_schedule.json")
         )
+        self.wardrobe = WardrobeStore(data_dir)
         self.business_day_start = DEFAULT_BUSINESS_DAY_START
         self._daily_profile_lock = asyncio.Lock()
         self.load()
@@ -1531,6 +1536,114 @@ class PersonaManager:
         async with self._daily_profile_lock:
             return await self._ensure_daily_selfie_profile_unlocked(action)
 
+    def configure_wardrobe_limits(
+        self,
+        *,
+        max_bytes: int,
+        max_dimension: int,
+        max_pixels: int,
+        max_frames: int,
+    ) -> None:
+        """Apply the host image limits to newly imported wardrobe files."""
+        self.wardrobe.max_bytes = max(1, int(max_bytes))
+        self.wardrobe.max_dimension = max(1, int(max_dimension))
+        self.wardrobe.max_pixels = max(1, int(max_pixels))
+        self.wardrobe.max_frames = max(1, int(max_frames))
+
+    def list_wardrobe(self, *, include_disabled: bool = True) -> list[WardrobeItem]:
+        return self.wardrobe.list_items(include_disabled=include_disabled)
+
+    def add_wardrobe_item(
+        self,
+        data: bytes,
+        mime_type: str = "",
+        *,
+        name: str = "",
+        description: str = "",
+        tags: Any = None,
+    ) -> WardrobeItem:
+        return self.wardrobe.add(
+            data,
+            mime_type,
+            name=name,
+            description=description,
+            tags=tags,
+        )
+
+    def update_wardrobe_item(self, item_id: str, **changes: Any) -> WardrobeItem:
+        return self.wardrobe.update(item_id, **changes)
+
+    def remove_wardrobe_item(self, item_id: str) -> WardrobeItem:
+        return self.wardrobe.remove(item_id)
+
+    def set_wardrobe_enabled(self, item_id: str, enabled: bool) -> WardrobeItem:
+        return self.wardrobe.set_enabled(item_id, enabled)
+
+    def current_wardrobe_item(self) -> Optional[WardrobeItem]:
+        schedule = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
+        if schedule is None or not schedule.wardrobe_item_id:
+            return None
+        item = self.wardrobe.get(schedule.wardrobe_item_id)
+        if item is None or not item.enabled:
+            return None
+        try:
+            self.wardrobe.read(item)
+        except ValueError:
+            return None
+        return item
+
+    def current_wardrobe_reference(self):
+        item = self.current_wardrobe_item()
+        return self.wardrobe.image_reference(item) if item else None
+
+    def _apply_wardrobe_item(self, schedule: DailySchedule, item: WardrobeItem) -> DailySchedule:
+        """Use one clothing image as the day's main outfit without replacing
+        explicit schedule overrides such as homewear or sleepwear.
+        """
+        outfit = item.description.strip() or item.name
+        schedule.outfits["main"] = outfit[:300]
+        schedule.outfit_source = "wardrobe"
+        schedule.wardrobe_item_id = item.id
+        for event in schedule.events:
+            ref = event.outfit_ref.strip().lower()
+            if ref in {"", "main", "same"}:
+                event.outfit_ref = "main"
+                event.outfit_source = "wardrobe"
+                event.wardrobe_item_id = item.id
+        try:
+            self.wardrobe.mark_used(item.id, schedule.date)
+        except ValueError:
+            pass
+        return schedule
+
+    def _select_wardrobe_for_schedule(
+        self,
+        schedule: DailySchedule,
+        *,
+        force_new: bool = False,
+    ) -> DailySchedule:
+        current_id = schedule.wardrobe_item_id
+        item = self.wardrobe.select_for_date(
+            schedule.date,
+            avoid_id=current_id,
+            force_new=force_new,
+        )
+        if item is None:
+            return schedule
+        return self._apply_wardrobe_item(schedule, item)
+
+    def _schedule_needs_wardrobe(self, schedule: DailySchedule) -> bool:
+        if not schedule.wardrobe_item_id:
+            return True
+        item = self.wardrobe.get(schedule.wardrobe_item_id)
+        if item is None or not item.enabled:
+            return True
+        try:
+            self.wardrobe.read(item)
+        except ValueError:
+            return True
+        return False
+
     def _profile_from_timeline(
         self,
         schedule: DailySchedule,
@@ -1565,6 +1678,13 @@ class PersonaManager:
             occasion=schedule.occasion,
             llm_attempted=False,
             timeline=schedule,
+            outfit_source=schedule.outfit_source,
+            wardrobe_item_id=schedule.wardrobe_item_id,
+            wardrobe_item_name=(
+                self.wardrobe.get(schedule.wardrobe_item_id).name
+                if schedule.wardrobe_item_id and self.wardrobe.get(schedule.wardrobe_item_id)
+                else ""
+            ),
         )
 
     async def _ensure_daily_selfie_profile_unlocked(
@@ -1575,13 +1695,16 @@ class PersonaManager:
         existed = self.data.get("daily_selfie_profile")
         canonical = self.get_daily_schedule(today)
         if canonical is not None:
+            wardrobe_changed = self._schedule_needs_wardrobe(canonical)
+            if wardrobe_changed:
+                canonical = self._select_wardrobe_for_schedule(canonical)
             profile = self._profile_from_timeline(
                 canonical,
                 legacy=existed if isinstance(existed, dict) else None,
             )
             # Keep the old in-memory/API shape for callers, while all future
             # prompt selection reads the canonical timeline store.
-            if not isinstance(existed, dict) or existed.get("schema_version") != DAILY_PROFILE_SCHEMA_VERSION:
+            if wardrobe_changed or not isinstance(existed, dict) or existed.get("schema_version") != DAILY_PROFILE_SCHEMA_VERSION:
                 self._persist_daily_selfie_profile(profile)
             return profile
         if isinstance(existed, dict) and existed.get("date") == today:
@@ -1700,6 +1823,9 @@ class PersonaManager:
             avoid_actions=avoid_actions,
             avoid_route_ids=self.daily_schedule_store.recent_route_ids(),
         )
+        if profile.timeline is not None:
+            self._select_wardrobe_for_schedule(profile.timeline)
+            profile = self._profile_from_timeline(profile.timeline)
         self._persist_daily_selfie_profile(profile)
         return profile
 
@@ -1749,6 +1875,9 @@ class PersonaManager:
             "updated_at": profile.updated_at,
             "source": profile.source,
             "llm_attempted": profile.llm_attempted,
+            "outfit_source": profile.outfit_source or (timeline.outfit_source if timeline else ""),
+            "wardrobe_item_id": profile.wardrobe_item_id or (timeline.wardrobe_item_id if timeline else ""),
+            "wardrobe_item_name": profile.wardrobe_item_name,
         }
         self.data["updated_at"] = profile.updated_at
         self.save()
@@ -1771,6 +1900,12 @@ class PersonaManager:
                 avoid_actions=avoid_actions,
                 avoid_route_ids=self.daily_schedule_store.recent_route_ids(),
             )
+            if profile.timeline is not None:
+                previous_schedule = previous.timeline if previous else None
+                if previous_schedule and previous_schedule.wardrobe_item_id:
+                    profile.timeline.wardrobe_item_id = previous_schedule.wardrobe_item_id
+                self._select_wardrobe_for_schedule(profile.timeline, force_new=True)
+                profile = self._profile_from_timeline(profile.timeline)
             self._persist_daily_selfie_profile(profile)
             return profile
 
@@ -1815,6 +1950,13 @@ class PersonaManager:
             f"日期：{schedule.date}",
             f"主题：{schedule.theme}" if schedule.theme else "",
             f"心情：{schedule.mood}" if schedule.mood else "",
+            (
+                f"穿搭来源：自定义衣橱（{self.wardrobe.get(schedule.wardrobe_item_id).name}）"
+                if schedule.outfit_source == "wardrobe"
+                and schedule.wardrobe_item_id
+                and self.wardrobe.get(schedule.wardrobe_item_id)
+                else "穿搭来源：今日日程内置穿搭"
+            ),
             "当前事件：" + (
                 f"{current.start}-{current.end} {current.title}｜{current.scene}｜{current.action}"
                 if current else "暂无"
@@ -1897,6 +2039,9 @@ class PersonaManager:
             occasion=str(raw.get("occasion") or ""),
             llm_attempted=False,
             timeline=timeline,
+            outfit_source=str(raw.get("outfit_source") or (timeline.outfit_source if timeline else "")),
+            wardrobe_item_id=str(raw.get("wardrobe_item_id") or (timeline.wardrobe_item_id if timeline else "")),
+            wardrobe_item_name=str(raw.get("wardrobe_item_name") or ""),
         )
 
     def build_selfie_prompt(
@@ -1907,6 +2052,8 @@ class PersonaManager:
         has_reference_image: bool,
         extra_reference_count: int = 0,
         has_external_reference: Optional[bool] = None,
+        has_wardrobe_reference: bool = False,
+        wardrobe_item_name: str = "",
     ) -> str:
         act = str(action or "").strip()
         intent = self.analyze_selfie_intent(act)
@@ -2076,6 +2223,14 @@ class PersonaManager:
                             if back_facing_shot or side_facing_shot
                             else "除非用户要求遮脸，否则主角面部清晰自然。"
                         ),
+                    ]
+                )
+            if has_wardrobe_reference and not intent.is_group_photo and not intent.is_legs_only and not intent.is_cos_look:
+                reference_lines.extend(
+                    [
+                        "参考图二是自定义衣橱服装参考图；只迁移衣服、材质、颜色、版型、印花和配饰。",
+                        "参考图二不提供人物身份；禁止迁移其中人物的脸型、五官、发型发色、体态、性别、表情或背景。人物身份始终以参考图一为准。",
+                        f"衣橱服装名称：{str(wardrobe_item_name or '').strip()}。" if str(wardrobe_item_name or '').strip() else "",
                     ]
                 )
 
@@ -2600,6 +2755,8 @@ class PersonaManager:
                     f"可选穿搭池：{len(daily.outfit_pool)}套",
                 ]
             )
+            if daily.outfit_source == "wardrobe" and daily.wardrobe_item_name:
+                lines.append(f"今日衣橱：{daily.wardrobe_item_name}（{daily.wardrobe_item_id}）")
             if daily.day_theme:
                 lines.append(f"今日日程基调：{daily.day_theme}")
             timeline = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))

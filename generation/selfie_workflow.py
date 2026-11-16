@@ -17,6 +17,7 @@ from ..features.reference_collector import (
     CosReferenceSelection,
     select_cos_references,
     select_group_references,
+    select_wardrobe_selfie_references,
 )
 
 
@@ -64,9 +65,21 @@ class SelfieWorkflowService:
         intent = plugin.persona.analyze_selfie_intent(str(action or ""))
         compact = "".join(str(action or "").split()).lower()
         look_cos = bool(intent.is_cos_look and "看看cos" in compact)
-        if not look_cos and not intent.is_legs_only:
+        if not look_cos and not intent.is_legs_only and not intent.is_group_photo:
             if intent.is_cos_look:
                 return plugin._select_cos_references(action, message_refs)
+            if message_refs:
+                return None
+            wardrobe_item = plugin.persona.current_wardrobe_item()
+            wardrobe_ref = plugin.persona.current_wardrobe_reference()
+            if wardrobe_item and wardrobe_ref:
+                return select_wardrobe_selfie_references(
+                    plugin._persona_identity_reference(allow_logo=True),
+                    wardrobe_ref,
+                    wardrobe_item_id=wardrobe_item.id,
+                    wardrobe_item_name=wardrobe_item.name,
+                    persona_extra_refs=plugin._persona_auxiliary_references(action),
+                )
             return None
 
         is_cos = bool(intent.is_cos_look)
@@ -88,7 +101,13 @@ class SelfieWorkflowService:
         if selection is not None:
             return list(selection.refs)
         identity = plugin._persona_identity_reference(allow_logo=not plugin._is_cos_action(action))
-        return ([identity] if identity else []) + plugin._persona_auxiliary_references(action) + list(message_refs)
+        refs = ([identity] if identity else []) + plugin._persona_auxiliary_references(action) + list(message_refs)
+        persona = getattr(plugin, "persona", None)
+        if not message_refs and not plugin._is_cos_action(action) and persona is not None:
+            wardrobe_ref = persona.current_wardrobe_reference()
+            if wardrobe_ref is not None:
+                refs.append(wardrobe_ref)
+        return refs
 
     def _resolve_action_options(
         self,

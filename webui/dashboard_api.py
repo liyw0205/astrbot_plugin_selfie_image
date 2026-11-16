@@ -581,6 +581,42 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
         return self._ok(result.data, **result.extra)
 
+    async def page_selfie_wardrobe_get(self) -> Any:
+        try:
+            result: SelfieProfileControllerResult = self._selfie_profile_controller.wardrobe_get()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
+    async def _page_selfie_wardrobe_mutation(self, method: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        assert payload is not None
+        try:
+            result: SelfieProfileControllerResult = getattr(
+                self._selfie_profile_controller, method
+            )(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
+    async def page_selfie_wardrobe_add(self) -> Any:
+        return await self._page_selfie_wardrobe_mutation("wardrobe_add")
+
+    async def page_selfie_wardrobe_update(self) -> Any:
+        return await self._page_selfie_wardrobe_mutation("wardrobe_update")
+
+    async def page_selfie_wardrobe_delete(self) -> Any:
+        return await self._page_selfie_wardrobe_mutation("wardrobe_delete")
+
+    async def page_selfie_wardrobe_toggle(self) -> Any:
+        return await self._page_selfie_wardrobe_mutation("wardrobe_toggle")
+
     async def page_test_image_channel(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:
