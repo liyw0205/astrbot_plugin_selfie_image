@@ -18,7 +18,7 @@ def test_mobile_smoke_script_covers_declared_viewports_and_pages() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert "{name: 'small', width: 320, height: 568}" in source
     assert "{name: 'large', width: 390, height: 844}" in source
-    assert "status-preview" in source
+    assert "status-preview" not in source
     assert "dashboard unauthenticated" in source
     assert "does not certify a real device" in source
     assert "scrollWidth > metrics.clientWidth + 1" in source

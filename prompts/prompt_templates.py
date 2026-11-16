@@ -37,6 +37,7 @@ COS_HAIR_OVERRIDE_CONTRACT_ZH = (
     "挑染、拼色或渐变按明示的颜色及分布呈现；局部异色仅用于对应发束或区域，其余头发遵循本次主发色，不把局部配色扩大为整片异色刘海。"
     "指定假发时，参考图原发完整收在假发内，可见发际线、刘海和鬓发均属于同一顶假发。"
     "指定发型轮廓时，按指定内容替换参考图中对应的刘海、鬓发、分缝、长度或束发；未写明的发型细节自然补全。"
+    "即使套装正文只写长发、短发、直发、卷发或双马尾等类别，也必须补全可见的刘海类型、分缝位置、层次、长度终点、束发位置和发尾形态；这些结构均以本次 COS 为准，不得沿用参考图的刘海细节。"
     "仅指定局部挑染而未指定底色时，底色沿用身份参考图；完全未指定发色时也沿用参考图发色。未指定发型时保留与本次设定兼容的自然发型，不按角色名补造未写明的造型。"
     "头饰需贴合头部并与刘海、发束协调，不穿插、悬浮或与头发融合。"
 )
@@ -64,6 +65,7 @@ COS_HAIR_OVERRIDE_CONTRACT_EN = (
     "Use the stated colors and distribution for highlights, color blocking, or gradients. Local accents apply only to the corresponding strands or regions; the remaining hair follows the chosen base color. Do not expand a local accent into an entire contrasting fringe. "
     "When a wig is specified, tuck all reference hair inside it; the visible hairline, bangs, and side locks belong to the same wig. "
     "Replace only the hairstyle features that are specified, such as bangs, side locks, parting, length, or tied sections. Complete unspecified hairstyle details naturally. "
+    "Even when the costume only names a broad category such as long hair, short hair, straight hair, curls, or twin tails, complete the visible bang shape, parting, layers, endpoint length, tie placement, and tip shape for this COS; never reuse the reference image's bang details. "
     "If only local highlights are specified without a base color, retain the identity reference's base color; retain its hair color as well when no color is specified at all. Keep unspecified hairstyle features compatible with the chosen look; do not invent unlisted hair details from the character name. "
     "Fit headwear naturally without floating, intersecting, or merging it with the hair."
 )

@@ -7555,8 +7555,13 @@ class DashboardEmbedContractTests(unittest.TestCase):
         self.assertIn("page-nav", page_html)
         self.assertNotIn("channelTabVideo", page_html)
         self.assertIn("开始试画", page_html)
-        logo = Path(__file__).resolve().parents[1] / "pages" / "dashboard" / "logo.png"
+        root = Path(__file__).resolve().parents[1]
+        logo = root / "logo.png"
         self.assertTrue(logo.is_file())
+        main_src = (root / "main.py").read_text(encoding="utf-8")
+        self.assertIn("def _sync_dashboard_logo", main_src)
+        self.assertIn("self._sync_dashboard_logo()", main_src)
+        self.assertIn("pages/dashboard/logo.png", (root / ".gitignore").read_text(encoding="utf-8"))
         from astrbot_plugin_selfie_image.webui.web import render_index_html
 
         rendered = render_index_html()
@@ -7766,25 +7771,25 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         for name in ("cmd_help", "cmd_help_text", "cmd_draw", "cmd_image_model", "cmd_image_tasks", "cmd_image_task_cancel"):
             self.assertTrue(hasattr(plugin_main.SelfieImagePlugin, name), name)
 
-    def test_help_uses_shipped_static_poster_only(self) -> None:
+    def test_help_uses_startup_generated_cached_posters(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        poster = root / "assets" / "help_poster.png"
         logo = root / "logo.png"
         self.assertTrue(logo.is_file(), "logo.png must ship in repo")
-        self.assertTrue(poster.is_file(), "assets/help_poster.png must ship in repo")
-        self.assertGreater(poster.stat().st_size, 1000)
-        self.assertTrue(looks_like_image_bytes(poster.read_bytes()[:32]))
         main_src = (root / "main.py").read_text(encoding="utf-8")
-        self.assertNotIn("_generate_help_poster", main_src)
-        self.assertIn("help_poster.png", main_src)
-        self.assertIn("_bundled_help_poster_path", main_src)
+        helper_src = (root / "generation" / "help_poster.py").read_text(encoding="utf-8")
+        self.assertIn("ensure_help_images", main_src)
+        self.assertIn("help_poster_full.png", helper_src)
+        self.assertIn("HELP_IMAGE_LAYOUT_VERSION", helper_src)
         self.assertIn("async def cmd_help", main_src)
         self.assertIn('@filter.command("生图help")', main_src)
         self.assertIn("async def cmd_help_text", main_src)
-        # image-only path must not auto-append full help text in cmd_help body
+        self.assertIn('@filter.command("生图状态", alias={"生图记录状态"})', main_src)
+        # Both commands send a cached image and only fall back to text if generation failed.
         help_fn = main_src.split("async def cmd_help", 1)[1].split("async def cmd_help_text", 1)[0]
         self.assertNotIn("_help_text_body()", help_fn)
         self.assertIn("chain_result", help_fn)
+        help_text_fn = main_src.split("async def cmd_help_text", 1)[1].split("def _help_text_body", 1)[0]
+        self.assertIn("chain_result", help_text_fn)
 
     def test_command_docstrings_for_plugin_panel_descriptions(self) -> None:
         main_src = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")

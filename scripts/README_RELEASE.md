@@ -61,8 +61,9 @@ Unrelated untracked files are never discovered or included automatically.
 New local Python imports must resolve to a module included in the artifact.
 
 The archive contains one plugin directory with Python runtime modules, bundled
-prompt JSON, metadata, runtime requirements, README/CHANGELOG, posters, logos,
-and tracked image/font assets. The generated Dashboard `index.html` and Flask
+prompt JSON, metadata, runtime requirements, README/CHANGELOG, the root logo,
+and tracked image/font assets. Help cards are generated with Pillow into the
+plugin data directory on first use. The generated Dashboard `index.html` and Flask
 `webui/index_fallback.py` are both runtime entrypoints and each appears once.
 Dashboard source fragments, tests, development scripts, CI files, design
 previews, research folders, caches, and local configuration are excluded.

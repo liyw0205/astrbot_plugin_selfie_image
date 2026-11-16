@@ -19,7 +19,7 @@
     {
       "cos_type": "世界计划 缤纷舞台",
       "file": "世界计划 缤纷舞台.json",
-      "count": 19
+      "count": 23
     },
     {
       "cos_type": "从零开始的异世界生活",
@@ -538,6 +538,10 @@
     "prsk_nene_wxs",
     "prsk_mafuyu_n25",
     "prsk_miku_vbs",
+    "miku_classic_v2_stage",
+    "miku_racing_circuit",
+    "miku_snow_festival",
+    "miku_magical_mirai",
     "ark_exusiai_street",
     "ark_eyja_volcano_research",
     "ark_saria_structured_uniform",

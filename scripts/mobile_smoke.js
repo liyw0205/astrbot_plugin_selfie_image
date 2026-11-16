@@ -39,7 +39,7 @@ function parseArgs(argv) {
     else if (argument === '--timeout') options.timeout = Number(argv[++index]) || DEFAULT_TIMEOUT_MS;
     else if (argument === '--help' || argument === '-h') {
       console.log('Usage: node scripts/mobile_smoke.js [--chromium PATH] [--output DIR] [--timeout MS]');
-      console.log('Checks status-preview and unauthenticated Dashboard at 320x568 and 390x844.');
+      console.log('Checks the unauthenticated Dashboard at 320x568 and 390x844.');
       process.exit(0);
     } else {
       throw new Error(`Unknown argument: ${argument}`);
@@ -123,9 +123,11 @@ async function startDashboardServer() {
     }
     const relative = requestPath === '/' || requestPath === '/dashboard' || requestPath === '/dashboard/'
       ? 'pages/dashboard/index.html'
-      : requestPath.startsWith('/dashboard/')
-        ? `pages/dashboard/${requestPath.slice('/dashboard/'.length)}`
-        : requestPath.replace(/^\/+/, '');
+      : requestPath === '/dashboard/logo.png'
+        ? 'logo.png'
+        : requestPath.startsWith('/dashboard/')
+          ? `pages/dashboard/${requestPath.slice('/dashboard/'.length)}`
+          : requestPath.replace(/^\/+/, '');
     const file = path.resolve(ROOT, relative);
     if (!file.startsWith(`${ROOT}${path.sep}`) && file !== ROOT) {
       response.writeHead(403);
@@ -139,18 +141,6 @@ async function startDashboardServer() {
   return {server, url: `http://127.0.0.1:${port}/dashboard/`};
 }
 
-function startStatusServer(port) {
-  const child = spawn('python', ['pages/status-preview/server.py', '--port', String(port)], {
-    cwd: ROOT,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let output = '';
-  const collect = chunk => { output += chunk.toString(); };
-  child.stdout.on('data', collect);
-  child.stderr.on('data', collect);
-  return {child, output: () => output};
-}
-
 async function stopProcess(child, signal = 'SIGTERM') {
   if (!child || child.exitCode !== null || child.signalCode) return;
   child.kill(signal);
@@ -158,28 +148,6 @@ async function stopProcess(child, signal = 'SIGTERM') {
     once(child, 'exit'),
     new Promise(resolve => setTimeout(resolve, 2000)),
   ]);
-}
-
-async function waitForHttp(url, timeout) {
-  const started = Date.now();
-  let lastError;
-  while (Date.now() - started < timeout) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-      lastError = new Error(`HTTP ${response.status}`);
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  throw new Error(`等待 ${url} 超时：${lastError?.message || '服务未响应'}`);
-}
-
-async function waitForJson(url, timeout) {
-  await waitForHttp(url, timeout);
-  const response = await fetch(url);
-  return response.json();
 }
 
 async function waitForCdp(port, timeout) {
@@ -299,7 +267,6 @@ async function capturePage(cdp, url, viewport, outputFile) {
   })`);
   await new Promise(resolve => setTimeout(resolve, 250));
   const metrics = await cdp.evaluate(`(() => {
-    const report = document.querySelector('#report');
     const body = document.body;
     const root = document.documentElement;
     return {
@@ -308,17 +275,9 @@ async function capturePage(cdp, url, viewport, outputFile) {
       clientWidth: root.clientWidth,
       scrollWidth: Math.max(root.scrollWidth, body ? body.scrollWidth : 0),
       bodyText: body ? body.innerText.slice(0, 500) : '',
-      report: report ? {
-        complete: report.complete,
-        naturalWidth: report.naturalWidth,
-        naturalHeight: report.naturalHeight,
-      } : null,
       login: Boolean(document.querySelector('#loginPage')),
       loginBox: Boolean(document.querySelector('#loginPage .login-box')),
       authed: document.body.classList.contains('authed'),
-      main: Boolean(document.querySelector('main')),
-      scenario: Boolean(document.querySelector('#scenario')),
-      stage: Boolean(document.querySelector('.stage')),
     };
   })()`);
   const screenshot = await cdp.send('Page.captureScreenshot', {format: 'png', fromSurface: true});
@@ -336,11 +295,7 @@ async function capturePage(cdp, url, viewport, outputFile) {
   if (metrics.scrollWidth > metrics.clientWidth + 1) {
     throw new Error(`${url}: 存在水平溢出 ${metrics.scrollWidth}px > ${metrics.clientWidth}px`);
   }
-  if (metrics.report) {
-    if (!metrics.main || !metrics.scenario || !metrics.stage || !metrics.report?.complete || metrics.report.naturalWidth <= 0) {
-      throw new Error(`${url}: 状态预览关键内容未完成渲染`);
-    }
-  } else if (!metrics.login || !metrics.loginBox || metrics.authed) {
+  if (!metrics.login || !metrics.loginBox || metrics.authed) {
     throw new Error(`${url}: 未认证 Dashboard 登录入口状态异常`);
   }
   if (errors.length) throw new Error(`${url}: 浏览器错误：${errors.slice(0, 3).join(' | ')}`);
@@ -355,13 +310,10 @@ async function main() {
   if (output) fs.mkdirSync(output, {recursive: true});
 
   const dashboard = await startDashboardServer();
-  const statusPort = await freePort();
-  const status = startStatusServer(statusPort);
   let browser;
   let cdp;
   const tempProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'selfie-mobile-smoke-'));
   try {
-    await waitForJson(`http://127.0.0.1:${statusPort}/api/designs`, options.timeout);
     const cdpPort = await freePort();
     browser = spawn(chromium, [
       '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
@@ -371,12 +323,8 @@ async function main() {
     const cdpUrl = await waitForCdp(cdpPort, options.timeout);
     cdp = new CdpSession(cdpUrl, options.timeout);
     for (const viewport of VIEWPORTS) {
-      const statusUrl = `http://127.0.0.1:${statusPort}/?v=3&scenario=stress&page=1`;
       const dashboardUrl = `${dashboard.url}?mobile-smoke=${viewport.name}`;
-      const statusOutput = output ? path.join(output, `status-preview-${viewport.name}.png`) : '';
       const dashboardOutput = output ? path.join(output, `dashboard-${viewport.name}.png`) : '';
-      const statusResult = await capturePage(cdp, statusUrl, viewport, statusOutput);
-      console.log(`[mobile-smoke] status-preview ${viewport.name} ${viewport.width}x${viewport.height}: ok (${statusResult.screenshotBytes} bytes)`);
       const dashboardResult = await capturePage(cdp, dashboardUrl, viewport, dashboardOutput);
       console.log(`[mobile-smoke] dashboard unauthenticated ${viewport.name} ${viewport.width}x${viewport.height}: ok (${dashboardResult.screenshotBytes} bytes)`);
     }
@@ -384,7 +332,6 @@ async function main() {
   } finally {
     if (cdp) cdp.close();
     await stopProcess(browser);
-    await stopProcess(status.child);
     await new Promise(resolve => dashboard.server.close(resolve));
     try {
       fs.rmSync(tempProfile, {recursive: true, force: true});

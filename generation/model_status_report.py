@@ -184,7 +184,7 @@ def render_model_status_report(
     text(48, footer_y + 64, "数据来自最近生图请求记录", 18, muted)
     if page_count > 1:
         token = {3600: "1h", 86400: "24h", 604800: "7d", 2592000: "30d"}.get(seconds, "7d")
-        text(1032, footer_y + 64, f"下一页：/生图记录状态 {token} {safe_page % page_count + 1}",
+        text(1032, footer_y + 64, f"下一页：/生图状态 {token} {safe_page % page_count + 1}",
              18, muted, right=True)
     return image
 
@@ -332,7 +332,7 @@ class ImageStatusService:
                 30 * 86400: "30d",
             }.get(window_seconds, "7d")
             next_page = safe_page + 1 if safe_page < page_count else 1
-            lines.extend(["", f"下一页：/生图记录状态 {window_token} {next_page}"])
+            lines.extend(["", f"下一页：/生图状态 {window_token} {next_page}"])
         return "\n".join(lines)
 
     @staticmethod

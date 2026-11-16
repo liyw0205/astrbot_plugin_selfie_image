@@ -10,6 +10,7 @@ import json
 import os
 import random
 import re
+import shutil
 import threading
 import time
 from collections import OrderedDict
@@ -120,6 +121,7 @@ from .generation.selfie_workflow import SelfieWorkflowService
 from .generation.web_test_workflow import WebTestImageWorkflow
 from .generation.image_scheduler import ImageJobScheduler
 from .generation.model_status_report import ImageStatusService
+from .generation.help_poster import ensure_help_images
 from .generation.task_service import GenerationTaskService
 from .features.framework_persona import resolve_framework_persona
 from .generation.generation_records import metric_window_seconds
@@ -339,20 +341,11 @@ class SelfieImagePlugin(
         os.makedirs(self.media_sources_dir, exist_ok=True)
         self._plugin_root = os.path.dirname(os.path.abspath(__file__))
         self._bundled_logo_path = os.path.join(self._plugin_root, "logo.png")
-        # Pre-generated static help poster (shipped in repo; never generated at runtime).
-        assets_dir = os.path.join(self._plugin_root, "assets")
-        self._bundled_help_poster_path = ""
-        for name in ("help_poster.png", "help_poster.jpg", "help_poster.webp"):
-            candidate = os.path.join(assets_dir, name)
-            if os.path.isfile(candidate):
-                self._bundled_help_poster_path = candidate
-                break
-        if not self._bundled_help_poster_path:
-            for name in ("help_poster.png", "help_poster.jpg"):
-                candidate = os.path.join(self._plugin_root, name)
-                if os.path.isfile(candidate):
-                    self._bundled_help_poster_path = candidate
-                    break
+        self._dashboard_logo_path = os.path.join(
+            self._plugin_root, "pages", "dashboard", "logo.png"
+        )
+        self._sync_dashboard_logo()
+        self._help_image_paths: Dict[str, str] = {"quick": "", "full": ""}
 
         self._native_config = config if hasattr(config, "save_config") else None
         self._native_config_path = str(getattr(config, "config_path", "") or "")
@@ -432,6 +425,17 @@ class SelfieImagePlugin(
     async def initialize(self) -> None:
         self.loop = asyncio.get_running_loop()
         self.log_config_preflight()
+        try:
+            self._help_image_paths = dict(
+                await asyncio.to_thread(
+                    ensure_help_images,
+                    self.data_dir,
+                    logo_path=self._bundled_logo_path,
+                    font_loader=self._status_report_font,
+                )
+            )
+        except Exception as exc:
+            logger.warning("[SelfieImage] 启动帮助图生成失败：%s", redact_sensitive_text(str(exc)))
         try:
             cleanup = self._cleanup_image_cache_if_needed()
             deleted = cleanup.get("deleted") if isinstance(cleanup, Mapping) else []
@@ -2503,6 +2507,27 @@ class SelfieImagePlugin(
                     continue
         return None
 
+    def _sync_dashboard_logo(self) -> bool:
+        """Copy the single bundled logo for direct Dashboard file serving."""
+        source = os.path.abspath(str(getattr(self, "_bundled_logo_path", "") or ""))
+        target = os.path.abspath(str(getattr(self, "_dashboard_logo_path", "") or ""))
+        if not source or not target or source == target or not os.path.isfile(source):
+            return False
+        temporary = f"{target}.tmp-{os.getpid()}"
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copyfile(source, temporary)
+            os.replace(temporary, target)
+            return True
+        except OSError as exc:
+            try:
+                if os.path.isfile(temporary):
+                    os.unlink(temporary)
+            except OSError:
+                pass
+            logger.warning("[SelfieImage] Dashboard logo 同步失败: %s", redact_sensitive_text(str(exc)))
+            return False
+
     @staticmethod
     def _status_report_wrap(draw: Any, text: str, font: Any, max_width: int, max_lines: int = 2) -> List[str]:
         return ImageStatusService.wrap_text(draw, text, font, max_width, max_lines)
@@ -3502,8 +3527,8 @@ class SelfieImagePlugin(
 
     @filter.command("生图帮助")
     async def cmd_help(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """只看图卡帮助。完整文字说明请发 /生图help。"""
-        help_path = self._resolve_help_image_path()
+        """发送生图指令速查图。完整说明请发 /生图help。"""
+        help_path = self._resolve_help_image_path("quick")
         if help_path:
             yield event.chain_result([self._create_image_component(help_path)])
             return
@@ -3512,7 +3537,11 @@ class SelfieImagePlugin(
 
     @filter.command("生图help")
     async def cmd_help_text(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """完整文字指令说明。"""
+        """发送完整的生图指令说明图。"""
+        help_path = self._resolve_help_image_path("full")
+        if help_path:
+            yield event.chain_result([self._create_image_component(help_path)])
+            return
         yield event.plain_result(self._help_text_body())
 
     def _help_text_body(self) -> str:
@@ -3543,7 +3572,7 @@ class SelfieImagePlugin(
                 "",
                 "模型与进度：",
                 "· /生图模型　看列表；跟序号或 渠道/模型 切换（只影响当前群/私聊）；发「清除」恢复默认",
-                "· /生图记录状态　看最近 7 天模型成功率、耗时、错误和历史；可跟 1h、24h、7d、30d 与页码",
+                "· /生图状态　看最近 7 天模型成功率、耗时、错误和历史；可跟 1h、24h、7d、30d 与页码（兼容 /生图记录状态）",
                 "· /生图任务　看进行中的生图任务，包含 LLM 调用；可跟任务号",
                 "· /生图取消　取消还在排的/进行中的任务",
                 "· 管理员名单：/生图加黑 ID/@用户 [理由]、/生图加白 ID/@用户 [理由]、/生图释放 ID/@用户",
@@ -3566,17 +3595,18 @@ class SelfieImagePlugin(
             ]
         )
 
-    def _resolve_help_image_path(self) -> str:
-        """Return shipped static help poster only (no runtime generation)."""
-        for path in (getattr(self, "_bundled_help_poster_path", ""),):
-            if path and os.path.isfile(path):
-                try:
-                    with open(path, "rb") as handle:
-                        head = handle.read(32)
-                    if looks_like_image_bytes(head):
-                        return path
-                except Exception:
-                    continue
+    def _resolve_help_image_path(self, kind: str = "quick") -> str:
+        """Return a startup-generated help image without regenerating it."""
+        key = "full" if str(kind or "").strip().lower() == "full" else "quick"
+        path = str(getattr(self, "_help_image_paths", {}).get(key, "") or "")
+        if path and os.path.isfile(path):
+            try:
+                with open(path, "rb") as handle:
+                    head = handle.read(32)
+                if looks_like_image_bytes(head):
+                    return path
+            except Exception:
+                pass
         return ""
 
     def _quoted_reply_ids(self, event: Optional[AstrMessageEvent]) -> List[str]:
@@ -3812,7 +3842,7 @@ class SelfieImagePlugin(
         yield event.plain_result(f"反推编号：{saved['image_code']}\nLLM 反推结果，非原始提示词。")
         yield event.plain_result(prompt)
 
-    @filter.command("生图记录状态")
+    @filter.command("生图状态", alias={"生图记录状态"})
     async def cmd_image_model_status(
         self,
         event: AstrMessageEvent,
@@ -3826,7 +3856,7 @@ class SelfieImagePlugin(
             yield event.plain_result(denied)
             return
         fallback = " ".join(item for item in (p1, p2, p3) if item).strip()
-        message = extract_command_message(event, "生图记录状态", fallback).strip()
+        message = extract_command_message(event, ("生图状态", "生图记录状态"), fallback).strip()
         window_token = "7d"
         page = 1
         invalid: List[str] = []
@@ -3841,7 +3871,7 @@ class SelfieImagePlugin(
             elif token not in {"状态", "查看", "默认", "全部"}:
                 invalid.append(token)
         if invalid:
-            yield event.plain_result("参数格式：/生图记录状态 [1h|24h|7d|30d] [页码]")
+            yield event.plain_result("参数格式：/生图状态 [1h|24h|7d|30d] [页码]")
             return
         try:
             window_seconds = metric_window_seconds(window_token)

@@ -155,7 +155,7 @@ def test_release_selection_excludes_research_runtime_data_and_arbitrary_untracke
     files = {
         "main.py": "print('runtime')\n",
         "features/unreviewed.py": "API_KEY = 'untracked'\n",
-        "pages/status-preview/app.js": "preview\n",
+        "docs/local-notes.md": "local notes\n",
         "data/cos/research/capture.json": "{}\n",
         "image_cache/generated.png": "generated\n",
         "selfie_image_config.json": "{}\n",

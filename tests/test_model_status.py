@@ -403,12 +403,12 @@ def test_image_status_service_formats_text_and_pages_without_plugin_runtime() ->
     assert "最近状态：轮询超时" in text
     assert "主要错误：轮询超时 1" in text
     assert "连续失败：1 次" in text
-    assert "下一页：/生图记录状态 1h 2" in text
+    assert "下一页：/生图状态 1h 2" in text
 
     last_page = service.format_text(status, page=999, page_size=1)
     assert "第 2/2 页" in last_page
     assert "channel/model-b" in last_page
-    assert "下一页：/生图记录状态 1h 1" in last_page
+    assert "下一页：/生图状态 1h 1" in last_page
 
 
 def test_image_status_service_displays_model_recommendation_as_advice() -> None:

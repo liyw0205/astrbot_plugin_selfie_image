@@ -23,7 +23,7 @@ ROOT_FILES = frozenset({
     "__init__.py", "main.py", "metadata.yaml", "_conf_schema.json", "requirements.txt",
     "README.md", "CHANGELOG.md", "LICENSE", "LICENSE.md", "LICENSE.txt", "logo.png",
 })
-PAGE_FILES = frozenset({"pages/dashboard/index.html", "pages/dashboard/_page.json", "pages/dashboard/logo.png"})
+PAGE_FILES = frozenset({"pages/dashboard/index.html", "pages/dashboard/_page.json"})
 # Deliberately adopted runtime sources may be checked before their first commit.
 # No other untracked file is eligible for a release archive.
 APPROVED_RUNTIME_ADDITIONS = frozenset({
@@ -35,13 +35,14 @@ APPROVED_RUNTIME_ADDITIONS = frozenset({
     "generation/task_service.py",
     "generation/selfie_batch_workflow.py",
     "generation/selfie_workflow.py",
+    "generation/help_poster.py",
     "core/async_compat.py",
     "webui/controllers.py",
     "webui/prompt_controller.py",
 })
 REQUIRED_FILES = frozenset({
     "__init__.py", "main.py", "metadata.yaml", "_conf_schema.json", "requirements.txt",
-    "README.md", "CHANGELOG.md", "logo.png", "assets/help_poster.png", "assets/help_poster.jpg",
+    "README.md", "CHANGELOG.md", "logo.png",
     "webui/index_fallback.py", "core/constants.py", "data/cos/looks/index.json",
     "data/common/selfie_snapshots.json", "data/group/compositions.json",
     "data/legs/compositions.json", "data/legs/outfits.json", "data/legs/views.json",

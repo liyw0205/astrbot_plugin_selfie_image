@@ -18,4 +18,8 @@ search_txt.txt
 cos/.review_stage/
 .pytest_cache/
 
+# Local development notes, benchmarks, and design previews stay on-device.
+docs/
+pages/dashboard/logo.png
+
 .venv/
