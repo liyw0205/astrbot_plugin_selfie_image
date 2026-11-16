@@ -103,6 +103,15 @@ class BackupManager:
                 raise BackupManagerError("备份任务不存在")
             return dict(task)
 
+    def mark_task_runtime_refreshed(self, task_id: str) -> bool:
+        """Claim the one-time post-restore runtime refresh for a task."""
+        with self._lock:
+            task = self._tasks.get(str(task_id or ""))
+            if not task or task.get("runtime_refreshed"):
+                return False
+            task["runtime_refreshed"] = True
+            return True
+
     def _submit(self, task: dict[str, Any], worker: Callable[[], Any]) -> dict[str, Any]:
         def run() -> None:
             self._update_task(task["task_id"], status="running", stage="running", message="正在处理")

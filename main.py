@@ -2128,7 +2128,33 @@ class SelfieImagePlugin(
         return self.backup_manager.start_backup(selected)
 
     def backup_task_from_web(self, task_id: str) -> Dict[str, Any]:
+        task = self.backup_manager.task(task_id)
+        if task.get("status") == "completed" and task.get("kind") in {"restore", "upload"}:
+            if self.backup_manager.mark_task_runtime_refreshed(task_id):
+                self._refresh_runtime_after_backup_restore()
         return self.backup_manager.task(task_id)
+
+    def _refresh_runtime_after_backup_restore(self) -> None:
+        """Reload durable stores after a completed dashboard restore."""
+        try:
+            with self._config_lock:
+                raw_config, parsed_config = self._load_initial_config_state()
+                self.raw_config = raw_config
+                self.config = parsed_config
+                scheduler = getattr(self, "_image_scheduler", None)
+                if scheduler is not None:
+                    scheduler.set_limit(self.config.image_max_concurrent_tasks)
+            self.persona.load()
+            self.persona.daily_schedule_store.load()
+            self.persona.wardrobe.load()
+            self.presets.load()
+            self.nai_artist_presets.load()
+            self.cos_pool.load()
+            self.studio._load()
+            self.creative_canvas._load()
+            self._usage_stats = self._load_usage_stats()
+        except Exception as exc:
+            logger.warning("[SelfieImage] 恢复备份后刷新运行时资料失败: %s", redact_sensitive_text(str(exc)))
 
     def download_backup_from_web(self, backup_id: str) -> Dict[str, Any]:
         return self.backup_manager.download_backup(backup_id)
