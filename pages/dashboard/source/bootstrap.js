@@ -13,6 +13,7 @@
       if (target === 'creativeCanvas') loadCreativeCanvasList(CREATIVE_CANVAS.current && CREATIVE_CANVAS.current.id);
       if (target === 'presets') loadManagedPromptPresets(PRESET_KIND);
       if (target === 'selfie') refreshSelfie();
+      if (target === 'backup') loadBackupManager();
       if (target === 'proxies') { loadConfig().then(() => renderProxyList()).catch(() => renderProxyList()); }
       if (target === 'groups') { loadQQGroups(); }
       if (options.focus === true) button.focus();

@@ -1123,6 +1123,56 @@ class SelfieProfileController:
         data = self._call("toggle_wardrobe_item_from_web", payload, error_status=400)
         return self._result(data, "衣橱服装状态已更新")
 
+    def wardrobe_export(self) -> SelfieProfileControllerResult:
+        return self._result(self._call("export_wardrobe_from_web"), "衣橱已导出")
+
+    def wardrobe_import(self, payload: Any) -> SelfieProfileControllerResult:
+        data = self._call("import_wardrobe_from_web", payload, error_status=400)
+        return self._result(data, "衣橱已导入")
+
+
+class BackupController:
+    """Shared selectable backup operations for both web adapters."""
+
+    def __init__(self, plugin: Any) -> None:
+        self.plugin = plugin
+
+    def _call(self, name: str, *args: Any, status: int = 500) -> Any:
+        hook = getattr(self.plugin, name, None)
+        if not callable(hook):
+            raise WebContractError("当前版本不支持备份管理", 501)
+        try:
+            return hook(*args)
+        except WebContractError:
+            raise
+        except Exception as exc:
+            raise WebContractError(str(exc), status) from exc
+
+    def options(self) -> dict[str, Any]:
+        return self._call("backup_options_from_web")
+
+    def list(self) -> dict[str, Any]:
+        return self._call("list_backups_from_web")
+
+    def create(self, payload: Any) -> dict[str, Any]:
+        return self._call("create_backup_from_web", payload, status=400)
+
+    def task(self, task_id: Any) -> dict[str, Any]:
+        return self._call("backup_task_from_web", str(task_id or ""), status=404)
+
+    def download(self, backup_id: Any) -> dict[str, Any]:
+        return self._call("download_backup_from_web", str(backup_id or ""), status=404)
+
+    def restore(self, backup_id: Any) -> dict[str, Any]:
+        return self._call("restore_backup_from_web", str(backup_id or ""), status=400)
+
+    def delete(self, payload: Any) -> dict[str, Any]:
+        body = payload if isinstance(payload, dict) else {}
+        return self._call("delete_backup_from_web", body, status=400)
+
+    def upload(self, payload: Any) -> dict[str, Any]:
+        return self._call("upload_backup_from_web", payload, status=400)
+
 
 class ImageChannelController:
     """Shared channel-test and model-refresh operations for both Web adapters."""

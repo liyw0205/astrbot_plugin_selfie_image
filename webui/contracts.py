@@ -89,6 +89,17 @@ class ConfigRouteContract:
 
 
 @dataclass(frozen=True)
+class BackupRouteContract:
+    endpoint: str
+    flask_path: str
+    dashboard_path: str
+    methods: tuple[str, ...]
+    flask_handler: str
+    dashboard_handler: str
+    description: str
+
+
+@dataclass(frozen=True)
 class ProxyRouteContract:
     endpoint: str
     flask_path: str
@@ -272,6 +283,14 @@ SELFIE_PROFILE_ROUTE_CONTRACTS = (
         "selfie_wardrobe_toggle", "/api/selfie-wardrobe/toggle", "selfie-wardrobe/toggle", ("POST",),
         "selfie_wardrobe_toggle", "page_selfie_wardrobe_toggle", "Selfie Image toggle wardrobe item",
     ),
+    SelfieProfileRouteContract(
+        "selfie_wardrobe_export", "/api/selfie-wardrobe/export", "selfie-wardrobe/export", ("GET",),
+        "selfie_wardrobe_export", "page_selfie_wardrobe_export", "Selfie Image export wardrobe",
+    ),
+    SelfieProfileRouteContract(
+        "selfie_wardrobe_import", "/api/selfie-wardrobe/import", "selfie-wardrobe/import", ("POST",),
+        "selfie_wardrobe_import", "page_selfie_wardrobe_import", "Selfie Image import wardrobe",
+    ),
 )
 
 
@@ -331,6 +350,42 @@ CONFIG_ROUTE_CONTRACTS = (
     ConfigRouteContract(
         "config_import", "/api/config/import", "config/import", ("POST",),
         "config_import", "page_config_import", "Selfie Image import config",
+    ),
+)
+
+
+BACKUP_ROUTE_CONTRACTS = (
+    BackupRouteContract(
+        "backups_options", "/api/backups/options", "backups/options", ("GET",),
+        "backups_options", "page_backups_options", "Selfie Image backup options",
+    ),
+    BackupRouteContract(
+        "backups_list", "/api/backups", "backups", ("GET",),
+        "backups_list", "page_backups_list", "Selfie Image backup list",
+    ),
+    BackupRouteContract(
+        "backups_create", "/api/backups", "backups", ("POST",),
+        "backups_create", "page_backups_create", "Selfie Image create backup",
+    ),
+    BackupRouteContract(
+        "backups_task", "/api/backups/tasks/<task_id>", "backups/tasks/<task_id>", ("GET",),
+        "backups_task", "page_backups_task", "Selfie Image backup task status",
+    ),
+    BackupRouteContract(
+        "backups_download", "/api/backups/<backup_id>/download", "backups/<backup_id>/download", ("GET",),
+        "backups_download", "page_backups_download", "Selfie Image download backup",
+    ),
+    BackupRouteContract(
+        "backups_restore", "/api/backups/<backup_id>/restore", "backups/<backup_id>/restore", ("POST",),
+        "backups_restore", "page_backups_restore", "Selfie Image restore backup",
+    ),
+    BackupRouteContract(
+        "backups_delete", "/api/backups/delete", "backups/delete", ("POST",),
+        "backups_delete", "page_backups_delete", "Selfie Image delete backup",
+    ),
+    BackupRouteContract(
+        "backups_upload", "/api/backups/upload", "backups/upload", ("POST",),
+        "backups_upload", "page_backups_upload", "Selfie Image upload backup",
     ),
 )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import hashlib
 from io import BytesIO
@@ -64,6 +65,7 @@ from .features.access_policy import (
     permission_denied_message,
 )
 from .features.qq_group_cache import QQGroupCache
+from .features.backup_manager import BackupManager
 from .features.context_routing import (
     compact_followup_text,
     format_context_for_llm,
@@ -401,6 +403,7 @@ class SelfieImagePlugin(
         self.qq_group_cache = QQGroupCache(self)
         self._load_persisted_conversation_context()
         self.persona = PersonaManager(self.data_dir)
+        self.backup_manager = BackupManager(self.data_dir)
         _wardrobe_dimension, _wardrobe_pixels, _wardrobe_frames = image_validation_limits(self.config)
         self.persona.configure_wardrobe_limits(
             max_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
@@ -2097,6 +2100,63 @@ class SelfieImagePlugin(
             enabled = enabled.strip().lower() in {"1", "true", "yes", "on", "启用"}
         self.persona.set_wardrobe_enabled(item_id, bool(enabled))
         return self.get_wardrobe_payload()
+
+    @staticmethod
+    def _decode_web_archive(payload: Any, label: str) -> bytes:
+        body = payload if isinstance(payload, Mapping) else {}
+        raw = str(body.get("content_base64") or body.get("data") or body.get("content") or "").strip()
+        if raw.startswith("data:") and "," in raw:
+            raw = raw.split(",", 1)[1]
+        if not raw:
+            raise ValueError(f"缺少{label}文件内容")
+        try:
+            return base64.b64decode(raw, validate=True)
+        except (ValueError, TypeError, base64.binascii.Error) as exc:
+            raise ValueError(f"{label}文件内容不是有效的 base64") from exc
+
+    def backup_options_from_web(self) -> Dict[str, Any]:
+        return {"items": self.backup_manager.options(), "max": 5}
+
+    def list_backups_from_web(self) -> Dict[str, Any]:
+        return self.backup_manager.list_backups()
+
+    def create_backup_from_web(self, payload: Any) -> Dict[str, Any]:
+        body = payload if isinstance(payload, Mapping) else {}
+        selected = body.get("selected", body.get("items", []))
+        if not isinstance(selected, list):
+            raise ValueError("selected 必须是数组")
+        return self.backup_manager.start_backup(selected)
+
+    def backup_task_from_web(self, task_id: str) -> Dict[str, Any]:
+        return self.backup_manager.task(task_id)
+
+    def download_backup_from_web(self, backup_id: str) -> Dict[str, Any]:
+        return self.backup_manager.download_backup(backup_id)
+
+    def restore_backup_from_web(self, backup_id: str) -> Dict[str, Any]:
+        return self.backup_manager.start_restore(backup_id)
+
+    def delete_backup_from_web(self, payload: Any) -> Dict[str, Any]:
+        body = payload if isinstance(payload, Mapping) else {}
+        backup_id = str(body.get("id") or body.get("backup_id") or "").strip()
+        if not backup_id:
+            raise ValueError("缺少备份编号")
+        return self.backup_manager.delete_backup(backup_id)
+
+    def upload_backup_from_web(self, payload: Any) -> Dict[str, Any]:
+        body = payload if isinstance(payload, Mapping) else {}
+        content = self._decode_web_archive(body, "备份")
+        return self.backup_manager.upload_backup(str(body.get("filename") or "backup.zip"), content)
+
+    def export_wardrobe_from_web(self) -> Dict[str, Any]:
+        return self.backup_manager.export_wardrobe()
+
+    def import_wardrobe_from_web(self, payload: Any) -> Dict[str, Any]:
+        content = self._decode_web_archive(payload, "衣橱归档")
+        result = self.backup_manager.import_wardrobe(content)
+        # Keep the in-memory selector in sync with the atomically restored files.
+        self.persona.wardrobe.load()
+        return self.get_wardrobe_payload() | {"imported": True, "archive": result}
 
     def set_selfie_appearance_type_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         value = payload.get("appearance_type", payload.get("type", "auto"))

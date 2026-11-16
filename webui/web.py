@@ -18,6 +18,7 @@ from ..core.utils import (
 from .contracts import (
     ASSET_COLLECTION_ROUTE_CONTRACTS,
     ASSET_ROUTE_CONTRACTS,
+    BACKUP_ROUTE_CONTRACTS,
     CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
@@ -36,6 +37,7 @@ from .controllers import (
     AssetCollectionController,
     AssetController,
     AssetControllerResult,
+    BackupController,
     CacheController,
     CacheControllerResult,
     CanvasController,
@@ -199,7 +201,9 @@ class FlaskWebServer:
 
     def _create_app(self) -> Any:
         app = Flask("astrbot_plugin_selfie_image")
-        app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
+        # JSON/base64 uploads carry roughly 4/3 the ZIP size; keep the server
+        # limit above the manager's 128 MiB archive ceiling.
+        app.config["MAX_CONTENT_LENGTH"] = 180 * 1024 * 1024
         asset_collection_controller = AssetCollectionController(self.plugin)
         asset_controller = AssetController(self.plugin)
         canvas_controller = CanvasController(self.plugin)
@@ -214,6 +218,7 @@ class FlaskWebServer:
         selfie_profile_controller = SelfieProfileController(self.plugin)
         image_channel_controller = ImageChannelController(self.plugin)
         prompt_catalog_controller = PromptCatalogController(self.plugin)
+        backup_controller = BackupController(self.plugin)
         auth_failure_lock = threading.RLock()
         auth_failures: dict[str, dict[str, float]] = {}
         auth_failure_limit = 8
@@ -336,6 +341,15 @@ class FlaskWebServer:
             except Exception as exc:
                 return fail(str(exc), 500)
             return ok(result.data, **result.extra)
+
+        def backup_result(call: Any) -> Any:
+            try:
+                result = call()
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 500)
+            return ok(result)
 
         def image_channel_result(call: Any) -> Any:
             try:
@@ -760,12 +774,89 @@ class FlaskWebServer:
             "selfie_wardrobe_update": lambda: selfie_wardrobe_mutation("wardrobe_update"),
             "selfie_wardrobe_delete": lambda: selfie_wardrobe_mutation("wardrobe_delete"),
             "selfie_wardrobe_toggle": lambda: selfie_wardrobe_mutation("wardrobe_toggle"),
+            "selfie_wardrobe_export": lambda: selfie_profile_result(selfie_profile_controller.wardrobe_export),
+            "selfie_wardrobe_import": lambda: selfie_wardrobe_mutation("wardrobe_import"),
         }
         for route in SELFIE_PROFILE_ROUTE_CONTRACTS:
             app.add_url_rule(
                 route.flask_path,
                 endpoint=route.endpoint,
                 view_func=selfie_profile_handlers[route.flask_handler],
+                methods=list(route.methods),
+            )
+
+        def backups_options() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return backup_result(backup_controller.options)
+
+        def backups_list() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return backup_result(backup_controller.list)
+
+        def backups_create() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return backup_result(lambda: backup_controller.create(payload))
+
+        def backups_task(task_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return backup_result(lambda: backup_controller.task(task_id))
+
+        def backups_download(backup_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                return backup_result(lambda: backup_controller.download(backup_id))
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
+            except Exception as exc:
+                return fail(str(exc), 404)
+
+        def backups_restore(backup_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return backup_result(lambda: backup_controller.restore(backup_id))
+
+        def backups_delete() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return backup_result(lambda: backup_controller.delete(payload))
+
+        def backups_upload() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return backup_result(lambda: backup_controller.upload(payload))
+
+        backup_handlers = {
+            "backups_options": backups_options,
+            "backups_list": backups_list,
+            "backups_create": backups_create,
+            "backups_task": backups_task,
+            "backups_download": backups_download,
+            "backups_restore": backups_restore,
+            "backups_delete": backups_delete,
+            "backups_upload": backups_upload,
+        }
+        for route in BACKUP_ROUTE_CONTRACTS:
+            app.add_url_rule(
+                route.flask_path,
+                endpoint=route.endpoint,
+                view_func=backup_handlers[route.flask_handler],
                 methods=list(route.methods),
             )
 

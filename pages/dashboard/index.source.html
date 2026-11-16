@@ -51,6 +51,7 @@
       <button data-tab="selfie" type="button">形象参考</button>
       <button data-tab="audit" type="button">辅助功能</button>
       <button data-tab="raw" type="button">高级配置</button>
+      <button data-tab="backup" type="button">备份管理</button>
     </nav>
     <div class="topline">
       <button id="reloadAll" class="secondary">刷新全部</button>
@@ -629,7 +630,7 @@
         <div><label>描述</label><input id="wardrobeDescription" type="text" maxlength="600" placeholder="材质、版型或必须保留的细节"></div>
         <div><label>标签</label><input id="wardrobeTags" type="text" maxlength="300" placeholder="夏季,连衣裙"></div>
       </div>
-      <div class="actions"><button id="uploadWardrobe" type="button">添加到衣橱</button><button class="secondary" id="refreshWardrobe" type="button">刷新衣橱</button></div>
+      <div class="actions"><button id="uploadWardrobe" type="button">添加到衣橱</button><button class="secondary" id="refreshWardrobe" type="button">刷新衣橱</button><button class="secondary" id="exportWardrobe" type="button">导出衣橱</button><button class="secondary" id="importWardrobeBtn" type="button">导入衣橱</button><input id="importWardrobeFile" type="file" accept=".zip,application/zip" style="display:none"></div>
       <div id="selfieWardrobeList" class="daily-schedule" aria-live="polite"></div>
     </section>
 
@@ -664,8 +665,26 @@
       <div id="auditStatus" class="status">屏蔽词、文字审核、成品审核会在指令、对话工具和试画里一起生效。成品审核和图转文请选能看图的模型；留空时使用当前 LLM。转英文与辅助功能共用辅助渠道模型。</div>
     </section>
 
+    <section id="backup" class="floating-action-section">
+      <div class="between">
+        <div><h2>备份管理</h2><p class="muted">备份最多保留 5 个。衣橱为必要数据，生成记录和图片缓存可按需选择。</p></div>
+        <button class="secondary" type="button" onclick="navigateToTab('raw')">高级 JSON</button>
+      </div>
+      <div id="backupLimitStatus" class="status" aria-live="polite"></div>
+      <h3>选择备份数据</h3>
+      <div id="backupOptions" class="grid4"></div>
+      <div class="actions">
+        <button class="ok" id="createBackupBtn" type="button">开始备份</button>
+        <button class="secondary" id="uploadBackupBtn" type="button">上传备份并自动恢复</button>
+        <input id="backupUploadFile" type="file" accept=".zip,application/zip" style="display:none">
+      </div>
+      <div class="progress-wrap" id="backupProgressWrap" hidden><div class="between"><span id="backupProgressLabel">准备中</span><span id="backupProgressValue">0%</span></div><progress id="backupProgress" max="100" value="0"></progress></div>
+      <h3>备份列表</h3>
+      <div id="backupList" class="daily-schedule" aria-live="polite"><div class="muted">正在读取备份列表…</div></div>
+    </section>
+
     <section id="raw" class="floating-action-section">
-      <h2>高级 · 配置原文</h2>
+      <div class="between"><h2>高级 · 配置原文</h2><button class="secondary" type="button" onclick="navigateToTab('backup')">备份管理</button></div>
       <p class="muted">这里改的是插件自己的配置，不包含 AstrBot 启动用的网页地址和口令。</p>
       <textarea id="configText" style="min-height:360px"></textarea>
       <div class="actions">
@@ -1027,6 +1046,7 @@
 <!-- dashboard-source: record_details.js -->
 <!-- dashboard-source: image_test.js -->
 <!-- dashboard-source: selfie_auth.js -->
+<!-- dashboard-source: backup_manager.js -->
 <!-- dashboard-source: prompt_catalogs.js -->
 <!-- dashboard-source: studio_sessions.js -->
 <!-- dashboard-source: studio_graph.js -->

@@ -21,6 +21,7 @@ from .web import (
 from .contracts import (
     ASSET_COLLECTION_ROUTE_CONTRACTS,
     ASSET_ROUTE_CONTRACTS,
+    BACKUP_ROUTE_CONTRACTS,
     CACHE_ROUTE_CONTRACTS,
     CANVAS_ROUTE_CONTRACTS,
     CONFIG_ROUTE_CONTRACTS,
@@ -41,6 +42,7 @@ from .controllers import (
     AssetCollectionController,
     AssetController,
     AssetControllerResult,
+    BackupController,
     CacheController,
     CacheControllerResult,
     CanvasController,
@@ -102,6 +104,7 @@ class SelfieImageDashboardAPI:
         self._selfie_profile_controller = SelfieProfileController(plugin)
         self._image_channel_controller = ImageChannelController(plugin)
         self._prompt_catalog_controller = PromptCatalogController(plugin)
+        self._backup_controller = BackupController(plugin)
 
     def _config_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
         return [
@@ -224,6 +227,12 @@ class SelfieImageDashboardAPI:
             for route in SELFIE_PROFILE_ROUTE_CONTRACTS
         ]
 
+    def _backup_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
+        return [
+            (route.dashboard_path, getattr(self, route.dashboard_handler), list(route.methods), route.description)
+            for route in BACKUP_ROUTE_CONTRACTS
+        ]
+
     def _image_channel_route_entries(self) -> list[tuple[str, Any, list[str], str]]:
         return [
             (
@@ -272,6 +281,7 @@ class SelfieImageDashboardAPI:
             *self._proxy_route_entries(),
             *self._qq_group_route_entries(),
             *self._selfie_profile_route_entries(),
+            *self._backup_route_entries(),
             *self._image_channel_route_entries(),
             *self._task_route_entries(),
             *self._record_route_entries(),
@@ -616,6 +626,86 @@ class SelfieImageDashboardAPI:
 
     async def page_selfie_wardrobe_toggle(self) -> Any:
         return await self._page_selfie_wardrobe_mutation("wardrobe_toggle")
+
+    async def page_selfie_wardrobe_export(self) -> Any:
+        try:
+            result: SelfieProfileControllerResult = self._selfie_profile_controller.wardrobe_export()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
+    async def page_selfie_wardrobe_import(self) -> Any:
+        return await self._page_selfie_wardrobe_mutation("wardrobe_import")
+
+    async def page_backups_options(self) -> Any:
+        try:
+            result = self._backup_controller.options()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        return self._ok(result)
+
+    async def page_backups_list(self) -> Any:
+        try:
+            result = self._backup_controller.list()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        return self._ok(result)
+
+    async def page_backups_create(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            result = self._backup_controller.create(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        return self._ok(result)
+
+    async def page_backups_task(self, task_id: str) -> Any:
+        try:
+            result = self._backup_controller.task(task_id)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        return self._ok(result)
+
+    async def page_backups_download(self, backup_id: str) -> Any:
+        try:
+            result = self._backup_controller.download(backup_id)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        return self._ok(result)
+
+    async def page_backups_restore(self, backup_id: str) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            result = self._backup_controller.restore(backup_id)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        return self._ok(result)
+
+    async def page_backups_delete(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            result = self._backup_controller.delete(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        return self._ok(result)
+
+    async def page_backups_upload(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            result = self._backup_controller.upload(payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        return self._ok(result)
 
     async def page_test_image_channel(self) -> Any:
         payload, error = await self._json_object_payload()

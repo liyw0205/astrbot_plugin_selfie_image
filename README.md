@@ -3,7 +3,7 @@
 AstrBot 的生图、图生图、AI 自拍、合影与管理面板插件。
 
 - 插件名：`astrbot_plugin_selfie_image`
-- 当前稳定版：`1.7.60`
+- 当前稳定版：`1.7.61`
 - AstrBot：`>=4.13.0,<5`
 - 仓库：<https://github.com/liyw0205/astrbot_plugin_selfie_image>
 
@@ -17,6 +17,7 @@ AstrBot 的生图、图生图、AI 自拍、合影与管理面板插件。
 - 独立 Flask Web 面板与 AstrBot 内嵌 Dashboard
 - 图片缓存、SQLite 生成索引、发送状态和缓存清理预览
 - 自定义衣橱与今日日程联动，普通自拍每天使用一套衣橱服装
+- 备份管理：按数据项备份/下载/恢复/删除，支持衣橱导入导出与上传后自动恢复
 - 可选提示词审核、出图审核、图片转文字和中英文提示词转换
 
 ## 安装
