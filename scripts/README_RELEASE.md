@@ -38,6 +38,35 @@ Tag-triggered CI starts with a `release-tag` job. It requires the ref to match
 Python, Dashboard, or package jobs can start. Ordinary commits, branch pushes,
 and pull requests do not trigger this workflow.
 
+## Host Rehearsal
+
+`scripts/host_rehearsal.py` is an operator-side rehearsal runner for a real,
+isolated AstrBot instance. It refuses incomplete contracts before starting a
+process. The JSON contract must provide a new or empty `data_root`, an existing
+`working_directory`, foreground `start_command`/`stop_command` argv arrays, an
+unauthenticated `health_url`, AstrBot/plugin/target/rollback versions, a test
+channel and account, an explicit proxy mode (`none`, `http`, or `socks`), and
+commands for all six phases: `upgrade`, `generate`, `failure`, `cancel`,
+`restart`, and `rollback`.
+
+Commands are argv arrays, never shell strings. They may use `{data_root}`,
+`{report_path}`, `{phase}`, `{target_version}`, `{rollback_version}`, and
+`{channel}`. Proxy credentials are supplied through the configured environment
+variable (`proxy.url_env`), never written to the contract or report.
+
+Run it only with a disposable data root:
+
+```sh
+python scripts/host_rehearsal.py --config /path/to/host-rehearsal.json
+```
+
+The report contains phase status, health status, durations, exit codes, error
+categories, version metadata, proxy mode, and an account fingerprint. It never
+stores command output, media, credentials, or full upstream responses. The
+isolated data root is removed after the run unless `--keep-data` is supplied.
+This runner is a prerequisite for real-host acceptance; local unit tests do
+not count as a host rehearsal.
+
 ## Input Contracts
 
 `scripts/check_release.py` can run the data and artifact checks independently.
