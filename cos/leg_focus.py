@@ -193,6 +193,7 @@ def _load_outfit_pool() -> Dict[str, Any]:
                     or not str(raw.get("title") or "").strip()
                     or not str(raw.get("prompt") or "").strip()
                     or type(raw.get("weight")) is not int or raw["weight"] < 1
+                    or type(raw.get("explicit_only", False)) is not bool
                 ):
                     raise LegFocusDataError(f"看看腿服饰池字段不完整或重复: {key}/{item_id}")
                 seen.add(item_id)
@@ -697,6 +698,7 @@ def _pick_hosiery_style(
         style for style in LEGFOCUS_HOSIERY_STYLES
         if style["family"] in outfit["hosiery_families"]
         and (style["wear"] == wear or (wear == "连裤袜" and style["kind"] == "tights"))
+        and style["kind"] == "tights"
         and style["kind"] not in excluded_kinds
         and not style.get("explicit_only")
         and _hosiery_allowed(style, text)
@@ -916,6 +918,7 @@ def _weighted_detail_choice(excluded_wears: set[str] | None = None) -> Dict[str,
     pool = [
         item for item in LEGFOCUS_RANDOM_LEG_DETAILS
         if str(item.get("wear") or "") not in excluded
+        and not item.get("explicit_only", False)
     ]
     if not pool:
         raise LegFocusDataError("看看腿没有满足排除条件的腿部细节，请放宽袜装要求")

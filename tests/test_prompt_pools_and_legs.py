@@ -702,6 +702,34 @@ class PromptPoolJsonTests(unittest.TestCase):
                     self.assertEqual(len(selected), 1)
                     self.assertIn(style["family"], selected[0]["hosiery_families"])
 
+    def test_random_legwear_uses_full_coverage_defaults_and_keeps_special_requests_explicit(self) -> None:
+        from astrbot_plugin_selfie_image.cos.leg_focus import (
+            LEGFOCUS_HOSIERY_STYLES, LEGFOCUS_RANDOM_LEG_DETAILS, LEGFOCUS_OUTFIT_POOL,
+            _pick_hosiery_style, _weighted_detail_choice, build_leg_focus_action,
+        )
+
+        self.assertTrue(next(item for item in LEGFOCUS_RANDOM_LEG_DETAILS if item["id"] == "barefoot")["explicit_only"])
+        self.assertTrue(all(
+            style.get("explicit_only")
+            for style in LEGFOCUS_HOSIERY_STYLES
+            if style["kind"] == "stirrup"
+        ))
+        for outfit in LEGFOCUS_OUTFIT_POOL:
+            for wear in ("黑丝", "白丝"):
+                with self.subTest(outfit=outfit["id"], wear=wear):
+                    style = _pick_hosiery_style(wear, outfit)
+                    self.assertTrue(style)
+                    self.assertEqual(style["kind"], "tights")
+
+        for _ in range(30):
+            self.assertNotEqual(_weighted_detail_choice()["wear"], "赤足")
+
+        stirrup = build_leg_focus_action("踩脚黑丝", force_pose="kneeling_sit_back", force_camera="selfie")
+        self.assertIn("黑色过膝踩脚长袜", stirrup)
+        barefoot = build_leg_focus_action("赤足", force_pose="kneeling_sit_back", force_camera="selfie")
+        self.assertIn("脚趾数量正确", barefoot)
+        self.assertIn("【wear:barefoot】", barefoot)
+
     def test_outfit_pool_is_json_owned_and_contains_no_source_policy_prompt(self) -> None:
         from astrbot_plugin_selfie_image.core.prompt_data import read_versioned_json
         from astrbot_plugin_selfie_image.cos.leg_focus import (
