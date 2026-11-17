@@ -9,7 +9,6 @@ from typing import Iterable, List, Tuple
 
 from ..cos.cos_looks_loader import COS_JSON_REAR_HAIR_REQUEST_TERMS
 from ..features.persona import (
-    appearance_type_instruction,
     appearance_type_output_instruction,
     current_period,
     extra_overrides_outfit,
@@ -34,17 +33,17 @@ SELFIE_SHOT_POOL = (
 
 SELFIE_SHOT_LINES = {
     "arm_half": "手机自拍臂中近景：手臂自然伸向镜头，头部到腰线入镜，上衣版型与搭配层次清楚，表情松弛。",
-    "timer_half": "画外固定机位定时自拍：手机或支架固定在画面外，主角不持机、不伸手臂向镜头；头部到腰部入镜，手势完整清楚，人物透视自然。",
+    "timer_half": "画外固定机位定时自拍：手机与支架均留在画面外，主角不持机、不伸手臂向镜头；竖屏半身构图，头部到腰部入镜，手势在胸前完整呈现，手部比例自然。",
     "mirror_half": "镜前中近景自拍：头部到胯部上方入镜，手机不挡住主要服装，展示今日穿搭的上下层次。",
     "mirror_full": "全身镜前穿搭自拍：头部、上衣、下装和鞋履完整入镜，手机自然持握且不遮挡衣服，人物与倒影比例一致。",
-    "window_side": "窗边侧光自拍：身体略侧，头部到腰线或胯部上方入镜，衣服层次清楚。",
+    "window_side": "窗边侧光自拍：身体略侧，头部到腰线入镜，衣服层次清楚。",
     "desk_sit": "书桌前坐姿自拍：略俯视中近景，头部到腰部入镜，可自然扶桌沿，今日上衣和配饰清晰。",
     "sofa_casual": "沙发上随手自拍：靠垫只在背景边缘，头部到腰线入镜，穿搭不被抱枕遮挡，姿态放松。",
     "high_angle": "稍高机位自拍：镜头略高于眼，轻微向下拍到腰线，不要过度俯拍变形。",
     "close_portrait": "近景胸像自拍：脸与肩为主，五官清晰，浅景深。",
-    "back_view": "纯背面自拍构图：主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手按当前小动作自然配合，不强制垂放或凭空增加道具。",
-    "back_three_quarter": "背后三分之四自拍构图：镜头同时看到后背和一侧肩胯，重心自然落在一条腿上，另一脚轻微错后；头部顺着身体方向，不回头硬露正脸，双手按当前小动作自然配合。",
-    "side_profile": "侧身自拍：身体和头部自然朝向同一侧，肩胯约四十五度侧向镜头，不回头硬露正脸，颈部和肩线保持自然。",
+    "back_view": "竖屏半身中近景的纯背面自拍构图，主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈，不要求露出正脸；双手按当前小动作自然配合，不强制垂放，不凭空增加栏杆或道具。",
+    "back_three_quarter": "竖屏半身中近景的背后三分之四自拍构图，镜头同时看到后背和一侧肩胯；头部顺着身体方向，不回头硬露正脸，双手按当前小动作自然配合，不凭空增加栏杆或道具。",
+    "side_profile": "竖屏侧身半身中近景自拍，身体和头部自然朝向同一侧，肩胯约四十五度侧向镜头，不回头硬露正脸，颈部和肩线保持自然。",
 }
 
 SELFIE_GESTURES = (
@@ -81,16 +80,16 @@ THIRD_PERSON_SHOT_POOL = (
 )
 
 THIRD_PERSON_SHOT_LINES = {
-    "half_front": "半身平视他拍：别人视角的单人半身照，身体正面或微侧。",
-    "three_quarter": "三分之四侧身他拍：身体略侧，头部顺着身体方向自然转向，不做突然回头动作。",
-    "env_mid": "中远景环境人像：人物与场景都清楚，AI 仍是主体。",
-    "walk_candid": "走路抓拍：侧前方跟随感，步伐自然，生活感强。",
-    "close_smile": "近景胸像：脸与肩，浅景深，五官清晰。",
-    "low_over": "轻微低机位侧前方拍摄半身：头颈保持自然，不做过肩回望，不要过度仰拍变形。",
-    "lean_wall": "靠墙/门框他拍：肩背轻靠，双手自然，竖构图友好。",
-    "back_view": "纯背面他拍构图：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手按动作自然配合，不强制垂放或凭空增加道具。",
-    "back_three_quarter": "背后三分之四他拍构图：镜头同时看到后背和一侧肩胯，重心自然落在一条腿上，另一脚轻微错后；头部顺着身体方向，不回头硬露正脸，双手按动作自然配合。",
-    "side_profile": "纯侧身他拍：身体、肩线和面部朝向一致，以自然侧面或侧后三分之四角度呈现，不回头、不为露正脸扭转脖子。",
+    "half_front": "竖屏正面半身平视他拍，头部到腰线入镜。",
+    "three_quarter": "竖屏三分之四侧身他拍，头部到大腿上段入镜；头部顺着身体方向自然转向，不做突然回头动作。",
+    "env_mid": "竖屏中远景环境人像：人物从头到鞋完整入镜，周围场景清楚，AI 仍是主体。",
+    "walk_candid": "竖屏走路抓拍，侧前方取景，头部到膝上入镜，步伐自然。",
+    "close_smile": "竖屏近景胸像：脸与肩，浅景深，五官清晰。",
+    "low_over": "竖屏轻微低机位侧前方半身他拍，头部到腰线入镜；头颈保持自然，不做过肩回望，不要过度仰拍变形。",
+    "lean_wall": "竖屏靠墙他拍，头部到大腿上段入镜，肩背轻靠场景已有支撑面，双手自然。",
+    "back_view": "竖屏半身中近景的纯背面他拍构图，人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手按动作自然配合，不强制垂放或凭空增加道具。",
+    "back_three_quarter": "竖屏半身中近景的背后三分之四他拍构图，镜头同时看到后背和一侧肩胯；头部顺着身体方向，不回头硬露正脸，双手按动作自然配合，不凭空增加栏杆或道具。",
+    "side_profile": "竖屏半身中近景的纯侧身他拍，身体、肩线和面部朝向一致，呈自然侧面轮廓，不回头、不为露正脸扭转脖子。",
 }
 
 THIRD_PERSON_ACTIONS = (
@@ -181,7 +180,7 @@ def _has_explicit_action_override(text: str) -> bool:
     terms = (
         "站立", "站着", "坐姿", "坐着", "坐在", "床沿", "跪坐", "跪姿", "躺下", "侧躺", "趴着",
         "行走", "走路", "散步", "奔跑", "跳跃", "托腮", "比心", "双手举起",
-        "整理发丝", "整理袖口", "拿着花", "拿着书", "抱着", "倚靠", "靠墙",
+        "整理发丝", "整理袖口", "拿着", "手持", "捧着", "抱着", "倚靠", "靠墙",
     )
     return any(_has_positive_staging_term(compact, term) for term in terms)
 
@@ -504,10 +503,6 @@ def build_crop_waist_selfie_action(
         )
         + "保持 AI 身份长相与发色一致，画面干净得体。"
     )
-    if appearance_type == "real":
-        base += "画面统一为真人摄影质感，不混用插画或渲染媒介。"
-    elif appearance_type == "anime":
-        base += "统一为柔光京阿尼风格动漫插画，线条、上色、光影与动漫五官保持一致。"
     if has_refs:
         base = "参考用户附图的氛围或构图，" + base
     from ..studio.studio import default_image_preset_seed
@@ -618,7 +613,6 @@ def build_selfie_look_action(
     rear_three_quarter_view = shot == "back_three_quarter"
     rear_hair_close = rear_three_quarter_view and rear_hair_close_request
     side_view = shot == "side_profile"
-    full_mirror_view = shot == "mirror_full"
     gaze_line = (
         "视线和表情按用户明确要求执行，不额外要求看镜头。"
         if has_explicit_gaze_request(extra)
@@ -626,79 +620,35 @@ def build_selfie_look_action(
     )
     capture_finishes = SELFIE_MIRROR_FINISHES if shot in {"mirror_half", "mirror_full"} else SELFIE_CANDID_FINISHES
     capture_finish = random.choice(capture_finishes) if not extra and not heart_pose else ""
-    selfie_framing = (
-        "竖屏半身构图，头部到腰部入镜，双手手势在胸前完整呈现且不贴近镜头，手部比例自然；"
-        if heart_pose
-        else (
-            "竖屏全身镜面自拍：人物从头到鞋完整入镜，手机不遮挡今日穿搭；"
-            if full_mirror_view
-            else "竖屏近景胸像，画面以头部、脸和肩部为主；"
-            if shot == "close_portrait"
-            else "竖屏手机中近景半身：画面至少到腰线，优先看清今日上衣和搭配层次；"
-        )
-    )
+    if (
+        _has_explicit_action_override(extra)
+        and not heart_pose
+        and not rear_hair_close
+        and not (rear_view and requested_gesture)
+    ):
+        gesture = ""
     base = (
         "【自拍 / 看看模式】展示 AI 现在的样子。"
         + (
-            "画外固定机位定时自拍，手机与支架均留在画面外，拍摄者不入画。"
-            + (
-                "主角肩线和胸口自然朝向镜头，双手在胸前清楚组成完整爱心；"
-                if heart_pose == "double"
-                else "主角肩线和胸口自然朝向镜头，一只手在胸前比心，另一只手放松垂在身体侧边；"
-            )
-            + "只有正常连接于肩部的两条手臂和两只手，不持机、不伸手臂向镜头，手部比例自然。"
-            "保持面部清晰、肩颈放松、身体比例自然；不要夸张近大远小透视。"
-            if heart_pose
-            else
             "由主角自行启动手机定时拍摄，拍摄者不入画；这是自摄成片，不要求出现手机或自拍手臂。"
-            +
-            (
-                (
-                    "主角采用背后三分之四侧后方头肩近景，镜头从斜后侧拍到发顶和肩胛上缘，清楚呈现后侧发型轮廓与近侧发束；"
-                    "头部随肩线自然朝向画外，不回头、不回眸、不扭颈，不要求露出正脸；肩颈放松，双手留在画外，不遮挡发型。"
-                    if rear_hair_close
-                    else "主角采用背后三分之四角度，镜头同时看到后背和一侧肩胯；一条腿自然承重，另一脚轻微错后，头部顺着身体方向，不回头、不回眸、不扭颈，也不要求露出正脸；双手按小动作自然配合，不凭空增加栏杆、手机或其他道具。"
-                )
-                if rear_three_quarter_view
-                else "主角背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈，也不要求露出正脸；双手按小动作自然配合，不强制垂放，不凭空增加栏杆、手机或其他道具。"
-            )
-            + (
-                "保持竖屏背面侧后方头肩近景，画面到肩胛上缘为止；不要扩展成腰部或全身构图，重点呈现当前发型和发饰；不要美颜滤镜、不要棚拍精修。"
-                if rear_hair_close
-                else "保持竖屏半身中近景与自然透视，重点呈现背面发型和当前穿搭；不要美颜滤镜、不要棚拍精修。"
-            )
             if rear_view
-            else (
-                "身体侧向镜头的自拍构图：肩胯和头部朝向自然连贯，不回头硬露正脸；表情放松，保持面部自然可见。"
-                "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
-                "竖屏手机侧身半身中近景；"
-                + ("" if explicit_light else "窗光或暖灯；")
-                + "不要美颜滤镜、不要棚拍精修。"
-                if side_view
-                else "第一人称自拍视角（自己举机或镜前自拍），不是别人代拍。"
-                + gaze_line
-                + "保持 AI 当前形象、今日穿搭与气质一致，脸部清晰。"
-                + selfie_framing
-                + ("" if explicit_light else "窗光或暖灯；")
-                + "不要美颜滤镜、不要棚拍精修。"
-            )
+            else "自拍成片，拍摄者不入画。"
         )
+        + (gaze_line if not rear_view and not side_view else "")
+        + "保持 AI 当前形象、今日穿搭与气质一致。"
         + (
-            "本次机位：竖幅背后三分之四头肩发型近景，从斜后侧取景，发顶至肩胛上缘入画。"
+            "本次机位：竖幅背后三分之四头肩发型近景，从斜后侧约四十五度取景，发顶至肩胛上缘入画；"
+            "头部随肩线自然朝向画外，不回头、不回眸、不扭颈，不要求露出正脸；不要扩展成腰部或全身构图。"
             if rear_hair_close
             else f"本次机位：{SELFIE_SHOT_LINES.get(shot, SELFIE_SHOT_LINES['arm_half'])}"
         )
         + (f"场景倾向：{scene}。" if scene else "")
-        + f"小动作：{gesture}。"
+        + (f"小动作：{gesture}。" if gesture else "")
         + (f"光线：{light}。" if light else "")
         + (f"手机随手拍质感：{capture_finish}。" if capture_finish else "")
         + "场景和镜头不得改变、增添或删减今日穿搭；服装的廓形、颜色和层次保持清楚。"
         + "画面干净日常，不要夸张摆拍。"
     )
-    if appearance_type == "real":
-        base += "画面统一为真人摄影质感，不混用插画或渲染媒介。"
-    elif appearance_type == "anime":
-        base += "柔光京阿尼风格动漫插画：线条、上色、光影与动漫五官统一，不生成真人皮肤纹理。"
     if has_refs:
         base = "参考用户提供的图片氛围、场景或构图，" + base + " 主角身份仍以 AI 形象为准。"
     if extra_overrides_outfit(extra):
@@ -785,45 +735,22 @@ def build_third_person_look_action(
         light = "" if explicit_light else random.choice(lights)
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
     rear_view = shot in {"back_view", "back_three_quarter"}
-    rear_three_quarter_view = shot == "back_three_quarter"
     side_view = shot == "side_profile"
+    if _has_explicit_action_override(extra_request) and not (rear_view and requested_action):
+        action = ""
     base = (
         "【他拍 / 看看你模式】展示 AI 当前样子的自然日常成片。"
         "别人视角的单人成品照：镜头已经对准主角拍下，画面里只有主角一个人；拍摄者完全在画面外，不要第二个人，不要有人举着手机拍主角。"
-        + (
-            (
-                "本次明确采用背后三分之四构图：镜头同时看到后背和一侧肩胯，一条腿自然承重、另一脚轻微错后；头部顺着身体方向，不回头、不回眸、不扭颈；双手按动作自然配合，不凭空增加支撑物，优先展示发型和服装后侧。"
-                if rear_three_quarter_view
-                else "本次明确采用纯背面构图：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；双手按动作自然配合，不强制垂放，不凭空增加支撑物，优先展示发型和服装后侧。"
-            )
-            +
-            "竖屏半身中近景，透视自然，拍摄者留在画面外；不要美颜滤镜、不要影楼精修。"
-            if rear_view
-            else (
-                "本次采用纯侧身构图：身体、肩线和头部朝向一致，不回头或扭颈硬露正脸。"
-                "保持 AI 当前形象、今日穿搭和生活状态一致，采用竖屏半身中近景，姿态、背景层次和光线自然清楚；不要美颜滤镜、不要影楼精修。"
-                if side_view
-                else (
-                    ("视线和表情按用户明确要求执行，不额外要求看镜头。"
-                     if has_explicit_gaze_request(extra_request)
-                     else "正面构图时可自然看向镜头；侧面构图时头部顺着身体方向，不强行回头露正脸。")
-                    + "保持 AI 当前形象、今日穿搭和生活状态一致，脸部、穿搭、姿态、背景层次和光线都清晰自然。"
-                    "构图保持竖屏，不自行追加近景半身或其他景别，严格以本次机位为准；"
-                    + ("" if explicit_light else "窗光或暖灯，")
-                    + "构图干净自然，不要美颜滤镜、不要影楼精修。"
-                )
-            )
-        )
+        + ("视线和表情按用户明确要求执行，不额外要求看镜头。"
+           if has_explicit_gaze_request(extra_request)
+           else "正面构图时可自然看向镜头。" if not rear_view and not side_view else "")
+        + "保持 AI 当前形象、今日穿搭和生活状态一致。"
         + f"本次机位：{THIRD_PERSON_SHOT_LINES.get(shot, THIRD_PERSON_SHOT_LINES['half_front'])}"
         + (f"场景倾向：{scene}。" if scene else "")
-        + f"动作瞬间：{action}。"
+        + (f"动作瞬间：{action}。" if action else "")
         + (f"光线：{light}。" if light else "")
         + "生活化随手记录感，不要影楼硬摆。"
     )
-    if appearance_type == "real":
-        base += "画面统一为真人摄影质感，不混用插画或渲染媒介。"
-    elif appearance_type == "anime":
-        base += "柔光京阿尼风格动漫插画：线条、上色、光影与动漫五官统一，不生成真人皮肤纹理。"
     if has_refs:
         base = "参考用户提供的图片氛围、场景或构图，" + base
     extra = re.sub(r"\s+", " ", str(extra_request or "")).strip(" 。")
@@ -869,10 +796,6 @@ def build_group_selfie_action(
     group_framing = str(composition.get("framing") or "near")
     appearance_type = resolve_appearance_type(appearance_type, extra_request)
     explicit_light = _has_explicit_staging_light(extra_request)
-    appearance_line = appearance_type_instruction(
-        appearance_type,
-        has_reference_image=has_identity_reference,
-    )
     style_blob = " ".join(group_style_lines(appearance_type))
     identity_expression_line = (
         "表情与眼神按本次合影氛围自然重画，不要原样复制形象参考图的固定表情。"
@@ -895,8 +818,7 @@ def build_group_selfie_action(
         )
         + reference_population_line
     )
-    if appearance_line:
-        base += appearance_line
+    base += {"real": "形象类型：真人。", "anime": "形象类型：动漫。", "auto": "形象类型：自动。"}[appearance_type]
     base += style_blob
     group_staging = str(composition["prompt"])
     framing_prompt = {
@@ -905,6 +827,8 @@ def build_group_selfie_action(
         "environment": "所有人保持中远景可辨识，留出足够环境空间。",
         "close_medium": "采用贴近的竖幅近景至中景，不使用远景。",
     }[group_framing]
+    if group_shot in {"group_portrait", "group_environment"}:
+        framing_prompt = ""
     orientation_prompt = {
         "front": "正面合影，视线按用户要求执行；" if has_explicit_gaze_request(extra_request) else "正面合影时可自然看向镜头；",
         "side": "人物侧身朝向场景或支撑物，头部顺着身体方向，不强迫回头或露出正脸；",
@@ -916,30 +840,14 @@ def build_group_selfie_action(
         if group_orientation == "front"
         else ""
     )
-    gaze_prompt = (
-        "AI 若自然面向镜头，优先与镜头有眼神交流，表情自然生动，不要心不在焉或整脸僵住参考图表情。"
-        if group_orientation == "front" and not has_explicit_gaze_request(extra_request)
-        else ""
-    )
     base += (
         "所有同框对象处在同一场景中，站位或坐位自然，视线、距离、遮挡、互动统一。"
         + orientation_prompt
         + lighting_prompt
         + framing_prompt
-        + gaze_prompt
         + group_staging
     )
-    if appearance_type == "real":
-        base += "皮肤、光线与材质保持自然写实摄影质感。"
-    elif appearance_type == "anime":
-        base += "皮肤、线条、上色与光影都保持统一动漫插画质感，不生成真人皮肤纹理。"
-    if has_refs:
-        base += (
-            " 用户提供或艾特对象的图片是合影角色来源，必须拟人/改画成与主角同一画风的独立完整人物；"
-            "玩偶、毛绒玩具、吉祥物、卡通立牌、表情包、道具等只取配色气质线索，禁止原样保留玩具外形、平面简笔画肢体，"
-            "禁止贴在主角衣服上或与身体衣物粘连融合；非人物按风格拟人，无性别默认女性。"
-        )
-    else:
+    if not has_refs:
         base += " 没有合影对象参考图时，按文字要求生成自然同框完整人物；未指定性别时默认成年女性。"
     final_style_instruction = appearance_type_output_instruction(appearance_type)
     if final_style_instruction:

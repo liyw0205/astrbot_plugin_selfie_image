@@ -283,8 +283,11 @@ def validate_json_catalog() -> List[str]:
         ):
             issues.append(f"lighting {lighting_id}: missing valid aliases")
     for expression_id, expression in COS_JSON_EXPRESSIONS.items():
-        if set(expression) != {"label", "prompt", "aliases"}:
-            issues.append(f"expression {expression_id}: expected label/prompt/aliases")
+        if set(expression) != {"label", "prompt", "aliases", "covered_eyes_prompt", "closed_eyes_prompt"}:
+            issues.append(f"expression {expression_id}: expected label/prompt/aliases and eye-visibility variants")
+        for key in ("covered_eyes_prompt", "closed_eyes_prompt"):
+            if not isinstance(expression.get(key), str) or not expression[key].strip():
+                issues.append(f"expression {expression_id}: missing {key}")
         aliases = expression.get("aliases")
         if not isinstance(aliases, list) or not aliases or any(not isinstance(alias, str) or not alias.strip() for alias in aliases):
             issues.append(f"expression {expression_id}: aliases must be a non-empty string list")

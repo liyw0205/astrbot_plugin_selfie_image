@@ -835,6 +835,31 @@ def split_generation_record_images(record: Dict[str, Any]) -> List[Dict[str, Any
     return pieces
 
 
+def normalize_generation_duration(value: Any) -> Optional[float]:
+    """Bound an observed duration; missing or invalid samples stay absent."""
+    if isinstance(value, bool):
+        return None
+    try:
+        elapsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(elapsed) or elapsed < 0:
+        return None
+    return round(min(86400.0, elapsed), 3)
+
+
+def normalize_generation_stage_timings(value: Any) -> Dict[str, float]:
+    """Return only finite, bounded durations for known generation stages."""
+    if not isinstance(value, Mapping):
+        return {}
+    timings: Dict[str, float] = {}
+    for key in GENERATION_TIMING_STAGES:
+        elapsed = normalize_generation_duration(value.get(key))
+        if elapsed is not None:
+            timings[key] = elapsed
+    return timings
+
+
 def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
     """Shrink persisted generation records: drop prompt duplicates, cap attempt errors."""
     if not isinstance(record, dict):
@@ -842,17 +867,7 @@ def compact_generation_record(record: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(record)
     raw_timings = out.get("stage_timings")
     if isinstance(raw_timings, Mapping):
-        safe_timings: Dict[str, float] = {}
-        for key in GENERATION_TIMING_STAGES:
-            value = raw_timings.get(key)
-            if isinstance(value, bool):
-                continue
-            try:
-                elapsed = float(value)
-            except (TypeError, ValueError, OverflowError):
-                continue
-            if math.isfinite(elapsed) and elapsed >= 0:
-                safe_timings[key] = round(min(86400.0, elapsed), 3)
+        safe_timings = normalize_generation_stage_timings(raw_timings)
         if safe_timings:
             out["stage_timings"] = safe_timings
         else:
@@ -1312,6 +1327,8 @@ def summarize_record_for_list(record: Dict[str, Any]) -> Dict[str, Any]:
         "status": record.get("status") or ("succeeded" if record.get("success") else "failed"),
         "generation_success": record.get("generation_success"),
         "delivery_success": record.get("delivery_success"),
+        "delivery_unknown": bool(record.get("delivery_unknown")),
+        "delivery_failed": bool(record.get("delivery_failed")) or record.get("delivery_success") is False,
         "media_type": record.get("media_type") or "image",
         "channel": channel,
         "model": model,

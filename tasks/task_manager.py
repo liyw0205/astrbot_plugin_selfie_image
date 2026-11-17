@@ -21,6 +21,8 @@ from ..core.async_compat import mark_task_cancelling
 from ..core.utils import (
     collect_record_cache_paths,
     new_trace_id,
+    normalize_generation_duration,
+    normalize_generation_stage_timings,
     redact_sensitive_data,
     redact_sensitive_text,
     save_json_file,
@@ -1584,9 +1586,7 @@ class WebTaskMixin:
         if delivery_success not in (True, False, None):
             delivery_success = None
         delivery_failed = bool(record.get("delivery_failed")) or delivery_success is False
-        delivery_unknown = bool(record.get("delivery_unknown")) or delivery_success is None and bool(
-            record.get("generation_success")
-        )
+        delivery_unknown = bool(record.get("delivery_unknown"))
         if delivery_failed or delivery_unknown:
             stage = "delivery"
         elif not stage:
@@ -1662,9 +1662,7 @@ class WebTaskMixin:
             if delivery_success not in (True, False, None):
                 delivery_success = None
             delivery_failed = bool(record.get("delivery_failed")) or delivery_success is False
-            delivery_unknown = bool(record.get("delivery_unknown")) or delivery_success is None and bool(
-                generation_success
-            )
+            delivery_unknown = bool(record.get("delivery_unknown"))
             image_states = record.get("image_delivery") if isinstance(record.get("image_delivery"), Mapping) else {}
             stage, stage_label = self._task_image_stage(record)
             error = str(
@@ -1674,15 +1672,19 @@ class WebTaskMixin:
                 or response.get("error")
                 or ""
             ).strip()
-            try:
-                elapsed = float(record.get("elapsed_seconds"))
-                elapsed = round(max(0.0, min(86400.0, elapsed)), 3)
-            except (TypeError, ValueError, OverflowError):
-                elapsed = None
+            elapsed = normalize_generation_duration(record.get("elapsed_seconds"))
+            queue_wait = normalize_generation_duration(record.get("queue_wait_seconds"))
+            stage_timings = normalize_generation_stage_timings(record.get("stage_timings"))
             for path in paths or [""]:
                 state = str(image_states.get(path) or "").strip().lower()
-                if state not in {"sent", "failed", "unknown"}:
-                    state = "failed" if delivery_failed else "unknown" if delivery_unknown else "sent" if delivery_success is True else "pending"
+                if state not in {"sent", "failed", "unknown", "pending", "not_sent"}:
+                    state = (
+                        "failed" if delivery_failed else
+                        "unknown" if delivery_unknown else
+                        "sent" if delivery_success is True else
+                        "not_sent" if generation_success is False else
+                        "pending"
+                    )
                 rows.append(
                     {
                         "index": len(rows) + 1,
@@ -1692,10 +1694,12 @@ class WebTaskMixin:
                         "used_model": redact_sensitive_text(used_model)[:180],
                         "generation_success": generation_success,
                         "delivery_state": state,
-                        "delivery_success": delivery_success,
-                        "delivery_unknown": delivery_unknown,
-                        "delivery_failed": delivery_failed,
+                        "delivery_success": True if state == "sent" else False if state == "failed" else None,
+                        "delivery_unknown": state == "unknown",
+                        "delivery_failed": state == "failed",
                         "elapsed_seconds": elapsed,
+                        "queue_wait_seconds": queue_wait,
+                        "stage_timings": stage_timings,
                         "error": redact_sensitive_text(error)[:320],
                     }
                 )
@@ -2211,18 +2215,28 @@ class WebTaskMixin:
                     if not isinstance(response, Mapping):
                         response = {}
                     status = str(record.get("status") or response.get("status") or "").strip().lower() if isinstance(record, Mapping) else ""
+                    delivery_unknown = bool(response.get("delivery_unknown")) or (
+                        isinstance(record, Mapping) and bool(record.get("delivery_unknown"))
+                    )
+                    generation_success = record.get("generation_success", response.get("generation_success")) if isinstance(record, Mapping) else response.get("generation_success")
                     generation_failed = (
-                        isinstance(record, Mapping)
-                        and (record.get("success") is False or record.get("generation_success") is False)
-                    ) or response.get("success") is False
-                    delivery_failed = (
+                        generation_success is False
+                        or (
+                            generation_success is None
+                            and not delivery_unknown
+                            and (isinstance(record, Mapping) and record.get("success") is False or response.get("success") is False)
+                        )
+                    )
+                    delivery_failed = not delivery_unknown and (
                         isinstance(record, Mapping)
                         and (
                             record.get("delivery_success") is False
                             or bool(record.get("delivery_failed"))
-                            or bool(record.get("delivery_unknown"))
                         )
-                    ) or status in {"failed", "delivery_failed", "partial_success"}
+                        or response.get("delivery_success") is False
+                        or bool(response.get("delivery_failed"))
+                        or status in {"failed", "delivery_failed", "partial_success"}
+                    )
                     if not generation_failed and not delivery_failed:
                         skipped.append({"task_id": task_id, "record_id": record_id, "reason": "生成记录未失败"})
                         continue
@@ -2288,9 +2302,15 @@ class WebTaskMixin:
             "tasks": rows,
         }
 
-    def start_web_image_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _ensure_generation_available(self) -> None:
         if getattr(self, "_terminating", False):
             raise RuntimeError("插件正在卸载，无法提交新任务")
+        manager = getattr(self, "backup_manager", None)
+        if manager is not None and manager.restore_pending:
+            raise RuntimeError("备份恢复已准备，请重启插件后再生成图片")
+
+    def start_web_image_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_generation_available()
         if not isinstance(payload, dict):
             raise RuntimeError("请求体必须是 JSON 对象")
         loop = getattr(self, "loop", None)
@@ -2321,8 +2341,7 @@ class WebTaskMixin:
             payload_copy, str(payload_copy.get("owner_session") or "web"), selfie_refs,
         )
         with self._web_task_lock:
-            if getattr(self, "_terminating", False):
-                raise RuntimeError("插件正在卸载，无法提交新任务")
+            self._ensure_generation_available()
             if not force_regenerate:
                 duplicate = self._find_recent_duplicate_task_locked(fingerprint)
                 if duplicate:

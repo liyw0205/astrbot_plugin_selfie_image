@@ -32,14 +32,8 @@ COS_COVERED_EYES_IDENTITY_CONTRACT_ZH = (
 )
 
 COS_HAIR_OVERRIDE_CONTRACT_ZH = (
-    "套装明示的发型、发色优先于身份参考图的原头发，不以是否出现“假发”字样为条件。"
-    "指定单一发色时，发际线、发根、内层、刘海、鬓发和发尾均为该色，不在新发型下面叠留参考图原色刘海或鬓发。"
-    "挑染、拼色或渐变按明示的颜色及分布呈现；局部异色仅用于对应发束或区域，其余头发遵循本次主发色，不把局部配色扩大为整片异色刘海。"
-    "指定假发时，参考图原发完整收在假发内，可见发际线、刘海和鬓发均属于同一顶假发。"
-    "指定发型轮廓时，按指定内容替换参考图中对应的刘海、鬓发、分缝、长度或束发；未写明的发型细节自然补全。"
-    "即使套装正文只写长发、短发、直发、卷发或双马尾等类别，也必须补全可见的刘海类型、分缝位置、层次、长度终点、束发位置和发尾形态；这些结构均以本次 COS 为准，不得沿用参考图的刘海细节。"
-    "仅指定局部挑染而未指定底色时，底色沿用身份参考图；完全未指定发色时也沿用参考图发色。未指定发型时保留与本次设定兼容的自然发型，不按角色名补造未写明的造型。"
-    "头饰需贴合头部并与刘海、发束协调，不穿插、悬浮或与头发融合。"
+    "COS 发型和配色以套装写明的细节为准，覆盖身份参考图原发；佩戴假发时原发完整收在假发内，不混入原色刘海或鬓发。"
+    "挑染、拼色和渐变仅用于套装注明的发束或区域；套装未指定的发型、底色沿用身份参考图。"
 )
 
 COS_IDENTITY_CONTRACT_EN = (
@@ -60,14 +54,10 @@ COS_COVERED_EYES_IDENTITY_CONTRACT_EN = (
 )
 
 COS_HAIR_OVERRIDE_CONTRACT_EN = (
-    "The costume's explicit hairstyle and hair colors override the identity reference's original hair, whether or not the word wig appears. "
-    "For a single specified color, use that color throughout the visible hairline, roots, inner layers, bangs, side locks, and ends; do not layer new hair over bangs or side locks in the reference's original color. "
-    "Use the stated colors and distribution for highlights, color blocking, or gradients. Local accents apply only to the corresponding strands or regions; the remaining hair follows the chosen base color. Do not expand a local accent into an entire contrasting fringe. "
-    "When a wig is specified, tuck all reference hair inside it; the visible hairline, bangs, and side locks belong to the same wig. "
-    "Replace only the hairstyle features that are specified, such as bangs, side locks, parting, length, or tied sections. Complete unspecified hairstyle details naturally. "
-    "Even when the costume only names a broad category such as long hair, short hair, straight hair, curls, or twin tails, complete the visible bang shape, parting, layers, endpoint length, tie placement, and tip shape for this COS; never reuse the reference image's bang details. "
-    "If only local highlights are specified without a base color, retain the identity reference's base color; retain its hair color as well when no color is specified at all. Keep unspecified hairstyle features compatible with the chosen look; do not invent unlisted hair details from the character name. "
-    "Fit headwear naturally without floating, intersecting, or merging it with the hair."
+    "Use the hairstyle and color details written in the costume instead of the identity reference's hair. "
+    "Tuck reference hair completely inside a specified wig without mixing in its original bangs or side locks. "
+    "Apply highlights, color blocking, and gradients only to the listed strands or regions; "
+    "retain the identity reference's hairstyle or base color where the costume does not specify one."
 )
 
 
@@ -474,6 +464,10 @@ def build_selfie_builtin_prompt(
                 "Follow the complete COS action contract below exactly once. Preserve its selected outfit, pose, scene, camera, and single framing without adding another camera or crop choice.",
                 rendered_action,
             ])
+            if extra_reference_count:
+                lines.append(
+                    "Use extra references only for details explicitly requested by the user; do not override the selected outfit, framing, pose, expression, makeup, or visual medium."
+                )
         elif not is_group_contract:
             lines.extend([
                 "Keep the main subject's identity, gender, face, hair, body proportions, and overall appearance stable; change expression naturally with the scene.",

@@ -1125,11 +1125,34 @@ class BackupController:
     def task(self, task_id: Any) -> dict[str, Any]:
         return self._call("backup_task_from_web", str(task_id or ""), status=404)
 
-    def download(self, backup_id: Any) -> dict[str, Any]:
+    def download(self, backup_id: Any, params: Any = None) -> dict[str, Any]:
+        params = params or {}
+        mode = query_value(params, "format")
+        if mode == "chunk":
+            offset = parse_bounded_int(params, "offset", 0, 0, 128 * 1024 * 1024)
+            length = parse_bounded_int(params, "length", 1024 * 1024, 1, 1024 * 1024)
+            return self._call("download_backup_chunk_from_web", str(backup_id or ""), offset, length,
+                              query_value(params, "revision"), status=400)
+        if mode == "file":
+            return self._call("download_backup_file_from_web", str(backup_id or ""), status=404)
+        if mode:
+            raise WebContractError("备份下载格式无效", 400)
         return self._call("download_backup_from_web", str(backup_id or ""), status=404)
 
-    def restore(self, backup_id: Any) -> dict[str, Any]:
-        return self._call("restore_backup_from_web", str(backup_id or ""), status=400)
+    @staticmethod
+    def _restore_payload(payload: Any) -> dict[str, Any]:
+        body = payload if isinstance(payload, dict) else {}
+        if set(body) - {"selected"} or ("selected" in body and (
+            not isinstance(body["selected"], list) or not body["selected"]
+            or any(not isinstance(item, str) for item in body["selected"])
+        )):
+            raise WebContractError("请选择有效的恢复数据项", 400)
+        return body
+
+    def restore(self, backup_id: Any, payload: Any = None) -> dict[str, Any]:
+        body = self._restore_payload(payload)
+        args = (body["selected"],) if "selected" in body else ()
+        return self._call("restore_backup_from_web", str(backup_id or ""), *args, status=400)
 
     def delete(self, payload: Any) -> dict[str, Any]:
         body = payload if isinstance(payload, dict) else {}
@@ -1137,6 +1160,39 @@ class BackupController:
 
     def upload(self, payload: Any) -> dict[str, Any]:
         return self._call("upload_backup_from_web", payload, status=400)
+
+    def transfer(self, operation: str, transfer_id: str = "", payload: Any = None) -> dict[str, Any]:
+        body = payload if isinstance(payload, dict) else {}
+        allowed = {"start": {"kind", "size", "filename"},
+                   "append": {"offset", "content_base64", "crc32"},
+                   "commit": {"selected"}}.get(operation, set())
+        if set(body) - allowed:
+            raise WebContractError("归档请求包含未知字段", 400)
+        if operation == "commit":
+            self._restore_payload(body)
+        if operation == "start" and (
+            not isinstance(body.get("filename", ""), str) or len(body.get("filename", "")) > 255
+            or not isinstance(body.get("kind"), str) or body.get("kind") not in {"backup", "wardrobe"}
+        ):
+            raise WebContractError("无效的归档类型或文件名", 400)
+        hooks = {
+            "start": ("start_archive_upload_from_web", (body,)),
+            "append": ("append_archive_upload_from_web", (transfer_id, body)),
+            "commit": ("commit_archive_upload_from_web", (transfer_id, body["selected"]) if "selected" in body else (transfer_id,)),
+            "discard": ("discard_archive_transfer_from_web", (transfer_id,)),
+            "export": ("start_wardrobe_export_from_web", ()),
+        }
+        name, args = hooks[operation]
+        return self._call(name, *args, status=400)
+
+    def export_download(self, transfer_id: str, params: Any) -> dict[str, Any]:
+        mode = query_value(params, "format", "chunk")
+        if mode not in {"chunk", "file"}:
+            raise WebContractError("归档下载格式无效", 400)
+        offset = parse_bounded_int(params, "offset", 0, 0, 128 * 1024 * 1024)
+        length = parse_bounded_int(params, "length", 1024 * 1024, 1, 1024 * 1024)
+        return self._call("download_archive_export_from_web", transfer_id, offset, length,
+                          query_value(params, "revision"), mode == "file", status=400)
 
 
 class ImageChannelController:

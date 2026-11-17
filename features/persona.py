@@ -1886,7 +1886,9 @@ class PersonaManager:
         """Create a fresh local-random daily profile without calling an LLM."""
         async with self._daily_profile_lock:
             previous = self.get_daily_selfie_profile()
-            avoid_outfits = set(previous.outfit_by_period.values()) if previous else set()
+            avoid_outfits = {previous.outfit, *previous.outfit_by_period.values()} if previous else set()
+            if previous and previous.timeline:
+                avoid_outfits.update(previous.timeline.outfits.values())
             avoid_statuses = set(previous.status_by_period.values()) if previous else set()
             avoid_scenes = set(previous.scene_by_period.values()) if previous else set()
             avoid_actions = set(previous.action_by_period.values()) if previous else set()
@@ -2147,6 +2149,12 @@ class PersonaManager:
             )
         if intent.is_cos_look:
             identity_lines.append(COS_HAIR_OVERRIDE_CONTRACT_ZH)
+        elif has_staging_contract:
+            identity_lines = [
+                "参考图一锁定主角的脸型五官、发型发色、体态、性别与年龄感；额外参考不得替换主角身份。"
+                if has_reference_image
+                else "主角身份以角色名称和人设为准，未说明性别时默认成年女性。"
+            ]
         if intent.is_legs_only:
             if has_leg_focus_contract(act):
                 identity_lines = (
@@ -2173,7 +2181,11 @@ class PersonaManager:
                 )
                 if has_reference_image:
                     identity_lines.append(LEGFOCUS_REFERENCE_RULES["zh"])
-        if has_reference_image and not intent.is_legs_only and has_viewpoint_change_request(act):
+        if (
+            has_reference_image and not intent.is_legs_only
+            and not (cos_contract or group_contract or has_staging_contract)
+            and has_viewpoint_change_request(act)
+        ):
             identity_lines.append(
                 "本次指定或随机选定的镜头视角优先于参考图投影；保留同一人的身份线索，但不要复制参考图里的头部朝向、脸部透视、肩线和原姿势。按目标视角自然重建面部透视；侧脸或三分之四侧面时，远侧五官允许自然遮挡，不要为保留参考图而强行露出双眼或扭脸。"
             )
@@ -2182,6 +2194,13 @@ class PersonaManager:
             has_reference_image=has_reference_image,
             is_cos=intent.is_cos_look,
         )
+        if cos_contract or has_staging_contract:
+            appearance_line = (
+                "形象类型：自动。主角媒介与人物比例以参考图一为准。"
+                if appearance_type == "auto" and has_reference_image
+                else f"形象类型：{APPEARANCE_TYPE_LABELS[appearance_type]}。"
+                if appearance_type != "auto" else ""
+            )
         if appearance_line and not intent.is_legs_only:
             identity_lines.insert(1 if has_reference_image else 0, appearance_line)
 
@@ -2199,6 +2218,12 @@ class PersonaManager:
             elif intent.is_legs_only:
                 reference_lines.append(
                     "额外参考图只参考氛围和构图，不改变已锁定的单一视角、姿势或完整服装搭配。"
+                )
+            elif cos_contract or has_staging_contract:
+                reference_lines.append(
+                    "额外参考图只补充用户明确要求参考的细节，不覆盖本次已锁定的服装、构图、姿势、神态、妆造或形象类型。"
+                    if cos_contract
+                    else "额外参考图只补充用户明确要求参考的细节，不覆盖本次已锁定的穿搭、机位、动作、视线或形象类型。"
                 )
             else:
                 reference_lines.extend(

@@ -8,11 +8,12 @@ import json
 import threading
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qsl, urlsplit
 
 import pytest
-from werkzeug.datastructures import MultiDict
+from werkzeug.datastructures import Headers, MultiDict
 from werkzeug.routing import Map, Rule
 
 from astrbot_plugin_selfie_image.core.constants import PLUGIN_NAME
@@ -439,6 +440,7 @@ def http(request, monkeypatch, tmp_path, dashboard_harness):
             host_request.query = MultiDict(parse_qsl(parsed.query, keep_blank_values=True))
             host_request.method = method
             host_request.body = body
+            host_request.headers = Headers(headers or {})
             path = f"/{PLUGIN_NAME}/{page_prefix}{parsed.path.removeprefix('/api/')}"
             handler, values = routes.bind("localhost").match(path, method=method)
             return asyncio.run(handler(**values))
@@ -1706,6 +1708,261 @@ def test_cache_file_download_remains_adapter_owned(tmp_path, monkeypatch):
         str(image_path),
         {"filename": "cache.png", "content_type": "image/png"},
     )
+
+
+def test_backup_chunk_download_and_validation_match_both_adapters(http, tmp_path):
+    from astrbot_plugin_selfie_image.features.backup_manager import BackupManager
+    from astrbot_plugin_selfie_image.tests.test_backup_manager import _root, _wait
+
+    manager = BackupManager(_root(tmp_path))
+    try:
+        task = manager.start_backup(["config"])
+        archive = _wait(manager, task["task_id"])["result"]
+        http.plugin.download_backup_chunk_from_web = manager.download_chunk
+        http.plugin.download_backup_from_web = manager.download_backup
+        path = f"/api/backups/{archive['id']}/download"
+        data = assert_success(http.call(path + "?format=chunk&offset=0&length=31"))
+        assert data["offset"] == 0
+        assert data["next_offset"] == 31
+        assert "path" not in data
+        assert_success(http.call(path))
+        assert_failure(http.call(path + "?format=chunk&offset=-1"), 400)
+        assert_failure(http.call(path + "?format=chunk&length=1048577"), 400)
+        assert_failure(http.call(path + "?format=chunk&revision=stale"), 400, "变化")
+        assert_failure(http.call(path + "?format=invalid"), 400)
+        if http.adapter == "flask":
+            assert_failure(http.call(path + "?format=chunk", headers={}), 401)
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("uploaded", [False, True])
+def test_selective_backup_restore_reaches_manager_through_both_adapters(http, tmp_path, uploaded):
+    import base64
+    import zlib
+
+    from astrbot_plugin_selfie_image.features.backup_manager import BackupManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.tests.test_backup_manager import _root, _wait
+
+    manager = BackupManager(_root(tmp_path), defer_restore=True)
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.backup_manager = manager
+    plugin._web_task_lock = threading.RLock()
+    plugin._assert_backup_restore_idle = lambda: None
+    for name in ("restore_backup_from_web", "start_archive_upload_from_web", "append_archive_upload_from_web", "commit_archive_upload_from_web"):
+        setattr(http.plugin, name, getattr(plugin, name))
+    try:
+        archive = _wait(manager, manager.start_backup(["config", "wardrobe"])["task_id"])["result"]
+        if uploaded:
+            data = (manager.backup_root / archive["filename"]).read_bytes()
+            session = assert_success(http.call("/api/archive-transfers/uploads", method="POST", body={"kind": "backup", "filename": "local.zip", "size": len(data)}))
+            path = f"/api/archive-transfers/{session['id']}"
+            assert_success(http.call(path + "/chunk", method="POST", body={"offset": 0, "content_base64": base64.b64encode(data).decode(), "crc32": f"{zlib.crc32(data):08x}"}))
+            path += "/commit"
+        else:
+            path = f"/api/backups/{archive['id']}/restore"
+        for body in ({"selected": []}, {"selected": None}, {"selected": "config"}, {"selected": [True]}):
+            assert_failure(http.call(path, method="POST", body=body), 400)
+            assert not manager.restore_pending
+        config = tmp_path / "selfie_image_config.json"
+        config.write_text('{"current":true}')
+        wardrobe = tmp_path / "wardrobe" / "metadata.json"
+        wardrobe.write_text('{"items":["current"]}')
+        task = assert_success(http.call(path, method="POST", body={"selected": ["wardrobe"]}))
+        finished = _wait(manager, task["task_id"])
+        assert finished["status"] == "completed"
+        assert finished["result"]["restore_selected"] == ["wardrobe"]
+        assert manager.apply_pending_restore()
+        assert config.read_text() == '{"current":true}'
+        assert wardrobe.read_text() == '{"items": []}'
+    finally:
+        manager.close()
+
+
+def test_backup_file_download_remains_authenticated_and_adapter_owned(tmp_path, monkeypatch):
+    from astrbot_plugin_selfie_image.features.backup_manager import BackupManager
+    from astrbot_plugin_selfie_image.tests.test_backup_manager import _root, _wait
+
+    manager = BackupManager(_root(tmp_path))
+    try:
+        task = manager.start_backup(["config"])
+        archive = _wait(manager, task["task_id"])["result"]
+        plugin = ContractPlugin(tmp_path)
+        plugin.download_backup_file_from_web = manager.download_file
+        path = f"/api/backups/{archive['id']}/download?format=file"
+        client = FlaskWebServer(plugin)._create_app().test_client()
+        assert client.get(path).status_code == 401
+        response = client.get(path, headers={"Authorization": f"Bearer {TOKEN}"})
+        assert response.status_code == 200
+        assert response.is_streamed
+        assert response.mimetype == "application/zip"
+        assert "attachment" in response.headers["Content-Disposition"]
+        assert response.data == (manager.backup_root / archive["filename"]).read_bytes()
+        response.close()
+        monkeypatch.setattr(dashboard_module, "request", SimpleNamespace(query={"format": "file"}))
+        monkeypatch.setattr(dashboard_module, "file_response", lambda path, **kwargs: (path, kwargs))
+        api = dashboard_module.SelfieImageDashboardAPI(plugin)
+        result = asyncio.run(api.page_backups_download(archive["id"]))
+        assert result == (str(manager.backup_root / archive["filename"]),
+                          {"filename": archive["filename"], "content_type": "application/zip"})
+    finally:
+        manager.close()
+
+
+def test_archive_transfer_upload_export_and_limits_match_both_adapters(http, tmp_path):
+    import base64
+    import threading
+    import zlib
+
+    from astrbot_plugin_selfie_image.features.backup_manager import BackupManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.tests.test_backup_manager import _root
+
+    manager = BackupManager(_root(tmp_path), defer_restore=True)
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.backup_manager = manager
+    plugin._web_task_lock = threading.RLock()
+    plugin._assert_backup_restore_idle = lambda: None
+    loaded = []
+    plugin.persona = SimpleNamespace(wardrobe=SimpleNamespace(load=lambda: loaded.append(True)))
+    plugin.get_wardrobe_payload = lambda: {"items": []}
+    for name in (
+        "start_archive_upload_from_web", "append_archive_upload_from_web", "commit_archive_upload_from_web",
+        "discard_archive_transfer_from_web", "start_wardrobe_export_from_web", "download_archive_export_from_web",
+    ):
+        setattr(http.plugin, name, getattr(plugin, name))
+    try:
+        exported = assert_success(http.call("/api/archive-transfers/wardrobe-export", method="POST", body={}))
+        download = f"/api/archive-transfers/{exported['id']}/download"
+        archive = assert_success(http.call(download + "?format=chunk"))
+        data = base64.b64decode(archive["content_base64"])
+        assert archive["eof"] is True
+        assert "path" not in archive
+        assert_failure(http.call(download + "?revision=stale"), 400)
+        assert_failure(http.call(download + "?length=1048577"), 400)
+        upload_path = "/api/archive-transfers/uploads"
+        assert_failure(http.call(upload_path, method="POST", body={"kind": "wardrobe", "size": True}), 400)
+        for invalid in [[], {"kind": []}, {"kind": "wardrobe", "size": 1, "filename": 123},
+                        {"kind": "wardrobe", "size": 1, "path": "/tmp/not-accepted"}]:
+            assert_failure(http.call(upload_path, method="POST", body=invalid), 400)
+        session = assert_success(http.call(upload_path, method="POST", body={"kind": "wardrobe", "size": len(data)}))
+        transfer = f"/api/archive-transfers/{session['id']}"
+        chunk = {"offset": 0, "content_base64": base64.b64encode(data).decode(), "crc32": f"{zlib.crc32(data):08x}"}
+        assert_failure(http.call(transfer + "/chunk", method="POST", body=chunk | {"crc32": "00000000"}), 400)
+        assert_failure(http.call(transfer + "/chunk", method="POST", body=chunk | {"content_base64": "x" * 1398105}), 400)
+        assert_failure(http.call(transfer + "/chunk", method="POST", body=chunk | {"offset": True}), 400)
+        assert_failure(http.call(transfer + "/chunk", method="POST", body=chunk | {"content_base64": "@@@"}), 400)
+        assert_failure(http.call(transfer + "/commit", method="POST", body={"unknown": True}), 400)
+        assert_success(http.call(transfer + "/chunk", method="POST", body=chunk))
+        assert_success(http.call(transfer + "/chunk", method="POST", body=chunk))
+        assert_success(http.call(transfer + "/commit", method="POST", body={}))
+        assert loaded == [True]
+        assert_failure(http.call(transfer + "/commit", method="POST", body={}), 400)
+        assert_success(http.call(f"/api/archive-transfers/{exported['id']}/discard", method="POST", body={}))
+        assert not list(manager.transfers.root.iterdir())
+        if http.adapter == "flask":
+            assert_failure(http.call(upload_path, method="POST", body={}, headers={}), 401)
+            assert_failure(http.call("/api/archive-transfers/wardrobe-export", method="POST", body={}, headers={}), 401)
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("path,method", [
+    ("/api/archive-transfers/uploads", "POST"),
+    ("/api/archive-transfers/test/chunk", "POST"),
+    ("/api/archive-transfers/test/commit", "POST"),
+    ("/api/archive-transfers/test/discard", "POST"),
+    ("/api/archive-transfers/wardrobe-export", "POST"),
+    ("/api/archive-transfers/test/download?format=file", "GET"),
+    ("/api/selfie-wardrobe/export", "GET"),
+])
+def test_archive_routes_reject_missing_standalone_auth(standalone, path, method):
+    client, _plugin = standalone
+    response = client.open(path, method=method)
+    assert response.status_code == 401
+
+
+def test_archive_request_declared_limit_matches_adapters(http):
+    response = http.call("/api/archive-transfers/uploads", method="POST", body={}, headers={
+        "Authorization": f"Bearer {TOKEN}", "Content-Length": str(2 * 1024 * 1024 + 1),
+    })
+    # Flask's test client replaces Content-Length with the actual serialized size.
+    if http.adapter == "dashboard":
+        assert_failure(response, 413)
+    else:
+        assert_failure(http.call("/api/archive-transfers/uploads", method="POST",
+                                 body={"padding": "x" * (2 * 1024 * 1024)}), 413)
+
+
+@pytest.mark.parametrize("path", ["/api/backups/upload", "/api/selfie-wardrobe/import"])
+def test_legacy_archive_unknown_length_read_is_bounded(standalone, path):
+    import io
+
+    limit = 24 * 1024 * 1024
+
+    class BoundedInput(io.BytesIO):
+        def read(self, size=-1):
+            assert 0 <= size <= limit + 1, "legacy archive request performed an unbounded read"
+            return super().read(size)
+
+        def readinto(self, buffer):
+            assert len(buffer) <= limit + 1, "legacy archive request performed an oversized read"
+            return super().readinto(buffer)
+
+    client, _plugin = standalone
+    response = client.post(path, headers={"Authorization": f"Bearer {TOKEN}"},
+                           content_type="application/json", environ_overrides={
+                               "wsgi.input": BoundedInput(b" " * (limit + 1)),
+                               "wsgi.input_terminated": True, "CONTENT_LENGTH": "",
+                           })
+    assert response.status_code == 413
+
+
+def test_wardrobe_export_file_matches_bytes_and_adapter_owns_response(tmp_path, monkeypatch):
+    from astrbot_plugin_selfie_image.features.backup_manager import BackupManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.tests.test_backup_manager import _root
+
+    manager = BackupManager(_root(tmp_path))
+    plugin = ContractPlugin(tmp_path)
+    plugin.backup_manager = manager
+    plugin.download_archive_export_from_web = SelfieImagePlugin.download_archive_export_from_web.__get__(plugin)
+    try:
+        exported = manager.start_wardrobe_export()
+        path = f"/api/archive-transfers/{exported['id']}/download?format=file"
+        expected = next(manager.transfers.root.glob("*/archive.zip")).read_bytes()
+        client = FlaskWebServer(plugin)._create_app().test_client()
+        assert client.get(path).status_code == 401
+        with client.get(path, headers={"Authorization": f"Bearer {TOKEN}"}) as response:
+            assert response.status_code == 200
+            assert response.is_streamed
+            assert response.mimetype == "application/zip"
+            assert response.data == expected
+        monkeypatch.setattr(dashboard_module, "request", SimpleNamespace(query={"format": "file"}))
+        monkeypatch.setattr(dashboard_module, "file_response", lambda path, **kwargs: (path, kwargs))
+        api = dashboard_module.SelfieImageDashboardAPI(plugin)
+        filename, options = asyncio.run(api.page_archive_export_download(exported["id"]))
+        assert Path(filename).read_bytes() == expected
+        assert options == {"filename": exported["filename"], "content_type": "application/zip"}
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("operation", ["import", "export"])
+def test_legacy_wardrobe_archive_work_is_offloaded_in_dashboard(http, operation):
+    called_from = []
+
+    def work(*_args):
+        called_from.append(threading.get_ident())
+        return {"items": []}
+
+    setattr(http.plugin, f"{operation}_wardrobe_from_web", work)
+    method = "POST" if operation == "import" else "GET"
+    assert_success(http.call(f"/api/selfie-wardrobe/{operation}", method=method, body={}))
+    assert len(called_from) == 1
+    if http.adapter == "dashboard":
+        assert called_from[0] != threading.get_ident()
 
 
 def test_shared_config_route_contract_matches_both_live_registries(tmp_path):

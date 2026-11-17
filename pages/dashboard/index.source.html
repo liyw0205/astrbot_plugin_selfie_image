@@ -631,6 +631,7 @@
         <div><label>标签</label><input id="wardrobeTags" type="text" maxlength="300" placeholder="夏季,连衣裙"></div>
       </div>
       <div class="actions"><button id="uploadWardrobe" type="button">添加到衣橱</button><button class="secondary" id="refreshWardrobe" type="button">刷新衣橱</button><button class="secondary" id="exportWardrobe" type="button">导出衣橱</button><button class="secondary" id="importWardrobeBtn" type="button">导入衣橱</button><input id="importWardrobeFile" type="file" accept=".zip,application/zip" style="display:none"></div>
+      <div class="progress-wrap" id="wardrobeArchiveProgressWrap" hidden><div class="between"><span id="wardrobeArchiveProgressLabel">准备中</span><span id="wardrobeArchiveProgressValue">0%</span><button class="icon-button" id="wardrobeArchiveCancelUpload" type="button" title="取消上传" aria-label="取消上传" hidden>×</button></div><progress id="wardrobeArchiveProgress" max="100" value="0"></progress></div>
       <div id="selfieWardrobeList" class="daily-schedule" aria-live="polite"></div>
     </section>
 
@@ -675,10 +676,9 @@
       <div id="backupOptions" class="grid4"></div>
       <div class="actions">
         <button class="ok" id="createBackupBtn" type="button">开始备份</button>
-        <button class="secondary" id="uploadBackupBtn" type="button">上传备份并自动恢复</button>
-        <input id="backupUploadFile" type="file" accept=".zip,application/zip" style="display:none">
+        <button class="secondary" id="uploadBackupBtn" type="button">恢复备份</button>
       </div>
-      <div class="progress-wrap" id="backupProgressWrap" hidden><div class="between"><span id="backupProgressLabel">准备中</span><span id="backupProgressValue">0%</span></div><progress id="backupProgress" max="100" value="0"></progress></div>
+      <div class="progress-wrap" id="backupProgressWrap" hidden><div class="between"><span id="backupProgressLabel">准备中</span><span id="backupProgressValue">0%</span><button class="icon-button" id="backupCancelUpload" type="button" title="取消上传" aria-label="取消上传" hidden>×</button></div><progress id="backupProgress" max="100" value="0"></progress></div>
       <h3>备份列表</h3>
       <div id="backupList" class="daily-schedule" aria-live="polite"><div class="muted">正在读取备份列表…</div></div>
     </section>
@@ -979,6 +979,22 @@
         <button class="secondary" type="button" onclick="closeCreativeCanvasCreateModal()">取消</button>
         <button class="ok" id="creativeCanvasCreateConfirmBtn" type="button">创建画布</button>
       </div></div>
+    </div>
+  </div>
+
+  <div id="backupRestoreModal" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="backupRestoreTitle">
+    <div class="modal backup-restore-dialog">
+      <div class="between"><h2 id="backupRestoreTitle">恢复备份</h2><button class="icon-button" id="backupRestoreClose" type="button" title="关闭" aria-label="关闭恢复窗口">×</button></div>
+      <div class="modal-body">
+        <label for="backupRestoreSource">备份文件</label>
+        <select id="backupRestoreSource"></select>
+        <div id="backupRestoreFileField"><label for="backupUploadFile">本地 ZIP 文件</label><input id="backupUploadFile" type="file" accept=".zip,application/zip"></div>
+        <div id="backupRestoreStatus" class="status" role="status"></div>
+        <h3>恢复内容</h3>
+        <div id="backupRestoreOptions" class="backup-restore-options"></div>
+        <p class="muted">所选数据将被覆盖。校验完成后，重启插件应用恢复。</p>
+      </div>
+      <div class="modal-footer"><div class="actions" style="margin-top:0;justify-content:flex-end"><button class="secondary" id="backupRestoreCancel" type="button">取消</button><button class="danger" id="backupRestoreSubmit" type="button">恢复</button></div></div>
     </div>
   </div>
 

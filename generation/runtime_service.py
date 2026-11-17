@@ -67,6 +67,9 @@ class GenerationRuntimeService:
         plugin = self.plugin
         if getattr(plugin, "_terminating", False):
             raise asyncio.CancelledError()
+        checker = getattr(plugin, "_ensure_generation_available", None)
+        if callable(checker):
+            checker()
         context = dict(record_context) if isinstance(record_context, Mapping) else {}
         task_id = str(context.get("task_id") or "").strip()
         if task_id and not str(context.get("trace_id") or "").strip():

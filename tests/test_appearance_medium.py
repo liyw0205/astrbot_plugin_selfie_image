@@ -152,13 +152,13 @@ def test_auto_cos_with_reference_preserves_reference_medium():
     assert _COS_AUTO_REFERENCE_NEGATIVE_PROMPT in action
     assert _COS_COMMON_NEGATIVE_PROMPT not in action
     assert "禁止动漫插画" not in action
-    assert "未提及或未核实的部件不自行添加" in action
+    assert "未列出的部件不自行添加" in action
     assert "开叉、荷叶边" not in action
 
     with tempfile.TemporaryDirectory() as tmp:
         persona = PersonaManager(tmp)
         prompt = persona.build_selfie_prompt(action, "bot", "tone", True, 0)
-    assert "视觉媒介和人物比例以参考图一为唯一主形象依据" in prompt
+    assert "主角媒介与人物比例以参考图一为准" in prompt
     assert "禁止动漫插画" not in prompt
 
 
@@ -202,15 +202,12 @@ def test_cos_costume_hair_overrides_reference_bangs_and_color_consistently():
             action, "小助", "温柔", True, 0
         )
 
-    assert "按指定内容替换参考图中对应的刘海、鬓发、分缝、长度或束发" in prompt
-    assert "未写明的发型细节自然补全" in prompt
-    assert "参考图原发完整收在假发内" in prompt
-    assert "可见发际线、刘海和鬓发均属于同一顶假发" in prompt
-    assert "不以是否出现“假发”字样为条件" in prompt
-    assert "发际线、发根、内层、刘海、鬓发和发尾均为该色" in prompt
-    assert "不在新发型下面叠留参考图原色刘海或鬓发" in prompt
-    assert "局部异色仅用于对应发束或区域" in prompt
-    assert "完全未指定发色时也沿用参考图发色" in prompt
+    assert "覆盖身份参考图原发" in prompt
+    assert "未写明的发型细节自然补全" not in prompt
+    assert "原发完整收在假发内，不混入原色刘海或鬓发" in prompt
+    assert "挑染、拼色和渐变仅用于套装注明的发束或区域" in prompt
+    assert "套装未指定的发型、底色沿用身份参考图" in prompt
+    assert prompt.count(item["prompt"].split("；")[0]) == 1
     assert "发型发色来自参考图一" not in prompt
 
 
@@ -234,15 +231,13 @@ def test_english_cos_builtin_has_matching_hair_override_contract():
         appearance_type="auto",
     )
 
-    assert "Replace only the hairstyle features that are specified" in prompt
-    assert "tuck all reference hair inside it" in prompt
-    assert "the visible hairline, bangs, and side locks belong to the same wig" in prompt
-    assert "whether or not the word wig appears" in prompt
-    assert "hairline, roots, inner layers, bangs, side locks, and ends" in prompt
-    assert "do not layer new hair over bangs or side locks in the reference's original color" in prompt
-    assert "Local accents apply only to the corresponding strands or regions" in prompt
-    assert "when no color is specified at all" in prompt
-    assert "do not invent unlisted hair details from the character name" in prompt
+    assert "Use the hairstyle and color details written in the costume" in prompt
+    assert "Tuck reference hair completely inside a specified wig" in prompt
+    assert "without mixing in its original bangs or side locks" in prompt
+    assert "Apply highlights, color blocking, and gradients only to the listed strands or regions" in prompt
+    assert "retain the identity reference's hairstyle or base color where the costume does not specify one" in prompt
+    assert "Complete unspecified hairstyle details" not in prompt
+    assert item["prompt"] in prompt
 
 
 def test_persona_selfie_prompt_finishes_with_selected_medium_contract():
@@ -324,13 +319,17 @@ def test_selfie_action_builders_do_not_force_a_medium_in_auto_mode():
 
     for build in builders:
         automatic = build("auto")
-        realistic = build("real")
-        anime = build("anime")
         assert "真人摄影质感" not in automatic
         assert "柔光京阿尼风格动漫插画" not in automatic
-        assert "真人摄影质感" in realistic
+        with tempfile.TemporaryDirectory() as tmp:
+            persona = PersonaManager(tmp)
+            persona.set_appearance_type("real")
+            realistic = persona.build_selfie_prompt(build("real"), "", "", True)
+            persona.set_appearance_type("anime")
+            anime = persona.build_selfie_prompt(build("anime"), "", "", True)
+        assert realistic.endswith(appearance_type_output_instruction("real"))
+        assert anime.endswith(appearance_type_output_instruction("anime"))
         assert "真人摄影质感" not in anime
-        assert "柔光京阿尼风格动漫插画" in anime
         assert "真实皮肤" not in anime
 
     overridden = build_selfie_look_action(
@@ -338,8 +337,12 @@ def test_selfie_action_builders_do_not_force_a_medium_in_auto_mode():
         appearance_type="real",
         scene_light_provider=lambda _kind: (["窗边"], ["窗光"]),
     )
-    assert "柔光京阿尼风格动漫插画" in overridden
-    assert "真人摄影质感" not in overridden
+    with tempfile.TemporaryDirectory() as tmp:
+        persona = PersonaManager(tmp)
+        persona.set_appearance_type("real")
+        prompt = persona.build_selfie_prompt(overridden, "", "", True)
+    assert prompt.endswith(appearance_type_output_instruction("anime"))
+    assert "真人摄影质感" not in prompt
 
 
 def test_command_llm_selfie_and_llm_cos_keep_selected_medium_end_to_end():

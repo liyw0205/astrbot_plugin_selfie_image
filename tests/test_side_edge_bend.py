@@ -47,11 +47,11 @@ def test_side_edge_bend_requires_two_hands_on_one_edge_and_sideward_gaze():
         assert "双手必须同时扶住同一条窄侧边" in action
         assert "另一只手可" not in action
         assert "头部靠近并转向侧边" in action
-        assert "不要求露出正脸" in action
+        assert "不需要正脸，可只见侧脸" in action
         assert "未明确要求遮脸时保持面部" not in action
         assert "保持面部、发型、服装和配饰清晰可见" not in action
         if camera == "third":
-            assert "手机、镜子或拍摄设备" in action
+            assert "不要拍到拍摄设备或拍摄过程" in action
         else:
             assert "不自动出现手持设备" in action
 
@@ -78,5 +78,6 @@ def test_explicit_selfie_keeps_side_edge_support_hands_and_sideward_gaze():
     )
     assert "【cam:selfie】" in action
     assert "【cos_pose:side_edge_bend】" in action
-    assert "侧边支撑前倾优先于通用自拍手势" in action
-    assert "头部和视线朝向支撑边，不看镜头" in action
+    assert "采用固定或定时自拍，拍摄设备完全在画面外" in action
+    assert "双手必须同时扶住同一条窄侧边" in action
+    assert "头部靠近并转向侧边，视线看向支撑边" in action

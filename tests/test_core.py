@@ -7968,7 +7968,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         self.assertNotIn("保持相关人物身份、服装、姿势、场景与构图一致", cos_ref_zh)
         with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25):
             web_cos = plugin_main.build_cos_third_person_prompt("COS 换装：自然站立，展示指定服装")
-        self.assertIn("本次未指定视角，随机采用", web_cos)
+        self.assertEqual(web_cos.count("本次镜头构图："), 1)
+        self.assertNotIn("本次未指定视角，随机采用", web_cos)
         from astrbot_plugin_selfie_image.cos.cos_looks import COS_FRAMING_CLASSES
         self.assertEqual(
             sum(item["prompt"] in web_cos for item in COS_FRAMING_CLASSES.values()),
@@ -8178,7 +8179,9 @@ class AstrBotSmokeContractTests(unittest.TestCase):
 
         instruction = "本次指定或随机选定的镜头视角优先于参考图投影"
         self.assertNotIn(instruction, default_selfie)
-        self.assertIn(instruction, random_selfie_prompt)
+        self.assertNotIn(instruction, random_selfie_prompt)
+        self.assertEqual(random_selfie_prompt.count("本次机位："), 1)
+        self.assertIn("略俯视中近景，头部到腰部入镜", random_selfie_prompt)
         self.assertIn(instruction, side_selfie)
         self.assertIn(instruction, llm_side_selfie)
         self.assertIn(instruction, side_cos)
@@ -8252,7 +8255,8 @@ class AstrBotSmokeContractTests(unittest.TestCase):
         stub = object.__new__(plugin_main.SelfieImagePlugin)
         stub.persona = type("P", (), {"get_appearance_type": staticmethod(lambda: "anime")})()
         text = plugin_main.SelfieImagePlugin._build_group_selfie_action(stub, extra_request="", has_refs=True)
-        self.assertIn("形象是动漫人物", text)
+        self.assertIn("形象类型：动漫", text)
+        self.assertIn("整张合影统一为柔光京阿尼风格动漫", text)
         self.assertIn("是女性则 AI 必须是女性", text)
         self.assertNotIn("写实真人照片风格", text)
         self.assertNotIn("仅当用户明确要求二次元/动漫合影时，才允许整体二次元画风", text)
@@ -9044,12 +9048,15 @@ class LegFocusTests(unittest.TestCase):
         self.assertNotIn("朋友在对面用手机拍", look_you)
         self.assertNotIn("朋友在旁边", look_you)
         self.assertIn("竖屏", look_you)
-        self.assertIn("半身", look_you)
+        self.assertEqual(look_you.count("本次机位："), 1)
         self.assertIn("光线：", look_you)
         self.assertNotIn("真实皮肤", look_you)
         self.assertNotIn("真人摄影质感", look_you)
-        self.assertIn("不要美颜滤镜", look_you)
-        from astrbot_plugin_selfie_image.prompts.selfie_actions import SELFIE_SHOT_POOL
+        from astrbot_plugin_selfie_image.features.persona import PersonaManager as PromptPersonaManager
+        with tempfile.TemporaryDirectory() as tmp:
+            final_look_you = PromptPersonaManager(tmp).build_selfie_prompt(look_you, "", "", True)
+        self.assertEqual(final_look_you.count("磨皮"), 1)
+        from astrbot_plugin_selfie_image.prompts.selfie_actions import SELFIE_SHOT_POOL, SELFIE_SHOT_LINES
         for shot, _ in SELFIE_SHOT_POOL:
             with self.subTest(selfie_shot=shot), patch(
                 "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
@@ -9057,15 +9064,14 @@ class LegFocusTests(unittest.TestCase):
             ):
                 selfie_cover = plugin_main.SelfieImagePlugin._build_selfie_look_action(_P(), "", False)
                 self.assertIn(f"【shot:{shot}】", selfie_cover)
-                self.assertIn("竖屏", selfie_cover)
-                if shot == "close_portrait":
-                    self.assertIn("近景胸像", selfie_cover)
-                else:
-                    self.assertTrue("半身" in selfie_cover or "全身" in selfie_cover)
+                self.assertEqual(selfie_cover.count("本次机位："), 1)
+                self.assertIn(SELFIE_SHOT_LINES[shot], selfie_cover)
                 self.assertIn("光线：", selfie_cover)
                 self.assertNotIn("真实皮肤", selfie_cover)
                 self.assertNotIn("真人摄影质感", selfie_cover)
-                self.assertIn("不要美颜滤镜", selfie_cover)
+                with tempfile.TemporaryDirectory() as tmp:
+                    final_selfie = PromptPersonaManager(tmp).build_selfie_prompt(selfie_cover, "", "", True)
+                self.assertEqual(final_selfie.count("磨皮"), 1)
                 self.assertNotIn("过度美颜磨皮", selfie_cover)
         with patch(
             "astrbot_plugin_selfie_image.prompts.selfie_actions.random.choices",
@@ -9073,13 +9079,13 @@ class LegFocusTests(unittest.TestCase):
         ):
             group_cover = plugin_main.SelfieImagePlugin._build_group_selfie_action(_P(), "", False)
         self.assertIn("竖屏", group_cover)
-        self.assertTrue("半身" in group_cover or "中远景" in group_cover)
+        self.assertIn("自然竖屏近景合影构图", group_cover)
         self.assertIn("窗光", group_cover)
         self.assertIn("不要美颜滤镜", group_cover)
-        self.assertIn("保持上方已确定的单一构图", forced_selfie)
+        self.assertEqual(forced_selfie.count("本次镜头构图："), 1)
         self.assertNotRegex(forced_selfie, r"(?:全身|半身|三分之二身)或(?:全身|半身|三分之二身)")
         self.assertNotIn("对镜全身或大半身自拍", forced_selfie)
-        self.assertIn("保持上方已确定的单一构图", forced_third)
+        self.assertEqual(forced_third.count("本次镜头构图："), 1)
         self.assertNotRegex(forced_third, r"(?:全身|半身|三分之二身)或(?:全身|半身|三分之二身)")
         self.assertNotIn("全身或大半身", forced_third)
         self.assertIn("室内柔光半身", adapted)

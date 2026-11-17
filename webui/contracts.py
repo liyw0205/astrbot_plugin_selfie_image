@@ -369,6 +369,30 @@ BACKUP_ROUTE_CONTRACTS = (
         "backups_upload", "/api/backups/upload", "backups/upload", ("POST",),
         "backups_upload", "page_backups_upload", "Selfie Image upload backup",
     ),
+    BackupRouteContract(
+        "archive_upload_start", "/api/archive-transfers/uploads", "archive-transfers/uploads", ("POST",),
+        "archive_upload_start", "page_archive_upload_start", "Selfie Image start archive upload",
+    ),
+    BackupRouteContract(
+        "archive_upload_chunk", "/api/archive-transfers/<transfer_id>/chunk", "archive-transfers/<transfer_id>/chunk", ("POST",),
+        "archive_upload_chunk", "page_archive_upload_chunk", "Selfie Image append archive chunk",
+    ),
+    BackupRouteContract(
+        "archive_upload_commit", "/api/archive-transfers/<transfer_id>/commit", "archive-transfers/<transfer_id>/commit", ("POST",),
+        "archive_upload_commit", "page_archive_upload_commit", "Selfie Image commit archive upload",
+    ),
+    BackupRouteContract(
+        "archive_transfer_discard", "/api/archive-transfers/<transfer_id>/discard", "archive-transfers/<transfer_id>/discard", ("POST",),
+        "archive_transfer_discard", "page_archive_transfer_discard", "Selfie Image discard archive transfer",
+    ),
+    BackupRouteContract(
+        "archive_wardrobe_export", "/api/archive-transfers/wardrobe-export", "archive-transfers/wardrobe-export", ("POST",),
+        "archive_wardrobe_export", "page_archive_wardrobe_export", "Selfie Image prepare wardrobe export",
+    ),
+    BackupRouteContract(
+        "archive_export_download", "/api/archive-transfers/<transfer_id>/download", "archive-transfers/<transfer_id>/download", ("GET",),
+        "archive_export_download", "page_archive_export_download", "Selfie Image download wardrobe export",
+    ),
 )
 
 

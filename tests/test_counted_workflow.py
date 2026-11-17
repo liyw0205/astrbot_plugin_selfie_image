@@ -29,6 +29,10 @@ def plugin():
     instance._update_generation_records_delivery_timing = Mock()
     instance._build_success_text = Mock(return_value="")
     instance._batch_success_text = Mock(return_value="")
+    instance._batch_failure_policy = lambda: ("stop", 0)
+    instance._friendly_user_error_message = lambda error, _label: error
+    instance._batch_shot_fail_text = Mock(return_value="failed")
+    instance._send_task_notification = AsyncMock()
     return instance
 
 
@@ -119,6 +123,42 @@ def test_record_commit_precedes_progress_and_delivery_update(plugin):
 
     assert result["success"] is True
     assert events == ["queued", "commit", "send", "commit", "delivery", "completed"]
+
+
+@pytest.mark.parametrize("same_shot", [False, True])
+def test_mixed_receipts_keep_confirmed_failure_and_unknown_counts_on_stop(plugin, same_shot):
+    plugin._image_inflight_limit = lambda: 1
+    plugin._send_generated_images.side_effect = (
+        [ImageDeliveryOutcome(0, failed=1, unknown=1)] if same_shot else
+        [ImageDeliveryOutcome(0, failed=1), ImageDeliveryOutcome(0, unknown=1)]
+    )
+    results = (
+        [{"success": True, "files": ["a.png", "b.png"]}] if same_shot else
+        [{"success": True, "files": ["a.png"]}, {"success": True, "files": ["b.png"]}]
+    )
+    results.append({"success": False, "error": "provider stopped"})
+    result = run_batch(plugin, AsyncMock(side_effect=results), total=len(results))
+
+    assert result["status"] == "delivery_failed"
+    assert result["files"] == ["a.png", "b.png"]
+    assert result["delivery_success"] is False
+    assert result["delivery_failed"] is True
+    assert result["delivery_unknown"] is False
+    assert result["delivery_failed_count"] == result["delivery_unknown_count"] == 1
+    assert result["batch_failed_at"] == len(results)
+    assert result["error"] == "provider stopped"
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_batch_without_generated_images_does_not_report_delivery(plugin, cancelled):
+    plugin._task_cancel_requested.return_value = cancelled
+    result = run_batch(plugin, AsyncMock(return_value={"success": False, "error": "provider failed"}))
+    assert result["files"] == []
+    assert result["generation_success"] is False
+    assert result["delivery_success"] is None
+    assert result["delivery_failed"] is result["delivery_unknown"] is False
+    assert result["status"] == ("cancelled" if cancelled else "failed")
+    plugin._send_generated_images.assert_not_awaited()
 
 
 def test_legacy_generation_slot_is_released_on_exception(plugin):

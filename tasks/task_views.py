@@ -121,6 +121,8 @@ def format_task_list_text(
         suffix += f" {queue}" if queue else ""
         stage = str(task.get("generation_stage_label") or "").strip()
         suffix += f" [{stage}]" if stage else ""
+        delivery = _delivery_text(task)
+        suffix += f" · {delivery}" if delivery else ""
         suffix += f"（{warning}）" if warning else ""
         lines.append(f"{index}. {task_id} [{status_cn}/{kind}] {prompt}{suffix}")
     if include_finished:
@@ -164,6 +166,9 @@ def format_task_detail_text(task: Mapping[str, Any]) -> str:
         lines.append(f"进度：{progress}")
     if task.get("generation_stage_label"):
         lines.append(f"生成阶段：{task.get('generation_stage_label')}")
+    delivery = _delivery_text(task)
+    if delivery:
+        lines.append(f"投递状态：{delivery}")
     queue = _queue_text(task)
     if queue:
         lines.append(f"队列：{queue}")
@@ -228,6 +233,25 @@ def _progress_text(task: Mapping[str, Any]) -> str:
     except (TypeError, ValueError):
         percent_value = int(round(completed * 100 / requested))
     return f"{completed}/{requested}（{percent_value}%）"
+
+
+def _delivery_text(task: Mapping[str, Any]) -> str:
+    result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+    unknown = bool(task.get("delivery_unknown") or result.get("delivery_unknown"))
+    failed = bool(task.get("delivery_failed") or result.get("delivery_failed"))
+    delivery_success = task.get("delivery_success", result.get("delivery_success"))
+    generation_success = task.get("generation_success", result.get("generation_success"))
+    if unknown:
+        return "发送状态未知"
+    if failed or delivery_success is False:
+        return "发送失败"
+    if delivery_success is True:
+        return "已发送"
+    if generation_success is True:
+        return "待确认"
+    if generation_success is False:
+        return "未发送"
+    return ""
 
 
 def _queue_text(task: Mapping[str, Any]) -> str:

@@ -1126,7 +1126,7 @@ def test_back_three_quarter_pose_survives_final_persona_prompt_without_hands_dow
 
     assert "【shot:back_three_quarter】" in prompt
     assert "背后三分之四角度" in prompt
-    assert "双手按小动作自然配合" in prompt
+    assert "双手按当前小动作自然配合" in prompt
     assert "双手放松垂在身侧" not in prompt
 
 

@@ -254,7 +254,8 @@ def test_corrected_cos_identity_details_are_present_in_final_catalog():
     assert "白色长发" in prompts["blue_archive_hina"]
     assert "紫色眼睛" in prompts["blue_archive_hina"]
     assert re.search(r"粉色长(?:假)?发", prompts["blue_archive_aru"])
-    assert "红色短发" in prompts["blue_archive_junko"]
+    assert "红色长双马尾假发" in prompts["blue_archive_junko"]
+    assert "红色短发" not in prompts["blue_archive_junko"]
     assert "黑色短发" in prompts["blue_archive_tsubaki"]
     assert "金色齐肩双马尾" in prompts["blue_archive_chinatsu"]
     assert "深棕色短发" in prompts["blue_archive_izuna"]
@@ -262,7 +263,8 @@ def test_corrected_cos_identity_details_are_present_in_final_catalog():
     assert "白色长假发" in prompts["camellya_red_rose"]
     assert "银白色长卷发" in prompts["carlotta_frost_portrait"]
     assert "深棕色长假发" in prompts["wuthering_zhezhi_ink"]
-    assert "深红色长发" in prompts["mushoku_tensei_aisha"]
+    assert "深红色假发" in prompts["mushoku_tensei_aisha"]
+    assert "后脑高位束成单马尾" in prompts["mushoku_tensei_aisha"]
     assert "绿色眼睛" in prompts["mushoku_tensei_aisha"]
     assert "洛可可" in prompts["wuthering_roccia_stage"]
     assert "釉瑚" in prompts["wuthering_youhu_antique"]
@@ -575,7 +577,7 @@ def test_outfit_framing_words_do_not_suppress_random_view():
         )
     assert selected["view_id"] == "low_angle_hero"
     assert selected["prompt"] == COS_FRAMING_CLASSES["low_angle_hero"]["prompt"]
-    assert selected["outfit_text"] == "竖屏9:16，半身到全身构图，人物对镜站立"
+    assert selected["outfit_text"] == "竖屏9:16，人物对镜站立"
 
 
 def test_camera_adaptation_does_not_corrupt_existing_facing_phrases():
@@ -928,7 +930,7 @@ def test_group_random_staging_uses_environment_when_selected():
 
     assert "【shot:group_environment】" in action
     assert "中远景环境合影构图" in action
-    assert "所有人保持中远景可辨识" in action
+    assert "所有同框对象和周围场景都清楚" in action
     assert "背面构图" not in action
     assert "竖屏手机近景半身" not in action
 
@@ -1144,14 +1146,16 @@ def test_cos_back_view_does_not_require_a_visible_face_in_third_person_mode():
         picker=lambda **_: item,
     )
     assert "【cos_pose:back_to_camera】" in action
-    assert "背面他拍" in action
+    assert "【他拍 / 看看COS模式】" in action
     assert "不要求露出面部" in action
     assert "未明确要求遮脸时保持面部和服装清晰可见" not in action
 
     with tempfile.TemporaryDirectory() as tmp:
         persona = PersonaManager(tmp)
         prompt = persona.build_selfie_prompt(action, "小助", "温柔", True, 1)
-    assert "若当前构图允许面部入镜" in prompt
+    assert "不要求露出面部" in prompt
+    assert "额外参考图只补充用户明确要求参考的细节" in prompt
+    assert "表情眼神按本次场景重画" not in prompt
     assert "除非用户要求遮脸，否则主角面部清晰自然" not in prompt
 
 
@@ -1182,12 +1186,14 @@ def test_back_three_quarter_pose_keeps_head_aligned_without_lookback():
     assert "背后三分之四角度朝向场景纵深" in action
     assert "肩线、胯部与头部朝向保持一致" in action
     assert "不回头、不回眸、不扭颈" in action
-    assert "面部自然朝向画外" in action
+    assert "也不要求露出侧脸或正脸" in action
 
     with tempfile.TemporaryDirectory() as tmp:
         persona = PersonaManager(tmp)
         prompt = persona.build_selfie_prompt(action, "小助", "温柔", True, 1)
-    assert "若当前构图允许面部入镜" in prompt
+    assert "肩线、胯部与头部朝向保持一致" in prompt
+    assert "额外参考图只补充用户明确要求参考的细节" in prompt
+    assert "表情眼神按本次场景重画" not in prompt
     assert "除非用户要求遮脸，否则主角面部清晰自然" not in prompt
 
 
@@ -1238,7 +1244,8 @@ def test_cos_collage_respects_single_pose_framing_and_camera_constraints():
     assert "【cos_view:multi_view_collage】" not in first_person
     assert "【cam:third】" in explicit_pose
     assert "【cam:selfie】" in selfie
-    assert "背对镜头" in explicit_pose
+    assert "【cos_pose:back_to_camera】" in explicit_pose
+    assert "人物背部朝向镜头" in explicit_pose
     assert "单张照片" in explicit_pose
     assert "用户补充要求优先：多视角拼贴" not in explicit_pose
 
@@ -1617,7 +1624,8 @@ def test_generated_cos_action_exposes_one_camera_tag_and_one_concrete_framing():
         )
 
     assert re.findall(r"【(?:cam|cos_view):[^】]+】", action) == ["【cam:first】"]
-    assert action.count("本次未指定视角，随机采用") == 1
+    assert action.count("本次镜头构图：") == 1
+    assert "本次未指定视角，随机采用" not in action
     assert "视角按本套 COS 套装描述执行" not in action
 
 
@@ -1644,17 +1652,17 @@ def test_cos_action_replaces_outfit_view_alternatives():
     item = {
         "id": "framing_test",
         "title": "视角测试",
-        "prompt": "严格换装为测试COS：人物正面或三分之四侧身站立，采用近景至全身构图。",
+        "prompt": "严格换装为测试COS：白色衬衫与蓝色百褶短裙；人物正面或三分之四侧身站立，采用近景至全身构图。",
     }
     with patch("astrbot_plugin_selfie_image.cos.cos_looks.random.random", return_value=0.25), patch(
         "astrbot_plugin_selfie_image.cos.cos_looks.random.choice",
         side_effect=lambda values: values[0],
     ):
         action = build_cos_look_action("", picker=lambda **_: item)
-    assert "本次未指定视角，随机采用" in action
-    assert "该随机机位优先于套装正文中的通用景别和机位描述" in action
-    assert "正面或三分之四侧身" in action
-    assert "近景至全身" in action
+    assert action.count("本次镜头构图：") == 1
+    assert "白色衬衫与蓝色百褶短裙" in action
+    assert "正面或三分之四侧身" not in action
+    assert "近景至全身" not in action
 
 
 def test_selfie_command_cos_request_does_not_use_cos_pool():

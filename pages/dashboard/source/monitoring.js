@@ -230,21 +230,27 @@
       return String(task?.generation_stage_label || '').trim();
     }
     function taskQueueDeliveryLabel(task) {
-      if (task?.delivery_unknown === true) return '发送状态未知（QQ 回执超时）';
+      if (task?.delivery_unknown === true) return '发送状态未知';
       if (task?.delivery_success === true) return '已发送';
       if (task?.delivery_success === false) return '发送失败';
+      if (task?.generation_success === true) return '待确认';
+      if (task?.generation_success === false) return '未发送';
       return '';
     }
     function taskImageDeliveryLabel(item) {
-      return ({sent:'已发送', failed:'发送失败', unknown:'状态未知', pending:'等待回执'})[String(item?.delivery_state || '').trim()] || '未记录';
+      return ({sent:'已发送', failed:'发送失败', unknown:'发送状态未知', pending:'待确认', not_sent:'未发送'})[String(item?.delivery_state || '').trim()] || '未记录';
     }
     function taskImageResultsMarkup(items) {
       const rows = Array.isArray(items) ? items : [];
       if (!rows.length) return '';
-      return `<div style="margin-top:14px"><div class="detail-title"><h3>逐图结果</h3><span class="muted">${rows.length} 张</span></div><div style="overflow:auto"><table class="table"><thead><tr><th>#</th><th>阶段</th><th>模型</th><th>生成</th><th>投递</th><th>耗时</th><th>原因</th></tr></thead><tbody>${rows.map(item => {
+      const timingLabels = {reference_fetch:'参考图', image_to_text:'图转文', prompt_audit:'提示词审核', output_audit:'结果审核', delivery_receipt:'投递回执'};
+      return `<div style="margin-top:14px"><div class="detail-title"><h3>逐图结果</h3><span class="muted">${rows.length} 张</span></div><div style="overflow:auto"><table class="table"><thead><tr><th>#</th><th>阶段</th><th>模型</th><th>生成</th><th>投递</th><th>队列</th><th>阶段计时</th><th>耗时</th><th>原因</th></tr></thead><tbody>${rows.map(item => {
         const generation = item?.generation_success === true ? '成功' : item?.generation_success === false ? '失败' : '处理中';
         const elapsed = item?.elapsed_seconds == null ? '-' : `${escapeHtml(String(item.elapsed_seconds))}s`;
-        return `<tr><td>${escapeHtml(String(item?.index || ''))}</td><td>${escapeHtml(String(item?.generation_stage_label || item?.generation_stage || '等待结果'))}</td><td>${escapeHtml(String(item?.used_model || '未记录'))}</td><td>${generation}</td><td>${escapeHtml(taskImageDeliveryLabel(item))}</td><td>${elapsed}</td><td>${escapeHtml(String(item?.error || ''))}</td></tr>`;
+        const queueWait = item?.queue_wait_seconds == null ? '-' : `${escapeHtml(String(item.queue_wait_seconds))}s`;
+        const timings = item?.stage_timings && typeof item.stage_timings === 'object' && !Array.isArray(item.stage_timings) ? item.stage_timings : {};
+        const timingText = Object.entries(timings).map(([key, value]) => `${timingLabels[key] || key} ${value}s`).join(' · ');
+        return `<tr><td>${escapeHtml(String(item?.index || ''))}</td><td>${escapeHtml(String(item?.generation_stage_label || item?.generation_stage || '等待结果'))}</td><td>${escapeHtml(String(item?.used_model || '未记录'))}</td><td>${generation}</td><td>${escapeHtml(taskImageDeliveryLabel(item))}</td><td>${queueWait}</td><td title="${escapeHtml(timingText)}">${escapeHtml(timingText || '-')}</td><td>${elapsed}</td><td>${escapeHtml(String(item?.error || ''))}</td></tr>`;
       }).join('')}</tbody></table></div></div>`;
     }
     function taskQueueTiming(task) {

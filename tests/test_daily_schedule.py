@@ -47,6 +47,24 @@ def test_current_event_prefers_active_then_previous_or_next() -> None:
     assert select_current_event(events, 6 * 60, wrap_previous_day=True).id == "evening"
 
 
+def test_refresh_avoids_current_outfit_missing_from_legacy_period_projection(tmp_path, monkeypatch):
+    import asyncio
+    import random
+    from astrbot_plugin_selfie_image.features import persona
+
+    monkeypatch.setattr(persona, "random", random.Random(19))
+    monkeypatch.setattr(DailySchedule, "current_event", lambda self, now=None: self.events[-1])
+
+    async def refresh_twice():
+        manager = persona.PersonaManager(str(tmp_path))
+        first = await manager.refresh_daily_selfie_profile_local()
+        second = await manager.refresh_daily_selfie_profile_local()
+        assert first.outfit not in first.outfit_by_period.values()
+        assert first.outfit != second.outfit
+
+    asyncio.run(refresh_twice())
+
+
 def test_schedule_round_trips_and_rejects_overlapping_events() -> None:
     schedule = DailySchedule(
         date="2026-10-29",
@@ -174,8 +192,8 @@ def test_daily_back_event_drops_turn_back_and_missing_support_prop() -> None:
     assert "【shot:back_three_quarter】" in action
     assert "回望镜头" not in action
     assert "搭在栏杆" not in action
-    assert "背后三分之四构图" in action
-    assert "自然承重" in action
+    assert "背后三分之四他拍构图" in action
+    assert "动作瞬间：" in action
     assert "双手放松垂在身侧" not in action
 
 

@@ -201,6 +201,7 @@ class CountedGenerationWorkflow:
         sent_count = int(sent or 0)
         explicit_failed = max(0, int(getattr(sent, "failed_count", 0) or 0))
         unknown = max(0, int(getattr(sent, "unknown_count", 0) or 0))
+        self.delivery_unknown_shots += unknown
         # A transport timeout can follow a successful send. Keep ambiguous
         # receipts separate so they are never promoted to confirmed failure.
         if sent is None:
@@ -214,7 +215,6 @@ class CountedGenerationWorkflow:
         elif unknown:
             delivered = False
             delivery_unknown = True
-            self.delivery_unknown_shots += unknown
         elif sent_count >= len(files):
             delivered = True
             delivery_unknown = False
@@ -249,66 +249,49 @@ class CountedGenerationWorkflow:
             )
 
     def _summarize_result(self) -> Dict[str, Any]:
+        generation_success = self.succeeded_shots > 0
+        delivery_failed = self.delivery_failed_shots > 0
+        delivery_unknown = self.delivery_unknown_shots > 0 and not delivery_failed
+        delivery_success = (
+            False if delivery_failed else
+            None if delivery_unknown or not generation_success else
+            True
+        )
         if self.cancelled:
-            return self.plugin._normalize_generation_result({
-                "success": False,
-                "error": "任务已取消",
-                "cancelled": True,
-                "files": self.all_files,
-                "original_prompt": self.original_prompt,
-                "final_prompt": self.final_prompt,
-                "batch_total": self.total,
-                "completed_count": min(self.total, self.succeeded_shots + self.skipped_shots + self.cancelled_shots),
-                "succeeded_count": self.succeeded_shots,
-                "failed_count": self.skipped_shots,
-                "attempts": self.all_attempts,
-            }, self.total)
-        if self.failed_at:
-            return self.plugin._normalize_generation_result({
-                "success": False,
-                "error": self.last_failure_error or self.fail_label or "生图没有完成",
-                "files": self.all_files,
-                "original_prompt": self.original_prompt,
-                "final_prompt": self.final_prompt,
-                "request_data": self.last_request_data,
-                "batch_total": self.total,
-                "batch_failed_at": self.failed_at,
-                "batch_skipped": self.skipped_shots,
-                "completed_count": min(self.total, self.succeeded_shots + self.skipped_shots),
-                "succeeded_count": self.succeeded_shots,
-                "failed_count": self.skipped_shots,
-                "attempts": self.all_attempts,
-            }, self.total)
+            error = "任务已取消"
+        elif self.failed_at:
+            error = self.last_failure_error or self.fail_label or "生图没有完成"
+        elif delivery_failed:
+            error = self.delivery_error or "生成成功但发送失败"
+        else:
+            error = ""
         result = {
-            "success": self.skipped_shots == 0 and self.delivery_failed_shots == 0,
+            "success": not self.cancelled and not self.failed_at and self.skipped_shots == 0 and not delivery_failed,
+            "error": error,
+            "cancelled": self.cancelled,
             "files": self.all_files,
             "original_prompt": self.original_prompt,
             "final_prompt": self.final_prompt,
             "request_data": self.last_request_data,
             "used_model": self.used_model,
             "elapsed_seconds": self.last_elapsed,
+            "generation_success": generation_success,
+            "delivery_success": delivery_success,
+            "delivery_unknown": delivery_unknown,
+            "delivery_failed": delivery_failed,
+            "delivery_unknown_count": self.delivery_unknown_shots,
+            "delivery_failed_count": self.delivery_failed_shots,
             "batch_total": self.total,
             "batch_skipped": self.skipped_shots,
-            "completed_count": min(self.total, self.succeeded_shots + self.skipped_shots),
+            "completed_count": min(self.total, self.succeeded_shots + self.skipped_shots + self.cancelled_shots),
             "succeeded_count": self.succeeded_shots,
             "failed_count": self.skipped_shots,
             "attempts": self.all_attempts,
         }
-        if self.delivery_failed_shots:
-            result.update({
-                "status": "delivery_failed",
-                "generation_success": True,
-                "delivery_success": False,
-                "delivery_failed_count": self.delivery_failed_shots,
-                "error": self.delivery_error or "生成成功但发送失败",
-            })
-        elif self.delivery_unknown_shots:
-            result.update({
-                "generation_success": self.succeeded_shots > 0,
-                "delivery_success": None,
-                "delivery_unknown": True,
-                "delivery_unknown_count": self.delivery_unknown_shots,
-            })
-        else:
-            result.update({"generation_success": self.succeeded_shots > 0, "delivery_success": True})
+        if self.cancelled:
+            result["status"] = "cancelled"
+        elif delivery_failed and generation_success:
+            result["status"] = "delivery_failed"
+        if self.failed_at:
+            result["batch_failed_at"] = self.failed_at
         return self.plugin._normalize_generation_result(result, self.total)

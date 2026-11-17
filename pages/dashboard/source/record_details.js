@@ -354,12 +354,18 @@
       for (const key of ['cos', 'cos_pose', 'cos_scene', 'cos_lighting', 'cos_framing', 'cos_composition', 'cos_view']) {
         if (r[key]) selection[key] = r[key];
       }
+      const generation = r.generation_success === true || (r.generation_success == null && r.success === true);
+      const delivery = r.delivery_unknown === true ? '发送状态未知'
+        : r.delivery_failed === true || r.delivery_success === false ? '发送失败'
+        : r.delivery_success === true ? '已发送'
+        : generation ? '待确认' : '未发送';
       return [
         `生图编号：${r.image_code || ''}`,
         `时间：${r.time || ''}`,
         `调用入口：${r.source || ''}`,
         `模型：${r.used_model || r.model || ''}`,
-        `状态：${r.success ? '成功' : '失败'}`,
+        `生成：${generation ? '成功' : '失败'}`,
+        `投递：${delivery}`,
         `随机条目：${JSON.stringify(selection)}`,
         `原始输入：\n${r.original_prompt || ''}`,
         `最终实际提示词：\n${r.final_prompt || r.request_data?.request_prompt_en || r.request_prompt || r.prompt || ''}`,
@@ -412,11 +418,11 @@
         <div class="grid">
           <div><label>时间</label><div class="status">${escapeHtml(r.time || '')}</div></div>
           <div><label>来源</label><div class="status">${escapeHtml(displaySourceLabel(r))}</div></div>
-          <div><label>状态</label><div class="status">${r.success ? '成功' : '失败'}</div></div>
+          <div><label>状态</label><div class="status">${escapeHtml(recordLifecycleStatus(r).label)}</div></div>
           <div><label>类型</label><div class="status">图片</div></div>
           <div><label>MD5</label><div class="status" style="overflow-wrap:anywhere">${escapeHtml(String(r.md5 || '空'))}</div></div>
           <div><label>用时</label><div class="status">${escapeHtml(formatRecordElapsed(r))}</div></div>
-          ${r.generation_success !== undefined || r.delivery_success !== undefined ? `<div><label>生成/发送</label><div class="status">${r.generation_success === true ? '生成成功' : r.generation_success === false ? '生成失败' : '-'}${r.delivery_success === true ? ' · 已发送' : r.delivery_success === false ? ' · 发送失败' : ''}</div></div>` : ''}
+          ${r.generation_success !== undefined || r.delivery_success !== undefined || r.delivery_unknown === true ? `<div><label>生成/发送</label><div class="status">${r.generation_success === true || (r.generation_success == null && r.success === true) ? '生成成功' : r.generation_success === false || r.success === false ? '生成失败' : '-'}${r.delivery_unknown === true ? ' · 发送状态未知' : r.delivery_success === true ? ' · 已发送' : r.delivery_success === false || r.delivery_failed === true ? ' · 发送失败' : r.generation_success === true || r.success === true ? ' · 待确认' : ' · 未发送'}</div></div>` : ''}
           <div><label>模型重试</label><div class="status">${recordRetryModelChain(r)}</div></div>
           ${!r.task_summary && r.task_id ? `<div><label>关联任务</label><div class="status mono">${escapeHtml(String(r.task_id))}</div></div>` : ''}
           <div><label>调用入口</label><div class="status">${escapeHtml(r.source || '')}</div></div>

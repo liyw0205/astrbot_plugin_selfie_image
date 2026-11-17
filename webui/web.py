@@ -358,7 +358,20 @@ class FlaskWebServer:
                 response.headers["Expires"] = "0"
             return response
 
-        def json_object_payload() -> Any:
+        def json_object_payload(max_bytes: Optional[int] = None) -> Any:
+            if max_bytes is not None:
+                if request.content_length and request.content_length > max_bytes:
+                    return None, fail("归档请求过大，请使用分块上传", 413)
+                raw_body = request.stream.read(max_bytes + 1)
+                if len(raw_body) > max_bytes:
+                    return None, fail("归档请求过大，请使用分块上传", 413)
+                try:
+                    payload = json.loads(raw_body) if raw_body.strip() else {}
+                except (ValueError, UnicodeError):
+                    return None, fail("请求体必须是 JSON 对象")
+                if not isinstance(payload, dict):
+                    return None, fail("请求体必须是 JSON 对象")
+                return payload, None
             payload = request.get_json(silent=True)
             if payload is None:
                 raw_body = request.get_data(cache=True) or b""
@@ -718,12 +731,19 @@ class FlaskWebServer:
         def selfie_wardrobe_mutation(method: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
+            payload, error_response = json_object_payload(
+                24 * 1024 * 1024 if method == "wardrobe_import" else None,
+            )
             if error_response:
                 return error_response
             return selfie_profile_result(
                 lambda: getattr(selfie_profile_controller, method)(payload)
             )
+
+        def selfie_wardrobe_export() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            return selfie_profile_result(selfie_profile_controller.wardrobe_export)
 
         selfie_profile_handlers = {
             "selfie_reference_get": selfie_reference_get,
@@ -736,7 +756,7 @@ class FlaskWebServer:
             "selfie_wardrobe_update": lambda: selfie_wardrobe_mutation("wardrobe_update"),
             "selfie_wardrobe_delete": lambda: selfie_wardrobe_mutation("wardrobe_delete"),
             "selfie_wardrobe_toggle": lambda: selfie_wardrobe_mutation("wardrobe_toggle"),
-            "selfie_wardrobe_export": lambda: selfie_profile_result(selfie_profile_controller.wardrobe_export),
+            "selfie_wardrobe_export": selfie_wardrobe_export,
             "selfie_wardrobe_import": lambda: selfie_wardrobe_mutation("wardrobe_import"),
         }
         for route in SELFIE_PROFILE_ROUTE_CONTRACTS:
@@ -774,7 +794,10 @@ class FlaskWebServer:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
             try:
-                return backup_result(lambda: backup_controller.download(backup_id))
+                if request.args.get("format") == "file":
+                    info = backup_controller.download(backup_id, request.args)
+                    return send_file(info["path"], mimetype="application/zip", as_attachment=True, download_name=info["filename"], max_age=0)
+                return backup_result(lambda: backup_controller.download(backup_id, request.args))
             except WebContractError as exc:
                 return fail(str(exc), exc.status_code)
             except Exception as exc:
@@ -783,10 +806,10 @@ class FlaskWebServer:
         def backups_restore(backup_id: str) -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            _, error_response = json_object_payload()
+            payload, error_response = json_object_payload()
             if error_response:
                 return error_response
-            return backup_result(lambda: backup_controller.restore(backup_id))
+            return backup_result(lambda: backup_controller.restore(backup_id, payload))
 
         def backups_delete() -> Any:
             if not check_auth():
@@ -799,10 +822,30 @@ class FlaskWebServer:
         def backups_upload() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
-            payload, error_response = json_object_payload()
+            payload, error_response = json_object_payload(24 * 1024 * 1024)
             if error_response:
                 return error_response
             return backup_result(lambda: backup_controller.upload(payload))
+
+        def archive_transfer(operation: str, transfer_id: str = "") -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            payload, error_response = json_object_payload(2 * 1024 * 1024)
+            if error_response:
+                return error_response
+            return backup_result(lambda: backup_controller.transfer(operation, transfer_id, payload))
+
+        def archive_export_download(transfer_id: str) -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            try:
+                info = backup_controller.export_download(transfer_id, request.args)
+                if request.args.get("format") == "file":
+                    return send_file(info["path"], mimetype="application/zip", as_attachment=True,
+                                     download_name=info["filename"], max_age=0)
+                return ok(info)
+            except WebContractError as exc:
+                return fail(str(exc), exc.status_code)
 
         backup_handlers = {
             "backups_options": backups_options,
@@ -813,6 +856,12 @@ class FlaskWebServer:
             "backups_restore": backups_restore,
             "backups_delete": backups_delete,
             "backups_upload": backups_upload,
+            "archive_upload_start": lambda: archive_transfer("start"),
+            "archive_upload_chunk": lambda transfer_id: archive_transfer("append", transfer_id),
+            "archive_upload_commit": lambda transfer_id: archive_transfer("commit", transfer_id),
+            "archive_transfer_discard": lambda transfer_id: archive_transfer("discard", transfer_id),
+            "archive_wardrobe_export": lambda: archive_transfer("export"),
+            "archive_export_download": archive_export_download,
         }
         for route in BACKUP_ROUTE_CONTRACTS:
             app.add_url_rule(

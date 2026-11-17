@@ -870,7 +870,10 @@ class StudioMixin:
             },
         }
         with self._web_task_lock:
-            if getattr(self, "_terminating", False):
+            checker = getattr(self, "_ensure_generation_available", None)
+            if callable(checker):
+                checker()
+            elif getattr(self, "_terminating", False):
                 raise RuntimeError("插件正在卸载，无法提交新任务")
             self._web_task_seq += 1
             task_id = f"web-studio-{int(time.time() * 1000)}-{self._web_task_seq}"
@@ -1234,6 +1237,9 @@ class StudioMixin:
             wait_commits = getattr(self, "_wait_for_record_commits", None)
             if callable(wait_commits):
                 await wait_commits(task_id)
+            mark_delivery = getattr(self, "_mark_task_records_delivery", None)
+            if callable(mark_delivery) and all_paths:
+                await mark_delivery(task_id, delivered=True, paths=all_paths)
             canvas_store.attach_run_finish(
                 session_id,
                 task_id,
@@ -1268,6 +1274,8 @@ class StudioMixin:
                 "status": terminal["terminal_status"],
                 "cancelled": terminal["cancelled"],
                 "generation_success": terminal["generation_success"],
+                # Studio results are available on the canvas, not sent to chat.
+                "delivery_success": True if all_paths else None,
                 "delivery_failed": terminal["delivery_failed"],
                 "delivery_unknown": terminal["delivery_unknown"],
                 "image_paths": all_paths,
@@ -1289,6 +1297,10 @@ class StudioMixin:
                 task_id,
                 status=terminal["terminal_status"],
                 success=success,
+                generation_success=terminal["generation_success"],
+                delivery_success=True if all_paths else None,
+                delivery_failed=terminal["delivery_failed"],
+                delivery_unknown=terminal["delivery_unknown"],
                 generation_stage=terminal_stage,
                 generation_stage_label=terminal_stage_label,
                 error=error,
@@ -1336,7 +1348,20 @@ class StudioMixin:
                 generation_stage="cancelled",
                 generation_stage_label="已取消",
                 error=error,
-                result={"success": False, "error": error, "cancelled": True, "session_id": session_id},
+                generation_success=False,
+                delivery_success=None,
+                delivery_failed=False,
+                delivery_unknown=False,
+                result={
+                    "success": False,
+                    "error": error,
+                    "cancelled": True,
+                    "generation_success": False,
+                    "delivery_success": None,
+                    "delivery_failed": False,
+                    "delivery_unknown": False,
+                    "session_id": session_id,
+                },
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
             )
@@ -1376,7 +1401,20 @@ class StudioMixin:
                 generation_stage="cancelled" if cancelled else "failed",
                 generation_stage_label="已取消" if cancelled else "已失败",
                 error=error,
-                result={"success": False, "error": error, "session_id": session_id},
+                generation_success=False,
+                delivery_success=None,
+                delivery_failed=False,
+                delivery_unknown=False,
+                result={
+                    "success": False,
+                    "error": error,
+                    "cancelled": cancelled,
+                    "generation_success": False,
+                    "delivery_success": None,
+                    "delivery_failed": False,
+                    "delivery_unknown": False,
+                    "session_id": session_id,
+                },
                 finished_ts=time.time(),
                 finished_at=self._web_task_timestamp(),
             )

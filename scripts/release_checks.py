@@ -41,6 +41,7 @@ APPROVED_RUNTIME_ADDITIONS = frozenset({
     "webui/controllers.py",
     "webui/prompt_controller.py",
     "features/backup_manager.py",
+    "features/archive_transfer.py",
 })
 REQUIRED_FILES = frozenset({
     "__init__.py", "main.py", "metadata.yaml", "_conf_schema.json", "requirements.txt",

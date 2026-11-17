@@ -572,9 +572,11 @@ class SelfieImageDashboardAPI:
             return error
         assert payload is not None
         try:
-            result: SelfieProfileControllerResult = getattr(
-                self._selfie_profile_controller, method
-            )(payload)
+            handler = getattr(self._selfie_profile_controller, method)
+            result: SelfieProfileControllerResult = (
+                await asyncio.to_thread(handler, payload)
+                if method == "wardrobe_import" else handler(payload)
+            )
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         except Exception as exc:
@@ -595,7 +597,9 @@ class SelfieImageDashboardAPI:
 
     async def page_selfie_wardrobe_export(self) -> Any:
         try:
-            result: SelfieProfileControllerResult = self._selfie_profile_controller.wardrobe_export()
+            result: SelfieProfileControllerResult = await asyncio.to_thread(
+                self._selfie_profile_controller.wardrobe_export,
+            )
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         except Exception as exc:
@@ -614,7 +618,7 @@ class SelfieImageDashboardAPI:
 
     async def page_backups_list(self) -> Any:
         try:
-            result = self._backup_controller.list()
+            result = await asyncio.to_thread(self._backup_controller.list)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         return self._ok(result)
@@ -638,9 +642,11 @@ class SelfieImageDashboardAPI:
 
     async def page_backups_download(self, backup_id: str) -> Any:
         try:
-            result = self._backup_controller.download(backup_id)
+            result = await asyncio.to_thread(self._backup_controller.download, backup_id, request.query)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
+        if self._query_value("format") == "file":
+            return file_response(result["path"], filename=result["filename"], content_type="application/zip")
         return self._ok(result)
 
     async def page_backups_restore(self, backup_id: str) -> Any:
@@ -648,7 +654,7 @@ class SelfieImageDashboardAPI:
         if error:
             return error
         try:
-            result = self._backup_controller.restore(backup_id)
+            result = await asyncio.to_thread(self._backup_controller.restore, backup_id, payload)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         return self._ok(result)
@@ -668,9 +674,49 @@ class SelfieImageDashboardAPI:
         if error:
             return error
         try:
-            result = self._backup_controller.upload(payload)
+            result = await asyncio.to_thread(self._backup_controller.upload, payload)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
+        return self._ok(result)
+
+    async def _page_archive_transfer(self, operation: str, transfer_id: str = "") -> Any:
+        headers = getattr(request, "headers", {})
+        try:
+            if int(headers.get("content-length") or 0) > 2 * 1024 * 1024:
+                return self._fail("归档请求不得超过 2MB", 413)
+        except (ValueError, TypeError):
+            return self._fail("无效的归档请求长度", 400)
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            result = await asyncio.to_thread(self._backup_controller.transfer, operation, transfer_id, payload)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        return self._ok(result)
+
+    async def page_archive_upload_start(self) -> Any:
+        return await self._page_archive_transfer("start")
+
+    async def page_archive_upload_chunk(self, transfer_id: str) -> Any:
+        return await self._page_archive_transfer("append", transfer_id)
+
+    async def page_archive_upload_commit(self, transfer_id: str) -> Any:
+        return await self._page_archive_transfer("commit", transfer_id)
+
+    async def page_archive_transfer_discard(self, transfer_id: str) -> Any:
+        return await self._page_archive_transfer("discard", transfer_id)
+
+    async def page_archive_wardrobe_export(self) -> Any:
+        return await self._page_archive_transfer("export")
+
+    async def page_archive_export_download(self, transfer_id: str) -> Any:
+        try:
+            result = await asyncio.to_thread(self._backup_controller.export_download, transfer_id, request.query)
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        if self._query_value("format") == "file":
+            return file_response(result["path"], filename=result["filename"], content_type="application/zip")
         return self._ok(result)
 
     async def page_test_image_channel(self) -> Any:

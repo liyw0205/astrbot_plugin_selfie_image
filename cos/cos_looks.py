@@ -239,7 +239,7 @@ COS_LOOK_SCENE_THEME_CONFLICTS = {
 COS_SUBJECT_CLARITY_PROMPT = (
     "人物面部、身体轮廓、发型边缘和服装关键结构是画面最高优先级，曝光自然、五官轮廓可辨；"
     "背景、远处陈设和服装细小纹理允许随真实景深自然柔化；"
-    "主体保留正常局部反差与少量生活抓拍的不完美，不做统一磨皮、整体雾化或过度锐化。"
+    "对焦落在人物和服装主体。"
 )
 
 COS_SUBJECT_CLARITY_COVERED_EYES_PROMPT = (
@@ -262,6 +262,7 @@ COS_EYE_MODE_BY_LOOK_ID: Dict[str, str] = {
     "ninghongye_spider_demon": "full_cover",
     "ninghongye_gasviper": "full_cover",
     "ninghongye_dark_feline": "full_cover",
+    "fate_medusa_black_violet": "full_cover",
 }
 
 COS_FULL_EYE_COVER_PROMPT = (
@@ -302,6 +303,8 @@ def normalize_cos_eye_contract(prompt: str, cos_id: str = "") -> str:
         return f"{text}{COS_VISIBLE_EYE_PROMPT}"
     if mode != "full_cover":
         return text
+    if not str(cos_id or "").startswith("ninghongye_"):
+        return text.replace(COS_VISIBLE_EYE_PROMPT, "")
     old_contract = re.compile(
         r"宁红夜的双眼必须被横向红色绸缎仪式眼罩完整覆盖；.*?"
         r"眼带不是发饰、头巾、透明纱、蕾丝、金属面罩或悬浮装饰。"
@@ -725,10 +728,13 @@ def pick_cos_framing(
 ) -> Dict[str, Any]:
     """Pick a concrete framing unless the user's extra request already fixes it."""
     camera = str(camera or "third")
-    # Framing text authored inside an outfit is descriptive context, not a lock.
-    # Keep it intact so the selected random view can take precedence in the
-    # action contract without rewriting costume details.
-    resolved_outfit = str(outfit or "")
+    # Outfit alternatives must not survive alongside the chosen camera crop.
+    # Only remove recognized staging alternatives, leaving costume text intact.
+    resolved_outfit = re.sub(
+        rf"(?:人物)?(?:采用|使用|适合)?{COS_FRAMING_OPTION_RE.pattern}[，。；]?",
+        "",
+        str(outfit or ""),
+    )
     resolved_extra, extra_options, option_id = _resolve_cos_framing_options(
         extra_request,
         avoid_framings=avoid_framings,
@@ -808,7 +814,9 @@ def pick_cos_framing(
         forced_allowed = forced_allowed and forced not in COS_SCENE_POSE_FRAMING_EXCLUSIONS.get(
             (scene_id, pose_id), frozenset()
         )
-        forced_allowed = forced_allowed and forced not in _as_id_set(avoid_framings)
+        forced_allowed = forced_allowed and (
+            rear_hair_requested or forced not in _as_id_set(avoid_framings)
+        )
         forced_allowed = forced_allowed and forced not in _cos_unsafe_framings(scene_id, pose_id, camera)
         if forced_allowed:
             selected = dict(COS_FRAMING_CLASSES[forced])
@@ -1426,8 +1434,21 @@ def _pick_scene_lighting(
     return lighting_id, "".join(part for part in parts if part)
 
 
-def _pick_scene_expression(pose_id: str, extra_request: str = "") -> tuple[str, str]:
-    requested = _requested_vocab_id(extra_request, COS_JSON_EXPRESSIONS)
+def _pick_scene_expression(pose_id: str, extra_request: str = "", *, covered_eyes: bool = False) -> tuple[str, str]:
+    # Makeup names can contain expression aliases (温柔妆 / 俏皮妆).
+    # Mask complete names only for expression lookup, keeping clause boundaries.
+    makeup_terms = {
+        re.sub(r"\s+", "", str(value)).lower()
+        for item_id, item in COS_JSON_MAKEUPS.items()
+        for value in (item_id, item.get("title"), *(item.get("aliases") or ()))
+        if value
+    }
+    expression_request = re.sub(r"\s+", "", str(extra_request or "")).lower()
+    expression_request = re.sub(
+        "|".join(re.escape(term) for term in sorted(makeup_terms, key=len, reverse=True)),
+        ",", expression_request,
+    )
+    requested = _requested_vocab_id(expression_request, COS_JSON_EXPRESSIONS)
     pose = COS_RANDOM_POSE_CLASSES.get(pose_id, {})
     allowed = tuple(pose.get("expression_ids") or COS_JSON_EXPRESSIONS)
     incompatible = set(pose.get("incompatible_expression_ids") or ())
@@ -1438,10 +1459,19 @@ def _pick_scene_expression(pose_id: str, extra_request: str = "") -> tuple[str, 
             (item for item in allowed if item in COS_JSON_EXPRESSIONS and item not in incompatible)
         )
     expression = COS_JSON_EXPRESSIONS.get(expression_id) or {}
-    return expression_id, str(expression.get("prompt") or "").strip()
+    if pose.get("orientation") == "back":
+        return expression_id, ""
+    prompt_key = (
+        "covered_eyes_prompt" if covered_eyes
+        else "closed_eyes_prompt" if pose_id in {"quiet_low_gaze", "sleeping_on_bed"}
+        else "prompt"
+    )
+    return expression_id, str(expression.get(prompt_key) or "").strip()
 
 
-def _pick_scene_makeup(scene_id: str, extra_request: str = "") -> tuple[str, str]:
+def _pick_scene_makeup(
+    scene_id: str, extra_request: str = "", *, pose_id: str = "", covered_eyes: bool = False,
+) -> tuple[str, str]:
     requested = _requested_vocab_id(extra_request, COS_JSON_MAKEUPS)
     scene = COS_RANDOM_SCENE_CLASSES.get(str(scene_id or ""), {})
     allowed = tuple(
@@ -1450,7 +1480,9 @@ def _pick_scene_makeup(scene_id: str, extra_request: str = "") -> tuple[str, str
     )
     makeup_id = requested if requested in COS_JSON_MAKEUPS else _pick_weighted_cos_id(allowed)
     makeup = COS_JSON_MAKEUPS.get(makeup_id) or {}
-    return makeup_id, str(makeup.get("prompt") or "").strip()
+    if COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("orientation") == "back":
+        return makeup_id, ""
+    return makeup_id, str(makeup.get("covered_eyes_prompt" if covered_eyes else "prompt") or "").strip()
 
 
 def _poses_for_orientation(pose_ids: Iterable[str], orientation: str) -> List[str]:
@@ -1693,16 +1725,20 @@ def _pick_cos_collage_variation(
     lighting_id, lighting_prompt = _pick_scene_lighting(
         scene_id, main_pose, extra_request, panel_pose_ids=panel_poses,
     )
-    expression_id, expression_prompt = _pick_scene_expression(main_pose, extra_request)
+    expression_id, expression_prompt = _pick_scene_expression(
+        main_pose, extra_request, covered_eyes=cos_eye_mode(cos_id) == "full_cover",
+    )
     if (
         expression_id == "deep_affection"
         and any(pose_id in {"back_to_camera", "over_shoulder"} for pose_id in panel_poses)
     ):
         # One expression line applies to every panel, including rear-facing poses.
         expression_id, expression_prompt = _pick_scene_expression(
-            "over_shoulder", extra_request
+            "over_shoulder", extra_request, covered_eyes=cos_eye_mode(cos_id) == "full_cover",
         )
-    makeup_id, makeup_prompt = _pick_scene_makeup(scene_id, extra_request)
+    makeup_id, makeup_prompt = _pick_scene_makeup(
+        scene_id, extra_request, pose_id=main_pose, covered_eyes=cos_eye_mode(cos_id) == "full_cover",
+    )
     prompt_parts = []
     prompt_parts.append(
         ("按用户指定场景补充环境细节：" if requested_scene else "本次随机场景优先于套装正文中残留的背景或环境描述：")
@@ -1916,8 +1952,11 @@ def pick_cos_variation(
     scene = COS_RANDOM_SCENE_CLASSES.get(scene_id)
     style_id, scene_style_prompt = _pick_scene_style(scene_id, extra_request)
     lighting_id, lighting_prompt = _pick_scene_lighting(scene_id, pose_id, extra_request)
-    expression_id, expression_prompt = _pick_scene_expression(pose_id, extra_request)
-    makeup_id, makeup_prompt = _pick_scene_makeup(scene_id, extra_request)
+    covered_eyes = cos_eye_mode(cos_id) == "full_cover"
+    expression_id, expression_prompt = _pick_scene_expression(pose_id, extra_request, covered_eyes=covered_eyes)
+    makeup_id, makeup_prompt = _pick_scene_makeup(
+        scene_id, extra_request, pose_id=pose_id, covered_eyes=covered_eyes,
+    )
 
     prompt_parts = []
     if scene and requested_scene != "user":
@@ -1955,8 +1994,6 @@ def pick_cos_variation(
         pose_prompt = _cos_pose_prompt_for_camera(pose_id, camera)
         if pose_id == "over_shoulder" and camera == "third" and requests_rear_hair_close(extra_request):
             pose_prompt = (
-                "人物以背后三分之四角度朝向镜头斜后方，近侧头部与一侧肩线自然可见；"
-                "头部与肩线方向连贯，视线朝向画外，不回头、不回眸、不扭颈，不要求露出正脸；"
                 "肩颈放松、站姿稳定，双手自然留在头肩取景范围之外，不抬手遮挡发型。"
             )
         prompt_parts.append(
@@ -2784,14 +2821,7 @@ def build_cos_third_person_prompt(text: str) -> str:
         ),
     )
     adapted = framing.get("extra_request_text", adapted)
-    if framing.get("randomized_from_options"):
-        framing_line = f"本次从已有视角选项中随机确定为{framing['prompt']}；"
-    else:
-        framing_line = (
-            f"本次未指定视角，随机采用{framing['prompt']}；该随机机位优先于套装正文中的通用景别和机位描述；"
-            if framing["prompt"]
-            else "本次按已确定的单一构图执行；"
-        )
+    framing_line = f"本次镜头构图：{framing['prompt']}；" if framing.get("prompt") else ""
     composition = framing.get("composition") or {}
     if composition.get("prompt"):
         framing_line += f"附加构图强化：{composition['prompt']}；"
@@ -3086,20 +3116,8 @@ def build_cos_look_action(
             "本次采用9:16竖幅画布上的自然错落式多视角拼贴，优先于套装正文中的单一景别描述；"
             "以下各画格保持同一人物、同一套装、同一场景和影像风格；"
         )
-    elif framing_choice.get("randomized_from_options"):
-        framing_line = f"本次从已有视角选项中随机确定为{framing_choice['prompt']}；"
-    elif variation.get("combination_id") and framing_choice.get("prompt"):
-        framing_line = (
-            f"本次采用精选组合“{variation.get('combination_title') or variation['combination_id']}”，"
-            f"镜头构图锁定为{framing_choice['prompt']}；"
-        )
-    elif framing_choice.get("explicit"):
-        framing_line = "按用户指定的镜头构图执行；"
-    elif framing_choice["view_id"] and framing_choice["prompt"]:
-        framing_line = (
-            f"本次未指定视角，随机采用{framing_choice['prompt']}；"
-            "该随机机位优先于套装正文中的通用景别和机位描述；"
-        )
+    elif framing_choice.get("prompt"):
+        framing_line = f"本次镜头构图：{framing_choice['prompt']}；"
     else:
         framing_line = ""
     if collage_fallback_reason:
@@ -3113,22 +3131,6 @@ def build_cos_look_action(
     phone_face_cover = phone_face_cover and handheld_allowed
     if camera_kind == "third":
         hand_rule = (
-            "背面他拍：人物背对镜头，肩胯和头部朝向一致，不回头、不回眸、不扭颈；"
-            "双手按已选姿势自然摆放，人物恰好两条手臂和两只手，不额外添加拍摄设备，不要求露出面部。"
-            if variation["pose_id"] == "back_to_camera"
-            else
-            (
-                "背面侧后方头肩构图：人物身体以背后三分之四角度朝向镜头，头部随肩线自然朝向画外；"
-                "镜头呈现后侧发型与近侧耳后发束，不要求露出正脸，不回头、不回眸、不扭颈；双手留在画外，不遮挡发型。"
-                if framing_choice.get("view_id") == "rear_hair_close"
-                else "背后三分之四展示：人物肩线、胯部与头部朝向一致，面部自然朝向画外；不要求露出侧脸或正脸，不为了露脸回头、回眸或扭颈，优先呈现背部、腰胯曲线和服装侧后方。"
-            )
-            if variation["pose_id"] == "over_shoulder"
-            else
-            "侧边支撑前倾：不出现手机、镜子或拍摄设备；人物双手在肩部至头部附近同时扶住同一条窄侧边，可相邻或轻微上下错开并共同支撑身体，头部和视线朝向侧边；"
-            "不要求露出正脸，保留自然侧脸或让面部部分、全部处于画外，不为了露脸回头或扭颈；人物恰好两条手臂和两只手。"
-            if variation["pose_id"] == "side_edge_bend"
-            else
             "不要对镜、不要镜子；画面只允许主角既有的一只手握持唯一一部普通手机，从脸侧或下方自然遮住半张脸；"
             "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或第二台拍摄设备；"
@@ -3137,7 +3139,8 @@ def build_cos_look_action(
                 "主角双手严格保持已选动作，优先呈现姿势轮廓和服装结构；面部可被手臂或发丝自然局部遮挡，不为露脸改变手臂或头部方向；"
                 "画面只展示主角自身的两条手臂和两只手，连接自然。"
                 if pose_allows_face_occlusion
-                else "主角双手自然做动作，画面只展示主角自身的两条手臂和两只手，手臂从肩部到手腕连接自然；未明确要求遮脸时保持面部、身体轮廓和服装关键结构清楚，细小纹理允许随景深自然柔化；严格遵循已选机位与姿势呈现面部，侧脸按自然透视呈现，不为露出正脸强行扭头或扭颈。"
+                and COS_RANDOM_POSE_CLASSES.get(pose_id, {}).get("orientation") != "back"
+                else "双手按已选姿势自然摆放，人物恰好两条手臂和两只手，连接自然。"
             )
         )
         framing = (
@@ -3151,15 +3154,6 @@ def build_cos_look_action(
         )
     elif camera_kind == "selfie":
         hand_rule = (
-            "本次为背面定时自拍：主角自行启动手机定时拍摄，手机和支架留在画面外；主角背对镜头，双手按已选姿势自然摆放，不拿手机、不回头，也不额外生成拍摄者。"
-            if variation["pose_id"] == "back_to_camera"
-            else
-            "本次为背后三分之四定时拍摄：拍摄设备留在画面外，人物肩线、胯部与头部朝向一致，面部自然朝向画外；不要求露出侧脸或正脸，不为了露脸回头、回眸或扭颈。"
-            if variation["pose_id"] == "over_shoulder"
-            else
-            "侧边支撑前倾优先于通用自拍手势：采用固定或定时拍摄，设备留在画面外，不让手机占用双手；双手必须同时扶住同一条窄侧边并共同支撑身体前倾，头部和视线朝向支撑边，不看镜头；不要求正脸，可只见侧脸或不露脸，不为露脸回头或扭颈。"
-            if variation["pose_id"] == "side_edge_bend"
-            else
             "可对镜取景；画面只允许主角既有的一只手握持唯一一部普通手机，从脸侧或下方自然遮住半张脸；"
             "若该手原本做动作或持道具，手机替代它原本的动作或道具，原道具不入镜；"
             "另一只手保持原有动作或道具。人物恰好两条手臂、两只手和正常数量手指，禁止新增手、手臂、镜像手、第二部手机或其它拍摄设备；"
@@ -3177,24 +3171,9 @@ def build_cos_look_action(
         )
     else:
         hand_rule = (
-            "第一视角主观镜头：镜头位于观察者自然视线的位置，像观察者亲眼看到主角；"
+            "镜头位于观察者自然视线的位置；"
             "画面只出现主角一个人，主角自身两条手臂和两只手自然连接；"
             "不自动出现手持设备、镜面反射、拍摄者、记录设备、观察者身体、观察者手臂或第二人物；"
-            + (
-                "按背面构图清楚展示头发和服装后侧，不要求主角回头露出面部。"
-                if variation["pose_id"] == "back_to_camera"
-                else
-                "背后三分之四展示优先于面部展示：肩线、胯部与头部朝向一致，脸自然朝向画外；不要求露出侧脸或正脸，不为了露脸回头、回眸或扭颈。"
-                if variation["pose_id"] == "over_shoulder"
-                else
-                "双手在肩部至头部附近同时扶住同一条窄侧边，可相邻或轻微上下错开，头部和视线朝向支撑边；不要求露出正脸，可只见侧脸或不露脸，不为露脸扭头。"
-                if variation["pose_id"] == "side_edge_bend"
-                else (
-                    "动作与服装结构清楚，面部可被手臂或发丝自然局部遮挡，不为露脸改变姿势。"
-                    if pose_allows_face_occlusion
-                    else "保持面部、发型、服装和配饰清晰可见。"
-                )
-            )
         )
         framing = (
             "【第一视角 / 看看COS模式】"
@@ -3207,12 +3186,12 @@ def build_cos_look_action(
         framing
         + f"本次套装：{series_prefix}{title}。"
         + outfit
-        + "严格还原套装提示词明确列出的颜色、层次、配饰、鞋履和材质；未提及或未核实的部件不自行添加；妆造和神态按本次兼容组合执行；"
+        + "还原套装写明的颜色、层次、配饰、鞋履和材质，未列出的部件不自行添加。"
         + (
             "保持七张照片的不规则竖幅拼贴关系：中央竖幅主图明显更大，六张辅助照片错落分布于主图上下与两侧，避免等分网格；"
             "各画格使用不同姿势和机位但场景、服装与影像风格一致；不要简化成普通常服；画面干净得体。"
             if collage_active
-            else "保持上方已确定的单一构图，不在多个景别或视角之间切换；不要简化成普通常服；画面干净得体。"
+            else ""
         )
     )
     if variation["prompt"]:
@@ -3227,6 +3206,22 @@ def build_cos_look_action(
         requested_pose=requested_pose,
         requested_orientation=requested_orientation,
     )
+    consumed_terms = {title}
+    for catalog, selection_key in (
+        (COS_JSON_EXPRESSIONS, "expression_id"),
+        (COS_JSON_MAKEUPS, "makeup_id"),
+    ):
+        entry = catalog.get(variation.get(selection_key), {})
+        consumed_terms.update(entry.get("aliases") or ())
+        consumed_terms.add(str(entry.get("label") or entry.get("title") or ""))
+    if framing_choice.get("randomized_from_options"):
+        consumed_terms.update(str(framing_choice.get("prompt") or "").split("；"))
+    # Drop whole parsed tokens only; preserve free-form refinements and negations.
+    extra = re.sub(
+        r"[^\s，,、；;]+",
+        lambda match: "" if match.group() in consumed_terms else match.group(),
+        extra,
+    ).strip(" ，,、；;")
     if collage_fallback_reason:
         term_pattern = "|".join(
             re.escape(term)

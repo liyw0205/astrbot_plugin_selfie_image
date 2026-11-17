@@ -240,6 +240,14 @@
       const seconds = Number(record.elapsed_seconds);
       return Number.isFinite(seconds) && seconds >= 0 ? `${seconds.toFixed(2)}秒` : '空';
     }
+    function recordLifecycleStatus(record) {
+      const generation = record.generation_success ?? record.success;
+      if (generation !== true) return {label: generation === false ? '生成失败' : '未记录', tone: 'gray'};
+      if (record.delivery_unknown === true) return {label: '回执未知', tone: 'warning'};
+      if (record.delivery_failed === true || record.delivery_success === false) return {label: '发送失败', tone: 'warning'};
+      if (record.delivery_success === true) return {label: '成功', tone: 'green'};
+      return {label: '待确认', tone: 'gray'};
+    }
     function recordDetailValue(value, fallback = '') {
       if (value === undefined || value === null || value === '') return fallback;
       if (typeof value === 'boolean') return value ? '是' : '否';
@@ -427,7 +435,8 @@
       $('recordTable').innerHTML = '<thead><tr><th></th><th>编号</th><th>时间</th><th>类型</th><th>来源</th><th>状态</th><th>用时</th><th>模型/失败原因</th></tr></thead><tbody>' +
         (pageRows.length ? pageRows.map(r => {
           const id = String(r.id || '');
-          return `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td class="mono">${escapeHtml(r.image_code || '')}</td><td>${escapeHtml(r.time||'')}</td><td>图片</td><td>${escapeHtml(displaySourceLabel(r))}</td><td>${r.success?'成功':'失败'}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
+          const lifecycle = recordLifecycleStatus(r);
+          return `<tr class="record-detail-row" data-record-id="${escapeHtml(id)}" style="cursor:pointer" title="点击查看详情"><td><input type="checkbox" data-record-select="${escapeHtml(id)}" aria-label="选择记录 ${escapeHtml(id)}" ${RECORD_SELECTION.has(id) ? 'checked' : ''}></td><td class="mono">${escapeHtml(r.image_code || '')}</td><td>${escapeHtml(r.time||'')}</td><td>图片</td><td>${escapeHtml(displaySourceLabel(r))}</td><td>${escapeHtml(lifecycle.label)}</td><td>${escapeHtml(formatRecordElapsed(r))}</td><td>${recordFinalModelBadge(r)}</td></tr>`;
         }).join('') : '<tr><td colspan="8" class="muted">没有匹配的监控记录</td></tr>') +
         '</tbody>';
       $('recordTable').querySelectorAll('input[data-record-select]').forEach(input => input.onchange = event => {
@@ -602,6 +611,7 @@
           const media = assetPrimaryPath(record);
           const name = media.path.split('/').pop() || '图片';
           const prompt = String(record.original_prompt || record.request_prompt || '').trim();
+          const lifecycle = recordLifecycleStatus(record);
           const thumb = media.path
             ? `<div class="status" data-media-placeholder>加载缩略图…</div><img data-cache-path="${escapeHtml(media.path)}" data-cache-variant="thumbnail" alt="${escapeHtml(name)}">${media.count > 1 ? `<span class="asset-count-label">图片 ×${media.count}</span>` : ''}`
             : '<div class="status">没有缓存媒体</div>';
@@ -613,7 +623,7 @@
               ${thumb}
             </div>
             <div class="asset-card-body">
-              <div class="asset-card-title"><b title="${escapeHtml(name)}">${escapeHtml(name)}</b><span class="pill ${record.success ? 'green' : 'gray'}">${record.success ? '成功' : '失败'}</span></div>
+              <div class="asset-card-title"><b title="${escapeHtml(name)}">${escapeHtml(name)}</b><span class="pill ${lifecycle.tone}">${escapeHtml(lifecycle.label)}</span></div>
               <div class="muted">${escapeHtml(record.time || '')} · ${escapeHtml(record.used_model || '未记录模型')}</div>
               <div class="asset-card-prompt">${escapeHtml(prompt || record.note || '没有提示词或备注')}</div>
               <div class="asset-card-meta">${assetTagPills(record)}</div>

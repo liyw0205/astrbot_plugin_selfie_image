@@ -266,7 +266,10 @@ class GenerationTaskService:
         force_regenerate = bool(request_summary.get("force_regenerate") or request_summary.get("force"))
         fingerprint = plugin._request_fingerprint(request_summary, session_key, reference_images)
         with plugin._web_task_lock:
-            if getattr(plugin, "_terminating", False):
+            checker = getattr(plugin, "_ensure_generation_available", None)
+            if callable(checker):
+                checker()
+            elif getattr(plugin, "_terminating", False):
                 raise RuntimeError("插件正在卸载，无法提交新任务")
             if not force_regenerate:
                 duplicate = plugin._find_recent_duplicate_task_locked(fingerprint)

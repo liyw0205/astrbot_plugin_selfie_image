@@ -17,12 +17,15 @@ import sys
 import unittest
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_LOOK_SETS,
+    build_cos_look_action,
     get_cos_look_by_id,
     is_special_cos_look,
     normalize_cos_prompt_negatives,
@@ -110,6 +113,27 @@ class CcWhiteTigerPromptTest(unittest.TestCase):
         self.assertNotIn("自拍", prompt)
         self.assertIn("金色藤蔓花朵镂空", prompt)
         self.assertIn("粉色缎面高开叉长裙", prompt)
+
+
+@pytest.mark.parametrize("look_id,required,forbidden", [
+    ("roxy_cream", ("薄碎齐刘海", "鬓发", "耳后低位", "大腿上段", "辫尾"), ("未写明自然补全",)),
+    ("fate_nero_opera_regalia", ("中分长刘海", "脑后盘成", "发尾收入髻内"), ("后发披散至腰际",)),
+    ("mushoku_tensei_sylphiette", ("碎刘海", "耳周短发", "后颈剪短", "发尾细碎外翘"), ("后发披散至腰际",)),
+    ("blue_archive_junko", ("红色长双马尾假发", "厚碎齐刘海", "耳后高位", "发尾渐浅橙色"), ("红色短发",)),
+    ("zzz_sunna_private_sportswear", ("碎斜刘海", "耳侧短发", "停在颈侧"), ("束起的后发垂至腰际",)),
+    ("artsee173_011_welrod_british", ("耳侧绕到后脑", "后颈小马尾", "尾端停在颈根"), ("束起的后发垂至腰际",)),
+    ("rem_white_summer_dress", ("覆盖右眼", "露出左眼", "后颈发尾内扣"), ("覆盖左眼",)),
+    ("ram_yellow_casual_dress", ("覆盖左眼", "露出右眼", "后颈发尾内扣"), ("覆盖右眼",)),
+])
+def test_pool_hair_details_reach_the_action_without_incompatible_lengths(look_id, required, forbidden):
+    pool_prompt = get_cos_look_by_id(look_id)["prompt"]
+    action = build_cos_look_action("自然站姿 摄影棚", force_id=look_id, camera="third")
+    for phrase in required:
+        assert phrase in pool_prompt
+        assert action.count(phrase) == 1
+    for phrase in forbidden:
+        assert phrase not in pool_prompt
+        assert phrase not in action
 
 
 if __name__ == "__main__":

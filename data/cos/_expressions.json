@@ -3,6 +3,8 @@
   "items": {
     "gentle": {
       "label": "温柔",
+      "covered_eyes_prompt": "嘴角保持轻微的柔和弧度，下颌放松。",
+      "closed_eyes_prompt": "面颊和唇角放松，带轻微温柔笑意。",
       "prompt": "神态温柔放松，眼神柔和，嘴角只有非常轻微的自然弧度。",
       "aliases": [
         "温柔",
@@ -12,6 +14,8 @@
     },
     "deep_affection": {
       "label": "深情",
+      "covered_eyes_prompt": "唇部放松，嘴角柔和，面部肌肉舒展。",
+      "closed_eyes_prompt": "嘴角柔和，面部肌肉舒展，情绪安宁。",
       "prompt": "神态专注而深情，眉眼舒展，眼神柔和专注，唇部放松，情绪克制自然。",
       "aliases": [
         "深情",
@@ -21,6 +25,8 @@
     },
     "melancholy": {
       "label": "忧伤",
+      "covered_eyes_prompt": "嘴角轻垂，下颌放松，流露克制的忧伤。",
+      "closed_eyes_prompt": "眉心轻拢，嘴角轻垂，不哭泣。",
       "prompt": "神态带轻微忧伤，眉心略有收拢，嘴角放松，表情安静克制，不哭泣不夸张。",
       "aliases": [
         "忧郁",
@@ -30,6 +36,8 @@
     },
     "lively": {
       "label": "活力",
+      "covered_eyes_prompt": "面颊轻抬，嘴角上扬，笑意明快。",
+      "closed_eyes_prompt": "面颊轻抬，唇角略扬，笑意轻快。",
       "prompt": "神态明快有活力，眼神有光，表情自然生动，不做夸张张嘴或卡通笑容。",
       "aliases": [
         "明快",
@@ -39,6 +47,8 @@
     },
     "playful": {
       "label": "俏皮",
+      "covered_eyes_prompt": "单侧嘴角略扬，面颊有轻松笑意。",
+      "closed_eyes_prompt": "嘴角略扬，面颊带轻松笑意。",
       "prompt": "神态俏皮灵动，眉梢轻扬，眼角带笑，嘴角微微上扬，表情轻松自然。",
       "aliases": [
         "俏皮",
@@ -47,6 +57,8 @@
     },
     "calm": {
       "label": "平静",
+      "covered_eyes_prompt": "鼻唇周围肌肉放松，唇角自然，不刻意微笑。",
+      "closed_eyes_prompt": "面部肌肉松弛，唇角自然，不刻意微笑。",
       "prompt": "神态平静克制，面部肌肉放松，视线稳定，不刻意微笑。",
       "aliases": [
         "平静",
@@ -56,6 +68,8 @@
     },
     "confident": {
       "label": "自信",
+      "covered_eyes_prompt": "唇角微扬，下颌放松，神态从容。",
+      "closed_eyes_prompt": "唇角略扬，下颌放松，神态从容。",
       "prompt": "神态自信从容，眉眼舒展，眼神坚定，唇角放松，不做攻击性表情。",
       "aliases": [
         "自信",
@@ -64,6 +78,8 @@
     },
     "flirtatious": {
       "label": "轻挑含笑",
+      "covered_eyes_prompt": "单侧嘴角轻扬，双唇放松，笑意克制。",
+      "closed_eyes_prompt": "单侧嘴角轻扬，双唇放松。",
       "prompt": "神态带轻微挑逗笑意，眼睑自然微收，单侧嘴角轻扬，双唇放松，表情撩人而不夸张。",
       "aliases": [
         "轻挑含笑",
@@ -74,6 +90,8 @@
     },
     "cool": {
       "label": "清冷",
+      "covered_eyes_prompt": "唇线平直，面颊放松，神态疏离。",
+      "closed_eyes_prompt": "唇线平直，面颊放松，神态安静。",
       "prompt": "神态清冷疏离，目光平静，表情克制，不做夸张冷笑。",
       "aliases": [
         "清冷",
@@ -82,6 +100,8 @@
     },
     "sultry": {
       "label": "慵懒诱惑",
+      "covered_eyes_prompt": "双唇轻微分开，面颊肌肉松弛，不张大嘴。",
+      "closed_eyes_prompt": "双唇轻微分开，面部肌肉舒展，不张大嘴。",
       "prompt": "神态慵懒而有诱惑力，上眼睑略低，眼神松弛，双唇轻微分开，面部肌肉自然舒展，不张大嘴。",
       "aliases": [
         "慵懒诱惑",

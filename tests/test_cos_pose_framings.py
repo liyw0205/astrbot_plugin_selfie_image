@@ -1,6 +1,8 @@
 import re
 from unittest.mock import patch
 
+import pytest
+
 from astrbot_plugin_selfie_image.cos import cos_looks
 from astrbot_plugin_selfie_image.cos.cos_looks import (
     COS_COMBINATION_PRESETS,
@@ -130,7 +132,8 @@ def test_rear_hair_close_request_selects_side_back_pose_and_matching_crop():
     assert "【cos_pose:over_shoulder】" in action
     assert "【cos_framing:rear_hair_close】" in action
     assert framing_prompt in action
-    assert "人物以背后三分之四角度朝向镜头斜后方" in action
+    assert action.count("不回头、不回眸、不扭颈") == 1
+    assert "双手自然留在头肩取景范围之外" in action
     assert "展示后背剪裁、腰胯曲线" not in action
     assert "本次构图优先保证支撑关系" not in action
 
@@ -149,10 +152,10 @@ def test_selfie_rear_hair_close_uses_side_back_head_crop_in_final_prompt(tmp_pat
     )
 
     assert "【shot:back_three_quarter】" in action
-    assert "背后三分之四侧后方头肩近景" in action
-    assert "画面到肩胛上缘为止" in action
+    assert "背后三分之四头肩发型近景" in action
+    assert "发顶至肩胛上缘入画" in action
     assert "不回头、不回眸、不扭颈" in action
-    assert "背后三分之四侧后方头肩近景" in prompt
+    assert "背后三分之四头肩发型近景" in prompt
     assert "头部到腰线入镜" not in prompt
     assert "镜头同时看到后背和一侧肩胯" not in prompt
 
@@ -250,8 +253,8 @@ def test_back_three_quarter_pose_does_not_request_a_lookback():
     )
     assert "【cos_pose:over_shoulder】" in action
     assert "【cos_framing:rear_lookback】" not in action
-    assert "面部自然朝向画外" in action
-    assert "不为了露脸回头、回眸或扭颈" in action
+    assert "也不要求露出侧脸或正脸" in action
+    assert "不回头、不回眸、不扭颈" in action
 
 
 def test_cos_multi_view_collage_defaults_to_portrait_ratio():
@@ -384,7 +387,8 @@ def test_short_video_reference_poses_survive_the_final_cos_prompt(tmp_path):
         )
         assert final_prompt.count(pose["prompt"]) == 1
         if pose.get("face_visibility") == "optional":
-            assert "姿势优先，面部可被手臂或发丝自然局部遮挡，不为露脸改变动作。" in final_prompt
+            assert final_prompt.count("面部可被手臂或发丝自然局部遮挡") == 1
+            assert "不为露脸改变手臂或头部方向" in final_prompt
             assert "除非用户要求遮脸，否则主角面部清晰自然" not in final_prompt
 
 
@@ -421,13 +425,13 @@ def test_seductive_expressions_replace_old_entries_without_changing_head_directi
         for pose_id in ("side_edge_bend", "rear_edge_curve", "over_shoulder"):
             selected_id, prompt = cos_looks._pick_scene_expression(pose_id, expression["label"])
             assert selected_id == expression_id
-            assert prompt == expression["prompt"]
+            assert prompt == ("" if COS_JSON_POSES[pose_id].get("orientation") == "back" else expression["prompt"])
             assert not any(term in prompt for term in ("镜头", "回头", "侧脸", "扭颈", "歪头"))
 
 
 def test_expression_catalog_has_one_schema_and_no_direction_controls():
     for expression in COS_JSON_EXPRESSIONS.values():
-        assert set(expression) == {"label", "prompt", "aliases"}
+        assert set(expression) == {"label", "prompt", "aliases", "covered_eyes_prompt", "closed_eyes_prompt"}
         assert not any(term in expression["prompt"] for term in (
             "镜头", "回头", "扭颈", "歪头", "远处", "低垂", "肩颈", "头部",
         ))
@@ -473,7 +477,8 @@ def test_side_pose_with_extra_reference_does_not_force_a_visible_face(tmp_path):
         action, bot_name="", personality="", has_reference_image=True, extra_reference_count=1,
     )
     assert "【cos_pose:rear_wall_curve】" in prompt
-    assert "若当前构图允许面部入镜" in prompt
+    assert "额外参考图只补充用户明确要求参考的细节" in prompt
+    assert "表情眼神按本次场景重画" not in prompt
     assert "除非用户要求遮脸，否则主角面部清晰自然" not in prompt
 
 
@@ -547,7 +552,7 @@ def test_build_action_does_not_pass_combination_framing_as_forced_view():
 
 def test_cos_action_uses_json_expression_and_makeup_pools():
     action = build_cos_look_action(
-        "温柔，自然妆",
+        "自然站姿，温柔，自然妆",
         force_id="roxy_cream",
         camera="third",
     )
@@ -558,3 +563,27 @@ def test_cos_action_uses_json_expression_and_makeup_pools():
     assert makeup_prompt in action
     assert "【cos_expression:gentle】" in action
     assert "【cos_makeup:natural_clean】" in action
+
+
+@pytest.mark.parametrize("query,expression_id", [
+    ("平静 温柔妆", "calm"),
+    ("自信 柔和妆", "confident"),
+    ("清冷 俏皮妆", "cool"),
+    ("平静 柔和女性化妆造", "calm"),
+    ("清冷 俏皮彩色妆造", "cool"),
+    ("平静 温 柔 妆", "calm"),
+    ("清冷 不要温柔妆", "cool"),
+    ("温柔 不要温柔妆", "gentle"),
+    ("不要温柔妆，温柔", "gentle"),
+    ("温柔妆 清冷", "cool"),
+    ("温柔 自然妆", "gentle"),
+])
+def test_makeup_names_do_not_override_explicit_expressions(query, expression_id):
+    selected, prompt = cos_looks._pick_scene_expression("standing_detail", query)
+    assert selected == expression_id
+    assert prompt == COS_JSON_EXPRESSIONS[expression_id]["prompt"]
+
+
+def test_makeup_pool_describes_pigments_without_prescribing_expressions():
+    assert "整体温柔" not in COS_JSON_MAKEUPS["soft_feminine"]["prompt"]
+    assert "暖粉色" in COS_JSON_MAKEUPS["soft_feminine"]["prompt"]

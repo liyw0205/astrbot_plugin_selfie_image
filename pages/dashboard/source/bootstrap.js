@@ -61,10 +61,12 @@
       else if (mask === $('studioConnectModal')) closeStudioConnectModal();
       else if (mask === $('creativeCanvasCreateModal')) closeCreativeCanvasCreateModal();
       else if (mask === $('groupConfigModal')) closeGroupConfigModal();
+      else if (mask === $('backupRestoreModal')) closeBackupRestore();
     }));
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
       if ($('confirmModal')?.classList.contains('show')) { closeConfirmAction(false); return; }
+      if ($('backupRestoreModal')?.classList.contains('show')) { closeBackupRestore(); return; }
       if ($('mediaSourceModal')?.classList.contains('show')) { closeMediaSourceModal(); return; }
       if ($('mediaLightboxModal')?.classList.contains('show')) { closeMediaLightbox(); return; }
       if ($('taskModal')?.classList.contains('show')) { closeTaskDetail(); return; }

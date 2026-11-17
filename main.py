@@ -60,6 +60,7 @@ from .features.access_policy import (
 )
 from .features.qq_group_cache import QQGroupCache
 from .features.backup_manager import BackupManager
+from .features.archive_transfer import CHUNK_SIZE, MAX_JSON_ARCHIVE_BYTES
 from .features.context_routing import (
     compact_followup_text,
     looks_like_clothes_followup,
@@ -303,6 +304,9 @@ class SelfieImagePlugin(
         self._image_status_service = ImageStatusService()
         self._migrate_legacy_data_dir(plugin_data_dir)
         os.makedirs(self.data_dir, exist_ok=True)
+        self.backup_manager = BackupManager(self.data_dir, defer_restore=True)
+        # Restore before opening config, SQLite, task snapshots or cached stores.
+        self.backup_manager.apply_pending_restore()
         self.config_path = os.path.join(self.data_dir, PLUGIN_CONFIG_FILENAME)
         self._migrate_legacy_config_file()
         self._migrate_config_file_schema()
@@ -363,7 +367,6 @@ class SelfieImagePlugin(
 
         self.qq_group_cache = QQGroupCache(self)
         self.persona = PersonaManager(self.data_dir)
-        self.backup_manager = BackupManager(self.data_dir)
         _wardrobe_dimension, _wardrobe_pixels, _wardrobe_frames = image_validation_limits(self.config)
         self.persona.configure_wardrobe_limits(
             max_bytes=self.config.image_max_image_size_mb * 1024 * 1024,
@@ -439,6 +442,14 @@ class SelfieImagePlugin(
             }
 
     async def terminate(self) -> None:
+        try:
+            await self._terminate_runtime()
+        finally:
+            backup_manager = getattr(self, "backup_manager", None)
+            if backup_manager is not None:
+                await asyncio.to_thread(backup_manager.close)
+
+    async def _terminate_runtime(self) -> None:
         with self._web_task_lock:
             self._terminating = True
             for task in self._web_tasks.values():
@@ -1976,18 +1987,29 @@ class SelfieImagePlugin(
     @staticmethod
     def _decode_web_archive(payload: Any, label: str) -> bytes:
         body = payload if isinstance(payload, Mapping) else {}
-        raw = str(body.get("content_base64") or body.get("data") or body.get("content") or "").strip()
+        raw = body.get("content_base64") or body.get("data") or body.get("content") or ""
+        if not isinstance(raw, str):
+            raise ValueError(f"{label}文件内容不是有效的 base64")
+        encoded_limit = 4 * ((MAX_JSON_ARCHIVE_BYTES + 2) // 3)
+        if len(raw) > encoded_limit + 1024:
+            raise ValueError(f"{label}超过 16MB，请使用分块上传")
+        raw = raw.strip()
         if raw.startswith("data:") and "," in raw:
             raw = raw.split(",", 1)[1]
         if not raw:
             raise ValueError(f"缺少{label}文件内容")
+        if len(raw) > encoded_limit:
+            raise ValueError(f"{label}超过 16MB，请使用分块上传")
         try:
-            return base64.b64decode(raw, validate=True)
+            content = base64.b64decode(raw, validate=True)
         except (ValueError, TypeError, base64.binascii.Error) as exc:
             raise ValueError(f"{label}文件内容不是有效的 base64") from exc
+        if len(content) > MAX_JSON_ARCHIVE_BYTES:
+            raise ValueError(f"{label}超过 16MB，请使用分块上传")
+        return content
 
     def backup_options_from_web(self) -> Dict[str, Any]:
-        return {"items": self.backup_manager.options(), "max": 5}
+        return {"items": self.backup_manager.options(), "max": 5, "restart_required": True}
 
     def list_backups_from_web(self) -> Dict[str, Any]:
         return self.backup_manager.list_backups()
@@ -2000,39 +2022,39 @@ class SelfieImagePlugin(
         return self.backup_manager.start_backup(selected)
 
     def backup_task_from_web(self, task_id: str) -> Dict[str, Any]:
-        task = self.backup_manager.task(task_id)
-        if task.get("status") == "completed" and task.get("kind") in {"restore", "upload"}:
-            if self.backup_manager.mark_task_runtime_refreshed(task_id):
-                self._refresh_runtime_after_backup_restore()
         return self.backup_manager.task(task_id)
 
-    def _refresh_runtime_after_backup_restore(self) -> None:
-        """Reload durable stores after a completed dashboard restore."""
-        try:
-            with self._config_lock:
-                raw_config, parsed_config = self._load_initial_config_state()
-                self.raw_config = raw_config
-                self.config = parsed_config
-                scheduler = getattr(self, "_image_scheduler", None)
-                if scheduler is not None:
-                    scheduler.set_limit(self.config.image_max_concurrent_tasks)
-            self.persona.load()
-            self.persona.daily_schedule_store.load()
-            self.persona.wardrobe.load()
-            self.presets.load()
-            self.nai_artist_presets.load()
-            self.cos_pool.load()
-            self.studio._load()
-            self.creative_canvas._load()
-            self._usage_stats = self._load_usage_stats()
-        except Exception as exc:
-            logger.warning("[SelfieImage] 恢复备份后刷新运行时资料失败: %s", redact_sensitive_text(str(exc)))
+    def _assert_backup_restore_idle(self) -> None:
+        if getattr(self, "_terminating", False):
+            raise ValueError("插件正在卸载，无法恢复备份")
+        tasks = getattr(self, "_web_tasks", {})
+        workers = getattr(self, "_runtime_generation_workers", {}).values()
+        handles = getattr(self, "_runtime_generation_tasks", {}).values()
+        commits = list(getattr(self, "_record_commit_tasks", set()))
+        commits.extend(getattr(self, "_usage_commit_tasks", set()))
+        commits.extend(future for bucket in getattr(self, "_pending_record_commits", {}).values() for future in bucket)
+        commits.extend(future for bucket in getattr(self, "_pending_image_record_commits", {}).values() for future in bucket)
+        if any(task.get("status") in {"queued", "running"} for task in tasks.values()) or any(
+            not handle.done() for handle in [*workers, *handles, *commits]
+        ):
+            raise ValueError("请等待生成任务和数据写入完成后恢复备份")
+        scheduler = self._image_scheduler_snapshot()
+        if scheduler.get("active", 0) or scheduler.get("pending", 0):
+            raise ValueError("请等待生成任务完成后恢复备份")
 
     def download_backup_from_web(self, backup_id: str) -> Dict[str, Any]:
         return self.backup_manager.download_backup(backup_id)
 
-    def restore_backup_from_web(self, backup_id: str) -> Dict[str, Any]:
-        return self.backup_manager.start_restore(backup_id)
+    def download_backup_file_from_web(self, backup_id: str) -> Dict[str, Any]:
+        return self.backup_manager.download_file(backup_id)
+
+    def download_backup_chunk_from_web(self, backup_id: str, offset: int, length: int, revision: str) -> Dict[str, Any]:
+        return self.backup_manager.download_chunk(backup_id, offset, length, revision)
+
+    def restore_backup_from_web(self, backup_id: str, selected: Any = None) -> Dict[str, Any]:
+        with self._web_task_lock:
+            self._assert_backup_restore_idle()
+            return self.backup_manager.start_restore(backup_id, selected)
 
     def delete_backup_from_web(self, payload: Any) -> Dict[str, Any]:
         body = payload if isinstance(payload, Mapping) else {}
@@ -2044,7 +2066,9 @@ class SelfieImagePlugin(
     def upload_backup_from_web(self, payload: Any) -> Dict[str, Any]:
         body = payload if isinstance(payload, Mapping) else {}
         content = self._decode_web_archive(body, "备份")
-        return self.backup_manager.upload_backup(str(body.get("filename") or "backup.zip"), content)
+        with self._web_task_lock:
+            self._assert_backup_restore_idle()
+            return self.backup_manager.upload_backup(str(body.get("filename") or "backup.zip"), content, body.get("selected"))
 
     def export_wardrobe_from_web(self) -> Dict[str, Any]:
         return self.backup_manager.export_wardrobe()
@@ -2055,6 +2079,47 @@ class SelfieImagePlugin(
         # Keep the in-memory selector in sync with the atomically restored files.
         self.persona.wardrobe.load()
         return self.get_wardrobe_payload() | {"imported": True, "archive": result}
+
+    def start_archive_upload_from_web(self, payload: Any) -> Dict[str, Any]:
+        body = payload if isinstance(payload, Mapping) else {}
+        return self.backup_manager.start_archive_upload(
+            body.get("kind"), body.get("size"), str(body.get("filename") or "archive.zip"),
+        )
+
+    def append_archive_upload_from_web(self, transfer_id: str, payload: Any) -> Dict[str, Any]:
+        body = payload if isinstance(payload, Mapping) else {}
+        raw = body.get("content_base64")
+        if not isinstance(raw, str) or len(raw) > 4 * ((CHUNK_SIZE + 2) // 3):
+            raise ValueError("归档分块不得超过 1MB")
+        try:
+            data = base64.b64decode(raw, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("归档分块不是有效的 base64") from exc
+        return self.backup_manager.transfers.append_upload(
+            transfer_id, body.get("offset"), data, body.get("crc32"),
+        )
+
+    def commit_archive_upload_from_web(self, transfer_id: str, selected: Any = None) -> Dict[str, Any]:
+        with self.backup_manager.transfers.consume_upload(transfer_id) as (path, info):
+            if info["kind"] == "backup":
+                with self._web_task_lock:
+                    self._assert_backup_restore_idle()
+                    return self.backup_manager.upload_backup_file(info["filename"], path, selected)
+            result = self.backup_manager.import_wardrobe_file(path)
+            self.persona.wardrobe.load()
+            return self.get_wardrobe_payload() | {"imported": True, "archive": result}
+
+    def discard_archive_transfer_from_web(self, transfer_id: str) -> Dict[str, Any]:
+        return self.backup_manager.transfers.discard(transfer_id)
+
+    def start_wardrobe_export_from_web(self) -> Dict[str, Any]:
+        return self.backup_manager.start_wardrobe_export()
+
+    def download_archive_export_from_web(self, transfer_id: str, offset: int, length: int,
+                                         revision: str, as_file: bool) -> Dict[str, Any]:
+        return self.backup_manager.transfers.download_export(
+            transfer_id, offset=offset, length=length, revision=revision, as_file=as_file,
+        )
 
     def set_selfie_appearance_type_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         value = payload.get("appearance_type", payload.get("type", "auto"))
