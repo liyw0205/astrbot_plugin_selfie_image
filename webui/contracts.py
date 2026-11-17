@@ -273,6 +273,14 @@ SELFIE_PROFILE_ROUTE_CONTRACTS = (
         "selfie_wardrobe_import", "/api/selfie-wardrobe/import", "selfie-wardrobe/import", ("POST",),
         "selfie_wardrobe_import", "page_selfie_wardrobe_import", "Selfie Image import wardrobe",
     ),
+    SelfieProfileRouteContract(
+        "selfie_wardrobe_settings", "/api/selfie-wardrobe/settings", "selfie-wardrobe/settings", ("POST",),
+        "selfie_wardrobe_settings", "page_selfie_wardrobe_settings", "Selfie Image wardrobe rotation settings",
+    ),
+    SelfieProfileRouteContract(
+        "selfie_wardrobe_select", "/api/selfie-wardrobe/select", "selfie-wardrobe/select", ("POST",),
+        "selfie_wardrobe_select", "page_selfie_wardrobe_select", "Selfie Image select today's wardrobe item",
+    ),
 )
 
 

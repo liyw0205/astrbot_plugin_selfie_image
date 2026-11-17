@@ -11,8 +11,10 @@ import datetime as _datetime
 import hashlib
 import json
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass, field
+from functools import wraps
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -29,7 +31,7 @@ from ..core.utils import (
 )
 
 
-WARDROBE_SCHEMA_VERSION = 1
+WARDROBE_SCHEMA_VERSION = 2
 DEFAULT_RECENT_DAYS = 7
 MAX_NAME_LENGTH = 120
 MAX_DESCRIPTION_LENGTH = 600
@@ -62,6 +64,14 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
 
 
+def _synchronized(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
 @dataclass(slots=True)
 class WardrobeItem:
     id: str
@@ -74,6 +84,7 @@ class WardrobeItem:
     enabled: bool = True
     created_at: str = ""
     last_used_date: str = ""
+    sort_order: int = 0
 
     @classmethod
     def from_dict(cls, value: Any) -> Optional["WardrobeItem"]:
@@ -96,6 +107,7 @@ class WardrobeItem:
             enabled=bool(value.get("enabled", True)),
             created_at=_text(value.get("created_at"), 40),
             last_used_date=_text(value.get("last_used_date"), 20),
+            sort_order=(value["sort_order"] if type(value.get("sort_order")) is int else 0),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -122,11 +134,19 @@ class WardrobeStore:
         self.max_pixels = max(1, int(max_pixels))
         self.max_frames = max(1, int(max_frames))
         self.recent_days = max(0, int(recent_days))
+        self._lock = threading.RLock()
         self.items: dict[str, WardrobeItem] = {}
         self.load()
 
+    @_synchronized
     def load(self) -> None:
         self.items = {}
+        self.selection_mode = "random"
+        self.last_auto_order = 0
+        self.selection_date = ""
+        self.selection_id = ""
+        self.manual_date = ""
+        self.manual_id = ""
         try:
             raw = json.loads(self.metadata_path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError, TypeError):
@@ -134,15 +154,33 @@ class WardrobeStore:
         values = raw.get("items") if isinstance(raw, dict) else raw
         if not isinstance(values, list):
             return
+        if isinstance(raw, dict):
+            self.selection_mode = "sequential" if raw.get("selection_mode") == "sequential" else "random"
+            state = raw.get("selection_state")
+            if isinstance(state, dict):
+                position = state.get("last_auto_order")
+                self.last_auto_order = max(0, position) if type(position) is int else 0
+                for key in ("selection_date", "selection_id", "manual_date", "manual_id"):
+                    setattr(self, key, _text(state.get(key), 80))
+        last_order = 0
         for value in values:
             item = WardrobeItem.from_dict(value)
             if item and item.id not in self.items:
+                # Legacy metadata already has a display order; retain it on migration.
+                item.sort_order = max(last_order + 1, item.sort_order)
+                last_order = item.sort_order
                 self.items[item.id] = item
 
+    @_synchronized
     def save(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         payload = {
             "schema_version": WARDROBE_SCHEMA_VERSION,
+            "selection_mode": self.selection_mode,
+            "selection_state": {
+                key: getattr(self, key)
+                for key in ("last_auto_order", "selection_date", "selection_id", "manual_date", "manual_id")
+            },
             "items": [item.to_dict() for item in self.list_items(include_disabled=True)],
         }
         temp = self.metadata_path.with_name(f"{self.metadata_path.name}.{time.time_ns()}.tmp")
@@ -155,10 +193,12 @@ class WardrobeStore:
             except OSError:
                 pass
 
+    @_synchronized
     def list_items(self, *, include_disabled: bool = True) -> list[WardrobeItem]:
         values = [item for item in self.items.values() if include_disabled or item.enabled]
-        return sorted(values, key=lambda item: (item.created_at or "", item.id))
+        return sorted(values, key=lambda item: item.sort_order)
 
+    @_synchronized
     def get(self, item_id: str) -> Optional[WardrobeItem]:
         return self.items.get(str(item_id or "").strip())
 
@@ -190,6 +230,7 @@ class WardrobeStore:
         detected = detect_mime_by_bytes(data)
         return normalize_image_mime(mime_type or detected, detected or "image/png")
 
+    @_synchronized
     def add(
         self,
         data: bytes,
@@ -238,6 +279,7 @@ class WardrobeStore:
                 description=_text(description, MAX_DESCRIPTION_LENGTH),
                 tags=_tags(tags),
                 created_at=_now(),
+                sort_order=max(self.last_auto_order, *(value.sort_order for value in self.items.values()), 0) + 1,
             )
             self.items[item.id] = item
             try:
@@ -253,6 +295,7 @@ class WardrobeStore:
             except OSError:
                 pass
 
+    @_synchronized
     def update(
         self,
         item_id: str,
@@ -281,6 +324,7 @@ class WardrobeStore:
     def set_enabled(self, item_id: str, enabled: bool) -> WardrobeItem:
         return self.update(item_id, enabled=bool(enabled))
 
+    @_synchronized
     def remove(self, item_id: str) -> WardrobeItem:
         item = self.get(item_id)
         if item is None:
@@ -294,6 +338,7 @@ class WardrobeStore:
         self.save()
         return item
 
+    @_synchronized
     def read(self, item: WardrobeItem | str) -> tuple[bytes, str]:
         value = item if isinstance(item, WardrobeItem) else self.get(str(item))
         if value is None:
@@ -337,6 +382,7 @@ class WardrobeStore:
                 result.add(item.id)
         return result
 
+    @_synchronized
     def select_for_date(
         self,
         date: str,
@@ -344,35 +390,83 @@ class WardrobeStore:
         avoid_id: str = "",
         force_new: bool = False,
     ) -> Optional[WardrobeItem]:
-        enabled = [item for item in self.list_items(include_disabled=False) if item.enabled]
+        enabled = self.list_items(include_disabled=False)
         if not enabled:
             return None
-        current_id = str(avoid_id or "").strip()
-        recent = self._recent_ids(str(date))
-        candidates = [item for item in enabled if item.id not in recent]
-        if force_new:
-            candidates = [item for item in candidates if item.id != current_id]
-        if not candidates:
-            candidates = [item for item in enabled if not force_new or item.id != current_id]
-        if not candidates:
-            candidates = enabled
-        digest = hashlib.sha256(str(date).encode("utf-8")).digest()
-        index = int.from_bytes(digest[:8], "big") % len(candidates)
-        return candidates[index]
 
+        def readable(item):
+            try:
+                self.read(item)
+            except ValueError:
+                return False
+            return True
+
+        available = {item.id: item for item in enabled}
+        manual = available.get(self.manual_id) if self.manual_date == str(date) else None
+        if manual and readable(manual):
+            return manual
+        cached = available.get(self.selection_id) if self.selection_date == str(date) and not force_new else None
+        if cached and readable(cached):
+            return cached
+        current_id = str(avoid_id or "").strip()
+        eligible = [item for item in enabled if not force_new or item.id != current_id]
+        if self.selection_mode == "sequential":
+            candidates = [item for item in eligible if item.sort_order > self.last_auto_order]
+            candidates += [item for item in eligible if item.sort_order <= self.last_auto_order]
+        else:
+            recent = self._recent_ids(str(date))
+            preferred = [item for item in eligible if item.id not in recent]
+            candidates = preferred or eligible
+            digest = hashlib.sha256(str(date).encode("utf-8")).digest()
+            if candidates:
+                index = int.from_bytes(digest[:8], "big") % len(candidates)
+                candidates = candidates[index:] + candidates[:index]
+            if preferred:
+                candidates += [item for item in eligible if item.id in recent]
+        if force_new and current_id in available:
+            candidates.append(available[current_id])
+        return next((item for item in candidates if readable(item)), None)
+
+    @_synchronized
     def mark_used(self, item_id: str, date: str) -> WardrobeItem:
         item = self.get(item_id)
         if item is None:
             raise ValueError("衣橱服装不存在")
         item.last_used_date = _text(date, 20)
+        if not (self.manual_date == str(date) and self.manual_id == item.id):
+            self.last_auto_order = item.sort_order
+            self.selection_date = str(date)
+            self.selection_id = item.id
         self.save()
         return item
 
-    def summary(self, *, current_id: str = "") -> dict[str, Any]:
+    @_synchronized
+    def set_selection_mode(self, mode: str) -> None:
+        if mode not in {"random", "sequential"}:
+            raise ValueError("衣橱轮换方式只能是 random 或 sequential")
+        self.selection_mode = mode
+        self.save()
+
+    @_synchronized
+    def select_today(self, item_id: str, date: str) -> WardrobeItem:
+        item = self.get(item_id)
+        if item is None or not item.enabled:
+            raise ValueError("请选择已启用的衣橱服装")
+        self.read(item)
+        self.manual_date = str(date)
+        self.manual_id = item.id
+        self.save()
+        return item
+
+    @_synchronized
+    def summary(self, *, current_id: str = "", date: str = "") -> dict[str, Any]:
         current = self.get(current_id) if current_id else None
         return {
             "items": [item.to_dict() for item in self.list_items()],
             "enabled_count": sum(1 for item in self.items.values() if item.enabled),
             "current_item_id": current.id if current else "",
             "current_item_name": current.name if current else "",
+            "selection_mode": self.selection_mode,
+            "manual_today": bool(date and self.manual_date == date and current and self.manual_id == current.id),
+            "max_image_bytes": self.max_bytes,
         }

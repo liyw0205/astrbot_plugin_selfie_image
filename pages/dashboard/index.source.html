@@ -625,12 +625,17 @@
       <div id="selfieDailySchedule" class="daily-schedule" hidden></div>
       <h3 style="margin-top:18px">自定义衣橱</h3>
       <div class="grid">
-        <div><label>服装图片</label><input id="wardrobeFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml"></div>
-        <div><label>名称</label><input id="wardrobeName" type="text" maxlength="120" placeholder="白色夏日连衣裙"></div>
+        <div><label for="wardrobeSelectionMode">每日轮换</label><select id="wardrobeSelectionMode"><option value="random">随机（避开近期穿过的）</option><option value="sequential">按导入顺序</option></select></div>
+        <div id="wardrobeCurrent" class="wardrobe-current" aria-live="polite"></div>
+      </div>
+      <div class="grid">
+        <div><label for="wardrobeFile">服装图片（可多选）</label><input id="wardrobeFile" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/heic,image/heif,image/tiff,image/svg+xml"></div>
+        <div><label>名称</label><input id="wardrobeName" type="text" maxlength="120" placeholder="留空使用文件名，多张同名时自动编号"></div>
         <div><label>描述</label><input id="wardrobeDescription" type="text" maxlength="600" placeholder="材质、版型或必须保留的细节"></div>
         <div><label>标签</label><input id="wardrobeTags" type="text" maxlength="300" placeholder="夏季,连衣裙"></div>
       </div>
       <div class="actions"><button id="uploadWardrobe" type="button">添加到衣橱</button><button class="secondary" id="refreshWardrobe" type="button">刷新衣橱</button><button class="secondary" id="exportWardrobe" type="button">导出衣橱</button><button class="secondary" id="importWardrobeBtn" type="button">导入衣橱</button><input id="importWardrobeFile" type="file" accept=".zip,application/zip" style="display:none"></div>
+      <div class="progress-wrap" id="wardrobeBatchProgressWrap" hidden><div class="between"><span id="wardrobeBatchProgressLabel">准备中</span><button class="icon-button" id="wardrobeBatchCancel" type="button" title="停止后续导入" aria-label="停止后续导入">×</button></div><progress id="wardrobeBatchProgress" max="1" value="0"></progress><div id="wardrobeBatchResult" role="status"></div></div>
       <div class="progress-wrap" id="wardrobeArchiveProgressWrap" hidden><div class="between"><span id="wardrobeArchiveProgressLabel">准备中</span><span id="wardrobeArchiveProgressValue">0%</span><button class="icon-button" id="wardrobeArchiveCancelUpload" type="button" title="取消上传" aria-label="取消上传" hidden>×</button></div><progress id="wardrobeArchiveProgress" max="100" value="0"></progress></div>
       <div id="selfieWardrobeList" class="daily-schedule" aria-live="polite"></div>
     </section>

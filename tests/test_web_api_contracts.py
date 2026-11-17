@@ -478,6 +478,7 @@ def test_registered_routes_keep_dashboard_prefixes_and_success_wrappers(http, pr
 
 
 PROTECTED_ROUTES = [
+    ("/api/selfie-wardrobe/settings", "POST"), ("/api/selfie-wardrobe/select", "POST"),
     ("/api/config", "GET"), ("/api/config", "POST"), ("/api/config/export", "GET"),
     ("/api/config/import/preview", "POST"), ("/api/config/import", "POST"),
     ("/api/proxies", "GET"), ("/api/proxies/test", "POST"), ("/api/proxies/quality-check", "POST"),
@@ -1522,6 +1523,68 @@ def test_selfie_profile_controller_preserves_mutation_input_and_missing_hooks(ht
     assert_failure(http.call("/api/selfie-reference/clear", method="POST", body={}), 501, "不支持")
     assert_failure(http.call("/api/selfie-appearance-type", method="POST", body={}), 501, "不支持")
     assert_failure(http.call("/api/selfie-profile/refresh-local", method="POST", body={}), 501, "不支持")
+
+
+def test_wardrobe_rotation_and_today_selection_reach_real_persona(http, tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.tests.test_wardrobe import PNG_1X1, PNG_1X1_ALT
+
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(tmp_path)
+    first = plugin.persona.add_wardrobe_item(PNG_1X1, name="第一套")
+    second = plugin.persona.add_wardrobe_item(PNG_1X1_ALT, name="第二套")
+    for hook in ("get_wardrobe_payload", "set_wardrobe_settings_from_web", "select_wardrobe_today_from_web"):
+        setattr(http.plugin, hook, getattr(plugin, hook))
+    settings = assert_success(http.call("/api/selfie-wardrobe/settings", method="POST", body={"selection_mode": "sequential"}))
+    assert settings["selection_mode"] == "sequential"
+    assert [item["id"] for item in settings["items"]] == [first.id, second.id]
+    selected = assert_success(http.call("/api/selfie-wardrobe/select", method="POST", body={"id": second.id}))
+    assert selected["wardrobe"]["current_item_id"] == second.id
+    assert selected["wardrobe"]["manual_today"] is True
+    assert selected["daily_schedule"]["schedule"]["wardrobe_item_id"] == second.id
+    assert plugin.persona.current_wardrobe_reference().data == PNG_1X1_ALT
+    assert assert_success(http.call("/api/selfie-wardrobe"))["current_item_id"] == second.id
+    for invalid in ({}, {"selection_mode": []}, {"selection_mode": True}, {"selection_mode": "unknown"}):
+        assert_failure(http.call("/api/selfie-wardrobe/settings", method="POST", body=invalid), 400)
+    for invalid in ({}, {"id": []}, {"id": 1}, {"id": "missing"}):
+        assert_failure(http.call("/api/selfie-wardrobe/select", method="POST", body=invalid), 400)
+    plugin.persona.set_wardrobe_enabled(first.id, False)
+    assert_failure(http.call("/api/selfie-wardrobe/select", method="POST", body={"id": first.id}), 400, "启用")
+    plugin.persona.wardrobe.resolve_path(second).unlink()
+    assert_failure(http.call("/api/selfie-wardrobe/select", method="POST", body={"id": second.id}), 400, "不可读")
+
+
+@pytest.mark.parametrize("path", ["settings", "select"])
+def test_wardrobe_new_mutations_validate_body_and_missing_hook(http, path):
+    route = f"/api/selfie-wardrobe/{path}"
+    assert_failure(http.call(route, method="POST", body=[]), 400, "JSON 对象")
+    assert_failure(http.call(route, method="POST", body={}), 501, "不支持")
+
+
+def test_wardrobe_upload_toggle_and_delete_immediately_reconcile_daily_schedule(http, tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.tests.test_wardrobe import PNG_1X1, PNG_1X1_ALT
+    import base64
+
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(tmp_path)
+    plugin.config = http.plugin.config
+    for hook in ("get_wardrobe_payload", "save_wardrobe_item_from_web", "toggle_wardrobe_item_from_web", "delete_wardrobe_item_from_web"):
+        setattr(http.plugin, hook, getattr(plugin, hook))
+    for image in (PNG_1X1, PNG_1X1_ALT):
+        added = assert_success(http.call("/api/selfie-wardrobe/add", method="POST", body={"image": base64.b64encode(image).decode()}))
+        assert added["current_item_id"]
+    first = plugin.persona.current_wardrobe_item()
+    toggled = assert_success(http.call("/api/selfie-wardrobe/toggle", method="POST", body={"id": first.id, "enabled": False}))
+    assert toggled["current_item_id"] != first.id
+    second = plugin.persona.current_wardrobe_item()
+    assert second and plugin.persona.get_daily_schedule().wardrobe_item_id == second.id
+    deleted = assert_success(http.call("/api/selfie-wardrobe/delete", method="POST", body={"id": second.id}))
+    assert not deleted["current_item_id"]
+    assert not plugin.persona.get_daily_schedule().wardrobe_item_id
+    assert plugin.persona.current_wardrobe_reference() is None
 
 
 def test_image_channel_controller_shares_tests_refresh_and_task_status(http):

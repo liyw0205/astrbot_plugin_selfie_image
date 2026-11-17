@@ -573,10 +573,12 @@ class SelfieImageDashboardAPI:
         assert payload is not None
         try:
             handler = getattr(self._selfie_profile_controller, method)
-            result: SelfieProfileControllerResult = (
-                await asyncio.to_thread(handler, payload)
-                if method == "wardrobe_import" else handler(payload)
-            )
+            if method in self._selfie_profile_controller.ASYNC_WARDROBE_MUTATIONS:
+                result = await handler(payload)
+            elif method == "wardrobe_import":
+                result = await asyncio.to_thread(handler, payload)
+            else:
+                result = handler(payload)
         except WebContractError as exc:
             return self._fail(str(exc), exc.status_code)
         except Exception as exc:
@@ -594,6 +596,12 @@ class SelfieImageDashboardAPI:
 
     async def page_selfie_wardrobe_toggle(self) -> Any:
         return await self._page_selfie_wardrobe_mutation("wardrobe_toggle")
+
+    async def page_selfie_wardrobe_settings(self) -> Any:
+        return await self._page_selfie_wardrobe_mutation("wardrobe_settings")
+
+    async def page_selfie_wardrobe_select(self) -> Any:
+        return await self._page_selfie_wardrobe_mutation("wardrobe_select")
 
     async def page_selfie_wardrobe_export(self) -> Any:
         try:

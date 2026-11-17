@@ -232,6 +232,13 @@
     .daily-schedule-list { display: grid; gap: 6px; }
     .daily-event { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; padding: 10px; border-left: 3px solid var(--line-strong); background: var(--panel-soft); border-radius: 4px; }
     .daily-event.current { border-left-color: var(--primary); background: var(--primary-weak); }
+    .daily-event.wardrobe-item { grid-template-columns: minmax(0, 1fr); }
+    .wardrobe-item .actions { margin: 0; flex-wrap: wrap; }
+    .wardrobe-item .muted, .wardrobe-current, #wardrobeBatchResult { overflow-wrap: anywhere; }
+    .wardrobe-current { align-self: center; font-size: 12px; line-height: 16px; }
+    #wardrobeBatchResult { white-space: pre-line; font-size: 12px; line-height: 16px; }
+    #wardrobeBatchProgressLabel { min-width: 0; overflow-wrap: anywhere; }
+    #wardrobeBatchCancel { flex-shrink: 0; }
     .daily-event-time { display: grid; align-content: start; gap: 5px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
     .daily-event-time strong { color: var(--text-secondary); font-size: 12px; }
     .daily-event-body { min-width: 0; display: grid; gap: 8px; }

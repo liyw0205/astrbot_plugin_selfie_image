@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -1027,6 +1028,8 @@ class QQGroupController:
 class SelfieProfileController:
     """Shared selfie-reference and profile operations for both Web adapters."""
 
+    ASYNC_WARDROBE_MUTATIONS = frozenset({"wardrobe_add", "wardrobe_delete", "wardrobe_toggle", "wardrobe_select"})
+
     def __init__(self, plugin: Any) -> None:
         self.plugin = plugin
 
@@ -1072,21 +1075,34 @@ class SelfieProfileController:
     def wardrobe_get(self) -> SelfieProfileControllerResult:
         return self._result(self._call("get_wardrobe_payload"))
 
-    def wardrobe_add(self, payload: Any) -> SelfieProfileControllerResult:
-        data = self._call("save_wardrobe_item_from_web", payload, error_status=400)
-        return self._result(data, "衣橱服装已添加")
+    async def _wardrobe_change(self, hook_name: str, payload: Any, message: str) -> SelfieProfileControllerResult:
+        data = self._call(hook_name, payload, error_status=400)
+        try:
+            if inspect.isawaitable(data):
+                data = await data
+        except Exception as exc:
+            raise WebContractError(str(exc), 400) from exc
+        return self._result(data, message)
+
+    async def wardrobe_add(self, payload: Any) -> SelfieProfileControllerResult:
+        return await self._wardrobe_change("save_wardrobe_item_from_web", payload, "衣橱服装已添加")
 
     def wardrobe_update(self, payload: Any) -> SelfieProfileControllerResult:
         data = self._call("update_wardrobe_item_from_web", payload, error_status=400)
         return self._result(data, "衣橱服装已更新")
 
-    def wardrobe_delete(self, payload: Any) -> SelfieProfileControllerResult:
-        data = self._call("delete_wardrobe_item_from_web", payload, error_status=400)
-        return self._result(data, "衣橱服装已删除")
+    async def wardrobe_delete(self, payload: Any) -> SelfieProfileControllerResult:
+        return await self._wardrobe_change("delete_wardrobe_item_from_web", payload, "衣橱服装已删除")
 
-    def wardrobe_toggle(self, payload: Any) -> SelfieProfileControllerResult:
-        data = self._call("toggle_wardrobe_item_from_web", payload, error_status=400)
-        return self._result(data, "衣橱服装状态已更新")
+    async def wardrobe_toggle(self, payload: Any) -> SelfieProfileControllerResult:
+        return await self._wardrobe_change("toggle_wardrobe_item_from_web", payload, "衣橱服装状态已更新")
+
+    def wardrobe_settings(self, payload: Any) -> SelfieProfileControllerResult:
+        data = self._call("set_wardrobe_settings_from_web", payload, error_status=400)
+        return self._result(data, "衣橱轮换方式已保存")
+
+    async def wardrobe_select(self, payload: Any) -> SelfieProfileControllerResult:
+        return await self._wardrobe_change("select_wardrobe_today_from_web", payload, "今日衣橱服装已指定")
 
     def wardrobe_export(self) -> SelfieProfileControllerResult:
         return self._result(self._call("export_wardrobe_from_web"), "衣橱已导出")

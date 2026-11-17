@@ -43,25 +43,35 @@
       root.hidden = false;
     }
 
+    let WARDROBE_BATCH_BUSY = false;
+    let WARDROBE_BATCH_CANCELLED = false;
+    let WARDROBE_PENDING_UPLOADS = null;
+    let WARDROBE_MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+
     function renderWardrobe(payload) {
       const root = $('selfieWardrobeList');
       if (!root) return;
       const items = payload && Array.isArray(payload.items) ? payload.items : [];
+      if ($('wardrobeSelectionMode')) $('wardrobeSelectionMode').value = payload?.selection_mode || 'random';
+      if (payload?.max_image_bytes > 0) WARDROBE_MAX_IMAGE_BYTES = payload.max_image_bytes;
+      if ($('wardrobeCurrent')) $('wardrobeCurrent').textContent = payload?.current_item_name
+        ? `今日：${payload.current_item_name}${payload.manual_today ? ' · 手动指定' : ''}` : '今日服装：待选择';
       window.__selfieWardrobeItems = items;
       if (!items.length) {
         root.innerHTML = '<div class="muted">衣橱为空，添加服装图后普通自拍会优先使用。</div>';
         return;
       }
-      root.innerHTML = items.map(item => `<div class="daily-event wardrobe-item" data-wardrobe-id="${escapeHtml(item.id || '')}">
+      root.innerHTML = items.map((item, index) => `<div class="daily-event wardrobe-item${item.id === payload?.current_item_id ? ' current' : ''}" data-wardrobe-id="${escapeHtml(item.id || '')}">
         <div class="daily-event-body">
-          <div class="daily-event-heading"><input class="wardrobe-name" value="${escapeHtml(item.name || '')}" aria-label="衣橱名称"><span class="daily-event-status">${item.enabled ? '启用' : '停用'}</span></div>
+          <div class="daily-event-heading"><input class="wardrobe-name" maxlength="120" value="${escapeHtml(item.name || '')}" aria-label="衣橱名称"><span class="daily-event-status">${index + 1} · ${item.enabled ? '启用' : '停用'}${item.id === payload?.current_item_id ? ' · 今日服装' : ''}</span></div>
           <div class="daily-event-fields"><span class="muted">${escapeHtml((item.tags || []).join(', '))}</span><span class="muted">${escapeHtml(item.id || '')}</span></div>
         </div>
-        <div class="actions" style="margin-top:8px"><button type="button" class="secondary wardrobe-save">保存</button><button type="button" class="secondary wardrobe-toggle">${item.enabled ? '停用' : '启用'}</button><button type="button" class="danger wardrobe-delete">删除</button></div>
+        <div class="actions"><button type="button" class="secondary wardrobe-wear" ${item.enabled ? '' : 'disabled'}>今天穿这套</button><button type="button" class="secondary wardrobe-save">保存</button><button type="button" class="secondary wardrobe-toggle">${item.enabled ? '停用' : '启用'}</button><button type="button" class="danger wardrobe-delete">删除</button></div>
       </div>`).join('');
       root.querySelectorAll('.wardrobe-save').forEach(button => button.onclick = () => updateWardrobe(button.closest('[data-wardrobe-id]').dataset.wardrobeId));
       root.querySelectorAll('.wardrobe-toggle').forEach(button => button.onclick = () => toggleWardrobe(button.closest('[data-wardrobe-id]').dataset.wardrobeId));
       root.querySelectorAll('.wardrobe-delete').forEach(button => button.onclick = () => deleteWardrobe(button.closest('[data-wardrobe-id]').dataset.wardrobeId));
+      root.querySelectorAll('.wardrobe-wear').forEach(button => button.onclick = () => wearWardrobe(button));
     }
 
     async function refreshSelfie(notify = false) {
@@ -92,19 +102,82 @@
       }
     }
     async function uploadWardrobe() {
-      const file = $('wardrobeFile') && $('wardrobeFile').files[0];
-      if (!file) { showToast('请选择服装图片', 'bad'); return; }
+      if (WARDROBE_BATCH_BUSY) return;
+      const files = Array.from($('wardrobeFile')?.files || []);
+      const name = ($('wardrobeName')?.value || '').trim();
+      const queue = WARDROBE_PENDING_UPLOADS || files.map((file, index) => ({file,
+        name: name ? (files.length > 1 ? `${name.slice(0, 110)} ${index + 1}` : name) : file.name.replace(/\.[^.]+$/, ''),
+        description: ($('wardrobeDescription')?.value || '').trim(),
+        tags: ($('wardrobeTags')?.value || '').trim(),
+      }));
+      if (!queue.length) { showToast('请选择服装图片', 'bad'); return; }
+      WARDROBE_BATCH_BUSY = true;
+      WARDROBE_BATCH_CANCELLED = false;
+      const controlIds = ['uploadWardrobe', 'wardrobeFile', 'wardrobeName', 'wardrobeDescription', 'wardrobeTags', 'importWardrobeBtn'];
+      controlIds.forEach(id => { if ($(id)) $(id).disabled = true; });
+      $('wardrobeBatchProgressWrap').hidden = false;
+      $('wardrobeBatchCancel').hidden = false;
+      $('wardrobeBatchCancel').disabled = false;
+      $('wardrobeBatchResult').textContent = '';
+      $('wardrobeBatchProgress').max = queue.length;
+      $('wardrobeBatchProgress').value = 0;
+      let succeeded = 0, processed = 0;
+      const pending = [], failures = [];
       try {
-        await api('/api/selfie-wardrobe/add', {method:'POST', body: JSON.stringify({
-          image: await readFileDataUrl(file), mime_type: file.type,
-          name: ($('wardrobeName')?.value || '').trim(),
-          description: ($('wardrobeDescription')?.value || '').trim(),
-          tags: ($('wardrobeTags')?.value || '').trim(),
-        })});
-        if ($('wardrobeFile')) $('wardrobeFile').value = '';
+        for (const [index, task] of queue.entries()) {
+          if (WARDROBE_BATCH_CANCELLED) { pending.push(...queue.slice(index)); break; }
+          $('wardrobeBatchProgressLabel').textContent = `正在导入 ${index + 1}/${queue.length} · ${task.file.name}`;
+          try {
+            if (task.file.size > WARDROBE_MAX_IMAGE_BYTES) throw new Error('图片超过大小限制');
+            const image = await readFileDataUrl(task.file);
+            if (WARDROBE_BATCH_CANCELLED) { pending.push(...queue.slice(index)); break; }
+            await api('/api/selfie-wardrobe/add', {method:'POST', body: JSON.stringify({
+              image, mime_type: task.file.type, name: task.name, description: task.description, tags: task.tags,
+            })});
+            succeeded++;
+          } catch (error) { pending.push(task); failures.push(`${task.file.name}：${error.message || '读取失败'}`); }
+          processed++;
+          $('wardrobeBatchProgress').value = processed;
+        }
+        WARDROBE_PENDING_UPLOADS = pending.length ? pending : null;
+        if (!pending.length) $('wardrobeFile').value = '';
+        const message = `${WARDROBE_BATCH_CANCELLED ? '已停止' : '导入完成'}：成功 ${succeeded} 张，失败 ${failures.length} 张${queue.length > processed ? `，未处理 ${queue.length - processed} 张` : ''}`;
+        $('wardrobeBatchProgressLabel').textContent = message;
+        $('wardrobeBatchResult').textContent = failures.join('\n');
         await refreshSelfie();
-        showToast('衣橱服装已添加', 'ok');
-      } catch (e) { showToast(e.message || '衣橱服装添加失败', 'bad'); }
+        showToast(message, failures.length ? 'bad' : 'ok');
+      } finally {
+        WARDROBE_BATCH_BUSY = false;
+        controlIds.forEach(id => { if ($(id)) $(id).disabled = false; });
+        $('wardrobeBatchCancel').hidden = true;
+        $('uploadWardrobe').textContent = WARDROBE_PENDING_UPLOADS ? '重试未完成的图片' : '添加到衣橱';
+      }
+    }
+    function cancelWardrobeBatch() {
+      WARDROBE_BATCH_CANCELLED = true;
+      $('wardrobeBatchCancel').disabled = true;
+      $('wardrobeBatchProgressLabel').textContent = '正在停止，等待当前图片处理完成';
+    }
+    async function saveWardrobeMode() {
+      const select = $('wardrobeSelectionMode');
+      select.disabled = true;
+      try {
+        const res = await api('/api/selfie-wardrobe/settings', {method:'POST', body: JSON.stringify({selection_mode:select.value})});
+        renderWardrobe(res.data);
+        showToast('轮换方式已保存，今天的服装保留', 'ok');
+      } catch (e) { showToast(e.message || '轮换方式保存失败', 'bad'); await refreshSelfie(); }
+      finally { select.disabled = false; }
+    }
+    async function wearWardrobe(button) {
+      const id = button.closest('[data-wardrobe-id]').dataset.wardrobeId;
+      button.disabled = true;
+      try {
+        const res = await api('/api/selfie-wardrobe/select', {method:'POST', body: JSON.stringify({id})});
+        renderSelfieDailySchedule(res.data?.daily_schedule);
+        renderWardrobe(res.data?.wardrobe);
+        showToast('今日服装已指定，明天继续自动轮换', 'ok');
+      } catch (e) { showToast(e.message || '今日服装设置失败', 'bad'); }
+      finally { button.disabled = false; }
     }
     async function updateWardrobe(id) {
       const row = document.querySelector(`[data-wardrobe-id="${CSS.escape(id)}"]`);
@@ -134,6 +207,7 @@
       try {
         const res = await api('/api/selfie-profile/refresh-local', {method:'POST', body:'{}'});
         renderSelfieDailySchedule(res.data && res.data.daily_schedule);
+        renderWardrobe(res.data && res.data.wardrobe);
         showToast('本地今日穿搭已刷新', 'ok');
       } catch (e) {
         showToast(e.message, 'bad');

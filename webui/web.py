@@ -736,6 +736,10 @@ class FlaskWebServer:
             )
             if error_response:
                 return error_response
+            if method in selfie_profile_controller.ASYNC_WARDROBE_MUTATIONS:
+                return selfie_profile_result(lambda: self._run_async(
+                    getattr(selfie_profile_controller, method)(payload), timeout=20,
+                ))
             return selfie_profile_result(
                 lambda: getattr(selfie_profile_controller, method)(payload)
             )
@@ -756,6 +760,8 @@ class FlaskWebServer:
             "selfie_wardrobe_update": lambda: selfie_wardrobe_mutation("wardrobe_update"),
             "selfie_wardrobe_delete": lambda: selfie_wardrobe_mutation("wardrobe_delete"),
             "selfie_wardrobe_toggle": lambda: selfie_wardrobe_mutation("wardrobe_toggle"),
+            "selfie_wardrobe_settings": lambda: selfie_wardrobe_mutation("wardrobe_settings"),
+            "selfie_wardrobe_select": lambda: selfie_wardrobe_mutation("wardrobe_select"),
             "selfie_wardrobe_export": selfie_wardrobe_export,
             "selfie_wardrobe_import": lambda: selfie_wardrobe_mutation("wardrobe_import"),
         }

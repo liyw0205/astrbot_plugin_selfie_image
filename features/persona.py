@@ -1579,6 +1579,25 @@ class PersonaManager:
     def set_wardrobe_enabled(self, item_id: str, enabled: bool) -> WardrobeItem:
         return self.wardrobe.set_enabled(item_id, enabled)
 
+    def set_wardrobe_selection_mode(self, mode: str) -> None:
+        if mode not in {"random", "sequential"}:
+            raise ValueError("请选择随机或按顺序轮换")
+        current = self.current_wardrobe_item()
+        if current and not self.wardrobe.selection_date:
+            self.wardrobe.mark_used(current.id, daily_schedule_date_key(self.business_day_start))
+        self.wardrobe.set_selection_mode(mode)
+
+    async def select_wardrobe_today(self, item_id: str) -> DailySelfieProfile:
+        async with self._daily_profile_lock:
+            today = daily_schedule_date_key(self.business_day_start)
+            item = self.wardrobe.select_today(item_id, today)
+            profile = await self._ensure_daily_selfie_profile_unlocked("指定今日服装")
+            if profile.timeline is not None:
+                self._apply_wardrobe_item(profile.timeline, item)
+                profile = self._profile_from_timeline(profile.timeline)
+                self._persist_daily_selfie_profile(profile)
+            return profile
+
     def current_wardrobe_item(self) -> Optional[WardrobeItem]:
         schedule = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
         if schedule is None or not schedule.wardrobe_item_id:
@@ -1629,10 +1648,23 @@ class PersonaManager:
             force_new=force_new,
         )
         if item is None:
+            if schedule.wardrobe_item_id:
+                fallback = fallback_daily_profile(schedule.date, schedule.seed)
+                schedule.outfits["main"] = (fallback.timeline.outfits.get("main", "") if fallback.timeline else "") or fallback.outfit
+                schedule.outfit_source = ""
+                schedule.wardrobe_item_id = ""
+                for event in schedule.events:
+                    if event.outfit_source == "wardrobe":
+                        event.outfit_source = ""
+                        event.wardrobe_item_id = ""
             return schedule
         return self._apply_wardrobe_item(schedule, item)
 
     def _schedule_needs_wardrobe(self, schedule: DailySchedule) -> bool:
+        if self.wardrobe.manual_date == schedule.date and self.wardrobe.manual_id != schedule.wardrobe_item_id:
+            manual = self.wardrobe.get(self.wardrobe.manual_id)
+            if manual and self.wardrobe.image_reference(manual) is not None:
+                return True
         if not schedule.wardrobe_item_id:
             return True
         item = self.wardrobe.get(schedule.wardrobe_item_id)

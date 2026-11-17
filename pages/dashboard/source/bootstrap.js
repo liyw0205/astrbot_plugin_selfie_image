@@ -238,6 +238,13 @@
 
     $('uploadSelfie').onclick = uploadSelfie;
     if ($('uploadWardrobe')) $('uploadWardrobe').onclick = uploadWardrobe;
+    if ($('wardrobeSelectionMode')) $('wardrobeSelectionMode').onchange = saveWardrobeMode;
+    if ($('wardrobeBatchCancel')) $('wardrobeBatchCancel').onclick = cancelWardrobeBatch;
+    if ($('wardrobeFile')) $('wardrobeFile').onchange = () => {
+      WARDROBE_PENDING_UPLOADS = null;
+      $('uploadWardrobe').textContent = '添加到衣橱';
+      $('wardrobeBatchProgressWrap').hidden = true;
+    };
     if ($('refreshWardrobe')) $('refreshWardrobe').onclick = () => refreshSelfie(true);
     if ($('selfieAppearanceType')) $('selfieAppearanceType').onchange = saveAppearanceType;
     $('testChannel').onchange = refreshTestModels;

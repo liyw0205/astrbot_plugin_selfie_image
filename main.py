@@ -137,7 +137,7 @@ from .core.models import (
     ImageModelTarget,
     usable_api_keys,
 )
-from .features.persona import PersonaManager, current_period
+from .features.persona import PersonaManager, current_period, daily_schedule_date_key
 from .studio.studio import (
     BUILTIN_PROMPTS,
     StudioStore,
@@ -1922,14 +1922,26 @@ class SelfieImagePlugin(
 
     def get_wardrobe_payload(self) -> Dict[str, Any]:
         current = self.persona.current_wardrobe_item()
-        return {
-            "items": [item.to_dict() for item in self.persona.list_wardrobe()],
-            "enabled_count": sum(1 for item in self.persona.list_wardrobe() if item.enabled),
-            "current_item_id": current.id if current else "",
-            "current_item_name": current.name if current else "",
-        }
+        return self.persona.wardrobe.summary(
+            current_id=current.id if current else "",
+            date=daily_schedule_date_key(self.persona.business_day_start),
+        )
 
-    def save_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def set_wardrobe_settings_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        mode = payload.get("selection_mode")
+        if not isinstance(mode, str) or mode not in {"random", "sequential"}:
+            raise ValueError("请选择随机或按顺序轮换")
+        self.persona.set_wardrobe_selection_mode(mode)
+        return self.get_wardrobe_payload()
+
+    async def select_wardrobe_today_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        item_id = payload.get("id")
+        if not isinstance(item_id, str) or not item_id.strip():
+            raise ValueError("缺少衣橱服装 id")
+        await self.persona.select_wardrobe_today(item_id.strip())
+        return {"wardrobe": self.get_wardrobe_payload(), "daily_schedule": self.persona.daily_schedule_payload()}
+
+    async def save_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         raw_image = str(payload.get("image") or payload.get("data") or "").strip()
         if not raw_image:
             raise ValueError("缺少 image 字段，支持 data:image/...;base64,... 或纯 base64")
@@ -1952,6 +1964,7 @@ class SelfieImagePlugin(
             description=str(payload.get("description") or "").strip(),
             tags=payload.get("tags"),
         )
+        await self.persona.ensure_daily_selfie_profile("衣橱添加")
         return self.get_wardrobe_payload()
 
     def update_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1967,14 +1980,15 @@ class SelfieImagePlugin(
         )
         return self.get_wardrobe_payload()
 
-    def delete_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def delete_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         item_id = str(payload.get("id") or payload.get("item_id") or "").strip()
         if not item_id:
             raise ValueError("缺少衣橱服装 id")
         self.persona.remove_wardrobe_item(item_id)
+        await self.persona.ensure_daily_selfie_profile("衣橱删除")
         return self.get_wardrobe_payload()
 
-    def toggle_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def toggle_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         item_id = str(payload.get("id") or payload.get("item_id") or "").strip()
         if not item_id:
             raise ValueError("缺少衣橱服装 id")
@@ -1982,6 +1996,7 @@ class SelfieImagePlugin(
         if isinstance(enabled, str):
             enabled = enabled.strip().lower() in {"1", "true", "yes", "on", "启用"}
         self.persona.set_wardrobe_enabled(item_id, bool(enabled))
+        await self.persona.ensure_daily_selfie_profile("衣橱启停")
         return self.get_wardrobe_payload()
 
     @staticmethod
@@ -3578,6 +3593,8 @@ class SelfieImagePlugin(
                 "· /辅助形象清除　清空辅助形象图，不影响主形象",
                 "· /形象清除　去掉参考图",
                 "· /形象刷新　刷新今日穿搭状态",
+                "· /衣橱、/衣橱添加　查看衣橱或附图导入服装",
+                "· /衣橱穿 编号　指定今天穿哪套；/衣橱轮换 顺序（或 随机）设置每日选衣方式",
                 "",
                 "预设：/预设　列表；可在任意生图指令中写「变真人」「变动漫」「变猫娘」「变Q版」「变像素」等图像转换预设；「特殊预设」随机选择上下身结构，「动作预设」随机选择动作，「上身预设」随机选择上身结构，「下身预设」随机选择下身结构；管理员可 /预设添加 名称:内容、/预设删除 名称",
                 "",
@@ -4245,6 +4262,7 @@ class SelfieImagePlugin(
             return "衣橱还是空的。请使用 衣橱添加 并附上一张服装图。"
         lines = [
             f"自定义衣橱：{len(items)} 套，已启用 {sum(1 for item in items if item.enabled)} 套。",
+            f"轮换方式：{'按导入顺序' if self.persona.wardrobe.selection_mode == 'sequential' else '随机'}。",
             (
                 f"今日服装：{current.name}（{current.id}）"
                 if current
@@ -4332,6 +4350,30 @@ class SelfieImagePlugin(
         if failed:
             message += f"另有 {failed} 张图片读取失败。"
         yield event.plain_result(message + "\n" + self._wardrobe_list_text())
+
+    @filter.command("衣橱穿")
+    async def cmd_wardrobe_wear(self, event: AstrMessageEvent, p1: str = "") -> AsyncGenerator[Any, None]:
+        """指定今天穿的衣橱服装，次日恢复自动轮换。"""
+        item = self._wardrobe_item_by_token(p1)
+        if item is None:
+            yield event.plain_result("请提供正确的衣橱编号或 id。\n" + self._wardrobe_list_text())
+            return
+        try:
+            await self.persona.select_wardrobe_today(item.id)
+        except ValueError as exc:
+            yield event.plain_result(str(exc))
+            return
+        yield event.plain_result(f"今天穿：{item.name}。明天继续自动轮换。")
+
+    @filter.command("衣橱轮换")
+    async def cmd_wardrobe_rotation(self, event: AstrMessageEvent, p1: str = "") -> AsyncGenerator[Any, None]:
+        """设置衣橱的每日轮换方式。"""
+        mode = {"顺序": "sequential", "随机": "random", "sequential": "sequential", "random": "random"}.get(p1.strip())
+        if mode is None:
+            yield event.plain_result("用法：衣橱轮换 顺序 或 衣橱轮换 随机。")
+            return
+        self.persona.set_wardrobe_selection_mode(mode)
+        yield event.plain_result("轮换方式已保存，今天的服装保留，下一次自动选衣时生效。\n" + self._wardrobe_list_text())
 
     @filter.command("衣橱删除")
     async def cmd_wardrobe_delete(self, event: AstrMessageEvent, p1: str = "", p2: str = "") -> AsyncGenerator[Any, None]:
