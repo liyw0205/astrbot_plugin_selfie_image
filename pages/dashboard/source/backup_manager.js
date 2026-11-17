@@ -42,17 +42,17 @@
       return error;
     }
 
-    async function archiveRequest(path, body, signal, timeout = 30000) {
+    async function archiveTimedRequest(request, signal, timeout = 30000, timeoutMessage = '归档请求超时，请重试') {
       if (signal?.aborted) throw archiveUploadCancelled();
       const controller = new AbortController();
       let timer;
       let abort;
       try {
         const response = await Promise.race([
-          api(path, {method:'POST', body:JSON.stringify(body), signal:controller.signal}),
+          request(controller.signal),
           new Promise((_, reject) => {
             timer = setTimeout(() => {
-              reject(new Error('归档请求超时，请重试'));
+              reject(new Error(timeoutMessage));
               controller.abort();
             }, timeout);
             abort = () => {
@@ -69,6 +69,12 @@
         clearTimeout(timer);
         if (abort) signal?.removeEventListener('abort', abort);
       }
+    }
+
+    async function archiveRequest(path, body, signal, timeout = 30000) {
+      return archiveTimedRequest(requestSignal => api(path, {
+        method:'POST', body:JSON.stringify(body), signal:requestSignal,
+      }), signal, timeout);
     }
 
     async function uploadArchiveFile(file, kind, restoreOptions = {}) {
@@ -297,18 +303,24 @@
       let blob;
       let filename = defaultFilename;
       if (!isDashboardPage()) {
-        const response = await fetch(`${path}?format=file`, {headers:headers()});
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({}));
-          throw new Error(apiErrorMessage(response.status, error));
-        }
-        blob = await response.blob();
+        blob = await archiveTimedRequest(async signal => {
+          const response = await fetch(`${path}?format=file`, {headers:headers(), signal});
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(apiErrorMessage(response.status, error));
+          }
+          return response.blob();
+        }, null, 300000, '归档下载超时，请重试');
       } else {
-        const bridge = await waitForDashboardBridge();
-        if (typeof bridge.ready === 'function') await bridge.ready();
+        const bridge = await archiveTimedRequest(async () => {
+          const result = await waitForDashboardBridge();
+          if (typeof result.ready === 'function') await result.ready();
+          return result;
+        }, null, 30000, '归档下载超时，请重试');
         // Download in the host: sandboxed plugin iframes may block blob links.
         if (typeof bridge.download === 'function') {
-          await bridge.download(bridgeEndpoint(path), {format:'file'}, defaultFilename);
+          await archiveTimedRequest(() => bridge.download(bridgeEndpoint(path), {format:'file'}, defaultFilename),
+            null, 300000, '归档下载超时，请重试');
           return;
         }
         const parts = [];
@@ -316,7 +328,9 @@
         let revision = '';
         let totalSize;
         for (;;) {
-          const response = await api(`${path}?format=chunk&offset=${offset}&revision=${encodeURIComponent(revision)}`);
+          const response = await archiveTimedRequest(signal => api(
+            `${path}?format=chunk&offset=${offset}&revision=${encodeURIComponent(revision)}`, {signal}),
+            null, 30000, '归档下载超时，请重试');
           const payload = response.data || {};
           if (!payload.revision || (revision && revision !== payload.revision)) throw new Error('归档文件已变化，请重新下载');
           const size = Number(payload.size);

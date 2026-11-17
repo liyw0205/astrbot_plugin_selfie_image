@@ -23,7 +23,7 @@ const source = fs.readFileSync(process.argv[2], 'utf8');
     const clicks = [], errors = [], blobs = [];
     const elements = new Map();
     const context = vm.createContext({
-      Blob, Uint8Array, URLSearchParams,
+      Blob, Uint8Array, URLSearchParams, AbortController, clearTimeout,
       atob: value => Buffer.from(value, 'base64').toString('binary'),
       btoa: value => Buffer.from(value, 'binary').toString('base64'),
       isDashboardPage: () => dashboard,
@@ -48,7 +48,7 @@ const source = fs.readFileSync(process.argv[2], 'utf8');
       document: {body:{appendChild:() => {}}, createElement:() => ({click(){clicks.push(true);}, remove(){}})},
       showToast: (message, kind) => {if(kind === 'bad') errors.push([message,kind]);},
       waitForDashboardBridge: async () => ({}),
-      setTimeout: callback => {callback();},
+      setTimeout: (callback, delay) => delay >= 30000 ? setTimeout(callback, delay) : callback(),
       $: id => {
         if(!elements.has(id)) elements.set(id, {querySelectorAll:() => [], addEventListener:() => {}});
         return elements.get(id);
@@ -179,4 +179,98 @@ vm.runInContext(fs.readFileSync(process.argv[2],'utf8')+'\nglobalThis.request=ar
 })().catch(error=>{process.stderr.write(error.stack+'\n');process.exitCode=1;});
 """
     result = subprocess.run([node, "-", str(source)], input=script, text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("mode", [
+    "file_headers", "file_body", "file_error_body", "bridge_discovery", "bridge_ready",
+    "bridge_download", "bridge_chunk", "bridge_partial",
+])
+def test_download_timeout_releases_export_and_allows_retry(mode):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is unavailable")
+    source = Path(__file__).resolve().parents[1] / "pages/dashboard/source/backup_manager.js"
+    script = r"""
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const mode=process.argv[3], pending=[], never=()=>new Promise(resolve=>pending.push(resolve));
+let stalled=true, transportSignal, discarded=0, saved=0, bridgeCalls=0, chunkCalls=0;
+const errors=[], calls=[];
+const bridge={
+  ready:()=>stalled&&mode==='bridge_ready'?never():Promise.resolve(),
+  download:()=>{bridgeCalls++;return stalled&&mode==='bridge_download'?never():Promise.resolve();},
+};
+if(mode==='bridge_chunk'||mode==='bridge_partial')delete bridge.download;
+const context=vm.createContext({
+  Blob,Uint8Array,AbortController,clearTimeout,
+  setTimeout:(callback,ms)=>setTimeout(callback,ms>=30000?10:ms===2000?0:ms),
+  atob:value=>Buffer.from(value,'base64').toString('binary'),
+  isDashboardPage:()=>mode.startsWith('bridge_'),headers:()=>({'X-Selfie-Image-Token':'fixture'}),
+  bridgeEndpoint:path=>path.replace(/^\/api\//,''),
+  apiErrorMessage:()=> 'HTTP failure',
+  waitForDashboardBridge:()=>stalled&&mode==='bridge_discovery'?never():Promise.resolve(bridge),
+  api:async (path,options)=>{
+    calls.push({path,options});
+    if(path.endsWith('/wardrobe-export'))return {data:{id:'export-fixture',filename:'clothes.zip'}};
+    if(path.endsWith('/discard')){discarded++;return {data:{discarded:true}};}
+    assert(path.includes('/download?format=chunk'));
+    transportSignal=options?.signal;
+    chunkCalls++;
+    const offset=Number(new URL(path,'http://fixture').searchParams.get('offset'));
+    if(mode==='bridge_partial'&&offset===0)return {data:{revision:'r',size:6,offset:0,next_offset:3,eof:false,content_base64:'emlw'}};
+    if(stalled)return never();
+    if(mode==='bridge_partial')return {data:{revision:'r',size:6,offset:3,next_offset:6,eof:true,content_base64:'emlw'}};
+    return {data:{revision:'r',size:3,offset:0,next_offset:3,eof:true,content_base64:'emlw'}};
+  },
+  fetch:async (path,options)=>{
+    assert(path.endsWith('/download?format=file'));
+    assert.equal(options.headers['X-Selfie-Image-Token'],'fixture');
+    transportSignal=options.signal;
+    if(stalled&&mode==='file_headers')return never();
+    return {ok:!(stalled&&mode==='file_error_body'),
+      blob:()=>stalled?never():Promise.resolve(new Blob(['zip'])),json:never};
+  },
+  URL:{createObjectURL:()=> 'blob:fixture',revokeObjectURL:()=>{}},
+  document:{body:{appendChild(){}},createElement:()=>({click(){saved++;},remove(){}})},
+  showToast:(message,kind)=>{if(kind==='bad')errors.push(message);},
+  $:()=>({addEventListener(){}}),
+});
+vm.runInContext(fs.readFileSync(process.argv[2],'utf8')+
+  '\nglobalThis.handlers={exportWardrobe,busy:()=>BACKUP_BUSY};',context);
+(async()=>{
+  const result=await Promise.race([
+    context.handlers.exportWardrobe().then(()=> 'settled'),
+    new Promise(resolve=>setTimeout(()=>resolve('stuck'),100)),
+  ]);
+  assert.equal(result,'settled','stalled '+mode+' left export pending');
+  assert.equal(context.handlers.busy(),false);
+  assert.equal(discarded,1);
+  assert.equal(saved,0);
+  assert.equal(errors.length,1);
+  assert.match(errors[0],/超时/);
+  if(mode.startsWith('file_')||mode==='bridge_chunk'||mode==='bridge_partial')assert.equal(transportSignal.aborted,true);
+  const timedOutChunkCalls=chunkCalls;
+  for(const resolve of pending.splice(0))resolve(mode==='bridge_discovery'?bridge:{
+    ok:true,blob:async()=>new Blob(['late']),data:{revision:'r',size:6,offset:3,next_offset:6,eof:true,content_base64:'emlw'},
+  });
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(saved,0,'late response saved a timed-out download');
+  assert.equal(discarded,1);
+  assert.equal(chunkCalls,timedOutChunkCalls,'late response continued a timed-out download');
+  assert.equal(errors.length,1);
+  const firstCalls=calls.length;
+  stalled=false;
+  await context.handlers.exportWardrobe();
+  assert.equal(context.handlers.busy(),false);
+  assert.equal(discarded,2);
+  assert.equal(errors.length,1);
+  assert.equal(saved,mode==='bridge_chunk'||mode==='bridge_partial'||mode.startsWith('file_')?1:0);
+  assert.equal(bridgeCalls,mode==='bridge_download'?2:mode.startsWith('bridge_')&&!['bridge_chunk','bridge_partial'].includes(mode)?1:0);
+  assert(calls.length>firstCalls);
+  assert.equal(calls.filter(call=>call.path.endsWith('/wardrobe-export')).length,2);
+})().catch(error=>{process.stderr.write(error.stack+'\n');process.exitCode=1;});
+"""
+    result = subprocess.run([node, "-", str(source), mode], input=script, text=True, capture_output=True, timeout=10)
     assert result.returncode == 0, result.stderr

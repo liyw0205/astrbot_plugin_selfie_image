@@ -23,6 +23,8 @@ options.push(...['形象资料','今日日程','预设与 COS','画布与资产�
 const rows = [{id:'bkp_fixture', filename:'bkp_fixture.zip', selected:['config','wardrobe'], size:2048, file_count:2}];
 let calls = [], pending = false, deleted = false, rejectRestore = false;
 let visibleRows = rows, downloadMode = 'normal', releaseChunk = null, holdChunk = false;
+const stalledDownloads = new Set();
+let closedDownloads = 0;
 const longFilename = 'backup_' + 'long_filename_'.repeat(12) + '.zip';
 
 const sdk = `
@@ -93,6 +95,14 @@ async function main() {
       if(downloadMode==='failure') {
         response.statusCode=503;response.setHeader('Content-Type','application/json');response.end(JSON.stringify({success:false,error:'fixture download unavailable'}));return;
       }
+      if(downloadMode==='stalled') {
+        const chunked=url.searchParams.get('format')==='chunk';
+        response.setHeader('Content-Type',chunked?'application/json':'application/zip');
+        response.write(chunked?'{"success":true,"data":':archive.subarray(0,8));
+        stalledDownloads.add(response);
+        response.on('close',()=>{stalledDownloads.delete(response);closedDownloads++;});
+        return;
+      }
       if(url.searchParams.get('format')==='chunk') {
         const offset=Number(url.searchParams.get('offset')),chunk=archive.subarray(offset,offset+48);
         assert.equal(url.searchParams.get('revision'),offset?'fixture-revision':'');
@@ -112,6 +122,7 @@ async function main() {
     }
     let data={};
     if(url.pathname==='/api/backups/options')data={items:options};
+    else if(url.pathname==='/api/archive-transfers/wardrobe-export')data={id:'export-fixture',filename:'clothes.zip'};
     else if(url.pathname==='/api/backups')data={items:deleted?[]:visibleRows, max:5, can_create:visibleRows.length<5, restore_pending:pending};
     else if(url.pathname==='/api/backups/delete'){deleted=true;data={items:[],max:5};}
     else if(url.pathname.endsWith('/restore') || url.pathname.endsWith('/commit')) {
@@ -147,10 +158,12 @@ async function main() {
     };
     const until=async expression=>{
       for(let i=0;i<100;i++) {if(await evaluate(expression))return;await new Promise(resolve=>setTimeout(resolve,30));}
-      throw new Error('Timed out: '+expression+'; '+await evaluate('document.body.innerText.slice(-1200)'));
+      throw new Error('Timed out: '+expression+'; '+JSON.stringify(calls.slice(-6))+'; '+await evaluate('document.body.innerText.slice(-1200)'));
     };
     const click=async selector=>{
-      const point=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+      await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
+      await new Promise(resolve=>setTimeout(resolve,100));
+      const point=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;const hit=document.elementFromPoint(x,y);if(!hit||!el.contains(hit))throw new Error('click target is obscured: '+${JSON.stringify(selector)});return {x,y};})()`);
       const frame=await cdp.send('Runtime.evaluate',{expression:"(()=>{const r=document.querySelector('iframe')?.getBoundingClientRect();return r?{x:r.x,y:r.y}:{x:0,y:0};})()",returnByValue:true});
       point.x+=frame.result.value.x;point.y+=frame.result.value.y;
       await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
@@ -178,10 +191,30 @@ async function main() {
       downloadMode='failure';await click('.backup-download');
       await until("[...document.querySelectorAll('.toast')].some(el=>el.textContent.includes('fixture download unavailable'))");
       assert.equal(downloaded().length,previousDownloads);
+      await evaluate(`window.fixtureSetTimeout=window.setTimeout;window.setTimeout=(callback,ms,...args)=>window.fixtureSetTimeout(callback,ms===30000||ms===300000?150:ms,...args);$('toastWrap').innerHTML='';`);
+      const closedBefore=closedDownloads;
+      downloadMode='stalled';await click('.backup-download');
+      await until("[...document.querySelectorAll('.toast')].some(el=>el.textContent.includes('归档下载超时'))");
+      assert.equal(downloaded().length,previousDownloads);
+      if(mode==='standalone') {
+        for(let i=0;i<50&&closedDownloads===closedBefore;i++)await new Promise(resolve=>setTimeout(resolve,20));
+        assert(closedDownloads>closedBefore,'standalone stalled response was not aborted');
+      }
+      for(const response of stalledDownloads)response.destroy();
+      await evaluate("navigateToTab('selfie');$('toastWrap').innerHTML='';");
+      const exportsBefore=calls.filter(call=>call.path.endsWith('/wardrobe-export')).length;
+      const discardsBefore=calls.filter(call=>call.path.endsWith('/export-fixture/discard')).length;
+      await click('#exportWardrobe');
+      await until("!BACKUP_BUSY && [...document.querySelectorAll('.toast')].some(el=>el.textContent.includes('归档下载超时'))");
+      assert.equal(calls.filter(call=>call.path.endsWith('/wardrobe-export')).length,exportsBefore+1);
+      assert.equal(calls.filter(call=>call.path.endsWith('/export-fixture/discard')).length,discardsBefore+1);
+      for(const response of stalledDownloads)response.destroy();
+      await evaluate("window.setTimeout=window.fixtureSetTimeout;delete window.fixtureSetTimeout;navigateToTab('backup');");
+      const retryCallsStart=calls.length;
       downloadMode='slow';await evaluate("$('toastWrap').innerHTML=''");await click('.backup-download');
       await until("[...document.querySelectorAll('.toast')].some(el=>el.textContent.includes('已开始下载'))");
       assert(calls.some(call=>call.path.endsWith('/download')&&call.format===(mode==='legacy'?'chunk':'file')));
-      if(mode==='legacy')assert.deepEqual(calls.filter(call=>call.path.endsWith('/download')).slice(1).map(call=>Number(call.offset)),Array.from({length:Math.ceil(archive.length/48)},(_,i)=>i*48));
+      if(mode==='legacy')assert.deepEqual(calls.slice(retryCallsStart).filter(call=>call.path.endsWith('/download')).map(call=>Number(call.offset)),Array.from({length:Math.ceil(archive.length/48)},(_,i)=>i*48));
       for(let i=0;i<100&&downloaded().length===previousDownloads;i++)await new Promise(resolve=>setTimeout(resolve,30));
       assert.equal(downloaded().length,previousDownloads+1,'download did not leave the sandbox');
       assert(downloaded().every(name=>fs.readFileSync(path.join(downloadDir,name)).equals(archive)));
@@ -254,11 +287,12 @@ async function main() {
       await click('.backup-delete'); await click('#confirmProceedBtn'); await until('!BACKUP_BUSY');
       assert.equal(calls.filter(call=>call.path.endsWith('/delete')).length,1);
       assert.equal(await evaluate("$('backupList').textContent.includes('暂无备份')"),true);
-      console.log(`[backup-smoke] ${mode} ${width}x${height}: valid ZIP, download failure/retry/delay, restore, upload cancel/retry, full/empty list and long filename passed`);
+      console.log(`[backup-smoke] ${mode} ${width}x${height}: valid ZIP, stalled download timeout/retry/export cleanup, restore, upload cancel/retry, full/empty list and long filename passed`);
     }
     assert.deepEqual(exceptions,[]);
     console.log(`[backup-smoke] screenshots: ${output}`);
   } finally {
+    for(const response of stalledDownloads)response.destroy();
     if(releaseChunk)releaseChunk();
     if(cdp)cdp.close();await stopProcess(browser);
     await new Promise(resolve=>server.close(resolve));
