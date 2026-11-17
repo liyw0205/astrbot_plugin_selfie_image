@@ -100,8 +100,47 @@ def _empty_or_new_directory(value: Any, label: str) -> Path:
         raise RehearsalError(f"{label}: must be a real directory path")
     if path.exists() and any(path.iterdir()):
         raise RehearsalError(f"{label}: must be new or empty; existing data is never removed")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
+    return path.resolve(strict=False)
+
+
+def _directory_identity(path: Path) -> tuple[int, int] | None:
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        return None
+    return info.st_dev, info.st_ino
+
+
+def _prepare_data_root(config: Mapping[str, Any]) -> tuple[int, int] | None:
+    """Recheck the preflight snapshot and create only a still-absent root."""
+    data_root = Path(config["data_root"])
+    expected_path = Path(config["data_root_resolved"])
+    if data_root.is_symlink() or data_root.resolve(strict=False) != expected_path:
+        raise RehearsalError("data_root: changed after validation")
+
+    expected_identity = config["data_root_identity"]
+    if config["data_root_preexisting"]:
+        if (
+            not data_root.is_dir()
+            or _directory_identity(data_root) != expected_identity
+            or any(data_root.iterdir())
+        ):
+            raise RehearsalError("data_root: changed after validation")
+        return None
+
+    if data_root.exists():
+        raise RehearsalError("data_root: changed after validation")
+    data_root.parent.mkdir(parents=True, exist_ok=True)
+    if data_root.resolve(strict=False) != expected_path:
+        raise RehearsalError("data_root: changed after validation")
+    try:
+        data_root.mkdir()
+    except FileExistsError as error:
+        raise RehearsalError("data_root: changed after validation") from error
+    identity = _directory_identity(data_root)
+    if identity is None or not data_root.is_dir() or data_root.is_symlink():
+        raise RehearsalError("data_root: changed after validation")
+    return identity
 
 
 def validate_config(payload: Any, *, config_path: Path | None = None) -> dict[str, Any]:
@@ -120,6 +159,7 @@ def validate_config(payload: Any, *, config_path: Path | None = None) -> dict[st
 
     data_root = _empty_or_new_directory(payload["data_root"], "data_root")
     data_root_preexisting = data_root.exists()
+    data_root_identity = _directory_identity(data_root)
     working_directory = Path(_text(payload["working_directory"], "working_directory")).expanduser().absolute()
     if working_directory.is_symlink() or not working_directory.is_dir():
         raise RehearsalError("working_directory: must be an existing directory")
@@ -186,6 +226,8 @@ def validate_config(payload: Any, *, config_path: Path | None = None) -> dict[st
         "schema_version": SCHEMA_VERSION,
         "data_root": data_root,
         "data_root_preexisting": data_root_preexisting,
+        "data_root_identity": data_root_identity,
+        "data_root_resolved": data_root.resolve(strict=False),
         "working_directory": working_directory,
         "start_command": start_command,
         "stop_command": stop_command,
@@ -371,7 +413,7 @@ def run_rehearsal(config: Mapping[str, Any], *, keep_data: bool = False) -> dict
 
     data_root = Path(config["data_root"])
     report_path = Path(config["report_path"])
-    data_root.mkdir(parents=True, exist_ok=True)
+    created_data_root_identity = _prepare_data_root(config)
     values = {
         "data_root": str(data_root),
         "report_path": str(report_path),
@@ -505,8 +547,16 @@ def run_rehearsal(config: Mapping[str, Any], *, keep_data: bool = False) -> dict
             if config["data_root_preexisting"]:
                 report["data_cleanup"] = "preserved_existing_empty"
             else:
-                shutil.rmtree(data_root)
-                report["data_cleanup"] = "removed"
+                if (
+                    data_root.is_symlink()
+                    or data_root.resolve(strict=False) != Path(config["data_root_resolved"])
+                    or _directory_identity(data_root) != created_data_root_identity
+                ):
+                    report["data_cleanup"] = "preserved_changed"
+                    report["status"] = "failed"
+                else:
+                    shutil.rmtree(data_root)
+                    report["data_cleanup"] = "removed"
         except OSError:
             report["data_cleanup"] = "failed"
             report["status"] = "failed"

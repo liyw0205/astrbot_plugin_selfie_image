@@ -60,12 +60,18 @@ Run it only with a disposable data root:
 python scripts/host_rehearsal.py --config /path/to/host-rehearsal.json
 ```
 
+Validation does not create directories. Immediately before starting the host,
+the runner rechecks that `data_root` is still the same empty directory (or is
+still absent) observed during preflight. It removes a newly created root only
+if the path still identifies that same directory after the run; changed paths
+are preserved and reported as failure. A pre-existing empty directory is
+preserved, and `--keep-data` retains a newly created root.
+
 The report contains phase status, health status, durations, exit codes, error
 categories, version metadata, proxy mode, and an account fingerprint. It never
-stores command output, media, credentials, or full upstream responses. The
-isolated data root is removed after the run unless `--keep-data` is supplied.
-This runner is a prerequisite for real-host acceptance; local unit tests do
-not count as a host rehearsal.
+stores command output, media, credentials, or full upstream responses. This
+runner is a prerequisite for real-host acceptance; local unit tests do not
+count as a host rehearsal.
 
 ## Input Contracts
 
