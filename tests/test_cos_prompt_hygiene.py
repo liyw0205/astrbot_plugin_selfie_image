@@ -124,6 +124,15 @@ class CcWhiteTigerPromptTest(unittest.TestCase):
     ("artsee173_011_welrod_british", ("耳侧绕到后脑", "后颈小马尾", "尾端停在颈根"), ("束起的后发垂至腰际",)),
     ("rem_white_summer_dress", ("覆盖右眼", "露出左眼", "后颈发尾内扣"), ("覆盖左眼",)),
     ("ram_yellow_casual_dress", ("覆盖左眼", "露出右眼", "后颈发尾内扣"), ("覆盖右眼",)),
+    ("hi3_rita_long_maid_coat", ("后脑发丝贴顺收至颈根", "发尾齐颈并微微内扣"), ("后发披散至腰际",)),
+    ("azur_lane_kaga", ("齐刘海横向平齐并由细发束自然分开", "后区发丝齐至颈根、末端微向内扣"), ("后发披散至腰际",)),
+    ("ark_kalstit_researcher", ("额前短碎刘海错落露眉", "后发轻薄分层停在肩头"), ("束起的后发垂至腰际",)),
+    ("hi3_seele_asym_dress", ("侧分长刘海斜掠一侧眉眼", "后颈剪出轻薄短层次，发尾微微外翘"), ("后发披散至腰际",)),
+    ("cc_white_tiger_pink_gold_dress", ("齐刘海横向修齐并留少量细碎边缘", "后发整体直落到大腿上段、末端收成轻尖"), ("后发披散至腰际",)),
+    ("silver_wolf_blue_black_street", ("碎刘海斜向一侧形成不规则短束", "后颈收短并露出轻翘发尾"), ("束起的后发垂至腰际",)),
+    ("silver_wolf_tech_vest", ("碎刘海斜向一侧形成不规则短束", "后颈收短并露出轻翘发尾"), ("束起的后发垂至腰际",)),
+    ("blue_archive_hoshino_private_gym", ("蓬松厚刘海偏向一侧", "头顶保留一束弯曲翘发"), ("齐颈短发",)),
+    ("ark_suzuran_ritual", ("齐刘海均匀落在眉上并留少量细碎发丝", "后发轻薄分层至肩头、尾端微微内弯"), ("束起的后发垂至腰际",)),
 ])
 def test_pool_hair_details_reach_the_action_without_incompatible_lengths(look_id, required, forbidden):
     pool_prompt = get_cos_look_by_id(look_id)["prompt"]
