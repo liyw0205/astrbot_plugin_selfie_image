@@ -380,6 +380,7 @@
     }
     function requestTraceSnapshot() { return REQUEST_TRACE.map(item => Object.assign({}, item)); }
     let CONFIG = {};
+    let CONFIG_REVISION = 0;
     let CONFIG_LOAD_SEQ = 0;
     let QQ_GROUP_LOAD_SEQ = 0;
     let CONFIG_MUTATION_SEQ = 0;
@@ -667,7 +668,9 @@
             document.body.classList.remove("authed");
           }
           finish(`http_${res.status}`);
-          throw new Error(apiErrorMessage(res.status, data));
+          const error = new Error(apiErrorMessage(res.status, data));
+          error.status = res.status;
+          throw error;
         }
         finish(`http_${res.status}`);
         return data;

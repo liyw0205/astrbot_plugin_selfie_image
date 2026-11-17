@@ -154,6 +154,7 @@
         if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
         CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
         const payload = {groups: rows, permission};
+        if (CONFIG_REVISION > 0) payload.revision = CONFIG_REVISION;
         return enqueueConfigWrite(async () => {
           try {
             const result = await api('/api/qq-groups/config', {method:'POST', body: JSON.stringify(payload)});
@@ -161,6 +162,7 @@
             if (rows.length) CONFIG.group_chat_configs = Object.fromEntries(rows.map(row => [String(row.group_id), row.config]));
             CONFIG.permission = {...(CONFIG.permission || {}), ...permission};
             if (result.data?.permission) CONFIG.permission = {...CONFIG.permission, ...result.data.permission};
+            if (Number(result.data?.revision) > 0) CONFIG_REVISION = Number(result.data.revision);
             updateGlobalUsableGateUi();
             showToast('群聊配置和用户名单已保存', 'ok');
             return true;
@@ -169,6 +171,13 @@
               if (rows.length) CONFIG.group_chat_configs = previousGroups;
               CONFIG.permission = previousPermission;
               updateGlobalUsableGateUi();
+              if (error.status === 409) {
+                CONFIG_MUTATION_SEQ += 1;
+                await loadConfig();
+                await loadQQGroups();
+                showToast('配置已被其他页面更新，已重新读取，请确认后再保存', 'info');
+                return false;
+              }
               showToast(error.message || '保存群聊配置失败', 'bad');
             }
             return false;
@@ -187,11 +196,22 @@
         const res = await api('/api/config');
         if (loadSeq !== CONFIG_LOAD_SEQ || mutationSeq !== CONFIG_MUTATION_SEQ) return;
         CONFIG = res.data || {};
+        if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         fillForms();
         renderProxyList();
       } catch (e) {
         if (loadSeq === CONFIG_LOAD_SEQ) showToast(e.message || '配置读取失败', 'bad');
       }
+    }
+    function configWriteBody(snapshot) {
+      const body = {config: snapshot};
+      if (CONFIG_REVISION > 0) body.revision = CONFIG_REVISION;
+      return body;
+    }
+    async function reloadConfigAfterConflict() {
+      CONFIG_MUTATION_SEQ += 1;
+      await loadConfig();
+      showToast('配置已被其他页面更新，已重新读取，请确认后再保存', 'info');
     }
     async function exportJsonConfig() {
       const modal = $('configExportModal');
@@ -264,9 +284,10 @@
       const quiet = options.quiet === true;
       try {
         const snapshot = options.snapshot || (collectForms(), JSON.parse(JSON.stringify(CONFIG || {})));
-        const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: snapshot})});
+        const res = await api('/api/config', {method:'POST', body: JSON.stringify(configWriteBody(snapshot))});
         if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
         CONFIG = res.data || CONFIG;
+        if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         ensureConfig();
         $('configText').value = JSON.stringify(CONFIG, null, 2);
         if (renderAfterSave) fillForms();
@@ -282,6 +303,10 @@
         return true;
       } catch (e) {
         if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
+        if (e.status === 409) {
+          await reloadConfigAfterConflict();
+          return false;
+        }
         if (toastOnError) setMultiStatus(e.message, 'bad');
         return false;
       }
@@ -653,9 +678,10 @@
     }
     async function persistChannelListSnapshot(snapshot, mutationSeq = ++CONFIG_MUTATION_SEQ) {
       try {
-        const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: snapshot})});
+        const res = await api('/api/config', {method:'POST', body: JSON.stringify(configWriteBody(snapshot))});
         if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
         CONFIG = res.data || CONFIG;
+        if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         ensureConfig();
         // Channel-list mutations already update their local card. Rebuilding
         // every card after a priority-only autosave makes mobile WebViews hitch.
@@ -665,6 +691,10 @@
         // A newer mutation owns the visible state; do not let this old
         // failure trigger the caller's rollback path.
         if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
+        if (e.status === 409) {
+          await reloadConfigAfterConflict();
+          return false;
+        }
         // A failed autosave must leave the visible priority order aligned with
         // the last known server config, so a retry cannot submit a partial or
         // reordered snapshot by accident.
@@ -698,14 +728,18 @@
       try {
         CONFIG = parsed;
         ensureConfig();
-        const res = await api('/api/config', {method:'POST', body: JSON.stringify({config: CONFIG})});
+        const res = await api('/api/config', {method:'POST', body: JSON.stringify(configWriteBody(CONFIG))});
         if (mutationSeq !== CONFIG_MUTATION_SEQ) return true;
         CONFIG = res.data || CONFIG;
+        if (Number(res.revision) > 0) CONFIG_REVISION = Number(res.revision);
         fillForms();
         showToast('JSON 配置已保存', 'ok');
         return true;
       } catch (e) {
-        if (mutationSeq === CONFIG_MUTATION_SEQ) showToast(e.message || 'JSON 配置保存失败', 'bad');
+        if (mutationSeq === CONFIG_MUTATION_SEQ) {
+          if (e.status === 409) await reloadConfigAfterConflict();
+          else showToast(e.message || 'JSON 配置保存失败', 'bad');
+        }
         return false;
       }
       };

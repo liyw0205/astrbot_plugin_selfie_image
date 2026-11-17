@@ -47,6 +47,17 @@ DEFAULT_WEB_TOKEN = str(DEFAULT_CONFIG["web"].get("token") or "changeme").strip(
 class ConfigImportValidationError(RuntimeError):
     """A submitted configuration was rejected by the preflight validator."""
 
+
+class ConfigRevisionConflictError(RuntimeError):
+    """A web client attempted to save a stale full configuration snapshot."""
+
+    def __init__(self, expected: int, current: int) -> None:
+        self.expected = int(expected)
+        self.current = int(current)
+        super().__init__(
+            f"配置已被其他页面更新（当前版本 {self.current}，提交版本 {self.expected}），请重新读取后再保存"
+        )
+
 # Credentials are never sent to the browser.  The dashboard still submits the
 # complete channel list when saving, so these markers must round-trip without
 # replacing an existing secret.  Keep the set deliberately small and explicit
@@ -559,6 +570,10 @@ class ConfigurationMixin:
 
     def _load_initial_config_state(self) -> tuple[Dict[str, Any], AICatConfig]:
         """Load raw/runtime config together, reusing normalization when safe."""
+        # Revision is deliberately kept out of the persisted JSON.  It is a
+        # process-local guard for browser snapshots and is reset on restart.
+        if not hasattr(self, "_config_revision"):
+            self._config_revision = 1
         result = load_json_file_result(self.config_path)
         self._config_storage_status = {
             "ok": result.ok,
@@ -610,6 +625,11 @@ class ConfigurationMixin:
                 "error": "",
                 "source": self.config_path,
             }
+            self._config_revision = max(1, int(getattr(self, "_config_revision", 0) or 0) + 1)
+
+    def get_config_revision(self) -> int:
+        """Return the current process-local revision for conditional web writes."""
+        return max(1, int(getattr(self, "_config_revision", 1) or 1))
 
     def _apply_raw_config(self, raw: Dict[str, Any]) -> None:
         raw = self._strip_web_startup_config(raw)
@@ -691,7 +711,9 @@ class ConfigurationMixin:
             "config": redact_sensitive_data(candidate),
         }
 
-    def import_config_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def import_config_from_web(
+        self, payload: Dict[str, Any], *, expected_revision: Optional[int] = None
+    ) -> Dict[str, Any]:
         candidate = payload.get("config") if isinstance(payload.get("config"), dict) else payload
         if not isinstance(candidate, dict):
             raise ValueError("配置必须是 JSON 对象")
@@ -700,10 +722,18 @@ class ConfigurationMixin:
             preview = self.preview_config_import(candidate)
             if not preview["ok"]:
                 raise ConfigImportValidationError("配置预检未通过")
-            return self.update_config_from_web(candidate)
+            return self.update_config_from_web(candidate, expected_revision=expected_revision)
+        except ConfigRevisionConflictError:
+            # A stale snapshot must never trigger the legacy rollback path:
+            # the current in-memory config belongs to the other writer.
+            raise
         except Exception:
-            self._apply_raw_config(before)
-            self._persist_config()
+            # Validation failures do not mutate state. Avoid rewriting the
+            # same file (and advancing its revision) just to roll back a
+            # candidate that was never published.
+            if self.raw_config != before:
+                self._apply_raw_config(before)
+                self._persist_config()
             raise
 
     def list_proxies_for_web(self, *, mask_password: bool = True) -> List[Dict[str, Any]]:
@@ -749,9 +779,14 @@ class ConfigurationMixin:
         result["proxy_name"] = str(row.get("name") or "")
         return result
 
-    def update_config_from_web(self, patch: Dict[str, Any]) -> Dict[str, Any]:
+    def update_config_from_web(
+        self, patch: Dict[str, Any], *, expected_revision: Optional[int] = None
+    ) -> Dict[str, Any]:
         with self._config_lock:
+            if expected_revision is not None and int(expected_revision) != self.get_config_revision():
+                raise ConfigRevisionConflictError(expected_revision, self.get_config_revision())
             patch = self._strip_web_startup_config(patch)
+            patch.pop("revision", None)
             patch = _restore_web_channel_credentials(patch, self.raw_config)
             patch = _restore_web_proxy_credentials(patch, self.raw_config)
             merged = deep_merge(self.raw_config, patch)

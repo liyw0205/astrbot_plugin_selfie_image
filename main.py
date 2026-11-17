@@ -780,10 +780,18 @@ class SelfieImagePlugin(
                 )
                 if key in permission
             }
-        updated = self.update_config_from_web(patch) if patch else self.get_config_for_web()
+        expected_revision = None
+        if isinstance(payload, dict) and payload.get("revision") is not None:
+            expected_revision = int(payload.get("revision"))
+        updated = (
+            self.update_config_from_web(patch, expected_revision=expected_revision)
+            if patch
+            else self.get_config_for_web()
+        )
         return {
             "group_chat_configs": self.config.group_chat_configs,
             "permission": updated.get("permission", {}),
+            "revision": self.get_config_revision(),
         }
 
     def _permission_denied_message(self, event: AstrMessageEvent) -> str:

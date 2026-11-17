@@ -43,7 +43,10 @@ from astrbot_plugin_selfie_image.webui.services import (
     parse_task_query,
     task_status_payload,
 )
-from astrbot_plugin_selfie_image.features.config_manager import ConfigurationMixin
+from astrbot_plugin_selfie_image.features.config_manager import (
+    ConfigurationMixin,
+    ConfigRevisionConflictError,
+)
 from astrbot_plugin_selfie_image.features.conversation_context import ConversationContextMixin
 from astrbot_plugin_selfie_image.generation.asset_collections import AssetCollectionStore
 from astrbot_plugin_selfie_image.generation.generation_store import GenerationStoreMixin
@@ -303,6 +306,33 @@ def test_invalid_config_import_rolls_back_without_overwriting_current_config() -
             {"image_channels": [{"id": "main", "name": "main", "provider_type": "openai", "enabled": True}]}
         )
     assert plugin.raw_config == before
+
+
+def test_config_revision_rejects_stale_full_snapshot_without_rollback(tmp_path) -> None:
+    import threading
+
+    plugin = object.__new__(ConfigurationMixin)
+    plugin._config_lock = threading.RLock()
+    plugin.config_path = str(tmp_path / "config.json")
+    plugin.key_config = {"web": {"enable": False, "token": "token"}}
+    plugin.raw_config = {}
+    plugin._apply_raw_config({"compatibility_field": {"source": "initial"}})
+    first_revision = plugin.get_config_revision()
+
+    plugin.update_config_from_web(
+        {"compatibility_field": {"source": "newer"}},
+        expected_revision=first_revision,
+    )
+    current_revision = plugin.get_config_revision()
+    assert current_revision > first_revision
+
+    with pytest.raises(ConfigRevisionConflictError):
+        plugin.update_config_from_web(
+            {"compatibility_field": {"source": "stale"}},
+            expected_revision=first_revision,
+        )
+    assert plugin.raw_config["compatibility_field"]["source"] == "newer"
+    assert plugin.get_config_revision() == current_revision
 
 
 def test_legacy_schema_and_proxy_shape_upgrade_in_memory_without_dropping_compat_fields() -> None:

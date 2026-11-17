@@ -13,7 +13,7 @@ from ..core.utils import (
     redact_generation_record_for_detail,
     redact_sensitive_data,
 )
-from ..features.config_manager import ConfigImportValidationError
+from ..features.config_manager import ConfigImportValidationError, ConfigRevisionConflictError
 from ..generation.generation_records import metric_window_seconds
 from .contracts import MAX_WEB_RECORD_ID_LENGTH, MAX_WEB_TASK_ID_LENGTH, WEB_TASK_ID_RE
 from .services import (
@@ -112,22 +112,55 @@ class ConfigController:
 
     @staticmethod
     def _patch(payload: Any) -> dict[str, Any]:
-        return config_patch_payload(payload if isinstance(payload, dict) else {})
+        candidate = config_patch_payload(payload if isinstance(payload, dict) else {})
+        # ``revision`` is transport metadata, never a persisted config key.
+        candidate = dict(candidate)
+        candidate.pop("revision", None)
+        return candidate
 
     def get(self) -> ConfigControllerResult:
         try:
             data = self.plugin.get_config_for_web()
         except Exception as exc:
             raise WebContractError(str(exc), 500) from exc
-        return ConfigControllerResult(data)
+        revision = getattr(self.plugin, "get_config_revision", lambda: None)()
+        extra = {"revision": int(revision)} if revision is not None else {}
+        return ConfigControllerResult(data, extra)
+
+    @staticmethod
+    def _revision(payload: Any) -> int | None:
+        if not isinstance(payload, dict) or payload.get("revision") is None:
+            return None
+        try:
+            value = int(payload.get("revision"))
+        except (TypeError, ValueError) as exc:
+            raise WebContractError("revision 必须是整数") from exc
+        if value < 1:
+            raise WebContractError("revision 必须大于 0")
+        return value
 
     def update(self, payload: Any) -> ConfigControllerResult:
         patch = self._patch(payload)
+        expected_revision = self._revision(payload)
         try:
-            data = self.plugin.update_config_from_web(patch)
+            updater = self.plugin.update_config_from_web
+            parameters = inspect.signature(updater).parameters
+            accepts_revision = "expected_revision" in parameters or any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            )
+            data = (
+                updater(patch, expected_revision=expected_revision)
+                if accepts_revision
+                else updater(patch)
+            )
+        except ConfigRevisionConflictError as exc:
+            raise WebContractError(str(exc), 409) from exc
         except Exception as exc:
             raise WebContractError(str(exc), 500) from exc
-        return ConfigControllerResult(data)
+        revision = getattr(self.plugin, "get_config_revision", lambda: None)()
+        extra = {"revision": int(revision)} if revision is not None else {}
+        return ConfigControllerResult(data, extra)
 
     def export(self, mode: Any) -> ConfigControllerResult:
         raw = str(mode or "").strip().lower() in {"raw", "plain", "original"}
@@ -149,13 +182,30 @@ class ConfigController:
 
     def import_config(self, payload: Any) -> ConfigControllerResult:
         patch = self._patch(payload)
+        expected_revision = self._revision(payload)
         try:
-            data = self.plugin.import_config_from_web(patch)
+            importer = self.plugin.import_config_from_web
+            parameters = inspect.signature(importer).parameters
+            accepts_revision = "expected_revision" in parameters or any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            )
+            data = (
+                importer(patch, expected_revision=expected_revision)
+                if accepts_revision
+                else importer(patch)
+            )
+        except ConfigRevisionConflictError as exc:
+            raise WebContractError(str(exc), 409) from exc
         except (ValueError, ConfigImportValidationError) as exc:
             raise WebContractError(str(exc), 400) from exc
         except Exception as exc:
             raise WebContractError(str(exc), 500) from exc
-        return ConfigControllerResult(data, {"message": "配置导入成功"})
+        revision = getattr(self.plugin, "get_config_revision", lambda: None)()
+        extra = {"message": "配置导入成功"}
+        if revision is not None:
+            extra["revision"] = int(revision)
+        return ConfigControllerResult(data, extra)
 
 
 class ProxyController:
@@ -1020,6 +1070,8 @@ class QQGroupController:
             raise WebContractError("当前版本不支持 QQ 群配置", 501)
         try:
             data = updater(payload)
+        except ConfigRevisionConflictError as exc:
+            raise WebContractError(str(exc), 409) from exc
         except Exception as exc:
             raise WebContractError(str(exc), 400) from exc
         return QQGroupControllerResult(redact_sensitive_data(data))
