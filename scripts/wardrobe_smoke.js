@@ -38,11 +38,12 @@ const host = `<!doctype html><html><head><meta name="viewport" content="width=de
     const response=await fetch('/api/'+endpoint,op==='POST'?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
     event.source.postMessage({id,result:await response.json()},'*');
   });</script></body></html>`;
-let items, selectionMode, current, calls, failFile, holdUpload, releaseUpload;
+let items, selectionMode, current, calls, failFile, holdUpload, releaseUpload, scheduleReady;
 const wardrobe = () => ({items, selection_mode:selectionMode, current_item_id:current,
   current_item_name:items.find(item=>item.id===current)?.name || '', manual_today:!!current});
 const daily = () => ({schedule:{date:'2026-11-17',source:'local',outfits:{main:items.find(item=>item.id===current)?.name || '日常'},
   events:[{id:'day',start:'08:00',end:'18:00',title:'日间安排',outfit_ref:'main'}]}});
+const missingDaily = () => ({schedule:null,current_event:null,next_event:null});
 
 async function main() {
   fs.mkdirSync(output,{recursive:true});
@@ -66,8 +67,12 @@ async function main() {
       selectionMode=body.selection_mode;data=wardrobe();
     } else if(url.pathname==='/api/selfie-wardrobe/select') {
       current=body.id;data={wardrobe:wardrobe(),daily_schedule:daily()};
-    } else if(url.pathname==='/api/selfie-reference'||url.pathname==='/api/selfie-profile/refresh-local') {
-      data={has_image:false,wardrobe:wardrobe(),daily_schedule:daily()};
+    } else if(url.pathname==='/api/selfie-profile/ensure-today') {
+      scheduleReady=true;data={wardrobe:wardrobe(),daily_schedule:daily()};
+    } else if(url.pathname==='/api/selfie-reference') {
+      data={has_image:false,wardrobe:wardrobe(),daily_schedule:scheduleReady?daily():missingDaily()};
+    } else if(url.pathname==='/api/selfie-profile/refresh-local') {
+      scheduleReady=true;data={has_image:false,wardrobe:wardrobe(),daily_schedule:daily()};
     }
     response.statusCode=error?400:200;response.setHeader('Content-Type','application/json');
     response.end(JSON.stringify(error?{success:false,error}:{success:true,data}));
@@ -101,7 +106,7 @@ async function main() {
     };
     const choose=names=>evaluate(`(()=>{const transfer=new DataTransfer();${JSON.stringify(names)}.forEach(name=>transfer.items.add(new File(['fixture '+name],name,{type:'image/png'})));$('wardrobeFile').files=transfer.files;$('wardrobeFile').dispatchEvent(new Event('change'));})()`);
     for(const embedded of [false,true])for(const width of [1280,390,320]) {
-      items=[{id:'disabled',name:'已停用的服装',enabled:false,tags:[]}];selectionMode='random';current='';calls=[];
+      items=[{id:'disabled',name:'已停用的服装',enabled:false,tags:[]}];selectionMode='random';current='';calls=[];scheduleReady=false;
       failFile=true;holdUpload=false;releaseUpload=null;contextId=undefined;
       const height=width===1280?900:width===320?568:844;
       await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<500});
@@ -110,7 +115,8 @@ async function main() {
       await until("typeof navigateToTab === 'function'");
       const hostLayout=await cdp.send('Runtime.evaluate',{expression:'document.documentElement.scrollWidth <= innerWidth+1',returnByValue:true});
       assert.equal(hostLayout.result.value,true,'fixture host overflows horizontally');
-      await evaluate("navigateToTab('selfie')");await until("document.querySelector('.wardrobe-wear')");
+      await evaluate("navigateToTab('selfie')");await until("document.querySelector('.wardrobe-wear') && $('selfieDailySchedule').textContent.includes('日间安排')");
+      assert.equal(calls.filter(call=>call.path.endsWith('/ensure-today')).length,1,'missing schedule was not ensured exactly once');
       assert.equal(await evaluate("document.querySelector('.wardrobe-wear').disabled"),true);
       await evaluate("$('wardrobeSelectionMode').value='sequential';$('wardrobeSelectionMode').dispatchEvent(new Event('change'));");
       await until("!$('wardrobeSelectionMode').disabled");assert.equal(selectionMode,'sequential');
@@ -125,14 +131,16 @@ async function main() {
       await until("$('wardrobeCurrent').textContent.includes('third')");
       assert.equal(current,'wardrobe_2');
       assert.equal(await evaluate("$('selfieDailySchedule').textContent.includes('third')"),true);
-      await click('[onclick="refreshDailySelfieLocal()"]');await until("$('wardrobeCurrent').textContent.includes('手动指定')");
+      await click('[onclick="refreshDailySelfieLocal()"]');await until("$('confirmModal').classList.contains('show')");await click('#confirmProceedBtn');
+      await until("!$('confirmModal').classList.contains('show') && $('toastWrap').textContent.includes('今日日程已重新生成')");
       assert.equal(await evaluate("$('wardrobeSelectionMode').value"),'sequential');
       assert.equal(await evaluate("document.querySelectorAll('.wardrobe-item').length"),4);
 
       await choose(['stop-a.png','stop-b.png','stop-c.png']);holdUpload=true;
       await click('#uploadWardrobe');
       for(let i=0;i<100&&!releaseUpload;i++)await new Promise(resolve=>setTimeout(resolve,20));
-      assert(releaseUpload,'upload never started');
+      const batchState=await evaluate("JSON.stringify({busy:WARDROBE_BATCH_BUSY,disabled:$('uploadWardrobe')?.disabled,fileCount:$('wardrobeFile')?.files?.length,pending:WARDROBE_PENDING_UPLOADS?.length,progress:$('wardrobeBatchProgressLabel')?.textContent,tail:document.body.innerText.slice(-800)})");
+      assert(releaseUpload,`upload never started: ${batchState}`);
       const beforeCancel=calls.filter(call=>call.path.endsWith('/add')).length;
       assert.equal(await evaluate("$('uploadWardrobe').disabled && $('wardrobeFile').disabled"),true);
       await click('#wardrobeBatchCancel');holdUpload=false;releaseUpload();

@@ -246,6 +246,11 @@ SELFIE_PROFILE_ROUTE_CONTRACTS = (
         "page_selfie_profile_refresh_local", "Selfie Image local refresh profile",
     ),
     SelfieProfileRouteContract(
+        "selfie_profile_ensure_today", "/api/selfie-profile/ensure-today",
+        "selfie-profile/ensure-today", ("POST",), "selfie_profile_ensure_today",
+        "page_selfie_profile_ensure_today", "Selfie Image ensure today's schedule",
+    ),
+    SelfieProfileRouteContract(
         "selfie_wardrobe_get", "/api/selfie-wardrobe", "selfie-wardrobe", ("GET",),
         "selfie_wardrobe_get", "page_selfie_wardrobe_get", "Selfie Image wardrobe list",
     ),

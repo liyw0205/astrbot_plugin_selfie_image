@@ -713,6 +713,16 @@ class FlaskWebServer:
                 lambda: selfie_profile_controller.set_appearance_type(payload)
             )
 
+        def selfie_profile_ensure_today() -> Any:
+            if not check_auth():
+                return fail("Unauthorized: Token 不正确", 401)
+            _, error_response = json_object_payload()
+            if error_response:
+                return error_response
+            return selfie_profile_result(lambda: self._run_async(
+                selfie_profile_controller.ensure_daily_schedule(), timeout=20,
+            ))
+
         def selfie_profile_refresh_local() -> Any:
             if not check_auth():
                 return fail("Unauthorized: Token 不正确", 401)
@@ -754,6 +764,7 @@ class FlaskWebServer:
             "selfie_reference_post": selfie_reference_post,
             "selfie_reference_clear": selfie_reference_clear,
             "selfie_appearance_type": selfie_appearance_type,
+            "selfie_profile_ensure_today": selfie_profile_ensure_today,
             "selfie_profile_refresh_local": selfie_profile_refresh_local,
             "selfie_wardrobe_get": selfie_wardrobe_get,
             "selfie_wardrobe_add": lambda: selfie_wardrobe_mutation("wardrobe_add"),

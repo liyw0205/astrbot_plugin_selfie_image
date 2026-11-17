@@ -479,6 +479,7 @@ def test_registered_routes_keep_dashboard_prefixes_and_success_wrappers(http, pr
 
 PROTECTED_ROUTES = [
     ("/api/selfie-wardrobe/settings", "POST"), ("/api/selfie-wardrobe/select", "POST"),
+    ("/api/selfie-profile/ensure-today", "POST"),
     ("/api/config", "GET"), ("/api/config", "POST"), ("/api/config/export", "GET"),
     ("/api/config/import/preview", "POST"), ("/api/config/import", "POST"),
     ("/api/proxies", "GET"), ("/api/proxies/test", "POST"), ("/api/proxies/quality-check", "POST"),
@@ -1469,11 +1470,16 @@ def test_selfie_profile_controller_preserves_operations_messages_and_redaction(h
         calls.append(("refresh",))
         return {"status": "ok", "api_key": "profile-secret"}
 
+    async def ensure_today():
+        calls.append(("ensure",))
+        return {"daily_schedule": {"schedule": None}, "api_key": "schedule-secret"}
+
     http.plugin.get_selfie_reference_payload = get_reference
     http.plugin.save_selfie_reference_from_web = save_reference
     http.plugin.clear_selfie_reference_from_web = clear_reference
     http.plugin.set_selfie_appearance_type_from_web = set_appearance
     http.plugin.refresh_selfie_profile_local_from_web = refresh_local
+    http.plugin.ensure_selfie_daily_schedule_from_web = ensure_today
 
     result = http.call("/api/selfie-reference")
     assert assert_success(result) == {"has_image": True, "api_key": "[REDACTED]"}
@@ -1499,13 +1505,20 @@ def test_selfie_profile_controller_preserves_operations_messages_and_redaction(h
     assert appearance.envelope["message"] == "形象类型已保存"
     assert "appearance-secret" not in json.dumps(appearance.payload)
 
+    ensured = http.call("/api/selfie-profile/ensure-today", method="POST", body={})
+    assert assert_success(ensured) == {
+        "daily_schedule": {"schedule": None}, "api_key": "[REDACTED]",
+    }
+    assert ensured.envelope["message"] == "今日日程已就绪"
+    assert "schedule-secret" not in json.dumps(ensured.payload)
+
     refreshed = http.call("/api/selfie-profile/refresh-local", method="POST", body={})
     assert assert_success(refreshed) == {"status": "ok", "api_key": "[REDACTED]"}
-    assert refreshed.envelope["message"] == "本地今日穿搭已刷新"
+    assert refreshed.envelope["message"] == "今日日程已重新生成"
     assert "profile-secret" not in json.dumps(refreshed.payload)
     assert calls == [
         ("get",), ("save", payload), ("clear",),
-        ("appearance", {"appearance_type": "auto"}), ("refresh",),
+        ("appearance", {"appearance_type": "auto"}), ("ensure",), ("refresh",),
     ]
 
 
@@ -1514,6 +1527,7 @@ def test_selfie_profile_controller_preserves_mutation_input_and_missing_hooks(ht
         "/api/selfie-reference",
         "/api/selfie-reference/clear",
         "/api/selfie-appearance-type",
+        "/api/selfie-profile/ensure-today",
         "/api/selfie-profile/refresh-local",
     ):
         assert_failure(http.call(path, method="POST", body=[]), 400, "JSON 对象")
@@ -1522,7 +1536,30 @@ def test_selfie_profile_controller_preserves_mutation_input_and_missing_hooks(ht
     assert_failure(http.call("/api/selfie-reference", method="POST", body={}), 501, "不支持")
     assert_failure(http.call("/api/selfie-reference/clear", method="POST", body={}), 501, "不支持")
     assert_failure(http.call("/api/selfie-appearance-type", method="POST", body={}), 501, "不支持")
+    assert_failure(http.call("/api/selfie-profile/ensure-today", method="POST", body={}), 501, "不支持")
     assert_failure(http.call("/api/selfie-profile/refresh-local", method="POST", body={}), 501, "不支持")
+
+
+def test_ensure_today_schedule_route_creates_missing_schedule_and_is_idempotent(http, tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(str(tmp_path))
+    http.plugin.ensure_selfie_daily_schedule_from_web = plugin.ensure_selfie_daily_schedule_from_web
+
+    first = assert_success(http.call("/api/selfie-profile/ensure-today", method="POST", body={}))
+    schedule = first["daily_schedule"]["schedule"]
+    assert schedule and schedule["events"]
+    assert first["wardrobe"]["items"] == []
+
+    existing = plugin.persona.get_daily_schedule()
+    existing.theme = "保留的日程主题"
+    plugin.persona._persist_daily_selfie_profile(plugin.persona._profile_from_timeline(existing))
+    expected = plugin.persona.daily_schedule_payload()["schedule"]
+
+    second = assert_success(http.call("/api/selfie-profile/ensure-today", method="POST", body={}))
+    assert second["daily_schedule"]["schedule"] == expected
 
 
 def test_selfie_reference_round_trip_reaches_real_persona(http, tmp_path):

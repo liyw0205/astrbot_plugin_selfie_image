@@ -545,6 +545,18 @@ class SelfieImageDashboardAPI:
             return self._fail(str(exc), 500)
         return self._ok(result.data, **result.extra)
 
+    async def page_selfie_profile_ensure_today(self) -> Any:
+        payload, error = await self._json_object_payload()
+        if error:
+            return error
+        try:
+            result: SelfieProfileControllerResult = await self._selfie_profile_controller.ensure_daily_schedule()
+        except WebContractError as exc:
+            return self._fail(str(exc), exc.status_code)
+        except Exception as exc:
+            return self._fail(str(exc), 500)
+        return self._ok(result.data, **result.extra)
+
     async def page_selfie_profile_refresh_local(self) -> Any:
         payload, error = await self._json_object_payload()
         if error:

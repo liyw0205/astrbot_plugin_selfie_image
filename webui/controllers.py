@@ -1062,6 +1062,16 @@ class SelfieProfileController:
         data = self._call("set_selfie_appearance_type_from_web", payload, error_status=400)
         return self._result(data, "形象类型已保存")
 
+    async def ensure_daily_schedule(self) -> SelfieProfileControllerResult:
+        hook = getattr(self.plugin, "ensure_selfie_daily_schedule_from_web", None)
+        if not callable(hook):
+            raise WebContractError("当前版本不支持自拍资料操作", 501)
+        try:
+            data = await hook()
+        except Exception as exc:
+            raise WebContractError(str(exc), 500) from exc
+        return self._result(data, "今日日程已就绪")
+
     async def refresh_local(self) -> SelfieProfileControllerResult:
         hook = getattr(self.plugin, "refresh_selfie_profile_local_from_web", None)
         if not callable(hook):
@@ -1070,7 +1080,7 @@ class SelfieProfileController:
             data = await hook()
         except Exception as exc:
             raise WebContractError(str(exc), 500) from exc
-        return self._result(data, "本地今日穿搭已刷新")
+        return self._result(data, "今日日程已重新生成")
 
     def wardrobe_get(self) -> SelfieProfileControllerResult:
         return self._result(self._call("get_wardrobe_payload"))

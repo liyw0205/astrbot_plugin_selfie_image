@@ -177,11 +177,14 @@ def test_selfie_controls_only_offer_local_daily_outfit_refresh():
     assert controls.index('onclick="refreshSelfie(true)"') < controls.index('onclick="clearSelfie()"')
     assert '今日穿搭' not in controls
     assert 'onclick="refreshDailySelfieLocal()"' in controls
+    assert '重新生成今日日程' in controls
     assert 'class="actions selfie-reference-actions"' in controls
     assert 'onclick="refreshDailySelfieLlm()"' not in PAGE
     assert "async function refreshDailySelfieLlm()" not in PAGE
     assert "async function refreshDailySelfieLocal()" in PAGE
     assert "'/api/selfie-profile/refresh-local'" in PAGE
+    assert "'/api/selfie-profile/ensure-today'" in PAGE
+    assert "async function retrySelfieDailySchedule()" in PAGE
     assert '今日穿搭与日程' in PAGE
 
 
@@ -201,7 +204,7 @@ def test_dashboard_health_and_metrics_are_grouped_for_scanning():
 
 
 def test_daily_schedule_details_use_labeled_wrapping_fields():
-    assert 'function renderSelfieDailySchedule(payload)' in PAGE
+    assert "function renderSelfieDailySchedule(payload, stateMessage = '')" in PAGE
     assert "renderField('场景', event.scene)" in PAGE
     assert "renderField('动作', event.action)" in PAGE
     assert "renderField('穿搭', outfit)" in PAGE

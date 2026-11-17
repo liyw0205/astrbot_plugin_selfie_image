@@ -45,6 +45,16 @@ class SelfieProfileWebService:
             "image": bytes_to_data_url(ref["data"], ref["mime_type"]),
         }
 
+    async def ensure_daily_schedule(self) -> dict[str, Any]:
+        """Create today's schedule only when it is missing or stale."""
+        plugin = self.plugin
+        profile = await plugin.persona.ensure_daily_selfie_profile("查看每日安排")
+        return {
+            "daily_schedule": plugin.persona.daily_schedule_payload(),
+            "wardrobe": plugin.get_wardrobe_payload(),
+            "updated_at": profile.updated_at,
+        }
+
     def wardrobe(self) -> dict[str, Any]:
         persona = self.plugin.persona
         current = persona.current_wardrobe_item()

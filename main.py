@@ -1997,6 +1997,9 @@ class SelfieImagePlugin(
     def clear_selfie_reference_from_web(self) -> Dict[str, Any]:
         return _selfie_profile_web_service_for(self).clear_reference()
 
+    async def ensure_selfie_daily_schedule_from_web(self) -> Dict[str, Any]:
+        return await _selfie_profile_web_service_for(self).ensure_daily_schedule()
+
     async def refresh_selfie_profile_local_from_web(self) -> Dict[str, Any]:
         """Refresh today's profile using only the local varied fallback pool."""
         return await _selfie_profile_web_service_for(self).refresh_local()

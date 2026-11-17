@@ -1,10 +1,11 @@
-    function renderSelfieDailySchedule(payload) {
+    function renderSelfieDailySchedule(payload, stateMessage = '') {
       const root = $('selfieDailySchedule');
       if (!root) return;
       const schedule = payload && payload.schedule;
       if (!schedule || !Array.isArray(schedule.events) || !schedule.events.length) {
-        root.hidden = true;
-        root.innerHTML = '';
+        root.innerHTML = `<div class="daily-schedule-head"><div class="daily-schedule-title"><strong>今日穿搭与日程</strong><span class="muted">今日日程暂不可用</span></div></div><div class="daily-current-event"><span class="daily-event-status">${escapeHtml(stateMessage || '暂无今日日程，正在等待恢复。')}</span><button type="button" class="secondary" id="ensureSelfieDailySchedule">重新加载今日日程</button></div>`;
+        root.hidden = false;
+        $('ensureSelfieDailySchedule').onclick = retrySelfieDailySchedule;
         return;
       }
       const currentId = payload.current_event && String(payload.current_event.id || '');
@@ -41,6 +42,30 @@
         : '<div class="daily-current-event"><span class="daily-event-status">当前没有匹配的日程事件</span></div>';
       root.innerHTML = `<div class="daily-schedule-head"><div class="daily-schedule-title"><strong>今日穿搭与日程</strong><span class="muted">${escapeHtml(schedule.date || '今日')} · ${escapeHtml(sourceLabel)}</span></div><span class="daily-schedule-current">${schedule.events.length} 个安排</span></div>${factMarkup ? `<div class="daily-schedule-facts">${factMarkup}</div>` : ''}${currentMarkup}<details class="daily-schedule-details"><summary><span>全天安排</span><span>${schedule.events.length} 个时段</span></summary><div class="daily-schedule-list">${events}</div></details>`;
       root.hidden = false;
+    }
+
+    let SELFIE_DAILY_ENSURE_REQUEST = null;
+    async function loadSelfieDailySchedule() {
+      if (!SELFIE_DAILY_ENSURE_REQUEST) {
+        SELFIE_DAILY_ENSURE_REQUEST = api('/api/selfie-profile/ensure-today', {method:'POST', body:'{}'})
+          .then(res => ({
+            schedule: res.data?.daily_schedule || null,
+            wardrobe: res.data?.wardrobe || null,
+            error: '',
+          }))
+          .catch(e => ({schedule: null, wardrobe: null, error: e.message || '今日日程恢复失败'}))
+          .finally(() => { SELFIE_DAILY_ENSURE_REQUEST = null; });
+      }
+      return await SELFIE_DAILY_ENSURE_REQUEST;
+    }
+
+    async function retrySelfieDailySchedule() {
+      const button = $('ensureSelfieDailySchedule');
+      if (button) { button.disabled = true; button.textContent = '正在恢复…'; }
+      const result = await loadSelfieDailySchedule();
+      if (result.wardrobe) renderWardrobe(result.wardrobe);
+      renderSelfieDailySchedule(result.schedule, result.error || '服务暂未返回今日日程，请重试。');
+      if (result.schedule?.schedule) showToast('今日日程已恢复', 'ok');
     }
 
     let WARDROBE_BATCH_BUSY = false;
@@ -90,7 +115,18 @@
         }
         const appearanceLabel = ({auto:'自动', real:'真人', anime:'动漫'})[data.appearance_type || 'auto'] || '自动';
         $('selfieStatus').textContent = `${data.has_image ? '形象参考图已设置' : '尚未设置形象参考图'} · 类型：${appearanceLabel}`;
-        renderSelfieDailySchedule(data.daily_schedule);
+        let dailySchedule = data.daily_schedule;
+        let scheduleError = '';
+        if (!Array.isArray(dailySchedule?.schedule?.events) || !dailySchedule.schedule.events.length) {
+          const ensured = await loadSelfieDailySchedule();
+          dailySchedule = ensured.schedule || dailySchedule;
+          scheduleError = ensured.error || (
+            Array.isArray(ensured.schedule?.schedule?.events) && ensured.schedule.schedule.events.length
+              ? '' : '服务暂未返回今日日程，请点击重试。'
+          );
+          if (ensured.wardrobe) data.wardrobe = ensured.wardrobe;
+        }
+        renderSelfieDailySchedule(dailySchedule, scheduleError);
         renderWardrobe(data.wardrobe);
         if ($('selfieAppearanceType')) {
           $('selfieAppearanceType').value = data.appearance_type || 'auto';
@@ -98,6 +134,7 @@
         if (notify) showToast('形象参考已刷新', 'ok');
       } catch (e) {
         $('selfieStatus').textContent = '形象信息暂不可用';
+        renderSelfieDailySchedule(null, e.message || '形象信息读取失败');
         showToast(e.message || '形象信息读取失败', 'bad');
       }
     }
@@ -204,11 +241,12 @@
       } catch (e) { showToast(e.message || '衣橱服装删除失败', 'bad'); }
     }
     async function refreshDailySelfieLocal() {
+      if (!await confirmAction('重新生成会替换今天已有的安排，不会清空衣橱中的服装。', {title:'重新生成今日日程', confirmText:'重新生成'})) return;
       try {
         const res = await api('/api/selfie-profile/refresh-local', {method:'POST', body:'{}'});
         renderSelfieDailySchedule(res.data && res.data.daily_schedule);
         renderWardrobe(res.data && res.data.wardrobe);
-        showToast('本地今日穿搭已刷新', 'ok');
+        showToast('今日日程已重新生成', 'ok');
       } catch (e) {
         showToast(e.message, 'bad');
       }
