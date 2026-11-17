@@ -61,6 +61,7 @@ from .features.access_policy import (
 from .features.qq_group_cache import QQGroupCache
 from .features.backup_manager import BackupManager
 from .features.backup_web_service import BackupWebService
+from .features.selfie_profile_web_service import SelfieProfileWebService
 from .features.archive_transfer import CHUNK_SIZE, MAX_JSON_ARCHIVE_BYTES
 from .features.context_routing import (
     compact_followup_text,
@@ -138,7 +139,7 @@ from .core.models import (
     ImageModelTarget,
     usable_api_keys,
 )
-from .features.persona import PersonaManager, current_period, daily_schedule_date_key
+from .features.persona import PersonaManager, current_period
 from .studio.studio import (
     BUILTIN_PROMPTS,
     StudioStore,
@@ -226,7 +227,6 @@ from .core.utils import (
     collect_unreferenced_record_cache_paths,
     compact_generation_record,
     split_generation_record_images,
-    data_url_to_bytes,
     detect_mime_by_bytes,
     event_group_id,
     event_user_id,
@@ -238,7 +238,6 @@ from .core.utils import (
     image_validation_limits,
     load_json_file,
     looks_like_image_bytes,
-    normalize_image_mime,
     parse_audit_response_text,
     redact_sensitive_data,
     redact_sensitive_text,
@@ -287,6 +286,10 @@ def _generation_runtime_service_for(plugin: Any) -> GenerationRuntimeService:
 
 def _backup_web_service_for(plugin: Any) -> BackupWebService:
     return _cached_plugin_service(plugin, "_backup_web_service", BackupWebService)
+
+
+def _selfie_profile_web_service_for(plugin: Any) -> SelfieProfileWebService:
+    return _cached_plugin_service(plugin, "_selfie_profile_web_service", SelfieProfileWebService)
 
 
 @register(PLUGIN_NAME, PLUGIN_AUTHOR, f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}", PLUGIN_VERSION)
@@ -1900,109 +1903,28 @@ class SelfieImagePlugin(
         return english, refs, meta
 
     def get_selfie_reference_payload(self) -> Dict[str, Any]:
-        data = self.persona.get()
-        ref = self.persona.get_reference_image()
-        appearance_type = self.persona.get_appearance_type()
-        wardrobe = self.get_wardrobe_payload()
-        base = {
-            "appearance_type": appearance_type,
-            "appearance_type_label": self.persona.appearance_type_label(),
-            "ref_mime_type": data.get("ref_mime_type") or "image/png",
-            "updated_at": data.get("updated_at") or "",
-            "status": self.persona.status_text(),
-            "daily_schedule": self.persona.daily_schedule_payload(),
-            "wardrobe": wardrobe,
-        }
-        if not ref:
-            return {
-                **base,
-                "has_image": False,
-            }
-        return {
-            **base,
-            "has_image": True,
-            "ref_mime_type": ref["mime_type"],
-            "image": bytes_to_data_url(ref["data"], ref["mime_type"]),
-        }
+        return _selfie_profile_web_service_for(self).reference()
 
     def get_wardrobe_payload(self) -> Dict[str, Any]:
-        current = self.persona.current_wardrobe_item()
-        return self.persona.wardrobe.summary(
-            current_id=current.id if current else "",
-            date=daily_schedule_date_key(self.persona.business_day_start),
-        )
+        return _selfie_profile_web_service_for(self).wardrobe()
 
     def set_wardrobe_settings_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        mode = payload.get("selection_mode")
-        if not isinstance(mode, str) or mode not in {"random", "sequential"}:
-            raise ValueError("请选择随机或按顺序轮换")
-        self.persona.set_wardrobe_selection_mode(mode)
-        return self.get_wardrobe_payload()
+        return _selfie_profile_web_service_for(self).wardrobe_settings(payload)
 
     async def select_wardrobe_today_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        item_id = payload.get("id")
-        if not isinstance(item_id, str) or not item_id.strip():
-            raise ValueError("缺少衣橱服装 id")
-        await self.persona.select_wardrobe_today(item_id.strip())
-        return {"wardrobe": self.get_wardrobe_payload(), "daily_schedule": self.persona.daily_schedule_payload()}
+        return await _selfie_profile_web_service_for(self).select_wardrobe_today(payload)
 
     async def save_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        raw_image = str(payload.get("image") or payload.get("data") or "").strip()
-        if not raw_image:
-            raise ValueError("缺少 image 字段，支持 data:image/...;base64,... 或纯 base64")
-        max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
-        data, mime = data_url_to_bytes(
-            raw_image,
-            max_dimension=max_dimension,
-            max_pixels=max_pixels,
-            max_frames=max_frames,
-        )
-        if not data:
-            raise ValueError("上传图片为空或尺寸/动画帧数超限")
-        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
-        if len(data) > max_bytes:
-            raise ValueError(f"图片过大，最大允许 {self.config.image_max_image_size_mb}MB")
-        self.persona.add_wardrobe_item(
-            data,
-            normalize_image_mime(mime or str(payload.get("mime_type") or "") or detect_mime_by_bytes(data)),
-            name=str(payload.get("name") or payload.get("title") or "").strip(),
-            description=str(payload.get("description") or "").strip(),
-            tags=payload.get("tags"),
-        )
-        await self.persona.ensure_daily_selfie_profile("衣橱添加")
-        return self.get_wardrobe_payload()
+        return await _selfie_profile_web_service_for(self).save_wardrobe_item(payload)
 
     def update_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        item_id = str(payload.get("id") or payload.get("item_id") or "").strip()
-        if not item_id:
-            raise ValueError("缺少衣橱服装 id")
-        self.persona.update_wardrobe_item(
-            item_id,
-            name=payload.get("name") if "name" in payload else None,
-            description=payload.get("description") if "description" in payload else None,
-            tags=payload.get("tags") if "tags" in payload else None,
-            enabled=payload.get("enabled") if "enabled" in payload else None,
-        )
-        return self.get_wardrobe_payload()
+        return _selfie_profile_web_service_for(self).update_wardrobe_item(payload)
 
     async def delete_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        item_id = str(payload.get("id") or payload.get("item_id") or "").strip()
-        if not item_id:
-            raise ValueError("缺少衣橱服装 id")
-        self.persona.remove_wardrobe_item(item_id)
-        await self.persona.ensure_daily_selfie_profile("衣橱删除")
-        return self.get_wardrobe_payload()
+        return await _selfie_profile_web_service_for(self).delete_wardrobe_item(payload)
 
     async def toggle_wardrobe_item_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        item_id = str(payload.get("id") or payload.get("item_id") or "").strip()
-        if not item_id:
-            raise ValueError("缺少衣橱服装 id")
-        enabled = payload.get("enabled")
-        if isinstance(enabled, str):
-            enabled = enabled.strip().lower() in {"1", "true", "yes", "on", "启用"}
-        self.persona.set_wardrobe_enabled(item_id, bool(enabled))
-        await self.persona.ensure_daily_selfie_profile("衣橱启停")
-        return self.get_wardrobe_payload()
+        return await _selfie_profile_web_service_for(self).toggle_wardrobe_item(payload)
 
     @staticmethod
     def _decode_web_archive(payload: Any, label: str) -> bytes:
@@ -2067,54 +1989,17 @@ class SelfieImagePlugin(
         return _backup_web_service_for(self).download_export(transfer_id, offset, length, revision, as_file)
 
     def set_selfie_appearance_type_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        value = payload.get("appearance_type", payload.get("type", "auto"))
-        self.persona.set_appearance_type(value)
-        return self.get_selfie_reference_payload()
+        return _selfie_profile_web_service_for(self).set_appearance_type(payload)
 
     def save_selfie_reference_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        raw_image = str(payload.get("image") or payload.get("data") or "").strip()
-        if not raw_image:
-            raise ValueError("缺少 image 字段，支持 data:image/...;base64,... 或纯 base64")
-        max_dimension, max_pixels, max_frames = image_validation_limits(self.config)
-        data, mime = data_url_to_bytes(
-            raw_image,
-            max_dimension=max_dimension,
-            max_pixels=max_pixels,
-            max_frames=max_frames,
-        )
-        if not data:
-            raise ValueError("上传图片为空或尺寸/动画帧数超限")
-        max_bytes = self.config.image_max_image_size_mb * 1024 * 1024
-        if len(data) > max_bytes:
-            raise ValueError(f"图片过大，最大允许 {self.config.image_max_image_size_mb}MB")
-        self.persona.save_reference_image(data, normalize_image_mime(mime or str(payload.get("mime_type") or "") or detect_mime_by_bytes(data)))
-        if "appearance_type" in payload or "type" in payload:
-            self.persona.set_appearance_type(payload.get("appearance_type", payload.get("type")))
-        return self.get_selfie_reference_payload()
+        return _selfie_profile_web_service_for(self).save_reference(payload)
 
     def clear_selfie_reference_from_web(self) -> Dict[str, Any]:
-        self.persona.clear_reference_image()
-        return self.get_selfie_reference_payload()
+        return _selfie_profile_web_service_for(self).clear_reference()
 
     async def refresh_selfie_profile_local_from_web(self) -> Dict[str, Any]:
         """Refresh today's profile using only the local varied fallback pool."""
-        profile = await self.persona.refresh_daily_selfie_profile_local()
-        return {
-            "status": self.persona.status_text(),
-            "updated_at": profile.updated_at,
-            "source": profile.source,
-            "outfit": profile.outfit,
-            "outfit_by_period": dict(profile.outfit_by_period),
-            "outfit_pool": list(profile.outfit_pool),
-            "scene_by_period": dict(profile.scene_by_period),
-            "action_by_period": dict(profile.action_by_period),
-            "schedule_by_period": copy.deepcopy(profile.schedule_by_period),
-            "daily_schedule": self.persona.daily_schedule_payload(),
-            "day_theme": profile.day_theme,
-            "wardrobe": self.get_wardrobe_payload(),
-            "occasion": profile.occasion,
-            "mood": profile.mood,
-        }
+        return await _selfie_profile_web_service_for(self).refresh_local()
 
     def _find_image_target(self, channel_name: str = "", model: str = "") -> Optional[ImageModelTarget]:
         targets: List[ImageModelTarget] = []

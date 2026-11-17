@@ -1525,6 +1525,36 @@ def test_selfie_profile_controller_preserves_mutation_input_and_missing_hooks(ht
     assert_failure(http.call("/api/selfie-profile/refresh-local", method="POST", body={}), 501, "不支持")
 
 
+def test_selfie_reference_round_trip_reaches_real_persona(http, tmp_path):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.tests.test_wardrobe import PNG_1X1
+    import base64
+
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(str(tmp_path))
+    plugin.config = http.plugin.config
+    for hook in (
+        "get_selfie_reference_payload", "get_wardrobe_payload", "save_selfie_reference_from_web",
+        "clear_selfie_reference_from_web", "set_selfie_appearance_type_from_web",
+    ):
+        setattr(http.plugin, hook, getattr(plugin, hook))
+    assert assert_success(http.call("/api/selfie-reference"))["has_image"] is False
+    body = {"data": base64.b64encode(PNG_1X1).decode("ascii"), "type": "真人"}
+    uploaded = assert_success(http.call("/api/selfie-reference", method="POST", body=body))
+    assert uploaded["has_image"] is True
+    assert uploaded["appearance_type"] == "real"
+    assert plugin.persona.get_reference_image()["data"] == PNG_1X1
+    assert assert_success(http.call("/api/selfie-reference")) == uploaded
+    assert_failure(http.call("/api/selfie-reference", method="POST", body={"image": "invalid"}), 400, "上传图片为空")
+    assert plugin.persona.get_reference_image()["data"] == PNG_1X1
+    changed = assert_success(http.call("/api/selfie-appearance-type", method="POST", body={"appearance_type": "动漫"}))
+    assert changed["appearance_type"] == "anime"
+    assert changed["has_image"] is True
+    assert assert_success(http.call("/api/selfie-reference/clear", method="POST", body={}))["has_image"] is False
+    assert PersonaManager(str(tmp_path)).get_reference_image() is None
+
+
 def test_wardrobe_rotation_and_today_selection_reach_real_persona(http, tmp_path):
     from astrbot_plugin_selfie_image.features.persona import PersonaManager
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin
