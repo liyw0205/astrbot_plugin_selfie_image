@@ -60,6 +60,7 @@ from .features.access_policy import (
 )
 from .features.qq_group_cache import QQGroupCache
 from .features.backup_manager import BackupManager
+from .features.backup_web_service import BackupWebService
 from .features.archive_transfer import CHUNK_SIZE, MAX_JSON_ARCHIVE_BYTES
 from .features.context_routing import (
     compact_followup_text,
@@ -282,6 +283,10 @@ def _generation_task_service_for(plugin: Any) -> GenerationTaskService:
 
 def _generation_runtime_service_for(plugin: Any) -> GenerationRuntimeService:
     return _cached_plugin_service(plugin, "_generation_runtime_service", GenerationRuntimeService)
+
+
+def _backup_web_service_for(plugin: Any) -> BackupWebService:
+    return _cached_plugin_service(plugin, "_backup_web_service", BackupWebService)
 
 
 @register(PLUGIN_NAME, PLUGIN_AUTHOR, f"{PLUGIN_DISPLAY_NAME} v{PLUGIN_VERSION}", PLUGIN_VERSION)
@@ -2001,140 +2006,65 @@ class SelfieImagePlugin(
 
     @staticmethod
     def _decode_web_archive(payload: Any, label: str) -> bytes:
-        body = payload if isinstance(payload, Mapping) else {}
-        raw = body.get("content_base64") or body.get("data") or body.get("content") or ""
-        if not isinstance(raw, str):
-            raise ValueError(f"{label}文件内容不是有效的 base64")
-        encoded_limit = 4 * ((MAX_JSON_ARCHIVE_BYTES + 2) // 3)
-        if len(raw) > encoded_limit + 1024:
-            raise ValueError(f"{label}超过 16MB，请使用分块上传")
-        raw = raw.strip()
-        if raw.startswith("data:") and "," in raw:
-            raw = raw.split(",", 1)[1]
-        if not raw:
-            raise ValueError(f"缺少{label}文件内容")
-        if len(raw) > encoded_limit:
-            raise ValueError(f"{label}超过 16MB，请使用分块上传")
-        try:
-            content = base64.b64decode(raw, validate=True)
-        except (ValueError, TypeError, base64.binascii.Error) as exc:
-            raise ValueError(f"{label}文件内容不是有效的 base64") from exc
-        if len(content) > MAX_JSON_ARCHIVE_BYTES:
-            raise ValueError(f"{label}超过 16MB，请使用分块上传")
-        return content
+        return BackupWebService.decode_archive(payload, label, max_bytes=MAX_JSON_ARCHIVE_BYTES)
 
     def backup_options_from_web(self) -> Dict[str, Any]:
-        return {"items": self.backup_manager.options(), "max": 5, "restart_required": True}
+        return _backup_web_service_for(self).options()
 
     def list_backups_from_web(self) -> Dict[str, Any]:
-        return self.backup_manager.list_backups()
+        return _backup_web_service_for(self).list()
 
     def create_backup_from_web(self, payload: Any) -> Dict[str, Any]:
-        body = payload if isinstance(payload, Mapping) else {}
-        selected = body.get("selected", body.get("items", []))
-        if not isinstance(selected, list):
-            raise ValueError("selected 必须是数组")
-        return self.backup_manager.start_backup(selected)
+        return _backup_web_service_for(self).create(payload)
 
     def backup_task_from_web(self, task_id: str) -> Dict[str, Any]:
-        return self.backup_manager.task(task_id)
+        return _backup_web_service_for(self).task(task_id)
 
     def _assert_backup_restore_idle(self) -> None:
-        if getattr(self, "_terminating", False):
-            raise ValueError("插件正在卸载，无法恢复备份")
-        tasks = getattr(self, "_web_tasks", {})
-        workers = getattr(self, "_runtime_generation_workers", {}).values()
-        handles = getattr(self, "_runtime_generation_tasks", {}).values()
-        commits = list(getattr(self, "_record_commit_tasks", set()))
-        commits.extend(getattr(self, "_usage_commit_tasks", set()))
-        commits.extend(future for bucket in getattr(self, "_pending_record_commits", {}).values() for future in bucket)
-        commits.extend(future for bucket in getattr(self, "_pending_image_record_commits", {}).values() for future in bucket)
-        if any(task.get("status") in {"queued", "running"} for task in tasks.values()) or any(
-            not handle.done() for handle in [*workers, *handles, *commits]
-        ):
-            raise ValueError("请等待生成任务和数据写入完成后恢复备份")
-        scheduler = self._image_scheduler_snapshot()
-        if scheduler.get("active", 0) or scheduler.get("pending", 0):
-            raise ValueError("请等待生成任务完成后恢复备份")
+        _backup_web_service_for(self).assert_restore_idle()
 
     def download_backup_from_web(self, backup_id: str) -> Dict[str, Any]:
-        return self.backup_manager.download_backup(backup_id)
+        return _backup_web_service_for(self).download(backup_id)
 
     def download_backup_file_from_web(self, backup_id: str) -> Dict[str, Any]:
-        return self.backup_manager.download_file(backup_id)
+        return _backup_web_service_for(self).download_file(backup_id)
 
     def download_backup_chunk_from_web(self, backup_id: str, offset: int, length: int, revision: str) -> Dict[str, Any]:
-        return self.backup_manager.download_chunk(backup_id, offset, length, revision)
+        return _backup_web_service_for(self).download_chunk(backup_id, offset, length, revision)
 
     def restore_backup_from_web(self, backup_id: str, selected: Any = None) -> Dict[str, Any]:
-        with self._web_task_lock:
-            self._assert_backup_restore_idle()
-            return self.backup_manager.start_restore(backup_id, selected)
+        return _backup_web_service_for(self).restore(backup_id, selected)
 
     def delete_backup_from_web(self, payload: Any) -> Dict[str, Any]:
-        body = payload if isinstance(payload, Mapping) else {}
-        backup_id = str(body.get("id") or body.get("backup_id") or "").strip()
-        if not backup_id:
-            raise ValueError("缺少备份编号")
-        return self.backup_manager.delete_backup(backup_id)
+        return _backup_web_service_for(self).delete(payload)
 
     def upload_backup_from_web(self, payload: Any) -> Dict[str, Any]:
-        body = payload if isinstance(payload, Mapping) else {}
-        content = self._decode_web_archive(body, "备份")
-        with self._web_task_lock:
-            self._assert_backup_restore_idle()
-            return self.backup_manager.upload_backup(str(body.get("filename") or "backup.zip"), content, body.get("selected"))
+        return _backup_web_service_for(self).upload(payload)
 
     def export_wardrobe_from_web(self) -> Dict[str, Any]:
-        return self.backup_manager.export_wardrobe()
+        return _backup_web_service_for(self).export_wardrobe()
 
     def import_wardrobe_from_web(self, payload: Any) -> Dict[str, Any]:
-        content = self._decode_web_archive(payload, "衣橱归档")
-        result = self.backup_manager.import_wardrobe(content)
-        # Keep the in-memory selector in sync with the atomically restored files.
-        self.persona.wardrobe.load()
-        return self.get_wardrobe_payload() | {"imported": True, "archive": result}
+        return _backup_web_service_for(self).import_wardrobe(payload)
 
     def start_archive_upload_from_web(self, payload: Any) -> Dict[str, Any]:
-        body = payload if isinstance(payload, Mapping) else {}
-        return self.backup_manager.start_archive_upload(
-            body.get("kind"), body.get("size"), str(body.get("filename") or "archive.zip"),
-        )
+        return _backup_web_service_for(self).start_upload(payload)
 
     def append_archive_upload_from_web(self, transfer_id: str, payload: Any) -> Dict[str, Any]:
-        body = payload if isinstance(payload, Mapping) else {}
-        raw = body.get("content_base64")
-        if not isinstance(raw, str) or len(raw) > 4 * ((CHUNK_SIZE + 2) // 3):
-            raise ValueError("归档分块不得超过 1MB")
-        try:
-            data = base64.b64decode(raw, validate=True)
-        except (ValueError, TypeError) as exc:
-            raise ValueError("归档分块不是有效的 base64") from exc
-        return self.backup_manager.transfers.append_upload(
-            transfer_id, body.get("offset"), data, body.get("crc32"),
-        )
+        return _backup_web_service_for(self).append_upload(transfer_id, payload, chunk_size=CHUNK_SIZE)
 
     def commit_archive_upload_from_web(self, transfer_id: str, selected: Any = None) -> Dict[str, Any]:
-        with self.backup_manager.transfers.consume_upload(transfer_id) as (path, info):
-            if info["kind"] == "backup":
-                with self._web_task_lock:
-                    self._assert_backup_restore_idle()
-                    return self.backup_manager.upload_backup_file(info["filename"], path, selected)
-            result = self.backup_manager.import_wardrobe_file(path)
-            self.persona.wardrobe.load()
-            return self.get_wardrobe_payload() | {"imported": True, "archive": result}
+        return _backup_web_service_for(self).commit_upload(transfer_id, selected)
 
     def discard_archive_transfer_from_web(self, transfer_id: str) -> Dict[str, Any]:
-        return self.backup_manager.transfers.discard(transfer_id)
+        return _backup_web_service_for(self).discard_transfer(transfer_id)
 
     def start_wardrobe_export_from_web(self) -> Dict[str, Any]:
-        return self.backup_manager.start_wardrobe_export()
+        return _backup_web_service_for(self).start_wardrobe_export()
 
     def download_archive_export_from_web(self, transfer_id: str, offset: int, length: int,
                                          revision: str, as_file: bool) -> Dict[str, Any]:
-        return self.backup_manager.transfers.download_export(
-            transfer_id, offset=offset, length=length, revision=revision, as_file=as_file,
-        )
+        return _backup_web_service_for(self).download_export(transfer_id, offset, length, revision, as_file)
 
     def set_selfie_appearance_type_from_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         value = payload.get("appearance_type", payload.get("type", "auto"))
@@ -2181,6 +2111,7 @@ class SelfieImagePlugin(
             "schedule_by_period": copy.deepcopy(profile.schedule_by_period),
             "daily_schedule": self.persona.daily_schedule_payload(),
             "day_theme": profile.day_theme,
+            "wardrobe": self.get_wardrobe_payload(),
             "occasion": profile.occasion,
             "mood": profile.mood,
         }

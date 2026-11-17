@@ -1562,6 +1562,32 @@ def test_wardrobe_new_mutations_validate_body_and_missing_hook(http, path):
     assert_failure(http.call(route, method="POST", body={}), 501, "不支持")
 
 
+@pytest.mark.parametrize("pinned", [False, True])
+def test_local_profile_refresh_returns_current_wardrobe_for_dashboard(http, tmp_path, pinned):
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.tests.test_wardrobe import PNG_1X1, PNG_1X1_ALT
+
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(tmp_path)
+    first = plugin.persona.add_wardrobe_item(PNG_1X1, name="第一套")
+    second = plugin.persona.add_wardrobe_item(PNG_1X1_ALT, name="第二套")
+    plugin.persona.set_wardrobe_selection_mode("sequential")
+    asyncio.run(plugin.persona.ensure_daily_selfie_profile())
+    if pinned:
+        asyncio.run(plugin.persona.select_wardrobe_today(first.id))
+    http.plugin.refresh_selfie_profile_local_from_web = plugin.refresh_selfie_profile_local_from_web
+
+    refreshed = assert_success(http.call("/api/selfie-profile/refresh-local", method="POST", body={}))
+    expected = first if pinned else second
+    assert refreshed["wardrobe"]["current_item_id"] == expected.id
+    assert refreshed["wardrobe"]["manual_today"] is pinned
+    assert refreshed["wardrobe"]["selection_mode"] == "sequential"
+    assert [item["id"] for item in refreshed["wardrobe"]["items"]] == [first.id, second.id]
+    assert refreshed["daily_schedule"]["schedule"]["wardrobe_item_id"] == expected.id
+    assert plugin.persona.current_wardrobe_reference().data == plugin.persona.wardrobe.read(expected)[0]
+
+
 def test_wardrobe_upload_toggle_and_delete_immediately_reconcile_daily_schedule(http, tmp_path):
     from astrbot_plugin_selfie_image.features.persona import PersonaManager
     from astrbot_plugin_selfie_image.main import SelfieImagePlugin
