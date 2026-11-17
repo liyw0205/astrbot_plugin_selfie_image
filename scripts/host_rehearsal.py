@@ -583,10 +583,17 @@ def run_rehearsal(config: Mapping[str, Any], *, keep_data: bool = False) -> dict
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path, help="JSON rehearsal contract")
+    parser.add_argument(
+        "--validate-only", action="store_true",
+        help="validate the contract without creating directories or starting processes",
+    )
     parser.add_argument("--keep-data", action="store_true", help="retain the isolated data root for diagnosis")
     args = parser.parse_args(argv)
     try:
         config = load_config(args.config)
+        if args.validate_only:
+            print("[host-rehearsal] configuration valid; no directories or processes created")
+            return 0
         report = run_rehearsal(config, keep_data=args.keep_data)
     except RehearsalError as error:
         print(f"[host-rehearsal] {error}", file=sys.stderr)

@@ -62,6 +62,10 @@ runtime path before treating the rehearsal as isolated.
 Run it only with a disposable data root:
 
 ```sh
+# Safe schema/path/command preflight; does not create directories or start the host.
+python scripts/host_rehearsal.py --config /path/to/host-rehearsal.json --validate-only
+
+# Full rehearsal; starts the isolated host and runs all six phases.
 python scripts/host_rehearsal.py --config /path/to/host-rehearsal.json
 ```
 

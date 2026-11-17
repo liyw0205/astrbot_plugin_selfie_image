@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import socket
 import sys
 import textwrap
@@ -97,6 +98,24 @@ def test_start_command_must_pass_bare_data_root(tmp_path: Path, start_command: l
 
     with pytest.raises(RehearsalError, match=r"start_command: must pass the bare \{data_root\}"):
         validate_config(config, config_path=tmp_path / "config.json")
+
+
+def test_validate_only_does_not_create_data_or_run_host(tmp_path: Path, monkeypatch, capsys) -> None:
+    raw = _config(tmp_path, 38130)
+    config_path = tmp_path / "host-rehearsal.json"
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setattr(
+        host_rehearsal, "run_rehearsal",
+        lambda *_args, **_kwargs: pytest.fail("validate-only must not start the rehearsal"),
+    )
+
+    assert host_rehearsal.main(["--config", str(config_path), "--validate-only"]) == 0
+
+    output = capsys.readouterr().out
+    assert "configuration valid" in output
+    assert "no directories or processes created" in output
+    assert not Path(raw["data_root"]).exists()
+    assert not Path(raw["report_path"]).exists()
 
 
 def test_invalid_config_does_not_create_data_root_parents(tmp_path: Path) -> None:
