@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .archive_transfer import CHUNK_SIZE, MAX_JSON_ARCHIVE_BYTES
@@ -110,9 +110,16 @@ class BackupWebService:
     def import_wardrobe(self, payload: Any) -> dict[str, Any]:
         plugin = self.plugin
         content = plugin._decode_web_archive(payload, "衣橱归档")
-        result = plugin.backup_manager.import_wardrobe(content)
-        # Stores can be replaced by restore/reload; always read the live plugin.
-        plugin.persona.wardrobe.load()
+        return self._apply_wardrobe_import(lambda: plugin.backup_manager.import_wardrobe(content))
+
+    def _apply_wardrobe_import(self, import_archive: Callable[[], Any]) -> dict[str, Any]:
+        plugin = self.plugin
+        apply_import = getattr(plugin.persona, "apply_wardrobe_import", None)
+        if callable(apply_import):
+            result = apply_import(import_archive)
+        else:
+            result = import_archive()
+            plugin.persona.wardrobe.load()
         return plugin.get_wardrobe_payload() | {"imported": True, "archive": result}
 
     def start_upload(self, payload: Any) -> dict[str, Any]:
@@ -141,9 +148,7 @@ class BackupWebService:
                 with plugin._web_task_lock:
                     plugin._assert_backup_restore_idle()
                     return plugin.backup_manager.upload_backup_file(info["filename"], path, selected)
-            result = plugin.backup_manager.import_wardrobe_file(path)
-            plugin.persona.wardrobe.load()
-            return plugin.get_wardrobe_payload() | {"imported": True, "archive": result}
+            return self._apply_wardrobe_import(lambda: plugin.backup_manager.import_wardrobe_file(path))
 
     def discard_transfer(self, transfer_id: str) -> dict[str, Any]:
         return self.plugin.backup_manager.transfers.discard(transfer_id)

@@ -7,7 +7,10 @@ import datetime
 import os
 import random
 import re
+import threading
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
@@ -1066,7 +1069,8 @@ class PersonaManager:
         )
         self.wardrobe = WardrobeStore(data_dir)
         self.business_day_start = DEFAULT_BUSINESS_DAY_START
-        self._daily_profile_lock = asyncio.Lock()
+        # Local profile updates never suspend; archive imports also run in workers.
+        self._daily_profile_lock = threading.RLock()
         self.load()
 
     def load(self) -> None:
@@ -1533,8 +1537,34 @@ class PersonaManager:
     ) -> DailySelfieProfile:
         # Batch shots may initialize the profile concurrently; serialize the
         # read/generate/save sequence so every shot shares one daily snapshot.
-        async with self._daily_profile_lock:
-            return await self._ensure_daily_selfie_profile_unlocked(action)
+        async with self._daily_profile_update():
+            return self._ensure_daily_selfie_profile_unlocked(action)
+
+    @asynccontextmanager
+    async def _daily_profile_update(self) -> AsyncIterator[None]:
+        # Archive work can hold the lock in another thread; waiting must stay
+        # cancellable and must not block the host event loop.
+        while not self._daily_profile_lock.acquire(blocking=False):
+            await asyncio.sleep(0.01)
+        try:
+            yield
+        finally:
+            self._daily_profile_lock.release()
+
+    def apply_wardrobe_import(self, import_archive: Callable[[], Any]) -> Any:
+        """Apply an archive and reconcile today's existing timeline as one update."""
+        with self._daily_profile_lock:
+            result = import_archive()
+            self.wardrobe.load()
+            schedule = self.get_daily_schedule(daily_schedule_date_key(self.business_day_start))
+            if schedule is not None:
+                if self._schedule_needs_wardrobe(schedule):
+                    self._select_wardrobe_for_schedule(schedule)
+                else:
+                    # The same image ID can carry a different name or description.
+                    self._apply_wardrobe_item(schedule, self.wardrobe.get(schedule.wardrobe_item_id))
+                self._persist_daily_selfie_profile(self._profile_from_timeline(schedule))
+            return result
 
     def configure_wardrobe_limits(
         self,
@@ -1588,10 +1618,10 @@ class PersonaManager:
         self.wardrobe.set_selection_mode(mode)
 
     async def select_wardrobe_today(self, item_id: str) -> DailySelfieProfile:
-        async with self._daily_profile_lock:
+        async with self._daily_profile_update():
             today = daily_schedule_date_key(self.business_day_start)
             item = self.wardrobe.select_today(item_id, today)
-            profile = await self._ensure_daily_selfie_profile_unlocked("指定今日服装")
+            profile = self._ensure_daily_selfie_profile_unlocked("指定今日服装")
             if profile.timeline is not None:
                 self._apply_wardrobe_item(profile.timeline, item)
                 profile = self._profile_from_timeline(profile.timeline)
@@ -1719,7 +1749,7 @@ class PersonaManager:
             ),
         )
 
-    async def _ensure_daily_selfie_profile_unlocked(
+    def _ensure_daily_selfie_profile_unlocked(
         self,
         action: str = "",
     ) -> DailySelfieProfile:
@@ -1916,7 +1946,7 @@ class PersonaManager:
 
     async def refresh_daily_selfie_profile_local(self) -> DailySelfieProfile:
         """Create a fresh local-random daily profile without calling an LLM."""
-        async with self._daily_profile_lock:
+        async with self._daily_profile_update():
             previous = self.get_daily_selfie_profile()
             avoid_outfits = {previous.outfit, *previous.outfit_by_period.values()} if previous else set()
             if previous and previous.timeline:

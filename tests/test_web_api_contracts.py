@@ -1987,6 +1987,52 @@ def test_archive_transfer_upload_export_and_limits_match_both_adapters(http, tmp
         manager.close()
 
 
+@pytest.mark.parametrize("chunked", [False, True])
+def test_wardrobe_archive_import_reconciles_real_schedule_through_both_adapters(http, tmp_path, chunked):
+    import base64
+    import zlib
+
+    from astrbot_plugin_selfie_image.features.backup_manager import BackupManager
+    from astrbot_plugin_selfie_image.features.persona import PersonaManager
+    from astrbot_plugin_selfie_image.main import SelfieImagePlugin
+    from astrbot_plugin_selfie_image.tests.test_wardrobe import PNG_1X1, PNG_1X1_ALT
+
+    source = PersonaManager(tmp_path / "source")
+    item = source.add_wardrobe_item(PNG_1X1_ALT, name="imported", description="imported details")
+    exporter = BackupManager(tmp_path / "source")
+    plugin = object.__new__(SelfieImagePlugin)
+    plugin.persona = PersonaManager(tmp_path / "target")
+    plugin.backup_manager = BackupManager(tmp_path / "target")
+    old = plugin.persona.add_wardrobe_item(PNG_1X1, name="old outfit")
+    asyncio.run(plugin.persona.select_wardrobe_today(old.id))
+    for hook in ("import_wardrobe_from_web", "start_archive_upload_from_web", "append_archive_upload_from_web",
+                 "commit_archive_upload_from_web", "get_selfie_reference_payload"):
+        setattr(http.plugin, hook, getattr(plugin, hook))
+    try:
+        exported = exporter.export_wardrobe()
+        if chunked:
+            data = base64.b64decode(exported["content_base64"])
+            session = assert_success(http.call("/api/archive-transfers/uploads", method="POST", body={
+                "kind": "wardrobe", "size": len(data),
+            }))
+            transfer = f"/api/archive-transfers/{session['id']}"
+            assert_success(http.call(transfer + "/chunk", method="POST", body={
+                "offset": 0, "content_base64": exported["content_base64"], "crc32": f"{zlib.crc32(data):08x}",
+            }))
+            imported = assert_success(http.call(transfer + "/commit", method="POST", body={}))
+        else:
+            imported = assert_success(http.call("/api/selfie-wardrobe/import", method="POST", body=exported))
+        assert imported["current_item_id"] == item.id
+        reference = assert_success(http.call("/api/selfie-reference"))
+        assert reference["wardrobe"]["current_item_id"] == item.id
+        assert reference["daily_schedule"]["schedule"]["wardrobe_item_id"] == item.id
+        assert reference["daily_schedule"]["schedule"]["outfits"]["main"] == item.description
+        assert plugin.persona.current_wardrobe_reference().data == PNG_1X1_ALT
+    finally:
+        exporter.close()
+        plugin.backup_manager.close()
+
+
 @pytest.mark.parametrize("path,method", [
     ("/api/archive-transfers/uploads", "POST"),
     ("/api/archive-transfers/test/chunk", "POST"),
