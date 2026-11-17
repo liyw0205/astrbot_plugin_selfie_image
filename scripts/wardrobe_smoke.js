@@ -31,7 +31,7 @@ const page = fs.readFileSync(path.join(ROOT, 'pages/dashboard/index.source.html'
   .replace(/<!-- dashboard-source: ([\w.-]+) -->/g, (_, name) => name === 'bootstrap.js'
     ? source(name).split('    (async function init()')[0] : source(name));
 const host = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-  <body style="margin:0"><iframe src="/fixture" sandbox="allow-scripts" style="width:100vw;height:100vh;border:0"></iframe><script>
+  <body style="margin:0"><iframe src="/fixture" sandbox="allow-scripts" style="display:block;width:100%;height:100vh;border:0"></iframe><script>
   window.addEventListener('message',async event=>{
     if(event.source!==document.querySelector('iframe').contentWindow||!event.data.op)return;
     const {id,op,endpoint,body}=event.data;
@@ -94,6 +94,8 @@ async function main() {
     };
     const click=async selector=>{
       const point=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+      const frame=await cdp.send('Runtime.evaluate',{expression:"(()=>{const r=document.querySelector('iframe')?.getBoundingClientRect();return r?{x:r.x,y:r.y}:{x:0,y:0};})()",returnByValue:true});
+      point.x+=frame.result.value.x;point.y+=frame.result.value.y;
       await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
       await cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
     };
@@ -101,10 +103,13 @@ async function main() {
     for(const embedded of [false,true])for(const width of [1280,390,320]) {
       items=[{id:'disabled',name:'已停用的服装',enabled:false,tags:[]}];selectionMode='random';current='';calls=[];
       failFile=true;holdUpload=false;releaseUpload=null;contextId=undefined;
-      await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:width===1280?900:844,deviceScaleFactor:1,mobile:width<500});
+      const height=width===1280?900:width===320?568:844;
+      await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<500});
       await cdp.send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/${embedded?'host':'fixture'}`});
       await new Promise(resolve=>setTimeout(resolve,350));
       await until("typeof navigateToTab === 'function'");
+      const hostLayout=await cdp.send('Runtime.evaluate',{expression:'document.documentElement.scrollWidth <= innerWidth+1',returnByValue:true});
+      assert.equal(hostLayout.result.value,true,'fixture host overflows horizontally');
       await evaluate("navigateToTab('selfie')");await until("document.querySelector('.wardrobe-wear')");
       assert.equal(await evaluate("document.querySelector('.wardrobe-wear').disabled"),true);
       await evaluate("$('wardrobeSelectionMode').value='sequential';$('wardrobeSelectionMode').dispatchEvent(new Event('change'));");
@@ -121,6 +126,8 @@ async function main() {
       assert.equal(current,'wardrobe_2');
       assert.equal(await evaluate("$('selfieDailySchedule').textContent.includes('third')"),true);
       await click('[onclick="refreshDailySelfieLocal()"]');await until("$('wardrobeCurrent').textContent.includes('手动指定')");
+      assert.equal(await evaluate("$('wardrobeSelectionMode').value"),'sequential');
+      assert.equal(await evaluate("document.querySelectorAll('.wardrobe-item').length"),4);
 
       await choose(['stop-a.png','stop-b.png','stop-c.png']);holdUpload=true;
       await click('#uploadWardrobe');
@@ -141,7 +148,7 @@ async function main() {
       assert.deepEqual(overflow,[]);
       const shot=await cdp.send('Page.captureScreenshot',{format:'png'});
       fs.writeFileSync(path.join(output,`${embedded?'embedded':'standalone'}-${width}.png`),Buffer.from(shot.data,'base64'));
-      console.log(`[wardrobe-smoke] ${embedded?'sandbox iframe':'standalone'} ${width}: batch import, retry, cancel, rotation, today selection and layout passed`);
+      console.log(`[wardrobe-smoke] ${embedded?'sandbox iframe':'standalone'} ${width}x${height}: batch import, retry, cancel, rotation, today selection, refresh and layout passed`);
     }
     assert.deepEqual(exceptions,[]);
     console.log(`[wardrobe-smoke] screenshots: ${output}`);

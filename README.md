@@ -270,7 +270,7 @@ python -m compileall -q features generation tasks main.py
 git diff --check
 ```
 
-备份管理浏览器回归：`node scripts/backup_smoke.js`（需要 Chromium）。使用临时数据验证独立页与受限 iframe 在桌面、390px、320px 下的按钮点击、文件下载、恢复勾选、上传提交、取消和错误反馈；默认将截图保存到临时目录，可用 `BACKUP_SMOKE_OUTPUT` 指定输出位置。测试使用模拟宿主桥接，不操作真实插件数据。
+备份管理浏览器回归：`node scripts/backup_smoke.js`（需要 Chromium、Python）。使用临时数据验证独立页与受限 iframe 在 1280×900、390×844、320×568 下的按钮点击、认证下载、有效 ZIP、下载失败重试与延迟响应、恢复勾选、上传取消后重试、满/空列表及长文件名布局；默认将截图保存到临时目录，可用 `BACKUP_SMOKE_OUTPUT` 指定输出位置。测试使用模拟宿主桥接，不操作真实插件数据。
 
 衣橱浏览器回归：`node scripts/wardrobe_smoke.js`（需要 Chromium）。覆盖相同视口和宿主模式下的多图导入、部分失败重试、停止后续上传、轮换方式、今日选衣与日程同步；截图默认保存到临时目录，可用 `WARDROBE_SMOKE_OUTPUT` 指定输出位置，不操作真实插件数据。
 
