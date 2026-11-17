@@ -167,18 +167,32 @@ def test_protected_media_has_three_day_sliding_persistent_cache_and_retry_ui():
 
 def test_dashboard_catalog_pages_and_gallery_survive_a_reload_with_bounded_ttl():
     assert "const DASHBOARD_PERSIST_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;" in PAGE
-    assert "function hydrateDashboardPersistentCaches()" in PAGE
+    assert "const DASHBOARD_PERSIST_CACHE_NAME = 'selfie-image-dashboard-v1';" in PAGE
+    assert "async function hydrateDashboardPersistStorage()" in PAGE
+    assert "scheduleDashboardPersistCacheWrite(storageKey" in PAGE
+    assert "await hydrateDashboardPersistStorage();" in PAGE
+    assert "async function hydrateDashboardPersistentCaches()" in PAGE
     assert "listDashboardPersistCache('picker-page')" in PAGE
     assert "listDashboardPersistCache('managed-page')" in PAGE
     assert "listDashboardPersistCache('record-page')" in PAGE
     assert "listDashboardPersistCache('asset-page')" in PAGE
     assert "readDashboardPersistCache('gallery-picker', 'items')" in PAGE
+    assert "readDashboardPersistCacheEntry('asset-collections', 'all')" in PAGE
     assert "writeDashboardPersistCache('picker-page', key, data)" in PAGE
     assert "writeDashboardPersistCache('managed-page', key, value)" in PAGE
     assert "writeDashboardPersistCache('gallery-picker', 'items', GALLERY_PICKER_CACHE.items)" in PAGE
+    assert "writeDashboardPersistCache('asset-collections', 'all', ASSET_COLLECTIONS)" in PAGE
+    assert "clearAssetCollectionsCache()" in PAGE
     assert "clearDashboardPersistNamespace('record-page')" in PAGE
     assert "clearDashboardPersistNamespace('asset-page')" in PAGE
     assert "clearDashboardPersistNamespace('media')" in PAGE
+
+
+def test_backup_metadata_uses_short_persisted_cache_without_scanning_selected_data():
+    assert "const BACKUP_PERSIST_NAMESPACE = 'backup-manager';" in PAGE
+    assert "restorePersistedBackupManager()" in PAGE
+    assert "persistBackupManager();" in PAGE
+    assert "removeDashboardPersistCache(BACKUP_PERSIST_NAMESPACE, 'state')" in PAGE
 
 
 def test_media_persistence_falls_back_when_cache_storage_is_unavailable():

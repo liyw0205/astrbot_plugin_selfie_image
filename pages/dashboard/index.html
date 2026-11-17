@@ -2235,6 +2235,12 @@
     const DASHBOARD_PERSIST_CACHE_MAX_ENTRIES = 160;
     const DASHBOARD_PERSIST_CACHE_MAX_BYTES = 3 * 1024 * 1024;
     const DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES = 700 * 1024;
+    const DASHBOARD_PERSIST_CACHE_NAME = 'selfie-image-dashboard-v1';
+    const DASHBOARD_PERSIST_MEMORY = new Map();
+    const DASHBOARD_PERSIST_CACHE_WRITE_SEQ = new Map();
+    const DASHBOARD_PERSIST_CACHE_WRITE_OP = new Map();
+    let DASHBOARD_PERSIST_STORAGE_HYDRATION = null;
+    let DASHBOARD_PERSIST_STORAGE_HYDRATED = false;
     function dashboardPersistHash(value) {
       let hash = 2166136261;
       for (const char of String(value || '')) {
@@ -2250,6 +2256,97 @@
     function dashboardPersistKey(namespace, key, scope = dashboardPersistScope()) {
       return `${DASHBOARD_PERSIST_CACHE_PREFIX}${scope}:${namespace}:${encodeURIComponent(String(key || ''))}`;
     }
+    function dashboardPersistCacheStorage() {
+      try {
+        return typeof window.caches?.open === 'function' && typeof window.Response === 'function'
+          ? window.caches : null;
+      } catch (_) {
+        return null;
+      }
+    }
+    function dashboardPersistCacheUrl(storageKey) {
+      return `/__selfie_dashboard_cache__/${encodeURIComponent(storageKey)}`;
+    }
+    function scheduleDashboardPersistCacheDelete(storageKey) {
+      const sequence = (DASHBOARD_PERSIST_CACHE_WRITE_SEQ.get(storageKey) || 0) + 1;
+      DASHBOARD_PERSIST_CACHE_WRITE_SEQ.set(storageKey, sequence);
+      DASHBOARD_PERSIST_CACHE_WRITE_OP.set(storageKey, 'delete');
+      const cachesApi = dashboardPersistCacheStorage();
+      if (!cachesApi) return;
+      void cachesApi.open(DASHBOARD_PERSIST_CACHE_NAME)
+        .then(cache => cache.delete(dashboardPersistCacheUrl(storageKey)))
+        .catch(() => {});
+    }
+    function scheduleDashboardPersistCacheWrite(storageKey, encoded) {
+      const cachesApi = dashboardPersistCacheStorage();
+      if (!cachesApi) return;
+      const sequence = (DASHBOARD_PERSIST_CACHE_WRITE_SEQ.get(storageKey) || 0) + 1;
+      DASHBOARD_PERSIST_CACHE_WRITE_SEQ.set(storageKey, sequence);
+      DASHBOARD_PERSIST_CACHE_WRITE_OP.set(storageKey, 'write');
+      void cachesApi.open(DASHBOARD_PERSIST_CACHE_NAME).then(async cache => {
+        if (DASHBOARD_PERSIST_CACHE_WRITE_SEQ.get(storageKey) !== sequence) return;
+        await cache.put(dashboardPersistCacheUrl(storageKey), new Response(encoded, {
+          headers: {'content-type': 'application/json'},
+        }));
+        if (DASHBOARD_PERSIST_CACHE_WRITE_SEQ.get(storageKey) !== sequence
+          && DASHBOARD_PERSIST_CACHE_WRITE_OP.get(storageKey) === 'delete') {
+          await cache.delete(dashboardPersistCacheUrl(storageKey));
+        }
+      }).catch(() => {});
+    }
+    async function hydrateDashboardPersistStorage() {
+      if (DASHBOARD_PERSIST_STORAGE_HYDRATED) return;
+      if (DASHBOARD_PERSIST_STORAGE_HYDRATION) return DASHBOARD_PERSIST_STORAGE_HYDRATION;
+      const cachesApi = dashboardPersistCacheStorage();
+      if (!cachesApi) {
+        DASHBOARD_PERSIST_STORAGE_HYDRATED = true;
+        return;
+      }
+      DASHBOARD_PERSIST_STORAGE_HYDRATION = (async () => {
+        try {
+          const cache = await cachesApi.open(DASHBOARD_PERSIST_CACHE_NAME);
+          const requests = await cache.keys();
+          const now = Date.now();
+          for (const request of requests) {
+            const response = await cache.match(request);
+            if (!response) continue;
+            try {
+              const value = await response.json();
+              const storageKey = String(value?.storageKey || '');
+              const namespace = String(value?.namespace || '');
+              const key = String(value?.key || '');
+              const scope = String(value?.scope || '');
+              const storedAt = Number(value?.storedAt || 0);
+              if (!storageKey || !namespace || !scope || !storedAt || now - storedAt > DASHBOARD_PERSIST_CACHE_TTL_MS) {
+                await cache.delete(request);
+                continue;
+              }
+              DASHBOARD_PERSIST_MEMORY.set(storageKey, {
+                namespace, key, scope, storedAt,
+                lastAccessed: Number(value?.lastAccessed || storedAt),
+                size: Number(value?.size || 0), data: value.data,
+              });
+            } catch (_) {
+              await cache.delete(request);
+            }
+          }
+          const entries = [...DASHBOARD_PERSIST_MEMORY.entries()]
+            .sort((a, b) => Number(a[1]?.lastAccessed || 0) - Number(b[1]?.lastAccessed || 0));
+          let totalBytes = entries.reduce((sum, item) => sum + Math.max(0, Number(item[1]?.size || 0)), 0);
+          while (entries.length > DASHBOARD_PERSIST_CACHE_MAX_ENTRIES || totalBytes > DASHBOARD_PERSIST_CACHE_MAX_BYTES) {
+            const [storageKey, item] = entries.shift() || [];
+            if (!storageKey) break;
+            totalBytes -= Math.max(0, Number(item?.size || 0));
+            DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+            await cache.delete(dashboardPersistCacheUrl(storageKey)).catch(() => {});
+          }
+          DASHBOARD_PERSIST_STORAGE_HYDRATED = true;
+        } catch (_) {
+          // CacheStorage is optional in embedded/sandboxed browsers.
+        }
+      })().finally(() => { DASHBOARD_PERSIST_STORAGE_HYDRATION = null; });
+      return DASHBOARD_PERSIST_STORAGE_HYDRATION;
+    }
     function readDashboardPersistIndex() {
       try {
         const value = JSON.parse(safeStorageGet(DASHBOARD_PERSIST_CACHE_INDEX_KEY, '{}'));
@@ -2263,6 +2360,8 @@
     }
     function removeDashboardPersistEntry(storageKey, index = readDashboardPersistIndex()) {
       safeStorageRemove(storageKey);
+      DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+      scheduleDashboardPersistCacheDelete(storageKey);
       if (Object.prototype.hasOwnProperty.call(index, storageKey)) {
         delete index[storageKey];
         writeDashboardPersistIndex(index);
@@ -2282,6 +2381,8 @@
         const missing = !raw;
         if (missing || dashboardPersistEntryExpired(item, now)) {
           safeStorageRemove(storageKey);
+          DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+          scheduleDashboardPersistCacheDelete(storageKey);
           delete index[storageKey];
           changed = true;
           continue;
@@ -2296,6 +2397,8 @@
         if (!oldest) break;
         totalBytes -= Number(oldest.item.size || 0);
         safeStorageRemove(oldest.storageKey);
+        DASHBOARD_PERSIST_MEMORY.delete(oldest.storageKey);
+        scheduleDashboardPersistCacheDelete(oldest.storageKey);
         delete index[oldest.storageKey];
         changed = true;
       }
@@ -2308,8 +2411,17 @@
       const index = readDashboardPersistIndex();
       const raw = safeStorageGet(storageKey, '');
       if (!raw) {
-        if (index[storageKey]) removeDashboardPersistEntry(storageKey, index);
-        return null;
+        const memory = DASHBOARD_PERSIST_MEMORY.get(storageKey);
+        if (!memory) {
+          if (index[storageKey]) removeDashboardPersistEntry(storageKey, index);
+          return null;
+        }
+        if (dashboardPersistEntryExpired(memory) || memory.scope !== scope) {
+          removeDashboardPersistEntry(storageKey, index);
+          return null;
+        }
+        memory.lastAccessed = Date.now();
+        return {data: memory.data, storedAt: Number(memory.storedAt || 0)};
       }
       try {
         const value = JSON.parse(raw);
@@ -2326,6 +2438,11 @@
         index[storageKey] = item;
         safeStorageSet(storageKey, JSON.stringify(value));
         writeDashboardPersistIndex(index);
+        DASHBOARD_PERSIST_MEMORY.set(storageKey, {
+          namespace, key: String(key || ''), scope,
+          storedAt: Number(value.storedAt || item.storedAt || 0),
+          lastAccessed: item.lastAccessed, size: Number(item.size || raw.length || 0), data: value.data,
+        });
         return {data: value.data, storedAt: Number(value.storedAt || item.storedAt || 0)};
       } catch (_) {
         removeDashboardPersistEntry(storageKey, index);
@@ -2339,16 +2456,25 @@
       let encoded;
       try {
         const scope = dashboardPersistScope();
-        encoded = JSON.stringify({scope, storedAt: Date.now(), data});
-        if (encoded.length > DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES) return false;
+        const storedAt = Date.now();
         const storageKey = dashboardPersistKey(namespace, key, scope);
+        const entry = {scope, namespace, key: String(key || ''), storageKey, storedAt, lastAccessed: storedAt, data};
+        encoded = JSON.stringify(entry);
+        if (encoded.length > DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES) return false;
+        DASHBOARD_PERSIST_MEMORY.set(storageKey, {
+          namespace, key: String(key || ''), scope, storedAt, lastAccessed: storedAt,
+          size: encoded.length, data,
+        });
+        scheduleDashboardPersistCacheWrite(storageKey, JSON.stringify(Object.assign({}, entry, {size: encoded.length})));
         safeStorageSet(storageKey, encoded);
-        if (safeStorageGet(storageKey, '') !== encoded) return false;
+        const storedInLocalStorage = safeStorageGet(storageKey, '') === encoded;
         const index = readDashboardPersistIndex();
-        index[storageKey] = {namespace, key: String(key || ''), scope, storedAt: Date.now(), lastAccessed: Date.now(), size: encoded.length};
-        writeDashboardPersistIndex(index);
-        pruneDashboardPersistCache();
-        return true;
+        if (storedInLocalStorage) {
+          index[storageKey] = {namespace, key: String(key || ''), scope, storedAt, lastAccessed: storedAt, size: encoded.length};
+          writeDashboardPersistIndex(index);
+          pruneDashboardPersistCache();
+        }
+        return storedInLocalStorage || Boolean(dashboardPersistCacheStorage());
       } catch (_) {
         return false;
       }
@@ -2364,8 +2490,16 @@
         if (item.namespace !== namespace) continue;
         if (typeof predicate === 'function' && !predicate(String(item.key || ''))) continue;
         safeStorageRemove(storageKey);
+        DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+        scheduleDashboardPersistCacheDelete(storageKey);
         delete index[storageKey];
         changed = true;
+      }
+      for (const [storageKey, item] of [...DASHBOARD_PERSIST_MEMORY.entries()]) {
+        if (item.namespace !== namespace) continue;
+        if (typeof predicate === 'function' && !predicate(String(item.key || ''))) continue;
+        DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+        scheduleDashboardPersistCacheDelete(storageKey);
       }
       if (changed) writeDashboardPersistIndex(index);
     }
@@ -2373,6 +2507,7 @@
       const index = pruneDashboardPersistCache();
       const scope = dashboardPersistScope();
       const rows = [];
+      const seen = new Set();
       for (const [storageKey, item] of Object.entries(index)) {
         if (item.namespace !== namespace || item.scope !== scope) continue;
         const raw = safeStorageGet(storageKey, '');
@@ -2382,10 +2517,25 @@
           if (value.scope !== scope || dashboardPersistEntryExpired(item)) continue;
           item.lastAccessed = Date.now();
           index[storageKey] = item;
+          seen.add(storageKey);
+          DASHBOARD_PERSIST_MEMORY.set(storageKey, {
+            namespace, key: String(item.key || ''), scope,
+            storedAt: Number(value.storedAt || item.storedAt || 0),
+            lastAccessed: item.lastAccessed, size: Number(item.size || raw.length || 0), data: value.data,
+          });
           rows.push({key: String(item.key || ''), data: value.data, storedAt: Number(value.storedAt || 0)});
         } catch (_) {
           removeDashboardPersistEntry(storageKey, index);
         }
+      }
+      for (const [storageKey, item] of DASHBOARD_PERSIST_MEMORY.entries()) {
+        if (seen.has(storageKey) || item.namespace !== namespace || item.scope !== scope) continue;
+        if (dashboardPersistEntryExpired(item)) {
+          removeDashboardPersistEntry(storageKey, index);
+          continue;
+        }
+        item.lastAccessed = Date.now();
+        rows.push({key: String(item.key || ''), data: item.data, storedAt: Number(item.storedAt || 0)});
       }
       writeDashboardPersistIndex(index);
       return rows;
@@ -2520,9 +2670,10 @@
     let CURRENT_COMPARE = null;
     let DASHBOARD_PERSIST_HYDRATED_SCOPE = '';
 
-    function hydrateDashboardPersistentCaches() {
+    async function hydrateDashboardPersistentCaches() {
       // Standalone login pages do not have a trustworthy scope until a token is entered.
       if (!isDashboardPage() && !AUTH_TOKEN) return;
+      await hydrateDashboardPersistStorage();
       const scope = dashboardPersistScope();
       if (DASHBOARD_PERSIST_HYDRATED_SCOPE && DASHBOARD_PERSIST_HYDRATED_SCOPE !== scope) {
         for (const controller of [...RECORD_PAGE_CONTROLLERS.values(), ...ASSET_PAGE_CONTROLLERS.values()]) {
@@ -2565,7 +2716,7 @@
         GALLERY_PICKER_CACHE.loaded = true;
       }
     }
-    hydrateDashboardPersistentCaches();
+    void hydrateDashboardPersistentCaches();
 
     function isEmbeddedFrame() {
       try {
@@ -6386,6 +6537,11 @@ Source prompt:
 
     let ASSET_COLLECTIONS = [];
     let ASSET_COLLECTION_LOAD_SEQ = 0;
+    let ASSET_COLLECTION_LOAD_REQUEST = null;
+    let ASSET_COLLECTION_LOAD_CONTROLLER = null;
+    let ASSET_COLLECTION_CACHE_AT = 0;
+    let ASSET_COLLECTION_CACHE_SCOPE = '';
+    const ASSET_COLLECTION_CACHE_TTL_MS = 30000;
 
     function selectedAssetCollectionId() {
       return String($('assetCollectionSelect')?.value || '').trim();
@@ -6422,17 +6578,62 @@ Source prompt:
       }
     }
 
-    async function loadAssetCollections(showRefreshToast = false) {
-      const requestSeq = ++ASSET_COLLECTION_LOAD_SEQ;
-      try {
-        const res = await api('/api/assets/collections');
-        if (requestSeq !== ASSET_COLLECTION_LOAD_SEQ) return;
-        ASSET_COLLECTIONS = Array.isArray(res.data) ? res.data : [];
-        renderAssetCollections();
-        if (showRefreshToast) showToast('资产集合已刷新', 'ok');
-      } catch (e) {
-        if (requestSeq === ASSET_COLLECTION_LOAD_SEQ && $('assetCollectionStatus')) $('assetCollectionStatus').textContent = e.message || '资产集合读取失败';
+    function clearAssetCollectionsCache() {
+      ASSET_COLLECTION_LOAD_SEQ += 1;
+      try { ASSET_COLLECTION_LOAD_CONTROLLER?.abort(); } catch (_) {}
+      ASSET_COLLECTION_LOAD_CONTROLLER = null;
+      ASSET_COLLECTION_CACHE_AT = 0;
+      ASSET_COLLECTION_LOAD_REQUEST = null;
+      ASSET_COLLECTIONS = [];
+      clearDashboardPersistNamespace('asset-collections');
+    }
+    async function loadAssetCollections(showRefreshToast = false, force = false) {
+      const scope = dashboardPersistScope();
+      if (ASSET_COLLECTION_CACHE_SCOPE && ASSET_COLLECTION_CACHE_SCOPE !== scope) {
+        ASSET_COLLECTION_CACHE_AT = 0;
+        ASSET_COLLECTIONS = [];
       }
+      ASSET_COLLECTION_CACHE_SCOPE = scope;
+      if (ASSET_COLLECTION_LOAD_REQUEST) {
+        const pending = ASSET_COLLECTION_LOAD_REQUEST;
+        return force || showRefreshToast ? pending.then(() => loadAssetCollections(showRefreshToast, true)) : pending;
+      }
+      if (!force && !showRefreshToast && ASSET_COLLECTION_CACHE_AT > 0
+        && Date.now() - ASSET_COLLECTION_CACHE_AT < ASSET_COLLECTION_CACHE_TTL_MS) {
+        renderAssetCollections();
+        return;
+      }
+      if (!force && !showRefreshToast) {
+        const persisted = readDashboardPersistCacheEntry('asset-collections', 'all');
+        if (Array.isArray(persisted?.data)) {
+          ASSET_COLLECTIONS = persisted.data;
+          ASSET_COLLECTION_CACHE_AT = Date.now();
+          renderAssetCollections();
+          return;
+        }
+      }
+      const requestSeq = ++ASSET_COLLECTION_LOAD_SEQ;
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      ASSET_COLLECTION_LOAD_CONTROLLER = controller;
+      let request;
+      request = (async () => {
+        try {
+          const res = await api('/api/assets/collections', controller ? {signal: controller.signal} : {});
+          if (requestSeq !== ASSET_COLLECTION_LOAD_SEQ) return;
+          ASSET_COLLECTIONS = Array.isArray(res.data) ? res.data : [];
+          ASSET_COLLECTION_CACHE_AT = Date.now();
+          writeDashboardPersistCache('asset-collections', 'all', ASSET_COLLECTIONS);
+          renderAssetCollections();
+          if (showRefreshToast) showToast('资产集合已刷新', 'ok');
+        } catch (e) {
+          if (requestSeq === ASSET_COLLECTION_LOAD_SEQ && $('assetCollectionStatus')) $('assetCollectionStatus').textContent = e.message || '资产集合读取失败';
+        }
+      })().finally(() => {
+        if (ASSET_COLLECTION_LOAD_REQUEST === request) ASSET_COLLECTION_LOAD_REQUEST = null;
+        if (ASSET_COLLECTION_LOAD_CONTROLLER === controller) ASSET_COLLECTION_LOAD_CONTROLLER = null;
+      });
+      ASSET_COLLECTION_LOAD_REQUEST = request;
+      return request;
     }
 
     async function createAssetCollection() {
@@ -6440,15 +6641,19 @@ Source prompt:
       const note = String($('assetCollectionNote')?.value || '').trim();
       if (!name) return showToast('请输入集合名称', 'bad');
       try {
+        clearAssetCollectionsCache();
         const res = await api('/api/assets/collections', {method: 'POST', body: JSON.stringify({name, note})});
         if (!res.success) throw new Error(res.message || '集合创建失败');
         if ($('assetCollectionName')) $('assetCollectionName').value = '';
         if ($('assetCollectionNote')) $('assetCollectionNote').value = '';
-        await loadAssetCollections();
+        await loadAssetCollections(false, true);
         const id = String(res.data?.id || '');
         if (id && $('assetCollectionSelect')) $('assetCollectionSelect').value = id;
         showToast(res.message || '资产集合已创建', 'ok');
-      } catch (e) { showToast(e.message || '集合创建失败', 'bad'); }
+      } catch (e) {
+        await loadAssetCollections(false, true).catch(() => {});
+        showToast(e.message || '集合创建失败', 'bad');
+      }
     }
 
     async function deleteAssetCollection(collectionId) {
@@ -6457,23 +6662,28 @@ Source prompt:
       const item = ASSET_COLLECTIONS.find(row => String(row.id || '') === id);
       if (!await confirmAction(`确定删除集合“${item?.name || id}”？集合内记录和媒体不会删除。`, {title: '删除资产集合', confirmText: '删除集合'})) return;
       try {
+        clearAssetCollectionsCache();
         const res = await api('/api/assets/collections/' + encodeURIComponent(id) + '/delete', {method: 'POST'});
         if (!res.success) throw new Error(res.message || '集合删除失败');
-        await loadAssetCollections();
+        await loadAssetCollections(false, true);
         const token = String(res.data?.undo?.token || '');
         const ttl = Math.min(10000, Math.max(1000, Number(res.data?.undo?.ttl_seconds || 600) * 1000));
         showToast(res.message || '资产集合已删除', 'ok', token ? {
           actionText: '撤销', duration: ttl,
           onAction: async () => {
             try {
+              clearAssetCollectionsCache();
               const restored = await api('/api/assets/collections/restore', {method: 'POST', body: JSON.stringify({token})});
               if (!restored.success) throw new Error(restored.message || '集合恢复失败');
-              await loadAssetCollections();
+              await loadAssetCollections(false, true);
               showToast(restored.message || '资产集合已恢复', 'ok');
             } catch (e) { showToast(e.message || '集合恢复失败', 'bad'); }
           }
         } : {});
-      } catch (e) { showToast(e.message || '集合删除失败', 'bad'); }
+      } catch (e) {
+        await loadAssetCollections(false, true).catch(() => {});
+        showToast(e.message || '集合删除失败', 'bad');
+      }
     }
 
     async function updateSelectedAssetCollectionRecords(remove = false) {
@@ -6486,6 +6696,7 @@ Source prompt:
         const res = await api(path, {method: 'POST', body: JSON.stringify({record_ids: ids})});
         if (!res.success) throw new Error(res.message || '集合内容更新失败');
         ASSET_COLLECTIONS = ASSET_COLLECTIONS.map(item => String(item.id || '') === collectionId ? (res.data || item) : item);
+        writeDashboardPersistCache('asset-collections', 'all', ASSET_COLLECTIONS);
         renderAssetCollections();
         showToast(res.message || '集合内容已更新', 'ok');
       } catch (e) { showToast(e.message || '集合内容更新失败', 'bad'); }
@@ -8533,7 +8744,7 @@ Source prompt:
       ensureProtectedMediaScope();
       // A standalone page may boot before the user enters a token. Hydrate the
       // token-scoped page/catalog cache after authentication is established.
-      hydrateDashboardPersistentCaches();
+      await hydrateDashboardPersistentCaches();
       try {
         const res = await api('/api/config');
         CONFIG = res.data || {};
@@ -8586,7 +8797,8 @@ Source prompt:
       clearRecordPageCache();
       clearAssetPageCache();
       clearPickerCache();
-      for (const namespace of ['record-page', 'asset-page', 'picker-page', 'managed-page', 'asset-tags', 'gallery-picker']) {
+      clearAssetCollectionsCache();
+      for (const namespace of ['record-page', 'asset-page', 'picker-page', 'managed-page', 'asset-tags', 'gallery-picker', 'asset-collections']) {
         clearDashboardPersistNamespace(namespace);
       }
       safeStorageRemove('selfieImageToken');
@@ -8657,6 +8869,7 @@ Source prompt:
     let BACKUP_OPTIONS_CACHE = null;
     let BACKUP_LIST_CACHE = null;
     let BACKUP_LIST_CACHE_AT = 0;
+    const BACKUP_PERSIST_NAMESPACE = 'backup-manager';
     const BACKUP_LIST_CACHE_TTL_MS = 30 * 1000;
     let BACKUP_LIST = [];
     let BACKUP_CAN_UPLOAD = true;
@@ -8837,6 +9050,30 @@ Source prompt:
     function invalidateBackupListCache() {
       BACKUP_LIST_CACHE = null;
       BACKUP_LIST_CACHE_AT = 0;
+      if (typeof removeDashboardPersistCache === 'function') {
+        removeDashboardPersistCache(BACKUP_PERSIST_NAMESPACE, 'state');
+      }
+    }
+
+    function restorePersistedBackupManager() {
+      if (typeof readDashboardPersistCacheEntry !== 'function') return false;
+      const cached = readDashboardPersistCacheEntry(BACKUP_PERSIST_NAMESPACE, 'state');
+      const storedAt = Number(cached?.storedAt || 0);
+      const value = cached?.data;
+      if (!storedAt || Date.now() - storedAt >= BACKUP_LIST_CACHE_TTL_MS
+        || !Array.isArray(value?.options) || !value?.list || typeof value.list !== 'object') return false;
+      BACKUP_OPTIONS_CACHE = value.options;
+      BACKUP_LIST_CACHE = value.list;
+      BACKUP_LIST_CACHE_AT = storedAt;
+      return true;
+    }
+
+    function persistBackupManager() {
+      if (typeof writeDashboardPersistCache !== 'function' || !BACKUP_LIST_CACHE) return;
+      writeDashboardPersistCache(BACKUP_PERSIST_NAMESPACE, 'state', {
+        options: BACKUP_OPTIONS_CACHE || BACKUP_OPTIONS,
+        list: BACKUP_LIST_CACHE,
+      });
     }
 
     function renderCachedBackupManager() {
@@ -8852,6 +9089,10 @@ Source prompt:
         const pending = BACKUP_LOAD_REQUEST;
         return force ? pending.then(() => loadBackupManager(true)) : pending;
       }
+      if (!force && !BACKUP_OPTIONS_CACHE && !BACKUP_LIST_CACHE && restorePersistedBackupManager()) {
+        renderCachedBackupManager();
+        return;
+      }
       if (!force && Date.now() - BACKUP_LIST_CACHE_AT < BACKUP_LIST_CACHE_TTL_MS && renderCachedBackupManager()) return;
       const loadSeq = ++BACKUP_LOAD_SEQ;
       const mutationSeq = BACKUP_MUTATION_SEQ;
@@ -8866,6 +9107,7 @@ Source prompt:
           BACKUP_OPTIONS_CACHE = BACKUP_OPTIONS;
           BACKUP_LIST_CACHE = list.data || {};
           BACKUP_LIST_CACHE_AT = Date.now();
+          persistBackupManager();
           renderBackupOptions();
           renderBackupList(BACKUP_LIST_CACHE);
         } catch (error) {
@@ -9009,6 +9251,7 @@ Source prompt:
         const response = await api('/api/backups/delete', {method:'POST', body: JSON.stringify({id})});
         BACKUP_LIST_CACHE = response.data || {};
         BACKUP_LIST_CACHE_AT = Date.now();
+        persistBackupManager();
         renderBackupList(BACKUP_LIST_CACHE);
         showToast('备份已删除', 'ok');
       } catch (error) { showToast(error.message || '删除备份失败', 'bad'); }

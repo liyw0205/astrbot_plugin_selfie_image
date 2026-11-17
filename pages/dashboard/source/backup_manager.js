@@ -7,6 +7,7 @@
     let BACKUP_OPTIONS_CACHE = null;
     let BACKUP_LIST_CACHE = null;
     let BACKUP_LIST_CACHE_AT = 0;
+    const BACKUP_PERSIST_NAMESPACE = 'backup-manager';
     const BACKUP_LIST_CACHE_TTL_MS = 30 * 1000;
     let BACKUP_LIST = [];
     let BACKUP_CAN_UPLOAD = true;
@@ -187,6 +188,30 @@
     function invalidateBackupListCache() {
       BACKUP_LIST_CACHE = null;
       BACKUP_LIST_CACHE_AT = 0;
+      if (typeof removeDashboardPersistCache === 'function') {
+        removeDashboardPersistCache(BACKUP_PERSIST_NAMESPACE, 'state');
+      }
+    }
+
+    function restorePersistedBackupManager() {
+      if (typeof readDashboardPersistCacheEntry !== 'function') return false;
+      const cached = readDashboardPersistCacheEntry(BACKUP_PERSIST_NAMESPACE, 'state');
+      const storedAt = Number(cached?.storedAt || 0);
+      const value = cached?.data;
+      if (!storedAt || Date.now() - storedAt >= BACKUP_LIST_CACHE_TTL_MS
+        || !Array.isArray(value?.options) || !value?.list || typeof value.list !== 'object') return false;
+      BACKUP_OPTIONS_CACHE = value.options;
+      BACKUP_LIST_CACHE = value.list;
+      BACKUP_LIST_CACHE_AT = storedAt;
+      return true;
+    }
+
+    function persistBackupManager() {
+      if (typeof writeDashboardPersistCache !== 'function' || !BACKUP_LIST_CACHE) return;
+      writeDashboardPersistCache(BACKUP_PERSIST_NAMESPACE, 'state', {
+        options: BACKUP_OPTIONS_CACHE || BACKUP_OPTIONS,
+        list: BACKUP_LIST_CACHE,
+      });
     }
 
     function renderCachedBackupManager() {
@@ -202,6 +227,10 @@
         const pending = BACKUP_LOAD_REQUEST;
         return force ? pending.then(() => loadBackupManager(true)) : pending;
       }
+      if (!force && !BACKUP_OPTIONS_CACHE && !BACKUP_LIST_CACHE && restorePersistedBackupManager()) {
+        renderCachedBackupManager();
+        return;
+      }
       if (!force && Date.now() - BACKUP_LIST_CACHE_AT < BACKUP_LIST_CACHE_TTL_MS && renderCachedBackupManager()) return;
       const loadSeq = ++BACKUP_LOAD_SEQ;
       const mutationSeq = BACKUP_MUTATION_SEQ;
@@ -216,6 +245,7 @@
           BACKUP_OPTIONS_CACHE = BACKUP_OPTIONS;
           BACKUP_LIST_CACHE = list.data || {};
           BACKUP_LIST_CACHE_AT = Date.now();
+          persistBackupManager();
           renderBackupOptions();
           renderBackupList(BACKUP_LIST_CACHE);
         } catch (error) {
@@ -359,6 +389,7 @@
         const response = await api('/api/backups/delete', {method:'POST', body: JSON.stringify({id})});
         BACKUP_LIST_CACHE = response.data || {};
         BACKUP_LIST_CACHE_AT = Date.now();
+        persistBackupManager();
         renderBackupList(BACKUP_LIST_CACHE);
         showToast('备份已删除', 'ok');
       } catch (error) { showToast(error.message || '删除备份失败', 'bad'); }

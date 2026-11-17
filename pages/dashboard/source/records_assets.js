@@ -962,6 +962,11 @@
 
     let ASSET_COLLECTIONS = [];
     let ASSET_COLLECTION_LOAD_SEQ = 0;
+    let ASSET_COLLECTION_LOAD_REQUEST = null;
+    let ASSET_COLLECTION_LOAD_CONTROLLER = null;
+    let ASSET_COLLECTION_CACHE_AT = 0;
+    let ASSET_COLLECTION_CACHE_SCOPE = '';
+    const ASSET_COLLECTION_CACHE_TTL_MS = 30000;
 
     function selectedAssetCollectionId() {
       return String($('assetCollectionSelect')?.value || '').trim();
@@ -998,17 +1003,62 @@
       }
     }
 
-    async function loadAssetCollections(showRefreshToast = false) {
-      const requestSeq = ++ASSET_COLLECTION_LOAD_SEQ;
-      try {
-        const res = await api('/api/assets/collections');
-        if (requestSeq !== ASSET_COLLECTION_LOAD_SEQ) return;
-        ASSET_COLLECTIONS = Array.isArray(res.data) ? res.data : [];
-        renderAssetCollections();
-        if (showRefreshToast) showToast('资产集合已刷新', 'ok');
-      } catch (e) {
-        if (requestSeq === ASSET_COLLECTION_LOAD_SEQ && $('assetCollectionStatus')) $('assetCollectionStatus').textContent = e.message || '资产集合读取失败';
+    function clearAssetCollectionsCache() {
+      ASSET_COLLECTION_LOAD_SEQ += 1;
+      try { ASSET_COLLECTION_LOAD_CONTROLLER?.abort(); } catch (_) {}
+      ASSET_COLLECTION_LOAD_CONTROLLER = null;
+      ASSET_COLLECTION_CACHE_AT = 0;
+      ASSET_COLLECTION_LOAD_REQUEST = null;
+      ASSET_COLLECTIONS = [];
+      clearDashboardPersistNamespace('asset-collections');
+    }
+    async function loadAssetCollections(showRefreshToast = false, force = false) {
+      const scope = dashboardPersistScope();
+      if (ASSET_COLLECTION_CACHE_SCOPE && ASSET_COLLECTION_CACHE_SCOPE !== scope) {
+        ASSET_COLLECTION_CACHE_AT = 0;
+        ASSET_COLLECTIONS = [];
       }
+      ASSET_COLLECTION_CACHE_SCOPE = scope;
+      if (ASSET_COLLECTION_LOAD_REQUEST) {
+        const pending = ASSET_COLLECTION_LOAD_REQUEST;
+        return force || showRefreshToast ? pending.then(() => loadAssetCollections(showRefreshToast, true)) : pending;
+      }
+      if (!force && !showRefreshToast && ASSET_COLLECTION_CACHE_AT > 0
+        && Date.now() - ASSET_COLLECTION_CACHE_AT < ASSET_COLLECTION_CACHE_TTL_MS) {
+        renderAssetCollections();
+        return;
+      }
+      if (!force && !showRefreshToast) {
+        const persisted = readDashboardPersistCacheEntry('asset-collections', 'all');
+        if (Array.isArray(persisted?.data)) {
+          ASSET_COLLECTIONS = persisted.data;
+          ASSET_COLLECTION_CACHE_AT = Date.now();
+          renderAssetCollections();
+          return;
+        }
+      }
+      const requestSeq = ++ASSET_COLLECTION_LOAD_SEQ;
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      ASSET_COLLECTION_LOAD_CONTROLLER = controller;
+      let request;
+      request = (async () => {
+        try {
+          const res = await api('/api/assets/collections', controller ? {signal: controller.signal} : {});
+          if (requestSeq !== ASSET_COLLECTION_LOAD_SEQ) return;
+          ASSET_COLLECTIONS = Array.isArray(res.data) ? res.data : [];
+          ASSET_COLLECTION_CACHE_AT = Date.now();
+          writeDashboardPersistCache('asset-collections', 'all', ASSET_COLLECTIONS);
+          renderAssetCollections();
+          if (showRefreshToast) showToast('资产集合已刷新', 'ok');
+        } catch (e) {
+          if (requestSeq === ASSET_COLLECTION_LOAD_SEQ && $('assetCollectionStatus')) $('assetCollectionStatus').textContent = e.message || '资产集合读取失败';
+        }
+      })().finally(() => {
+        if (ASSET_COLLECTION_LOAD_REQUEST === request) ASSET_COLLECTION_LOAD_REQUEST = null;
+        if (ASSET_COLLECTION_LOAD_CONTROLLER === controller) ASSET_COLLECTION_LOAD_CONTROLLER = null;
+      });
+      ASSET_COLLECTION_LOAD_REQUEST = request;
+      return request;
     }
 
     async function createAssetCollection() {
@@ -1016,15 +1066,19 @@
       const note = String($('assetCollectionNote')?.value || '').trim();
       if (!name) return showToast('请输入集合名称', 'bad');
       try {
+        clearAssetCollectionsCache();
         const res = await api('/api/assets/collections', {method: 'POST', body: JSON.stringify({name, note})});
         if (!res.success) throw new Error(res.message || '集合创建失败');
         if ($('assetCollectionName')) $('assetCollectionName').value = '';
         if ($('assetCollectionNote')) $('assetCollectionNote').value = '';
-        await loadAssetCollections();
+        await loadAssetCollections(false, true);
         const id = String(res.data?.id || '');
         if (id && $('assetCollectionSelect')) $('assetCollectionSelect').value = id;
         showToast(res.message || '资产集合已创建', 'ok');
-      } catch (e) { showToast(e.message || '集合创建失败', 'bad'); }
+      } catch (e) {
+        await loadAssetCollections(false, true).catch(() => {});
+        showToast(e.message || '集合创建失败', 'bad');
+      }
     }
 
     async function deleteAssetCollection(collectionId) {
@@ -1033,23 +1087,28 @@
       const item = ASSET_COLLECTIONS.find(row => String(row.id || '') === id);
       if (!await confirmAction(`确定删除集合“${item?.name || id}”？集合内记录和媒体不会删除。`, {title: '删除资产集合', confirmText: '删除集合'})) return;
       try {
+        clearAssetCollectionsCache();
         const res = await api('/api/assets/collections/' + encodeURIComponent(id) + '/delete', {method: 'POST'});
         if (!res.success) throw new Error(res.message || '集合删除失败');
-        await loadAssetCollections();
+        await loadAssetCollections(false, true);
         const token = String(res.data?.undo?.token || '');
         const ttl = Math.min(10000, Math.max(1000, Number(res.data?.undo?.ttl_seconds || 600) * 1000));
         showToast(res.message || '资产集合已删除', 'ok', token ? {
           actionText: '撤销', duration: ttl,
           onAction: async () => {
             try {
+              clearAssetCollectionsCache();
               const restored = await api('/api/assets/collections/restore', {method: 'POST', body: JSON.stringify({token})});
               if (!restored.success) throw new Error(restored.message || '集合恢复失败');
-              await loadAssetCollections();
+              await loadAssetCollections(false, true);
               showToast(restored.message || '资产集合已恢复', 'ok');
             } catch (e) { showToast(e.message || '集合恢复失败', 'bad'); }
           }
         } : {});
-      } catch (e) { showToast(e.message || '集合删除失败', 'bad'); }
+      } catch (e) {
+        await loadAssetCollections(false, true).catch(() => {});
+        showToast(e.message || '集合删除失败', 'bad');
+      }
     }
 
     async function updateSelectedAssetCollectionRecords(remove = false) {
@@ -1062,6 +1121,7 @@
         const res = await api(path, {method: 'POST', body: JSON.stringify({record_ids: ids})});
         if (!res.success) throw new Error(res.message || '集合内容更新失败');
         ASSET_COLLECTIONS = ASSET_COLLECTIONS.map(item => String(item.id || '') === collectionId ? (res.data || item) : item);
+        writeDashboardPersistCache('asset-collections', 'all', ASSET_COLLECTIONS);
         renderAssetCollections();
         showToast(res.message || '集合内容已更新', 'ok');
       } catch (e) { showToast(e.message || '集合内容更新失败', 'bad'); }

@@ -52,6 +52,12 @@
     const DASHBOARD_PERSIST_CACHE_MAX_ENTRIES = 160;
     const DASHBOARD_PERSIST_CACHE_MAX_BYTES = 3 * 1024 * 1024;
     const DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES = 700 * 1024;
+    const DASHBOARD_PERSIST_CACHE_NAME = 'selfie-image-dashboard-v1';
+    const DASHBOARD_PERSIST_MEMORY = new Map();
+    const DASHBOARD_PERSIST_CACHE_WRITE_SEQ = new Map();
+    const DASHBOARD_PERSIST_CACHE_WRITE_OP = new Map();
+    let DASHBOARD_PERSIST_STORAGE_HYDRATION = null;
+    let DASHBOARD_PERSIST_STORAGE_HYDRATED = false;
     function dashboardPersistHash(value) {
       let hash = 2166136261;
       for (const char of String(value || '')) {
@@ -67,6 +73,97 @@
     function dashboardPersistKey(namespace, key, scope = dashboardPersistScope()) {
       return `${DASHBOARD_PERSIST_CACHE_PREFIX}${scope}:${namespace}:${encodeURIComponent(String(key || ''))}`;
     }
+    function dashboardPersistCacheStorage() {
+      try {
+        return typeof window.caches?.open === 'function' && typeof window.Response === 'function'
+          ? window.caches : null;
+      } catch (_) {
+        return null;
+      }
+    }
+    function dashboardPersistCacheUrl(storageKey) {
+      return `/__selfie_dashboard_cache__/${encodeURIComponent(storageKey)}`;
+    }
+    function scheduleDashboardPersistCacheDelete(storageKey) {
+      const sequence = (DASHBOARD_PERSIST_CACHE_WRITE_SEQ.get(storageKey) || 0) + 1;
+      DASHBOARD_PERSIST_CACHE_WRITE_SEQ.set(storageKey, sequence);
+      DASHBOARD_PERSIST_CACHE_WRITE_OP.set(storageKey, 'delete');
+      const cachesApi = dashboardPersistCacheStorage();
+      if (!cachesApi) return;
+      void cachesApi.open(DASHBOARD_PERSIST_CACHE_NAME)
+        .then(cache => cache.delete(dashboardPersistCacheUrl(storageKey)))
+        .catch(() => {});
+    }
+    function scheduleDashboardPersistCacheWrite(storageKey, encoded) {
+      const cachesApi = dashboardPersistCacheStorage();
+      if (!cachesApi) return;
+      const sequence = (DASHBOARD_PERSIST_CACHE_WRITE_SEQ.get(storageKey) || 0) + 1;
+      DASHBOARD_PERSIST_CACHE_WRITE_SEQ.set(storageKey, sequence);
+      DASHBOARD_PERSIST_CACHE_WRITE_OP.set(storageKey, 'write');
+      void cachesApi.open(DASHBOARD_PERSIST_CACHE_NAME).then(async cache => {
+        if (DASHBOARD_PERSIST_CACHE_WRITE_SEQ.get(storageKey) !== sequence) return;
+        await cache.put(dashboardPersistCacheUrl(storageKey), new Response(encoded, {
+          headers: {'content-type': 'application/json'},
+        }));
+        if (DASHBOARD_PERSIST_CACHE_WRITE_SEQ.get(storageKey) !== sequence
+          && DASHBOARD_PERSIST_CACHE_WRITE_OP.get(storageKey) === 'delete') {
+          await cache.delete(dashboardPersistCacheUrl(storageKey));
+        }
+      }).catch(() => {});
+    }
+    async function hydrateDashboardPersistStorage() {
+      if (DASHBOARD_PERSIST_STORAGE_HYDRATED) return;
+      if (DASHBOARD_PERSIST_STORAGE_HYDRATION) return DASHBOARD_PERSIST_STORAGE_HYDRATION;
+      const cachesApi = dashboardPersistCacheStorage();
+      if (!cachesApi) {
+        DASHBOARD_PERSIST_STORAGE_HYDRATED = true;
+        return;
+      }
+      DASHBOARD_PERSIST_STORAGE_HYDRATION = (async () => {
+        try {
+          const cache = await cachesApi.open(DASHBOARD_PERSIST_CACHE_NAME);
+          const requests = await cache.keys();
+          const now = Date.now();
+          for (const request of requests) {
+            const response = await cache.match(request);
+            if (!response) continue;
+            try {
+              const value = await response.json();
+              const storageKey = String(value?.storageKey || '');
+              const namespace = String(value?.namespace || '');
+              const key = String(value?.key || '');
+              const scope = String(value?.scope || '');
+              const storedAt = Number(value?.storedAt || 0);
+              if (!storageKey || !namespace || !scope || !storedAt || now - storedAt > DASHBOARD_PERSIST_CACHE_TTL_MS) {
+                await cache.delete(request);
+                continue;
+              }
+              DASHBOARD_PERSIST_MEMORY.set(storageKey, {
+                namespace, key, scope, storedAt,
+                lastAccessed: Number(value?.lastAccessed || storedAt),
+                size: Number(value?.size || 0), data: value.data,
+              });
+            } catch (_) {
+              await cache.delete(request);
+            }
+          }
+          const entries = [...DASHBOARD_PERSIST_MEMORY.entries()]
+            .sort((a, b) => Number(a[1]?.lastAccessed || 0) - Number(b[1]?.lastAccessed || 0));
+          let totalBytes = entries.reduce((sum, item) => sum + Math.max(0, Number(item[1]?.size || 0)), 0);
+          while (entries.length > DASHBOARD_PERSIST_CACHE_MAX_ENTRIES || totalBytes > DASHBOARD_PERSIST_CACHE_MAX_BYTES) {
+            const [storageKey, item] = entries.shift() || [];
+            if (!storageKey) break;
+            totalBytes -= Math.max(0, Number(item?.size || 0));
+            DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+            await cache.delete(dashboardPersistCacheUrl(storageKey)).catch(() => {});
+          }
+          DASHBOARD_PERSIST_STORAGE_HYDRATED = true;
+        } catch (_) {
+          // CacheStorage is optional in embedded/sandboxed browsers.
+        }
+      })().finally(() => { DASHBOARD_PERSIST_STORAGE_HYDRATION = null; });
+      return DASHBOARD_PERSIST_STORAGE_HYDRATION;
+    }
     function readDashboardPersistIndex() {
       try {
         const value = JSON.parse(safeStorageGet(DASHBOARD_PERSIST_CACHE_INDEX_KEY, '{}'));
@@ -80,6 +177,8 @@
     }
     function removeDashboardPersistEntry(storageKey, index = readDashboardPersistIndex()) {
       safeStorageRemove(storageKey);
+      DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+      scheduleDashboardPersistCacheDelete(storageKey);
       if (Object.prototype.hasOwnProperty.call(index, storageKey)) {
         delete index[storageKey];
         writeDashboardPersistIndex(index);
@@ -99,6 +198,8 @@
         const missing = !raw;
         if (missing || dashboardPersistEntryExpired(item, now)) {
           safeStorageRemove(storageKey);
+          DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+          scheduleDashboardPersistCacheDelete(storageKey);
           delete index[storageKey];
           changed = true;
           continue;
@@ -113,6 +214,8 @@
         if (!oldest) break;
         totalBytes -= Number(oldest.item.size || 0);
         safeStorageRemove(oldest.storageKey);
+        DASHBOARD_PERSIST_MEMORY.delete(oldest.storageKey);
+        scheduleDashboardPersistCacheDelete(oldest.storageKey);
         delete index[oldest.storageKey];
         changed = true;
       }
@@ -125,8 +228,17 @@
       const index = readDashboardPersistIndex();
       const raw = safeStorageGet(storageKey, '');
       if (!raw) {
-        if (index[storageKey]) removeDashboardPersistEntry(storageKey, index);
-        return null;
+        const memory = DASHBOARD_PERSIST_MEMORY.get(storageKey);
+        if (!memory) {
+          if (index[storageKey]) removeDashboardPersistEntry(storageKey, index);
+          return null;
+        }
+        if (dashboardPersistEntryExpired(memory) || memory.scope !== scope) {
+          removeDashboardPersistEntry(storageKey, index);
+          return null;
+        }
+        memory.lastAccessed = Date.now();
+        return {data: memory.data, storedAt: Number(memory.storedAt || 0)};
       }
       try {
         const value = JSON.parse(raw);
@@ -143,6 +255,11 @@
         index[storageKey] = item;
         safeStorageSet(storageKey, JSON.stringify(value));
         writeDashboardPersistIndex(index);
+        DASHBOARD_PERSIST_MEMORY.set(storageKey, {
+          namespace, key: String(key || ''), scope,
+          storedAt: Number(value.storedAt || item.storedAt || 0),
+          lastAccessed: item.lastAccessed, size: Number(item.size || raw.length || 0), data: value.data,
+        });
         return {data: value.data, storedAt: Number(value.storedAt || item.storedAt || 0)};
       } catch (_) {
         removeDashboardPersistEntry(storageKey, index);
@@ -156,16 +273,25 @@
       let encoded;
       try {
         const scope = dashboardPersistScope();
-        encoded = JSON.stringify({scope, storedAt: Date.now(), data});
-        if (encoded.length > DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES) return false;
+        const storedAt = Date.now();
         const storageKey = dashboardPersistKey(namespace, key, scope);
+        const entry = {scope, namespace, key: String(key || ''), storageKey, storedAt, lastAccessed: storedAt, data};
+        encoded = JSON.stringify(entry);
+        if (encoded.length > DASHBOARD_PERSIST_CACHE_ENTRY_MAX_BYTES) return false;
+        DASHBOARD_PERSIST_MEMORY.set(storageKey, {
+          namespace, key: String(key || ''), scope, storedAt, lastAccessed: storedAt,
+          size: encoded.length, data,
+        });
+        scheduleDashboardPersistCacheWrite(storageKey, JSON.stringify(Object.assign({}, entry, {size: encoded.length})));
         safeStorageSet(storageKey, encoded);
-        if (safeStorageGet(storageKey, '') !== encoded) return false;
+        const storedInLocalStorage = safeStorageGet(storageKey, '') === encoded;
         const index = readDashboardPersistIndex();
-        index[storageKey] = {namespace, key: String(key || ''), scope, storedAt: Date.now(), lastAccessed: Date.now(), size: encoded.length};
-        writeDashboardPersistIndex(index);
-        pruneDashboardPersistCache();
-        return true;
+        if (storedInLocalStorage) {
+          index[storageKey] = {namespace, key: String(key || ''), scope, storedAt, lastAccessed: storedAt, size: encoded.length};
+          writeDashboardPersistIndex(index);
+          pruneDashboardPersistCache();
+        }
+        return storedInLocalStorage || Boolean(dashboardPersistCacheStorage());
       } catch (_) {
         return false;
       }
@@ -181,8 +307,16 @@
         if (item.namespace !== namespace) continue;
         if (typeof predicate === 'function' && !predicate(String(item.key || ''))) continue;
         safeStorageRemove(storageKey);
+        DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+        scheduleDashboardPersistCacheDelete(storageKey);
         delete index[storageKey];
         changed = true;
+      }
+      for (const [storageKey, item] of [...DASHBOARD_PERSIST_MEMORY.entries()]) {
+        if (item.namespace !== namespace) continue;
+        if (typeof predicate === 'function' && !predicate(String(item.key || ''))) continue;
+        DASHBOARD_PERSIST_MEMORY.delete(storageKey);
+        scheduleDashboardPersistCacheDelete(storageKey);
       }
       if (changed) writeDashboardPersistIndex(index);
     }
@@ -190,6 +324,7 @@
       const index = pruneDashboardPersistCache();
       const scope = dashboardPersistScope();
       const rows = [];
+      const seen = new Set();
       for (const [storageKey, item] of Object.entries(index)) {
         if (item.namespace !== namespace || item.scope !== scope) continue;
         const raw = safeStorageGet(storageKey, '');
@@ -199,10 +334,25 @@
           if (value.scope !== scope || dashboardPersistEntryExpired(item)) continue;
           item.lastAccessed = Date.now();
           index[storageKey] = item;
+          seen.add(storageKey);
+          DASHBOARD_PERSIST_MEMORY.set(storageKey, {
+            namespace, key: String(item.key || ''), scope,
+            storedAt: Number(value.storedAt || item.storedAt || 0),
+            lastAccessed: item.lastAccessed, size: Number(item.size || raw.length || 0), data: value.data,
+          });
           rows.push({key: String(item.key || ''), data: value.data, storedAt: Number(value.storedAt || 0)});
         } catch (_) {
           removeDashboardPersistEntry(storageKey, index);
         }
+      }
+      for (const [storageKey, item] of DASHBOARD_PERSIST_MEMORY.entries()) {
+        if (seen.has(storageKey) || item.namespace !== namespace || item.scope !== scope) continue;
+        if (dashboardPersistEntryExpired(item)) {
+          removeDashboardPersistEntry(storageKey, index);
+          continue;
+        }
+        item.lastAccessed = Date.now();
+        rows.push({key: String(item.key || ''), data: item.data, storedAt: Number(item.storedAt || 0)});
       }
       writeDashboardPersistIndex(index);
       return rows;
@@ -337,9 +487,10 @@
     let CURRENT_COMPARE = null;
     let DASHBOARD_PERSIST_HYDRATED_SCOPE = '';
 
-    function hydrateDashboardPersistentCaches() {
+    async function hydrateDashboardPersistentCaches() {
       // Standalone login pages do not have a trustworthy scope until a token is entered.
       if (!isDashboardPage() && !AUTH_TOKEN) return;
+      await hydrateDashboardPersistStorage();
       const scope = dashboardPersistScope();
       if (DASHBOARD_PERSIST_HYDRATED_SCOPE && DASHBOARD_PERSIST_HYDRATED_SCOPE !== scope) {
         for (const controller of [...RECORD_PAGE_CONTROLLERS.values(), ...ASSET_PAGE_CONTROLLERS.values()]) {
@@ -382,7 +533,7 @@
         GALLERY_PICKER_CACHE.loaded = true;
       }
     }
-    hydrateDashboardPersistentCaches();
+    void hydrateDashboardPersistentCaches();
 
     function isEmbeddedFrame() {
       try {

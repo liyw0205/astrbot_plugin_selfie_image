@@ -361,7 +361,7 @@
       ensureProtectedMediaScope();
       // A standalone page may boot before the user enters a token. Hydrate the
       // token-scoped page/catalog cache after authentication is established.
-      hydrateDashboardPersistentCaches();
+      await hydrateDashboardPersistentCaches();
       try {
         const res = await api('/api/config');
         CONFIG = res.data || {};
@@ -414,7 +414,8 @@
       clearRecordPageCache();
       clearAssetPageCache();
       clearPickerCache();
-      for (const namespace of ['record-page', 'asset-page', 'picker-page', 'managed-page', 'asset-tags', 'gallery-picker']) {
+      clearAssetCollectionsCache();
+      for (const namespace of ['record-page', 'asset-page', 'picker-page', 'managed-page', 'asset-tags', 'gallery-picker', 'asset-collections']) {
         clearDashboardPersistNamespace(namespace);
       }
       safeStorageRemove('selfieImageToken');
